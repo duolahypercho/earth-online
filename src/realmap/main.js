@@ -355,13 +355,13 @@ function getSuggestedCameraPoses() {
     const offsetZ = dirX * side * 11;
     // Street-level first (proven walk canyon), then canyon = same corridor
     // slightly elevated so beauty frames never collapse to road-strip abstracts.
-    const streetBack = Math.min(bestCorridor.length * 0.12, 48);
-    const streetX = midX + offsetX * 0.2 - dirX * streetBack;
-    const streetZ = midZ + offsetZ * 0.2 - dirZ * streetBack;
-    const streetLook = Math.min(bestCorridor.length * 0.38, 140);
+    const streetBack = Math.min(bestCorridor.length * 0.08, 32);
+    const streetX = midX + offsetX * 0.88 - dirX * streetBack;
+    const streetZ = midZ + offsetZ * 0.88 - dirZ * streetBack;
+    const streetLook = Math.min(bestCorridor.length * 0.28, 95);
     street = makeCameraPose(
-      [streetX, 1.72, streetZ],
-      [midX + dirX * streetLook, 2.4, midZ + dirZ * streetLook],
+      [streetX, 1.58, streetZ],
+      [midX + dirX * streetLook, 4.2, midZ + dirZ * streetLook],
       true,
     );
     const canyonHeight = 9.5;
@@ -1835,7 +1835,7 @@ function createDetailBuildingMesh(building, groundY = 0) {
   const windowTexture = facadeWindowTexture(seed, style).clone();
   windowTexture.wrapS = THREE.RepeatWrapping;
   windowTexture.wrapT = THREE.RepeatWrapping;
-  windowTexture.repeat.set(1.35, 1.15);
+  windowTexture.repeat.set(1.85, 1.65);
   windowTexture.needsUpdate = true;
   const photoTexture = facadePhotoTexture(style);
   const photoReady = Boolean(photoTexture?.image && photoTexture.image.width > 0);
@@ -2997,6 +2997,130 @@ function createStreetCorridorPads(roads) {
   return group;
 }
 
+function createCorridorCurbs(roads) {
+  const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
+  const segments = [];
+  for (const road of roads) {
+    if (!corridorClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    const half = roadHalfWidth(road);
+    for (const side of [half + 0.08, -(half + 0.08)]) {
+      const centerline = offsetPolyline(points, side);
+      for (let i = 0; i < centerline.length - 1; i += 1) {
+        const a = centerline[i];
+        const b = centerline[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 0.6) continue;
+        segments.push({ a, b, dx, dz, length });
+      }
+    }
+  }
+  const group = new THREE.Group();
+  group.name = 'Street corridor curbs';
+  if (!segments.length) {
+    group.userData = { type: 'corridor-curbs', segments: 0 };
+    return group;
+  }
+  const geometry = new THREE.BoxGeometry(1, 0.14, 1);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x686460,
+    roughness: 0.82,
+    metalness: 0.02,
+    flatShading: true,
+  });
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  const dummy = new THREE.Object3D();
+  const mesh = new THREE.InstancedMesh(geometry, material, segments.length);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
+    dummy.position.set(
+      (segment.a.x + segment.b.x) / 2,
+      elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.07,
+      (segment.a.z + segment.b.z) / 2,
+    );
+    dummy.quaternion.setFromUnitVectors(zAxis, direction);
+    dummy.scale.set(0.22, 1, segment.length);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  group.userData = { type: 'corridor-curbs', segments: segments.length };
+  return group;
+}
+
+function createCorridorCenterlines(roads) {
+  const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
+  const dashes = [];
+  for (const road of roads) {
+    if (!corridorClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    const count = Math.min(80, Math.floor(length / 5.5));
+    for (let c = 0; c < count; c += 1) {
+      const target = ((c + 0.5) / count) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength >= target) {
+          const t = segLength > 0 ? (target - walked) / segLength : 0;
+          const x = a.x + (b.x - a.x) * t;
+          const z = a.z + (b.z - a.z) * t;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          dashes.push({ x, z, heading: Math.atan2(dx, dz), length: 2.4 });
+          break;
+        }
+        walked += segLength;
+      }
+    }
+  }
+  const group = new THREE.Group();
+  group.name = 'Street corridor centerlines';
+  if (!dashes.length) {
+    group.userData = { type: 'corridor-centerlines', dashes: 0 };
+    return group;
+  }
+  const geometry = new THREE.BoxGeometry(1, 0.04, 1);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xf0ece0,
+    roughness: 0.55,
+    metalness: 0.02,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  });
+  const dummy = new THREE.Object3D();
+  const mesh = new THREE.InstancedMesh(geometry, material, dashes.length);
+  for (let index = 0; index < dashes.length; index += 1) {
+    const dash = dashes[index];
+    dummy.position.set(
+      dash.x,
+      elevationAt(dash.x, dash.z) + ROAD_SURFACE_LIFT + 0.05,
+      dash.z,
+    );
+    dummy.rotation.set(0, dash.heading, 0);
+    dummy.scale.set(0.18, 1, dash.length);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  group.add(mesh);
+  group.userData = { type: 'corridor-centerlines', dashes: dashes.length };
+  return group;
+}
+
 function createBuildingFrontagePads(buildings) {
   const pads = [];
   for (const building of buildings.detailed) {
@@ -3011,13 +3135,13 @@ function createBuildingFrontagePads(buildings) {
       maxZ = Math.max(maxZ, building.points[i + 1]);
     }
     if (!Number.isFinite(minX)) continue;
-    const inset = 2.8;
+    const inset = 4.5;
     pads.push({
       cx: (minX + maxX) / 2,
       cz: (minZ + maxZ) / 2,
-      width: Math.max(6, maxX - minX + inset * 2),
-      depth: Math.max(6, maxZ - minZ + inset * 2),
-      brick: (Number(building.id) || 0) % 11 === 0,
+      width: Math.max(4.5, (maxX - minX + inset * 2) * 0.72),
+      depth: Math.max(4.5, (maxZ - minZ + inset * 2) * 0.72),
+      brick: (Number(building.id) || 0) % 4 !== 0,
     });
   }
   for (const building of buildings.coarse) {
@@ -3590,6 +3714,33 @@ function createPedestrianAvatar(palette) {
   return group;
 }
 
+function createThoughtBubble() {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 48;
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'rgba(250,246,238,0.92)';
+  context.beginPath();
+  context.arc(48, 22, 22, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = 'rgba(20,26,32,0.85)';
+  context.font = '700 12px ui-sans-serif,system-ui,sans-serif';
+  context.textAlign = 'center';
+  context.fillText('…', 48, 27);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.6, 0.8, 1);
+  sprite.position.y = 2.05;
+  return sprite;
+}
+
 function offsetPolyline(points, offset) {
   const result = [];
   for (let i = 0; i < points.length; i += 1) {
@@ -3681,17 +3832,31 @@ function createPedestrianSystem(roads) {
   for (let i = 0; i < count && paths.length; i += 1) {
     const path = paths[i % paths.length];
     const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
+    const storyIndex = i % 6;
+    const story = [
+      { role: 'Courier', action: 'delivering', mood: 'focused', choice: 'take the shortcut' },
+      { role: 'Barista', action: 'heading to work', mood: 'pleasant', choice: 'grab a coffee first' },
+      { role: 'Resident', action: 'walking home', mood: 'tired', choice: 'take the slow street' },
+      { role: 'Tourist', action: 'photographing', mood: 'curious', choice: 'visit the landmark' },
+      { role: 'Worker', action: 'commuting', mood: 'busy', choice: 'skip the crowd' },
+      { role: 'Cleaner', action: 'sweeping', mood: 'steady', choice: 'keep the block tidy' },
+    ][storyIndex];
     const s = Math.random() * path.length;
     const pose = pointAlongPath(path.points, s);
     avatar.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     avatar.rotation.y = pose.heading;
     pedestrianGroup.add(avatar);
+    if (i % 3 === 0) {
+      const bubble = createThoughtBubble();
+      if (bubble) avatar.add(bubble);
+    }
     pedestrianState.push({
       mesh: avatar,
       path,
       s,
       speed: path.speed * (0.85 + Math.random() * 0.3),
       phase: Math.random() * Math.PI * 2,
+      story,
     });
   }
 }
@@ -5942,6 +6107,8 @@ async function buildCity() {
       const sidewalks = createSimpleSidewalkMeshes(simpleRoads);
       cityRoot.add(sidewalks);
       cityRoot.add(createStreetCorridorPads(simpleRoads));
+      cityRoot.add(createCorridorCurbs(simpleRoads));
+      cityRoot.add(createCorridorCenterlines(simpleRoads));
       simpleRoadSegments = roadMeshes.userData.segments || 0;
       simpleSidewalkSegments = sidewalks.userData.segments || 0;
       const detailed = usedRoads.filter((road) => detailIds.has(road.id));
@@ -5958,6 +6125,8 @@ async function buildCity() {
       cityRoot.add(roadMeshes);
       cityRoot.add(createSimpleSidewalkMeshes(usedRoads));
       cityRoot.add(createStreetCorridorPads(usedRoads));
+      cityRoot.add(createCorridorCurbs(usedRoads));
+      cityRoot.add(createCorridorCenterlines(usedRoads));
     }
     cityRoot.add(createCableCarTracks(usedRoads));
     setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
@@ -6106,6 +6275,10 @@ function start() {
       coarseBuildings: coarseBuildingMesh?.count || 0,
       mode: cityMode,
       pedestrians: pedestrianState.length,
+      streetStories: pedestrianState
+        .filter((person) => person.story)
+        .slice(0, 6)
+        .map((person) => person.story),
       trees: treeGroup?.children[0]?.count || 0,
       furniture: furnitureGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,

@@ -328,6 +328,7 @@ try {
     renderer: cityState.renderer,
   });
   check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
+  check('Street residents expose readable micro-stories', Boolean(cityState.streetStories?.length && cityState.streetStories.every((story) => story.role && story.action && story.mood && story.choice)), cityState.streetStories);
   check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
   check('Building doorways mark entrances', Number(cityState.doorways || 0) > 0, cityState.doorways);
   check('Streetfront awnings and signs placed', Number(cityState.streetfronts || 0) > 0, cityState.streetfronts);
