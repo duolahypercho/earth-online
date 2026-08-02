@@ -286,11 +286,15 @@ function analyzeRegionCameraTargets() {
       const b = roadPts[i + 1];
       const length = Math.hypot(b.x - a.x, b.z - a.z);
       if (length < 48) continue;
-      const density = countBuildingsNearSegment(a, b, buildings);
-      const score = length * weight * (1 + density * 0.08);
+      const density = countBuildingsNearSegment(a, b, buildings, 36);
+      // Reject waterfront/bridge strips — canyon must be flanked by real massing.
+      if (density < 10) continue;
+      const midElev = elevationAt((a.x + b.x) / 2, (a.z + b.z) / 2);
+      if (midElev < SEA_LEVEL_Y + 1.5) continue;
+      const score = length * weight * (1 + density * 0.35);
       if (score > bestCorridorScore) {
         bestCorridorScore = score;
-        bestCorridor = { a, b, length, road };
+        bestCorridor = { a, b, length, road, density };
       }
     }
   }
@@ -6122,6 +6126,27 @@ function start() {
       x: vehicle.mesh.position.x,
       z: vehicle.mesh.position.z,
     })),
+    getTrafficPathDiagnostics: () => {
+      if (!trafficState) return null;
+      const oneWayPaths = new Map();
+      const twoWayPaths = new Map();
+      for (const path of trafficState.paths) {
+        const roadId = path.road?.id;
+        if (roadId == null) continue;
+        const bucket = path.road.oneway ? oneWayPaths : twoWayPaths;
+        const list = bucket.get(roadId) || [];
+        list.push(path.dir);
+        bucket.set(roadId, list);
+      }
+      const oneWayViolations = [...oneWayPaths.entries()].filter(([, dirs]) => dirs.length !== 1);
+      const twoWayViolations = [...twoWayPaths.entries()].filter(([, dirs]) => dirs.length !== 2);
+      return {
+        oneWayRoads: oneWayPaths.size,
+        twoWayRoads: twoWayPaths.size,
+        oneWayViolations: oneWayViolations.length,
+        twoWayViolations: twoWayViolations.length,
+      };
+    },
     showInspector,
   };
   renderLoop();

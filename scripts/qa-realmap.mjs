@@ -248,6 +248,9 @@ try {
   }
   check('City has real signal metadata', cityState.signals > 0, cityState.signals);
   check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
+  const trafficPaths = await page.evaluate(() => window.__SF_REALMAP__.getTrafficPathDiagnostics());
+  check('One-way roads get exactly one legal direction', Boolean(trafficPaths && trafficPaths.oneWayRoads > 0 && trafficPaths.oneWayViolations === 0), trafficPaths);
+  check('Two-way roads get exactly two legal directions', Boolean(trafficPaths && trafficPaths.twoWayRoads > 0 && trafficPaths.twoWayViolations === 0), trafficPaths);
   check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);
   check('SF hills present in heightmap', Number(cityState.terrain?.maxElevation || 0) > 100, cityState.terrain?.maxElevation);
   const hillProbe = await page.evaluate(() => {
