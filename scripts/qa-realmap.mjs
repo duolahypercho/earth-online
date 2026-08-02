@@ -328,6 +328,9 @@ try {
   check('Building doorways mark entrances', Number(cityState.doorways || 0) > 0, cityState.doorways);
   check('Streetfront awnings and signs placed', Number(cityState.streetfronts || 0) > 0, cityState.streetfronts);
   check('Rooftop parapets and mechanical details placed', Number(cityState.rooftops || 0) > 0, cityState.rooftops);
+  check('Hillside shrubbery layers placed', Number(cityState.hillShrubbery || 0) > 0, cityState.hillShrubbery);
+  check('Wet weather puddles placed', Number(cityState.puddles || 0) > 0, cityState.puddles);
+  check('Coastal mist particles placed', Number(cityState.mist || 0) > 0, cityState.mist);
 
   const mission = await page.evaluate(() => window.__SF_REALMAP__.startPhotoTour());
   check('Photo tour selects real landmarks', Boolean(mission?.landmarks?.length >= 2 && mission.landmarks.every((landmark) => landmark.name)), mission?.landmarks);
@@ -352,10 +355,13 @@ try {
   check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
   await page.waitForTimeout(250);
   await page.screenshot({ path: qaPath('realmap-street.png') });
+  // Walk mode overwrites the camera every frame; orbit + street pose for beauty.
   await page.evaluate(() => {
+    window.__SF_REALMAP__.setCityMode('orbit');
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     if (poses?.street) window.__SF_REALMAP__.setCameraPose(poses.street);
   });
+  await page.waitForTimeout(400);
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(250);
   await page.screenshot({ path: qaPath('realmap-street-beauty.png') });

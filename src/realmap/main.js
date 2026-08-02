@@ -355,15 +355,6 @@ function getSuggestedCameraPoses() {
     const offsetZ = dirX * side * 11;
     // Street-level first (proven walk canyon), then canyon = same corridor
     // slightly elevated so beauty frames never collapse to road-strip abstracts.
-    const streetBack = Math.min(bestCorridor.length * 0.08, 32);
-    const streetX = midX + offsetX * 0.88 - dirX * streetBack;
-    const streetZ = midZ + offsetZ * 0.88 - dirZ * streetBack;
-    const streetLook = Math.min(bestCorridor.length * 0.28, 95);
-    street = makeCameraPose(
-      [streetX, 1.58, streetZ],
-      [midX + dirX * streetLook, 4.2, midZ + dirZ * streetLook],
-      true,
-    );
     const canyonHeight = 9.5;
     const canyonBack = Math.min(bestCorridor.length * 0.18, 70);
     const lookAhead = Math.min(bestCorridor.length * 0.42, 160);
@@ -372,6 +363,17 @@ function getSuggestedCameraPoses() {
     canyon = makeCameraPose(
       [canyonX, canyonHeight, canyonZ],
       [midX + dirX * lookAhead, 3.2, midZ + dirZ * lookAhead],
+      true,
+    );
+    // Same dense corridor as canyon, but eye-level and shifted toward the curb
+    // so one facade fills ~35% of frame instead of flat plaza asphalt.
+    const streetHeight = 4.5;
+    const streetLateral = 0.85;
+    const streetX = midX + offsetX * streetLateral - dirX * canyonBack;
+    const streetZ = midZ + offsetZ * streetLateral - dirZ * canyonBack;
+    street = makeCameraPose(
+      [streetX, streetHeight, streetZ],
+      [midX + dirX * lookAhead, 5.7, midZ + dirZ * lookAhead],
       true,
     );
   }
@@ -3278,6 +3280,7 @@ let pedestrianState = [];
 let treeGroup = null;
 let furnitureGroup = null;
 let hillVegetationGroup = null;
+let hillShrubberyGroup = null;
 let doorwayGroup = null;
 let streetfrontGroup = null;
 let rooftopGroup = null;
@@ -3308,6 +3311,11 @@ let audioEnabled = true;
 let rainGroup = null;
 let rainPositions = null;
 let rainVelocities = null;
+let wetWeatherGroup = null;
+let puddleMaterial = null;
+let mistGroup = null;
+let mistPositions = null;
+let mistVelocities = null;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
@@ -4222,7 +4230,7 @@ function createHillVegetation(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 7600 && guard < 180000) {
+  while (spots.length < 9800 && guard < 230000) {
     guard += 1;
     const seed = guard * 7919;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
@@ -4312,6 +4320,229 @@ function createHillVegetation(regionPoints) {
   rockMeshes.castShadow = true;
   rockMeshes.receiveShadow = true;
   hillVegetationGroup.add(trunks, canopies, grassMeshes, rockMeshes);
+}
+
+function createHillShrubbery(regionPoints) {
+  if (hillShrubberyGroup) {
+    cityRoot.remove(hillShrubberyGroup);
+    hillShrubberyGroup = null;
+  }
+  hillShrubberyGroup = new THREE.Group();
+  hillShrubberyGroup.name = 'Real map hillside shrubbery';
+  cityRoot.add(hillShrubberyGroup);
+  const flat = flatRegion();
+  const bounds = bboxOfPoints(regionPoints);
+  const spots = [];
+  const random = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  let guard = 0;
+  while (spots.length < 7600 && guard < 160000) {
+    guard += 1;
+    const seed = guard * 4133;
+    const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
+    const z = bounds.minZ + random(seed + 23) * (bounds.maxZ - bounds.minZ);
+    if (!pointInFlatRing({ x, z }, flat)) continue;
+    const elevation = elevationAt(x, z);
+    if (elevation < 38) continue;
+    const boxes = collisionBoxesNear(x, z, 1.5);
+    let blocked = false;
+    for (const box of boxes) {
+      const cx = THREE.MathUtils.clamp(x, box.min.x, box.max.x);
+      const cz = THREE.MathUtils.clamp(z, box.min.z, box.max.z);
+      if (Math.hypot(x - cx, z - cz) < 1.5) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+    spots.push({
+      x,
+      z,
+      elevation,
+      scale: 0.45 + random(seed + 61) * 1.1,
+      tone: random(seed + 73),
+    });
+  }
+  const shrubGeometry = new THREE.DodecahedronGeometry(0.7, 0);
+  const fernGeometry = new THREE.ConeGeometry(0.34, 0.85, 5);
+  const shrubMaterial = new THREE.MeshStandardMaterial({
+    color: 0x527a4a,
+    roughness: 0.94,
+    flatShading: true,
+  });
+  const fernMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6b8f52,
+    roughness: 0.9,
+    flatShading: true,
+  });
+  const shrubs = new THREE.InstancedMesh(shrubGeometry, shrubMaterial, spots.length);
+  const ferns = new THREE.InstancedMesh(fernGeometry, fernMaterial, spots.length);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  for (let i = 0; i < spots.length; i += 1) {
+    const spot = spots[i];
+    dummy.position.set(spot.x, spot.elevation + 0.32, spot.z);
+    dummy.scale.set(spot.scale, spot.scale * 0.72, spot.scale * 0.85);
+    dummy.rotation.set(random(i + 3) * 0.5, random(i + 5) * Math.PI, random(i + 7) * 0.4);
+    dummy.updateMatrix();
+    shrubs.setMatrixAt(i, dummy.matrix);
+    color.setHSL(0.26 + spot.tone * 0.08, 0.4, 0.3 + (i % 5) * 0.035);
+    shrubs.setColorAt(i, color);
+    dummy.position.set(spot.x + (random(i + 11) - 0.5) * 0.7, spot.elevation + 0.45, spot.z + (random(i + 13) - 0.5) * 0.7);
+    dummy.scale.set(spot.scale * 0.75, spot.scale * 0.95, spot.scale * 0.75);
+    dummy.rotation.set(0.12, random(i + 17) * Math.PI, 0.1);
+    dummy.updateMatrix();
+    ferns.setMatrixAt(i, dummy.matrix);
+    color.setHSL(0.3 + (i % 6) * 0.02, 0.42, 0.34 + (i % 4) * 0.03);
+    ferns.setColorAt(i, color);
+  }
+  shrubs.instanceMatrix.needsUpdate = true;
+  ferns.instanceMatrix.needsUpdate = true;
+  shrubs.instanceColor.needsUpdate = true;
+  ferns.instanceColor.needsUpdate = true;
+  shrubs.castShadow = true;
+  shrubs.receiveShadow = true;
+  ferns.castShadow = true;
+  ferns.receiveShadow = true;
+  hillShrubberyGroup.add(shrubs, ferns);
+}
+
+function createWetWeatherVisuals(roads) {
+  if (wetWeatherGroup) {
+    cityRoot.remove(wetWeatherGroup);
+    wetWeatherGroup = null;
+  }
+  wetWeatherGroup = new THREE.Group();
+  wetWeatherGroup.name = 'Real map wet weather';
+  cityRoot.add(wetWeatherGroup);
+  const puddleSpots = [];
+  const classes = new Set(['primary', 'secondary', 'tertiary', 'residential', 'living_street', 'service']);
+  for (const road of roads) {
+    if (!classes.has(road.highway)) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    const count = Math.min(10, Math.floor(length / 90));
+    for (let c = 0; c < count && puddleSpots.length < 900; c += 1) {
+      const target = ((c + 0.4 + Math.random() * 0.25) / count) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength >= target) {
+          const t = segLength > 0 ? (target - walked) / segLength : 0;
+          const x = a.x + (b.x - a.x) * t;
+          const z = a.z + (b.z - a.z) * t;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const side = c % 2 === 0 ? 1 : -1;
+          puddleSpots.push({
+            x: x - dz / len * side * (roadHalfWidth(road) * 0.55),
+            z: z + dx / len * side * (roadHalfWidth(road) * 0.55),
+            heading: Math.atan2(dx, dz),
+            scale: 0.7 + Math.random() * 1.1,
+          });
+          break;
+        }
+        walked += segLength;
+      }
+    }
+  }
+  const geometry = new THREE.CircleGeometry(1, 12);
+  puddleMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0x2a4a58,
+    roughness: 0.08,
+    metalness: 0.1,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.08,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const puddles = new THREE.InstancedMesh(geometry, puddleMaterial, puddleSpots.length);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < puddleSpots.length; i += 1) {
+    const spot = puddleSpots[i];
+    dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.045, spot.z);
+    dummy.rotation.set(-Math.PI / 2, 0, spot.heading);
+    dummy.scale.set(spot.scale, spot.scale, 1);
+    dummy.updateMatrix();
+    puddles.setMatrixAt(i, dummy.matrix);
+  }
+  puddles.instanceMatrix.needsUpdate = true;
+  puddles.receiveShadow = true;
+  wetWeatherGroup.add(puddles);
+  wetWeatherGroup.visible = false;
+}
+
+function createMistSystem() {
+  if (!scene || mistGroup) return mistGroup;
+  const count = 900;
+  mistPositions = new Float32Array(count * 3);
+  mistVelocities = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    mistPositions[i * 3] = (Math.random() - 0.5) * 520;
+    mistPositions[i * 3 + 1] = 2 + Math.random() * 46;
+    mistPositions[i * 3 + 2] = (Math.random() - 0.5) * 520;
+    mistVelocities[i] = 0.4 + Math.random() * 0.8;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gradient.addColorStop(0, 'rgba(210,224,232,0.7)');
+  gradient.addColorStop(1, 'rgba(210,224,232,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.PointsMaterial({
+    color: 0xd8e4ec,
+    size: 26,
+    map: texture,
+    transparent: true,
+    opacity: 0.12,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(mistPositions, 3));
+  mistGroup = new THREE.Points(geometry, material);
+  mistGroup.name = 'Real map coastal mist';
+  mistGroup.frustumCulled = false;
+  mistGroup.visible = false;
+  scene.add(mistGroup);
+  return mistGroup;
+}
+
+function updateWeatherVisuals(dt) {
+  if (wetWeatherGroup) {
+    const active = weatherMode === 'drizzle';
+    wetWeatherGroup.visible = active;
+    if (puddleMaterial) {
+      const target = active ? 0.72 : 0;
+      puddleMaterial.opacity = THREE.MathUtils.lerp(puddleMaterial.opacity, target, Math.min(1, dt * 4));
+    }
+  }
+  if (mistGroup && mistPositions && camera) {
+    const active = weatherMode === 'fog' || weatherMode === 'drizzle';
+    mistGroup.visible = active;
+    if (!active) return;
+    mistGroup.position.copy(camera.position);
+    for (let i = 0; i < mistVelocities.length; i += 1) {
+      mistPositions[i * 3] += mistVelocities[i] * dt * 1.4;
+      mistPositions[i * 3 + 1] += Math.sin(performance.now() * 0.0002 + i) * dt * 0.15;
+      if (mistPositions[i * 3] > 280) mistPositions[i * 3] = -280;
+    }
+    mistGroup.geometry.attributes.position.needsUpdate = true;
+  }
 }
 
 function createBuildingDoorways(buildings) {
@@ -5431,7 +5662,7 @@ function setupScene() {
         varying vec3 vWorldPosition;
         void main() {
           float h = normalize(vWorldPosition).y;
-          float tLow = clamp(pow(max(h, 0.0), 0.42), 0.0, 1.0);
+          float tLow = clamp(pow(max(h, 0.0), 0.30), 0.0, 1.0);
           float tHigh = clamp(pow(max(h, 0.0), 0.88), 0.0, 1.0);
           vec3 color = mix(horizonColor, midColor, tLow);
           color = mix(color, topColor, tHigh);
@@ -5831,6 +6062,7 @@ function renderLoop() {
     : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
   updateRain(dt);
+  updateWeatherVisuals(dt);
   if (composer) composer.render();
   else renderer.render(scene, camera);
   updateReadout3d();
@@ -6168,6 +6400,7 @@ async function buildCity() {
     createPedestrianSystem(usedRoads);
     createStreetTrees(usedRoads);
     createStreetFurniture(usedRoads);
+    createWetWeatherVisuals(usedRoads);
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
     sceneTriangleCount = countSceneTriangles(cityRoot);
 
@@ -6175,6 +6408,8 @@ async function buildCity() {
     cityFlatRegion = flatRegion();
     buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
     createHillVegetation(regionPoints);
+    createHillShrubbery(regionPoints);
+    createMistSystem();
     const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
     console.warn('trafficStart', trafficStart);
     initPlayer({
@@ -6282,6 +6517,9 @@ function start() {
       trees: treeGroup?.children[0]?.count || 0,
       furniture: furnitureGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
+      hillShrubbery: hillShrubberyGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
+      puddles: wetWeatherGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
+      mist: mistGroup?.geometry?.attributes?.position?.count || 0,
       doorways: doorwayGroup?.children.length || 0,
       streetfronts: streetfrontGroup?.children.length || 0,
       rooftops: rooftopGroup?.userData
