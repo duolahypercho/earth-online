@@ -1209,6 +1209,26 @@ const roadMarkingColors = {
   'marking-none': 0x3a4148,
 };
 
+const sandboxTextureCache = {};
+
+function loadSandboxTextures() {
+  if (typeof document === 'undefined' || sandboxTextureCache.loaded) return;
+  sandboxTextureCache.loaded = true;
+  const load = (key, url, repeatX, repeatY) => {
+    const texture = new THREE.TextureLoader().load(url);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(repeatX, repeatY);
+    sandboxTextureCache[key] = texture;
+  };
+  load('asphalt', '/assets/sf-asphalt.png', 92, 92);
+  load('sidewalk', '/assets/sf-sidewalk.png', 68, 68);
+  load('plaster', '/assets/sf-facade-plaster.png', 4.5, 3.2);
+  load('edwardian', '/assets/sf-edwardian-facade.png', 4.2, 3.4);
+  load('victorian', '/assets/sf-victorian-siding.png', 4.8, 3.8);
+}
+
 function makeRoadMaterial(materialClass) {
   const isMarking = materialClass.startsWith('marking-');
   const color = isMarking
@@ -1223,6 +1243,13 @@ function makeRoadMaterial(materialClass) {
     polygonOffsetUnits: isMarking ? -2 : 0,
   });
   material.name = materialClass;
+  if (materialClass === 'road' && sandboxTextureCache.asphalt) {
+    material.map = sandboxTextureCache.asphalt;
+    material.color.set(0xffffff);
+  } else if (materialClass === 'sidewalk' && sandboxTextureCache.sidewalk) {
+    material.map = sandboxTextureCache.sidewalk;
+    material.color.set(0xffffff);
+  }
   return material;
 }
 
@@ -1313,12 +1340,20 @@ function createDetailBuildingMesh(building, groundY = 0) {
   });
   geometry.rotateX(Math.PI / 2);
   geometry.translate(0, groundY + 0.15, 0);
+  const facadeStyles = ['plaster', 'edwardian', 'victorian', 'plaster'];
+  const facadeKey = facadeStyles[(Number(building.id) || 0) % facadeStyles.length];
   const material = new THREE.MeshStandardMaterial({
     color: buildingColor(building),
     roughness: 0.82,
     metalness: 0.05,
     flatShading: true,
   });
+  if (sandboxTextureCache[facadeKey]) {
+    material.map = sandboxTextureCache[facadeKey];
+    material.color.set(0xffffff);
+    material.roughness = 0.86;
+    material.metalness = 0.02;
+  }
   const roofMaterial = new THREE.MeshStandardMaterial({
     color: buildingRoofColor(building),
     roughness: 0.9,
@@ -2794,7 +2829,7 @@ function setup3DControls() {
       } else {
         const point = hit.point;
         const road = findNearestRoad(point);
-        if (road) showInspector('Street', road);
+        if (road) showInspector('Street', { ...road, point: { x: point.x, z: point.z } });
       }
     }
   });
@@ -2822,6 +2857,29 @@ function findNearestRoad(point) {
   return best;
 }
 
+function nearestCrossStreet(road, point) {
+  let best = null;
+  let bestDistance = 14;
+  for (const candidate of selectedRoadsForHit) {
+    if (candidate.id === road.id || !candidate.name) continue;
+    const points = roadPoints(candidate);
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const segLengthSq = dx * dx + dz * dz;
+      const t = segLengthSq > 0 ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / segLengthSq)) : 0;
+      const distance = Math.hypot(point.x - (a.x + dx * t), point.z - (a.z + dz * t));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+      }
+    }
+  }
+  return best;
+}
+
 function showInspector(type, data) {
   inspectorTitle.textContent = type;
   const fields = [];
@@ -2840,6 +2898,11 @@ function showInspector(type, data) {
     fields.push(['Phase', 'Shared 25.8 s cycle']);
   } else if (type === 'Street') {
     fields.push(['Name', data.name || 'Unnamed street']);
+    const crossStreet = nearestCrossStreet(data, data.point || data);
+    if (crossStreet) fields.push(['Cross street', crossStreet.name || 'Unnamed cross street']);
+    fields.push(['Block', data.name
+      ? `${data.name}${crossStreet?.name ? ` at ${crossStreet.name}` : ' block'}`
+      : 'Unnamed block']);
     fields.push(['Class', data.highway || '—']);
     fields.push(['One way', data.oneway ? 'Yes' : 'No']);
     fields.push(['Lanes', String(data.lanes || 1)]);
@@ -2992,6 +3055,7 @@ function disposeRoot(root) {
 
 function start() {
   resize();
+  loadSandboxTextures();
   window.addEventListener('resize', () => {
     resize();
     if (renderer) {

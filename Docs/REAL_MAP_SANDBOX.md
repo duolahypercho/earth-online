@@ -27,6 +27,10 @@ that slice as a 3D city with:
 - real San Francisco hills from DataSF five-foot elevation contours, applied to
   the ground, roads, sidewalks, buildings, signals, pedestrians, traffic, and
   the player camera;
+- the main game's photographic asphalt, sidewalk, plaster, Edwardian, and
+  Victorian siding textures on generated roads and building facades;
+- clickable street metadata now includes the nearest named cross street and a
+  readable block label;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
