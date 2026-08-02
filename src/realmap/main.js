@@ -43,10 +43,11 @@ const inspectorTitle = document.querySelector('#inspector-title');
 const inspectorFields = document.querySelector('#inspector-fields');
 const inspectorClose = document.querySelector('#inspector-close');
 
-const DATA_URL = '/data/sf/sf-city.json.gz';
-const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
-const ELEVATION_URL = '/data/sf/sf-elevation.json.gz';
-const ELEVATION_FALLBACK_URL = '/data/sf/sf-elevation.json';
+const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`;
+const DATA_URL = publicAsset('data/sf/sf-city.json.gz');
+const DATA_FALLBACK_URL = publicAsset('data/sf/sf-city.json');
+const ELEVATION_URL = publicAsset('data/sf/sf-elevation.json.gz');
+const ELEVATION_FALLBACK_URL = publicAsset('data/sf/sf-elevation.json');
 
 let cityData = null;
 let terrainData = null;
@@ -1340,12 +1341,12 @@ function loadSandboxTextures() {
     texture.repeat.set(repeatX, repeatY);
     sandboxTextureCache[key] = texture;
   };
-  load('asphalt', '/assets/sf-asphalt.png', 92, 92);
-  load('sidewalk', '/assets/sf-sidewalk.png', 68, 68);
-  load('plaster', '/assets/sf-facade-plaster.png', 4.5, 3.2);
-  load('edwardian', '/assets/sf-edwardian-facade.png', 4.2, 3.4);
-  load('edwardian2', '/assets/sf-edwardian-facade-2.png', 4.2, 3.4);
-  load('victorian', '/assets/sf-victorian-siding.png', 4.8, 3.8);
+  load('asphalt', publicAsset('assets/sf-asphalt.png'), 92, 92);
+  load('sidewalk', publicAsset('assets/sf-sidewalk.png'), 68, 68);
+  load('plaster', publicAsset('assets/sf-facade-plaster.png'), 4.5, 3.2);
+  load('edwardian', publicAsset('assets/sf-edwardian-facade.png'), 4.2, 3.4);
+  load('edwardian2', publicAsset('assets/sf-edwardian-facade-2.png'), 4.2, 3.4);
+  load('victorian', publicAsset('assets/sf-victorian-siding.png'), 4.8, 3.8);
   sandboxTextureCache.asphaltNormal = proceduralSurfaceMap('asphalt-normal');
   sandboxTextureCache.asphaltRoughness = proceduralSurfaceMap('asphalt-roughness');
   sandboxTextureCache.brickSidewalk = proceduralSurfaceMap('brick');

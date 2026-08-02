@@ -3,6 +3,8 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { signalOffsetForPosition, signalPhaseAt } from './signals.js';
 import interiorMaterialAtlasUrl from '../assets/interiors/sf-interior-material-atlas-v1.png';
 
+const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`;
+
 const CITY_HALF_X = 98;
 const CITY_HALF_Z = 74;
 const ROAD_HALF_WIDTH = 7;
@@ -476,7 +478,7 @@ export function createCity({ scene, renderer }) {
   // of relying on a single-color shader. Keep the procedural maps on the
   // remaining buildings so the district still has controlled variation.
   if (typeof document !== 'undefined') {
-    const facadeTexture = new THREE.TextureLoader().load('/assets/sf-facade-plaster.png');
+    const facadeTexture = new THREE.TextureLoader().load(publicAsset('assets/sf-facade-plaster.png'));
     facadeTexture.colorSpace = THREE.SRGBColorSpace;
     facadeTexture.wrapS = THREE.RepeatWrapping;
     facadeTexture.wrapT = THREE.RepeatWrapping;
@@ -490,7 +492,7 @@ export function createCity({ scene, renderer }) {
       material.needsUpdate = true;
     });
 
-    const sidingTexture = new THREE.TextureLoader().load('/assets/sf-victorian-siding.png');
+    const sidingTexture = new THREE.TextureLoader().load(publicAsset('assets/sf-victorian-siding.png'));
     sidingTexture.colorSpace = THREE.SRGBColorSpace;
     sidingTexture.wrapS = THREE.RepeatWrapping;
     sidingTexture.wrapT = THREE.RepeatWrapping;
@@ -501,7 +503,7 @@ export function createCity({ scene, renderer }) {
       material.needsUpdate = true;
     });
 
-    const asphaltPhoto = new THREE.TextureLoader().load('/assets/sf-asphalt.png');
+    const asphaltPhoto = new THREE.TextureLoader().load(publicAsset('assets/sf-asphalt.png'));
     asphaltPhoto.colorSpace = THREE.SRGBColorSpace;
     asphaltPhoto.wrapS = THREE.RepeatWrapping;
     asphaltPhoto.wrapT = THREE.RepeatWrapping;
@@ -552,7 +554,7 @@ export function createCity({ scene, renderer }) {
     heroRoadSurface.receiveShadow = true;
     group.add(heroRoadSurface);
 
-    const sidewalkPhoto = new THREE.TextureLoader().load('/assets/sf-sidewalk.png');
+    const sidewalkPhoto = new THREE.TextureLoader().load(publicAsset('assets/sf-sidewalk.png'));
     sidewalkPhoto.colorSpace = THREE.SRGBColorSpace;
     sidewalkPhoto.wrapS = THREE.RepeatWrapping;
     sidewalkPhoto.wrapT = THREE.RepeatWrapping;
@@ -2806,7 +2808,7 @@ export function createCity({ scene, renderer }) {
   // underlying building remains collision/portal geometry; this is only the
   // street-facing weathered skin seen from the beauty camera.
   const addApproachFacade = (building, x, z, width, depth, height, crop = 0) => {
-    const texture = new THREE.TextureLoader().load('/assets/sf-edwardian-facade-2.png');
+    const texture = new THREE.TextureLoader().load(publicAsset('assets/sf-edwardian-facade-2.png'));
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -3579,7 +3581,7 @@ export function createCity({ scene, renderer }) {
     emissiveIntensity: 0.16,
     roughness: 0.62,
   });
-  const heroPhotoTexture = new THREE.TextureLoader().load('/assets/sf-edwardian-facade-2.png');
+  const heroPhotoTexture = new THREE.TextureLoader().load(publicAsset('assets/sf-edwardian-facade-2.png'));
   heroPhotoTexture.colorSpace = THREE.SRGBColorSpace;
   heroPhotoTexture.anisotropy = 8;
   heroPhotoTexture.wrapS = THREE.ClampToEdgeWrapping;
@@ -3591,7 +3593,7 @@ export function createCity({ scene, renderer }) {
     roughness: 0.82,
     metalness: 0.02,
   });
-  const heroTallPhotoTexture = new THREE.TextureLoader().load('/assets/sf-edwardian-facade.png');
+  const heroTallPhotoTexture = new THREE.TextureLoader().load(publicAsset('assets/sf-edwardian-facade.png'));
   heroTallPhotoTexture.colorSpace = THREE.SRGBColorSpace;
   heroTallPhotoTexture.anisotropy = 8;
   heroTallPhotoTexture.wrapS = THREE.ClampToEdgeWrapping;

@@ -14,6 +14,8 @@ import {
   signalPhaseAt,
 } from './signals.js';
 
+const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`;
+
 /* ---------------- deterministic rng ---------------- */
 
 const SEED = 20260801;
@@ -1974,10 +1976,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     detailedHeroRoot.visible = false;
     target.mesh.root.add(detailedHeroRoot);
     const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath('/assets/draco/');
+    dracoLoader.setDecoderPath(publicAsset('assets/draco/'));
     const loader = new GLTFLoader();
     loader.setDRACOLoader(dracoLoader);
-    loader.load('/assets/ferrari.glb', (gltf) => {
+    loader.load(publicAsset('assets/ferrari.glb'), (gltf) => {
       const hero = gltf.scene;
       hero.updateMatrixWorld(true);
       const initialBounds = new THREE.Box3().setFromObject(hero);
