@@ -558,6 +558,24 @@ function streetLineFor(sectorKey, localSlot, kind) {
   return alternatives[(rotation + localSlot - nearFocusCount) % alternatives.length];
 }
 
+function nearFocusStreetLine(sectorKey, focusPosition, orientation, fallbackLine) {
+  if (!focusPosition
+    || !Number.isFinite(focusPosition.x)
+    || !Number.isFinite(focusPosition.z)) return fallbackLine;
+  const coordinates = parseSectorKey(sectorKey);
+  if (!coordinates) return fallbackLine;
+  const center = orientation === 'east-west'
+    ? coordinates.z * SECTOR_SIZE
+    : coordinates.x * SECTOR_SIZE;
+  const focusLateral = (orientation === 'east-west' ? focusPosition.z : focusPosition.x) - center;
+  return STREET_LINE_OFFSETS.reduce(
+    (nearest, line) => (
+      Math.abs(focusLateral - line) < Math.abs(focusLateral - nearest) ? line : nearest
+    ),
+    fallbackLine,
+  );
+}
+
 function nearFocusProgress(
   sectorKey,
   focusPosition,
@@ -1337,6 +1355,12 @@ export function createStreamedAgentSystem({
       // local presentation state; IDs, schedules, clocks, and leases remain
       // untouched and the next fixed step resumes ordinary motion.
       actor.progress = stagedProgress;
+      actor.roadLine = nearFocusStreetLine(
+        focusSectorKey,
+        focusPosition,
+        actor.orientation,
+        actor.roadLine,
+      );
       actor.crossing = false;
       actor.crossingProgress = 0;
       actor.waiting = false;
