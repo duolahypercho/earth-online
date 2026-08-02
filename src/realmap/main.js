@@ -1957,9 +1957,7 @@ function createSimpleRoadMeshes(roads) {
     entry.count += Math.max(0, road.points.length / 2 - 1);
     classes.set(cls, entry);
   }
-  const geometry = new THREE.BoxGeometry(1, 0.08, 1);
-  const dummy = new THREE.Object3D();
-  const zAxis = new THREE.Vector3(0, 0, 1);
+  const geometry = new THREE.PlaneGeometry(1, 1);
   for (const [cls, entry] of classes) {
     if (!entry.count) continue;
     const config = SIMPLE_ROAD_CONFIG[cls];
@@ -1968,8 +1966,14 @@ function createSimpleRoadMeshes(roads) {
       roughness: 0.95,
       metalness: 0.01,
     });
-    const mesh = new THREE.InstancedMesh(geometry, material, entry.count);
-    let index = 0;
+    if (sandboxTextureCache.asphalt) {
+      material.map = sandboxTextureCache.asphalt;
+      material.color.set(0xffffff);
+      material.roughness = 0.94;
+    }
+    const positions = [];
+    const indices = [];
+    let vertexOffset = 0;
     for (const road of entry.roads) {
       const points = roadPoints(road);
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -1979,17 +1983,33 @@ function createSimpleRoadMeshes(roads) {
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
         if (length < 0.4) continue;
-        const direction = new THREE.Vector3(dx / length, 0, dz / length);
-        dummy.position.set((a.x + b.x) / 2, elevationAt((a.x + b.x) / 2, (a.z + b.z) / 2) - 0.045, (a.z + b.z) / 2);
-        dummy.quaternion.setFromUnitVectors(zAxis, direction);
-        dummy.scale.set(config.width, 1, length);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(index, dummy.matrix);
-        index += 1;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const half = config.width / 2;
+        const a1 = { x: a.x + nx * half, z: a.z + nz * half };
+        const a2 = { x: a.x - nx * half, z: a.z - nz * half };
+        const b1 = { x: b.x + nx * half, z: b.z + nz * half };
+        const b2 = { x: b.x - nx * half, z: b.z - nz * half };
+        positions.push(
+          a1.x, elevationAt(a1.x, a1.z) - 0.045, a1.z,
+          a2.x, elevationAt(a2.x, a2.z) - 0.045, a2.z,
+          b1.x, elevationAt(b1.x, b1.z) - 0.045, b1.z,
+          b2.x, elevationAt(b2.x, b2.z) - 0.045, b2.z,
+        );
+        indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+        vertexOffset += 4;
       }
     }
-    mesh.count = index;
-    mesh.instanceMatrix.needsUpdate = true;
+    if (!positions.length) continue;
+    const meshGeometry = new THREE.BufferGeometry();
+    meshGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const uvs = [];
+    const repeat = Math.max(1, Math.floor(entry.roads.reduce((sum, road) => sum + roadLengthOf(road), 0) / 90));
+    for (let i = 0; i < vertexOffset; i += 1) uvs.push(i % 2 === 0 ? 0 : 1, ((i / 4) * repeat) % 200);
+    meshGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    meshGeometry.setIndex(indices);
+    meshGeometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(meshGeometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = `Simple real road ${cls}`;
@@ -2026,6 +2046,11 @@ function createSimpleSidewalkMeshes(roads) {
     roughness: 0.9,
     metalness: 0.01,
   });
+  if (sandboxTextureCache.sidewalk) {
+    material.map = sandboxTextureCache.sidewalk;
+    material.color.set(0xffffff);
+    material.roughness = 0.9;
+  }
   const mesh = new THREE.InstancedMesh(geometry, material, segments.length);
   const dummy = new THREE.Object3D();
   const zAxis = new THREE.Vector3(0, 0, 1);
