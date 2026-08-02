@@ -155,6 +155,35 @@ try {
   check('WebGL2 city generated', cityState.webgl2 && cityState.isCity, cityState);
   check('City has real signal metadata', cityState.signals > 0, cityState.signals);
   check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
+  check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);
+  check('SF hills present in heightmap', Number(cityState.terrain?.maxElevation || 0) > 100, cityState.terrain?.maxElevation);
+  const hillProbe = await page.evaluate(() => {
+    const lab = window.__SF_REALMAP__;
+    const data = lab.getData();
+    const first = data.boundary[0];
+    const samples = [];
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < first.length; i += 2) {
+      minX = Math.min(minX, first[i]);
+      maxX = Math.max(maxX, first[i]);
+      minZ = Math.min(minZ, first[i + 1]);
+      maxZ = Math.max(maxZ, first[i + 1]);
+    }
+    for (let zi = 0; zi <= 16; zi += 1) {
+      for (let xi = 0; xi <= 16; xi += 1) {
+        const x = minX + (maxX - minX) * (xi / 16);
+        const z = minZ + (maxZ - minZ) * (zi / 16);
+        samples.push({ x, z, elevation: lab.getElevationAt(x, z) });
+      }
+    }
+    const max = Math.max(...samples.map((sample) => sample.elevation));
+    const min = Math.min(...samples.map((sample) => sample.elevation));
+    return { samples: samples.length, min, max };
+  });
+  check('Terrain sampling returns varied city elevation', hillProbe.max - hillProbe.min > 30, hillProbe);
   check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {
     geometryTriangles: cityState.geometryTriangles,
     renderer: cityState.renderer,
@@ -175,6 +204,36 @@ try {
   check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
   await page.waitForTimeout(250);
   await page.screenshot({ path: '.qa-realmap-street.png' });
+
+  const highPoint = await page.evaluate(() => {
+    const lab = window.__SF_REALMAP__;
+    const data = lab.getData();
+    const first = data.boundary[0];
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < first.length; i += 2) {
+      minX = Math.min(minX, first[i]);
+      maxX = Math.max(maxX, first[i]);
+      minZ = Math.min(minZ, first[i + 1]);
+      maxZ = Math.max(maxZ, first[i + 1]);
+    }
+    let best = { x: minX, z: minZ, elevation: -Infinity };
+    for (let zi = 0; zi <= 32; zi += 1) {
+      for (let xi = 0; xi <= 32; xi += 1) {
+        const x = minX + (maxX - minX) * (xi / 32);
+        const z = minZ + (maxZ - minZ) * (zi / 32);
+        const elevation = lab.getElevationAt(x, z);
+        if (elevation > best.elevation) best = { x, z, elevation };
+      }
+    }
+    return best;
+  });
+  check('Hill probe found a real SF high point', Number(highPoint?.elevation || 0) > 120, highPoint);
+  await page.evaluate((point) => window.__SF_REALMAP__.setPlayerPosition(point.x, point.z), highPoint);
+  await page.waitForTimeout(450);
+  await page.screenshot({ path: '.qa-realmap-hills.png' });
 
   const nearest = await page.evaluate(() => window.__SF_REALMAP__.getNearestVehicle());
   let driveTarget = nearest;

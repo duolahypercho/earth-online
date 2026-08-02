@@ -45,8 +45,11 @@ const inspectorClose = document.querySelector('#inspector-close');
 
 const DATA_URL = '/data/sf/sf-city.json.gz';
 const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
+const ELEVATION_URL = '/data/sf/sf-elevation.json.gz';
+const ELEVATION_FALLBACK_URL = '/data/sf/sf-elevation.json';
 
 let cityData = null;
+let terrainData = null;
 let region = [];
 let mapCamera = { x: 0, z: 0, scale: 1 };
 let activeTool = 'draw';
@@ -219,9 +222,50 @@ async function fetchCityData() {
   }
 }
 
+async function fetchElevationData() {
+  try {
+    const response = await fetch(ELEVATION_URL);
+    if (!response.ok) throw new Error(`gzip elevation ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    if (typeof DecompressionStream !== 'undefined') {
+      const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
+      const text = await new Response(stream).text();
+      return JSON.parse(text);
+    }
+    return JSON.parse(new TextDecoder().decode(buffer));
+  } catch (gzipError) {
+    console.warn('gzip elevation failed, falling back to raw JSON', gzipError);
+    const response = await fetch(ELEVATION_FALLBACK_URL);
+    if (!response.ok) throw new Error(`raw elevation ${response.status}`);
+    return response.json();
+  }
+}
+
+function elevationAt(x, z) {
+  if (!terrainData?.grid) return 0;
+  const { originX, originZ, cellSize, width, height, grid } = terrainData;
+  const gx = (x - originX) / cellSize;
+  const gz = (z - originZ) / cellSize;
+  const x0 = Math.floor(gx);
+  const z0 = Math.floor(gz);
+  const tx = gx - x0;
+  const tz = gz - z0;
+  const sample = (cx, cz) => {
+    if (cx < 0 || cx >= width || cz < 0 || cz >= height) return 0;
+    return grid[cz * width + cx] || 0;
+  };
+  const a = sample(x0, z0);
+  const b = sample(x0 + 1, z0);
+  const c = sample(x0, z0 + 1);
+  const d = sample(x0 + 1, z0 + 1);
+  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}
+
 async function loadCity() {
   setStatus('boot', 'Fetching real San Francisco OSM data…', 0.1);
   cityData = await fetchCityData();
+  setStatus('boot', 'Fetching real San Francisco elevation contours…', 0.45);
+  terrainData = await fetchElevationData();
   setStatus('boot', `Decoding ${formatNumber(cityData.meta.counts.roads)} roads and ${formatNumber(cityData.meta.counts.coarseBuildings + cityData.meta.counts.detailBuildings)} buildings…`, 0.75);
   await new Promise((resolve) => requestAnimationFrame(resolve));
   const boundary = cityData.boundary[0];
@@ -1212,6 +1256,19 @@ function indexedMeshToGeometries(sourceMesh) {
   return results;
 }
 
+function applyTerrainToMesh(mesh) {
+  const positions = mesh.geometry.attributes.position;
+  for (let i = 0; i < positions.count; i += 1) {
+    const x = positions.getX(i);
+    const z = positions.getZ(i);
+    positions.setY(i, elevationAt(x, z));
+  }
+  positions.needsUpdate = true;
+  mesh.geometry.computeVertexNormals();
+  mesh.geometry.computeBoundingBox();
+  mesh.geometry.computeBoundingSphere();
+}
+
 function buildingColor(building) {
   const cls = building.building || 'yes';
   const height = Number(building.height) || 0;
@@ -1231,6 +1288,14 @@ function buildingRoofColor(building) {
   const hash = (Number(building.id) || 0) % 7;
   const palette = [0x565d60, 0x625650, 0x50585a, 0x6a5e52, 0x4c5559, 0x605a50, 0x575e5c];
   return palette[hash];
+}
+
+function buildingGroundY(building) {
+  let minY = Infinity;
+  for (let i = 0; i < building.points.length; i += 2) {
+    minY = Math.min(minY, elevationAt(building.points[i], building.points[i + 1]));
+  }
+  return Number.isFinite(minY) ? minY : elevationAt(building.centroid[0], building.centroid[1]);
 }
 
 function createDetailBuildingMesh(building, groundY = 0) {
@@ -1292,7 +1357,11 @@ function createCoarseBuildings(buildings) {
     const building = buildings[i];
     const height = Math.max(2.5, Math.min(Number(building.height) || 8, 280));
     const size = Math.max(3.5, Math.min(Math.sqrt(building.area || 160), 42));
-    dummy.position.set(building.centroid[0], height / 2 + 0.15, building.centroid[1]);
+    dummy.position.set(
+      building.centroid[0],
+      elevationAt(building.centroid[0], building.centroid[1]) + height / 2 + 0.15,
+      building.centroid[1],
+    );
     dummy.rotation.set(0, seedRandom(building.id || i) * Math.PI, 0);
     dummy.scale.set(size, height, size);
     dummy.updateMatrix();
@@ -1315,10 +1384,31 @@ function createGround(regionPoints) {
   }
   const geometry = new THREE.ShapeGeometry(shape, 1);
   geometry.rotateX(Math.PI / 2);
+  const positions = geometry.attributes.position;
+  const colors = new Float32Array(positions.count * 3);
+  const lowColor = new THREE.Color(0x82956f);
+  const midColor = new THREE.Color(0xa59666);
+  const highColor = new THREE.Color(0x6f7b78);
+  const color = new THREE.Color();
+  for (let i = 0; i < positions.count; i += 1) {
+    const x = positions.getX(i);
+    const z = positions.getZ(i);
+    const elevation = elevationAt(x, z);
+    positions.setY(i, elevation - 0.08);
+    const t = THREE.MathUtils.clamp(elevation / 180, 0, 1);
+    color.copy(lowColor).lerp(midColor, Math.min(1, t * 1.4));
+    if (t > 0.7) color.lerp(highColor, (t - 0.7) / 0.3);
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
   const material = new THREE.MeshStandardMaterial({
-    color: 0xa8b59c,
+    color: 0xffffff,
     roughness: 1,
     metalness: 0,
+    vertexColors: true,
   });
   const ground = new THREE.Mesh(geometry, material);
   ground.position.y = -0.06;
@@ -1388,7 +1478,7 @@ function createSignalGroup(position, index) {
     group.add(lamp);
     lamps.push(lamp);
   }
-  group.position.set(position[0], 0, position[1]);
+  group.position.set(position[0], elevationAt(position[0], position[1]), position[1]);
   group.userData = {
     type: 'signal',
     signal: { position, index },
@@ -1441,11 +1531,9 @@ function createCrosswalks(signals, roads) {
     for (let i = 0; i < 6; i += 1) {
       const offset = (i - 2.5) * 0.62;
       const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
-      stripe.position.set(
-        best.position.x + roadX * offset,
-        0.085,
-        best.position.z + roadZ * offset,
-      );
+      const stripeX = best.position.x + roadX * offset;
+      const stripeZ = best.position.z + roadZ * offset;
+      stripe.position.set(stripeX, elevationAt(stripeX, stripeZ) + 0.085, stripeZ);
       stripe.rotation.y = best.heading + Math.PI * 0.5;
       stripe.receiveShadow = true;
       group.add(stripe);
@@ -1492,7 +1580,7 @@ function createOneWayArrows(roads) {
           const direction = new THREE.Vector3(dx, 0, dz).normalize();
           arrows.push({
             road,
-            position: new THREE.Vector3(px, 0.11, pz),
+            position: new THREE.Vector3(px, elevationAt(px, pz) + 0.11, pz),
             direction,
           });
           break;
@@ -1698,6 +1786,7 @@ function createRoadMeshes(compilation) {
   const surfaceParts = indexedMeshToGeometries(bundle.surface);
   for (const part of surfaceParts) {
     const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
+    applyTerrainToMesh(mesh);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = `Real map road surface ${part.materialClass}`;
@@ -1707,6 +1796,7 @@ function createRoadMeshes(compilation) {
     const markingParts = indexedMeshToGeometries(bundle.markings);
     for (const part of markingParts) {
       const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
+      applyTerrainToMesh(mesh);
       mesh.name = `Real map road markings ${part.materialClass}`;
       group.add(mesh);
     }
@@ -1966,7 +2056,7 @@ function initPlayer(position) {
   };
   playerYaw = playerState.yaw;
   playerPitch = playerState.pitch;
-  playerAvatarGroup.position.set(resolved.x, 0, resolved.z);
+  playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
 }
 
 function updatePlayerWalk(dt) {
@@ -1995,9 +2085,9 @@ function updatePlayerWalk(dt) {
     legs.children[0].rotation.x = swing;
     legs.children[1].rotation.x = -swing;
   }
-  playerAvatarGroup.position.set(playerState.x, 0, playerState.z);
+  playerAvatarGroup.position.set(playerState.x, elevationAt(playerState.x, playerState.z), playerState.z);
   playerAvatarGroup.rotation.y = playerYaw;
-  camera.position.set(playerState.x, 1.68, playerState.z);
+  camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
   camera.rotation.order = 'YXZ';
   camera.rotation.set(playerPitch, playerYaw, 0);
 }
@@ -2122,7 +2212,7 @@ function createPedestrianSystem(roads) {
     const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
     const s = Math.random() * path.length;
     const pose = pointAlongPath(path.points, s);
-    avatar.position.set(pose.x, 0, pose.z);
+    avatar.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     avatar.rotation.y = pose.heading;
     pedestrianGroup.add(avatar);
     pedestrianState.push({
@@ -2139,7 +2229,7 @@ function updatePedestrians(dt) {
   for (const person of pedestrianState) {
     person.s = (person.s + person.speed * dt) % person.path.length;
     const pose = pointAlongPath(person.path.points, person.s);
-    person.mesh.position.set(pose.x, 0, pose.z);
+    person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     person.mesh.rotation.y = pose.heading;
     const swing = Math.sin(performance.now() * 0.008 + person.phase) * 0.4;
     person.mesh.userData.left.rotation.x = swing;
@@ -2207,12 +2297,12 @@ function createStreetTrees(roads) {
   const color = new THREE.Color();
   for (let i = 0; i < positions.length; i += 1) {
     const position = positions[i];
-    dummy.position.set(position.x, 0.55, position.z);
+    dummy.position.set(position.x, elevationAt(position.x, position.z) + 0.55, position.z);
     dummy.scale.setScalar(position.scale);
     dummy.rotation.set(0, Math.random() * Math.PI, 0);
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
-    dummy.position.y = 2.55;
+    dummy.position.y = elevationAt(position.x, position.z) + 2.55;
     dummy.rotation.set(0, Math.random() * Math.PI, 0);
     dummy.scale.setScalar(position.scale * (0.85 + Math.random() * 0.25));
     dummy.updateMatrix();
@@ -2335,7 +2425,7 @@ function updateDrivenVehicle(dt) {
   vehicle.mesh.rotation.set(0, state.heading, 0);
   const forward = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
   const behind = vehicle.mesh.position.clone().sub(forward.clone().multiplyScalar(9));
-  behind.y = 3.6;
+  behind.y = elevationAt(behind.x, behind.z) + 3.6;
   camera.position.lerp(behind, Math.min(1, dt * 5));
   camera.lookAt(vehicle.mesh.position.clone().add(forward.clone().multiplyScalar(14)));
 }
@@ -2482,7 +2572,11 @@ function pathPosition(path, s) {
     if (walked + segLength >= clamped) {
       const t = segLength > 0 ? (clamped - walked) / segLength : 0;
       return {
-        position: new THREE.Vector3(a.x + (b.x - a.x) * t, 0.16, a.z + (b.z - a.z) * t),
+        position: new THREE.Vector3(
+          a.x + (b.x - a.x) * t,
+          elevationAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) + 0.16,
+          a.z + (b.z - a.z) * t,
+        ),
         heading: Math.atan2(b.z - a.z, b.x - a.x),
       };
     }
@@ -2491,7 +2585,7 @@ function pathPosition(path, s) {
   const a = path.points[path.points.length - 2];
   const b = path.points[path.points.length - 1];
   return {
-    position: new THREE.Vector3(b.x, 0.16, b.z),
+    position: new THREE.Vector3(b.x, elevationAt(b.x, b.z) + 0.16, b.z),
     heading: Math.atan2(b.z - a.z, b.x - a.x),
   };
 }
@@ -2828,7 +2922,7 @@ async function buildCity() {
     await tick();
     detailBuildingMeshes = [];
     for (const building of buildings.detailed) {
-      const mesh = createDetailBuildingMesh(building);
+      const mesh = createDetailBuildingMesh(building, buildingGroundY(building));
       if (mesh) {
         detailBuildingMeshes.push(mesh);
         cityRoot.add(mesh);
@@ -2861,8 +2955,8 @@ async function buildCity() {
     cityFlatRegion = flatRegion();
     buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
     initPlayer({ x: centroid.x, z: centroid.z });
-    controls.target.set(centroid.x, 0, centroid.z);
-    camera.position.set(centroid.x - 170, 190, centroid.z - 210);
+    controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
+    camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
     sun.target.position.set(centroid.x, 0, centroid.z);
     sun.target.updateMatrixWorld();
@@ -2940,6 +3034,13 @@ function start() {
       pedestrians: pedestrianState.length,
       trees: treeGroup?.children[0]?.count || 0,
       crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
+      terrain: terrainData?.meta ? {
+        cellSize: terrainData.meta.cellSize,
+        width: terrainData.meta.width,
+        height: terrainData.meta.height,
+        minElevation: terrainData.meta.minElevation,
+        maxElevation: terrainData.meta.maxElevation,
+      } : null,
       player: playerState ? { x: playerState.x, z: playerState.z } : null,
       collisionVolumes: collisionAabbs.length,
       driveIndex,
@@ -2954,12 +3055,13 @@ function start() {
     }),
     setCityMode: (mode) => setCityMode(mode),
     getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
+    getElevationAt: (x, z) => elevationAt(x, z),
     setPlayerPosition: (x, z) => {
       if (!playerState) return null;
       const resolved = resolvePlayerPosition(x, z, 0.5);
       playerState.x = resolved.x;
       playerState.z = resolved.z;
-      playerAvatarGroup.position.set(resolved.x, 0, resolved.z);
+      playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
       return resolved;
     },
     getNearestVehicle: () => {

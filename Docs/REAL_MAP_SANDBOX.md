@@ -24,6 +24,9 @@ that slice as a 3D city with:
   planted along OSM roads;
 - zebra crossings at real signal nodes, SSAO/SMAA post-processing, and a
   gradient Pacific sky dome;
+- real San Francisco hills from DataSF five-foot elevation contours, applied to
+  the ground, roads, sidewalks, buildings, signals, pedestrians, traffic, and
+  the player camera;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -69,9 +72,12 @@ graph. `Esc` returns to Orbit.
    GeoJSON (modifying view `txuc-3kzm`, PDDL 1.0), projects to local metres,
    clips roads/buildings/signals to the city boundary, and writes a compact
    flat-array `sf-city.json` plus a gzip variant.
-3. The browser fetches `sf-city.json.gz`, decompresses with
-   `DecompressionStream`, and builds only the roads/buildings inside the drawn
-   polygon.
+3. `scripts/build-sf-elevation.mjs` rasterizes the DataSF Elevation Contours
+   (`6d73-6c4f`, five-foot interval) into `sf-elevation.json.gz`, a compact
+   ~0.3 MB heightmap grid covering the city.
+4. The browser fetches `sf-city.json.gz` and `sf-elevation.json.gz`, decompresses
+   both with `DecompressionStream`, and builds only the roads/buildings inside
+   the drawn polygon, sampling the heightmap with bilinear interpolation.
 
 Attribution: `© OpenStreetMap contributors` (ODbL 1.0) and City and County of
 San Francisco (DataSF PDDL 1.0). Source URLs and SHA-256 digests are stored in
@@ -94,6 +100,10 @@ Latest gate results on this machine:
   and 9,399 collision volumes;
 - Downtown rendered 251,209 scene triangles with 1,158 crosswalk stripes after
   post-processing was enabled;
+- terrain heightmap covers the city at 617 x 640 cells, -6.9 m to 272.4 m,
+  matching real SF summit scale;
+- Full City QA and Downtown QA each pass 22/22 checks including a hill probe
+  that finds a 238 m high point and captures a street-level hill frame;
 - player walk mode moves through the city and drive mode accelerates along real
   roads in the Playwright gate;
 - pixel readback shows a varied, non-blank golden-hour frame
