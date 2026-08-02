@@ -251,6 +251,8 @@ try {
   const trafficPaths = await page.evaluate(() => window.__SF_REALMAP__.getTrafficPathDiagnostics());
   check('One-way roads get exactly one legal direction', Boolean(trafficPaths && trafficPaths.oneWayRoads > 0 && trafficPaths.oneWayViolations === 0), trafficPaths);
   check('Two-way roads get exactly two legal directions', Boolean(trafficPaths && trafficPaths.twoWayRoads > 0 && trafficPaths.twoWayViolations === 0), trafficPaths);
+  const signalLegality = await page.evaluate(() => window.__SF_REALMAP__.getSignalLegalityDiagnostics());
+  check('Traffic signals are legal on paths', Boolean(signalLegality?.legal && signalLegality.stopsOnPath > 0), signalLegality);
   check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);
   check('SF hills present in heightmap', Number(cityState.terrain?.maxElevation || 0) > 100, cityState.terrain?.maxElevation);
   const hillProbe = await page.evaluate(() => {
@@ -288,7 +290,7 @@ try {
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('drizzle'));
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
-    window.__SF_REALMAP__.setCameraPose(poses.canyon || poses.hero);
+    window.__SF_REALMAP__.setCameraPose(poses.street || poses.hero);
   });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(650);

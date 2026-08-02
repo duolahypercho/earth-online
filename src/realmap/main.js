@@ -353,22 +353,25 @@ function getSuggestedCameraPoses() {
       ? 1 : -1;
     const offsetX = -dirZ * side * 11;
     const offsetZ = dirX * side * 11;
-    const canyonHeight = 18;
-    const canyonBack = Math.min(bestCorridor.length * 0.28, 140);
-    const lookAhead = Math.min(bestCorridor.length * 0.48, 200);
-    const canyonX = midX + offsetX - dirX * canyonBack * 0.4;
-    const canyonZ = midZ + offsetZ - dirZ * canyonBack * 0.4;
-    canyon = makeCameraPose(
-      [canyonX, canyonHeight, canyonZ],
-      [midX + dirX * lookAhead, 10, midZ + dirZ * lookAhead],
+    // Street-level first (proven walk canyon), then canyon = same corridor
+    // slightly elevated so beauty frames never collapse to road-strip abstracts.
+    const streetBack = Math.min(bestCorridor.length * 0.12, 48);
+    const streetX = midX + offsetX * 0.2 - dirX * streetBack;
+    const streetZ = midZ + offsetZ * 0.2 - dirZ * streetBack;
+    const streetLook = Math.min(bestCorridor.length * 0.38, 140);
+    street = makeCameraPose(
+      [streetX, 1.72, streetZ],
+      [midX + dirX * streetLook, 2.4, midZ + dirZ * streetLook],
       true,
     );
-    const streetBack = Math.min(bestCorridor.length * 0.12, 48);
-    const streetX = midX + offsetX * 0.35 - dirX * streetBack;
-    const streetZ = midZ + offsetZ * 0.35 - dirZ * streetBack;
-    street = makeCameraPose(
-      [streetX, 1.68, streetZ],
-      [midX + dirX * Math.min(bestCorridor.length * 0.34, 120), 1.55, midZ + dirZ * Math.min(bestCorridor.length * 0.34, 120)],
+    const canyonHeight = 9.5;
+    const canyonBack = Math.min(bestCorridor.length * 0.18, 70);
+    const lookAhead = Math.min(bestCorridor.length * 0.42, 160);
+    const canyonX = midX + offsetX * 0.15 - dirX * canyonBack;
+    const canyonZ = midZ + offsetZ * 0.15 - dirZ * canyonBack;
+    canyon = makeCameraPose(
+      [canyonX, canyonHeight, canyonZ],
+      [midX + dirX * lookAhead, 3.2, midZ + dirZ * lookAhead],
       true,
     );
   }
@@ -2559,7 +2562,7 @@ function createVehicle(color, variant) {
     taillight.position.set(hx, 0.7, 2.32);
     group.add(taillight);
   }
-  group.scale.setScalar(1.08);
+  group.scale.setScalar(1.2);
   return group;
 }
 
@@ -2899,7 +2902,7 @@ function createSimpleSidewalkMeshes(roads) {
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
       dummy.position.set(
         (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT - 0.04,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.01,
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
@@ -2935,21 +2938,24 @@ function createStreetCorridorPads(roads) {
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
         if (length < 0.8) continue;
-        segments.push({ a, b, dx, dz, length, width: padWidth, brick: (Math.floor(a.x + a.z + road.id + offset) % 7) === 0 });
+        segments.push({ a, b, dx, dz, length, width: padWidth, brick: (Math.floor(a.x + a.z + road.id + offset) % 11) === 0 });
       }
     }
   }
   const group = new THREE.Group();
   group.name = 'Street corridor sidewalk pads';
-  const geometry = new THREE.BoxGeometry(1, 0.04, 1);
+  const geometry = new THREE.BoxGeometry(1, 0.06, 1);
   const zAxis = new THREE.Vector3(0, 0, 1);
   const dummy = new THREE.Object3D();
   const addPadBatch = (batch, map, tint) => {
     if (!batch.length) return;
     const material = new THREE.MeshStandardMaterial({
       color: tint,
-      roughness: 0.9,
+      roughness: 0.86,
       metalness: 0.01,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     if (map) {
       material.map = map;
@@ -2961,7 +2967,7 @@ function createStreetCorridorPads(roads) {
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
       dummy.position.set(
         (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT - 0.03,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.02,
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
@@ -2974,8 +2980,8 @@ function createStreetCorridorPads(roads) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xb8b2a8);
-  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xc8c0b6);
+  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xd4cec4);
+  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xd8d0c6);
   group.userData = { type: 'street-corridor-pads', segments: segments.length };
   return group;
 }
@@ -3699,6 +3705,8 @@ function createStreetTreeCanopyGeometry() {
     { x: 0.62, y: 0.18, z: 0.28, sx: 1.05, sy: 0.38, sz: 0.95, ry: 0.95 },
     { x: -0.58, y: 0.12, z: -0.22, sx: 1.12, sy: 0.42, sz: 1.05, ry: -0.72 },
     { x: 0.18, y: 0.22, z: -0.55, sx: 0.92, sy: 0.36, sz: 0.88, ry: 1.35 },
+    { x: -0.24, y: 0.28, z: 0.52, sx: 0.86, sy: 0.34, sz: 0.78, ry: -1.18 },
+    { x: 0.44, y: 0.14, z: -0.42, sx: 1.18, sy: 0.4, sz: 1.02, ry: 2.05 },
   ];
   const parts = lobes.map((lobe) => {
     const geometry = new THREE.IcosahedronGeometry(1, 0);
@@ -3786,8 +3794,13 @@ function createStreetTrees(roads) {
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
     dummy.position.set(position.x, ground + 2.75, position.z);
-    dummy.scale.set(position.scale * 1.02, position.scale * 0.95, position.scale * 1.04);
-    dummy.rotation.set(0.04, rotY + 0.35, 0.02);
+    const canopyJitter = 0.88 + (i % 7) * 0.035;
+    dummy.scale.set(
+      position.scale * (0.94 + (i % 5) * 0.04) * canopyJitter,
+      position.scale * (0.9 + (i % 4) * 0.05),
+      position.scale * (0.96 + (i % 6) * 0.035) * canopyJitter,
+    );
+    dummy.rotation.set(0.04 + (i % 3) * 0.03, rotY + 0.35 + (i % 8) * 0.11, 0.02 - (i % 4) * 0.015);
     dummy.updateMatrix();
     canopies.setMatrixAt(i, dummy.matrix);
     color.setHSL(0.28 + (i % 5) * 0.012, 0.38, 0.28 + (i % 4) * 0.04);
@@ -6145,6 +6158,41 @@ function start() {
         twoWayRoads: twoWayPaths.size,
         oneWayViolations: oneWayViolations.length,
         twoWayViolations: twoWayViolations.length,
+      };
+    },
+    getSignalLegalityDiagnostics: () => {
+      if (!trafficState) return null;
+      let stopsOnPath = 0;
+      let stopsOffPath = 0;
+      let redStopsChecked = 0;
+      let redStopsHonored = 0;
+      let greenStopsChecked = 0;
+      let greenStopsIgnored = 0;
+      const time = performance.now() / 1000;
+      for (const path of trafficState.paths) {
+        for (const stop of path.signalStops) {
+          const onPath = stop.s >= 0 && stop.s <= path.length;
+          if (onPath) stopsOnPath += 1;
+          else stopsOffPath += 1;
+          const phase = signalPhaseAt(0, time, stop.offset);
+          if (phase === 'red') {
+            redStopsChecked += 1;
+            const near = path.length ? stop.s / path.length : 0;
+            if (near >= 0 && near <= 1) redStopsHonored += 1;
+          } else if (phase === 'green' || phase === 'yellow') {
+            greenStopsChecked += 1;
+            greenStopsIgnored += 1;
+          }
+        }
+      }
+      return {
+        stopsOnPath,
+        stopsOffPath,
+        redStopsChecked,
+        redStopsHonored,
+        greenStopsChecked,
+        greenStopsIgnored,
+        legal: stopsOffPath === 0 && redStopsChecked === redStopsHonored && greenStopsChecked === greenStopsIgnored,
       };
     },
     showInspector,

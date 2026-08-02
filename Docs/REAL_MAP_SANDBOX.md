@@ -62,6 +62,9 @@ that slice as a 3D city with:
 - one-way/two-way traffic semantics are now QA-verified: Downtown yields 650
   one-way and 469 two-way road paths with zero direction violations; Full City
   yields 5,994 one-way and 11,998 two-way with zero violations;
+- traffic-signal legality is QA-verified: all signal stops lie on their path,
+  red phases are honored, and green/yellow phases are ignored (Downtown 823
+  stops, Full City 1,347 stops);
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -129,7 +132,7 @@ npm run qa:realmap-blind-ab
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (52/52 Full City, 51/51 Downtown) and the visual critic
+gameplay gate is green (53/53 Full City, 52/52 Downtown) and the visual critic
 is CONDITIONAL at 6.2/10 with 3 of 4 frames accepted (hero 20.7, canyon 19.4,
 drizzle 28.7 edge density against a real-photo reference of 40.2). The natural
 hill frame remains REJECT because that Downtown hillside is genuinely sparse;
