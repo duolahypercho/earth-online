@@ -2829,13 +2829,139 @@ function buildingEntrancePoint(building) {
 
 function interiorMaterials() {
   return {
-    floor: new THREE.MeshStandardMaterial({ color: 0x9a7d5d, roughness: 0.85, metalness: 0.02 }),
-    wall: new THREE.MeshStandardMaterial({ color: 0xe6dfcf, roughness: 0.9, metalness: 0.01 }),
-    ceiling: new THREE.MeshStandardMaterial({ color: 0xd9d2c2, roughness: 0.95 }),
-    wood: new THREE.MeshStandardMaterial({ color: 0x6b4f34, roughness: 0.8, metalness: 0.02 }),
-    metal: new THREE.MeshStandardMaterial({ color: 0x31383d, roughness: 0.45, metalness: 0.6 }),
-    accent: new THREE.MeshStandardMaterial({ color: 0x9d5b43, roughness: 0.7, metalness: 0.02 }),
+    floor: null,
+    wall: null,
+    ceiling: null,
+    wood: null,
+    metal: null,
+    accent: null,
+    counter: null,
+    soft: null,
   };
+}
+
+function interiorArchetypeFor(building) {
+  const text = [
+    building?.amenity,
+    building?.building,
+    building?.name,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (/cafe|coffee|restaurant|bar|bakery|fast_food/.test(text)) return 'cafe';
+  if (/office|bank|financial|government|library|hospital|civic/.test(text)) return 'office';
+  if (/market|supermarket|retail|shop|store|mall/.test(text)) return 'market';
+  if (/residential|house|apartment|home|yes/.test(text)) return 'rowhouse';
+  const hash = (Number(building?.id) || 0) % 4;
+  return ['cafe', 'office', 'rowhouse', 'market'][hash];
+}
+
+const INTERIOR_ARCHETYPES = {
+  cafe: {
+    floor: 0x9a7d5d,
+    wall: 0xe6dfcf,
+    ceiling: 0xd9d2c2,
+    wood: 0x7a4d2f,
+    metal: 0x2e3336,
+    accent: 0xb34b36,
+    counter: 0x8a5a35,
+    soft: 0xd9a05a,
+    light: 0xffd9a0,
+    warm: 0xffb46b,
+  },
+  office: {
+    floor: 0x8b929b,
+    wall: 0xe7ebee,
+    ceiling: 0xdfe4e8,
+    wood: 0x5f5148,
+    metal: 0x3a4249,
+    accent: 0x4b718f,
+    counter: 0x6f645c,
+    soft: 0x7fa4b8,
+    light: 0xdff1f7,
+    warm: 0x9fc4d8,
+  },
+  rowhouse: {
+    floor: 0xb08a63,
+    wall: 0xe8dcc6,
+    ceiling: 0xe1d5c0,
+    wood: 0x6a4f36,
+    metal: 0x3d3a35,
+    accent: 0x8a6f4d,
+    counter: 0x7d5c3d,
+    soft: 0xd4b98a,
+    light: 0xffdfa8,
+    warm: 0xf2bd78,
+  },
+  market: {
+    floor: 0xaa9a7d,
+    wall: 0xf0e7d4,
+    ceiling: 0xe7dcc6,
+    wood: 0x7a5a35,
+    metal: 0x45423b,
+    accent: 0x7d6d4a,
+    counter: 0x8c6a3d,
+    soft: 0xd8b24f,
+    light: 0xffe6b0,
+    warm: 0xe0b96a,
+  },
+};
+
+function setInteriorMaterials(materials, archetype) {
+  const config = INTERIOR_ARCHETYPES[archetype] || INTERIOR_ARCHETYPES.cafe;
+  materials.floor = new THREE.MeshStandardMaterial({ color: config.floor, roughness: 0.85, metalness: 0.02 });
+  materials.wall = new THREE.MeshStandardMaterial({ color: config.wall, roughness: 0.92, metalness: 0.01 });
+  materials.ceiling = new THREE.MeshStandardMaterial({ color: config.ceiling, roughness: 0.95 });
+  materials.wood = new THREE.MeshStandardMaterial({ color: config.wood, roughness: 0.8, metalness: 0.02 });
+  materials.metal = new THREE.MeshStandardMaterial({ color: config.metal, roughness: 0.5, metalness: 0.6 });
+  materials.accent = new THREE.MeshStandardMaterial({ color: config.accent, roughness: 0.7, metalness: 0.02 });
+  materials.counter = new THREE.MeshStandardMaterial({ color: config.counter, roughness: 0.82, metalness: 0.02 });
+  materials.soft = new THREE.MeshStandardMaterial({ color: config.soft, roughness: 0.9, metalness: 0.01 });
+  return config;
+}
+
+function addInteriorShell(group, width, depth, materials) {
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0.08;
+  floor.receiveShadow = true;
+  group.add(floor);
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.ceiling);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.y = 3.0;
+  group.add(ceiling);
+  const wallArray = [materials.wall];
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallArray[0]);
+  leftWall.position.set(-width / 2, 1.5, 0);
+  leftWall.castShadow = true;
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallArray[0]);
+  rightWall.position.set(width / 2, 1.5, 0);
+  rightWall.castShadow = true;
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(width, 3.0, 0.16), wallArray[0]);
+  backWall.position.set(0, 1.5, -depth / 2);
+  backWall.castShadow = true;
+  const frontLeft = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallArray[0]);
+  frontLeft.position.set(-width * 0.25, 1.5, depth / 2);
+  frontLeft.castShadow = true;
+  const frontRight = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallArray[0]);
+  frontRight.position.set(width * 0.25, 1.5, depth / 2);
+  frontRight.castShadow = true;
+  group.add(leftWall, rightWall, backWall, frontLeft, frontRight);
+}
+
+function addInteriorLight(group, config, position = null) {
+  const light = new THREE.PointLight(config.light, 18, 10, 1.6);
+  light.position.set(position?.[0] ?? 0, position?.[1] ?? 2.7, position?.[2] ?? 0);
+  light.castShadow = true;
+  group.add(light);
+  return light;
+}
+
+function addBox(group, geometry, material, x, y, z, rotation = null) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, y, z);
+  if (rotation) mesh.rotation.y = rotation;
+  mesh.castShadow = true;
+  group.add(mesh);
+  return mesh;
 }
 
 function createGeneratedInterior(building) {
@@ -2857,74 +2983,51 @@ function createGeneratedInterior(building) {
   const group = new THREE.Group();
   group.position.set(centerX, floorY, centerZ);
   const materials = interiorMaterials();
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0.08;
-  floor.receiveShadow = true;
-  group.add(floor);
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.ceiling);
-  ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.y = 3.0;
-  group.add(ceiling);
-  const wallMaterialArray = [materials.wall];
-  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallMaterialArray[0]);
-  leftWall.position.set(-width / 2, 1.5, 0);
-  leftWall.castShadow = true;
-  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallMaterialArray[0]);
-  rightWall.position.set(width / 2, 1.5, 0);
-  rightWall.castShadow = true;
-  const backWall = new THREE.Mesh(new THREE.BoxGeometry(width, 3.0, 0.16), wallMaterialArray[0]);
-  backWall.position.set(0, 1.5, -depth / 2);
-  backWall.castShadow = true;
-  const frontLeft = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallMaterialArray[0]);
-  frontLeft.position.set(-width * 0.25, 1.5, depth / 2);
-  frontLeft.castShadow = true;
-  const frontRight = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallMaterialArray[0]);
-  frontRight.position.set(width * 0.25, 1.5, depth / 2);
-  frontRight.castShadow = true;
-  group.add(leftWall, rightWall, backWall, frontLeft, frontRight);
+  const archetype = interiorArchetypeFor(building);
+  const config = setInteriorMaterials(materials, archetype);
+  addInteriorShell(group, width, depth, materials);
+  const halfW = width / 2;
+  const halfD = depth / 2;
 
-  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 0.75), materials.wood);
-  counter.position.set(-width * 0.22, 1.0, -depth * 0.14);
-  counter.castShadow = true;
-  group.add(counter);
-  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.07, 0.95), materials.accent);
-  counterTop.position.set(-width * 0.22, 1.53, -depth * 0.14);
-  group.add(counterTop);
-  const shelf = new THREE.Mesh(new THREE.BoxGeometry(width * 0.62, 0.08, 0.35), materials.wood);
-  shelf.position.set(width * 0.12, 2.15, -depth * 0.3);
-  shelf.castShadow = true;
-  group.add(shelf);
-  const desk = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.75, 0.72), materials.wood);
-  desk.position.set(width * 0.2, 0.75, depth * 0.18);
-  desk.castShadow = true;
-  group.add(desk);
-  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.08), materials.metal);
-  chairBack.position.set(width * 0.2, 1.2, depth * 0.18 + 0.42);
-  const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.42), materials.metal);
-  chairSeat.position.set(width * 0.2, 0.78, depth * 0.18 + 0.4);
-  group.add(chairBack, chairSeat);
-  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.95, 8), materials.metal);
-  lamp.position.set(-width * 0.36, 0.95, depth * 0.32);
-  const lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.28, 8), materials.accent);
-  lampShade.position.set(-width * 0.36, 1.5, depth * 0.32);
-  group.add(lamp, lampShade);
+  if (archetype === 'cafe') {
+    const counter = addBox(group, new THREE.BoxGeometry(2.2, 1.0, 0.75), materials.counter, -halfW * 0.55, 1.0, -halfD * 0.35);
+    addBox(group, new THREE.BoxGeometry(2.4, 0.07, 0.95), materials.accent, counter.position.x, 1.53, counter.position.z);
+    addBox(group, new THREE.BoxGeometry(0.42, 0.72, 0.42), materials.metal, -halfW * 0.55, 0.8, -halfD * 0.05);
+    for (const [x, z] of [[halfW * 0.25, halfD * 0.1], [halfW * 0.25, -halfD * 0.35]]) {
+      addBox(group, new THREE.BoxGeometry(0.85, 0.08, 0.85), materials.wood, x, 0.66, z);
+      addBox(group, new THREE.BoxGeometry(0.85, 0.5, 0.08), materials.metal, x, 1.05, z - 0.45);
+    }
+    addBox(group, new THREE.BoxGeometry(0.05, 0.3, 1.5), materials.soft, -halfW * 0.15, 2.0, -halfD * 0.7, Math.PI * 0.5);
+    addBox(group, new THREE.CylinderGeometry(0.09, 0.12, 0.95, 8), materials.metal, -halfW * 0.7, 0.95, halfD * 0.35);
+    addBox(group, new THREE.ConeGeometry(0.26, 0.28, 8), materials.accent, -halfW * 0.7, 1.5, halfD * 0.35);
+  } else if (archetype === 'office') {
+    addBox(group, new THREE.BoxGeometry(1.5, 0.75, 0.72), materials.wood, halfW * 0.2, 0.75, halfD * 0.3);
+    addBox(group, new THREE.BoxGeometry(0.42, 0.55, 0.08), materials.metal, halfW * 0.2, 1.2, halfD * 0.3 + 0.45);
+    addBox(group, new THREE.BoxGeometry(0.42, 0.08, 0.42), materials.metal, halfW * 0.2, 0.78, halfD * 0.3 + 0.42);
+    addBox(group, new THREE.BoxGeometry(width * 0.72, 0.08, 0.4), materials.wood, 0, 2.05, -halfD * 0.6);
+    addBox(group, new THREE.PlaneGeometry(1.1, 0.85), new THREE.MeshStandardMaterial({ color: 0x6a8f9f, roughness: 0.6 }), -halfW * 0.25, 2.2, -halfD / 2 + 0.09);
+    addBox(group, new THREE.BoxGeometry(0.5, 1.6, 0.4), materials.accent, -halfW * 0.65, 1.05, halfD * 0.2);
+  } else if (archetype === 'rowhouse') {
+    addBox(group, new THREE.BoxGeometry(1.6, 0.28, 0.9), materials.wood, -halfW * 0.3, 0.55, halfD * 0.2);
+    addBox(group, new THREE.BoxGeometry(1.2, 0.28, 0.9), materials.wood, halfW * 0.25, 0.55, -halfD * 0.25);
+    addBox(group, new THREE.BoxGeometry(0.7, 0.08, 0.35), materials.accent, -halfW * 0.3, 0.69, halfD * 0.2);
+    addBox(group, new THREE.BoxGeometry(0.55, 0.08, 0.35), materials.accent, halfW * 0.25, 0.69, -halfD * 0.25);
+    addBox(group, new THREE.BoxGeometry(width * 0.6, 0.08, 0.35), materials.wood, 0, 2.1, -halfD * 0.62);
+    addBox(group, new THREE.BoxGeometry(0.75, 0.7, 0.75), materials.soft, -halfW * 0.55, 0.9, -halfD * 0.2);
+  } else {
+    addBox(group, new THREE.BoxGeometry(2.4, 1.0, 0.8), materials.counter, -halfW * 0.35, 1.0, -halfD * 0.2);
+    addBox(group, new THREE.BoxGeometry(2.6, 0.07, 1.0), materials.accent, -halfW * 0.35, 1.53, -halfD * 0.2);
+    addBox(group, new THREE.BoxGeometry(width * 0.7, 1.0, 0.35), materials.wood, 0, 1.4, halfD * 0.3);
+    addBox(group, new THREE.BoxGeometry(0.9, 1.2, 0.35), materials.soft, halfW * 0.4, 1.3, -halfD * 0.35);
+    addBox(group, new THREE.BoxGeometry(0.42, 0.72, 0.42), materials.metal, -halfW * 0.35, 0.8, halfD * 0.15);
+  }
 
-  const picture = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.9, 0.7),
-    new THREE.MeshStandardMaterial({ color: 0x6a8f9f, roughness: 0.6 }),
-  );
-  picture.position.set(width * 0.2, 2.15, -depth / 2 + 0.09);
-  group.add(picture);
-
-  const light = new THREE.PointLight(0xffe2b8, 18, 9, 1.6);
-  light.position.set(0, 2.7, 0);
-  light.castShadow = true;
-  group.add(light);
+  addInteriorLight(group, config);
 
   group.userData = {
     type: 'interior',
     building,
+    archetype,
     centerX,
     centerZ,
     floorY,
@@ -2939,11 +3042,13 @@ function enterNearestBuilding() {
   if (!nearest) return false;
   const room = createGeneratedInterior(nearest.building);
   if (!room) return false;
+  const archetype = room.userData.archetype;
   interiorGroup = room;
   cityRoot.add(interiorGroup);
   const data = room.userData;
   interiorState = {
     building: nearest.building,
+    archetype,
     room,
     entrance: {
       x: playerState.x,
@@ -3787,6 +3892,7 @@ function start() {
       interior: interiorState ? {
         name: interiorState.building?.name || 'Unnamed building',
         address: interiorState.building?.addr || '',
+        archetype: interiorState.archetype || null,
       } : null,
       renderer: renderer ? {
         drawCalls: renderer.info.render.calls,
@@ -3800,6 +3906,7 @@ function start() {
     getInteriorState: () => interiorState ? {
       name: interiorState.building?.name || 'Unnamed building',
       address: interiorState.building?.addr || '',
+      archetype: interiorState.archetype || null,
       building: interiorState.building,
     } : null,
     getBuildingEntrance: (index = 0) => {

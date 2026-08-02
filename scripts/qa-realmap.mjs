@@ -251,10 +251,34 @@ try {
     check('Enterable real-map building opens', entered === true);
     const interior = await page.evaluate(() => window.__SF_REALMAP__.getInteriorState());
     check('Interior exposes OSM metadata', Boolean(interior && (interior.name || interior.address)), interior);
+    check('Interior has a room archetype', Boolean(interior?.archetype), interior?.archetype);
     await page.waitForTimeout(350);
     await page.screenshot({ path: '.qa-realmap-interior.png' });
-    const exited = await page.evaluate(() => window.__SF_REALMAP__.exitInterior());
-    check('Interior returns to the street', exited === true);
+  const exited = await page.evaluate(() => window.__SF_REALMAP__.exitInterior());
+  check('Interior returns to the street', exited === true);
+
+  const archetypeSweep = await page.evaluate(() => {
+    const lab = window.__SF_REALMAP__;
+    const seen = new Set();
+    const details = [];
+    for (let index = 0; index < Math.min(80, 999); index += 1) {
+      const entrance = lab.getBuildingEntrance(index);
+      if (!entrance) continue;
+      lab.setPlayerPosition(entrance.x, entrance.z);
+      if (!lab.enterNearestBuilding()) continue;
+      const state = lab.getInteriorState();
+      if (state?.archetype) {
+        if (!seen.has(state.archetype)) {
+          seen.add(state.archetype);
+          details.push({ index, archetype: state.archetype, name: state.name });
+        }
+      }
+      lab.exitInterior();
+      if (seen.size >= 4) break;
+    }
+    return { seen: [...seen], details };
+  });
+  check('Interior sweep finds multiple room archetypes', archetypeSweep.seen.length >= 3, archetypeSweep);
   } else {
     check('Enterable real-map building opens', false, 'no detailed building entrance');
     check('Interior exposes OSM metadata', false, 'no detailed building entrance');

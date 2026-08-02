@@ -40,6 +40,8 @@ that slice as a 3D city with:
   footprint and press `E`, then `E` or `Esc` returns you to the street;
 - visible doorway markers on detailed OSM footprints so enterable buildings are
   discoverable from the street;
+- four interior archetypes selected from OSM metadata: cafe, office, rowhouse,
+  and market, each with distinct furniture, palette, and lighting;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
