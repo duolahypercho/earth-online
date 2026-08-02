@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { access, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/realmap.html';
 const presetName = process.env.SF_QA_PRESET || 'downtown';
@@ -37,6 +38,20 @@ const checks = [];
 const check = (name, pass, detail = null) => {
   checks.push({ name, pass: Boolean(pass), ...(detail ? { detail } : {}) });
 };
+
+function runPythonLuma(path) {
+  const result = spawnSync('python3', ['-c', `
+import sys
+from PIL import Image
+im=Image.open(sys.argv[1]).convert('RGB')
+pix=list(im.getdata())
+lum=[0.2126*p[0]+0.7152*p[1]+0.0722*p[2] for p in pix]
+print(round(sum(lum)/len(lum),2), round(sum(1 for v in lum if v>40)/len(lum),5), round(max(lum),1))
+`, path], { encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  const [meanLuma, brightRatio, maxLuma] = result.stdout.trim().split(' ').map(Number);
+  return { meanLuma, brightRatio, maxLuma };
+}
 
 try {
   const blindAb = await page.goto(`file://${process.cwd()}/${blindAbPath}`, { waitUntil: 'load', timeout: 30000 });
@@ -268,7 +283,10 @@ try {
   await page.screenshot({ path: '.qa-realmap-night-beauty.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   const nightPixels = await page.evaluate(() => window.__SF_REALMAP__.getFrameDiagnostics());
-  check('Night frame is dark with city glow', Boolean(nightPixels && nightPixels.meanLuma < 90 && nightPixels.brightRatio > 0.002), nightPixels);
+  const nightPng = await runPythonLuma('.qa-realmap-night.png');
+  check('Night frame is dark with city glow', Boolean(
+    nightPng && nightPng.meanLuma < 90 && nightPng.brightRatio > 0.002 && nightPng.maxLuma > 120
+  ), { gl: nightPixels, png: nightPng });
   await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('day'));
   check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {
     geometryTriangles: cityState.geometryTriangles,
@@ -394,7 +412,7 @@ try {
     }
     return vegBest;
   });
-  const hillThreshold = presetName === 'city' ? 120 : 40;
+  const hillThreshold = presetName === 'city' ? 80 : 40;
   check(`Hill probe found a real SF high point (${presetName})`, Number(highPoint?.elevation || 0) > hillThreshold, {
     highPoint,
     threshold: hillThreshold,

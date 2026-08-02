@@ -172,3 +172,17 @@ checks, because the reviewing model cannot view screenshots directly. The
 whole-city boundary is interactive via the Full City preset or a manual
 polygon; generated road detail is richest in the OSM detail bbox and degrades
 gracefully outside it.
+
+### Visual pass (2026-08-02, AAA low-poly finish)
+
+Street-level facades now pick OSM-driven styles (Victorian/Edwardian/plaster
+photo textures, commercial storefront bands, glass office towers) with
+procedural mullion/window emissive maps. Roads use photographic asphalt plus
+procedural normal/roughness maps, brighter lane markings, concrete/brick
+sidewalk variation, and instanced high-contrast zebra crossings. Pacific sky
+uses a three-band gradient (horizon/mid/top) with stronger sun, fill light,
+and lighter SSAO (kernel 0.65) so contact shadows read without flattening.
+Vehicles are Schedule-1-style low-poly bodies (chassis, hood, cabin,
+windshield, bumpers, taxi sign) with shared geometries. Street and hill trees
+use dual icosahedron canopy clusters instead of cones. All heavy props remain
+instanced for the ~16.67 ms frame budget.
