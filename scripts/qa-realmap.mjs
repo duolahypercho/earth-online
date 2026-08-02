@@ -88,6 +88,33 @@ try {
   );
   await page.waitForTimeout(2600);
   await page.screenshot({ path: '.qa-realmap-city.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
+    position: [1300, 22, 1820],
+    target: [1473, 42, 1900],
+  }));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: '.qa-realmap-hero.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
+    position: [1780, 34, 1760],
+    target: [1900, 26, 1580],
+  }));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: '.qa-realmap-canyon.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
+  await page.waitForTimeout(350);
+  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
+    position: [1300, 22, 1820],
+    target: [1473, 42, 1900],
+  }));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: '.qa-realmap-hero-beauty.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
+    position: [1780, 34, 1760],
+    target: [1900, 26, 1580],
+  }));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: '.qa-realmap-canyon-beauty.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const pixels = await page.evaluate(() => {
     const canvas = document.querySelector('#scene-canvas');
@@ -210,6 +237,10 @@ try {
   check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
   await page.waitForTimeout(250);
   await page.screenshot({ path: '.qa-realmap-street.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: '.qa-realmap-street-beauty.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const highPoint = await page.evaluate(() => {
     const lab = window.__SF_REALMAP__;
@@ -240,6 +271,10 @@ try {
   await page.evaluate((point) => window.__SF_REALMAP__.setPlayerPosition(point.x, point.z), highPoint);
   await page.waitForTimeout(450);
   await page.screenshot({ path: '.qa-realmap-hills.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: '.qa-realmap-hills-beauty.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const nearest = await page.evaluate(() => window.__SF_REALMAP__.getNearestVehicle());
   let driveTarget = nearest;

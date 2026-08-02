@@ -5,17 +5,42 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "net": "node server/multiplayer-server.mjs",
+    "dev:online": "node scripts/dev-all.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "build:realmap-assets": "node scripts/build-realmap-assets.mjs",
+    "build:sf-elevation": "node scripts/build-sf-elevation.mjs",
+    "qa:realmap": "node scripts/qa-realmap.mjs",
+    "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
     "verify:city": "node scripts/verify-city-simulation.mjs",
     "verify:gauntlet": "node scripts/verify-gauntlet-matrix.mjs",
     "verify:streaming": "node scripts/verify-streaming.mjs",
-    "verify:streamed-agents": "node scripts/verify-streamed-agents.mjs"
+    "verify:streamed-agents": "node scripts/verify-streamed-agents.mjs",
+    "verify:road-grade-markings": "node scripts/verify-road-grade-markings.mjs",
+    "verify:expansion": "node scripts/verify-expansion.mjs",
+    "verify:performance": "node scripts/verify-performance.mjs",
+    "verify:live-soak": "node scripts/verify-live-soak.mjs",
+    "verify:physics": "node scripts/verify-physics.mjs",
+    "verify:online": "node scripts/verify-online.mjs",
+    "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
+    "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
+    "qa:visual-critic": "node scripts/qa-visual-critic.mjs",
+    "qa:beauty-frames": "node scripts/qa-beauty-frames.mjs",
+    "qa:time-of-day": "node scripts/qa-time-of-day.mjs",
+    "qa:blind-ab": "node scripts/build-blind-ab.mjs",
+    "profile:frame": "node scripts/profile-frame.mjs",
+    "qa:district-visual": "node scripts/qa-district-visual.mjs",
+    "qa:interior-visual": "node scripts/qa-interior-variants.mjs"
   },
   "dependencies": {
-    "three": "0.180.0"
+    "three": "0.180.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "osm-pbf-parser": "^2.3.0",
+    "playwright": "^1.54.2",
+    "through2": "^4.0.2",
     "vite": "^6.1.0"
   }
 }

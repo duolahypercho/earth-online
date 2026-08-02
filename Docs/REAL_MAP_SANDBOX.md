@@ -33,6 +33,9 @@ that slice as a 3D city with:
   readable block label;
 - `R` cycles Clear, Pacific Fog, and Pacific Drizzle moods with matching sky,
   sun, fog, and exposure;
+- procedural window/storefront texture bands on every detailed OSM footprint,
+  578 street-furniture pieces (benches, lights, hydrants), and beauty-mode
+  HUD-free captures for critic frames;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -93,7 +96,16 @@ San Francisco (DataSF PDDL 1.0). Source URLs and SHA-256 digests are stored in
 
 ```bash
 npm run qa:realmap
+npm run qa:realmap-critic
 ```
+
+`npm run qa:realmap-critic` runs the harsh visual gate against
+`public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
+per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
+gameplay gate is green (25/25) while the visual critic remains REJECT at 5.6/10
+because street-level edge density and human-blind commercial comparison are
+still unresolved. The critic document lists the exact blockers and acceptance
+tests for the next pass.
 
 Latest gate results on this machine:
 

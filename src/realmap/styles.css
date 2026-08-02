@@ -382,6 +382,13 @@ button:disabled {
   display: none;
 }
 
+body.is-beauty .hud,
+body.is-beauty .inspector {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
 @media (max-width: 900px) {
   .hud {
     grid-template-columns: 1fr;

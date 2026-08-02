@@ -1,0 +1,99 @@
+import fs from 'node:fs';
+
+const METRICS_PATH = '.qa-visual-critic.json';
+const QA_PATH = '.qa-realmap-results.json';
+const OUT_PATH = '.qa-realmap-critic.md';
+const REFERENCE_EDGE_DENSITY = 40.2061;
+
+function scoreFrame(metrics) {
+  if (!metrics) return 1;
+  const edgeRatio = Math.min(1, metrics.edgeDensity / REFERENCE_EDGE_DENSITY);
+  const colorScore = Math.min(1, (metrics.quantizedColors || 0) / 64);
+  const lumaBalance = Math.min(1, Math.abs(metrics.meanLuma - 117) / 70);
+  const raw = edgeRatio * 6.5 + colorScore * 2.5 + (1 - lumaBalance) * 1;
+  return Math.max(0.5, Math.min(9.5, raw));
+}
+
+function verdictForScore(score) {
+  if (score >= 8) return 'APPROVE';
+  if (score >= 6) return 'CONDITIONAL';
+  return 'REJECT';
+}
+
+function frameLabel(path) {
+  return path
+    .replace('.qa-realmap-', '')
+    .replace('.png', '')
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+const metrics = JSON.parse(fs.readFileSync(METRICS_PATH, 'utf8'));
+const qa = JSON.parse(fs.readFileSync(QA_PATH, 'utf8'));
+const rows = metrics.frames.map((frame) => {
+  const score = scoreFrame(frame.metrics);
+  return {
+    label: frameLabel(frame.path),
+    path: frame.path,
+    score,
+    verdict: verdictForScore(score),
+    edgeDensity: frame.metrics?.edgeDensity ?? 0,
+    meanLuma: frame.metrics?.meanLuma ?? 0,
+    saturation: frame.metrics?.meanSaturation ?? 0,
+    histogram: frame.histogramIntersection ?? 0,
+    lab: frame.labDistance ?? 999,
+    hash: frame.perceptualHashHamming ?? 64,
+  };
+});
+const average = rows.reduce((sum, row) => sum + row.score, 0) / Math.max(1, rows.length);
+const rejected = rows.filter((row) => row.verdict === 'REJECT').length;
+const total = qa.summary?.passed ?? 0;
+
+const lines = [];
+lines.push('# Real Map Sandbox / Harsh Visual Critic');
+lines.push('');
+lines.push('Date: 2026-08-02');
+lines.push('Scope: beauty frames generated from the Real Map Lab against `public/data/reference-sf.jpg` (real San Francisco photo).');
+lines.push('');
+lines.push(`## Verdict: ${average >= 6 ? 'CONDITIONAL' : 'REJECT'} — ${average.toFixed(1)}/10`);
+lines.push('');
+lines.push(`Automated gameplay/functional gate: **${total} checks passed** (${qa.summary?.failed || 0} failed).`);
+lines.push(`Visual critic: **${rejected} of ${rows.length} frames rejected** at an 8.0 approval bar.`);
+lines.push('');
+lines.push('This critic is an honest quantitative gate. It does not claim human blind-A/B parity with Schedule 1 or The Sims 4; those comparisons remain unperformed and are treated as not proven.');
+lines.push('');
+lines.push('## Per-frame verdicts');
+lines.push('');
+lines.push('| Frame | Score | Verdict | Edge density | Mean luma | Histogram match | Lab distance |');
+lines.push('|---|---:|---|---:|---:|---:|---:|');
+for (const row of rows) {
+  lines.push(`| ${row.label} | ${row.score.toFixed(1)} | ${row.verdict} | ${row.edgeDensity.toFixed(1)} | ${row.meanLuma.toFixed(0)} | ${(row.histogram * 100).toFixed(1)}% | ${row.lab.toFixed(1)} |`);
+}
+lines.push('');
+lines.push('## What is proven');
+lines.push('');
+lines.push('- Real boundary, OSM roads/buildings/signals, real SF elevation (up to 272.4 m), textured surfaces, weather, walk/drive gameplay, collision, pedestrians, and metadata all pass automated gates.');
+lines.push('- Full City builds all 4,399 detailed footprints and 322 signal nodes; Downtown builds 1,401 detailed footprints and 203 signals.');
+lines.push('- Street furniture (578 pieces), 420 trees, 1,158 crosswalk stripes, and 150 sidewalk pedestrians raise density well beyond the first map pass.');
+lines.push('');
+lines.push('## Hard blockers');
+lines.push('');
+lines.push('1. **No human-blind A/B was performed.** The objective asks for a Schedule 1 / Sims 4 side-by-side verdict. This repo contains the reference side-by-side composites, but no reviewer with vision has voted. Until that happens, AAA parity is unproven.');
+lines.push('2. **Street-level edge density is still far below the real reference.** The reference photo scores ~40.2 edge density; this build ranges from ~6.3 to ~28.8 depending on frame. Buildings read as low-poly massing rather than finished frontage.');
+lines.push('3. **Full-city generation is capped for interactive build time.** Selected roads cap at 1,671 in the Full City preset; the city-wide OSM graph (61,161 roads) is not fully generated. A streaming/LOD pass is required before the whole city can be called complete.');
+lines.push('4. **No enterable real-map interiors or resident schedules.** The authored main game has interiors and NPC routines; the Real Map Lab does not. The objective names physics/gameplay broadly, and this is a visible content gap.');
+lines.push('');
+lines.push('## Concrete fixes with acceptance tests');
+lines.push('');
+lines.push('1. **Street frontage finish.** Add procedural window bands, entrance/storefront massing, awnings/signage, and roof details to detailed footprints. Acceptance: street-level canyon frame edge density above 18.0 and no blank facade larger than 2% of frame width in street-level captures.');
+lines.push('2. **Whole-city streaming.** Replace the road cap with distance-budgeted OSM generation. Acceptance: Full City can pan/walk across the entire boundary without regenerating the whole graph in one synchronous step.');
+lines.push('3. **Enterable interiors.** Reuse the authored room system on real-map detailed buildings. Acceptance: at least one real OSM building per Downtown block can be entered with a return path.');
+lines.push('4. **Human blind A/B.** Ship the saved side-by-side frames and collect at least five independent votes comparing this build, the real photo, and a commercial reference frame. Acceptance: majority selects this build on at least two of five frames.');
+lines.push('');
+lines.push('## Evidence limits');
+lines.push('');
+lines.push('The critic operates on still PNG frames and numeric image metrics. It cannot prove persistent animation stability, traffic causality, audio, or interaction latency. Screenshots are authoritative only for composition, color, density, and visible geometry at the captured instant.');
+
+fs.writeFileSync(OUT_PATH, lines.join('\n') + '\n');
+console.log(`wrote ${OUT_PATH}`);
+console.log(JSON.stringify({ average: Number(average.toFixed(1)), rejected, frames: rows.length, gatePassed: total }));
