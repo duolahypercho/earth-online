@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d1b22" />
+    <meta
+      name="description"
+      content="Real San Francisco OSM sandbox: draw a city boundary, then generate low-poly roads, sidewalks, buildings, signals, and traffic."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>San Francisco / Real Map Lab</title>
+  </head>
+  <body>
+    <main id="app" aria-label="San Francisco real map sandbox">
+      <canvas id="map-canvas" aria-label="San Francisco boundary editor"></canvas>
+      <canvas id="scene-canvas" aria-label="Generated San Francisco city"></canvas>
+      <div id="hud" class="hud" inert>
+        <header class="brand">
+          <span class="brand-mark">SF<span>/</span>MAP</span>
+          <div>
+            <h1>Real Map Lab</h1>
+            <p id="mode-label">Drawing boundary</p>
+          </div>
+        </header>
+        <section class="toolbar" aria-label="Map tools">
+          <div class="tool-group" data-toolbar="draw">
+            <button type="button" class="tool is-active" data-tool="draw" title="Draw boundary">
+              <span class="tool-icon" aria-hidden="true">✏</span>Draw
+            </button>
+            <button type="button" class="tool" data-tool="pan" title="Pan and inspect">
+              <span class="tool-icon" aria-hidden="true">☰</span>Pan
+            </button>
+          </div>
+          <div class="tool-group" data-toolbar="presets">
+            <button type="button" class="preset" data-preset="downtown">Downtown</button>
+            <button type="button" class="preset" data-preset="mission">Mission</button>
+            <button type="button" class="preset" data-preset="north-beach">North Beach</button>
+            <button type="button" class="preset" data-preset="presidio">Presidio</button>
+            <button type="button" class="preset" data-preset="sunset">Outer Sunset</button>
+            <button type="button" class="preset is-full" data-preset="city">Full City</button>
+          </div>
+          <div class="tool-group" data-toolbar="actions">
+            <button type="button" class="action" data-action="undo" disabled>Undo</button>
+            <button type="button" class="action" data-action="clear">Clear</button>
+            <button type="button" class="action is-primary" data-action="build" disabled>
+              Build 3D City
+            </button>
+            <button type="button" class="action" data-action="back" hidden>Back to Map</button>
+          </div>
+        </section>
+        <section class="readout" aria-label="Map readout">
+          <span id="readout-vertices">0 vertices</span>
+          <span id="readout-area">— km²</span>
+          <span id="readout-selected">0 roads / 0 buildings / 0 signals</span>
+        </section>
+        <p class="hint" id="hint">
+          Click to place boundary vertices · double-click or Enter to close · Esc to cancel
+        </p>
+      </div>
+      <aside id="inspector" class="inspector" inert>
+        <button type="button" id="inspector-close" class="inspector-close" aria-label="Close inspector">×</button>
+        <h2 id="inspector-title">Feature</h2>
+        <dl id="inspector-fields"></dl>
+      </aside>
+      <section id="boot-overlay" class="boot-overlay" role="dialog" aria-modal="true" aria-labelledby="boot-title">
+        <div class="boot-panel">
+          <p class="boot-kicker">REAL OSM DATA / THREE.JS R180 / WEBGL2</p>
+          <h2 id="boot-title">San Francisco,<br />drawn from the real map.</h2>
+          <div class="boot-progress"><i id="boot-bar"></i></div>
+          <p class="boot-status" id="boot-status">Loading real city data…</p>
+          <button id="launch-button" class="boot-action" type="button" disabled>Enter Map Lab</button>
+        </div>
+      </section>
+      <div id="build-overlay" class="build-overlay" hidden>
+        <div class="build-panel">
+          <p class="boot-kicker" id="build-stage">GENERATING</p>
+          <h2 id="build-title">Laying asphalt…</h2>
+          <div class="boot-progress"><i id="build-bar"></i></div>
+          <p class="boot-status" id="build-status"></p>
+        </div>
+      </div>
+      <noscript>This experience requires JavaScript and WebGL2.</noscript>
+    </main>
+    <script type="module" src="/src/realmap/main.js"></script>
+  </body>
+</html>

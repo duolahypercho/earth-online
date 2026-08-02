@@ -1,0 +1,192 @@
+import { chromium } from 'playwright';
+import { access, writeFile } from 'node:fs/promises';
+
+const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/realmap.html';
+const systemChrome = process.env.SF_QA_EXECUTABLE || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
+const qaAngle = process.env.SF_QA_ANGLE || 'metal';
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--disable-dev-shm-usage',
+    `--use-angle=${qaAngle}`,
+    '--enable-gpu',
+    '--ignore-gpu-blocklist',
+  ],
+  ...(executablePath ? { executablePath } : {}),
+});
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const errors = [];
+const httpErrors = [];
+page.on('pageerror', (error) => errors.push(error.message));
+page.on('console', (message) => {
+  if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) {
+    const expectedFallback = /^(Road resolution strategy failed|REALMAP_DIAGNOSTICS|Whole-model mesh failed|Road surface mesher failed)/;
+    if (!expectedFallback.test(message.text())) errors.push(message.text());
+  }
+});
+page.on('response', (response) => {
+  if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) {
+    httpErrors.push(`${response.status()} ${response.url()}`);
+  }
+});
+
+const checks = [];
+const check = (name, pass, detail = null) => {
+  checks.push({ name, pass: Boolean(pass), ...(detail ? { detail } : {}) });
+};
+
+try {
+  await page.goto(baseUrl, { waitUntil: 'load', timeout: 60000 });
+  await page.waitForFunction(
+    () => document.querySelector('#launch-button') && !document.querySelector('#launch-button').disabled,
+    { timeout: 120000 },
+  );
+  await page.locator('#launch-button').click();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: '.qa-realmap-map.png' });
+
+  const mapPixels = await page.evaluate(() => {
+    const canvas = document.querySelector('#map-canvas');
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+    const buckets = new Set();
+    for (let i = 0; i < data.length; i += 4 * 2000) {
+      buckets.add(`${data[i] >> 4},${data[i + 1] >> 4},${data[i + 2] >> 4}`);
+    }
+    return { buckets: buckets.size };
+  });
+  check('Boundary map renders varied layers', mapPixels.buckets > 12, mapPixels);
+
+  const mapState = await page.evaluate(() => {
+    const lab = window.__SF_REALMAP__;
+    const data = lab.getData();
+    return {
+      boundaryRings: data.boundary.length,
+      roads: data.meta.counts.roads,
+      buildings: data.meta.counts.detailBuildings + data.meta.counts.coarseBuildings,
+      signals: data.meta.counts.signals,
+      sources: data.meta.sources.length,
+    };
+  });
+  check('Real city data loaded', mapState.boundaryRings >= 20 && mapState.roads > 30000, mapState);
+  check('Boundary has metadata sources', mapState.sources >= 2, mapState.sources);
+
+  await page.evaluate(() => window.__SF_REALMAP__.applyPreset('downtown'));
+  const region = await page.evaluate(() => window.__SF_REALMAP__.getRegion().length);
+  check('Preset draws a boundary', region >= 4, { region });
+
+  const buildResult = await page.evaluate(() => window.__SF_REALMAP__.build());
+  if (buildResult?.error) {
+    throw new Error(`Real map build failed: ${buildResult.error}`);
+  }
+  await page.waitForFunction(
+    () => window.__SF_REALMAP__.getBuildState().isCity,
+    { timeout: 240000 },
+  );
+  await page.waitForTimeout(2600);
+  await page.screenshot({ path: '.qa-realmap-city.png' });
+
+  const pixels = await page.evaluate(() => {
+    const canvas = document.querySelector('#scene-canvas');
+    const gl = canvas.getContext('webgl2');
+    if (!gl) return null;
+    const width = gl.drawingBufferWidth;
+    const height = gl.drawingBufferHeight;
+    const data = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    const buckets = new Map();
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let blank = 0;
+    const sampleStep = Math.max(1, Math.floor((width * height) / 160000));
+    for (let i = 0; i < data.length; i += 4 * sampleStep) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+      if (a < 8) {
+        blank += 1;
+        continue;
+      }
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      const key = `${r >> 4},${g >> 4},${b >> 4}`;
+      buckets.set(key, (buckets.get(key) || 0) + 1);
+    }
+    const total = Math.max(1, buckets.size ? [...buckets.values()].reduce((a, b) => a + b, 0) : 0);
+    const mean = [
+      sumR / total,
+      sumG / total,
+      sumB / total,
+    ];
+    let variance = 0;
+    for (let i = 0; i < data.length; i += 4 * sampleStep) {
+      if (data[i + 3] < 8) continue;
+      variance += (data[i] - mean[0]) ** 2 + (data[i + 1] - mean[1]) ** 2 + (data[i + 2] - mean[2]) ** 2;
+    }
+    const sorted = [...buckets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    return {
+      width,
+      height,
+      colorBuckets: buckets.size,
+      mean: mean.map((value) => Math.round(value)),
+      stddev: Math.round(Math.sqrt(variance / Math.max(1, total))),
+      blankRatio: Number((blank / Math.max(1, total + blank)).toFixed(4)),
+      topColors: sorted.map(([key, count]) => ({ key, ratio: Number((count / total).toFixed(3)) })),
+    };
+  });
+  check('Rendered frame is visually varied', Boolean(pixels && pixels.colorBuckets > 120 && pixels.stddev > 24), pixels);
+  check('Frame is not blank', Boolean(pixels && pixels.blankRatio < 0.2), pixels?.blankRatio);
+  check('Golden-hour sky present', Boolean(pixels && pixels.topColors.some((entry) => entry.key.startsWith('1') || entry.key.startsWith('2'))), pixels?.topColors);
+
+  const cityState = await page.evaluate(() => {
+    const lab = window.__SF_REALMAP__;
+    const state = lab.getBuildState();
+    return {
+      ...state,
+      webgl2: document.querySelector('#scene-canvas').getContext('webgl2') !== null,
+    };
+  });
+  check('WebGL2 city generated', cityState.webgl2 && cityState.isCity, cityState);
+  check('City has real signal metadata', cityState.signals > 0, cityState.signals);
+  check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
+  check('Renderer emitted geometry', Number(cityState.renderer?.drawCalls || 0) > 0, cityState.renderer);
+
+  await page.evaluate(() => window.__SF_REALMAP__.showInspector('Street', {
+    id: 999,
+    name: 'Market Street',
+    highway: 'primary',
+    oneway: true,
+    lanes: 3,
+    maxspeed: '25 mph',
+    surface: 'asphalt',
+    sidewalk: 'both',
+    bridge: false,
+    tunnel: false,
+  }));
+  await page.waitForTimeout(200);
+  const inspectorVisible = await page.locator('#inspector').isVisible();
+  check('Street metadata inspector opens', inspectorVisible);
+  await page.screenshot({ path: '.qa-realmap-inspector.png' });
+} catch (error) {
+  errors.push(error.message);
+} finally {
+  await writeFile('.qa-realmap-results.json', JSON.stringify({
+    checks,
+    errors,
+    httpErrors,
+    summary: {
+      passed: checks.filter((entry) => entry.pass).length,
+      failed: checks.filter((entry) => !entry.pass).length,
+    },
+  }, null, 2));
+  console.log(JSON.stringify({ checks, errors, httpErrors }, null, 2));
+  await browser.close();
+}
+
+const failed = checks.filter((entry) => !entry.pass);
+if (failed.length || errors.length) process.exitCode = 1;

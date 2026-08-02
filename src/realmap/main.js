@@ -1,0 +1,2137 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  createRoadAuthoringDocument,
+  addRoadTemplate,
+  addRoadStroke,
+  makeLineSegment,
+  resolveAutomaticNetwork,
+  compileRoadNetwork,
+} from '../../vendor/three-roads/core.js';
+import {
+  buildRoadSurfaceModel,
+  meshRoadSurfaceModel,
+} from '../../vendor/three-roads/mesher.js';
+import { SIGNAL_PERIOD, signalPhaseAt } from '../signals.js';
+import './styles.css';
+
+const app = document.querySelector('#app');
+const mapCanvas = document.querySelector('#map-canvas');
+const sceneCanvas = document.querySelector('#scene-canvas');
+const bootOverlay = document.querySelector('#boot-overlay');
+const bootStatus = document.querySelector('#boot-status');
+const bootBar = document.querySelector('#boot-bar');
+const launchButton = document.querySelector('#launch-button');
+const buildOverlay = document.querySelector('#build-overlay');
+const buildBar = document.querySelector('#build-bar');
+const buildStatus = document.querySelector('#build-status');
+const buildStage = document.querySelector('#build-stage');
+const buildTitle = document.querySelector('#build-title');
+const hud = document.querySelector('#hud');
+const modeLabel = document.querySelector('#mode-label');
+const readoutVertices = document.querySelector('#readout-vertices');
+const readoutArea = document.querySelector('#readout-area');
+const readoutSelected = document.querySelector('#readout-selected');
+const hint = document.querySelector('#hint');
+const inspector = document.querySelector('#inspector');
+const inspectorTitle = document.querySelector('#inspector-title');
+const inspectorFields = document.querySelector('#inspector-fields');
+const inspectorClose = document.querySelector('#inspector-close');
+
+const DATA_URL = '/data/sf/sf-city.json.gz';
+const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
+
+let cityData = null;
+let region = [];
+let mapCamera = { x: 0, z: 0, scale: 1 };
+let activeTool = 'draw';
+let drawCursor = null;
+let mapDirty = true;
+let mapPointer = null;
+let viewportWidth = 0;
+let viewportHeight = 0;
+
+const roadPalette = {
+  motorway: '#e28a3f',
+  trunk: '#e8a13f',
+  primary: '#f0c96a',
+  secondary: '#e6e0c8',
+  tertiary: '#d8d4c4',
+  unclassified: '#c9c8bf',
+  residential: '#c3c5bd',
+  living_street: '#c3c5bd',
+  service: '#aeb3ad',
+  pedestrian: '#c8bfa8',
+  footway: '#b9c0b2',
+  cycleway: '#b8c9ad',
+  path: '#aeb7aa',
+};
+
+const ROAD_ORDER = [
+  'motorway',
+  'trunk',
+  'primary',
+  'secondary',
+  'tertiary',
+  'unclassified',
+  'residential',
+  'living_street',
+  'service',
+  'pedestrian',
+  'footway',
+  'cycleway',
+  'path',
+];
+
+const PRESETS = {
+  downtown: [
+    [560, 420], [2320, 420], [2380, 1180], [3260, 1180],
+    [3260, 2280], [2180, 2280], [1480, 1660], [560, 1660],
+  ],
+  mission: [
+    [-1150, -1420], [-520, -1420], [-520, -330], [-180, -330],
+    [-180, 120], [-980, 120], [-1150, -420],
+  ],
+  'north-beach': [
+    [1240, 1900], [1520, 1900], [1520, 2180], [2380, 2180],
+    [2380, 3220], [1880, 3220], [1500, 2740], [1240, 2400],
+  ],
+  presidio: [
+    [-2600, 1080], [-1380, 1080], [-1180, 1480], [-1260, 2240], [-2260, 2440],
+  ],
+  sunset: [
+    [-3400, -2460], [-2240, -2460], [-2180, -1260], [-2500, -820], [-3400, -820],
+  ],
+};
+
+function formatNumber(value, digits = 0) {
+  if (!Number.isFinite(value)) return '—';
+  return value.toLocaleString('en-US', { maximumFractionDigits: digits });
+}
+
+function polygonArea(points) {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.z - b.x * a.z;
+  }
+  return Math.abs(area / 2);
+}
+
+function polygonCentroid(points) {
+  let x = 0;
+  let z = 0;
+  for (const point of points) {
+    x += point.x;
+    z += point.z;
+  }
+  return { x: x / points.length, z: z / points.length };
+}
+
+function pointInFlatRing(point, flat) {
+  let inside = false;
+  for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
+    const ax = flat[i];
+    const az = flat[i + 1];
+    const bx = flat[j];
+    const bz = flat[j + 1];
+    if ((az > point.z) !== (bz > point.z)
+      && point.x < (bx - ax) * (point.z - az) / (bz - az) + ax) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function pointInRegion(point) {
+  return region.length >= 3 && pointInFlatRing(point, flatRegion());
+}
+
+function flatRegion() {
+  const flat = [];
+  for (const point of region) flat.push(point.x, point.z);
+  return flat;
+}
+
+function roadPoints(road) {
+  const points = [];
+  for (let i = 0; i < road.points.length; i += 2) {
+    points.push({ x: road.points[i], z: road.points[i + 1] });
+  }
+  return points;
+}
+
+function bboxOfPoints(points) {
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+  return { minX, minZ, maxX, maxZ };
+}
+
+function intersectsRegionBBox(road, regionBBox) {
+  const points = road.points;
+  for (let i = 0; i < points.length; i += 2) {
+    const x = points[i];
+    const z = points[i + 1];
+    if (x >= regionBBox.minX && x <= regionBBox.maxX && z >= regionBBox.minZ && z <= regionBBox.maxZ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function setStatus(overlay, status, progress = null) {
+  const statusNode = overlay === 'boot' ? bootStatus : buildStatus;
+  const barNode = overlay === 'boot' ? bootBar : buildBar;
+  statusNode.textContent = status;
+  if (progress !== null && barNode) barNode.style.width = `${Math.round(progress * 100)}%`;
+}
+
+async function fetchCityData() {
+  try {
+    const response = await fetch(DATA_URL);
+    if (!response.ok) throw new Error(`gzip data ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    if (typeof DecompressionStream !== 'undefined') {
+      const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
+      const text = await new Response(stream).text();
+      return JSON.parse(text);
+    }
+    return JSON.parse(new TextDecoder().decode(buffer));
+  } catch (gzipError) {
+    console.warn('gzip load failed, falling back to raw JSON', gzipError);
+    const response = await fetch(DATA_FALLBACK_URL);
+    if (!response.ok) throw new Error(`raw data ${response.status}`);
+    return response.json();
+  }
+}
+
+async function loadCity() {
+  setStatus('boot', 'Fetching real San Francisco OSM data…', 0.1);
+  cityData = await fetchCityData();
+  setStatus('boot', `Decoding ${formatNumber(cityData.meta.counts.roads)} roads and ${formatNumber(cityData.meta.counts.coarseBuildings + cityData.meta.counts.detailBuildings)} buildings…`, 0.75);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const boundary = cityData.boundary[0];
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < boundary.length; i += 2) {
+    minX = Math.min(minX, boundary[i]);
+    maxX = Math.max(maxX, boundary[i]);
+    minZ = Math.min(minZ, boundary[i + 1]);
+    maxZ = Math.max(maxZ, boundary[i + 1]);
+  }
+  const width = maxX - minX;
+  const height = maxZ - minZ;
+  mapCamera = {
+    x: (minX + maxX) / 2,
+    z: (minZ + maxZ) / 2,
+    scale: Math.min(viewportWidth / width, viewportHeight / height) * 0.86,
+  };
+  setStatus('boot', `Ready · ${cityData.meta.counts.detailRoads} detailed streets · ${cityData.meta.counts.signals} signals`, 1);
+  launchButton.disabled = false;
+  launchButton.textContent = 'Enter Map Lab';
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  viewportWidth = window.innerWidth;
+  viewportHeight = window.innerHeight;
+  mapCanvas.width = Math.round(viewportWidth * dpr);
+  mapCanvas.height = Math.round(viewportHeight * dpr);
+  mapCanvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  mapDirty = true;
+}
+
+function worldToScreen(point) {
+  return {
+    x: viewportWidth / 2 + (point.x - mapCamera.x) * mapCamera.scale,
+    y: viewportHeight / 2 + (point.z - mapCamera.z) * mapCamera.scale,
+  };
+}
+
+function screenToWorld(x, y) {
+  return {
+    x: mapCamera.x + (x - viewportWidth / 2) / mapCamera.scale,
+    z: mapCamera.z + (y - viewportHeight / 2) / mapCamera.scale,
+  };
+}
+
+function drawRoadLayer(ctx) {
+  if (!cityData) return;
+  const left = mapCamera.x - viewportWidth / 2 / mapCamera.scale;
+  const right = mapCamera.x + viewportWidth / 2 / mapCamera.scale;
+  const top = mapCamera.z - viewportHeight / 2 / mapCamera.scale;
+  const bottom = mapCamera.z + viewportHeight / 2 / mapCamera.scale;
+
+  const classPaths = new Map();
+  for (const cls of ROAD_ORDER) {
+    classPaths.set(cls, { path: new Path2D(), count: 0 });
+  }
+
+  const visible = cityData.roads;
+  for (let i = 0; i < visible.length; i += 1) {
+    const road = visible[i];
+    const points = road.points;
+    let onScreen = false;
+    for (let j = 0; j < points.length; j += 2) {
+      if (points[j] >= left && points[j] <= right && points[j + 1] >= top && points[j + 1] <= bottom) {
+        onScreen = true;
+        break;
+      }
+    }
+    if (!onScreen) continue;
+    const cls = roadPalette[road.highway] ? road.highway : 'service';
+    const entry = classPaths.get(cls) || classPaths.get('service');
+    entry.count += 1;
+    const path = entry.path;
+    for (let j = 0; j < points.length - 2; j += 2) {
+      const sx = worldToScreen({ x: points[j], z: points[j + 1] });
+      const ex = worldToScreen({ x: points[j + 2], z: points[j + 3] });
+      if (j === 0) path.moveTo(sx.x, sx.y);
+      path.lineTo(ex.x, ex.y);
+    }
+  }
+
+  const widthByClass = {
+    motorway: 7,
+    trunk: 6,
+    primary: 5,
+    secondary: 4,
+    tertiary: 3.2,
+    unclassified: 2.6,
+    residential: 2.4,
+    living_street: 2.2,
+    service: 1.8,
+    pedestrian: 1.6,
+    footway: 1.2,
+    cycleway: 1.2,
+    path: 1,
+  };
+
+  for (const cls of ROAD_ORDER) {
+    const entry = classPaths.get(cls);
+    if (!entry || entry.count === 0) continue;
+    ctx.strokeStyle = roadPalette[cls];
+    ctx.lineWidth = widthByClass[cls] || 2;
+    ctx.globalAlpha = cls === 'residential' || cls === 'service' ? 0.4 : 0.55;
+    ctx.stroke(entry.path);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBoundary(ctx) {
+  if (!cityData) return;
+  for (const ring of cityData.boundary) {
+    ctx.beginPath();
+    for (let i = 0; i < ring.length; i += 2) {
+      const point = worldToScreen({ x: ring[i], z: ring[i + 1] });
+      if (i === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    }
+    ctx.closePath();
+  }
+  ctx.fillStyle = 'rgba(150, 178, 150, 0.28)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(214, 232, 220, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawSignals(ctx) {
+  if (!cityData) return;
+  for (const signal of cityData.signals) {
+    const point = worldToScreen({ x: signal[0], z: signal[1] });
+    if (point.x < -10 || point.x > viewportWidth + 10 || point.y < -10 || point.y > viewportHeight + 10) continue;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffb454';
+    ctx.fill();
+  }
+}
+
+function drawRegion(ctx) {
+  if (region.length < 2) return;
+  ctx.beginPath();
+  for (let i = 0; i < region.length; i += 1) {
+    const point = worldToScreen(region[i]);
+    if (i === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  }
+  if (drawCursor) {
+    const cursor = worldToScreen(drawCursor);
+    ctx.lineTo(cursor.x, cursor.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(127, 212, 193, 0.18)';
+  ctx.fill();
+  ctx.strokeStyle = '#7fd4c1';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([10, 8]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (let i = 0; i < region.length; i += 1) {
+    const point = worldToScreen(region[i]);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? '#f2a65a' : '#dbe8ec';
+    ctx.strokeStyle = '#0d1b22';
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawMap() {
+  if (!mapDirty) return;
+  mapDirty = false;
+  const ctx = mapCanvas.getContext('2d');
+  ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+  const gradient = ctx.createRadialGradient(
+    viewportWidth / 2, viewportHeight / 2, 0,
+    viewportWidth / 2, viewportHeight / 2, Math.max(viewportWidth, viewportHeight) * 0.75,
+  );
+  gradient.addColorStop(0, '#264c5e');
+  gradient.addColorStop(1, '#10242e');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+  drawBoundary(ctx);
+  drawRoadLayer(ctx);
+  drawSignals(ctx);
+  drawRegion(ctx);
+  drawScale(ctx);
+}
+
+function drawScale(ctx) {
+  const meters = 2000;
+  const px = meters * mapCamera.scale;
+  const x = 24;
+  const y = viewportHeight - 28;
+  ctx.strokeStyle = 'rgba(219, 232, 236, 0.8)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + px, y);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(219, 232, 236, 0.9)';
+  ctx.font = '11px system-ui';
+  ctx.fillText(`2 km`, x + px / 2 - 10, y - 8);
+}
+
+function scheduleMapDraw() {
+  mapDirty = true;
+  requestAnimationFrame(drawMap);
+}
+
+function updateReadout() {
+  readoutVertices.textContent = `${region.length} vertices`;
+  readoutArea.textContent = region.length >= 3 ? `${(polygonArea(region) / 1e6).toFixed(2)} km²` : '— km²';
+  const buildButton = document.querySelector('[data-action="build"]');
+  buildButton.disabled = region.length < 3;
+  document.querySelector('[data-action="undo"]').disabled = region.length === 0;
+}
+
+function setRegion(points) {
+  region = points.map(([x, z]) => ({ x, z }));
+  updateReadout();
+  scheduleMapDraw();
+}
+
+function applyPreset(name) {
+  if (name === 'city') {
+    const flat = cityData.boundary[0];
+    setRegion(Array.from({ length: flat.length / 2 }, (_, i) => [flat[i * 2], flat[i * 2 + 1]]));
+  } else if (PRESETS[name]) {
+    setRegion(PRESETS[name]);
+  }
+}
+
+function mapPointerPosition(event) {
+  const rect = mapCanvas.getBoundingClientRect();
+  return screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+}
+
+function setupMapInteractions() {
+  mapCanvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const before = mapPointerPosition(event);
+    const factor = Math.exp(-event.deltaY * 0.0012);
+    mapCamera.scale = THREE.MathUtils.clamp(mapCamera.scale * factor, 0.06, 60);
+    const after = screenToWorld(event.clientX - mapCanvas.getBoundingClientRect().left, event.clientY - mapCanvas.getBoundingClientRect().top);
+    mapCamera.x += before.x - after.x;
+    mapCamera.z += before.z - after.z;
+    scheduleMapDraw();
+  }, { passive: false });
+
+  mapCanvas.addEventListener('pointerdown', (event) => {
+    if (event.button === 1 || activeTool === 'pan') {
+      mapPointer = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        panning: true,
+        startX: mapCamera.x,
+        startZ: mapCamera.z,
+      };
+      mapCanvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (activeTool !== 'draw') return;
+    const world = mapPointerPosition(event);
+    region.push(world);
+    drawCursor = null;
+    updateReadout();
+    scheduleMapDraw();
+  });
+
+  mapCanvas.addEventListener('pointermove', (event) => {
+    if (mapPointer?.panning) {
+      const dx = event.clientX - mapPointer.x;
+      const dy = event.clientY - mapPointer.y;
+      mapCamera.x = mapPointer.startX - dx / mapCamera.scale;
+      mapCamera.z = mapPointer.startZ - dy / mapCamera.scale;
+      scheduleMapDraw();
+      return;
+    }
+    if (activeTool === 'draw') {
+      drawCursor = mapPointerPosition(event);
+      scheduleMapDraw();
+    }
+  });
+
+  const endPointer = (event) => {
+    if (mapPointer?.id === event.pointerId) mapPointer = null;
+  };
+  mapCanvas.addEventListener('pointerup', endPointer);
+  mapCanvas.addEventListener('pointercancel', endPointer);
+
+  mapCanvas.addEventListener('dblclick', () => {
+    if (activeTool === 'draw' && region.length >= 3) {
+      drawCursor = null;
+      updateReadout();
+      scheduleMapDraw();
+    }
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && activeTool === 'draw' && region.length >= 3) {
+      drawCursor = null;
+      updateReadout();
+      scheduleMapDraw();
+    } else if (event.key === 'Escape' && activeTool === 'draw') {
+      region.pop();
+      updateReadout();
+      scheduleMapDraw();
+    }
+  });
+}
+
+function setupToolbar() {
+  document.querySelectorAll('[data-tool]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeTool = button.dataset.tool;
+      document.querySelectorAll('[data-tool]').forEach((candidate) => candidate.classList.toggle('is-active', candidate === button));
+      modeLabel.textContent = activeTool === 'draw' ? 'Drawing boundary' : 'Panning map';
+      hint.textContent = activeTool === 'draw'
+        ? 'Click to place boundary vertices · double-click or Enter to close · Esc to cancel'
+        : 'Drag to pan · scroll to zoom · draw to define the build area';
+    });
+  });
+
+  document.querySelectorAll('[data-preset]').forEach((button) => {
+    button.addEventListener('click', () => applyPreset(button.dataset.preset));
+  });
+
+  document.querySelector('[data-action="undo"]').addEventListener('click', () => {
+    region.pop();
+    updateReadout();
+    scheduleMapDraw();
+  });
+  document.querySelector('[data-action="clear"]').addEventListener('click', () => {
+    region = [];
+    updateReadout();
+    scheduleMapDraw();
+  });
+  document.querySelector('[data-action="build"]').addEventListener('click', () => {
+    if (region.length >= 3) buildCity().catch((error) => console.error('Build failed', error));
+  });
+  document.querySelector('[data-action="back"]').addEventListener('click', () => {
+    document.body.classList.remove('is-city');
+    document.querySelector('[data-action="back"]').hidden = true;
+    document.querySelector('[data-action="build"]').hidden = false;
+    hud.inert = false;
+  });
+  inspectorClose.addEventListener('click', () => {
+    inspector.hidden = true;
+  });
+}
+
+function setBuildProgress(stage, status, progress) {
+  buildStage.textContent = stage;
+  buildStatus.textContent = status;
+  if (progress !== null) buildBar.style.width = `${Math.round(progress * 100)}%`;
+}
+
+async function tick() {
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function templateForRoad(road) {
+  const cls = road.highway || 'residential';
+  const lanes = Math.max(1, Number(road.lanes) || 1);
+  if (cls === 'motorway' || cls === 'trunk') {
+    return road.oneway ? 'sf-highway-1way' : 'sf-highway-2way';
+  }
+  if (cls === 'primary' || cls === 'secondary' || cls === 'tertiary' || cls === 'unclassified') {
+    return road.oneway ? 'sf-arterial-1way' : 'sf-arterial-2way';
+  }
+  if (cls === 'pedestrian' || cls === 'footway' || cls === 'path' || cls === 'cycleway') {
+    return 'sf-walk';
+  }
+  return road.oneway ? 'sf-local-1way' : (lanes >= 3 ? 'sf-local-wide-2way' : 'sf-local-2way');
+}
+
+function projectPointOnSegment(point, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq < 0.0001) return null;
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSq));
+  const px = a.x + dx * t;
+  const pz = a.z + dz * t;
+  return { t, point: { x: px, z: pz }, distance: Math.hypot(point.x - px, point.z - pz) };
+}
+
+function flatFromPoints(points) {
+  const flat = [];
+  for (const point of points) flat.push(Math.round(point.x * 10) / 10, Math.round(point.z * 10) / 10);
+  return flat;
+}
+
+function splitRoadsAtJunctions(roads) {
+  const junctionKeys = new Set();
+  const junctionPoints = [];
+  for (const road of roads) {
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    for (const point of [points[0], points[points.length - 1]]) {
+      const key = `${Math.round(point.x * 2)},${Math.round(point.z * 2)}`;
+      if (!junctionKeys.has(key)) {
+        junctionKeys.add(key);
+        junctionPoints.push(point);
+      }
+    }
+  }
+
+  const splitRoads = [];
+  for (const road of roads) {
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    const cuts = new Map();
+    for (const junction of junctionPoints) {
+      let best = null;
+      let bestS = 0;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segment = projectPointOnSegment(junction, a, b);
+        if (!segment) {
+          walked += Math.hypot(b.x - a.x, b.z - a.z);
+          continue;
+        }
+        if (segment.distance <= 1.4 && segment.t > 0.04 && segment.t < 0.96) {
+          const s = walked + segment.t * Math.hypot(b.x - a.x, b.z - a.z);
+          if (!best || segment.distance < best.distance) {
+            best = segment;
+            bestS = s;
+          }
+        }
+        walked += Math.hypot(b.x - a.x, b.z - a.z);
+      }
+      if (best) {
+        const key = `${Math.round(bestS * 10)}`;
+        if (!cuts.has(key)) {
+          cuts.set(key, { s: bestS, point: best.point });
+        }
+      }
+    }
+    const sortedCuts = [...cuts.values()].sort((a, b) => a.s - b.s);
+    if (sortedCuts.length === 0) {
+      splitRoads.push(road);
+      continue;
+    }
+    let current = [points[0]];
+    let walked = 0;
+    let cutIndex = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+      const segEnd = walked + segLength;
+      while (cutIndex < sortedCuts.length && sortedCuts[cutIndex].s <= segEnd + 0.01) {
+        const cut = sortedCuts[cutIndex];
+        const t = segLength > 0 ? (cut.s - walked) / segLength : 0;
+        const point = { x: a.x + (b.x - a.x) * Math.max(0, Math.min(1, t)), z: a.z + (b.z - a.z) * Math.max(0, Math.min(1, t)) };
+        current.push(point);
+        if (current.length >= 2) {
+          splitRoads.push({
+            ...road,
+            id: `${road.id}-s${cutIndex}`,
+            points: flatFromPoints(current),
+          });
+        }
+        current = [point];
+        cutIndex += 1;
+      }
+      current.push(b);
+      walked = segEnd;
+    }
+    if (current.length >= 2) {
+      splitRoads.push({
+        ...road,
+        id: `${road.id}-s${sortedCuts.length}`,
+        points: flatFromPoints(current),
+      });
+    }
+  }
+  return splitRoads;
+}
+
+function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
+  const lanes = [];
+  for (let i = drivingLeft; i > 0; i -= 1) {
+    lanes.push({
+      role: `reverse-${i}`,
+      side: 'left',
+      order: i,
+      type: 'driving',
+      width,
+      access: ['car', 'bicycle', 'emergency'],
+    });
+  }
+  if (sidewalk) {
+    lanes.push({
+      role: 'left-curb',
+      side: 'left',
+      order: drivingLeft + 1,
+      type: 'border',
+      width: 0.22,
+      heights: [{ sOffset: 0, inner: 0, outer: 0.12 }],
+      access: [],
+      boundaryMarkings: [{ id: 'left-curb-face', kind: 'curb', boundary: 'outer', width: 0.14 }],
+    });
+    lanes.push({
+      role: 'left-walk',
+      side: 'left',
+      order: drivingLeft + 2,
+      type: 'sidewalk',
+      width: 2.1,
+      level: true,
+      heights: [{ sOffset: 0, inner: 0.12, outer: 0.12 }],
+      access: ['pedestrian'],
+    });
+  }
+  for (let i = 1; i <= drivingRight; i += 1) {
+    lanes.push({
+      role: `forward-${i}`,
+      side: 'right',
+      order: i,
+      type: 'driving',
+      width,
+      access: ['car', 'bicycle', 'emergency'],
+    });
+  }
+  if (sidewalk) {
+    lanes.push({
+      role: 'right-curb',
+      side: 'right',
+      order: drivingRight + 1,
+      type: 'border',
+      width: 0.22,
+      heights: [{ sOffset: 0, inner: 0, outer: 0.12 }],
+      access: [],
+      boundaryMarkings: [{ id: 'right-curb-face', kind: 'curb', boundary: 'outer', width: 0.14 }],
+    });
+    lanes.push({
+      role: 'right-walk',
+      side: 'right',
+      order: drivingRight + 2,
+      type: 'sidewalk',
+      width: 2.1,
+      level: true,
+      heights: [{ sOffset: 0, inner: 0.12, outer: 0.12 }],
+      access: ['pedestrian'],
+    });
+  }
+  const rightDriving = lanes.filter((lane) => lane.type === 'driving' && lane.side === 'right');
+  const leftDriving = lanes.filter((lane) => lane.type === 'driving' && lane.side === 'left');
+  const twoWay = rightDriving.length > 0 && leftDriving.length > 0;
+  rightDriving.forEach((lane, index) => {
+    const kind = index === 0 ? (twoWay ? 'broken' : 'solid') : 'broken';
+    lane.boundaryMarkings = lane.boundaryMarkings || [];
+    lane.boundaryMarkings.push({
+      id: `${lane.role}-center`,
+      kind,
+      boundary: 'inner',
+      width: 0.12,
+      laneChange: kind === 'broken' ? 'both' : 'none',
+    });
+  });
+  leftDriving.forEach((lane, index) => {
+    if (index === 0) return;
+    lane.boundaryMarkings = lane.boundaryMarkings || [];
+    lane.boundaryMarkings.push({
+      id: `${lane.role}-line`,
+      kind: 'broken',
+      boundary: 'inner',
+      width: 0.12,
+      laneChange: 'both',
+    });
+  });
+  return lanes;
+}
+
+function roadTemplates() {
+  const templates = [
+    {
+      id: 'sf-local-2way',
+      name: 'Local two-way street',
+      designLimits: { designSpeedKph: 30, minimumHorizontalRadius: 4 },
+      lanes: makeLanes({ drivingLeft: 1, drivingRight: 1, width: 2.9 }),
+    },
+    {
+      id: 'sf-local-wide-2way',
+      name: 'Wide local two-way street',
+      designLimits: { designSpeedKph: 40, minimumHorizontalRadius: 6 },
+      lanes: makeLanes({ drivingLeft: 1, drivingRight: 2, width: 3.1 }),
+    },
+    {
+      id: 'sf-local-1way',
+      name: 'One-way local street',
+      designLimits: { designSpeedKph: 30, minimumHorizontalRadius: 4 },
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 1, width: 3 }),
+    },
+    {
+      id: 'sf-arterial-2way',
+      name: 'Arterial two-way avenue',
+      designLimits: { designSpeedKph: 50, minimumHorizontalRadius: 12 },
+      lanes: makeLanes({ drivingLeft: 2, drivingRight: 2, width: 3.2 }),
+    },
+    {
+      id: 'sf-arterial-1way',
+      name: 'One-way avenue',
+      designLimits: { designSpeedKph: 50, minimumHorizontalRadius: 12 },
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 3, width: 3.2 }),
+    },
+    {
+      id: 'sf-highway-2way',
+      name: 'Divided highway',
+      designLimits: { designSpeedKph: 90, minimumHorizontalRadius: 60 },
+      lanes: [
+        ...makeLanes({ drivingLeft: 3, drivingRight: 3, sidewalk: false, width: 3.5 }),
+      ],
+    },
+    {
+      id: 'sf-highway-1way',
+      name: 'One-way highway',
+      designLimits: { designSpeedKph: 90, minimumHorizontalRadius: 60 },
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 4, sidewalk: false, width: 3.5 }),
+    },
+    {
+      id: 'sf-walk',
+      name: 'Pedestrian path',
+      designLimits: { designSpeedKph: 10, minimumHorizontalRadius: 2 },
+      lanes: [
+        {
+          role: 'walk',
+          side: 'right',
+          order: 1,
+          type: 'sidewalk',
+          width: 2.4,
+          level: true,
+          heights: [{ sOffset: 0, inner: 0.1, outer: 0.1 }],
+          access: ['pedestrian'],
+        },
+      ],
+    },
+  ];
+  return templates;
+}
+
+function selectBuildings(regionBBox) {
+  const detailed = [];
+  for (const building of cityData.detailBuildings) {
+    const [x, z] = building.centroid;
+    if (x >= regionBBox.minX && x <= regionBBox.maxX && z >= regionBBox.minZ && z <= regionBBox.maxZ
+      && pointInRegion({ x, z })) {
+      detailed.push(building);
+    }
+  }
+  const coarse = [];
+  for (const building of cityData.coarseBuildings) {
+    const [x, z] = building.centroid;
+    if (x >= regionBBox.minX && x <= regionBBox.maxX && z >= regionBBox.minZ && z <= regionBBox.maxZ
+      && pointInRegion({ x, z })) {
+      coarse.push(building);
+      if (coarse.length >= 5000) break;
+    }
+  }
+  return { detailed, coarse };
+}
+
+function selectRoads(regionBBox) {
+  const selected = new Map();
+  const detailIds = new Set();
+  let detailCount = 0;
+  for (const road of cityData.detailRoads) {
+    if (!intersectsRegionBBox(road, regionBBox)) continue;
+    const points = roadPoints(road);
+    if (!points.some(pointInRegion)) continue;
+    selected.set(road.id, road);
+    detailIds.add(road.id);
+    detailCount += 1;
+    if (detailCount >= 1000) break;
+  }
+
+  let cityCount = 0;
+  for (const cls of ROAD_ORDER) {
+    if (selected.size >= 1500) break;
+    for (const road of cityData.roads) {
+      if (road.highway !== cls || detailIds.has(road.id) || selected.has(road.id)) continue;
+      if (!intersectsRegionBBox(road, regionBBox)) continue;
+      const points = roadPoints(road);
+      if (!points.some(pointInRegion)) continue;
+      selected.set(road.id, road);
+      cityCount += 1;
+      if (selected.size >= 1500) break;
+    }
+  }
+  return [...selected.values()];
+}
+
+function selectSignals(regionBBox) {
+  return cityData.signals.filter(([x, z]) => (
+    x >= regionBBox.minX && x <= regionBBox.maxX && z >= regionBBox.minZ && z <= regionBBox.maxZ
+    && pointInRegion({ x, z })
+  ));
+}
+
+function buildRoadDocument(selectedRoads) {
+  const templates = roadTemplates();
+  let document = createRoadAuthoringDocument({
+    id: 'sf-realmap',
+    name: 'San Francisco real map sandbox',
+  });
+  for (const template of templates) document = addRoadTemplate(document, template);
+
+  let skipped = 0;
+  for (const road of selectedRoads) {
+    const points = roadPoints(road);
+    if (points.length < 2) {
+      skipped += 1;
+      continue;
+    }
+    let totalLength = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      totalLength += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    if (totalLength < 32) {
+      skipped += 1;
+      continue;
+    }
+    const geometry = [];
+    let s = 0;
+    let valid = true;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.4) continue;
+      if (length > 320) {
+        // Long OSM ways are often freeway ramps with sparse nodes; split so the
+        // automatic junction resolver can still find crossing streets.
+        const steps = Math.ceil(length / 220);
+        for (let step = 0; step < steps; step += 1) {
+          const t0 = step / steps;
+          const t1 = (step + 1) / steps;
+          const ax = a.x + dx * t0;
+          const az = a.z + dz * t0;
+          const bx = a.x + dx * t1;
+          const bz = a.z + dz * t1;
+          const sx = bx - ax;
+          const sz = bz - az;
+          geometry.push(makeLineSegment(s, ax, az, Math.atan2(sz, sx), Math.hypot(sx, sz)));
+          s += Math.hypot(sx, sz);
+        }
+      } else {
+        geometry.push(makeLineSegment(s, a.x, a.z, Math.atan2(dz, dx), length));
+        s += length;
+      }
+    }
+    if (geometry.length === 0) {
+      skipped += 1;
+      continue;
+    }
+    document = addRoadStroke(document, {
+      id: `road-${road.id}`,
+      geometry,
+      templateSpans: [{ templateId: templateForRoad(road), s: 0 }],
+    });
+  }
+  return { document, skipped };
+}
+
+function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
+  let lastError = null;
+  if (depth > 5) {
+    throw new Error('Road graph could not converge for this boundary.');
+  }
+  const strategies = [
+    { splitInteriorCrossings: false, snapTolerance: 0.7, junctionPortalSetback: 7 },
+    { splitInteriorCrossings: false, snapTolerance: 0.5, junctionPortalSetback: 6 },
+    { splitInteriorCrossings: false, snapTolerance: 0.32, junctionPortalSetback: 5 },
+  ];
+  let splitRoads = splitRoadsAtJunctions(selectedRoads)
+    .filter((road) => !removed.has(`road-${road.id}`));
+
+  const culpritFrom = (message) => {
+    const tooShort = /Road ([\w-]+) is too short for its junction portal setbacks/.exec(message);
+    if (tooShort) return tooShort[1];
+    const duplicate = /Duplicate junction approach key ([\w-]+)/.exec(message);
+    if (duplicate) return duplicate[1];
+    return null;
+  };
+
+  const maxAttempts = 20;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let progressed = false;
+    for (const options of strategies) {
+      try {
+        const { document } = buildRoadDocument(splitRoads);
+        const automatic = resolveAutomaticNetwork(document, {
+          junctionIdPrefix: 'sf-auto',
+          ...options,
+        });
+        const compilation = compileRoadNetwork(automatic.document, { validationProfile: 'interactive' });
+        if (!compilation.ok) {
+          const critical = (compilation.diagnostics || []).filter((entry) => entry.severity === 'error');
+          if (critical.length > 0) {
+            lastError = new Error(`Road compiler rejected the region (${critical.length} diagnostics).`);
+            console.error('REALMAP_DIAGNOSTICS', critical.map((entry) => `${entry.code} ${entry.message}`).join('\n'));
+            const named = new Set();
+            for (const diagnostic of critical) {
+              for (const match of diagnostic.message.matchAll(/(?:road-|sf-auto\|)([\w-]+)/g)) {
+                named.add(`road-${match[1]}`);
+              }
+            }
+            let removedAny = false;
+            for (const id of named) {
+              if (splitRoads.some((road) => `road-${road.id}` === id)) {
+                removed.add(id);
+                splitRoads = splitRoads.filter((road) => `road-${road.id}` !== id);
+                removedAny = true;
+              }
+            }
+            if (removedAny) {
+              progressed = true;
+              break;
+            }
+            const shortest = [...splitRoads]
+              .sort((left, right) => roadLengthOf(left) - roadLengthOf(right))
+              .slice(0, 24);
+            for (const road of shortest) {
+              removed.add(`road-${road.id}`);
+              splitRoads = splitRoads.filter((candidate) => candidate.id !== road.id);
+            }
+            console.warn(`Dropped ${shortest.length} short roads to satisfy OSM junction diagnostics`);
+            progressed = true;
+            break;
+          }
+        }
+        return { compilation, roads: splitRoads };
+      } catch (error) {
+        lastError = error;
+        console.error('Road resolution strategy failed', options, error.message);
+        const culprit = culpritFrom(error.message);
+        if (culprit && splitRoads.length > 1) {
+          const before = splitRoads.length;
+          removed.add(culprit);
+          splitRoads = splitRoads.filter((road) => `road-${road.id}` !== culprit);
+          if (splitRoads.length < before) {
+            console.warn(`Removed ${culprit} to keep road compilation alive`);
+            progressed = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!progressed) break;
+  }
+
+  if (selectedRoads.length > 900) {
+    const robust = selectedRoads
+      .filter((road) => !removed.has(`road-${road.id}`))
+      .filter((road) => roadLengthOf(road) >= 24)
+      .sort((left, right) => roadLengthOf(right) - roadLengthOf(left))
+      .slice(0, 900);
+    if (robust.length === 0) {
+      throw lastError || new Error('No road remains long enough to build junction topology.');
+    }
+    console.warn(`Reducing road set from ${selectedRoads.length} to ${robust.length} for a robust build`);
+    return compileSafely(robust, removed, depth + 1);
+  }
+  throw lastError || new Error('Road graph could not be compiled for this boundary.');
+}
+
+function roadLengthOf(road) {
+  const points = roadPoints(road);
+  let length = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+  }
+  return length;
+}
+
+function toThreeCoordinates(source) {
+  const result = new Float32Array(source.length);
+  for (let i = 0; i < source.length; i += 3) {
+    result[i] = source[i];
+    result[i + 1] = source[i + 2];
+    result[i + 2] = source[i + 1];
+  }
+  return result;
+}
+
+function toThreeIndices(source) {
+  const result = source.slice();
+  for (let i = 0; i < result.length; i += 3) {
+    const second = result[i + 1];
+    result[i + 1] = result[i + 2];
+    result[i + 2] = second;
+  }
+  return result;
+}
+
+const roadSurfaceColors = {
+  road: 0x3a4148,
+  shoulder: 0x4c5155,
+  sidewalk: 0x9b9c96,
+  cycleway: 0x8e3434,
+  median: 0x596451,
+  border: 0x6f7478,
+};
+
+const roadMarkingColors = {
+  'marking-white': 0xeae8df,
+  'marking-yellow': 0xe6bd3c,
+  'marking-blue': 0x4389bd,
+  'marking-red': 0xb83d38,
+  'marking-none': 0x3a4148,
+};
+
+function makeRoadMaterial(materialClass) {
+  const isMarking = materialClass.startsWith('marking-');
+  const color = isMarking
+    ? roadMarkingColors[materialClass] || 0xeae8df
+    : roadSurfaceColors[materialClass] || 0x6f7478;
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness: isMarking ? 0.72 : 0.93,
+    metalness: 0,
+    polygonOffset: isMarking,
+    polygonOffsetFactor: isMarking ? -2 : 0,
+    polygonOffsetUnits: isMarking ? -2 : 0,
+  });
+  material.name = materialClass;
+  return material;
+}
+
+function indexedMeshToGeometries(sourceMesh) {
+  if (!sourceMesh?.positions?.length) return [];
+  const classRanges = new Map();
+  for (const range of sourceMesh.semanticRanges || []) {
+    const entry = classRanges.get(range.materialClass) || [];
+    entry.push(range);
+    classRanges.set(range.materialClass, entry);
+  }
+  const sourceIndices = toThreeIndices(sourceMesh.indices);
+  const results = [];
+  for (const [materialClass, ranges] of classRanges) {
+    const indexCount = ranges.reduce((sum, range) => sum + range.indexCount, 0);
+    const indices = new (sourceIndices instanceof Uint32Array ? Uint32Array : Uint16Array)(indexCount);
+    let offset = 0;
+    for (const range of ranges) {
+      indices.set(sourceIndices.subarray(range.indexStart, range.indexStart + range.indexCount), offset);
+      offset += range.indexCount;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(toThreeCoordinates(sourceMesh.positions), 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(toThreeCoordinates(sourceMesh.normals), 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(sourceMesh.uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    results.push({ geometry, materialClass });
+  }
+  return results;
+}
+
+function buildingColor(building) {
+  const cls = building.building || 'yes';
+  const height = Number(building.height) || 0;
+  if (height >= 80) return 0x5f6f82;
+  if (height >= 40) return 0x8895a3;
+  if (cls === 'retail' || cls === 'commercial' || cls === 'warehouse' || cls === 'industrial') return 0x8a7d68;
+  if (cls === 'civic' || cls === 'public' || cls === 'school' || cls === 'hospital') return 0x9a8f78;
+  if (cls === 'yes' || cls === 'residential' || cls === 'apartments') {
+    const hash = (Number(building.id) || 0) % 5;
+    const palette = [0x8f8d82, 0x967f6a, 0x7f8a83, 0xa08a77, 0x777f88];
+    return palette[hash];
+  }
+  return 0x7d8581;
+}
+
+function buildingRoofColor(building) {
+  const hash = (Number(building.id) || 0) % 7;
+  const palette = [0x565d60, 0x625650, 0x50585a, 0x6a5e52, 0x4c5559, 0x605a50, 0x575e5c];
+  return palette[hash];
+}
+
+function createDetailBuildingMesh(building, groundY = 0) {
+  const points = [];
+  for (let i = 0; i < building.points.length; i += 2) {
+    points.push(new THREE.Vector2(building.points[i], building.points[i + 1]));
+  }
+  if (points.length < 3) return null;
+  const shape = new THREE.Shape(points);
+  const height = Math.max(3, Math.min(Number(building.height) || 12, 320));
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: height,
+    bevelEnabled: false,
+    curveSegments: 1,
+  });
+  geometry.rotateX(Math.PI / 2);
+  geometry.translate(0, groundY + 0.15, 0);
+  const material = new THREE.MeshStandardMaterial({
+    color: buildingColor(building),
+    roughness: 0.82,
+    metalness: 0.05,
+    flatShading: true,
+  });
+  const roofMaterial = new THREE.MeshStandardMaterial({
+    color: buildingRoofColor(building),
+    roughness: 0.9,
+    metalness: 0,
+    flatShading: true,
+  });
+  const mesh = new THREE.Mesh(geometry, [material, roofMaterial]);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData = {
+    type: 'building',
+    building,
+    label: building.name || 'Unnamed building',
+  };
+  return mesh;
+}
+
+function createCoarseBuildings(buildings) {
+  const count = buildings.length;
+  if (count === 0) return { mesh: null, materials: [] };
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.85,
+    metalness: 0.04,
+    flatShading: true,
+  });
+  const mesh = new THREE.InstancedMesh(geometry, material, count);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  const seedRandom = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  for (let i = 0; i < count; i += 1) {
+    const building = buildings[i];
+    const height = Math.max(2.5, Math.min(Number(building.height) || 8, 280));
+    const size = Math.max(3.5, Math.min(Math.sqrt(building.area || 160), 42));
+    dummy.position.set(building.centroid[0], height / 2 + 0.15, building.centroid[1]);
+    dummy.rotation.set(0, seedRandom(building.id || i) * Math.PI, 0);
+    dummy.scale.set(size, height, size);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    color.set(buildingColor(building));
+    mesh.setColorAt(i, color);
+  }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.userData = { type: 'building-instances', buildings };
+  return { mesh, materials: [material] };
+}
+
+function createGround(regionPoints) {
+  const shape = new THREE.Shape();
+  for (let i = 0; i < regionPoints.length; i += 1) {
+    if (i === 0) shape.moveTo(regionPoints[i].x, regionPoints[i].z);
+    else shape.lineTo(regionPoints[i].x, regionPoints[i].z);
+  }
+  const geometry = new THREE.ShapeGeometry(shape, 1);
+  geometry.rotateX(Math.PI / 2);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xa8b59c,
+    roughness: 1,
+    metalness: 0,
+  });
+  const ground = new THREE.Mesh(geometry, material);
+  ground.position.y = -0.06;
+  ground.receiveShadow = true;
+  ground.userData = { type: 'ground' };
+  return ground;
+}
+
+function createWaterPlane(regionPoints) {
+  const bounds = bboxOfPoints(regionPoints);
+  const width = Math.max(bounds.maxX - bounds.minX, 800) + 900;
+  const height = Math.max(bounds.maxZ - bounds.minZ, 800) + 900;
+  const geometry = new THREE.PlaneGeometry(width, height);
+  geometry.rotateX(-Math.PI / 2);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x1c4a5c,
+    roughness: 0.25,
+    metalness: 0.15,
+  });
+  const water = new THREE.Mesh(geometry, material);
+  water.position.set(
+    (bounds.minX + bounds.maxX) / 2,
+    -0.35,
+    (bounds.minZ + bounds.maxZ) / 2,
+  );
+  water.userData = { type: 'water' };
+  return water;
+}
+
+function createSignalGroup(position, index) {
+  const group = new THREE.Group();
+  const poleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x31383d,
+    roughness: 0.6,
+    metalness: 0.55,
+  });
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 4.6, 8), poleMaterial);
+  pole.position.y = 2.3;
+  pole.castShadow = true;
+  group.add(pole);
+
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.12), poleMaterial);
+  arm.position.set(1.2, 4.35, 0);
+  arm.rotation.y = Math.atan2(position.z, position.x) * 0.15;
+  arm.castShadow = true;
+  group.add(arm);
+
+  const housing = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.86, 0.28),
+    new THREE.MeshStandardMaterial({ color: 0x171b1d, roughness: 0.4, metalness: 0.5 }),
+  );
+  housing.position.set(2.22, 3.45, 0);
+  group.add(housing);
+
+  const lamps = [];
+  const lampColors = [0xff4747, 0xffb027, 0x43d17a];
+  const lampMaterial = new THREE.MeshStandardMaterial({
+    color: 0x22262a,
+    emissive: 0x000000,
+    emissiveIntensity: 1,
+    roughness: 0.3,
+  });
+  for (let i = 0; i < 3; i += 1) {
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.105, 10, 8), lampMaterial.clone());
+    lamp.position.set(2.22, 3.72 - i * 0.28, 0.17);
+    lamp.userData = { colorIndex: i, lampColor: lampColors[i] };
+    group.add(lamp);
+    lamps.push(lamp);
+  }
+  group.position.set(position[0], 0, position[1]);
+  group.userData = {
+    type: 'signal',
+    signal: { position, index },
+    offset: ((position[0] * 0.041 + position[1] * 0.027) % SIGNAL_PERIOD + SIGNAL_PERIOD) % SIGNAL_PERIOD,
+    lamps,
+  };
+  return group;
+}
+
+function createOneWayArrows(roads) {
+  const arrows = [];
+  const arrowGeometry = new THREE.ConeGeometry(0.5, 1.1, 3);
+  const arrowMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd9d6c4,
+    roughness: 0.5,
+    metalness: 0.05,
+  });
+  const up = new THREE.Vector3(0, 1, 0);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color(0xd9d6c4);
+  for (const road of roads) {
+    if (!road.oneway) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    const step = 22;
+    const count = Math.max(1, Math.floor(length / step));
+    for (let c = 0; c < count; c += 1) {
+      const target = ((c + 0.5) / count) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength >= target) {
+          const t = segLength > 0 ? (target - walked) / segLength : 0;
+          const px = a.x + (b.x - a.x) * t;
+          const pz = a.z + (b.z - a.z) * t;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const direction = new THREE.Vector3(dx, 0, dz).normalize();
+          arrows.push({
+            road,
+            position: new THREE.Vector3(px, 0.11, pz),
+            direction,
+          });
+          break;
+        }
+        walked += segLength;
+      }
+    }
+  }
+  const mesh = new THREE.InstancedMesh(arrowGeometry, arrowMaterial, arrows.length);
+  for (let i = 0; i < arrows.length; i += 1) {
+    dummy.position.copy(arrows[i].position);
+    dummy.quaternion.setFromUnitVectors(up, arrows[i].direction);
+    dummy.scale.set(1.15, 0.22, 1.15);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, color);
+  }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function buildPaths(roads) {
+  const paths = [];
+  const vehicleClasses = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service']);
+  for (const road of roads) {
+    if (!vehicleClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    const length = points.slice(0, -1).reduce((sum, a, i) => sum + Math.hypot(points[i + 1].x - a.x, points[i + 1].z - a.z), 0);
+    if (length < 14) continue;
+    const direction = road.oneway ? [1] : [1, -1];
+    for (const dir of direction) {
+      const ordered = dir === 1 ? points : [...points].reverse();
+      paths.push({
+        id: `p-${road.id}-${dir}`,
+        road,
+        points: ordered,
+        length,
+        dir,
+        signalStops: [],
+      });
+    }
+  }
+  return paths;
+}
+
+function connectPaths(paths) {
+  const startIndex = new Map();
+  for (let i = 0; i < paths.length; i += 1) {
+    const path = paths[i];
+    const key = `${Math.round(path.points[0].x / 2)},${Math.round(path.points[0].z / 2)}`;
+    const bucket = startIndex.get(key) || [];
+    bucket.push(i);
+    startIndex.set(key, bucket);
+  }
+  for (const path of paths) {
+    const end = path.points[path.points.length - 1];
+    const candidates = [];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const key = `${Math.round(end.x / 2) + dx},${Math.round(end.z / 2) + dz}`;
+        const bucket = startIndex.get(key);
+        if (bucket) candidates.push(...bucket);
+      }
+    }
+    const unique = [...new Set(candidates)];
+    path.next = unique;
+  }
+}
+
+function createVehicle(color, variant) {
+  const group = new THREE.Group();
+  const bodyColor = new THREE.Color(color);
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: bodyColor,
+    roughness: 0.35,
+    metalness: 0.55,
+    flatShading: true,
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1b1f22,
+    roughness: 0.6,
+    metalness: 0.3,
+    flatShading: true,
+  });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.55, 4.3), bodyMaterial);
+  body.position.y = 0.55;
+  body.castShadow = true;
+  group.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.5, 2.1), darkMaterial);
+  cabin.position.set(0, 1.02, variant === 'truck' ? 0 : -0.25);
+  cabin.castShadow = true;
+  group.add(cabin);
+  if (variant === 'truck') {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.1, 2.4), bodyMaterial);
+    box.position.set(0, 1.15, 0.85);
+    box.castShadow = true;
+    group.add(box);
+  }
+  for (const [wx, wz] of [[-0.92, 1.25], [0.92, 1.25], [-0.92, -1.25], [0.92, -1.25]]) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.18, 8), darkMaterial);
+    wheel.rotation.x = Math.PI / 2;
+    wheel.position.set(wx, 0.32, wz);
+    group.add(wheel);
+  }
+  const headlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffe7b0,
+    emissive: 0xffd98a,
+    emissiveIntensity: 0.5,
+  });
+  const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.08), headlightMaterial);
+  headlight.position.set(0, 0.72, -2.16);
+  group.add(headlight);
+  return group;
+}
+
+function buildTraffic(selectedRoads, signals) {
+  const paths = buildPaths(selectedRoads);
+  connectPaths(paths);
+  for (const path of paths) {
+    for (const [sx, sz] of signals) {
+      const point = { x: sx, z: sz };
+      let best = Infinity;
+      let bestS = -1;
+      for (let i = 0; i < path.points.length - 1; i += 1) {
+        const a = path.points[i];
+        const b = path.points[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const segLength = Math.hypot(dx, dz);
+        if (segLength === 0) continue;
+        const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / (segLength * segLength)));
+        const px = a.x + dx * t;
+        const pz = a.z + dz * t;
+        const distance = Math.hypot(px - point.x, pz - point.z);
+        if (distance < 9 && distance < best) {
+          best = distance;
+          bestS = i + t;
+        }
+      }
+      if (bestS >= 0) path.signalStops.push({ s: bestS, offset: ((sx * 0.041 + sz * 0.027) % SIGNAL_PERIOD + SIGNAL_PERIOD) % SIGNAL_PERIOD });
+    }
+  }
+  const colors = [0xd84a3a, 0x2f6fb5, 0xe0b32e, 0x4a9e77, 0xdfe1e4, 0x8e5a9e, 0xc98a3d, 0x3f8f8f];
+  const variants = ['car', 'sedan', 'truck', 'taxi'];
+  const vehicles = [];
+  const count = Math.min(90, Math.max(24, Math.floor(paths.length * 0.06)));
+  for (let i = 0; i < count; i += 1) {
+    if (paths.length === 0) break;
+    const path = paths[i % paths.length];
+    const mesh = createVehicle(colors[i % colors.length], variants[i % variants.length]);
+    vehicles.push({
+      mesh,
+      path,
+      s: (i / count) * path.length,
+      speed: 0,
+      targetSpeed: 6.5 + ((i * 7919) % 40) / 10,
+      maxSpeed: 11,
+      stopped: false,
+    });
+  }
+  return { vehicles, paths };
+}
+
+function createRoadMeshes(compilation) {
+  const arrowFreeNetwork = {
+    ...compilation.network,
+    roads: compilation.network.roads.map((road) => ({
+      ...road,
+      markings: (road.markings || []).filter((marking) => marking.kind !== 'arrow'),
+    })),
+  };
+  let surface;
+  try {
+    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
+      maxSegmentLength: 4,
+      maxChordError: 0.02,
+      junctionTessellationStep: 1.6,
+    });
+  } catch (error) {
+    console.error('Road surface mesher failed on dense profile', error.message);
+    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
+      maxSegmentLength: 6,
+      maxChordError: 0.03,
+      junctionTessellationStep: 2.4,
+    });
+  }
+  let bundle;
+  try {
+    bundle = meshRoadSurfaceModel(surface);
+  } catch (error) {
+    console.error('Whole-model mesh failed, retrying without junction patches', error.message);
+    surface.junctionPatches = [];
+    surface.decals = [];
+    surface.markings = (surface.markings || []).filter((marking) => {
+      const owner = String(marking.ownerId || '');
+      return !owner.startsWith('junction') && !owner.startsWith('sf-auto');
+    });
+    bundle = meshRoadSurfaceModel(surface);
+  }
+  const group = new THREE.Group();
+  const surfaceParts = indexedMeshToGeometries(bundle.surface);
+  for (const part of surfaceParts) {
+    const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = `Real map road surface ${part.materialClass}`;
+    group.add(mesh);
+  }
+  if (bundle.markings.positions.length > 0) {
+    const markingParts = indexedMeshToGeometries(bundle.markings);
+    for (const part of markingParts) {
+      const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
+      mesh.name = `Real map road markings ${part.materialClass}`;
+      group.add(mesh);
+    }
+  }
+  group.userData = { type: 'roads', compilation };
+  return group;
+}
+
+let renderer;
+let scene;
+let camera;
+let controls;
+let sun;
+let cityRoot;
+let trafficState = null;
+let signalGroups = [];
+let coarseBuildingMesh = null;
+let detailBuildingMeshes = [];
+let roadMeshes = null;
+let selectedRoadsForHit = [];
+let frameTime = 0;
+let fpsSamples = [];
+let lastFrameTime = performance.now();
+const moveKeys = new Set();
+
+function setupScene() {
+  const context = sceneCanvas.getContext('webgl2', {
+    alpha: false,
+    antialias: true,
+    powerPreference: 'high-performance',
+    preserveDrawingBuffer: true,
+  });
+  if (!context) {
+    setBuildProgress('ERROR', 'WebGL2 is required for the 3D sandbox.', 1);
+    throw new Error('WebGL2 unavailable');
+  }
+  renderer = new THREE.WebGLRenderer({ canvas: sceneCanvas, context });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.18;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xb9d0da);
+  scene.fog = new THREE.Fog(0xc2d4dc, 220, 1150);
+
+  const hemisphere = new THREE.HemisphereLight(0xcfe5f0, 0x635f4e, 1.05);
+  scene.add(hemisphere);
+
+  sun = new THREE.DirectionalLight(0xffd9a8, 3.05);
+  sun.position.set(420, 620, 380);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -420;
+  sun.shadow.camera.right = 420;
+  sun.shadow.camera.top = 420;
+  sun.shadow.camera.bottom = -420;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 1600;
+  sun.shadow.bias = -0.00022;
+  sun.shadow.normalBias = 0.04;
+  sun.shadow.radius = 3;
+  scene.add(sun);
+
+  camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 1, 2600);
+  controls = new OrbitControls(camera, sceneCanvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI / 2 - 0.04;
+  controls.minDistance = 6;
+  controls.maxDistance = 1800;
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+function updateSignals(time) {
+  for (const group of signalGroups) {
+    const data = group.userData;
+    const phase = signalPhaseAt(0, time, data.offset);
+    for (const lamp of data.lamps) {
+      const colorIndex = lamp.userData.colorIndex;
+      const active = phase === 'green' ? colorIndex === 2
+        : phase === 'yellow' ? colorIndex === 1
+          : colorIndex === 0;
+      lamp.material.emissive.set(active ? lamp.userData.lampColor : 0x000000);
+      lamp.material.color.set(active ? lamp.userData.lampColor : 0x22262a);
+    }
+  }
+}
+
+function pathPosition(path, s) {
+  const clamped = Math.max(0, Math.min(path.length - 0.01, s));
+  let walked = 0;
+  for (let i = 0; i < path.points.length - 1; i += 1) {
+    const a = path.points[i];
+    const b = path.points[i + 1];
+    const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+    if (walked + segLength >= clamped) {
+      const t = segLength > 0 ? (clamped - walked) / segLength : 0;
+      return {
+        position: new THREE.Vector3(a.x + (b.x - a.x) * t, 0.16, a.z + (b.z - a.z) * t),
+        heading: Math.atan2(b.z - a.z, b.x - a.x),
+      };
+    }
+    walked += segLength;
+  }
+  const a = path.points[path.points.length - 2];
+  const b = path.points[path.points.length - 1];
+  return {
+    position: new THREE.Vector3(b.x, 0.16, b.z),
+    heading: Math.atan2(b.z - a.z, b.x - a.x),
+  };
+}
+
+function updateTraffic(dt, time) {
+  if (!trafficState) return;
+  for (const vehicle of trafficState.vehicles) {
+    const path = vehicle.path;
+    let target = vehicle.targetSpeed;
+    let stopAt = Infinity;
+    for (const stop of path.signalStops) {
+      if (stop.s > vehicle.s && stop.s - vehicle.s < 14) {
+        const phase = signalPhaseAt(0, time, stop.offset);
+        if (phase === 'red') {
+          stopAt = stop.s - 2.2;
+          target = 0;
+          break;
+        }
+      }
+    }
+    if (!Number.isFinite(stopAt)) {
+      const lookahead = path.points[path.points.length - 1];
+      const distanceToEnd = path.length - vehicle.s;
+      if (distanceToEnd < 12) target = Math.min(target, 4 + distanceToEnd * 0.45);
+    }
+    const acceleration = target > vehicle.speed ? 2.4 : -5.2;
+    vehicle.speed = THREE.MathUtils.clamp(vehicle.speed + acceleration * dt, 0, vehicle.maxSpeed);
+    vehicle.s = Math.min(vehicle.s + vehicle.speed * dt, path.length);
+
+    if (vehicle.s >= path.length - 0.05) {
+      const end = path.points[path.points.length - 1];
+      const heading = vehicle.path.points.length > 1
+        ? Math.atan2(end.z - path.points[path.points.length - 2].z, end.x - path.points[path.points.length - 2].x)
+        : 0;
+      let bestNext = null;
+      let bestScore = -Infinity;
+      for (const nextIndex of path.next || []) {
+        const next = trafficState.paths[nextIndex];
+        if (!next) continue;
+        const nextStart = next.points[0];
+        if (Math.hypot(nextStart.x - end.x, nextStart.z - end.z) > 4) continue;
+        const nextHeading = next.points.length > 1
+          ? Math.atan2(next.points[1].z - nextStart.z, next.points[1].x - nextStart.x)
+          : 0;
+        let turn = Math.abs(heading - nextHeading);
+        turn = Math.min(turn, Math.PI * 2 - turn);
+        const score = -turn + Math.random() * 0.4;
+        if (score > bestScore) {
+          bestScore = score;
+          bestNext = next;
+        }
+      }
+      if (bestNext) {
+        vehicle.path = bestNext;
+        vehicle.s = 0;
+      } else {
+        vehicle.s = 0.5;
+      }
+    }
+
+    const state = pathPosition(vehicle.path, vehicle.s);
+    vehicle.mesh.position.copy(state.position);
+    vehicle.mesh.rotation.set(0, state.heading, 0);
+  }
+}
+
+function updateReadout3d() {
+  const info = renderer.info.render;
+  fpsSamples.push(performance.now());
+  while (fpsSamples.length && fpsSamples[0] < performance.now() - 1000) fpsSamples.shift();
+  const fps = fpsSamples.length;
+  readoutVertices.textContent = `${fps} FPS`;
+  readoutArea.textContent = `${formatNumber(info.calls)} draw calls`;
+  readoutSelected.textContent = `${formatNumber(info.triangles)} tris`;
+}
+
+function renderLoop() {
+  if (!renderer || !scene || !camera) {
+    requestAnimationFrame(renderLoop);
+    return;
+  }
+  const now = performance.now();
+  const dt = Math.min(0.05, Math.max(0.001, (now - lastFrameTime) / 1000));
+  lastFrameTime = now;
+  const time = performance.now() / 1000;
+  updateSignals(time);
+  updateTraffic(dt, time);
+  const moveSpeed = 46;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const move = new THREE.Vector3();
+  if (moveKeys.has('w')) move.add(forward);
+  if (moveKeys.has('s')) move.sub(forward);
+  if (moveKeys.has('d')) move.add(right);
+  if (moveKeys.has('a')) move.sub(right);
+  if (move.lengthSq() > 0) {
+    move.normalize().multiplyScalar(moveSpeed * dt);
+    controls.target.add(move);
+    camera.position.add(move);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  updateReadout3d();
+  requestAnimationFrame(renderLoop);
+}
+
+let threeDControlsBound = false;
+
+function setup3DControls() {
+  window.addEventListener('keydown', (event) => {
+    moveKeys.add(event.key.toLowerCase());
+    if (event.key === 'h') hud.inert = !hud.inert;
+  });
+  window.addEventListener('keyup', (event) => moveKeys.delete(event.key.toLowerCase()));
+  sceneCanvas.addEventListener('mousemove', (event) => {
+    if (moveKeys.size) return;
+    const rect = sceneCanvas.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, camera);
+    const objects = [];
+    if (coarseBuildingMesh) objects.push(coarseBuildingMesh);
+    objects.push(...detailBuildingMeshes);
+    objects.push(...signalGroups);
+    if (roadMeshes) objects.push(...roadMeshes.children);
+    const hits = raycaster.intersectObjects(objects, false);
+    sceneCanvas.style.cursor = hits.length ? 'pointer' : 'grab';
+  });
+
+  sceneCanvas.addEventListener('click', (event) => {
+    const rect = sceneCanvas.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, camera);
+    const objects = [];
+    if (coarseBuildingMesh) objects.push(coarseBuildingMesh);
+    objects.push(...detailBuildingMeshes);
+    objects.push(...signalGroups);
+    if (roadMeshes) objects.push(...roadMeshes.children);
+    const hits = raycaster.intersectObjects(objects, false);
+    if (hits.length) {
+      const hit = hits[0];
+      if (hit.object.userData?.type === 'building') {
+        showInspector('Building', hit.object.userData.building);
+      } else if (hit.object.userData?.type === 'signal') {
+        showInspector('Traffic signal', hit.object.userData.signal);
+      } else if (hit.object.userData?.type === 'building-instances' && Number.isInteger(hit.instanceId)) {
+        const building = coarseBuildingMesh.userData.buildings[hit.instanceId];
+        showInspector('Building', building);
+      } else {
+        const point = hit.point;
+        const road = findNearestRoad(point);
+        if (road) showInspector('Street', road);
+      }
+    }
+  });
+}
+
+function findNearestRoad(point) {
+  let best = null;
+  let bestDistance = 8;
+  for (const road of selectedRoadsForHit) {
+    const points = roadPoints(road);
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const segLengthSq = dx * dx + dz * dz;
+      const t = segLengthSq > 0 ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / segLengthSq)) : 0;
+      const distance = Math.hypot(point.x - (a.x + dx * t), point.z - (a.z + dz * t));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = road;
+      }
+    }
+  }
+  return best;
+}
+
+function showInspector(type, data) {
+  inspectorTitle.textContent = type;
+  const fields = [];
+  if (type === 'Building') {
+    fields.push(['Name', data.name || 'Unnamed building']);
+    fields.push(['Address', data.addr || '—']);
+    fields.push(['Building type', data.building || 'yes']);
+    fields.push(['Amenity', data.amenity || '—']);
+    fields.push(['Height', `${formatNumber(Number(data.height) || 0, 1)} m`]);
+    fields.push(['Levels', formatNumber(data.levels || 1)]);
+    fields.push(['Footprint', `${formatNumber(data.area || 0)} m²`]);
+    fields.push(['OSM way', String(data.id)]);
+  } else if (type === 'Traffic signal') {
+    fields.push(['Position', `${data.position[0].toFixed(1)}, ${data.position[1].toFixed(1)}`]);
+    fields.push(['SFMTA signal', 'OSM traffic_signals node']);
+    fields.push(['Phase', 'Shared 25.8 s cycle']);
+  } else if (type === 'Street') {
+    fields.push(['Name', data.name || 'Unnamed street']);
+    fields.push(['Class', data.highway || '—']);
+    fields.push(['One way', data.oneway ? 'Yes' : 'No']);
+    fields.push(['Lanes', String(data.lanes || 1)]);
+    fields.push(['Max speed', data.maxspeed || '—']);
+    fields.push(['Surface', data.surface || '—']);
+    fields.push(['Sidewalk', data.sidewalk || '—']);
+    fields.push(['Bridge', data.bridge ? 'Yes' : 'No']);
+    fields.push(['Tunnel', data.tunnel ? 'Yes' : 'No']);
+    fields.push(['OSM way', String(data.id)]);
+  }
+  inspectorFields.innerHTML = '';
+  for (const [label, value] of fields) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    inspectorFields.append(dt, dd);
+  }
+  inspector.hidden = false;
+}
+
+async function buildCity() {
+  const buildButton = document.querySelector('[data-action="build"]');
+  buildButton.disabled = true;
+  buildOverlay.hidden = false;
+  const flat = flatRegion();
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < flat.length; i += 2) {
+    minX = Math.min(minX, flat[i]);
+    maxX = Math.max(maxX, flat[i]);
+    minZ = Math.min(minZ, flat[i + 1]);
+    maxZ = Math.max(maxZ, flat[i + 1]);
+  }
+  const regionBBox = { minX, minZ, maxX, maxZ };
+
+  try {
+    setBuildProgress('SELECTING', 'Finding real streets, blocks, and signals in your boundary…', 0.04);
+    await tick();
+    const selectedRoads = selectRoads(regionBBox);
+    const buildings = selectBuildings(regionBBox);
+    const signals = selectSignals(regionBBox);
+    const regionPoints = region.map(({ x, z }) => ({ x, z }));
+    readoutSelected.textContent = `${formatNumber(selectedRoads.length)} roads / ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings / ${formatNumber(signals.length)} signals`;
+
+    setBuildProgress('MESHING', 'Compiling lane-level road surfaces and junctions…', 0.16);
+    await tick();
+    const { compilation, roads: usedRoads } = compileSafely(selectedRoads);
+    setBuildProgress('MESHING', 'Resolving intersections and turn topology…', 0.3);
+    await tick();
+    selectedRoadsForHit = usedRoads;
+
+    if (!scene) {
+      setupScene();
+      if (!threeDControlsBound) {
+        setup3DControls();
+        threeDControlsBound = true;
+      }
+    }
+    if (cityRoot) {
+      scene.remove(cityRoot);
+      disposeRoot(cityRoot);
+    }
+    cityRoot = new THREE.Group();
+    cityRoot.name = 'Real map generated city';
+    scene.add(cityRoot);
+
+    setBuildProgress('TERRAIN', 'Laying the land slab and bay water…', 0.4);
+    await tick();
+    cityRoot.add(createWaterPlane(regionPoints));
+    cityRoot.add(createGround(regionPoints));
+
+    setBuildProgress('ROADS', 'Generating asphalt, markings, and sidewalks from OSM…', 0.5);
+    await tick();
+    roadMeshes = createRoadMeshes(compilation);
+    cityRoot.add(roadMeshes);
+    setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
+    await tick();
+    detailBuildingMeshes = [];
+    for (const building of buildings.detailed) {
+      const mesh = createDetailBuildingMesh(building);
+      if (mesh) {
+        detailBuildingMeshes.push(mesh);
+        cityRoot.add(mesh);
+      }
+    }
+    const coarse = createCoarseBuildings(buildings.coarse);
+    coarseBuildingMesh = coarse.mesh;
+    if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
+
+    setBuildProgress('SIGNALS', 'Hanging traffic lights at real signal nodes…', 0.78);
+    await tick();
+    signalGroups = [];
+    for (let i = 0; i < signals.length; i += 1) {
+      const group = createSignalGroup(signals[i], i);
+      signalGroups.push(group);
+      cityRoot.add(group);
+    }
+
+    setBuildProgress('FLOW', 'Painting one-way arrows and starting traffic…', 0.9);
+    await tick();
+    cityRoot.add(createOneWayArrows(usedRoads));
+    trafficState = buildTraffic(usedRoads, signals);
+    for (const vehicle of trafficState.vehicles) cityRoot.add(vehicle.mesh);
+
+    const centroid = polygonCentroid(regionPoints);
+    controls.target.set(centroid.x, 0, centroid.z);
+    camera.position.set(centroid.x - 170, 190, centroid.z - 210);
+    sun.position.set(centroid.x + 420, 620, centroid.z + 380);
+    sun.target.position.set(centroid.x, 0, centroid.z);
+    sun.target.updateMatrixWorld();
+    controls.update();
+
+    setBuildProgress('DONE', `City ready · ${formatNumber(usedRoads.length)} streets · ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings`, 1);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    buildOverlay.hidden = true;
+    document.body.classList.add('is-city');
+    document.querySelector('[data-action="back"]').hidden = false;
+    document.querySelector('[data-action="build"]').hidden = true;
+    modeLabel.textContent = 'Exploring generated city';
+    hint.textContent = 'Drag orbit · scroll zoom · WASD pan · click buildings, streets, or signals for OSM metadata';
+  } catch (error) {
+    console.error(error);
+    setBuildProgress('ERROR', error.message || String(error), 1);
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+    buildOverlay.hidden = true;
+    buildButton.disabled = false;
+  }
+}
+
+function disposeRoot(root) {
+  root.traverse((object) => {
+    if (object.geometry) object.geometry.dispose();
+    const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+    for (const material of materials) material.dispose();
+  });
+  root.clear();
+}
+
+function start() {
+  resize();
+  window.addEventListener('resize', () => {
+    resize();
+    if (renderer) {
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    }
+  });
+  setupMapInteractions();
+  setupToolbar();
+  loadCity();
+
+  launchButton.addEventListener('click', () => {
+    bootOverlay.classList.add('is-dismissed');
+    hud.inert = false;
+    scheduleMapDraw();
+  });
+  requestAnimationFrame(drawMap);
+
+  window.__SF_REALMAP__ = {
+    getData: () => cityData,
+    getRegion: () => region,
+    setRegion: (points) => setRegion(points),
+    applyPreset: (name) => applyPreset(name),
+    build: () => buildCity().catch((error) => {
+      console.error('Real map build rejected', error);
+      return { error: error.message || String(error) };
+    }),
+    getBuildState: () => ({
+      isCity: document.body.classList.contains('is-city'),
+      buildOverlayHidden: buildOverlay.hidden,
+      selectedRoads: selectedRoadsForHit.length,
+      signals: signalGroups.length,
+      traffic: trafficState?.vehicles.length || 0,
+      renderer: renderer ? {
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+      } : null,
+    }),
+    showInspector,
+  };
+  renderLoop();
+}
+
+start();

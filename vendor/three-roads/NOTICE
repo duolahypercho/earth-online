@@ -1,0 +1,8 @@
+This package includes a TypeScript adaptation of the Delaunator advancing-hull Delaunay algorithm.
+
+Delaunator
+Copyright (c) 2017, Vladimir Agafonkin
+License: ISC
+Repository: https://github.com/mapbox/delaunator
+
+The adaptation in src/delaunator_backend.ts is vendored to avoid runtime dependencies and is modified to use this package's coordinate-form adaptive predicates plus a dynamically sized legalization stack.

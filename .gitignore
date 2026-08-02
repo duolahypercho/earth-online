@@ -25,3 +25,7 @@ dist/
 .vite/
 .qa-*
 .qa-playwright-profile-*/
+public/data/sf/*.json
+public/data/sf/*.json.gz
+public/data/sf/*.geojson
+public/data/sf/*.pbf

@@ -53,6 +53,17 @@ large geospatial records, prefer the portal's bulk GeoJSON/geospatial export
 over unbounded `$offset` pagination. Archive the original response before
 normalization. Never make the game client depend directly on Socrata.
 
+The shoreline asset's direct geospatial export is currently served from the
+dataset's modifying view `txuc-3kzm`, not the public dataset id:
+
+```text
+https://data.sfgov.org/api/geospatial/txuc-3kzm?method=export&format=GeoJSON
+```
+
+`scripts/build-realmap-assets.mjs` uses this endpoint, records it in
+`meta.sources`, and projects it into the same local metre frame as the OSM
+atlas so the game can draw the actual city/county boundary.
+
 ### Terrain: USGS 3DEP
 
 Use the [USGS National Map Downloader](https://apps.nationalmap.gov/downloader/)
@@ -186,6 +197,20 @@ public/data/city/
 ```
 
 Raw source data should normally remain outside the production web bundle.
+
+The shipped sandbox uses a compact `public/data/sf/sf-city.json.gz`
+(git-ignored) produced from the atlas and shoreline. It keeps roads, building
+footprints plus coarse massing centroids, signals, and the boundary rings as
+flat arrays so the browser can decode and clip them without shipping the
+66 MB atlas. The generated file carries source URLs, licenses, attribution,
+and SHA-256 digests in `meta.sources`.
+
+`three-roads` is vendored under `vendor/three-roads/` and is the lane/junction
+mesher for the real-map sandbox. Road strokes come from OSM ways; templates
+carry driving, curb, and sidewalk lanes; the automatic junction resolver is
+run with our own OSM-aware endpoint splitting, and arrow markings are stripped
+before meshing because dense real-world intersections can produce degenerate
+arrow decals.
 
 ## Streaming manifest contract
 
