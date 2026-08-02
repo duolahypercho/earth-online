@@ -109,30 +109,30 @@ try {
   );
   await page.waitForTimeout(2600);
   await page.screenshot({ path: '.qa-realmap-city.png' });
-  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1500, 26, 1700],
-    target: [1620, 20, 1600],
-  }));
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    window.__SF_REALMAP__.setCameraPose(poses.hero);
+  });
   await page.waitForTimeout(400);
   await page.screenshot({ path: '.qa-realmap-hero.png' });
-  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1780, 34, 1760],
-    target: [1900, 26, 1580],
-  }));
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    window.__SF_REALMAP__.setCameraPose(poses.canyon);
+  });
   await page.waitForTimeout(400);
   await page.screenshot({ path: '.qa-realmap-canyon.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(350);
-  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1780, 34, 1760],
-    target: [1900, 26, 1580],
-  }));
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    window.__SF_REALMAP__.setCameraPose(poses.canyon);
+  });
   await page.waitForTimeout(300);
   await page.screenshot({ path: '.qa-realmap-hero-beauty.png' });
-  await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1500, 26, 1700],
-    target: [1620, 20, 1600],
-  }));
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    window.__SF_REALMAP__.setCameraPose(poses.hero);
+  });
   await page.waitForTimeout(300);
   await page.screenshot({ path: '.qa-realmap-canyon-beauty.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
@@ -369,7 +369,30 @@ try {
         if (elevation > best.elevation) best = { x, z, elevation };
       }
     }
-    return best;
+    // Prefer a high point that is inside a dense vegetation patch instead of
+    // the bare summit. This keeps the critic frame honest about the hillside.
+    let vegBest = { ...best, vegetation: 0 };
+    const step = Math.max(1, Math.floor((maxX - minX) / 48));
+    for (let zi = 0; zi <= 48; zi += 1) {
+      for (let xi = 0; xi <= 48; xi += 1) {
+        const x = minX + (maxX - minX) * (xi / 48);
+        const z = minZ + (maxZ - minZ) * (zi / 48);
+        const elevation = lab.getElevationAt(x, z);
+        if (elevation < 70) continue;
+        let vegetation = 0;
+        for (let dz = -2; dz <= 2; dz += 1) {
+          for (let dx = -2; dx <= 2; dx += 1) {
+            const nx = x + dx * step;
+            const nz = z + dz * step;
+            if (lab.getElevationAt(nx, nz) > 70) vegetation += 1;
+          }
+        }
+        if (vegetation > vegBest.vegetation) {
+          vegBest = { x, z, elevation, vegetation };
+        }
+      }
+    }
+    return vegBest;
   });
   const hillThreshold = presetName === 'city' ? 120 : 40;
   check(`Hill probe found a real SF high point (${presetName})`, Number(highPoint?.elevation || 0) > hillThreshold, {
