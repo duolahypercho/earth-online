@@ -289,8 +289,12 @@ try {
   }
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('drizzle'));
   await page.evaluate(() => {
-    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
-    window.__SF_REALMAP__.setCameraPose(poses.street || poses.hero);
+    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().hero;
+    window.__SF_REALMAP__.setCameraPose({
+      ...pose,
+      position: [pose.position[0], 170, pose.position[2]],
+      target: pose.target,
+    });
   });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(650);

@@ -1507,12 +1507,16 @@ function proceduralSurfaceMap(kind, size = 256) {
         imageData.data[i + 1] = value;
         imageData.data[i + 2] = value;
       } else {
-        const brick = ((Math.floor(x / 18) + Math.floor(y / 10)) % 2) === 0;
-        const mortar = noise > 0.92 ? 200 : 0;
-        const base = brick ? 132 + noise * 28 : 118 + noise * 18;
-        imageData.data[i] = mortar || base + 8;
-        imageData.data[i + 1] = mortar || base - 6;
-        imageData.data[i + 2] = mortar || base - 14;
+        const brickX = Math.floor(x / 14);
+        const brickY = Math.floor(y / 8);
+        const brick = ((brickX + brickY) % 2) === 0;
+        const edgeX = (x % 14) < 1 || (x % 14) > 12;
+        const edgeY = (y % 8) < 1 || (y % 8) > 6;
+        const mortar = edgeX || edgeY || noise > 0.88;
+        const base = brick ? 148 + noise * 22 : 128 + noise * 16;
+        imageData.data[i] = mortar ? 218 + noise * 18 : base + 10;
+        imageData.data[i + 1] = mortar ? 212 + noise * 16 : base - 4;
+        imageData.data[i + 2] = mortar ? 200 + noise * 14 : base - 18;
       }
       imageData.data[i + 3] = 255;
     }
@@ -1545,6 +1549,7 @@ function loadSandboxTextures() {
   sandboxTextureCache.asphaltNormal = proceduralSurfaceMap('asphalt-normal');
   sandboxTextureCache.asphaltRoughness = proceduralSurfaceMap('asphalt-roughness');
   sandboxTextureCache.brickSidewalk = proceduralSurfaceMap('brick');
+  sandboxTextureCache.brickSidewalk.repeat.set(24, 24);
 }
 
 function buildingFacadeStyle(building) {
@@ -1574,12 +1579,12 @@ function facadeWindowTexture(seed, style = 'plaster') {
   const context = canvas.getContext('2d');
   const variant = seed % 6;
   const palettes = {
-    victorian: { base: '#8a7d6d', trim: '#4f4638', sash: '#2f2820', glass: ['#c9d8c4', '#b8c9bf', '#95a8b0'] },
-    edwardian: { base: '#7d837c', trim: '#454b47', sash: '#2c302e', glass: ['#d5ccb0', '#c8d3c8', '#9eb4bc'] },
-    edwardian2: { base: '#8c8070', trim: '#4a4338', sash: '#2b2620', glass: ['#dcc9a4', '#c9d5c8', '#8fa9b4'] },
-    plaster: { base: '#9a9488', trim: '#5a554c', sash: '#33302a', glass: ['#e2d4b0', '#ced9cf', '#a5bac4'] },
-    commercial: { base: '#8f8678', trim: '#4d4740', sash: '#242220', glass: ['#efe3c8', '#d8e0d8', '#88a0b0'] },
-    glass: { base: '#6f7f92', trim: '#3a4550', sash: '#1a2028', glass: ['#b8d4ec', '#a8c8e8', '#90b8dc'] },
+    victorian: { base: '#8a7d6d', trim: '#ddd4c4', sash: '#2a2218', glass: ['#141c24', '#182028', '#1e2834'] },
+    edwardian: { base: '#7d837c', trim: '#d8d0c0', sash: '#242018', glass: ['#121820', '#161e28', '#1c2630'] },
+    edwardian2: { base: '#8c8070', trim: '#e0d4c0', sash: '#221c14', glass: ['#141820', '#182028', '#202c38'] },
+    plaster: { base: '#9a9488', trim: '#e8dcc8', sash: '#282018', glass: ['#101820', '#142028', '#1a2838'] },
+    commercial: { base: '#8f8678', trim: '#ece0cc', sash: '#1c1814', glass: ['#0e141c', '#121c28', '#182434'] },
+    glass: { base: '#6f7f92', trim: '#c8d8e8', sash: '#101820', glass: ['#182838', '#1c3048', '#243850'] },
   };
   const palette = palettes[style] || palettes.plaster;
   context.fillStyle = palette.base;
@@ -1597,18 +1602,24 @@ function facadeWindowTexture(seed, style = 'plaster') {
       const x = (col * 26) - 12 + ((row * 5 + col * 3 + variant) % 3);
       const y = bandY + 4;
       const warm = (row * 17 + col * 11 + variant * 29) % palette.glass.length;
+      context.fillStyle = palette.trim;
+      context.fillRect(x - 1, y - 1, 13, 20);
       context.fillStyle = palette.glass[warm];
-      context.globalAlpha = style === 'glass' ? 0.92 : 0.84;
+      context.globalAlpha = style === 'glass' ? 0.96 : 0.92;
       context.fillRect(x, y, 11, 18);
       context.globalAlpha = 1;
       context.fillStyle = palette.sash;
       context.fillRect(x + 4, y, 2, 18);
       context.fillRect(x, y + 8, 11, 2);
-      if ((row + col + variant) % 4 === 0) {
-        context.globalAlpha = 0.22;
-        context.fillStyle = '#0e1218';
-        context.fillRect(x + 1, y + 10, 9, 7);
+      if ((row + col + variant) % 3 === 0) {
+        context.globalAlpha = 0.38;
+        context.fillStyle = '#060a10';
+        context.fillRect(x + 1, y + 9, 9, 8);
         context.globalAlpha = 1;
+      }
+      if ((row + col + variant) % 5 === 0) {
+        context.fillStyle = 'rgba(240,228,200,0.55)';
+        context.fillRect(x + 1, y + 1, 4, 3);
       }
     }
   }
@@ -2721,7 +2732,7 @@ function createSimpleRoadMeshes(roads) {
     });
     if (sandboxTextureCache.asphalt) {
       material.map = sandboxTextureCache.asphalt;
-      material.color.set(0xffffff);
+      material.color.set(0xcccccc);
     }
     if (sandboxTextureCache.asphaltNormal) {
       material.normalMap = sandboxTextureCache.asphaltNormal;
@@ -2876,7 +2887,7 @@ function createSimpleSidewalkMeshes(roads) {
         const length = Math.hypot(dx, dz);
         if (length < 0.4) continue;
         const segment = { a, b, dx, dz, length };
-        if ((Math.floor(a.x + a.z + road.id) % 5) === 0) brickSegments.push(segment);
+        if ((Math.floor(a.x + a.z + road.id) % 3) === 0) brickSegments.push(segment);
         else concreteSegments.push(segment);
       }
     }
@@ -2915,8 +2926,8 @@ function createSimpleSidewalkMeshes(roads) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xb8b2a8);
-  addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xc8c0b6);
+  addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xc8c2b8);
+  addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xe8dcc8);
   group.userData = { type: 'simple-sidewalks', segments: concreteSegments.length + brickSegments.length };
   return group;
 }
@@ -2938,7 +2949,7 @@ function createStreetCorridorPads(roads) {
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
         if (length < 0.8) continue;
-        segments.push({ a, b, dx, dz, length, width: padWidth, brick: (Math.floor(a.x + a.z + road.id + offset) % 11) === 0 });
+        segments.push({ a, b, dx, dz, length, width: padWidth, brick: (Math.floor(a.x + a.z + road.id + offset) % 4) !== 0 });
       }
     }
   }
@@ -2980,8 +2991,8 @@ function createStreetCorridorPads(roads) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xd4cec4);
-  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xd8d0c6);
+  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xd0cac0);
+  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xece0cc);
   group.userData = { type: 'street-corridor-pads', segments: segments.length };
   return group;
 }
@@ -3739,12 +3750,12 @@ function createStreetTrees(roads) {
   const highwayTreeChance = {
     motorway: 0,
     trunk: 0,
-    primary: 0.6,
-    secondary: 0.8,
+    primary: 0.75,
+    secondary: 0.9,
     tertiary: 1,
     residential: 1,
     living_street: 1,
-    service: 0.4,
+    service: 0.5,
   };
   for (const road of roads) {
     if (!highwayTreeChance[road.highway]) continue;
@@ -3753,9 +3764,10 @@ function createStreetTrees(roads) {
     for (let i = 0; i < points.length - 1; i += 1) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
-    const count = Math.min(42, Math.floor(length / 26));
+    const spacing = road.highway === 'primary' || road.highway === 'secondary' ? 18 : 22;
+    const count = Math.min(52, Math.floor(length / spacing));
     for (let c = 0; c < count; c += 1) {
-      if (positions.length >= 720) break;
+      if (positions.length >= 820) break;
       const target = ((c + 0.5 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -3770,7 +3782,8 @@ function createStreetTrees(roads) {
           const dz = b.z - a.z;
           const len = Math.hypot(dx, dz) || 1;
           const side = c % 2 === 0 ? 1 : -1;
-          positions.push({ x: x - dz / len * side * roadHalfWidth(road), z: z + dx / len * side * roadHalfWidth(road), scale: 0.7 + Math.random() * 0.45 });
+          const edgeOffset = roadHalfWidth(road) + 0.65;
+          positions.push({ x: x - dz / len * side * edgeOffset, z: z + dx / len * side * edgeOffset, scale: 0.75 + Math.random() * 0.5 });
           break;
         }
         walked += segLength;
@@ -3830,8 +3843,8 @@ function createStreetFurniture(roads) {
     for (let i = 0; i < points.length - 1; i += 1) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
-    const count = Math.min(16, Math.floor(length / 52));
-    for (let c = 0; c < count && spots.length < 620; c += 1) {
+    const count = Math.min(22, Math.floor(length / 36));
+    for (let c = 0; c < count && spots.length < 720; c += 1) {
       const target = ((c + 0.35 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -3846,7 +3859,7 @@ function createStreetFurniture(roads) {
           const dz = b.z - a.z;
           const len = Math.hypot(dx, dz) || 1;
           const side = c % 2 === 0 ? 1 : -1;
-          const kind = ((c + road.id) % 7);
+          const kind = ((c + road.id) % 11);
           spots.push({
             x: x - dz / len * side * (roadHalfWidth(road) + 1.1),
             z: z + dx / len * side * (roadHalfWidth(road) + 1.1),
@@ -3867,6 +3880,9 @@ function createStreetFurniture(roads) {
   const hydrantGeometry = new THREE.CylinderGeometry(0.09, 0.13, 0.62, 6);
   const planterGeometry = new THREE.BoxGeometry(0.85, 0.55, 0.85);
   const trashGeometry = new THREE.CylinderGeometry(0.26, 0.22, 0.62, 8);
+  const bicycleGeometry = new THREE.BoxGeometry(0.32, 0.72, 1.1);
+  const signalPoleGeometry = new THREE.CylinderGeometry(0.05, 0.07, 3.2, 6);
+  const signalHeadGeometry = new THREE.BoxGeometry(0.22, 0.58, 0.16);
   const benchMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4a33, roughness: 0.85, flatShading: true });
   const benchLegMaterial = new THREE.MeshStandardMaterial({ color: 0x31383d, roughness: 0.6, metalness: 0.4, flatShading: true });
   const lightMaterial = new THREE.MeshStandardMaterial({ color: 0x2e3336, roughness: 0.5, metalness: 0.6, flatShading: true });
@@ -3880,6 +3896,15 @@ function createStreetFurniture(roads) {
   const hydrantMaterial = new THREE.MeshStandardMaterial({ color: 0xa33f3f, roughness: 0.55, metalness: 0.3, flatShading: true });
   const planterMaterial = new THREE.MeshStandardMaterial({ color: 0x6d5a45, roughness: 0.88, metalness: 0.02, flatShading: true });
   const trashMaterial = new THREE.MeshStandardMaterial({ color: 0x2f363a, roughness: 0.6, metalness: 0.35, flatShading: true });
+  const bicycleMaterial = new THREE.MeshStandardMaterial({ color: 0x7a5b3c, roughness: 0.6, metalness: 0.18, flatShading: true });
+  const signalPoleMaterial = new THREE.MeshStandardMaterial({ color: 0x2a3034, roughness: 0.55, metalness: 0.5, flatShading: true });
+  const signalHeadMaterial = new THREE.MeshStandardMaterial({
+    color: 0x181c1e,
+    emissive: 0x331818,
+    emissiveIntensity: 0.6,
+    roughness: 0.35,
+    metalness: 0.4,
+  });
   const dummy = new THREE.Object3D();
   const benches = new THREE.InstancedMesh(benchGeometry, benchMaterial, spots.length);
   const benchLegs = new THREE.InstancedMesh(benchLegGeometry, benchLegMaterial, spots.length * 2);
@@ -3888,12 +3913,17 @@ function createStreetFurniture(roads) {
   const hydrants = new THREE.InstancedMesh(hydrantGeometry, hydrantMaterial, spots.length);
   const planters = new THREE.InstancedMesh(planterGeometry, planterMaterial, spots.length);
   const trashBins = new THREE.InstancedMesh(trashGeometry, trashMaterial, spots.length);
+  const bicycles = new THREE.InstancedMesh(bicycleGeometry, bicycleMaterial, spots.length);
+  const signalPoles = new THREE.InstancedMesh(signalPoleGeometry, signalPoleMaterial, spots.length);
+  const signalHeads = new THREE.InstancedMesh(signalHeadGeometry, signalHeadMaterial, spots.length);
   let benchIndex = 0;
   let legIndex = 0;
   let lightIndex = 0;
   let hydrantIndex = 0;
   let planterIndex = 0;
   let trashIndex = 0;
+  let bicycleIndex = 0;
+  let signalIndex = 0;
   for (let s = 0; s < spots.length; s += 1) {
     const spot = spots[s];
     const kind = spot.kind;
@@ -3935,12 +3965,29 @@ function createStreetFurniture(roads) {
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       planters.setMatrixAt(planterIndex++, dummy.matrix);
-    } else {
+    } else if (kind === 6) {
       dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.31, spot.z);
       dummy.rotation.set(0, spot.heading, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       trashBins.setMatrixAt(trashIndex++, dummy.matrix);
+    } else if (kind === 7 || kind === 8) {
+      dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 1.6, spot.z);
+      dummy.rotation.set(0, spot.heading, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      signalPoles.setMatrixAt(signalIndex, dummy.matrix);
+      dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 3.42, spot.z);
+      dummy.rotation.set(0, spot.heading, 0);
+      dummy.updateMatrix();
+      signalHeads.setMatrixAt(signalIndex, dummy.matrix);
+      signalIndex += 1;
+    } else {
+      dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.36, spot.z);
+      dummy.rotation.set(0, spot.heading, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      bicycles.setMatrixAt(bicycleIndex++, dummy.matrix);
     }
   }
   if (lightIndex) {
@@ -3975,6 +4022,22 @@ function createStreetFurniture(roads) {
     trashBins.castShadow = true;
     trashBins.receiveShadow = true;
     furnitureGroup.add(trashBins);
+  }
+  if (bicycleIndex) {
+    bicycles.count = bicycleIndex;
+    bicycles.instanceMatrix.needsUpdate = true;
+    bicycles.castShadow = true;
+    bicycles.receiveShadow = true;
+    furnitureGroup.add(bicycles);
+  }
+  if (signalIndex) {
+    signalPoles.count = signalIndex;
+    signalHeads.count = signalIndex;
+    signalPoles.instanceMatrix.needsUpdate = true;
+    signalHeads.instanceMatrix.needsUpdate = true;
+    signalPoles.castShadow = true;
+    signalHeads.castShadow = true;
+    furnitureGroup.add(signalPoles, signalHeads);
   }
 }
 
@@ -4169,6 +4232,33 @@ function createStreetfrontDetails(buildings) {
     roughness: 0.5,
     metalness: 0.1,
   });
+  const glassMaterial = new THREE.MeshStandardMaterial({
+    color: 0x27424e,
+    roughness: 0.18,
+    metalness: 0.4,
+    transparent: true,
+    opacity: 0.82,
+  });
+  const handleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9aa2a6,
+    roughness: 0.32,
+    metalness: 0.72,
+  });
+  const tableTopMaterial = new THREE.MeshStandardMaterial({
+    color: 0x7a6754,
+    roughness: 0.8,
+    metalness: 0.03,
+  });
+  const tableLegMaterial = new THREE.MeshStandardMaterial({
+    color: 0x33383c,
+    roughness: 0.5,
+    metalness: 0.5,
+  });
+  const chairMaterial = new THREE.MeshStandardMaterial({
+    color: 0x565044,
+    roughness: 0.78,
+    metalness: 0.02,
+  });
   const signCanvas = document.createElement('canvas');
   signCanvas.width = 128;
   signCanvas.height = 32;
@@ -4208,6 +4298,44 @@ function createStreetfrontDetails(buildings) {
     awning.rotation.y = Math.atan2(face.x, face.z);
     awning.castShadow = true;
     streetfrontGroup.add(awning);
+
+    const storefront = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 1.35, 0.12), glassMaterial);
+    storefront.position.set(
+      entranceX + face.x * 0.2,
+      groundY + 1.15,
+      entranceZ + face.z * 0.2,
+    );
+    storefront.rotation.y = Math.atan2(face.x, face.z);
+    streetfrontGroup.add(storefront);
+
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.6, 0.05), handleMaterial);
+    handle.position.set(
+      entranceX + normal.x * 0.5 + face.x * 0.42,
+      groundY + 1.2,
+      entranceZ + normal.z * 0.5 + face.z * 0.42,
+    );
+    handle.rotation.y = Math.atan2(face.x, face.z);
+    streetfrontGroup.add(handle);
+
+    if ((count % 2) === 0) {
+      const tableX = entranceX + normal.x * width * 0.42 + face.x * 1.5;
+      const tableZ = entranceZ + normal.z * width * 0.42 + face.z * 1.5;
+      const table = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.06, 0.85), tableTopMaterial);
+      table.position.set(tableX, groundY + 0.72, tableZ);
+      table.rotation.y = Math.atan2(face.x, face.z);
+      table.castShadow = true;
+      streetfrontGroup.add(table);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.72, 6), tableLegMaterial);
+      leg.position.set(tableX, groundY + 0.36, tableZ);
+      streetfrontGroup.add(leg);
+      for (const [cx, cz] of [[0.5, 0.35], [-0.5, 0.35]]) {
+        const chair = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), chairMaterial);
+        chair.position.set(tableX + normal.x * cx * 0.9, groundY + 0.42, tableZ + normal.z * cx * 0.9 + face.z * cz);
+        chair.rotation.y = Math.atan2(face.x, face.z);
+        chair.castShadow = true;
+        streetfrontGroup.add(chair);
+      }
+    }
 
     signContext.fillStyle = '#f0e9d8';
     signContext.fillRect(0, 0, 128, 32);
