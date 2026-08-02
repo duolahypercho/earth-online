@@ -184,6 +184,12 @@ try {
     return { samples: samples.length, min, max };
   });
   check('Terrain sampling returns varied city elevation', hillProbe.max - hillProbe.min > 30, hillProbe);
+  for (const mode of ['fog', 'drizzle', 'clear']) {
+    const next = await page.evaluate((weather) => window.__SF_REALMAP__.setWeather(weather), mode);
+    await page.waitForTimeout(350);
+    check(`Weather mode ${mode} applies`, next === mode, { next });
+  }
+  await page.screenshot({ path: '.qa-realmap-drizzle.png' });
   check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {
     geometryTriangles: cityState.geometryTriangles,
     renderer: cityState.renderer,

@@ -1872,7 +1872,51 @@ let driveIndex = -1;
 let composer = null;
 let skyDome = null;
 let sceneTriangleCount = 0;
+let weatherIndex = 0;
+let weatherMode = 'clear';
 const CELL_SIZE = 24;
+
+const WEATHER_MODES = {
+  clear: {
+    label: 'CLEAR',
+    background: 0xb9d0da,
+    fogColor: 0xc2d4dc,
+    fogNear: 220,
+    fogFar: 1150,
+    sunIntensity: 3.05,
+    sunColor: 0xffd9a8,
+    exposure: 1.18,
+    skyTop: 0x6fa7c4,
+    skyHorizon: 0xd7c9ae,
+    skySun: 0xffcf96,
+  },
+  fog: {
+    label: 'PACIFIC FOG',
+    background: 0xaab6bd,
+    fogColor: 0xaab6bd,
+    fogNear: 70,
+    fogFar: 560,
+    sunIntensity: 1.45,
+    sunColor: 0xdfe7ea,
+    exposure: 0.96,
+    skyTop: 0x9fb3bc,
+    skyHorizon: 0xc3c8c4,
+    skySun: 0xd7d3c8,
+  },
+  drizzle: {
+    label: 'PACIFIC DRIZZLE',
+    background: 0x758a93,
+    fogColor: 0x758a93,
+    fogNear: 90,
+    fogFar: 720,
+    sunIntensity: 1.9,
+    sunColor: 0xc8c5b8,
+    exposure: 1.02,
+    skyTop: 0x667f89,
+    skyHorizon: 0x9a9d95,
+    skySun: 0xb5a98c,
+  },
+};
 
 function roadHalfWidth(road) {
   const cls = road.highway || 'residential';
@@ -2469,7 +2513,7 @@ function updateCityReadout() {
   const mode = document.querySelector('#readout-mode');
   const people = document.querySelector('#readout-people');
   const car = document.querySelector('#readout-car');
-  mode.textContent = cityMode.toUpperCase();
+  mode.textContent = `${cityMode.toUpperCase()} · ${WEATHER_MODES[weatherMode].label}`;
   people.textContent = `${pedestrianState.length} people`;
   car.textContent = driveIndex >= 0
     ? `DRIVING / ${trafficState.vehicles[driveIndex].speed.toFixed(1)} M/S`
@@ -2580,6 +2624,25 @@ function setupScene() {
     console.warn('Post-processing disabled', error.message);
     composer = null;
   }
+}
+
+function setWeatherMode(mode) {
+  const config = WEATHER_MODES[mode];
+  if (!config) return weatherMode;
+  weatherMode = mode;
+  scene.background.set(config.background);
+  scene.fog.color.set(config.fogColor);
+  scene.fog.near = config.fogNear;
+  scene.fog.far = config.fogFar;
+  sun.color.set(config.sunColor);
+  sun.intensity = config.sunIntensity;
+  renderer.toneMappingExposure = config.exposure;
+  if (skyDome?.material?.uniforms) {
+    skyDome.material.uniforms.topColor.value.set(config.skyTop);
+    skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
+    skyDome.material.uniforms.sunColor.value.set(config.skySun);
+  }
+  return weatherMode;
 }
 
 function updateSignals(time) {
@@ -2759,6 +2822,11 @@ function setup3DControls() {
   window.addEventListener('keydown', (event) => {
     moveKeys.add(event.key.toLowerCase());
     if (event.key === 'h') hud.inert = !hud.inert;
+    if (event.key === 'r' && scene) {
+      const modes = Object.keys(WEATHER_MODES);
+      weatherIndex = (weatherIndex + 1) % modes.length;
+      setWeatherMode(modes[weatherIndex]);
+    }
     if (event.key === 'e' && cityMode === 'walk' && trafficState?.vehicles.length) {
       setCityMode('drive');
     } else if (event.key === 'e' && cityMode === 'drive') {
@@ -2963,6 +3031,7 @@ async function buildCity() {
         setup3DControls();
         threeDControlsBound = true;
       }
+      setWeatherMode('clear');
     }
     if (cityRoot) {
       scene.remove(cityRoot);
@@ -3105,6 +3174,7 @@ function start() {
         minElevation: terrainData.meta.minElevation,
         maxElevation: terrainData.meta.maxElevation,
       } : null,
+      weather: weatherMode,
       player: playerState ? { x: playerState.x, z: playerState.z } : null,
       collisionVolumes: collisionAabbs.length,
       driveIndex,
@@ -3118,6 +3188,8 @@ function start() {
       geometryTriangles: sceneTriangleCount,
     }),
     setCityMode: (mode) => setCityMode(mode),
+    setWeather: (mode) => setWeatherMode(mode),
+    getWeather: () => weatherMode,
     getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
     getElevationAt: (x, z) => elevationAt(x, z),
     setPlayerPosition: (x, z) => {

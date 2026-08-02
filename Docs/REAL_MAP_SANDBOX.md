@@ -31,6 +31,8 @@ that slice as a 3D city with:
   Victorian siding textures on generated roads and building facades;
 - clickable street metadata now includes the nearest named cross street and a
   readable block label;
+- `R` cycles Clear, Pacific Fog, and Pacific Drizzle moods with matching sky,
+  sun, fog, and exposure;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
