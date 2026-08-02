@@ -115,7 +115,8 @@ npm run qa:realmap-blind-ab
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (39/39) and the visual critic is CONDITIONAL at 6.5/10
+gameplay gate is green (42/42 Full City, 41/41 Downtown) and the visual critic
+is CONDITIONAL at 6.5/10
 with zero rejected frames. Street-level edge density now sits at 19.2, hills at
 17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind
 commercial comparison is still unresolved; the critic document lists the exact
@@ -137,9 +138,10 @@ Latest gate results on this machine:
   detailed OSM building footprints;
 - Full City preset generated all **60,463 real OSM roads** as real-road and
   sidewalk geometry (53,924 road segments, 22,924 sidewalk segments), with
-  lane-level junction meshing retained in the dense core, all 322 signal nodes,
-  90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse massing blocks,
-  and 9,399 collision volumes;
+  lane-level junction meshing **streamed in distance-budgeted chunks around the
+  camera** (QA confirms loaded chunks and compiled detail roads), all 322 signal
+  nodes, 90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse massing
+  blocks, and 9,399 collision volumes;
 - Downtown rendered 251,209 scene triangles with 1,158 crosswalk stripes after
   post-processing was enabled;
 - terrain heightmap covers the city at 617 x 640 cells, -6.9 m to 272.4 m,

@@ -199,6 +199,13 @@ try {
       simpleRoadSegments: cityState.simpleRoadSegments,
       simpleSidewalkSegments: cityState.simpleSidewalkSegments,
     });
+    await page.waitForFunction(
+      () => window.__SF_REALMAP__.getBuildState().roadStream?.loadedChunks > 0
+        && window.__SF_REALMAP__.getBuildState().roadStream?.compiledRoads > 0,
+      { timeout: 120000 },
+    );
+    const streamState = await page.evaluate(() => window.__SF_REALMAP__.getBuildState().roadStream);
+    check('Full city streams detail road chunks', Number(streamState?.loadedChunks || 0) > 0 && Number(streamState?.compiledRoads || 0) > 0, streamState);
   } else {
     check('Authored preset keeps lane-level road mesher', cityState.fullCity === false, cityState.fullCity);
   }

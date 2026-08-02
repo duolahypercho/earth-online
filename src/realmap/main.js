@@ -2072,6 +2072,55 @@ function createSimpleSidewalkMeshes(roads) {
   return group;
 }
 
+function queueDetailRoadChunk(focus) {
+  if (!fullCityMode || !cityData?.detailRoads?.length) return;
+  const radius = 640;
+  const candidates = [];
+  for (const road of cityData.detailRoads) {
+    if (detailRoadCompiledIds.has(road.id)) continue;
+    const points = roadPoints(road);
+    let nearestDistance = Infinity;
+    for (const point of points) {
+      const distance = Math.hypot(point.x - focus.x, point.z - focus.z);
+      if (distance < nearestDistance) nearestDistance = distance;
+    }
+    if (nearestDistance <= radius && points.some(pointInRegion)) candidates.push({ road, nearestDistance });
+  }
+  candidates.sort((a, b) => a.nearestDistance - b.nearestDistance);
+  const chunk = candidates.slice(0, 260).map((entry) => entry.road);
+  if (chunk.length < 24) return;
+  detailRoadQueue.push(chunk);
+  detailRoadStreamStats.pendingRoads += chunk.length;
+}
+
+async function loadNextDetailRoadChunk() {
+  if (roadStreamingInFlight || !detailRoadQueue.length) return;
+  roadStreamingInFlight = true;
+  const chunk = detailRoadQueue.shift();
+  try {
+    const { compilation } = compileSafely(chunk);
+    const meshes = createRoadMeshes(compilation);
+    detailRoadStreamGroup?.add(meshes);
+    for (const road of chunk) detailRoadCompiledIds.add(road.id);
+    detailRoadStreamStats.loadedChunks += 1;
+    detailRoadStreamStats.compiledRoads += chunk.length;
+    detailRoadStreamStats.pendingRoads -= chunk.length;
+  } catch (error) {
+    console.warn('Detail road chunk compile skipped', error.message);
+    detailRoadStreamStats.pendingRoads -= chunk.length;
+  } finally {
+    roadStreamingInFlight = false;
+  }
+}
+
+function updateRoadStreaming(focus) {
+  if (!fullCityMode || !detailRoadStreamGroup) return;
+  if (!detailRoadQueue.length) queueDetailRoadChunk(focus);
+  if (!roadStreamingInFlight && detailRoadQueue.length) {
+    loadNextDetailRoadChunk();
+  }
+}
+
 let renderer;
 let scene;
 let camera;
@@ -2119,6 +2168,11 @@ let hemisphereLight = null;
 let fullCityMode = false;
 let simpleRoadSegments = 0;
 let simpleSidewalkSegments = 0;
+let detailRoadStreamGroup = null;
+let detailRoadQueue = [];
+let detailRoadCompiledIds = new Set();
+let detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0 };
+let roadStreamingInFlight = false;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
@@ -3914,6 +3968,10 @@ function renderLoop() {
     controls.update();
   }
   updateCityReadout();
+  const streamFocus = playerState
+    ? { x: playerState.x, z: playerState.z }
+    : { x: camera.position.x, z: camera.position.z };
+  updateRoadStreaming(streamFocus);
   if (composer) composer.render();
   else renderer.render(scene, camera);
   updateReadout3d();
@@ -4133,6 +4191,7 @@ async function buildCity() {
     const buildings = selectBuildings(regionBBox);
     const signals = selectSignals(regionBBox);
     const regionPoints = region.map(({ x, z }) => ({ x, z }));
+    const streamFocus = polygonCentroid(regionPoints);
     readoutSelected.textContent = `${formatNumber(selectedRoads.length)} roads / ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings / ${formatNumber(signals.length)} signals`;
 
     let usedRoads = selectedRoads;
@@ -4185,17 +4244,14 @@ async function buildCity() {
       simpleRoadSegments = roadMeshes.userData.segments || 0;
       simpleSidewalkSegments = sidewalks.userData.segments || 0;
       const detailed = usedRoads.filter((road) => detailIds.has(road.id));
-      if (detailed.length) {
-        setBuildProgress('ROADS', 'Compiling lane-level detail roads in the dense core…', 0.58);
-        await tick();
-        try {
-          const { compilation: detailCompilation } = compileSafely(detailed);
-          const detailRoadsMesh = createRoadMeshes(detailCompilation);
-          cityRoot.add(detailRoadsMesh);
-        } catch (error) {
-          console.warn('Detailed core road compile skipped in full city mode', error.message);
-        }
-      }
+      detailRoadStreamGroup = new THREE.Group();
+      detailRoadStreamGroup.name = 'Streamed detail road chunks';
+      cityRoot.add(detailRoadStreamGroup);
+      detailRoadCompiledIds = new Set();
+      detailRoadQueue = [];
+      detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0 };
+      roadStreamingInFlight = false;
+      queueDetailRoadChunk(streamFocus);
     } else {
       roadMeshes = createRoadMeshes(compilation);
       cityRoot.add(roadMeshes);
@@ -4320,6 +4376,7 @@ function start() {
       fullCity: fullCityMode,
       simpleRoadSegments,
       simpleSidewalkSegments,
+      roadStream: fullCityMode ? { ...detailRoadStreamStats } : null,
       signals: signalGroups.length,
       traffic: trafficState?.vehicles.length || 0,
       detailBuildings: detailBuildingMeshes.length,

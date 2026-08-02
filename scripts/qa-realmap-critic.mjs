@@ -86,7 +86,7 @@ lines.push('');
 lines.push('## Concrete fixes with acceptance tests');
 lines.push('');
 lines.push('1. **Street frontage finish.** Add procedural window bands, entrance/storefront massing, awnings/signage, and roof details to detailed footprints. Acceptance: street-level canyon frame edge density above 18.0 and no blank facade larger than 2% of frame width in street-level captures.');
-lines.push('2. **Whole-city streaming.** Move from one synchronous full-city build to distance-budgeted chunk streaming. Acceptance: Full City can pan/walk across the entire boundary without regenerating the whole graph in one synchronous step, and detailed lane meshing appears progressively around the camera.');
+lines.push('2. **Whole-city streaming.** Full City now streams lane-level detail in distance-budgeted chunks around the camera instead of one synchronous compile. Acceptance: Full City can pan/walk across the entire boundary without regenerating the whole graph in one synchronous step, and detailed lane meshing appears progressively around the camera (QA now confirms loaded chunks and compiled detail roads).');
 lines.push('3. **Interior depth.** Add authored micro-scenes and resident schedules inside real-map buildings. Acceptance: at least one real OSM building per Downtown block can be entered with a return path, and at least three room archetypes are visually distinguishable (currently passing four archetypes).');
 lines.push('4. **Human blind A/B.** Ship the saved side-by-side frames and collect at least five independent votes comparing this build, the real photo, and a commercial reference frame. Acceptance: majority selects this build on at least two of five frames.');
 lines.push('');
