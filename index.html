@@ -6,13 +6,13 @@
     <meta name="theme-color" content="#0c131d" />
     <meta
       name="description"
-      content="A low-poly real-time San Francisco city simulator with a playable waterfront shift."
+      content="Earth Online — start in San Francisco, then grow toward California, the US, and North America. Everyone is welcome to add their own towns."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>San Francisco / Golden Hour</title>
+    <title>Earth Online · San Francisco</title>
   </head>
   <body>
-    <main id="app" aria-label="San Francisco real-time simulation">
+    <main id="app" aria-label="Earth Online San Francisco chapter">
       <canvas
         id="scene-canvas"
         tabindex="0"
@@ -31,25 +31,46 @@
         aria-live="polite"
       >
         <div class="boot-panel">
-          <div class="boot-mark">SF<span>/</span>01</div>
-          <p class="boot-kicker">CITY SHIFT / REAL-TIME STUDY</p>
-          <h1 id="boot-title">Golden hour,<br /><em>alive.</em></h1>
+          <div class="boot-mark">EO<span>/</span>SF</div>
+          <p class="boot-kicker">EARTH ONLINE · CHAPTER 01</p>
+          <h1 id="boot-title">San Francisco,<br /><em>first.</em></h1>
           <p class="boot-copy" id="boot-description">
-            Run the Waterfront Loop through a living district, then make the city your own.
+            A living open world starting here — then California, the US, and North America.
+            Everyone is welcome to add their own towns.
           </p>
           <div class="boot-guide" id="scene-instructions">
             <span><kbd>DRAG</kbd> orbit</span>
             <span><kbd>W A S D</kbd> roam</span>
-            <span><kbd>E</kbd> enter</span>
+            <span><kbd>E</kbd> drive / talk</span>
+            <span><kbd>T</kbd> eat</span>
+            <span><kbd>F</kbd> work</span>
+            <span><kbd>X</kbd> rest</span>
+            <span><kbd>V</kbd> voice</span>
             <span><kbd>R</kbd> weather</span>
             <span><kbd>H</kbd> beauty</span>
             <span><kbd>C</kbd> quality</span>
             <span><kbd>M</kbd> map</span>
           </div>
+          <label class="boot-name-label" for="player-name">PLAY AS</label>
+          <input
+            id="player-name"
+            class="boot-name-input"
+            type="text"
+            maxlength="18"
+            value="Traveler"
+            autocomplete="nickname"
+            aria-label="Player name"
+          />
           <button id="launch-button" class="boot-action" type="button" disabled>
             <span>Preparing the city</span><b aria-hidden="true">↗</b>
           </button>
           <p class="boot-status" id="boot-status">Warming up the avenue…</p>
+          <p class="boot-online-note">Run the multiplayer relay with <code>npm run net</code> and open the city in a second tab to meet someone on the street. Voice chat uses your microphone and plays with 3D spatial audio.</p>
+          <p class="boot-links">
+            <a href="./about.html">About Earth Online</a>
+            <a href="./realmap.html">Real Map Lab</a>
+            <a href="https://github.com/duolahypercho/earth-online" rel="noopener noreferrer">Add a town</a>
+          </p>
         </div>
       </section>
       <noscript>This experience requires JavaScript and WebGL2.</noscript>

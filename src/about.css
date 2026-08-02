@@ -1,0 +1,323 @@
+:root {
+  --ink: #f5f0e7;
+  --muted: rgba(245, 240, 231, 0.7);
+  --faint: rgba(245, 240, 231, 0.5);
+  --line: rgba(245, 240, 231, 0.14);
+  --teal: #6bd6c5;
+  --gold: #f2b56d;
+  --sans: "Avenir Next", "Helvetica Neue", sans-serif;
+  --display: "DIN Condensed", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+  --mono: "SFMono-Regular", "Roboto Mono", "Cascadia Mono", monospace;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  position: relative;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: #0a1018;
+  overflow-x: hidden;
+}
+
+.about-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 80% 55% at 18% 12%, rgba(107, 214, 197, 0.16), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 88% 18%, rgba(242, 181, 109, 0.18), transparent 50%),
+    linear-gradient(165deg, #152433 0%, #0a1018 42%, #081018 100%);
+}
+
+.about-sky::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(245, 240, 231, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245, 240, 231, 0.03) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+.about-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem clamp(1.25rem, 4vw, 3rem);
+}
+
+.about-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.about-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid rgba(242, 181, 109, 0.45);
+  border-radius: 0.45rem;
+  color: var(--gold);
+  font: 700 0.72rem/1 var(--mono);
+  letter-spacing: 0.12em;
+}
+
+.about-brand-name {
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.about-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.about-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.about-nav a:hover,
+.about-nav a:focus-visible {
+  color: var(--teal);
+}
+
+.about-main {
+  width: min(100%, 52rem);
+  margin: 0 auto;
+  padding: clamp(2rem, 8vh, 5rem) clamp(1.25rem, 4vw, 3rem) 4rem;
+}
+
+.about-hero {
+  max-width: 38rem;
+  animation: about-rise 700ms ease both;
+}
+
+.about-kicker {
+  margin: 0 0 1rem;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.about-hero h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(3.6rem, 12vw, 6.8rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.about-lead {
+  margin: 1.4rem 0 0;
+  color: var(--muted);
+  font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+  line-height: 1.55;
+}
+
+.about-invite {
+  margin: 1.1rem 0 0;
+  color: var(--gold);
+  font-family: var(--serif);
+  font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.about-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.85rem;
+  padding: 0.7rem 1.15rem;
+  border-radius: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.about-btn:hover,
+.about-btn:focus-visible {
+  transform: translateY(-1px);
+}
+
+.about-btn-primary {
+  color: #0c131d;
+  background: linear-gradient(135deg, #f2b56d, #e89a4a);
+}
+
+.about-btn-ghost {
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: rgba(12, 19, 29, 0.35);
+}
+
+.about-btn-ghost:hover,
+.about-btn-ghost:focus-visible {
+  border-color: rgba(107, 214, 197, 0.55);
+}
+
+.about-roadmap,
+.about-join {
+  margin-top: clamp(3rem, 10vh, 5.5rem);
+  padding-top: 2rem;
+  border-top: 1px solid var(--line);
+  animation: about-rise 800ms ease 120ms both;
+}
+
+.about-roadmap h2,
+.about-join h2 {
+  margin: 0 0 1.4rem;
+  font-family: var(--display);
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.about-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.about-steps li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1rem;
+  align-items: start;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: rgba(12, 19, 29, 0.38);
+}
+
+.about-steps li.is-live {
+  border-color: rgba(107, 214, 197, 0.45);
+  background:
+    linear-gradient(120deg, rgba(107, 214, 197, 0.12), transparent 55%),
+    rgba(12, 19, 29, 0.5);
+}
+
+.about-step-mark {
+  color: var(--teal);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.about-steps h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.about-steps p,
+.about-join p,
+.about-join li {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.about-join ul {
+  margin: 1.1rem 0 0;
+  padding-left: 1.15rem;
+  color: var(--muted);
+}
+
+.about-join li + li {
+  margin-top: 0.45rem;
+}
+
+.about-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  width: min(100%, 52rem);
+  margin: 0 auto 2.5rem;
+  padding: 0 clamp(1.25rem, 4vw, 3rem);
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.about-foot a {
+  color: var(--teal);
+  text-decoration: none;
+}
+
+@keyframes about-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .about-top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .about-steps li {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+}
