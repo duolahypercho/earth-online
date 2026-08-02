@@ -180,6 +180,15 @@ try {
     };
   });
   check('WebGL2 city generated', cityState.webgl2 && cityState.isCity, cityState);
+  if (presetName === 'city') {
+    check('Full city uses all real OSM roads', cityState.fullCity === true && Number(cityState.selectedRoads || 0) > 10000, {
+      selectedRoads: cityState.selectedRoads,
+      simpleRoadSegments: cityState.simpleRoadSegments,
+      simpleSidewalkSegments: cityState.simpleSidewalkSegments,
+    });
+  } else {
+    check('Authored preset keeps lane-level road mesher', cityState.fullCity === false, cityState.fullCity);
+  }
   check('City has real signal metadata', cityState.signals > 0, cityState.signals);
   check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
   check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);

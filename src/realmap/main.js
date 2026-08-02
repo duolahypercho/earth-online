@@ -988,6 +988,24 @@ function selectRoads(regionBBox) {
   return [...selected.values()];
 }
 
+function selectAllRoads(regionBBox) {
+  const selected = new Map();
+  for (const road of cityData.detailRoads) {
+    if (!intersectsRegionBBox(road, regionBBox)) continue;
+    const points = roadPoints(road);
+    if (!points.some(pointInRegion)) continue;
+    selected.set(road.id, road);
+  }
+  for (const road of cityData.roads) {
+    if (selected.has(road.id)) continue;
+    if (!intersectsRegionBBox(road, regionBBox)) continue;
+    const points = roadPoints(road);
+    if (!points.some(pointInRegion)) continue;
+    selected.set(road.id, road);
+  }
+  return [...selected.values()];
+}
+
 function selectSignals(regionBBox) {
   return cityData.signals.filter(([x, z]) => (
     x >= regionBBox.minX && x <= regionBBox.maxX && z >= regionBBox.minZ && z <= regionBBox.maxZ
@@ -1905,6 +1923,130 @@ function createRoadMeshes(compilation) {
   return group;
 }
 
+const SIMPLE_ROAD_CONFIG = {
+  motorway: { width: 13.5, color: 0x454c52 },
+  trunk: { width: 12, color: 0x4a5157 },
+  primary: { width: 10.5, color: 0x52585e },
+  secondary: { width: 9, color: 0x585f65 },
+  tertiary: { width: 7.5, color: 0x5c646a },
+  unclassified: { width: 6.5, color: 0x626970 },
+  residential: { width: 6, color: 0x636b72 },
+  living_street: { width: 5, color: 0x697078 },
+  service: { width: 4.5, color: 0x6b7279 },
+  pedestrian: { width: 3.6, color: 0x85857d },
+  footway: { width: 2.4, color: 0x8b8b84 },
+  cycleway: { width: 2.2, color: 0x8b8b84 },
+  path: { width: 2, color: 0x8b8b84 },
+};
+
+function roadSegmentCount(roads) {
+  let count = 0;
+  for (const road of roads) {
+    count += Math.max(0, road.points.length / 2 - 1);
+  }
+  return count;
+}
+
+function createSimpleRoadMeshes(roads) {
+  const group = new THREE.Group();
+  const classes = new Map();
+  for (const road of roads) {
+    const cls = SIMPLE_ROAD_CONFIG[road.highway] ? road.highway : 'service';
+    const entry = classes.get(cls) || { roads: [], count: 0 };
+    entry.roads.push(road);
+    entry.count += Math.max(0, road.points.length / 2 - 1);
+    classes.set(cls, entry);
+  }
+  const geometry = new THREE.BoxGeometry(1, 0.08, 1);
+  const dummy = new THREE.Object3D();
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  for (const [cls, entry] of classes) {
+    if (!entry.count) continue;
+    const config = SIMPLE_ROAD_CONFIG[cls];
+    const material = new THREE.MeshStandardMaterial({
+      color: config.color,
+      roughness: 0.95,
+      metalness: 0.01,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, entry.count);
+    let index = 0;
+    for (const road of entry.roads) {
+      const points = roadPoints(road);
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 0.4) continue;
+        const direction = new THREE.Vector3(dx / length, 0, dz / length);
+        dummy.position.set((a.x + b.x) / 2, elevationAt((a.x + b.x) / 2, (a.z + b.z) / 2) - 0.045, (a.z + b.z) / 2);
+        dummy.quaternion.setFromUnitVectors(zAxis, direction);
+        dummy.scale.set(config.width, 1, length);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(index, dummy.matrix);
+        index += 1;
+      }
+    }
+    mesh.count = index;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = `Simple real road ${cls}`;
+    group.add(mesh);
+  }
+  group.userData = { type: 'simple-roads', segments: roadSegmentCount(roads) };
+  return group;
+}
+
+function createSimpleSidewalkMeshes(roads) {
+  const sidewalkClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'pedestrian']);
+  const segments = [];
+  for (const road of roads) {
+    if (!sidewalkClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    const offset = roadHalfWidth(road);
+    for (const side of [offsetPolyline(points, offset), offsetPolyline(points, -offset)]) {
+      for (let i = 0; i < side.length - 1; i += 1) {
+        const a = side[i];
+        const b = side[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 0.4) continue;
+        segments.push({ a, b, dx, dz, length });
+      }
+    }
+  }
+  const group = new THREE.Group();
+  if (!segments.length) return group;
+  const geometry = new THREE.BoxGeometry(1, 0.05, 1);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x9b9c96,
+    roughness: 0.9,
+    metalness: 0.01,
+  });
+  const mesh = new THREE.InstancedMesh(geometry, material, segments.length);
+  const dummy = new THREE.Object3D();
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
+    dummy.position.set((segment.a.x + segment.b.x) / 2, elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) - 0.025, (segment.a.z + segment.b.z) / 2);
+    dummy.quaternion.setFromUnitVectors(zAxis, direction);
+    dummy.scale.set(2.1, 1, segment.length);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.name = 'Simple real sidewalks';
+  group.add(mesh);
+  group.userData = { type: 'simple-sidewalks', segments: segments.length };
+  return group;
+}
+
 let renderer;
 let scene;
 let camera;
@@ -1949,6 +2091,9 @@ let interiorState = null;
 let interiorLight = null;
 let interiorResidents = [];
 let hemisphereLight = null;
+let fullCityMode = false;
+let simpleRoadSegments = 0;
+let simpleSidewalkSegments = 0;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
@@ -3940,21 +4085,28 @@ async function buildCity() {
     maxZ = Math.max(maxZ, flat[i + 1]);
   }
   const regionBBox = { minX, minZ, maxX, maxZ };
+  fullCityMode = polygonArea(region) / 1e6 > 12;
 
   try {
     setBuildProgress('SELECTING', 'Finding real streets, blocks, and signals in your boundary…', 0.04);
     await tick();
-    const selectedRoads = selectRoads(regionBBox);
+    const selectedRoads = fullCityMode
+      ? selectAllRoads(regionBBox)
+      : selectRoads(regionBBox);
     const buildings = selectBuildings(regionBBox);
     const signals = selectSignals(regionBBox);
     const regionPoints = region.map(({ x, z }) => ({ x, z }));
     readoutSelected.textContent = `${formatNumber(selectedRoads.length)} roads / ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings / ${formatNumber(signals.length)} signals`;
 
-    setBuildProgress('MESHING', 'Compiling lane-level road surfaces and junctions…', 0.16);
-    await tick();
-    const { compilation, roads: usedRoads } = compileSafely(selectedRoads);
-    setBuildProgress('MESHING', 'Resolving intersections and turn topology…', 0.3);
-    await tick();
+    let usedRoads = selectedRoads;
+    let compilation = null;
+    if (!fullCityMode) {
+      setBuildProgress('MESHING', 'Compiling lane-level road surfaces and junctions…', 0.16);
+      await tick();
+      ({ compilation, roads: usedRoads } = compileSafely(selectedRoads));
+      setBuildProgress('MESHING', 'Resolving intersections and turn topology…', 0.3);
+      await tick();
+    }
     selectedRoadsForHit = usedRoads;
 
     if (!scene) {
@@ -3982,10 +4134,35 @@ async function buildCity() {
     cityRoot.add(createWaterPlane(regionPoints));
     cityRoot.add(createGround(regionPoints));
 
-    setBuildProgress('ROADS', 'Generating asphalt, markings, and sidewalks from OSM…', 0.5);
+    setBuildProgress('ROADS', fullCityMode
+      ? 'Laying the full real street network…'
+      : 'Generating asphalt, markings, and sidewalks from OSM…', 0.5);
     await tick();
-    roadMeshes = createRoadMeshes(compilation);
-    cityRoot.add(roadMeshes);
+    if (fullCityMode) {
+      const detailIds = new Set(cityData.detailRoads.map((road) => road.id));
+      const simpleRoads = usedRoads.filter((road) => !detailIds.has(road.id));
+      roadMeshes = createSimpleRoadMeshes(simpleRoads);
+      cityRoot.add(roadMeshes);
+      const sidewalks = createSimpleSidewalkMeshes(simpleRoads);
+      cityRoot.add(sidewalks);
+      simpleRoadSegments = roadMeshes.userData.segments || 0;
+      simpleSidewalkSegments = sidewalks.userData.segments || 0;
+      const detailed = usedRoads.filter((road) => detailIds.has(road.id));
+      if (detailed.length) {
+        setBuildProgress('ROADS', 'Compiling lane-level detail roads in the dense core…', 0.58);
+        await tick();
+        try {
+          const { compilation: detailCompilation } = compileSafely(detailed);
+          const detailRoadsMesh = createRoadMeshes(detailCompilation);
+          cityRoot.add(detailRoadsMesh);
+        } catch (error) {
+          console.warn('Detailed core road compile skipped in full city mode', error.message);
+        }
+      }
+    } else {
+      roadMeshes = createRoadMeshes(compilation);
+      cityRoot.add(roadMeshes);
+    }
     setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
     await tick();
     detailBuildingMeshes = [];
@@ -4103,6 +4280,9 @@ function start() {
       isCity: document.body.classList.contains('is-city'),
       buildOverlayHidden: buildOverlay.hidden,
       selectedRoads: selectedRoadsForHit.length,
+      fullCity: fullCityMode,
+      simpleRoadSegments,
+      simpleSidewalkSegments,
       signals: signalGroups.length,
       traffic: trafficState?.vehicles.length || 0,
       detailBuildings: detailBuildingMeshes.length,
