@@ -148,29 +148,37 @@ body {
   color: var(--hud-teal);
 }
 
-.boot-links {
+.boot-secondary-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.65rem 1.1rem;
-  margin: 0.95rem 0 0;
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+}
+
+.boot-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid rgba(245, 240, 231, 0.18);
+  border-radius: 0.45rem;
+  color: var(--hud-ink);
+  background: rgba(5, 9, 13, 0.35);
   font-family: var(--hud-mono);
   font-size: 0.62rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.boot-links a {
-  color: var(--hud-teal);
+  letter-spacing: 0.12em;
   text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: color 160ms ease, border-color 160ms ease;
+  text-transform: uppercase;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
 }
 
-.boot-links a:hover,
-.boot-links a:focus-visible {
+.boot-secondary:hover,
+.boot-secondary:focus-visible {
   color: var(--hud-gold);
-  border-bottom-color: rgba(242, 181, 109, 0.55);
+  border-color: rgba(242, 181, 109, 0.55);
+  background: rgba(8, 14, 18, 0.55);
 }
 
 .boot-mark {

@@ -8,11 +8,8 @@ We start in **San Francisco**, then grow outward:
 
 Everyone is welcome to add their own towns.
 
-Play the current chapter:
-[https://duolahypercho.github.io/earth-online/](https://duolahypercho.github.io/earth-online/)
-
-About the project:
-[https://duolahypercho.github.io/earth-online/about.html](https://duolahypercho.github.io/earth-online/about.html)
+- **About page:** [earth-online/about.html](https://duolahypercho.github.io/earth-online/about.html) · source: [`about.html`](./about.html)
+- **Play San Francisco:** [earth-online](https://duolahypercho.github.io/earth-online/)
 
 ## Vision
 
