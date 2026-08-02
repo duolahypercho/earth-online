@@ -3271,12 +3271,24 @@ function addInteriorResidents(group, width, depth, archetype, building) {
 function updateInteriorResidents(dt) {
   for (const resident of interiorResidents) {
     const data = resident.mesh.userData;
+    const visible = residentScheduleActive(data.schedule, timeOfDay);
+    resident.mesh.visible = visible;
+    if (!visible) continue;
     const swing = Math.sin(performance.now() * 0.0012 + data.phase * Math.PI * 2) * 0.08;
     resident.mesh.rotation.y += dt * 0.05;
     resident.mesh.position.x = resident.baseX + Math.cos(performance.now() * 0.0006 + data.phase * 8) * 0.12;
     resident.mesh.position.z = resident.baseZ + Math.sin(performance.now() * 0.0006 + data.phase * 8) * 0.1;
     resident.mesh.position.y = 0.04 + Math.max(0, swing);
   }
+}
+
+function residentScheduleActive(schedule, timeOfDay) {
+  if (!schedule) return true;
+  if (schedule === 'morning') return timeOfDay === 'day' || timeOfDay === 'dawn';
+  if (schedule === 'midday') return timeOfDay === 'day' || timeOfDay === 'dusk';
+  if (schedule === 'evening') return timeOfDay === 'dusk' || timeOfDay === 'night';
+  if (schedule === 'late-night') return timeOfDay === 'night' || timeOfDay === 'dawn';
+  return true;
 }
 
 function createGeneratedInterior(building) {
@@ -4317,6 +4329,7 @@ function start() {
           role: resident.mesh.userData.role,
           action: resident.mesh.userData.action,
           schedule: resident.mesh.userData.schedule,
+          visible: resident.mesh.visible,
         })),
       } : null,
       renderer: renderer ? {
@@ -4337,6 +4350,7 @@ function start() {
         role: resident.mesh.userData.role,
         action: resident.mesh.userData.action,
         schedule: resident.mesh.userData.schedule,
+        visible: resident.mesh.visible,
       })),
       building: interiorState.building,
     } : null,
