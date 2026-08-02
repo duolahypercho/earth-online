@@ -1925,6 +1925,7 @@ let pedestrianGroup = null;
 let pedestrianState = [];
 let treeGroup = null;
 let furnitureGroup = null;
+let hillVegetationGroup = null;
 let driveIndex = -1;
 let composer = null;
 let skyDome = null;
@@ -2580,6 +2581,92 @@ function createStreetFurniture(roads) {
     hydrants.instanceMatrix.needsUpdate = true;
     furnitureGroup.add(hydrants);
   }
+}
+
+function createHillVegetation(regionPoints) {
+  if (hillVegetationGroup) {
+    cityRoot.remove(hillVegetationGroup);
+    hillVegetationGroup = null;
+  }
+  hillVegetationGroup = new THREE.Group();
+  hillVegetationGroup.name = 'Real map hill vegetation';
+  cityRoot.add(hillVegetationGroup);
+  const flat = flatRegion();
+  const bounds = bboxOfPoints(regionPoints);
+  const spots = [];
+  const random = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  let guard = 0;
+  while (spots.length < 900 && guard < 24000) {
+    guard += 1;
+    const seed = guard * 7919;
+    const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
+    const z = bounds.minZ + random(seed + 17) * (bounds.maxZ - bounds.minZ);
+    if (!pointInFlatRing({ x, z }, flat)) continue;
+    const elevation = elevationAt(x, z);
+    if (elevation < 72) continue;
+    const boxes = collisionBoxesNear(x, z, 5);
+    let blocked = false;
+    for (const box of boxes) {
+      const cx = THREE.MathUtils.clamp(x, box.min.x, box.max.x);
+      const cz = THREE.MathUtils.clamp(z, box.min.z, box.max.z);
+      if (Math.hypot(x - cx, z - cz) < 5) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+    spots.push({
+      x,
+      z,
+      elevation,
+      kind: random(seed + 31) > 0.16 ? 'tree' : 'rock',
+      scale: 0.65 + random(seed + 43) * 0.9,
+    });
+  }
+  const treeTrunkGeometry = new THREE.CylinderGeometry(0.12, 0.2, 1.2, 6);
+  const treeCanopyGeometry = new THREE.ConeGeometry(1.5, 3.1, 7);
+  const rockGeometry = new THREE.DodecahedronGeometry(0.9, 0);
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5f4633, roughness: 0.95, flatShading: true });
+  const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x3f6b45, roughness: 0.92, flatShading: true });
+  const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x7c7b73, roughness: 0.9, flatShading: true });
+  const trees = spots.filter((spot) => spot.kind === 'tree');
+  const rocks = spots.filter((spot) => spot.kind === 'rock');
+  const trunks = new THREE.InstancedMesh(treeTrunkGeometry, trunkMaterial, trees.length);
+  const canopies = new THREE.InstancedMesh(treeCanopyGeometry, canopyMaterial, trees.length);
+  const rockMeshes = new THREE.InstancedMesh(rockGeometry, rockMaterial, rocks.length);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  for (let i = 0; i < trees.length; i += 1) {
+    const spot = trees[i];
+    dummy.position.set(spot.x, spot.elevation + 0.6, spot.z);
+    dummy.scale.setScalar(spot.scale);
+    dummy.rotation.set(0, random(i + 9) * Math.PI, 0);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    dummy.position.y = spot.elevation + 2.8;
+    dummy.scale.setScalar(spot.scale * (0.9 + random(i + 11) * 0.3));
+    dummy.updateMatrix();
+    canopies.setMatrixAt(i, dummy.matrix);
+    color.setHSL(0.3 + random(i) * 0.06, 0.36, 0.26 + random(i + 3) * 0.12);
+    canopies.setColorAt(i, color);
+  }
+  for (let i = 0; i < rocks.length; i += 1) {
+    const spot = rocks[i];
+    dummy.position.set(spot.x, spot.elevation + 0.35, spot.z);
+    dummy.scale.set(spot.scale, spot.scale * 0.7, spot.scale * 0.8);
+    dummy.rotation.set(random(i + 5) * 0.4, random(i + 7) * Math.PI, random(i + 13) * 0.4);
+    dummy.updateMatrix();
+    rockMeshes.setMatrixAt(i, dummy.matrix);
+  }
+  trunks.castShadow = true;
+  trunks.receiveShadow = true;
+  canopies.castShadow = true;
+  rockMeshes.castShadow = true;
+  rockMeshes.receiveShadow = true;
+  hillVegetationGroup.add(trunks, canopies, rockMeshes);
 }
 
 function nearestVehicle(position) {
@@ -3274,6 +3361,7 @@ async function buildCity() {
     const centroid = polygonCentroid(regionPoints);
     cityFlatRegion = flatRegion();
     buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
+    createHillVegetation(regionPoints);
     initPlayer({ x: centroid.x, z: centroid.z });
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
@@ -3355,6 +3443,7 @@ function start() {
       pedestrians: pedestrianState.length,
       trees: treeGroup?.children[0]?.count || 0,
       furniture: furnitureGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
+      hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
       terrain: terrainData?.meta ? {
         cellSize: terrainData.meta.cellSize,

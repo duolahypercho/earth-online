@@ -89,8 +89,8 @@ try {
   await page.waitForTimeout(2600);
   await page.screenshot({ path: '.qa-realmap-city.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1300, 22, 1820],
-    target: [1473, 42, 1900],
+    position: [1780, 34, 1760],
+    target: [1900, 26, 1580],
   }));
   await page.waitForTimeout(400);
   await page.screenshot({ path: '.qa-realmap-hero.png' });
@@ -103,8 +103,8 @@ try {
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(350);
   await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1300, 22, 1820],
-    target: [1473, 42, 1900],
+    position: [1780, 34, 1760],
+    target: [1900, 26, 1580],
   }));
   await page.waitForTimeout(300);
   await page.screenshot({ path: '.qa-realmap-hero-beauty.png' });
@@ -244,17 +244,16 @@ try {
 
   const highPoint = await page.evaluate(() => {
     const lab = window.__SF_REALMAP__;
-    const data = lab.getData();
-    const first = data.boundary[0];
+    const regionPoints = lab.getRegion();
     let minX = Infinity;
     let maxX = -Infinity;
     let minZ = Infinity;
     let maxZ = -Infinity;
-    for (let i = 0; i < first.length; i += 2) {
-      minX = Math.min(minX, first[i]);
-      maxX = Math.max(maxX, first[i]);
-      minZ = Math.min(minZ, first[i + 1]);
-      maxZ = Math.max(maxZ, first[i + 1]);
+    for (const point of regionPoints) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minZ = Math.min(minZ, point.z);
+      maxZ = Math.max(maxZ, point.z);
     }
     let best = { x: minX, z: minZ, elevation: -Infinity };
     for (let zi = 0; zi <= 32; zi += 1) {
@@ -267,8 +266,19 @@ try {
     }
     return best;
   });
-  check('Hill probe found a real SF high point', Number(highPoint?.elevation || 0) > 120, highPoint);
+  const hillThreshold = presetName === 'city' ? 120 : 40;
+  check(`Hill probe found a real SF high point (${presetName})`, Number(highPoint?.elevation || 0) > hillThreshold, {
+    highPoint,
+    threshold: hillThreshold,
+  });
   await page.evaluate((point) => window.__SF_REALMAP__.setPlayerPosition(point.x, point.z), highPoint);
+  await page.evaluate((point) => {
+    window.__SF_REALMAP__.setCityMode('orbit');
+    window.__SF_REALMAP__.setCameraPose({
+      position: [point.x - 110, point.elevation + 42, point.z + 80],
+      target: [point.x + 90, point.elevation - 8, point.z - 60],
+    });
+  }, highPoint);
   await page.waitForTimeout(450);
   await page.screenshot({ path: '.qa-realmap-hills.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));

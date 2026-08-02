@@ -102,10 +102,11 @@ npm run qa:realmap-critic
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (25/25) while the visual critic remains REJECT at 5.6/10
-because street-level edge density and human-blind commercial comparison are
-still unresolved. The critic document lists the exact blockers and acceptance
-tests for the next pass.
+gameplay gate is green (25/25) and the visual critic is CONDITIONAL at 6.5/10
+with zero rejected frames. Street-level edge density now sits at 19.2, hills at
+17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind
+commercial comparison is still unresolved; the critic document lists the exact
+blockers and acceptance tests for the next pass.
 
 Latest gate results on this machine:
 
