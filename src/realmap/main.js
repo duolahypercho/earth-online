@@ -1403,6 +1403,9 @@ function createDetailBuildingMesh(building, groundY = 0) {
   const windowTexture = facadeWindowTexture(Number(building.id) || 0).clone();
   windowTexture.needsUpdate = true;
   material.map = windowTexture;
+  material.emissiveMap = windowTexture;
+  material.emissive = new THREE.Color(0x000000);
+  material.emissiveIntensity = 0;
   material.color.set(0xffffff);
   material.roughness = 0.86;
   material.metalness = 0.02;
@@ -1411,6 +1414,7 @@ function createDetailBuildingMesh(building, groundY = 0) {
     Math.max(1, Math.round(perimeter / 11)),
     Math.max(1, Math.round(buildingHeight / 3.4)),
   );
+  windowMaterials.push(material);
   const roofMaterial = new THREE.MeshStandardMaterial({
     color: buildingRoofColor(building),
     roughness: 0.9,
@@ -1784,6 +1788,7 @@ function createVehicle(color, variant) {
     emissive: 0xffd98a,
     emissiveIntensity: 0.5,
   });
+  vehicleHeadlightMaterials.push(headlightMaterial);
   const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.08), headlightMaterial);
   headlight.position.set(0, 0.72, -2.16);
   group.add(headlight);
@@ -1934,9 +1939,15 @@ let skyDome = null;
 let sceneTriangleCount = 0;
 let weatherIndex = 0;
 let weatherMode = 'clear';
+let timeOfDay = 'day';
+let timeIndex = 0;
 let interiorGroup = null;
 let interiorState = null;
 let interiorLight = null;
+let hemisphereLight = null;
+const windowMaterials = [];
+const streetLightMaterials = [];
+const vehicleHeadlightMaterials = [];
 const CELL_SIZE = 24;
 
 const WEATHER_MODES = {
@@ -1978,6 +1989,81 @@ const WEATHER_MODES = {
     skyTop: 0x667f89,
     skyHorizon: 0x9a9d95,
     skySun: 0xb5a98c,
+  },
+};
+
+const TIME_OF_DAY_MODES = {
+  day: {
+    label: 'DAY',
+    background: 0xb9d0da,
+    fogColor: 0xc2d4dc,
+    fogNear: 220,
+    fogFar: 1150,
+    sunColor: 0xffd9a8,
+    sunIntensity: 3.05,
+    sunPosition: [420, 620, 380],
+    hemisphereSky: 0xcfe5f0,
+    hemisphereGround: 0x635f4e,
+    hemisphereIntensity: 1.05,
+    exposure: 1.18,
+    skyTop: 0x6fa7c4,
+    skyHorizon: 0xd7c9ae,
+    skySun: 0xffcf96,
+    night: 0,
+  },
+  dusk: {
+    label: 'DUSK',
+    background: 0x6f7784,
+    fogColor: 0x727a86,
+    fogNear: 180,
+    fogFar: 900,
+    sunColor: 0xff9c6b,
+    sunIntensity: 1.55,
+    sunPosition: [180, 210, 420],
+    hemisphereSky: 0x8ba7c9,
+    hemisphereGround: 0x4a3f48,
+    hemisphereIntensity: 0.72,
+    exposure: 1.0,
+    skyTop: 0x3b5474,
+    skyHorizon: 0xd89070,
+    skySun: 0xffa66e,
+    night: 0.42,
+  },
+  night: {
+    label: 'NIGHT',
+    background: 0x0d1b2c,
+    fogColor: 0x0d1b2c,
+    fogNear: 120,
+    fogFar: 760,
+    sunColor: 0x7d93b5,
+    sunIntensity: 0.22,
+    sunPosition: [-420, 60, -380],
+    hemisphereSky: 0x182c4d,
+    hemisphereGround: 0x141820,
+    hemisphereIntensity: 0.55,
+    exposure: 1.02,
+    skyTop: 0x07101f,
+    skyHorizon: 0x16283d,
+    skySun: 0x9fb4d4,
+    night: 1,
+  },
+  dawn: {
+    label: 'DAWN',
+    background: 0x9aa8b5,
+    fogColor: 0x9aa8b5,
+    fogNear: 200,
+    fogFar: 1000,
+    sunColor: 0xffb98a,
+    sunIntensity: 1.85,
+    sunPosition: [520, 180, 320],
+    hemisphereSky: 0xbad0e4,
+    hemisphereGround: 0x6b5b50,
+    hemisphereIntensity: 0.85,
+    exposure: 1.06,
+    skyTop: 0x6f8ba8,
+    skyHorizon: 0xe6b390,
+    skySun: 0xffc79b,
+    night: 0.28,
   },
 };
 
@@ -2519,6 +2605,7 @@ function createStreetFurniture(roads) {
     emissiveIntensity: 0.35,
     roughness: 0.45,
   });
+  streetLightMaterials.push(headMaterial);
   const hydrantMaterial = new THREE.MeshStandardMaterial({ color: 0xa33f3f, roughness: 0.55, metalness: 0.3, flatShading: true });
   const dummy = new THREE.Object3D();
   const benches = new THREE.InstancedMesh(benchGeometry, benchMaterial, spots.length);
@@ -3200,7 +3287,7 @@ function updateCityReadout() {
   const mode = document.querySelector('#readout-mode');
   const people = document.querySelector('#readout-people');
   const car = document.querySelector('#readout-car');
-  mode.textContent = `${cityMode.toUpperCase()} · ${WEATHER_MODES[weatherMode].label}`;
+  mode.textContent = `${cityMode.toUpperCase()} · ${WEATHER_MODES[weatherMode].label} · ${TIME_OF_DAY_MODES[timeOfDay].label}`;
   people.textContent = `${pedestrianState.length} people`;
   car.textContent = cityMode === 'interior'
     ? interiorState?.building?.name || 'INTERIOR'
@@ -3271,8 +3358,8 @@ function setupScene() {
   skyDome.renderOrder = -10;
   scene.add(skyDome);
 
-  const hemisphere = new THREE.HemisphereLight(0xcfe5f0, 0x635f4e, 1.05);
-  scene.add(hemisphere);
+  hemisphereLight = new THREE.HemisphereLight(0xcfe5f0, 0x635f4e, 1.05);
+  scene.add(hemisphereLight);
 
   sun = new THREE.DirectionalLight(0xffd9a8, 3.05);
   sun.position.set(420, 620, 380);
@@ -3332,6 +3419,55 @@ function setWeatherMode(mode) {
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
   return weatherMode;
+}
+
+function setTimeOfDay(mode) {
+  const config = TIME_OF_DAY_MODES[mode];
+  if (!config) return timeOfDay;
+  timeOfDay = mode;
+  scene.background.set(config.background);
+  scene.fog.color.set(config.fogColor);
+  scene.fog.near = config.fogNear;
+  scene.fog.far = config.fogFar;
+  sun.color.set(config.sunColor);
+  sun.intensity = config.sunIntensity;
+  sun.position.set(config.sunPosition[0], config.sunPosition[1], config.sunPosition[2]);
+  if (hemisphereLight) {
+    hemisphereLight.color.set(config.hemisphereSky);
+    hemisphereLight.groundColor.set(config.hemisphereGround);
+    hemisphereLight.intensity = config.hemisphereIntensity;
+  }
+  renderer.toneMappingExposure = config.exposure;
+  if (skyDome?.material?.uniforms) {
+    skyDome.material.uniforms.topColor.value.set(config.skyTop);
+    skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
+    skyDome.material.uniforms.sunColor.value.set(config.skySun);
+  }
+  updateNightGlow(config.night);
+  return timeOfDay;
+}
+
+function updateNightGlow(amount) {
+  const night = THREE.MathUtils.clamp(amount, 0, 1);
+  const windowGlow = night * 0.72;
+  for (const material of windowMaterials) {
+    if (!material) continue;
+    material.emissive.set(0xffd9a0);
+    material.emissiveIntensity = windowGlow;
+    material.needsUpdate = true;
+  }
+  for (const material of streetLightMaterials) {
+    if (!material) continue;
+    material.emissive.set(0xffd9a0);
+    material.emissiveIntensity = 0.3 + night * 1.7;
+    material.needsUpdate = true;
+  }
+  for (const material of vehicleHeadlightMaterials) {
+    if (!material) continue;
+    material.emissive.set(0xfff0c0);
+    material.emissiveIntensity = 0.5 + night * 1.5;
+    material.needsUpdate = true;
+  }
 }
 
 function updateSignals(time) {
@@ -3523,6 +3659,11 @@ function setup3DControls() {
       const modes = Object.keys(WEATHER_MODES);
       weatherIndex = (weatherIndex + 1) % modes.length;
       setWeatherMode(modes[weatherIndex]);
+    }
+    if (event.key === 't' && scene) {
+      const modes = Object.keys(TIME_OF_DAY_MODES);
+      timeIndex = (timeIndex + 1) % modes.length;
+      setTimeOfDay(modes[timeIndex]);
     }
     if (event.key === 'e' && cityMode === 'interior') {
       exitInterior();
@@ -3734,7 +3875,11 @@ async function buildCity() {
         threeDControlsBound = true;
       }
       setWeatherMode('clear');
+      setTimeOfDay('day');
     }
+    windowMaterials.length = 0;
+    streetLightMaterials.length = 0;
+    vehicleHeadlightMaterials.length = 0;
     if (cityRoot) {
       scene.remove(cityRoot);
       disposeRoot(cityRoot);
@@ -3883,6 +4028,7 @@ function start() {
         maxElevation: terrainData.meta.maxElevation,
       } : null,
       weather: weatherMode,
+      timeOfDay,
       player: playerState ? { x: playerState.x, z: playerState.z } : null,
       collisionVolumes: collisionAabbs.length,
       driveIndex,
@@ -3926,6 +4072,35 @@ function start() {
     },
     setWeather: (mode) => setWeatherMode(mode),
     getWeather: () => weatherMode,
+    setTimeOfDay: (mode) => setTimeOfDay(mode),
+    getTimeOfDay: () => timeOfDay,
+    getFrameDiagnostics: () => {
+      if (!renderer || !scene || !camera) return null;
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+      const gl = sceneCanvas.getContext('webgl2');
+      if (!gl) return null;
+      const width = gl.drawingBufferWidth;
+      const height = gl.drawingBufferHeight;
+      const data = new Uint8Array(width * height * 4);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      let sum = 0;
+      let bright = 0;
+      let count = 0;
+      let maxLuma = 0;
+      for (let i = 0; i < data.length; i += 4 * 4) {
+        const luma = data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
+        sum += luma;
+        count += 1;
+        maxLuma = Math.max(maxLuma, luma);
+        if (luma > 80) bright += 1;
+      }
+      return {
+        meanLuma: Number((sum / Math.max(1, count)).toFixed(1)),
+        brightRatio: Number((bright / Math.max(1, count)).toFixed(4)),
+        maxLuma: Number(maxLuma.toFixed(1)),
+      };
+    },
     getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
     getElevationAt: (x, z) => elevationAt(x, z),
     setPlayerPosition: (x, z) => {

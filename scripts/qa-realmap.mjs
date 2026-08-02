@@ -217,6 +217,22 @@ try {
     check(`Weather mode ${mode} applies`, next === mode, { next });
   }
   await page.screenshot({ path: '.qa-realmap-drizzle.png' });
+  for (const mode of ['day', 'dusk', 'night', 'dawn']) {
+    const next = await page.evaluate((time) => window.__SF_REALMAP__.setTimeOfDay(time), mode);
+    await page.waitForTimeout(350);
+    check(`Time of day ${mode} applies`, next === mode, { next });
+  }
+  await page.evaluate(() => window.__SF_REALMAP__.setWeather('clear'));
+  await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('night'));
+  await page.waitForTimeout(450);
+  await page.screenshot({ path: '.qa-realmap-night.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: '.qa-realmap-night-beauty.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
+  const nightPixels = await page.evaluate(() => window.__SF_REALMAP__.getFrameDiagnostics());
+  check('Night frame is dark with city glow', Boolean(nightPixels && nightPixels.meanLuma < 90 && nightPixels.brightRatio > 0.002), nightPixels);
+  await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('day'));
   check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {
     geometryTriangles: cityState.geometryTriangles,
     renderer: cityState.renderer,
