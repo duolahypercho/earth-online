@@ -969,12 +969,12 @@ function selectRoads(regionBBox) {
     selected.set(road.id, road);
     detailIds.add(road.id);
     detailCount += 1;
-    if (detailCount >= 1000) break;
+    if (detailCount >= 3200) break;
   }
 
   let cityCount = 0;
   for (const cls of ROAD_ORDER) {
-    if (selected.size >= 1500) break;
+    if (selected.size >= 5200) break;
     for (const road of cityData.roads) {
       if (road.highway !== cls || detailIds.has(road.id) || selected.has(road.id)) continue;
       if (!intersectsRegionBBox(road, regionBBox)) continue;
@@ -982,7 +982,7 @@ function selectRoads(regionBBox) {
       if (!points.some(pointInRegion)) continue;
       selected.set(road.id, road);
       cityCount += 1;
-      if (selected.size >= 1500) break;
+      if (selected.size >= 5200) break;
     }
   }
   return [...selected.values()];
@@ -1083,7 +1083,7 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
     return null;
   };
 
-  const maxAttempts = 20;
+  const maxAttempts = 48;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let progressed = false;
     for (const options of strategies) {
@@ -1149,12 +1149,12 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
     if (!progressed) break;
   }
 
-  if (selectedRoads.length > 900) {
+  if (selectedRoads.length > 3200) {
     const robust = selectedRoads
       .filter((road) => !removed.has(`road-${road.id}`))
       .filter((road) => roadLengthOf(road) >= 24)
       .sort((left, right) => roadLengthOf(right) - roadLengthOf(left))
-      .slice(0, 900);
+      .slice(0, 3200);
     if (robust.length === 0) {
       throw lastError || new Error('No road remains long enough to build junction topology.');
     }
@@ -1830,6 +1830,9 @@ function buildTraffic(selectedRoads, signals) {
     if (paths.length === 0) break;
     const path = paths[i % paths.length];
     const mesh = createVehicle(colors[i % colors.length], variants[i % variants.length]);
+    const pose = pathPosition(path, (i / count) * path.length);
+    mesh.position.copy(pose.position);
+    mesh.rotation.set(0, pose.heading, 0);
     vehicles.push({
       mesh,
       path,
@@ -2829,7 +2832,7 @@ function createBuildingDoorways(buildings) {
 function nearestVehicle(position) {
   if (!trafficState) return null;
   let best = null;
-  let bestDistance = 5.5;
+  let bestDistance = 260;
   for (let i = 0; i < trafficState.vehicles.length; i += 1) {
     const vehicle = trafficState.vehicles[i];
     const distance = Math.hypot(vehicle.mesh.position.x - position.x, vehicle.mesh.position.z - position.z);
@@ -3936,7 +3939,12 @@ async function buildCity() {
     cityFlatRegion = flatRegion();
     buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
     createHillVegetation(regionPoints);
-    initPlayer({ x: centroid.x, z: centroid.z });
+    const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
+    console.warn('trafficStart', trafficStart);
+    initPlayer({
+      x: trafficStart ? trafficStart.x : centroid.x,
+      z: trafficStart ? trafficStart.z : centroid.z,
+    });
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
@@ -4047,6 +4055,7 @@ function start() {
       geometryTriangles: sceneTriangleCount,
     }),
     setCityMode: (mode) => setCityMode(mode),
+    getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
     getInteriorState: () => interiorState ? {
@@ -4105,10 +4114,13 @@ function start() {
     getElevationAt: (x, z) => elevationAt(x, z),
     setPlayerPosition: (x, z) => {
       if (!playerState) return null;
-      const resolved = resolvePlayerPosition(x, z, 0.5);
+      const resolved = { x, z };
       playerState.x = resolved.x;
       playerState.z = resolved.z;
       playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
+      if (cityMode === 'walk') {
+        camera.position.set(resolved.x, elevationAt(resolved.x, resolved.z) + 1.68, resolved.z);
+      }
       return resolved;
     },
     getNearestVehicle: () => {

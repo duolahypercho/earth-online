@@ -351,9 +351,31 @@ try {
     if (trafficPositions?.length) driveTarget = { position: trafficPositions[0] };
   }
   if (driveTarget) {
-    await page.evaluate((position) => window.__SF_REALMAP__.setPlayerPosition(position.x, position.z), driveTarget.position);
+    const exact = await page.evaluate((position) => {
+      const lab = window.__SF_REALMAP__;
+      const traffic = lab.getTrafficPositions();
+      let best = null;
+      let bestDistance = Infinity;
+      for (const point of traffic) {
+        const distance = Math.hypot(point.x - position.x, point.z - position.z);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = point;
+        }
+      }
+      if (best) lab.setPlayerPosition(best.x, best.z);
+      return { player: lab.getPlayerPosition(), traffic: traffic.slice(0, 4), best, bestDistance };
+    }, driveTarget.position);
+    console.log('drive probe exact', JSON.stringify(exact));
+    await page.waitForTimeout(150);
+    const driveProbe = exact;
     const driveResult = await page.evaluate(() => window.__SF_REALMAP__.setCityMode('drive'));
-    check('Drive mode enters a real road vehicle', driveResult === true);
+    const driveIndex = await page.evaluate(() => window.__SF_REALMAP__.getDriveIndex());
+    check('Drive mode enters a real road vehicle', driveResult === true && driveIndex >= 0, {
+      ...driveProbe,
+      driveIndex,
+      driveResult,
+    });
     await page.waitForTimeout(200);
     await page.keyboard.down('w');
     await page.waitForTimeout(900);

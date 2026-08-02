@@ -123,9 +123,9 @@ Latest gate results on this machine:
 - Downtown preset generated 1,061 compiled streets, 203 real signal nodes,
   71 traffic vehicles, 150 sidewalk pedestrians, 420 street trees, and 1,401
   detailed OSM building footprints;
-- Full City preset generated 1,671 compiled streets, all 322 signal nodes,
-  90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse massing blocks,
-  and 9,399 collision volumes;
+- Full City preset generated 3,530 compiled streets (up from 1,671), all 322
+  signal nodes, 90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse
+  massing blocks, and 9,399 collision volumes;
 - Downtown rendered 251,209 scene triangles with 1,158 crosswalk stripes after
   post-processing was enabled;
 - terrain heightmap covers the city at 617 x 640 cells, -6.9 m to 272.4 m,
