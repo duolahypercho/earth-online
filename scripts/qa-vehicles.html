@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#2a343d}canvas{display:block}</style></head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const params = new URLSearchParams(location.search);
+const cls = params.get('cls') || 'sedan';
+const colorHex = params.get('color') ? parseInt(params.get('color'), 16) : 0xc7cbd1;
+
+// Minimal road network: one straight road so the system builds a pool.
+const roadNetwork = {
+  roads: [ { points: [[-100, 0, 0], [100, 0, 0]] } ],
+  intersections: [],
+};
+
+const { createTrafficSystem } = await import('/src/traffic.js');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x39424b);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.5;
+
+scene.add(new THREE.HemisphereLight(0xbfd7ee, 0x3a332c, 1.0));
+const sun = new THREE.DirectionalLight(0xffd9a8, 3.2);
+sun.position.set(-30, 40, 25);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(60, 48).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x4a4f52, roughness: 0.95 }),
+);
+scene.add(ground);
+
+const traffic = createTrafficSystem({ scene, roadNetwork });
+// Find a vehicle of the requested class, override paint, pin at origin.
+const root = traffic.group.children.find((c) => c.userData?.vehicleClass === cls)
+  || traffic.group.children[0];
+traffic.group.children.forEach((c) => { c.visible = c === root; });
+if (colorHex != null) {
+  root.traverse((child) => {
+    if (child.isMesh && child.material && child.material.clearcoat !== undefined) {
+      child.material = child.material.clone();
+      child.material.color.setHex(colorHex);
+    }
+  });
+}
+root.position.set(0, 0, 0);
+root.rotation.set(0, 0, 0);
+root.updateMatrixWorld(true);
+
+// Report the class dims so the runner can place the camera.
+const dims = { sedan: [4.55, 1.85, 1.42], suv: [4.86, 1.96, 1.72], taxi: [4.55, 1.85, 1.42],
+  pickup: [5.52, 2.02, 1.78], van: [5.35, 2.0, 2.1], truck: [7.3, 2.3, 2.9], bus: [11, 2.55, 3.0] }[cls] || [4.55, 1.85, 1.42];
+window.__DIMS__ = dims;
+// Numeric dump of the assembled body for QA: name, material color, local
+// position and scale (which equals world since the root is at origin).
+window.__BODY_DUMP__ = (() => {
+  const bodyG = root.children.find((c) => c.type === 'Group');
+  const rows = [];
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    rows.push({
+      pos: child.position.toArray().map((n) => +n.toFixed(3)),
+      scale: child.scale.toArray().map((n) => +n.toFixed(3)),
+      color: child.material && child.material.color ? child.material.color.getHexString() : null,
+      glass: child.material === undefined ? false : (child.material.color && child.material.color.getHexString() === '1c333e'),
+    });
+  });
+  return rows;
+})();
+
+const [len, wid, hgt] = dims;
+const yawDeg = parseFloat(params.get('yaw') ?? '38');
+const pitch = parseFloat(params.get('pitch') ?? '0.32');
+const dist = parseFloat(params.get('dist') ?? String(Math.max(7, len * 1.55)));
+const yaw = THREE.MathUtils.degToRad(yawDeg);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(
+  Math.sin(yaw) * Math.cos(pitch) * dist,
+  hgt * 0.5 + Math.sin(pitch) * dist,
+  Math.cos(yaw) * Math.cos(pitch) * dist,
+);
+camera.lookAt(0, hgt * 0.5, 0);
+
+renderer.render(scene, camera);
+window.__READY__ = true;
+</script>
+</body>
+</html>

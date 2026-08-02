@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0c131d" />
+    <meta
+      name="description"
+      content="A low-poly real-time San Francisco city simulator with a playable waterfront shift."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>San Francisco / Golden Hour</title>
+  </head>
+  <body>
+    <main id="app" aria-label="San Francisco real-time simulation">
+      <canvas
+        id="scene-canvas"
+        tabindex="0"
+        inert
+        aria-label="Interactive San Francisco city scene"
+        aria-describedby="scene-instructions"
+      ></canvas>
+      <div id="hud-root" inert></div>
+      <section
+        id="boot-overlay"
+        class="boot-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="boot-title"
+        aria-describedby="boot-description"
+        aria-live="polite"
+      >
+        <div class="boot-panel">
+          <div class="boot-mark">SF<span>/</span>01</div>
+          <p class="boot-kicker">CITY SHIFT / REAL-TIME STUDY</p>
+          <h1 id="boot-title">Golden hour,<br /><em>alive.</em></h1>
+          <p class="boot-copy" id="boot-description">
+            Run the Waterfront Loop through a living district, then make the city your own.
+          </p>
+          <div class="boot-guide" id="scene-instructions">
+            <span><kbd>DRAG</kbd> orbit</span>
+            <span><kbd>W A S D</kbd> roam</span>
+            <span><kbd>E</kbd> enter</span>
+            <span><kbd>R</kbd> weather</span>
+            <span><kbd>H</kbd> beauty</span>
+            <span><kbd>C</kbd> quality</span>
+            <span><kbd>M</kbd> map</span>
+          </div>
+          <button id="launch-button" class="boot-action" type="button" disabled>
+            <span>Preparing the city</span><b aria-hidden="true">↗</b>
+          </button>
+          <p class="boot-status" id="boot-status">Warming up the avenue…</p>
+        </div>
+      </section>
+      <noscript>This experience requires JavaScript and WebGL2.</noscript>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "san-francisco-realtime",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "verify:city": "node scripts/verify-city-simulation.mjs",
+    "verify:gauntlet": "node scripts/verify-gauntlet-matrix.mjs",
+    "verify:streaming": "node scripts/verify-streaming.mjs",
+    "verify:streamed-agents": "node scripts/verify-streamed-agents.mjs"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "vite": "^6.1.0"
+  }
+}
