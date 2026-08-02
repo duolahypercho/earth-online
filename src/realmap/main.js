@@ -1927,6 +1927,7 @@ let pedestrianState = [];
 let treeGroup = null;
 let furnitureGroup = null;
 let hillVegetationGroup = null;
+let doorwayGroup = null;
 let driveIndex = -1;
 let composer = null;
 let skyDome = null;
@@ -2671,6 +2672,71 @@ function createHillVegetation(regionPoints) {
   rockMeshes.castShadow = true;
   rockMeshes.receiveShadow = true;
   hillVegetationGroup.add(trunks, canopies, rockMeshes);
+}
+
+function createBuildingDoorways(buildings) {
+  if (doorwayGroup) {
+    cityRoot.remove(doorwayGroup);
+    doorwayGroup = null;
+  }
+  doorwayGroup = new THREE.Group();
+  doorwayGroup.name = 'Real map building doorways';
+  cityRoot.add(doorwayGroup);
+  const doorMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2c2620,
+    roughness: 0.62,
+    metalness: 0.08,
+  });
+  const lintelMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6b5a48,
+    roughness: 0.7,
+    metalness: 0.05,
+  });
+  const doorGeometry = new THREE.PlaneGeometry(1.05, 2.15);
+  const lintelGeometry = new THREE.BoxGeometry(1.3, 0.14, 0.18);
+  let count = 0;
+  for (const building of buildings) {
+    if (!building.points || building.points.length < 6) continue;
+    const points = buildingFootprintPoints(building);
+    const entrance = buildingEntrancePoint(building);
+    if (!entrance) continue;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minZ = Math.min(minZ, point.z);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    const center = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+    const dx = entrance.x - center.x;
+    const dz = entrance.z - center.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const face = { x: dx / length, z: dz / length };
+    const groundY = buildingGroundY(building);
+    const door = new THREE.Mesh(doorGeometry, doorMaterial);
+    door.position.set(
+      entrance.x - face.x * 0.28,
+      groundY + 1.08,
+      entrance.z - face.z * 0.28,
+    );
+    door.rotation.y = Math.atan2(face.x, face.z);
+    door.castShadow = true;
+    doorwayGroup.add(door);
+    const lintel = new THREE.Mesh(lintelGeometry, lintelMaterial);
+    lintel.position.set(
+      entrance.x - face.x * 0.28,
+      groundY + 2.22,
+      entrance.z - face.z * 0.28,
+    );
+    lintel.rotation.y = Math.atan2(face.x, face.z);
+    lintel.castShadow = true;
+    doorwayGroup.add(lintel);
+    count += 1;
+    if (count >= 1600) break;
+  }
 }
 
 function nearestVehicle(position) {
@@ -3594,6 +3660,7 @@ async function buildCity() {
     const coarse = createCoarseBuildings(buildings.coarse);
     coarseBuildingMesh = coarse.mesh;
     if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
+    createBuildingDoorways(buildings.detailed);
 
     setBuildProgress('SIGNALS', 'Hanging traffic lights at real signal nodes…', 0.78);
     await tick();
@@ -3701,6 +3768,7 @@ function start() {
       trees: treeGroup?.children[0]?.count || 0,
       furniture: furnitureGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
+      doorways: doorwayGroup?.children.length || 0,
       crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
       terrain: terrainData?.meta ? {
         cellSize: terrainData.meta.cellSize,

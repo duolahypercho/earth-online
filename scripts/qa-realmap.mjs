@@ -223,6 +223,7 @@ try {
   });
   check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
   check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
+  check('Building doorways mark entrances', Number(cityState.doorways || 0) > 0, cityState.doorways);
 
   const walkResult = await page.evaluate(() => window.__SF_REALMAP__.setCityMode('walk'));
   check('Walk mode activates', walkResult === true);

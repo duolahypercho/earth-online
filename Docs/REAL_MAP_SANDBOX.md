@@ -38,6 +38,8 @@ that slice as a 3D city with:
   HUD-free captures for critic frames;
 - enterable generated interiors for real OSM buildings: stand beside a detailed
   footprint and press `E`, then `E` or `Esc` returns you to the street;
+- visible doorway markers on detailed OSM footprints so enterable buildings are
+  discoverable from the street;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -104,7 +106,7 @@ npm run qa:realmap-critic
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (25/25) and the visual critic is CONDITIONAL at 6.5/10
+gameplay gate is green (29/29) and the visual critic is CONDITIONAL at 6.5/10
 with zero rejected frames. Street-level edge density now sits at 19.2, hills at
 17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind
 commercial comparison is still unresolved; the critic document lists the exact
