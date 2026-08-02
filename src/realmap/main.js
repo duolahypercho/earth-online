@@ -627,6 +627,7 @@ function setupToolbar() {
     });
   });
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
+    if (interiorState) exitInterior();
     if (document.pointerLockElement) document.exitPointerLock();
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) trafficState.vehicles[driveIndex].manual = false;
     driveIndex = -1;
@@ -1932,6 +1933,9 @@ let skyDome = null;
 let sceneTriangleCount = 0;
 let weatherIndex = 0;
 let weatherMode = 'clear';
+let interiorGroup = null;
+let interiorState = null;
+let interiorLight = null;
 const CELL_SIZE = 24;
 
 const WEATHER_MODES = {
@@ -2684,7 +2688,240 @@ function nearestVehicle(position) {
   return best;
 }
 
+function distanceToPolygon(point, points) {
+  let bestDistance = Infinity;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const lengthSq = dx * dx + dz * dz;
+    const t = lengthSq > 0 ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSq)) : 0;
+    const px = a.x + dx * t;
+    const pz = a.z + dz * t;
+    bestDistance = Math.min(bestDistance, Math.hypot(point.x - px, point.z - pz));
+  }
+  return bestDistance;
+}
+
+function buildingFootprintPoints(building) {
+  const points = [];
+  for (let i = 0; i < building.points.length; i += 2) {
+    points.push({ x: building.points[i], z: building.points[i + 1] });
+  }
+  return points;
+}
+
+function nearestEnterableBuilding(position, radius = 4.2) {
+  let best = null;
+  let bestDistance = radius;
+  for (const mesh of detailBuildingMeshes) {
+    const building = mesh.userData?.building;
+    if (!building?.points) continue;
+    const points = buildingFootprintPoints(building);
+    const distance = distanceToPolygon(position, points);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { building, mesh, distance, points };
+    }
+  }
+  return best;
+}
+
+function buildingEntrancePoint(building) {
+  const points = buildingFootprintPoints(building);
+  if (!points.length) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+  const center = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+  let best = null;
+  let bestDistance = Infinity;
+  for (const point of points) {
+    const distance = Math.hypot(point.x - center.x, point.z - center.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = point;
+    }
+  }
+  if (!best) return null;
+  const dx = best.x - center.x;
+  const dz = best.z - center.z;
+  const length = Math.hypot(dx, dz) || 1;
+  return {
+    x: best.x + (dx / length) * 2.6,
+    z: best.z + (dz / length) * 2.6,
+  };
+}
+
+function interiorMaterials() {
+  return {
+    floor: new THREE.MeshStandardMaterial({ color: 0x9a7d5d, roughness: 0.85, metalness: 0.02 }),
+    wall: new THREE.MeshStandardMaterial({ color: 0xe6dfcf, roughness: 0.9, metalness: 0.01 }),
+    ceiling: new THREE.MeshStandardMaterial({ color: 0xd9d2c2, roughness: 0.95 }),
+    wood: new THREE.MeshStandardMaterial({ color: 0x6b4f34, roughness: 0.8, metalness: 0.02 }),
+    metal: new THREE.MeshStandardMaterial({ color: 0x31383d, roughness: 0.45, metalness: 0.6 }),
+    accent: new THREE.MeshStandardMaterial({ color: 0x9d5b43, roughness: 0.7, metalness: 0.02 }),
+  };
+}
+
+function createGeneratedInterior(building) {
+  const points = buildingFootprintPoints(building);
+  if (!points.length) return null;
+  const bounds = points.reduce((acc, point) => ({
+    minX: Math.min(acc.minX, point.x),
+    maxX: Math.max(acc.maxX, point.x),
+    minZ: Math.min(acc.minZ, point.z),
+    maxZ: Math.max(acc.maxZ, point.z),
+  }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
+  const width = Math.min(9, Math.max(4, bounds.maxX - bounds.minX));
+  const depth = Math.min(9, Math.max(4, bounds.maxZ - bounds.minZ));
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+  const floorY = Math.min(
+    ...points.map((point) => elevationAt(point.x, point.z)),
+  );
+  const group = new THREE.Group();
+  group.position.set(centerX, floorY, centerZ);
+  const materials = interiorMaterials();
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0.08;
+  floor.receiveShadow = true;
+  group.add(floor);
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.ceiling);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.y = 3.0;
+  group.add(ceiling);
+  const wallMaterialArray = [materials.wall];
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallMaterialArray[0]);
+  leftWall.position.set(-width / 2, 1.5, 0);
+  leftWall.castShadow = true;
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.0, depth), wallMaterialArray[0]);
+  rightWall.position.set(width / 2, 1.5, 0);
+  rightWall.castShadow = true;
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(width, 3.0, 0.16), wallMaterialArray[0]);
+  backWall.position.set(0, 1.5, -depth / 2);
+  backWall.castShadow = true;
+  const frontLeft = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallMaterialArray[0]);
+  frontLeft.position.set(-width * 0.25, 1.5, depth / 2);
+  frontLeft.castShadow = true;
+  const frontRight = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 3.0, 0.16), wallMaterialArray[0]);
+  frontRight.position.set(width * 0.25, 1.5, depth / 2);
+  frontRight.castShadow = true;
+  group.add(leftWall, rightWall, backWall, frontLeft, frontRight);
+
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 0.75), materials.wood);
+  counter.position.set(-width * 0.22, 1.0, -depth * 0.14);
+  counter.castShadow = true;
+  group.add(counter);
+  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.07, 0.95), materials.accent);
+  counterTop.position.set(-width * 0.22, 1.53, -depth * 0.14);
+  group.add(counterTop);
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(width * 0.62, 0.08, 0.35), materials.wood);
+  shelf.position.set(width * 0.12, 2.15, -depth * 0.3);
+  shelf.castShadow = true;
+  group.add(shelf);
+  const desk = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.75, 0.72), materials.wood);
+  desk.position.set(width * 0.2, 0.75, depth * 0.18);
+  desk.castShadow = true;
+  group.add(desk);
+  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.08), materials.metal);
+  chairBack.position.set(width * 0.2, 1.2, depth * 0.18 + 0.42);
+  const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.42), materials.metal);
+  chairSeat.position.set(width * 0.2, 0.78, depth * 0.18 + 0.4);
+  group.add(chairBack, chairSeat);
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.95, 8), materials.metal);
+  lamp.position.set(-width * 0.36, 0.95, depth * 0.32);
+  const lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.28, 8), materials.accent);
+  lampShade.position.set(-width * 0.36, 1.5, depth * 0.32);
+  group.add(lamp, lampShade);
+
+  const picture = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 0.7),
+    new THREE.MeshStandardMaterial({ color: 0x6a8f9f, roughness: 0.6 }),
+  );
+  picture.position.set(width * 0.2, 2.15, -depth / 2 + 0.09);
+  group.add(picture);
+
+  const light = new THREE.PointLight(0xffe2b8, 18, 9, 1.6);
+  light.position.set(0, 2.7, 0);
+  light.castShadow = true;
+  group.add(light);
+
+  group.userData = {
+    type: 'interior',
+    building,
+    centerX,
+    centerZ,
+    floorY,
+    heading: Math.atan2(centerX, centerZ),
+  };
+  return group;
+}
+
+function enterNearestBuilding() {
+  if (interiorState || !playerState) return false;
+  const nearest = nearestEnterableBuilding(playerState);
+  if (!nearest) return false;
+  const room = createGeneratedInterior(nearest.building);
+  if (!room) return false;
+  interiorGroup = room;
+  cityRoot.add(interiorGroup);
+  const data = room.userData;
+  interiorState = {
+    building: nearest.building,
+    room,
+    entrance: {
+      x: playerState.x,
+      z: playerState.z,
+    },
+    yaw: playerYaw,
+  };
+  interiorLight = room.children.find((child) => child.isPointLight) || null;
+  if (document.pointerLockElement) document.exitPointerLock();
+  pointerLockActive = false;
+  cityMode = 'interior';
+  if (playerAvatarGroup) playerAvatarGroup.visible = false;
+  camera.position.set(data.centerX, data.floorY + 1.55, data.centerZ - 1.7);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.set(-0.08, Math.atan2(0, 1), 0);
+  updateCityReadout();
+  return true;
+}
+
+function exitInterior() {
+  if (!interiorState) return false;
+  if (interiorGroup) {
+    cityRoot.remove(interiorGroup);
+    interiorGroup = null;
+  }
+  interiorLight = null;
+  cityMode = 'walk';
+  if (playerAvatarGroup) playerAvatarGroup.visible = true;
+  const entrance = interiorState.entrance;
+  const resolved = resolvePlayerPosition(entrance.x, entrance.z, 0.5);
+  playerState.x = resolved.x;
+  playerState.z = resolved.z;
+  playerYaw = interiorState.yaw;
+  playerState.yaw = playerYaw;
+  interiorState = null;
+  updateCityReadout();
+  return true;
+}
+
 function setCityMode(mode) {
+  if (mode !== 'interior' && interiorState) exitInterior();
+  if (mode === 'interior') {
+    return enterNearestBuilding();
+  }
   if (mode === 'drive') {
     if (!playerState || !trafficState?.vehicles.length) return false;
     const nearest = nearestVehicle(playerState);
@@ -2723,9 +2960,14 @@ function setCityMode(mode) {
   });
   const driveButton = document.querySelector('[data-city-mode="drive"]');
   driveButton.disabled = !trafficState?.vehicles.length;
-  modeLabel.textContent = cityMode === 'walk' ? 'Walking the streets' : cityMode === 'drive' ? 'Driving real roads' : 'Exploring generated city';
-  hint.textContent = cityMode === 'walk'
-    ? 'W A S D walk · Shift sprint · E enter a car · Esc return to orbit'
+  modeLabel.textContent = cityMode === 'walk' ? 'Walking the streets'
+    : cityMode === 'drive' ? 'Driving real roads'
+      : cityMode === 'interior' ? `Inside ${interiorState?.building?.name || 'a building'}`
+        : 'Exploring generated city';
+  hint.textContent = cityMode === 'interior'
+    ? 'E or Esc returns to the street'
+    : cityMode === 'walk'
+      ? 'W A S D walk · Shift sprint · E enter a car or building · Esc return to orbit'
     : cityMode === 'drive'
       ? 'W accelerate · S brake · E exit the car'
       : 'Drag orbit · scroll zoom · W A S D pan · click buildings, streets, or signals';
@@ -2789,7 +3031,9 @@ function updateCityReadout() {
   const car = document.querySelector('#readout-car');
   mode.textContent = `${cityMode.toUpperCase()} · ${WEATHER_MODES[weatherMode].label}`;
   people.textContent = `${pedestrianState.length} people`;
-  car.textContent = driveIndex >= 0
+  car.textContent = cityMode === 'interior'
+    ? interiorState?.building?.name || 'INTERIOR'
+    : driveIndex >= 0
     ? `DRIVING / ${trafficState.vehicles[driveIndex].speed.toFixed(1)} M/S`
     : nearestVehicle(playerState || { x: 0, z: 0 }) ? 'E TO DRIVE' : '—';
 }
@@ -3060,6 +3304,14 @@ function renderLoop() {
   if (cityMode === 'walk') {
     controls.enabled = false;
     updatePlayerWalk(dt);
+  } else if (cityMode === 'interior') {
+    controls.enabled = false;
+    if (interiorState?.room) {
+      const data = interiorState.room.userData;
+      camera.position.set(data.centerX, data.floorY + 1.55, data.centerZ - 1.7);
+      camera.rotation.order = 'YXZ';
+      camera.rotation.set(-0.08, 0, 0);
+    }
   } else if (cityMode === 'drive') {
     controls.enabled = false;
     updateDrivenVehicle(dt);
@@ -3101,12 +3353,17 @@ function setup3DControls() {
       weatherIndex = (weatherIndex + 1) % modes.length;
       setWeatherMode(modes[weatherIndex]);
     }
-    if (event.key === 'e' && cityMode === 'walk' && trafficState?.vehicles.length) {
-      setCityMode('drive');
+    if (event.key === 'e' && cityMode === 'interior') {
+      exitInterior();
+    } else if (event.key === 'e' && cityMode === 'walk') {
+      if (!enterNearestBuilding() && trafficState?.vehicles.length) {
+        setCityMode('drive');
+      }
     } else if (event.key === 'e' && cityMode === 'drive') {
       setCityMode('walk');
     } else if (event.key === 'escape' && cityMode !== 'orbit') {
-      setCityMode('orbit');
+      if (cityMode === 'interior') exitInterior();
+      else setCityMode('orbit');
     }
   });
   window.addEventListener('keyup', (event) => moveKeys.delete(event.key.toLowerCase()));
@@ -3459,6 +3716,10 @@ function start() {
       vehicleSpeed: driveIndex >= 0 && trafficState?.vehicles[driveIndex]
         ? trafficState.vehicles[driveIndex].speed
         : null,
+      interior: interiorState ? {
+        name: interiorState.building?.name || 'Unnamed building',
+        address: interiorState.building?.addr || '',
+      } : null,
       renderer: renderer ? {
         drawCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
@@ -3466,6 +3727,17 @@ function start() {
       geometryTriangles: sceneTriangleCount,
     }),
     setCityMode: (mode) => setCityMode(mode),
+    enterNearestBuilding: () => enterNearestBuilding(),
+    exitInterior: () => exitInterior(),
+    getInteriorState: () => interiorState ? {
+      name: interiorState.building?.name || 'Unnamed building',
+      address: interiorState.building?.addr || '',
+      building: interiorState.building,
+    } : null,
+    getBuildingEntrance: (index = 0) => {
+      const building = detailBuildingMeshes[index]?.userData?.building;
+      return building ? buildingEntrancePoint(building) : null;
+    },
     setCameraPose: (pose) => {
       if (!controls || !camera) return false;
       if (pose?.position) camera.position.set(pose.position[0], pose.position[1], pose.position[2]);

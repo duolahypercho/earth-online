@@ -36,6 +36,8 @@ that slice as a 3D city with:
 - procedural window/storefront texture bands on every detailed OSM footprint,
   578 street-furniture pieces (benches, lights, hydrants), and beauty-mode
   HUD-free captures for critic frames;
+- enterable generated interiors for real OSM buildings: stand beside a detailed
+  footprint and press `E`, then `E` or `Esc` returns you to the street;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,

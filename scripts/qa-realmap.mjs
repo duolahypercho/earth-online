@@ -242,6 +242,23 @@ try {
   await page.screenshot({ path: '.qa-realmap-street-beauty.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
+  const entrance = await page.evaluate(() => window.__SF_REALMAP__.getBuildingEntrance(0));
+  if (entrance) {
+    await page.evaluate((point) => window.__SF_REALMAP__.setPlayerPosition(point.x, point.z), entrance);
+    await page.waitForTimeout(200);
+    const entered = await page.evaluate(() => window.__SF_REALMAP__.enterNearestBuilding());
+    check('Enterable real-map building opens', entered === true);
+    const interior = await page.evaluate(() => window.__SF_REALMAP__.getInteriorState());
+    check('Interior exposes OSM metadata', Boolean(interior && (interior.name || interior.address)), interior);
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: '.qa-realmap-interior.png' });
+    const exited = await page.evaluate(() => window.__SF_REALMAP__.exitInterior());
+    check('Interior returns to the street', exited === true);
+  } else {
+    check('Enterable real-map building opens', false, 'no detailed building entrance');
+    check('Interior exposes OSM metadata', false, 'no detailed building entrance');
+  }
+
   const highPoint = await page.evaluate(() => {
     const lab = window.__SF_REALMAP__;
     const regionPoints = lab.getRegion();
