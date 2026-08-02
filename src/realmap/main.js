@@ -1947,6 +1947,7 @@ let timeIndex = 0;
 let interiorGroup = null;
 let interiorState = null;
 let interiorLight = null;
+let interiorResidents = [];
 let hemisphereLight = null;
 const windowMaterials = [];
 const streetLightMaterials = [];
@@ -3054,6 +3055,85 @@ function addBox(group, geometry, material, x, y, z, rotation = null) {
   return mesh;
 }
 
+function interiorResidentPalette(seed) {
+  const palettes = [
+    { top: 0x3f6f8f, bottom: 0x2f3a44, skin: 0xd9a37e },
+    { top: 0x9d4f46, bottom: 0x27313a, skin: 0x8d5f43 },
+    { top: 0x5b7a63, bottom: 0x333c45, skin: 0xf0c8a0 },
+    { top: 0x8a5a2b, bottom: 0x2d2f31, skin: 0xe8b48f },
+  ];
+  return palettes[Math.abs(seed) % palettes.length];
+}
+
+function createInteriorResident(seed, archetype) {
+  const group = new THREE.Group();
+  const palette = interiorResidentPalette(seed);
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: palette.top, roughness: 0.78, flatShading: true });
+  const legMaterial = new THREE.MeshStandardMaterial({ color: palette.bottom, roughness: 0.85, flatShading: true });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.65 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.5, 0.22), bodyMaterial);
+  body.position.y = 0.82;
+  body.castShadow = true;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), skinMaterial);
+  head.position.y = 1.25;
+  head.castShadow = true;
+  const legs = new THREE.Group();
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.42, 0.14), legMaterial);
+  left.position.set(-0.09, 0.21, 0);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.42, 0.14), legMaterial);
+  right.position.set(0.09, 0.21, 0);
+  legs.add(left, right);
+  group.add(body, head, legs);
+  const roles = archetype === 'cafe' ? ['Barista', 'Regular']
+    : archetype === 'office' ? ['Analyst', 'Receptionist', 'Director']
+      : archetype === 'market' ? ['Stock clerk', 'Shopper', 'Cashier']
+        : ['Resident', 'Neighbor', 'Lodger'];
+  const actions = ['working', 'reading', 'chatting', 'serving', 'stocking', 'resting'];
+  const role = roles[Math.abs(seed) % roles.length];
+  const action = actions[Math.abs(seed * 3 + 7) % actions.length];
+  group.userData = {
+    type: 'interior-resident',
+    role,
+    action,
+    schedule: ['morning', 'midday', 'evening', 'late-night'][Math.abs(seed * 5 + 13) % 4],
+    phase: (seed % 1000) / 1000,
+  };
+  return group;
+}
+
+function interiorResidentPosition(width, depth, seed, index) {
+  const x = -width * 0.3 + ((seed % 7) / 7) * width * 0.6;
+  const z = -depth * 0.2 + (((seed * 3 + index * 7) % 9) / 9) * depth * 0.6;
+  return { x, z };
+}
+
+function addInteriorResidents(group, width, depth, archetype, building) {
+  const count = archetype === 'office' || archetype === 'market' ? 3 : 2;
+  const residents = [];
+  const seedBase = Number(building?.id) || 0;
+  for (let i = 0; i < count; i += 1) {
+    const seed = seedBase + i * 131;
+    const avatar = createInteriorResident(seed, archetype);
+    const position = interiorResidentPosition(width, depth, seed, i);
+    avatar.position.set(position.x, 0.04, position.z);
+    avatar.rotation.y = ((seed % 360) / 360) * Math.PI * 2;
+    group.add(avatar);
+    residents.push({ mesh: avatar, baseX: position.x, baseZ: position.z });
+  }
+  return residents;
+}
+
+function updateInteriorResidents(dt) {
+  for (const resident of interiorResidents) {
+    const data = resident.mesh.userData;
+    const swing = Math.sin(performance.now() * 0.0012 + data.phase * Math.PI * 2) * 0.08;
+    resident.mesh.rotation.y += dt * 0.05;
+    resident.mesh.position.x = resident.baseX + Math.cos(performance.now() * 0.0006 + data.phase * 8) * 0.12;
+    resident.mesh.position.z = resident.baseZ + Math.sin(performance.now() * 0.0006 + data.phase * 8) * 0.1;
+    resident.mesh.position.y = 0.04 + Math.max(0, swing);
+  }
+}
+
 function createGeneratedInterior(building) {
   const points = buildingFootprintPoints(building);
   if (!points.length) return null;
@@ -3113,11 +3193,14 @@ function createGeneratedInterior(building) {
   }
 
   addInteriorLight(group, config);
+  interiorResidents = addInteriorResidents(group, width, depth, archetype, building);
+  group.userData.residents = interiorResidents;
 
   group.userData = {
     type: 'interior',
     building,
     archetype,
+    residents: interiorResidents,
     centerX,
     centerZ,
     floorY,
@@ -3133,6 +3216,7 @@ function enterNearestBuilding() {
   const room = createGeneratedInterior(nearest.building);
   if (!room) return false;
   const archetype = room.userData.archetype;
+  interiorResidents = room.userData.residents || [];
   interiorGroup = room;
   cityRoot.add(interiorGroup);
   const data = room.userData;
@@ -3165,6 +3249,7 @@ function exitInterior() {
     interiorGroup = null;
   }
   interiorLight = null;
+  interiorResidents = [];
   cityMode = 'walk';
   if (playerAvatarGroup) playerAvatarGroup.visible = true;
   const entrance = interiorState.entrance;
@@ -3616,6 +3701,7 @@ function renderLoop() {
     updatePlayerWalk(dt);
   } else if (cityMode === 'interior') {
     controls.enabled = false;
+    updateInteriorResidents(dt);
     if (interiorState?.room) {
       const data = interiorState.room.userData;
       camera.position.set(data.centerX, data.floorY + 1.55, data.centerZ - 1.7);
@@ -4047,6 +4133,11 @@ function start() {
         name: interiorState.building?.name || 'Unnamed building',
         address: interiorState.building?.addr || '',
         archetype: interiorState.archetype || null,
+        residents: interiorResidents.map((resident) => ({
+          role: resident.mesh.userData.role,
+          action: resident.mesh.userData.action,
+          schedule: resident.mesh.userData.schedule,
+        })),
       } : null,
       renderer: renderer ? {
         drawCalls: renderer.info.render.calls,
@@ -4062,6 +4153,11 @@ function start() {
       name: interiorState.building?.name || 'Unnamed building',
       address: interiorState.building?.addr || '',
       archetype: interiorState.archetype || null,
+      residents: interiorResidents.map((resident) => ({
+        role: resident.mesh.userData.role,
+        action: resident.mesh.userData.action,
+        schedule: resident.mesh.userData.schedule,
+      })),
       building: interiorState.building,
     } : null,
     getBuildingEntrance: (index = 0) => {

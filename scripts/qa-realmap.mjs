@@ -268,6 +268,7 @@ try {
     const interior = await page.evaluate(() => window.__SF_REALMAP__.getInteriorState());
     check('Interior exposes OSM metadata', Boolean(interior && (interior.name || interior.address)), interior);
     check('Interior has a room archetype', Boolean(interior?.archetype), interior?.archetype);
+    check('Interior has scheduled residents', Boolean(interior?.residents?.length && interior.residents.every((resident) => resident.role && resident.action && resident.schedule)), interior?.residents);
     await page.waitForTimeout(350);
     await page.screenshot({ path: '.qa-realmap-interior.png' });
   const exited = await page.evaluate(() => window.__SF_REALMAP__.exitInterior());
