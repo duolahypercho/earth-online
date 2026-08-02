@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 
-const METRICS_PATH = '.qa-visual-critic.json';
-const QA_PATH = '.qa-realmap-results.json';
-const OUT_PATH = '.qa-realmap-critic.md';
+const qaPrefix = process.env.SF_QA_PREFIX ? `-${process.env.SF_QA_PREFIX}` : '';
+const METRICS_PATH = `.qa${qaPrefix}-visual-critic.json`;
+const QA_PATH = `.qa${qaPrefix}-realmap-results.json`;
+const OUT_PATH = `.qa${qaPrefix}-realmap-critic.md`;
 const REFERENCE_EDGE_DENSITY = 40.2061;
 
 function scoreFrame(metrics) {
@@ -22,6 +23,7 @@ function verdictForScore(score) {
 
 function frameLabel(path) {
   return path
+    .replace(new RegExp(`\\.qa-${qaPrefix.replace(/^-/, '')}-realmap-`), '')
     .replace('.qa-realmap-', '')
     .replace('.png', '')
     .replace(/-/g, ' ')

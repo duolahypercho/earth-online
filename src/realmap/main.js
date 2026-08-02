@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -169,31 +170,208 @@ function resolveCameraPose(pose) {
   return resolved;
 }
 
-function getSuggestedCameraPoses() {
-  const points = region.length >= 3 ? region : [{ x: 0, z: 0 }];
-  const centroid = polygonCentroid(points);
-  const bounds = bboxOfPoints(points);
-  const midX = (bounds.minX + bounds.maxX) / 2;
-  const midZ = (bounds.minZ + bounds.maxZ) / 2;
-  const spanX = bounds.maxX - bounds.minX;
-  const spanZ = bounds.maxZ - bounds.minZ;
-  return {
-    hero: {
-      elevationAware: true,
-      position: [midX - spanX * 0.12, 24, midZ + spanZ * 0.08],
-      target: [midX + spanX * 0.04, 8, midZ - spanZ * 0.02],
-    },
-    canyon: {
-      elevationAware: true,
-      position: [midX + spanX * 0.18, 32, midZ + spanZ * 0.14],
-      target: [midX + spanX * 0.28, 14, midZ - spanZ * 0.04],
-    },
-    street: {
-      elevationAware: true,
-      position: [centroid.x - 40, 1.68, centroid.z + 24],
-      target: [centroid.x + 80, 1.55, centroid.z - 60],
-    },
+let cachedCameraAnalysis = null;
+
+function regionBBoxFromPoints(points) {
+  return bboxOfPoints(points.length ? points : [{ x: 0, z: 0 }]);
+}
+
+function roadsForCameraAnalysis() {
+  if (selectedRoadsForHit?.length) return selectedRoadsForHit;
+  if (!cityData || region.length < 3) return [];
+  const bounds = regionBBoxFromPoints(region);
+  return fullCityMode ? selectAllRoads(bounds) : selectRoads(bounds);
+}
+
+function buildingsForCameraAnalysis() {
+  if (!cityData || region.length < 3) return { detailed: [], coarse: [] };
+  const bounds = regionBBoxFromPoints(region);
+  return selectBuildings(bounds);
+}
+
+function countBuildingsNearSegment(a, b, buildings, radius = 28) {
+  let count = 0;
+  const midX = (a.x + b.x) / 2;
+  const midZ = (a.z + b.z) / 2;
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const length = Math.hypot(dx, dz) || 1;
+  const nx = -dz / length;
+  const nz = dx / length;
+  const sample = (building) => {
+    const [cx, cz] = building.centroid;
+    const along = (cx - midX) * (dx / length) + (cz - midZ) * (dz / length);
+    if (Math.abs(along) > length * 0.65) return false;
+    const perp = Math.abs((cx - midX) * nx + (cz - midZ) * nz);
+    return perp <= radius;
   };
+  for (const building of buildings.detailed) {
+    if (sample(building)) count += 1;
+  }
+  for (const building of buildings.coarse) {
+    if (sample(building)) count += 1;
+  }
+  return count;
+}
+
+function analyzeRegionCameraTargets() {
+  const points = region.length >= 3 ? region : [{ x: 0, z: 0 }];
+  const regionKey = points.map((point) => `${Math.round(point.x)}:${Math.round(point.z)}`).join('|');
+  if (cachedCameraAnalysis?.regionKey === regionKey) return cachedCameraAnalysis;
+
+  const centroid = polygonCentroid(points);
+  const bounds = regionBBoxFromPoints(points);
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ, 800);
+  const buildings = buildingsForCameraAnalysis();
+  const roads = roadsForCameraAnalysis();
+  const isFullCity = polygonArea(points) / 1e6 > 12;
+
+  let skylineTarget = { x: centroid.x, z: centroid.z, height: 80 };
+  let landmarkFound = false;
+  for (const spec of SF_LANDMARK_SPECS) {
+    const resolved = resolveSfLandmark(spec);
+    if (!landmarkVisibleInRegion(resolved.x, resolved.z, bounds, isFullCity)) continue;
+    skylineTarget = { x: resolved.x, z: resolved.z, height: resolved.height };
+    landmarkFound = true;
+    break;
+  }
+  if (!landmarkFound) {
+    const ranked = [];
+    for (const building of buildings.detailed) {
+      ranked.push({
+        x: building.centroid[0],
+        z: building.centroid[1],
+        height: Math.max(12, Number(building.height) || 12),
+      });
+    }
+    for (const building of buildings.coarse) {
+      ranked.push({
+        x: building.centroid[0],
+        z: building.centroid[1],
+        height: Math.max(8, Number(building.height) || 8),
+      });
+    }
+    ranked.sort((a, b) => b.height - a.height);
+    const top = ranked.slice(0, 10);
+    if (top.length) {
+      let wx = 0;
+      let wz = 0;
+      let wh = 0;
+      let weightSum = 0;
+      for (const entry of top) {
+        const weight = entry.height * entry.height;
+        wx += entry.x * weight;
+        wz += entry.z * weight;
+        wh += entry.height * weight;
+        weightSum += weight;
+      }
+      skylineTarget = {
+        x: wx / weightSum,
+        z: wz / weightSum,
+        height: wh / weightSum,
+      };
+    }
+  }
+
+  const corridorWeights = { primary: 3.2, secondary: 2.4, tertiary: 1.6, unclassified: 1.1, residential: 0.8 };
+  let bestCorridor = null;
+  let bestCorridorScore = 0;
+  for (const road of roads) {
+    const weight = corridorWeights[road.highway] || 0;
+    if (weight <= 0) continue;
+    const roadPts = roadPoints(road);
+    for (let i = 0; i < roadPts.length - 1; i += 1) {
+      const a = roadPts[i];
+      const b = roadPts[i + 1];
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      if (length < 48) continue;
+      const density = countBuildingsNearSegment(a, b, buildings);
+      const score = length * weight * (1 + density * 0.08);
+      if (score > bestCorridorScore) {
+        bestCorridorScore = score;
+        bestCorridor = { a, b, length, road };
+      }
+    }
+  }
+
+  cachedCameraAnalysis = {
+    regionKey,
+    centroid,
+    bounds,
+    span,
+    skylineTarget,
+    bestCorridor,
+  };
+  return cachedCameraAnalysis;
+}
+
+function makeCameraPose(position, target, elevationAware = true) {
+  return { elevationAware, position, target };
+}
+
+function getSuggestedCameraPoses() {
+  const analysis = analyzeRegionCameraTargets();
+  const { centroid, span, skylineTarget, bestCorridor } = analysis;
+  const viewDx = skylineTarget.x - centroid.x;
+  const viewDz = skylineTarget.z - centroid.z;
+  const viewLen = Math.hypot(viewDx, viewDz) || span;
+  const viewNx = viewDx / viewLen;
+  const viewNz = viewDz / viewLen;
+  const heroDistance = THREE.MathUtils.clamp(span * 0.42, 220, 680);
+  const heroHeight = THREE.MathUtils.clamp(span * 0.16, 90, 240);
+  const heroCamX = skylineTarget.x - viewNx * heroDistance;
+  const heroCamZ = skylineTarget.z - viewNz * heroDistance;
+  const heroGround = elevationAt(heroCamX, heroCamZ);
+  const heroTargetY = elevationAt(skylineTarget.x, skylineTarget.z) + Math.min(120, skylineTarget.height * 0.42);
+  const hero = makeCameraPose(
+    [heroCamX, heroGround + heroHeight, heroCamZ],
+    [skylineTarget.x, heroTargetY, skylineTarget.z],
+    true,
+  );
+
+  let canyon = hero;
+  let street = hero;
+  if (bestCorridor) {
+    const { a, b } = bestCorridor;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const dirX = dx / length;
+    const dirZ = dz / length;
+    const midX = (a.x + b.x) / 2;
+    const midZ = (a.z + b.z) / 2;
+    const lateral = countBuildingsNearSegment(a, b, buildingsForCameraAnalysis(), 22);
+    const side = lateral > 0 && ((midX + (-dirZ) * 18 - centroid.x) ** 2 + (midZ + dirX * 18 - centroid.z) ** 2)
+      < ((midX - (-dirZ) * 18 - centroid.x) ** 2 + (midZ - dirX * 18 - centroid.z) ** 2)
+      ? 1 : -1;
+    const offsetX = -dirZ * side * 11;
+    const offsetZ = dirX * side * 11;
+    const canyonHeight = 14;
+    const canyonBack = Math.min(bestCorridor.length * 0.22, 120);
+    const canyonX = midX + offsetX - dirX * canyonBack * 0.35;
+    const canyonZ = midZ + offsetZ - dirZ * canyonBack * 0.35;
+    canyon = makeCameraPose(
+      [canyonX, elevationAt(canyonX, canyonZ) + canyonHeight, canyonZ],
+      [midX + dirX * Math.min(bestCorridor.length * 0.42, 180), elevationAt(midX, midZ) + 8, midZ + dirZ * Math.min(bestCorridor.length * 0.42, 180)],
+      true,
+    );
+    const streetBack = Math.min(bestCorridor.length * 0.12, 48);
+    const streetX = midX + offsetX - dirX * streetBack;
+    const streetZ = midZ + offsetZ - dirZ * streetBack;
+    street = makeCameraPose(
+      [streetX, elevationAt(streetX, streetZ) + 1.68, streetZ],
+      [midX + dirX * Math.min(bestCorridor.length * 0.34, 120), elevationAt(midX, midZ) + 1.55, midZ + dirZ * Math.min(bestCorridor.length * 0.34, 120)],
+      true,
+    );
+  }
+
+  const night = makeCameraPose(
+    [heroCamX, heroGround + heroHeight * 0.92, heroCamZ],
+    [skylineTarget.x, heroTargetY * 0.72, skylineTarget.z],
+    true,
+  );
+
+  return { hero, canyon, street, night };
 }
 
 function pointInFlatRing(point, flat) {
@@ -1536,12 +1714,14 @@ function indexedMeshToGeometries(sourceMesh) {
   return results;
 }
 
+const ROAD_SURFACE_LIFT = 0.06;
+
 function applyTerrainToMesh(mesh) {
   const positions = mesh.geometry.attributes.position;
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i);
     const z = positions.getZ(i);
-    positions.setY(i, elevationAt(x, z));
+    positions.setY(i, elevationAt(x, z) + ROAD_SURFACE_LIFT);
   }
   positions.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
@@ -1578,6 +1758,32 @@ function buildingGroundY(building) {
   return Number.isFinite(minY) ? minY : elevationAt(building.centroid[0], building.centroid[1]);
 }
 
+function projectBuildingFacadeUVs(geometry) {
+  geometry.computeVertexNormals();
+  const pos = geometry.attributes.position;
+  const norm = geometry.attributes.normal;
+  const uvs = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const nx = Math.abs(norm.getX(i));
+    const ny = Math.abs(norm.getY(i));
+    const nz = Math.abs(norm.getZ(i));
+    if (ny >= nx && ny >= nz) {
+      uvs[i * 2] = x * 0.045;
+      uvs[i * 2 + 1] = z * 0.045;
+    } else if (nx >= nz) {
+      uvs[i * 2] = z * 0.11;
+      uvs[i * 2 + 1] = y * 0.22;
+    } else {
+      uvs[i * 2] = x * 0.11;
+      uvs[i * 2 + 1] = y * 0.22;
+    }
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+}
+
 function createDetailBuildingMesh(building, groundY = 0) {
   const points = [];
   for (let i = 0; i < building.points.length; i += 2) {
@@ -1591,31 +1797,34 @@ function createDetailBuildingMesh(building, groundY = 0) {
     bevelEnabled: false,
     curveSegments: 1,
   });
-  geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, groundY + 0.15, 0);
-  geometry.computeVertexNormals();
+  geometry.rotateX(Math.PI / 2);
+  geometry.translate(0, groundY + buildingHeight + 0.15, 0);
+  projectBuildingFacadeUVs(geometry);
   const style = buildingFacadeStyle(building);
   const seed = Number(building.id) || 0;
-  const perimeter = footprintPerimeter(building.points);
-  const uRepeat = Math.max(1, Math.round(perimeter / 11));
-  const vRepeat = Math.max(1, Math.round(buildingHeight / 3.4));
+  // Always use the synchronous procedural facade atlas as the base map.
+  // Async photo textures often arrive after meshing and previously left walls black.
   const windowTexture = facadeWindowTexture(seed, style).clone();
-  windowTexture.repeat.set(uRepeat, vRepeat);
+  windowTexture.wrapS = THREE.RepeatWrapping;
+  windowTexture.wrapT = THREE.RepeatWrapping;
+  windowTexture.repeat.set(1.35, 1.15);
   windowTexture.needsUpdate = true;
   const photoTexture = facadePhotoTexture(style);
+  const photoReady = Boolean(photoTexture?.image && photoTexture.image.width > 0);
   const material = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: style === 'glass' ? 0.16 : 0.84,
-    metalness: style === 'glass' ? 0.48 : 0.03,
-    flatShading: style !== 'glass',
+    color: style === 'glass' ? 0xb8d0e4 : 0xffffff,
+    roughness: style === 'glass' ? 0.18 : 0.74,
+    metalness: style === 'glass' ? 0.42 : 0.03,
+    flatShading: false,
+    map: windowTexture,
   });
-  if (photoTexture && style !== 'glass') {
-    const facadeMap = photoTexture.clone();
-    facadeMap.repeat.set(uRepeat * 0.85, vRepeat * 0.9);
-    facadeMap.needsUpdate = true;
-    material.map = facadeMap;
-  } else {
-    material.map = windowTexture;
+  if (photoReady && style !== 'glass') {
+    // Slight warm tint from the photographic atlas without replacing window UVs.
+    material.color.set(buildingColor(building));
+    material.color.lerp(new THREE.Color(0xffffff), 0.55);
+  } else if (style !== 'glass') {
+    material.color.set(buildingColor(building));
+    material.color.lerp(new THREE.Color(0xffffff), 0.35);
   }
   material.emissiveMap = windowTexture;
   material.emissive = new THREE.Color(0x000000);
@@ -1627,7 +1836,9 @@ function createDetailBuildingMesh(building, groundY = 0) {
     metalness: 0,
     flatShading: true,
   });
-  const mesh = new THREE.Mesh(geometry, [material, roofMaterial]);
+  // ExtrudeGeometry groups after rotateX(+PI/2): group 0 = lids (roof/floor),
+  // group 1 = vertical sides. Put the facade atlas on the sides.
+  const mesh = new THREE.Mesh(geometry, [roofMaterial, material]);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.userData = {
@@ -1679,42 +1890,78 @@ function createCoarseBuildings(buildings) {
   return { mesh, materials: [material] };
 }
 
+const SEA_LEVEL_Y = -1.8;
+
 function createGround(regionPoints) {
-  const shape = new THREE.Shape();
-  for (let i = 0; i < regionPoints.length; i += 1) {
-    if (i === 0) shape.moveTo(regionPoints[i].x, regionPoints[i].z);
-    else shape.lineTo(regionPoints[i].x, regionPoints[i].z);
-  }
-  const geometry = new THREE.ShapeGeometry(shape, 1);
-  geometry.rotateX(Math.PI / 2);
-  const positions = geometry.attributes.position;
-  const colors = new Float32Array(positions.count * 3);
-  const lowColor = new THREE.Color(0x82956f);
-  const midColor = new THREE.Color(0xa59666);
-  const highColor = new THREE.Color(0x6f7b78);
+  const bounds = bboxOfPoints(regionPoints);
+  const flat = [];
+  for (const point of regionPoints) flat.push(point.x, point.z);
+  const spanX = Math.max(40, bounds.maxX - bounds.minX);
+  const spanZ = Math.max(40, bounds.maxZ - bounds.minZ);
+  const cell = THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 48);
+  const cols = Math.max(8, Math.ceil(spanX / cell));
+  const rows = Math.max(8, Math.ceil(spanZ / cell));
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  const lowColor = new THREE.Color(0x8a8578);
+  const midColor = new THREE.Color(0x9a9588);
+  const highColor = new THREE.Color(0x6d7874);
   const color = new THREE.Color();
-  for (let i = 0; i < positions.count; i += 1) {
-    const x = positions.getX(i);
-    const z = positions.getZ(i);
-    const elevation = elevationAt(x, z);
-    positions.setY(i, elevation - 0.08);
-    const t = THREE.MathUtils.clamp(elevation / 180, 0, 1);
-    color.copy(lowColor).lerp(midColor, Math.min(1, t * 1.4));
-    if (t > 0.7) color.lerp(highColor, (t - 0.7) / 0.3);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+  const heightSamples = [];
+  const noise = (x, z) => {
+    const value = Math.sin(x * 0.018 + z * 0.023) * 4.71
+      + Math.sin(x * 0.041 - z * 0.017) * 2.83
+      + Math.sin((x + z) * 0.007) * 5.1;
+    return value / 12.64;
+  };
+  for (let row = 0; row <= rows; row += 1) {
+    for (let col = 0; col <= cols; col += 1) {
+      const x = bounds.minX + (col / cols) * spanX;
+      const z = bounds.minZ + (row / rows) * spanZ;
+      const inside = pointInFlatRing({ x, z }, flat);
+      let elevation = elevationAt(x, z);
+      if (!Number.isFinite(elevation)) elevation = 0;
+      // Keep land at true elevation so roads/buildings (also elevation-sampled)
+      // stay flush. Underwater cells are culled from the index buffer below.
+      const y = inside && elevation > SEA_LEVEL_Y + 0.05
+        ? elevation - 0.04
+        : SEA_LEVEL_Y - 0.8;
+      positions.push(x, y, z);
+      heightSamples.push(inside ? elevation : SEA_LEVEL_Y);
+      const t = THREE.MathUtils.clamp(Math.max(0, elevation) / 180, 0, 1);
+      color.copy(lowColor).lerp(midColor, Math.min(1, t * 1.4));
+      if (t > 0.7) color.lerp(highColor, (t - 0.7) / 0.3);
+      color.offsetHSL(0, 0, noise(x, z) * 0.08);
+      if (!inside) color.set(0x1a4556);
+      colors.push(color.r, color.g, color.b);
+    }
   }
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const a = row * (cols + 1) + col;
+      const b = a + 1;
+      const c = a + (cols + 1);
+      const d = c + 1;
+      const land = [heightSamples[a], heightSamples[b], heightSamples[c], heightSamples[d]]
+        .filter((value) => value > SEA_LEVEL_Y).length;
+      if (land < 2) continue;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 1,
+    roughness: 0.96,
     metalness: 0,
     vertexColors: true,
+    flatShading: true,
   });
   const ground = new THREE.Mesh(geometry, material);
-  ground.position.y = -0.06;
   ground.receiveShadow = true;
   ground.userData = { type: 'ground' };
   return ground;
@@ -1722,23 +1969,210 @@ function createGround(regionPoints) {
 
 function createWaterPlane(regionPoints) {
   const bounds = bboxOfPoints(regionPoints);
-  const width = Math.max(bounds.maxX - bounds.minX, 800) + 900;
-  const height = Math.max(bounds.maxZ - bounds.minZ, 800) + 900;
-  const geometry = new THREE.PlaneGeometry(width, height);
+  const width = Math.max(bounds.maxX - bounds.minX, 800) + 1400;
+  const height = Math.max(bounds.maxZ - bounds.minZ, 800) + 1400;
+  const geometry = new THREE.PlaneGeometry(width, height, 1, 1);
   geometry.rotateX(-Math.PI / 2);
   const material = new THREE.MeshStandardMaterial({
-    color: 0x1c4a5c,
-    roughness: 0.25,
-    metalness: 0.15,
+    color: 0x1a4d63,
+    roughness: 0.22,
+    metalness: 0.18,
   });
   const water = new THREE.Mesh(geometry, material);
   water.position.set(
     (bounds.minX + bounds.maxX) / 2,
-    -0.35,
+    SEA_LEVEL_Y,
     (bounds.minZ + bounds.maxZ) / 2,
   );
   water.userData = { type: 'water' };
   return water;
+}
+
+const SF_LANDMARK_SPECS = [
+  { match: 'transamerica pyramid', kind: 'transamerica', fallback: [1473.7, 1900.5], height: 260 },
+  { match: 'salesforce tower', kind: 'salesforce', fallback: [1974.5, 1302.6], height: 326 },
+  { match: 'coit tower', kind: 'coit', fallback: [1193, 2695.4], height: 64 },
+];
+
+const SF_LANDMARK_SKIP = new Set(SF_LANDMARK_SPECS.map((spec) => spec.match));
+
+function resolveSfLandmark(spec) {
+  if (cityData?.detailBuildings) {
+    for (const building of cityData.detailBuildings) {
+      const name = (building.name || '').toLowerCase();
+      if (name.includes(spec.match)) {
+        return {
+          x: building.centroid[0],
+          z: building.centroid[1],
+          height: Math.max(12, Number(building.height) || spec.height),
+        };
+      }
+    }
+  }
+  return { x: spec.fallback[0], z: spec.fallback[1], height: spec.height };
+}
+
+function landmarkVisibleInRegion(x, z, regionBBox, isFullCity) {
+  if (isFullCity) return true;
+  const margin = 180;
+  return x >= regionBBox.minX - margin
+    && x <= regionBBox.maxX + margin
+    && z >= regionBBox.minZ - margin
+    && z <= regionBBox.maxZ + margin;
+}
+
+function createTransamericaSilhouette(x, z, targetHeight) {
+  const baseY = elevationAt(x, z);
+  const tower = new THREE.Group();
+  tower.name = 'Transamerica Pyramid silhouette';
+  tower.position.set(x, baseY, z);
+  const height = Math.min(320, Math.max(160, targetHeight * 0.96));
+  const limestone = new THREE.MeshStandardMaterial({
+    color: 0xd8d0c4,
+    roughness: 0.82,
+    metalness: 0.04,
+    flatShading: true,
+  });
+  const windowPanel = new THREE.MeshStandardMaterial({
+    color: 0x4a6888,
+    roughness: 0.24,
+    metalness: 0.36,
+    emissive: 0x000000,
+    emissiveIntensity: 0,
+  });
+  windowMaterials.push(windowPanel);
+  const baseRadius = height * 0.145;
+  const topRadius = height * 0.038;
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(topRadius, baseRadius, height * 0.86, 4, 1, false, Math.PI * 0.25),
+    limestone,
+  );
+  shaft.position.y = height * 0.43;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  tower.add(shaft);
+  for (let tier = 0; tier < 10; tier += 1) {
+    const progress = tier / 9;
+    const radius = THREE.MathUtils.lerp(baseRadius, topRadius, progress);
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius + 0.5, radius + 0.5, height * 0.012, 4, 1, false, Math.PI * 0.25),
+      windowPanel,
+    );
+    band.position.y = height * 0.08 + progress * height * 0.74;
+    tower.add(band);
+  }
+  const crown = new THREE.Mesh(
+    new THREE.ConeGeometry(topRadius * 1.55, height * 0.14, 4, 1, false, Math.PI * 0.25),
+    limestone,
+  );
+  crown.position.y = height * 0.93;
+  crown.castShadow = true;
+  tower.add(crown);
+  const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.1, height * 0.05, 8), limestone);
+  spire.position.y = height * 0.99;
+  tower.add(spire);
+  tower.userData = { type: 'landmark', label: 'Transamerica Pyramid' };
+  return tower;
+}
+
+function createSalesforceSilhouette(x, z, targetHeight) {
+  const baseY = elevationAt(x, z);
+  const tower = new THREE.Group();
+  tower.name = 'Salesforce Tower silhouette';
+  tower.position.set(x, baseY, z);
+  const height = Math.min(320, Math.max(180, targetHeight * 0.96));
+  const width = height * 0.17;
+  const glassBright = new THREE.MeshStandardMaterial({
+    color: 0x7eb0d0,
+    roughness: 0.16,
+    metalness: 0.46,
+    emissive: 0x000000,
+    emissiveIntensity: 0,
+  });
+  const glassDark = new THREE.MeshStandardMaterial({
+    color: 0x3a5878,
+    roughness: 0.2,
+    metalness: 0.4,
+    emissive: 0x000000,
+    emissiveIntensity: 0,
+  });
+  windowMaterials.push(glassBright, glassDark);
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.92, width), glassBright);
+  shaft.position.y = height * 0.46;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  tower.add(shaft);
+  for (let tier = 0; tier < 14; tier += 1) {
+    const band = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 1.02, height * 0.01, width * 1.02),
+      tier % 2 ? glassDark : glassBright,
+    );
+    band.position.y = height * 0.08 + tier * height * 0.058;
+    tower.add(band);
+  }
+  const crown = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, height * 0.06, width * 0.82), glassDark);
+  crown.position.y = height * 0.97;
+  tower.add(crown);
+  tower.userData = { type: 'landmark', label: 'Salesforce Tower' };
+  return tower;
+}
+
+function createCoitSilhouette(x, z, targetHeight) {
+  const baseY = elevationAt(x, z);
+  const tower = new THREE.Group();
+  tower.name = 'Coit Tower silhouette';
+  tower.position.set(x, baseY, z);
+  const height = Math.max(52, Math.min(96, targetHeight));
+  const concrete = new THREE.MeshStandardMaterial({
+    color: 0xb8ad98,
+    roughness: 0.94,
+    metalness: 0,
+    flatShading: true,
+    fog: false,
+  });
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(height * 0.028, height * 0.038, height * 0.82, 18),
+    concrete,
+  );
+  stem.position.y = height * 0.41;
+  stem.castShadow = true;
+  stem.receiveShadow = true;
+  tower.add(stem);
+  const deck = new THREE.Mesh(
+    new THREE.CylinderGeometry(height * 0.034, height * 0.032, height * 0.07, 18),
+    concrete,
+  );
+  deck.position.y = height * 0.84;
+  tower.add(deck);
+  const crown = new THREE.Mesh(
+    new THREE.CylinderGeometry(height * 0.026, height * 0.031, height * 0.11, 18),
+    concrete,
+  );
+  crown.position.y = height * 0.93;
+  tower.add(crown);
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(height * 0.024, height * 0.028, height * 0.04, 18),
+    concrete,
+  );
+  cap.position.y = height * 0.99;
+  tower.add(cap);
+  tower.userData = { type: 'landmark', label: 'Coit Tower' };
+  return tower;
+}
+
+function createSfLandmarkSilhouettes(regionBBox, isFullCity) {
+  const group = new THREE.Group();
+  group.name = 'SF landmark silhouettes';
+  for (const spec of SF_LANDMARK_SPECS) {
+    const resolved = resolveSfLandmark(spec);
+    if (!landmarkVisibleInRegion(resolved.x, resolved.z, regionBBox, isFullCity)) continue;
+    let landmark = null;
+    if (spec.kind === 'transamerica') landmark = createTransamericaSilhouette(resolved.x, resolved.z, resolved.height);
+    else if (spec.kind === 'salesforce') landmark = createSalesforceSilhouette(resolved.x, resolved.z, resolved.height);
+    else if (spec.kind === 'coit') landmark = createCoitSilhouette(resolved.x, resolved.z, resolved.height);
+    if (landmark) group.add(landmark);
+  }
+  return group;
 }
 
 function createSignalGroup(position, index) {
@@ -1975,15 +2409,19 @@ const vehicleWindshieldMaterial = new THREE.MeshStandardMaterial({
 function getVehiclePartGeometries() {
   if (vehiclePartGeometries) return vehiclePartGeometries;
   vehiclePartGeometries = {
-    chassis: new THREE.BoxGeometry(1.82, 0.36, 4.05),
-    body: new THREE.BoxGeometry(1.78, 0.5, 3.45),
-    cabin: new THREE.BoxGeometry(1.56, 0.46, 1.72),
-    hood: new THREE.BoxGeometry(1.68, 0.24, 1.05),
-    windshield: new THREE.BoxGeometry(1.44, 0.4, 0.07),
-    wheel: new THREE.CylinderGeometry(0.34, 0.34, 0.2, 6),
-    truckBed: new THREE.BoxGeometry(1.82, 1.02, 2.35),
-    bumper: new THREE.BoxGeometry(1.86, 0.14, 0.22),
-    taxiSign: new THREE.BoxGeometry(0.72, 0.12, 0.38),
+    chassis: new THREE.BoxGeometry(2.0, 0.38, 4.45),
+    body: new THREE.BoxGeometry(1.96, 0.54, 3.78),
+    cabin: new THREE.BoxGeometry(1.72, 0.5, 1.88),
+    hood: new THREE.BoxGeometry(1.84, 0.26, 1.15),
+    windshield: new THREE.BoxGeometry(1.58, 0.44, 0.08),
+    rearWindow: new THREE.BoxGeometry(1.52, 0.36, 0.07),
+    sideWindow: new THREE.BoxGeometry(0.06, 0.32, 1.05),
+    wheel: new THREE.CylinderGeometry(0.38, 0.38, 0.24, 8),
+    wheelHub: new THREE.CylinderGeometry(0.18, 0.18, 0.26, 6),
+    truckBed: new THREE.BoxGeometry(2.0, 1.08, 2.55),
+    bumper: new THREE.BoxGeometry(2.04, 0.16, 0.24),
+    taxiSign: new THREE.BoxGeometry(0.78, 0.14, 0.42),
+    roof: new THREE.BoxGeometry(1.64, 0.1, 1.62),
   };
   return vehiclePartGeometries;
 }
@@ -1994,59 +2432,77 @@ function createVehicle(color, variant) {
   const bodyColor = new THREE.Color(color);
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: bodyColor,
-    roughness: 0.38,
-    metalness: 0.52,
+    roughness: 0.36,
+    metalness: 0.48,
     flatShading: true,
   });
   const darkMaterial = new THREE.MeshStandardMaterial({
-    color: 0x171b1e,
-    roughness: 0.62,
-    metalness: 0.28,
+    color: 0x121618,
+    roughness: 0.58,
+    metalness: 0.32,
     flatShading: true,
   });
   const trimMaterial = new THREE.MeshStandardMaterial({
-    color: 0x2a3034,
-    roughness: 0.55,
-    metalness: 0.35,
+    color: 0x252b30,
+    roughness: 0.52,
+    metalness: 0.38,
     flatShading: true,
   });
+  const glassMaterial = vehicleWindshieldMaterial.clone();
+  glassMaterial.color.set(0x7a9cb8);
   const chassis = new THREE.Mesh(parts.chassis, trimMaterial);
-  chassis.position.y = 0.38;
+  chassis.position.y = 0.4;
   chassis.castShadow = true;
   group.add(chassis);
   const body = new THREE.Mesh(parts.body, bodyMaterial);
-  body.position.set(0, 0.72, variant === 'truck' ? 0.18 : 0.08);
+  body.position.set(0, 0.76, variant === 'truck' ? 0.2 : 0.1);
   body.castShadow = true;
   group.add(body);
   if (variant === 'truck') {
     const bed = new THREE.Mesh(parts.truckBed, bodyMaterial);
-    bed.position.set(0, 1.12, 0.92);
+    bed.position.set(0, 1.18, 1.0);
     bed.castShadow = true;
     group.add(bed);
     const cabin = new THREE.Mesh(parts.cabin, darkMaterial);
-    cabin.position.set(0, 1.02, -0.55);
+    cabin.position.set(0, 1.08, -0.58);
     cabin.castShadow = true;
     group.add(cabin);
+    const windshield = new THREE.Mesh(parts.windshield, glassMaterial);
+    windshield.position.set(0, 1.12, -0.22);
+    windshield.castShadow = true;
+    group.add(windshield);
   } else {
     const hood = new THREE.Mesh(parts.hood, bodyMaterial);
-    hood.position.set(0, 0.78, -1.28);
+    hood.position.set(0, 0.82, -1.38);
     hood.castShadow = true;
     group.add(hood);
     const cabin = new THREE.Mesh(parts.cabin, darkMaterial);
-    cabin.position.set(0, 1.06, 0.35);
+    cabin.position.set(0, 1.12, 0.38);
     cabin.castShadow = true;
     group.add(cabin);
-    const windshield = new THREE.Mesh(parts.windshield, vehicleWindshieldMaterial);
-    windshield.position.set(0, 1.08, -0.18);
+    const roof = new THREE.Mesh(parts.roof, bodyMaterial);
+    roof.position.set(0, 1.38, 0.38);
+    roof.castShadow = true;
+    group.add(roof);
+    const windshield = new THREE.Mesh(parts.windshield, glassMaterial);
+    windshield.position.set(0, 1.14, -0.2);
     windshield.castShadow = true;
     group.add(windshield);
+    const rearWindow = new THREE.Mesh(parts.rearWindow, glassMaterial);
+    rearWindow.position.set(0, 1.1, 0.98);
+    group.add(rearWindow);
+    for (const sx of [-0.98, 0.98]) {
+      const sideWindow = new THREE.Mesh(parts.sideWindow, glassMaterial);
+      sideWindow.position.set(sx, 1.08, 0.38);
+      group.add(sideWindow);
+    }
   }
   const bumperFront = new THREE.Mesh(parts.bumper, trimMaterial);
-  bumperFront.position.set(0, 0.48, -2.08);
+  bumperFront.position.set(0, 0.5, -2.28);
   bumperFront.castShadow = true;
   group.add(bumperFront);
   const bumperRear = new THREE.Mesh(parts.bumper, trimMaterial);
-  bumperRear.position.set(0, 0.48, 2.08);
+  bumperRear.position.set(0, 0.5, 2.28);
   group.add(bumperRear);
   if (variant === 'taxi') {
     const sign = new THREE.Mesh(parts.taxiSign, new THREE.MeshStandardMaterial({
@@ -2055,31 +2511,41 @@ function createVehicle(color, variant) {
       metalness: 0.08,
       flatShading: true,
     }));
-    sign.position.set(0, 1.38, 0.1);
+    sign.position.set(0, 1.46, 0.12);
     group.add(sign);
   }
-  for (const [wx, wz] of [[-0.9, 1.28], [0.9, 1.28], [-0.9, -1.28], [0.9, -1.28]]) {
+  for (const [wx, wz] of [[-0.98, 1.4], [0.98, 1.4], [-0.98, -1.4], [0.98, -1.4]]) {
     const wheel = new THREE.Mesh(parts.wheel, darkMaterial);
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(wx, 0.34, wz);
+    wheel.rotation.x = Math.PI / 2;
+    wheel.position.set(wx, 0.38, wz);
+    wheel.castShadow = true;
     group.add(wheel);
+    const hub = new THREE.Mesh(parts.wheelHub, trimMaterial);
+    hub.rotation.x = Math.PI / 2;
+    hub.position.set(wx, 0.38, wz);
+    group.add(hub);
   }
   const headlightMaterial = new THREE.MeshStandardMaterial({
     color: 0xffe7b0,
     emissive: 0xffd98a,
-    emissiveIntensity: 0.5,
+    emissiveIntensity: 0.85,
   });
   vehicleHeadlightMaterials.push(headlightMaterial);
-  const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.12, 0.08), headlightMaterial);
-  headlight.position.set(0, 0.68, -2.12);
-  group.add(headlight);
-  const taillight = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.06), new THREE.MeshStandardMaterial({
-    color: 0xc83838,
-    emissive: 0x901818,
-    emissiveIntensity: 0.25,
-  }));
-  taillight.position.set(0, 0.66, 2.12);
-  group.add(taillight);
+  for (const hx of [-0.62, 0.62]) {
+    const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.08), headlightMaterial);
+    headlight.position.set(hx, 0.72, -2.32);
+    group.add(headlight);
+  }
+  for (const hx of [-0.62, 0.62]) {
+    const taillight = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.12, 0.06), new THREE.MeshStandardMaterial({
+      color: 0xc83838,
+      emissive: 0x901818,
+      emissiveIntensity: 0.35,
+    }));
+    taillight.position.set(hx, 0.7, 2.32);
+    group.add(taillight);
+  }
+  group.scale.setScalar(1.08);
   return group;
 }
 
@@ -2270,10 +2736,10 @@ function createSimpleRoadMeshes(roads) {
         const b1 = { x: b.x + nx * half, z: b.z + nz * half };
         const b2 = { x: b.x - nx * half, z: b.z - nz * half };
         positions.push(
-          a1.x, elevationAt(a1.x, a1.z) - 0.045, a1.z,
-          a2.x, elevationAt(a2.x, a2.z) - 0.045, a2.z,
-          b1.x, elevationAt(b1.x, b1.z) - 0.045, b1.z,
-          b2.x, elevationAt(b2.x, b2.z) - 0.045, b2.z,
+          a1.x, elevationAt(a1.x, a1.z) + ROAD_SURFACE_LIFT, a1.z,
+          a2.x, elevationAt(a2.x, a2.z) + ROAD_SURFACE_LIFT, a2.z,
+          b1.x, elevationAt(b1.x, b1.z) + ROAD_SURFACE_LIFT, b1.z,
+          b2.x, elevationAt(b2.x, b2.z) + ROAD_SURFACE_LIFT, b2.z,
         );
         indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
         vertexOffset += 4;
@@ -2295,6 +2761,84 @@ function createSimpleRoadMeshes(roads) {
     group.add(mesh);
   }
   group.userData = { type: 'simple-roads', segments: roadSegmentCount(roads) };
+  return group;
+}
+
+function createCableCarTracks(roads) {
+  const group = new THREE.Group();
+  group.name = 'Cable car tracks';
+  const trackMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8a9098,
+    roughness: 0.42,
+    metalness: 0.72,
+    flatShading: true,
+  });
+  const eligibleClasses = new Set(['primary', 'secondary', 'tertiary', 'residential', 'unclassified']);
+  const positions = [];
+  const indices = [];
+  const railPositions = [];
+  const railIndices = [];
+  let vertexOffset = 0;
+  let railOffset = 0;
+  const trackHalf = 0.22;
+  const railHalf = 0.04;
+  for (const road of roads) {
+    if (!eligibleClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 24) continue;
+      const grade = Math.abs(elevationAt(b.x, b.z) - elevationAt(a.x, a.z)) / length;
+      const northSouth = Math.abs(dz) > Math.abs(dx) * 1.15;
+      if (!northSouth || grade < 0.085) continue;
+      const nx = -dz / length;
+      const nz = dx / length;
+      const a1 = { x: a.x + nx * trackHalf, z: a.z + nz * trackHalf };
+      const a2 = { x: a.x - nx * trackHalf, z: a.z - nz * trackHalf };
+      const b1 = { x: b.x + nx * trackHalf, z: b.z + nz * trackHalf };
+      const b2 = { x: b.x - nx * trackHalf, z: b.z - nz * trackHalf };
+      positions.push(
+        a1.x, elevationAt(a1.x, a1.z) + ROAD_SURFACE_LIFT + 0.03, a1.z,
+        a2.x, elevationAt(a2.x, a2.z) + ROAD_SURFACE_LIFT + 0.03, a2.z,
+        b1.x, elevationAt(b1.x, b1.z) + ROAD_SURFACE_LIFT + 0.03, b1.z,
+        b2.x, elevationAt(b2.x, b2.z) + ROAD_SURFACE_LIFT + 0.03, b2.z,
+      );
+      indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+      vertexOffset += 4;
+      for (const side of [-1, 1]) {
+        const ox = nx * side * (trackHalf - railHalf);
+        const oz = nz * side * (trackHalf - railHalf);
+        railPositions.push(
+          a.x + ox, elevationAt(a.x + ox, a.z + oz) + ROAD_SURFACE_LIFT + 0.06, a.z + oz,
+          b.x + ox, elevationAt(b.x + ox, b.z + oz) + ROAD_SURFACE_LIFT + 0.06, b.z + oz,
+        );
+        railIndices.push(railOffset, railOffset + 1);
+        railOffset += 2;
+      }
+    }
+  }
+  if (positions.length) {
+    const trackGeometry = new THREE.BufferGeometry();
+    trackGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    trackGeometry.setIndex(indices);
+    trackGeometry.computeVertexNormals();
+    const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
+    trackMesh.castShadow = true;
+    trackMesh.receiveShadow = true;
+    group.add(trackMesh);
+  }
+  if (railPositions.length) {
+    const railGeometry = new THREE.BufferGeometry();
+    railGeometry.setAttribute('position', new THREE.Float32BufferAttribute(railPositions, 3));
+    railGeometry.setIndex(railIndices);
+    const railMesh = new THREE.LineSegments(railGeometry, new THREE.LineBasicMaterial({ color: 0x4a5058, linewidth: 1 }));
+    group.add(railMesh);
+  }
+  group.userData = { type: 'cable-car-tracks', segments: indices.length / 6 };
   return group;
 }
 
@@ -2345,7 +2889,7 @@ function createSimpleSidewalkMeshes(roads) {
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
-      dummy.scale.set(2.1, 1, segment.length);
+      dummy.scale.set(3.2, 1, segment.length);
       dummy.updateMatrix();
       mesh.setMatrixAt(index, dummy.matrix);
     }
@@ -2357,6 +2901,143 @@ function createSimpleSidewalkMeshes(roads) {
   addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xffffff);
   addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xf0ebe3);
   group.userData = { type: 'simple-sidewalks', segments: concreteSegments.length + brickSegments.length };
+  return group;
+}
+
+function createStreetCorridorPads(roads) {
+  const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
+  const segments = [];
+  for (const road of roads) {
+    if (!corridorClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    const padOffset = roadHalfWidth(road) + 4.8;
+    const padWidth = 6.4;
+    for (const offset of [padOffset, -padOffset]) {
+      const centerline = offsetPolyline(points, offset);
+      for (let i = 0; i < centerline.length - 1; i += 1) {
+        const a = centerline[i];
+        const b = centerline[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 0.8) continue;
+        segments.push({ a, b, dx, dz, length, width: padWidth, brick: (Math.floor(a.x + a.z + road.id + offset) % 7) === 0 });
+      }
+    }
+  }
+  const group = new THREE.Group();
+  group.name = 'Street corridor sidewalk pads';
+  const geometry = new THREE.BoxGeometry(1, 0.04, 1);
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  const dummy = new THREE.Object3D();
+  const addPadBatch = (batch, map, tint) => {
+    if (!batch.length) return;
+    const material = new THREE.MeshStandardMaterial({
+      color: tint,
+      roughness: 0.9,
+      metalness: 0.01,
+    });
+    if (map) {
+      material.map = map;
+      material.color.set(0xffffff);
+    }
+    const mesh = new THREE.InstancedMesh(geometry, material, batch.length);
+    for (let index = 0; index < batch.length; index += 1) {
+      const segment = batch[index];
+      const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
+      dummy.position.set(
+        (segment.a.x + segment.b.x) / 2,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) - 0.02,
+        (segment.a.z + segment.b.z) / 2,
+      );
+      dummy.quaternion.setFromUnitVectors(zAxis, direction);
+      dummy.scale.set(segment.width, 1, segment.length);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  };
+  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xffffff);
+  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xf0ebe3);
+  group.userData = { type: 'street-corridor-pads', segments: segments.length };
+  return group;
+}
+
+function createBuildingFrontagePads(buildings) {
+  const pads = [];
+  for (const building of buildings.detailed) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < building.points.length; i += 2) {
+      minX = Math.min(minX, building.points[i]);
+      maxX = Math.max(maxX, building.points[i]);
+      minZ = Math.min(minZ, building.points[i + 1]);
+      maxZ = Math.max(maxZ, building.points[i + 1]);
+    }
+    if (!Number.isFinite(minX)) continue;
+    const inset = 2.8;
+    pads.push({
+      cx: (minX + maxX) / 2,
+      cz: (minZ + maxZ) / 2,
+      width: Math.max(6, maxX - minX + inset * 2),
+      depth: Math.max(6, maxZ - minZ + inset * 2),
+      brick: (Number(building.id) || 0) % 11 === 0,
+    });
+  }
+  for (const building of buildings.coarse) {
+    const size = Math.max(5, Math.min(Math.sqrt(building.area || 160), 36));
+    pads.push({
+      cx: building.centroid[0],
+      cz: building.centroid[1],
+      width: size + 5.6,
+      depth: size + 5.6,
+      brick: (Number(building.id) || 0) % 13 === 0,
+    });
+  }
+  const group = new THREE.Group();
+  group.name = 'Building frontage plaza pads';
+  if (!pads.length) {
+    group.userData = { type: 'building-frontage-pads', pads: 0 };
+    return group;
+  }
+  const geometry = new THREE.BoxGeometry(1, 0.035, 1);
+  const dummy = new THREE.Object3D();
+  const addBatch = (batch, map, tint) => {
+    if (!batch.length) return;
+    const material = new THREE.MeshStandardMaterial({
+      color: tint,
+      roughness: 0.92,
+      metalness: 0.01,
+    });
+    if (map) {
+      material.map = map;
+      material.color.set(0xffffff);
+    }
+    const mesh = new THREE.InstancedMesh(geometry, material, batch.length);
+    for (let index = 0; index < batch.length; index += 1) {
+      const pad = batch[index];
+      dummy.position.set(
+        pad.cx,
+        elevationAt(pad.cx, pad.cz) - 0.018,
+        pad.cz,
+      );
+      dummy.rotation.set(0, ((pad.cx * 17 + pad.cz * 31) % 628) / 628 * 0.08, 0);
+      dummy.scale.set(pad.width, 1, pad.depth);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  };
+  addBatch(pads.filter((pad) => !pad.brick), sandboxTextureCache.sidewalk, 0xffffff);
+  addBatch(pads.filter((pad) => pad.brick), sandboxTextureCache.brickSidewalk, 0xf0ebe3);
+  group.userData = { type: 'building-frontage-pads', pads: pads.length };
   return group;
 }
 
@@ -2414,6 +3095,9 @@ let scene;
 let camera;
 let controls;
 let sun;
+let moonFill;
+let nightAmbient;
+let ssaoPassRef = null;
 let cityRoot;
 let trafficState = null;
 let signalGroups = [];
@@ -2464,6 +3148,9 @@ let detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0
 let roadStreamingInFlight = false;
 let sandboxAudio = null;
 let audioEnabled = true;
+let rainGroup = null;
+let rainPositions = null;
+let rainVelocities = null;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
@@ -2554,20 +3241,20 @@ const TIME_OF_DAY_MODES = {
   },
   night: {
     label: 'NIGHT',
-    background: 0x0d1b2c,
-    fogColor: 0x0d1b2c,
-    fogNear: 220,
-    fogFar: 1800,
-    sunColor: 0x7d93b5,
-    sunIntensity: 0.22,
-    sunPosition: [-420, 60, -380],
-    hemisphereSky: 0x182c4d,
+    background: 0x101826,
+    fogColor: 0x152033,
+    fogNear: 280,
+    fogFar: 1900,
+    sunColor: 0x8aa4c8,
+    sunIntensity: 0.28,
+    sunPosition: [-420, 120, -380],
+    hemisphereSky: 0x243652,
     hemisphereGround: 0x141820,
     hemisphereIntensity: 0.55,
-    exposure: 1.02,
-    skyTop: 0x07101f,
-    skyHorizon: 0x16283d,
-    skySun: 0x9fb4d4,
+    exposure: 1.08,
+    skyTop: 0x0c1524,
+    skyHorizon: 0x243448,
+    skySun: 0xb8c8e0,
     night: 1,
   },
   dawn: {
@@ -2990,12 +3677,28 @@ function updatePedestrians(dt) {
 
 let treePartGeometries = null;
 
+function createStreetTreeCanopyGeometry() {
+  const lobes = [
+    { x: 0, y: 0.08, z: 0, sx: 1.55, sy: 0.48, sz: 1.35, ry: 0.15 },
+    { x: 0.62, y: 0.18, z: 0.28, sx: 1.05, sy: 0.38, sz: 0.95, ry: 0.95 },
+    { x: -0.58, y: 0.12, z: -0.22, sx: 1.12, sy: 0.42, sz: 1.05, ry: -0.72 },
+    { x: 0.18, y: 0.22, z: -0.55, sx: 0.92, sy: 0.36, sz: 0.88, ry: 1.35 },
+  ];
+  const parts = lobes.map((lobe) => {
+    const geometry = new THREE.IcosahedronGeometry(1, 0);
+    geometry.scale(lobe.sx, lobe.sy, lobe.sz);
+    geometry.rotateY(lobe.ry);
+    geometry.translate(lobe.x, lobe.y, lobe.z);
+    return geometry;
+  });
+  return mergeGeometries(parts);
+}
+
 function getTreePartGeometries() {
   if (treePartGeometries) return treePartGeometries;
   treePartGeometries = {
-    trunk: new THREE.CylinderGeometry(0.14, 0.22, 1.35, 5),
-    canopyLower: new THREE.IcosahedronGeometry(1.28, 0),
-    canopyUpper: new THREE.IcosahedronGeometry(0.82, 0),
+    trunk: new THREE.CylinderGeometry(0.18, 0.28, 1.65, 6),
+    canopy: createStreetTreeCanopyGeometry(),
   };
   return treePartGeometries;
 }
@@ -3054,41 +3757,31 @@ function createStreetTrees(roads) {
   const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6a4a33, roughness: 0.95, flatShading: true });
   const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7d4f, roughness: 0.9, flatShading: true });
   const trunks = new THREE.InstancedMesh(parts.trunk, trunkMaterial, positions.length);
-  const canopiesLower = new THREE.InstancedMesh(parts.canopyLower, canopyMaterial, positions.length);
-  const canopiesUpper = new THREE.InstancedMesh(parts.canopyUpper, canopyMaterial, positions.length);
+  const canopies = new THREE.InstancedMesh(parts.canopy, canopyMaterial, positions.length);
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   for (let i = 0; i < positions.length; i += 1) {
     const position = positions[i];
     const ground = elevationAt(position.x, position.z);
     const rotY = (i * 17) % 360 * (Math.PI / 180);
-    dummy.position.set(position.x, ground + 0.68, position.z);
+    dummy.position.set(position.x, ground + 0.82, position.z);
     dummy.scale.set(position.scale, position.scale, position.scale);
     dummy.rotation.set(0, rotY, 0);
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(position.x, ground + 2.35, position.z);
-    dummy.scale.set(position.scale * 1.05, position.scale * 0.92, position.scale * 1.08);
-    dummy.rotation.set(0.08, rotY + 0.4, 0.05);
+    dummy.position.set(position.x, ground + 2.75, position.z);
+    dummy.scale.set(position.scale * 1.02, position.scale * 0.95, position.scale * 1.04);
+    dummy.rotation.set(0.04, rotY + 0.35, 0.02);
     dummy.updateMatrix();
-    canopiesLower.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(position.x, ground + 3.45, position.z);
-    dummy.scale.set(position.scale * 0.78, position.scale * 0.72, position.scale * 0.8);
-    dummy.rotation.set(-0.05, rotY - 0.25, 0.04);
-    dummy.updateMatrix();
-    canopiesUpper.setMatrixAt(i, dummy.matrix);
+    canopies.setMatrixAt(i, dummy.matrix);
     color.setHSL(0.28 + (i % 5) * 0.012, 0.38, 0.28 + (i % 4) * 0.04);
-    canopiesLower.setColorAt(i, color);
-    color.setHSL(0.3 + (i % 3) * 0.015, 0.34, 0.34 + (i % 3) * 0.05);
-    canopiesUpper.setColorAt(i, color);
+    canopies.setColorAt(i, color);
   }
   trunks.castShadow = true;
   trunks.receiveShadow = true;
-  canopiesLower.castShadow = true;
-  canopiesUpper.castShadow = true;
-  canopiesLower.instanceColor.needsUpdate = true;
-  canopiesUpper.instanceColor.needsUpdate = true;
-  treeGroup.add(trunks, canopiesLower, canopiesUpper);
+  canopies.castShadow = true;
+  canopies.instanceColor.needsUpdate = true;
+  treeGroup.add(trunks, canopies);
 }
 
 function createStreetFurniture(roads) {
@@ -3238,14 +3931,14 @@ function createHillVegetation(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 4600 && guard < 120000) {
+  while (spots.length < 7600 && guard < 180000) {
     guard += 1;
     const seed = guard * 7919;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
     const z = bounds.minZ + random(seed + 17) * (bounds.maxZ - bounds.minZ);
     if (!pointInFlatRing({ x, z }, flat)) continue;
     const elevation = elevationAt(x, z);
-    if (elevation < 52) continue;
+    if (elevation < 32) continue;
     const boxes = collisionBoxesNear(x, z, 2.2);
     let blocked = false;
     for (const box of boxes) {
@@ -3257,56 +3950,59 @@ function createHillVegetation(regionPoints) {
       }
     }
     if (blocked) continue;
+    const kind = random(seed + 31) > 0.12 ? 'tree' : 'rock';
     spots.push({
       x,
       z,
       elevation,
-      kind: random(seed + 31) > 0.16 ? 'tree' : 'rock',
-      scale: 0.5 + random(seed + 43) * 1.4,
-      layer: random(seed + 57) > 0.62 ? 'under' : 'main',
+      kind,
+      scale: kind === 'tree' ? 0.42 + random(seed + 43) * 1.25 : 0.4 + random(seed + 51) * 1.1,
+      layer: random(seed + 57) > 0.5 ? 'under' : 'main',
+      grass: kind === 'tree' && random(seed + 71) > 0.5,
     });
   }
-  const treeTrunkGeometry = new THREE.CylinderGeometry(0.12, 0.2, 1.2, 6);
-  const treeCanopyGeometry = new THREE.ConeGeometry(1.5, 3.1, 7);
-  const underCanopyGeometry = new THREE.SphereGeometry(0.85, 7, 6);
+  const parts = getTreePartGeometries();
+  const grassGeometry = new THREE.ConeGeometry(0.28, 0.7, 5);
   const rockGeometry = new THREE.DodecahedronGeometry(0.9, 0);
   const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5f4633, roughness: 0.95, flatShading: true });
   const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x3f6b45, roughness: 0.92, flatShading: true });
-  const underMaterial = new THREE.MeshStandardMaterial({ color: 0x567d4d, roughness: 0.92, flatShading: true });
+  const grassMaterial = new THREE.MeshStandardMaterial({ color: 0x6d8a4e, roughness: 0.95, flatShading: true });
   const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x7c7b73, roughness: 0.9, flatShading: true });
   const trees = spots.filter((spot) => spot.kind === 'tree');
   const rocks = spots.filter((spot) => spot.kind === 'rock');
-  const trunks = new THREE.InstancedMesh(treeTrunkGeometry, trunkMaterial, trees.length);
-  const canopies = new THREE.InstancedMesh(treeCanopyGeometry, canopyMaterial, trees.length);
-  const unders = new THREE.InstancedMesh(underCanopyGeometry, underMaterial, trees.filter((spot) => spot.layer === 'under').length);
+  const grasses = spots.filter((spot) => spot.grass);
+  const trunks = new THREE.InstancedMesh(parts.trunk, trunkMaterial, trees.length);
+  const canopies = new THREE.InstancedMesh(parts.canopy, canopyMaterial, trees.length);
+  const grassMeshes = new THREE.InstancedMesh(grassGeometry, grassMaterial, grasses.length);
   const rockMeshes = new THREE.InstancedMesh(rockGeometry, rockMaterial, rocks.length);
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   for (let i = 0; i < trees.length; i += 1) {
     const spot = trees[i];
-    dummy.position.set(spot.x, spot.elevation + 0.6, spot.z);
+    const rotY = random(i + 9) * Math.PI;
+    dummy.position.set(spot.x, spot.elevation + 0.82, spot.z);
     dummy.scale.setScalar(spot.scale);
-    dummy.rotation.set(0, random(i + 9) * Math.PI, 0);
+    dummy.rotation.set(0, rotY, 0);
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
-    dummy.position.y = spot.elevation + 2.8;
-    dummy.scale.setScalar(spot.scale * (0.9 + random(i + 11) * 0.3));
+    dummy.position.set(spot.x, spot.elevation + 2.85, spot.z);
+    dummy.scale.set(spot.scale * 1.04, spot.scale * 0.92, spot.scale * 1.06);
+    dummy.rotation.set(0.05, rotY + 0.35, 0.03);
     dummy.updateMatrix();
     canopies.setMatrixAt(i, dummy.matrix);
-    color.setHSL(0.3 + random(i) * 0.06, 0.36, 0.26 + random(i + 3) * 0.12);
+    color.setHSL(0.28 + random(i) * 0.06, 0.38, 0.28 + random(i + 3) * 0.1);
     canopies.setColorAt(i, color);
   }
-  let underIndex = 0;
-  for (const spot of trees) {
-    if (spot.layer !== 'under') continue;
-    dummy.position.set(spot.x + (random(spot.x * 7) - 0.5) * 1.2, spot.elevation + 1.2, spot.z + (random(spot.z * 13) - 0.5) * 1.2);
-    dummy.scale.setScalar(spot.scale * (0.55 + random(spot.x + spot.z) * 0.35));
-    dummy.rotation.set(0, random(spot.x + 5) * Math.PI, 0);
+  let grassIndex = 0;
+  for (const spot of grasses) {
+    dummy.position.set(spot.x + (random(spot.x * 3) - 0.5) * 0.8, spot.elevation + 0.28, spot.z + (random(spot.z * 5) - 0.5) * 0.8);
+    dummy.scale.setScalar(spot.scale * 0.8);
+    dummy.rotation.set(random(spot.x + 21) * 0.5, random(spot.z + 23) * Math.PI, random(spot.x + 29) * 0.4);
     dummy.updateMatrix();
-    unders.setMatrixAt(underIndex, dummy.matrix);
-    color.setHSL(0.28 + random(spot.z + 9) * 0.07, 0.38, 0.32 + random(spot.x + 17) * 0.14);
-    unders.setColorAt(underIndex, color);
-    underIndex += 1;
+    grassMeshes.setMatrixAt(grassIndex, dummy.matrix);
+    color.setHSL(0.26 + random(spot.x + spot.z) * 0.08, 0.4, 0.36 + random(spot.x + 7) * 0.12);
+    grassMeshes.setColorAt(grassIndex, color);
+    grassIndex += 1;
   }
   for (let i = 0; i < rocks.length; i += 1) {
     const spot = rocks[i];
@@ -3319,11 +4015,12 @@ function createHillVegetation(regionPoints) {
   trunks.castShadow = true;
   trunks.receiveShadow = true;
   canopies.castShadow = true;
-  unders.castShadow = true;
-  unders.receiveShadow = true;
+  canopies.instanceColor.needsUpdate = true;
+  grassMeshes.castShadow = true;
+  grassMeshes.receiveShadow = true;
   rockMeshes.castShadow = true;
   rockMeshes.receiveShadow = true;
-  hillVegetationGroup.add(trunks, canopies, unders, rockMeshes);
+  hillVegetationGroup.add(trunks, canopies, grassMeshes, rockMeshes);
 }
 
 function createBuildingDoorways(buildings) {
@@ -3943,6 +4640,40 @@ function setCityMode(mode) {
       const centroid = polygonCentroid(region);
       initPlayer({ x: centroid.x, z: centroid.z });
     }
+    // Face along the nearest OSM road so street beauty frames see a canyon,
+    // not empty water or the back of a block.
+    const paths = trafficState?.paths || [];
+    if (playerState && paths.length) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const path of paths) {
+        for (let i = 0; i < path.points.length - 1; i += 1) {
+          const a = path.points[i];
+          const b = path.points[i + 1];
+          const midX = (a.x + b.x) * 0.5;
+          const midZ = (a.z + b.z) * 0.5;
+          const dist = Math.hypot(midX - playerState.x, midZ - playerState.z);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = { a, b, midX, midZ };
+          }
+        }
+      }
+      if (best) {
+        playerState.x = best.midX;
+        playerState.z = best.midZ;
+        playerYaw = Math.atan2(best.b.x - best.a.x, best.b.z - best.a.z);
+        playerState.yaw = playerYaw;
+        playerPitch = -0.06;
+        if (playerAvatarGroup) {
+          playerAvatarGroup.position.set(
+            playerState.x,
+            elevationAt(playerState.x, playerState.z),
+            playerState.z,
+          );
+        }
+      }
+    }
     cityMode = 'walk';
   } else {
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) {
@@ -4212,6 +4943,11 @@ function setupScene() {
   sun.shadow.normalBias = 0.028;
   sun.shadow.radius = 2.2;
   scene.add(sun);
+  moonFill = new THREE.DirectionalLight(0x88a8d0, 0);
+  moonFill.position.set(280, 520, 220);
+  scene.add(moonFill);
+  nightAmbient = new THREE.AmbientLight(0x445566, 0);
+  scene.add(nightAmbient);
   const fillLight = new THREE.DirectionalLight(0x88a8c8, 0.42);
   fillLight.position.set(-280, 320, -220);
   scene.add(fillLight);
@@ -4232,6 +4968,7 @@ function setupScene() {
     ssaoPass.kernelRadius = 0.65;
     ssaoPass.minDistance = 0.006;
     ssaoPass.maxDistance = 0.075;
+    ssaoPassRef = ssaoPass;
     composer.addPass(ssaoPass);
     const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
     composer.addPass(smaaPass);
@@ -4240,6 +4977,60 @@ function setupScene() {
     console.warn('Post-processing disabled', error.message);
     composer = null;
   }
+}
+
+function createRainSystem() {
+  if (!scene || rainGroup) return rainGroup;
+  const count = 5200;
+  rainPositions = new Float32Array(count * 3);
+  rainVelocities = new Float32Array(count);
+  const spread = 420;
+  for (let i = 0; i < count; i += 1) {
+    rainPositions[i * 3] = (Math.random() - 0.5) * spread;
+    rainPositions[i * 3 + 1] = Math.random() * 180;
+    rainPositions[i * 3 + 2] = (Math.random() - 0.5) * spread;
+    rainVelocities[i] = 38 + Math.random() * 42;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  const material = new THREE.PointsMaterial({
+    color: 0xb8c8d8,
+    size: 0.42,
+    transparent: true,
+    opacity: 0.62,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+  rainGroup = new THREE.Points(geometry, material);
+  rainGroup.name = 'Pacific drizzle rain';
+  rainGroup.visible = false;
+  rainGroup.frustumCulled = false;
+  scene.add(rainGroup);
+  return rainGroup;
+}
+
+function updateRain(dt) {
+  if (!rainGroup || !rainPositions || !camera) return;
+  const active = weatherMode === 'drizzle';
+  rainGroup.visible = active;
+  if (!active) return;
+  const windX = 14;
+  const windZ = 8;
+  const spread = 420;
+  const height = 180;
+  for (let i = 0; i < rainVelocities.length; i += 1) {
+    const index = i * 3;
+    rainPositions[index + 1] -= rainVelocities[i] * dt;
+    rainPositions[index] += windX * dt;
+    rainPositions[index + 2] += windZ * dt;
+    if (rainPositions[index + 1] < -8) {
+      rainPositions[index] = camera.position.x + (Math.random() - 0.5) * spread;
+      rainPositions[index + 1] = camera.position.y + height * Math.random();
+      rainPositions[index + 2] = camera.position.z + (Math.random() - 0.5) * spread;
+    }
+  }
+  rainGroup.geometry.attributes.position.needsUpdate = true;
+  rainGroup.position.set(0, 0, 0);
 }
 
 function setWeatherMode(mode) {
@@ -4261,6 +5052,8 @@ function setWeatherMode(mode) {
     skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
+  if (scene && !rainGroup) createRainSystem();
+  if (rainGroup) rainGroup.visible = mode === 'drizzle';
   return weatherMode;
 }
 
@@ -4295,7 +5088,8 @@ function setTimeOfDay(mode) {
 
 function updateNightGlow(amount) {
   const night = THREE.MathUtils.clamp(amount, 0, 1);
-  const windowGlow = night * 0.72;
+  // Keep ambient night dark; let windows/streetlights carry the glow.
+  const windowGlow = night * 1.35;
   for (const material of windowMaterials) {
     if (!material) continue;
     material.emissive.set(0xffd9a0);
@@ -4304,16 +5098,19 @@ function updateNightGlow(amount) {
   }
   for (const material of streetLightMaterials) {
     if (!material) continue;
-    material.emissive.set(0xffd9a0);
-    material.emissiveIntensity = 0.3 + night * 1.7;
+    material.emissive.set(0xffe8b8);
+    material.emissiveIntensity = 0.35 + night * 2.4;
     material.needsUpdate = true;
   }
   for (const material of vehicleHeadlightMaterials) {
     if (!material) continue;
-    material.emissive.set(0xfff0c0);
-    material.emissiveIntensity = 0.5 + night * 1.5;
+    material.emissive.set(0xfff8d8);
+    material.emissiveIntensity = 0.55 + night * 2.2;
     material.needsUpdate = true;
   }
+  if (moonFill) moonFill.intensity = night * 0.35;
+  if (nightAmbient) nightAmbient.intensity = night * 0.18;
+  if (ssaoPassRef) ssaoPassRef.enabled = night < 0.65;
 }
 
 function updateSignals(time) {
@@ -4343,7 +5140,7 @@ function pathPosition(path, s) {
       return {
         position: new THREE.Vector3(
           a.x + (b.x - a.x) * t,
-          elevationAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) + 0.16,
+          elevationAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) + ROAD_SURFACE_LIFT + 0.04,
           a.z + (b.z - a.z) * t,
         ),
         heading: Math.atan2(b.z - a.z, b.x - a.x),
@@ -4354,7 +5151,7 @@ function pathPosition(path, s) {
   const a = path.points[path.points.length - 2];
   const b = path.points[path.points.length - 1];
   return {
-    position: new THREE.Vector3(b.x, elevationAt(b.x, b.z) + 0.16, b.z),
+    position: new THREE.Vector3(b.x, elevationAt(b.x, b.z) + ROAD_SURFACE_LIFT + 0.04, b.z),
     heading: Math.atan2(b.z - a.z, b.x - a.x),
   };
 }
@@ -4780,10 +5577,13 @@ async function buildCity() {
       roadMeshes = createRoadMeshes(compilation);
       cityRoot.add(roadMeshes);
     }
+    cityRoot.add(createCableCarTracks(usedRoads));
     setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
     await tick();
     detailBuildingMeshes = [];
     for (const building of buildings.detailed) {
+      const landmarkName = (building.name || '').toLowerCase();
+      if (SF_LANDMARK_SKIP.has(landmarkName)) continue;
       const mesh = createDetailBuildingMesh(building, buildingGroundY(building));
       if (mesh) {
         detailBuildingMeshes.push(mesh);
@@ -4793,6 +5593,7 @@ async function buildCity() {
     const coarse = createCoarseBuildings(buildings.coarse);
     coarseBuildingMesh = coarse.mesh;
     if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
+    cityRoot.add(createSfLandmarkSilhouettes(regionBBox, fullCityMode));
     createBuildingDoorways(buildings.detailed);
     createStreetfrontDetails(buildings.detailed);
 
@@ -4814,6 +5615,7 @@ async function buildCity() {
     createPedestrianSystem(usedRoads);
     createStreetTrees(usedRoads);
     createStreetFurniture(usedRoads);
+    updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
     sceneTriangleCount = countSceneTriangles(cityRoot);
 
     const centroid = polygonCentroid(regionPoints);
@@ -4896,7 +5698,17 @@ function start() {
       console.error('Real map build rejected', error);
       return { error: error.message || String(error) };
     }),
-    getBuildState: () => ({
+    getBuildState: () => {
+      let renderStats = null;
+      if (renderer && scene && camera) {
+        renderer.info.reset();
+        renderer.render(scene, camera);
+        renderStats = {
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+        };
+      }
+      return {
       isCity: document.body.classList.contains('is-city'),
       buildOverlayHidden: buildOverlay.hidden,
       selectedRoads: selectedRoadsForHit.length,
@@ -4944,12 +5756,10 @@ function start() {
           visible: resident.mesh.visible,
         })),
       } : null,
-      renderer: renderer ? {
-        drawCalls: renderer.info.render.calls,
-        triangles: renderer.info.render.triangles,
-      } : null,
+      renderer: renderStats,
       geometryTriangles: sceneTriangleCount,
-    }),
+      };
+    },
     setCityMode: (mode) => setCityMode(mode),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
@@ -4980,6 +5790,14 @@ function start() {
       controls.update();
       return true;
     },
+    getCameraState: () => camera ? {
+      position: [camera.position.x, camera.position.y, camera.position.z],
+      target: [controls.target.x, controls.target.y, controls.target.z],
+      timeOfDay,
+      weatherMode,
+      sunIntensity: sun?.intensity ?? null,
+      sunPosition: sun ? [sun.position.x, sun.position.y, sun.position.z] : null,
+    } : null,
     getSuggestedCameraPoses: () => getSuggestedCameraPoses(),
     setBeauty: (active) => {
       document.body.classList.toggle('is-beauty', Boolean(active));

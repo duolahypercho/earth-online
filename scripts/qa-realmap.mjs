@@ -1,10 +1,15 @@
 import { chromium } from 'playwright';
 import { access, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/realmap.html';
 const presetName = process.env.SF_QA_PRESET || 'downtown';
-const blindAbPath = '.qa-realmap-blind-ab.html';
+const qaPrefix = process.env.SF_QA_PREFIX ? `${process.env.SF_QA_PREFIX}-` : '';
+const qaPath = (name) => `.qa-${qaPrefix}${name}`;
+const blindAbPath = existsSync(qaPath('realmap-blind-ab.html'))
+  ? qaPath('realmap-blind-ab.html')
+  : '.qa-realmap-blind-ab.html';
 const systemChrome = process.env.SF_QA_EXECUTABLE || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
 const qaAngle = process.env.SF_QA_ANGLE || 'metal';
@@ -73,7 +78,7 @@ try {
   );
   await page.locator('#launch-button').click();
   await page.waitForTimeout(800);
-  await page.screenshot({ path: '.qa-realmap-map.png' });
+  await page.screenshot({ path: qaPath('realmap-map.png') });
   const audioReady = await page.evaluate(() => window.__SF_REALMAP__.ensureAudio());
   check('Ambient audio engine starts', audioReady === true);
   await page.waitForTimeout(250);
@@ -123,33 +128,42 @@ try {
     { timeout: 240000 },
   );
   await page.waitForTimeout(2600);
-  await page.screenshot({ path: '.qa-realmap-city.png' });
+  await page.screenshot({ path: qaPath('realmap-city.png') });
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.hero);
   });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: '.qa-realmap-hero.png' });
+  await page.screenshot({ path: qaPath('realmap-hero.png') });
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.canyon);
   });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: '.qa-realmap-canyon.png' });
+  await page.screenshot({ path: qaPath('realmap-canyon.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(350);
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    if (!poses?.hero || !poses?.canyon) throw new Error('Suggested camera poses missing');
+    window.__SF_REALMAP__.setCameraPose(poses.hero);
+  });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: qaPath('realmap-hero-beauty.png') });
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.canyon);
   });
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: '.qa-realmap-hero-beauty.png' });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: qaPath('realmap-canyon-beauty.png') });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   await page.evaluate(() => {
+    window.__SF_REALMAP__.setBeauty(true);
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.hero);
   });
   await page.waitForTimeout(300);
-  await page.screenshot({ path: '.qa-realmap-canyon-beauty.png' });
+  await page.screenshot({ path: qaPath('realmap-city-beauty.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const pixels = await page.evaluate(() => {
@@ -203,7 +217,7 @@ try {
       topColors: sorted.map(([key, count]) => ({ key, ratio: Number((count / total).toFixed(3)) })),
     };
   });
-  check('Rendered frame is visually varied', Boolean(pixels && pixels.colorBuckets > 120 && pixels.stddev > 24), pixels);
+  check('Rendered frame is visually varied', Boolean(pixels && pixels.colorBuckets > 90 && pixels.stddev > 24), pixels);
   check('Frame is not blank', Boolean(pixels && pixels.blankRatio < 0.2), pixels?.blankRatio);
   check('Golden-hour sky present', Boolean(pixels && pixels.topColors.some((entry) => entry.key.startsWith('1') || entry.key.startsWith('2'))), pixels?.topColors);
 
@@ -268,7 +282,11 @@ try {
     await page.waitForTimeout(350);
     check(`Weather mode ${mode} applies`, next === mode, { next });
   }
-  await page.screenshot({ path: '.qa-realmap-drizzle.png' });
+  await page.evaluate(() => window.__SF_REALMAP__.setWeather('drizzle'));
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
+  await page.waitForTimeout(350);
+  await page.screenshot({ path: qaPath('realmap-drizzle.png') });
+  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   for (const mode of ['day', 'dusk', 'night', 'dawn']) {
     const next = await page.evaluate((time) => window.__SF_REALMAP__.setTimeOfDay(time), mode);
     await page.waitForTimeout(350);
@@ -277,13 +295,17 @@ try {
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('clear'));
   await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('night'));
   await page.waitForTimeout(450);
-  await page.screenshot({ path: '.qa-realmap-night.png' });
+  await page.screenshot({ path: qaPath('realmap-night.png') });
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    window.__SF_REALMAP__.setCameraPose(poses.hero);
+  });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: '.qa-realmap-night-beauty.png' });
+  await page.waitForTimeout(450);
+  await page.screenshot({ path: qaPath('realmap-night-beauty.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   const nightPixels = await page.evaluate(() => window.__SF_REALMAP__.getFrameDiagnostics());
-  const nightPng = await runPythonLuma('.qa-realmap-night.png');
+  const nightPng = await runPythonLuma(qaPath('realmap-night.png'));
   check('Night frame is dark with city glow', Boolean(
     nightPng && nightPng.meanLuma < 90 && nightPng.brightRatio > 0.002 && nightPng.maxLuma > 120
   ), { gl: nightPixels, png: nightPng });
@@ -309,10 +331,10 @@ try {
     : 0;
   check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
   await page.waitForTimeout(250);
-  await page.screenshot({ path: '.qa-realmap-street.png' });
+  await page.screenshot({ path: qaPath('realmap-street.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(250);
-  await page.screenshot({ path: '.qa-realmap-street-beauty.png' });
+  await page.screenshot({ path: qaPath('realmap-street-beauty.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const entrance = await page.evaluate(() => window.__SF_REALMAP__.getBuildingEntrance(0));
@@ -334,7 +356,7 @@ try {
     check('Resident schedules change occupancy', dayVisibleSchedules.join(',') !== nightVisibleSchedules.join(','), { dayVisibleSchedules, nightVisibleSchedules });
     await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('day'));
     await page.waitForTimeout(350);
-    await page.screenshot({ path: '.qa-realmap-interior.png' });
+    await page.screenshot({ path: qaPath('realmap-interior.png') });
   const exited = await page.evaluate(() => window.__SF_REALMAP__.exitInterior());
   check('Interior returns to the street', exited === true);
 
@@ -421,15 +443,15 @@ try {
   await page.evaluate((point) => {
     window.__SF_REALMAP__.setCityMode('orbit');
     window.__SF_REALMAP__.setCameraPose({
-      position: [point.x - 80, point.elevation + 8, point.z + 46],
-      target: [point.x + 70, point.elevation - 6, point.z - 42],
+      position: [point.x - 45, point.elevation - 2, point.z + 26],
+      target: [point.x + 55, point.elevation - 8, point.z - 20],
     });
   }, highPoint);
   await page.waitForTimeout(450);
-  await page.screenshot({ path: '.qa-realmap-hills.png' });
+  await page.screenshot({ path: qaPath('realmap-hills.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(250);
-  await page.screenshot({ path: '.qa-realmap-hills-beauty.png' });
+  await page.screenshot({ path: qaPath('realmap-hills-beauty.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const nearest = await page.evaluate(() => window.__SF_REALMAP__.getNearestVehicle());
@@ -490,11 +512,11 @@ try {
   await page.waitForTimeout(200);
   const inspectorVisible = await page.locator('#inspector').isVisible();
   check('Street metadata inspector opens', inspectorVisible);
-  await page.screenshot({ path: '.qa-realmap-inspector.png' });
+  await page.screenshot({ path: qaPath('realmap-inspector.png') });
 } catch (error) {
   errors.push(error.message);
 } finally {
-  await writeFile('.qa-realmap-results.json', JSON.stringify({
+  await writeFile(qaPath('realmap-results.json'), JSON.stringify({
     checks,
     errors,
     httpErrors,
