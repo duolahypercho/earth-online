@@ -2152,6 +2152,7 @@ let treeGroup = null;
 let furnitureGroup = null;
 let hillVegetationGroup = null;
 let doorwayGroup = null;
+let streetfrontGroup = null;
 let driveIndex = -1;
 let composer = null;
 let skyDome = null;
@@ -2921,7 +2922,7 @@ function createHillVegetation(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 900 && guard < 24000) {
+  while (spots.length < 2600 && guard < 64000) {
     guard += 1;
     const seed = guard * 7919;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
@@ -2929,12 +2930,12 @@ function createHillVegetation(regionPoints) {
     if (!pointInFlatRing({ x, z }, flat)) continue;
     const elevation = elevationAt(x, z);
     if (elevation < 72) continue;
-    const boxes = collisionBoxesNear(x, z, 5);
+    const boxes = collisionBoxesNear(x, z, 2.2);
     let blocked = false;
     for (const box of boxes) {
       const cx = THREE.MathUtils.clamp(x, box.min.x, box.max.x);
       const cz = THREE.MathUtils.clamp(z, box.min.z, box.max.z);
-      if (Math.hypot(x - cx, z - cz) < 5) {
+      if (Math.hypot(x - cx, z - cz) < 2.2) {
         blocked = true;
         break;
       }
@@ -2945,7 +2946,7 @@ function createHillVegetation(regionPoints) {
       z,
       elevation,
       kind: random(seed + 31) > 0.16 ? 'tree' : 'rock',
-      scale: 0.65 + random(seed + 43) * 0.9,
+      scale: 0.55 + random(seed + 43) * 1.25,
     });
   }
   const treeTrunkGeometry = new THREE.CylinderGeometry(0.12, 0.2, 1.2, 6);
@@ -3053,6 +3054,87 @@ function createBuildingDoorways(buildings) {
     doorwayGroup.add(lintel);
     count += 1;
     if (count >= 1600) break;
+  }
+}
+
+function createStreetfrontDetails(buildings) {
+  if (streetfrontGroup) {
+    cityRoot.remove(streetfrontGroup);
+    streetfrontGroup = null;
+  }
+  streetfrontGroup = new THREE.Group();
+  streetfrontGroup.name = 'Real map streetfront details';
+  cityRoot.add(streetfrontGroup);
+  const awningMaterial = new THREE.MeshStandardMaterial({
+    color: 0xc56a4a,
+    roughness: 0.78,
+    metalness: 0.02,
+  });
+  const signMaterial = new THREE.MeshStandardMaterial({
+    color: 0x22262a,
+    roughness: 0.5,
+    metalness: 0.1,
+  });
+  const signCanvas = document.createElement('canvas');
+  signCanvas.width = 128;
+  signCanvas.height = 32;
+  const signContext = signCanvas.getContext('2d');
+  const signTexture = new THREE.CanvasTexture(signCanvas);
+  signTexture.colorSpace = THREE.SRGBColorSpace;
+  signTexture.needsUpdate = true;
+  let count = 0;
+  for (const building of buildings) {
+    if (!building.points || building.points.length < 6) continue;
+    const entrance = buildingEntrancePoint(building);
+    if (!entrance) continue;
+    const points = buildingFootprintPoints(building);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minZ = Math.min(minZ, point.z);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    const center = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+    const dx = entrance.x - center.x;
+    const dz = entrance.z - center.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const face = { x: dx / length, z: dz / length };
+    const normal = { x: -face.z, z: face.x };
+    const width = Math.min(5.5, Math.max(2.2, (maxX - minX) * 0.55));
+    const groundY = buildingGroundY(building);
+    const entranceX = entrance.x - face.x * 0.28;
+    const entranceZ = entrance.z - face.z * 0.28;
+
+    const awning = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, 1.1), awningMaterial);
+    awning.position.set(entranceX + face.x * 0.72, groundY + 2.45, entranceZ + face.z * 0.72);
+    awning.rotation.y = Math.atan2(face.x, face.z);
+    awning.castShadow = true;
+    streetfrontGroup.add(awning);
+
+    signContext.fillStyle = '#f0e9d8';
+    signContext.fillRect(0, 0, 128, 32);
+    signContext.fillStyle = '#4a3d2f';
+    signContext.font = 'bold 20px sans-serif';
+    signContext.textAlign = 'center';
+    const name = (building.name || 'SF').slice(0, 14).toUpperCase();
+    signContext.fillText(name || 'SF', 64, 22);
+    signTexture.needsUpdate = true;
+    const signMaterialWithMap = signMaterial.clone();
+    signMaterialWithMap.map = signTexture;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.62, 0.55), signMaterialWithMap);
+    sign.position.set(
+      entranceX + normal.x * width * 0.22 + face.x * 0.12,
+      groundY + 2.95,
+      entranceZ + normal.z * width * 0.22 + face.z * 0.12,
+    );
+    sign.rotation.y = Math.atan2(face.x, face.z);
+    streetfrontGroup.add(sign);
+    count += 1;
+    if (count >= 600) break;
   }
 }
 
@@ -4365,6 +4447,7 @@ async function buildCity() {
     coarseBuildingMesh = coarse.mesh;
     if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
     createBuildingDoorways(buildings.detailed);
+    createStreetfrontDetails(buildings.detailed);
 
     setBuildProgress('SIGNALS', 'Hanging traffic lights at real signal nodes…', 0.78);
     await tick();
@@ -4483,6 +4566,7 @@ function start() {
       furniture: furnitureGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       doorways: doorwayGroup?.children.length || 0,
+      streetfronts: streetfrontGroup?.children.length || 0,
       crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
       terrain: terrainData?.meta ? {
         cellSize: terrainData.meta.cellSize,

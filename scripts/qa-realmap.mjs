@@ -110,8 +110,8 @@ try {
   await page.waitForTimeout(2600);
   await page.screenshot({ path: '.qa-realmap-city.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1780, 34, 1760],
-    target: [1900, 26, 1580],
+    position: [1500, 26, 1700],
+    target: [1620, 20, 1600],
   }));
   await page.waitForTimeout(400);
   await page.screenshot({ path: '.qa-realmap-hero.png' });
@@ -130,8 +130,8 @@ try {
   await page.waitForTimeout(300);
   await page.screenshot({ path: '.qa-realmap-hero-beauty.png' });
   await page.evaluate(() => window.__SF_REALMAP__.setCameraPose({
-    position: [1780, 34, 1760],
-    target: [1900, 26, 1580],
+    position: [1500, 26, 1700],
+    target: [1620, 20, 1600],
   }));
   await page.waitForTimeout(300);
   await page.screenshot({ path: '.qa-realmap-canyon-beauty.png' });
@@ -277,6 +277,7 @@ try {
   check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
   check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
   check('Building doorways mark entrances', Number(cityState.doorways || 0) > 0, cityState.doorways);
+  check('Streetfront awnings and signs placed', Number(cityState.streetfronts || 0) > 0, cityState.streetfronts);
 
   const walkResult = await page.evaluate(() => window.__SF_REALMAP__.setCityMode('walk'));
   check('Walk mode activates', walkResult === true);
@@ -379,8 +380,8 @@ try {
   await page.evaluate((point) => {
     window.__SF_REALMAP__.setCityMode('orbit');
     window.__SF_REALMAP__.setCameraPose({
-      position: [point.x - 110, point.elevation + 42, point.z + 80],
-      target: [point.x + 90, point.elevation - 8, point.z - 60],
+      position: [point.x - 80, point.elevation + 8, point.z + 46],
+      target: [point.x + 70, point.elevation - 6, point.z - 42],
     });
   }, highPoint);
   await page.waitForTimeout(450);

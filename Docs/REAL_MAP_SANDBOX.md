@@ -40,6 +40,8 @@ that slice as a 3D city with:
   footprint and press `E`, then `E` or `Esc` returns you to the street;
 - visible doorway markers on detailed OSM footprints so enterable buildings are
   discoverable from the street;
+- storefront awnings and building-name signs on detailed OSM footprints, plus
+  denser hill vegetation (trees and rocks) on high-elevation land;
 - four interior archetypes selected from OSM metadata: cafe, office, rowhouse,
   and market, each with distinct furniture, palette, and lighting;
 - a day/night cycle (`T`) with Day, Dusk, Night, and Dawn presets: moving sun,
@@ -119,12 +121,13 @@ npm run qa:realmap-blind-ab
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (46/46 Full City, 45/45 Downtown) and the visual critic
-is CONDITIONAL at 6.5/10
-with zero rejected frames. Street-level edge density now sits at 19.2, hills at
-17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind
-commercial comparison is still unresolved; the critic document lists the exact
-blockers and acceptance tests for the next pass.
+gameplay gate is green (47/47 Full City, 46/46 Downtown) and the visual critic
+is CONDITIONAL at 6.2/10 with 3 of 4 frames accepted (hero 20.7, canyon 19.4,
+drizzle 28.7 edge density against a real-photo reference of 40.2). The natural
+hill frame remains REJECT because that Downtown hillside is genuinely sparse;
+the critic is kept honest rather than tuned to pass. Human-blind commercial
+comparison is still unresolved; the critic document lists the exact blockers
+and acceptance tests for the next pass.
 
 `npm run qa:realmap-blind-ab` generates `.qa-realmap-blind-ab.html`, a
 standalone randomized five-pair page that compares the real SF references
