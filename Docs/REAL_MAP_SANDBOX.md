@@ -109,6 +109,7 @@ San Francisco (DataSF PDDL 1.0). Source URLs and SHA-256 digests are stored in
 ```bash
 npm run qa:realmap
 npm run qa:realmap-critic
+npm run qa:realmap-blind-ab
 ```
 
 `npm run qa:realmap-critic` runs the harsh visual gate against
@@ -119,6 +120,14 @@ with zero rejected frames. Street-level edge density now sits at 19.2, hills at
 17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind
 commercial comparison is still unresolved; the critic document lists the exact
 blockers and acceptance tests for the next pass.
+
+`npm run qa:realmap-blind-ab` generates `.qa-realmap-blind-ab.html`, a
+standalone randomized five-pair page that compares the real SF references
+against this build with shuffled sides. Open the HTML in any browser, choose
+which side of each pair looks more like San Francisco, and paste the JSON
+verdict back into the goal record. The QA gate verifies the page renders all
+five pairs and records a vote; the human verdict itself is the remaining
+external acceptance gate.
 
 Latest gate results on this machine:
 

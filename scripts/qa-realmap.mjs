@@ -3,6 +3,7 @@ import { access, writeFile } from 'node:fs/promises';
 
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/realmap.html';
 const presetName = process.env.SF_QA_PRESET || 'downtown';
+const blindAbPath = '.qa-realmap-blind-ab.html';
 const systemChrome = process.env.SF_QA_EXECUTABLE || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
 const qaAngle = process.env.SF_QA_ANGLE || 'metal';
@@ -38,6 +39,18 @@ const check = (name, pass, detail = null) => {
 };
 
 try {
+  const blindAb = await page.goto(`file://${process.cwd()}/${blindAbPath}`, { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('.pair').length === 5, { timeout: 10000 });
+  const firstVote = await page.evaluate(() => {
+    const firstButton = document.querySelector('.pair .actions button');
+    firstButton?.click();
+    return {
+      pairs: document.querySelectorAll('.pair').length,
+      choices: JSON.parse(document.querySelector('.results')?.textContent || '{}'),
+    };
+  });
+  check('Blind A/B page renders 5 pairs', firstVote.pairs === 5, firstVote.pairs);
+  check('Blind A/B records a vote', Boolean(firstVote.choices?.choices && Object.keys(firstVote.choices.choices).length), firstVote.choices);
   await page.goto(baseUrl, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(
     () => document.querySelector('#launch-button') && !document.querySelector('#launch-button').disabled,
