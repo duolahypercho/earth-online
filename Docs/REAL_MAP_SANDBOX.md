@@ -18,6 +18,10 @@ that slice as a 3D city with:
   signal timing from `src/signals.js`;
 - one-way arrows and a small traffic simulation that respects one-way state and
   red-light stopping;
+- a street-level player with building/water boundary collision, walk mode,
+  drive mode, and `E`-to-enter vehicles;
+- sidewalk pedestrians walking the offset real street graph and street trees
+  planted along OSM roads;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -38,7 +42,10 @@ Then press **Build 3D City**.
 
 3D controls: drag to orbit, scroll to zoom, `W A S D` to pan, click a building,
 street, or signal to inspect its OSM metadata, `H` to hide the HUD, **Back to
-Map** to redraw another boundary.
+Map** to redraw another boundary. Use the city toolbar or `E` to switch from
+Orbit to Walk and Drive: in Walk, `W A S D` walks with building collision and
+`Shift` sprints; in Drive, `W` accelerates and `S` brakes on the real road
+graph. `Esc` returns to Orbit.
 
 ## Files
 
@@ -78,8 +85,13 @@ Latest gate results on this machine:
 
 - 24 boundary rings, 61,161 roads, 159,954 buildings, 322 signals loaded;
 - Downtown preset generated 1,061 compiled streets, 203 real signal nodes,
-  71 traffic vehicles;
-- 556 draw calls, 97,087 triangles after per-material geometry grouping;
+  71 traffic vehicles, 150 sidewalk pedestrians, 420 street trees, and 1,401
+  detailed OSM building footprints;
+- Full City preset generated 1,671 compiled streets, all 322 signal nodes,
+  90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse massing blocks,
+  and 9,399 collision volumes;
+- player walk mode moves through the city and drive mode accelerates along real
+  roads in the Playwright gate;
 - pixel readback shows a varied, non-blank golden-hour frame
   (136 quantized color buckets, standard deviation 94 over sampled RGB);
 - metadata inspector opens for buildings, streets, and signals.

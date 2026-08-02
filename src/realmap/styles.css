@@ -203,6 +203,27 @@ button:disabled {
   backdrop-filter: blur(14px);
 }
 
+.is-city-only {
+  display: flex;
+}
+
+.is-city-only[hidden] {
+  display: none;
+}
+
+.city-status {
+  pointer-events: none;
+}
+
+#readout-mode {
+  color: #ffd3a1;
+  font-weight: 700;
+}
+
+#readout-people {
+  color: #b9f2e1;
+}
+
 .hint {
   grid-column: 1 / -1;
   justify-self: end;

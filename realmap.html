@@ -48,11 +48,21 @@
             </button>
             <button type="button" class="action" data-action="back" hidden>Back to Map</button>
           </div>
+          <div class="tool-group is-city-only" data-toolbar="city" hidden>
+            <button type="button" class="action is-active" data-city-mode="orbit">Orbit</button>
+            <button type="button" class="action" data-city-mode="walk">Walk</button>
+            <button type="button" class="action" data-city-mode="drive" disabled>Drive</button>
+          </div>
         </section>
         <section class="readout" aria-label="Map readout">
           <span id="readout-vertices">0 vertices</span>
           <span id="readout-area">— km²</span>
           <span id="readout-selected">0 roads / 0 buildings / 0 signals</span>
+        </section>
+        <section class="readout city-status" aria-label="City readout">
+          <span id="readout-mode">ORBIT</span>
+          <span id="readout-people">0 people</span>
+          <span id="readout-car">—</span>
         </section>
         <p class="hint" id="hint">
           Click to place boundary vertices · double-click or Enter to close · Esc to cancel

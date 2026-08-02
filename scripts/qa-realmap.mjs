@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { access, writeFile } from 'node:fs/promises';
 
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/realmap.html';
+const presetName = process.env.SF_QA_PRESET || 'downtown';
 const systemChrome = process.env.SF_QA_EXECUTABLE || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
 const qaAngle = process.env.SF_QA_ANGLE || 'metal';
@@ -73,9 +74,9 @@ try {
   check('Real city data loaded', mapState.boundaryRings >= 20 && mapState.roads > 30000, mapState);
   check('Boundary has metadata sources', mapState.sources >= 2, mapState.sources);
 
-  await page.evaluate(() => window.__SF_REALMAP__.applyPreset('downtown'));
+  await page.evaluate((preset) => window.__SF_REALMAP__.applyPreset(preset), presetName);
   const region = await page.evaluate(() => window.__SF_REALMAP__.getRegion().length);
-  check('Preset draws a boundary', region >= 4, { region });
+  check(`Preset draws a boundary (${presetName})`, region >= 4, { preset: presetName, region });
 
   const buildResult = await page.evaluate(() => window.__SF_REALMAP__.build());
   if (buildResult?.error) {
@@ -155,6 +156,43 @@ try {
   check('City has real signal metadata', cityState.signals > 0, cityState.signals);
   check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
   check('Renderer emitted geometry', Number(cityState.renderer?.drawCalls || 0) > 0, cityState.renderer);
+  check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
+  check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
+
+  const walkResult = await page.evaluate(() => window.__SF_REALMAP__.setCityMode('walk'));
+  check('Walk mode activates', walkResult === true);
+  const startPlayer = await page.evaluate(() => window.__SF_REALMAP__.getPlayerPosition());
+  await page.keyboard.down('w');
+  await page.waitForTimeout(700);
+  await page.keyboard.up('w');
+  const endPlayer = await page.evaluate(() => window.__SF_REALMAP__.getPlayerPosition());
+  const movedDistance = startPlayer && endPlayer
+    ? Math.hypot(endPlayer.x - startPlayer.x, endPlayer.z - startPlayer.z)
+    : 0;
+  check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: '.qa-realmap-street.png' });
+
+  const nearest = await page.evaluate(() => window.__SF_REALMAP__.getNearestVehicle());
+  let driveTarget = nearest;
+  if (!driveTarget) {
+    const trafficPositions = await page.evaluate(() => window.__SF_REALMAP__.getTrafficPositions());
+    if (trafficPositions?.length) driveTarget = { position: trafficPositions[0] };
+  }
+  if (driveTarget) {
+    await page.evaluate((position) => window.__SF_REALMAP__.setPlayerPosition(position.x, position.z), driveTarget.position);
+    const driveResult = await page.evaluate(() => window.__SF_REALMAP__.setCityMode('drive'));
+    check('Drive mode enters a real road vehicle', driveResult === true);
+    await page.waitForTimeout(200);
+    await page.keyboard.down('w');
+    await page.waitForTimeout(900);
+    await page.keyboard.up('w');
+    const driveState = await page.evaluate(() => window.__SF_REALMAP__.getBuildState());
+    check('Drive accelerates along OSM roads', Number(driveState.vehicleSpeed || 0) > 0.5, driveState.vehicleSpeed);
+  } else {
+    check('Drive mode enters a real road vehicle', false, 'no nearby vehicle after walk');
+  }
+  await page.evaluate(() => window.__SF_REALMAP__.setCityMode('orbit'));
 
   await page.evaluate(() => window.__SF_REALMAP__.showInspector('Street', {
     id: 999,

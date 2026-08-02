@@ -524,6 +524,7 @@ function setupMapInteractions() {
   });
 
   window.addEventListener('keydown', (event) => {
+    if (document.body.classList.contains('is-city')) return;
     if (event.key === 'Enter' && activeTool === 'draw' && region.length >= 3) {
       drawCursor = null;
       updateReadout();
@@ -565,10 +566,27 @@ function setupToolbar() {
   document.querySelector('[data-action="build"]').addEventListener('click', () => {
     if (region.length >= 3) buildCity().catch((error) => console.error('Build failed', error));
   });
+  document.querySelectorAll('[data-city-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.cityMode === 'drive') {
+        if (!setCityMode('drive')) {
+          hint.textContent = 'Approach a car and press E to drive';
+        }
+      } else {
+        setCityMode(button.dataset.cityMode);
+      }
+    });
+  });
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) trafficState.vehicles[driveIndex].manual = false;
+    driveIndex = -1;
+    cityMode = 'orbit';
+    controls.enabled = true;
     document.body.classList.remove('is-city');
     document.querySelector('[data-action="back"]').hidden = true;
     document.querySelector('[data-action="build"]').hidden = false;
+    document.querySelector('[data-toolbar="city"]').hidden = true;
     hud.inert = false;
   });
   inspectorClose.addEventListener('click', () => {
@@ -1650,6 +1668,622 @@ let frameTime = 0;
 let fpsSamples = [];
 let lastFrameTime = performance.now();
 const moveKeys = new Set();
+let cityMode = 'orbit';
+let cityFlatRegion = [];
+let playerState = null;
+let playerAvatarGroup = null;
+let playerYaw = 0;
+let playerPitch = -0.12;
+let pointerLockActive = false;
+let collisionAabbs = [];
+let collisionCells = new Map();
+let pedestrianGroup = null;
+let pedestrianState = [];
+let treeGroup = null;
+let driveIndex = -1;
+const CELL_SIZE = 24;
+
+function roadHalfWidth(road) {
+  const cls = road.highway || 'residential';
+  const half = {
+    motorway: 16,
+    trunk: 14,
+    primary: 12,
+    secondary: 10.5,
+    tertiary: 8.5,
+    unclassified: 7,
+    residential: 6.5,
+    living_street: 5.5,
+    service: 5,
+    pedestrian: 3.5,
+    footway: 2.5,
+    cycleway: 2.5,
+    path: 2,
+  }[cls] ?? 6.5;
+  return half + 2.1;
+}
+
+function cellKey(cellX, cellZ) {
+  return `${cellX},${cellZ}`;
+}
+
+function insertCollisionBox(box) {
+  const minX = Math.floor(box.min.x / CELL_SIZE);
+  const maxX = Math.floor(box.max.x / CELL_SIZE);
+  const minZ = Math.floor(box.min.z / CELL_SIZE);
+  const maxZ = Math.floor(box.max.z / CELL_SIZE);
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      const key = cellKey(x, z);
+      const bucket = collisionCells.get(key) || [];
+      bucket.push(box);
+      collisionCells.set(key, bucket);
+    }
+  }
+  collisionAabbs.push(box);
+}
+
+function buildCollisionGrid(detailMeshes, coarseMesh) {
+  collisionAabbs = [];
+  collisionCells = new Map();
+  for (const mesh of detailMeshes) {
+    const box = new THREE.Box3().setFromObject(mesh);
+    insertCollisionBox(box);
+  }
+  if (coarseMesh?.geometry) {
+    coarseMesh.geometry.computeBoundingBox();
+  }
+  if (coarseMesh?.geometry?.boundingBox) {
+    const matrix = new THREE.Matrix4();
+    const corners = [];
+    const source = coarseMesh.geometry.boundingBox;
+    for (const [x, y, z] of [
+      [source.min.x, source.min.y, source.min.z],
+      [source.max.x, source.min.y, source.min.z],
+      [source.min.x, source.max.y, source.min.z],
+      [source.min.x, source.min.y, source.max.z],
+      [source.max.x, source.max.y, source.min.z],
+      [source.min.x, source.max.y, source.max.z],
+      [source.max.x, source.min.y, source.max.z],
+      [source.max.x, source.max.y, source.max.z],
+    ]) corners.push(new THREE.Vector3(x, y, z));
+    const count = coarseMesh.count;
+    for (let i = 0; i < count; i += 1) {
+      coarseMesh.getMatrixAt(i, matrix);
+      const worldCorners = corners.map((point) => point.clone().applyMatrix4(matrix));
+      insertCollisionBox(new THREE.Box3().setFromPoints(worldCorners));
+    }
+  }
+}
+
+function collisionBoxesNear(x, z, radius) {
+  const minX = Math.floor((x - radius) / CELL_SIZE);
+  const maxX = Math.floor((x + radius) / CELL_SIZE);
+  const minZ = Math.floor((z - radius) / CELL_SIZE);
+  const maxZ = Math.floor((z + radius) / CELL_SIZE);
+  const boxes = [];
+  const seen = new Set();
+  for (let cx = minX; cx <= maxX; cx += 1) {
+    for (let cz = minZ; cz <= maxZ; cz += 1) {
+      const bucket = collisionCells.get(cellKey(cx, cz));
+      if (!bucket) continue;
+      for (const box of bucket) {
+        if (!seen.has(box)) {
+          seen.add(box);
+          boxes.push(box);
+        }
+      }
+    }
+  }
+  return boxes;
+}
+
+function nearestRegionPoint(x, z) {
+  let bestDistance = Infinity;
+  let best = { x, z };
+  for (let i = 0; i < region.length; i += 1) {
+    const a = region[i];
+    const b = region[(i + 1) % region.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const lengthSq = dx * dx + dz * dz;
+    const t = lengthSq > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / lengthSq)) : 0;
+    const px = a.x + dx * t;
+    const pz = a.z + dz * t;
+    const distance = Math.hypot(x - px, z - pz);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { x: px, z: pz };
+    }
+  }
+  return best;
+}
+
+function resolvePlayerPosition(x, z, radius = 0.5) {
+  let resolvedX = x;
+  let resolvedZ = z;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const boxes = collisionBoxesNear(resolvedX, resolvedZ, radius + 1);
+    for (const box of boxes) {
+      const closestX = THREE.MathUtils.clamp(resolvedX, box.min.x, box.max.x);
+      const closestZ = THREE.MathUtils.clamp(resolvedZ, box.min.z, box.max.z);
+      const dx = resolvedX - closestX;
+      const dz = resolvedZ - closestZ;
+      const distance = Math.hypot(dx, dz);
+      if (distance < radius && distance > 0.0001) {
+        const push = (radius - distance) / distance;
+        resolvedX += dx * push;
+        resolvedZ += dz * push;
+      } else if (distance <= 0.0001) {
+        const centerX = (box.min.x + box.max.x) * 0.5;
+        const centerZ = (box.min.z + box.max.z) * 0.5;
+        const awayX = resolvedX - centerX;
+        const awayZ = resolvedZ - centerZ;
+        const awayLength = Math.hypot(awayX, awayZ) || 1;
+        resolvedX += (awayX / awayLength) * radius;
+        resolvedZ += (awayZ / awayLength) * radius;
+      }
+    }
+  }
+  if (region.length >= 3 && !pointInFlatRing({ x: resolvedX, z: resolvedZ }, cityFlatRegion)) {
+    const nearest = nearestRegionPoint(resolvedX, resolvedZ);
+    resolvedX = nearest.x;
+    resolvedZ = nearest.z;
+  }
+  return { x: resolvedX, z: resolvedZ };
+}
+
+function createSandboxPlayerAvatar() {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x3f6f8f,
+    roughness: 0.72,
+    metalness: 0.02,
+    flatShading: true,
+  });
+  const legMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2f3a44,
+    roughness: 0.8,
+    flatShading: true,
+  });
+  const skinMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd9a37e,
+    roughness: 0.62,
+  });
+  const hairMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2b2623,
+    roughness: 0.78,
+  });
+  const legs = new THREE.Group();
+  legs.name = 'player-legs';
+  const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.55, 0.2), legMaterial);
+  leftLeg.position.set(-0.12, 0.275, 0);
+  const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.55, 0.2), legMaterial);
+  rightLeg.position.set(0.12, 0.275, 0);
+  legs.add(leftLeg, rightLeg);
+  legs.position.y = 0;
+  group.add(legs);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.3), bodyMaterial);
+  body.position.y = 0.92;
+  body.castShadow = true;
+  group.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), skinMaterial);
+  head.position.y = 1.42;
+  head.castShadow = true;
+  group.add(head);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.175, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), hairMaterial);
+  hair.position.y = 1.46;
+  group.add(hair);
+  const armLeft = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.5, 0.16), bodyMaterial);
+  armLeft.position.set(-0.34, 1.05, 0);
+  armLeft.castShadow = true;
+  const armRight = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.5, 0.16), bodyMaterial);
+  armRight.position.set(0.34, 1.05, 0);
+  armRight.castShadow = true;
+  group.add(armLeft, armRight);
+  group.userData = { type: 'player', legs, leftLeg, rightLeg };
+  return group;
+}
+
+function initPlayer(position) {
+  if (!playerAvatarGroup) {
+    playerAvatarGroup = createSandboxPlayerAvatar();
+    scene.add(playerAvatarGroup);
+  }
+  const resolved = resolvePlayerPosition(position.x, position.z, 0.5);
+  playerState = {
+    x: resolved.x,
+    z: resolved.z,
+    yaw: Math.atan2(0 - position.x, 0 - position.z),
+    pitch: -0.12,
+    walking: 0,
+  };
+  playerYaw = playerState.yaw;
+  playerPitch = playerState.pitch;
+  playerAvatarGroup.position.set(resolved.x, 0, resolved.z);
+}
+
+function updatePlayerWalk(dt) {
+  if (!playerState) return;
+  const speed = moveKeys.has('shiftleft') || moveKeys.has('shiftright') ? 9 : 5.2;
+  const forward = new THREE.Vector3(Math.sin(playerYaw), 0, Math.cos(playerYaw));
+  const right = new THREE.Vector3(Math.cos(playerYaw), 0, -Math.sin(playerYaw));
+  const move = new THREE.Vector3();
+  if (moveKeys.has('w')) move.add(forward);
+  if (moveKeys.has('s')) move.sub(forward);
+  if (moveKeys.has('d')) move.add(right);
+  if (moveKeys.has('a')) move.sub(right);
+  const moving = move.lengthSq() > 0;
+  if (moving) {
+    move.normalize().multiplyScalar(speed * dt);
+    const resolved = resolvePlayerPosition(playerState.x + move.x, playerState.z + move.z, 0.5);
+    playerState.x = resolved.x;
+    playerState.z = resolved.z;
+    playerState.walking += dt * 6;
+  }
+  const legs = playerAvatarGroup.userData.legs;
+  if (legs) {
+    const swing = moving ? Math.sin(playerState.walking) * 0.42 : 0;
+    legs.userData = legs.userData || {};
+    legs.rotation.x = swing * 0.5;
+    legs.children[0].rotation.x = swing;
+    legs.children[1].rotation.x = -swing;
+  }
+  playerAvatarGroup.position.set(playerState.x, 0, playerState.z);
+  playerAvatarGroup.rotation.y = playerYaw;
+  camera.position.set(playerState.x, 1.68, playerState.z);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.set(playerPitch, playerYaw, 0);
+}
+
+function createPedestrianAvatar(palette) {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.55, 0.24),
+    new THREE.MeshStandardMaterial({ color: palette.top, roughness: 0.8, flatShading: true }),
+  );
+  body.position.y = 0.9;
+  body.castShadow = true;
+  const legs = new THREE.Group();
+  const legMaterial = new THREE.MeshStandardMaterial({ color: palette.bottom, roughness: 0.85, flatShading: true });
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.45, 0.15), legMaterial);
+  left.position.set(-0.1, 0.225, 0);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.45, 0.15), legMaterial);
+  right.position.set(0.1, 0.225, 0);
+  legs.add(left, right);
+  group.add(legs);
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 10, 8),
+    new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.65 }),
+  );
+  head.position.y = 1.38;
+  head.castShadow = true;
+  group.add(head);
+  group.userData = { legs, left, right };
+  return group;
+}
+
+function offsetPolyline(points, offset) {
+  const result = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const previous = points[Math.max(0, i - 1)];
+    const next = points[Math.min(points.length - 1, i + 1)];
+    let dx = next.x - previous.x;
+    let dz = next.z - previous.z;
+    const length = Math.hypot(dx, dz) || 1;
+    dx /= length;
+    dz /= length;
+    result.push({ x: points[i].x - dz * offset, z: points[i].z + dx * offset });
+  }
+  return result;
+}
+
+function buildSidewalkPaths(roads) {
+  const paths = [];
+  const classes = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service', 'pedestrian']);
+  for (const road of roads) {
+    if (!classes.has(road.highway)) continue;
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    const offset = roadHalfWidth(road);
+    const sides = [
+      offsetPolyline(points, offset),
+      offsetPolyline(points, -offset),
+    ];
+    for (const side of sides) {
+      let length = 0;
+      for (let i = 0; i < side.length - 1; i += 1) {
+        length += Math.hypot(side[i + 1].x - side[i].x, side[i + 1].z - side[i].z);
+      }
+      if (length < 16) continue;
+      paths.push({ points: side, length, speed: 1.05 + Math.random() * 0.7 });
+    }
+  }
+  return paths;
+}
+
+function pointAlongPath(points, s) {
+  const clamped = Math.max(0, Math.min(points.length > 1 ? pathLength(points) - 0.01 : 0, s));
+  let walked = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    if (walked + length >= clamped) {
+      const t = length > 0 ? (clamped - walked) / length : 0;
+      return {
+        x: a.x + (b.x - a.x) * t,
+        z: a.z + (b.z - a.z) * t,
+        heading: Math.atan2(b.z - a.z, b.x - a.x),
+      };
+    }
+    walked += length;
+  }
+  const last = points[points.length - 1];
+  const previous = points[points.length - 2] || last;
+  return { x: last.x, z: last.z, heading: Math.atan2(last.z - previous.z, last.x - previous.x) };
+}
+
+function pathLength(points) {
+  let length = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+  }
+  return length;
+}
+
+function createPedestrianSystem(roads) {
+  const paths = buildSidewalkPaths(roads);
+  if (pedestrianGroup) {
+    cityRoot.remove(pedestrianGroup);
+    pedestrianGroup = null;
+  }
+  pedestrianGroup = new THREE.Group();
+  pedestrianGroup.name = 'Real map sidewalk pedestrians';
+  cityRoot.add(pedestrianGroup);
+  pedestrianState = [];
+  const palettes = [
+    { top: 0x3f6f8f, bottom: 0x2f3a44, skin: 0xd9a37e },
+    { top: 0x9d4f46, bottom: 0x27313a, skin: 0x8d5f43 },
+    { top: 0x5b7a63, bottom: 0x333c45, skin: 0xf0c8a0 },
+    { top: 0x6b4e7a, bottom: 0x242d35, skin: 0x7d4a33 },
+    { top: 0x8a5a2b, bottom: 0x2d2f31, skin: 0xe8b48f },
+    { top: 0x3f8f8f, bottom: 0x1f333a, skin: 0xd8a989 },
+  ];
+  const count = Math.min(150, Math.max(30, Math.floor(paths.length * 0.1)));
+  for (let i = 0; i < count && paths.length; i += 1) {
+    const path = paths[i % paths.length];
+    const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
+    const s = Math.random() * path.length;
+    const pose = pointAlongPath(path.points, s);
+    avatar.position.set(pose.x, 0, pose.z);
+    avatar.rotation.y = pose.heading;
+    pedestrianGroup.add(avatar);
+    pedestrianState.push({
+      mesh: avatar,
+      path,
+      s,
+      speed: path.speed * (0.85 + Math.random() * 0.3),
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+function updatePedestrians(dt) {
+  for (const person of pedestrianState) {
+    person.s = (person.s + person.speed * dt) % person.path.length;
+    const pose = pointAlongPath(person.path.points, person.s);
+    person.mesh.position.set(pose.x, 0, pose.z);
+    person.mesh.rotation.y = pose.heading;
+    const swing = Math.sin(performance.now() * 0.008 + person.phase) * 0.4;
+    person.mesh.userData.left.rotation.x = swing;
+    person.mesh.userData.right.rotation.x = -swing;
+  }
+}
+
+function createStreetTrees(roads) {
+  if (treeGroup) {
+    cityRoot.remove(treeGroup);
+    treeGroup = null;
+  }
+  treeGroup = new THREE.Group();
+  treeGroup.name = 'Real map street trees';
+  cityRoot.add(treeGroup);
+  const positions = [];
+  const highwayTreeChance = {
+    motorway: 0,
+    trunk: 0,
+    primary: 0.6,
+    secondary: 0.8,
+    tertiary: 1,
+    residential: 1,
+    living_street: 1,
+    service: 0.4,
+  };
+  for (const road of roads) {
+    if (!highwayTreeChance[road.highway]) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    const count = Math.min(28, Math.floor(length / 34));
+    for (let c = 0; c < count; c += 1) {
+      if (positions.length >= 420) break;
+      const target = ((c + 0.5 + Math.random() * 0.3) / count) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength >= target) {
+          const t = segLength > 0 ? (target - walked) / segLength : 0;
+          const x = a.x + (b.x - a.x) * t;
+          const z = a.z + (b.z - a.z) * t;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const side = c % 2 === 0 ? 1 : -1;
+          positions.push({ x: x - dz / len * side * roadHalfWidth(road), z: z + dx / len * side * roadHalfWidth(road), scale: 0.7 + Math.random() * 0.45 });
+          break;
+        }
+        walked += segLength;
+      }
+    }
+  }
+  const trunkGeometry = new THREE.CylinderGeometry(0.12, 0.18, 1.1, 6);
+  const canopyGeometry = new THREE.ConeGeometry(1.25, 2.6, 7);
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6a4a33, roughness: 0.95, flatShading: true });
+  const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7d4f, roughness: 0.9, flatShading: true });
+  const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, positions.length);
+  const canopies = new THREE.InstancedMesh(canopyGeometry, canopyMaterial, positions.length);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  for (let i = 0; i < positions.length; i += 1) {
+    const position = positions[i];
+    dummy.position.set(position.x, 0.55, position.z);
+    dummy.scale.setScalar(position.scale);
+    dummy.rotation.set(0, Math.random() * Math.PI, 0);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    dummy.position.y = 2.55;
+    dummy.rotation.set(0, Math.random() * Math.PI, 0);
+    dummy.scale.setScalar(position.scale * (0.85 + Math.random() * 0.25));
+    dummy.updateMatrix();
+    canopies.setMatrixAt(i, dummy.matrix);
+    color.setHSL(0.3 + Math.random() * 0.045, 0.34, 0.3 + Math.random() * 0.12);
+    canopies.setColorAt(i, color);
+  }
+  trunks.castShadow = true;
+  trunks.receiveShadow = true;
+  canopies.castShadow = true;
+  treeGroup.add(trunks, canopies);
+}
+
+function nearestVehicle(position) {
+  if (!trafficState) return null;
+  let best = null;
+  let bestDistance = 5.5;
+  for (let i = 0; i < trafficState.vehicles.length; i += 1) {
+    const vehicle = trafficState.vehicles[i];
+    const distance = Math.hypot(vehicle.mesh.position.x - position.x, vehicle.mesh.position.z - position.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { index: i, vehicle, distance };
+    }
+  }
+  return best;
+}
+
+function setCityMode(mode) {
+  if (mode === 'drive') {
+    if (!playerState || !trafficState?.vehicles.length) return false;
+    const nearest = nearestVehicle(playerState);
+    if (!nearest) return false;
+    if (driveIndex >= 0 && driveIndex !== nearest.index) {
+      trafficState.vehicles[driveIndex].manual = false;
+    }
+    driveIndex = nearest.index;
+    trafficState.vehicles[driveIndex].manual = true;
+    cityMode = 'drive';
+  } else if (mode === 'walk') {
+    if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) {
+      trafficState.vehicles[driveIndex].manual = false;
+      driveIndex = -1;
+    }
+    if (!playerState) {
+      const centroid = polygonCentroid(region);
+      initPlayer({ x: centroid.x, z: centroid.z });
+    }
+    cityMode = 'walk';
+  } else {
+    if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) {
+      trafficState.vehicles[driveIndex].manual = false;
+      driveIndex = -1;
+    }
+    cityMode = 'orbit';
+    controls.enabled = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (playerState) {
+      controls.target.set(playerState.x, 0, playerState.z);
+      camera.position.set(playerState.x - 22, 16, playerState.z - 24);
+    }
+  }
+  document.querySelectorAll('[data-city-mode]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.cityMode === cityMode);
+  });
+  const driveButton = document.querySelector('[data-city-mode="drive"]');
+  driveButton.disabled = !trafficState?.vehicles.length;
+  modeLabel.textContent = cityMode === 'walk' ? 'Walking the streets' : cityMode === 'drive' ? 'Driving real roads' : 'Exploring generated city';
+  hint.textContent = cityMode === 'walk'
+    ? 'W A S D walk · Shift sprint · E enter a car · Esc return to orbit'
+    : cityMode === 'drive'
+      ? 'W accelerate · S brake · E exit the car'
+      : 'Drag orbit · scroll zoom · W A S D pan · click buildings, streets, or signals';
+  updateCityReadout();
+  return true;
+}
+
+function updateDrivenVehicle(dt) {
+  if (!trafficState || driveIndex < 0) return;
+  const vehicle = trafficState.vehicles[driveIndex];
+  if (!vehicle) return;
+  let target = 0;
+  if (moveKeys.has('w')) target = vehicle.maxSpeed;
+  else if (moveKeys.has('s')) target = -2.5;
+  const acceleration = target > vehicle.speed ? 5.5 : -8.5;
+  vehicle.speed = THREE.MathUtils.clamp(vehicle.speed + acceleration * dt, -2.5, vehicle.maxSpeed);
+  vehicle.s = Math.max(0, Math.min(vehicle.path.length, vehicle.s + vehicle.speed * dt));
+  if (vehicle.s >= vehicle.path.length - 0.05) {
+    const end = vehicle.path.points[vehicle.path.points.length - 1];
+    const heading = vehicle.path.points.length > 1
+      ? Math.atan2(end.z - vehicle.path.points[vehicle.path.points.length - 2].z, end.x - vehicle.path.points[vehicle.path.points.length - 2].x)
+      : 0;
+    let bestNext = null;
+    let bestScore = -Infinity;
+    for (const nextIndex of vehicle.path.next || []) {
+      const next = trafficState.paths[nextIndex];
+      if (!next) continue;
+      const nextStart = next.points[0];
+      if (Math.hypot(nextStart.x - end.x, nextStart.z - end.z) > 4) continue;
+      const nextHeading = next.points.length > 1
+        ? Math.atan2(next.points[1].z - nextStart.z, next.points[1].x - nextStart.x)
+        : 0;
+      let turn = Math.abs(heading - nextHeading);
+      turn = Math.min(turn, Math.PI * 2 - turn);
+      const score = -turn;
+      if (score > bestScore) {
+        bestScore = score;
+        bestNext = next;
+      }
+    }
+    if (bestNext) {
+      vehicle.path = bestNext;
+      vehicle.s = 0;
+    } else {
+      vehicle.s = 0.5;
+    }
+  }
+  const state = pathPosition(vehicle.path, vehicle.s);
+  vehicle.mesh.position.copy(state.position);
+  vehicle.mesh.rotation.set(0, state.heading, 0);
+  const forward = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
+  const behind = vehicle.mesh.position.clone().sub(forward.clone().multiplyScalar(9));
+  behind.y = 3.6;
+  camera.position.lerp(behind, Math.min(1, dt * 5));
+  camera.lookAt(vehicle.mesh.position.clone().add(forward.clone().multiplyScalar(14)));
+}
+
+function updateCityReadout() {
+  const mode = document.querySelector('#readout-mode');
+  const people = document.querySelector('#readout-people');
+  const car = document.querySelector('#readout-car');
+  mode.textContent = cityMode.toUpperCase();
+  people.textContent = `${pedestrianState.length} people`;
+  car.textContent = driveIndex >= 0
+    ? `DRIVING / ${trafficState.vehicles[driveIndex].speed.toFixed(1)} M/S`
+    : nearestVehicle(playerState || { x: 0, z: 0 }) ? 'E TO DRIVE' : '—';
+}
 
 function setupScene() {
   const context = sceneCanvas.getContext('webgl2', {
@@ -1746,6 +2380,7 @@ function pathPosition(path, s) {
 function updateTraffic(dt, time) {
   if (!trafficState) return;
   for (const vehicle of trafficState.vehicles) {
+    if (vehicle.manual) continue;
     const path = vehicle.path;
     let target = vehicle.targetSpeed;
     let stopAt = Infinity;
@@ -1826,23 +2461,34 @@ function renderLoop() {
   const time = performance.now() / 1000;
   updateSignals(time);
   updateTraffic(dt, time);
-  const moveSpeed = 46;
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  forward.normalize();
-  const right = new THREE.Vector3(forward.z, 0, -forward.x);
-  const move = new THREE.Vector3();
-  if (moveKeys.has('w')) move.add(forward);
-  if (moveKeys.has('s')) move.sub(forward);
-  if (moveKeys.has('d')) move.add(right);
-  if (moveKeys.has('a')) move.sub(right);
-  if (move.lengthSq() > 0) {
-    move.normalize().multiplyScalar(moveSpeed * dt);
-    controls.target.add(move);
-    camera.position.add(move);
+  updatePedestrians(dt);
+  if (cityMode === 'walk') {
+    controls.enabled = false;
+    updatePlayerWalk(dt);
+  } else if (cityMode === 'drive') {
+    controls.enabled = false;
+    updateDrivenVehicle(dt);
+  } else {
+    controls.enabled = true;
+    const moveSpeed = 46;
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3(forward.z, 0, -forward.x);
+    const move = new THREE.Vector3();
+    if (moveKeys.has('w')) move.add(forward);
+    if (moveKeys.has('s')) move.sub(forward);
+    if (moveKeys.has('d')) move.add(right);
+    if (moveKeys.has('a')) move.sub(right);
+    if (move.lengthSq() > 0) {
+      move.normalize().multiplyScalar(moveSpeed * dt);
+      controls.target.add(move);
+      camera.position.add(move);
+    }
+    controls.update();
   }
-  controls.update();
+  updateCityReadout();
   renderer.render(scene, camera);
   updateReadout3d();
   requestAnimationFrame(renderLoop);
@@ -1854,10 +2500,34 @@ function setup3DControls() {
   window.addEventListener('keydown', (event) => {
     moveKeys.add(event.key.toLowerCase());
     if (event.key === 'h') hud.inert = !hud.inert;
+    if (event.key === 'e' && cityMode === 'walk' && trafficState?.vehicles.length) {
+      setCityMode('drive');
+    } else if (event.key === 'e' && cityMode === 'drive') {
+      setCityMode('walk');
+    } else if (event.key === 'escape' && cityMode !== 'orbit') {
+      setCityMode('orbit');
+    }
   });
   window.addEventListener('keyup', (event) => moveKeys.delete(event.key.toLowerCase()));
+  document.addEventListener('pointerlockchange', () => {
+    pointerLockActive = document.pointerLockElement === sceneCanvas;
+  });
+  document.addEventListener('mousemove', (event) => {
+    if (!pointerLockActive || cityMode !== 'walk') return;
+    playerYaw -= event.movementX * 0.0022;
+    playerPitch = THREE.MathUtils.clamp(playerPitch - event.movementY * 0.0022, -1.25, 1.25);
+    if (playerState) {
+      playerState.yaw = playerYaw;
+      playerState.pitch = playerPitch;
+    }
+  });
+  sceneCanvas.addEventListener('mousedown', () => {
+    if (cityMode === 'walk' && !pointerLockActive && document.body.classList.contains('is-city')) {
+      sceneCanvas.requestPointerLock();
+    }
+  });
   sceneCanvas.addEventListener('mousemove', (event) => {
-    if (moveKeys.size) return;
+    if (moveKeys.size || pointerLockActive || cityMode !== 'orbit') return;
     const rect = sceneCanvas.getBoundingClientRect();
     const pointer = new THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -2052,8 +2722,13 @@ async function buildCity() {
     cityRoot.add(createOneWayArrows(usedRoads));
     trafficState = buildTraffic(usedRoads, signals);
     for (const vehicle of trafficState.vehicles) cityRoot.add(vehicle.mesh);
+    createPedestrianSystem(usedRoads);
+    createStreetTrees(usedRoads);
 
     const centroid = polygonCentroid(regionPoints);
+    cityFlatRegion = flatRegion();
+    buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
+    initPlayer({ x: centroid.x, z: centroid.z });
     controls.target.set(centroid.x, 0, centroid.z);
     camera.position.set(centroid.x - 170, 190, centroid.z - 210);
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
@@ -2067,6 +2742,8 @@ async function buildCity() {
     document.body.classList.add('is-city');
     document.querySelector('[data-action="back"]').hidden = false;
     document.querySelector('[data-action="build"]').hidden = true;
+    document.querySelector('[data-toolbar="city"]').hidden = false;
+    setCityMode('orbit');
     modeLabel.textContent = 'Exploring generated city';
     hint.textContent = 'Drag orbit · scroll zoom · WASD pan · click buildings, streets, or signals for OSM metadata';
   } catch (error) {
@@ -2124,11 +2801,44 @@ function start() {
       selectedRoads: selectedRoadsForHit.length,
       signals: signalGroups.length,
       traffic: trafficState?.vehicles.length || 0,
+      detailBuildings: detailBuildingMeshes.length,
+      coarseBuildings: coarseBuildingMesh?.count || 0,
+      mode: cityMode,
+      pedestrians: pedestrianState.length,
+      trees: treeGroup?.children[0]?.count || 0,
+      player: playerState ? { x: playerState.x, z: playerState.z } : null,
+      collisionVolumes: collisionAabbs.length,
+      driveIndex,
+      vehicleSpeed: driveIndex >= 0 && trafficState?.vehicles[driveIndex]
+        ? trafficState.vehicles[driveIndex].speed
+        : null,
       renderer: renderer ? {
         drawCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
       } : null,
     }),
+    setCityMode: (mode) => setCityMode(mode),
+    getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
+    setPlayerPosition: (x, z) => {
+      if (!playerState) return null;
+      const resolved = resolvePlayerPosition(x, z, 0.5);
+      playerState.x = resolved.x;
+      playerState.z = resolved.z;
+      playerAvatarGroup.position.set(resolved.x, 0, resolved.z);
+      return resolved;
+    },
+    getNearestVehicle: () => {
+      const nearest = playerState ? nearestVehicle(playerState) : null;
+      return nearest ? {
+        index: nearest.index,
+        distance: nearest.distance,
+        position: { x: nearest.vehicle.mesh.position.x, z: nearest.vehicle.mesh.position.z },
+      } : null;
+    },
+    getTrafficPositions: () => (trafficState?.vehicles || []).map((vehicle) => ({
+      x: vehicle.mesh.position.x,
+      z: vehicle.mesh.position.z,
+    })),
     showInspector,
   };
   renderLoop();
