@@ -33,6 +33,28 @@ const FOCUS_TABLEAU_PEDESTRIANS = 10;
 const FOCUS_VEHICLE_SPACING = 24;
 const FOCUS_PEDESTRIAN_SPACING = 9;
 const FOCUS_RESTAGE_DISTANCE = 40;
+const FOCUS_TABLEAU_ROUTES = Object.freeze({
+  vehicle: Object.freeze([
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: -76 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: -52 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: 52 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: 76 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: -68 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 68 }),
+  ]),
+  pedestrian: Object.freeze([
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: -78 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: -62 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: -46 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: 46 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: 62 }),
+    Object.freeze({ orientation: 'east-west', longitudinalOffset: 78 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: -70 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: -52 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 52 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 70 }),
+  ]),
+});
 const VALID_WEATHER = new Set(['clear', 'fog', 'drizzle']);
 
 const PEDESTRIAN_ROLE_CUES = Object.freeze({
@@ -576,6 +598,10 @@ function nearFocusStreetLine(sectorKey, focusPosition, orientation, fallbackLine
   );
 }
 
+function focusTableauRoute(kind, localSlot) {
+  return FOCUS_TABLEAU_ROUTES[kind]?.[localSlot] || null;
+}
+
 function nearFocusProgress(
   sectorKey,
   focusPosition,
@@ -584,6 +610,7 @@ function nearFocusProgress(
   spacing,
   phase = 0,
   spreadCount = 5,
+  longitudinalOffset = 0,
 ) {
   if (!focusPosition
     || !Number.isFinite(focusPosition.x)
@@ -600,11 +627,24 @@ function nearFocusProgress(
   const group = Math.floor(localSlot / count);
   const groupOffset = group * spacing * count * 0.85;
   const longitudinal = THREE.MathUtils.clamp(
-    focusLongitudinal + spreadSlot * spacing + groupOffset,
+    focusLongitudinal + spreadSlot * spacing + groupOffset + longitudinalOffset,
     -SECTOR_SIZE * 0.44,
     SECTOR_SIZE * 0.44,
   );
   return modulo(longitudinal + SECTOR_SIZE * 0.5, SECTOR_SIZE);
+}
+
+function nearFocusProgressAt(sectorKey, focusPosition, orientation, longitudinalOffset) {
+  return nearFocusProgress(
+    sectorKey,
+    focusPosition,
+    orientation,
+    0,
+    0,
+    0,
+    1,
+    longitudinalOffset,
+  );
 }
 
 function createInstancedMesh(geometry, material, capacity, name) {
@@ -1340,14 +1380,13 @@ export function createStreamedAgentSystem({
       const isVehicle = actor.kind === 'vehicle';
       const tableauCount = isVehicle ? FOCUS_TABLEAU_VEHICLES : FOCUS_TABLEAU_PEDESTRIANS;
       if (actor.localSlot >= tableauCount) return;
-      const stagedProgress = nearFocusProgress(
+      const route = focusTableauRoute(actor.kind, actor.localSlot);
+      if (!route) return;
+      const stagedProgress = nearFocusProgressAt(
         focusSectorKey,
         focusPosition,
-        actor.orientation,
-        actor.localSlot,
-        isVehicle ? FOCUS_VEHICLE_SPACING : FOCUS_PEDESTRIAN_SPACING,
-        (seededUnit(actor.sectorSeed, 13) - 0.5) * (isVehicle ? 0.18 : 0.16),
-        tableauCount,
+        route.orientation,
+        route.longitudinalOffset,
       );
       if (stagedProgress === null) return;
       // A QA teleport can leave a representative mid-crossing or in a dwell
@@ -1355,6 +1394,7 @@ export function createStreamedAgentSystem({
       // local presentation state; IDs, schedules, clocks, and leases remain
       // untouched and the next fixed step resumes ordinary motion.
       actor.progress = stagedProgress;
+      actor.orientation = route.orientation;
       actor.roadLine = nearFocusStreetLine(
         focusSectorKey,
         focusPosition,
