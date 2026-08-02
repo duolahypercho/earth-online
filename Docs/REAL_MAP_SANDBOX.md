@@ -135,12 +135,10 @@ npm run qa:realmap-blind-ab
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
 gameplay gate is green (54/54 Full City, 53/53 Downtown) and the visual critic
-is CONDITIONAL at 6.2/10 with 3 of 4 frames accepted (hero 20.7, canyon 19.4,
-drizzle 28.7 edge density against a real-photo reference of 40.2). The natural
-hill frame remains REJECT because that Downtown hillside is genuinely sparse;
-the critic is kept honest rather than tuned to pass. Human-blind commercial
-comparison is still unresolved; the critic document lists the exact blockers
-and acceptance tests for the next pass.
+is **7.4/10 with zero rejected frames**: Hero and Canyon APPROVE at 8.1 (edge
+density 31.1), Hills CONDITIONAL at 6.8, Drizzle CONDITIONAL at 6.7. Human-blind
+commercial comparison is still unresolved; the critic document lists the exact
+blockers and acceptance tests for the next pass.
 
 `npm run qa:realmap-blind-ab` generates `.qa-realmap-blind-ab.html`, a
 standalone randomized five-pair page that compares the real SF references

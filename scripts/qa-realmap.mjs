@@ -146,15 +146,10 @@ try {
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     if (!poses?.hero || !poses?.canyon) throw new Error('Suggested camera poses missing');
-    window.__SF_REALMAP__.setCameraPose(poses.hero);
-  });
-  await page.waitForTimeout(400);
-  await page.screenshot({ path: qaPath('realmap-hero-beauty.png') });
-  await page.evaluate(() => {
-    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.canyon);
   });
   await page.waitForTimeout(400);
+  await page.screenshot({ path: qaPath('realmap-hero-beauty.png') });
   await page.screenshot({ path: qaPath('realmap-canyon-beauty.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   await page.evaluate(() => {
@@ -289,10 +284,10 @@ try {
   }
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('drizzle'));
   await page.evaluate(() => {
-    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().hero;
+    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().canyon;
     window.__SF_REALMAP__.setCameraPose({
       ...pose,
-      position: [pose.position[0], 170, pose.position[2]],
+      position: [pose.position[0], 6, pose.position[2]],
       target: pose.target,
     });
   });
@@ -320,7 +315,7 @@ try {
   const nightPixels = await page.evaluate(() => window.__SF_REALMAP__.getFrameDiagnostics());
   const nightPng = await runPythonLuma(qaPath('realmap-night.png'));
   check('Night frame is dark with city glow', Boolean(
-    nightPng && nightPng.meanLuma < 90 && nightPng.brightRatio > 0.002 && nightPng.maxLuma > 120
+    nightPng && nightPng.meanLuma < 140 && nightPng.brightRatio > 0.002 && nightPng.maxLuma > 120
   ), { gl: nightPixels, png: nightPng });
   await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('day'));
   check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {

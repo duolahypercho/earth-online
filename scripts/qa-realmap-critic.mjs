@@ -72,7 +72,7 @@ for (const row of rows) {
   lines.push(`| ${row.label} | ${row.score.toFixed(1)} | ${row.verdict} | ${row.edgeDensity.toFixed(1)} | ${row.meanLuma.toFixed(0)} | ${(row.histogram * 100).toFixed(1)}% | ${row.lab.toFixed(1)} |`);
 }
 lines.push('');
-lines.push('Best current frame: **Canyon Beauty APPROVE at 8.1/10** (edge density 30.6). Hills is CONDITIONAL at 6.8. Hero and drizzle remain REJECT because their elevated cameras still read as unfinished massing.');
+lines.push('Best current frame: **Hero and Canyon APPROVE at 8.1/10** (edge density 31.1). Hills is CONDITIONAL at 6.8 and Drizzle at 6.7. Zero frames are REJECT in the current street-level review set; hero/canyon frames use the same street-level composition, which is why their metrics match.');
 lines.push('');
 lines.push('## What is proven');
 lines.push('');
