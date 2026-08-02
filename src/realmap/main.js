@@ -215,6 +215,21 @@ function countBuildingsNearSegment(a, b, buildings, radius = 28) {
   return count;
 }
 
+function countBuildingsNearPoint(x, z, buildings, radius = 60) {
+  let count = 0;
+  const sample = (building) => {
+    const [cx, cz] = building.centroid;
+    return Math.hypot(cx - x, cz - z) <= radius;
+  };
+  for (const building of buildings.detailed) {
+    if (sample(building)) count += 1;
+  }
+  for (const building of buildings.coarse) {
+    if (sample(building)) count += 1;
+  }
+  return count;
+}
+
 function analyzeRegionCameraTargets() {
   const points = region.length >= 3 ? region : [{ x: 0, z: 0 }];
   const regionKey = points.map((point) => `${Math.round(point.x)}:${Math.round(point.z)}`).join('|');
@@ -316,7 +331,8 @@ function makeCameraPose(position, target, elevationAware = true) {
 
 function getSuggestedCameraPoses() {
   const analysis = analyzeRegionCameraTargets();
-  const { centroid, span, skylineTarget, bestCorridor } = analysis;
+  const { centroid, span, skylineTarget, bestCorridor, bounds } = analysis;
+  const buildings = buildingsForCameraAnalysis();
   const viewDx = skylineTarget.x - centroid.x;
   const viewDz = skylineTarget.z - centroid.z;
   const viewLen = Math.hypot(viewDx, viewDz) || span;
@@ -325,11 +341,11 @@ function getSuggestedCameraPoses() {
   // elevationAware poses treat Y as height ABOVE terrain. Do not pre-add
   // elevationAt() here or resolveCameraPose will double-count and fling the
   // camera into the sky (broken canyon/drizzle frames).
-  const heroDistance = THREE.MathUtils.clamp(span * 0.42, 220, 680);
-  const heroHeight = THREE.MathUtils.clamp(span * 0.16, 90, 240);
+  const heroDistance = THREE.MathUtils.clamp(span * 0.2, 180, 380);
+  const heroHeight = THREE.MathUtils.clamp(span * 0.055, 42, 78);
   const heroCamX = skylineTarget.x - viewNx * heroDistance;
   const heroCamZ = skylineTarget.z - viewNz * heroDistance;
-  const heroTargetLift = Math.min(120, skylineTarget.height * 0.42);
+  const heroTargetLift = Math.min(58, skylineTarget.height * 0.24);
   const hero = makeCameraPose(
     [heroCamX, heroHeight, heroCamZ],
     [skylineTarget.x, heroTargetLift, skylineTarget.z],
@@ -378,13 +394,56 @@ function getSuggestedCameraPoses() {
     );
   }
 
+  // Night: hero-like elevated view with Transamerica + bay/waterfront in frame.
+  const bayX = THREE.MathUtils.lerp(skylineTarget.x, bounds.maxX, 0.58);
+  const bayZ = THREE.MathUtils.lerp(skylineTarget.z, bounds.maxZ, 0.44);
+  const nightTargetX = THREE.MathUtils.lerp(skylineTarget.x, bayX, 0.38);
+  const nightTargetZ = THREE.MathUtils.lerp(skylineTarget.z, bayZ, 0.42);
   const night = makeCameraPose(
-    [heroCamX, heroHeight * 0.92, heroCamZ],
-    [skylineTarget.x, heroTargetLift * 0.72, skylineTarget.z],
+    [heroCamX + viewNz * 36, heroHeight * 0.86, heroCamZ - viewNx * 36],
+    [nightTargetX, heroTargetLift * 0.42, nightTargetZ],
     true,
   );
 
-  return { hero, canyon, street, night };
+  // Hills: dense mid-rise cluster on a slope — avoids bare summit wash.
+  let hills = hero;
+  let hillsBestScore = 0;
+  let hillsAnchor = null;
+  for (const building of buildings.detailed) {
+    const bx = building.centroid[0];
+    const bz = building.centroid[1];
+    const elev = elevationAt(bx, bz);
+    if (elev < 32 || elev > 105) continue;
+    const height = Math.max(12, Number(building.height) || 12);
+    if (height < 14 || height > 72) continue;
+    const density = countBuildingsNearPoint(bx, bz, buildings, 72);
+    if (density < 6) continue;
+    const score = density * height * (1 + Math.min(elev, 90) * 0.008);
+    if (score > hillsBestScore) {
+      hillsBestScore = score;
+      hillsAnchor = { x: bx, z: bz, elevation: elev, height };
+    }
+  }
+  if (hillsAnchor) {
+    const lookDx = centroid.x - hillsAnchor.x;
+    const lookDz = centroid.z - hillsAnchor.z;
+    const lookLen = Math.hypot(lookDx, lookDz) || span;
+    hills = makeCameraPose(
+      [
+        hillsAnchor.x - (lookDx / lookLen) * 30,
+        5,
+        hillsAnchor.z - (lookDz / lookLen) * 30,
+      ],
+      [
+        hillsAnchor.x + (lookDx / lookLen) * 19,
+        2,
+        hillsAnchor.z + (lookDz / lookLen) * 19,
+      ],
+      true,
+    );
+  }
+
+  return { hero, canyon, street, night, hills };
 }
 
 function pointInFlatRing(point, flat) {
@@ -3352,17 +3411,17 @@ const WEATHER_MODES = {
   },
   drizzle: {
     label: 'PACIFIC DRIZZLE',
-    background: 0x758a93,
-    fogColor: 0x758a93,
+    background: 0x7d939c,
+    fogColor: 0x7d939c,
     fogNear: 150,
     fogFar: 1600,
-    sunIntensity: 1.9,
-    sunColor: 0xc8c5b8,
-    exposure: 1.02,
-    skyTop: 0x667f89,
-    skyMid: 0x7a9098,
-    skyHorizon: 0x9a9d95,
-    skySun: 0xb5a98c,
+    sunIntensity: 2.35,
+    sunColor: 0xd8d5c8,
+    exposure: 1.24,
+    skyTop: 0x6e8791,
+    skyMid: 0x849aa2,
+    skyHorizon: 0xa5a89f,
+    skySun: 0xc0b498,
   },
 };
 
@@ -4230,7 +4289,7 @@ function createHillVegetation(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 9800 && guard < 230000) {
+  while (spots.length < 11800 && guard < 280000) {
     guard += 1;
     const seed = guard * 7919;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
@@ -4338,7 +4397,7 @@ function createHillShrubbery(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 7600 && guard < 160000) {
+  while (spots.length < 9200 && guard < 200000) {
     guard += 1;
     const seed = guard * 4133;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
@@ -4478,6 +4537,65 @@ function createWetWeatherVisuals(roads) {
   puddles.instanceMatrix.needsUpdate = true;
   puddles.receiveShadow = true;
   wetWeatherGroup.add(puddles);
+
+  const sheenSegments = [];
+  const sheenClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service']);
+  for (const road of roads) {
+    if (!sheenClasses.has(road.highway)) continue;
+    const points = roadPoints(road);
+    const half = roadHalfWidth(road) * 0.92;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 1) continue;
+      const nx = -dz / length;
+      const nz = dx / length;
+      sheenSegments.push({
+        a1: { x: a.x + nx * half, z: a.z + nz * half },
+        a2: { x: a.x - nx * half, z: a.z - nz * half },
+        b1: { x: b.x + nx * half, z: b.z + nz * half },
+        b2: { x: b.x - nx * half, z: b.z - nz * half },
+      });
+    }
+  }
+  const sheenMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0x9db6c2,
+    roughness: 0.08,
+    metalness: 0.02,
+    clearcoat: 1,
+    clearcoatRoughness: 0.06,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const sheenGeometry = new THREE.BufferGeometry();
+  const sheenPositions = [];
+  const sheenIndices = [];
+  let vertexOffset = 0;
+  for (const segment of sheenSegments) {
+    sheenPositions.push(
+      segment.a1.x, elevationAt(segment.a1.x, segment.a1.z) + 0.07, segment.a1.z,
+      segment.a2.x, elevationAt(segment.a2.x, segment.a2.z) + 0.07, segment.a2.z,
+      segment.b1.x, elevationAt(segment.b1.x, segment.b1.z) + 0.07, segment.b1.z,
+      segment.b2.x, elevationAt(segment.b2.x, segment.b2.z) + 0.07, segment.b2.z,
+    );
+    sheenIndices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+    vertexOffset += 4;
+  }
+  if (sheenPositions.length) {
+    sheenGeometry.setAttribute('position', new THREE.Float32BufferAttribute(sheenPositions, 3));
+    sheenGeometry.setIndex(sheenIndices);
+    sheenGeometry.computeVertexNormals();
+    const sheen = new THREE.Mesh(sheenGeometry, sheenMaterial);
+    sheen.name = 'Wet road sheen';
+    sheen.renderOrder = 2;
+    wetWeatherGroup.add(sheen);
+    wetWeatherGroup.userData.sheenMaterial = sheenMaterial;
+  }
   wetWeatherGroup.visible = false;
 }
 
@@ -4529,6 +4647,14 @@ function updateWeatherVisuals(dt) {
     if (puddleMaterial) {
       const target = active ? 0.72 : 0;
       puddleMaterial.opacity = THREE.MathUtils.lerp(puddleMaterial.opacity, target, Math.min(1, dt * 4));
+    }
+    if (wetWeatherGroup.userData.sheenMaterial) {
+      const target = active ? 0.46 : 0;
+      wetWeatherGroup.userData.sheenMaterial.opacity = THREE.MathUtils.lerp(
+        wetWeatherGroup.userData.sheenMaterial.opacity,
+        target,
+        Math.min(1, dt * 4),
+      );
     }
   }
   if (mistGroup && mistPositions && camera) {
@@ -5733,7 +5859,7 @@ function setupScene() {
 
 function createRainSystem() {
   if (!scene || rainGroup) return rainGroup;
-  const streakCount = 3200;
+  const streakCount = 9000;
   rainPositions = new Float32Array(streakCount * 6);
   rainVelocities = new Float32Array(streakCount);
   const spread = 460;
@@ -5756,7 +5882,7 @@ function createRainSystem() {
   const material = new THREE.LineBasicMaterial({
     color: 0xd8e4f0,
     transparent: true,
-    opacity: 0.52,
+    opacity: 0.66,
     depthWrite: false,
   });
   rainGroup = new THREE.LineSegments(geometry, material);
@@ -5801,6 +5927,21 @@ function updateRain(dt) {
   rainGroup.geometry.attributes.position.needsUpdate = true;
 }
 
+function applyWeatherRoadTuning(mode) {
+  const isDrizzle = mode === 'drizzle';
+  for (const [materialClass, material] of roadMaterialCache) {
+    if (materialClass === 'road') {
+      material.color.set(isDrizzle ? 0xc4ccc8 : 0xffffff);
+      material.roughness = isDrizzle ? 0.48 : (material.roughnessMap ? 1 : 0.92);
+      material.metalness = isDrizzle ? 0.08 : 0.01;
+      material.needsUpdate = true;
+    } else if (materialClass === 'marking-none') {
+      material.color.set(isDrizzle ? 0x2a2f32 : roadSurfaceColors.road);
+      material.needsUpdate = true;
+    }
+  }
+}
+
 function setWeatherMode(mode) {
   const config = WEATHER_MODES[mode];
   if (!config) return weatherMode;
@@ -5820,6 +5961,7 @@ function setWeatherMode(mode) {
     skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
+  applyWeatherRoadTuning(mode);
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
   return weatherMode;
@@ -5857,11 +5999,17 @@ function setTimeOfDay(mode) {
 function updateNightGlow(amount) {
   const night = THREE.MathUtils.clamp(amount, 0, 1);
   // Keep ambient night dark; let windows/streetlights carry the glow.
-  const windowGlow = night * 1.35;
-  for (const material of windowMaterials) {
+  const windowGlow = night * 1.28;
+  for (let index = 0; index < windowMaterials.length; index += 1) {
+    const material = windowMaterials[index];
     if (!material) continue;
-    material.emissive.set(0xffd9a0);
-    material.emissiveIntensity = windowGlow;
+    const tone = index % 5;
+    const warm = tone === 0 || tone === 2 || tone === 4;
+    const cool = tone === 1;
+    material.emissive.set(
+      warm ? 0xffd9a0 : cool ? 0x9ec8e8 : 0xc8b8e8,
+    );
+    material.emissiveIntensity = windowGlow * (warm ? 1 : cool ? 0.78 : 0.88);
     material.needsUpdate = true;
   }
   for (const material of streetLightMaterials) {

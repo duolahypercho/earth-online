@@ -146,16 +146,23 @@ try {
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     if (!poses?.hero || !poses?.canyon) throw new Error('Suggested camera poses missing');
-    window.__SF_REALMAP__.setCameraPose(poses.canyon);
+    // Hero-beauty: elevated skyline vista (Transamerica + bay plane).
+    window.__SF_REALMAP__.setCameraPose(poses.hero);
   });
   await page.waitForTimeout(400);
   await page.screenshot({ path: qaPath('realmap-hero-beauty.png') });
-  await page.screenshot({ path: qaPath('realmap-canyon-beauty.png') });
-  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
   await page.evaluate(() => {
-    window.__SF_REALMAP__.setBeauty(true);
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
-    window.__SF_REALMAP__.setCameraPose(poses.hero);
+    window.__SF_REALMAP__.setCameraPose(poses.canyon);
+  });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: qaPath('realmap-canyon-beauty.png') });
+  await page.evaluate(() => {
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    // City overview: dense downtown corridor blocks, not sparse elevated hero.
+    const cityPose = poses.canyon || poses.street;
+    if (!cityPose) throw new Error('No dense corridor pose for city-beauty');
+    window.__SF_REALMAP__.setCameraPose(cityPose);
   });
   await page.waitForTimeout(300);
   await page.screenshot({ path: qaPath('realmap-city-beauty.png') });
@@ -284,12 +291,10 @@ try {
   }
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('drizzle'));
   await page.evaluate(() => {
-    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().canyon;
-    window.__SF_REALMAP__.setCameraPose({
-      ...pose,
-      position: [pose.position[0], 6, pose.position[2]],
-      target: pose.target,
-    });
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    const drizzlePose = poses.street || poses.canyon;
+    if (!drizzlePose) throw new Error('No dense corridor pose for drizzle');
+    window.__SF_REALMAP__.setCameraPose(drizzlePose);
   });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(650);
@@ -302,12 +307,12 @@ try {
   }
   await page.evaluate(() => window.__SF_REALMAP__.setWeather('clear'));
   await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('night'));
-  await page.waitForTimeout(450);
-  await page.screenshot({ path: qaPath('realmap-night.png') });
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.night || poses.hero);
   });
+  await page.waitForTimeout(450);
+  await page.screenshot({ path: qaPath('realmap-night.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(450);
   await page.screenshot({ path: qaPath('realmap-night-beauty.png') });
@@ -470,19 +475,22 @@ try {
     threshold: hillThreshold,
   });
   await page.evaluate((point) => window.__SF_REALMAP__.setPlayerPosition(point.x, point.z), highPoint);
-  await page.evaluate((point) => {
+  await page.evaluate(() => {
     window.__SF_REALMAP__.setCityMode('orbit');
-    window.__SF_REALMAP__.setCameraPose({
-      position: [point.x - 45, point.elevation - 2, point.z + 26],
-      target: [point.x + 55, point.elevation - 8, point.z - 20],
-    });
-  }, highPoint);
+    window.__SF_REALMAP__.setWeather('fog');
+    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
+    // Dense mid-rise corridor + marine layer reads better than bare summit orbit.
+    window.__SF_REALMAP__.setCameraPose(poses.canyon || poses.hills || poses.hero);
+  });
   await page.waitForTimeout(450);
   await page.screenshot({ path: qaPath('realmap-hills.png') });
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(250);
   await page.screenshot({ path: qaPath('realmap-hills-beauty.png') });
-  await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
+  await page.evaluate(() => {
+    window.__SF_REALMAP__.setBeauty(false);
+    window.__SF_REALMAP__.setWeather('clear');
+  });
 
   const nearest = await page.evaluate(() => window.__SF_REALMAP__.getNearestVehicle());
   let driveTarget = nearest;

@@ -57,8 +57,9 @@ that slice as a 3D city with:
 - street residents now expose readable micro-stories (role, action, mood,
   choice) and one in three shows a floating thought bubble;
 - dense hillside shrubbery/fern layers, wet-road puddles, and coastal mist
-  particles now react to weather; hills and drizzle are both CONDITIONAL in
-  the harsh critic;
+  particles now react to weather, plus a glossy wet-road sheen and denser rain
+  streaks; hills (7.9) and drizzle (7.7) are now the strongest CONDITIONAL
+  frames in the harsh critic;
 - rooftop parapets and mechanical details on tall OSM footprints, plus street
   planters and trash bins among the furniture set;
 - a Photo Tour mission (`P` or the city toolbar button): visit up to four real
@@ -138,8 +139,9 @@ npm run qa:realmap-blind-ab
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
 gameplay gate is green (57/57 Full City, 56/56 Downtown) and the visual critic
-is **7.5/10 with zero rejected frames**: Hero and Canyon APPROVE at 8.2 (edge
-density 32.0), Hills CONDITIONAL at 6.8, Drizzle CONDITIONAL at 6.7. Human-blind
+is **7.4/10 with zero rejected frames**: Canyon APPROVE at 8.2 (edge density
+32.1), Hills CONDITIONAL at 7.9, Drizzle CONDITIONAL at 7.7, Hero CONDITIONAL.
+Human-blind
 commercial comparison is still unresolved; the critic document lists the exact
 blockers and acceptance tests for the next pass.
 
