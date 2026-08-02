@@ -22,6 +22,8 @@ that slice as a 3D city with:
   drive mode, and `E`-to-enter vehicles;
 - sidewalk pedestrians walking the offset real street graph and street trees
   planted along OSM roads;
+- zebra crossings at real signal nodes, SSAO/SMAA post-processing, and a
+  gradient Pacific sky dome;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -90,6 +92,8 @@ Latest gate results on this machine:
 - Full City preset generated 1,671 compiled streets, all 322 signal nodes,
   90 traffic vehicles, 4,399 detailed footprints, 5,000 coarse massing blocks,
   and 9,399 collision volumes;
+- Downtown rendered 251,209 scene triangles with 1,158 crosswalk stripes after
+  post-processing was enabled;
 - player walk mode moves through the city and drive mode accelerates along real
   roads in the Playwright gate;
 - pixel readback shows a varied, non-blank golden-hour frame

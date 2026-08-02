@@ -155,7 +155,10 @@ try {
   check('WebGL2 city generated', cityState.webgl2 && cityState.isCity, cityState);
   check('City has real signal metadata', cityState.signals > 0, cityState.signals);
   check('Traffic flows on OSM roads', cityState.traffic > 0, cityState.traffic);
-  check('Renderer emitted geometry', Number(cityState.renderer?.drawCalls || 0) > 0, cityState.renderer);
+  check('Renderer emitted geometry', Number(cityState.geometryTriangles || cityState.renderer?.triangles || 0) > 0, {
+    geometryTriangles: cityState.geometryTriangles,
+    renderer: cityState.renderer,
+  });
   check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
   check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
 

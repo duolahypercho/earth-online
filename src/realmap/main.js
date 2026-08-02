@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import {
   createRoadAuthoringDocument,
   addRoadTemplate,
@@ -1393,6 +1398,64 @@ function createSignalGroup(position, index) {
   return group;
 }
 
+function createCrosswalks(signals, roads) {
+  const group = new THREE.Group();
+  group.name = 'Real map zebra crossings';
+  const stripeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd9d6c4,
+    roughness: 0.72,
+    metalness: 0.02,
+  });
+  const stripeGeometry = new THREE.BoxGeometry(0.55, 0.04, 7.2);
+  let added = 0;
+  for (const signal of signals) {
+    let best = null;
+    let bestDistance = 9;
+    for (const road of roads) {
+      const points = roadPoints(road);
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const lengthSq = dx * dx + dz * dz;
+        if (lengthSq < 0.01) continue;
+        const t = Math.max(0, Math.min(1, ((signal[0] - a.x) * dx + (signal[1] - a.z) * dz) / lengthSq));
+        const px = a.x + dx * t;
+        const pz = a.z + dz * t;
+        const distance = Math.hypot(px - signal[0], pz - signal[1]);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = {
+            position: { x: px, z: pz },
+            heading: Math.atan2(dz, dx),
+            direction: { x: dx, z: dz },
+          };
+        }
+      }
+    }
+    if (!best) continue;
+    const length = Math.hypot(best.direction.x, best.direction.z) || 1;
+    const roadX = best.direction.x / length;
+    const roadZ = best.direction.z / length;
+    for (let i = 0; i < 6; i += 1) {
+      const offset = (i - 2.5) * 0.62;
+      const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
+      stripe.position.set(
+        best.position.x + roadX * offset,
+        0.085,
+        best.position.z + roadZ * offset,
+      );
+      stripe.rotation.y = best.heading + Math.PI * 0.5;
+      stripe.receiveShadow = true;
+      group.add(stripe);
+      added += 1;
+    }
+  }
+  group.userData = { type: 'crosswalks', stripes: added };
+  return group;
+}
+
 function createOneWayArrows(roads) {
   const arrows = [];
   const arrowGeometry = new THREE.ConeGeometry(0.5, 1.1, 3);
@@ -1681,6 +1744,9 @@ let pedestrianGroup = null;
 let pedestrianState = [];
 let treeGroup = null;
 let driveIndex = -1;
+let composer = null;
+let skyDome = null;
+let sceneTriangleCount = 0;
 const CELL_SIZE = 24;
 
 function roadHalfWidth(road) {
@@ -2308,6 +2374,44 @@ function setupScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xb9d0da);
   scene.fog = new THREE.Fog(0xc2d4dc, 220, 1150);
+  skyDome = new THREE.Mesh(
+    new THREE.SphereGeometry(1300, 24, 12),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x6fa7c4) },
+        horizonColor: { value: new THREE.Color(0xd7c9ae) },
+        sunColor: { value: new THREE.Color(0xffcf96) },
+      },
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 horizonColor;
+        uniform vec3 sunColor;
+        varying vec3 vWorldPosition;
+        void main() {
+          float h = normalize(vWorldPosition).y;
+          float t = clamp(pow(max(h, 0.0), 0.62), 0.0, 1.0);
+          vec3 color = mix(horizonColor, topColor, t);
+          float sunGlow = clamp(1.0 - distance(normalize(vWorldPosition), normalize(vec3(-0.32, 0.38, -0.28))) * 3.2, 0.0, 1.0);
+          color += sunColor * sunGlow * sunGlow * 0.32;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `,
+    }),
+  );
+  skyDome.name = 'Real map gradient sky';
+  skyDome.renderOrder = -10;
+  scene.add(skyDome);
 
   const hemisphere = new THREE.HemisphereLight(0xcfe5f0, 0x635f4e, 1.05);
   scene.add(hemisphere);
@@ -2336,6 +2440,21 @@ function setupScene() {
   controls.maxDistance = 1800;
   controls.target.set(0, 0, 0);
   controls.update();
+  try {
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight, 16);
+    ssaoPass.kernelRadius = 1.2;
+    ssaoPass.minDistance = 0.004;
+    ssaoPass.maxDistance = 0.12;
+    composer.addPass(ssaoPass);
+    const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+    composer.addPass(smaaPass);
+    composer.addPass(new OutputPass());
+  } catch (error) {
+    console.warn('Post-processing disabled', error.message);
+    composer = null;
+  }
 }
 
 function updateSignals(time) {
@@ -2450,6 +2569,16 @@ function updateReadout3d() {
   readoutSelected.textContent = `${formatNumber(info.triangles)} tris`;
 }
 
+function countSceneTriangles(root) {
+  let total = 0;
+  root.traverse((object) => {
+    if (!object.isMesh || !object.geometry) return;
+    const index = object.geometry.index;
+    total += (index ? index.count : object.geometry.attributes.position.count) / 3;
+  });
+  return Math.round(total);
+}
+
 function renderLoop() {
   if (!renderer || !scene || !camera) {
     requestAnimationFrame(renderLoop);
@@ -2489,7 +2618,8 @@ function renderLoop() {
     controls.update();
   }
   updateCityReadout();
-  renderer.render(scene, camera);
+  if (composer) composer.render();
+  else renderer.render(scene, camera);
   updateReadout3d();
   requestAnimationFrame(renderLoop);
 }
@@ -2716,6 +2846,7 @@ async function buildCity() {
       signalGroups.push(group);
       cityRoot.add(group);
     }
+    cityRoot.add(createCrosswalks(signals, usedRoads));
 
     setBuildProgress('FLOW', 'Painting one-way arrows and starting traffic…', 0.9);
     await tick();
@@ -2724,6 +2855,7 @@ async function buildCity() {
     for (const vehicle of trafficState.vehicles) cityRoot.add(vehicle.mesh);
     createPedestrianSystem(usedRoads);
     createStreetTrees(usedRoads);
+    sceneTriangleCount = countSceneTriangles(cityRoot);
 
     const centroid = polygonCentroid(regionPoints);
     cityFlatRegion = flatRegion();
@@ -2771,6 +2903,7 @@ function start() {
     if (renderer) {
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
+      composer?.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
     }
@@ -2806,6 +2939,7 @@ function start() {
       mode: cityMode,
       pedestrians: pedestrianState.length,
       trees: treeGroup?.children[0]?.count || 0,
+      crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
       player: playerState ? { x: playerState.x, z: playerState.z } : null,
       collisionVolumes: collisionAabbs.length,
       driveIndex,
@@ -2816,6 +2950,7 @@ function start() {
         drawCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
       } : null,
+      geometryTriangles: sceneTriangleCount,
     }),
     setCityMode: (mode) => setCityMode(mode),
     getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
