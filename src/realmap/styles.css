@@ -383,10 +383,14 @@ button:disabled {
 }
 
 body.is-beauty .hud,
-body.is-beauty .inspector {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 300ms ease;
+body.is-beauty .inspector,
+body.is-beauty .boot-overlay,
+body.is-beauty .build-overlay,
+body.is-beauty .hint,
+body.is-beauty .city-status {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 @media (max-width: 900px) {

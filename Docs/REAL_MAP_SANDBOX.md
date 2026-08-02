@@ -54,6 +54,11 @@ that slice as a 3D city with:
   weather, time of day, and room entry, with `M` to mute;
 - resident story state: each interior occupant exposes a mood and a readable
   choice alongside role/action/schedule;
+- rooftop parapets and mechanical details on tall OSM footprints, plus street
+  planters and trash bins among the furniture set;
+- a Photo Tour mission (`P` or the city toolbar button): visit up to four real
+  named SF landmarks in the generated region and watch progress fill in the
+  city readout;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -121,7 +126,7 @@ npm run qa:realmap-blind-ab
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (47/47 Full City, 46/46 Downtown) and the visual critic
+gameplay gate is green (50/50 Full City, 49/49 Downtown) and the visual critic
 is CONDITIONAL at 6.2/10 with 3 of 4 frames accepted (hero 20.7, canyon 19.4,
 drizzle 28.7 edge density against a real-photo reference of 40.2). The natural
 hill frame remains REJECT because that Downtown hillside is genuinely sparse;

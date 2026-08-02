@@ -38,6 +38,7 @@ const modeLabel = document.querySelector('#mode-label');
 const readoutVertices = document.querySelector('#readout-vertices');
 const readoutArea = document.querySelector('#readout-area');
 const readoutSelected = document.querySelector('#readout-selected');
+const readoutMission = document.querySelector('#readout-mission');
 const hint = document.querySelector('#hint');
 const inspector = document.querySelector('#inspector');
 const inspectorTitle = document.querySelector('#inspector-title');
@@ -317,15 +318,17 @@ function getSuggestedCameraPoses() {
   const viewLen = Math.hypot(viewDx, viewDz) || span;
   const viewNx = viewDx / viewLen;
   const viewNz = viewDz / viewLen;
+  // elevationAware poses treat Y as height ABOVE terrain. Do not pre-add
+  // elevationAt() here or resolveCameraPose will double-count and fling the
+  // camera into the sky (broken canyon/drizzle frames).
   const heroDistance = THREE.MathUtils.clamp(span * 0.42, 220, 680);
   const heroHeight = THREE.MathUtils.clamp(span * 0.16, 90, 240);
   const heroCamX = skylineTarget.x - viewNx * heroDistance;
   const heroCamZ = skylineTarget.z - viewNz * heroDistance;
-  const heroGround = elevationAt(heroCamX, heroCamZ);
-  const heroTargetY = elevationAt(skylineTarget.x, skylineTarget.z) + Math.min(120, skylineTarget.height * 0.42);
+  const heroTargetLift = Math.min(120, skylineTarget.height * 0.42);
   const hero = makeCameraPose(
-    [heroCamX, heroGround + heroHeight, heroCamZ],
-    [skylineTarget.x, heroTargetY, skylineTarget.z],
+    [heroCamX, heroHeight, heroCamZ],
+    [skylineTarget.x, heroTargetLift, skylineTarget.z],
     true,
   );
 
@@ -346,28 +349,29 @@ function getSuggestedCameraPoses() {
       ? 1 : -1;
     const offsetX = -dirZ * side * 11;
     const offsetZ = dirX * side * 11;
-    const canyonHeight = 14;
-    const canyonBack = Math.min(bestCorridor.length * 0.22, 120);
-    const canyonX = midX + offsetX - dirX * canyonBack * 0.35;
-    const canyonZ = midZ + offsetZ - dirZ * canyonBack * 0.35;
+    const canyonHeight = 18;
+    const canyonBack = Math.min(bestCorridor.length * 0.28, 140);
+    const lookAhead = Math.min(bestCorridor.length * 0.48, 200);
+    const canyonX = midX + offsetX - dirX * canyonBack * 0.4;
+    const canyonZ = midZ + offsetZ - dirZ * canyonBack * 0.4;
     canyon = makeCameraPose(
-      [canyonX, elevationAt(canyonX, canyonZ) + canyonHeight, canyonZ],
-      [midX + dirX * Math.min(bestCorridor.length * 0.42, 180), elevationAt(midX, midZ) + 8, midZ + dirZ * Math.min(bestCorridor.length * 0.42, 180)],
+      [canyonX, canyonHeight, canyonZ],
+      [midX + dirX * lookAhead, 10, midZ + dirZ * lookAhead],
       true,
     );
     const streetBack = Math.min(bestCorridor.length * 0.12, 48);
-    const streetX = midX + offsetX - dirX * streetBack;
-    const streetZ = midZ + offsetZ - dirZ * streetBack;
+    const streetX = midX + offsetX * 0.35 - dirX * streetBack;
+    const streetZ = midZ + offsetZ * 0.35 - dirZ * streetBack;
     street = makeCameraPose(
-      [streetX, elevationAt(streetX, streetZ) + 1.68, streetZ],
-      [midX + dirX * Math.min(bestCorridor.length * 0.34, 120), elevationAt(midX, midZ) + 1.55, midZ + dirZ * Math.min(bestCorridor.length * 0.34, 120)],
+      [streetX, 1.68, streetZ],
+      [midX + dirX * Math.min(bestCorridor.length * 0.34, 120), 1.55, midZ + dirZ * Math.min(bestCorridor.length * 0.34, 120)],
       true,
     );
   }
 
   const night = makeCameraPose(
-    [heroCamX, heroGround + heroHeight * 0.92, heroCamZ],
-    [skylineTarget.x, heroTargetY * 0.72, skylineTarget.z],
+    [heroCamX, heroHeight * 0.92, heroCamZ],
+    [skylineTarget.x, heroTargetLift * 0.72, skylineTarget.z],
     true,
   );
 
@@ -862,6 +866,12 @@ function setupToolbar() {
         setCityMode(button.dataset.cityMode);
       }
     });
+  });
+  document.querySelector('[data-action="tour"]')?.addEventListener('click', () => {
+    if (startPhotoTour()) {
+      setCityMode('walk');
+      hint.textContent = 'Photo tour started · visit the marked real San Francisco landmarks';
+    }
   });
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
     if (interiorState) exitInterior();
@@ -2579,7 +2589,7 @@ function buildTraffic(selectedRoads, signals) {
   const colors = [0xd84a3a, 0x2f6fb5, 0xe0b32e, 0x4a9e77, 0xdfe1e4, 0x8e5a9e, 0xc98a3d, 0x3f8f8f];
   const variants = ['car', 'sedan', 'truck', 'taxi'];
   const vehicles = [];
-  const count = Math.min(90, Math.max(24, Math.floor(paths.length * 0.06)));
+  const count = Math.min(150, Math.max(36, Math.floor(paths.length * 0.08)));
   for (let i = 0; i < count; i += 1) {
     if (paths.length === 0) break;
     const path = paths[i % paths.length];
@@ -2885,7 +2895,7 @@ function createSimpleSidewalkMeshes(roads) {
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
       dummy.position.set(
         (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) - 0.025,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT - 0.04,
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
@@ -2898,8 +2908,8 @@ function createSimpleSidewalkMeshes(roads) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xffffff);
-  addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xf0ebe3);
+  addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xb8b2a8);
+  addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xc8c0b6);
   group.userData = { type: 'simple-sidewalks', segments: concreteSegments.length + brickSegments.length };
   return group;
 }
@@ -2947,7 +2957,7 @@ function createStreetCorridorPads(roads) {
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
       dummy.position.set(
         (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) - 0.02,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT - 0.03,
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
@@ -2960,8 +2970,8 @@ function createStreetCorridorPads(roads) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xffffff);
-  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xf0ebe3);
+  addPadBatch(segments.filter((segment) => !segment.brick), sandboxTextureCache.sidewalk, 0xb8b2a8);
+  addPadBatch(segments.filter((segment) => segment.brick), sandboxTextureCache.brickSidewalk, 0xc8c0b6);
   group.userData = { type: 'street-corridor-pads', segments: segments.length };
   return group;
 }
@@ -3023,7 +3033,7 @@ function createBuildingFrontagePads(buildings) {
       const pad = batch[index];
       dummy.position.set(
         pad.cx,
-        elevationAt(pad.cx, pad.cz) - 0.018,
+        elevationAt(pad.cx, pad.cz) + ROAD_SURFACE_LIFT - 0.04,
         pad.cz,
       );
       dummy.rotation.set(0, ((pad.cx * 17 + pad.cz * 31) % 628) / 628 * 0.08, 0);
@@ -3035,8 +3045,8 @@ function createBuildingFrontagePads(buildings) {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  addBatch(pads.filter((pad) => !pad.brick), sandboxTextureCache.sidewalk, 0xffffff);
-  addBatch(pads.filter((pad) => pad.brick), sandboxTextureCache.brickSidewalk, 0xf0ebe3);
+  addBatch(pads.filter((pad) => !pad.brick), sandboxTextureCache.sidewalk, 0xb8b2a8);
+  addBatch(pads.filter((pad) => pad.brick), sandboxTextureCache.brickSidewalk, 0xc8c0b6);
   group.userData = { type: 'building-frontage-pads', pads: pads.length };
   return group;
 }
@@ -3125,7 +3135,9 @@ let furnitureGroup = null;
 let hillVegetationGroup = null;
 let doorwayGroup = null;
 let streetfrontGroup = null;
+let rooftopGroup = null;
 let driveIndex = -1;
+let missionState = null;
 let composer = null;
 let skyDome = null;
 let sceneTriangleCount = 0;
@@ -3644,7 +3656,7 @@ function createPedestrianSystem(roads) {
     { top: 0x8a5a2b, bottom: 0x2d2f31, skin: 0xe8b48f },
     { top: 0x3f8f8f, bottom: 0x1f333a, skin: 0xd8a989 },
   ];
-  const count = Math.min(150, Math.max(30, Math.floor(paths.length * 0.1)));
+  const count = Math.min(320, Math.max(50, Math.floor(paths.length * 0.18)));
   for (let i = 0; i < count && paths.length; i += 1) {
     const path = paths[i % paths.length];
     const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
@@ -3729,9 +3741,9 @@ function createStreetTrees(roads) {
     for (let i = 0; i < points.length - 1; i += 1) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
-    const count = Math.min(28, Math.floor(length / 34));
+    const count = Math.min(42, Math.floor(length / 26));
     for (let c = 0; c < count; c += 1) {
-      if (positions.length >= 420) break;
+      if (positions.length >= 720) break;
       const target = ((c + 0.5 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -3802,7 +3814,7 @@ function createStreetFurniture(roads) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
     const count = Math.min(16, Math.floor(length / 52));
-    for (let c = 0; c < count && spots.length < 340; c += 1) {
+    for (let c = 0; c < count && spots.length < 620; c += 1) {
       const target = ((c + 0.35 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -3817,7 +3829,7 @@ function createStreetFurniture(roads) {
           const dz = b.z - a.z;
           const len = Math.hypot(dx, dz) || 1;
           const side = c % 2 === 0 ? 1 : -1;
-          const kind = ((c + road.id) % 5);
+          const kind = ((c + road.id) % 7);
           spots.push({
             x: x - dz / len * side * (roadHalfWidth(road) + 1.1),
             z: z + dx / len * side * (roadHalfWidth(road) + 1.1),
@@ -3836,6 +3848,8 @@ function createStreetFurniture(roads) {
   const lightPoleGeometry = new THREE.CylinderGeometry(0.06, 0.09, 3.6, 6);
   const lightHeadGeometry = new THREE.BoxGeometry(0.5, 0.12, 0.22);
   const hydrantGeometry = new THREE.CylinderGeometry(0.09, 0.13, 0.62, 6);
+  const planterGeometry = new THREE.BoxGeometry(0.85, 0.55, 0.85);
+  const trashGeometry = new THREE.CylinderGeometry(0.26, 0.22, 0.62, 8);
   const benchMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4a33, roughness: 0.85, flatShading: true });
   const benchLegMaterial = new THREE.MeshStandardMaterial({ color: 0x31383d, roughness: 0.6, metalness: 0.4, flatShading: true });
   const lightMaterial = new THREE.MeshStandardMaterial({ color: 0x2e3336, roughness: 0.5, metalness: 0.6, flatShading: true });
@@ -3847,16 +3861,22 @@ function createStreetFurniture(roads) {
   });
   streetLightMaterials.push(headMaterial);
   const hydrantMaterial = new THREE.MeshStandardMaterial({ color: 0xa33f3f, roughness: 0.55, metalness: 0.3, flatShading: true });
+  const planterMaterial = new THREE.MeshStandardMaterial({ color: 0x6d5a45, roughness: 0.88, metalness: 0.02, flatShading: true });
+  const trashMaterial = new THREE.MeshStandardMaterial({ color: 0x2f363a, roughness: 0.6, metalness: 0.35, flatShading: true });
   const dummy = new THREE.Object3D();
   const benches = new THREE.InstancedMesh(benchGeometry, benchMaterial, spots.length);
   const benchLegs = new THREE.InstancedMesh(benchLegGeometry, benchLegMaterial, spots.length * 2);
   const lightPoles = new THREE.InstancedMesh(lightPoleGeometry, lightMaterial, spots.length);
   const lightHeads = new THREE.InstancedMesh(lightHeadGeometry, headMaterial, spots.length);
   const hydrants = new THREE.InstancedMesh(hydrantGeometry, hydrantMaterial, spots.length);
+  const planters = new THREE.InstancedMesh(planterGeometry, planterMaterial, spots.length);
+  const trashBins = new THREE.InstancedMesh(trashGeometry, trashMaterial, spots.length);
   let benchIndex = 0;
   let legIndex = 0;
   let lightIndex = 0;
   let hydrantIndex = 0;
+  let planterIndex = 0;
+  let trashIndex = 0;
   for (let s = 0; s < spots.length; s += 1) {
     const spot = spots[s];
     const kind = spot.kind;
@@ -3885,13 +3905,25 @@ function createStreetFurniture(roads) {
       dummy.updateMatrix();
       lightHeads.setMatrixAt(lightIndex, dummy.matrix);
       lightIndex += 1;
-    } else {
+    } else if (kind === 4) {
       dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.31, spot.z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       hydrants.setMatrixAt(hydrantIndex, dummy.matrix);
       hydrantIndex += 1;
+    } else if (kind === 5) {
+      dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.28, spot.z);
+      dummy.rotation.set(0, spot.heading, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      planters.setMatrixAt(planterIndex++, dummy.matrix);
+    } else {
+      dummy.position.set(spot.x, elevationAt(spot.x, spot.z) + 0.31, spot.z);
+      dummy.rotation.set(0, spot.heading, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      trashBins.setMatrixAt(trashIndex++, dummy.matrix);
     }
   }
   if (lightIndex) {
@@ -3912,6 +3944,20 @@ function createStreetFurniture(roads) {
     hydrants.count = hydrantIndex;
     hydrants.instanceMatrix.needsUpdate = true;
     furnitureGroup.add(hydrants);
+  }
+  if (planterIndex) {
+    planters.count = planterIndex;
+    planters.instanceMatrix.needsUpdate = true;
+    planters.castShadow = true;
+    planters.receiveShadow = true;
+    furnitureGroup.add(planters);
+  }
+  if (trashIndex) {
+    trashBins.count = trashIndex;
+    trashBins.instanceMatrix.needsUpdate = true;
+    trashBins.castShadow = true;
+    trashBins.receiveShadow = true;
+    furnitureGroup.add(trashBins);
   }
 }
 
@@ -4167,6 +4213,97 @@ function createStreetfrontDetails(buildings) {
     count += 1;
     if (count >= 600) break;
   }
+}
+
+function createRooftopDetails(buildings) {
+  if (rooftopGroup) {
+    cityRoot.remove(rooftopGroup);
+    rooftopGroup = null;
+  }
+  rooftopGroup = new THREE.Group();
+  rooftopGroup.name = 'Real map rooftop details';
+  cityRoot.add(rooftopGroup);
+  const candidates = [];
+  for (const building of buildings) {
+    const height = Number(building.height) || 0;
+    if (height < 5 || !building.points || building.points.length < 6) continue;
+    const points = buildingFootprintPoints(building);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minZ = Math.min(minZ, point.z);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    const width = maxX - minX;
+    const depth = maxZ - minZ;
+    if (width < 4 || depth < 4) continue;
+    candidates.push({
+      x: (minX + maxX) / 2,
+      z: (minZ + maxZ) / 2,
+      y: buildingGroundY(building) + height,
+      scale: 0.7 + ((Number(building.id) || 0) % 10) / 12,
+      kind: (Number(building.id) || 0) % 3,
+    });
+  }
+  const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const tankGeometry = new THREE.CylinderGeometry(0.5, 0.55, 1, 8);
+  const boxMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4a5155,
+    roughness: 0.78,
+    metalness: 0.28,
+    flatShading: true,
+  });
+  const tankMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6a6258,
+    roughness: 0.62,
+    metalness: 0.45,
+    flatShading: true,
+  });
+  const boxes = new THREE.InstancedMesh(boxGeometry, boxMaterial, candidates.length);
+  const tanks = new THREE.InstancedMesh(tankGeometry, tankMaterial, candidates.length);
+  const dummy = new THREE.Object3D();
+  let boxIndex = 0;
+  let tankIndex = 0;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const kind = candidate.kind;
+    if (kind === 0 || kind === 1) {
+      dummy.position.set(
+        candidate.x + ((i % 3) - 1) * candidate.scale * 1.8,
+        candidate.y + 1.1,
+        candidate.z + ((i % 2) * 2 - 1) * candidate.scale * 1.4,
+      );
+      dummy.scale.set(candidate.scale * 3.2, candidate.scale * 1.6, candidate.scale * 2.4);
+      dummy.rotation.set(0, (i % 4) * 0.31, 0);
+      dummy.updateMatrix();
+      boxes.setMatrixAt(boxIndex++, dummy.matrix);
+    } else {
+      dummy.position.set(candidate.x, candidate.y + 1.3, candidate.z);
+      dummy.scale.set(candidate.scale * 1.7, candidate.scale * 1.4, candidate.scale * 1.7);
+      dummy.rotation.set(0, (i % 6) * 0.22, 0);
+      dummy.updateMatrix();
+      tanks.setMatrixAt(tankIndex++, dummy.matrix);
+    }
+  }
+  if (boxIndex) {
+    boxes.count = boxIndex;
+    boxes.instanceMatrix.needsUpdate = true;
+    boxes.castShadow = true;
+    boxes.receiveShadow = true;
+    rooftopGroup.add(boxes);
+  }
+  if (tankIndex) {
+    tanks.count = tankIndex;
+    tanks.instanceMatrix.needsUpdate = true;
+    tanks.castShadow = true;
+    tanks.receiveShadow = true;
+    rooftopGroup.add(tanks);
+  }
+  rooftopGroup.userData = { boxes: boxIndex, tanks: tankIndex };
 }
 
 function nearestVehicle(position) {
@@ -4769,6 +4906,79 @@ function updateCityReadout() {
     : driveIndex >= 0
     ? `DRIVING / ${trafficState.vehicles[driveIndex].speed.toFixed(1)} M/S`
     : nearestVehicle(playerState || { x: 0, z: 0 }) ? 'E TO DRIVE' : '—';
+  if (readoutMission) {
+    readoutMission.textContent = missionState
+      ? `TOUR ${missionState.visitedCount}/${missionState.landmarks.length}`
+      : 'TOUR —';
+  }
+}
+
+function startPhotoTour() {
+  if (!detailBuildingMeshes.length) return null;
+  const knownNames = [
+    'transamerica',
+    'ferry building',
+    'coit tower',
+    'city hall',
+    'golden gate',
+    'union square',
+    'palace of fine',
+    'de young',
+    'california academy',
+  ];
+  const candidates = [];
+  for (const mesh of detailBuildingMeshes) {
+    const building = mesh.userData?.building;
+    if (!building?.name || !building.centroid) continue;
+    const lower = building.name.toLowerCase();
+    const rank = knownNames.findIndex((name) => lower.includes(name));
+    if (rank >= 0) candidates.push({ building, rank });
+  }
+  candidates.sort((a, b) => a.rank - b.rank || (Number(b.building.height) || 0) - (Number(a.building.height) || 0));
+  if (candidates.length < 2) {
+    const fallback = detailBuildingMeshes
+      .filter((mesh) => mesh.userData?.building?.name && mesh.userData.building.centroid)
+      .map((mesh) => ({
+        building: mesh.userData.building,
+        rank: 99,
+      }))
+      .sort((a, b) => (Number(b.building.height) || 0) - (Number(a.building.height) || 0))
+      .slice(0, 4);
+    candidates.push(...fallback);
+  }
+  const landmarks = candidates.slice(0, 4).map(({ building }) => ({
+    id: building.id,
+    name: building.name,
+    x: building.centroid[0],
+    z: building.centroid[1],
+    visited: false,
+  }));
+  missionState = {
+    landmarks,
+    visitedCount: 0,
+    complete: false,
+    startedAt: performance.now(),
+  };
+  updateCityReadout();
+  return missionState;
+}
+
+function updateMission() {
+  if (!missionState || !playerState) return;
+  let changed = false;
+  for (const landmark of missionState.landmarks) {
+    if (landmark.visited) continue;
+    const distance = Math.hypot(playerState.x - landmark.x, playerState.z - landmark.z);
+    if (distance < 28) {
+      landmark.visited = true;
+      missionState.visitedCount += 1;
+      changed = true;
+    }
+  }
+  if (changed) {
+    missionState.complete = missionState.visitedCount >= missionState.landmarks.length;
+    updateCityReadout();
+  }
 }
 
 function createNoiseBuffer(audioContext, seconds = 2) {
@@ -4977,31 +5187,38 @@ function setupScene() {
     console.warn('Post-processing disabled', error.message);
     composer = null;
   }
+  createRainSystem();
 }
 
 function createRainSystem() {
   if (!scene || rainGroup) return rainGroup;
-  const count = 5200;
-  rainPositions = new Float32Array(count * 3);
-  rainVelocities = new Float32Array(count);
-  const spread = 420;
-  for (let i = 0; i < count; i += 1) {
-    rainPositions[i * 3] = (Math.random() - 0.5) * spread;
-    rainPositions[i * 3 + 1] = Math.random() * 180;
-    rainPositions[i * 3 + 2] = (Math.random() - 0.5) * spread;
-    rainVelocities[i] = 38 + Math.random() * 42;
+  const streakCount = 3200;
+  rainPositions = new Float32Array(streakCount * 6);
+  rainVelocities = new Float32Array(streakCount);
+  const spread = 460;
+  const streakLength = 7.5;
+  for (let i = 0; i < streakCount; i += 1) {
+    const base = i * 6;
+    const x = (Math.random() - 0.5) * spread;
+    const y = Math.random() * 190;
+    const z = (Math.random() - 0.5) * spread;
+    rainPositions[base] = x;
+    rainPositions[base + 1] = y;
+    rainPositions[base + 2] = z;
+    rainPositions[base + 3] = x + 1.8;
+    rainPositions[base + 4] = y - streakLength;
+    rainPositions[base + 5] = z + 0.9;
+    rainVelocities[i] = 42 + Math.random() * 48;
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
-  const material = new THREE.PointsMaterial({
-    color: 0xb8c8d8,
-    size: 0.42,
+  const material = new THREE.LineBasicMaterial({
+    color: 0xd8e4f0,
     transparent: true,
-    opacity: 0.62,
+    opacity: 0.52,
     depthWrite: false,
-    sizeAttenuation: true,
   });
-  rainGroup = new THREE.Points(geometry, material);
+  rainGroup = new THREE.LineSegments(geometry, material);
   rainGroup.name = 'Pacific drizzle rain';
   rainGroup.visible = false;
   rainGroup.frustumCulled = false;
@@ -5014,23 +5231,33 @@ function updateRain(dt) {
   const active = weatherMode === 'drizzle';
   rainGroup.visible = active;
   if (!active) return;
-  const windX = 14;
-  const windZ = 8;
-  const spread = 420;
-  const height = 180;
+  rainGroup.position.copy(camera.position);
+  const windX = 16;
+  const windZ = 9;
+  const spread = 460;
+  const height = 190;
+  const streakLength = 7.5;
   for (let i = 0; i < rainVelocities.length; i += 1) {
-    const index = i * 3;
-    rainPositions[index + 1] -= rainVelocities[i] * dt;
-    rainPositions[index] += windX * dt;
-    rainPositions[index + 2] += windZ * dt;
-    if (rainPositions[index + 1] < -8) {
-      rainPositions[index] = camera.position.x + (Math.random() - 0.5) * spread;
-      rainPositions[index + 1] = camera.position.y + height * Math.random();
-      rainPositions[index + 2] = camera.position.z + (Math.random() - 0.5) * spread;
+    const base = i * 6;
+    rainPositions[base + 1] -= rainVelocities[i] * dt;
+    rainPositions[base + 4] -= rainVelocities[i] * dt;
+    rainPositions[base] += windX * dt;
+    rainPositions[base + 2] += windZ * dt;
+    rainPositions[base + 3] += windX * dt;
+    rainPositions[base + 5] += windZ * dt;
+    if (rainPositions[base + 1] < -18) {
+      const x = (Math.random() - 0.5) * spread;
+      const y = height * Math.random();
+      const z = (Math.random() - 0.5) * spread;
+      rainPositions[base] = x;
+      rainPositions[base + 1] = y;
+      rainPositions[base + 2] = z;
+      rainPositions[base + 3] = x + 1.8;
+      rainPositions[base + 4] = y - streakLength;
+      rainPositions[base + 5] = z + 0.9;
     }
   }
   rainGroup.geometry.attributes.position.needsUpdate = true;
-  rainGroup.position.set(0, 0, 0);
 }
 
 function setWeatherMode(mode) {
@@ -5287,11 +5514,13 @@ function renderLoop() {
     controls.update();
   }
   updateCityReadout();
+  updateMission();
   updateSandboxAudio();
   const streamFocus = playerState
     ? { x: playerState.x, z: playerState.z }
     : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
+  updateRain(dt);
   if (composer) composer.render();
   else renderer.render(scene, camera);
   updateReadout3d();
@@ -5305,6 +5534,9 @@ function setup3DControls() {
     moveKeys.add(event.key.toLowerCase());
     if (event.key === 'h') hud.inert = !hud.inert;
     if (event.key === 'm' && scene) toggleSandboxAudio();
+    if (event.key === 'p' && scene) {
+      if (startPhotoTour()) setCityMode('walk');
+    }
     if (event.key === 'r' && scene) {
       const modes = Object.keys(WEATHER_MODES);
       weatherIndex = (weatherIndex + 1) % modes.length;
@@ -5506,6 +5738,7 @@ async function buildCity() {
   try {
     setBuildProgress('SELECTING', 'Finding real streets, blocks, and signals in your boundary…', 0.04);
     await tick();
+    cachedCameraAnalysis = null;
     const selectedRoads = fullCityMode
       ? selectAllRoads(regionBBox)
       : selectRoads(regionBBox);
@@ -5542,6 +5775,7 @@ async function buildCity() {
       scene.remove(cityRoot);
       disposeRoot(cityRoot);
     }
+    missionState = null;
     cityRoot = new THREE.Group();
     cityRoot.name = 'Real map generated city';
     scene.add(cityRoot);
@@ -5562,6 +5796,7 @@ async function buildCity() {
       cityRoot.add(roadMeshes);
       const sidewalks = createSimpleSidewalkMeshes(simpleRoads);
       cityRoot.add(sidewalks);
+      cityRoot.add(createStreetCorridorPads(simpleRoads));
       simpleRoadSegments = roadMeshes.userData.segments || 0;
       simpleSidewalkSegments = sidewalks.userData.segments || 0;
       const detailed = usedRoads.filter((road) => detailIds.has(road.id));
@@ -5576,6 +5811,8 @@ async function buildCity() {
     } else {
       roadMeshes = createRoadMeshes(compilation);
       cityRoot.add(roadMeshes);
+      cityRoot.add(createSimpleSidewalkMeshes(usedRoads));
+      cityRoot.add(createStreetCorridorPads(usedRoads));
     }
     cityRoot.add(createCableCarTracks(usedRoads));
     setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
@@ -5593,9 +5830,11 @@ async function buildCity() {
     const coarse = createCoarseBuildings(buildings.coarse);
     coarseBuildingMesh = coarse.mesh;
     if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
+    cityRoot.add(createBuildingFrontagePads(buildings));
     cityRoot.add(createSfLandmarkSilhouettes(regionBBox, fullCityMode));
     createBuildingDoorways(buildings.detailed);
     createStreetfrontDetails(buildings.detailed);
+    createRooftopDetails(buildings.detailed);
 
     setBuildProgress('SIGNALS', 'Hanging traffic lights at real signal nodes…', 0.78);
     await tick();
@@ -5727,6 +5966,18 @@ function start() {
       hillVegetation: hillVegetationGroup?.children.reduce((sum, mesh) => sum + (mesh.count || 0), 0) || 0,
       doorways: doorwayGroup?.children.length || 0,
       streetfronts: streetfrontGroup?.children.length || 0,
+      rooftops: rooftopGroup?.userData
+        ? rooftopGroup.userData.boxes + rooftopGroup.userData.tanks
+        : 0,
+      mission: missionState ? {
+        complete: missionState.complete,
+        visitedCount: missionState.visitedCount,
+        total: missionState.landmarks.length,
+        landmarks: missionState.landmarks.map((landmark) => ({
+          name: landmark.name,
+          visited: landmark.visited,
+        })),
+      } : null,
       crosswalks: cityRoot?.getObjectByName('Real map zebra crossings')?.children.length || 0,
       terrain: terrainData?.meta ? {
         cellSize: terrainData.meta.cellSize,
@@ -5764,6 +6015,8 @@ function start() {
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
+    startPhotoTour: () => startPhotoTour(),
+    getMissionState: () => missionState,
     getInteriorState: () => interiorState ? {
       name: interiorState.building?.name || 'Unnamed building',
       address: interiorState.building?.addr || '',
