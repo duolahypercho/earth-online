@@ -48,6 +48,10 @@ that slice as a 3D city with:
 - scheduled interior residents: every enterable room now contains 2-3 occupants
   with role, action, and day-schedule metadata, and residents only appear in
   their assigned day periods (day/dusk/night occupancy changes);
+- ambient WebAudio city sound: traffic, wind, and interior hum layers react to
+  weather, time of day, and room entry, with `M` to mute;
+- resident story state: each interior occupant exposes a mood and a readable
+  choice alongside role/action/schedule;
 - clickable metadata for buildings, streets, and signals: OSM way ID, street
   name, highway class, one-way/two-way, lane count, speed limit, surface,
   sidewalk state, bridge/tunnel, building type, amenity, address, height,
@@ -115,7 +119,7 @@ npm run qa:realmap-blind-ab
 `npm run qa:realmap-critic` runs the harsh visual gate against
 `public/data/reference-sf.jpg`, writes `.qa-realmap-critic.md`, and reports a
 per-frame REJECT/CONDITIONAL/APPROVE verdict. As of 2026-08-02 the automated
-gameplay gate is green (42/42 Full City, 41/41 Downtown) and the visual critic
+gameplay gate is green (46/46 Full City, 45/45 Downtown) and the visual critic
 is CONDITIONAL at 6.5/10
 with zero rejected frames. Street-level edge density now sits at 19.2, hills at
 17.3, and drizzle at 28.1 against a real-photo reference of 40.2. Human-blind

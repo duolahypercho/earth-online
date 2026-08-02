@@ -59,6 +59,14 @@ try {
   await page.locator('#launch-button').click();
   await page.waitForTimeout(800);
   await page.screenshot({ path: '.qa-realmap-map.png' });
+  const audioReady = await page.evaluate(() => window.__SF_REALMAP__.ensureAudio());
+  check('Ambient audio engine starts', audioReady === true);
+  await page.waitForTimeout(250);
+  const audioState = await page.evaluate(() => window.__SF_REALMAP__.getAudioState());
+  check('Audio exposes weather/time layers', Boolean(audioState?.mode && Number(audioState?.trafficGain || 0) > 0), audioState);
+  const muted = await page.evaluate(() => window.__SF_REALMAP__.toggleAudio());
+  check('Audio mute toggles', Boolean(muted && muted.muted === true), muted);
+  await page.evaluate(() => window.__SF_REALMAP__.toggleAudio());
 
   const mapPixels = await page.evaluate(() => {
     const canvas = document.querySelector('#map-canvas');
@@ -298,6 +306,7 @@ try {
     check('Interior exposes OSM metadata', Boolean(interior && (interior.name || interior.address)), interior);
     check('Interior has a room archetype', Boolean(interior?.archetype), interior?.archetype);
     check('Interior has scheduled residents', Boolean(interior?.residents?.length && interior.residents.every((resident) => resident.role && resident.action && resident.schedule)), interior?.residents);
+    check('Residents expose story state', Boolean(interior?.residents?.length && interior.residents.every((resident) => resident.mood && resident.choice)), interior?.residents);
     const dayVisibleSchedules = interior.residents.filter((resident) => resident.visible).map((resident) => resident.schedule).sort();
     await page.evaluate(() => window.__SF_REALMAP__.setTimeOfDay('night'));
     await page.waitForTimeout(250);

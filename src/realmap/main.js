@@ -2173,6 +2173,8 @@ let detailRoadQueue = [];
 let detailRoadCompiledIds = new Set();
 let detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0 };
 let roadStreamingInFlight = false;
+let sandboxAudio = null;
+let audioEnabled = true;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
@@ -3319,6 +3321,8 @@ function createInteriorResident(seed, archetype) {
     type: 'interior-resident',
     role,
     action,
+    mood: Math.abs(seed * 7 + 3) % 4 === 0 ? 'focused' : Math.abs(seed * 7 + 3) % 4 === 1 ? 'pleasant' : 'busy',
+    choice: `${action} in the ${archetype} room`,
     schedule: ['morning', 'midday', 'evening', 'late-night'][Math.abs(seed * 5 + 13) % 4],
     phase: (seed % 1000) / 1000,
   };
@@ -3618,6 +3622,95 @@ function updateCityReadout() {
     : driveIndex >= 0
     ? `DRIVING / ${trafficState.vehicles[driveIndex].speed.toFixed(1)} M/S`
     : nearestVehicle(playerState || { x: 0, z: 0 }) ? 'E TO DRIVE' : '—';
+}
+
+function createNoiseBuffer(audioContext, seconds = 2) {
+  const buffer = audioContext.createBuffer(1, audioContext.sampleRate * seconds, audioContext.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+
+function ensureSandboxAudio() {
+  if (sandboxAudio) {
+    sandboxAudio.context?.resume?.();
+    return sandboxAudio;
+  }
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  const context = new AudioContextClass();
+  const master = context.createGain();
+  master.gain.value = 0.8;
+  master.connect(context.destination);
+
+  const noiseBuffer = createNoiseBuffer(context);
+  const trafficSource = context.createBufferSource();
+  trafficSource.buffer = noiseBuffer;
+  trafficSource.loop = true;
+  const trafficFilter = context.createBiquadFilter();
+  trafficFilter.type = 'bandpass';
+  trafficFilter.frequency.value = 240;
+  trafficFilter.Q.value = 0.4;
+  const trafficGain = context.createGain();
+  trafficGain.gain.value = 0;
+  trafficSource.connect(trafficFilter).connect(trafficGain).connect(master);
+  trafficSource.start();
+
+  const windSource = context.createBufferSource();
+  windSource.buffer = noiseBuffer;
+  windSource.loop = true;
+  windSource.playbackRate.value = 0.35;
+  const windFilter = context.createBiquadFilter();
+  windFilter.type = 'lowpass';
+  windFilter.frequency.value = 420;
+  const windGain = context.createGain();
+  windGain.gain.value = 0;
+  windSource.connect(windFilter).connect(windGain).connect(master);
+  windSource.start();
+
+  const interiorOscillator = context.createOscillator();
+  interiorOscillator.frequency.value = 120;
+  const interiorGain = context.createGain();
+  interiorGain.gain.value = 0;
+  interiorOscillator.connect(interiorGain).connect(master);
+  interiorOscillator.start();
+
+  sandboxAudio = {
+    context,
+    master,
+    trafficGain,
+    windGain,
+    interiorGain,
+    muted: false,
+    mode: 'day',
+  };
+  updateSandboxAudio();
+  return sandboxAudio;
+}
+
+function toggleSandboxAudio() {
+  const audio = ensureSandboxAudio();
+  if (!audio) return null;
+  audioEnabled = !audioEnabled;
+  audio.muted = !audioEnabled;
+  const target = audioEnabled ? 0.8 : 0;
+  audio.master.gain.setTargetAtTime(target, audio.context.currentTime, 0.08);
+  return { muted: audio.muted, enabled: audioEnabled };
+}
+
+function updateSandboxAudio() {
+  const audio = sandboxAudio;
+  if (!audio || !audio.context) return;
+  const now = audio.context.currentTime;
+  const night = TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0;
+  const fog = weatherMode === 'fog' ? 1 : weatherMode === 'drizzle' ? 0.55 : 0;
+  const interior = cityMode === 'interior' ? 1 : 0;
+  const traffic = cityMode === 'interior' ? 0.1 : 0.5 + night * 0.18 + fog * 0.08;
+  const wind = 0.16 + night * 0.05 + fog * 0.22 + (weatherMode === 'drizzle' ? 0.16 : 0);
+  audio.trafficGain.gain.setTargetAtTime(traffic * 0.045, now, 0.25);
+  audio.windGain.gain.setTargetAtTime(wind * 0.05, now, 0.3);
+  audio.interiorGain.gain.setTargetAtTime(interior * 0.028, now, 0.18);
+  audio.mode = cityMode === 'interior' ? 'interior' : timeOfDay;
 }
 
 function setupScene() {
@@ -3968,6 +4061,7 @@ function renderLoop() {
     controls.update();
   }
   updateCityReadout();
+  updateSandboxAudio();
   const streamFocus = playerState
     ? { x: playerState.x, z: playerState.z }
     : { x: camera.position.x, z: camera.position.z };
@@ -3984,6 +4078,7 @@ function setup3DControls() {
   window.addEventListener('keydown', (event) => {
     moveKeys.add(event.key.toLowerCase());
     if (event.key === 'h') hud.inert = !hud.inert;
+    if (event.key === 'm' && scene) toggleSandboxAudio();
     if (event.key === 'r' && scene) {
       const modes = Object.keys(WEATHER_MODES);
       weatherIndex = (weatherIndex + 1) % modes.length;
@@ -4357,6 +4452,7 @@ function start() {
     bootOverlay.classList.add('is-dismissed');
     hud.inert = false;
     scheduleMapDraw();
+    ensureSandboxAudio();
   });
   requestAnimationFrame(drawMap);
 
@@ -4410,6 +4506,8 @@ function start() {
         residents: interiorResidents.map((resident) => ({
           role: resident.mesh.userData.role,
           action: resident.mesh.userData.action,
+          mood: resident.mesh.userData.mood,
+          choice: resident.mesh.userData.choice,
           schedule: resident.mesh.userData.schedule,
           visible: resident.mesh.visible,
         })),
@@ -4431,6 +4529,8 @@ function start() {
       residents: interiorResidents.map((resident) => ({
         role: resident.mesh.userData.role,
         action: resident.mesh.userData.action,
+        mood: resident.mesh.userData.mood,
+        choice: resident.mesh.userData.choice,
         schedule: resident.mesh.userData.schedule,
         visible: resident.mesh.visible,
       })),
@@ -4455,6 +4555,16 @@ function start() {
     getWeather: () => weatherMode,
     setTimeOfDay: (mode) => setTimeOfDay(mode),
     getTimeOfDay: () => timeOfDay,
+    ensureAudio: () => ensureSandboxAudio() ? true : false,
+    toggleAudio: () => toggleSandboxAudio(),
+    getAudioState: () => sandboxAudio ? {
+      ready: sandboxAudio.context.state,
+      muted: sandboxAudio.muted,
+      mode: sandboxAudio.mode,
+      trafficGain: Number(sandboxAudio.trafficGain.gain.value.toFixed(4)),
+      windGain: Number(sandboxAudio.windGain.gain.value.toFixed(4)),
+      interiorGain: Number(sandboxAudio.interiorGain.gain.value.toFixed(4)),
+    } : null,
     getFrameDiagnostics: () => {
       if (!renderer || !scene || !camera) return null;
       if (composer) composer.render();
