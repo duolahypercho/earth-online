@@ -21,11 +21,14 @@ const CITY_BBOX = {
   maxLon: -122.2815,
 };
 
+// Dense urban peninsula: sidewalk/lane-level detail streams across the real
+// street grid (Mission → Marina, Ocean Beach approach → Embarcadero) instead
+// of only a NE downtown postage stamp.
 const DETAIL_BBOX = {
-  minLat: 37.7785,
-  maxLat: 37.8025,
-  minLon: -122.4125,
-  maxLon: -122.388,
+  minLat: 37.735,
+  maxLat: 37.811,
+  minLon: -122.515,
+  maxLon: -122.365,
 };
 
 const ROAD_CLASSES = new Set([

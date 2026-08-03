@@ -19,7 +19,81 @@ import {
   meshRoadSurfaceModel,
 } from '../../vendor/three-roads/mesher.js';
 import { SIGNAL_PERIOD, signalPhaseAt } from '../signals.js';
+import {
+  STREET_PRESETS,
+  createStreetDesign,
+  resolveStreetDesignLayers,
+  streetDesignToMapMeta,
+  resolveStreetCrossSection,
+  summarizeStreetDesign,
+  withStreetOverride,
+  withoutStreetOverride,
+  lookupStreetOverride,
+  normalizeStreetName,
+} from './street-design.js';
 import './styles.css';
+
+// ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
+//   Global: ?street=&sidewalk=&preset=   or setStreetDesign / setStreetPreset
+//   Per-street: setStreet('Market St', { asphaltWidth: 16, sidewalkWidth: 3.5 })
+let streetDesign = createStreetDesign();
+const urlStreetSearch = typeof window !== 'undefined' ? window.location.search : '';
+
+function syncStreetDesignIntoCityMeta() {
+  if (!cityData?.meta) return;
+  cityData.meta.streetDesign = streetDesignToMapMeta(streetDesign);
+}
+
+function applyStreetDesignFromCityData() {
+  streetDesign = resolveStreetDesignLayers({
+    mapMeta: cityData?.meta || null,
+    urlSearch: urlStreetSearch,
+  });
+  syncStreetDesignIntoCityMeta();
+  return summarizeStreetDesign(streetDesign);
+}
+
+function rebuildStreetDesignLive(reason = 'Street redesign') {
+  if (!document.body.classList.contains('is-city')) return false;
+  buildCity().catch((error) => console.error(`${reason} rebuild failed`, error));
+  return true;
+}
+
+function findRoadsByKey(key, { limit = 40 } = {}) {
+  const raw = String(key ?? '').trim();
+  if (!raw || !cityData?.roads?.length) return [];
+  const nameKey = normalizeStreetName(raw);
+  const out = [];
+  const seen = new Set();
+  for (const road of cityData.roads) {
+    if (!road) continue;
+    const idMatch = String(road.id) === raw;
+    const nameMatch = nameKey && normalizeStreetName(road.name || '') === nameKey;
+    if (!idMatch && !nameMatch) continue;
+    if (seen.has(road.id)) continue;
+    seen.add(road.id);
+    out.push(road);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function describeStreetRoad(road) {
+  const section = resolveStreetCrossSection(road, streetDesign);
+  const override = lookupStreetOverride(streetDesign, road);
+  return {
+    id: road.id,
+    name: road.name || '',
+    highway: road.highway || '',
+    lanes: section.lanes,
+    oneway: Boolean(road.oneway),
+    asphaltWidthM: Number(section.asphaltWidth.toFixed(2)),
+    sidewalkWidthM: Number(section.sidewalkWidth.toFixed(2)),
+    streetScale: section.streetScale,
+    sidewalkScale: section.sidewalkScale,
+    override: override || null,
+  };
+}
 
 const app = document.querySelector('#app');
 const mapCanvas = document.querySelector('#map-canvas');
@@ -55,8 +129,6 @@ let cityData = null;
 let terrainData = null;
 let region = [];
 let mapCamera = { x: 0, z: 0, scale: 1 };
-let activeTool = 'draw';
-let drawCursor = null;
 let mapDirty = true;
 let mapPointer = null;
 let viewportWidth = 0;
@@ -113,9 +185,201 @@ const PRESETS = {
   sunset: [
     [-3400, -2460], [-2240, -2460], [-2180, -1260], [-2500, -820], [-3400, -820],
   ],
+  // Local metres from OSM center (37.778, -122.4194) — real block envelopes.
+  haight: [
+    [-3000, -1100], [-400, -1100], [-400, -400], [-3000, -400],
+  ],
+  castro: [
+    [-1700, -1800], [-900, -1800], [-900, -700], [-1700, -700],
+  ],
+  richmond: [
+    [-4800, 100], [-2200, 100], [-2200, 1200], [-4800, 1200],
+  ],
+  embarcadero: [
+    [1400, -400], [2800, -400], [2800, 1400], [1400, 1400],
+  ],
+  financial: [
+    [1200, -200], [2400, -200], [2400, 1000], [1200, 1000],
+  ],
 };
 
+const STREAM = Object.freeze({
+  // Full City: city-wide streets + footprints, then near-field fidelity around the player.
+  cellSize: 256,
+  roadRadius: 900,
+  buildingRadius: 700,
+  signalRadius: 520,
+  propRadius: 420,
+  seedRadius: 900,
+  unloadScale: 1.7,
+  detailChunkSize: 0,
+  simpleChunkSize: 120,
+  buildingChunkSize: 80,
+  maxDetailChunks: 0,
+  maxSimpleChunks: 0,
+  maxDetailBuildings: 0,
+  maxCoarseBuildings: 28000,
+  maxSignals: 64,
+  maxTrees: 40,
+  maxFurniture: 0,
+  maxHillVegetation: 0,
+  maxHillShrubbery: 0,
+  maxTrafficRoads: 1200,
+  maxTraffic: 42,
+  maxPedestrians: 48,
+  lifeRadius: 420,
+  fogNear: 280,
+  fogFar: 4200,
+  pixelRatioCap: 1.35,
+  streamEveryFrames: 3,
+  roadBuildBatch: 350,
+  buildingBuildBatch: 4500,
+  doorwayRadius: 200,
+  doorwayMax: 120,
+  // Near-field fidelity bubble (~2–4 blocks).
+  nearRadius: 260,
+  nearFacadeMax: 24,
+  nearRoadMax: 72,
+  nearSignalMax: 18,
+  nearTreeMax: 64,
+  nearUnloadScale: 1.5,
+  nearCellSize: 96,
+  nearFacadeBudgetPerTick: 2,
+  // three-roads only near the player (keeps Full City FPS).
+  // Chunks must include crossing partners so junctions/crossroads resolve.
+  nearThreeRoadsRadius: 180,
+  nearThreeRoadsChunkSize: 8,
+  nearThreeRoadsMaxWays: 20,
+  nearThreeRoadsConnectRadius: 3.2,
+  maxNearThreeRoadsChunks: 5,
+  nearThreeRoadsUnloadScale: 1.55,
+  nearThreeRoadsMinChunk: 3,
+});
+// On a real secondary/residential junction (not a plaza gap) so asphalt is on-camera.
+const PREBUILT_SPAWN = Object.freeze({ x: 892, z: 377 }); // near Market / Financial
+const FULL_CITY_TRAFFIC_HIGHWAYS = new Set([
+  'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+  'residential', 'unclassified', 'living_street',
+]);
+let streamFrameCounter = 0;
+let fullCityPerfApplied = false;
+let cityWideRoadGroup = null;
+let cityWideBuildingGroup = null;
+let cityWideReady = false;
+let doorwayFocusCell = '';
+let enterableBuildingIndex = [];
+let nearFieldGroup = null;
+let nearFacadeGroup = null;
+let nearStreetscapeGroup = null;
+let nearThreeRoadsGroup = null;
+let nearFacadeIds = new Set();
+let nearFacadeMeshes = new Map();
+let nearFacadeQueue = [];
+let nearStreetscapeCell = '';
+let nearSignalRefs = [];
+let nearFieldStats = { facades: 0, roads: 0, signals: 0, trees: 0, threeRoads: 0, threeRoadsChunks: 0, threeRoadsJunctions: 0 };
+let nearThreeRoadsIds = new Set();
+let nearThreeRoadsQueue = [];
+let nearThreeRoadsInFlight = false;
+
+function nearestRoadDistance(road, focus) {
+  // Prefer true centerline distance so mid-block samples (far from vertices) still hit.
+  const onLine = distanceToRoadCenterline(road, focus);
+  if (onLine) return onLine.distance;
+  let nearest = Infinity;
+  for (let i = 0; i < road.points.length; i += 2) {
+    const distance = Math.hypot(road.points[i] - focus.x, road.points[i + 1] - focus.z);
+    if (distance < nearest) nearest = distance;
+  }
+  return nearest;
+}
+
+function filterRoadsNear(roads, focus, radius) {
+  return roads.filter((road) => nearestRoadDistance(road, focus) <= radius);
+}
+
+function filterBuildingsNear(buildings, focus, radius) {
+  return buildings.filter((building) => {
+    const [x, z] = building.centroid || [0, 0];
+    return Math.hypot(x - focus.x, z - focus.z) <= radius;
+  });
+}
+
+function partitionCellKey(x, z, cellSize = STREAM.cellSize) {
+  return `${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}`;
+}
+
+function cellsAround(focus, radius, cellSize = STREAM.cellSize) {
+  const minCX = Math.floor((focus.x - radius) / cellSize);
+  const maxCX = Math.floor((focus.x + radius) / cellSize);
+  const minCZ = Math.floor((focus.z - radius) / cellSize);
+  const maxCZ = Math.floor((focus.z + radius) / cellSize);
+  const keys = [];
+  for (let cx = minCX; cx <= maxCX; cx += 1) {
+    for (let cz = minCZ; cz <= maxCZ; cz += 1) keys.push(`${cx}:${cz}`);
+  }
+  return keys;
+}
+
+function buildWorldPartition(roads, buildings) {
+  const roadCells = new Map();
+  const buildingCells = new Map();
+  for (const road of roads) {
+    const points = roadPoints(road);
+    if (!points.length) continue;
+    const seen = new Set();
+    for (const point of points) {
+      const key = partitionCellKey(point.x, point.z);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const list = roadCells.get(key) || [];
+      list.push(road);
+      roadCells.set(key, list);
+    }
+  }
+  for (const building of buildings) {
+    const [x, z] = building.centroid || [0, 0];
+    const key = partitionCellKey(x, z);
+    const list = buildingCells.get(key) || [];
+    list.push(building);
+    buildingCells.set(key, list);
+  }
+  return { roadCells, buildingCells };
+}
+
+function queryPartitionRoads(partition, focus, radius) {
+  if (!partition?.roadCells) return [];
+  const seen = new Set();
+  const out = [];
+  for (const key of cellsAround(focus, radius)) {
+    const list = partition.roadCells.get(key);
+    if (!list) continue;
+    for (const road of list) {
+      if (seen.has(road.id)) continue;
+      if (nearestRoadDistance(road, focus) > radius) continue;
+      seen.add(road.id);
+      out.push(road);
+    }
+  }
+  return out;
+}
+
+function queryPartitionBuildings(partition, focus, radius) {
+  if (!partition?.buildingCells) return [];
+  const out = [];
+  for (const key of cellsAround(focus, radius)) {
+    const list = partition.buildingCells.get(key);
+    if (!list) continue;
+    for (const building of list) {
+      const [x, z] = building.centroid || [0, 0];
+      if (Math.hypot(x - focus.x, z - focus.z) <= radius) out.push(building);
+    }
+  }
+  return out;
+}
+
 function formatNumber(value, digits = 0) {
+
   if (!Number.isFinite(value)) return '—';
   return value.toLocaleString('en-US', { maximumFractionDigits: digits });
 }
@@ -443,6 +707,20 @@ function getSuggestedCameraPoses() {
     );
   }
 
+  if (fullCityMode) {
+    const j = PREBUILT_SPAWN;
+    street = makeCameraPose(
+      [j.x - 28, 10, j.z - 36],
+      [j.x + 40, 1, j.z + 50],
+      true,
+    );
+    canyon = makeCameraPose(
+      [j.x - 18, 36, j.z - 28],
+      [j.x + 8, 1, j.z + 10],
+      true,
+    );
+  }
+
   return { hero, canyon, street, night, hills };
 }
 
@@ -461,13 +739,17 @@ function pointInFlatRing(point, flat) {
   return inside;
 }
 
+let regionFlatCache = null;
+
 function pointInRegion(point) {
   return region.length >= 3 && pointInFlatRing(point, flatRegion());
 }
 
 function flatRegion() {
+  if (regionFlatCache) return regionFlatCache;
   const flat = [];
   for (const point of region) flat.push(point.x, point.z);
+  regionFlatCache = flat;
   return flat;
 }
 
@@ -570,13 +852,47 @@ function elevationAt(x, z) {
   return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
 }
 
+async function playPrebuiltCity() {
+  applyPreset('city');
+  if (region.length < 3) throw new Error('Full City boundary unavailable');
+  bootOverlay.classList.add('is-dismissed');
+  hud.inert = false;
+  scheduleMapDraw();
+  ensureSandboxAudio();
+  modeLabel.textContent = 'Prebuilt streamed city';
+  hint.textContent = 'Nearby OSM streets only · roam to stream more · never loads whole city at once';
+  await buildCity();
+}
+
+async function applyBootQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const preset = params.get('preset');
+  const playPrebuilt = params.get('play') === '1' || params.get('prebuilt') === '1';
+  const shouldBuild = params.get('build') === '1' || params.get('autobuild') === '1';
+  if (playPrebuilt) {
+    await playPrebuiltCity().catch((error) => console.error('Prebuilt play failed', error));
+    return;
+  }
+  if (preset) applyPreset(preset);
+  if (!shouldBuild || region.length < 3) return;
+  bootOverlay.classList.add('is-dismissed');
+  hud.inert = false;
+  scheduleMapDraw();
+  ensureSandboxAudio();
+  await buildCity().catch((error) => console.error('Boot autobuild failed', error));
+}
+
 async function loadCity() {
   setStatus('boot', 'Fetching real San Francisco OSM data…', 0.1);
   cityData = await fetchCityData();
+  const streetSummary = applyStreetDesignFromCityData();
   setStatus('boot', 'Fetching real San Francisco elevation contours…', 0.45);
   terrainData = await fetchElevationData();
   setStatus('boot', `Decoding ${formatNumber(cityData.meta.counts.roads)} roads and ${formatNumber(cityData.meta.counts.coarseBuildings + cityData.meta.counts.detailBuildings)} buildings…`, 0.75);
   await new Promise((resolve) => requestAnimationFrame(resolve));
+  console.info(
+    `[realmap] streetDesign from map: preset=${streetSummary.preset} street=${streetSummary.streetScale} sidewalk=${streetSummary.sidewalkScale} → asphalt≈${streetSummary.residentialAsphaltM}m`,
+  );
   const boundary = cityData.boundary[0];
   let minX = Infinity;
   let minZ = Infinity;
@@ -598,6 +914,7 @@ async function loadCity() {
   setStatus('boot', `Ready · ${cityData.meta.counts.detailRoads} detailed streets · ${cityData.meta.counts.signals} signals`, 1);
   launchButton.disabled = false;
   launchButton.textContent = 'Enter Map Lab';
+  await applyBootQuery();
 }
 
 function resize() {
@@ -725,10 +1042,6 @@ function drawRegion(ctx) {
     if (i === 0) ctx.moveTo(point.x, point.y);
     else ctx.lineTo(point.x, point.y);
   }
-  if (drawCursor) {
-    const cursor = worldToScreen(drawCursor);
-    ctx.lineTo(cursor.x, cursor.y);
-  }
   ctx.closePath();
   ctx.fillStyle = 'rgba(127, 212, 193, 0.18)';
   ctx.fill();
@@ -737,17 +1050,6 @@ function drawRegion(ctx) {
   ctx.setLineDash([10, 8]);
   ctx.stroke();
   ctx.setLineDash([]);
-
-  for (let i = 0; i < region.length; i += 1) {
-    const point = worldToScreen(region[i]);
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = i === 0 ? '#f2a65a' : '#dbe8ec';
-    ctx.strokeStyle = '#0d1b22';
-    ctx.lineWidth = 2;
-    ctx.fill();
-    ctx.stroke();
-  }
 }
 
 function drawMap() {
@@ -796,11 +1098,11 @@ function updateReadout() {
   readoutArea.textContent = region.length >= 3 ? `${(polygonArea(region) / 1e6).toFixed(2)} km²` : '— km²';
   const buildButton = document.querySelector('[data-action="build"]');
   buildButton.disabled = region.length < 3;
-  document.querySelector('[data-action="undo"]').disabled = region.length === 0;
 }
 
 function setRegion(points) {
   region = points.map(([x, z]) => ({ x, z }));
+  regionFlatCache = null;
   updateReadout();
   scheduleMapDraw();
 }
@@ -832,39 +1134,25 @@ function setupMapInteractions() {
   }, { passive: false });
 
   mapCanvas.addEventListener('pointerdown', (event) => {
-    if (event.button === 1 || activeTool === 'pan') {
-      mapPointer = {
-        id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        panning: true,
-        startX: mapCamera.x,
-        startZ: mapCamera.z,
-      };
-      mapCanvas.setPointerCapture(event.pointerId);
-      return;
-    }
-    if (activeTool !== 'draw') return;
-    const world = mapPointerPosition(event);
-    region.push(world);
-    drawCursor = null;
-    updateReadout();
-    scheduleMapDraw();
+    if (event.button !== 0 && event.button !== 1) return;
+    mapPointer = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      panning: true,
+      startX: mapCamera.x,
+      startZ: mapCamera.z,
+    };
+    mapCanvas.setPointerCapture(event.pointerId);
   });
 
   mapCanvas.addEventListener('pointermove', (event) => {
-    if (mapPointer?.panning) {
-      const dx = event.clientX - mapPointer.x;
-      const dy = event.clientY - mapPointer.y;
-      mapCamera.x = mapPointer.startX - dx / mapCamera.scale;
-      mapCamera.z = mapPointer.startZ - dy / mapCamera.scale;
-      scheduleMapDraw();
-      return;
-    }
-    if (activeTool === 'draw') {
-      drawCursor = mapPointerPosition(event);
-      scheduleMapDraw();
-    }
+    if (!mapPointer?.panning) return;
+    const dx = event.clientX - mapPointer.x;
+    const dy = event.clientY - mapPointer.y;
+    mapCamera.x = mapPointer.startX - dx / mapCamera.scale;
+    mapCamera.z = mapPointer.startZ - dy / mapCamera.scale;
+    scheduleMapDraw();
   });
 
   const endPointer = (event) => {
@@ -872,57 +1160,30 @@ function setupMapInteractions() {
   };
   mapCanvas.addEventListener('pointerup', endPointer);
   mapCanvas.addEventListener('pointercancel', endPointer);
-
-  mapCanvas.addEventListener('dblclick', () => {
-    if (activeTool === 'draw' && region.length >= 3) {
-      drawCursor = null;
-      updateReadout();
-      scheduleMapDraw();
-    }
-  });
-
-  window.addEventListener('keydown', (event) => {
-    if (document.body.classList.contains('is-city')) return;
-    if (event.key === 'Enter' && activeTool === 'draw' && region.length >= 3) {
-      drawCursor = null;
-      updateReadout();
-      scheduleMapDraw();
-    } else if (event.key === 'Escape' && activeTool === 'draw') {
-      region.pop();
-      updateReadout();
-      scheduleMapDraw();
-    }
-  });
 }
 
 function setupToolbar() {
-  document.querySelectorAll('[data-tool]').forEach((button) => {
+  document.querySelectorAll('[data-preset]').forEach((button) => {
     button.addEventListener('click', () => {
-      activeTool = button.dataset.tool;
-      document.querySelectorAll('[data-tool]').forEach((candidate) => candidate.classList.toggle('is-active', candidate === button));
-      modeLabel.textContent = activeTool === 'draw' ? 'Drawing boundary' : 'Panning map';
-      hint.textContent = activeTool === 'draw'
-        ? 'Click to place boundary vertices · double-click or Enter to close · Esc to cancel'
-        : 'Drag to pan · scroll to zoom · draw to define the build area';
+      applyPreset(button.dataset.preset);
+      modeLabel.textContent = 'District selected';
+      hint.textContent = 'Drag to pan · scroll to zoom · Build Region or Play Prebuilt';
     });
   });
 
-  document.querySelectorAll('[data-preset]').forEach((button) => {
-    button.addEventListener('click', () => applyPreset(button.dataset.preset));
-  });
-
-  document.querySelector('[data-action="undo"]').addEventListener('click', () => {
-    region.pop();
-    updateReadout();
-    scheduleMapDraw();
-  });
   document.querySelector('[data-action="clear"]').addEventListener('click', () => {
     region = [];
+    regionFlatCache = null;
     updateReadout();
     scheduleMapDraw();
+    modeLabel.textContent = 'Select a district';
+    hint.textContent = 'Choose a preset · drag to pan · scroll to zoom · Build Region or Play Prebuilt';
   });
   document.querySelector('[data-action="build"]').addEventListener('click', () => {
     if (region.length >= 3) buildCity().catch((error) => console.error('Build failed', error));
+  });
+  document.querySelector('[data-action="play-prebuilt"]')?.addEventListener('click', () => {
+    playPrebuiltCity().catch((error) => console.error('Prebuilt play failed', error));
   });
   document.querySelectorAll('[data-city-mode]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -951,6 +1212,8 @@ function setupToolbar() {
     document.body.classList.remove('is-city');
     document.querySelector('[data-action="back"]').hidden = true;
     document.querySelector('[data-action="build"]').hidden = false;
+    const playButton = document.querySelector('[data-action="play-prebuilt"]');
+    if (playButton) playButton.hidden = false;
     document.querySelector('[data-toolbar="city"]').hidden = true;
     hud.inert = false;
   });
@@ -969,19 +1232,75 @@ async function tick() {
   await new Promise((resolve) => requestAnimationFrame(resolve));
 }
 
-function templateForRoad(road) {
+function drivingLaneLayoutForRoad(road) {
+  const section = streetCrossSection(road);
+  const total = Math.max(1, section.lanes || 1);
+  const width = section.drivingLaneWidth;
+  if (road.oneway) {
+    return { drivingLeft: 0, drivingRight: total, width, section };
+  }
+  const drivingLeft = Math.max(1, Math.floor(total / 2));
+  const drivingRight = Math.max(1, total - drivingLeft);
+  return { drivingLeft, drivingRight, width, section };
+}
+
+function templateIdForRoad(road) {
   const cls = road.highway || 'residential';
-  const lanes = Math.max(1, Number(road.lanes) || 1);
-  if (cls === 'motorway' || cls === 'trunk') {
-    return road.oneway ? 'sf-highway-1way' : 'sf-highway-2way';
-  }
-  if (cls === 'primary' || cls === 'secondary' || cls === 'tertiary' || cls === 'unclassified') {
-    return road.oneway ? 'sf-arterial-1way' : 'sf-arterial-2way';
-  }
   if (cls === 'pedestrian' || cls === 'footway' || cls === 'path' || cls === 'cycleway') {
     return 'sf-walk';
   }
-  return road.oneway ? 'sf-local-1way' : (lanes >= 3 ? 'sf-local-wide-2way' : 'sf-local-2way');
+  const { drivingLeft, drivingRight, width, section } = drivingLaneLayoutForRoad(road);
+  const walk = fullCityMode ? 0 : 1;
+  const walkW = walk ? Math.round(section.templateSidewalkWidth * 100) : 0;
+  // Width-locked key so three-roads ribbon Σ matches city-wide asphaltWidth.
+  return `sf-dyn-L${drivingLeft}R${drivingRight}W${Math.round(width * 100)}S${walk}SW${walkW}`;
+}
+
+function templateForRoad(road) {
+  return templateIdForRoad(road);
+}
+
+function makeTemplateForRoad(road) {
+  const id = templateIdForRoad(road);
+  if (id === 'sf-walk') {
+    return {
+      id: 'sf-walk',
+      name: 'Pedestrian path',
+      designLimits: { designSpeedKph: 10, minimumHorizontalRadius: 2 },
+      lanes: [
+        {
+          role: 'walk',
+          side: 'right',
+          order: 1,
+          type: 'sidewalk',
+          width: 2.4,
+          level: true,
+          heights: [{ sOffset: 0, inner: 0.1, outer: 0.1 }],
+          access: ['pedestrian'],
+        },
+      ],
+    };
+  }
+  const { drivingLeft, drivingRight, width, section } = drivingLaneLayoutForRoad(road);
+  const cls = road.highway || 'residential';
+  const arterial = cls === 'primary' || cls === 'secondary' || cls === 'tertiary' || cls === 'unclassified'
+    || cls === 'motorway' || cls === 'trunk';
+  return {
+    id,
+    name: `${cls} ${drivingLeft + drivingRight}-lane`,
+    designLimits: {
+      designSpeedKph: arterial ? 50 : 30,
+      minimumHorizontalRadius: arterial ? 12 : 4,
+    },
+    lanes: makeLanes({
+      drivingLeft,
+      drivingRight,
+      sidewalk: !fullCityMode,
+      width,
+      sidewalkWidth: section.templateSidewalkWidth,
+      curbWidth: section.curbWidth,
+    }),
+  };
 }
 
 function projectPointOnSegment(point, a, b) {
@@ -1001,20 +1320,170 @@ function flatFromPoints(points) {
   return flat;
 }
 
-function splitRoadsAtJunctions(roads) {
-  const junctionKeys = new Set();
-  const junctionPoints = [];
+function nodeKey(point, scale = 2) {
+  return `${Math.round(point.x * scale)},${Math.round(point.z * scale)}`;
+}
+
+function isNearJunctionNode(point, junctionNodes, junctionPoints, radius = 2.2) {
+  if (junctionNodes?.has(nodeKey(point))) return true;
+  if (!junctionPoints?.length) return false;
+  for (const jp of junctionPoints) {
+    if (Math.hypot(point.x - jp.x, point.z - jp.z) <= radius) return true;
+  }
+  return false;
+}
+
+function junctionHalfAt(point, junctionHalfByKey, junctionPoints, fallbackHalf) {
+  const key = nodeKey(point);
+  if (junctionHalfByKey?.has(key)) return junctionHalfByKey.get(key);
+  if (!junctionPoints?.length) return fallbackHalf;
+  let best = fallbackHalf;
+  let nearest = Infinity;
+  for (const jp of junctionPoints) {
+    const dist = Math.hypot(point.x - jp.x, point.z - jp.z);
+    if (dist > 2.4) continue;
+    const jKey = nodeKey(jp);
+    const jHalf = junctionHalfByKey?.get(jKey) || fallbackHalf;
+    if (dist < nearest) {
+      nearest = dist;
+      best = jHalf;
+    }
+  }
+  return best;
+}
+
+function appendTerrainJunctionBox(positions, indices, cx, cz, half) {
+  const samplePoints = [
+    { x: cx, z: cz },
+    { x: cx - half, z: cz - half },
+    { x: cx + half, z: cz - half },
+    { x: cx + half, z: cz + half },
+    { x: cx - half, z: cz + half },
+    { x: cx, z: cz - half },
+    { x: cx, z: cz + half },
+    { x: cx - half, z: cz },
+    { x: cx + half, z: cz },
+  ];
+  const elevations = samplePoints.map((c) => elevationAt(c.x, c.z));
+  const lift = roadSurfaceLift();
+  const yTop = Math.max(...elevations) + lift + 0.72;
+  const yBottom = Math.min(...elevations) + lift - 2.4;
+  appendJunctionBox(positions, indices, cx, yBottom, cz, half, Math.max(0.36, yTop - yBottom));
+}
+
+function pointInsideJunctionSquare(point, jp, jHalf, inset = 0.995) {
+  const limit = jHalf * inset;
+  return Math.abs(point.x - jp.x) <= limit && Math.abs(point.z - jp.z) <= limit;
+}
+
+function segmentCrossesJunctionSquare(a, b, jp, jHalf, inset = 0.995) {
+  const limit = jHalf * inset;
+  const minX = jp.x - limit;
+  const maxX = jp.x + limit;
+  const minZ = jp.z - limit;
+  const maxZ = jp.z + limit;
+  if (pointInsideJunctionSquare(a, jp, jHalf, inset)
+    || pointInsideJunctionSquare(b, jp, jHalf, inset)) return true;
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  let t0 = 0;
+  let t1 = 1;
+  const clip = (p, q) => {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+  if (!clip(-dx, a.x - minX)) return false;
+  if (!clip(dx, maxX - a.x)) return false;
+  if (!clip(-dz, a.z - minZ)) return false;
+  if (!clip(dz, maxZ - a.z)) return false;
+  return t0 <= t1;
+}
+
+function appendJunctionBox(positions, indices, cx, y0, cz, half, height) {
+  const x0 = cx - half;
+  const x1 = cx + half;
+  const z0 = cz - half;
+  const z1 = cz + half;
+  const y1 = y0 + height;
+  const base = positions.length / 3;
+  positions.push(
+    x0, y0, z0,
+    x1, y0, z0,
+    x1, y0, z1,
+    x0, y0, z1,
+    x0, y1, z0,
+    x1, y1, z0,
+    x1, y1, z1,
+    x0, y1, z1,
+  );
+  const faces = [
+    [0, 2, 1, 0, 3, 2],
+    [4, 5, 6, 4, 6, 7],
+    [3, 0, 4, 3, 4, 7],
+    [1, 2, 6, 1, 6, 5],
+    [0, 1, 5, 0, 5, 4],
+    [2, 3, 7, 2, 7, 6],
+  ];
+  for (const face of faces) {
+    for (const index of face) indices.push(base + index);
+  }
+}
+
+/**
+ * OSM often stores a + crossroad as two long ways that share an interior node
+ * (neither way ends there). three-roads only junctions endpoint snaps, so we must
+ * cut those shared nodes into true approach endpoints before compile.
+ */
+function collectJunctionPoints(roads) {
+  const endpointKeys = new Set();
+  const endpointPoints = [];
+  const nodeHits = new Map();
   for (const road of roads) {
     const points = roadPoints(road);
     if (points.length < 2) continue;
     for (const point of [points[0], points[points.length - 1]]) {
-      const key = `${Math.round(point.x * 2)},${Math.round(point.z * 2)}`;
-      if (!junctionKeys.has(key)) {
-        junctionKeys.add(key);
-        junctionPoints.push(point);
+      const key = nodeKey(point);
+      if (!endpointKeys.has(key)) {
+        endpointKeys.add(key);
+        endpointPoints.push(point);
+      }
+    }
+    // Count each road once per quantized node so a self-overlapping polyline
+    // does not invent a junction.
+    const seenOnRoad = new Set();
+    for (const point of points) {
+      const key = nodeKey(point);
+      if (seenOnRoad.has(key)) continue;
+      seenOnRoad.add(key);
+      const hit = nodeHits.get(key);
+      if (hit) {
+        hit.count += 1;
+      } else {
+        nodeHits.set(key, { count: 1, point });
       }
     }
   }
+  const junctionPoints = [...endpointPoints];
+  const junctionKeys = new Set(endpointKeys);
+  for (const [key, hit] of nodeHits) {
+    if (hit.count < 2) continue;
+    if (junctionKeys.has(key)) continue;
+    junctionKeys.add(key);
+    junctionPoints.push(hit.point);
+  }
+  return junctionPoints;
+}
+
+function splitRoadsAtJunctions(roads) {
+  const junctionPoints = collectJunctionPoints(roads);
 
   const splitRoads = [];
   for (const road of roads) {
@@ -1091,15 +1560,26 @@ function splitRoadsAtJunctions(roads) {
   return splitRoads;
 }
 
-function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
+function makeLanes({
+  drivingLeft,
+  drivingRight,
+  sidewalk = true,
+  width,
+  sidewalkWidth,
+  curbWidth,
+} = {}) {
+  const sample = streetCrossSection({ highway: 'residential', lanes: 2 });
+  const laneWidth = Number.isFinite(width) ? width : sample.drivingLaneWidth;
   const lanes = [];
+  const walkWidth = Number.isFinite(sidewalkWidth) ? sidewalkWidth : sample.templateSidewalkWidth;
+  const curbW = Math.max(0.22, Number.isFinite(curbWidth) ? curbWidth : (sample.curbWidth || 0.28));
   for (let i = drivingLeft; i > 0; i -= 1) {
     lanes.push({
       role: `reverse-${i}`,
       side: 'left',
       order: i,
       type: 'driving',
-      width,
+      width: laneWidth,
       access: ['car', 'bicycle', 'emergency'],
     });
   }
@@ -1109,19 +1589,19 @@ function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
       side: 'left',
       order: drivingLeft + 1,
       type: 'border',
-      width: 0.22,
-      heights: [{ sOffset: 0, inner: 0, outer: 0.12 }],
+      width: curbW,
+      heights: [{ sOffset: 0, inner: 0, outer: 0.14 }],
       access: [],
-      boundaryMarkings: [{ id: 'left-curb-face', kind: 'curb', boundary: 'outer', width: 0.14 }],
+      boundaryMarkings: [{ id: 'left-curb-face', kind: 'curb', boundary: 'outer', width: 0.16 }],
     });
     lanes.push({
       role: 'left-walk',
       side: 'left',
       order: drivingLeft + 2,
       type: 'sidewalk',
-      width: 2.1,
+      width: walkWidth,
       level: true,
-      heights: [{ sOffset: 0, inner: 0.12, outer: 0.12 }],
+      heights: [{ sOffset: 0, inner: 0.14, outer: 0.14 }],
       access: ['pedestrian'],
     });
   }
@@ -1131,7 +1611,7 @@ function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
       side: 'right',
       order: i,
       type: 'driving',
-      width,
+      width: laneWidth,
       access: ['car', 'bicycle', 'emergency'],
     });
   }
@@ -1141,19 +1621,19 @@ function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
       side: 'right',
       order: drivingRight + 1,
       type: 'border',
-      width: 0.22,
-      heights: [{ sOffset: 0, inner: 0, outer: 0.12 }],
+      width: curbW,
+      heights: [{ sOffset: 0, inner: 0, outer: 0.14 }],
       access: [],
-      boundaryMarkings: [{ id: 'right-curb-face', kind: 'curb', boundary: 'outer', width: 0.14 }],
+      boundaryMarkings: [{ id: 'right-curb-face', kind: 'curb', boundary: 'outer', width: 0.16 }],
     });
     lanes.push({
       role: 'right-walk',
       side: 'right',
       order: drivingRight + 2,
       type: 'sidewalk',
-      width: 2.1,
+      width: walkWidth,
       level: true,
-      heights: [{ sOffset: 0, inner: 0.12, outer: 0.12 }],
+      heights: [{ sOffset: 0, inner: 0.14, outer: 0.14 }],
       access: ['pedestrian'],
     });
   }
@@ -1186,50 +1666,53 @@ function makeLanes({ drivingLeft, drivingRight, sidewalk = true, width = 3 }) {
 }
 
 function roadTemplates() {
+  // Full City already draws city-wide sidewalks — keep three-roads as asphalt only
+  // so near-field ribbons match simple-strip width (no double walk bands / overflow).
+  const walk = !fullCityMode;
   const templates = [
     {
       id: 'sf-local-2way',
       name: 'Local two-way street',
       designLimits: { designSpeedKph: 30, minimumHorizontalRadius: 4 },
-      lanes: makeLanes({ drivingLeft: 1, drivingRight: 1, width: 2.9 }),
+      lanes: makeLanes({ drivingLeft: 1, drivingRight: 1, sidewalk: walk }),
     },
     {
       id: 'sf-local-wide-2way',
       name: 'Wide local two-way street',
       designLimits: { designSpeedKph: 40, minimumHorizontalRadius: 6 },
-      lanes: makeLanes({ drivingLeft: 1, drivingRight: 2, width: 3.1 }),
+      lanes: makeLanes({ drivingLeft: 1, drivingRight: 2, sidewalk: walk }),
     },
     {
       id: 'sf-local-1way',
       name: 'One-way local street',
       designLimits: { designSpeedKph: 30, minimumHorizontalRadius: 4 },
-      lanes: makeLanes({ drivingLeft: 0, drivingRight: 1, width: 3 }),
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 1, sidewalk: walk }),
     },
     {
       id: 'sf-arterial-2way',
       name: 'Arterial two-way avenue',
       designLimits: { designSpeedKph: 50, minimumHorizontalRadius: 12 },
-      lanes: makeLanes({ drivingLeft: 2, drivingRight: 2, width: 3.2 }),
+      lanes: makeLanes({ drivingLeft: 2, drivingRight: 2, sidewalk: walk }),
     },
     {
       id: 'sf-arterial-1way',
       name: 'One-way avenue',
       designLimits: { designSpeedKph: 50, minimumHorizontalRadius: 12 },
-      lanes: makeLanes({ drivingLeft: 0, drivingRight: 3, width: 3.2 }),
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 3, sidewalk: walk }),
     },
     {
       id: 'sf-highway-2way',
       name: 'Divided highway',
       designLimits: { designSpeedKph: 90, minimumHorizontalRadius: 60 },
       lanes: [
-        ...makeLanes({ drivingLeft: 3, drivingRight: 3, sidewalk: false, width: 3.5 }),
+        ...makeLanes({ drivingLeft: 3, drivingRight: 3, sidewalk: false, width: 3.6 }),
       ],
     },
     {
       id: 'sf-highway-1way',
       name: 'One-way highway',
       designLimits: { designSpeedKph: 90, minimumHorizontalRadius: 60 },
-      lanes: makeLanes({ drivingLeft: 0, drivingRight: 4, sidewalk: false, width: 3.5 }),
+      lanes: makeLanes({ drivingLeft: 0, drivingRight: 4, sidewalk: false, width: 3.6 }),
     },
     {
       id: 'sf-walk',
@@ -1284,12 +1767,12 @@ function selectRoads(regionBBox) {
     selected.set(road.id, road);
     detailIds.add(road.id);
     detailCount += 1;
-    if (detailCount >= 3200) break;
+    if (detailCount >= 12000) break;
   }
 
   let cityCount = 0;
   for (const cls of ROAD_ORDER) {
-    if (selected.size >= 5200) break;
+    if (selected.size >= 18000) break;
     for (const road of cityData.roads) {
       if (road.highway !== cls || detailIds.has(road.id) || selected.has(road.id)) continue;
       if (!intersectsRegionBBox(road, regionBBox)) continue;
@@ -1335,6 +1818,7 @@ function buildRoadDocument(selectedRoads) {
     name: 'San Francisco real map sandbox',
   });
   for (const template of templates) document = addRoadTemplate(document, template);
+  const addedTemplates = new Set(templates.map((template) => template.id));
 
   let skipped = 0;
   for (const road of selectedRoads) {
@@ -1353,7 +1837,6 @@ function buildRoadDocument(selectedRoads) {
     }
     const geometry = [];
     let s = 0;
-    let valid = true;
     for (let i = 0; i < points.length - 1; i += 1) {
       const a = points[i];
       const b = points[i + 1];
@@ -1386,10 +1869,15 @@ function buildRoadDocument(selectedRoads) {
       skipped += 1;
       continue;
     }
+    const template = makeTemplateForRoad(road);
+    if (!addedTemplates.has(template.id)) {
+      document = addRoadTemplate(document, template);
+      addedTemplates.add(template.id);
+    }
     document = addRoadStroke(document, {
       id: `road-${road.id}`,
       geometry,
-      templateSpans: [{ templateId: templateForRoad(road), s: 0 }],
+      templateSpans: [{ templateId: template.id, s: 0 }],
     });
   }
   return { document, skipped };
@@ -1401,9 +1889,10 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
     throw new Error('Road graph could not converge for this boundary.');
   }
   const strategies = [
-    { splitInteriorCrossings: false, snapTolerance: 0.7, junctionPortalSetback: 7 },
-    { splitInteriorCrossings: false, snapTolerance: 0.5, junctionPortalSetback: 6 },
-    { splitInteriorCrossings: false, snapTolerance: 0.32, junctionPortalSetback: 5 },
+    // Prefer endpoint snaps after our shared-node splits (cheap, stable on OSM).
+    { splitInteriorCrossings: false, snapTolerance: 0.9, junctionPortalSetback: 3.2 },
+    { splitInteriorCrossings: false, snapTolerance: 0.55, junctionPortalSetback: 2.6 },
+    { splitInteriorCrossings: false, snapTolerance: 0.32, junctionPortalSetback: 2.1 },
   ];
   let splitRoads = splitRoadsAtJunctions(selectedRoads)
     .filter((road) => !removed.has(`road-${road.id}`));
@@ -1727,12 +2216,32 @@ function footprintPerimeter(points) {
   return perimeter;
 }
 
-function makeRoadMaterial(materialClass) {
-  if (roadMaterialCache.has(materialClass)) return roadMaterialCache.get(materialClass);
+function makeRoadMaterial(materialClass, options = {}) {
+  const cheap = Boolean(options.cheap);
+  const cacheKey = `${materialClass}|${cheap && fullCityMode ? 'fc-cheap' : 'std'}`;
+  if (roadMaterialCache.has(cacheKey)) return roadMaterialCache.get(cacheKey);
   const isMarking = materialClass.startsWith('marking-');
   const color = isMarking
     ? roadMarkingColors[materialClass] || 0xf4f2ea
     : roadSurfaceColors[materialClass] || 0x6f7478;
+  // Full City near three-roads: unlit charcoal matching city-wide simple asphalt.
+  // Force every surface class to asphalt — junction patches must not render as
+  // light sidewalk/border blobs on the crossing.
+  if (cheap && fullCityMode && !isMarking) {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x404034,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    material.name = cacheKey;
+    roadMaterialCache.set(cacheKey, material);
+    return material;
+  }
   const material = new THREE.MeshStandardMaterial({
     color,
     roughness: isMarking ? 0.58 : materialClass === 'border' ? 0.88 : 0.92,
@@ -1769,7 +2278,7 @@ function makeRoadMaterial(materialClass) {
   } else if (materialClass === 'border') {
     material.color.set(0x96918a);
   }
-  roadMaterialCache.set(materialClass, material);
+  roadMaterialCache.set(cacheKey, material);
   return material;
 }
 
@@ -1803,14 +2312,239 @@ function indexedMeshToGeometries(sourceMesh) {
   return results;
 }
 
-const ROAD_SURFACE_LIFT = 0.06;
+// Street / sidewalk sizes live in street-design.js (streetScale / sidewalkScale).
+function roadSurfaceLift() {
+  return streetDesign.roadSurfaceLift;
+}
+function buildingFootprintInset() {
+  return streetDesign.buildingInset;
+}
+function buildingBaseClearance() {
+  return streetDesign.buildingBaseClearance;
+}
+function buildingStreetPushCap() {
+  return streetDesign.buildingPushCap;
+}
 
-function applyTerrainToMesh(mesh) {
+function streetCrossSection(road) {
+  return resolveStreetCrossSection(road, streetDesign);
+}
+
+function simpleRoadWidth(road) {
+  return streetCrossSection(road).asphaltWidth;
+}
+
+function insetRingTowardCentroid(ring, inset = buildingFootprintInset()) {
+  if (!ring?.length || inset <= 0) return ring;
+  let cx = 0;
+  let cy = 0;
+  for (const point of ring) {
+    cx += point.x;
+    cy += point.y;
+  }
+  cx /= ring.length;
+  cy /= ring.length;
+  const out = [];
+  for (const point of ring) {
+    const dx = cx - point.x;
+    const dy = cy - point.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.2) {
+      out.push(point.clone ? point.clone() : new THREE.Vector2(point.x, point.y));
+      continue;
+    }
+    const move = Math.min(inset, dist * 0.35);
+    out.push(new THREE.Vector2(
+      point.x + (dx / dist) * move,
+      point.y + (dy / dist) * move,
+    ));
+  }
+  return out;
+}
+
+function footprintRingArea(ring) {
+  if (!ring?.length) return 0;
+  let area = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const ax = a.x;
+    const ay = a.y ?? a.z;
+    const bx = b.x;
+    const by = b.y ?? b.z;
+    area += ax * by - bx * ay;
+  }
+  return Math.abs(area) * 0.5;
+}
+
+function footprintOverlapsAsphalt(ring, building, roads) {
+  if (!ring?.length || !roads?.length) return false;
+  const samples = [...ring];
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.max(1, Math.ceil(edgeLen / 2.5));
+    for (let s = 1; s < steps; s += 1) {
+      const t = s / steps;
+      samples.push(new THREE.Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+    }
+  }
+  for (const point of samples) {
+    for (const road of roads) {
+      const section = streetCrossSection(road);
+      if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') continue;
+      if (nearestRoadDistance(road, { x: point.x, z: point.y }) < section.asphaltHalf + 0.95) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Push footprints out of the full visual ROW (asphalt + sidewalk).
+ * Returns null when the parcel cannot leave the roadway (caller must skip it). */
+function clearFootprintFromStreets(ring, building) {
+  if (!fullCityMode || !worldPartition || !ring?.length) return ring;
+  const [cx, cz] = building?.centroid || [ring[0].x, ring[0].y];
+  const focus = { x: cx, z: cz };
+  const nearbyRoads = queryPartitionRoads(worldPartition, focus, 90)
+    .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'))
+    .map((road) => ({ road, distance: nearestRoadDistance(road, focus) }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 14)
+    .map((entry) => entry.road);
+  if (!nearbyRoads.length) return insetRingTowardCentroid(ring, buildingFootprintInset());
+
+  const asphaltBuffer = (road) => streetCrossSection(road).asphaltHalf + 0.55;
+  const rowOuter = (road) => streetCrossSection(road).buildingRowOuter;
+
+  // Drop parcels whose center sits on the asphalt — they only produce overflow.
+  for (const road of nearbyRoads) {
+    const section = streetCrossSection(road);
+    if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
+      continue;
+    }
+    if (nearestRoadDistance(road, focus) < asphaltBuffer(road)) return null;
+  }
+
+  // Push against up to four nearby roads — corners need both cross-street arms.
+  const clearanceRoads = nearbyRoads.slice(0, 4);
+  let out = ring.map((point) => new THREE.Vector2(point.x, point.y));
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = [];
+    for (const point of out) {
+      let x = point.x;
+      let z = point.y;
+      for (const road of clearanceRoads) {
+        const section = streetCrossSection(road);
+        if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
+          continue;
+        }
+        const points = roadPoints(road);
+        let bestDist = Infinity;
+        let bestNx = 0;
+        let bestNz = 0;
+        for (let i = 0; i < points.length - 1; i += 1) {
+          const a = points[i];
+          const b = points[i + 1];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const lenSq = dx * dx + dz * dz;
+          if (lenSq < 1e-6) continue;
+          const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / lenSq));
+          const px = a.x + dx * t;
+          const pz = a.z + dz * t;
+          const vx = x - px;
+          const vz = z - pz;
+          const dist = Math.hypot(vx, vz);
+          if (dist < bestDist) {
+            bestDist = dist;
+            const inv = dist > 1e-5 ? 1 / dist : 0;
+            bestNx = vx * inv;
+            bestNz = vz * inv;
+            if (dist < 1e-5) {
+              const len = Math.sqrt(lenSq);
+              bestNx = -dz / len;
+              bestNz = dx / len;
+              if (bestNx * (x - cx) + bestNz * (z - cz) < 0) {
+                bestNx = -bestNx;
+                bestNz = -bestNz;
+              }
+            }
+          }
+        }
+        const minDist = rowOuter(road);
+        const pushCap = Math.max(buildingStreetPushCap(), minDist + 2);
+        if (bestDist < minDist && (bestNx || bestNz)) {
+          const push = Math.min(minDist - bestDist, pushCap);
+          x += bestNx * push;
+          z += bestNz * push;
+        }
+      }
+      next.push(new THREE.Vector2(x, z));
+    }
+    out = next;
+  }
+  for (const point of out) {
+    const toCx = point.x - cx;
+    const toCz = point.y - cz;
+    if (toCx * toCx + toCz * toCz < 0.25) {
+      const ang = Math.atan2(point.y - cz, point.x - cx);
+      point.x = cx + Math.cos(ang) * 0.65;
+      point.y = cz + Math.sin(ang) * 0.65;
+    }
+  }
+  const cleared = insetRingTowardCentroid(out, buildingFootprintInset() * 0.35);
+  if (!cleared || cleared.length < 3) return null;
+  if (footprintRingArea(cleared) < 10) return null;
+
+  const samplePoints = [...cleared];
+  for (let i = 0; i < cleared.length; i += 1) {
+    const a = cleared[i];
+    const b = cleared[(i + 1) % cleared.length];
+    samplePoints.push(new THREE.Vector2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5));
+  }
+  for (const point of samplePoints) {
+    for (const road of clearanceRoads) {
+      const section = streetCrossSection(road);
+      if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
+        continue;
+      }
+      if (nearestRoadDistance(road, { x: point.x, z: point.y }) < asphaltBuffer(road)) {
+        return null;
+      }
+    }
+  }
+  return cleared;
+}
+
+function roadSurfaceY(x, z, flatY = null) {
+  if (flatY != null && Number.isFinite(flatY)) return flatY;
+  return elevationAt(x, z) + roadSurfaceLift();
+}
+
+function applyTerrainToMesh(mesh, options = {}) {
   const positions = mesh.geometry.attributes.position;
-  for (let i = 0; i < positions.count; i += 1) {
-    const x = positions.getX(i);
-    const z = positions.getZ(i);
-    positions.setY(i, elevationAt(x, z) + ROAD_SURFACE_LIFT);
+  if (options.flat && positions.count > 0) {
+    // Keep junction patches planar — per-vertex elevation tilts them into ramps.
+    let sx = 0;
+    let sz = 0;
+    for (let i = 0; i < positions.count; i += 1) {
+      sx += positions.getX(i);
+      sz += positions.getZ(i);
+    }
+    const inv = 1 / positions.count;
+    const y = elevationAt(sx * inv, sz * inv) + roadSurfaceLift();
+    for (let i = 0; i < positions.count; i += 1) {
+      positions.setY(i, y);
+    }
+  } else {
+    for (let i = 0; i < positions.count; i += 1) {
+      const x = positions.getX(i);
+      const z = positions.getZ(i);
+      positions.setY(i, elevationAt(x, z) + roadSurfaceLift());
+    }
   }
   positions.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
@@ -1879,7 +2613,21 @@ function createDetailBuildingMesh(building, groundY = 0) {
     points.push(new THREE.Vector2(building.points[i], building.points[i + 1]));
   }
   if (points.length < 3) return null;
-  const shape = new THREE.Shape(points);
+  if (points.length > 2) {
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (Math.hypot(first.x - last.x, first.y - last.y) < 0.08) points.pop();
+  }
+  const ring = fullCityMode ? clearFootprintFromStreets(points, building) : points;
+  if (!ring || ring.length < 3) return null;
+  if (fullCityMode && worldPartition) {
+    const nearbyRoads = queryPartitionRoads(worldPartition, {
+      x: building.centroid?.[0] ?? ring[0].x,
+      z: building.centroid?.[1] ?? ring[0].y,
+    }, 75).filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+    if (nearbyRoads.length && footprintOverlapsAsphalt(ring, building, nearbyRoads)) return null;
+  }
+  const shape = new THREE.Shape(ring);
   const buildingHeight = Math.max(3, Math.min(Number(building.height) || 12, 320));
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth: buildingHeight,
@@ -1887,7 +2635,8 @@ function createDetailBuildingMesh(building, groundY = 0) {
     curveSegments: 1,
   });
   geometry.rotateX(Math.PI / 2);
-  geometry.translate(0, groundY + buildingHeight + 0.15, 0);
+  const baseY = groundY + (fullCityMode ? buildingBaseClearance() : 0.15);
+  geometry.translate(0, baseY + buildingHeight, 0);
   projectBuildingFacadeUVs(geometry);
   const style = buildingFacadeStyle(building);
   const seed = Number(building.id) || 0;
@@ -1928,8 +2677,15 @@ function createDetailBuildingMesh(building, groundY = 0) {
   // ExtrudeGeometry groups after rotateX(+PI/2): group 0 = lids (roof/floor),
   // group 1 = vertical sides. Put the facade atlas on the sides.
   const mesh = new THREE.Mesh(geometry, [roofMaterial, material]);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = !fullCityMode;
+  mesh.receiveShadow = !fullCityMode;
+  if (fullCityMode) {
+    for (const mat of [roofMaterial, material]) {
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = -2;
+    }
+  }
   mesh.userData = {
     type: 'building',
     building,
@@ -1942,6 +2698,11 @@ function createDetailBuildingMesh(building, groundY = 0) {
 function createCoarseBuildings(buildings) {
   const count = buildings.length;
   if (count === 0) return { mesh: null, materials: [] };
+  // Full City must never use random centroid boxes — those read as a procedural map.
+  // Region builds still use cheap instances for distant coarse footprints without rings.
+  if (fullCityMode) {
+    return createMergedFootprintBuildings(buildings);
+  }
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -1979,6 +2740,103 @@ function createCoarseBuildings(buildings) {
   return { mesh, materials: [material] };
 }
 
+function createMergedFootprintBuildings(buildings) {
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  let vertexOffset = 0;
+  const color = new THREE.Color();
+  const placed = [];
+
+  for (const building of buildings) {
+    if (!building?.points || building.points.length < 6) continue;
+    const ring = [];
+    for (let i = 0; i < building.points.length; i += 2) {
+      ring.push(new THREE.Vector2(building.points[i], building.points[i + 1]));
+    }
+    if (ring.length > 2) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (Math.hypot(first.x - last.x, first.y - last.y) < 0.08) ring.pop();
+    }
+    if (ring.length < 3) continue;
+    const nearbyRoads = fullCityMode && worldPartition
+      ? queryPartitionRoads(worldPartition, {
+        x: building.centroid?.[0] ?? ring[0].x,
+        z: building.centroid?.[1] ?? ring[0].y,
+      }, 75).filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'))
+      : [];
+    let insetRing = fullCityMode
+      ? clearFootprintFromStreets(ring, building)
+      : insetRingTowardCentroid(ring, buildingFootprintInset());
+    if (fullCityMode && insetRing && nearbyRoads.length && footprintOverlapsAsphalt(insetRing, building, nearbyRoads)) {
+      continue;
+    }
+    if (!insetRing || insetRing.length < 3) continue;
+
+    let faces;
+    try {
+      faces = THREE.ShapeUtils.triangulateShape(insetRing, []);
+    } catch {
+      continue;
+    }
+    if (!faces?.length) continue;
+
+    const levels = Number(building.levels) || 0;
+    const height = Math.max(
+      3,
+      Math.min(Number(building.height) || (levels > 0 ? levels * 3.15 : 9), 320),
+    );
+    const cx = building.centroid?.[0] ?? insetRing[0].x;
+    const cz = building.centroid?.[1] ?? insetRing[0].y;
+    const groundY = elevationAt(cx, cz) + buildingBaseClearance();
+    const topY = groundY + height;
+    color.set(buildingColor(building));
+
+    const base = vertexOffset;
+    const count = insetRing.length;
+    for (const point of insetRing) {
+      positions.push(point.x, groundY, point.y);
+      colors.push(color.r * 0.78, color.g * 0.78, color.b * 0.78);
+    }
+    for (const point of insetRing) {
+      positions.push(point.x, topY, point.y);
+      colors.push(color.r, color.g, color.b);
+    }
+    vertexOffset += count * 2;
+
+    for (const tri of faces) {
+      indices.push(base + count + tri[0], base + count + tri[1], base + count + tri[2]);
+    }
+    for (let i = 0; i < count; i += 1) {
+      const j = (i + 1) % count;
+      const b0 = base + i;
+      const b1 = base + j;
+      const t0 = base + count + i;
+      const t1 = base + count + j;
+      indices.push(b0, b1, t1, b0, t1, t0);
+    }
+    placed.push(building);
+  }
+
+  if (!positions.length) return { mesh: null, materials: [], buildings: [] };
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.userData = {
+    type: 'footprint-buildings',
+    buildings: placed,
+    buildingIds: placed.map((building) => building.id),
+  };
+  return { mesh, materials: [material], buildings: placed };
+}
+
 const SEA_LEVEL_Y = -1.8;
 
 function createGround(regionPoints) {
@@ -1987,6 +2845,7 @@ function createGround(regionPoints) {
   for (const point of regionPoints) flat.push(point.x, point.z);
   const spanX = Math.max(40, bounds.maxX - bounds.minX);
   const spanZ = Math.max(40, bounds.maxZ - bounds.minZ);
+  // Keep Full City land coarse for FPS; deep groundSink (below) clears asphalt.
   const cell = THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 48);
   const cols = Math.max(8, Math.ceil(spanX / cell));
   const rows = Math.max(8, Math.ceil(spanZ / cell));
@@ -1998,6 +2857,9 @@ function createGround(regionPoints) {
   const highColor = new THREE.Color(0x6d7874);
   const color = new THREE.Color();
   const heightSamples = [];
+  // Mild sink so coarse land triangles don't z-fight asphalt; deep pits look like
+  // teal canyons under floating ribbons from street-level cameras.
+  const groundSink = fullCityMode ? 0.1 : 0.04;
   const noise = (x, z) => {
     const value = Math.sin(x * 0.018 + z * 0.023) * 4.71
       + Math.sin(x * 0.041 - z * 0.017) * 2.83
@@ -2011,10 +2873,10 @@ function createGround(regionPoints) {
       const inside = pointInFlatRing({ x, z }, flat);
       let elevation = elevationAt(x, z);
       if (!Number.isFinite(elevation)) elevation = 0;
-      // Keep land at true elevation so roads/buildings (also elevation-sampled)
-      // stay flush. Underwater cells are culled from the index buffer below.
+      // Sink land below road lift so coarse triangles cannot hide asphalt.
+      // Underwater cells are culled from the index buffer below.
       const y = inside && elevation > SEA_LEVEL_Y + 0.05
-        ? elevation - 0.04
+        ? elevation - groundSink
         : SEA_LEVEL_Y - 0.8;
       positions.push(x, y, z);
       heightSamples.push(inside ? elevation : SEA_LEVEL_Y);
@@ -2049,9 +2911,12 @@ function createGround(regionPoints) {
     metalness: 0,
     vertexColors: true,
     flatShading: true,
+    // Must write depth in Full City or the teal water plane bleeds through lot gaps.
+    depthWrite: true,
   });
   const ground = new THREE.Mesh(geometry, material);
   ground.receiveShadow = true;
+  ground.renderOrder = fullCityMode ? -2 : 0;
   ground.userData = { type: 'ground' };
   return ground;
 }
@@ -2317,12 +3182,21 @@ function createSignalGroup(position, index) {
 function createCrosswalks(signals, roads) {
   const group = new THREE.Group();
   group.name = 'Real map zebra crossings';
-  const stripeMaterial = new THREE.MeshStandardMaterial({
-    color: 0xf8f6ee,
-    roughness: 0.62,
-    metalness: 0.01,
-  });
-  const stripeGeometry = new THREE.BoxGeometry(0.58, 0.045, 7.4);
+  const stripeMaterial = fullCityMode
+    ? new THREE.MeshBasicMaterial({
+      color: 0xf8f6ee,
+      toneMapped: false,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: 0xf8f6ee,
+      roughness: 0.62,
+      metalness: 0.01,
+    });
+  const stripeGeometry = new THREE.BoxGeometry(0.58, fullCityMode ? 0.035 : 0.045, 7.4);
   const placements = [];
   for (const signal of signals) {
     let best = null;
@@ -2367,13 +3241,14 @@ function createCrosswalks(signals, roads) {
   const dummy = new THREE.Object3D();
   for (let i = 0; i < placements.length; i += 1) {
     const placement = placements[i];
-    dummy.position.set(placement.x, elevationAt(placement.x, placement.z) + 0.09, placement.z);
+    dummy.position.set(placement.x, elevationAt(placement.x, placement.z) + roadSurfaceLift() + (fullCityMode ? 0.12 : 0.09), placement.z);
     dummy.rotation.set(0, placement.heading, 0);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.receiveShadow = true;
+  mesh.receiveShadow = !fullCityMode;
+  mesh.renderOrder = fullCityMode ? 7 : 0;
   group.add(mesh);
   group.userData = { type: 'crosswalks', stripes: placements.length };
   return group;
@@ -2423,6 +3298,12 @@ function createOneWayArrows(roads) {
         walked += segLength;
       }
     }
+  }
+  if (!arrows.length) {
+    const empty = new THREE.Group();
+    empty.name = 'One-way arrows';
+    empty.userData = { type: 'one-way-arrows', arrows: 0 };
+    return empty;
   }
   const mesh = new THREE.InstancedMesh(arrowGeometry, arrowMaterial, arrows.length);
   for (let i = 0; i < arrows.length; i += 1) {
@@ -2668,7 +3549,8 @@ function buildTraffic(selectedRoads, signals) {
   const colors = [0xd84a3a, 0x2f6fb5, 0xe0b32e, 0x4a9e77, 0xdfe1e4, 0x8e5a9e, 0xc98a3d, 0x3f8f8f];
   const variants = ['car', 'sedan', 'truck', 'taxi'];
   const vehicles = [];
-  const count = Math.min(150, Math.max(36, Math.floor(paths.length * 0.08)));
+  const desired = Math.min(150, Math.max(36, Math.floor(paths.length * 0.08)));
+  const count = fullCityMode ? Math.min(STREAM.maxTraffic, desired, paths.length || 0) : desired;
   for (let i = 0; i < count; i += 1) {
     if (paths.length === 0) break;
     const path = paths[i % paths.length];
@@ -2689,53 +3571,88 @@ function buildTraffic(selectedRoads, signals) {
   return { vehicles, paths };
 }
 
-function createRoadMeshes(compilation) {
+function createRoadMeshes(compilation, options = {}) {
+  const cheap = Boolean(options.cheap || fullCityMode);
+  // Cheap/near Full City: drop corridor dashes. Unresolved or overlapping portals
+  // otherwise paint a chaotic + scribble; junction patches + approach-hull pads
+  // carry the readable asphalt fill instead.
   const arrowFreeNetwork = {
     ...compilation.network,
     roads: compilation.network.roads.map((road) => ({
       ...road,
-      markings: (road.markings || []).filter((marking) => marking.kind !== 'arrow'),
+      markings: cheap
+        ? []
+        : (road.markings || []).filter((marking) => marking.kind !== 'arrow'),
     })),
   };
   let surface;
   try {
-    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
-      maxSegmentLength: 4,
-      maxChordError: 0.02,
-      junctionTessellationStep: 1.6,
-    });
+    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, cheap
+      ? {
+        maxSegmentLength: 7,
+        maxChordError: 0.055,
+        junctionTessellationStep: 3.2,
+      }
+      : {
+        maxSegmentLength: 4,
+        maxChordError: 0.02,
+        junctionTessellationStep: 1.6,
+      });
   } catch (error) {
     console.error('Road surface mesher failed on dense profile', error.message);
     surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
-      maxSegmentLength: 6,
-      maxChordError: 0.03,
-      junctionTessellationStep: 2.4,
+      maxSegmentLength: 8,
+      maxChordError: 0.06,
+      junctionTessellationStep: 3.6,
     });
+  }
+  if (cheap) {
+    surface.markings = [];
+    surface.decals = [];
+    // Portal cutouts with no junction fill become tan pits — refuse and let
+    // simple strips + approach-hull pads carry the crossing.
+    const expectedJunctions = compilation?.network?.junctions?.length || 0;
+    if (expectedJunctions > 0 && !(surface.junctionPatches?.length)) {
+      console.warn('Cheap road mesh missing junction patches — skipping torn portals');
+      return null;
+    }
   }
   let bundle;
   try {
     bundle = meshRoadSurfaceModel(surface);
   } catch (error) {
-    console.error('Whole-model mesh failed, retrying without junction patches', error.message);
-    surface.junctionPatches = [];
-    surface.decals = [];
-    surface.markings = (surface.markings || []).filter((marking) => {
-      const owner = String(marking.ownerId || '');
-      return !owner.startsWith('junction') && !owner.startsWith('sf-auto');
-    });
-    bundle = meshRoadSurfaceModel(surface);
+    console.error('Whole-model mesh failed, retrying coarser junctions', error.message);
+    try {
+      surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
+        maxSegmentLength: 9,
+        maxChordError: 0.08,
+        junctionTessellationStep: 4.2,
+      });
+      if (cheap) {
+        surface.markings = [];
+        surface.decals = [];
+      }
+      bundle = meshRoadSurfaceModel(surface);
+    } catch (retryError) {
+      console.error('Junction mesh still failing — refusing torn portal mesh', retryError.message);
+      // Clearing junctionPatches leaves portal setback holes (tan ground / voids).
+      // Caller should fall back to simple strips + approach-hull pads.
+      return null;
+    }
   }
   const group = new THREE.Group();
   const surfaceParts = indexedMeshToGeometries(bundle.surface);
   for (const part of surfaceParts) {
-    const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
-    applyTerrainToMesh(mesh);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass, { cheap }));
+    applyTerrainToMesh(mesh, { flat: Boolean(cheap && fullCityMode) });
+    // Sit above city-wide simple asphalt + pads so near three-roads wins.
+    if (cheap) mesh.position.y += fullCityMode ? 0.07 : 0.06;
+    mesh.castShadow = !cheap;
+    mesh.receiveShadow = !cheap;
     mesh.name = `Real map road surface ${part.materialClass}`;
     group.add(mesh);
   }
-  if (bundle.markings.positions.length > 0) {
+  if (!cheap && bundle.markings.positions.length > 0) {
     const markingParts = indexedMeshToGeometries(bundle.markings);
     for (const part of markingParts) {
       const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass));
@@ -2744,24 +3661,30 @@ function createRoadMeshes(compilation) {
       group.add(mesh);
     }
   }
-  group.userData = { type: 'roads', compilation };
+  group.userData = {
+    type: 'roads',
+    compilation,
+    cheap,
+    hasJunctionPatches: (surface.junctionPatches?.length || 0) > 0,
+  };
   return group;
 }
 
+// Warm charcoal asphalt — match user-report dark ribbons (~RGB 64,64,48).
 const SIMPLE_ROAD_CONFIG = {
-  motorway: { width: 13.5, color: 0x454c52 },
-  trunk: { width: 12, color: 0x4a5157 },
-  primary: { width: 10.5, color: 0x52585e },
-  secondary: { width: 9, color: 0x585f65 },
-  tertiary: { width: 7.5, color: 0x5c646a },
-  unclassified: { width: 6.5, color: 0x626970 },
-  residential: { width: 6, color: 0x636b72 },
-  living_street: { width: 5, color: 0x697078 },
-  service: { width: 4.5, color: 0x6b7279 },
-  pedestrian: { width: 3.6, color: 0x85857d },
-  footway: { width: 2.4, color: 0x8b8b84 },
-  cycleway: { width: 2.2, color: 0x8b8b84 },
-  path: { width: 2, color: 0x8b8b84 },
+  motorway: { width: 13.5, color: 0x323228 },
+  trunk: { width: 12, color: 0x36362c },
+  primary: { width: 10.5, color: 0x3a3a30 },
+  secondary: { width: 9, color: 0x3e3e34 },
+  tertiary: { width: 7.5, color: 0x404036 },
+  unclassified: { width: 6.5, color: 0x424238 },
+  residential: { width: 6, color: 0x404034 },
+  living_street: { width: 5, color: 0x444438 },
+  service: { width: 4.5, color: 0x48483c },
+  pedestrian: { width: 3.6, color: 0x505044 },
+  footway: { width: 2.4, color: 0x545448 },
+  cycleway: { width: 2.2, color: 0x545448 },
+  path: { width: 2, color: 0x545448 },
 };
 
 function roadSegmentCount(roads) {
@@ -2772,7 +3695,7 @@ function roadSegmentCount(roads) {
   return count;
 }
 
-function createSimpleRoadMeshes(roads) {
+function createSimpleRoadMeshes(roads, options = {}) {
   const group = new THREE.Group();
   const classes = new Map();
   for (const road of roads) {
@@ -2782,53 +3705,118 @@ function createSimpleRoadMeshes(roads) {
     entry.count += Math.max(0, road.points.length / 2 - 1);
     classes.set(cls, entry);
   }
+
+  // Prefer a city-wide junction node set so street-by-street batches still extend
+  // into crossings whose partner way lives in another batch.
+  let junctionNodes = options.junctionNodes;
+  const junctionPoints = options.junctionPoints || [];
+  const junctionHalfByKey = options.junctionHalfByKey || new Map();
+  if (!junctionNodes) {
+    const nodeHits = new Map();
+    for (const road of roads) {
+      if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential')) continue;
+      const seen = new Set();
+      for (const point of roadPoints(road)) {
+        const key = nodeKey(point);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        nodeHits.set(key, (nodeHits.get(key) || 0) + 1);
+      }
+    }
+    junctionNodes = new Set([...nodeHits.entries()].filter(([, count]) => count >= 2).map(([key]) => key));
+  }
+
   const geometry = new THREE.PlaneGeometry(1, 1);
   for (const [cls, entry] of classes) {
     if (!entry.count) continue;
     const config = SIMPLE_ROAD_CONFIG[cls];
-    const material = new THREE.MeshStandardMaterial({
-      color: config.color,
-      roughness: 0.95,
-      metalness: 0.01,
-    });
-    if (sandboxTextureCache.asphalt) {
+    // Full City: unlit dark asphalt so ribbons stay readable under ACES/sun and
+    // never wash into tan ground (Lambert was disappearing into land fill).
+    const material = fullCityMode
+      ? new THREE.MeshBasicMaterial({
+        color: config.color,
+        depthWrite: true,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      })
+      : new THREE.MeshStandardMaterial({
+        color: config.color,
+        roughness: 0.95,
+        metalness: 0.01,
+      });
+    if (!fullCityMode && sandboxTextureCache.asphalt) {
       material.map = sandboxTextureCache.asphalt;
       material.color.set(0xcccccc);
     }
-    if (sandboxTextureCache.asphaltNormal) {
+    if (!fullCityMode && sandboxTextureCache.asphaltNormal) {
       material.normalMap = sandboxTextureCache.asphaltNormal;
       material.normalScale.set(0.28, 0.28);
     }
-    if (sandboxTextureCache.asphaltRoughness) {
+    if (!fullCityMode && sandboxTextureCache.asphaltRoughness) {
       material.roughnessMap = sandboxTextureCache.asphaltRoughness;
       material.roughness = 1;
-    } else {
+    } else if (!fullCityMode) {
       material.roughness = 0.92;
     }
     const positions = [];
     const indices = [];
     let vertexOffset = 0;
     for (const road of entry.roads) {
+      if (fullCityMode && !FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential')) continue;
       const points = roadPoints(road);
       for (let i = 0; i < points.length - 1; i += 1) {
-        const a = points[i];
-        const b = points[i + 1];
+        let a = points[i];
+        let b = points[i + 1];
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
         if (length < 0.4) continue;
-        const nx = -dz / length;
-        const nz = dx / length;
-        const half = config.width / 2;
+        const ux = dx / length;
+        const uz = dz / length;
+        // Use shared ROW asphaltHalf so ribbons align with sidewalks/curbs.
+        // Mild extend into the junction so strips meet approach-hull pads.
+        const half = streetCrossSection(road).asphaltHalf;
+        const aAtJunction = isNearJunctionNode(a, junctionNodes, junctionPoints);
+        const bAtJunction = isNearJunctionNode(b, junctionNodes, junctionPoints);
+        const extend = fullCityMode ? half * 0.42 : 0.35;
+        if (aAtJunction) {
+          a = { x: a.x - ux * extend, z: a.z - uz * extend };
+        }
+        if (bAtJunction) {
+          b = { x: b.x + ux * extend, z: b.z + uz * extend };
+        }
+        const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+        if (segLen < 0.4) continue;
+        const span = segLen || length;
+        const nx = -(b.z - a.z) / span;
+        const nz = (b.x - a.x) / span;
         const a1 = { x: a.x + nx * half, z: a.z + nz * half };
         const a2 = { x: a.x - nx * half, z: a.z - nz * half };
         const b1 = { x: b.x + nx * half, z: b.z + nz * half };
         const b2 = { x: b.x - nx * half, z: b.z - nz * half };
+        // Junction approach ribbons must stay planar — per-corner elevation tilts quads into ramps.
+        let flatA = null;
+        let flatB = null;
+        if (fullCityMode && aAtJunction) {
+          flatA = roadSurfaceY(points[i].x, points[i].z);
+        }
+        if (fullCityMode && bAtJunction) {
+          flatB = roadSurfaceY(points[i + 1].x, points[i + 1].z);
+        }
+        if (flatA != null && flatB != null) {
+          const merged = (flatA + flatB) * 0.5;
+          flatA = merged;
+          flatB = merged;
+        }
         positions.push(
-          a1.x, elevationAt(a1.x, a1.z) + ROAD_SURFACE_LIFT, a1.z,
-          a2.x, elevationAt(a2.x, a2.z) + ROAD_SURFACE_LIFT, a2.z,
-          b1.x, elevationAt(b1.x, b1.z) + ROAD_SURFACE_LIFT, b1.z,
-          b2.x, elevationAt(b2.x, b2.z) + ROAD_SURFACE_LIFT, b2.z,
+          a1.x, roadSurfaceY(a1.x, a1.z, flatA), a1.z,
+          a2.x, roadSurfaceY(a2.x, a2.z, flatA), a2.z,
+          b1.x, roadSurfaceY(b1.x, b1.z, flatB), b1.z,
+          b2.x, roadSurfaceY(b2.x, b2.z, flatB), b2.z,
         );
         indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
         vertexOffset += 4;
@@ -2837,19 +3825,292 @@ function createSimpleRoadMeshes(roads) {
     if (!positions.length) continue;
     const meshGeometry = new THREE.BufferGeometry();
     meshGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    const uvs = [];
-    const repeat = Math.max(1, Math.floor(entry.roads.reduce((sum, road) => sum + roadLengthOf(road), 0) / 90));
-    for (let i = 0; i < vertexOffset; i += 1) uvs.push(i % 2 === 0 ? 0 : 1, ((i / 4) * repeat) % 200);
-    meshGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    meshGeometry.setIndex(indices);
-    meshGeometry.computeVertexNormals();
+    if (fullCityMode) {
+      const normals = new Float32Array(positions.length);
+      for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
+      meshGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    } else {
+      const uvs = [];
+      const repeat = Math.max(1, Math.floor(entry.roads.reduce((sum, road) => sum + roadLengthOf(road), 0) / 90));
+      for (let i = 0; i < vertexOffset; i += 1) uvs.push(i % 2 === 0 ? 0 : 1, ((i / 4) * repeat) % 200);
+      meshGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      meshGeometry.setIndex(indices);
+      meshGeometry.computeVertexNormals();
+    }
+    if (fullCityMode) meshGeometry.setIndex(indices);
+    meshGeometry.computeBoundingBox();
+    meshGeometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(meshGeometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = !fullCityMode;
+    mesh.receiveShadow = !fullCityMode;
+    mesh.frustumCulled = true;
+    mesh.renderOrder = 1;
     mesh.name = `Simple real road ${cls}`;
     group.add(mesh);
   }
   group.userData = { type: 'simple-roads', segments: roadSegmentCount(roads) };
+  return group;
+}
+
+/**
+ * Simple strip roads leave triangular tears at T/+ corners. Fill only the asphalt
+ * hull of real approaches — a full disc was painting a fake fourth arm on T-junctions.
+ */
+function isPointInBuildingFootprint(point) {
+  if (!worldPartition) return false;
+  const nearby = queryPartitionBuildings(worldPartition, point, 12);
+  for (const building of nearby) {
+    if (!building?.points || building.points.length < 6) continue;
+    if (pointInFlatRing(point, building.points)) return true;
+  }
+  return false;
+}
+
+function junctionExitDistance(ux, uz, jHalf) {
+  const denom = Math.max(Math.abs(ux), Math.abs(uz), 1e-6);
+  return jHalf / denom;
+}
+
+function junctionStripSetback(road, atJunction, point, junctionHalfByKey, junctionPoints, ux, uz) {
+  if (!fullCityMode || !atJunction) return 0.35;
+  const half = streetCrossSection(road).asphaltHalf;
+  const jHalf = junctionHalfAt(point, junctionHalfByKey, junctionPoints, half);
+  return junctionExitDistance(ux, uz, jHalf);
+}
+
+function convexHullXZ(points) {
+  const unique = [];
+  const seen = new Set();
+  for (const point of points) {
+    const key = `${Math.round(point.x * 20)},${Math.round(point.z * 20)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(point);
+  }
+  if (unique.length <= 2) return unique;
+  unique.sort((a, b) => (a.x - b.x) || (a.z - b.z));
+  const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lower = [];
+  for (const point of unique) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper = [];
+  for (let i = unique.length - 1; i >= 0; i -= 1) {
+    const point = unique[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function pushApproachCorners(entry, point, neighbor, half) {
+  const dx = neighbor.x - point.x;
+  const dz = neighbor.z - point.z;
+  const length = Math.hypot(dx, dz) || 1;
+  const ux = dx / length;
+  const uz = dz / length;
+  const nx = -uz;
+  const nz = ux;
+  // Reach past portal setbacks so pads fill cutouts and strip corner tears.
+  // Hull of real approaches only — empty T quadrant stays empty.
+  const along = Math.min(length * 0.85, Math.max(half * 1.42, 5.8));
+  const wide = half * 1.12;
+  entry.corners.push(
+    { x: point.x + nx * wide, z: point.z + nz * wide },
+    { x: point.x - nx * wide, z: point.z - nz * wide },
+    { x: point.x + ux * along + nx * wide, z: point.z + uz * along + nz * wide },
+    { x: point.x + ux * along - nx * wide, z: point.z + uz * along - nz * wide },
+  );
+  entry.maxHalf = Math.max(entry.maxHalf || 0, half);
+}
+
+function distanceToRoadCenterline(road, point) {
+  const points = roadPoints(road);
+  let nearest = Infinity;
+  let best = null;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const hit = projectPointOnSegment(point, points[i], points[i + 1]);
+    if (!hit) continue;
+    if (hit.distance < nearest) {
+      nearest = hit.distance;
+      best = hit;
+    }
+  }
+  return best ? { distance: nearest, point: best.point, t: best.t } : null;
+}
+
+function createJunctionPadsFromNodes(junctionHalfByKey, junctionPoints) {
+  const positions = [];
+  const indices = [];
+  const pointByKey = new Map();
+  for (const jp of junctionPoints) pointByKey.set(nodeKey(jp), jp);
+  let padCount = 0;
+  for (const [key, half] of junctionHalfByKey) {
+    if (!half || half <= 0) continue;
+    const jp = pointByKey.get(key);
+    if (!jp) continue;
+    appendTerrainJunctionBox(positions, indices, jp.x, jp.z, half);
+    padCount += 1;
+  }
+  const group = new THREE.Group();
+  group.name = 'Simple junction pads';
+  if (!padCount) {
+    group.userData = { type: 'simple-junction-pads', count: 0 };
+    return group;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x404034,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Simple junction asphalt pads';
+  mesh.renderOrder = 10;
+  group.add(mesh);
+  group.userData = { type: 'simple-junction-pads', count: padCount };
+  return group;
+}
+
+function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
+  const junctions = new Map();
+  const ensureEntry = (key, point) => {
+    const entry = junctions.get(key) || { point, roadIds: new Set(), corners: [], maxHalf: 0 };
+    junctions.set(key, entry);
+    return entry;
+  };
+
+  for (const road of roads) {
+    if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential')
+      && !SIMPLE_ROAD_CONFIG[road.highway]) continue;
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    const half = streetCrossSection(road).asphaltHalf;
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const key = nodeKey(point);
+      const neighbors = [];
+      if (index > 0) neighbors.push(points[index - 1]);
+      if (index < points.length - 1) neighbors.push(points[index + 1]);
+      if (!neighbors.length) continue;
+      const entry = ensureEntry(key, point);
+      entry.roadIds.add(road.id);
+      entry.maxHalf = Math.max(entry.maxHalf || 0, half);
+      for (const neighbor of neighbors) pushApproachCorners(entry, point, neighbor, half);
+    }
+  }
+
+  // T-stubs: OSM endpoint lands on another way's centerline without a shared vertex.
+  // Without this, simple strips leave rectangular tears / tan ground at T corners.
+  const trafficRoads = roads.filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+  const stubRadius = Math.min(2.1, STREAM.nearThreeRoadsConnectRadius);
+  for (const stub of trafficRoads) {
+    const stubPoints = roadPoints(stub);
+    if (stubPoints.length < 2) continue;
+    const stubHalf = streetCrossSection(stub).asphaltHalf;
+    for (const end of [stubPoints[0], stubPoints[stubPoints.length - 1]]) {
+      const endKey = nodeKey(end);
+      if ((junctions.get(endKey)?.roadIds.size || 0) >= 2) continue;
+      const candidates = worldPartition
+        ? queryPartitionRoads(worldPartition, end, stubRadius + 8)
+        : trafficRoads;
+      let best = null;
+      for (const other of candidates) {
+        if (other.id === stub.id) continue;
+        if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(other.highway || 'residential')) continue;
+        const hit = distanceToRoadCenterline(other, end);
+        if (!hit || hit.distance > stubRadius) continue;
+        // Require a true lateral land-on, not endpoint-to-endpoint chaining.
+        if (hit.t <= 0.04 || hit.t >= 0.96) continue;
+        if (!best || hit.distance < best.distance) {
+          best = { ...hit, other };
+        }
+      }
+      if (!best) continue;
+      const key = nodeKey(best.point);
+      const otherHalf = streetCrossSection(best.other).asphaltHalf;
+      const entry = ensureEntry(key, best.point);
+      entry.roadIds.add(stub.id);
+      entry.roadIds.add(best.other.id);
+      entry.maxHalf = Math.max(entry.maxHalf || 0, stubHalf, otherHalf);
+      const stubPrev = stubPoints[0] === end ? stubPoints[1] : stubPoints[stubPoints.length - 2];
+      if (stubPrev) pushApproachCorners(entry, best.point, stubPrev, stubHalf);
+      const otherPoints = roadPoints(best.other);
+      for (let i = 0; i < otherPoints.length - 1; i += 1) {
+        const hit = projectPointOnSegment(best.point, otherPoints[i], otherPoints[i + 1]);
+        if (!hit || hit.distance > stubRadius) continue;
+        pushApproachCorners(entry, best.point, otherPoints[i], otherHalf);
+        pushApproachCorners(entry, best.point, otherPoints[i + 1], otherHalf);
+        break;
+      }
+    }
+  }
+
+  const positions = [];
+  const indices = [];
+  let vertexOffset = 0;
+  let padCount = 0;
+  for (const entry of junctions.values()) {
+    if (entry.roadIds.size < 2 || entry.maxHalf <= 0) continue;
+    const hull = convexHullXZ(entry.corners);
+    if (hull.length < 3) continue;
+    const y = elevationAt(entry.point.x, entry.point.z) + roadSurfaceLift();
+    const ring = hull.map((point) => new THREE.Vector2(point.x, point.z));
+    let faces;
+    try {
+      faces = THREE.ShapeUtils.triangulateShape(ring, []);
+    } catch {
+      continue;
+    }
+    if (!faces?.length) continue;
+    const base = vertexOffset;
+    for (const point of hull) {
+      positions.push(point.x, y, point.z);
+    }
+    for (const tri of faces) {
+      indices.push(base + tri[0], base + tri[1], base + tri[2]);
+    }
+    vertexOffset += hull.length;
+    padCount += 1;
+  }
+
+  const group = new THREE.Group();
+  group.name = 'Simple junction pads';
+  if (!padCount) {
+    group.userData = { type: 'simple-junction-pads', count: 0 };
+    return group;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  const normals = new Float32Array(positions.length);
+  for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  const material = fullCityMode
+    ? new THREE.MeshBasicMaterial({
+      color: 0x404034,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+    })
+    : new THREE.MeshStandardMaterial({ color: 0x404034, roughness: 0.95, metalness: 0.01 });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Simple junction asphalt pads';
+  mesh.receiveShadow = !fullCityMode;
+  mesh.renderOrder = 3;
+  group.add(mesh);
+  group.userData = { type: 'simple-junction-pads', count: padCount };
   return group;
 }
 
@@ -2891,10 +4152,10 @@ function createCableCarTracks(roads) {
       const b1 = { x: b.x + nx * trackHalf, z: b.z + nz * trackHalf };
       const b2 = { x: b.x - nx * trackHalf, z: b.z - nz * trackHalf };
       positions.push(
-        a1.x, elevationAt(a1.x, a1.z) + ROAD_SURFACE_LIFT + 0.03, a1.z,
-        a2.x, elevationAt(a2.x, a2.z) + ROAD_SURFACE_LIFT + 0.03, a2.z,
-        b1.x, elevationAt(b1.x, b1.z) + ROAD_SURFACE_LIFT + 0.03, b1.z,
-        b2.x, elevationAt(b2.x, b2.z) + ROAD_SURFACE_LIFT + 0.03, b2.z,
+        a1.x, elevationAt(a1.x, a1.z) + roadSurfaceLift() + 0.03, a1.z,
+        a2.x, elevationAt(a2.x, a2.z) + roadSurfaceLift() + 0.03, a2.z,
+        b1.x, elevationAt(b1.x, b1.z) + roadSurfaceLift() + 0.03, b1.z,
+        b2.x, elevationAt(b2.x, b2.z) + roadSurfaceLift() + 0.03, b2.z,
       );
       indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
       vertexOffset += 4;
@@ -2902,8 +4163,8 @@ function createCableCarTracks(roads) {
         const ox = nx * side * (trackHalf - railHalf);
         const oz = nz * side * (trackHalf - railHalf);
         railPositions.push(
-          a.x + ox, elevationAt(a.x + ox, a.z + oz) + ROAD_SURFACE_LIFT + 0.06, a.z + oz,
-          b.x + ox, elevationAt(b.x + ox, b.z + oz) + ROAD_SURFACE_LIFT + 0.06, b.z + oz,
+          a.x + ox, elevationAt(a.x + ox, a.z + oz) + roadSurfaceLift() + 0.06, a.z + oz,
+          b.x + ox, elevationAt(b.x + ox, b.z + oz) + roadSurfaceLift() + 0.06, b.z + oz,
         );
         railIndices.push(railOffset, railOffset + 1);
         railOffset += 2;
@@ -2931,29 +4192,154 @@ function createCableCarTracks(roads) {
   return group;
 }
 
-function createSimpleSidewalkMeshes(roads) {
+function createSimpleSidewalkMeshes(roads, options = {}) {
   const sidewalkClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'pedestrian']);
+  const junctionNodes = options.junctionNodes instanceof Set ? options.junctionNodes : null;
+  const group = new THREE.Group();
+  group.name = 'Simple sidewalks';
+
+  // Full City: emit asphalt-style ribbon quads (not instanced boxes) so sidewalks
+  // sit as a clear band between dark roadway and building parcels.
+  if (fullCityMode) {
+    const positions = [];
+    const indices = [];
+    let vertexOffset = 0;
+    let segmentCount = 0;
+    for (const road of roads) {
+      if (!sidewalkClasses.has(road.highway)) continue;
+      const section = streetCrossSection(road);
+      if (!section.hasSidewalk || section.sidewalkWidth < 0.4) continue;
+      const points = roadPoints(road);
+      if (points.length < 2) continue;
+      const halfW = section.sidewalkWidth * 0.5;
+      // Trim ribbons back — corner L-pads + extend legs bridge the block wrap.
+      const innerEdge = section.asphaltHalf + (section.curbWidth || 0.28);
+      const cornerReach = Math.min(section.asphaltHalf * 0.28, 3.2);
+      const trim = junctionNodes ? Math.min(innerEdge + cornerReach + 0.4, 11) : 0;
+      for (const sideSign of [1, -1]) {
+        const center = offsetPolyline(points, sideSign * section.sidewalkCenter);
+        for (let i = 0; i < center.length - 1; i += 1) {
+          let a = center[i];
+          let b = center[i + 1];
+          let dx = b.x - a.x;
+          let dz = b.z - a.z;
+          let length = Math.hypot(dx, dz);
+          if (length < 0.5) continue;
+          if (trim > 0 && points[i] && points[i + 1]) {
+            const ux = dx / length;
+            const uz = dz / length;
+            if (junctionNodes.has(nodeKey(points[i]))) {
+              a = { x: a.x + ux * trim, z: a.z + uz * trim };
+            }
+            if (junctionNodes.has(nodeKey(points[i + 1]))) {
+              b = { x: b.x - ux * trim, z: b.z - uz * trim };
+            }
+            dx = b.x - a.x;
+            dz = b.z - a.z;
+            length = Math.hypot(dx, dz);
+            if (length < 1.0) continue;
+          }
+          const span = length || 1;
+          const nx = -dz / span;
+          const nz = dx / span;
+          const lift = roadSurfaceLift() + 0.06;
+          const a1 = { x: a.x + nx * halfW, z: a.z + nz * halfW };
+          const a2 = { x: a.x - nx * halfW, z: a.z - nz * halfW };
+          const b1 = { x: b.x + nx * halfW, z: b.z + nz * halfW };
+          const b2 = { x: b.x - nx * halfW, z: b.z - nz * halfW };
+          positions.push(
+            a1.x, elevationAt(a1.x, a1.z) + lift, a1.z,
+            a2.x, elevationAt(a2.x, a2.z) + lift, a2.z,
+            b1.x, elevationAt(b1.x, b1.z) + lift, b1.z,
+            b2.x, elevationAt(b2.x, b2.z) + lift, b2.z,
+          );
+          indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+          vertexOffset += 4;
+          segmentCount += 1;
+        }
+      }
+    }
+    if (positions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      const normals = new Float32Array(positions.length);
+      for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
+      geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xd8d2c6,
+        depthWrite: true,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = 'Full City sidewalk ribbons';
+      mesh.renderOrder = 2;
+      mesh.frustumCulled = true;
+      group.add(mesh);
+    }
+    group.userData = { type: 'simple-sidewalks', segments: segmentCount, mode: 'ribbon' };
+    return group;
+  }
+
   const concreteSegments = [];
   const brickSegments = [];
   for (const road of roads) {
     if (!sidewalkClasses.has(road.highway)) continue;
+    const section = streetCrossSection(road);
+    if (!section.hasSidewalk) continue;
     const points = roadPoints(road);
-    const offset = roadHalfWidth(road);
+    const offset = section.sidewalkCenter;
+    // Pull sidewalks back from junctions so pads own the corner (no white scribble).
+    const trim = junctionNodes ? Math.min(section.asphaltHalf * 1.05, 12) : 0;
     for (const side of [offsetPolyline(points, offset), offsetPolyline(points, -offset)]) {
       for (let i = 0; i < side.length - 1; i += 1) {
-        const a = side[i];
-        const b = side[i + 1];
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const length = Math.hypot(dx, dz);
+        let a = side[i];
+        let b = side[i + 1];
+        let dx = b.x - a.x;
+        let dz = b.z - a.z;
+        let length = Math.hypot(dx, dz);
         if (length < 0.4) continue;
-        const segment = { a, b, dx, dz, length };
-        if ((Math.floor(a.x + a.z + road.id) % 3) === 0) brickSegments.push(segment);
-        else concreteSegments.push(segment);
+        if (trim > 0 && points[i] && points[i + 1]) {
+          const ux = dx / length;
+          const uz = dz / length;
+          if (junctionNodes.has(nodeKey(points[i]))) {
+            a = { x: a.x + ux * trim, z: a.z + uz * trim };
+          }
+          if (junctionNodes.has(nodeKey(points[i + 1]))) {
+            b = { x: b.x - ux * trim, z: b.z - uz * trim };
+          }
+          dx = b.x - a.x;
+          dz = b.z - a.z;
+          length = Math.hypot(dx, dz);
+          if (length < 0.8) continue;
+        }
+        // Cap instance length — huge single boxes become floating wall artifacts.
+        const width = section.sidewalkWidth;
+        const maxLen = 18;
+        const pieces = Math.max(1, Math.ceil(length / maxLen));
+        for (let p = 0; p < pieces; p += 1) {
+          const t0 = p / pieces;
+          const t1 = (p + 1) / pieces;
+          const pa = { x: a.x + dx * t0, z: a.z + dz * t0 };
+          const pb = { x: a.x + dx * t1, z: a.z + dz * t1 };
+          const pdx = pb.x - pa.x;
+          const pdz = pb.z - pa.z;
+          const plen = Math.hypot(pdx, pdz);
+          if (plen < 0.4) continue;
+          const segment = { a: pa, b: pb, dx: pdx, dz: pdz, length: plen, width };
+          if ((Math.floor(pa.x + pa.z + road.id) % 3) === 0) brickSegments.push(segment);
+          else concreteSegments.push(segment);
+        }
       }
     }
   }
-  const group = new THREE.Group();
   const geometry = new THREE.BoxGeometry(1, 0.05, 1);
   const zAxis = new THREE.Vector3(0, 0, 1);
   const dummy = new THREE.Object3D();
@@ -2972,13 +4358,17 @@ function createSimpleSidewalkMeshes(roads) {
     for (let index = 0; index < segments.length; index += 1) {
       const segment = segments[index];
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
-      dummy.position.set(
-        (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.01,
-        (segment.a.z + segment.b.z) / 2,
-      );
-      dummy.quaternion.setFromUnitVectors(zAxis, direction);
-      dummy.scale.set(3.2, 1, segment.length);
+      const midX = (segment.a.x + segment.b.x) / 2;
+      const midZ = (segment.a.z + segment.b.z) / 2;
+      const groundY = elevationAt(midX, midZ);
+      if (!Number.isFinite(groundY) || !Number.isFinite(direction.x) || !Number.isFinite(direction.z)) continue;
+      dummy.position.set(midX, groundY + roadSurfaceLift() + 0.1, midZ);
+      if (direction.dot(zAxis) < -0.999) {
+        dummy.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+      } else {
+        dummy.quaternion.setFromUnitVectors(zAxis, direction);
+      }
+      dummy.scale.set(segment.width || 3.2, 1, segment.length);
       dummy.updateMatrix();
       mesh.setMatrixAt(index, dummy.matrix);
     }
@@ -2989,18 +4379,299 @@ function createSimpleSidewalkMeshes(roads) {
   };
   addSidewalkBatch(concreteSegments, sandboxTextureCache.sidewalk, 0xc8c2b8);
   addSidewalkBatch(brickSegments, sandboxTextureCache.brickSidewalk, 0xe8dcc8);
-  group.userData = { type: 'simple-sidewalks', segments: concreteSegments.length + brickSegments.length };
+  group.userData = { type: 'simple-sidewalks', segments: concreteSegments.length + brickSegments.length, mode: 'instances' };
+  return group;
+}
+
+/** Fill sidewalk corners at junctions so walk bands wrap block corners. */
+function createSidewalkCornerPads(roads, junctionNodes) {
+  const group = new THREE.Group();
+  group.name = 'Sidewalk corner pads';
+  if (!fullCityMode || !(junctionNodes instanceof Set) || !junctionNodes.size) {
+    group.userData = { type: 'sidewalk-corners', count: 0 };
+    return group;
+  }
+  const byNode = new Map();
+  for (const road of roads) {
+    if (!road) continue;
+    const section = streetCrossSection(road);
+    if (!section.hasSidewalk || section.sidewalkWidth < 0.4) continue;
+    const points = roadPoints(road);
+    const inner = section.asphaltHalf + (section.curbWidth || 0);
+    const outer = section.sidewalkOuter;
+    const extend = Math.min(section.asphaltHalf * 0.18, 1.4);
+    const asphaltHalf = section.asphaltHalf;
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const key = nodeKey(point);
+      if (!junctionNodes.has(key)) continue;
+      const neighbors = [];
+      if (i > 0) neighbors.push(points[i - 1]);
+      if (i < points.length - 1) neighbors.push(points[i + 1]);
+      if (!neighbors.length) continue;
+      const entry = byNode.get(key) || { point, arms: [] };
+      for (const neighbor of neighbors) {
+        const dx = neighbor.x - point.x;
+        const dz = neighbor.z - point.z;
+        const len = Math.hypot(dx, dz) || 1;
+        entry.arms.push({
+          ux: dx / len,
+          uz: dz / len,
+          angle: Math.atan2(dz, dx),
+          inner,
+          outer,
+          extend,
+          asphaltHalf,
+        });
+      }
+      byNode.set(key, entry);
+    }
+  }
+
+  const positions = [];
+  const indices = [];
+  let vertexOffset = 0;
+  let count = 0;
+  const lift = roadSurfaceLift() + 0.06;
+
+  const pushCornerQuad = (p00, p10, p01, p11) => {
+    const flatY = roadSurfaceY(
+      (p00.x + p10.x + p01.x + p11.x) * 0.25,
+      (p00.z + p10.z + p01.z + p11.z) * 0.25,
+    ) + 0.12;
+    positions.push(
+      p00.x, flatY, p00.z,
+      p10.x, flatY, p10.z,
+      p01.x, flatY, p01.z,
+      p11.x, flatY, p11.z,
+    );
+    indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+    vertexOffset += 4;
+    count += 1;
+  };
+
+  const pushCornerQuadOutsideAsphalt = (cx, cz, asphaltHalf, p00, p10, p01, p11) => {
+    const limit = asphaltHalf * 0.97;
+    const inside = (p) => Math.abs(p.x - cx) <= limit && Math.abs(p.z - cz) <= limit;
+    if (inside(p00) || inside(p10) || inside(p01) || inside(p11)) return;
+    pushCornerQuad(p00, p10, p01, p11);
+  };
+
+  for (const entry of byNode.values()) {
+    if (entry.arms.length < 2) continue;
+    const unique = [];
+    for (const arm of entry.arms) {
+      const key = `${Math.round(arm.ux * 12)},${Math.round(arm.uz * 12)}`;
+      const existing = unique.find((u) => u.key === key);
+      if (existing) {
+        existing.inner = Math.max(existing.inner, arm.inner);
+        existing.outer = Math.max(existing.outer, arm.outer);
+        existing.extend = Math.max(existing.extend, arm.extend);
+        existing.asphaltHalf = Math.max(existing.asphaltHalf || 0, arm.asphaltHalf);
+      } else {
+        unique.push({ ...arm, key });
+      }
+    }
+    if (unique.length < 2) continue;
+    unique.sort((a, b) => a.angle - b.angle);
+    const cx = entry.point.x;
+    const cz = entry.point.z;
+    const maxAsphalt = Math.max(...unique.map((arm) => arm.asphaltHalf || 0));
+    const ring = [...unique, { ...unique[0], angle: unique[0].angle + Math.PI * 2 }];
+    for (let i = 0; i < unique.length; i += 1) {
+      const a = ring[i];
+      const b = ring[i + 1];
+      let span = b.angle - a.angle;
+      if (span < 0) span += Math.PI * 2;
+      // Block corners (~35–115°). Skip through-road and wide sectors on asphalt.
+      if (span < 0.45 || span > 2.15) continue;
+
+      // Inward normals into the block sector (left of A, right of B in CCW order).
+      const nAx = -a.uz;
+      const nAz = a.ux;
+      const nBx = b.uz;
+      const nBz = -b.ux;
+      const innerA = a.inner;
+      const innerB = b.inner;
+      const outerA = a.outer;
+      const outerB = b.outer;
+      const extend = Math.max(a.extend, b.extend);
+
+      const innerCorner = {
+        x: cx + nAx * innerA + nBx * innerB,
+        z: cz + nAz * innerA + nBz * innerB,
+      };
+      const outerAlongA = {
+        x: cx + nAx * outerA + nBx * innerB,
+        z: cz + nAz * outerA + nBz * innerB,
+      };
+      const outerAlongB = {
+        x: cx + nAx * innerA + nBx * outerB,
+        z: cz + nAz * innerA + nBz * outerB,
+      };
+      const outerCorner = {
+        x: cx + nAx * outerA + nBx * outerB,
+        z: cz + nAz * outerA + nBz * outerB,
+      };
+
+      // Sector fill at the junction vertex.
+      pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt, innerCorner, outerAlongA, outerAlongB, outerCorner);
+
+      if (extend > 0.35) {
+        // Leg along arm A — bridges ribbon trim gap back toward the corridor.
+        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt,
+          { x: innerCorner.x - a.ux * extend, z: innerCorner.z - a.uz * extend },
+          { x: outerAlongA.x - a.ux * extend, z: outerAlongA.z - a.uz * extend },
+          innerCorner,
+          outerAlongA,
+        );
+        // Leg along arm B.
+        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt,
+          { x: innerCorner.x - b.ux * extend, z: innerCorner.z - b.uz * extend },
+          innerCorner,
+          { x: outerAlongB.x - b.ux * extend, z: outerAlongB.z - b.uz * extend },
+          outerAlongB,
+        );
+      }
+    }
+  }
+  if (!count) {
+    group.userData = { type: 'sidewalk-corners', count: 0 };
+    return group;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  const normals = new Float32Array(positions.length);
+  for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xd8d2c6,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Sidewalk corner pads';
+  mesh.renderOrder = 8;
+  group.add(mesh);
+  group.userData = { type: 'sidewalk-corners', count };
+  return group;
+}
+
+/** Fill the lot strip between sidewalk outer edge and building setback (hides teal gaps). */
+function createLotApronMeshes(roads, options = {}) {
+  const group = new THREE.Group();
+  group.name = 'Lot aprons';
+  if (!fullCityMode) {
+    group.userData = { type: 'lot-aprons', segments: 0 };
+    return group;
+  }
+  const sidewalkClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
+  const junctionNodes = options.junctionNodes instanceof Set ? options.junctionNodes : null;
+  const positions = [];
+  const indices = [];
+  let vertexOffset = 0;
+  let segmentCount = 0;
+  for (const road of roads) {
+    if (!sidewalkClasses.has(road.highway)) continue;
+    const section = streetCrossSection(road);
+    if (!section.hasSidewalk) continue;
+    const apronWidth = Math.max(1.2, Math.min(5.5, section.buildingRowOuter - section.sidewalkOuter + 1.2));
+    if (apronWidth < 0.7) continue;
+    const centerOffset = section.sidewalkOuter + apronWidth * 0.5;
+    const halfW = apronWidth * 0.5;
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+    const trim = junctionNodes ? Math.min(section.asphaltHalf + section.sidewalkWidth * 0.65, 11) : 0;
+    for (const sideSign of [1, -1]) {
+      const center = offsetPolyline(points, sideSign * centerOffset);
+      for (let i = 0; i < center.length - 1; i += 1) {
+        let a = center[i];
+        let b = center[i + 1];
+        let dx = b.x - a.x;
+        let dz = b.z - a.z;
+        let length = Math.hypot(dx, dz);
+        if (length < 0.6) continue;
+        if (trim > 0 && points[i] && points[i + 1]) {
+          const ux = dx / length;
+          const uz = dz / length;
+          if (junctionNodes.has(nodeKey(points[i]))) {
+            a = { x: a.x + ux * trim, z: a.z + uz * trim };
+          }
+          if (junctionNodes.has(nodeKey(points[i + 1]))) {
+            b = { x: b.x - ux * trim, z: b.z - uz * trim };
+          }
+          dx = b.x - a.x;
+          dz = b.z - a.z;
+          length = Math.hypot(dx, dz);
+          if (length < 1.0) continue;
+        }
+        const span = length || 1;
+        const nx = -dz / span;
+        const nz = dx / span;
+        const lift = roadSurfaceLift() + 0.02;
+        const a1 = { x: a.x + nx * halfW, z: a.z + nz * halfW };
+        const a2 = { x: a.x - nx * halfW, z: a.z - nz * halfW };
+        const b1 = { x: b.x + nx * halfW, z: b.z + nz * halfW };
+        const b2 = { x: b.x - nx * halfW, z: b.z - nz * halfW };
+        positions.push(
+          a1.x, elevationAt(a1.x, a1.z) + lift, a1.z,
+          a2.x, elevationAt(a2.x, a2.z) + lift, a2.z,
+          b1.x, elevationAt(b1.x, b1.z) + lift, b1.z,
+          b2.x, elevationAt(b2.x, b2.z) + lift, b2.z,
+        );
+        indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+        vertexOffset += 4;
+        segmentCount += 1;
+      }
+    }
+  }
+  if (positions.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    const normals = new Float32Array(positions.length);
+    for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    const material = new THREE.MeshBasicMaterial({
+      // Near-sidewalk concrete so the ROW reads continuous to the facade.
+      color: 0xc4bfb4,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'Lot apron ribbons';
+    mesh.renderOrder = 1;
+    group.add(mesh);
+  }
+  group.userData = { type: 'lot-aprons', segments: segmentCount };
   return group;
 }
 
 function createStreetCorridorPads(roads) {
+  // Full City already draws precise sidewalks from streetCrossSection — skip pads
+  // so they don't double-draw into parcels / asphalt.
+  if (fullCityMode) {
+    const empty = new THREE.Group();
+    empty.name = 'Street corridor sidewalk pads';
+    empty.userData = { type: 'street-corridor-pads', segments: 0, skipped: true };
+    return empty;
+  }
   const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
   const segments = [];
   for (const road of roads) {
     if (!corridorClasses.has(road.highway)) continue;
     const points = roadPoints(road);
-    const padOffset = roadHalfWidth(road) + 4.8;
-    const padWidth = 6.4;
+    const section = streetCrossSection(road);
+    const padOffset = section.hasSidewalk ? section.sidewalkCenter : roadHalfWidth(road) + 4.8;
+    const padWidth = section.hasSidewalk ? section.sidewalkWidth : 6.4;
     for (const offset of [padOffset, -padOffset]) {
       const centerline = offsetPolyline(points, offset);
       for (let i = 0; i < centerline.length - 1; i += 1) {
@@ -3039,7 +4710,7 @@ function createStreetCorridorPads(roads) {
       const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
       dummy.position.set(
         (segment.a.x + segment.b.x) / 2,
-        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.02,
+        elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + roadSurfaceLift() + 0.02,
         (segment.a.z + segment.b.z) / 2,
       );
       dummy.quaternion.setFromUnitVectors(zAxis, direction);
@@ -3063,9 +4734,11 @@ function createCorridorCurbs(roads) {
   const segments = [];
   for (const road of roads) {
     if (!corridorClasses.has(road.highway)) continue;
+    const section = streetCrossSection(road);
+    if (!section.hasCurb) continue;
     const points = roadPoints(road);
-    const half = roadHalfWidth(road);
-    for (const side of [half + 0.08, -(half + 0.08)]) {
+    const half = section.curbCenter;
+    for (const side of [half, -half]) {
       const centerline = offsetPolyline(points, side);
       for (let i = 0; i < centerline.length - 1; i += 1) {
         const a = centerline[i];
@@ -3074,7 +4747,22 @@ function createCorridorCurbs(roads) {
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
         if (length < 0.6) continue;
-        segments.push({ a, b, dx, dz, length });
+        const maxLen = 16;
+        const pieces = Math.max(1, Math.ceil(length / maxLen));
+        for (let p = 0; p < pieces; p += 1) {
+          const t0 = p / pieces;
+          const t1 = (p + 1) / pieces;
+          const pa = { x: a.x + dx * t0, z: a.z + dz * t0 };
+          const pb = { x: a.x + dx * t1, z: a.z + dz * t1 };
+          const pdx = pb.x - pa.x;
+          const pdz = pb.z - pa.z;
+          const plen = Math.hypot(pdx, pdz);
+          if (plen < 0.5) continue;
+          segments.push({
+            a: pa, b: pb, dx: pdx, dz: pdz, length: plen,
+            width: Math.max(0.14, section.curbWidth),
+          });
+        }
       }
     }
   }
@@ -3097,26 +4785,83 @@ function createCorridorCurbs(roads) {
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
-    dummy.position.set(
-      (segment.a.x + segment.b.x) / 2,
-      elevationAt((segment.a.x + segment.b.x) / 2, (segment.a.z + segment.b.z) / 2) + ROAD_SURFACE_LIFT + 0.07,
-      (segment.a.z + segment.b.z) / 2,
-    );
-    dummy.quaternion.setFromUnitVectors(zAxis, direction);
-    dummy.scale.set(0.22, 1, segment.length);
+    const midX = (segment.a.x + segment.b.x) / 2;
+    const midZ = (segment.a.z + segment.b.z) / 2;
+    const groundY = elevationAt(midX, midZ);
+    if (!Number.isFinite(groundY)) continue;
+    dummy.position.set(midX, groundY + roadSurfaceLift() + 0.12, midZ);
+    if (direction.dot(zAxis) < -0.999) {
+      dummy.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    } else {
+      dummy.quaternion.setFromUnitVectors(zAxis, direction);
+    }
+    dummy.scale.set(segment.width || 0.22, 1, segment.length);
     dummy.updateMatrix();
     mesh.setMatrixAt(index, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = !fullCityMode;
+  mesh.receiveShadow = !fullCityMode;
   group.add(mesh);
   group.userData = { type: 'corridor-curbs', segments: segments.length };
   return group;
 }
 
-function createCorridorCenterlines(roads) {
+function createCorridorCenterlines(roads, options = {}) {
   const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
+  const clearRadius = fullCityMode ? 26 : 17;
+  const clearRadiusSq = clearRadius * clearRadius;
+  // Skip dashes inside approach-hull junction zones so T/+ centers stay clean.
+  const nodeCounts = new Map();
+  for (const road of roads) {
+    if (!corridorClasses.has(road.highway)) continue;
+    const seen = new Set();
+    for (const point of roadPoints(road)) {
+      const key = nodeKey(point);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      nodeCounts.set(key, (nodeCounts.get(key) || 0) + 1);
+    }
+  }
+  const clearKeys = new Set();
+  const markClear = (jx, jz) => {
+    for (let dx = -clearRadius; dx <= clearRadius; dx += 1) {
+      for (let dz = -clearRadius; dz <= clearRadius; dz += 1) {
+        if (dx * dx + dz * dz > clearRadiusSq) continue;
+        clearKeys.add(`${jx + dx},${jz + dz}`);
+      }
+    }
+  };
+  const junctionNodes = options.junctionNodes instanceof Set ? options.junctionNodes : null;
+  if (junctionNodes?.size) {
+    for (const key of junctionNodes) {
+      const [jx, jz] = key.split(',').map(Number);
+      markClear(jx, jz);
+    }
+  }
+  for (const [key, count] of nodeCounts) {
+    if (count < 2) continue;
+    const [jx, jz] = key.split(',').map(Number);
+    markClear(jx, jz);
+  }
+  // Also clear around T-stubs (endpoint on another centerline).
+  for (const road of roads) {
+    if (!corridorClasses.has(road.highway)) continue;
+    for (const end of roadEndpoints(road)) {
+      const candidates = worldPartition
+        ? queryPartitionRoads(worldPartition, end, STREAM.nearThreeRoadsConnectRadius + 6)
+        : roads;
+      for (const other of candidates) {
+        if (other.id === road.id) continue;
+        const hit = distanceToRoadCenterline(other, end);
+        if (!hit || hit.distance > STREAM.nearThreeRoadsConnectRadius) continue;
+        if (hit.t <= 0.04 || hit.t >= 0.96) continue;
+        const [jx, jz] = nodeKey(hit.point).split(',').map(Number);
+        markClear(jx, jz);
+        break;
+      }
+    }
+  }
   const dashes = [];
   for (const road of roads) {
     if (!corridorClasses.has(road.highway)) continue;
@@ -3125,7 +4870,9 @@ function createCorridorCenterlines(roads) {
     for (let i = 0; i < points.length - 1; i += 1) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
-    const count = Math.min(80, Math.floor(length / 5.5));
+    const dashStep = fullCityMode ? 7.5 : 5.5;
+    const maxDashes = fullCityMode ? 48 : 80;
+    const count = Math.min(maxDashes, Math.floor(length / dashStep));
     for (let c = 0; c < count; c += 1) {
       const target = ((c + 0.5) / count) * length;
       let walked = 0;
@@ -3137,9 +4884,9 @@ function createCorridorCenterlines(roads) {
           const t = segLength > 0 ? (target - walked) / segLength : 0;
           const x = a.x + (b.x - a.x) * t;
           const z = a.z + (b.z - a.z) * t;
+          if (clearKeys.has(nodeKey({ x, z }))) break;
           const dx = b.x - a.x;
           const dz = b.z - a.z;
-          const len = Math.hypot(dx, dz) || 1;
           dashes.push({ x, z, heading: Math.atan2(dx, dz), length: 2.4 });
           break;
         }
@@ -3154,21 +4901,30 @@ function createCorridorCenterlines(roads) {
     return group;
   }
   const geometry = new THREE.BoxGeometry(1, 0.04, 1);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xf0ece0,
-    roughness: 0.55,
-    metalness: 0.02,
-    polygonOffset: true,
-    polygonOffsetFactor: -3,
-    polygonOffsetUnits: -3,
-  });
+  const material = fullCityMode
+    ? new THREE.MeshBasicMaterial({
+      color: 0xf0ece0,
+      toneMapped: false,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: 0xf0ece0,
+      roughness: 0.55,
+      metalness: 0.02,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    });
   const dummy = new THREE.Object3D();
   const mesh = new THREE.InstancedMesh(geometry, material, dashes.length);
   for (let index = 0; index < dashes.length; index += 1) {
     const dash = dashes[index];
     dummy.position.set(
       dash.x,
-      elevationAt(dash.x, dash.z) + ROAD_SURFACE_LIFT + 0.05,
+      elevationAt(dash.x, dash.z) + roadSurfaceLift() + (fullCityMode ? 0.08 : 0.05),
       dash.z,
     );
     dummy.rotation.set(0, dash.heading, 0);
@@ -3177,6 +4933,7 @@ function createCorridorCenterlines(roads) {
     mesh.setMatrixAt(index, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
+  mesh.renderOrder = fullCityMode ? 6 : 0;
   group.add(mesh);
   group.userData = { type: 'corridor-centerlines', dashes: dashes.length };
   return group;
@@ -3239,7 +4996,7 @@ function createBuildingFrontagePads(buildings) {
       const pad = batch[index];
       dummy.position.set(
         pad.cx,
-        elevationAt(pad.cx, pad.cz) + ROAD_SURFACE_LIFT - 0.04,
+        elevationAt(pad.cx, pad.cz) + roadSurfaceLift() - 0.04,
         pad.cz,
       );
       dummy.rotation.set(0, ((pad.cx * 17 + pad.cz * 31) % 628) / 628 * 0.08, 0);
@@ -3258,24 +5015,146 @@ function createBuildingFrontagePads(buildings) {
 }
 
 function queueDetailRoadChunk(focus) {
-  if (!fullCityMode || !cityData?.detailRoads?.length) return;
-  const radius = 640;
+  if (!fullCityMode || !cityData?.detailRoads?.length || !detailRoadStreamGroup) return;
+  if (detailRoadStreamGroup.children.length >= STREAM.maxDetailChunks) return;
+  const nearby = worldPartition
+    ? queryPartitionRoads(worldPartition, focus, STREAM.roadRadius)
+    : (cityData.detailRoads || []);
   const candidates = [];
-  for (const road of cityData.detailRoads) {
+  for (const road of nearby) {
     if (detailRoadCompiledIds.has(road.id)) continue;
-    const points = roadPoints(road);
-    let nearestDistance = Infinity;
-    for (const point of points) {
-      const distance = Math.hypot(point.x - focus.x, point.z - focus.z);
-      if (distance < nearestDistance) nearestDistance = distance;
-    }
-    if (nearestDistance <= radius && points.some(pointInRegion)) candidates.push({ road, nearestDistance });
+    const nearestDistance = nearestRoadDistance(road, focus);
+    if (nearestDistance <= STREAM.roadRadius) candidates.push({ road, nearestDistance });
   }
   candidates.sort((a, b) => a.nearestDistance - b.nearestDistance);
-  const chunk = candidates.slice(0, 260).map((entry) => entry.road);
-  if (chunk.length < 24) return;
+  const chunk = candidates.slice(0, STREAM.detailChunkSize).map((entry) => entry.road);
+  if (chunk.length < 8) return;
   detailRoadQueue.push(chunk);
   detailRoadStreamStats.pendingRoads += chunk.length;
+}
+
+function queueSimpleRoadChunk(focus) {
+  if (!fullCityMode || !cityData?.roads?.length || !simpleRoadStreamGroup) return;
+  if (simpleRoadStreamGroup.children.length >= STREAM.maxSimpleChunks) return;
+  // Full City never compiles three-roads detail meshes — every nearby OSM way
+  // uses the cheap simple asphalt strip, including former "detail" roads.
+  const nearby = worldPartition
+    ? queryPartitionRoads(worldPartition, focus, STREAM.roadRadius)
+    : cityData.roads;
+  const candidates = [];
+  for (const road of nearby) {
+    if (simpleRoadCompiledIds.has(road.id) || detailRoadCompiledIds.has(road.id)) continue;
+    const nearestDistance = nearestRoadDistance(road, focus);
+    if (nearestDistance <= STREAM.roadRadius) candidates.push({ road, nearestDistance });
+  }
+  candidates.sort((a, b) => a.nearestDistance - b.nearestDistance);
+  const chunk = candidates.slice(0, STREAM.simpleChunkSize).map((entry) => entry.road);
+  if (chunk.length < 6) return;
+  const group = createSimpleRoadMeshes(chunk);
+  const sidewalks = createSimpleSidewalkMeshes(chunk);
+  const bundle = new THREE.Group();
+  bundle.name = `Simple road chunk ${simpleRoadStreamGroup.children.length + 1}`;
+  bundle.add(group, sidewalks);
+  bundle.userData = {
+    type: 'simple-road-chunk',
+    roadIds: chunk.map((road) => road.id),
+    focus: { ...focus },
+  };
+  for (const road of chunk) simpleRoadCompiledIds.add(road.id);
+  simpleRoadStreamGroup.add(bundle);
+  simpleRoadSegments += group.userData.segments || 0;
+  simpleSidewalkSegments += sidewalks.userData?.segments || roadSegmentCount(chunk);
+  detailRoadStreamStats.simpleChunks = simpleRoadStreamGroup.children.length;
+}
+
+function queueBuildingChunk(focus) {
+  if (!fullCityMode || !buildingStreamGroup || !streamBuildingPool?.length) return;
+  if (detailBuildingMeshes.length >= STREAM.maxDetailBuildings) return;
+  const nearby = worldPartition
+    ? queryPartitionBuildings(worldPartition, focus, STREAM.buildingRadius)
+    : streamBuildingPool;
+  const candidates = [];
+  for (const building of nearby) {
+    if (streamedBuildingIds.has(building.id)) continue;
+    const [x, z] = building.centroid || [0, 0];
+    const distance = Math.hypot(x - focus.x, z - focus.z);
+    if (distance <= STREAM.buildingRadius) candidates.push({ building, distance });
+  }
+  candidates.sort((a, b) => a.distance - b.distance);
+  const chunk = candidates.slice(0, STREAM.buildingChunkSize).map((entry) => entry.building);
+  if (!chunk.length) return;
+  // Cheap LOD: instanced boxes only. ExtrudeGeometry kills FPS at city scale.
+  const { mesh } = createCoarseBuildings(chunk);
+  if (mesh) {
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      type: 'streamed-building-chunk',
+      buildingIds: chunk.map((building) => building.id),
+      streamFocus: { ...focus },
+    };
+    buildingStreamGroup.add(mesh);
+    detailBuildingMeshes.push(mesh);
+  }
+  for (const building of chunk) streamedBuildingIds.add(building.id);
+  detailRoadStreamStats.buildings = streamedBuildingIds.size;
+}
+
+function unloadFarStreamChunks(focus) {
+  const unloadRoad = STREAM.roadRadius * STREAM.unloadScale;
+  const unloadBuilding = STREAM.buildingRadius * STREAM.unloadScale;
+  if (detailRoadStreamGroup) {
+    for (let index = detailRoadStreamGroup.children.length - 1; index >= 0; index -= 1) {
+      const child = detailRoadStreamGroup.children[index];
+      const ids = child.userData?.roadIds || [];
+      if (!ids.length) continue;
+      let nearest = Infinity;
+      for (const id of ids) {
+        const road = streamRoadById.get(id);
+        if (!road) continue;
+        nearest = Math.min(nearest, nearestRoadDistance(road, focus));
+      }
+      if (nearest > unloadRoad) {
+        for (const id of ids) detailRoadCompiledIds.delete(id);
+        detailRoadStreamGroup.remove(child);
+        disposeRoot(child);
+        detailRoadStreamStats.compiledRoads = Math.max(0, detailRoadStreamStats.compiledRoads - ids.length);
+      }
+    }
+  }
+  if (simpleRoadStreamGroup) {
+    for (let index = simpleRoadStreamGroup.children.length - 1; index >= 0; index -= 1) {
+      const child = simpleRoadStreamGroup.children[index];
+      const ids = child.userData?.roadIds || [];
+      let nearest = Infinity;
+      for (const id of ids) {
+        const road = streamRoadById.get(id);
+        if (!road) continue;
+        nearest = Math.min(nearest, nearestRoadDistance(road, focus));
+      }
+      if (nearest > unloadRoad) {
+        for (const id of ids) simpleRoadCompiledIds.delete(id);
+        simpleRoadStreamGroup.remove(child);
+        disposeRoot(child);
+      }
+    }
+  }
+  if (buildingStreamGroup) {
+    for (let index = detailBuildingMeshes.length - 1; index >= 0; index -= 1) {
+      const mesh = detailBuildingMeshes[index];
+      const anchor = mesh.userData?.streamFocus;
+      if (!anchor) continue;
+      const distance = Math.hypot(anchor.x - focus.x, anchor.z - focus.z);
+      if (distance <= unloadBuilding) continue;
+      const buildingId = mesh.userData.buildingId;
+      const buildingIds = mesh.userData.buildingIds || [];
+      buildingStreamGroup.remove(mesh);
+      disposeRoot(mesh);
+      detailBuildingMeshes.splice(index, 1);
+      if (buildingId != null) streamedBuildingIds.delete(buildingId);
+      for (const id of buildingIds) streamedBuildingIds.delete(id);
+      detailRoadStreamStats.buildings = streamedBuildingIds.size;
+    }
+  }
 }
 
 async function loadNextDetailRoadChunk() {
@@ -3285,6 +5164,16 @@ async function loadNextDetailRoadChunk() {
   try {
     const { compilation } = compileSafely(chunk);
     const meshes = createRoadMeshes(compilation);
+    if (!meshes) {
+      console.warn('Detail road chunk mesh skipped');
+      detailRoadStreamStats.pendingRoads -= chunk.length;
+      return;
+    }
+    meshes.userData = {
+      ...(meshes.userData || {}),
+      type: 'detail-road-chunk',
+      roadIds: chunk.map((road) => road.id),
+    };
     detailRoadStreamGroup?.add(meshes);
     for (const road of chunk) detailRoadCompiledIds.add(road.id);
     detailRoadStreamStats.loadedChunks += 1;
@@ -3299,11 +5188,863 @@ async function loadNextDetailRoadChunk() {
 }
 
 function updateRoadStreaming(focus) {
-  if (!fullCityMode || !detailRoadStreamGroup) return;
-  if (!detailRoadQueue.length) queueDetailRoadChunk(focus);
-  if (!roadStreamingInFlight && detailRoadQueue.length) {
-    loadNextDetailRoadChunk();
+  if (!fullCityMode) return;
+  streamFrameCounter += 1;
+  if (streamFrameCounter % STREAM.streamEveryFrames !== 0) return;
+  streamFocusPoint = focus;
+  updateNearFieldFidelity(focus);
+}
+
+function ensureNearFieldGroups() {
+  if (nearFieldGroup || !cityRoot) return;
+  nearFieldGroup = new THREE.Group();
+  nearFieldGroup.name = 'Near-field fidelity';
+  cityRoot.add(nearFieldGroup);
+  nearFacadeGroup = new THREE.Group();
+  nearFacadeGroup.name = 'Near windowed facades';
+  nearStreetscapeGroup = new THREE.Group();
+  nearStreetscapeGroup.name = 'Near streetscape';
+  nearThreeRoadsGroup = new THREE.Group();
+  nearThreeRoadsGroup.name = 'Near three-roads lanes';
+  nearFieldGroup.add(nearThreeRoadsGroup, nearStreetscapeGroup, nearFacadeGroup);
+}
+
+function clearNearStreetscape() {
+  if (!nearStreetscapeGroup) return;
+  for (const signal of nearSignalRefs) {
+    const index = signalGroups.indexOf(signal);
+    if (index >= 0) signalGroups.splice(index, 1);
   }
+  nearSignalRefs = [];
+  while (nearStreetscapeGroup.children.length) {
+    const child = nearStreetscapeGroup.children[0];
+    nearStreetscapeGroup.remove(child);
+    disposeRoot(child);
+  }
+}
+
+function buildNearStreetTreeGroup(roads, maxTrees) {
+  const group = new THREE.Group();
+  group.name = 'Near street trees';
+  const positions = [];
+  const chance = {
+    primary: 0.75, secondary: 0.9, tertiary: 1, residential: 1, living_street: 1, service: 0.45,
+  };
+  for (const road of roads) {
+    if (!chance[road.highway]) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    const spacing = road.highway === 'primary' || road.highway === 'secondary' ? 18 : 22;
+    const count = Math.min(28, Math.floor(length / spacing));
+    for (let c = 0; c < count && positions.length < maxTrees; c += 1) {
+      const target = ((c + 0.45) / Math.max(1, count)) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength < target) {
+          walked += segLength;
+          continue;
+        }
+        const t = segLength > 0 ? (target - walked) / segLength : 0;
+        const x = a.x + (b.x - a.x) * t;
+        const z = a.z + (b.z - a.z) * t;
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const side = c % 2 === 0 ? 1 : -1;
+        const section = streetCrossSection(road);
+        const edgeOffset = section.hasSidewalk
+          ? section.sidewalkOuter - section.sidewalkWidth * 0.25
+          : section.asphaltHalf + 0.8;
+        positions.push({
+          x: x - (dz / len) * side * edgeOffset,
+          z: z + (dx / len) * side * edgeOffset,
+          scale: 0.78 + ((c * 17) % 40) / 100,
+        });
+        break;
+      }
+    }
+  }
+  if (!positions.length) return group;
+  const parts = getTreePartGeometries();
+  const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x6a4a33 });
+  const canopyMaterial = new THREE.MeshLambertMaterial({ color: 0x4f7d4f });
+  const trunks = new THREE.InstancedMesh(parts.trunk, trunkMaterial, positions.length);
+  const canopies = new THREE.InstancedMesh(parts.canopy, canopyMaterial, positions.length);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  for (let i = 0; i < positions.length; i += 1) {
+    const position = positions[i];
+    const ground = elevationAt(position.x, position.z);
+    const rotY = ((i * 17) % 360) * (Math.PI / 180);
+    dummy.position.set(position.x, ground + 0.82, position.z);
+    dummy.scale.set(position.scale, position.scale, position.scale);
+    dummy.rotation.set(0, rotY, 0);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(position.x, ground + 2.75, position.z);
+    dummy.scale.set(position.scale * 1.05, position.scale, position.scale * 1.05);
+    dummy.updateMatrix();
+    canopies.setMatrixAt(i, dummy.matrix);
+    color.setHSL(0.28 + (i % 5) * 0.012, 0.38, 0.3 + (i % 4) * 0.04);
+    canopies.setColorAt(i, color);
+  }
+  trunks.castShadow = false;
+  canopies.castShadow = false;
+  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+  group.add(trunks, canopies);
+  group.userData.treeCount = positions.length;
+  return group;
+}
+
+function rebuildNearStreetscape(focus) {
+  if (!nearStreetscapeGroup) return;
+  clearNearStreetscape();
+  const roads = (worldPartition
+    ? queryPartitionRoads(worldPartition, focus, STREAM.nearRadius)
+    : [])
+    .slice(0, STREAM.nearRoadMax);
+  nearFieldStats.roads = roads.length;
+  if (roads.length) {
+    // Full City draws sidewalks city-wide. Skip near-field curb/sidewalk/centerline
+    // overlays — they stack, flip into floating beams, and scribble junctions.
+    if (!fullCityMode) {
+      nearStreetscapeGroup.add(createSimpleSidewalkMeshes(roads));
+      nearStreetscapeGroup.add(createStreetCorridorPads(roads));
+      nearStreetscapeGroup.add(createCorridorCurbs(roads));
+      nearStreetscapeGroup.add(createCorridorCenterlines(roads));
+    }
+    const trees = buildNearStreetTreeGroup(roads, STREAM.nearTreeMax);
+    nearStreetscapeGroup.add(trees);
+    nearFieldStats.trees = trees.userData.treeCount || 0;
+  } else {
+    nearFieldStats.trees = 0;
+  }
+
+  const signals = (cityData.signals || [])
+    .filter(([x, z]) => Math.hypot(x - focus.x, z - focus.z) <= STREAM.nearRadius)
+    .slice(0, STREAM.nearSignalMax);
+  nearFieldStats.signals = signals.length;
+  for (let i = 0; i < signals.length; i += 1) {
+    const group = createSignalGroup(signals[i], i);
+    group.userData.nearField = true;
+    nearStreetscapeGroup.add(group);
+    signalGroups.push(group);
+    nearSignalRefs.push(group);
+  }
+  if (signals.length && roads.length && !fullCityMode) {
+    nearStreetscapeGroup.add(createCrosswalks(signals, roads));
+  }
+}
+
+function unloadFarNearFacades(focus) {
+  const limit = STREAM.nearRadius * STREAM.nearUnloadScale;
+  for (const [id, mesh] of [...nearFacadeMeshes.entries()]) {
+    const anchor = mesh.userData.streamFocus;
+    const [cx, cz] = mesh.userData.building?.centroid || [anchor?.x, anchor?.z];
+    const x = anchor?.x ?? cx;
+    const z = anchor?.z ?? cz;
+    if (x == null || Math.hypot(x - focus.x, z - focus.z) <= limit) continue;
+    nearFacadeGroup.remove(mesh);
+    disposeRoot(mesh);
+    nearFacadeMeshes.delete(id);
+    nearFacadeIds.delete(id);
+  }
+  nearFacadeQueue = nearFacadeQueue.filter((building) => {
+    const [x, z] = building.centroid || [building.points[0], building.points[1]];
+    return Math.hypot(x - focus.x, z - focus.z) <= limit;
+  });
+  nearFieldStats.facades = nearFacadeIds.size;
+}
+
+function queueNearFacades(focus) {
+  if (!worldPartition || nearFacadeIds.size >= STREAM.nearFacadeMax) return;
+  const candidates = queryPartitionBuildings(worldPartition, focus, STREAM.nearRadius)
+    .filter((building) => building?.points && building.points.length >= 6 && !nearFacadeIds.has(building.id))
+    .map((building) => {
+      const [x, z] = building.centroid || [building.points[0], building.points[1]];
+      return { building, distance: Math.hypot(x - focus.x, z - focus.z) };
+    })
+    .sort((a, b) => a.distance - b.distance);
+  const queued = new Set(nearFacadeQueue.map((building) => building.id));
+  for (const entry of candidates) {
+    if (nearFacadeIds.size + nearFacadeQueue.length >= STREAM.nearFacadeMax) break;
+    if (queued.has(entry.building.id)) continue;
+    nearFacadeQueue.push(entry.building);
+    queued.add(entry.building.id);
+    if (nearFacadeQueue.length >= 20) break;
+  }
+}
+
+function pumpNearFacades() {
+  let built = 0;
+  while (built < STREAM.nearFacadeBudgetPerTick && nearFacadeQueue.length && nearFacadeIds.size < STREAM.nearFacadeMax) {
+    const building = nearFacadeQueue.shift();
+    if (!building || nearFacadeIds.has(building.id)) continue;
+    const mesh = createDetailBuildingMesh(building, buildingGroundY(building));
+    if (!mesh) continue;
+    mesh.userData.nearFacade = true;
+    mesh.userData.buildingId = building.id;
+    mesh.userData.streamFocus = {
+      x: building.centroid?.[0] ?? building.points[0],
+      z: building.centroid?.[1] ?? building.points[1],
+    };
+    nearFacadeGroup.add(mesh);
+    nearFacadeIds.add(building.id);
+    nearFacadeMeshes.set(building.id, mesh);
+    built += 1;
+  }
+  nearFieldStats.facades = nearFacadeIds.size;
+}
+
+function updateNearFieldFidelity(focus) {
+  if (!fullCityMode || !cityWideReady || !worldPartition) return;
+  ensureNearFieldGroups();
+  unloadFarNearFacades(focus);
+  unloadFarNearThreeRoads(focus);
+  queueNearFacades(focus);
+  pumpNearFacades();
+  queueNearThreeRoads(focus);
+  if (!nearThreeRoadsInFlight) loadNearThreeRoadsChunk();
+
+  const cell = partitionCellKey(focus.x, focus.z, STREAM.nearCellSize);
+  if (cell !== nearStreetscapeCell) {
+    nearStreetscapeCell = cell;
+    rebuildNearStreetscape(focus);
+  }
+  updateNearbyDoorways(focus);
+}
+
+function unloadFarNearThreeRoads(focus) {
+  if (!nearThreeRoadsGroup) return;
+  const limit = STREAM.nearThreeRoadsRadius * STREAM.nearThreeRoadsUnloadScale;
+  for (let index = nearThreeRoadsGroup.children.length - 1; index >= 0; index -= 1) {
+    const child = nearThreeRoadsGroup.children[index];
+    const ids = child.userData?.roadIds || [];
+    let nearest = Infinity;
+    for (const id of ids) {
+      const road = streamRoadById.get(id);
+      if (!road) continue;
+      nearest = Math.min(nearest, nearestRoadDistance(road, focus));
+    }
+    if (nearest <= limit) continue;
+    for (const id of ids) {
+      nearThreeRoadsIds.delete(id);
+      detailRoadCompiledIds.delete(id);
+    }
+    nearThreeRoadsGroup.remove(child);
+    disposeRoot(child);
+  }
+  nearThreeRoadsQueue = nearThreeRoadsQueue.filter((chunk) => {
+    const keep = chunk.some((road) => nearestRoadDistance(road, focus) <= limit);
+    if (!keep) {
+      for (const road of chunk) {
+        // queued ids are only reserved after compile; nothing to clear
+      }
+    }
+    return keep;
+  });
+  nearFieldStats.threeRoadsChunks = nearThreeRoadsGroup.children.length;
+  nearFieldStats.threeRoads = nearThreeRoadsIds.size;
+}
+
+function roadEndpoints(road) {
+  const points = roadPoints(road);
+  if (!points.length) return [];
+  if (points.length === 1) return [points[0]];
+  return [points[0], points[points.length - 1]];
+}
+
+function roadsShareJunction(a, b, radius = STREAM.nearThreeRoadsConnectRadius) {
+  // Shared OSM node (exact + / T). Prefer this over loose proximity.
+  const pointsA = roadPoints(a);
+  const pointsB = roadPoints(b);
+  const keysB = new Set(pointsB.map((point) => nodeKey(point)));
+  for (const point of pointsA) {
+    if (keysB.has(nodeKey(point))) return true;
+  }
+  // T-stub: endpoint of one way lands on the other centerline (not merely near a vertex).
+  for (const end of roadEndpoints(a)) {
+    const hit = distanceToRoadCenterline(b, end);
+    if (hit && hit.distance <= radius && hit.t > 0.04 && hit.t < 0.96) return true;
+  }
+  for (const end of roadEndpoints(b)) {
+    const hit = distanceToRoadCenterline(a, end);
+    if (hit && hit.distance <= radius && hit.t > 0.04 && hit.t < 0.96) return true;
+  }
+  return false;
+}
+
+/**
+ * Grow a seed set with true junction partners only — do not invent a 4th arm on a T.
+ * Skip already-compiled arms so chunks stay small/stable (remesh churn flipped T↔+).
+ */
+function expandRoadsForCrossroads(seedRoads, focus) {
+  const chosen = new Map();
+  for (const road of seedRoads) chosen.set(road.id, road);
+  const maxWays = STREAM.nearThreeRoadsMaxWays;
+  let grew = true;
+  let guard = 0;
+  while (grew && chosen.size < maxWays && guard < 5) {
+    grew = false;
+    guard += 1;
+    const current = [...chosen.values()];
+    for (const seed of current) {
+      if (chosen.size >= maxWays) break;
+      const probes = [...roadEndpoints(seed)];
+      // Also probe shared-looking interior vertices near the player.
+      for (const point of roadPoints(seed)) {
+        if (Math.hypot(point.x - focus.x, point.z - focus.z) > STREAM.nearThreeRoadsRadius) continue;
+        probes.push(point);
+      }
+      for (const probe of probes) {
+        if (chosen.size >= maxWays) break;
+        if (Math.hypot(probe.x - focus.x, probe.z - focus.z) > STREAM.nearThreeRoadsRadius * 1.15) continue;
+        const candidates = queryPartitionRoads(worldPartition, probe, 28)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'))
+          .filter((road) => !chosen.has(road.id))
+          .filter((road) => !nearThreeRoadsIds.has(road.id) && !detailRoadCompiledIds.has(road.id));
+        for (const road of candidates) {
+          if (!roadsShareJunction(seed, road)) continue;
+          if (nearestRoadDistance(road, focus) > STREAM.nearThreeRoadsRadius * 1.15) continue;
+          chosen.set(road.id, road);
+          grew = true;
+          if (chosen.size >= maxWays) break;
+        }
+      }
+    }
+  }
+  return [...chosen.values()];
+}
+
+function queueNearThreeRoads(focus) {
+  // Near three-roads uses width-locked asphalt-only templates so ribbons match
+  // city-wide simple strips (sidewalks stay on the city-wide layer).
+  if (!nearThreeRoadsGroup || !worldPartition) return;
+  if (nearThreeRoadsGroup.children.length >= STREAM.maxNearThreeRoadsChunks) return;
+  if (nearThreeRoadsQueue.length) return;
+  const nearby = queryPartitionRoads(worldPartition, focus, STREAM.nearThreeRoadsRadius)
+    .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'))
+    .filter((road) => !nearThreeRoadsIds.has(road.id) && !detailRoadCompiledIds.has(road.id))
+    .map((road) => ({ road, distance: nearestRoadDistance(road, focus) }))
+    .filter((entry) => entry.distance <= STREAM.nearThreeRoadsRadius)
+    .sort((a, b) => a.distance - b.distance);
+  const seeds = nearby.slice(0, STREAM.nearThreeRoadsChunkSize).map((entry) => entry.road);
+  if (seeds.length < STREAM.nearThreeRoadsMinChunk) return;
+  const chunk = expandRoadsForCrossroads(seeds, focus);
+  if (chunk.length < STREAM.nearThreeRoadsMinChunk) return;
+  nearThreeRoadsQueue.push(chunk);
+}
+
+async function loadNearThreeRoadsChunk() {
+  if (nearThreeRoadsInFlight || !nearThreeRoadsQueue.length || !nearThreeRoadsGroup) return;
+  if (nearThreeRoadsGroup.children.length >= STREAM.maxNearThreeRoadsChunks) {
+    nearThreeRoadsQueue.length = 0;
+    return;
+  }
+  nearThreeRoadsInFlight = true;
+  const chunk = nearThreeRoadsQueue.shift();
+  const sourceIds = chunk.map((road) => road.id);
+  try {
+    // Yield so compile/mesh hitch doesn't freeze the drive loop.
+    await tick();
+    const { compilation } = compileSafely(chunk);
+    await tick();
+    const junctionCount = compilation?.network?.junctions?.length || 0;
+    let meshes = createRoadMeshes(compilation, { cheap: true });
+    if (fullCityMode) {
+      // City-wide approach-hull pads already seal crossings. Only accept a clean
+      // three-roads mesh with junction patches — never stack a second pad layer.
+      if (!meshes?.userData?.hasJunctionPatches) {
+        if (meshes) disposeRoot(meshes);
+        meshes = null;
+      } else {
+        // Tint all near three-roads surfaces to match city-wide charcoal asphalt.
+        meshes.traverse((child) => {
+          if (!child.isMesh || !child.material) return;
+          if (child.material.name?.includes('marking')) return;
+          if (child.material.isMeshBasicMaterial && child.material.color) {
+            child.material.color.setHex(0x404034);
+          }
+        });
+      }
+    } else if (!meshes) {
+      // Keep approach-hull pads so crossings stay continuous even when three-roads
+      // refuses a torn portal mesh.
+      meshes = new THREE.Group();
+      meshes.userData = { type: 'roads', cheap: true, padsOnly: true };
+      const pads = createSimpleJunctionPads(chunk);
+      if (pads.userData?.count) {
+        pads.position.y += 0.02;
+        meshes.add(pads);
+      }
+    } else if (!meshes.userData?.hasJunctionPatches) {
+      // Mesh exists but junctions are open — seal with approach-hull pads only.
+      const pads = createSimpleJunctionPads(chunk);
+      if (pads.userData?.count) {
+        pads.position.y += 0.02;
+        meshes.add(pads);
+      }
+    }
+    if (!meshes) return;
+    meshes.name = `Near three-roads · ${sourceIds.length} ways · ${junctionCount} junctions`;
+    meshes.userData = {
+      ...(meshes.userData || {}),
+      type: 'near-three-roads-chunk',
+      roadIds: sourceIds,
+      junctionCount,
+      focus: { ...streamFocusPoint },
+    };
+    nearThreeRoadsGroup.add(meshes);
+    for (const id of sourceIds) {
+      nearThreeRoadsIds.add(id);
+      detailRoadCompiledIds.add(id);
+    }
+    detailRoadStreamStats.loadedChunks += 1;
+    detailRoadStreamStats.compiledRoads += sourceIds.length;
+    nearFieldStats.threeRoadsChunks = nearThreeRoadsGroup.children.length;
+    nearFieldStats.threeRoads = nearThreeRoadsIds.size;
+    nearFieldStats.threeRoadsJunctions = (nearFieldStats.threeRoadsJunctions || 0) + junctionCount;
+  } catch (error) {
+    console.warn('Near three-roads chunk skipped', error.message);
+  } finally {
+    nearThreeRoadsInFlight = false;
+  }
+}
+
+function resetNearFieldState() {
+  if (nearFieldGroup && cityRoot) {
+    cityRoot.remove(nearFieldGroup);
+    disposeRoot(nearFieldGroup);
+  }
+  nearFieldGroup = null;
+  nearFacadeGroup = null;
+  nearStreetscapeGroup = null;
+  nearThreeRoadsGroup = null;
+  nearFacadeIds = new Set();
+  nearFacadeMeshes = new Map();
+  nearFacadeQueue = [];
+  nearStreetscapeCell = '';
+  nearSignalRefs = [];
+  nearFieldStats = { facades: 0, roads: 0, signals: 0, trees: 0, threeRoads: 0, threeRoadsChunks: 0, threeRoadsJunctions: 0 };
+  nearThreeRoadsIds = new Set();
+  nearThreeRoadsQueue = [];
+  nearThreeRoadsInFlight = false;
+  detailRoadCompiledIds = new Set();
+  detailRoadQueue = [];
+}
+
+async function buildCityWideTrafficRoads(allRoads) {
+  // Kept for callers; Full City prefers street-by-street via buildCityStreetByStreet.
+  cityWideRoadGroup = new THREE.Group();
+  cityWideRoadGroup.name = 'City-wide SF traffic roads';
+  cityRoot.add(cityWideRoadGroup);
+  const batchSize = STREAM.roadBuildBatch;
+  let segments = 0;
+  for (let i = 0; i < allRoads.length; i += batchSize) {
+    const batch = allRoads.slice(i, i + batchSize);
+    const mesh = createSimpleRoadMeshes(batch);
+    cityWideRoadGroup.add(mesh);
+    segments += mesh.userData.segments || 0;
+    simpleRoadSegments = segments;
+    if ((i / batchSize) % 3 === 0 || i + batchSize >= allRoads.length) {
+      const done = Math.min(allRoads.length, i + batchSize);
+      setBuildProgress(
+        'ROADS',
+        `Building entire SF traffic network ${formatNumber(done)} / ${formatNumber(allRoads.length)} ways…`,
+        0.42 + 0.28 * (done / Math.max(1, allRoads.length)),
+      );
+      await tick();
+    }
+  }
+  roadMeshes = cityWideRoadGroup;
+  return segments;
+}
+
+function groupRoadsIntoStreets(roads) {
+  const byName = new Map();
+  for (const road of roads) {
+    const rawName = (road.name || '').trim();
+    // Named streets stay coherent; unnamed ways group into ~block-sized cells.
+    const key = rawName
+      || `block:${Math.floor((road.points?.[0] || 0) / STREAM.cellSize)}:${Math.floor((road.points?.[1] || 0) / STREAM.cellSize)}`;
+    const list = byName.get(key) || [];
+    list.push(road);
+    byName.set(key, list);
+  }
+  return [...byName.entries()].map(([name, streetRoads]) => {
+    let x = 0;
+    let z = 0;
+    let samples = 0;
+    for (const road of streetRoads) {
+      for (let i = 0; i < road.points.length; i += 2) {
+        x += road.points[i];
+        z += road.points[i + 1];
+        samples += 1;
+      }
+    }
+    return {
+      name: name.startsWith('block:') ? `Block ${name.slice(6)}` : name,
+      roads: streetRoads,
+      x: samples ? x / samples : 0,
+      z: samples ? z / samples : 0,
+    };
+  });
+}
+
+function buildingsAlongStreet(streetRoads, claimed, maxDist = 52) {
+  const out = [];
+  const seen = new Set();
+  for (const road of streetRoads) {
+    const points = roadPoints(road);
+    if (!points.length) continue;
+    const section = streetCrossSection(road);
+    const minCentroidDist = section.buildingRowOuter + 0.5;
+    const step = Math.max(1, Math.ceil(points.length / 4));
+    for (let i = 0; i < points.length; i += step) {
+      const focus = points[i];
+      const nearby = worldPartition
+        ? queryPartitionBuildings(worldPartition, focus, maxDist)
+        : [];
+      for (const building of nearby) {
+        if (!building?.id || claimed.has(building.id) || seen.has(building.id)) continue;
+        if (!building.points || building.points.length < 6) continue;
+        const [bx, bz] = building.centroid || [building.points[0], building.points[1]];
+        if (nearestRoadDistance(road, { x: bx, z: bz }) > maxDist) continue;
+        if (nearestRoadDistance(road, { x: bx, z: bz }) < minCentroidDist) continue;
+        seen.add(building.id);
+        out.push(building);
+      }
+    }
+  }
+  return out;
+}
+
+async function buildCityStreetByStreet(allRoads, footprintBuildings, focus) {
+  const trafficRoads = splitRoadsAtJunctions(
+    allRoads.filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential')),
+  );
+  cityWideRoadGroup = new THREE.Group();
+  cityWideRoadGroup.name = 'SF streets (street-by-street)';
+  cityWideBuildingGroup = new THREE.Group();
+  cityWideBuildingGroup.name = 'SF blocks (footprint parcels)';
+  // Buildings render above asphalt so sidewalk/road never “overflow” through facades.
+  cityWideBuildingGroup.renderOrder = 3;
+  cityRoot.add(cityWideRoadGroup);
+  cityRoot.add(cityWideBuildingGroup);
+  roadMeshes = cityWideRoadGroup;
+  detailBuildingMeshes = [];
+  enterableBuildingIndex = footprintBuildings;
+  coarseBuildingMesh = null;
+
+  const claimed = new Set();
+  const streets = groupRoadsIntoStreets(trafficRoads)
+    .sort((a, b) => Math.hypot(a.x - focus.x, a.z - focus.z) - Math.hypot(b.x - focus.x, b.z - focus.z));
+
+  // Shared OSM nodes across the whole city — used to extend strip ends into crossings.
+  const nodeHits = new Map();
+  for (const road of trafficRoads) {
+    if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential')) continue;
+    const seen = new Set();
+    for (const point of roadPoints(road)) {
+      const key = nodeKey(point);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      nodeHits.set(key, (nodeHits.get(key) || 0) + 1);
+    }
+  }
+  const junctionNodes = new Set(
+    [...nodeHits.entries()].filter(([, count]) => count >= 2).map(([key]) => key),
+  );
+  const junctionPoints = [];
+  const junctionKeysNeeded = new Set(junctionNodes);
+  const junctionHalfByKey = new Map();
+  for (const road of trafficRoads) {
+    const half = streetCrossSection(road).asphaltHalf;
+    for (const point of roadPoints(road)) {
+      const key = nodeKey(point);
+      if (junctionKeysNeeded.has(key)) {
+        junctionHalfByKey.set(key, Math.max(junctionHalfByKey.get(key) || 0, half));
+        if (!junctionPoints.some((jp) => nodeKey(jp) === key)) {
+          junctionPoints.push({ x: point.x, z: point.z });
+        }
+      }
+    }
+  }
+  // T-stubs: endpoint on another centerline — treat landing point as a junction node.
+  const stubRadius = Math.min(2.1, STREAM.nearThreeRoadsConnectRadius);
+  for (const stub of trafficRoads) {
+    if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(stub.highway || 'residential')) continue;
+    const stubPoints = roadPoints(stub);
+    if (stubPoints.length < 2) continue;
+    for (const end of [stubPoints[0], stubPoints[stubPoints.length - 1]]) {
+      if (junctionNodes.has(nodeKey(end))) continue;
+      const candidates = worldPartition
+        ? queryPartitionRoads(worldPartition, end, stubRadius + 8)
+        : trafficRoads;
+      for (const other of candidates) {
+        if (other.id === stub.id) continue;
+        if (!FULL_CITY_TRAFFIC_HIGHWAYS.has(other.highway || 'residential')) continue;
+        const hit = distanceToRoadCenterline(other, end);
+        if (!hit || hit.distance > stubRadius || hit.t <= 0.04 || hit.t >= 0.96) continue;
+        junctionNodes.add(nodeKey(end));
+        junctionNodes.add(nodeKey(hit.point));
+        const stubHalf = streetCrossSection(stub).asphaltHalf;
+        const otherHalf = streetCrossSection(other).asphaltHalf;
+        const landKey = nodeKey(hit.point);
+        junctionHalfByKey.set(landKey, Math.max(junctionHalfByKey.get(landKey) || 0, stubHalf, otherHalf));
+        junctionHalfByKey.set(nodeKey(end), Math.max(junctionHalfByKey.get(nodeKey(end)) || 0, stubHalf, otherHalf));
+        junctionPoints.push({ x: end.x, z: end.z }, { x: hit.point.x, z: hit.point.z });
+        break;
+      }
+    }
+  }
+
+  let roadWays = 0;
+  let buildingCount = 0;
+  simpleRoadSegments = 0;
+  const STREET_BATCH = 18;
+
+  for (let index = 0; index < streets.length; index += STREET_BATCH) {
+    const batch = streets.slice(index, index + STREET_BATCH);
+    const batchRoads = [];
+    const batchBuildings = [];
+    let label = batch[0]?.name || 'Street';
+    for (const street of batch) {
+      batchRoads.push(...street.roads);
+      const along = buildingsAlongStreet(street.roads, claimed, 54);
+      for (const building of along) {
+        claimed.add(building.id);
+        batchBuildings.push(building);
+      }
+    }
+    if (batch.length > 1) label = `${batch[0].name} → ${batch[batch.length - 1].name}`;
+
+    if (batchRoads.length) {
+      const roadMesh = createSimpleRoadMeshes(batchRoads, { junctionNodes, junctionPoints, junctionHalfByKey });
+      roadMesh.name = `Streets · ${label}`;
+      cityWideRoadGroup.add(roadMesh);
+      const sidewalks = createSimpleSidewalkMeshes(batchRoads, { junctionNodes });
+      if (sidewalks.children.length) {
+        sidewalks.name = `Sidewalks · ${label}`;
+        cityWideRoadGroup.add(sidewalks);
+        simpleSidewalkSegments += sidewalks.userData?.segments || roadSegmentCount(batchRoads);
+      }
+      roadWays += batchRoads.length;
+      simpleRoadSegments += roadMesh.userData.segments || 0;
+    }
+    if (batchBuildings.length) {
+      const { mesh, buildings } = createMergedFootprintBuildings(batchBuildings);
+      if (mesh) {
+        mesh.name = `Blocks · ${label}`;
+        cityWideBuildingGroup.add(mesh);
+        detailBuildingMeshes.push(mesh);
+        if (!coarseBuildingMesh) coarseBuildingMesh = mesh;
+        buildingCount += buildings.length;
+      }
+    }
+
+    const done = Math.min(streets.length, index + STREET_BATCH);
+    setBuildProgress(
+      'STREETS',
+      `${label} · street ${formatNumber(done)} / ${formatNumber(streets.length)} · ${formatNumber(buildingCount)} real footprints`,
+      0.42 + 0.4 * (done / Math.max(1, streets.length)),
+    );
+    await tick();
+  }
+
+  // Approach-hull pads (road-oriented) — axis AABB boxes leave diamond gaps on SF grid.
+  const junctionPads = createSimpleJunctionPads(trafficRoads, junctionHalfByKey);
+  cityWideRoadGroup.add(junctionPads);
+  detailRoadStreamStats.junctionPads = junctionPads.userData?.count || 0;
+  const sidewalkCorners = createSidewalkCornerPads(trafficRoads, junctionNodes);
+  const lotAprons = createLotApronMeshes(trafficRoads, { junctionNodes });
+  if (lotAprons.userData?.segments) {
+    cityWideRoadGroup.add(lotAprons);
+    detailRoadStreamStats.lotAprons = lotAprons.userData.segments;
+  }
+  if (sidewalkCorners.userData?.count) {
+    cityWideRoadGroup.add(sidewalkCorners);
+    detailRoadStreamStats.sidewalkCorners = sidewalkCorners.userData.count;
+  }
+
+  // AAA low-poly markings on every traffic corridor (junction-cleared dashes).
+  const centerlines = createCorridorCenterlines(trafficRoads, { junctionNodes });
+  cityWideRoadGroup.add(centerlines);
+  detailRoadStreamStats.centerlineDashes = centerlines.userData?.dashes || 0;
+
+  // Zebras at real signal nodes (capped for FPS).
+  const signalPool = (cityData.signals || []).slice(0, Math.max(STREAM.maxSignals * 4, 180));
+  const crosswalks = createCrosswalks(signalPool, trafficRoads);
+  if (crosswalks.userData?.stripes) {
+    cityWideRoadGroup.add(crosswalks);
+    detailRoadStreamStats.crosswalkStripes = crosswalks.userData.stripes;
+  }
+
+  // One-way arrows on marked one-way traffic roads (sparse).
+  const oneWayRoads = trafficRoads.filter((road) => road.oneway).slice(0, 400);
+  if (oneWayRoads.length) {
+    const oneWays = createOneWayArrows(oneWayRoads);
+    if (oneWays?.isInstancedMesh && oneWays.count > 0) {
+      oneWays.name = 'One-way arrows';
+      if (fullCityMode) {
+        oneWays.material = new THREE.MeshBasicMaterial({ color: 0xf4f2ea, toneMapped: false });
+        oneWays.castShadow = false;
+        oneWays.receiveShadow = false;
+        oneWays.renderOrder = 6;
+      }
+      cityWideRoadGroup.add(oneWays);
+      detailRoadStreamStats.oneWayArrows = oneWays.count;
+    }
+  }
+
+  // Remaining parcels: fill block-by-block (partition cells), outward from spawn.
+  const leftovers = footprintBuildings.filter((building) => !claimed.has(building.id) && building.points?.length >= 6);
+  const byCell = new Map();
+  for (const building of leftovers) {
+    const [x, z] = building.centroid || [building.points[0], building.points[1]];
+    const key = partitionCellKey(x, z, STREAM.cellSize);
+    const list = byCell.get(key) || [];
+    list.push(building);
+    byCell.set(key, list);
+  }
+  const cells = [...byCell.entries()]
+    .map(([key, list]) => {
+      const [cx, cz] = key.split(':').map(Number);
+      const x = (cx + 0.5) * STREAM.cellSize;
+      const z = (cz + 0.5) * STREAM.cellSize;
+      return { key, list, x, z, distance: Math.hypot(x - focus.x, z - focus.z) };
+    })
+    .sort((a, b) => a.distance - b.distance);
+
+  const CELL_BATCH = 6;
+  for (let index = 0; index < cells.length; index += CELL_BATCH) {
+    const batch = cells.slice(index, index + CELL_BATCH);
+    const buildings = [];
+    for (const cell of batch) {
+      for (const building of cell.list) {
+        claimed.add(building.id);
+        buildings.push(building);
+      }
+    }
+    const { mesh, buildings: placed } = createMergedFootprintBuildings(buildings);
+    if (mesh) {
+      mesh.name = `Interior blocks ${batch[0].key}`;
+      cityWideBuildingGroup.add(mesh);
+      detailBuildingMeshes.push(mesh);
+      buildingCount += placed.length;
+    }
+    const done = Math.min(cells.length, index + CELL_BATCH);
+    setBuildProgress(
+      'BLOCKS',
+      `Interior parcels · block ${formatNumber(done)} / ${formatNumber(cells.length)} · ${formatNumber(buildingCount)} footprints`,
+      0.82 + 0.12 * (done / Math.max(1, cells.length)),
+    );
+    await tick();
+  }
+
+  detailRoadStreamStats.cityWideRoads = roadWays;
+  detailRoadStreamStats.buildings = buildingCount;
+  detailRoadStreamStats.streets = streets.length;
+  detailRoadStreamStats.blocks = cells.length;
+  return { roadWays, buildingCount, streets: streets.length, blocks: cells.length };
+}
+
+async function buildCityWideBuildingMassing(allBuildings) {
+  // Legacy batch path — Full City uses buildCityStreetByStreet instead.
+  cityWideBuildingGroup = new THREE.Group();
+  cityWideBuildingGroup.name = 'City-wide SF building massing';
+  cityRoot.add(cityWideBuildingGroup);
+  detailBuildingMeshes = [];
+  enterableBuildingIndex = allBuildings.filter((building) => building?.points && building.points.length >= 6);
+  const batchSize = STREAM.buildingBuildBatch;
+  let placed = 0;
+  for (let i = 0; i < allBuildings.length; i += batchSize) {
+    const batch = allBuildings.slice(i, i + batchSize);
+    const { mesh, buildings } = createMergedFootprintBuildings(batch);
+    if (mesh) {
+      mesh.name = `SF footprints ${i}-${i + batch.length}`;
+      cityWideBuildingGroup.add(mesh);
+      detailBuildingMeshes.push(mesh);
+      if (!coarseBuildingMesh) coarseBuildingMesh = mesh;
+      placed += buildings.length;
+    }
+    setBuildProgress(
+      'BLOCKS',
+      `Raising SF footprints ${formatNumber(placed)} / ${formatNumber(allBuildings.length)}…`,
+      0.7 + 0.12 * (placed / Math.max(1, allBuildings.length)),
+    );
+    await tick();
+  }
+  return placed;
+}
+
+function updateNearbyDoorways(focus) {
+  if (!fullCityMode || !worldPartition) return;
+  const cell = partitionCellKey(focus.x, focus.z, 128);
+  if (cell === doorwayFocusCell) return;
+  doorwayFocusCell = cell;
+  const nearby = queryPartitionBuildings(worldPartition, focus, STREAM.doorwayRadius)
+    .slice(0, STREAM.doorwayMax);
+  // Exterior door markers only — room geometry is created on enterNearestBuilding().
+  createBuildingDoorways(nearby);
+}
+
+function pickFullCityTrafficRoads(focus) {
+  const pool = (cityData.roads || []).filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+  const near = worldPartition
+    ? queryPartitionRoads(worldPartition, focus, STREAM.seedRadius)
+      .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'))
+    : filterRoadsNear(pool, focus, STREAM.seedRadius);
+  const chosen = new Map();
+  for (const road of near) {
+    chosen.set(road.id, road);
+    if (chosen.size >= STREAM.maxTrafficRoads) break;
+  }
+  if (chosen.size < STREAM.maxTrafficRoads) {
+    const step = Math.max(1, Math.floor(pool.length / (STREAM.maxTrafficRoads - chosen.size + 1)));
+    for (let i = 0; i < pool.length && chosen.size < STREAM.maxTrafficRoads; i += step) {
+      const road = pool[i];
+      if (!chosen.has(road.id)) chosen.set(road.id, road);
+    }
+  }
+  return [...chosen.values()];
+}
+
+function applyFullCityPerfMode() {
+  if (fullCityPerfApplied || !renderer) return;
+  fullCityPerfApplied = true;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, STREAM.pixelRatioCap));
+  renderer.shadowMap.enabled = false;
+  if (sun) {
+    sun.castShadow = false;
+    sun.intensity = Math.min(sun.intensity, 2.4);
+  }
+  if (composer) {
+    composer.dispose?.();
+    composer = null;
+  }
+  if (ssaoPassRef) {
+    ssaoPassRef.enabled = false;
+    ssaoPassRef = null;
+  }
+  if (scene?.fog) {
+    scene.fog.near = STREAM.fogNear;
+    scene.fog.far = STREAM.fogFar;
+  }
+  camera.far = Math.max(1400, STREAM.fogFar + 200);
+  camera.updateProjectionMatrix();
+}
+
+function lifeFocusPoint() {
+  if (playerState) return { x: playerState.x, z: playerState.z };
+  if (camera) return { x: camera.position.x, z: camera.position.z };
+  return streamFocusPoint || PREBUILT_SPAWN;
 }
 
 let renderer;
@@ -3324,6 +6065,8 @@ let selectedRoadsForHit = [];
 let frameTime = 0;
 let fpsSamples = [];
 let lastFrameTime = performance.now();
+let avgFrameMs = 16.6;
+let frameMsSamples = [];
 const moveKeys = new Set();
 let cityMode = 'orbit';
 let cityFlatRegion = [];
@@ -3361,9 +6104,23 @@ let fullCityMode = false;
 let simpleRoadSegments = 0;
 let simpleSidewalkSegments = 0;
 let detailRoadStreamGroup = null;
+let simpleRoadStreamGroup = null;
+let buildingStreamGroup = null;
 let detailRoadQueue = [];
 let detailRoadCompiledIds = new Set();
-let detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0 };
+let simpleRoadCompiledIds = new Set();
+let streamedBuildingIds = new Set();
+let streamBuildingPool = [];
+let streamRoadById = new Map();
+let worldPartition = null;
+let streamFocusPoint = PREBUILT_SPAWN;
+let detailRoadStreamStats = {
+  loadedChunks: 0,
+  compiledRoads: 0,
+  pendingRoads: 0,
+  simpleChunks: 0,
+  buildings: 0,
+};
 let roadStreamingInFlight = false;
 let sandboxAudio = null;
 let audioEnabled = true;
@@ -3502,6 +6259,10 @@ const TIME_OF_DAY_MODES = {
 };
 
 function roadHalfWidth(road) {
+  // Prefer the shared ROW model so sidewalks/trees/curbs share one boundary.
+  if (fullCityMode) {
+    return streetCrossSection(road).asphaltHalf;
+  }
   const cls = road.highway || 'residential';
   const half = {
     motorway: 16,
@@ -3895,7 +6656,8 @@ function createPedestrianSystem(roads) {
     { top: 0x8a5a2b, bottom: 0x2d2f31, skin: 0xe8b48f },
     { top: 0x3f8f8f, bottom: 0x1f333a, skin: 0xd8a989 },
   ];
-  const count = Math.min(320, Math.max(50, Math.floor(paths.length * 0.18)));
+  const desired = Math.min(320, Math.max(50, Math.floor(paths.length * 0.18)));
+  const count = fullCityMode ? Math.min(STREAM.maxPedestrians, desired) : desired;
   for (let i = 0; i < count && paths.length; i += 1) {
     const path = paths[i % paths.length];
     const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
@@ -3913,7 +6675,7 @@ function createPedestrianSystem(roads) {
     avatar.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     avatar.rotation.y = pose.heading;
     pedestrianGroup.add(avatar);
-    if (i % 3 === 0) {
+    if (i % 3 === 0 && !fullCityMode) {
       const bubble = createThoughtBubble();
       if (bubble) avatar.add(bubble);
     }
@@ -3929,7 +6691,16 @@ function createPedestrianSystem(roads) {
 }
 
 function updatePedestrians(dt) {
+  const focus = fullCityMode ? lifeFocusPoint() : null;
+  const lifeRadius = STREAM.lifeRadius;
   for (const person of pedestrianState) {
+    if (focus) {
+      const px = person.mesh.position.x;
+      const pz = person.mesh.position.z;
+      const near = Math.hypot(px - focus.x, pz - focus.z) <= lifeRadius;
+      person.mesh.visible = near;
+      if (!near) continue;
+    }
     person.s = (person.s + person.speed * dt) % person.path.length;
     const pose = pointAlongPath(person.path.points, person.s);
     person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
@@ -3999,7 +6770,7 @@ function createStreetTrees(roads) {
     const spacing = road.highway === 'primary' || road.highway === 'secondary' ? 18 : 22;
     const count = Math.min(52, Math.floor(length / spacing));
     for (let c = 0; c < count; c += 1) {
-      if (positions.length >= 820) break;
+      if (positions.length >= (fullCityMode ? STREAM.maxTrees : 820)) break;
       const target = ((c + 0.5 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -4022,6 +6793,7 @@ function createStreetTrees(roads) {
       }
     }
   }
+  if (!positions.length) return;
   const parts = getTreePartGeometries();
   const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6a4a33, roughness: 0.95, flatShading: true });
   const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7d4f, roughness: 0.9, flatShading: true });
@@ -4054,7 +6826,7 @@ function createStreetTrees(roads) {
   trunks.castShadow = true;
   trunks.receiveShadow = true;
   canopies.castShadow = true;
-  canopies.instanceColor.needsUpdate = true;
+  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
   treeGroup.add(trunks, canopies);
 }
 
@@ -4076,7 +6848,7 @@ function createStreetFurniture(roads) {
       length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
     }
     const count = Math.min(22, Math.floor(length / 36));
-    for (let c = 0; c < count && spots.length < 720; c += 1) {
+    for (let c = 0; c < count && spots.length < (fullCityMode ? STREAM.maxFurniture : 720); c += 1) {
       const target = ((c + 0.35 + Math.random() * 0.3) / count) * length;
       let walked = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
@@ -4289,7 +7061,8 @@ function createHillVegetation(regionPoints) {
     return value - Math.floor(value);
   };
   let guard = 0;
-  while (spots.length < 11800 && guard < 280000) {
+  const hillCap = fullCityMode ? STREAM.maxHillVegetation : 11800;
+  while (spots.length < hillCap && guard < 280000) {
     guard += 1;
     const seed = guard * 7919;
     const x = bounds.minX + random(seed) * (bounds.maxX - bounds.minX);
@@ -4319,6 +7092,7 @@ function createHillVegetation(regionPoints) {
       grass: kind === 'tree' && random(seed + 71) > 0.5,
     });
   }
+  if (!spots.length) return;
   const parts = getTreePartGeometries();
   const grassGeometry = new THREE.ConeGeometry(0.28, 0.7, 5);
   const rockGeometry = new THREE.DodecahedronGeometry(0.9, 0);
@@ -4373,7 +7147,7 @@ function createHillVegetation(regionPoints) {
   trunks.castShadow = true;
   trunks.receiveShadow = true;
   canopies.castShadow = true;
-  canopies.instanceColor.needsUpdate = true;
+  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
   grassMeshes.castShadow = true;
   grassMeshes.receiveShadow = true;
   rockMeshes.castShadow = true;
@@ -4424,6 +7198,7 @@ function createHillShrubbery(regionPoints) {
       tone: random(seed + 73),
     });
   }
+  if (!spots.length) return;
   const shrubGeometry = new THREE.DodecahedronGeometry(0.7, 0);
   const fernGeometry = new THREE.ConeGeometry(0.34, 0.85, 5);
   const shrubMaterial = new THREE.MeshStandardMaterial({
@@ -4459,8 +7234,8 @@ function createHillShrubbery(regionPoints) {
   }
   shrubs.instanceMatrix.needsUpdate = true;
   ferns.instanceMatrix.needsUpdate = true;
-  shrubs.instanceColor.needsUpdate = true;
-  ferns.instanceColor.needsUpdate = true;
+  if (shrubs.instanceColor) shrubs.instanceColor.needsUpdate = true;
+  if (ferns.instanceColor) ferns.instanceColor.needsUpdate = true;
   shrubs.castShadow = true;
   shrubs.receiveShadow = true;
   ferns.castShadow = true;
@@ -5015,14 +7790,33 @@ function buildingFootprintPoints(building) {
 function nearestEnterableBuilding(position, radius = 4.2) {
   let best = null;
   let bestDistance = radius;
+  const candidates = fullCityMode && worldPartition
+    ? queryPartitionBuildings(worldPartition, position, Math.max(radius * 6, 36))
+    : null;
+  if (candidates) {
+    for (const building of candidates) {
+      if (!building?.points || building.points.length < 6) continue;
+      const points = buildingFootprintPoints(building);
+      const distance = distanceToPolygon(position, points);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { building, mesh: null, distance, points };
+      }
+    }
+    return best;
+  }
   for (const mesh of detailBuildingMeshes) {
-    const building = mesh.userData?.building;
-    if (!building?.points) continue;
-    const points = buildingFootprintPoints(building);
-    const distance = distanceToPolygon(position, points);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = { building, mesh, distance, points };
+    const single = mesh.userData?.building;
+    const many = mesh.userData?.buildings;
+    const list = many || (single ? [single] : []);
+    for (const building of list) {
+      if (!building?.points) continue;
+      const points = buildingFootprintPoints(building);
+      const distance = distanceToPolygon(position, points);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { building, mesh, distance, points };
+      }
     }
   }
   return best;
@@ -5370,6 +8164,7 @@ function enterNearestBuilding() {
   if (interiorState || !playerState) return false;
   const nearest = nearestEnterableBuilding(playerState);
   if (!nearest) return false;
+  // Interiors are created only when the player opens a door — never at city build.
   const room = createGeneratedInterior(nearest.building);
   if (!room) return false;
   const archetype = room.userData.archetype;
@@ -5403,6 +8198,7 @@ function exitInterior() {
   if (!interiorState) return false;
   if (interiorGroup) {
     cityRoot.remove(interiorGroup);
+    disposeRoot(interiorGroup);
     interiorGroup = null;
   }
   interiorLight = null;
@@ -5738,11 +8534,13 @@ function updateSandboxAudio() {
 }
 
 function setupScene() {
+  const bootParams = new URLSearchParams(window.location.search);
+  const captureMode = bootParams.has('qa') || bootParams.has('capture') || bootParams.has('screenshot');
   const context = sceneCanvas.getContext('webgl2', {
     alpha: false,
-    antialias: true,
+    antialias: !bootParams.has('play') && !bootParams.has('prebuilt'),
     powerPreference: 'high-performance',
-    preserveDrawingBuffer: true,
+    preserveDrawingBuffer: captureMode,
   });
   if (!context) {
     setBuildProgress('ERROR', 'WebGL2 is required for the 3D sandbox.', 1);
@@ -5929,11 +8727,16 @@ function updateRain(dt) {
 
 function applyWeatherRoadTuning(mode) {
   const isDrizzle = mode === 'drizzle';
-  for (const [materialClass, material] of roadMaterialCache) {
+  for (const [cacheKey, material] of roadMaterialCache) {
+    const materialClass = String(cacheKey).split('|')[0];
     if (materialClass === 'road') {
-      material.color.set(isDrizzle ? 0xc4ccc8 : 0xffffff);
-      material.roughness = isDrizzle ? 0.48 : (material.roughnessMap ? 1 : 0.92);
-      material.metalness = isDrizzle ? 0.08 : 0.01;
+      if (material.isMeshBasicMaterial) {
+        material.color.set(isDrizzle ? 0x2a2f32 : 0x404034);
+      } else {
+        material.color.set(isDrizzle ? 0xc4ccc8 : 0xffffff);
+        material.roughness = isDrizzle ? 0.48 : (material.roughnessMap ? 1 : 0.92);
+        material.metalness = isDrizzle ? 0.08 : 0.01;
+      }
       material.needsUpdate = true;
     } else if (materialClass === 'marking-none') {
       material.color.set(isDrizzle ? 0x2a2f32 : roadSurfaceColors.road);
@@ -5948,10 +8751,10 @@ function setWeatherMode(mode) {
   weatherMode = mode;
   scene.background.set(config.background);
   scene.fog.color.set(config.fogColor);
-  scene.fog.near = config.fogNear;
-  scene.fog.far = config.fogFar;
+  scene.fog.near = fullCityMode ? STREAM.fogNear : config.fogNear;
+  scene.fog.far = fullCityMode ? STREAM.fogFar : config.fogFar;
   sun.color.set(config.sunColor);
-  sun.intensity = config.sunIntensity;
+  sun.intensity = fullCityMode ? Math.min(config.sunIntensity, 2.4) : config.sunIntensity;
   renderer.toneMappingExposure = config.exposure;
   if (skyDome?.material?.uniforms) {
     skyDome.material.uniforms.topColor.value.set(config.skyTop);
@@ -5973,10 +8776,10 @@ function setTimeOfDay(mode) {
   timeOfDay = mode;
   scene.background.set(config.background);
   scene.fog.color.set(config.fogColor);
-  scene.fog.near = config.fogNear;
-  scene.fog.far = config.fogFar;
+  scene.fog.near = fullCityMode ? STREAM.fogNear : config.fogNear;
+  scene.fog.far = fullCityMode ? STREAM.fogFar : config.fogFar;
   sun.color.set(config.sunColor);
-  sun.intensity = config.sunIntensity;
+  sun.intensity = fullCityMode ? Math.min(config.sunIntensity, 2.4) : config.sunIntensity;
   sun.position.set(config.sunPosition[0], config.sunPosition[1], config.sunPosition[2]);
   if (hemisphereLight) {
     hemisphereLight.color.set(config.hemisphereSky);
@@ -6030,7 +8833,14 @@ function updateNightGlow(amount) {
 }
 
 function updateSignals(time) {
+  const focus = fullCityMode ? lifeFocusPoint() : null;
+  const lifeRadius = STREAM.signalRadius;
   for (const group of signalGroups) {
+    if (focus) {
+      const near = Math.hypot(group.position.x - focus.x, group.position.z - focus.z) <= lifeRadius;
+      group.visible = near;
+      if (!near) continue;
+    }
     const data = group.userData;
     const phase = signalPhaseAt(0, time, data.offset);
     for (const lamp of data.lamps) {
@@ -6056,7 +8866,7 @@ function pathPosition(path, s) {
       return {
         position: new THREE.Vector3(
           a.x + (b.x - a.x) * t,
-          elevationAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) + ROAD_SURFACE_LIFT + 0.04,
+          elevationAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) + roadSurfaceLift() + 0.04,
           a.z + (b.z - a.z) * t,
         ),
         heading: Math.atan2(b.z - a.z, b.x - a.x),
@@ -6067,15 +8877,23 @@ function pathPosition(path, s) {
   const a = path.points[path.points.length - 2];
   const b = path.points[path.points.length - 1];
   return {
-    position: new THREE.Vector3(b.x, elevationAt(b.x, b.z) + ROAD_SURFACE_LIFT + 0.04, b.z),
+    position: new THREE.Vector3(b.x, elevationAt(b.x, b.z) + roadSurfaceLift() + 0.04, b.z),
     heading: Math.atan2(b.z - a.z, b.x - a.x),
   };
 }
 
 function updateTraffic(dt, time) {
   if (!trafficState) return;
+  const focus = fullCityMode ? lifeFocusPoint() : null;
+  const lifeRadius = STREAM.lifeRadius;
   for (const vehicle of trafficState.vehicles) {
     if (vehicle.manual) continue;
+    if (focus) {
+      const pos = vehicle.mesh.position;
+      const near = Math.hypot(pos.x - focus.x, pos.z - focus.z) <= lifeRadius;
+      vehicle.mesh.visible = near;
+      if (!near) continue;
+    }
     const path = vehicle.path;
     let target = vehicle.targetSpeed;
     let stopAt = Infinity;
@@ -6163,6 +8981,9 @@ function renderLoop() {
   const now = performance.now();
   const dt = Math.min(0.05, Math.max(0.001, (now - lastFrameTime) / 1000));
   lastFrameTime = now;
+  frameMsSamples.push(dt * 1000);
+  if (frameMsSamples.length > 60) frameMsSamples.shift();
+  avgFrameMs = frameMsSamples.reduce((sum, value) => sum + value, 0) / frameMsSamples.length;
   const time = performance.now() / 1000;
   updateSignals(time);
   updateTraffic(dt, time);
@@ -6429,14 +9250,27 @@ async function buildCity() {
     setBuildProgress('SELECTING', 'Finding real streets, blocks, and signals in your boundary…', 0.04);
     await tick();
     cachedCameraAnalysis = null;
-    const selectedRoads = fullCityMode
-      ? selectAllRoads(regionBBox)
-      : selectRoads(regionBBox);
-    const buildings = selectBuildings(regionBBox);
-    const signals = selectSignals(regionBBox);
+    let selectedRoads;
+    let buildings;
+    let signals;
+    if (fullCityMode) {
+      // Skip peninsula-wide point-in-polygon scans — partition + stream instead.
+      selectedRoads = cityData.roads || [];
+      buildings = {
+        detailed: cityData.detailBuildings || [],
+        coarse: cityData.coarseBuildings || [],
+      };
+      signals = cityData.signals || [];
+    } else {
+      selectedRoads = selectRoads(regionBBox);
+      buildings = selectBuildings(regionBBox);
+      signals = selectSignals(regionBBox);
+    }
     const regionPoints = region.map(({ x, z }) => ({ x, z }));
     const streamFocus = polygonCentroid(regionPoints);
-    readoutSelected.textContent = `${formatNumber(selectedRoads.length)} roads / ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings / ${formatNumber(signals.length)} signals`;
+    readoutSelected.textContent = fullCityMode
+      ? `Streamed city · ${formatNumber(selectedRoads.length)} OSM ways indexed`
+      : `${formatNumber(selectedRoads.length)} roads / ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings / ${formatNumber(signals.length)} signals`;
 
     let usedRoads = selectedRoads;
     let compilation = null;
@@ -6470,118 +9304,233 @@ async function buildCity() {
     cityRoot.name = 'Real map generated city';
     scene.add(cityRoot);
 
-    setBuildProgress('TERRAIN', 'Laying the land slab and bay water…', 0.4);
+    const playFocus = fullCityMode ? { ...PREBUILT_SPAWN } : streamFocus;
+    streamFocusPoint = playFocus;
+    cityWideReady = false;
+    doorwayFocusCell = '';
+    fullCityPerfApplied = false;
+    cityWideRoadGroup = null;
+    cityWideBuildingGroup = null;
+    resetNearFieldState();
+    const terrainPoints = fullCityMode ? regionPoints : regionPoints;
+    setBuildProgress('TERRAIN', fullCityMode
+      ? 'Laying the SF peninsula land pad…'
+      : 'Laying the land slab and bay water…', 0.4);
     await tick();
-    cityRoot.add(createWaterPlane(regionPoints));
-    cityRoot.add(createGround(regionPoints));
+    cityRoot.add(createWaterPlane(terrainPoints));
+    cityRoot.add(createGround(terrainPoints));
 
-    setBuildProgress('ROADS', fullCityMode
-      ? 'Laying the full real street network…'
-      : 'Generating asphalt, markings, and sidewalks from OSM…', 0.5);
-    await tick();
+    streamRoadById = new Map((cityData.roads || usedRoads).map((road) => [road.id, road]));
+    let activeRoads = usedRoads;
+    let activeBuildings = buildings;
+    let activeSignals = signals;
     if (fullCityMode) {
-      const detailIds = new Set(cityData.detailRoads.map((road) => road.id));
-      const simpleRoads = usedRoads.filter((road) => !detailIds.has(road.id));
-      roadMeshes = createSimpleRoadMeshes(simpleRoads);
-      cityRoot.add(roadMeshes);
-      const sidewalks = createSimpleSidewalkMeshes(simpleRoads);
-      cityRoot.add(sidewalks);
-      cityRoot.add(createStreetCorridorPads(simpleRoads));
-      cityRoot.add(createCorridorCurbs(simpleRoads));
-      cityRoot.add(createCorridorCenterlines(simpleRoads));
-      simpleRoadSegments = roadMeshes.userData.segments || 0;
-      simpleSidewalkSegments = sidewalks.userData.segments || 0;
-      const detailed = usedRoads.filter((road) => detailIds.has(road.id));
-      detailRoadStreamGroup = new THREE.Group();
-      detailRoadStreamGroup.name = 'Streamed detail road chunks';
-      cityRoot.add(detailRoadStreamGroup);
+      setBuildProgress('PARTITION', 'Indexing entire SF into world cells…', 0.4);
+      await tick();
+      const allRoads = cityData.roads || [];
+      // Real SF parcels only — OSM footprints. Never centroid boxes / coarse hangars.
+      const footprintBuildings = (cityData.detailBuildings || [])
+        .filter((building) => building?.points && building.points.length >= 6);
+      worldPartition = buildWorldPartition(allRoads, footprintBuildings);
+      streamBuildingPool = footprintBuildings;
+      activeRoads = pickFullCityTrafficRoads(playFocus);
+      selectedRoadsForHit = activeRoads;
+      activeBuildings = {
+        detailed: footprintBuildings,
+        coarse: [],
+      };
+      activeSignals = signals
+        .filter(([x, z]) => Math.hypot(x - playFocus.x, z - playFocus.z) <= STREAM.signalRadius)
+        .slice(0, STREAM.maxSignals);
+
+      simpleRoadStreamGroup = null;
+      detailRoadStreamGroup = null;
+      buildingStreamGroup = null;
       detailRoadCompiledIds = new Set();
+      simpleRoadCompiledIds = new Set();
+      streamedBuildingIds = new Set();
       detailRoadQueue = [];
-      detailRoadStreamStats = { loadedChunks: 0, compiledRoads: 0, pendingRoads: 0 };
+      detailRoadStreamStats = {
+        loadedChunks: 0,
+        compiledRoads: 0,
+        pendingRoads: 0,
+        simpleChunks: 0,
+        buildings: 0,
+        cityWideRoads: allRoads.length,
+        cityWideBuildings: footprintBuildings.length,
+        streets: 0,
+        blocks: 0,
+      };
       roadStreamingInFlight = false;
-      queueDetailRoadChunk(streamFocus);
+      simpleRoadSegments = 0;
+      simpleSidewalkSegments = 0;
+
+      setBuildProgress('STREETS', 'Building SF street by street with real parcel footprints…', 0.42);
+      await tick();
+      const coverage = await buildCityStreetByStreet(allRoads, footprintBuildings, playFocus);
+      detailRoadStreamStats.cityWideRoads = coverage.roadWays;
+      detailRoadStreamStats.buildings = coverage.buildingCount;
+      detailRoadStreamStats.streets = coverage.streets;
+      detailRoadStreamStats.blocks = coverage.blocks;
+
+      // Sidewalks are built street-by-street with asphalt (city-wide).
     } else {
+      setBuildProgress('ROADS', 'Generating asphalt, markings, and sidewalks from OSM…', 0.5);
+      await tick();
       roadMeshes = createRoadMeshes(compilation);
-      cityRoot.add(roadMeshes);
+      if (roadMeshes) cityRoot.add(roadMeshes);
       cityRoot.add(createSimpleSidewalkMeshes(usedRoads));
       cityRoot.add(createStreetCorridorPads(usedRoads));
       cityRoot.add(createCorridorCurbs(usedRoads));
       cityRoot.add(createCorridorCenterlines(usedRoads));
+      cityRoot.add(createCableCarTracks(usedRoads));
     }
-    cityRoot.add(createCableCarTracks(usedRoads));
-    setBuildProgress('BLOCKS', 'Extruding footprints and raising block massing…', 0.66);
+    setBuildProgress('BLOCKS', fullCityMode
+      ? 'Street parcels raised — finishing leftover interior blocks…'
+      : 'Extruding footprints and raising block massing…', 0.66);
     await tick();
-    detailBuildingMeshes = [];
-    for (const building of buildings.detailed) {
-      const landmarkName = (building.name || '').toLowerCase();
-      if (SF_LANDMARK_SKIP.has(landmarkName)) continue;
-      const mesh = createDetailBuildingMesh(building, buildingGroundY(building));
-      if (mesh) {
-        detailBuildingMeshes.push(mesh);
-        cityRoot.add(mesh);
+    if (!fullCityMode) {
+      detailBuildingMeshes = [];
+      for (const building of activeBuildings.detailed) {
+        const landmarkName = (building.name || '').toLowerCase();
+        if (SF_LANDMARK_SKIP.has(landmarkName)) continue;
+        const mesh = createDetailBuildingMesh(building, buildingGroundY(building));
+        if (mesh) {
+          detailBuildingMeshes.push(mesh);
+          cityRoot.add(mesh);
+        }
       }
+      const coarse = createCoarseBuildings(activeBuildings.coarse);
+      coarseBuildingMesh = coarse.mesh;
+      if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
+      cityRoot.add(createBuildingFrontagePads(activeBuildings));
+      createBuildingDoorways(activeBuildings.detailed);
+      createStreetfrontDetails(activeBuildings.detailed);
+      createRooftopDetails(activeBuildings.detailed);
+    } else {
+      // Seed near-field fidelity around spawn so the first view isn't bare shells.
+      ensureNearFieldGroups();
+      nearStreetscapeCell = '';
+      rebuildNearStreetscape(playFocus);
+      queueNearFacades(playFocus);
+      for (let warm = 0; warm < 14; warm += 1) pumpNearFacades();
+      // Warm several three-roads chunks at spawn so nearby junctions resolve once (no remesh churn).
+      for (let warm = 0; warm < STREAM.maxNearThreeRoadsChunks; warm += 1) {
+        queueNearThreeRoads(playFocus);
+        if (!nearThreeRoadsQueue.length) break;
+        await loadNearThreeRoadsChunk();
+      }
+      updateNearbyDoorways(playFocus);
+      cityWideReady = true;
     }
-    const coarse = createCoarseBuildings(buildings.coarse);
-    coarseBuildingMesh = coarse.mesh;
-    if (coarseBuildingMesh) cityRoot.add(coarseBuildingMesh);
-    cityRoot.add(createBuildingFrontagePads(buildings));
     cityRoot.add(createSfLandmarkSilhouettes(regionBBox, fullCityMode));
-    createBuildingDoorways(buildings.detailed);
-    createStreetfrontDetails(buildings.detailed);
-    createRooftopDetails(buildings.detailed);
 
-    setBuildProgress('SIGNALS', 'Hanging traffic lights at real signal nodes…', 0.78);
+    // Guarantee no leftover interior room is visible until a door is opened.
+    if (interiorGroup) {
+      cityRoot.remove(interiorGroup);
+      disposeRoot(interiorGroup);
+      interiorGroup = null;
+    }
+    interiorState = null;
+    interiorResidents = [];
+
+    setBuildProgress('SIGNALS', fullCityMode
+      ? 'Nearby signals only…'
+      : 'Hanging traffic lights at real signal nodes…', 0.78);
     await tick();
     signalGroups = [];
-    for (let i = 0; i < signals.length; i += 1) {
-      const group = createSignalGroup(signals[i], i);
+    for (let i = 0; i < activeSignals.length; i += 1) {
+      const group = createSignalGroup(activeSignals[i], i);
       signalGroups.push(group);
       cityRoot.add(group);
     }
-    cityRoot.add(createCrosswalks(signals, usedRoads));
+    if (!fullCityMode) cityRoot.add(createCrosswalks(activeSignals, activeRoads));
 
-    setBuildProgress('FLOW', 'Painting one-way arrows and starting traffic…', 0.9);
+    setBuildProgress('FLOW', fullCityMode
+      ? 'Seeding traffic on the SF network (far cars sleep)…'
+      : 'Starting nearby traffic and people…', 0.9);
     await tick();
-    cityRoot.add(createOneWayArrows(usedRoads));
-    trafficState = buildTraffic(usedRoads, signals);
-    for (const vehicle of trafficState.vehicles) cityRoot.add(vehicle.mesh);
-    createPedestrianSystem(usedRoads);
-    createStreetTrees(usedRoads);
-    createStreetFurniture(usedRoads);
-    createWetWeatherVisuals(usedRoads);
+    if (!fullCityMode) cityRoot.add(createOneWayArrows(activeRoads));
+    trafficState = buildTraffic(activeRoads, activeSignals);
+    for (const vehicle of trafficState.vehicles) {
+      if (fullCityMode) {
+        vehicle.mesh.castShadow = false;
+        vehicle.mesh.traverse?.((child) => { child.castShadow = false; child.receiveShadow = false; });
+      }
+      cityRoot.add(vehicle.mesh);
+    }
+    createPedestrianSystem(activeRoads);
+    if (!fullCityMode) createStreetTrees(activeRoads);
+    if (!fullCityMode) {
+      createStreetFurniture(activeRoads);
+      createWetWeatherVisuals(activeRoads);
+    }
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
-    sceneTriangleCount = countSceneTriangles(cityRoot);
+    sceneTriangleCount = fullCityMode ? 0 : countSceneTriangles(cityRoot);
 
-    const centroid = polygonCentroid(regionPoints);
+    const centroid = fullCityMode ? playFocus : polygonCentroid(regionPoints);
     cityFlatRegion = flatRegion();
-    buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
-    createHillVegetation(regionPoints);
-    createHillShrubbery(regionPoints);
-    createMistSystem();
+    if (fullCityMode) {
+      // Collision uses nearby enterables via partition queries — skip 28k AABB insert.
+      collisionAabbs = [];
+      collisionCells = new Map();
+    } else {
+      buildCollisionGrid(detailBuildingMeshes, coarseBuildingMesh);
+    }
+    if (!fullCityMode || STREAM.maxHillVegetation > 0) {
+      createHillVegetation(fullCityMode
+        ? [
+          { x: playFocus.x - STREAM.propRadius, z: playFocus.z - STREAM.propRadius },
+          { x: playFocus.x + STREAM.propRadius, z: playFocus.z - STREAM.propRadius },
+          { x: playFocus.x + STREAM.propRadius, z: playFocus.z + STREAM.propRadius },
+          { x: playFocus.x - STREAM.propRadius, z: playFocus.z + STREAM.propRadius },
+        ]
+        : regionPoints);
+    }
+    if (!fullCityMode) {
+      createHillShrubbery(regionPoints);
+      createMistSystem();
+    }
     const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
-    console.warn('trafficStart', trafficStart);
     initPlayer({
       x: trafficStart ? trafficStart.x : centroid.x,
       z: trafficStart ? trafficStart.z : centroid.z,
     });
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
-    positionSkyDomeAt(centroid, regionSpan(regionPoints));
+    positionSkyDomeAt(centroid, fullCityMode ? regionSpan(regionPoints) : regionSpan(regionPoints));
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
     sun.target.position.set(centroid.x, 0, centroid.z);
     sun.target.updateMatrixWorld();
     controls.update();
+    if (fullCityMode && controls) controls.maxDistance = 5200;
 
-    setBuildProgress('DONE', `City ready · ${formatNumber(usedRoads.length)} streets · ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings`, 1);
+    if (fullCityMode) {
+      applyFullCityPerfMode();
+      if (camera) {
+        camera.far = Math.max(camera.far, 6500);
+        camera.updateProjectionMatrix();
+      }
+    } else if (ssaoPassRef) {
+      ssaoPassRef.enabled = true;
+    }
+
+    setBuildProgress('DONE', fullCityMode
+      ? `SF ready · ${formatNumber(detailRoadStreamStats.streets || 0)} streets · ${formatNumber(nearFieldStats.facades)} near facades · shells beyond · interiors behind doors`
+      : `City ready · ${formatNumber(usedRoads.length)} streets · ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings`, 1);
     await new Promise((resolve) => setTimeout(resolve, 650));
     buildOverlay.hidden = true;
     document.body.classList.add('is-city');
     document.querySelector('[data-action="back"]').hidden = false;
     document.querySelector('[data-action="build"]').hidden = true;
+    const playButton = document.querySelector('[data-action="play-prebuilt"]');
+    if (playButton) playButton.hidden = true;
     document.querySelector('[data-toolbar="city"]').hidden = false;
     setCityMode('orbit');
     modeLabel.textContent = 'Exploring generated city';
-    hint.textContent = 'Drag orbit · scroll zoom · WASD pan · click buildings, streets, or signals for OSM metadata';
+    hint.textContent = fullCityMode
+      ? 'Near three-roads lanes + facades · far city stays simple · E at a door for interiors'
+      : 'Drag orbit · scroll zoom · WASD pan · click buildings, streets, or signals for OSM metadata';
   } catch (error) {
     console.error(error);
     setBuildProgress('ERROR', error.message || String(error), 1);
@@ -6606,7 +9555,8 @@ function start() {
   window.addEventListener('resize', () => {
     resize();
     if (renderer) {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      const pixelCap = fullCityMode ? STREAM.pixelRatioCap : 2;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelCap));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       composer?.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -6630,6 +9580,152 @@ function start() {
     getRegion: () => region,
     setRegion: (points) => setRegion(points),
     applyPreset: (name) => applyPreset(name),
+    playPrebuilt: () => playPrebuiltCity().catch((error) => {
+      console.error('Prebuilt play rejected', error);
+      return { error: error.message || String(error) };
+    }),
+    getFps: () => fpsSamples.length,
+    getPerf: () => ({
+      fps: fpsSamples.length,
+      avgFrameMs: Number(avgFrameMs.toFixed(2)),
+      fullCity: fullCityMode,
+      cityWideReady,
+      cityWideRoads: detailRoadStreamStats.cityWideRoads || cityWideRoadGroup?.children.length || 0,
+      cityWideBuildings: detailRoadStreamStats.buildings || 0,
+      nearFacades: nearFieldStats.facades,
+      nearRoads: nearFieldStats.roads,
+      nearSignals: nearFieldStats.signals,
+      nearTrees: nearFieldStats.trees,
+      nearThreeRoads: nearFieldStats.threeRoads,
+      nearThreeRoadsChunks: nearFieldStats.threeRoadsChunks,
+      roadSegments: simpleRoadSegments,
+      interiorsOpen: Boolean(interiorState),
+      doorways: doorwayGroup?.children.length || 0,
+      shadows: Boolean(renderer?.shadowMap?.enabled),
+      composer: Boolean(composer),
+      traffic: trafficState?.vehicles.length || 0,
+      pedestrians: pedestrianState.length,
+      simpleChunks: simpleRoadStreamGroup?.children.length || 0,
+      buildingChunks: detailBuildingMeshes.length,
+      stream: fullCityMode ? { ...detailRoadStreamStats } : null,
+      drawCalls: renderer?.info?.render?.calls ?? null,
+      triangles: renderer?.info?.render?.triangles ?? null,
+    }),
+    getCoverage: () => ({
+      cityWideReady,
+      roads: detailRoadStreamStats.cityWideRoads || 0,
+      buildings: detailRoadStreamStats.buildings || 0,
+      streets: detailRoadStreamStats.streets || 0,
+      blocks: detailRoadStreamStats.blocks || 0,
+      roadSegments: simpleRoadSegments,
+      interiorsOpen: Boolean(interiorState),
+      interiorGroupPresent: Boolean(interiorGroup),
+      doorways: doorwayGroup?.children.length || 0,
+      nearFacades: nearFieldStats.facades,
+      nearRoads: nearFieldStats.roads,
+      nearSignals: nearFieldStats.signals,
+      nearTrees: nearFieldStats.trees,
+      nearThreeRoads: nearFieldStats.threeRoads,
+      nearThreeRoadsChunks: nearFieldStats.threeRoadsChunks,
+      nearThreeRoads: nearFieldStats.threeRoads,
+      nearThreeRoadsChunks: nearFieldStats.threeRoadsChunks,
+      nearThreeRoadsJunctions: nearFieldStats.threeRoadsJunctions || 0,
+      fps: fpsSamples.length,
+      avgFrameMs: Number(avgFrameMs.toFixed(2)),
+      footprintMode: true,
+      nearField: true,
+      roadGroupChildren: cityWideRoadGroup?.children.length || 0,
+      roadGroupVisible: cityWideRoadGroup ? cityWideRoadGroup.visible : null,
+      junctionPads: detailRoadStreamStats.junctionPads || 0,
+      sidewalkCorners: detailRoadStreamStats.sidewalkCorners || 0,
+      lotAprons: detailRoadStreamStats.lotAprons || 0,
+      centerlineDashes: detailRoadStreamStats.centerlineDashes || 0,
+      crosswalkStripes: detailRoadStreamStats.crosswalkStripes || 0,
+      oneWayArrows: detailRoadStreamStats.oneWayArrows || 0,
+    }),
+    debugRoadMeshes: () => {
+      if (!cityWideRoadGroup) return { error: 'no cityWideRoadGroup' };
+      const spawn = { x: PREBUILT_SPAWN.x, z: PREBUILT_SPAWN.z };
+      let meshCount = 0;
+      let nearest = null;
+      const nearVerts = [];
+      const radiusBuckets = { r50: 0, r150: 0, r400: 0, r1000: 0 };
+      cityWideRoadGroup.traverse((object) => {
+        if (!object.isMesh) return;
+        meshCount += 1;
+        const positions = object.geometry?.attributes?.position;
+        if (!positions) return;
+        for (let i = 0; i < positions.count; i += 4) {
+          const x = positions.getX(i);
+          const y = positions.getY(i);
+          const z = positions.getZ(i);
+          const dist = Math.hypot(x - spawn.x, z - spawn.z);
+          if (dist < 50) radiusBuckets.r50 += 1;
+          if (dist < 150) radiusBuckets.r150 += 1;
+          if (dist < 400) radiusBuckets.r400 += 1;
+          if (dist < 1000) radiusBuckets.r1000 += 1;
+          if (!nearest || dist < nearest.dist) {
+            nearest = {
+              name: object.name,
+              dist: Number(dist.toFixed(2)),
+              x: Number(x.toFixed(2)),
+              y: Number(y.toFixed(2)),
+              z: Number(z.toFixed(2)),
+              color: object.material?.color ? `#${object.material.color.getHexString()}` : null,
+            };
+          }
+          if (dist <= 80 && nearVerts.length < 20) {
+            nearVerts.push({
+              name: object.name,
+              dist: Number(dist.toFixed(2)),
+              x: Number(x.toFixed(2)),
+              y: Number(y.toFixed(2)),
+              z: Number(z.toFixed(2)),
+            });
+          }
+        }
+      });
+      // Also sample raw OSM roads near spawn from city data.
+      let osmNear = 0;
+      let osmNearest = null;
+      for (const road of cityData?.roads || []) {
+        for (let i = 0; i < road.points.length; i += 2) {
+          const x = road.points[i];
+          const z = road.points[i + 1];
+          const dist = Math.hypot(x - spawn.x, z - spawn.z);
+          if (dist < 80) osmNear += 1;
+          if (!osmNearest || dist < osmNearest.dist) {
+            osmNearest = { id: road.id, highway: road.highway, dist: Number(dist.toFixed(2)), x, z };
+          }
+        }
+      }
+      const byClass = {};
+      cityWideRoadGroup.traverse((object) => {
+        if (!object.isMesh) return;
+        const positions = object.geometry?.attributes?.position;
+        if (!positions) return;
+        let local = 0;
+        for (let i = 0; i < positions.count; i += 4) {
+          const dist = Math.hypot(positions.getX(i) - spawn.x, positions.getZ(i) - spawn.z);
+          if (dist <= 60) local += 1;
+        }
+        if (!local) return;
+        const key = object.name || 'unnamed';
+        byClass[key] = (byClass[key] || 0) + local;
+      });
+      return {
+        children: cityWideRoadGroup.children.length,
+        meshes: meshCount,
+        elevSpawn: elevationAt(spawn.x, spawn.z),
+        groundY: elevationAt(spawn.x, spawn.z) - (fullCityMode ? 1.35 : 0.04),
+        radiusBuckets,
+        nearest,
+        nearVerts,
+        byClass,
+        osmNear,
+        osmNearest,
+      };
+    },
     build: () => buildCity().catch((error) => {
       console.error('Real map build rejected', error);
       return { error: error.message || String(error) };
@@ -6745,7 +9841,41 @@ function start() {
       if (resolved?.position) camera.position.set(resolved.position[0], resolved.position[1], resolved.position[2]);
       if (resolved?.target) controls.target.set(resolved.target[0], resolved.target[1], resolved.target[2]);
       controls.update();
+      const focus = {
+        x: resolved?.target?.[0] ?? camera.position.x,
+        z: resolved?.target?.[2] ?? camera.position.z,
+      };
+      streamFocusPoint = focus;
+      if (fullCityMode && cityWideReady) updateNearFieldFidelity(focus);
       return true;
+    },
+    /** Teleport player + stream focus (drive/walk). Orbit uses camera target. */
+    setPlayerPose: (pose = {}) => {
+      const x = Number(pose.x);
+      const z = Number(pose.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+      streamFocusPoint = { x, z };
+      if (playerState) {
+        playerState.x = x;
+        playerState.z = z;
+        if (Number.isFinite(pose.yaw)) {
+          playerYaw = pose.yaw;
+          playerState.yaw = pose.yaw;
+        }
+        if (playerAvatarGroup) {
+          playerAvatarGroup.position.set(x, elevationAt(x, z), z);
+        }
+      }
+      if (fullCityMode && cityWideReady) updateNearFieldFidelity(streamFocusPoint);
+      return { x, z };
+    },
+    setStreamFocus: (point = {}) => {
+      const x = Number(point.x);
+      const z = Number(point.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+      streamFocusPoint = { x, z };
+      if (fullCityMode && cityWideReady) updateNearFieldFidelity(streamFocusPoint);
+      return streamFocusPoint;
     },
     getCameraState: () => camera ? {
       position: [camera.position.x, camera.position.y, camera.position.z],
@@ -6759,6 +9889,135 @@ function start() {
     setBeauty: (active) => {
       document.body.classList.toggle('is-beauty', Boolean(active));
       return Boolean(active);
+    },
+    /** Current street/sidewalk design knobs + residential meter summary. */
+    getStreetDesign: () => ({
+      ...streetDesign,
+      summary: summarizeStreetDesign(streetDesign),
+      presets: Object.keys(STREET_PRESETS),
+      mapMeta: cityData?.meta?.streetDesign || null,
+      overrides: streetDesign.overrides,
+    }),
+    /**
+     * Set global streetScale / sidewalkScale (and optional other knobs).
+     * Updates in-memory map meta.streetDesign and rebuilds Full City when playing.
+     * Example: setStreetDesign({ streetScale: 4.2, sidewalkScale: 2.0 })
+     */
+    setStreetDesign: (partial = {}) => {
+      streetDesign = createStreetDesign({
+        ...streetDesign,
+        ...partial,
+        overrides: partial.overrides || streetDesign.overrides,
+        preset: partial.preset || 'custom',
+      });
+      syncStreetDesignIntoCityMeta();
+      const summary = summarizeStreetDesign(streetDesign);
+      rebuildStreetDesignLive('Street redesign');
+      return summary;
+    },
+    /** Apply a named preset: compact | default | wide | boulevard */
+    setStreetPreset: (name) => {
+      const preset = STREET_PRESETS[String(name || '').toLowerCase()];
+      if (!preset) return { error: `Unknown preset ${name}`, presets: Object.keys(STREET_PRESETS) };
+      streetDesign = createStreetDesign({
+        preset: String(name).toLowerCase(),
+        overrides: streetDesign.overrides,
+      });
+      syncStreetDesignIntoCityMeta();
+      const summary = summarizeStreetDesign(streetDesign);
+      rebuildStreetDesignLive('Street preset');
+      return summary;
+    },
+    /**
+     * Dynamically change one street (by OSM id or street name) asphalt / sidewalk.
+     * Absolute meters or scales. Rebuilds Full City when playing.
+     *
+     *   setStreet('Market St', { asphaltWidth: 16, sidewalkWidth: 3.5 })
+     *   setStreet(roadId, { streetScale: 2.4, sidewalkScale: 1.5 })
+     */
+    setStreet: (key, partial = {}) => {
+      const roads = findRoadsByKey(key);
+      if (!roads.length) {
+        return { error: `No street matched "${key}"`, hint: 'Use listStreets({ q: "Market" })' };
+      }
+      streetDesign = withStreetOverride(streetDesign, key, partial);
+      syncStreetDesignIntoCityMeta();
+      const streets = roads.slice(0, 24).map(describeStreetRoad);
+      rebuildStreetDesignLive('Per-street resize');
+      return {
+        key: String(key),
+        matched: roads.length,
+        streets,
+        overrides: streetDesign.overrides,
+        summary: summarizeStreetDesign(streetDesign),
+      };
+    },
+    /** Read resolved asphalt/sidewalk for a street id or name. */
+    getStreet: (key) => {
+      const roads = findRoadsByKey(key);
+      if (!roads.length) return { error: `No street matched "${key}"` };
+      return {
+        key: String(key),
+        matched: roads.length,
+        streets: roads.slice(0, 40).map(describeStreetRoad),
+      };
+    },
+    /** Remove a per-street override (falls back to global design). */
+    clearStreet: (key) => {
+      streetDesign = withoutStreetOverride(streetDesign, key);
+      syncStreetDesignIntoCityMeta();
+      rebuildStreetDesignLive('Clear street override');
+      return {
+        key: String(key),
+        overrides: streetDesign.overrides,
+        summary: summarizeStreetDesign(streetDesign),
+      };
+    },
+    /** All active per-street overrides. */
+    getStreetOverrides: () => ({
+      byId: { ...streetDesign.overrides.byId },
+      byName: { ...streetDesign.overrides.byName },
+      summary: summarizeStreetDesign(streetDesign),
+    }),
+    /**
+     * Find streets to edit.
+     *   listStreets({ q: 'Valencia', limit: 12 })
+     *   listStreets({ near: [x,z], radius: 180, limit: 20 })
+     */
+    listStreets: (opts = {}) => {
+      const q = normalizeStreetName(opts.q || opts.name || '');
+      const limit = Math.max(1, Math.min(80, Number(opts.limit) || 20));
+      const near = Array.isArray(opts.near) ? { x: opts.near[0], z: opts.near[1] } : opts.near;
+      const radius = Number(opts.radius) || 220;
+      const roads = cityData?.roads || [];
+      const scored = [];
+      for (const road of roads) {
+        if (!road) continue;
+        if (q) {
+          const name = normalizeStreetName(road.name || '');
+          if (!name.includes(q) && String(road.id) !== String(opts.q)) continue;
+        }
+        let distance = 0;
+        if (near && Number.isFinite(near.x) && Number.isFinite(near.z)) {
+          distance = nearestRoadDistance(road, near);
+          if (distance > radius) continue;
+        }
+        scored.push({ road, distance });
+      }
+      scored.sort((a, b) => a.distance - b.distance || String(a.road.name).localeCompare(String(b.road.name)));
+      const uniqueNames = new Map();
+      const list = [];
+      for (const entry of scored) {
+        const nameKey = normalizeStreetName(entry.road.name || '') || `id:${entry.road.id}`;
+        if (uniqueNames.has(nameKey) && !opts.byId) continue;
+        uniqueNames.set(nameKey, true);
+        list.push({
+          ...describeStreetRoad(entry.road),
+          distanceM: Number(entry.distance.toFixed(1)),
+        });
+        if (list.length >= limit) break;
+      }
+      return { count: list.length, streets: list };
     },
     setWeather: (mode) => setWeatherMode(mode),
     getWeather: () => weatherMode,

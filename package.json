@@ -10,7 +10,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "build:realmap-assets": "node scripts/build-realmap-assets.mjs",
+    "embed:street-design": "node scripts/embed-street-design.mjs",
+    "build:sf-atlas": "node scripts/build-sf-atlas.mjs",
     "build:sf-elevation": "node scripts/build-sf-elevation.mjs",
+    "verify:realmap-topology": "node scripts/verify-realmap-topology.mjs",
     "qa:realmap": "node scripts/qa-realmap.mjs",
     "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
     "qa:realmap-blind-ab": "node scripts/build-realmap-blind-ab.mjs",
@@ -23,6 +26,7 @@
     "verify:performance": "node scripts/verify-performance.mjs",
     "verify:live-soak": "node scripts/verify-live-soak.mjs",
     "verify:physics": "node scripts/verify-physics.mjs",
+    "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
@@ -32,7 +36,10 @@
     "qa:blind-ab": "node scripts/build-blind-ab.mjs",
     "profile:frame": "node scripts/profile-frame.mjs",
     "qa:district-visual": "node scripts/qa-district-visual.mjs",
-    "qa:interior-visual": "node scripts/qa-interior-variants.mjs"
+    "qa:interior-visual": "node scripts/qa-interior-variants.mjs",
+    "qa:npc-anim": "node scripts/qa-npc-animation.mjs",
+    "qa:junction-sbs": "node scripts/qa-junction-sbs.mjs",
+    "probe:realmap-drive": "node scripts/probe-realmap-drive.mjs"
   },
   "dependencies": {
     "three": "0.180.0",

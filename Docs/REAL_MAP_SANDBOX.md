@@ -86,8 +86,16 @@ npm run dev
 
 Open `http://localhost:5173/realmap.html`. Choose Draw and click to place
 boundary vertices, double-click or press Enter to close the polygon, or use the
-presets (Downtown, Mission, North Beach, Presidio, Outer Sunset, Full City).
-Then press **Build 3D City**.
+presets (Downtown, Financial, Embarcadero, Mission, Castro, Haight, Richmond,
+North Beach, Presidio, Outer Sunset, Full City). Then press **Build 3D City**.
+
+Deep-link **prebuilt streamed city** (recommended):
+`http://localhost:5173/realmap.html?play=1`
+
+This skips drawing a boundary and only seeds nearby OSM streets/buildings,
+then streams more as you roam. Full City no longer meshes ~60k roads at once.
+
+Or click **Play Prebuilt City** in the map toolbar.
 
 3D controls: drag to orbit, scroll to zoom, `W A S D` to pan, click a building,
 street, or signal to inspect its OSM metadata, `H` to hide the HUD, **Back to
@@ -159,7 +167,15 @@ Latest gate results on this machine:
 - Downtown preset generated 1,061 compiled streets, 203 real signal nodes,
   71 traffic vehicles, 150 sidewalk pedestrians, 420 street trees, and 1,401
   detailed OSM building footprints;
-- Full City preset generated all **60,463 real OSM roads** as real-road and
+- Detail bbox now covers the urban peninsula (Ocean Beach approach → Embarcadero,
+  Bernal/Mission edge → Marina): **~49k detail roads** and **28k** prioritized
+  detailed footprints.
+- **Full City is streamed:** only a ~750 m seed of streets/buildings loads at
+  start; more chunks stream/unload with camera focus (caps on detail chunks,
+  buildings, trees, furniture, hill veg). SSAO is disabled in Full City for FPS.
+- Full City still *knows* all **60k+ OSM roads** as data, but does **not** mesh
+  them all at once. Downtown / region builds still compile their boundary fully.
+- Full City preset generated all **60,463+ real OSM roads** as real-road and
   sidewalk geometry (53,924 road segments, 22,924 sidewalk segments), with
   lane-level junction meshing **streamed in distance-budgeted chunks around the
   camera** (QA confirms loaded chunks and compiled detail roads), all 322 signal

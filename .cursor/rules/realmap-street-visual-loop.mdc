@@ -1,0 +1,18 @@
+---
+description: After every Full City / three-roads / junction change, capture side-by-side screenshots and spawn a fix subagent until streets look realistic.
+alwaysApply: true
+---
+
+# Realmap street visual QA loop
+
+Street/sidewalk sizing lives in `public/data/sf/sf-city.json` → `meta.streetDesign` (patch with `npm run embed:street-design`). URL `?street=&sidewalk=&preset=` overrides for experiments only.
+
+Whenever you change realmap roads, junctions, sidewalks, three-roads streaming, or Full City street meshing:
+
+1. **Capture** — run `npm run qa:junction-sbs` (or `node scripts/qa-junction-sbs.mjs`). Outputs live under `tmp/junction-qa/`.
+2. **Read the PNGs** with the Read tool (especially `sbs-*.png` and `overhead-*.png`). Do not trust metrics alone.
+3. **Spawn a subagent** (`generalPurpose`) whose only job is to fix visible street defects from those frames. Give it absolute image paths and require another capture after each fix.
+4. **Iterate** until junctions read as real T or + (no strip gaps, no fake fourth arm on a T, no chaotic overlapping lane markings, continuous asphalt through corners). Keep FPS ≥ ~40 on Full City play.
+5. **Report** with before/after image paths and what changed.
+
+Do not call a road change “done” from code inspection alone.

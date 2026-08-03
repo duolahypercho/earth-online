@@ -3,7 +3,8 @@
 // brake/indicator lighting, wheel spin and body bob. Deterministic via seed.
 //
 // Exports: createTrafficSystem({ scene, roadNetwork })
-//   -> { group, update(dt, elapsed), getStats() }
+//   -> { group, update(dt, elapsed), setFocus(position, radius), getStats(),
+//        getDiagnostics(), setWeather(mode), getVehicleLifeSnapshot() }
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -13,6 +14,16 @@ import {
   signalOffsetForPosition,
   signalPhaseAt,
 } from './signals.js';
+import {
+  attachNodeControls,
+  createTrafficRuleScenario,
+  evaluateTrafficRuleSample,
+  findTurnRule,
+  isDirectionLegal,
+  isTurnAllowed,
+  normalizeRoadRules,
+} from './traffic-graph.js';
+import { createSfTaxiModel } from './vehicles/createSfTaxiModel.js';
 
 const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`;
 
@@ -42,8 +53,10 @@ const ROUTE_LOOKAHEAD = 22;   // choose a turn early enough to signal it (m)
 const TURN_SPAN = 8.2;        // lane path either side of an intersection (m)
 const BRAKE_LIGHT_DECEL = -0.65;
 const SIGNAL_REACTION = 0.32; // perception/actuation allowance for stop planning
+const STOP_SIGN_HOLD = 0.45;  // full stop dwell before release at stop control
 const CURB_LANE_LIMIT = 5.2;  // moving vehicles hug the marked right lane (m)
 const CURB_LANE_OFFSET = 4.9; // parking-lane centerline (m)
+const BIKE_LANE_OFFSET = 3.95; // between travel lane and parking / curb
 const TAXI_DWELL_MIN = 2.6;
 const TAXI_DWELL_SPAN = 3.6;
 const SERVICE_DWELL_MIN = 4.2;
@@ -60,6 +73,18 @@ const HERO_ROAD_CAP = 6;
 const HERO_HEAVY_CROSS_CAP = 1;
 const MAX_VEHICLES = 42;
 const MIN_VEHICLES = 38;
+// Keep full wheels/glass/lighting details inside the street-view pocket. The
+// lane simulation and signal behavior continue citywide; vehicles outside
+// this radius use the already-pooled readable silhouette instead of
+// submitting every manufactured submesh from the 39-car fleet.
+// Preserve close sidewalk/car interaction detail while switching the rest of
+// the live fleet to its single pooled silhouette early enough to keep the
+// original core district inside the frame budget.
+const TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED = 72 * 72;
+// The optional production hero asset is intentionally more expensive than the
+// pooled low-poly vehicle. Keep it for a true close-up, but let the procedural
+// shell carry the readable silhouette through the normal street-view band.
+const TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED = 26 * 26;
 const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
 
@@ -114,11 +139,17 @@ const CLASSES = {
     vMin: 6.0, vMax: 9.0, accel: 1.25, brake: 3.1,
     headway: 1.65, reaction: 0.56, jerkUp: 1.55, jerkDown: 3.5,
   },
+  bike: {
+    len: 1.72, wid: 0.52, hgt: 1.05, wheelR: 0.31,
+    vMin: 4.2, vMax: 7.4, accel: 2.1, brake: 3.8,
+    headway: 1.05, reaction: 0.26, jerkUp: 3.6, jerkDown: 6.4,
+  },
 };
 
 const TAXI_COLOR = 0xffc324;
 const BUS_BODY = 0xe9e6e0;
 const BUS_STRIPE = 0xc8352c; // Muni-ish red
+const BUS_ROUTE_BOARD = 'MUNI 1 CALIFORNIA'; // text on the shared coach sign board
 const TRUCK_CABS = [0x6b4a2a, 0xf0ede6, 0x8c2f2a, 0x3a3f46]; // UPS brown, white, red, charcoal
 
 const VEHICLE_IDENTITIES = {
@@ -158,6 +189,12 @@ const VEHICLE_IDENTITIES = {
     label: 'Local delivery vehicle',
     curbService: 'delivery',
   },
+  bike: {
+    key: 'sf-bike',
+    category: 'bike',
+    label: 'San Francisco bicycle',
+    curbService: null,
+  },
 };
 
 const CURB_SERVICE_PROFILES = {
@@ -193,6 +230,7 @@ const CURB_SERVICE_PROFILES = {
 function vehicleIdentityFor(cls, ordinal) {
   if (cls === 'bus') return VEHICLE_IDENTITIES.sfmtaTransit;
   if (cls === 'taxi') return VEHICLE_IDENTITIES.taxi;
+  if (cls === 'bike') return VEHICLE_IDENTITIES.bike;
   if (cls === 'truck') return VEHICLE_IDENTITIES.delivery;
   if (cls === 'van') {
     if (ordinal === 0) return VEHICLE_IDENTITIES.sfmtaService;
@@ -202,6 +240,39 @@ function vehicleIdentityFor(cls, ordinal) {
   }
   if (cls === 'pickup' && ordinal === 0) return VEHICLE_IDENTITIES.cityService;
   return VEHICLE_IDENTITIES.private;
+}
+
+function routeSideCue(side, uTurn = false) {
+  if (uTurn) return 'u-turn';
+  if (side > 0) return 'right';
+  if (side < 0) return 'left';
+  return 'straight';
+}
+
+// Livery labels mirror the shared badge/sign vocabulary painted in
+// `buildShared`, so UI/QA cues stay in lockstep with the visible fleet.
+function liveryCueFor(identity, cls) {
+  if (identity.key === 'sf-taxi') {
+    return { key: 'sf-taxi', label: 'Taxi yellow / TAXI' };
+  }
+  if (identity.key === 'sf-bike') {
+    return { key: 'sf-bike', label: 'City bicycle' };
+  }
+  if (identity.key === 'sfmta-transit') {
+    return { key: 'muni-transit', label: 'Muni white / red stripe' };
+  }
+  if (identity.key === 'sfmta-service') {
+    return { key: 'sfmta-service', label: 'SFMTA street service' };
+  }
+  if (identity.key === 'city-service') {
+    return { key: 'city-service', label: 'City field service' };
+  }
+  if (identity.key === 'local-delivery') {
+    return cls === 'truck'
+      ? { key: 'delivery-truck', label: 'Bay Parcel box truck' }
+      : { key: 'delivery-van', label: 'Bay Parcel van' };
+  }
+  return { key: 'private', label: 'Private vehicle' };
 }
 
 // Streamed districts use one global instanced fleet rather than cloning this
@@ -216,6 +287,7 @@ export function getStreamedVehicleVisualProfile() {
       suv: { ...CLASSES.suv },
       taxi: { ...CLASSES.taxi },
       van: { ...CLASSES.van },
+      bike: { ...CLASSES.bike },
     },
     taxiColor: TAXI_COLOR,
   };
@@ -286,6 +358,11 @@ function extractPointList(r) {
   return null;
 }
 
+function extractSignalPlanPoint(plan, out) {
+  if (!plan) return false;
+  return readPoint(plan.position || plan.world || plan, out);
+}
+
 function splitAtKnownIntersections(list, intersections) {
   if (!Array.isArray(list) || list.length !== 2 || !intersections.length) return [list];
 
@@ -332,13 +409,17 @@ function normalizeNetwork(roadNetwork) {
 
   const tmp = { x: 0, y: 0, z: 0 };
   const intersections = Array.isArray(roadNetwork.intersections) ? roadNetwork.intersections : [];
+  const turnRules = Array.isArray(roadNetwork.turnRules) ? roadNetwork.turnRules : [];
   for (const raw of roadNetwork.roads) {
     const list = extractPointList(raw);
     if (!list || list.length < 2) continue;
-    const rawSpeedLimit = Number(raw?.speedLimit);
-    const speedLimit = Number.isFinite(rawSpeedLimit) && rawSpeedLimit > 0
-      ? (rawSpeedLimit > 18 ? rawSpeedLimit * 0.44704 : rawSpeedLimit)
-      : Infinity;
+    const rules = normalizeRoadRules(raw);
+    const speedLimit = rules.speedLimit;
+    const laneOffset = rules.laneOffset ?? (
+      Number.isFinite(Number(raw?.laneWidth)) && Number(raw.laneWidth) > 0
+        ? Number(raw.laneWidth)
+        : LANE_OFFSET
+    );
     for (const segment of splitAtKnownIntersections(list, intersections)) {
       const px = [], py = [], pz = [];
       let lx = null, lz = null;
@@ -368,6 +449,9 @@ function normalizeNetwork(roadNetwork) {
         cum,
         len,
         speedLimit,
+        laneOffset,
+        oneway: rules.oneway,
+        dirs: rules.dirs,
         endNode: [-1, -1],
         signalGroup: [
           Math.abs(firstDx) >= Math.abs(firstDz) ? 0 : 1,
@@ -387,12 +471,19 @@ function normalizeNetwork(roadNetwork) {
       for (let n = 0; n < nodes.length; n++) {
         if (Math.abs(nodes[n].x - x) < NODE_EPS && Math.abs(nodes[n].z - z) < NODE_EPS) { ni = n; break; }
       }
-      if (ni === -1) { ni = nodes.length; nodes.push({ x, y, z, ends: [] }); }
+      if (ni === -1) { ni = nodes.length; nodes.push({ x, y, z, ends: [], control: 'none' }); }
       nodes[ni].ends.push({ road: ri, end });
       r.endNode[end] = ni;
     }
   }
-  return { roads, nodes };
+  attachNodeControls(nodes, roadNetwork);
+  return {
+    roads,
+    nodes,
+    signalPlans: Array.isArray(roadNetwork.signalPlans) ? roadNetwork.signalPlans : [],
+    turnRules,
+    controls: Array.isArray(roadNetwork.controls) ? roadNetwork.controls : [],
+  };
 }
 
 /* ---------------- signals ---------------- */
@@ -400,12 +491,32 @@ function normalizeNetwork(roadNetwork) {
 // Nodes where >= 3 road ends meet are treated as signalized crossings.
 // The phase group belongs to each road end (horizontal 0, vertical 1), not
 // the whole node: opposing approaches move together while cross traffic waits.
-function buildSignals(nodes) {
+function buildSignals(nodes, signalPlans = []) {
   const signals = new Map();
+  const useAuthoredPlans = signalPlans.length > 0;
+  const planPoint = { x: 0, y: 0, z: 0 };
   for (let n = 0; n < nodes.length; n++) {
-    if (nodes[n].ends.length < 3) continue;
+    if (nodes[n].control === 'stop' || nodes[n].control === 'none') continue;
+    if (nodes[n].ends.length < 3 && nodes[n].control !== 'signal') continue;
+    let plan = null;
+    if (useAuthoredPlans) {
+      plan = signalPlans.find((candidate) => {
+        if (!extractSignalPlanPoint(candidate, planPoint)) return false;
+        return Math.hypot(planPoint.x - nodes[n].x, planPoint.z - nodes[n].z) <= NODE_EPS * 2;
+      });
+      if (nodes[n].control !== 'signal') {
+        if (!plan || plan.signalized === false) continue;
+      }
+    } else if (nodes[n].control !== 'signal' && nodes[n].ends.length < 3) {
+      continue;
+    }
     signals.set(n, {
       offset: signalOffsetForPosition(nodes[n].x, nodes[n].z),
+      planId: plan?.id || null,
+      cycleSeconds: Number.isFinite(plan?.cycleSeconds) ? plan.cycleSeconds : null,
+      pedestrianLeadSeconds: Number.isFinite(plan?.pedestrianLeadSeconds)
+        ? plan.pedestrianLeadSeconds
+        : null,
     });
   }
   return signals;
@@ -610,7 +721,7 @@ function buildShared() {
     context.font = '700 35px Arial, sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText('MUNI 1 CALIFORNIA', canvas.width * 0.5, canvas.height * 0.53);
+    context.fillText(BUS_ROUTE_BOARD, canvas.width * 0.5, canvas.height * 0.53);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = 4;
@@ -768,7 +879,7 @@ function buildShared() {
     heroContactMat: new THREE.MeshBasicMaterial({
       color: 0x080d10,
       transparent: true,
-      opacity: 0.36,
+      opacity: 0.16,
       depthWrite: false,
       toneMapped: false,
     }),
@@ -833,6 +944,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   root.userData.vehicleClass = cls;
   root.userData.vehicleIdentity = identity.key;
   root.userData.vehicleCategory = identity.category;
+  root.userData.vehicleColor = color;
   root.add(bodyG, wheelG);
 
   // A compact baked contact patch grounds the pooled fleet even when its
@@ -859,7 +971,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // windshield sweeps while weather is wet. The pivot lives on the body
     // group so a single rotation reads from every exterior angle.
     let wiperPivot = null;
-    if (cls !== 'bus') {
+    if (cls !== 'bus' && cls !== 'bike') {
       // Anchor at the base of each class's actual windshield (front-bottom
       // edge of its cabin volume), raked to match the glass slope.
       const wiperSeat = cls === 'sedan' || cls === 'taxi'
@@ -887,7 +999,20 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
       bodyG.add(wiperPivot);
     }
 
-    const paint = shared.bodyMat(color);
+  const paint = shared.bodyMat(readableBodyColor(color, cls));
+  // A single pooled silhouette keeps citywide traffic visible without
+  // submitting every glass pane, wheel hub, indicator, and trim mesh once the
+  // vehicle is beyond the near street-view pocket. Simulation and collision
+  // state remain unchanged; the full assembly returns inside the pocket.
+  const proxyBody = new THREE.Mesh(shared.roundedBox, paint);
+  proxyBody.name = 'Traffic distance silhouette';
+  proxyBody.position.y = hgt * 0.46;
+  proxyBody.scale.set(wid * 0.98, hgt * 0.72, len * 0.98);
+  proxyBody.castShadow = false;
+  proxyBody.receiveShadow = true;
+  proxyBody.visible = false;
+  root.add(proxyBody);
+  const proxyCueG = addProxyClassCue(shared, root, cls, spec, paint);
   const wheels = [];
   const frontWheels = [];
   const beaconLights = [];
@@ -955,7 +1080,20 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     }
   };
 
-  if (cls === 'sedan' || cls === 'taxi') {
+  if (cls === 'bike') {
+    // Low-poly city bike: diamond frame, disc wheels, flat bars, seat.
+    const frameMat = shared.bodyMat(readableBodyColor(color, cls));
+    const fork = box(shared, frameMat, 0.05, hgt * 0.42, 0.05, 0, hgt * 0.42, len * 0.28, bodyG);
+    void fork;
+    box(shared, frameMat, 0.05, 0.05, len * 0.55, 0, hgt * 0.48, 0, bodyG);
+    box(shared, frameMat, 0.05, hgt * 0.28, 0.05, 0, hgt * 0.34, -len * 0.22, bodyG);
+    box(shared, frameMat, 0.42, 0.04, 0.04, 0, hgt * 0.78, len * 0.22, bodyG);
+    box(shared, shared.rubberTrimMat, 0.18, 0.06, 0.22, 0, hgt * 0.72, -len * 0.18, bodyG);
+    addWheel(-wid * 0.02, len * 0.32, wheelR, true);
+    addWheel(wid * 0.02, -len * 0.32, wheelR);
+    // Narrow the contact patch for a bike footprint.
+    contactShadow.scale.set(wid * 0.9, len * 0.55, 1);
+  } else if (cls === 'sedan' || cls === 'taxi') {
     roundedBox(shared, paint, wid * 0.98, hgt * 0.46, len * 0.98, 0, hgt * 0.38, 0, bodyG);
     // Hood and trunk decks sit lower than the roof so the side profile reads
     // as a three-box sedan rather than one extruded slab.
@@ -1257,6 +1395,13 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   // language with the authored hero car: bumpers, mirrors, window breaks and
   // a low belt line are visible even when a vehicle is several car lengths
   // away. They stay on the shared unit geometry to keep the pool inexpensive.
+  // Bikes keep the diamond-frame assembly above and skip car fascia language.
+  const tailLights = [];
+  const rearIndicatorLeft = [];
+  const rearIndicatorRight = [];
+  const indicatorLeft = [];
+  const indicatorRight = [];
+  if (cls !== 'bike') {
   box(shared, shared.underbodyMat, wid * 0.78, 0.13, len * 0.76, 0, wheelR * 0.72, 0, bodyG);
   if (cls !== 'bus' && cls !== 'truck') {
     // Roof antenna fin seated on each class's actual cabin roof, plus a
@@ -1326,11 +1471,6 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
 
   // Shared on/off materials keep lighting state readable without allocating
   // unique shader materials for every pooled vehicle.
-  const tailLights = [];
-  const rearIndicatorLeft = [];
-  const rearIndicatorRight = [];
-  const indicatorLeft = [];
-  const indicatorRight = [];
   const ly = Math.min(hgt * 0.55, 0.9);
   for (const side of [-1, 1]) {
     box(shared, shared.lightHousingMat, wid * 0.225, 0.155, 0.05,
@@ -1385,13 +1525,13 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   indicatorRight.push(box(shared, shared.indicatorOffMat, 0.1, 0.06, 0.06, wid * 0.44, ly, len / 2 + 0.03, bodyG));
   indicatorLeft.push(box(shared, shared.indicatorOffMat, 0.065, 0.1, 0.15, -wid / 2 - 0.01, ly, len * 0.32, bodyG));
   indicatorRight.push(box(shared, shared.indicatorOffMat, 0.065, 0.1, 0.15, wid / 2 + 0.01, ly, len * 0.32, bodyG));
+  } // end non-bike automotive fascia / lighting
 
   bodyG.traverse((child) => {
     if (!child.isMesh) return;
-    // Vehicle contact is carried by the lit underbody and road AO; casting
-    // every pooled submesh into the sun atlas costs more than it contributes
-    // at the street-view distances used by this demo.
-    child.castShadow = false;
+    // Bikes are cheap enough to cast; the car fleet keeps contact discs so
+    // the sun atlas is not flooded by forty multi-mesh vehicles.
+    child.castShadow = cls === 'bike';
     child.receiveShadow = child.userData.noReceiveShadow !== true;
     child.updateMatrix();
     child.matrixAutoUpdate = false;
@@ -1401,6 +1541,8 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     root,
     bodyG,
     wheelG,
+    proxyBody,
+    proxyCueG,
     wheels,
     frontWheels,
     beaconLights,
@@ -1430,20 +1572,74 @@ function pickColor(rng) {
   return BODY_PALETTE[0].c;
 }
 
+function readableBodyColor(hex, cls) {
+  if (cls === 'taxi' || cls === 'bus' || cls === 'bike') return hex;
+  const r = (hex >> 16) & 255;
+  const g = (hex >> 8) & 255;
+  const b = hex & 255;
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  if (lum >= 0.24) return hex;
+  const lift = 0.24 / Math.max(lum, 0.08);
+  const rr = Math.min(255, Math.round(r * lift));
+  const gg = Math.min(255, Math.round(g * lift));
+  const bb = Math.min(255, Math.round(b * lift));
+  return (rr << 16) | (gg << 8) | bb;
+}
+
+function addProxyClassCue(shared, root, cls, spec, paint) {
+  const proxyCueG = new THREE.Group();
+  proxyCueG.name = 'Traffic distance class cue';
+  proxyCueG.visible = false;
+  const { wid, hgt, len } = spec;
+  if (cls === 'bike') {
+    box(shared, paint, wid * 0.35, hgt * 0.08, len * 0.72,
+      0, hgt * 0.48, 0, proxyCueG);
+  } else if (cls === 'bus') {
+    roundedBox(shared, shared.bodyMat(BUS_STRIPE), wid * 0.92, hgt * 0.1, len * 0.94,
+      0, hgt * 0.58, 0, proxyCueG);
+    frontBadge(shared, shared.busRouteMat, wid * 0.34, hgt * 0.12, 0, hgt * 0.66, len * 0.47, proxyCueG,
+      'Pooled Muni route board');
+  } else if (cls === 'taxi') {
+    box(shared, shared.signMat, wid * 0.42, hgt * 0.12, len * 0.22,
+      0, hgt * 0.92, -len * 0.04, proxyCueG);
+    for (const side of [-1, 1]) {
+      box(shared, shared.taxiTrimMat, 0.03, hgt * 0.08, len * 0.72,
+        side * wid * 0.5, hgt * 0.48, 0, proxyCueG);
+    }
+  } else if (cls === 'truck' || cls === 'van') {
+    box(shared, paint, wid * 0.82, hgt * 0.08, len * 0.42,
+      0, hgt * 0.72, -len * 0.08, proxyCueG);
+    box(shared, shared.trimMat, wid * 0.18, hgt * 0.08, len * 0.08,
+      0, hgt * 0.72, len * 0.38, proxyCueG);
+  } else if (cls === 'pickup') {
+    box(shared, paint, wid * 0.76, hgt * 0.28, len * 0.34,
+      0, hgt * 0.58, -len * 0.24, proxyCueG);
+  } else if (cls === 'suv') {
+    box(shared, shared.roofEquipmentMat, wid * 0.42, hgt * 0.05, len * 0.52,
+      0, hgt * 0.92, -len * 0.03, proxyCueG);
+  } else {
+    taperedBox(shared, shared.sedanCabin, paint, wid * 0.72, hgt * 0.16, len * 0.34,
+      0, hgt * 0.78, -len * 0.02, proxyCueG);
+  }
+  root.add(proxyCueG);
+  return proxyCueG;
+}
+
 function buildClassList(rng, count) {
-  // Seed the fleet with one Muni coach and a couple of cabs, then bias the
-  // remainder toward sedans/SUVs with a light taxi presence. Freight is a
+  // Seed the fleet with one Muni coach, cabs, and a few bikes, then bias the
+  // remainder toward sedans/SUVs with a light taxi/bike presence. Freight is a
   // small share: box trucks on every block read as a distribution yard.
-  const list = ['bus', 'taxi', 'taxi', 'truck', 'truck', 'van', 'van', 'pickup', 'suv', 'suv'];
+  const list = ['bus', 'taxi', 'taxi', 'bike', 'bike', 'bike', 'truck', 'truck', 'van', 'van', 'pickup', 'suv', 'suv'];
   while (list.length < count) {
     const r = rng();
     list.push(
-      r < 0.46 ? 'sedan'
-        : r < 0.68 ? 'suv'
-          : r < 0.79 ? 'van'
-            : r < 0.87 ? 'pickup'
-              : r < 0.945 ? 'taxi'
-                : 'truck',
+      r < 0.42 ? 'sedan'
+        : r < 0.62 ? 'suv'
+          : r < 0.72 ? 'van'
+            : r < 0.8 ? 'pickup'
+              : r < 0.88 ? 'taxi'
+                : r < 0.94 ? 'bike'
+                  : 'truck',
     );
   }
   // deterministic shuffle
@@ -1456,20 +1652,28 @@ function buildClassList(rng, count) {
 
 /* ---------------- factory ---------------- */
 
-export function createTrafficSystem({ scene, roadNetwork } = {}) {
+export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   const group = new THREE.Group();
   group.name = 'traffic';
   if (scene && typeof scene.add === 'function') scene.add(group);
 
   const rng = mulberry32(SEED);
-  const { roads, nodes } = normalizeNetwork(roadNetwork);
-  const signals = buildSignals(nodes);
+  const { roads, nodes, signalPlans, turnRules } = normalizeNetwork(roadNetwork);
+  const signals = buildSignals(nodes, signalPlans);
   const vehicles = [];
-  const stats = { active: 0, avgSpeed: 0, signalPhase: signals.size ? 'green' : 'off' };
+  const stats = {
+    active: 0,
+    visible: 0,
+    avgSpeed: 0,
+    signalPhase: signals.size ? 'green' : 'off',
+  };
   const diagnostics = {
     classMix: {},
     identityMix: {},
     elapsed: 0,
+    maxInputDt: 0,
+    dtClampCount: 0,
+    invalidDtCount: 0,
     minLaneGap: null,
     minMovingHeadway: null,
     minStoppedGap: null,
@@ -1489,6 +1693,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     uTurnTransitions: 0,
     signalStops: 0,
     greenReleases: 0,
+    stopSignStops: 0,
+    stopSignReleases: 0,
+    oneWayRejects: 0,
+    illegalTurnRejects: 0,
     safetyClamps: 0,
     maxSafetyCorrection: 0,
     weather: 'clear',
@@ -1498,7 +1706,13 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     serviceStops: 0,
     deliveryStops: 0,
   };
+  let playerVehicle = null;
+  const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
+  let focusActive = false;
+  let focusX = 0;
+  let focusZ = 0;
+  let focusRadiusSquared = Infinity;
 
   // Muni coach curb program: per-direction stop lines along each road, far
   // enough from intersections that a dwelling bus never blocks the box. The
@@ -1516,8 +1730,14 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
   if (roads.length > 0) {
     shared = buildShared();
-    let count = MIN_VEHICLES + Math.floor(rng() * (MAX_VEHICLES - MIN_VEHICLES + 1));
-    count = Math.max(6, Math.min(count, roads.length * 6));
+    let count = Number.isFinite(fleetSize)
+      ? Math.max(1, Math.floor(fleetSize))
+      : MIN_VEHICLES + Math.floor(rng() * (MAX_VEHICLES - MIN_VEHICLES + 1));
+    if (!Number.isFinite(fleetSize)) {
+      count = Math.max(6, Math.min(count, roads.length * 6));
+    } else {
+      count = Math.max(1, Math.min(count, Math.max(roads.length * 8, count)));
+    }
     const classes = buildClassList(rng, count);
     const classOrdinals = {};
 
@@ -1535,8 +1755,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       const spawnParked = cls === 'sedan' || cls === 'suv'
         ? rng() < 0.14
         : cls === 'taxi' ? rng() < 0.3 : false;
+      const bikeColors = [0x2c5f8a, 0xc45c2a, 0x2f6b4f, 0x343a44, 0xb08a3e];
       const baseColor = cls === 'taxi' ? TAXI_COLOR
         : cls === 'bus' ? BUS_BODY
+        : cls === 'bike' ? bikeColors[Math.floor(rng() * bikeColors.length)]
         : cls === 'truck' ? TRUCK_CABS[Math.floor(rng() * TRUCK_CABS.length)]
         : pickColor(rng);
       const color = identity.key === 'sfmta-service' ? 0xf1eee7
@@ -1553,7 +1775,14 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         const ri = Math.floor(rng() * roads.length);
         const road = roads[ri];
         if (road.len < spec.len + 16) continue;
-        const dir = rng() < 0.5 ? 1 : -1;
+        const legalDirs = Array.isArray(road.dirs) && road.dirs.length
+          ? road.dirs
+          : [1, -1];
+        const dir = legalDirs[Math.floor(rng() * legalDirs.length)];
+        if (!isDirectionLegal(road, dir)) {
+          diagnostics.oneWayRejects += 1;
+          continue;
+        }
         const edgeClearance = heavyVehicle
           ? Math.min(32, road.len * 0.46)
           : Math.min(24, road.len * 0.36);
@@ -1591,6 +1820,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
           continue;
         }
         const classSpeedBias = cls === 'taxi' ? 1.025
+          : cls === 'bike' ? 1.05
           : cls === 'bus' || cls === 'truck' ? 0.965
             : 1;
         const identitySpeedBias = identity.curbService === 'service' ? 0.94
@@ -1626,6 +1856,9 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
           blinkSide: 0,
           waitingForGreen: false,
           greenReleaseAt: Infinity,
+          waitingAtStop: false,
+          stopHoldUntil: Infinity,
+          stopClearedNode: -1,
           safetyClamped: false,
           parked: spawnParked,
           parkedAt: null,
@@ -1720,6 +1953,9 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     vehicle.heading = null;
     vehicle.waitingForGreen = false;
     vehicle.greenReleaseAt = Infinity;
+    vehicle.waitingAtStop = false;
+    vehicle.stopHoldUntil = Infinity;
+    vehicle.stopClearedNode = -1;
     vehicle.longitudinalAccel = 0;
     vehicle.dwellUntil = 0;
     vehicle.curbDwellUntil = Infinity;
@@ -1743,7 +1979,14 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       const road = roads[roadIndex];
       if (road.len < vehicle.spec.len + 16) continue;
       const edge = vehicle.half + 5;
-      for (const dir of [vehicle.dir, -vehicle.dir]) {
+      const candidateDirs = Array.isArray(road.dirs) && road.dirs.length
+        ? road.dirs
+        : [vehicle.dir, -vehicle.dir];
+      for (const dir of candidateDirs) {
+        if (!isDirectionLegal(road, dir)) {
+          diagnostics.oneWayRejects += 1;
+          continue;
+        }
         for (const fraction of [0, 0.18, 0.36, 0.54, 0.72, 0.9, 1]) {
           const s = edge + (road.len - edge * 2) * fraction;
           if (!slotIsClear(vehicle, roadIndex, dir, s)) continue;
@@ -1891,50 +2134,20 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         relocateOffHero(vehicle);
       }
     }
-    let busStaged = false;
-    if (heroBus && heroNorthRoadIndex >= 0) {
-      // Keep the Muni coach beyond the near-camera segment. A coach at
-      // s=52 on the downhill road projects into the lower lens; staging it
-      // at the first block face lets the stop line, route display, and
-      // surrounding traffic form a readable midground instead of a cropped
-      // white slab at the horizon.
-      for (const desiredS of [8, 12, 18]) {
-        if (!slotIsClear(heroBus, heroNorthRoadIndex, 1, desiredS)) {
-          const blocking = vehicles.find((vehicle) => (
-            vehicle !== heroBus
-            && vehicle.road === heroNorthRoadIndex
-            && vehicle.dir === 1
-            && Math.abs(vehicle.s - desiredS) < vehicle.half + heroBus.half + MIN_GAP
-          ));
-          if (blocking) relocateOffHero(blocking);
-        }
-        if (!slotIsClear(heroBus, heroNorthRoadIndex, 1, desiredS)) continue;
-        moveVehicleTo(heroBus, heroNorthRoadIndex, 1, desiredS);
-        busStaged = true;
-        break;
-      }
-    }
-    if (!busStaged && heroBus) relocateOffHero(heroBus);
-    // Keep the production car beyond the protected foreground but far enough
-    // from the turn entry to remain visible throughout the capture window. It
-    // stays a deliberate foreground anchor while the bus and curb actors hold
-    // the eye farther up the avenue.
-    const sedanStaged = reserveHeroSlot(heroSedan, 54);
-    // Both staged actors immediately participate in normal car-following.
-    // The opening stays readable through placement and occupancy caps rather
-    // than freezing hero traffic at presentation-only speeds.
-    if (heroBus && busStaged) heroBus.speed = Math.min(heroBus.speed, heroBus.cruise * 0.46);
-    if (heroSedan && sedanStaged) heroSedan.speed = Math.min(heroSedan.speed, heroSedan.cruise * 0.46);
+    // Pass-10 hero lens: the static California Street cable car owns the avenue.
+    // Keep the Muni coach off both California segments so it cannot crop the
+    // open-sided coach, twin rails, or overhead span wires in capture.
+    if (heroBus) relocateOffHero(heroBus);
+    // Keep the production sedan off the hero avenue entirely; a mid-distance
+    // car was reading as a second hero vehicle in the cable-car capture band.
+    if (heroSedan) relocateOffHero(heroSedan);
   }
 
-  // The first block is an authored morning-rush tableau, not a static fleet
-  // display: a taxi holds the east curb, an SFMTA service van approaches its
-  // own curb window from the opposite lane, and the Muni coach advances toward
-  // its stop. They remain ordinary pooled actors and leave through the same
-  // dwell, gap, signal, and route code as every other vehicle.
+  // The first block is an authored morning-rush tableau on the far avenue.
+  // Curb actors stay north of the cable-car lens so the coach remains hero.
   if (heroNorthRoadIndex >= 0) {
     const curbTaxi = presentationTaxis[2];
-    if (curbTaxi && reservePresentationSlot(curbTaxi, heroNorthRoadIndex, 1, 23)) {
+    if (curbTaxi && reservePresentationSlot(curbTaxi, heroNorthRoadIndex, 1, 82)) {
       curbTaxi.parked = true;
       curbTaxi.parkedAt = null;
       curbTaxi.dwellUntil = 9.5 + curbTaxi.servicePhase * 4.5;
@@ -1950,7 +2163,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     }
 
     const serviceVan = vehicles.find((vehicle) => vehicle.identity.key === 'sfmta-service');
-    if (serviceVan && reservePresentationSlot(serviceVan, heroNorthRoadIndex, -1, 44)) {
+    if (serviceVan && reservePresentationSlot(serviceVan, heroNorthRoadIndex, -1, 88)) {
       serviceVan.parked = false;
       serviceVan.parkedAt = null;
       serviceVan.curbDwellUntil = Infinity;
@@ -1965,63 +2178,42 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     }
   }
 
-  // One vehicle gets a production mesh while the rest stay on the procedural
-  // pool. It remains a normal simulation actor rather than a static prop.
-  if (typeof document !== 'undefined' && vehicles.length) {
-    const target = heroSedan;
-    const detailedHeroRoot = new THREE.Group();
-    detailedHeroRoot.name = 'Detailed hero traffic LOD';
-    target.detailedRoot = detailedHeroRoot;
-    target.detailedReady = false;
-    detailedHeroRoot.visible = false;
-    target.mesh.root.add(detailedHeroRoot);
-    const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath(publicAsset('assets/draco/'));
-    const loader = new GLTFLoader();
-    loader.setDRACOLoader(dracoLoader);
-    loader.load(publicAsset('assets/ferrari.glb'), (gltf) => {
-      const hero = gltf.scene;
-      hero.updateMatrixWorld(true);
-      const initialBounds = new THREE.Box3().setFromObject(hero);
-      const initialSize = initialBounds.getSize(new THREE.Vector3());
-      const modelLength = Math.max(initialSize.x, initialSize.z) || 1;
-      // The production asset's longitudinal axis is already +Z in its glTF
-      // scene. Keep that authored orientation and let the live road root
-      // supply the lane heading.
-      hero.rotation.y = 0;
-      hero.scale.setScalar(target.spec.len / modelLength);
-      hero.updateMatrixWorld(true);
-      const scaledBounds = new THREE.Box3().setFromObject(hero);
-      const center = scaledBounds.getCenter(new THREE.Vector3());
-      hero.position.set(-center.x, -scaledBounds.min.y + 0.02, -center.z);
-      let hasRenderableMesh = false;
-      hero.traverse((child) => {
-        if (!child.isMesh) return;
-        hasRenderableMesh ||= child.geometry?.getAttribute('position')?.count >= 3;
-        // The city sun already supplies the lane contact from the pooled
-        // vehicle shell. Avoid sending every Ferrari submesh through the
-        // large shadow atlas when the authored car is close to the lens.
-        child.castShadow = false;
-        child.receiveShadow = true;
-        // This is one close-range replacement only. Its many small authored
-        // meshes have different bounds, so avoid a camera-angle cull that can
-        // expose the hidden procedural shell one submesh at a time.
-        child.frustumCulled = false;
-        if (child.material) {
-          const materials = Array.isArray(child.material) ? child.material : [child.material];
-          materials.forEach((material) => {
-            if ('envMapIntensity' in material) material.envMapIntensity = 1.2;
-            if ('clearcoat' in material) material.clearcoat = Math.min(material.clearcoat, 0.34);
-          });
-        }
-      });
-      detailedHeroRoot.add(hero);
-      target.detailedReady = hasRenderableMesh;
-      dracoLoader.dispose();
-    }, undefined, (error) => {
-      console.warn('Detailed traffic LOD unavailable; using procedural vehicle.', error);
-      dracoLoader.dispose();
-    });
+  // Wire the img2threejs polished taxi into near-detail LOD for every cab.
+  // Procedural yellow shells remain the distance silhouette + rain fallback.
+  if (typeof document !== 'undefined') {
+    for (const target of vehicles) {
+      if (target.cls !== 'taxi') continue;
+      const detailedHeroRoot = new THREE.Group();
+      detailedHeroRoot.name = 'Polished SF taxi LOD';
+      target.detailedRoot = detailedHeroRoot;
+      target.detailedReady = false;
+      detailedHeroRoot.visible = false;
+      target.mesh.root.add(detailedHeroRoot);
+      try {
+        const hero = createSfTaxiModel({
+          castShadow: true,
+          receiveShadow: true,
+          scale: target.spec.len / 4.35,
+        });
+        // Contact shadow already lives on the traffic root; hide the preview disc.
+        const previewShadow = hero.userData?.sculptRuntime?.meshes?.contactShadow;
+        if (previewShadow) previewShadow.visible = false;
+        hero.position.y = 0;
+        hero.traverse((child) => {
+          if (!child.isMesh) return;
+          child.frustumCulled = true;
+        });
+        detailedHeroRoot.add(hero);
+        target.detailedReady = true;
+        target.detailedTick = typeof hero.userData?.tick === 'function'
+          ? (dt) => hero.userData.tick(dt)
+          : null;
+      } catch (error) {
+        console.warn('Polished SF taxi LOD unavailable; using procedural taxi.', error);
+        target.detailedRoot = null;
+        target.detailedReady = false;
+      }
+    }
   }
 
   /* ---- per-frame sim ---- */
@@ -2100,6 +2292,11 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     const end = v.dir === 1 ? 1 : 0;
     const node = nodes[road.endNode[end]];
     if (!node) {
+      if (!isDirectionLegal(road, -v.dir)) {
+        diagnostics.oneWayRejects += 1;
+        v.route = null;
+        return;
+      }
       v.route = { uTurn: true };
       if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = 1;
       return;
@@ -2108,6 +2305,11 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     sampleRoad(road, end === 1 ? road.len : 0);
     const inX = samp.tx * v.dir;
     const inZ = samp.tz * v.dir;
+    const approachPoint = {
+      x: road.px[end === 1 ? 0 : road.px.length - 1],
+      z: road.pz[end === 1 ? 0 : road.pz.length - 1],
+    };
+    const turnRule = findTurnRule(node, approachPoint, turnRules);
     const choices = [];
     let totalWeight = 0;
 
@@ -2134,6 +2336,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       if (nextRoad.len < v.spec.len + TURN_SPAN * 2) continue;
 
       const dir = edge.end === 0 ? 1 : -1;
+      if (!isDirectionLegal(nextRoad, dir)) {
+        diagnostics.oneWayRejects += 1;
+        continue;
+      }
       sampleRoad(nextRoad, edge.end === 0 ? 0 : nextRoad.len);
       const outX = samp.tx * dir;
       const outZ = samp.tz * dir;
@@ -2142,6 +2348,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
       const cross = inX * outZ - inZ * outX;
       const side = dot > 0.86 ? 0 : (cross < 0 ? 1 : -1);
+      if (!isTurnAllowed({ side, rule: turnRule })) {
+        diagnostics.illegalTurnRejects += 1;
+        continue;
+      }
       let weight = side === 0 ? 5.2 : side > 0 ? 2.4 : 1.45;
       if ((v.cls === 'bus' || v.cls === 'truck') && side < 0) weight *= 0.7;
       // After the protected opening, refill an under-occupied hero avenue
@@ -2162,6 +2372,11 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     }
 
     if (!choices.length) {
+      if (!isDirectionLegal(road, -v.dir) || !isTurnAllowed({ side: 1, uTurn: true, rule: turnRule })) {
+        diagnostics.oneWayRejects += 1;
+        v.route = null;
+        return;
+      }
       v.route = { uTurn: true };
       if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = 1;
       return;
@@ -2175,6 +2390,82 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         route = choice;
         break;
       }
+    }
+    v.route = route;
+    if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = route.side;
+  }
+
+  // Player routes follow the same intersections as AI traffic, but the turn
+  // choice comes from steering instead of a weighted random draw. Straight is
+  // preferred unless the player is clearly steering into a side road.
+  function planPlayerRoute(v) {
+    const road = roads[v.road];
+    const end = v.dir === 1 ? 1 : 0;
+    const node = nodes[road.endNode[end]];
+    if (!node) {
+      v.route = { uTurn: true };
+      if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = 1;
+      return;
+    }
+
+    sampleRoad(road, end === 1 ? road.len : 0);
+    const inX = samp.tx * v.dir;
+    const inZ = samp.tz * v.dir;
+    const approachPoint = {
+      x: road.px[end === 1 ? 0 : road.px.length - 1],
+      z: road.pz[end === 1 ? 0 : road.pz.length - 1],
+    };
+    const turnRule = findTurnRule(node, approachPoint, turnRules);
+    const choices = [];
+
+    for (const edge of node.ends) {
+      if (edge.road === v.road) continue;
+      const nextRoad = roads[edge.road];
+      if (nextRoad.len < v.spec.len + TURN_SPAN * 2) continue;
+      const dir = edge.end === 0 ? 1 : -1;
+      if (!isDirectionLegal(nextRoad, dir)) {
+        diagnostics.oneWayRejects += 1;
+        continue;
+      }
+      sampleRoad(nextRoad, edge.end === 0 ? 0 : nextRoad.len);
+      const outX = samp.tx * dir;
+      const outZ = samp.tz * dir;
+      const dot = inX * outX + inZ * outZ;
+      if (dot < -0.72) continue;
+      const cross = inX * outZ - inZ * outX;
+      const side = dot > 0.86 ? 0 : (cross < 0 ? 1 : -1);
+      if (!isTurnAllowed({ side, rule: turnRule })) {
+        diagnostics.illegalTurnRejects += 1;
+        continue;
+      }
+      choices.push({ road: edge.road, dir, side });
+    }
+
+    if (!choices.length) {
+      if (!isDirectionLegal(road, -v.dir) || !isTurnAllowed({ side: 1, uTurn: true, rule: turnRule })) {
+        diagnostics.oneWayRejects += 1;
+        v.route = null;
+        return;
+      }
+      v.route = { uTurn: true };
+      if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = 1;
+      return;
+    }
+
+    const steer = v.playerSteer ?? 0;
+    const turningLeft = steer < -0.3;
+    const turningRight = steer > 0.3;
+    let route = null;
+    if (turningLeft) {
+      route = choices.find((choice) => choice.side < 0)
+        || choices.find((choice) => choice.side === 0)
+        || choices[0];
+    } else if (turningRight) {
+      route = choices.find((choice) => choice.side > 0)
+        || choices.find((choice) => choice.side === 0)
+        || choices[0];
+    } else {
+      route = choices.find((choice) => choice.side === 0) || choices[0];
     }
     v.route = route;
     if (v.mergeSignalUntil <= lastElapsed) v.blinkSide = route.side;
@@ -2256,7 +2547,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
     const road = roads[v.road];
     const entryS = v.dir === 1 ? road.len - TURN_SPAN : TURN_SPAN;
-    const offset = LANE_OFFSET + v.laneBias;
+    const offset = (road.laneOffset ?? LANE_OFFSET) + v.laneBias;
     sampleRoad(road, entryS);
     const inX = samp.tx * v.dir;
     const inY = samp.ty * v.dir;
@@ -2311,6 +2602,16 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
   function beginUTurn(v, overshoot = 0) {
     const road = roads[v.road];
+    const reverseDir = -v.dir;
+    if (!isDirectionLegal(road, reverseDir)) {
+      diagnostics.oneWayRejects += 1;
+      // One-ways cannot reverse in place — rehome onto a legal directed edge.
+      if (relocateOffHero(v)) return;
+      v.speed = 0;
+      v.route = null;
+      v.turn = null;
+      return;
+    }
     const boundaryS = v.dir === 1 ? road.len : 0;
     sampleRoad(road, boundaryS);
     const inX = samp.tx * v.dir;
@@ -2319,7 +2620,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     const outX = -inX;
     const outY = -inY;
     const outZ = -inZ;
-    const offset = LANE_OFFSET + v.laneBias;
+    const offset = (road.laneOffset ?? LANE_OFFSET) + v.laneBias;
     const rightX = inZ;
     const rightZ = -inX;
     const p0x = samp.x + rightX * offset;
@@ -2331,7 +2632,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     const control = Math.max(3.2, offset * 1.46);
     const route = {
       road: v.road,
-      dir: -v.dir,
+      dir: reverseDir,
       side: 1,
       uTurn: true,
     };
@@ -2569,7 +2870,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     for (const bucket of laneBuckets) bucket.length = 0;
     for (const v of vehicles) {
       v.leader = null;
-      if (v.parked || vehicleIsCurbside(v)) continue;
+      if (v.parked || vehicleIsCurbside(v) || v.playerControlled || v.remoteControlled) continue;
       const bucketIndex = v.road * 2 + (v.dir === 1 ? 0 : 1);
       laneBuckets[bucketIndex].push(v);
     }
@@ -2611,7 +2912,12 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
   function update(dt, elapsed) {
     if (!vehicles.length) return;
-    if (!Number.isFinite(dt) || dt <= 0) return;
+    if (!Number.isFinite(dt) || dt <= 0) {
+      diagnostics.invalidDtCount += 1;
+      return;
+    }
+    diagnostics.maxInputDt = Math.max(diagnostics.maxInputDt, dt);
+    if (dt > MAX_DT) diagnostics.dtClampCount += 1;
     dt = Math.min(dt, MAX_DT);
     lastElapsed = Number.isFinite(elapsed) ? elapsed : lastElapsed + dt;
     const t = lastElapsed;
@@ -2622,9 +2928,19 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     let queuedCount = 0;
     let signalQueuedCount = 0;
     let turningCount = 0;
+    let visibleCount = 0;
 
     for (const v of vehicles) {
       let road = roads[v.road];
+
+      // A remote player owns this vehicle: the networking layer drives its
+      // mesh directly and the local AI must not move, queue, or rehome it.
+      if (v.remoteControlled) {
+        v.speed = 0;
+        v.longitudinalAccel = 0;
+        v.blinkSide = 0;
+        continue;
+      }
 
       // Parked vehicles wait out a staggered curb window, then rejoin the
       // moving lane through the pull-out path below. They never route, queue
@@ -2669,7 +2985,8 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       }
 
       if (!v.turn && !v.route && distanceToEnd(v, road) < ROUTE_LOOKAHEAD) {
-        planRoute(v);
+        if (v.playerControlled) planPlayerRoute(v);
+        else planRoute(v);
       }
 
       const targetRoad = v.turn ? roads[v.turn.route.road] : road;
@@ -2684,21 +3001,25 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         desired = 0;
       }
 
-      if (v.turn) {
-        desired = Math.min(desired, turnSpeedLimit(v));
-        if (exitIsBlocked(v)) {
-          const remaining = Math.max(0, v.turn.length - v.turn.distance - 0.22);
-          const exitSpeed = Math.sqrt(
-            2 * v.spec.brake * weatherBrakeFactor() * 0.58 * remaining,
-          );
-          desired = Math.min(desired, exitSpeed);
-        }
-        turningCount += 1;
-      } else {
+      if (!v.playerControlled) {
+        if (v.turn) {
+          desired = Math.min(desired, turnSpeedLimit(v));
+          if (exitIsBlocked(v)) {
+            const remaining = Math.max(0, v.turn.length - v.turn.distance - 0.22);
+            const exitSpeed = Math.sqrt(
+              2 * v.spec.brake * weatherBrakeFactor() * 0.58 * remaining,
+            );
+            desired = Math.min(desired, exitSpeed);
+          }
+          turningCount += 1;
+        } else {
         const end = v.dir === 1 ? 1 : 0;
         const distLine = distanceToEnd(v, road) - STOP_MARGIN - v.half;
-        const signal = signals.get(road.endNode[end]);
+        const nodeIndex = road.endNode[end];
+        const nodeControl = nodes[nodeIndex]?.control || 'none';
+        const signal = nodeControl === 'stop' ? null : signals.get(nodeIndex);
         let mustStop = exitIsBlocked(v) || leftTurnConflict(v) || opposingLeftTurnWait(v);
+        let stopRequiresStop = false;
 
         // Bleed speed before the curve rather than braking only after entering
         // it. The kinematic envelope yields natural approach speeds without a
@@ -2711,6 +3032,35 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
             + 2 * v.spec.brake * weatherBrakeFactor() * 0.58 * distanceToCurve,
           );
           desired = Math.min(desired, approachSpeed);
+        }
+
+        if (nodeControl === 'stop' && distLine >= -0.05 && v.stopClearedNode !== nodeIndex) {
+          stopRequiresStop = true;
+          if (
+            distLine < 2.6
+            && v.speed < 0.45
+          ) {
+            if (!v.waitingAtStop) {
+              diagnostics.stopSignStops += 1;
+              v.waitingAtStop = true;
+              v.stopHoldUntil = t + STOP_SIGN_HOLD;
+            }
+            if (t < v.stopHoldUntil || exitIsBlocked(v)) {
+              stopRequiresStop = true;
+            } else {
+              v.waitingAtStop = false;
+              v.stopHoldUntil = Infinity;
+              v.stopClearedNode = nodeIndex;
+              stopRequiresStop = false;
+              diagnostics.stopSignReleases += 1;
+            }
+          }
+        } else if (v.stopClearedNode === nodeIndex && distLine < -1.5) {
+          // Left the cleared node far enough that a later revisit must stop.
+          v.stopClearedNode = -1;
+        } else if (nodeControl !== 'stop') {
+          v.waitingAtStop = false;
+          v.stopHoldUntil = Infinity;
         }
 
         if (signal && distLine >= -0.05) {
@@ -2853,7 +3203,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
             diagnostics.greenReleases += 1;
           }
         }
-        mustStop ||= signalRequiresStop;
+        mustStop ||= signalRequiresStop || stopRequiresStop;
 
         if (mustStop && distLine >= -0.05) {
           const comfortableBrake = v.spec.brake * weatherBrakeFactor() * 0.72;
@@ -2907,6 +3257,24 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
             desired = Math.min(desired, followSpeed, safeSpeed);
           }
           if (leadGap < surfaceGap) desired = 0;
+        }
+        }
+      } else {
+        const roadLimit = road.speedLimit ?? v.cruise;
+        const throttle = THREE.MathUtils.clamp(playerInput.throttle, 0, 1);
+        const brake = THREE.MathUtils.clamp(playerInput.brake, 0, 1);
+        const targetSpeed = throttle > 0
+          ? Math.min(v.cruise * 1.2, roadLimit * 1.08) * throttle
+          : 0;
+        desired = brake > 0 ? 0 : targetSpeed;
+        v.playerSteer = THREE.MathUtils.clamp(playerInput.steer, -1, 1);
+        v.blinkSide = Math.abs(v.playerSteer) > 0.28 ? Math.sign(v.playerSteer) : 0;
+        if (v.turn) desired = Math.min(desired, turnSpeedLimit(v));
+        if (brake > 0 && v.speed > 0) {
+          v.longitudinalAccel = Math.max(
+            -v.spec.brake * 0.92 * brake,
+            v.longitudinalAccel,
+          );
         }
       }
 
@@ -3015,7 +3383,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
 
         if (v.route && !v.route.uTurn) {
           const entryS = v.dir === 1 ? road.len - TURN_SPAN : TURN_SPAN;
-          if ((v.s - entryS) * v.dir >= 0) {
+          if (
+            (v.s - entryS) * v.dir >= 0
+            && (!v.playerControlled || v.speed > 0.6)
+          ) {
             if (exitIsBlocked(v) || leftTurnConflict(v)) {
               v.s = entryS - v.dir * 0.2;
               v.speed = 0;
@@ -3028,6 +3399,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         } else if (
           v.route?.uTurn
           && (v.dir === 1 ? v.s >= road.len : v.s <= 0)
+          && (!v.playerControlled || v.speed > 0.6)
         ) {
           const boundaryS = v.dir === 1 ? road.len : 0;
           const overshoot = (v.s - boundaryS) * v.dir;
@@ -3070,6 +3442,46 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
           // An extremely saturated network holds the actor at the visual
           // boundary rather than allowing overlap or entry into the lens.
           v.s = heroForegroundCutoff;
+          v.speed = 0;
+          v.route = null;
+          v.blinkSide = 0;
+        }
+      }
+
+      // Coaches on the northbound California segment dominate the pass-10
+      // cable-car hero band. Rehome them to the surrounding grid continuously.
+      if (
+        !v.turn
+        && v.cls === 'bus'
+        && heroNorthRoadIndex >= 0
+        && v.road === heroNorthRoadIndex
+        && v.s < Math.min(roads[heroNorthRoadIndex].len * 0.72, 58)
+      ) {
+        if (relocateOffHero(v)) {
+          road = roads[v.road];
+          v.heading = null;
+          v.speed = Math.min(v.speed, v.cruise * 0.35);
+        } else {
+          v.speed = 0;
+          v.route = null;
+          v.blinkSide = 0;
+        }
+      }
+
+      // Taxis staged on the northbound California curb were stealing the
+      // cable-car hero band during QA captures. Keep them north of the lens.
+      if (
+        !v.turn
+        && v.cls === 'taxi'
+        && heroNorthRoadIndex >= 0
+        && v.road === heroNorthRoadIndex
+        && v.s < Math.min(roads[heroNorthRoadIndex].len * 0.82, 72)
+      ) {
+        if (relocateOffHero(v)) {
+          road = roads[v.road];
+          v.heading = null;
+          v.speed = Math.min(v.speed, v.cruise * 0.35);
+        } else {
           v.speed = 0;
           v.route = null;
           v.blinkSide = 0;
@@ -3121,28 +3533,46 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         fz = samp.tz * v.dir;
         const rightX = fz;
         const rightZ = -fx;
-        // A ~14 s wander period reads as human lane placement instead of the
-        // visible 33 s weave the previous 0.19 rad/s produced at city speeds.
-        const laneDrift = Math.sin(t * 0.46 + v.bobPhase) * 0.028;
-        const normalOffset = LANE_OFFSET + v.laneBias + laneDrift;
-        const curbOffset = Math.min(
-          CURB_LANE_LIMIT,
-          CURB_LANE_OFFSET + v.laneBias * 0.3,
-        );
-        const curbHoldActive = curbHoldS !== null
-          || v.parked
-          || vehicleIsCurbside(v);
-        const curbBlend = curbHoldActive ? 1 : curbApproach;
-        const targetOffset = normalOffset
-          + (curbOffset - normalOffset) * curbBlend;
-        const lateralRate = curbHoldActive ? 1.8
-          : curbBlend > 0 ? 1.55
-            : v.mergeSignalUntil > t ? 1.65
-              : 2.2;
-        v.laneOffsetSm = v.laneOffsetSm === undefined
-          ? targetOffset
-          : v.laneOffsetSm + (targetOffset - v.laneOffsetSm)
-            * Math.min(1, dt * lateralRate);
+        const classLane = v.cls === 'bike'
+          ? BIKE_LANE_OFFSET
+          : (road.laneOffset ?? LANE_OFFSET);
+        let normalOffset = classLane + v.laneBias;
+        if (v.playerControlled) {
+          const steerRate = 0.7 + Math.min(1, v.speed / 9) * 0.85;
+          v.laneOffsetSm = v.laneOffsetSm === undefined
+            ? normalOffset
+            : THREE.MathUtils.clamp(
+              v.laneOffsetSm + v.playerSteer * dt * steerRate,
+              normalOffset - 1.65,
+              normalOffset + 1.65,
+            );
+        } else {
+          // A ~14 s wander period reads as human lane placement instead of
+          // the visible 33 s weave the previous 0.19 rad/s produced at
+          // city speeds.
+          const laneDrift = Math.sin(t * 0.46 + v.bobPhase) * 0.028;
+          normalOffset += laneDrift;
+          const curbOffset = Math.min(
+            CURB_LANE_LIMIT,
+            CURB_LANE_OFFSET + v.laneBias * 0.3,
+          );
+          const curbHoldActive = v.cls !== 'bike' && (
+            curbHoldS !== null
+            || v.parked
+            || vehicleIsCurbside(v)
+          );
+          const curbBlend = curbHoldActive ? 1 : (v.cls === 'bike' ? 0 : curbApproach);
+          const targetOffset = normalOffset
+            + (curbOffset - normalOffset) * curbBlend;
+          const lateralRate = curbHoldActive ? 1.8
+            : curbBlend > 0 ? 1.55
+              : v.mergeSignalUntil > t ? 1.65
+                : 2.2;
+          v.laneOffsetSm = v.laneOffsetSm === undefined
+            ? targetOffset
+            : v.laneOffsetSm + (targetOffset - v.laneOffsetSm)
+              * Math.min(1, dt * lateralRate);
+        }
         const offset = v.laneOffsetSm;
         if (
           v.mergeSignalUntil > t
@@ -3172,7 +3602,11 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         heading,
         0,
       );
-      v.mesh.root.visible = true;
+      const distanceSquared = (px - focusX) ** 2 + (pz - focusZ) ** 2;
+      const visible = !focusActive || distanceSquared <= focusRadiusSquared;
+      const nearDetail = !focusActive || distanceSquared <= TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED;
+      v.mesh.root.visible = visible;
+      if (visible) visibleCount += 1;
 
       const speedRatio = Math.min(1, v.speed / v.spec.vMax);
       v.mesh.bodyG.position.y = Math.sin(t * 8.5 + v.bobPhase) * 0.014 * speedRatio
@@ -3194,6 +3628,10 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
         Math.min(0.52, Math.atan((wheelbase * yawRate) / Math.max(0.8, v.speed))),
       );
       v.steerSm += (steerTarget - v.steerSm) * Math.min(1, dt * 9);
+      if (v.playerControlled) {
+        v.steerSm += (THREE.MathUtils.clamp(v.playerSteer * 0.5, -0.52, 0.52) - v.steerSm)
+          * Math.min(1, dt * 5);
+      }
       const spin = (v.speed / v.mesh.wheelR) * dt;
       for (const wheel of v.mesh.wheels) {
         wheel.rotation.x += spin;
@@ -3216,19 +3654,28 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       }
 
       if (v.detailedRoot) {
-        // In rain, keep the fully opaque pooled shell rather than relying on
-        // the optional asset's many reflective submeshes. The detailed model
-        // remains a clear-weather accent only after it proves renderable.
-        const showDetailed = v.detailedReady
-          && weatherMode === 'clear'
+        // Polished taxi LOD stays up in clear/fog; drizzle keeps the opaque
+        // procedural shell so wet-road reflections stay cheap and readable.
+        const showDetailed = nearDetail
+          && distanceSquared <= TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED
+          && v.detailedReady
+          && weatherMode !== 'drizzle'
           && v.detailedRoot.children.length > 0;
         v.detailedRoot.visible = showDetailed;
-        v.mesh.bodyG.visible = !showDetailed;
-        v.mesh.wheelG.visible = !showDetailed;
+        v.mesh.bodyG.visible = nearDetail && !showDetailed;
+        v.mesh.wheelG.visible = nearDetail && !showDetailed;
         if (showDetailed) {
           v.detailedRoot.position.copy(v.mesh.bodyG.position);
           v.detailedRoot.rotation.copy(v.mesh.bodyG.rotation);
+          v.detailedTick?.(dt);
         }
+      }
+
+      v.mesh.proxyBody.visible = visible && !nearDetail;
+      if (v.mesh.proxyCueG) v.mesh.proxyCueG.visible = visible && !nearDetail;
+      if (!v.detailedRoot) {
+        v.mesh.bodyG.visible = nearDetail;
+        v.mesh.wheelG.visible = nearDetail;
       }
 
       const holdActive = v.waitingForGreen
@@ -3238,7 +3685,8 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       const brakeOn = !v.parked
         && (actualAccel <= BRAKE_LIGHT_DECEL
           || holdActive
-          || (desired < 0.05 && v.speed < 0.12));
+          || (desired < 0.05 && v.speed < 0.12)
+          || (v.playerControlled && playerInput.brake > 0 && v.speed > 0.4));
       const tailLights = v.mesh.tailLights;
       if (Array.isArray(tailLights)) {
         const brakeMaterial = brakeOn ? v.mesh.tailBrakeMat : v.mesh.tailOffMat;
@@ -3300,6 +3748,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     }
 
     stats.active = vehicles.length;
+    stats.visible = visibleCount;
     stats.avgSpeed = Math.round((speedSum / vehicles.length) * 10) / 10;
     stats.signalPhase = firstSignal
       ? signalPhaseAt(0, t, firstSignal.offset)
@@ -3327,7 +3776,25 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
   }
 
   function getStats() {
-    return { active: stats.active, avgSpeed: stats.avgSpeed, signalPhase: stats.signalPhase };
+    return {
+      active: stats.active,
+      visible: stats.visible,
+      avgSpeed: stats.avgSpeed,
+      signalPhase: stats.signalPhase,
+    };
+  }
+
+  function setFocus(position, radius = 340) {
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) {
+      focusActive = false;
+      focusRadiusSquared = Infinity;
+      return;
+    }
+    focusActive = true;
+    focusX = position.x;
+    focusZ = position.z;
+    const safeRadius = Number.isFinite(radius) ? Math.max(32, radius) : 340;
+    focusRadiusSquared = safeRadius * safeRadius;
   }
 
   function getDiagnostics() {
@@ -3335,6 +3802,7 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
       ...diagnostics,
       classMix: { ...diagnostics.classMix },
       identityMix: { ...diagnostics.identityMix },
+      maxInputDt: Math.round(diagnostics.maxInputDt * 1000) / 1000,
       minTurnRadius: diagnostics.minTurnRadius === null
         ? null
         : Math.round(diagnostics.minTurnRadius * 100) / 100,
@@ -3346,23 +3814,398 @@ export function createTrafficSystem({ scene, roadNetwork } = {}) {
     };
   }
 
-  // Keep the shared lighting materials in step with the coastal weather cycle.
-  // Mutating the pooled materials updates every vehicle in one pass, matching
-  // the way `createCity().setWeather()` recolors the static world.
+  // QA/UI view of the fleet: plain values derived only from live vehicle
+  // records, so callers never reach into THREE objects or internal mutation
+  // state. Deterministic for a given simulation clock and never written back.
+  function getVehicleLifeSnapshot() {
+    const t = lastElapsed;
+    const records = [];
+    let featuredCount = 0;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const v = vehicles[index];
+      const curbside = Number.isFinite(v.curbDwellUntil);
+      const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
+      const activeRoute = v.turn?.route || v.route;
+      const routeCue = activeRoute ? routeSideCue(activeRoute.side, activeRoute.uTurn) : null;
+
+      let actionKey = 'driving';
+      let actionLabel = 'Driving';
+      let actionDetail = null;
+      if (v.parked) {
+        actionKey = 'parked';
+        actionLabel = 'Parked at curb';
+        actionDetail = parkedDwellEnd > t ? 'dwelling' : 'pull-out pending';
+      } else if (curbside) {
+        actionKey = 'at-stop';
+        actionLabel = 'Servicing stop';
+        actionDetail = v.pullOutBlockedSince !== null ? 'pull-out blocked' : 'dwelling';
+      } else if (v.turn) {
+        actionKey = 'turning';
+        actionLabel = 'Turning';
+        actionDetail = routeCue;
+      } else if (v.waitingForGreen) {
+        actionKey = 'waiting-at-signal';
+        actionLabel = 'Waiting at signal';
+      } else if (v.mergeSignalUntil > t) {
+        actionKey = 'merging';
+        actionLabel = 'Merging from curb';
+      } else if (v.route) {
+        actionKey = 'approaching-turn';
+        actionLabel = 'Approaching turn';
+        actionDetail = routeCue;
+      } else if (v.speed < 0.35 && v.leader) {
+        actionKey = 'queued';
+        actionLabel = 'Queued in traffic';
+      }
+
+      let stopCue = null;
+      let dwellRemaining = null;
+      if (v.parked) {
+        stopCue = 'parked';
+        dwellRemaining = Math.max(0, parkedDwellEnd - t);
+      } else if (curbside) {
+        stopCue = v.cls === 'bus' ? 'transit-stop' : 'curb-service';
+        dwellRemaining = Math.max(0, v.curbDwellUntil - t);
+      } else if (Number.isFinite(v.nextCurbStopAt)) {
+        stopCue = 'approaching-stop';
+      }
+
+      const storedColor = v.mesh.root.userData.vehicleColor;
+      const paintColor = typeof storedColor === 'number'
+        ? null
+        : v.mesh.bodyG.children.find(
+          (child) => child.isMesh && child.material?.color,
+        )?.material?.color;
+      const colorHex = typeof storedColor === 'number'
+        ? `#${storedColor.toString(16).padStart(6, '0')}`
+        : paintColor && typeof paintColor.getHex === 'function'
+          ? `#${paintColor.getHex().toString(16).padStart(6, '0')}`
+          : null;
+      const heroCue = v.mesh.root.userData.heroTrafficCue ?? null;
+      const featured = heroCue !== null
+        || v === heroBus
+        || v === heroSedan
+        || presentationCars.includes(v);
+      if (featured) featuredCount += 1;
+
+      const hazardOn = t < v.hazardUntil;
+      records.push({
+        id: index,
+        class: v.cls,
+        identity: {
+          key: v.identity.key,
+          category: v.identity.category,
+          label: v.identity.label,
+          service: v.identity.curbService,
+        },
+        action: {
+          key: actionKey,
+          label: actionLabel,
+          detail: actionDetail,
+        },
+        route: {
+          cue: routeCue,
+          inTurn: Boolean(v.turn),
+          targetRoad: activeRoute?.road ?? null,
+          targetDir: activeRoute?.dir ?? null,
+        },
+        stop: {
+          cue: stopCue,
+          service: v.identity.curbService ?? (v.cls === 'bus' ? 'transit' : null),
+          targetS: Number.isFinite(v.nextCurbStopAt)
+            ? Math.round(v.nextCurbStopAt * 10) / 10
+            : null,
+          dwellRemaining: dwellRemaining === null
+            ? null
+            : Math.round(dwellRemaining * 10) / 10,
+          blocked: v.pullOutBlockedSince !== null,
+        },
+        livery: {
+          ...liveryCueFor(v.identity, v.cls),
+          colorHex,
+          board: v.cls === 'bus' ? BUS_ROUTE_BOARD : null,
+        },
+        indicators: {
+          left: v.blinkSide < 0,
+          right: v.blinkSide > 0,
+          hazard: hazardOn,
+        },
+        speed: Math.round(v.speed * 10) / 10,
+        road: v.road,
+        s: Math.round(v.s * 10) / 10,
+        position: {
+          x: Math.round(v.mesh.root.position.x * 10) / 10,
+          z: Math.round(v.mesh.root.position.z * 10) / 10,
+        },
+        visible: v.mesh.root.visible,
+        featured,
+        heroCue,
+      });
+    }
+    return {
+      time: Math.round(t * 10) / 10,
+      count: vehicles.length,
+      featured: featuredCount,
+      vehicles: records,
+    };
+  }
+
+  let nightLightingAmount = 0;
+
+  // Keep the shared lighting materials in step with the coastal weather cycle
+  // and the day/night clock. Mutating the pooled materials updates every
+  // vehicle in one pass, matching `createCity().setWeather()`.
+  function applyVehicleLighting() {
+    if (!shared) return;
+    const preset = LIGHTING_PRESETS[weatherMode];
+    const night = nightLightingAmount;
+    const headScale = THREE.MathUtils.lerp(0.42, 1.55, night);
+    const signScale = THREE.MathUtils.lerp(0.7, 1.45, night);
+    shared.headMat.emissiveIntensity = preset.head * headScale;
+    shared.tailOffMat.emissiveIntensity = THREE.MathUtils.lerp(
+      preset.tailOff * 0.65,
+      preset.tailOff * 1.35,
+      night,
+    );
+    shared.tailBrakeMat.emissiveIntensity = preset.tailBrake * THREE.MathUtils.lerp(0.9, 1.2, night);
+    shared.indicatorOffMat.emissiveIntensity = preset.indicatorOff;
+    shared.indicatorOnMat.emissiveIntensity = preset.indicatorOn * THREE.MathUtils.lerp(0.95, 1.25, night);
+    shared.signMat.emissiveIntensity = preset.taxiSign * signScale;
+    shared.destinationMat.emissiveIntensity = preset.destination * signScale;
+    shared.beaconOffMat.emissiveIntensity = preset.beaconOff;
+    shared.beaconOnMat.emissiveIntensity = preset.beaconOn * THREE.MathUtils.lerp(1, 1.2, night);
+  }
+
   function setWeather(mode = 'clear') {
     if (!shared) return;
     weatherMode = ['clear', 'fog', 'drizzle'].includes(mode) ? mode : 'clear';
-    const preset = LIGHTING_PRESETS[weatherMode];
-    shared.headMat.emissiveIntensity = preset.head;
-    shared.tailOffMat.emissiveIntensity = preset.tailOff;
-    shared.tailBrakeMat.emissiveIntensity = preset.tailBrake;
-    shared.indicatorOffMat.emissiveIntensity = preset.indicatorOff;
-    shared.indicatorOnMat.emissiveIntensity = preset.indicatorOn;
-    shared.signMat.emissiveIntensity = preset.taxiSign;
-    shared.destinationMat.emissiveIntensity = preset.destination;
-    shared.beaconOffMat.emissiveIntensity = preset.beaconOff;
-    shared.beaconOnMat.emissiveIntensity = preset.beaconOn;
+    applyVehicleLighting();
   }
 
-  return { group, update, getStats, getDiagnostics, setWeather };
+  function setNightLighting(amount = 0) {
+    nightLightingAmount = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
+    applyVehicleLighting();
+  }
+
+  /* ---- player driving ---- */
+
+  function getNearestEnterableVehicle(position, maxDistance = 3.6) {
+    if (!position) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (vehicle.cls === 'bike') continue;
+      if (vehicle.playerControlled || vehicle.remoteControlled) continue;
+      if (!vehicle.parked && vehicle.speed > 0.9) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = { index, vehicle, distance };
+      }
+    }
+    return best;
+  }
+
+  function enterPlayerVehicle(index) {
+    if (playerVehicle || !Number.isInteger(index)) return false;
+    const vehicle = vehicles[index];
+    if (!vehicle || vehicle.playerControlled || vehicle.remoteControlled) return false;
+    vehicle.playerControlled = true;
+    vehicle.parked = false;
+    vehicle.parkedAt = null;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.waitingForGreen = false;
+    vehicle.greenReleaseAt = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.nextCurbStopAt = Infinity;
+    vehicle.nextServiceAt = Infinity;
+    vehicle.busStopIndex = -1;
+    vehicle.hazardUntil = 0;
+    vehicle.mergeSignalUntil = 0;
+    vehicle.pullOutBlockedSince = null;
+    vehicle.playerSteer = 0;
+    vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
+    playerVehicle = vehicle;
+    return true;
+  }
+
+  function exitPlayerVehicle() {
+    if (!playerVehicle) return null;
+    const vehicle = playerVehicle;
+    const point = vehicle.mesh.root.position;
+    const exit = {
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      heading: vehicle.heading ?? 0,
+    };
+    vehicle.playerControlled = false;
+    vehicle.playerSteer = 0;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = 5 + vehicle.servicePhase * 4;
+    playerVehicle = null;
+    return exit;
+  }
+
+  function setPlayerInput(input = {}) {
+    playerInput.throttle = THREE.MathUtils.clamp(Number(input.throttle) || 0, 0, 1);
+    playerInput.brake = THREE.MathUtils.clamp(Number(input.brake) || 0, 0, 1);
+    playerInput.steer = THREE.MathUtils.clamp(Number(input.steer) || 0, -1, 1);
+  }
+
+  function getPlayerVehicleState() {
+    if (!playerVehicle) return null;
+    const vehicle = playerVehicle;
+    const point = vehicle.mesh.root.position;
+    return {
+      index: vehicles.indexOf(vehicle),
+      class: vehicle.cls,
+      color: typeof vehicle.mesh.root.userData.vehicleColor === 'number'
+        ? vehicle.mesh.root.userData.vehicleColor
+        : null,
+      position: { x: point.x, y: point.y, z: point.z },
+      heading: vehicle.heading ?? 0,
+      speed: vehicle.speed,
+      road: vehicle.road,
+    };
+  }
+
+  /* ---- remote player vehicles ---- */
+
+  function setRemotePose(index, pose = {}) {
+    const vehicle = vehicles[index];
+    if (!vehicle || vehicle.playerControlled) return false;
+    if (!vehicle.remoteControlled) {
+      vehicle.remoteControlled = true;
+      vehicle.parked = false;
+      vehicle.parkedAt = null;
+      vehicle.speed = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.leader = null;
+      vehicle.curbDwellUntil = Infinity;
+      vehicle.nextCurbStopAt = Infinity;
+      vehicle.nextServiceAt = Infinity;
+      vehicle.busStopIndex = -1;
+      vehicle.hazardUntil = 0;
+      vehicle.mergeSignalUntil = 0;
+      vehicle.heading = null;
+    }
+    const point = vehicle.mesh.root.position;
+    const x = Number.isFinite(pose.x) ? pose.x : point.x;
+    const y = Number.isFinite(pose.y) ? pose.y : point.y;
+    const z = Number.isFinite(pose.z) ? pose.z : point.z;
+    const yaw = Number.isFinite(pose.yaw) ? pose.yaw : (vehicle.heading ?? 0);
+    vehicle.mesh.root.position.set(x, y, z);
+    vehicle.mesh.root.rotation.set(0, yaw, 0);
+    vehicle.mesh.root.visible = true;
+    vehicle.remoteYaw = yaw;
+    return true;
+  }
+
+  function clearRemotePose(index) {
+    const vehicle = vehicles[index];
+    if (!vehicle) return;
+    vehicle.remoteControlled = false;
+    vehicle.remoteYaw = null;
+    vehicle.heading = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = 4 + vehicle.servicePhase * 3;
+  }
+
+  function isPlayerDriving() {
+    return Boolean(playerVehicle);
+  }
+
+  function getRuleProbeSample() {
+    return vehicles.map((v) => {
+      const road = roads[v.road];
+      const illegalDir = road ? !isDirectionLegal(road, v.dir) : true;
+      return {
+        road: v.road,
+        dir: v.dir,
+        s: v.s,
+        speed: v.speed,
+        waitingAtStop: Boolean(v.waitingAtStop),
+        stoppedAtStop: Boolean(v.waitingAtStop && v.speed < 0.2),
+        waitingForGreen: Boolean(v.waitingForGreen),
+        routeSide: v.route?.side ?? null,
+        illegalDir,
+        illegalTurn: false,
+        oneway: Boolean(road?.oneway),
+        controlAhead: nodes[road?.endNode[v.dir === 1 ? 1 : 0]]?.control || 'none',
+      };
+    });
+  }
+
+  return {
+    group,
+    update,
+    setFocus,
+    getStats,
+    getDiagnostics,
+    getVehicleLifeSnapshot,
+    getRuleProbeSample,
+    setWeather,
+    setNightLighting,
+    getNearestEnterableVehicle,
+    enterPlayerVehicle,
+    exitPlayerVehicle,
+    setPlayerInput,
+    getPlayerVehicleState,
+    isPlayerDriving,
+    setRemotePose,
+    clearRemotePose,
+  };
 }
+
+/** Headless multi-vehicle law-lite probe on the sandbox cross. */
+export function createTrafficRulesHarness({ vehicleCount = 24 } = {}) {
+  const scenario = createTrafficRuleScenario();
+  const traffic = createTrafficSystem({
+    roadNetwork: scenario,
+    fleetSize: vehicleCount,
+  });
+
+  function sample() {
+    return traffic.getRuleProbeSample();
+  }
+
+  function run(seconds = 18, dt = 1 / 30) {
+    const samples = [];
+    let t = 0;
+    const steps = Math.max(1, Math.ceil(seconds / dt));
+    for (let i = 0; i < steps; i += 1) {
+      t += dt;
+      traffic.update(dt, t);
+      if (i % 8 === 0 || i === steps - 1) {
+        samples.push(...sample());
+      }
+    }
+    const diagnostics = traffic.getDiagnostics();
+    const evaluation = evaluateTrafficRuleSample(samples, diagnostics);
+    return {
+      ...evaluation,
+      diagnostics,
+      active: traffic.getStats().active,
+      scenarioId: scenario.id,
+      vehicleCount,
+      seconds,
+    };
+  }
+
+  return { traffic, scenario, sample, run };
+}
+
+export { createTrafficRuleScenario, evaluateTrafficRuleSample };

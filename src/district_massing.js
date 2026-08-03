@@ -200,7 +200,9 @@ const PALETTES = {
     metalness: [0.01, 0.03],
   },
   'victorian': {
-    colors: [0x826a72, 0x9a8088, 0x6f5a62],
+    // Painted-lady accents stay warm and muted at distance; the previous
+    // plum palette turned unfinished proxy sides into giant pink blocks.
+    colors: [0x8b7267, 0xb3907c, 0x6e696e],
     roughness: [0.74, 0.84],
     metalness: [0.02, 0.05],
   },
@@ -228,8 +230,8 @@ const DISTRICT_PROFILES = {
     heightRange: [18, 160],
     minHeight: 12,
     maxHeight: 220,
-    fillRatio: 0.82,
-    streetGap: 14,
+    fillRatio: 0.88,
+    streetGap: 12,
     palettes: ['glass-tower', 'limestone-tower', 'steel-tower'],
     geometryStyles: { setback: 0.35, tapered: 0.45, box: 0.20 },
     floorHeight: 3.8,
@@ -247,24 +249,24 @@ const DISTRICT_PROFILES = {
     name: 'SoMa',
   },
   'North Beach': {
-    heightRange: [10, 36],
-    minHeight: 6,
-    maxHeight: 48,
-    fillRatio: 0.88,
-    streetGap: 10,
+    heightRange: [6, 22],
+    minHeight: 4,
+    maxHeight: 32,
+    fillRatio: 0.92,
+    streetGap: 9,
     palettes: ['stucco', 'masonry-warm', 'victorian'],
-    geometryStyles: { box: 0.70, rowhouse: 0.30 },
+    geometryStyles: { box: 0.45, rowhouse: 0.55 },
     floorHeight: 3.1,
     name: 'North Beach',
   },
   'Pacific Heights': {
-    heightRange: [12, 45],
-    minHeight: 8,
-    maxHeight: 60,
-    fillRatio: 0.74,
-    streetGap: 14,
+    heightRange: [8, 30],
+    minHeight: 5,
+    maxHeight: 44,
+    fillRatio: 0.82,
+    streetGap: 12,
     palettes: ['stucco', 'masonry-warm', 'victorian', 'modern-white'],
-    geometryStyles: { box: 0.55, setback: 0.25, rowhouse: 0.20 },
+    geometryStyles: { box: 0.35, setback: 0.25, rowhouse: 0.40 },
     floorHeight: 3.3,
     name: 'Pacific Heights',
   },
@@ -291,13 +293,13 @@ const DISTRICT_PROFILES = {
     name: 'Sunset',
   },
   'Outer Sunset': {
-    heightRange: [4, 12],
+    heightRange: [3, 8],
     minHeight: 3,
-    maxHeight: 16,
-    fillRatio: 0.80,
+    maxHeight: 12,
+    fillRatio: 0.72,
     streetGap: 8,
     palettes: ['stucco', 'concrete-mid'],
-    geometryStyles: { box: 0.90, rowhouse: 0.10 },
+    geometryStyles: { box: 0.62, rowhouse: 0.38 },
     floorHeight: 2.7,
     name: 'Outer Sunset',
   },
@@ -313,9 +315,9 @@ const DISTRICT_PROFILES = {
     name: 'Richmond',
   },
   Mission: {
-    heightRange: [8, 30],
+    heightRange: [5, 22],
     minHeight: 5,
-    maxHeight: 40,
+    maxHeight: 30,
     fillRatio: 0.86,
     streetGap: 10,
     palettes: ['victorian', 'masonry-warm', 'brick-industrial'],
@@ -338,8 +340,8 @@ const DISTRICT_PROFILES = {
     heightRange: [14, 50],
     minHeight: 8,
     maxHeight: 65,
-    fillRatio: 0.68,
-    streetGap: 16,
+    fillRatio: 0.76,
+    streetGap: 14,
     // Beaux-Arts institutions share these blocks with older Tenderloin
     // masonry and brick. Carrying those neighboring fabric types into the
     // palette prevents an entire streamed avenue becoming one white facade.
@@ -350,7 +352,7 @@ const DISTRICT_PROFILES = {
       'masonry-warm',
       'brick-industrial',
     ],
-    geometryStyles: { box: 0.34, setback: 0.36, tapered: 0.20, rowhouse: 0.10 },
+    geometryStyles: { box: 0.28, setback: 0.38, tapered: 0.18, rowhouse: 0.16 },
     floorHeight: 3.6,
     name: 'Civic Center',
   },
@@ -358,10 +360,10 @@ const DISTRICT_PROFILES = {
     heightRange: [5, 16],
     minHeight: 3,
     maxHeight: 22,
-    fillRatio: 0.42,
-    streetGap: 20,
+    fillRatio: 0.52,
+    streetGap: 18,
     palettes: ['stucco', 'modern-white', 'masonry-cool'],
-    geometryStyles: { box: 0.90, rowhouse: 0.10 },
+    geometryStyles: { box: 0.22, rowhouse: 0.52, setback: 0.26 },
     floorHeight: 2.9,
     name: 'Presidio',
   },
@@ -420,7 +422,259 @@ const DISTRICT_PROFILES = {
     floorHeight: 2.9,
     name: 'Golden Gate',
   },
+  Chinatown: {
+    heightRange: [8, 24],
+    minHeight: 6,
+    maxHeight: 32,
+    fillRatio: 0.90,
+    streetGap: 8,
+    palettes: ['masonry-warm', 'brick-industrial', 'victorian'],
+    geometryStyles: { box: 0.40, rowhouse: 0.50, setback: 0.10 },
+    floorHeight: 3.0,
+    name: 'Chinatown',
+  },
+  'Nob Hill': {
+    heightRange: [12, 40],
+    minHeight: 8,
+    maxHeight: 52,
+    fillRatio: 0.78,
+    streetGap: 14,
+    palettes: ['limestone-tower', 'masonry-warm', 'stucco', 'modern-white'],
+    geometryStyles: { setback: 0.35, box: 0.35, rowhouse: 0.20, tapered: 0.10 },
+    floorHeight: 3.4,
+    name: 'Nob Hill',
+  },
+  'Russian Hill': {
+    heightRange: [8, 24],
+    minHeight: 5,
+    maxHeight: 32,
+    fillRatio: 0.84,
+    streetGap: 10,
+    palettes: ['stucco', 'victorian', 'modern-white', 'masonry-warm'],
+    geometryStyles: { box: 0.40, rowhouse: 0.50, setback: 0.10 },
+    floorHeight: 3.1,
+    name: 'Russian Hill',
+  },
+  Marina: {
+    heightRange: [6, 18],
+    minHeight: 4,
+    maxHeight: 24,
+    fillRatio: 0.72,
+    streetGap: 12,
+    palettes: ['modern-white', 'stucco', 'masonry-cool'],
+    geometryStyles: { box: 0.70, rowhouse: 0.30 },
+    floorHeight: 3.0,
+    name: 'Marina',
+  },
+  Embarcadero: {
+    heightRange: [20, 120],
+    minHeight: 12,
+    maxHeight: 180,
+    fillRatio: 0.85,
+    streetGap: 14,
+    palettes: ['glass-tower', 'steel-tower', 'limestone-tower'],
+    geometryStyles: { tapered: 0.40, setback: 0.35, box: 0.25 },
+    floorHeight: 3.7,
+    name: 'Embarcadero',
+  },
+  'Twin Peaks': {
+    heightRange: [4, 14],
+    minHeight: 2,
+    maxHeight: 18,
+    fillRatio: 0.28,
+    streetGap: 22,
+    palettes: ['stucco', 'modern-white', 'masonry-warm'],
+    geometryStyles: { box: 0.7, rowhouse: 0.2, setback: 0.1 },
+    floorHeight: 2.9,
+    name: 'Twin Peaks',
+  },
 };
+
+// The authored expansion blueprint is intentionally reduced to the four
+// geometry families the pooled renderer already supports. This keeps the
+// district plan on the live streaming path without adding a second building
+// renderer or duplicating every facade mesh in the authored overlay.
+const AUTHORED_MASSING_BY_SECTOR = Object.freeze({
+  '1:0': Object.freeze({
+    source: 'authored-civic-center-plan',
+    styleSequence: Object.freeze(['rowhouse', 'setback', 'box', 'setback', 'rowhouse', 'tapered']),
+    paletteSequence: Object.freeze(['limestone-tower', 'masonry-cool', 'masonry-warm', 'brick-industrial']),
+    fillRatio: 0.76,
+    streetGap: 14,
+    landmarkClearance: Object.freeze({ x: -108, z: 60, radius: 38 }),
+  }),
+  '4:0': Object.freeze({
+    source: 'authored-financial-plan',
+    styleSequence: Object.freeze(['tapered', 'setback', 'tapered', 'setback', 'tapered', 'setback']),
+    paletteSequence: Object.freeze(['glass-tower', 'steel-tower', 'limestone-tower']),
+    fillRatio: 0.88,
+    streetGap: 12,
+    heightRange: Object.freeze([24, 120]),
+    minHeight: 16,
+    maxHeight: 180,
+    landmarkClearance: Object.freeze({ x: 64, z: 92, radius: 46 }),
+  }),
+  '4:4': Object.freeze({
+    source: 'authored-north-beach-plan',
+    styleSequence: Object.freeze(['rowhouse', 'rowhouse', 'rowhouse', 'box', 'rowhouse', 'rowhouse']),
+    paletteSequence: Object.freeze(['stucco', 'masonry-warm', 'victorian']),
+    heightRange: Object.freeze([5, 18]),
+    minHeight: 5,
+    maxHeight: 24,
+    fillRatio: 0.92,
+    streetGap: 9,
+    grade: 0.075,
+    landmarkClearance: Object.freeze({ x: 58, z: 74, radius: 44 }),
+  }),
+  '0:4': Object.freeze({
+    source: 'authored-pacific-heights-plan',
+    styleSequence: Object.freeze(['rowhouse', 'setback', 'rowhouse', 'rowhouse', 'setback', 'rowhouse']),
+    paletteSequence: Object.freeze(['victorian', 'masonry-warm', 'stucco', 'modern-white']),
+    heightRange: Object.freeze([7, 24]),
+    minHeight: 6,
+    maxHeight: 32,
+    fillRatio: 0.82,
+    streetGap: 12,
+    grade: 0.11,
+    landmarkClearance: Object.freeze({ x: -28, z: 72, radius: 42 }),
+  }),
+  '-4:1': Object.freeze({
+    source: 'authored-presidio-plan',
+    styleSequence: Object.freeze(['rowhouse', 'rowhouse', 'rowhouse', 'box', 'rowhouse', 'rowhouse']),
+    paletteSequence: Object.freeze(['stucco', 'modern-white', 'masonry-cool']),
+    heightRange: Object.freeze([4, 14]),
+    minHeight: 3,
+    maxHeight: 20,
+    // The Presidio is a park-and-barracks edge, not a continuous urban wall.
+    // The larger authored clearance keeps the gate and meadow legible while
+    // this moderate fill preserves the existing detail-massing invariant.
+    fillRatio: 0.52,
+    streetGap: 18,
+    grade: 0.045,
+    landmarkClearance: Object.freeze({ x: -20, z: 100, radius: 56 }),
+  }),
+  '-3:-2': Object.freeze({
+    source: 'authored-mission-plan',
+    styleSequence: Object.freeze(['box', 'rowhouse', 'box', 'rowhouse', 'rowhouse', 'box']),
+    paletteSequence: Object.freeze(['victorian', 'masonry-warm', 'brick-industrial']),
+    heightRange: Object.freeze([5, 18]),
+    minHeight: 5,
+    maxHeight: 26,
+    fillRatio: 0.70,
+    grade: 0.038,
+    landmarkClearance: Object.freeze({ x: 8, z: 24, radius: 42 }),
+  }),
+  '4:-4': Object.freeze({
+    source: 'authored-mission-bay-plan',
+    styleSequence: Object.freeze(['setback', 'tapered', 'box', 'setback', 'tapered', 'box']),
+    paletteSequence: Object.freeze(['glass-tower', 'modern-white', 'steel-tower', 'brick-industrial']),
+    grade: 0.006,
+    landmarkClearance: Object.freeze({ x: 32, z: 64, radius: 52 }),
+  }),
+  '-5:-4': Object.freeze({
+    source: 'authored-outer-sunset-plan',
+    styleSequence: Object.freeze(['box', 'box', 'rowhouse', 'box', 'box', 'rowhouse']),
+    paletteSequence: Object.freeze(['stucco', 'concrete-mid', 'stucco']),
+    fillRatio: 0.54,
+    grade: 0.012,
+    landmarkClearance: Object.freeze({ x: 0, z: 128, radius: 56 }),
+  }),
+  '3:3': Object.freeze({
+    source: 'authored-chinatown-plan',
+    styleSequence: Object.freeze(['rowhouse', 'box', 'rowhouse', 'box', 'rowhouse', 'setback']),
+    paletteSequence: Object.freeze(['masonry-warm', 'brick-industrial', 'victorian', 'masonry-cool']),
+    heightRange: Object.freeze([8, 22]),
+    minHeight: 6,
+    maxHeight: 30,
+    fillRatio: 0.90,
+    grade: 0.055,
+    landmarkClearance: Object.freeze({ x: -64, z: -170, radius: 34 }),
+  }),
+  '2:3': Object.freeze({
+    source: 'authored-nob-hill-plan',
+    styleSequence: Object.freeze(['setback', 'box', 'setback', 'rowhouse', 'setback', 'box']),
+    paletteSequence: Object.freeze(['limestone-tower', 'masonry-warm', 'stucco', 'modern-white']),
+    heightRange: Object.freeze([10, 36]),
+    minHeight: 8,
+    maxHeight: 48,
+    fillRatio: 0.78,
+    grade: 0.10,
+    landmarkClearance: Object.freeze({ x: -40, z: -20, radius: 48 }),
+  }),
+  '1:4': Object.freeze({
+    source: 'authored-russian-hill-plan',
+    styleSequence: Object.freeze(['rowhouse', 'rowhouse', 'box', 'rowhouse', 'rowhouse', 'box']),
+    paletteSequence: Object.freeze(['stucco', 'victorian', 'modern-white', 'masonry-warm']),
+    heightRange: Object.freeze([7, 22]),
+    minHeight: 5,
+    maxHeight: 30,
+    fillRatio: 0.84,
+    grade: 0.095,
+    landmarkClearance: Object.freeze({ x: 80, z: 176, radius: 40 }),
+  }),
+  '0:5': Object.freeze({
+    source: 'authored-marina-plan',
+    styleSequence: Object.freeze(['box', 'rowhouse', 'box', 'box', 'rowhouse', 'box']),
+    paletteSequence: Object.freeze(['modern-white', 'stucco', 'masonry-cool']),
+    heightRange: Object.freeze([5, 16]),
+    minHeight: 4,
+    maxHeight: 22,
+    fillRatio: 0.72,
+    grade: 0.008,
+    landmarkClearance: Object.freeze({ x: -150, z: 20, radius: 52 }),
+  }),
+  '3:0': Object.freeze({
+    source: 'authored-embarcadero-plan',
+    styleSequence: Object.freeze(['tapered', 'setback', 'box', 'tapered', 'setback', 'tapered']),
+    paletteSequence: Object.freeze(['glass-tower', 'steel-tower', 'limestone-tower', 'modern-white']),
+    heightRange: Object.freeze([20, 110]),
+    minHeight: 12,
+    maxHeight: 160,
+    fillRatio: 0.85,
+    grade: 0.01,
+    landmarkClearance: Object.freeze({ x: 40, z: 90, radius: 48 }),
+  }),
+  '2:-1': Object.freeze({
+    source: 'authored-soma-design-plan',
+    styleSequence: Object.freeze(['box', 'setback', 'box', 'box', 'setback', 'tapered']),
+    paletteSequence: Object.freeze(['brick-industrial', 'steel-tower', 'concrete-mid', 'modern-white']),
+    heightRange: Object.freeze([8, 40]),
+    minHeight: 6,
+    maxHeight: 70,
+    fillRatio: 0.70,
+    grade: 0.012,
+    landmarkClearance: Object.freeze({ x: 40, z: 120, radius: 46 }),
+  }),
+});
+
+// Authored expansion sectors carry a more precise neighborhood identity than
+// the broad city-scale position heuristic. Keep this contract shared by
+// streamed massing and the representative traffic/pedestrian profiles so a
+// Mission Bay sector cannot silently inherit SoMa or Castro morphology.
+export const AUTHORED_DISTRICT_BY_SECTOR = Object.freeze({
+  '1:0': 'Civic Center',
+  '4:0': 'Financial District',
+  '4:4': 'North Beach',
+  '0:4': 'Pacific Heights',
+  '-4:1': 'Presidio',
+  '-3:-2': 'Mission',
+  '4:-4': 'Mission Bay',
+  '-5:-4': 'Outer Sunset',
+  '3:3': 'Chinatown',
+  '2:3': 'Nob Hill',
+  '1:4': 'Russian Hill',
+  '0:5': 'Marina',
+  '3:0': 'Embarcadero',
+  '2:-1': 'SoMa',
+  '-5:0': 'Golden Gate',
+  '-5:1': 'Richmond',
+  '-4:-2': 'Sunset',
+  '-2:-2': 'Twin Peaks',
+  '-3:-1': 'Castro / Noe Valley',
+  '-1:-2': 'Castro / Noe Valley',
+  '-1:1': 'SoMa',
+  '-4:2': 'Pacific Heights',
+});
 
 // ── Fallback profile ──────────────────────────────────────────────────────
 const FALLBACK_PROFILE = Object.freeze({
@@ -437,8 +691,18 @@ const FALLBACK_PROFILE = Object.freeze({
 
 // ── Lookup helpers ────────────────────────────────────────────────────────
 
-export function getDistrictProfile(districtName) {
-  return DISTRICT_PROFILES[districtName] || FALLBACK_PROFILE;
+export function getDistrictProfile(districtNameOrDescriptor) {
+  const descriptorKey = typeof districtNameOrDescriptor === 'object'
+    ? districtNameOrDescriptor?.key
+    : null;
+  const districtName = typeof districtNameOrDescriptor === 'object'
+    ? districtNameOrDescriptor?.district
+    : districtNameOrDescriptor;
+  const baseProfile = DISTRICT_PROFILES[districtName] || FALLBACK_PROFILE;
+  const authored = descriptorKey ? AUTHORED_MASSING_BY_SECTOR[descriptorKey] : null;
+  return authored
+    ? { ...baseProfile, ...authored }
+    : baseProfile;
 }
 
 function pickGeometryStyle(styles, random) {
@@ -493,7 +757,7 @@ function cellNoise(seed, candidateIndex, salt) {
 }
 
 export function generateDistrictMassing(descriptor, sectorSize, quality) {
-  const profile = getDistrictProfile(descriptor.district);
+  const profile = getDistrictProfile(descriptor);
   const random = mulberry32(descriptor.seed);
 
   const limits = quality === 'detail'
@@ -515,6 +779,7 @@ export function generateDistrictMassing(descriptor, sectorSize, quality) {
 
   const buildings = [];
   let candidateIndex = 0;
+  const landmarkClearance = profile.landmarkClearance;
 
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
@@ -522,8 +787,18 @@ export function generateDistrictMassing(descriptor, sectorSize, quality) {
       const lotChance = random();
       if (lotChance > lotFillRatio) continue;
 
-      const geometryStyle = pickGeometryStyle(profile.geometryStyles, random);
-      const paletteRoll = profile.palettes.indexOf(pickPalette(profile.palettes, random));
+      const cellIndex = row * columns + column;
+      const authoredStyle = profile.styleSequence?.[cellIndex % profile.styleSequence.length];
+      const geometryStyle = authoredStyle && profile.geometryStyles[authoredStyle]
+        ? authoredStyle
+        : pickGeometryStyle(profile.geometryStyles, random);
+      const authoredPalette = profile.paletteSequence?.[
+        cellIndex % profile.paletteSequence.length
+      ];
+      const paletteCandidate = authoredPalette && profile.palettes.includes(authoredPalette)
+        ? authoredPalette
+        : pickPalette(profile.palettes, random);
+      const paletteRoll = profile.palettes.indexOf(paletteCandidate);
       const paletteName = profile.palettes[
         (paletteRoll + row + column * 2) % profile.palettes.length
       ];
@@ -571,6 +846,9 @@ export function generateDistrictMassing(descriptor, sectorSize, quality) {
 
       const slotX = -sectorSize * 0.5 + blockStep * (column + 0.5);
       const slotZ = -sectorSize * 0.5 + blockStep * (row + 0.5);
+      if (landmarkClearance
+        && Math.hypot(slotX - landmarkClearance.x, slotZ - landmarkClearance.z)
+          < landmarkClearance.radius) continue;
       const xSlack = Math.max(0, maxBlockSize - width);
       const zSlack = Math.max(0, maxBlockSize - depth);
       const x = slotX + (

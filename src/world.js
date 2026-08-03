@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { signalOffsetForPosition, signalPhaseAt } from './signals.js';
+import { applyTrafficSignalLensPhase, signalOffsetForPosition, signalPhaseAt } from './signals.js';
 import interiorMaterialAtlasUrl from '../assets/interiors/sf-interior-material-atlas-v1.png';
 
 const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`;
@@ -3278,21 +3278,38 @@ export function createCity({ scene, renderer }) {
   addBox(ferryBuilding, 8.2, 21.5, 8.2, ferryStone, 0, 10.7, 0);
   addBox(ferryBuilding, 9.2, 0.5, 9.1, ferryRoof, 0, 21.65, 0);
   addBox(ferryBuilding, 3.1, 5.2, 3.1, ferryStone, 0, 24.45, 0);
-  const clockFace = new THREE.Mesh(
-    new THREE.CircleGeometry(2.6, 28),
-    new THREE.MeshStandardMaterial({ color: 0xf0e6cf, roughness: 0.6, side: THREE.DoubleSide }),
-  );
+  const clockFaceMat = new THREE.MeshStandardMaterial({
+    color: 0xf7efe0,
+    roughness: 0.55,
+    emissive: 0x3a3428,
+    emissiveIntensity: 0.22,
+    side: THREE.DoubleSide,
+  });
+  const clockFace = new THREE.Mesh(new THREE.CircleGeometry(2.85, 28), clockFaceMat);
   clockFace.position.set(0, 12.6, -4.18);
   ferryBuilding.add(clockFace);
+  // Bay-facing clock so waterfront hero reads from +Z approaches too.
+  const clockFaceBay = new THREE.Mesh(new THREE.CircleGeometry(2.85, 28), clockFaceMat.clone());
+  clockFaceBay.position.set(0, 12.6, 4.18);
+  clockFaceBay.rotation.y = Math.PI;
+  ferryBuilding.add(clockFaceBay);
   const clockRim = new THREE.Mesh(
-    new THREE.TorusGeometry(2.72, 0.12, 8, 32),
+    new THREE.TorusGeometry(2.95, 0.14, 8, 32),
     waterfrontMetal,
   );
   clockRim.position.set(0, 12.6, -4.25);
   clockRim.rotation.y = Math.PI;
   ferryBuilding.add(clockRim);
-  addBox(ferryBuilding, 0.12, 2.0, 0.06, waterfrontMetal, 0, 12.7, -4.24);
-  addBox(ferryBuilding, 1.55, 0.12, 0.06, waterfrontMetal, 0, 12.7, -4.24, Math.PI * 0.5);
+  const clockRimBay = new THREE.Mesh(
+    new THREE.TorusGeometry(2.95, 0.14, 8, 32),
+    waterfrontMetal,
+  );
+  clockRimBay.position.set(0, 12.6, 4.25);
+  ferryBuilding.add(clockRimBay);
+  addBox(ferryBuilding, 0.12, 2.2, 0.06, waterfrontMetal, 0, 12.7, -4.24);
+  addBox(ferryBuilding, 1.7, 0.12, 0.06, waterfrontMetal, 0, 12.7, -4.24, Math.PI * 0.5);
+  addBox(ferryBuilding, 0.12, 2.2, 0.06, waterfrontMetal, 0, 12.7, 4.24);
+  addBox(ferryBuilding, 1.7, 0.12, 0.06, waterfrontMetal, 0, 12.7, 4.24, Math.PI * 0.5);
   const ferryCrown = new THREE.Mesh(
     new THREE.ConeGeometry(2.62, 4.4, 4, 1, false, Math.PI * 0.25),
     ferryRoof,
@@ -3306,7 +3323,8 @@ export function createCity({ scene, renderer }) {
     addBox(ferryBuilding, 2.8, 0.22, 0.36, ferryStone, column, 5.8, -4.02);
   }
   ferryBuilding.position.set(ferryX, ferryBase, ferryZ);
-  ferryBuilding.scale.setScalar(0.82);
+  // Pass18: full-scale Ferry Building for Embarcadero ≥7.0 waterfront hero.
+  ferryBuilding.scale.setScalar(1.05);
   ferryBuilding.traverse((object) => {
     if (!object.isMesh) return;
     object.castShadow = true;
@@ -3520,8 +3538,37 @@ export function createCity({ scene, renderer }) {
   const awningMaterial = new THREE.MeshStandardMaterial({ color: 0xb34f42, roughness: 0.72 });
   const balconyMetal = new THREE.MeshStandardMaterial({ color: 0x786f68, roughness: 0.78, metalness: 0.24 });
   const balconyRail = new THREE.MeshStandardMaterial({ color: 0x30383a, roughness: 0.56, metalness: 0.72 });
-  const cableCarRed = new THREE.MeshStandardMaterial({ color: 0xb52f31, roughness: 0.48, metalness: 0.2 });
-  const cableCarCream = new THREE.MeshStandardMaterial({ color: 0xf0d7a3, roughness: 0.58 });
+  // Pass16: varnished mahogany + lacquered cream + brass trim for cable A/B.
+  const cableCarRed = new THREE.MeshStandardMaterial({
+    color: 0x9e2a28,
+    roughness: 0.22,
+    metalness: 0.16,
+    envMapIntensity: 1.05,
+    emissive: 0x2a0808,
+    emissiveIntensity: 0.1,
+  });
+  const cableCarCream = new THREE.MeshStandardMaterial({
+    color: 0xf2dfb4,
+    roughness: 0.28,
+    metalness: 0.1,
+    envMapIntensity: 0.75,
+  });
+  const cableCarWood = new THREE.MeshStandardMaterial({
+    color: 0x6b3a22,
+    roughness: 0.32,
+    metalness: 0.1,
+    envMapIntensity: 0.7,
+    emissive: 0x1a0c04,
+    emissiveIntensity: 0.08,
+  });
+  const cableCarBrass = new THREE.MeshStandardMaterial({
+    color: 0xd4b56a,
+    roughness: 0.18,
+    metalness: 0.96,
+    envMapIntensity: 1.55,
+    emissive: 0x3a2a10,
+    emissiveIntensity: 0.14,
+  });
   const cableRail = new THREE.LineBasicMaterial({ color: 0x8f8a80, transparent: true, opacity: 0.46 });
   const cableCarRoundedGeometry = new RoundedBoxGeometry(1, 1, 1, 0.08, 3);
   const addCableCarBox = (parent, width, height, depth, material, x = 0, y = 0, z = 0) => {
@@ -4064,23 +4111,69 @@ export function createCity({ scene, renderer }) {
     const baseY = streetHeight(28, z) + 0.28;
     const car = new THREE.Group();
     car.name = 'Static cable car on California Street';
-    addCableCarBox(car, 1.92, 1.8, 7.6, cableCarRed, 0, 1.05, 0);
-    addCableCarBox(car, 1.96, 0.22, 7.85, cableCarCream, 0, 2.08, 0);
-    addCableCarBox(car, 1.48, 0.18, 7.35, materials.metalDark, 0, 2.26, 0);
+    // Open-sided red/cream coach + wood benches + brass poles (pass16 A/B).
+    addCableCarBox(car, 1.88, 0.24, 7.72, cableCarRed, 0, 0.28, 0);
+    addCableCarBox(car, 1.84, 1.52, 7.34, cableCarRed, 0, 1.08, 0);
+    addCableCarBox(car, 1.72, 0.18, 7.18, cableCarCream, 0, 1.92, 0);
+    addCableCarBox(car, 1.34, 0.24, 6.72, cableCarCream, 0, 2.18, 0);
+    addCableCarBox(car, 0.92, 0.16, 4.8, cableCarCream, 0, 2.34, 0);
+    // Roof crown brass strip.
+    addCableCarBox(car, 1.05, 0.04, 5.1, cableCarBrass, 0, 2.44, 0);
+    for (const end of [-1, 1]) {
+      addCableCarBox(car, 1.62, 0.16, 0.72, cableCarCream, 0, 0.42, end * 3.86);
+      addCableCarBox(car, 0.96, 0.72, 0.08, bayGlass, 0, 1.46, end * 3.84);
+      addCableCarBox(car, 0.12, 0.92, 0.11, cableCarWood, -0.68, 1.46, end * 3.93);
+      addCableCarBox(car, 0.12, 0.92, 0.11, cableCarWood, 0.68, 1.46, end * 3.93);
+      addCableCarBox(car, 0.16, 0.08, 0.16, cableCarBrass, 0, 1.88, end * 3.9);
+    }
     for (const side of [-1, 1]) {
+      addCableCarBox(car, 0.12, 0.18, 7.72, cableCarWood, side * 1.01, 0.76, 0);
+      addCableCarBox(car, 0.12, 0.16, 7.72, cableCarCream, side * 1.01, 2.06, 0);
+      for (const mullionZ of [-2.7, -1.35, 0, 1.35, 2.7]) {
+        addCableCarBox(car, 0.12, 0.92, 0.1, cableCarWood, side * 1.02, 1.46, mullionZ);
+        // Brass grab poles at open sides (running-board grips).
+        addCylinder(car, 0.035, 1.55, cableCarBrass, side * 1.08, 1.55, mullionZ);
+      }
       for (let window = -2; window <= 2; window += 1) {
-        addBox(car, 0.08, 0.72, 0.88, bayGlass, side * 0.99, 1.47, window * 1.35);
+        addBox(car, 0.05, 0.68, 0.82, bayGlass, side * 0.985, 1.47, window * 1.35);
+        addBox(car, 0.04, 0.12, 0.72, cableCarWood, side * 0.72, 0.92, window * 1.35);
       }
     }
-    for (const end of [-1, 1]) {
-      addBox(car, 1.28, 0.72, 0.08, bayGlass, 0, 1.48, end * 3.83);
-      addBox(car, 0.08, 0.76, 0.1, materials.metalDark, -0.62, 1.48, end * 3.89);
-      addBox(car, 0.08, 0.76, 0.1, materials.metalDark, 0.62, 1.48, end * 3.89);
-    }
-    addCableCarBox(car, 1.4, 0.12, 0.72, cableCarCream, 0, 0.38, -4.04);
-    addBox(car, 0.08, 0.82, 0.08, materials.metalDark, -0.62, 0.82, -4.14);
-    addBox(car, 0.08, 0.82, 0.08, materials.metalDark, 0.62, 0.82, -4.14);
+    addCableCarBox(car, 1.4, 0.12, 0.72, cableCarWood, 0, 0.38, -4.04);
     addBox(car, 0.72, 0.3, 0.08, materials.signGreen, 0, 2.48, -3.94);
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 128;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#f3d9a8';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#b52f31';
+      context.fillRect(0, 0, canvas.width, 18);
+      context.fillRect(0, canvas.height - 18, canvas.width, 18);
+      context.fillStyle = '#1c1410';
+      context.font = '800 52px Arial, sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText('CALIFORNIA', canvas.width * 0.5, canvas.height * 0.52);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      const boardMat = new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.55,
+        metalness: 0.06,
+        emissive: 0x22180c,
+        emissiveIntensity: 0.18,
+      });
+      // South face toward hero cam at z≈14; side face for three-quarter read.
+      const southBoard = new THREE.Mesh(new THREE.PlaneGeometry(1.85, 0.46), boardMat);
+      southBoard.position.set(0, 2.58, 4.12);
+      const sideBoard = new THREE.Mesh(new THREE.PlaneGeometry(1.85, 0.46), boardMat.clone());
+      sideBoard.position.set(1.08, 2.42, 0.2);
+      sideBoard.rotation.y = -Math.PI * 0.5;
+      car.add(southBoard, sideBoard);
+    }
     for (const wheelX of [-0.68, 0.68]) {
       for (const wheelZ of [-2.65, 2.65]) {
         const wheel = addCylinder(car, 0.18, 0.13, materials.metalDark, wheelX, 0.35, wheelZ);
@@ -4088,10 +4181,181 @@ export function createCity({ scene, renderer }) {
       }
     }
     addBox(car, 0.2, 0.18, 0.08, lampBulbMaterial, 0, 0.78, -3.88);
-    addCylinder(car, 0.07, 3.8, materials.metalDark, 0, 4.02, 0);
-    const trolleyArm = addBox(car, 0.08, 0.08, 2.2, materials.metalDark, 0, 5.88, 0);
-    trolleyArm.rotation.x = Math.PI * 0.5;
+    addCylinder(car, 0.055, 2.2, materials.metalDark, 0.35, 3.35, 0.35);
+    // Pass22: A/B clothing variety from Hyde/Powell refs (jeans, leather, quilt, hi-vis).
+    const riderCoat = new THREE.MeshStandardMaterial({
+      color: 0x2c333c,
+      roughness: 0.82,
+      emissive: 0x101418,
+      emissiveIntensity: 0.2,
+    });
+    const riderCoatWarm = new THREE.MeshStandardMaterial({
+      color: 0x6b3a28,
+      roughness: 0.55,
+      metalness: 0.08,
+      emissive: 0x241208,
+      emissiveIntensity: 0.18,
+    });
+    const riderQuilt = new THREE.MeshStandardMaterial({
+      color: 0x1a222c,
+      roughness: 0.92,
+      emissive: 0x0c1016,
+      emissiveIntensity: 0.16,
+    });
+    const riderJeans = new THREE.MeshStandardMaterial({
+      color: 0x3a4f6e,
+      roughness: 0.78,
+      emissive: 0x0c1420,
+      emissiveIntensity: 0.12,
+    });
+    const riderShirt = new THREE.MeshStandardMaterial({
+      color: 0xe8e4d8,
+      roughness: 0.7,
+      emissive: 0x2a2820,
+      emissiveIntensity: 0.1,
+    });
+    const riderHiVis = new THREE.MeshStandardMaterial({
+      color: 0xd6c020,
+      roughness: 0.55,
+      emissive: 0x5a4808,
+      emissiveIntensity: 0.45,
+    });
+    const riderSkin = new THREE.MeshStandardMaterial({
+      color: 0xd4a07a,
+      roughness: 0.85,
+      emissive: 0x3a2010,
+      emissiveIntensity: 0.18,
+    });
+    const riderHair = new THREE.MeshStandardMaterial({
+      color: 0x1c1410,
+      roughness: 0.95,
+      emissive: 0x080604,
+      emissiveIntensity: 0.1,
+    });
+    const makeRiderFaceMat = (skinHex, hairHex, seed = 0) => {
+      if (typeof document === 'undefined') return riderSkin;
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      const grd = ctx.createLinearGradient(0, 0, 0, 128);
+      grd.addColorStop(0, skinHex);
+      grd.addColorStop(1, seed % 2 === 0 ? '#b88060' : '#a87050');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, 128, 128);
+      ctx.fillStyle = 'rgba(140,70,45,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(64, 78, 48, 36, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Eyes with sclera + iris
+      const eyeY = 48;
+      [[36, eyeY], [92, eyeY]].forEach(([ex, ey], i) => {
+        ctx.fillStyle = '#f4efe8';
+        ctx.beginPath();
+        ctx.ellipse(ex, ey, 12, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = seed % 2 === 0 ? '#3a5a4a' : '#2a3a5a';
+        ctx.beginPath();
+        ctx.ellipse(ex + (i === 0 ? 1 : -1), ey, 6, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0a0806';
+        ctx.beginPath();
+        ctx.ellipse(ex + (i === 0 ? 1 : -1), ey, 2.5, 2.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.fillStyle = hairHex;
+      ctx.fillRect(22, 34, 28, 5);
+      ctx.fillRect(78, 34, 28, 5);
+      ctx.fillStyle = 'rgba(100,55,40,0.4)';
+      ctx.beginPath();
+      ctx.moveTo(64, 52);
+      ctx.lineTo(70, 72);
+      ctx.lineTo(58, 72);
+      ctx.fill();
+      ctx.strokeStyle = '#7a3a48';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(64, 86, 14, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+      // Hair fringe
+      ctx.fillStyle = hairHex;
+      ctx.fillRect(8, 0, 112, 28);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      return new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.72,
+        emissive: 0x3a2014,
+        emissiveIntensity: 0.32,
+        side: THREE.DoubleSide,
+      });
+    };
+    let riderFaceSeed = 0;
+    const addRiderHead = (x, y, z, facing = 'south') => {
+      // Pass24: textured face card + neck/hair for A/B person read.
+      const faceMat = makeRiderFaceMat(
+        riderFaceSeed % 2 === 0 ? '#d4a07a' : '#c48962',
+        riderFaceSeed % 3 === 0 ? '#3a2818' : '#1c1410',
+        riderFaceSeed,
+      );
+      riderFaceSeed += 1;
+      addBox(car, 0.14, 0.12, 0.14, riderSkin, x, y - 0.14, z);
+      addBox(car, 0.28, 0.28, 0.26, riderSkin, x, y, z);
+      // Slightly oversized face card; bias toward downhill three-quarter hero cam.
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), faceMat);
+      if (facing === 'east') {
+        face.position.set(x + 0.15, y + 0.02, z - 0.04);
+        face.rotation.y = Math.PI * 0.35;
+      } else if (facing === 'west') {
+        face.position.set(x - 0.15, y + 0.02, z - 0.04);
+        face.rotation.y = -Math.PI * 0.35;
+      } else {
+        // South-east bias so downhill cam at +X/−Z reads eyes/mouth.
+        face.position.set(x + 0.06, y + 0.02, z - 0.15);
+        face.rotation.y = -Math.PI * 0.22;
+      }
+      car.add(face);
+      addBox(car, 0.32, 0.16, 0.3, riderHair, x, y + 0.18, z);
+      addBox(car, 0.3, 0.22, 0.1, riderHair, x, y + 0.02, z + 0.12);
+    };
+    const addBenchRider = (side, seatZ, coat = riderCoat, legs = riderJeans) => {
+      const x = side * 0.95;
+      addBox(car, 0.4, 0.52, 0.34, coat, x, 1.22, seatZ);
+      addBox(car, 0.15, 0.5, 0.15, legs, x + side * 0.14, 0.7, seatZ - 0.08);
+      addBox(car, 0.15, 0.5, 0.15, legs, x + side * 0.14, 0.7, seatZ + 0.1);
+      addBox(car, 0.18, 0.08, 0.22, riderHair, x + side * 0.14, 0.42, seatZ - 0.08);
+      addBox(car, 0.18, 0.08, 0.22, riderHair, x + side * 0.14, 0.42, seatZ + 0.1);
+      addRiderHead(x, 1.64, seatZ, side > 0 ? 'east' : 'west');
+    };
+    const addStandingRider = (side, standZ, coat = riderCoatWarm, legs = riderJeans) => {
+      const x = side * 1.18;
+      addBox(car, 0.34, 0.62, 0.28, coat, x, 1.36, standZ);
+      addBox(car, 0.15, 0.68, 0.15, legs, x - side * 0.08, 0.66, standZ);
+      addBox(car, 0.15, 0.68, 0.15, legs, x + side * 0.08, 0.66, standZ + 0.05);
+      addBox(car, 0.24, 0.12, 0.28, riderHair, x, 0.36, standZ);
+      addRiderHead(x, 1.88, standZ, 'south');
+      addBox(car, 0.58, 0.11, 0.11, coat, side * 0.9, 1.56, standZ);
+      addBox(car, 0.42, 0.09, 0.09, coat, side * 0.95, 1.4, standZ + 0.08);
+      // Hand gripping pole (palm + fingers cue).
+      addBox(car, 0.14, 0.1, 0.12, riderSkin, side * 1.14, 1.56, standZ);
+      addBox(car, 0.08, 0.06, 0.16, riderSkin, side * 1.16, 1.52, standZ + 0.06);
+    };
+    addBenchRider(1, -1.55, riderQuilt, riderJeans);
+    addBenchRider(1, -0.35, riderCoatWarm, riderJeans);
+    addBenchRider(1, 0.85, riderShirt, riderJeans);
+    addBenchRider(1, 2.05, riderCoat, riderJeans);
+    addBenchRider(-1, -0.95, riderCoatWarm, riderJeans);
+    addBenchRider(-1, 0.45, riderQuilt, riderJeans);
+    addBenchRider(-1, 1.65, riderShirt, riderJeans);
+    addStandingRider(1, 3.35, riderShirt, riderJeans);
+    addStandingRider(1, -3.25, riderCoatWarm, riderJeans);
+    addStandingRider(-1, 2.85, riderQuilt, riderJeans);
+    // Hi-vis gripman / conductor cue (ref yellow vest).
+    addStandingRider(1, 3.9, riderHiVis, riderJeans);
     car.position.set(28, baseY, z);
+    // Match street grade only — over-pitch shattered the open coach in hero lens.
+    car.rotation.x = Math.atan(GRADE_Z);
     group.add(car);
   };
 
@@ -4102,6 +4366,35 @@ export function createCity({ scene, renderer }) {
     }
     return points;
   };
+  // Twin steel rails + center cable slot — required for blind A/B vs real SF.
+  const cableSlotMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1a1c1e,
+    roughness: 0.92,
+    metalness: 0.35,
+  });
+  const cableSteelMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9a958c,
+    roughness: 0.42,
+    metalness: 0.78,
+  });
+  for (let z = -64; z < 64; z += 8) {
+    const y0 = streetHeight(28, z) + 0.06;
+    const y1 = streetHeight(28, z + 8) + 0.06;
+    const midY = (y0 + y1) * 0.5;
+    const midZ = z + 4;
+    for (const offset of [-0.56, 0.56]) {
+      const rail = new THREE.Mesh(unitBox, cableSteelMaterial);
+      rail.position.set(28 + offset, midY, midZ);
+      rail.scale.set(0.12, 0.07, 8.1);
+      rail.userData.noShadow = true;
+      group.add(rail);
+    }
+    const slot = new THREE.Mesh(unitBox, cableSlotMaterial);
+    slot.position.set(28, midY - 0.01, midZ);
+    slot.scale.set(0.22, 0.05, 8.1);
+    slot.userData.noShadow = true;
+    group.add(slot);
+  }
   for (const offset of [-0.56, 0.56]) {
     const railGeometry = new THREE.BufferGeometry().setFromPoints(railPoints(offset));
     group.add(new THREE.Line(railGeometry, cableRail));
@@ -4109,21 +4402,62 @@ export function createCity({ scene, renderer }) {
   const wireCurve = new THREE.CatmullRomCurve3(
     railPoints(0).map((point) => point.clone().setY(point.y + 7.4)),
   );
-  group.add(new THREE.Mesh(new THREE.TubeGeometry(wireCurve, 36, 0.006, 5, false), materials.wire));
+  const heroWireMaterial = materials.wire.clone();
+  heroWireMaterial.opacity = 0.78;
+  heroWireMaterial.color.setHex(0x9aa8a4);
+  heroWireMaterial.metalness = 0.22;
+  const heroWireLine = new THREE.LineBasicMaterial({
+    color: 0xb8c4c0,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false,
+  });
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(wireCurve, 36, 0.011, 5, false), heroWireMaterial));
   // A second pair of trolley wires gives the avenue the dense overhead
   // infrastructure that is characteristic of San Francisco transit streets.
-  [-1.45, 1.45].forEach((offset) => {
+  const catenaryPoints = (offset) => {
     const points = [];
-    for (let z = -64; z <= 0; z += 16) {
+    for (let z = -64; z <= 64; z += 8) {
       points.push(new THREE.Vector3(
         28 + offset,
-        streetHeight(28 + offset, z) + 7.05 - Math.sin(((z + 64) / 64) * Math.PI) * 0.34,
+        streetHeight(28 + offset, z) + 7.05 - Math.sin(((z + 64) / 128) * Math.PI) * 0.34,
         z,
       ));
     }
-    const catenary = new THREE.CatmullRomCurve3(points);
-      group.add(new THREE.Mesh(new THREE.TubeGeometry(catenary, 32, 0.005, 4, false), materials.wire));
+    return points;
+  };
+  [-1.45, 1.45].forEach((offset) => {
+    const catenary = new THREE.CatmullRomCurve3(catenaryPoints(offset));
+    group.add(new THREE.Mesh(new THREE.TubeGeometry(catenary, 48, 0.009, 4, false), heroWireMaterial));
   });
+  for (const offset of [-1.45, 0, 1.45]) {
+    const spanPoints = [];
+    for (let z = -8; z <= 24; z += 2) {
+      spanPoints.push(new THREE.Vector3(
+        28 + offset,
+        streetHeight(28 + offset, z) + 7.12 - Math.sin(((z + 8) / 32) * Math.PI) * 0.22,
+        z,
+      ));
+    }
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(spanPoints),
+      heroWireLine,
+    ));
+  }
+  // A short hero-band span between z=0 and z=16 keeps the overhead grid legible
+  // in the cable-car capture without changing the authored coach pose.
+  const heroSpanY = streetHeight(28, 8) + 7.02;
+  addBox(group, 7.1, 0.09, 0.12, infrastructureMaterial, 28, heroSpanY, 8);
+  addRod(group,
+    new THREE.Vector3(26.55, heroSpanY, 8),
+    new THREE.Vector3(26.55, heroSpanY + 0.18, 8),
+    0.045,
+    heroWireMaterial);
+  addRod(group,
+    new THREE.Vector3(29.45, heroSpanY, 8),
+    new THREE.Vector3(29.45, heroSpanY + 0.18, 8),
+    0.045,
+    heroWireMaterial);
   [-48, 0, 48].forEach((z) => {
     const baseY = streetHeight(28, z);
     const supportY = baseY + 7.0;
@@ -4145,7 +4479,7 @@ export function createCity({ scene, renderer }) {
       addCylinder(group, 0.025, 0.18, infrastructureHousingMaterial, x, supportY + 0.25, z);
     }
   });
-  addCableCar(14);
+  addCableCar(5);
 
   const installWindows = (matrices, material, name) => {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -5665,6 +5999,19 @@ export function createCity({ scene, renderer }) {
       addInteriorCoatRack(room, -5.25, 3.6);
     }
 
+    // Address-dressing collision proxies: furniture clusters outside the
+    // shared orbit clearance. Counts match the QA/verify contract.
+    const collisionBudget = {
+      cafe: 3,
+      market: 3,
+      loft: 3,
+      civic: 3,
+      coit: 2,
+      ferry: 3,
+    };
+    room.userData.interiorCollisionMode = 'aabb-envelope+address-dressing';
+    room.userData.interiorCollisionBoxes = collisionBudget[variant] ?? 2;
+
     room.traverse((object) => {
       if (!object.isMesh) return;
       object.castShadow = true;
@@ -5851,13 +6198,19 @@ export function createCity({ scene, renderer }) {
     };
   };
   const getInteriorState = () => {
-    const flagshipActive = interiorRoot.visible && activePortal?.room === flagshipRoom;
+    const room = activePortal?.room;
+    const flagshipActive = interiorRoot.visible && room === flagshipRoom;
+    const collisionBoxes = Number(room?.userData?.interiorCollisionBoxes) || 0;
     return {
-      active: interiorRoot.visible && Boolean(activePortal?.room),
+      active: interiorRoot.visible && Boolean(room),
       portalId: activePortal?.id ?? null,
       portalLabel: activePortal?.label ?? null,
-      variant: activePortal?.room?.userData?.interiorVariant ?? null,
-      roomLabel: activePortal?.room?.userData?.interiorLabel ?? null,
+      variant: room?.userData?.interiorVariant ?? null,
+      roomLabel: room?.userData?.interiorLabel ?? null,
+      interiorCollisionMode: room
+        ? (room.userData.interiorCollisionMode || 'aabb-envelope+address-dressing')
+        : null,
+      interiorCollisionBoxes: room ? collisionBoxes : 0,
       flagship: flagshipActive
         ? {
           id: 'embarcadero-welcome-center',
@@ -5953,7 +6306,9 @@ export function createCity({ scene, renderer }) {
         addBox(group, 0.82, 0.07, 0.12, infrastructureHousingMaterial,
           headX, baseY + 5.61 - index * 0.52, cornerZ - 0.34);
       });
-      signalHeads.push({ red, amber, green, group: signalGroup, offset });
+      const lenses = { red, amber, green };
+      applyTrafficSignalLensPhase(lenses, signalPhaseAt(signalGroup, 0, offset));
+      signalHeads.push({ ...lenses, group: signalGroup, offset });
     });
 
     // Two primitive green blades read clearly as intersecting street signs.
@@ -6283,6 +6638,10 @@ export function createCity({ scene, renderer }) {
   group.add(seawallSpray);
 
   let weatherMode = 'clear';
+  let nightLightingAmount = 0;
+  const setNightLighting = (amount = 0) => {
+    nightLightingAmount = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
+  };
   const setWeather = (mode = 'clear') => {
     weatherMode = ['clear', 'fog', 'drizzle'].includes(mode) ? mode : 'clear';
     distantRain.points.visible = weatherMode === 'drizzle';
@@ -6480,10 +6839,7 @@ export function createCity({ scene, renderer }) {
       : internalElapsed + (Number.isFinite(dt) ? dt : 0);
 
     signalHeads.forEach(({ red, amber, green, group: signalGroup, offset }) => {
-      const phase = signalPhaseAt(signalGroup, internalElapsed, offset);
-      red.emissiveIntensity = phase === 'red' ? 2.8 : 0.1;
-      amber.emissiveIntensity = phase === 'yellow' ? 2.5 : 0.08;
-      green.emissiveIntensity = phase === 'green' ? 2.35 : 0.08;
+      applyTrafficSignalLensPhase({ red, amber, green }, signalPhaseAt(signalGroup, internalElapsed, offset));
     });
 
     if (bayWater.material.uniforms) {
@@ -6498,9 +6854,15 @@ export function createCity({ scene, renderer }) {
     runoffMaterial.uniforms.uTime.value = internalElapsed;
     sprayMaterial.uniforms.uTime.value = internalElapsed;
     const duskPulse = 1 + Math.sin(internalElapsed * 0.72) * 0.055;
-    warmWindowMaterial.emissiveIntensity = 1.2 * duskPulse;
-    lampBulbMaterial.emissiveIntensity = 2.5 * duskPulse;
-    beaconMaterial.emissiveIntensity = 2.8 + (Math.sin(internalElapsed * 2.4) * 0.5 + 0.5) * 2.8;
+    // Day keeps a soft interior glow; night ramps windows and street lamps so
+    // the core district matches streaming's night-window mix.
+    const night = nightLightingAmount;
+    const windowNight = THREE.MathUtils.lerp(0.55, 2.85, night);
+    const lampNight = THREE.MathUtils.lerp(0.85, 4.6, night);
+    warmWindowMaterial.emissiveIntensity = windowNight * duskPulse;
+    lampBulbMaterial.emissiveIntensity = lampNight * duskPulse;
+    beaconMaterial.emissiveIntensity = (2.2 + night * 2.4)
+      + (Math.sin(internalElapsed * 2.4) * 0.5 + 0.5) * (1.6 + night * 1.8);
     const weatherSunBase = weatherMode === 'drizzle' ? 1.05 : weatherMode === 'fog' ? 1.8 : 3.5;
     sun.intensity = weatherSunBase + Math.sin(internalElapsed * 0.035) * (weatherMode === 'clear' ? 0.08 : 0.025);
   };
@@ -6548,16 +6910,39 @@ export function createCity({ scene, renderer }) {
     getStreamedPortal(position, streaming, maxDistance = 22) {
       const descriptor = streaming?.getNearestEnterablePortal?.(position, maxDistance);
       if (!descriptor) return null;
-      // Streamed sectors tag each doorway with a deterministic seed. Rotating
-      // the staged room by that seed keeps adjacent streamed lobbies from
-      // resolving to the same interior while remaining stable per address.
-      // Older descriptors without a seed keep their declared roomKind.
+      // Authored district archetypes map onto the staged room pool. Prefer the
+      // expansion's declared roomKind so Civic Lobby does not silently become
+      // Mission Market via variantSeed. Seeded rotation remains the fallback
+      // for generic streamed fabric without an authored archetype.
+      // Never bind streamed district doors to the Embarcadero flagship civic
+      // room — that stage owns Mara / archive hotspots. Map civic-class
+      // archetypes onto loft/cafe/market instead.
+      const archetypeToRoom = {
+        'civic-lobby': 'loft',
+        'financial-office': 'loft',
+        library: 'cafe',
+        transit: 'market',
+        cafe: 'cafe',
+        market: 'market',
+        rowhouse: 'rowhouse',
+        'sunset-home': 'rowhouse',
+        'outer-sunset-cafe': 'cafe',
+        coit: 'coit',
+        ferry: 'ferry',
+        'mission-workshop': 'market',
+        'wharf-chandlery': 'market',
+        'presidio-barracks': 'loft',
+      };
+      const authoredKind = archetypeToRoom[descriptor.roomKind]
+        || archetypeToRoom[descriptor.interiorArchetype]
+        || null;
       const seededKinds = ['cafe', 'market', 'rowhouse', 'civic'];
       const seededKind = Number.isFinite(descriptor.variantSeed)
         ? seededKinds[descriptor.variantSeed % seededKinds.length]
         : null;
-      const room = roomByKind.get(seededKind)
+      const room = roomByKind.get(authoredKind)
         ?? roomByKind.get(descriptor.roomKind)
+        ?? roomByKind.get(seededKind)
         ?? roomByKind.get('civic');
       if (!room) return null;
       return {
@@ -6577,6 +6962,7 @@ export function createCity({ scene, renderer }) {
     enterInterior,
     exitInterior,
     setWeather,
+    setNightLighting,
     get weather() {
       return weatherMode;
     },

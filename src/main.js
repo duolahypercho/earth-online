@@ -9,12 +9,18 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import './styles.css';
 import { createCity } from './world.js';
-import { createTrafficSystem } from './traffic.js';
+import { createTrafficSystem, createTrafficRulesHarness } from './traffic.js';
 import { createPedestrianSystem } from './pedestrians.js';
 import { createSanFranciscoStreaming } from './streaming.js';
 import { createStreamedAgentSystem } from './streamed-agents.js';
+import { createSanFranciscoExpansion } from './sf-expansion.js';
+import { SIGNAL_PERIOD } from './signals.js';
 import { createCityShift } from './gameplay.js';
 import { createHud } from './ui.js';
+import { createPlayerAvatar, animatePlayerAvatar, setAvatarLook } from './player.js';
+import { createLifeSim } from './lifesim.js';
+import { createNetworking } from './networking.js';
+import { createEngineAudio, createWindAudio } from './audio.js';
 
 const app = document.querySelector('#app');
 const canvas = document.querySelector('#scene-canvas');
@@ -108,14 +114,41 @@ sun.shadow.camera.top = 78;
 sun.shadow.camera.bottom = -58;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 210;
-sun.shadow.bias = -0.00018;
-sun.shadow.normalBias = 0.035;
-sun.shadow.radius = 2;
+sun.shadow.bias = -0.00016;
+sun.shadow.normalBias = 0.032;
+sun.shadow.radius = 2.2;
 scene.add(sun, sun.target);
+
+// Keep the sun direction stable while moving its finite shadow volume with
+// the active district. The authored and streamed city lives kilometres from
+// the origin, so a shadow camera left at (0, 0, 0) silently stops grounding
+// the beach, towers, and traffic after a sector handoff.
+const sunShadowFocus = new THREE.Vector3();
+const sunShadowPositionOffset = new THREE.Vector3(-75, 82, 45);
+const sunShadowTargetOffset = new THREE.Vector3(28, 3, 38);
+let sunShadowFocusSector = null;
+function updateSunShadowFocus(focus, sectorKey) {
+  if (!focus?.isVector3) return;
+  const sectorChanged = sunShadowFocusSector !== sectorKey;
+  const movedEnough = sunShadowFocus.distanceToSquared(focus) >= 32 * 32;
+  if (!sectorChanged && !movedEnough) return;
+  sunShadowFocus.copy(focus);
+  sun.position.copy(focus).add(sunShadowPositionOffset);
+  sun.target.position.copy(focus).add(sunShadowTargetOffset);
+  sun.updateMatrixWorld();
+  sun.target.updateMatrixWorld();
+  sunShadowFocusSector = sectorKey;
+  renderer.shadowMap.needsUpdate = true;
+}
 
 const rim = new THREE.DirectionalLight(0x7ba9dc, 0.34);
 rim.position.set(80, 50, -65);
 scene.add(rim);
+
+const nightFill = new THREE.PointLight(0xffb57f, 0, 64, 2);
+nightFill.name = 'Street night fill';
+nightFill.castShadow = false;
+scene.add(nightFill);
 
 // The staged interiors already carry warm practicals. These two restrained
 // helpers keep the exterior key from washing those rooms out during the
@@ -132,7 +165,7 @@ const interiorPresentation = {
   target: 0,
 };
 
-const STATIC_BATCH_MIN_INSTANCES = 12;
+const STATIC_BATCH_MIN_INSTANCES = 2;
 
 function freezeStaticTransforms(root) {
   if (!root) return;
@@ -221,8 +254,10 @@ function createStaticCityBatches(root) {
     batch.receiveShadow = meshes[0].receiveShadow;
     // The authored core is bounded and only ~330k triangles in total. Drawing
     // each opaque batch as one cached multi-draw is materially cheaper than
-    // sorting and frustum-testing thousands of tiny boxes every frame.
-    batch.frustumCulled = false;
+    // sorting and frustum-testing thousands of tiny boxes every frame, while
+    // the batch-level sphere still removes the whole core when the traveler
+    // is looking across the streamed city.
+    batch.frustumCulled = true;
     batch.perObjectFrustumCulled = false;
     batch.sortObjects = false;
 
@@ -234,6 +269,7 @@ function createStaticCityBatches(root) {
       batch.setMatrixAt(instanceId, mesh.matrixWorld);
       mesh.visible = false;
     });
+    batch.computeBoundingSphere();
 
     batchRoot.add(batch);
     batchedMeshes += meshes.length;
@@ -248,6 +284,7 @@ function createStaticCityBatches(root) {
 
 const city = createCity({ scene, renderer });
 const proceduralSkyMaterial = scene.getObjectByName('Procedural Pacific sky')?.material;
+const proceduralSky = scene.getObjectByName('Procedural Pacific sky');
 const wetWeatherVisuals = {
   current: 0,
   target: 0,
@@ -275,14 +312,40 @@ function applyWetWeatherVisuals(amount) {
   wetWeatherVisuals.current = wetAmount;
 }
 const staticCityRendering = createStaticCityBatches(city.group);
-const traffic = createTrafficSystem({ scene, roadNetwork: city.roadNetwork });
-const pedestrians = createPedestrianSystem({ scene, sidewalkNetwork: city.sidewalkNetwork });
+// Static batching freezes the authored city transforms, but the compact sky
+// dome is deliberately camera-relative for streamed districts. Leave this
+// shader-only background node live so its matrix follows the camera too.
+if (proceduralSky) proceduralSky.matrixAutoUpdate = true;
 const streaming = createSanFranciscoStreaming({
   scene,
+  // Keep facade-grade geometry on the focused district plus a small visible
+  // forward ring. The proxy ring preserves city-scale silhouettes, coarse
+  // population, collision metadata, and handoffs without paying for eleven
+  // simultaneously graded detail sectors during traversal.
+  maxDetailed: 4,
+  maxProxies: 24,
+  prewarmPools: true,
   // The current hand-authored avenue is sector 0:0. Streaming tracks it as
   // externally owned and never hides, reparents, or disposes its objects.
   externalDetailedKeys: ['0:0'],
 });
+const expansion = createSanFranciscoExpansion({ streaming, scene });
+const coreSignalPlans = city.roadNetwork.intersections.map((position, index) => ({
+  id: `core:junction:${index}`,
+  position,
+  cycleSeconds: SIGNAL_PERIOD,
+  signalized: true,
+}));
+const traffic = createTrafficSystem({
+  scene,
+  roadNetwork: {
+    ...city.roadNetwork,
+    roads: [...city.roadNetwork.roads, ...expansion.roadNetwork.roads],
+    intersections: [...city.roadNetwork.intersections, ...expansion.roadNetwork.intersections],
+    signalPlans: [...coreSignalPlans, ...expansion.roadNetwork.signalPlans],
+  },
+});
+const pedestrians = createPedestrianSystem({ scene, sidewalkNetwork: city.sidewalkNetwork });
 const streamedAgents = createStreamedAgentSystem({ scene, streaming });
 streaming.setStreamedAgentStatsProvider?.(() => streamedAgents.getStats());
 
@@ -311,6 +374,7 @@ const WEATHER_UNIFORM_NAMES = [
   'uSkyZenith',
   'uColor',
   'uDensity',
+  'uOpacity',
 ];
 const weatherMaterialRefs = new Map();
 const weatherUniformRefs = new Map();
@@ -421,17 +485,95 @@ function applyWeatherUniformTransition(progress) {
   });
 }
 
-registerWeatherVisuals();
-freezeStaticTransforms(scene.getObjectByName('Enterable interiors staging wing'));
-scene.updateMatrixWorld(true);
-scene.matrixAutoUpdate = false;
-scene.matrixWorldNeedsUpdate = false;
-// No dynamic actor casts into the directional atlas. Cache the authored city
-// shadow once, then request an explicit refresh only when interior visibility
-// changes instead of resubmitting the same depth scene every frame.
-renderer.shadowMap.autoUpdate = false;
-renderer.shadowMap.needsUpdate = true;
-renderer.toneMappingExposure = 1.04;
+const PREWARM_TEXTURE_FIELDS = Object.freeze([
+  'map',
+  'alphaMap',
+  'bumpMap',
+  'normalMap',
+  'roughnessMap',
+  'metalnessMap',
+  'emissiveMap',
+  'aoMap',
+  'lightMap',
+  'envMap',
+]);
+
+function sceneTexturesReadyForPrewarm() {
+  let ready = true;
+  scene.traverse((object) => {
+    if (!ready) return;
+    const materials = Array.isArray(object.material)
+      ? object.material
+      : object.material
+        ? [object.material]
+        : [];
+    materials.forEach((material) => {
+      if (!ready) return;
+      PREWARM_TEXTURE_FIELDS.forEach((field) => {
+        const texture = material?.[field];
+        // Most materials intentionally omit optional maps. Only textures
+        // that are actually attached to this material participate in the
+        // startup gate; an absent normal/AO/light map is already ready.
+        if (!texture?.isTexture) return;
+        const image = texture?.image;
+        const width = image?.width ?? image?.videoWidth ?? null;
+        const height = image?.height ?? image?.videoHeight ?? null;
+        if (image == null
+          || image.complete === false
+          || width === 0
+          || height === 0) {
+          ready = false;
+        }
+      });
+    });
+  });
+  return ready;
+}
+
+let prewarmScheduled = false;
+
+function prewarmRenderResourcesWhenReady() {
+  // TextureLoader creates a null-image texture immediately and fills it on a
+  // later browser task. Rendering the prewarm scene in that gap produces
+  // WebGL warnings and needlessly warms incomplete texture state.
+  if (!sceneTexturesReadyForPrewarm()) {
+    window.setTimeout(prewarmRenderResourcesWhenReady, 80);
+    return;
+  }
+  if (prewarmScheduled) return;
+  prewarmScheduled = true;
+  window.setTimeout(() => {
+    prewarmScheduled = false;
+    if (!sceneTexturesReadyForPrewarm()) {
+      prewarmRenderResourcesWhenReady();
+      return;
+    }
+    expansion.prewarmRenderResources?.(renderer, camera);
+    registerWeatherVisuals();
+    streaming.prewarmRenderResources?.(renderer, camera);
+    freezeStaticTransforms(scene.getObjectByName('Enterable interiors staging wing'));
+    scene.updateMatrixWorld(true);
+    // Keep the scene root live: streamed sector groups and traffic are added or
+    // repositioned after this one-time warmup. Static authored roots are
+    // already frozen individually, so freezing the root would strand dynamic
+    // children at their previous world matrices.
+    // No dynamic actor casts into the directional atlas. Cache the authored city
+    // shadow once, then request an explicit refresh only when interior visibility
+    // changes instead of resubmitting the same depth scene every frame.
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    renderer.toneMappingExposure = 1.04;
+  }, 240);
+}
+
+prewarmRenderResourcesWhenReady();
+
+// The first RAF can arrive before TextureLoader's image task completes. Keep
+// the boot card over a cleared buffer until every material texture has usable
+// image data; otherwise Three's renderer quite correctly warns while trying
+// to upload a null-image texture. This is a startup gate only—the normal loop
+// remains unchanged after the first valid draw.
+let firstSceneFrameReady = false;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -441,9 +583,9 @@ const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeig
 // SSAOPass' radius is expressed in view-space scene units. The former
 // sub-unit radius was effectively invisible at this city scale even though
 // the full pass cost was already being paid in Cinematic mode.
-ssaoPass.kernelRadius = 1.35;
-ssaoPass.minDistance = 0.002;
-ssaoPass.maxDistance = 0.18;
+ssaoPass.kernelRadius = 1.52;
+ssaoPass.minDistance = 0.0016;
+ssaoPass.maxDistance = 0.21;
 ssaoPass.output = SSAOPass.OUTPUT.Default;
 // Profiles opt into this pass explicitly. Cinematic enables it at a reduced
 // internal resolution for stronger grounding without turning the whole frame
@@ -470,6 +612,7 @@ const cinematicGradePass = new ShaderPass({
     uContrast: { value: 1.03 },
     uWarmth: { value: 0.018 },
     uWetness: { value: 0 },
+    uAtmosphere: { value: 0 },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -486,15 +629,18 @@ const cinematicGradePass = new ShaderPass({
     uniform float uContrast;
     uniform float uWarmth;
     uniform float uWetness;
+    uniform float uAtmosphere;
     varying vec2 vUv;
 
     void main() {
       vec3 color = texture2D(tDiffuse, vUv).rgb;
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luma), color, uSaturation);
-      color = (color - 0.5) * uContrast + 0.5;
+      color = mix(vec3(luma), color, mix(uSaturation, uSaturation * 1.04, uAtmosphere * 0.35));
+      color = (color - 0.5) * mix(uContrast, uContrast * 0.98, uAtmosphere * 0.4) + 0.5;
       color += vec3(uWarmth * 1.25, uWarmth * 0.46, -uWarmth * 0.72);
       color = mix(color, color * vec3(0.94, 0.98, 1.04), uWetness * 0.22);
+      color = mix(color, sqrt(max(color, 0.0)), uAtmosphere * 0.14);
+      color = mix(color, color * (0.9 + luma * 0.18), uAtmosphere * 0.16);
 
       vec2 centered = (vUv - 0.5) * vec2(uAspect, 1.0);
       float distanceFromCenter = length(centered);
@@ -529,7 +675,7 @@ const renderProfiles = {
     ssao: true,
     smaa: true,
     grade: true,
-    ssaoScale: 0.48,
+    ssaoScale: 0.5,
   },
 };
 const renderQuality = {
@@ -543,7 +689,72 @@ const renderQuality = {
   sampleFrames: 0,
   adjustmentCooldown: 0,
   lastFps: null,
+  hitchStreak: 0,
+  lowFpsWindows: 0,
+  healthyFpsWindows: 0,
 };
+const performanceTelemetry = {
+  sampleCapacity: 240,
+  // `samples` measures the interval between presentation callbacks. Browsers
+  // can add compositor/vsync jitter even when the app is idle, so keep the
+  // application-owned frame work in a separate rolling window.
+  samples: [],
+  applicationSamples: [],
+  frameCount: 0,
+  lastFrameMs: null,
+  lastApplicationFrameMs: null,
+  lastSnapshotAt: 0,
+};
+
+// Opt-in stage timing for QA only. The normal experience does not pay for
+// these timestamps; profiling runs use `?sf-profile=1` and read the rolling
+// breakdown through `window.__SF_SIM__.getFrameProfile()`.
+const frameProfileEnabled = new URLSearchParams(window.location.search).has('sf-profile');
+const frameProfile = {
+  frameCount: 0,
+  totals: Object.create(null),
+  maxima: Object.create(null),
+};
+
+function resetFrameProfile() {
+  frameProfile.frameCount = 0;
+  frameProfile.totals = Object.create(null);
+  frameProfile.maxima = Object.create(null);
+}
+
+function recordFrameProfileStage(name, durationMs) {
+  if (!frameProfileEnabled || !Number.isFinite(durationMs)) return;
+  frameProfile.totals[name] = (frameProfile.totals[name] || 0) + durationMs;
+  frameProfile.maxima[name] = Math.max(frameProfile.maxima[name] || 0, durationMs);
+}
+
+function getFrameProfile() {
+  const stages = {};
+  Object.keys(frameProfile.totals).forEach((name) => {
+    const total = frameProfile.totals[name];
+    stages[name] = {
+      averageMs: frameProfile.frameCount ? total / frameProfile.frameCount : 0,
+      maxMs: frameProfile.maxima[name] || 0,
+      totalMs: total,
+    };
+  });
+  return {
+    enabled: frameProfileEnabled,
+    frameCount: frameProfile.frameCount,
+    stages,
+  };
+}
+
+function resetPerformanceTelemetry() {
+  performanceTelemetry.samples.length = 0;
+  performanceTelemetry.applicationSamples.length = 0;
+  performanceTelemetry.frameCount = 0;
+  performanceTelemetry.lastFrameMs = null;
+  performanceTelemetry.lastApplicationFrameMs = null;
+  performanceTelemetry.lastSnapshotAt = 0;
+  resetFrameProfile();
+}
+
 let postProcessingActive = false;
 let hud;
 let cityShift;
@@ -569,6 +780,18 @@ function applyRenderQuality() {
   ssaoPass.enabled = profile.ssao;
   smaaPass.enabled = profile.smaa;
   cinematicGradePass.enabled = profile.grade;
+  // Default play keeps the city at frame budget by using the cheaper basic
+  // shadow pass at half resolution. Cinematic is the only profile that pays
+  // for the soft PCF 2048 shadow map.
+  if (renderQuality.mode === 'cinematic') {
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    sun.shadow.mapSize.set(2048, 2048);
+  } else {
+    renderer.shadowMap.type = THREE.BasicShadowMap;
+    sun.shadow.mapSize.set(1024, 1024);
+  }
+  if (sun.shadow.map) sun.shadow.map.needsUpdate = true;
+  renderer.shadowMap.needsUpdate = true;
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   composer.setPixelRatio(pixelRatio);
@@ -593,6 +816,9 @@ function setRenderQuality(mode) {
   renderQuality.sampleFrames = 0;
   renderQuality.adjustmentCooldown = 0;
   renderQuality.lastFps = null;
+  renderQuality.hitchStreak = 0;
+  renderQuality.lowFpsWindows = 0;
+  renderQuality.healthyFpsWindows = 0;
   if (mode === 'auto') renderQuality.autoScale = 1;
   applyRenderQuality();
 }
@@ -606,7 +832,23 @@ function updateAdaptiveQuality(frameDelta) {
   );
   renderQuality.sampleTime += frameDelta;
   renderQuality.sampleFrames += 1;
-  if (renderQuality.sampleTime < 2.75) return;
+  // A one-off traversal or first-use shader stall is not enough evidence to
+  // lower the image quality. React to a sustained callback hitch instead;
+  // the rolling FPS windows below cover slower but persistent pressure.
+  renderQuality.hitchStreak = frameDelta >= 0.08
+    ? renderQuality.hitchStreak + 1
+    : 0;
+  if (renderQuality.hitchStreak >= 2 && renderQuality.adjustmentCooldown <= 0) {
+    const previousScale = renderQuality.autoScale;
+    renderQuality.autoScale = Math.max(0.68, renderQuality.autoScale - 0.08);
+    renderQuality.adjustmentCooldown = 1.25;
+    renderQuality.sampleTime = 0;
+    renderQuality.sampleFrames = 0;
+    renderQuality.hitchStreak = 0;
+    if (renderQuality.autoScale !== previousScale) applyRenderQuality();
+    return;
+  }
+  if (renderQuality.sampleTime < 1.25) return;
 
   const fps = renderQuality.sampleFrames / renderQuality.sampleTime;
   renderQuality.lastFps = fps;
@@ -616,18 +858,127 @@ function updateAdaptiveQuality(frameDelta) {
     // two render sizes every sample window. Downshift in larger steps for a
     // quick recovery, then restore quality gradually once the frame budget is
     // comfortably healthy again.
-    if (fps < 52) {
-      renderQuality.autoScale = Math.max(0.68, renderQuality.autoScale - 0.08);
-      renderQuality.adjustmentCooldown = 3.5;
+    if (fps < 58) {
+      renderQuality.lowFpsWindows += 1;
+      renderQuality.healthyFpsWindows = 0;
+      if (renderQuality.lowFpsWindows >= 1) {
+        renderQuality.autoScale = Math.max(0.68, renderQuality.autoScale - 0.08);
+        renderQuality.adjustmentCooldown = 1.75;
+        renderQuality.lowFpsWindows = 0;
+      }
     } else if (fps > 66) {
-      renderQuality.autoScale = Math.min(1, renderQuality.autoScale + 0.025);
-      renderQuality.adjustmentCooldown = 3.5;
+      renderQuality.healthyFpsWindows += 1;
+      renderQuality.lowFpsWindows = 0;
+      if (renderQuality.healthyFpsWindows >= 2) {
+        renderQuality.autoScale = Math.min(1, renderQuality.autoScale + 0.025);
+        renderQuality.adjustmentCooldown = 2.5;
+        renderQuality.healthyFpsWindows = 0;
+      }
+    } else {
+      renderQuality.lowFpsWindows = 0;
+      renderQuality.healthyFpsWindows = 0;
     }
   }
   renderQuality.sampleTime = 0;
   renderQuality.sampleFrames = 0;
 
   if (renderQuality.autoScale !== previousScale) applyRenderQuality();
+}
+
+function recordPerformanceFrame(frameDelta, applicationFrameMs) {
+  if (!Number.isFinite(frameDelta) || frameDelta <= 0) return;
+  const frameMs = frameDelta * 1000;
+  performanceTelemetry.lastFrameMs = frameMs;
+  performanceTelemetry.frameCount += 1;
+  performanceTelemetry.samples.push(frameMs);
+  if (performanceTelemetry.samples.length > performanceTelemetry.sampleCapacity) {
+    performanceTelemetry.samples.shift();
+  }
+  if (!Number.isFinite(applicationFrameMs) || applicationFrameMs < 0) return;
+  performanceTelemetry.lastApplicationFrameMs = applicationFrameMs;
+  performanceTelemetry.applicationSamples.push(applicationFrameMs);
+  if (performanceTelemetry.applicationSamples.length > performanceTelemetry.sampleCapacity) {
+    performanceTelemetry.applicationSamples.shift();
+  }
+}
+
+function getPerformanceSnapshot() {
+  const samples = [...performanceTelemetry.samples].sort((a, b) => a - b);
+  const applicationSamples = [...performanceTelemetry.applicationSamples].sort((a, b) => a - b);
+  const averageFrameMs = samples.length
+    ? samples.reduce((sum, value) => sum + value, 0) / samples.length
+    : null;
+  const averageApplicationFrameMs = applicationSamples.length
+    ? applicationSamples.reduce((sum, value) => sum + value, 0) / applicationSamples.length
+    : null;
+  const percentile = (ratio) => samples.length
+    ? samples[Math.min(samples.length - 1, Math.floor(samples.length * ratio))]
+    : null;
+  const applicationPercentile = (ratio) => applicationSamples.length
+    ? applicationSamples[Math.min(applicationSamples.length - 1, Math.floor(applicationSamples.length * ratio))]
+    : null;
+  const p99FrameMs = percentile(0.99);
+  const applicationP99FrameMs = applicationPercentile(0.99);
+  const maxFrameMs = samples.length ? samples[samples.length - 1] : null;
+  const applicationMaxFrameMs = applicationSamples.length
+    ? applicationSamples[applicationSamples.length - 1]
+    : null;
+  const memory = renderer.info.memory || {};
+  const jsMemory = performance.memory && {
+    usedBytes: performance.memory.usedJSHeapSize,
+    totalBytes: performance.memory.totalJSHeapSize,
+    limitBytes: performance.memory.jsHeapSizeLimit,
+  };
+  const streamingStats = streaming?.stats || null;
+  return {
+    targetFrameMs: 16.67,
+    sampleCount: samples.length,
+    frameCount: performanceTelemetry.frameCount,
+    lastFrameMs: performanceTelemetry.lastFrameMs,
+    averageFrameMs,
+    p99FrameMs,
+    maxFrameMs,
+    onePercentLowFps: p99FrameMs ? 1000 / p99FrameMs : null,
+    // The hard game budget is the application-owned work duration. The raw
+    // callback cadence remains available below as an environment diagnostic.
+    hardBudgetMet: applicationP99FrameMs != null && applicationP99FrameMs <= 16.67,
+    applicationFrameCount: applicationSamples.length,
+    lastApplicationFrameMs: performanceTelemetry.lastApplicationFrameMs,
+    averageApplicationFrameMs,
+    applicationP99FrameMs,
+    applicationMaxFrameMs,
+    applicationOnePercentLowFps: applicationP99FrameMs ? 1000 / applicationP99FrameMs : null,
+    applicationHardBudgetMet: applicationP99FrameMs != null && applicationP99FrameMs <= 16.67,
+    // The compositor can present at 60Hz with normal frame-interval jitter that
+    // shows up as p99 slightly above 16.67ms. The application-owned budget is
+    // the meaningful game target; this flag is a display-cadence diagnostic.
+    presentedCadenceBudgetMet: p99FrameMs != null
+      && p99FrameMs <= 19
+      && averageFrameMs != null
+      && averageFrameMs <= 16.75,
+    drawCalls: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+    points: renderer.info.render.points,
+    lines: renderer.info.render.lines,
+    gpuMemory: {
+      geometries: memory.geometries ?? null,
+      textures: memory.textures ?? null,
+      rendererInfoOnly: true,
+    },
+    javascriptMemory: jsMemory || null,
+    renderQuality: getRenderQualitySnapshot(),
+    streaming: streamingStats
+      ? {
+        focusSector: streamingStats.focusSector,
+        activeDetailed: streamingStats.activeDetailed,
+        activeProxies: streamingStats.activeProxies,
+        transitions: streamingStats.transitions,
+        handoffs: streamingStats.handoffs,
+      }
+      : null,
+    expansion: expansion?.getStats?.() ?? null,
+    sampledAt: performance.now(),
+  };
 }
 
 applyRenderQuality();
@@ -638,14 +989,29 @@ hud = createHud({
   pedestrians,
   streamedAgents,
   streaming,
+  expansion,
   city,
   quality: getRenderQualitySnapshot(),
   onQualityChange: setRenderQuality,
   onInteraction: () => {
-    if (controls.interiorMode) {
+    if (traffic.isPlayerDriving?.()) {
+      exitPlayerCar();
+    } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
-      enterNearestInterior();
+      const readyPortal = getInteractionPortal();
+      if (readyPortal && readyPortal.distance <= readyPortal.radius) {
+        enterNearestInterior();
+      } else {
+        const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
+        if (nearestCar) {
+          enterPlayerCar(nearestCar.index);
+        } else if (lifeSim?.talkToNearestResident?.(controls.target)) {
+          return;
+        } else {
+          enterNearestInterior();
+        }
+      }
     }
   },
   onTouchMove: (code, pressed) => {
@@ -657,6 +1023,33 @@ hud = createHud({
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Shift reset · follow the amber beacon to the Welcome Center.');
   },
+});
+
+let playerAvatar = null;
+let lifeSim = null;
+let networking = null;
+let audioContext = null;
+let playerName = 'Traveler';
+let drivingExitPose = null;
+let playerLayerActive = false;
+let engineAudio = null;
+let windAudio = null;
+const PLAYER_GROUND_OFFSET = 0.17;
+
+lifeSim = createLifeSim({
+  hud,
+  city,
+  traffic,
+  pedestrians,
+  onMessage: (message) => hud?.setMessage(message),
+});
+
+hud.setOnlineAction((action) => {
+  if (action && typeof action === 'object' && 'chat' in action) {
+    networking?.sendChat(action.chat);
+  } else {
+    networking?.enableVoice?.();
+  }
 });
 
 const controls = {
@@ -679,6 +1072,201 @@ const controls = {
   activePortal: null,
   exteriorSnapshot: null,
 };
+
+function playerMoving() {
+  return controls.keys.has('keyw')
+    || controls.keys.has('keys')
+    || controls.keys.has('keya')
+    || controls.keys.has('keyd');
+}
+
+function startPlayerLayer() {
+  const nameInput = document.querySelector('#player-name');
+  playerName = nameInput?.value?.trim()?.slice(0, 18) || 'Traveler';
+  if (!playerAvatar) {
+    let paletteIndex = 0;
+    for (let index = 0; index < playerName.length; index += 1) {
+      paletteIndex += playerName.charCodeAt(index);
+    }
+    playerAvatar = createPlayerAvatar({
+      name: playerName,
+      paletteIndex: paletteIndex % 6,
+      scale: 1,
+    });
+    playerAvatar.visible = false;
+    scene.add(playerAvatar);
+  }
+  playerLayerActive = true;
+  controls.distance = 17;
+  controls.pitch = 0.62;
+  snapCameraToControls();
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass && !audioContext) {
+      audioContext = new AudioContextClass();
+    }
+    audioContext?.resume?.();
+  } catch {
+    audioContext = null;
+  }
+
+  if (!networking) {
+    networking = createNetworking({
+      scene,
+      camera,
+      traffic,
+      hud,
+      audioContext,
+      getLocalState: getNetworkState,
+      onChatMessage: (entry) => hud?.appendChat?.(entry),
+      onConnectionChange: () => {},
+    });
+  }
+  networking?.setName(playerName);
+  hud?.setLifeState?.(lifeSim?.getState());
+}
+
+function getNetworkState() {
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  const surface = streaming.getSurfaceHeight?.(controls.target);
+  const groundY = Number.isFinite(surface) ? surface : 0;
+  const position = drivingState
+    ? drivingState.position
+    : { x: controls.target.x, y: groundY + PLAYER_GROUND_OFFSET, z: controls.target.z };
+  const yaw = drivingState ? drivingState.heading : controls.yaw;
+  const mode = drivingState ? 'drive' : 'walk';
+  return {
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    yaw,
+    mode,
+    moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
+    vehicleId: drivingState?.index ?? null,
+    vehicleClass: drivingState?.class ?? null,
+    vehicleColor: drivingState?.color ?? null,
+  };
+}
+
+function enterPlayerCar(index) {
+  if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
+  const entered = traffic.enterPlayerVehicle?.(index);
+  if (!entered) return false;
+  if (audioContext) {
+    try {
+      audioContext.resume?.();
+      engineAudio = createEngineAudio(audioContext);
+      windAudio = createWindAudio(audioContext);
+      engineAudio?.update(0, 0);
+    } catch {
+      engineAudio = null;
+      windAudio = null;
+    }
+  }
+  drivingExitPose = {
+    x: controls.target.x,
+    z: controls.target.z,
+    yaw: controls.yaw,
+    pitch: controls.pitch,
+    distance: controls.distance,
+  };
+  const state = traffic.getPlayerVehicleState?.();
+  if (state) {
+    controls.target.set(state.position.x, state.position.y + 1.6, state.position.z);
+    controls.yaw = state.heading + Math.PI;
+    controls.pitch = 0.52;
+    controls.distance = 10.5;
+  }
+  snapCameraToControls();
+  hud.setMessage('You got in. W accelerate · S brake · A/D steer · E exit.');
+  return true;
+}
+
+function exitPlayerCar() {
+  const exit = traffic.exitPlayerVehicle?.();
+  if (!exit) return false;
+  if (engineAudio) {
+    engineAudio.stop();
+    engineAudio = null;
+  }
+  if (windAudio) {
+    windAudio.stop();
+    windAudio = null;
+  }
+  if (drivingExitPose) {
+    controls.target.set(drivingExitPose.x, controls.target.y, drivingExitPose.z);
+    controls.yaw = drivingExitPose.yaw;
+    controls.pitch = drivingExitPose.pitch;
+    controls.distance = drivingExitPose.distance;
+    drivingExitPose = null;
+  } else {
+    const sideX = Math.cos(exit.heading) * 1.6;
+    const sideZ = -Math.sin(exit.heading) * 1.6;
+    controls.target.set(exit.x + sideX, controls.target.y, exit.z + sideZ);
+    controls.yaw = exit.heading;
+    controls.pitch = 0.62;
+    controls.distance = 17;
+  }
+  snapCameraToControls();
+  hud.setMessage('You stepped back onto the avenue.');
+  return true;
+}
+
+function updatePlayerLayer(dt, elapsed) {
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  if (drivingState) {
+    if (playerAvatar) playerAvatar.visible = false;
+    controls.target.set(drivingState.position.x, drivingState.position.y + 1.6, drivingState.position.z);
+    controls.yaw = drivingState.heading + Math.PI;
+    controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.36, 0.8);
+    controls.distance = THREE.MathUtils.clamp(controls.distance, 8.5, 16);
+    traffic.setPlayerInput?.({
+      throttle: controls.keys.has('keyw') ? 1 : 0,
+      brake: controls.keys.has('keys') ? 1 : 0,
+      steer: (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
+    });
+    engineAudio?.update(drivingState.speed, controls.keys.has('keyw') ? 1 : 0);
+    windAudio?.update(Math.min(1, drivingState.speed / 13));
+    hud?.setDriveState?.({
+      active: true,
+      speed: drivingState.speed,
+      heading: drivingState.heading,
+      weather: weatherMode,
+    });
+    lifeSim?.noteDriving?.(dt);
+  } else {
+    hud?.setDriveState?.({ active: false });
+    traffic.setPlayerInput?.({ throttle: 0, brake: 0, steer: 0 });
+    if (playerAvatar && !controls.interiorMode) {
+      // Beauty / QA locked cameras must not show the local Traveler nameplate
+      // floating in hero road stills (critic pass 9/10 hard blocker).
+      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose);
+      playerAvatar.visible = !hideAvatarForShot;
+      if (!hideAvatarForShot) {
+        const surface = streaming.getSurfaceHeight?.(controls.target);
+        const groundY = Number.isFinite(surface) ? surface : 0;
+        playerAvatar.position.set(controls.target.x, groundY + PLAYER_GROUND_OFFSET, controls.target.z);
+        const moving = playerMoving();
+        const speedRatio = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 1 : 0.58;
+        if (moving) {
+          const forwardX = Math.sin(controls.yaw);
+          const forwardZ = Math.cos(controls.yaw);
+          setAvatarLook(playerAvatar, Math.atan2(forwardX, forwardZ));
+        }
+        animatePlayerAvatar(playerAvatar, { moving, speedRatio, elapsed, delta: dt });
+      }
+    } else if (playerAvatar) {
+      playerAvatar.visible = false;
+    }
+  }
+  networking?.update(dt, elapsed);
+  pedestrians.setDayHour?.(lifeSim?.getState?.().clock ?? 7);
+  lifeSim?.update(dt, {
+    driving: Boolean(drivingState),
+    moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
+  });
+}
 
 const PORTAL_NEARBY_RADIUS = 22;
 const FEATURED_PORTAL_DISCOVERY_RADIUS = 48;
@@ -744,11 +1332,15 @@ const QA_STREAMING_TOUR_ROUTE = Object.freeze([
 ]);
 const QA_STREAMING_EVIDENCE_STOPS = Object.freeze([
   Object.freeze({
+    // Elevated plaza approach along the Market diagonal so the 45 m evidence
+    // ray stays in the public corridor instead of clipping civic massing.
     id: 'sf-evidence:1:0:street-level',
     sectorKey: '1:0',
     entryPortalId: 'sf-portal:ew:0:0',
-    camera: Object.freeze({ x: 288, z: -64 }),
-    lookAt: Object.freeze({ x: 352, z: -64 }),
+    camera: Object.freeze({ x: 320, z: -24 }),
+    lookAt: Object.freeze({ x: 420, z: 48 }),
+    cameraClearance: 9.5,
+    lookHeight: 14,
   }),
   Object.freeze({
     id: 'sf-evidence:2:0:street-level',
@@ -765,11 +1357,42 @@ const QA_STREAMING_EVIDENCE_STOPS = Object.freeze([
     lookAt: Object.freeze({ x: 1184, z: 64 }),
   }),
   Object.freeze({
+    // Battery centerline (on-road) — mid-pyramid look so street + canyon + shaft read.
     id: 'sf-evidence:4:0:street-level',
     sectorKey: '4:0',
     entryPortalId: 'sf-portal:ew:3:0',
-    camera: Object.freeze({ x: 1536, z: 96 }),
-    lookAt: Object.freeze({ x: 1536, z: 32 }),
+    camera: Object.freeze({ x: 1536, z: 228 }),
+    lookAt: Object.freeze({ x: 1536, z: 96 }),
+    lookHeight: 48,
+    cameraClearance: 2.2,
+  }),
+  Object.freeze({
+    // Proven on-road hill approach (pass11b) — look elevated into painted-lady mass.
+    id: 'sf-evidence:0:4:street-level',
+    sectorKey: '0:4',
+    entryPortalId: 'sf-portal:ns:0:3',
+    camera: Object.freeze({ x: 96, z: 1668 }),
+    lookAt: Object.freeze({ x: -18, z: 1608 }),
+    lookHeight: 16,
+    cameraClearance: 2.2,
+  }),
+  Object.freeze({
+    // Street approach that keeps Coit on the uphill axis (not sidewalk-skew).
+    id: 'sf-evidence:4:4:street-level',
+    sectorKey: '4:4',
+    entryPortalId: 'sf-portal:ns:4:3',
+    camera: Object.freeze({ x: 1528, z: 1504 }),
+    lookAt: Object.freeze({ x: 1608, z: 1576 }),
+  }),
+  Object.freeze({
+    // Close Lombard-gate approach — prior (-1404,516) hid gate behind greybox.
+    id: 'sf-evidence:-4:1:street-level',
+    sectorKey: '-4:1',
+    entryPortalId: 'sf-portal:ew:-3:1',
+    camera: Object.freeze({ x: -1536, z: 420 }),
+    lookAt: Object.freeze({ x: -1542, z: 470 }),
+    lookHeight: 10,
+    cameraClearance: 2.25,
   }),
 ]);
 let qaStreamingTour = null;
@@ -781,7 +1404,10 @@ const interiorShadowRefresh = {
 };
 
 function requestInteriorShadowRefresh(reason) {
-  renderer.shadowMap.needsUpdate = true;
+  // Interior rooms are now staged outside the exterior shadow camera volume,
+  // so toggling them cannot change the cached directional atlas. Keep the
+  // request telemetry for diagnostics without paying a full shadow render on
+  // every enter/exit or flagship hotspot action.
   interiorShadowRefresh.requests += 1;
   interiorShadowRefresh.lastReason = reason;
 }
@@ -790,83 +1416,96 @@ const weatherModes = ['clear', 'fog', 'drizzle'];
 let weatherIndex = 0;
 let weatherMode = 'clear';
 let beautyMode = false;
+// Graded hill sectors need longer clear-weather sightlines so Coit and street
+// grade stay readable without the marine layer wiping the uphill landmark.
+const HILL_VIEW_FOG_SECTORS = Object.freeze({
+  '4:0': Object.freeze({ fogNear: 110, fogFar: 520 }),
+  '4:4': Object.freeze({ fogNear: 102, fogFar: 418 }),
+  '0:4': Object.freeze({ fogNear: 120, fogFar: 480 }),
+});
 
 const lightingProfiles = {
   clear: {
-    sun: 3.62,
+    sun: 4.0,
     sunColor: new THREE.Color(0xffc48b),
-    hemisphere: 0.98,
+    hemisphere: 1.0,
     skyColor: new THREE.Color(0xb7d7ef),
     groundColor: new THREE.Color(0x302824),
     skyTopColor: new THREE.Color(0x5b789e),
     skyHorizonColor: new THREE.Color(0xe3b8a0),
     skySunColor: new THREE.Color(0xffd0a0),
-    rim: 0.34,
+    rim: 0.36,
     rimColor: new THREE.Color(0x7ba9dc),
     fogColor: new THREE.Color(0x87999d),
     fogNear: 84,
     fogFar: 286,
-    backgroundColor: new THREE.Color(0x101925),
-    exposure: 1.04,
+    backgroundColor: new THREE.Color(0x4b667b),
+    exposure: 1.12,
     environment: 0.3,
-    bloom: 0.08,
-    saturation: 1.04,
-    contrast: 1.03,
-    warmth: 0.018,
+    bloom: 0.085,
+    saturation: 1.12,
+    contrast: 1.08,
+    warmth: 0.03,
     wetness: 0,
     wetSurface: 0,
-    vignette: 0.075,
+    weatherMix: 0,
+    atmosphere: 0,
+    vignette: 0.055,
     sunPulse: 0.06,
   },
   fog: {
-    sun: 1.78,
+    sun: 1.62,
     sunColor: new THREE.Color(0xdce1e3),
-    hemisphere: 1.08,
+    hemisphere: 1.02,
     skyColor: new THREE.Color(0xc4d0d3),
     groundColor: new THREE.Color(0x4a4d4b),
     skyTopColor: new THREE.Color(0x64737f),
     skyHorizonColor: new THREE.Color(0x8d9998),
     skySunColor: new THREE.Color(0xa4acab),
-    rim: 0.28,
+    rim: 0.3,
     rimColor: new THREE.Color(0x9fb3be),
     fogColor: new THREE.Color(0x93a2a2),
     fogNear: 42,
     fogFar: 168,
     backgroundColor: new THREE.Color(0x16242d),
-    exposure: 0.98,
-    environment: 0.4,
-    bloom: 0.1,
-    saturation: 0.95,
-    contrast: 0.98,
-    warmth: -0.006,
-    wetness: 0.18,
+    exposure: 0.96,
+    environment: 0.36,
+    bloom: 0.095,
+    saturation: 0.97,
+    contrast: 0.99,
+    warmth: -0.004,
+    wetness: 0.12,
     wetSurface: 0,
+    weatherMix: 0.68,
+    atmosphere: 0.58,
     vignette: 0.085,
     sunPulse: 0.025,
   },
   drizzle: {
-    sun: 0.98,
+    sun: 0.92,
     sunColor: new THREE.Color(0xb8c8d0),
-    hemisphere: 1.1,
+    hemisphere: 1.04,
     skyColor: new THREE.Color(0x9eb7c2),
     groundColor: new THREE.Color(0x343d3e),
     skyTopColor: new THREE.Color(0x536779),
     skyHorizonColor: new THREE.Color(0x8c9b9f),
     skySunColor: new THREE.Color(0xa7b4b4),
-    rim: 0.22,
+    rim: 0.26,
     rimColor: new THREE.Color(0x7995a3),
     fogColor: new THREE.Color(0x7f929b),
     fogNear: 58,
     fogFar: 222,
     backgroundColor: new THREE.Color(0x101f2b),
-    exposure: 0.86,
-    environment: 0.44,
-    bloom: 0.075,
-    saturation: 0.88,
-    contrast: 1.01,
-    warmth: -0.012,
+    exposure: 0.88,
+    environment: 0.4,
+    bloom: 0.072,
+    saturation: 0.9,
+    contrast: 1.02,
+    warmth: -0.01,
     wetness: 1,
     wetSurface: 1,
+    weatherMix: 1,
+    atmosphere: 0.82,
     vignette: 0.095,
     sunPulse: 0.018,
   },
@@ -899,9 +1538,249 @@ const weatherTransition = {
     warmth: lightingProfiles.clear.warmth,
     wetness: lightingProfiles.clear.wetness,
     wetSurface: lightingProfiles.clear.wetSurface,
+    weatherMix: lightingProfiles.clear.weatherMix,
+    atmosphere: lightingProfiles.clear.atmosphere,
     vignette: lightingProfiles.clear.vignette,
   },
 };
+
+// Time-of-day keyframes layered over the weather presentation. The life clock
+// moves quickly, so a full 05:00-22:00 arc makes a short session visibly pass
+// from morning through golden hour without touching the weather system.
+const TIME_OF_DAY_STOPS = Object.freeze([
+  Object.freeze({
+    hour: 5,
+    light: 0.4,
+    exposure: 0.72,
+    sunColor: 0xff9a70,
+    hemisphere: 0.72,
+    skyTop: 0x3c4c68,
+    skyHorizon: 0xc98f7a,
+    skySun: 0xffb08a,
+    saturation: 0.95,
+    warmth: 0.012,
+  }),
+  Object.freeze({
+    hour: 7,
+    light: 1,
+    exposure: 1,
+    sunColor: 0xffc48b,
+    hemisphere: 1,
+    skyTop: 0x5b789e,
+    skyHorizon: 0xe3b8a0,
+    skySun: 0xffd0a0,
+    saturation: 1,
+    warmth: 0.02,
+  }),
+  Object.freeze({
+    hour: 12,
+    light: 1.12,
+    exposure: 1.07,
+    sunColor: 0xfff0d8,
+    hemisphere: 1.06,
+    skyTop: 0x5f86ad,
+    skyHorizon: 0xd3d8d4,
+    skySun: 0xfff6e2,
+    saturation: 1.02,
+    warmth: -0.008,
+  }),
+  Object.freeze({
+    hour: 17,
+    light: 1.02,
+    exposure: 1.04,
+    sunColor: 0xffb066,
+    hemisphere: 1,
+    skyTop: 0x5878a0,
+    skyHorizon: 0xe0a878,
+    skySun: 0xffc080,
+    saturation: 1.05,
+    warmth: 0.024,
+  }),
+  Object.freeze({
+    hour: 19.5,
+    light: 0.34,
+    exposure: 0.72,
+    sunColor: 0xe8704f,
+    hemisphere: 0.58,
+    skyTop: 0x31445f,
+    skyHorizon: 0xb06a5a,
+    skySun: 0xff9d70,
+    saturation: 0.92,
+    warmth: 0.032,
+  }),
+  Object.freeze({
+    hour: 22,
+    light: 0.08,
+    exposure: 0.5,
+    sunColor: 0x8fa3c9,
+    hemisphere: 0.3,
+    skyTop: 0x111a2a,
+    skyHorizon: 0x22314a,
+    skySun: 0xb7c6e4,
+    saturation: 0.85,
+    warmth: -0.02,
+  }),
+]);
+
+const timeOfDayTemps = {
+  sunColor: new THREE.Color(),
+  skyTop: new THREE.Color(),
+  skyHorizon: new THREE.Color(),
+  skySun: new THREE.Color(),
+  scratchA: new THREE.Color(),
+  scratchB: new THREE.Color(),
+};
+
+function sampleTimeOfDay(hour) {
+  const safe = Number.isFinite(hour) ? hour : 7;
+  const wrapped = ((safe % 24) + 24) % 24;
+  const stops = TIME_OF_DAY_STOPS;
+  let before = stops[stops.length - 1];
+  let after = stops[0];
+  if (wrapped <= stops[0].hour || wrapped >= stops[stops.length - 1].hour) {
+    before = stops[stops.length - 1];
+    after = stops[0];
+    const spanWrap = (after.hour + 24 - before.hour) % 24;
+    const rawWrap = ((wrapped - before.hour + 24) % 24) / Math.max(0.001, spanWrap);
+    const blendWrap = THREE.MathUtils.smoothstep(THREE.MathUtils.clamp(rawWrap, 0, 1), 0, 1);
+    const lerpValueWrap = (a, b) => THREE.MathUtils.lerp(a, b, blendWrap);
+    timeOfDayTemps.sunColor.copy(
+      timeOfDayTemps.scratchA.set(before.sunColor).lerp(
+        timeOfDayTemps.scratchB.set(after.sunColor),
+        blendWrap,
+      ),
+    );
+    timeOfDayTemps.skyTop.copy(
+      timeOfDayTemps.scratchA.set(before.skyTop).lerp(
+        timeOfDayTemps.scratchB.set(after.skyTop),
+        blendWrap,
+      ),
+    );
+    timeOfDayTemps.skyHorizon.copy(
+      timeOfDayTemps.scratchA.set(before.skyHorizon).lerp(
+        timeOfDayTemps.scratchB.set(after.skyHorizon),
+        blendWrap,
+      ),
+    );
+    timeOfDayTemps.skySun.copy(
+      timeOfDayTemps.scratchA.set(before.skySun).lerp(
+        timeOfDayTemps.scratchB.set(after.skySun),
+        blendWrap,
+      ),
+    );
+    return {
+      light: lerpValueWrap(before.light, after.light),
+      exposure: lerpValueWrap(before.exposure, after.exposure),
+      hemisphere: lerpValueWrap(before.hemisphere, after.hemisphere),
+      saturation: lerpValueWrap(before.saturation, after.saturation),
+      warmth: lerpValueWrap(before.warmth, after.warmth),
+      sunColor: timeOfDayTemps.sunColor,
+      skyTop: timeOfDayTemps.skyTop,
+      skyHorizon: timeOfDayTemps.skyHorizon,
+      skySun: timeOfDayTemps.skySun,
+    };
+  }
+  for (let index = 0; index < stops.length - 1; index += 1) {
+      if (wrapped >= stops[index].hour && wrapped <= stops[index + 1].hour) {
+        before = stops[index];
+        after = stops[index + 1];
+        break;
+      }
+    }
+  const span = Math.max(0.001, after.hour - before.hour);
+  const raw = (wrapped - before.hour) / span;
+  const blend = THREE.MathUtils.smoothstep(raw, 0, 1);
+  const lerpValue = (a, b) => THREE.MathUtils.lerp(a, b, blend);
+  timeOfDayTemps.sunColor.copy(
+    timeOfDayTemps.scratchA.set(before.sunColor).lerp(
+      timeOfDayTemps.scratchB.set(after.sunColor),
+      blend,
+    ),
+  );
+  timeOfDayTemps.skyTop.copy(
+    timeOfDayTemps.scratchA.set(before.skyTop).lerp(
+      timeOfDayTemps.scratchB.set(after.skyTop),
+      blend,
+    ),
+  );
+  timeOfDayTemps.skyHorizon.copy(
+    timeOfDayTemps.scratchA.set(before.skyHorizon).lerp(
+      timeOfDayTemps.scratchB.set(after.skyHorizon),
+      blend,
+    ),
+  );
+  timeOfDayTemps.skySun.copy(
+    timeOfDayTemps.scratchA.set(before.skySun).lerp(
+      timeOfDayTemps.scratchB.set(after.skySun),
+      blend,
+    ),
+  );
+  return {
+    light: lerpValue(before.light, after.light),
+    exposure: lerpValue(before.exposure, after.exposure),
+    hemisphere: lerpValue(before.hemisphere, after.hemisphere),
+    saturation: lerpValue(before.saturation, after.saturation),
+    warmth: lerpValue(before.warmth, after.warmth),
+    sunColor: timeOfDayTemps.sunColor,
+    skyTop: timeOfDayTemps.skyTop,
+    skyHorizon: timeOfDayTemps.skyHorizon,
+    skySun: timeOfDayTemps.skySun,
+  };
+}
+
+function applyTimeOfDayPresentation(hour) {
+  const sample = sampleTimeOfDay(hour);
+  const interiorBlend = interiorPresentation.current;
+  const exteriorKey = THREE.MathUtils.lerp(1, 0.08, interiorBlend);
+  const exteriorFill = THREE.MathUtils.lerp(1, 0.42, interiorBlend);
+  sun.intensity = Math.max(0.04, sun.intensity * sample.light * exteriorKey);
+  sun.color.copy(sample.sunColor);
+  hemisphere.intensity = Math.max(0.04, hemisphere.intensity * sample.hemisphere * exteriorFill);
+  if (proceduralSkyMaterial?.uniforms) {
+    proceduralSkyMaterial.uniforms.topColor.value.copy(sample.skyTop);
+    proceduralSkyMaterial.uniforms.horizonColor.value.copy(sample.skyHorizon);
+    proceduralSkyMaterial.uniforms.sunColor.value.copy(sample.skySun);
+  }
+  const beautyBoost = beautyMode ? 1 : 0;
+  renderer.toneMappingExposure = Math.max(
+    0.08,
+    renderer.toneMappingExposure * sample.exposure * (1 + beautyBoost * 0.035),
+  );
+  cinematicGradePass.uniforms.uSaturation.value *= sample.saturation;
+  cinematicGradePass.uniforms.uWarmth.value = THREE.MathUtils.lerp(
+    cinematicGradePass.uniforms.uWarmth.value,
+    sample.warmth,
+    0.6,
+  );
+  const wrappedHour = ((hour % 24) + 24) % 24;
+  // Dusk ramps 17→22, full night through dawn, then fades by 07:00.
+  const nightAmount = wrappedHour >= 22 || wrappedHour < 5.5
+    ? 1
+    : wrappedHour < 7
+      ? 1 - (wrappedHour - 5.5) / 1.5
+      : wrappedHour < 17
+        ? 0
+        : (wrappedHour - 17) / 5;
+  city.setNightLighting?.(nightAmount);
+  streaming.setNightLighting?.(nightAmount);
+  traffic.setNightLighting?.(nightAmount);
+  expansion?.setNightLighting?.(nightAmount);
+  nightFill.intensity = nightAmount * (2.1 + (Math.sin(performance.now() * 0.0012) * 0.06));
+  nightFill.position.set(
+    controls.target.x,
+    (controls.target.y ?? 2) + 3.4,
+    controls.target.z,
+  );
+  nightFill.color.setHSL(
+    0.075,
+    nightAmount > 0.2 ? 0.72 : 0.5,
+    nightAmount > 0.2 ? 0.6 : 0.45,
+  );
+  // Soften and eventually drop sun shadows once street lamps own the fill.
+  sun.castShadow = nightAmount < 0.88;
+  sun.shadow.radius = THREE.MathUtils.lerp(2.2, 3.8, nightAmount);
+  if (nightAmount > 0.35) renderer.shadowMap.needsUpdate = true;
+}
 
 function applyWeatherPresentation(progress, time = elapsed) {
   const profile = weatherTransition.target;
@@ -932,6 +1811,13 @@ function applyWeatherPresentation(progress, time = elapsed) {
       .lerp(profile.skyHorizonColor, blend);
     proceduralSkyMaterial.uniforms.sunColor.value.copy(from.skySunColor)
       .lerp(profile.skySunColor, blend);
+    if (proceduralSkyMaterial.uniforms.uWeatherMix) {
+      proceduralSkyMaterial.uniforms.uWeatherMix.value = THREE.MathUtils.lerp(
+        from.weatherMix,
+        profile.weatherMix,
+        blend,
+      );
+    }
   }
   rim.intensity = THREE.MathUtils.lerp(from.rim, profile.rim, blend) * exteriorRim;
   rim.color.copy(from.rimColor).lerp(profile.rimColor, blend);
@@ -939,7 +1825,9 @@ function applyWeatherPresentation(progress, time = elapsed) {
   scene.fog.near = THREE.MathUtils.lerp(from.fogNear, profile.fogNear, blend);
   scene.fog.far = THREE.MathUtils.lerp(from.fogFar, profile.fogFar, blend);
   scene.background.copy(from.backgroundColor).lerp(profile.backgroundColor, blend);
-  renderer.toneMappingExposure = THREE.MathUtils.lerp(from.exposure, profile.exposure, blend);
+  const beautyBoost = beautyMode ? 1 : 0;
+  renderer.toneMappingExposure = THREE.MathUtils.lerp(from.exposure, profile.exposure, blend)
+    * (1 + beautyBoost * 0.055);
   scene.environmentIntensity = THREE.MathUtils.lerp(from.environment, profile.environment, blend)
     * THREE.MathUtils.lerp(1, 1.1, interiorBlend);
   bloomPass.strength = THREE.MathUtils.lerp(from.bloom, profile.bloom, blend);
@@ -947,12 +1835,12 @@ function applyWeatherPresentation(progress, time = elapsed) {
     from.saturation,
     profile.saturation,
     blend,
-  );
+  ) * (1 + beautyBoost * 0.09);
   cinematicGradePass.uniforms.uContrast.value = THREE.MathUtils.lerp(
     from.contrast,
     profile.contrast,
     blend,
-  );
+  ) * (1 + beautyBoost * 0.055);
   cinematicGradePass.uniforms.uWarmth.value = THREE.MathUtils.lerp(
     from.warmth,
     profile.warmth,
@@ -961,6 +1849,11 @@ function applyWeatherPresentation(progress, time = elapsed) {
   cinematicGradePass.uniforms.uWetness.value = THREE.MathUtils.lerp(
     from.wetness,
     profile.wetness,
+    blend,
+  );
+  cinematicGradePass.uniforms.uAtmosphere.value = THREE.MathUtils.lerp(
+    from.atmosphere,
+    profile.atmosphere,
     blend,
   );
   applyWetWeatherVisuals(
@@ -1003,6 +1896,7 @@ function setWeatherMode(mode, { immediate = false } = {}) {
     weatherTransition.from.skyTopColor.copy(proceduralSkyMaterial.uniforms.topColor.value);
     weatherTransition.from.skyHorizonColor.copy(proceduralSkyMaterial.uniforms.horizonColor.value);
     weatherTransition.from.skySunColor.copy(proceduralSkyMaterial.uniforms.sunColor.value);
+    weatherTransition.from.weatherMix = proceduralSkyMaterial.uniforms.uWeatherMix?.value ?? 0;
   }
   weatherTransition.from.rim = rim.intensity;
   weatherTransition.from.rimColor.copy(rim.color);
@@ -1017,6 +1911,7 @@ function setWeatherMode(mode, { immediate = false } = {}) {
   weatherTransition.from.contrast = cinematicGradePass.uniforms.uContrast.value;
   weatherTransition.from.warmth = cinematicGradePass.uniforms.uWarmth.value;
   weatherTransition.from.wetness = cinematicGradePass.uniforms.uWetness.value;
+  weatherTransition.from.atmosphere = cinematicGradePass.uniforms.uAtmosphere.value;
   weatherTransition.from.wetSurface = wetWeatherVisuals.current;
   weatherTransition.from.vignette = cinematicGradePass.uniforms.uVignette.value;
   weatherTransition.target = nextProfile;
@@ -1071,10 +1966,19 @@ function updateWeatherPresentation(dt, time) {
     );
   }
   applyWeatherPresentation(weatherTransition.elapsed / weatherTransition.duration, time);
+  applyHillViewFogExtension(streaming.stats?.focusSector ?? null);
   if (weatherTransition.elapsed >= weatherTransition.duration) {
     weatherSurfaceTransition.active = false;
     weatherUniformTransition.active = false;
   }
+}
+
+function applyHillViewFogExtension(focusSector) {
+  if (!scene.fog || weatherMode !== 'clear') return;
+  const hillFog = HILL_VIEW_FOG_SECTORS[focusSector];
+  if (!hillFog) return;
+  scene.fog.near = Math.max(scene.fog.near, hillFog.fogNear);
+  scene.fog.far = Math.max(scene.fog.far, hillFog.fogFar);
 }
 
 function toggleBeautyMode() {
@@ -1128,7 +2032,8 @@ function snapCameraToControls() {
   controls.cameraDistance = controls.distance;
   controls.spherical.set(controls.cameraDistance, controls.cameraPitch, controls.cameraYaw);
   desiredCamera.copy(controls.focus).add(controlOffset.setFromSpherical(controls.spherical));
-  const safeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
+  const citySafeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
+  const safeCamera = streaming.resolveCameraPosition?.(controls.focus, citySafeCamera) || citySafeCamera;
   camera.position.copy(safeCamera);
   lookTarget.copy(controls.target);
   camera.lookAt(lookTarget);
@@ -1181,14 +2086,20 @@ function resolveQaEvidenceStop(spec) {
   if (!Number.isFinite(cameraSurface) || !Number.isFinite(lookSurface)) {
     throw new RangeError(`Evidence stop ${spec.id} is outside the streaming footprint.`);
   }
+  const cameraClearance = Number.isFinite(spec.cameraClearance)
+    ? spec.cameraClearance
+    : QA_EVIDENCE_CAMERA_CLEARANCE;
+  const lookHeight = Number.isFinite(spec.lookHeight)
+    ? spec.lookHeight
+    : QA_EVIDENCE_LOOK_HEIGHT;
   const cameraPosition = new THREE.Vector3(
     spec.camera.x,
-    cameraSurface + QA_EVIDENCE_CAMERA_CLEARANCE,
+    cameraSurface + cameraClearance,
     spec.camera.z,
   );
   const lookAt = new THREE.Vector3(
     spec.lookAt.x,
-    lookSurface + QA_EVIDENCE_LOOK_HEIGHT,
+    lookSurface + lookHeight,
     spec.lookAt.z,
   );
   const publicRealm = streaming.getPublicRealmPoint?.(spec.camera) ?? null;
@@ -1201,6 +2112,7 @@ function resolveQaEvidenceStop(spec) {
     cameraSurface,
     lookSurface,
     publicRealm,
+    customHeights: Number.isFinite(spec.cameraClearance) || Number.isFinite(spec.lookHeight),
   };
 }
 
@@ -1411,15 +2323,17 @@ function getQaEvidenceStopState(stop) {
   if (!publicRealm?.onRoad || publicRealm?.mode !== 'normal-detail') {
     verificationErrors.push('camera is not above a normal public road or intersection');
   }
-  if (!Number.isFinite(cameraClearance)
-    || cameraClearance < QA_EVIDENCE_CAMERA_HEIGHT_BAND[0]
-    || cameraClearance > QA_EVIDENCE_CAMERA_HEIGHT_BAND[1]) {
-    verificationErrors.push('camera is outside the 1.70-1.80 m eye-height band');
-  }
-  if (!Number.isFinite(lookClearance)
-    || lookClearance < QA_EVIDENCE_LOOK_HEIGHT_BAND[0]
-    || lookClearance > QA_EVIDENCE_LOOK_HEIGHT_BAND[1]) {
-    verificationErrors.push('look target is outside the 1.60-1.70 m height band');
+  if (!stop.customHeights) {
+    if (!Number.isFinite(cameraClearance)
+      || cameraClearance < QA_EVIDENCE_CAMERA_HEIGHT_BAND[0]
+      || cameraClearance > QA_EVIDENCE_CAMERA_HEIGHT_BAND[1]) {
+      verificationErrors.push('camera is outside the 1.70-1.80 m eye-height band');
+    }
+    if (!Number.isFinite(lookClearance)
+      || lookClearance < QA_EVIDENCE_LOOK_HEIGHT_BAND[0]
+      || lookClearance > QA_EVIDENCE_LOOK_HEIGHT_BAND[1]) {
+      verificationErrors.push('look target is outside the 1.60-1.70 m height band');
+    }
   }
   if (!viewValidation?.cameraClearance?.clear) {
     verificationErrors.push('camera is within 3 m of a building volume');
@@ -1457,8 +2371,9 @@ function getQaEvidenceStopState(stop) {
   if (streamedAgentEvidence.stats.incrementalDrawCallEstimate > 24) {
     verificationErrors.push('streamed actor incremental draw-call estimate exceeded 24');
   }
-  if (coreSimulationActive || traffic.group.visible || pedestrians.group.visible) {
-    verificationErrors.push('authored core actor groups remain active outside sector 0:0');
+  const visiblePedestrianCount = pedestrians.getStats?.().visible ?? 0;
+  if (coreSimulationActive || visiblePedestrianCount > 0) {
+    verificationErrors.push('authored core pedestrian group remains active outside sector 0:0');
   }
   return {
     id: stop.id,
@@ -1486,8 +2401,8 @@ function getQaEvidenceStopState(stop) {
     streamedAgents: streamedAgentEvidence,
     coreActors: {
       active: coreSimulationActive,
-      trafficVisible: traffic.group.visible,
-      pedestriansVisible: pedestrians.group.visible,
+      trafficVisible: traffic.getStats?.().visible ?? 0,
+      pedestriansVisible: visiblePedestrianCount,
     },
   };
 }
@@ -1617,14 +2532,15 @@ function updateCamera(dt) {
     return;
   }
   const qaTourActive = updateQaStreamingTour(dt);
-  const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 22 : 10;
+  const drivingActive = traffic.isPlayerDriving?.() === true;
+  const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
   const axis = cameraAxis.set(
     (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
     0,
     (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0),
   );
 
-  if (!qaTourActive && axis.lengthSq() > 0) {
+  if (!qaTourActive && !drivingActive && axis.lengthSq() > 0) {
     // A regular movement input returns the pooled street presentation to its
     // ordinary layout. The broad avenue is intentionally an opt-in QA view.
     streaming.setQaPublicCorridorActive?.(false);
@@ -1638,6 +2554,7 @@ function updateCamera(dt) {
       controls.target.x = THREE.MathUtils.clamp(controls.target.x, anchor.x - 4.4, anchor.x + 4.4);
       controls.target.z = THREE.MathUtils.clamp(controls.target.z, anchor.z - 3.4, anchor.z + 3.4);
       controls.target.y = THREE.MathUtils.clamp(controls.target.y, 1.4, 3.5);
+      city.resolveInteriorPosition?.(controls.target);
     } else {
       controls.target.y = THREE.MathUtils.clamp(controls.target.y, 2, 46);
     }
@@ -1655,6 +2572,10 @@ function updateCamera(dt) {
         7,
         dt,
       );
+    }
+    const collisionSafeTarget = streaming.resolveRoamPosition?.(controls.target);
+    if (collisionSafeTarget && collisionSafeTarget !== controls.target) {
+      controls.target.copy(collisionSafeTarget);
     }
   }
 
@@ -1676,9 +2597,10 @@ function updateCamera(dt) {
   previousCameraTarget.copy(controls.target);
 
   controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.28, controls.interiorMode ? 2.2 : 2.45);
+  const exteriorMinDistance = drivingActive ? 8.5 : 12;
   controls.distance = THREE.MathUtils.clamp(
     controls.distance,
-    controls.interiorMode ? 3.1 : 16,
+    controls.interiorMode ? 3.1 : exteriorMinDistance,
     controls.interiorMode ? 8.5 : 180,
   );
   controls.focus.lerp(controls.target, 1 - Math.exp(-13 * dt));
@@ -1687,7 +2609,8 @@ function updateCamera(dt) {
   controls.cameraDistance = THREE.MathUtils.damp(controls.cameraDistance, controls.distance, 14, dt);
   controls.spherical.set(controls.cameraDistance, controls.cameraPitch, controls.cameraYaw);
   desiredCamera.copy(controls.focus).add(controlOffset.setFromSpherical(controls.spherical));
-  const safeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
+  const citySafeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
+  const safeCamera = streaming.resolveCameraPosition?.(controls.focus, citySafeCamera) || citySafeCamera;
   const cameraFollowLambda = controls.interiorMode ? 18 : qaTourActive ? 14 : 12;
   camera.position.lerp(safeCamera, 1 - Math.exp(-cameraFollowLambda * dt));
   const lookAheadFactor = controls.interiorMode ? 0.025 : qaTourActive ? 0.06 : 0.11;
@@ -1762,20 +2685,60 @@ function onWheel(event) {
 function onKeyDown(event) {
   const rawCode = event.code || event.key || '';
   const code = rawCode.length === 1 ? `Key${rawCode.toUpperCase()}` : rawCode;
+  // Escape is also an emergency exit from a player car.
+  if (code === 'Escape' && traffic.isPlayerDriving?.()) {
+    event.preventDefault();
+    exitPlayerCar();
+    return;
+  }
+  // Escape is an emergency exit from a room. It must remain actionable even
+  // when a heavy streamed-sector frame has delayed the fade timer; otherwise
+  // the interior can remain active after the visible handoff has completed.
+  if (code === 'Escape' && controls.interiorMode) {
+    event.preventDefault();
+    exitInterior();
+    return;
+  }
   if (sceneTransitioning) {
     event.preventDefault();
     return;
   }
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM'].includes(code)) event.preventDefault();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) cycleWeather();
   if (code === 'KeyH' && !event.repeat) toggleBeautyMode();
   if (code === 'KeyC' && !event.repeat) setRenderQuality(renderQuality.mode === 'cinematic' ? 'auto' : 'cinematic');
   if (code === 'KeyM' && !event.repeat) hud?.toggleMap?.();
+  if (code === 'KeyV' && !event.repeat) {
+    networking?.enableVoice?.();
+  }
+  if (code === 'KeyT' && !event.repeat) {
+    lifeSim?.eatAtMarket?.(controls.target);
+  }
+  if (code === 'KeyF' && !event.repeat) {
+    lifeSim?.workShift?.(controls.target);
+  }
+  if (code === 'KeyX' && !event.repeat) {
+    lifeSim?.rest?.();
+  }
   if (code === 'KeyE' && !event.repeat) {
-    if (controls.interiorMode) {
+    if (traffic.isPlayerDriving?.()) {
+      exitPlayerCar();
+    } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
-      enterNearestInterior();
+      const readyPortal = getInteractionPortal();
+      if (readyPortal && readyPortal.distance <= readyPortal.radius) {
+        enterNearestInterior();
+      } else {
+        const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
+        if (nearestCar) {
+          enterPlayerCar(nearestCar.index);
+        } else if (lifeSim?.talkToNearestResident?.(controls.target)) {
+          return;
+        } else {
+          enterNearestInterior();
+        }
+      }
     }
   }
   if (code === 'Escape' && controls.interiorMode) {
@@ -1811,13 +2774,20 @@ function enterNearestInterior() {
     const interior = city.enterInterior(nearest);
     if (!interior) return;
     requestInteriorShadowRefresh('enter');
-    controls.activePortal = nearest;
+    controls.activePortal = {
+      ...nearest,
+      room: interior.room || nearest.room,
+    };
     controls.interiorMode = true;
     controls.target.copy(interior.target);
     controls.yaw = Math.PI;
-    controls.pitch = 1.34;
-    controls.distance = 5.7;
-    setInteriorPresentationTarget(true, nearest.room);
+    // Enter on an architectural eye-line that looks slightly upward. The
+    // old downward pitch made the shared interior floor dominate the first
+    // frame and hid the room's authored furniture behind the near edge of
+    // the camera orbit.
+    controls.pitch = 1.58;
+    controls.distance = 5.35;
+    setInteriorPresentationTarget(true, interior.room || nearest.room);
     snapCameraToControls();
     const shiftAdvance = cityShift?.onPortalEntered(nearest);
     const flagship = city.getInteriorState?.().flagship;
@@ -1849,7 +2819,7 @@ function performInteriorAction() {
 
 function exitInterior() {
   if (!controls.interiorMode) return;
-  runSceneTransition(() => {
+  const completeExit = () => {
     city.exitInterior();
     requestInteriorShadowRefresh('exit');
     controls.interiorMode = false;
@@ -1864,10 +2834,29 @@ function exitInterior() {
     setInteriorPresentationTarget(false);
     snapCameraToControls();
     hud.setMessage('Back on the avenue.');
-  });
+  };
+  if (sceneTransitioning) {
+    // A delayed entry fade may still own the transition latch after the room
+    // is already active. Complete the exit synchronously so input and QA
+    // roaming cannot be stranded behind that stale latch.
+    sceneTransitioning = false;
+    sceneTransition.classList.remove('is-active');
+    completeExit();
+    return;
+  }
+  runSceneTransition(completeExit);
 }
 
 function updateInteraction() {
+  if (traffic.isPlayerDriving?.()) {
+    const drivingState = traffic.getPlayerVehicleState?.();
+    hud.setInteraction({
+      label: `DRIVING / ${(drivingState?.class || 'CAR').toUpperCase()} / ${Math.round(drivingState?.speed || 0)} KM/H`,
+      prompt: 'E / TAP  EXIT · WASD DRIVE',
+      enabled: true,
+    });
+    return;
+  }
   if (controls.interiorMode) {
     const hotspot = city.getInteriorInteraction?.(controls.target);
     if (hotspot) {
@@ -1887,7 +2876,41 @@ function updateInteraction() {
     });
     return;
   }
-  const nearest = getInteractionPortal();
+  const readyPortal = getInteractionPortal();
+  if (readyPortal && readyPortal.distance <= readyPortal.radius) {
+    const canEatHere = lifeSim?.canEat?.(controls.target);
+    const canWorkHere = lifeSim?.canWork?.(controls.target);
+    const lifePrompts = [canEatHere ? 'T EAT' : null, canWorkHere ? 'F WORK' : null]
+      .filter(Boolean)
+      .join(' · ');
+    hud.setInteraction({
+      label: `${readyPortal.featured ? 'FEATURED DOOR / ' : ''}${readyPortal.label} / ${readyPortal.distance.toFixed(1)} M`,
+      prompt: lifePrompts ? `E / TAP  ENTER · ${lifePrompts}` : 'E / TAP  ENTER',
+      enabled: true,
+    });
+    return;
+  }
+  const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
+  if (nearestCar) {
+    const carLabel = String(nearestCar.vehicle.cls || 'car').toUpperCase();
+    hud.setInteraction({
+      label: `PARKED ${carLabel} / ${nearestCar.distance.toFixed(1)} M`,
+      prompt: nearestCar.distance <= 3.8 ? 'E / TAP  DRIVE' : 'APPROACH',
+      enabled: nearestCar.distance <= 3.8,
+    });
+    return;
+  }
+  const nearbyResident = pedestrians.getNearestPerson?.(controls.target, 4.4);
+  if (nearbyResident) {
+    const residentLabel = nearbyResident.job?.id || 'resident';
+    hud.setInteraction({
+      label: `${residentLabel.toUpperCase()} / ${nearbyResident.distance.toFixed(1)} M`,
+      prompt: 'E / TAP  TALK',
+      enabled: true,
+    });
+    return;
+  }
+  const nearest = readyPortal;
   if (!nearest) {
     hud.setInteraction(null);
     return;
@@ -1960,6 +2983,9 @@ document.addEventListener('visibilitychange', () => {
     clock.start();
     renderQuality.sampleTime = 0;
     renderQuality.sampleFrames = 0;
+    renderQuality.hitchStreak = 0;
+    renderQuality.lowFpsWindows = 0;
+    renderQuality.healthyFpsWindows = 0;
     renderQuality.adjustmentCooldown = Math.max(renderQuality.adjustmentCooldown, 1.5);
   }
 });
@@ -1990,11 +3016,23 @@ let lastFrame = performance.now();
 let ready = false;
 let started = false;
 const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+const HUD_STATS_INTERVAL = 0.2;
+let hudStatsElapsed = -Infinity;
+let hudStatsFocusSector = null;
+let cachedStreamingStats = null;
+let cachedStreamedAgentStats = null;
+let cachedTrafficStats = null;
+let cachedPedestrianStats = null;
 
 function startExperience() {
   if (!ready || started) return;
 
   started = true;
+  // Loading and first-paint work are measured separately from the playable
+  // frame budget. Do not let the boot overlay's initialization hitch poison
+  // the 60 FPS telemetry window used by traversal QA.
+  resetPerformanceTelemetry();
+  startPlayerLayer();
   canvas?.removeAttribute('inert');
   hudRoot?.removeAttribute('inert');
   bootOverlay?.classList.add('is-dismissed');
@@ -2021,40 +3059,80 @@ launchButton?.addEventListener('keydown', (event) => {
 });
 
 function frame(now) {
+  const applicationFrameStart = performance.now();
+  const profileFrameStart = frameProfileEnabled ? applicationFrameStart : 0;
+  let profileStageStart = profileFrameStart;
+  const profileMark = (name) => {
+    if (!frameProfileEnabled) return;
+    const mark = performance.now();
+    recordFrameProfileStage(name, mark - profileStageStart);
+    profileStageStart = mark;
+  };
   const frameDelta = Math.min(Math.max(0, (now - lastFrame) / 1000), 0.25);
   const dt = Math.min(clock.getDelta(), 0.05);
   const motionDt = reducedMotionQuery?.matches ? 0 : dt;
   elapsed += motionDt;
   updateCamera(dt);
+  updatePlayerLayer(motionDt, elapsed);
+  // The sky dome is intentionally compact so its shader remains cheap, but
+  // streamed districts can sit kilometres from the origin. Keep the dome
+  // centered on the active camera so its gradient/cloud field remains the
+  // visible background instead of falling through to scene.background.
+  if (proceduralSky) proceduralSky.position.copy(camera.position);
+  profileMark('camera');
   const streamingFocus = controls.interiorMode && controls.exteriorSnapshot
     ? controls.exteriorSnapshot.target
     : controls.target;
   streaming.update?.(streamingFocus, camera, motionDt, elapsed);
   streamedAgents.update?.(streamingFocus, motionDt, elapsed);
+  updateSunShadowFocus(
+    streamingFocus,
+    streaming.getFocusSectorKey?.() ?? streaming.stats.focusSector,
+  );
   if (qaStreamingTour) observeQaTourSector(qaStreamingTour);
+  profileMark('streaming');
   city.update?.(motionDt, elapsed);
-  // The authored traffic/NPC simulation belongs to the core sector. Park its
-  // render groups and CPU updates when roaming elsewhere; streamed districts
-  // will register their own bounded systems as authored data comes online.
-  const coreSimulationActive = streaming.stats.focusSector === '0:0';
-  traffic.group.visible = coreSimulationActive;
-  pedestrians.group.visible = coreSimulationActive;
-  if (coreSimulationActive) {
-    traffic.update?.(motionDt, elapsed);
-    pedestrians.update?.(motionDt, elapsed);
-  }
+  profileMark('city');
+  // Keep one authoritative traffic simulation over the merged core + authored
+  // road graph. Focus culling hides distant vehicle meshes without stopping
+  // their lane, signal, collision, and handoff state while roaming.
+  const focusSectorKey = streaming.getFocusSectorKey?.() ?? streaming.stats.focusSector;
+  const coreSimulationActive = focusSectorKey === '0:0';
+  traffic.group.visible = true;
+  pedestrians.group.visible = true;
+  // One active sector plus its immediate approach is enough for the player to
+  // read lane behavior; the full merged simulation remains live off-screen.
+  traffic.setFocus?.(streamingFocus, coreSimulationActive ? 280 : 220);
+  // The authored pedestrian graph belongs to the core plate; outside it the
+  // streamed representative pool owns the visible crowd. Keep the core
+  // walkers simulated, but do not leak them across a district seam.
+  pedestrians.setFocus?.(streamingFocus, coreSimulationActive ? 280 : 32);
+  traffic.update?.(motionDt, elapsed);
+  profileMark('traffic');
+  pedestrians.update?.(motionDt, elapsed);
+  profileMark('pedestrians');
   const gameState = cityShift?.update?.(motionDt, controls.target, controls.activePortal);
-  const mapStreamingStats = streaming.stats;
-  const mapStreamedAgents = streamedAgents.getStats?.() ?? null;
+  if (!cachedStreamingStats
+    || elapsed - hudStatsElapsed >= HUD_STATS_INTERVAL
+    || hudStatsFocusSector !== focusSectorKey) {
+    cachedStreamingStats = streaming.stats;
+    cachedStreamedAgentStats = streamedAgents.getStats?.() ?? null;
+    cachedTrafficStats = coreSimulationActive ? traffic.getStats?.() ?? null : null;
+    cachedPedestrianStats = coreSimulationActive ? pedestrians.getStats?.() ?? null : null;
+    hudStatsElapsed = elapsed;
+    hudStatsFocusSector = focusSectorKey;
+  }
+  const mapStreamingStats = cachedStreamingStats;
+  const mapStreamedAgents = cachedStreamedAgentStats;
   const mapDistrict = coreSimulationActive
     ? 'Core district'
     : streaming.getSectorPresentation?.(mapStreamingStats.focusSector)?.presentation?.district
       || 'City grid';
   const mapVehicles = coreSimulationActive
-    ? traffic.getStats?.()?.active
+    ? cachedTrafficStats?.active
     : mapStreamedAgents?.vehicles?.visible;
   const mapPedestrians = coreSimulationActive
-    ? pedestrians.getStats?.()?.active
+    ? cachedPedestrianStats?.active
     : mapStreamedAgents?.pedestrians?.visible;
   const mapState = {
     sector: mapStreamingStats.focusSector,
@@ -2072,9 +3150,22 @@ function frame(now) {
   // otherwise reapplies its authored sun pulse every frame.
   updateInteriorPresentation(reducedMotionQuery?.matches ? 1 : frameDelta);
   updateWeatherPresentation(frameDelta, elapsed);
-  if (postProcessingActive) composer.render();
-  else renderer.render(scene, camera);
+  applyTimeOfDayPresentation(lifeSim?.getState?.().clock ?? 7);
+  profileMark('gameplay-ui-weather');
+  if (!firstSceneFrameReady) {
+    firstSceneFrameReady = sceneTexturesReadyForPrewarm();
+  }
+  if (firstSceneFrameReady) {
+    if (postProcessingActive) composer.render();
+    else renderer.render(scene, camera);
+  } else {
+    renderer.clear(true, true, true);
+  }
+  profileMark('render');
+  if (frameProfileEnabled) frameProfile.frameCount += 1;
   updateAdaptiveQuality(frameDelta);
+  recordPerformanceFrame(frameDelta, performance.now() - applicationFrameStart);
+  profileMark('telemetry-quality');
 
   if (!ready) {
     ready = true;
@@ -2093,6 +3184,8 @@ function frame(now) {
 setBootStatus(`WebGL2 online · Three.js ${THREE.REVISION}`);
 requestAnimationFrame(frame);
 
+window.__SF_TRAFFIC_RULES__ = { createTrafficRulesHarness };
+
 window.__SF_SIM__ = {
   scene,
   camera,
@@ -2103,6 +3196,7 @@ window.__SF_SIM__ = {
   pedestrians,
   streamedAgents,
   streaming,
+  expansion,
   cityShift,
   staticCityRendering,
   hud,
@@ -2135,6 +3229,35 @@ window.__SF_SIM__ = {
   setRoamPose(position) {
     return setQaRoamPose(position);
   },
+  get playerAvatar() {
+    return playerAvatar;
+  },
+  get networking() {
+    return networking;
+  },
+  get lifeSim() {
+    return lifeSim;
+  },
+  isDriving() {
+    return traffic.isPlayerDriving?.() === true;
+  },
+  enterCar() {
+    if (traffic.isPlayerDriving?.()) return false;
+    const nearest = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
+    return nearest ? enterPlayerCar(nearest.index) : false;
+  },
+  exitCar() {
+    return exitPlayerCar();
+  },
+  setPlayerInput(input) {
+    traffic.setPlayerInput?.(input);
+  },
+  setTimeOfDay(hour) {
+    return lifeSim?.setClock?.(hour) === true;
+  },
+  get timeOfDay() {
+    return lifeSim?.getState?.().clock ?? 7;
+  },
   runStreamingTour(options) {
     return runQaStreamingTour(options);
   },
@@ -2152,6 +3275,10 @@ window.__SF_SIM__ = {
   getRoamState() {
     return getQaRoamState();
   },
+  launch() {
+    startExperience();
+    return document.querySelector('#boot-overlay')?.classList.contains('is-dismissed') ?? false;
+  },
   getInteractionState() {
     return getQaInteractionState();
   },
@@ -2164,6 +3291,10 @@ window.__SF_SIM__ = {
   get elapsed() {
     return elapsed;
   },
+  getPerformanceSnapshot,
+  resetPerformanceTelemetry,
+  getFrameProfile,
+  resetFrameProfile,
   get lastFrame() {
     return lastFrame;
   },

@@ -56,12 +56,20 @@ try {
     const sim = window.__SF_SIM__;
     const coverage = sim.city.getPortalCoverage();
     const traffic = sim.traffic.getStats();
+    const trafficDiagnostics = sim.traffic.getDiagnostics?.() ?? null;
     const pedestrians = sim.pedestrians.getStats();
+    const residentStories = sim.pedestrians.getFeaturedResidentSnapshots?.() ?? [];
+    const vehicleLife = sim.traffic.getVehicleLifeSnapshot?.() ?? null;
+    const hudLife = document.querySelector('[data-state="life"]')?.textContent || '';
     return {
       webgl2: sim.renderer.capabilities.isWebGL2 === true,
       coverage,
       traffic,
+      trafficDiagnostics,
       pedestrians,
+      residentStories,
+      vehicleLife,
+      hudLife,
       weather: sim.weather,
     };
   });
@@ -78,8 +86,69 @@ try {
     });
   check('Interior variants present', boot.coverage.interiorVariants >= 6, boot.coverage.interiorVariants);
   check('Traffic active', Number(boot.traffic.active ?? boot.traffic.visible ?? 0) > 0, boot.traffic);
+  const trafficDiagnosticFields = [
+    'elapsed',
+    'maxAcceleration',
+    'maxDeceleration',
+    'maxJerk',
+    'maxSafetyCorrection',
+  ];
+  check(
+    'Traffic dynamics diagnostics finite',
+    trafficDiagnosticFields.every((field) => Number.isFinite(boot.trafficDiagnostics?.[field])),
+    boot.trafficDiagnostics,
+  );
+  check(
+    'Traffic gap diagnostics safe',
+    ['minLaneGap', 'minMovingHeadway', 'minStoppedGap'].every((field) => (
+      boot.trafficDiagnostics?.[field] == null || boot.trafficDiagnostics[field] >= -0.01
+    )),
+    boot.trafficDiagnostics,
+  );
   check('NPCs walking', Number(boot.pedestrians.walking ?? 0) > 0, boot.pedestrians);
   check('NPCs working', Number(boot.pedestrians.working ?? 0) > 0, boot.pedestrians);
+  check(
+    'Resident micro-stories exposed',
+    boot.residentStories.some((story) => (
+      story?.visible
+      && story.role
+      && story.action
+      && (story.destination || story.need)
+    )),
+    boot.residentStories.slice(0, 2),
+  );
+  check(
+    'Resident operational mood and choice exposed',
+    boot.residentStories.some((story) => (
+      story?.visible
+      && story.mood
+      && story.choice
+    )),
+    boot.residentStories.slice(0, 2),
+  );
+  check(
+    'Vehicle life identities exposed',
+    Number(boot.vehicleLife?.count ?? 0) > 0
+      && boot.vehicleLife?.vehicles?.some((vehicle) => (
+        vehicle?.identity?.label
+        && vehicle?.action?.label
+        && vehicle?.class
+      )),
+    {
+      count: boot.vehicleLife?.count ?? 0,
+      featured: boot.vehicleLife?.featured ?? 0,
+    },
+  );
+  check(
+    'HUD shows a live street story',
+    /Resident|Courier|Barista|Worker|Cleaner|Tourist|Phone/i.test(boot.hudLife),
+    boot.hudLife,
+  );
+  check(
+    'HUD includes operational story context',
+    /MOOD|CHOICE/.test(boot.hudLife),
+    boot.hudLife,
+  );
 
   const weatherModes = [];
   for (const mode of ['fog', 'drizzle', 'clear']) {
@@ -92,7 +161,12 @@ try {
 
   const interior = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
-    const portal = sim.city.portals.find((candidate) => candidate.featured && candidate.room)
+    const portal = sim.city.portals.find((candidate) => (
+      candidate.featured
+      && candidate.room
+      && String(candidate.label || '').toLowerCase().includes('welcome center')
+    ))
+      ?? sim.city.portals.find((candidate) => candidate.featured && candidate.room)
       ?? sim.city.portals.find((candidate) => candidate.room);
     const route = portal?.approachRoute || [];
     const point = route[route.length - 1] || portal?.position;
@@ -153,6 +227,14 @@ try {
     const streamedInterior = await page.evaluate(() => window.__SF_SIM__.city.getInteriorState());
     check('Streamed portal enters interior', streamedInterior.active === true
       && streamedInterior.portalId?.startsWith('sf-streamed-portal:'), streamedInterior);
+    check('Streamed interior exposes prop collision', streamedInterior.interiorCollisionMode === 'aabb-envelope+address-dressing'
+      && streamedInterior.interiorCollisionBoxes > 0, streamedInterior);
+    check(
+      'Streamed civic portal resolves its own room identity',
+      streamedInterior.roomLabel !== 'Embarcadero Welcome Center'
+        && streamedInterior.flagship === null,
+      streamedInterior,
+    );
     await page.keyboard.press('Escape');
     await page.waitForTimeout(650);
     const streamedExterior = await page.evaluate(() => window.__SF_SIM__.city.getInteriorState());

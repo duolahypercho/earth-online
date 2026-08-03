@@ -5,6 +5,7 @@ const FPS_WINDOW_SECONDS = 2;
 const FPS_STABLE_WINDOW_SECONDS = 0.8;
 const SIMULATION_START_HOUR = 7;
 const SIMULATION_HOURS_PER_SECOND = 0.033;
+const RESIDENT_STORY_ROTATION_SECONDS = 6;
 
 function createElement(tagName, className, text) {
   const element = document.createElement(tagName);
@@ -189,6 +190,141 @@ function formatLifeCue(trafficStats, pedestrianStats) {
   return 'CITY / IN MOTION';
 }
 
+function readFeaturedResidents(source) {
+  if (!source || typeof source.getFeaturedResidentSnapshots !== 'function') return null;
+  try {
+    const stories = source.getFeaturedResidentSnapshots();
+    return Array.isArray(stories)
+      ? stories.filter((story) => story && typeof story === 'object')
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readFeaturedResident(source, elapsed = 0) {
+  const stories = readFeaturedResidents(source);
+  if (!stories?.length) return null;
+
+  const visibleStories = stories.filter((story) => story.visible);
+  if (!visibleStories.length) return stories[0] || null;
+
+  const seconds = Number(elapsed);
+  const safeElapsed = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const rotation = Math.floor(safeElapsed / RESIDENT_STORY_ROTATION_SECONDS);
+  return visibleStories[rotation % visibleStories.length] || null;
+}
+
+function readResidentText(value, keys = []) {
+  try {
+    if (typeof value === 'string') return value.trim() || null;
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    for (const key of keys) {
+      const text = readResidentText(value[key]);
+      if (text) return text;
+    }
+  } catch {
+    // Optional story metadata must never interrupt HUD synchronization.
+  }
+
+  return null;
+}
+
+function compactResidentPhrase(value) {
+  return String(value || '')
+    .replace(/\b(?:a|an|the|to|at|for|then|toward|along|before)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function readFeaturedVehicle(source) {
+  if (!source || typeof source.getVehicleLifeSnapshot !== 'function') return null;
+  try {
+    const snapshot = source.getVehicleLifeSnapshot();
+    const vehicles = Array.isArray(snapshot?.vehicles) ? snapshot.vehicles : [];
+    return vehicles.find((vehicle) => vehicle?.featured && vehicle.visible)
+      || vehicles.find((vehicle) => vehicle?.visible)
+      || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatResidentStory(resident) {
+  const identity = String(resident.label || resident.id || 'Resident').trim();
+  const role = resident.role ? String(resident.role).trim().toUpperCase() : null;
+  const action = String(resident.action || resident.activity || 'moving through the district').trim();
+  const relationship = resident.relationship?.actorLabel
+    ? `WITH ${resident.relationship.actorLabel}`
+    : resident.need
+      ? `NEED ${resident.need.replace(/^to\s+/i, '')}`
+      : resident.destination
+        ? `TO ${resident.destination}`
+        : null;
+  const mood = readResidentText(resident.mood, ['label', 'name', 'text', 'value', 'state', 'tone']);
+  const choice = readResidentText(
+    resident.choice,
+    ['label', 'name', 'text', 'value', 'option', 'action', 'title'],
+  );
+  const compactAction = compactResidentPhrase(action);
+  const compactRelationship = relationship ? compactResidentPhrase(relationship) : null;
+  const compact = [
+    identity,
+    role,
+    compactAction,
+  ].filter(Boolean).join(' · ')
+    + '\n'
+    + [
+      compactRelationship,
+      mood ? `MOOD ${compactResidentPhrase(mood)}` : null,
+      choice ? `CHOICE ${compactResidentPhrase(choice)}` : null,
+    ].filter(Boolean).join(' · ');
+  const aria = [
+    identity,
+    role ? `role ${role.toLowerCase()}` : null,
+    `action: ${action}`,
+    relationship ? `context: ${relationship}` : null,
+    mood ? `mood: ${mood}` : null,
+    choice ? `choice: ${choice}` : null,
+  ].filter(Boolean).join('. ');
+
+  return { compact, aria };
+}
+
+function formatStreetStory(pedestrians, traffic, elapsed, streamedAgents, outsideCore = false) {
+  const storySource = outsideCore && typeof streamedAgents?.getFeaturedResidentSnapshots === 'function'
+    ? streamedAgents
+    : pedestrians;
+  const resident = readFeaturedResident(storySource, elapsed);
+  if (resident) {
+    return formatResidentStory(resident);
+  }
+
+  const vehicleSource = outsideCore ? null : traffic;
+  const vehicle = readFeaturedVehicle(vehicleSource);
+  if (!vehicle) return null;
+  const identity = String(
+    vehicle.identity?.label || vehicle.livery?.board || vehicle.class || 'Vehicle',
+  ).trim();
+  const action = String(vehicle.action?.label || 'Driving').trim();
+  const cue = vehicle.stop?.cue
+    ? `${vehicle.stop.cue.replaceAll('-', ' ')}`
+    : vehicle.route?.targetRoad
+      ? `toward ${vehicle.route.targetRoad}`
+      : vehicle.livery?.service
+        ? vehicle.livery.service
+        : null;
+  const compact = [identity, action, cue].filter(Boolean).join(' · ');
+  return {
+    compact,
+    aria: [identity, `action: ${action}`, cue ? `context: ${cue}` : null]
+      .filter(Boolean)
+      .join('. '),
+  };
+}
+
 function getQuality(value) {
   if (value === null) return 'unknown';
   if (value >= 54) return 'high';
@@ -317,12 +453,25 @@ export function createHud({
   const mapGrid = createElement('div', 'hud__map-grid');
   mapGrid.setAttribute('aria-label', 'Schematic district map');
   const mapDistricts = [
-    ['Mission', 18, 75],
-    ['Civic Center', 31, 53],
-    ['Downtown', 51, 54],
-    ['North Beach', 67, 33],
-    ['Embarcadero', 78, 58],
-    ['Pacific Heights', 19, 18],
+    ['Outer Sunset', 6, 82],
+    ['Mission', 28, 78],
+    ['Castro', 22, 68],
+    ['Haight', 14, 58],
+    ['Golden Gate Park', 8, 48],
+    ['Richmond', 10, 34],
+    ['Presidio', 12, 18],
+    ['Pacific Heights', 26, 22],
+    ['Fillmore', 30, 40],
+    ['Civic Center', 38, 52],
+    ['SoMa', 48, 68],
+    ['Downtown', 54, 50],
+    ['Embarcadero', 72, 52],
+    ['Chinatown', 58, 38],
+    ['Nob Hill', 48, 36],
+    ['Russian Hill', 52, 28],
+    ['North Beach', 66, 26],
+    ['Marina', 42, 14],
+    ['Twin Peaks', 24, 58],
   ];
   const mapDistrictNodes = new Map();
   mapDistricts.forEach(([label, left, top]) => {
@@ -435,6 +584,14 @@ export function createHud({
   renderControls.append(renderHeading, renderOptions, qualityMeta);
   telemetry.append(telemetryHeading, telemetryBar, metrics, quality, renderControls);
 
+  // Render quality and FPS are developer controls, not player-facing city
+  // information. Keep the elements and update paths alive for diagnostics,
+  // but remove them from the default fantasy HUD so the world owns the frame.
+  telemetryToggle.hidden = true;
+  qualityToggle.hidden = true;
+  quality.hidden = true;
+  renderControls.hidden = true;
+
   const state = createElement('section', 'hud__state');
   state.setAttribute('aria-label', 'Simulation state');
   const stateMode = createElement('span', 'status-chip status-chip--active', 'MODE / FREE ROAM');
@@ -546,7 +703,67 @@ export function createHud({
   touchEnter.addEventListener('click', () => onInteraction?.());
   touchControls.append(touchEnter);
 
-  root.append(header, mission, telemetry, state, interaction, message, footer, touchControls, mapOverlay);
+  /* ---- life panel ---- */
+  const lifePanel = createElement('section', 'hud__life');
+  lifePanel.setAttribute('aria-label', 'Life needs');
+  const lifeHeader = createElement('div', 'hud__life-header');
+  const lifeTitle = createElement('span', 'hud__life-title', 'LIFE / DAY 01');
+  const lifeClock = createElement('span', 'hud__life-clock', '07:00');
+  const lifeCash = createElement('span', 'hud__life-cash', '$140');
+  const lifeMood = createElement('span', 'hud__life-mood', 'GOOD');
+  lifeHeader.append(lifeTitle, lifeClock, lifeCash, lifeMood);
+  const lifeBars = createElement('div', 'hud__life-bars');
+  const lifeBarNodes = new Map();
+  ['energy', 'hunger', 'social', 'fun'].forEach((key) => {
+    const row = createElement('div', 'hud__life-bar');
+    const label = createElement('span', 'hud__life-bar-label', key.toUpperCase());
+    const track = createElement('span', 'hud__life-bar-track');
+    const fill = createElement('span', 'hud__life-bar-fill');
+    fill.setAttribute('aria-hidden', 'true');
+    track.append(fill);
+    row.append(label, track);
+    lifeBarNodes.set(key, { row, fill, label });
+    lifeBars.append(row);
+  });
+  lifePanel.append(lifeHeader, lifeBars);
+
+  const drivePanel = createElement('section', 'hud__drive');
+  drivePanel.setAttribute('aria-label', 'Driving telemetry');
+  drivePanel.hidden = true;
+  const driveSpeed = createElement('span', 'hud__drive-speed', '0');
+  const driveUnit = createElement('span', 'hud__drive-unit', 'KM/H');
+  const driveMode = createElement('span', 'hud__drive-mode', 'DRIVE / CLEAR');
+  const driveHeading = createElement('span', 'hud__drive-heading', 'N');
+  drivePanel.append(driveSpeed, driveUnit, driveMode, driveHeading);
+
+  /* ---- online panel ---- */
+  const onlinePanel = createElement('section', 'hud__online');
+  onlinePanel.setAttribute('aria-label', 'Online players and voice');
+  const onlineHeader = createElement('div', 'hud__online-header');
+  const onlineStatus = createElement('span', 'hud__online-status', 'SOLO MODE');
+  onlineStatus.setAttribute('data-state', 'offline');
+  const onlineCount = createElement('span', 'hud__online-count', '0 ONLINE');
+  const voiceToggle = createElement('button', 'hud__voice-toggle', 'VOICE OFF');
+  voiceToggle.type = 'button';
+  voiceToggle.setAttribute('aria-pressed', 'false');
+  voiceToggle.setAttribute('aria-label', 'Toggle voice chat. A live indicator shows when you are speaking.');
+  onlineHeader.append(onlineStatus, onlineCount, voiceToggle);
+  const playerList = createElement('ul', 'hud__players');
+  playerList.setAttribute('aria-label', 'Connected players');
+  const chatLog = createElement('div', 'hud__chat-log');
+  chatLog.setAttribute('aria-live', 'polite');
+  const chatRow = createElement('div', 'hud__chat-row');
+  const chatInput = createElement('input', 'hud__chat-input');
+  chatInput.type = 'text';
+  chatInput.placeholder = 'Message the room…';
+  chatInput.setAttribute('aria-label', 'Chat message');
+  chatInput.maxLength = 180;
+  const chatSend = createElement('button', 'hud__chat-send', 'SEND');
+  chatSend.type = 'button';
+  chatRow.append(chatInput, chatSend);
+  onlinePanel.append(onlineHeader, playerList, chatLog, chatRow);
+
+  root.append(header, mission, telemetry, state, interaction, lifePanel, onlinePanel, drivePanel, message, footer, touchControls, mapOverlay);
   const mountPoint = document.querySelector('#hud-root') || document.body;
   mountPoint.append(root);
 
@@ -565,9 +782,12 @@ export function createHud({
   let lastDistrict = 'Core district';
   let lastBeat = '07:00 · Morning rush';
   let lastCue = 'People / in motion';
+  let lastStory = null;
+  let lastStoryAria = null;
   let telemetryAccumulator = 0;
   const missionStepNodes = new Map();
   let mapOpen = false;
+  const mapRemoteNodes = new Map();
 
   function setTelemetryMode(mode = 'compact') {
     if (disposed) return;
@@ -768,15 +988,22 @@ export function createHud({
     document.querySelector('#scene-canvas')?.focus({ preventScroll: true });
   });
 
-  function syncLifeContext(district, beat, cue) {
+  function syncLifeContext(district, beat, cue, story) {
     lastDistrict = String(district || 'Core district').trim() || 'Core district';
     lastBeat = String(beat || '07:00 · City rhythm').trim() || '07:00 · City rhythm';
     lastCue = String(cue || 'City / in motion').trim() || 'City / in motion';
+    if (story !== undefined) {
+      const compactStory = typeof story === 'string' ? story : story?.compact;
+      const ariaStory = typeof story === 'string' ? story : story?.aria;
+      lastStory = compactStory ? String(compactStory).trim() : null;
+      lastStoryAria = ariaStory ? String(ariaStory).trim() : lastStory;
+    }
+    const visibleLifeDetail = lastStory || lastCue;
     stateLifeDistrict.textContent = lastDistrict;
-    stateLifeBeat.textContent = `${lastBeat} · ${lastCue}`;
+    stateLifeBeat.textContent = `${lastBeat} · ${visibleLifeDetail}`;
     stateLife.setAttribute(
       'aria-label',
-      `District: ${lastDistrict}. Schedule: ${lastBeat}. Activity: ${lastCue}.`,
+      `District: ${lastDistrict}. Schedule: ${lastBeat}. Activity: ${lastCue}.${lastStoryAria ? ` Street story: ${lastStoryAria}.` : ''}`,
     );
 
     if (root.dataset.cameraMode === 'interior') return;
@@ -784,10 +1011,12 @@ export function createHud({
     context.dataset.mode = 'district';
     contextLabel.textContent = 'District';
     contextDistrict.textContent = lastDistrict;
-    contextActivity.textContent = `Activity / ${lastBeat} · ${lastCue}`;
+    contextActivity.textContent = lastStory
+      ? `Street story / ${lastStory}`
+      : `Activity / ${lastBeat} · ${lastCue}`;
     context.setAttribute(
       'aria-label',
-      `Current district: ${lastDistrict}. Current activity: ${lastBeat}. ${lastCue}.`,
+      `Current district: ${lastDistrict}. Current activity: ${lastBeat}. ${lastCue}.${lastStoryAria ? ` Street story: ${lastStoryAria}.` : ''}`,
     );
   }
 
@@ -827,7 +1056,8 @@ export function createHud({
     const district = focusDistrict || streamedStats?.districts?.[0] || 'Core district';
     const beat = formatLifeBeat(streamedStats?.schedule, elapsed);
     const cue = formatLifeCue(trafficStats, pedestrianStats);
-    syncLifeContext(district, beat, cue);
+    const story = formatStreetStory(pedestrians, traffic, elapsed, streamedAgents, outsideCore);
+    syncLifeContext(district, beat, cue, story);
     if (gameState) setGameState(gameState);
     if (mapState) setMapState(mapState);
     if (frameFps !== null) updateQualityReadout();
@@ -920,6 +1150,162 @@ export function createHud({
     stateTime.setAttribute('aria-label', `Weather: ${String(mode).replace('-', ' ')}.`);
   }
 
+  const lifeBarColors = {
+    energy: '#f2c14e',
+    hunger: '#e07856',
+    social: '#6ba3a8',
+    fun: '#c08fd0',
+  };
+
+  function setLifeState(lifeState = {}) {
+    if (disposed) return;
+    const day = Math.max(1, Number(lifeState.day) || 1);
+    lifeTitle.textContent = `LIFE / DAY ${String(day).padStart(2, '0')}`;
+    lifeClock.textContent = `${String(lifeState.clockLabel || '07:00')} ${String(lifeState.phase || 'MORNING')}`;
+    lifeCash.textContent = `$${Math.max(0, Math.round(Number(lifeState.cash) || 0))}`;
+    lifeMood.textContent = String(lifeState.mood || 'GOOD').toUpperCase();
+    lifeMood.dataset.mood = String(lifeState.mood || 'good');
+    const needs = lifeState.needs || {};
+    for (const [key, node] of lifeBarNodes) {
+      const value = Math.min(100, Math.max(0, Number(needs[key]) || 0));
+      node.fill.style.width = `${value}%`;
+      node.fill.style.backgroundColor = lifeBarColors[key] || '#6ba3a8';
+      node.fill.style.opacity = value < 30 ? '0.95' : '0.75';
+      node.row.dataset.need = key;
+      node.row.dataset.low = String(value < 30);
+      node.label.textContent = `${key.toUpperCase()} ${Math.round(value)}`;
+      node.row.setAttribute('aria-label', `${key}: ${Math.round(value)} out of 100`);
+    }
+  }
+
+  let onlineAction = null;
+
+  function setOnlineAction(action) {
+    onlineAction = action;
+  }
+
+  function setOnlineState(onlineState = {}) {
+    if (disposed) return;
+    const connected = onlineState.connected === true;
+    const peers = Array.isArray(onlineState.peers) ? onlineState.peers : [];
+    onlineStatus.textContent = connected ? 'ONLINE' : 'SOLO MODE';
+    onlineStatus.dataset.state = connected ? 'online' : 'offline';
+    onlineCount.textContent = `${peers.length} ONLINE`;
+    if (onlineState.playerName) onlineStatus.setAttribute('aria-label', `Multiplayer: ${onlineState.playerName}`);
+    const talking = onlineState.talking === true;
+    const voiceOn = onlineState.voiceOn === true;
+    voiceToggle.textContent = voiceOn ? (talking ? 'SPEAKING' : 'VOICE ON') : 'VOICE OFF';
+    voiceToggle.dataset.state = voiceOn ? (talking ? 'talking' : 'on') : 'off';
+    voiceToggle.setAttribute('aria-pressed', String(voiceOn));
+    if (onlineState.error) {
+      voiceToggle.setAttribute('aria-label', onlineState.error);
+      voiceToggle.title = onlineState.error;
+    }
+
+    while (playerList.firstChild) playerList.removeChild(playerList.firstChild);
+    const ownItem = createElement('li', 'hud__player hud__player--self');
+    const ownDot = createElement('span', 'hud__player-dot');
+    ownDot.setAttribute('aria-hidden', 'true');
+    ownDot.dataset.talking = String(talking);
+    const ownName = createElement('span', 'hud__player-name', `${onlineState.playerName || 'You'} (you)`);
+    const ownMode = createElement('span', 'hud__player-mode', voiceOn ? 'VOICE' : 'MUTED');
+    ownItem.append(ownDot, ownName, ownMode);
+    playerList.append(ownItem);
+    peers.forEach((peer) => {
+      const item = createElement('li', 'hud__player');
+      const dot = createElement('span', 'hud__player-dot');
+      dot.setAttribute('aria-hidden', 'true');
+      dot.dataset.talking = String(peer.talking === true);
+      const name = createElement('span', 'hud__player-name', peer.name || 'Player');
+      const mode = createElement('span', 'hud__player-mode', peer.driving ? 'DRIVING' : 'ON FOOT');
+      item.append(dot, name, mode);
+      playerList.append(item);
+    });
+    setMapRemoteState(peers);
+  }
+
+  function setMapRemoteState(peers = []) {
+    if (disposed) return;
+    const activeRemoteIds = new Set(peers.map((peer) => peer.id));
+    for (const [id, node] of mapRemoteNodes) {
+      if (activeRemoteIds.has(id)) continue;
+      node.remove();
+      mapRemoteNodes.delete(id);
+    }
+    peers.forEach((peer) => {
+      let node = mapRemoteNodes.get(peer.id);
+      if (!node) {
+        node = createElement('span', 'hud__map-remote', peer.name.slice(0, 2).toUpperCase());
+        node.setAttribute('aria-hidden', 'true');
+        mapGrid.append(node);
+        mapRemoteNodes.set(peer.id, node);
+      }
+      const x = Number(peer.x);
+      const z = Number(peer.z);
+      if (Number.isFinite(x) && Number.isFinite(z)) {
+        node.style.left = `${Math.min(96, Math.max(4, (x / 5760 + 0.5) * 100))}%`;
+        node.style.top = `${Math.min(96, Math.max(4, (z / 5760 + 0.5) * 100))}%`;
+      }
+      node.dataset.driving = String(peer.driving === true);
+      node.dataset.talking = String(peer.talking === true);
+      node.textContent = peer.name.slice(0, 2).toUpperCase();
+    });
+  }
+
+  const headingLabels = {
+    N: 'NORTH',
+    NE: 'NORTHEAST',
+    E: 'EAST',
+    SE: 'SOUTHEAST',
+    S: 'SOUTH',
+    SW: 'SOUTHWEST',
+    W: 'WEST',
+    NW: 'NORTHWEST',
+  };
+
+  function setDriveState(driveState = {}) {
+    if (disposed) return;
+    const active = driveState.active === true;
+    drivePanel.hidden = !active;
+    if (!active) return;
+    const speed = Math.max(0, Math.round(Number(driveState.speed) || 0));
+    driveSpeed.textContent = String(speed);
+    driveSpeed.dataset.speedBand = speed < 6 ? 'idle' : speed < 18 ? 'city' : 'cruise';
+    const headingRad = Number(driveState.heading);
+    const index = Number.isFinite(headingRad)
+      ? Math.floor((((headingRad * 180 / Math.PI) + 360) % 360 + 22.5) / 45) % 8
+      : 0;
+    const cardinal = Object.keys(headingLabels)[index];
+    driveHeading.textContent = cardinal;
+    driveMode.textContent = `DRIVE / ${String(driveState.weather || 'CLEAR').toUpperCase()}`;
+    drivePanel.setAttribute('aria-label', `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}.`);
+  }
+
+  function appendChat(entry = {}) {
+    if (disposed) return;
+    const line = createElement('p', 'hud__chat-line');
+    if (entry.local) line.dataset.local = 'true';
+    const name = createElement('strong', 'hud__chat-name', `${entry.name || 'Player'}: `);
+    const text = createElement('span', 'hud__chat-text', String(entry.text || ''));
+    line.append(name, text);
+    chatLog.append(line);
+    while (chatLog.childElementCount > 24) chatLog.removeChild(chatLog.firstChild);
+  }
+
+  voiceToggle.addEventListener('click', () => onlineAction?.());
+  const sendChat = () => {
+    const text = chatInput.value;
+    chatInput.value = '';
+    onlineAction?.({ chat: text });
+  };
+  chatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      sendChat();
+    }
+  });
+
   function dispose() {
     if (disposed) return;
 
@@ -940,6 +1326,12 @@ export function createHud({
     toggleMap,
     setCameraState,
     setAtmosphere,
+    setLifeState,
+    setOnlineState,
+    setOnlineAction,
+    appendChat,
+    setDriveState,
+    setMapRemoteState,
     dispose,
   };
 }

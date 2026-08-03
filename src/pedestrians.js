@@ -9,14 +9,33 @@
 
 import * as THREE from 'three';
 import { signalOffsetForPosition, signalPhaseAt } from './signals.js';
+import { createBlackboard, tick as tickBehaviorTree } from './npc-behavior-tree.js';
+import { createTreeForRole } from './npc-trees.js';
 
 const POOL_SIZE = 48;
 // Eight camera-facing actors carry the costly face/clothing treatment; the
 // remainder preserve a readable, varied background crowd inside the 48-person
 // fixed pool. This keeps the hero pass bounded on Cinema quality.
 const HERO_ACTORS = 8;
+// These identities intentionally track the fixed hero pool rather than a
+// random role draw. The labels are synthetic UI handles, not claims about
+// canonical resident backstories.
+const FEATURED_RESIDENTS = Object.freeze([
+  Object.freeze({ actorIndex: 0, id: 'maria-chen', label: 'Maria Chen' }),
+  Object.freeze({ actorIndex: 1, id: 'james-orourke', label: "James O'Rourke" }),
+  Object.freeze({ actorIndex: 2, id: 'diana-ruiz', label: 'Diana Ruiz' }),
+  Object.freeze({ actorIndex: 3, id: 'noah-kim', label: 'Noah Kim' }),
+  Object.freeze({ actorIndex: 4, id: 'priya-shah', label: 'Priya Shah' }),
+  Object.freeze({ actorIndex: 5, id: 'elena-park', label: 'Elena Park' }),
+  Object.freeze({ actorIndex: 6, id: 'theo-nguyen', label: 'Theo Nguyen' }),
+  Object.freeze({ actorIndex: 7, id: 'grace-okonkwo', label: 'Grace Okonkwo' }),
+]);
 const WALK_SPEED = 1.12;
 const WALK_SPEED_VARIANCE = 0.38;
+// Reference step length for coupling stride phase to ~1.1 m/s adult walk.
+const ADULT_STEP_LENGTH = 0.68;
+const GAIT_START_DAMP = 10.2;
+const GAIT_STOP_DAMP = 5.4;
 const MAX_DT = 0.05;
 
 const STATE_WALK = 0;
@@ -219,15 +238,34 @@ const GAIT_VISUAL_CUES = Object.freeze({
 });
 const WEATHER_MODES = new Set(['clear', 'fog', 'drizzle']);
 const HERO_ROUTE_SAMPLES = [
-  { segment: 0, ratio: 0.9 },
-  { segment: 1, ratio: 0.38 },
-  { segment: 1, ratio: 0.86 },
-  { segment: 2, ratio: 0.3 },
-  { segment: 2, ratio: 0.66 },
-  { segment: 2, ratio: 0.94 },
+  { segment: 1, ratio: 0.22 },
+  { segment: 1, ratio: 0.48 },
+  { segment: 1, ratio: 0.72 },
+  { segment: 2, ratio: 0.28 },
+  { segment: 2, ratio: 0.56 },
+  { segment: 2, ratio: 0.84 },
 ];
 const RIGHT_SIDE_DEPTH_OFFSETS = [-0.1, 0.11, -0.09, 0.1, -0.12, 0.05];
-const HERO_LANE_OFFSETS = [-0.42, 0.14, 0.42, -0.14];
+// Keep beauty-route heroes in the sidewalk center band — negative spread pulled
+// camera-facing actors into facades during QA and street-distance review.
+const HERO_LANE_OFFSETS = [0.04, 0.02, 0.06, 0.04];
+// Waterfront avenues place building mass on -X; bias pulls heroes toward +X curb.
+const BEAUTY_STREET_BIAS = 0.48;
+// Beauty routes clamp toward street-side only so reversed headings never hug facades.
+const BEAUTY_LANE_CLAMP = Object.freeze({ min: 0.18, max: 0.52 });
+// Keep the background crowd in two readable sidewalk lanes. The role bias is
+// deliberately subtle: it gives a courier or café worker a habitual path
+// through a block without turning navigation into a role-specific graph.
+const ROLE_SIDEWALK_LANES = Object.freeze({
+  // Keep all roles street-side of sidewalk center so facade clipping stays rare.
+  commuter: 0.36,
+  courier: 0.48,
+  barista: 0.40,
+  worker: 0.44,
+  tourist: 0.42,
+  cleaner: 0.34,
+  phone: 0.42,
+});
 
 // Morning-rush role colors are deliberately a little quieter than UI colors:
 // they read as a jacket patch, apron trim, or carried object in the street
@@ -636,18 +674,34 @@ function addVisualWardrobeDetails({
     tote.name = 'Canvas tote';
   }
 
-  // A small chest patch is the persistent role signal at street distance:
-  // teal for couriers, amber for café staff, violet for phone pauses, and so
-  // on. It is intentionally offset from the worker badge so both cues remain
-  // legible on a hi-vis vest.
-  const rolePatch = addMesh(
-    rig,
-    geometry.badge,
-    materials.roleAccent,
-    new THREE.Vector3(-0.11, role === 'barista' ? 1.37 : 1.41, 0.242),
-    new THREE.Vector3(heroDetail ? 1.32 : 1.02, heroDetail ? 1.18 : 0.98, 0.9),
-  );
-  rolePatch.name = `${role} role color patch`;
+  // Role identity reads through wardrobe pieces above — apron, vest, bag,
+  // reflective stripe — not through floating chest markers that read as UI.
+  if (role === 'commuter' && bagStyle === 'none' && !existingOuterwear) {
+    const scarf = addMesh(
+      rig,
+      geometry.scarf,
+      materials.scarf,
+      new THREE.Vector3(0, 1.52, 0.08),
+      new THREE.Vector3(0.82, 0.72, 0.72),
+    );
+    scarf.name = 'Commuter neck scarf';
+  } else if (role === 'phone') {
+    addMesh(
+      rig,
+      geometry.scarf,
+      materials.trim,
+      new THREE.Vector3(0, 1.48, 0.06),
+      new THREE.Vector3(0.74, 0.55, 0.55),
+    ).name = 'Phone-user collar trim';
+  } else if (role === 'tourist' && bagStyle === 'none') {
+    addMesh(
+      rig,
+      geometry.badge,
+      materials.trim,
+      new THREE.Vector3(0.12, 1.34, 0.228),
+      new THREE.Vector3(0.72, 0.72, 0.55),
+    ).name = 'Tourist map fold';
+  }
 }
 
 const HERO_BONE = Object.freeze({
@@ -1010,6 +1064,12 @@ function createSharedGeometry() {
     badge: new THREE.BoxGeometry(0.05, 0.06, 0.024),
     scarf: new THREE.TorusGeometry(0.115, 0.026, 5, 12),
     scarfTail: new THREE.BoxGeometry(0.04, 0.28, 0.038),
+    // Background pedestrians keep a readable head/torso/limb silhouette,
+    // while using one paired arm and one paired leg mesh instead of the
+    // close-up component stack. The navigation and behavior rigs still
+    // receive the same transform handles below.
+    crowdArms: new THREE.BoxGeometry(0.16, 0.72, 0.14),
+    crowdLegs: new THREE.BoxGeometry(0.22, 0.84, 0.2),
     hood: new THREE.TorusGeometry(0.145, 0.03, 5, 12),
     beanie: new THREE.SphereGeometry(0.19, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.54),
     capBrim: new THREE.BoxGeometry(0.18, 0.026, 0.11),
@@ -1018,6 +1078,7 @@ function createSharedGeometry() {
     parcel: new THREE.BoxGeometry(0.18, 0.15, 0.24),
     parcelTape: new THREE.BoxGeometry(0.19, 0.018, 0.055),
     cup: new THREE.CylinderGeometry(0.04, 0.033, 0.13, 8),
+    cupSleeve: new THREE.CylinderGeometry(0.044, 0.038, 0.055, 8),
     cupLid: new THREE.CylinderGeometry(0.045, 0.045, 0.014, 8),
     phone: new THREE.BoxGeometry(0.075, 0.12, 0.012),
     camera: new THREE.BoxGeometry(0.12, 0.08, 0.14),
@@ -1237,7 +1298,7 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
       new THREE.Vector3(0, 0, 0),
     );
     addMesh(prop, geometry.parcelTape, materials.trim, new THREE.Vector3(0, 0.085, 0));
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.22);
     prop.position.set(0.13, -0.49, 0.13);
     bones[HERO_BONE.rightUpperArm].add(prop);
   } else if (job.prop === 'coffee') {
@@ -1245,11 +1306,12 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
     addMesh(
       prop,
       geometry.cup,
-      materials.accent,
+      materials.roleAccent,
       new THREE.Vector3(0, 0, 0),
     );
+    addMesh(prop, geometry.cupSleeve, materials.accent, new THREE.Vector3(0, -0.008, 0));
     addMesh(prop, geometry.cupLid, materials.trim, new THREE.Vector3(0, 0.071, 0));
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.2);
     prop.position.set(0.03, -0.72, 0.12);
     bones[HERO_BONE.rightUpperArm].add(prop);
   } else if (job.prop === 'phone') {
@@ -1267,7 +1329,7 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
       new THREE.Vector3(0, 0, 0.008),
       new THREE.Vector3(0.74, 0.74, 0.2),
     );
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.16);
     prop.position.set(0, -0.68, 0.13);
     bones[HERO_BONE.rightUpperArm].add(prop);
   } else if (job.prop === 'camera') {
@@ -1280,7 +1342,7 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
     );
     const lens = addMesh(prop, geometry.lens, materials.screen, new THREE.Vector3(0, 0, 0.09));
     lens.rotation.x = Math.PI * 0.5;
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.2);
     prop.position.set(0, -0.62, 0.14);
     bones[HERO_BONE.rightUpperArm].add(prop);
   } else if (job.prop === 'broom') {
@@ -1293,7 +1355,7 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
     );
     const broomHead = addMesh(prop, geometry.broomHead, materials.dark, new THREE.Vector3(0, 0, 0));
     broomHead.rotation.y = Math.PI * 0.5;
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.1);
     prop.rotation.z = -0.18;
     prop.position.set(0.2, -1.49, 0);
     bones[HERO_BONE.rightUpperArm].add(prop);
@@ -1301,7 +1363,7 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
     prop = new THREE.Group();
     addMesh(prop, geometry.toolHandle, materials.accent, new THREE.Vector3(0, -0.1, 0));
     addMesh(prop, geometry.toolHead, materials.metal, new THREE.Vector3(0, 0.035, 0));
-    prop.scale.setScalar(visual.propScale);
+    prop.scale.setScalar(visual.propScale * 1.1);
     prop.position.set(0.16, -0.62, 0.03);
     bones[HERO_BONE.rightUpperArm].add(prop);
   }
@@ -1332,6 +1394,8 @@ function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex,
     rightFoot: bones[HERO_BONE.rightFoot],
     leftHipY: bones[HERO_BONE.leftUpperLeg].position.y,
     rightHipY: bones[HERO_BONE.rightUpperLeg].position.y,
+    leftHipX: bones[HERO_BONE.leftUpperLeg].position.x,
+    rightHipX: bones[HERO_BONE.rightUpperLeg].position.x,
     prop,
     groundOffset: 0,
     armSwing: legacyData.armSwing,
@@ -1375,6 +1439,133 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     ? rng() < (heroDetail ? 0.72 : 0.48)
     : rng() < (heroDetail ? 0.36 : 0.16);
   const hooded = outerwear && rng() < (heroDetail ? 0.34 : 0.18);
+
+  // The background crowd remains fully simulated and collision-aware, but it
+  // does not need the close-up wardrobe/face stack. Consume the same visual
+  // RNG decisions as the legacy builder before switching to the bounded
+  // silhouette so route assignment remains deterministic.
+  if (!heroDetail) {
+    const torsoDepth = 0.84 + rng() * 0.1;
+    const headHeight = 0.88 + rng() * 0.09;
+    const headDepth = 0.88 + rng() * 0.08;
+    rng(); // Background shoe accent decision.
+    if (job.id === 'commuter') {
+      const existingBackpack = rng() < 0.42;
+      if (!existingBackpack && !outerwear) rng();
+    } else if (!outerwear) {
+      rng();
+    }
+
+    const root = new THREE.Group();
+    root.name = `NPC / ${job.id}`;
+    root.scale.set(
+      build * visualVariant.bodyWidthScale,
+      height,
+      build * visualVariant.bodyDepthScale,
+    );
+    const rig = new THREE.Group();
+    root.add(rig);
+
+    // Drop torso slightly so hip pivots read attached under the waist.
+    const torso = addMesh(rig, geometry.torso, materials.top, new THREE.Vector3(0, 1.0, 0));
+    torso.scale.set(shoulderWidth, silhouette === 3 ? 1.1 : 1.04, torsoDepth);
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 1.84, 0);
+    rig.add(headPivot);
+    const head = addMesh(headPivot, geometry.head, materials.skin, new THREE.Vector3());
+    head.scale.set(headWidth, headHeight, headDepth);
+    const hair = addMesh(headPivot, geometry.hair, materials.hair, new THREE.Vector3(0, 0.08, -0.01));
+    hair.scale.set(headWidth * 1.13, [0.66, 0.9, 0.78][hairStyle] || 0.78, 0.98);
+
+    // Independent L/R limbs so procedural gait can alternate (shared legRig
+    // previously overwrote left swing with right, reading as a hop).
+    const leftArm = new THREE.Group();
+    leftArm.position.set(-0.28 * shoulderWidth, 1.28, 0);
+    rig.add(leftArm);
+    const leftArmMesh = addMesh(
+      leftArm,
+      geometry.crowdArms,
+      materials.top,
+      new THREE.Vector3(0, -0.36, 0),
+    );
+    leftArmMesh.scale.set(0.9, 1, 0.88);
+    const rightArm = new THREE.Group();
+    rightArm.position.set(0.28 * shoulderWidth, 1.28, 0);
+    rig.add(rightArm);
+    const rightArmMesh = addMesh(
+      rightArm,
+      geometry.crowdArms,
+      materials.top,
+      new THREE.Vector3(0, -0.36, 0),
+    );
+    rightArmMesh.scale.set(0.9, 1, 0.88);
+
+    const leftLeg = new THREE.Group();
+    // Hip pivot tucked under shortened torso so swing doesn't open a waist gap.
+    leftLeg.position.set(-0.14, 0.68, 0);
+    rig.add(leftLeg);
+    const leftLegMesh = addMesh(
+      leftLeg,
+      geometry.crowdLegs,
+      materials.bottom,
+      new THREE.Vector3(0, -0.5, 0),
+    );
+    leftLegMesh.scale.set(1, 1.05, 1);
+    const rightLeg = new THREE.Group();
+    rightLeg.position.set(0.14, 0.68, 0);
+    rig.add(rightLeg);
+    const rightLegMesh = addMesh(
+      rightLeg,
+      geometry.crowdLegs,
+      materials.bottom,
+      new THREE.Vector3(0, -0.5, 0),
+    );
+    rightLegMesh.scale.set(1, 1, 1);
+
+    const emptyForearm = new THREE.Group();
+    const emptyHand = new THREE.Group();
+    const emptyShin = new THREE.Group();
+    const emptyFoot = new THREE.Group();
+    root.userData = {
+      rig,
+      head,
+      headPivot,
+      body: torso,
+      leftArm,
+      rightArm,
+      leftForearm: emptyForearm,
+      rightForearm: emptyForearm,
+      leftHand: emptyHand,
+      rightHand: emptyHand,
+      leftLeg,
+      rightLeg,
+      leftShin: emptyShin,
+      rightShin: emptyShin,
+      leftFoot: emptyFoot,
+      rightFoot: emptyFoot,
+      leftHipY: leftLeg.position.y,
+      rightHipY: rightLeg.position.y,
+      leftHipX: leftLeg.position.x,
+      rightHipX: rightLeg.position.x,
+      prop: null,
+      groundOffset: 0,
+      armSwing: 0.86 + rng() * 0.22,
+      stride: 0.92 + rng() * 0.14,
+      headBias: (rng() - 0.5) * 0.14,
+      silhouette,
+      heroDetail: false,
+      footNeutralX: 0,
+      leftFootY: 0,
+      rightFootY: 0,
+      leftFootZ: 0,
+      rightFootZ: 0,
+      leftShoeStripe: null,
+      rightShoeStripe: null,
+      visualVariant,
+    };
+    return root;
+  }
+
   root.scale.set(
     build * visualVariant.bodyWidthScale,
     height,
@@ -1631,21 +1822,22 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     const parcel = addMesh(prop, geometry.parcel, materials.accent, new THREE.Vector3(0, 0, 0));
     parcel.scale.set(1.12, 1.08, 1.08);
     addMesh(prop, geometry.parcelTape, materials.trim, new THREE.Vector3(0, 0.085, 0));
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.14);
     prop.position.set(0.13, -0.48, 0.12);
     rightArm.add(prop);
   } else if (job.prop === 'coffee') {
     prop = new THREE.Group();
-    addMesh(prop, geometry.cup, materials.accent, new THREE.Vector3(0, 0, 0));
+    addMesh(prop, geometry.cup, materials.roleAccent, new THREE.Vector3(0, 0, 0));
+    addMesh(prop, geometry.cupSleeve, materials.accent, new THREE.Vector3(0, -0.008, 0));
     addMesh(prop, geometry.cupLid, materials.trim, new THREE.Vector3(0, 0.071, 0));
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.14);
     prop.position.set(0.03, -0.72, 0.13);
     rightArm.add(prop);
   } else if (job.prop === 'phone') {
     prop = new THREE.Group();
     addMesh(prop, geometry.phone, materials.dark, new THREE.Vector3(0, 0, 0));
     addMesh(prop, geometry.phone, materials.screen, new THREE.Vector3(0, 0, 0.008), new THREE.Vector3(0.74, 0.74, 0.2));
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.1);
     prop.position.set(0, -0.68, 0.16);
     rightArm.add(prop);
   } else if (job.prop === 'camera') {
@@ -1653,7 +1845,7 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     addMesh(prop, geometry.camera, materials.dark, new THREE.Vector3(0, 0, 0));
     const lens = addMesh(prop, geometry.lens, materials.screen, new THREE.Vector3(0, 0, 0.09));
     lens.rotation.x = Math.PI * 0.5;
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.14);
     prop.position.set(0, -0.62, 0.18);
     rightArm.add(prop);
   } else if (job.prop === 'broom') {
@@ -1661,7 +1853,7 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     const handle = addMesh(prop, geometry.broomHandle, materials.accent, new THREE.Vector3(0, 0.43, 0));
     const head = addMesh(prop, geometry.broomHead, materials.dark, new THREE.Vector3(0, 0, 0));
     head.rotation.y = Math.PI * 0.5;
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.08);
     prop.rotation.z = -0.22;
     prop.position.set(0.22, -1.24, 0);
     rightArm.add(prop);
@@ -1674,7 +1866,7 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     prop = new THREE.Group();
     addMesh(prop, geometry.toolHandle, materials.accent, new THREE.Vector3(0, -0.1, 0));
     addMesh(prop, geometry.toolHead, materials.metal, new THREE.Vector3(0, 0.035, 0));
-    prop.scale.setScalar(visualVariant.propScale);
+    prop.scale.setScalar(visualVariant.propScale * 1.08);
     prop.position.set(0.18, -0.62, 0.03);
     rightArm.add(prop);
   }
@@ -1704,6 +1896,8 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
     rightFoot,
     leftHipY: leftLeg.position.y,
     rightHipY: rightLeg.position.y,
+    leftHipX: leftLeg.position.x,
+    rightHipX: rightLeg.position.x,
     prop,
     groundOffset: 0,
     armSwing: 0.86 + rng() * 0.22,
@@ -1727,6 +1921,51 @@ function buildActor(geometry, materialLibrary, rng, job, heroDetail = false, act
   return heroDetail
     ? buildSkinnedHeroActor(geometry, materials, job, root, actorIndex, visualVariant)
     : root;
+}
+
+let sharedHeroAvatarResources = null;
+
+function getHeroAvatarResources() {
+  if (!sharedHeroAvatarResources) {
+    sharedHeroAvatarResources = {
+      geometry: createSharedGeometry(),
+      materials: createMaterialLibrary(),
+    };
+  }
+  return sharedHeroAvatarResources;
+}
+
+/**
+ * Builds a standalone player-grade hero using the same shared skinned rig and
+ * wardrobe stack as the authored close-range crowd. The shared geometry and
+ * material library stay live for the pedestrian pool, so callers must not
+ * dispose them per-actor.
+ */
+export function createHeroPlayerAvatar({
+  name = 'Traveler',
+  jobId = 'commuter',
+  variantSeed = 0,
+  scale = 1,
+} = {}) {
+  const resources = getHeroAvatarResources();
+  const job = JOBS.find((candidate) => candidate.id === jobId) || JOBS[0];
+  const seed = (0x51f00d42 ^ Math.imul(((Number(variantSeed) || 0) >>> 0) + 1, 0x9e3779b1)) >>> 0;
+  const rng = mulberry32(seed);
+  const root = buildActor(
+    resources.geometry,
+    resources.materials,
+    rng,
+    job,
+    true,
+    Number(variantSeed) >>> 0,
+  );
+  root.name = `Player hero rig / ${name}`;
+  root.scale.setScalar(Number.isFinite(scale) && scale > 0 ? scale : 1);
+  root.userData.phase = 0;
+  root.userData.gaitBlend = 0;
+  root.userData.playerRig = true;
+  root.userData.heroDetail = true;
+  return root;
 }
 
 function pointsForPath(path) {
@@ -1762,7 +2001,12 @@ function createContactShadowTexture() {
 function createData(mesh, job, index, rng, hero = false) {
   const roleSpeed = JOB_SPEED_FACTOR[job.id] ?? 1;
   const schedule = roleScheduleFor(job);
-  const laneOffset = (rng() > 0.5 ? 1 : -1) * (0.08 + rng() * 0.12);
+  const preferredLane = ROLE_SIDEWALK_LANES[job.id] ?? 0;
+  const laneOffset = THREE.MathUtils.clamp(
+    preferredLane + (rng() - 0.5) * 0.14,
+    -0.52,
+    0.52,
+  );
   return {
     mesh,
     job,
@@ -1803,6 +2047,19 @@ function createData(mesh, job, index, rng, hero = false) {
     destinationReached: false,
     stopCount: 0,
     index,
+    behaviorTree: createTreeForRole(job.id),
+    blackboard: createBlackboard({
+      roleId: job.id,
+      atCrossing: false,
+      signalClear: false,
+      atDestination: false,
+      preferWork: Boolean(job.prop),
+      handoffReady: false,
+      weather: 'clear',
+      intent: 'walk',
+      animCue: 'commute-stride',
+      urgency: 0.55,
+    }),
   };
 }
 
@@ -1844,6 +2101,12 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   const crowdGrid = new Map();
   const crowdBuckets = Array.from({ length: POOL_SIZE }, () => []);
   const activeCrowdBuckets = [];
+  let focusActive = false;
+  let focusX = 0;
+  let focusZ = 0;
+  let focusRadiusSquared = Infinity;
+  let qaSoloGroupIndex = null;
+  let qaForceWalkIndex = null;
 
   // Enrich each crosswalk with the traffic-signal context it needs to time
   // pedestrian phases realistically. A crossing over the east-west roadway
@@ -1889,11 +2152,34 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   let beautyRouteCursor = 0;
   const system = {};
 
+  function dayNightFactor() {
+    const hour = Number.isFinite(system.dayHour) ? system.dayHour : 7;
+    if (hour >= 6 && hour < 10) return 1;
+    if (hour >= 10 && hour < 17) return 0.72;
+    if (hour >= 17 && hour < 21) return 0.62;
+    if (hour >= 21 && hour < 23) return 0.24;
+    return 0.1;
+  }
+
+  function setDayHour(hour) {
+    const safe = Number(hour);
+    if (!Number.isFinite(safe)) return false;
+    system.dayHour = ((safe % 24) + 24) % 24;
+    return true;
+  }
+
+  function getDayHour() {
+    return Number.isFinite(system.dayHour) ? system.dayHour : 7;
+  }
+
   function scheduleDuration(data, state) {
     const range = data.schedule?.[state] || [1, 3];
     let duration = randomRange(rng, range);
     if (system.weather === 'drizzle' && state === 'idle') duration += 0.35;
     if (system.weather === 'fog' && state !== 'walk') duration += 0.45;
+    const dayFactor = dayNightFactor();
+    if (state === 'idle') duration += (1 - dayFactor) * 1.8;
+    if (state === 'work') duration *= Math.max(0.3, dayFactor);
     return duration;
   }
 
@@ -1938,11 +2224,14 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     data.stopCount += 1;
     data.destinationReached = true;
     const schedule = data.schedule || ROLE_SCHEDULES.commuter;
-    if (data.job.prop && rng() < schedule.workChance) {
+    const dayFactor = dayNightFactor();
+    const workChance = schedule.workChance * Math.max(0.28, dayFactor);
+    const idleChance = schedule.idleChance + (1 - dayFactor) * 0.22;
+    if (data.job.prop && rng() < workChance) {
       setBehaviorState(data, STATE_WORK, null, `work:${schedule.destination}`);
       return true;
     }
-    if (rng() < schedule.idleChance) {
+    if (rng() < idleChance) {
       setBehaviorState(data, STATE_IDLE, null, `idle:${schedule.destination}`);
       return true;
     }
@@ -1962,7 +2251,9 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       : system.weather === 'fog'
         ? (data.job.id === 'tourist' ? 0.86 : 0.93)
         : 1;
-    return data.speed * data.walkPace * gradeFactor * weatherFactor;
+    const dayFactor = dayNightFactor();
+    const timeFactor = 0.82 + dayFactor * 0.18;
+    return data.speed * data.walkPace * gradeFactor * weatherFactor * timeFactor;
   }
 
   function pathGradeFor(data) {
@@ -2092,8 +2383,16 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     data.segment = Math.min(placement.segment, route.length - 2);
     data.direction = orderOnSide % 2 ? -1 : 1;
     data.t = data.direction > 0 ? ratio : 1 - ratio;
-    data.laneOffset = HERO_LANE_OFFSETS[orderOnSide % HERO_LANE_OFFSETS.length]
+    // Scale offset by travel direction so the same world-side (street/center)
+    // is kept when an actor reverses heading on a path segment.
+    const lateralSpread = HERO_LANE_OFFSETS[orderOnSide % HERO_LANE_OFFSETS.length]
       * (sideIndex ? -1 : 1);
+    const rawBeautyLane = (BEAUTY_STREET_BIAS + lateralSpread) * data.direction;
+    data.laneOffset = THREE.MathUtils.clamp(
+      Math.abs(rawBeautyLane),
+      BEAUTY_LANE_CLAMP.min,
+      BEAUTY_LANE_CLAMP.max,
+    ) * Math.sign(rawBeautyLane || 1);
     data.laneOffsetHome = data.laneOffset;
     setDestinationFor(data);
     if (data.job.prop) {
@@ -2157,6 +2456,49 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     return true;
   }
 
+  function assignDestinationCluster(first, second, route, {
+    ratio = 0.86,
+    lateralGap = 0.64,
+    directionSign = 1,
+    state = STATE_WORK,
+    duration = 12,
+    vignette = null,
+  } = {}) {
+    if (!first || !second || !route) return false;
+    const firstPlaced = placeHeroAtRoute(first, route, {
+      ratio,
+      lateralOffset: lateralGap,
+      directionSign,
+      state,
+      duration,
+      vignette: typeof vignette === 'function' ? vignette(first) : vignette,
+    });
+    const secondPlaced = placeHeroAtRoute(second, route, {
+      ratio,
+      lateralOffset: -lateralGap,
+      directionSign,
+      state,
+      duration,
+      vignette: typeof vignette === 'function' ? vignette(second) : vignette,
+    });
+    if (!firstPlaced || !secondPlaced) return false;
+
+    // Both actors face the shared route endpoint. The tiny paired formation
+    // makes a work destination/viewpoint read as a place, not two unrelated
+    // people frozen at arbitrary points on a sidewalk.
+    const endpoint = pointsForPath(route)[directionSign > 0 ? pointsForPath(route).length - 1 : 0];
+    if (endpoint?.isVector3) {
+      for (const data of [first, second]) {
+        const dx = endpoint.x - data.mesh.position.x;
+        const dz = endpoint.z - data.mesh.position.z;
+        if (Math.hypot(dx, dz) < 0.001) continue;
+        data.heading = Math.atan2(dx, dz);
+        data.mesh.rotation.y = data.heading;
+      }
+    }
+    return true;
+  }
+
   function assignMorningHandoff(first, second, route) {
     if (!first || !second || !route) return;
     // A courier pauses at the café edge while the barista checks the order.
@@ -2179,6 +2521,15 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       vignette: 'handoff:coffee counter',
     });
     if (!placedFirst || !placedSecond) return;
+    // The route directions remain opposite for the later rejoin, but the
+    // stationary handoff beat turns both bodies toward the person receiving
+    // the parcel/cup so the exchange reads from an oblique sidewalk camera.
+    for (const [actor, partner] of [[first, second], [second, first]]) {
+      const dx = partner.mesh.position.x - actor.mesh.position.x;
+      const dz = partner.mesh.position.z - actor.mesh.position.z;
+      actor.heading = Math.atan2(dx, dz);
+      actor.mesh.rotation.y = actor.heading;
+    }
     first.interaction = { kind: 'handoff', partner: second, side: 'courier' };
     second.interaction = { kind: 'handoff', partner: first, side: 'barista' };
   }
@@ -2306,7 +2657,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   }
 
   function assignConversationPair(first, second) {
-    const route = beautyRoutes[1] || beautyRoutes[0] || farAvenueRoutes[0] || paths[0];
+    const route = farAvenueRoutes[0] || beautyRoutes[1] || beautyRoutes[0] || paths[0];
     const points = pointsForPath(route);
     if (!first || !second || points.length < 2) return;
     const segment = Math.min(points.length - 2, Math.max(0, Math.floor((points.length - 1) * 0.42)));
@@ -2368,8 +2719,29 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       );
       data.turnIntent = cornerDelta * THREE.MathUtils.smoothstep(data.t, 0.62, 0.98);
     }
-    out.x += direction.z * data.laneOffset;
-    out.z -= direction.x * data.laneOffset;
+    let lane = data.laneOffset;
+    if (data.beautyRoute) {
+      // Beauty corridors put mass on -X; keep a firm street-side band so
+      // background actors never cut the Coit/Embarcadero facade apex.
+      const sign = Math.sign(lane || data.direction || 1) || 1;
+      lane = THREE.MathUtils.clamp(Math.abs(lane), 0.36, 0.56) * sign;
+    }
+    out.x += direction.z * lane;
+    out.z -= direction.x * lane;
+    // Waterfront avenues keep building mass on -X; nudge street-side for
+    // beauty heroes and background actors on the same corridor.
+    if (data.beautyRoute || !data.hero) {
+      out.x += data.beautyRoute ? 0.82 : 0.68;
+    }
+    // Corners shrink the usable sidewalk band — a light street-side push
+    // keeps actors off facade apexes without shoving them onto plazas.
+    const cornerAbs = Math.abs(data.turnIntent || 0);
+    if (cornerAbs > 0.06 && (data.beautyRoute || !data.hero)) {
+      const cornerPush = THREE.MathUtils.clamp(cornerAbs * 0.62, 0.06, 0.24);
+      const curbSign = Math.sign(lane || 1) || 1;
+      out.x += direction.z * cornerPush * curbSign;
+      out.z -= direction.x * cornerPush * curbSign;
+    }
     return true;
   }
 
@@ -2381,7 +2753,8 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       : system.weather === 'drizzle'
         ? 1.04
         : 1;
-    if (rng() >= schedule.crossingChance * weatherFactor) return false;
+    const nightCrossingFactor = 0.3 + dayNightFactor() * 0.7;
+    if (rng() >= schedule.crossingChance * weatherFactor * nightCrossingFactor) return false;
     const crossing = chooseCrossingFor(data);
     const rawEntry = crossing?.entry || crossing?.start || crossing?.from;
     const rawExit = crossing?.exit || crossing?.end || crossing?.to;
@@ -2416,6 +2789,8 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       }
       if (data.beautyRoute) {
         data.direction = -1;
+        data.laneOffset = -data.laneOffset;
+        data.laneOffsetHome = -(data.laneOffsetHome ?? data.laneOffset);
         data.segment = points.length - 2;
         data.t = 0;
         setDestinationFor(data);
@@ -2433,6 +2808,8 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
     if (data.beautyRoute) {
       data.direction = 1;
+      data.laneOffset = -data.laneOffset;
+      data.laneOffsetHome = -(data.laneOffsetHome ?? data.laneOffset);
       data.segment = 0;
       data.t = 0;
       setDestinationFor(data);
@@ -2534,8 +2911,27 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
   }
 
+  function blendBoneRot(bone, x, y, z, weight) {
+    if (weight <= 0) return;
+    if (weight >= 0.999) {
+      bone.rotation.set(x, y, z);
+      return;
+    }
+    bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, x, weight);
+    bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, y, weight);
+    bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, z, weight);
+  }
+
+  function blendScalar(current, target, weight) {
+    return weight <= 0 ? current : THREE.MathUtils.lerp(current, target, weight);
+  }
+
   function resetPose(data) {
     const ud = data.mesh.userData;
+    const leftHipY = ud.leftHipY;
+    const rightHipY = ud.rightHipY;
+    const leftHipX = ud.leftHipX ?? 0;
+    const rightHipX = ud.rightHipX ?? 0;
     ud.rig.position.set(0, 0, 0);
     ud.rig.rotation.set(0, 0, 0);
     ud.leftArm.rotation.set(0, 0, 0);
@@ -2544,8 +2940,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     ud.rightForearm.rotation.set(0, 0, 0);
     ud.leftLeg.rotation.set(0, 0, 0);
     ud.rightLeg.rotation.set(0, 0, 0);
-    ud.leftLeg.position.y = ud.leftHipY;
-    ud.rightLeg.position.y = ud.rightHipY;
+    ud.leftLeg.position.y = leftHipY;
+    ud.rightLeg.position.y = rightHipY;
+    ud.leftLeg.position.x = leftHipX;
+    ud.rightLeg.position.x = rightHipX;
     ud.leftShin.rotation.set(0, 0, 0);
     ud.rightShin.rotation.set(0, 0, 0);
     ud.leftFoot.position.y = ud.leftFootY ?? ud.leftFoot.position.y;
@@ -2569,30 +2967,52 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
 
   function animate(data, elapsed, delta) {
     const ud = data.mesh.userData;
+    const skinnedRig = Boolean(ud.skinnedBody);
     resetPose(data);
     const crossingWait = data.state === STATE_CROSS && data.crossing?.phase === 'wait';
+    const crossingCross = data.state === STATE_CROSS && data.crossing?.phase === 'cross';
     const walking = data.state === STATE_WALK || (data.state === STATE_CROSS && !crossingWait);
     // Blend between locomotion and stillness rather than snapping limbs from
     // a full stride to a statue when a person reaches a curb or work task.
-    // The phase remains continuous, so a restarted walk reads as a push-off.
-    data.gaitBlend = THREE.MathUtils.damp(data.gaitBlend, walking ? 1 : 0, walking ? 11 : 7, delta);
-    const gait = data.gaitBlend;
+    // Ease-in is slightly faster than ease-out so stops feel weighted.
+    const gaitTarget = walking ? 1 : 0;
+    const gaitDamp = gaitTarget > data.gaitBlend ? GAIT_START_DAMP : GAIT_STOP_DAMP;
+    data.gaitBlend = THREE.MathUtils.damp(data.gaitBlend, gaitTarget, gaitDamp, delta);
+    const gait = THREE.MathUtils.smoothstep(data.gaitBlend, 0, 1);
+    const restWeight = 1 - gait;
     const visual = data.visualVariant || ud.visualVariant || {};
     const posePhase = elapsed + (visual.posePhase || 0);
     const gaitCue = GAIT_VISUAL_CUES[visual.gaitStyle] || GAIT_VISUAL_CUES.steady;
-    // Match cadence to a plausible adult step length. A short stance dip,
-    // pelvis shift, foot roll and stronger shoulder counter-rotation make the
-    // close walkers read as weight-bearing instead of skating marionettes.
-    const phase = elapsed * (5.15 + data.speed * 0.58) * data.cadence + data.phase;
+    const btHurry = Number.isFinite(data.btUrgency) ? 0.92 + data.btUrgency * 0.45 : 1;
+    const crossHurry = (crossingCross
+      ? (data.crossing?.hurried ? 1.24 : 1.14)
+      : 1) * (walking ? btHurry : 1);
+    const locomotionSpeed = walking ? moveSpeedFor(data) * crossHurry : 0;
+    const stepLength = Math.max(
+      0.55,
+      ADULT_STEP_LENGTH * ud.stride * gaitCue.stride * (crossingCross ? 1.06 : 1),
+    );
+    // Phase rate tracks world speed so footfall cadence matches translation (~1.1 m/s).
+    const phaseRate = (locomotionSpeed / stepLength) * Math.PI * data.cadence;
+    const phase = elapsed * phaseRate + data.phase;
     const sinPhase = Math.sin(phase);
+    const cosPhase = Math.cos(phase);
     const forwardLeft = Math.max(0, -sinPhase);
     const forwardRight = Math.max(0, sinPhase);
     const stanceLeft = Math.max(0, sinPhase);
     const stanceRight = Math.max(0, -sinPhase);
-    const leftFootLift = forwardLeft * 0.052 * gait;
-    const rightFootLift = forwardRight * 0.052 * gait;
-    const leftFootPlant = Math.pow(Math.max(0, Math.cos(phase)), 8) * gait;
-    const rightFootPlant = Math.pow(Math.max(0, -Math.cos(phase)), 8) * gait;
+    const leftSwing = Math.pow(forwardLeft, 0.82);
+    const rightSwing = Math.pow(forwardRight, 0.82);
+    const leftStance = Math.pow(stanceLeft, 2.4);
+    const rightStance = Math.pow(stanceRight, 2.4);
+    const leftFootLift = leftSwing * 0.072 * gait;
+    const rightFootLift = rightSwing * 0.072 * gait;
+    const leftFootPlant = Math.pow(Math.max(0, cosPhase), 10) * gait;
+    const rightFootPlant = Math.pow(Math.max(0, -cosPhase), 10) * gait;
+    const leftHeelStrike = Math.pow(Math.max(0, Math.cos(phase + 0.12)), 14) * gait;
+    const rightHeelStrike = Math.pow(Math.max(0, -Math.cos(phase + 0.12)), 14) * gait;
+    const leftToeOff = Math.pow(Math.max(0, -Math.sin(phase - 0.18)), 8) * gait;
+    const rightToeOff = Math.pow(Math.max(0, Math.sin(phase - 0.18)), 8) * gait;
     const turnRate = data.turnRate;
     const turnLean = THREE.MathUtils.clamp(
       turnRate * 0.032 + data.turnIntent * 0.045,
@@ -2601,63 +3021,107 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     );
     data.turnRate = THREE.MathUtils.damp(data.turnRate, 0, 8, delta);
     data.stepPulse = Math.max(leftFootPlant, rightFootPlant);
-    const swing = sinPhase * 0.43 * gait * ud.stride * gaitCue.stride;
+    const strideScale = gait * ud.stride * gaitCue.stride * crossHurry;
+    // Background capsules need a stronger swing to read at mid range; heroes
+    // keep a more grounded adult stride.
+    // Readable stride at mid-range without opening a waist hollow.
+    const crowdBoost = ud.heroDetail === false ? 1.42 : 1;
+    const heroBoost = skinnedRig ? 1.12 : 1;
+    const swing = sinPhase * 0.62 * strideScale * crowdBoost * heroBoost;
+    const shoulderTwist = sinPhase * 0.19 * gait;
     const bob = gait > 0.001
-      ? (-Math.pow(Math.abs(Math.cos(phase)), 4) * 0.014 * gait - data.stepPulse * 0.005)
+      ? (-Math.pow(Math.abs(cosPhase), 4) * 0.019 * gait - data.stepPulse * 0.009)
         * gaitCue.bob
-      : Math.sin(elapsed * 1.7 + data.phase) * 0.005;
+      : Math.sin(elapsed * 1.7 + data.phase) * 0.006;
     ud.rig.position.y = bob;
-    // The planted hip takes the weight while the opposite knee rises. This
-    // modest offset is enough to ground the stride without moving a walker
-    // off its navigation path.
-    ud.rig.position.x = -sinPhase * 0.018 * gait;
-    // Keep the rig's shoe line close to the waypoint plane on hills, while
-    // the torso still leans slightly into the grade below.
-    ud.rig.rotation.x = 0.016 * gait
-      + Math.sin(phase * 2) * 0.007 * gait
+    // Pelvis drops over the planted hip while the swing side rises.
+    const hipDrop = 0.032 * gait;
+    ud.rig.position.x = -sinPhase * 0.028 * gait;
+    ud.rig.rotation.x = 0.018 * gait
+      + Math.sin(phase * 2) * 0.01 * gait
       + gaitCue.lean * gait
+      + (crossingCross ? 0.014 * gait : 0)
       - data.grade * 0.055 * gait;
-    ud.rig.rotation.z = -sinPhase * 0.022 * gait - turnLean;
-    ud.leftLeg.position.y += forwardLeft * 0.032 * gait;
-    ud.rightLeg.position.y += forwardRight * 0.032 * gait;
+    ud.rig.rotation.z = -sinPhase * 0.032 * gait - turnLean;
+    const leftHipY = ud.leftHipY;
+    const rightHipY = ud.rightHipY;
+    const leftHipX = ud.leftHipX ?? 0;
+    const rightHipX = ud.rightHipX ?? 0;
+    // Skinned heroes drive gait through bone rotation only — translating hip/
+    // foot bones breaks mesh weights and reads as floating limb fragments.
+    if (!skinnedRig) {
+      // Crowd: keep hip Y nearly pinned — vertical slide reads as detached legs.
+      const hipYAmp = ud.heroDetail === false ? 0.01 : 1;
+      ud.leftLeg.position.y = leftHipY + (leftSwing * 0.032 - leftStance * hipDrop) * gait * hipYAmp;
+      ud.rightLeg.position.y = rightHipY + (rightSwing * 0.032 - rightStance * hipDrop) * gait * hipYAmp;
+      const hipSpread = (ud.heroDetail === false ? 0.02 : 0.014) * gait;
+      ud.leftLeg.position.x = leftHipX + (-rightSwing + leftSwing) * hipSpread - (ud.heroDetail === false ? 0.012 * gait : 0);
+      ud.rightLeg.position.x = rightHipX + (rightSwing - leftSwing) * hipSpread + (ud.heroDetail === false ? 0.012 * gait : 0);
+    }
     ud.leftLeg.rotation.x = swing;
     ud.rightLeg.rotation.x = -swing;
-    ud.leftShin.rotation.x = (forwardLeft * 0.6 - stanceLeft * 0.055) * gait;
-    ud.rightShin.rotation.x = (forwardRight * 0.6 - stanceRight * 0.055) * gait;
-    ud.leftFoot.position.y += leftFootLift;
-    ud.rightFoot.position.y += rightFootLift;
-    ud.leftFoot.position.z += forwardLeft * 0.035 * gait;
-    ud.rightFoot.position.z += forwardRight * 0.035 * gait;
-    if (ud.leftShoeStripe) {
-      ud.leftShoeStripe.position.y += leftFootLift;
-      ud.leftShoeStripe.position.z += forwardLeft * 0.035 * gait;
-    }
-    if (ud.rightShoeStripe) {
-      ud.rightShoeStripe.position.y += rightFootLift;
-      ud.rightShoeStripe.position.z += forwardRight * 0.035 * gait;
+    ud.leftLeg.rotation.y = -sinPhase * 0.055 * gait;
+    ud.rightLeg.rotation.y = sinPhase * 0.055 * gait;
+    const footLiftScale = skinnedRig ? 0.72 : 1;
+    ud.leftShin.rotation.x = (
+      leftSwing * 0.88 * footLiftScale - leftStance * 0.09 + leftHeelStrike * 0.06 - leftToeOff * 0.04
+    ) * gait;
+    ud.rightShin.rotation.x = (
+      rightSwing * 0.88 * footLiftScale - rightStance * 0.09 + rightHeelStrike * 0.06 - rightToeOff * 0.04
+    ) * gait;
+    // Feet advance only during swing; stance holds the shoe line to kill skate.
+    const leftFootZOffset = leftSwing * 0.052 * gait;
+    const rightFootZOffset = rightSwing * 0.052 * gait;
+    if (!skinnedRig) {
+      ud.leftFoot.position.y += leftFootLift * (1 - leftStance * 0.92);
+      ud.rightFoot.position.y += rightFootLift * (1 - rightStance * 0.92);
+      ud.leftFoot.position.z += leftFootZOffset - leftStance * leftFootZOffset * 0.98;
+      ud.rightFoot.position.z += rightFootZOffset - rightStance * rightFootZOffset * 0.98;
+      if (ud.leftShoeStripe) {
+        ud.leftShoeStripe.position.y += leftFootLift * (1 - leftStance * 0.92);
+        ud.leftShoeStripe.position.z += leftFootZOffset - leftStance * leftFootZOffset * 0.98;
+      }
+      if (ud.rightShoeStripe) {
+        ud.rightShoeStripe.position.y += rightFootLift * (1 - rightStance * 0.92);
+        ud.rightShoeStripe.position.z += rightFootZOffset - rightStance * rightFootZOffset * 0.98;
+      }
     }
     const footNeutralX = ud.footNeutralX ?? Math.PI * 0.5;
+    // Skinned foot bones detach when pitch is exaggerated — keep rotation mild.
+    const footPitchScale = skinnedRig ? 0.48 : 1;
     ud.leftFoot.rotation.x = footNeutralX
-      + (forwardLeft * 0.27 - stanceLeft * 0.1 + leftFootPlant * 0.08) * gait
+      + (leftSwing * 0.38 * footPitchScale - leftStance * 0.08 + leftFootPlant * 0.06 + leftHeelStrike * 0.04 - leftToeOff * 0.03) * gait
       - data.grade * 0.025 * gait;
     ud.rightFoot.rotation.x = footNeutralX
-      + (forwardRight * 0.27 - stanceRight * 0.1 + rightFootPlant * 0.08) * gait
+      + (rightSwing * 0.38 * footPitchScale - rightStance * 0.08 + rightFootPlant * 0.06 + rightHeelStrike * 0.04 - rightToeOff * 0.03) * gait
       - data.grade * 0.025 * gait;
-    ud.leftArm.rotation.x = -swing * 0.74 * ud.armSwing * gaitCue.arm;
-    ud.rightArm.rotation.x = swing * 0.74 * ud.armSwing * gaitCue.arm;
-    ud.leftArm.rotation.z = -0.045 - forwardLeft * 0.018 * gait;
-    ud.rightArm.rotation.z = 0.045 + forwardRight * 0.018 * gait;
-    ud.leftForearm.rotation.x = (-0.13 - stanceLeft * 0.16) * gait;
-    ud.rightForearm.rotation.x = (-0.13 - stanceRight * 0.16) * gait;
-    ud.leftForearm.rotation.z = -0.035;
-    ud.rightForearm.rotation.z = 0.035;
-    ud.leftLeg.rotation.z = sinPhase * 0.032 * gait;
-    ud.rightLeg.rotation.z = -sinPhase * 0.032 * gait;
+    const armSwing = swing * 0.92 * ud.armSwing * gaitCue.arm;
+    ud.leftArm.rotation.x = -armSwing;
+    ud.rightArm.rotation.x = armSwing;
+    ud.leftArm.rotation.y = shoulderTwist * 0.52;
+    ud.rightArm.rotation.y = -shoulderTwist * 0.52;
+    ud.leftArm.rotation.z = -0.045 - leftSwing * 0.035 * gait + leftStance * 0.012 * gait;
+    ud.rightArm.rotation.z = 0.045 + rightSwing * 0.035 * gait - rightStance * 0.012 * gait;
+    ud.leftForearm.rotation.x = (-0.13 - leftStance * 0.22 + leftSwing * 0.14) * gait;
+    ud.rightForearm.rotation.x = (-0.13 - rightStance * 0.22 + rightSwing * 0.14) * gait;
+    ud.leftForearm.rotation.z = -0.035 - sinPhase * 0.018 * gait;
+    ud.rightForearm.rotation.z = 0.035 + sinPhase * 0.018 * gait;
+    ud.leftLeg.rotation.z = sinPhase * (ud.heroDetail === false ? 0.095 : 0.048) * gait;
+    ud.rightLeg.rotation.z = -sinPhase * (ud.heroDetail === false ? 0.095 : 0.048) * gait;
+    if (ud.heroDetail === false) {
+      // Background capsules lack shins/feet — exaggerate upper-limb swing so
+      // the stride reads at mid range instead of a stiff T-pose torso.
+      ud.leftArm.rotation.z = -0.12 - leftSwing * 0.08 * gait + leftStance * 0.03 * gait;
+      ud.rightArm.rotation.z = 0.12 + rightSwing * 0.08 * gait - rightStance * 0.03 * gait;
+      // Extra sagittal pitch so rear/¾ views show clear L/R separation.
+      ud.leftLeg.rotation.x *= 1.12;
+      ud.rightLeg.rotation.x *= 1.12;
+    }
     ud.body.rotation.z = gait > 0.001
-      ? -sinPhase * 0.022 * gait
-      : Math.sin(elapsed + data.phase) * 0.012;
+      ? -sinPhase * 0.032 * gait
+      : Math.sin(elapsed + data.phase) * 0.014;
     ud.body.rotation.x += data.grade * 0.12 * gait;
-    ud.body.rotation.y = -sinPhase * 0.06 * gait + turnLean * 0.32 + data.turnIntent * 0.035 * gait;
+    ud.body.rotation.y = -shoulderTwist * 0.88 + turnLean * 0.32 + data.turnIntent * 0.035 * gait;
     ud.headPivot.rotation.y = ud.headBias
       + Math.sin(elapsed * 0.55 + data.gazePhase) * 0.045 * gait
       + turnLean * 0.8
@@ -2717,139 +3181,208 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       }
     }
 
-    if (data.state === STATE_IDLE) {
+    if (data.state === STATE_IDLE && restWeight > 0.001) {
+      const rw = restWeight;
       const idleSway = Math.sin(elapsed * 0.7 + data.phase);
-      ud.rig.position.x = idleSway * 0.012;
-      ud.rig.rotation.z = -idleSway * 0.016;
-      ud.leftLeg.position.y += Math.max(0, -idleSway) * 0.006;
-      ud.rightLeg.position.y += Math.max(0, idleSway) * 0.006;
-      ud.leftArm.rotation.x = -0.055;
-      ud.rightArm.rotation.x = 0.035;
-      ud.leftForearm.rotation.x = -0.11;
-      ud.rightForearm.rotation.x = -0.08;
-      ud.headPivot.rotation.y = ud.headBias + Math.sin(elapsed * 0.65 + data.phase) * 0.2;
-      ud.body.rotation.x = Math.sin(elapsed * 0.5 + data.phase) * 0.018;
-      ud.body.rotation.z = idleSway * 0.014;
+      const idleBreath = Math.sin(elapsed * 1.35 + data.phase * 0.5);
+      ud.rig.position.x = blendScalar(ud.rig.position.x, idleSway * 0.014, rw);
+      ud.rig.position.y = blendScalar(ud.rig.position.y, idleBreath * 0.004, rw);
+      ud.rig.rotation.z = blendScalar(ud.rig.rotation.z, -idleSway * 0.018, rw);
+      if (!skinnedRig) {
+        ud.leftLeg.position.y = blendScalar(
+          ud.leftLeg.position.y,
+          ud.leftLeg.position.y + Math.max(0, -idleSway) * 0.006,
+          rw,
+        );
+        ud.rightLeg.position.y = blendScalar(
+          ud.rightLeg.position.y,
+          ud.rightLeg.position.y + Math.max(0, idleSway) * 0.006,
+          rw,
+        );
+      }
+      blendBoneRot(ud.leftArm, -0.055, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+      blendBoneRot(ud.rightArm, 0.035, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+      blendBoneRot(ud.leftForearm, -0.11, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+      blendBoneRot(ud.rightForearm, -0.08, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+      ud.headPivot.rotation.y = blendScalar(
+        ud.headPivot.rotation.y,
+        ud.headBias + Math.sin(elapsed * 0.65 + data.phase) * 0.2,
+        rw,
+      );
+      ud.body.rotation.x = blendScalar(ud.body.rotation.x, Math.sin(elapsed * 0.5 + data.phase) * 0.018, rw);
+      ud.body.rotation.z = blendScalar(ud.body.rotation.z, idleSway * 0.014, rw);
       if (data.vignette === 'conversation') {
         const gesture = Math.max(0, Math.sin(elapsed * 1.35 + data.phase));
         const listener = data.index % 2 === 1;
-        ud.headPivot.rotation.y = listener ? -0.08 : 0.08;
-        ud.body.rotation.y = listener ? -0.035 : 0.035;
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, listener ? -0.08 : 0.08, rw);
+        ud.body.rotation.y = blendScalar(ud.body.rotation.y, listener ? -0.035 : 0.035, rw);
         if (!listener) {
-          ud.rightArm.rotation.x = -0.34 - gesture * 0.42;
-          ud.rightForearm.rotation.x = -0.42 - gesture * 0.36;
-          ud.rightArm.rotation.z = -0.18;
+          blendBoneRot(
+            ud.rightArm,
+            -0.34 - gesture * 0.42,
+            ud.rightArm.rotation.y,
+            -0.18,
+            rw,
+          );
+          blendBoneRot(
+            ud.rightForearm,
+            -0.42 - gesture * 0.36,
+            ud.rightForearm.rotation.y,
+            ud.rightForearm.rotation.z,
+            rw,
+          );
         } else {
-          ud.leftArm.rotation.x = -0.22 - gesture * 0.18;
-          ud.leftForearm.rotation.x = -0.3;
-          ud.headPivot.rotation.x = Math.sin(elapsed * 0.78 + data.phase) * 0.06;
+          blendBoneRot(
+            ud.leftArm,
+            -0.22 - gesture * 0.18,
+            ud.leftArm.rotation.y,
+            ud.leftArm.rotation.z,
+            rw,
+          );
+          blendBoneRot(ud.leftForearm, -0.3, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+          ud.headPivot.rotation.x = blendScalar(
+            ud.headPivot.rotation.x,
+            Math.sin(elapsed * 0.78 + data.phase) * 0.06,
+            rw,
+          );
         }
       } else if (data.job.id === 'phone') {
         const phoneCheck = 0.5 + Math.sin(posePhase * 0.72) * 0.5;
-        ud.rightArm.rotation.x = -0.62 - phoneCheck * 0.14;
-        ud.rightForearm.rotation.x = -0.62 - phoneCheck * 0.18;
-        ud.rightArm.rotation.z = 0.08;
-        ud.headPivot.rotation.x = 0.16 + phoneCheck * 0.08;
-        ud.headPivot.rotation.y = ud.headBias + Math.sin(posePhase * 0.36) * 0.08;
+        blendBoneRot(ud.rightArm, -0.62 - phoneCheck * 0.14, ud.rightArm.rotation.y, 0.08, rw);
+        blendBoneRot(ud.rightForearm, -0.62 - phoneCheck * 0.18, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        ud.headPivot.rotation.x = blendScalar(ud.headPivot.rotation.x, 0.16 + phoneCheck * 0.08, rw);
+        ud.headPivot.rotation.y = blendScalar(
+          ud.headPivot.rotation.y,
+          ud.headBias + Math.sin(posePhase * 0.36) * 0.08,
+          rw,
+        );
       } else if (data.job.id === 'tourist') {
         const sightseeing = Math.sin(posePhase * 0.36);
-        ud.headPivot.rotation.y = ud.headBias + sightseeing * 0.3;
-        ud.body.rotation.y = sightseeing * 0.06;
-        if (data.job.prop === 'camera' && sightseeing > 0.35) {
-          ud.rightArm.rotation.x = -0.74;
-          ud.rightForearm.rotation.x = -0.68;
-          ud.rightArm.rotation.z = 0.1;
-          ud.headPivot.rotation.x = -0.06;
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, ud.headBias + sightseeing * 0.3, rw);
+        ud.body.rotation.y = blendScalar(ud.body.rotation.y, sightseeing * 0.06, rw);
+        if (data.job.prop === 'camera') {
+          // A viewpoint pause alternates between framing the shot and taking
+          // in the skyline. Keeping the camera raised for most of the beat
+          // makes the stop legible before the actor starts walking again.
+          const cameraMoment = 0.5 + Math.sin(posePhase * 0.36 + 0.8) * 0.5;
+          blendBoneRot(ud.rightArm, -0.62 - cameraMoment * 0.2, ud.rightArm.rotation.y, 0.1, rw);
+          blendBoneRot(ud.rightForearm, -0.6 - cameraMoment * 0.16, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+          ud.headPivot.rotation.x = blendScalar(ud.headPivot.rotation.x, -0.02 - cameraMoment * 0.06, rw);
         }
       } else if (data.job.id === 'barista') {
-        ud.rightArm.rotation.x = -0.52;
-        ud.rightForearm.rotation.x = -0.76;
-        ud.leftArm.rotation.x = -0.12 + Math.sin(posePhase * 0.68) * 0.08;
-        ud.leftForearm.rotation.x = -0.22;
-        ud.body.rotation.z = Math.sin(posePhase * 0.42) * 0.04;
+        blendBoneRot(ud.rightArm, -0.52, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.76, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(
+          ud.leftArm,
+          -0.12 + Math.sin(posePhase * 0.68) * 0.08,
+          ud.leftArm.rotation.y,
+          ud.leftArm.rotation.z,
+          rw,
+        );
+        blendBoneRot(ud.leftForearm, -0.22, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.body.rotation.z = blendScalar(ud.body.rotation.z, Math.sin(posePhase * 0.42) * 0.04, rw);
       } else if (data.job.id === 'courier') {
         const parcelCheck = Math.max(0, Math.sin(posePhase * 0.52));
-        ud.rightArm.rotation.x = -0.28 - parcelCheck * 0.12;
-        ud.rightForearm.rotation.x = -0.5 - parcelCheck * 0.16;
-        ud.headPivot.rotation.y = ud.headBias + parcelCheck * 0.1;
-        ud.body.rotation.z = -0.028;
+        blendBoneRot(ud.rightArm, -0.28 - parcelCheck * 0.12, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.5 - parcelCheck * 0.16, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, ud.headBias + parcelCheck * 0.1, rw);
+        ud.body.rotation.z = blendScalar(ud.body.rotation.z, -0.028, rw);
       } else if (data.job.id === 'cleaner') {
-        ud.body.rotation.x = 0.06;
-        ud.rightArm.rotation.x = -0.34;
-        ud.rightForearm.rotation.x = -0.4;
-        ud.leftArm.rotation.x = -0.14;
-        ud.leftForearm.rotation.x = -0.24;
-        ud.rig.rotation.z = 0.024;
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, 0.06, rw);
+        blendBoneRot(ud.rightArm, -0.34, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.4, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(ud.leftArm, -0.14, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+        blendBoneRot(ud.leftForearm, -0.24, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.rig.rotation.z = blendScalar(ud.rig.rotation.z, 0.024, rw);
       } else if (data.job.id === 'worker') {
         const toolCheck = Math.max(0, Math.sin(posePhase * 0.56));
-        ud.body.rotation.x = 0.045;
-        ud.rightArm.rotation.x = -0.38 - toolCheck * 0.16;
-        ud.rightForearm.rotation.x = -0.4 - toolCheck * 0.14;
-        ud.headPivot.rotation.y = ud.headBias + toolCheck * 0.1;
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, 0.045, rw);
+        blendBoneRot(ud.rightArm, -0.38 - toolCheck * 0.16, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.4 - toolCheck * 0.14, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, ud.headBias + toolCheck * 0.1, rw);
       }
-    } else if (data.state === STATE_WORK) {
+    } else if (data.state === STATE_WORK && restWeight > 0.001) {
+      const rw = restWeight;
       const workPhase = elapsed * 2.2 + data.phase;
-      ud.headPivot.rotation.x = 0.1 + Math.sin(workPhase * 0.55) * 0.08;
+      ud.headPivot.rotation.x = blendScalar(ud.headPivot.rotation.x, 0.1 + Math.sin(workPhase * 0.55) * 0.08, rw);
       if (data.job.id === 'cleaner') {
-        ud.body.rotation.x = 0.16;
-        ud.rightArm.rotation.x = -0.52 + Math.sin(workPhase) * 0.3;
-        ud.rightArm.rotation.z = -0.26;
-        ud.rightForearm.rotation.x = -0.3;
-        ud.leftArm.rotation.x = -0.38 - Math.sin(workPhase) * 0.24;
-        ud.leftForearm.rotation.x = -0.46;
-        ud.leftArm.rotation.z = 0.12;
-        ud.rig.rotation.z = 0.035;
-        ud.rig.rotation.y = Math.sin(workPhase) * 0.12;
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, 0.16, rw);
+        blendBoneRot(ud.rightArm, -0.52 + Math.sin(workPhase) * 0.3, ud.rightArm.rotation.y, -0.26, rw);
+        blendBoneRot(ud.rightForearm, -0.3, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(ud.leftArm, -0.38 - Math.sin(workPhase) * 0.24, ud.leftArm.rotation.y, 0.12, rw);
+        blendBoneRot(ud.leftForearm, -0.46, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.rig.rotation.z = blendScalar(ud.rig.rotation.z, 0.035, rw);
+        ud.rig.rotation.y = blendScalar(ud.rig.rotation.y, Math.sin(workPhase) * 0.12, rw);
       } else if (data.job.id === 'tourist') {
-        ud.leftArm.rotation.x = -1.08;
-        ud.rightArm.rotation.x = -1.18;
-        ud.leftArm.rotation.z = -0.18;
-        ud.rightArm.rotation.z = 0.14;
-        ud.leftForearm.rotation.x = -0.56;
-        ud.rightForearm.rotation.x = -0.7;
-        ud.body.rotation.z = 0.028;
-        ud.headPivot.rotation.x = -0.08;
+        blendBoneRot(ud.leftArm, -1.08, ud.leftArm.rotation.y, -0.18, rw);
+        blendBoneRot(ud.rightArm, -1.18, ud.rightArm.rotation.y, 0.14, rw);
+        blendBoneRot(ud.leftForearm, -0.56, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.7, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        ud.body.rotation.z = blendScalar(ud.body.rotation.z, 0.028, rw);
+        ud.headPivot.rotation.x = blendScalar(ud.headPivot.rotation.x, -0.08, rw);
       } else if (data.job.id === 'phone') {
-        ud.rightArm.rotation.x = -0.88;
-        ud.rightForearm.rotation.x = -0.72;
-        ud.rightArm.rotation.z = 0.09;
-        ud.leftArm.rotation.x = 0.08;
-        ud.leftForearm.rotation.x = -0.18;
-        ud.headPivot.rotation.x = 0.28;
-        ud.headPivot.rotation.y = Math.sin(workPhase * 0.35) * 0.08;
+        blendBoneRot(ud.rightArm, -0.88, ud.rightArm.rotation.y, 0.09, rw);
+        blendBoneRot(ud.rightForearm, -0.72, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(ud.leftArm, 0.08, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+        blendBoneRot(ud.leftForearm, -0.18, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.headPivot.rotation.x = blendScalar(ud.headPivot.rotation.x, 0.28, rw);
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, Math.sin(workPhase * 0.35) * 0.08, rw);
       } else if (data.job.id === 'barista') {
         // Coffee is carried near the chest, with a small weight shift and
         // occasional glance rather than an idle arm waving through the cup.
-        ud.rightArm.rotation.x = -0.64;
-        ud.rightForearm.rotation.x = -0.82;
-        ud.leftArm.rotation.x = -0.3 + Math.sin(workPhase * 0.75) * 0.08;
-        ud.leftForearm.rotation.x = -0.32;
-        ud.body.rotation.z = Math.sin(workPhase * 0.5) * 0.035;
-        ud.headPivot.rotation.y = Math.sin(workPhase * 0.36) * 0.12;
+        blendBoneRot(ud.rightArm, -0.64, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.82, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(
+          ud.leftArm,
+          -0.3 + Math.sin(workPhase * 0.75) * 0.08,
+          ud.leftArm.rotation.y,
+          ud.leftArm.rotation.z,
+          rw,
+        );
+        blendBoneRot(ud.leftForearm, -0.32, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.body.rotation.z = blendScalar(ud.body.rotation.z, Math.sin(workPhase * 0.5) * 0.035, rw);
+        ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, Math.sin(workPhase * 0.36) * 0.12, rw);
       } else if (data.job.id === 'courier') {
-        ud.rightArm.rotation.x = -0.36;
-        ud.rightForearm.rotation.x = -0.82;
-        ud.rightArm.rotation.z = 0.11;
-        ud.leftArm.rotation.x = -0.42;
-        ud.leftForearm.rotation.x = -0.7;
-        ud.body.rotation.x = 0.05;
-        ud.body.rotation.z = -0.024;
+        blendBoneRot(ud.rightArm, -0.36, ud.rightArm.rotation.y, 0.11, rw);
+        blendBoneRot(ud.rightForearm, -0.82, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(ud.leftArm, -0.42, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+        blendBoneRot(ud.leftForearm, -0.7, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, 0.05, rw);
+        ud.body.rotation.z = blendScalar(ud.body.rotation.z, -0.024, rw);
       } else if (data.job.id === 'worker') {
-        ud.body.rotation.x = 0.09;
-        ud.rightArm.rotation.x = -0.68 + Math.sin(workPhase) * 0.22;
-        ud.rightForearm.rotation.x = -0.48;
-        ud.leftArm.rotation.x = -0.3;
-        ud.rig.rotation.y = Math.sin(workPhase * 0.42) * 0.06;
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, 0.09, rw);
+        blendBoneRot(ud.rightArm, -0.68 + Math.sin(workPhase) * 0.22, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.48, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(ud.leftArm, -0.3, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+        ud.rig.rotation.y = blendScalar(ud.rig.rotation.y, Math.sin(workPhase * 0.42) * 0.06, rw);
       } else {
-        ud.rightArm.rotation.x = -0.7 + Math.sin(workPhase) * 0.25;
-        ud.rightForearm.rotation.x = -0.48;
-        ud.leftArm.rotation.x = -0.18 + Math.sin(workPhase + 0.8) * 0.14;
-        ud.body.rotation.x = Math.sin(workPhase * 0.5) * 0.025;
+        blendBoneRot(ud.rightArm, -0.7 + Math.sin(workPhase) * 0.25, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+        blendBoneRot(ud.rightForearm, -0.48, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+        blendBoneRot(
+          ud.leftArm,
+          -0.18 + Math.sin(workPhase + 0.8) * 0.14,
+          ud.leftArm.rotation.y,
+          ud.leftArm.rotation.z,
+          rw,
+        );
+        ud.body.rotation.x = blendScalar(ud.body.rotation.x, Math.sin(workPhase * 0.5) * 0.025, rw);
       }
-    } else if (crossingWait) {
+    } else if (crossingWait && restWeight > 0.001) {
+      const rw = restWeight;
       const glance = Math.sin(elapsed * 1.8 + data.phase);
-      ud.headPivot.rotation.y = glance > 0 ? 0.62 : -0.62;
-      ud.body.rotation.y = ud.headPivot.rotation.y * 0.12;
+      ud.headPivot.rotation.y = blendScalar(ud.headPivot.rotation.y, glance > 0 ? 0.62 : -0.62, rw);
+      ud.body.rotation.y = blendScalar(ud.body.rotation.y, ud.headPivot.rotation.y * 0.12, rw);
+      blendBoneRot(ud.leftArm, -0.08, ud.leftArm.rotation.y, ud.leftArm.rotation.z, rw);
+      blendBoneRot(ud.rightArm, 0.04, ud.rightArm.rotation.y, ud.rightArm.rotation.z, rw);
+      blendBoneRot(ud.leftForearm, -0.1, ud.leftForearm.rotation.y, ud.leftForearm.rotation.z, rw);
+      blendBoneRot(ud.rightForearm, -0.12, ud.rightForearm.rotation.y, ud.rightForearm.rotation.z, rw);
+    } else if (crossingCross) {
+      // Forward brace and alert gaze on top of the hurried cross gait.
+      ud.body.rotation.x += 0.022 * gait;
+      ud.headPivot.rotation.y += Math.sin(elapsed * 0.8 + data.gazePhase) * 0.07 * gait;
+      if (data.crossing?.hurried) {
+        ud.body.rotation.y += Math.sin(elapsed * 2.4 + data.phase) * 0.04 * gait;
+      }
     }
 
     // Stationary people still carry their weight. A tiny hip settle, planted
@@ -2859,8 +3392,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       const weightPhase = posePhase * (data.state === STATE_WORK ? 0.42 : 0.55) + data.phase;
       const weightShift = Math.sin(weightPhase);
       ud.rig.position.x += weightShift * 0.008;
-      ud.leftLeg.position.y += Math.max(0, -weightShift) * 0.004;
-      ud.rightLeg.position.y += Math.max(0, weightShift) * 0.004;
+      if (!skinnedRig) {
+        ud.leftLeg.position.y += Math.max(0, -weightShift) * 0.004;
+        ud.rightLeg.position.y += Math.max(0, weightShift) * 0.004;
+      }
       ud.leftFoot.rotation.z += weightShift * 0.014;
       ud.rightFoot.rotation.z += weightShift * 0.014;
     }
@@ -2887,14 +3422,21 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       ud.body.rotation.y = THREE.MathUtils.clamp(localFacing * 0.22, -0.2, 0.2);
       if (data.interaction.kind === 'handoff') {
         const handoffBeat = 0.5 + Math.sin(posePhase * 1.25) * 0.5;
+        const partnerSide = Math.sign(
+          Math.cos(data.mesh.rotation.y) * partnerDeltaX
+            - Math.sin(data.mesh.rotation.y) * partnerDeltaZ,
+        ) || 1;
         if (data.interaction.side === 'courier') {
           ud.rightArm.rotation.x = -0.34 - handoffBeat * 0.14;
           ud.rightForearm.rotation.x = -0.74 - handoffBeat * 0.12;
-          ud.rightArm.rotation.z = 0.1;
+          ud.rightArm.rotation.z = 0.1 - partnerSide * 0.18;
+          ud.rightForearm.rotation.z = -partnerSide * 0.12;
           ud.body.rotation.x += 0.025;
         } else {
           ud.rightArm.rotation.x = -0.48 - handoffBeat * 0.12;
           ud.rightForearm.rotation.x = -0.7 - handoffBeat * 0.1;
+          ud.rightArm.rotation.z = 0.08 - partnerSide * 0.18;
+          ud.rightForearm.rotation.z = -partnerSide * 0.12;
           ud.leftArm.rotation.x = -0.18 - handoffBeat * 0.12;
           ud.leftForearm.rotation.x = -0.28;
           ud.body.rotation.z += 0.018;
@@ -2965,14 +3507,34 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   const morningRoute = beautyRoutes[0] || farAvenueRoutes[0] || paths[0];
   const secondaryMorningRoute = beautyRoutes[1] || farAvenueRoutes[1] || morningRoute;
   assignMorningHandoff(pool[2], pool[4], morningRoute);
-  placeHeroAtRoute(pool[1], secondaryMorningRoute, {
-    ratio: 0.7,
-    lateralOffset: 0.42,
-    directionSign: -1,
-    state: STATE_IDLE,
-    duration: 11.5,
-    vignette: 'dwelling:viewpoint',
+  assignDestinationCluster(pool[0], pool[5], secondaryMorningRoute, {
+    ratio: 0.88,
+    lateralGap: 0.66,
+    directionSign: 1,
+    state: STATE_WORK,
+    duration: 12.5,
+    vignette: (data) => `work:${data.destinationKind}`,
   });
+  const touristClusterMember = pool.find((data, index) => (
+    index >= HERO_ACTORS && data.job.id === 'tourist'
+  ));
+  if (!assignDestinationCluster(pool[1], touristClusterMember, secondaryMorningRoute, {
+    ratio: 0.76,
+    lateralGap: 0.58,
+    directionSign: 1,
+    state: STATE_IDLE,
+    duration: 13.5,
+    vignette: 'viewpoint:pause',
+  })) {
+    placeHeroAtRoute(pool[1], secondaryMorningRoute, {
+      ratio: 0.7,
+      lateralOffset: 0.42,
+      directionSign: -1,
+      state: STATE_IDLE,
+      duration: 11.5,
+      vignette: 'dwelling:viewpoint',
+    });
+  }
   placeHeroAtRoute(pool[3], morningRoute, {
     ratio: 0.34,
     lateralOffset: -0.42,
@@ -2982,13 +3544,81 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     vignette: 'dwelling:transit stop',
   });
 
+  function occupiesCableCarAperture(data) {
+    const { x, z } = data.mesh.position;
+    return x > 18.5 && x < 45.5 && z > 4.5 && z < 33.5;
+  }
+
+  function keepOutOfCableCarAperture(data) {
+    if (!occupiesCableCarAperture(data)) return false;
+    const farRoute = farAvenueRoutes[0] || farAvenueRoutes[1];
+    if (!farRoute) return false;
+    assignBeautyRoute(data, farRoute, data.index, data.index % 2);
+    return true;
+  }
+
+  function syncNpcBlackboard(data) {
+    const bb = data.blackboard;
+    if (!bb) return;
+    bb.roleId = data.job.id;
+    bb.weather = system.weather;
+    bb.atCrossing = data.state === STATE_CROSS;
+    bb.signalClear = data.state === STATE_CROSS
+      && data.crossing?.phase === 'cross';
+    bb.atDestination = data.state === STATE_IDLE
+      || data.state === STATE_WORK
+      || data.destinationReached;
+    bb.preferWork = data.state === STATE_WORK
+      || (Boolean(data.job.prop) && data.destinationReached && data.state !== STATE_IDLE);
+    bb.handoffReady = data.interaction?.kind === 'handoff';
+    bb.vignette = data.vignette;
+    bb.state = data.state;
+  }
+
+  function tickNpcBehavior(data, delta) {
+    if (!data.behaviorTree || !data.blackboard) return;
+    syncNpcBlackboard(data);
+    tickBehaviorTree(data.behaviorTree, data.blackboard, delta);
+    const intent = data.blackboard.intent;
+    const urgency = Number.isFinite(data.blackboard.urgency) ? data.blackboard.urgency : 0.55;
+    data.btIntent = intent;
+    data.btAnimCue = data.blackboard.animCue;
+    data.btUrgency = urgency;
+    // Urgency from the role tree modulates walk pace without fighting navigation.
+    if (intent === 'walk' || intent === 'cross') {
+      data.walkPace = THREE.MathUtils.damp(
+        data.walkPace,
+        THREE.MathUtils.clamp(0.82 + urgency * 0.55, 0.78, 1.28),
+        4,
+        delta,
+      );
+    }
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
     for (const data of pool) {
       if (!data.path) continue;
+      if (keepOutOfCableCarAperture(data)) continue;
       const points = pointsForPath(data.path);
       if (!points || points.length < 2) continue;
+
+      // Apply QA force-walk before navigation so the subject actually advances
+      // this frame instead of animating a frozen idle stance.
+      if (qaForceWalkIndex != null && (
+        data.index === qaForceWalkIndex
+        || group.children.indexOf(data.mesh) === qaForceWalkIndex
+      )) {
+        if (data.state !== STATE_WALK && data.state !== STATE_CROSS) {
+          setBehaviorState(data, STATE_WALK, 20, 'qa:force-walk');
+        }
+        data.destinationReached = false;
+        data.gaitBlend = 1;
+        data.timer = Math.max(data.timer, 10);
+        data.speed = Math.max(data.speed, WALK_SPEED * 0.92);
+        data.walkPace = Math.max(data.walkPace || 1, 1);
+      }
 
       let transferStep = false;
       if (data.transfer) {
@@ -3035,11 +3665,32 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
           turnToward(data, desired, delta, 10);
         }
       }
+      // QA harness: keep force-walk flags hot; BT skipped while forced.
+      if (qaForceWalkIndex != null && (
+        data.index === qaForceWalkIndex
+        || group.children.indexOf(data.mesh) === qaForceWalkIndex
+      )) {
+        // already applied pre-nav
+      } else {
+        tickNpcBehavior(data, delta);
+      }
       animate(data, elapsed, delta);
+
+      const soloMesh = qaSoloGroupIndex != null ? group.children[qaSoloGroupIndex] : null;
+      const visible = soloMesh
+        ? data.mesh === soloMesh
+        : !focusActive
+          || (data.mesh.position.x - focusX) ** 2
+            + (data.mesh.position.z - focusZ) ** 2 <= focusRadiusSquared;
+      data.mesh.visible = visible;
 
       shadowPosition.set(data.mesh.position.x, data.mesh.position.y + 0.012, data.mesh.position.z);
       const strideShadow = 1 + Math.abs(Math.sin(elapsed * 5.7 * data.cadence + data.phase)) * data.gaitBlend * 0.08;
-      shadowScale.set(data.mesh.scale.x * 0.92 * strideShadow, 1, data.mesh.scale.z * 0.5);
+      shadowScale.set(
+        visible ? data.mesh.scale.x * 0.92 * strideShadow : 0,
+        visible ? 1 : 0,
+        visible ? data.mesh.scale.z * 0.5 : 0,
+      );
       shadowMatrix.compose(shadowPosition, shadowQuaternion, shadowScale);
       contactShadows.setMatrixAt(data.index, shadowMatrix);
     }
@@ -3150,22 +3801,297 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     contactShadows.instanceMatrix.needsUpdate = true;
   }
 
+  function residentIdentityFor(data) {
+    const featured = FEATURED_RESIDENTS[data.index];
+    if (featured?.actorIndex === data.index) return featured;
+    const serial = String(data.index + 1).padStart(2, '0');
+    return { id: `resident-${serial}`, label: `Resident ${serial}` };
+  }
+
+  function residentDestinationFor(data) {
+    return data.destinationKind || data.schedule?.destination || 'sidewalk stop';
+  }
+
+  function residentActivityFor(data) {
+    if (data.state === STATE_CROSS) {
+      if (data.crossing?.phase === 'wait') return 'waiting to cross';
+      if (data.crossing?.phase === 'cross') return 'crossing';
+      return 'approaching a crossing';
+    }
+    if (data.state === STATE_WORK) return 'working';
+    if (data.state === STATE_IDLE) {
+      return data.interaction?.kind === 'conversation' ? 'in conversation' : 'paused';
+    }
+    return 'walking';
+  }
+
+  function residentActionFor(data, destination) {
+    const interaction = data.interaction;
+    if (interaction?.kind === 'conversation') {
+      return interaction.side === 'listener' ? 'listening to a neighbor' : 'chatting with a neighbor';
+    }
+    if (interaction?.kind === 'handoff') {
+      return interaction.side === 'courier' ? 'handing over a parcel' : 'receiving a delivery';
+    }
+    if (data.state === STATE_CROSS) {
+      if (data.crossing?.phase === 'wait') return 'checking the signal';
+      if (data.crossing?.phase === 'cross') return `crossing toward ${destination}`;
+      return `approaching the crosswalk to ${destination}`;
+    }
+    if (data.state === STATE_WORK) {
+      switch (data.job.id) {
+        case 'courier': return 'making a delivery';
+        case 'barista': return 'working the coffee counter';
+        case 'worker': return 'working the job site';
+        case 'tourist': return 'taking a viewpoint photo';
+        case 'cleaner': return 'sweeping the cleanup zone';
+        case 'phone': return 'checking the phone';
+        default: return `working at ${destination}`;
+      }
+    }
+    if (data.state === STATE_IDLE) {
+      if (data.job.id === 'tourist') return 'taking in the view';
+      if (data.job.id === 'phone') return 'checking the phone';
+      return `pausing at ${destination}`;
+    }
+    switch (data.job.prop) {
+      case 'parcel': return 'walking with a parcel';
+      case 'coffee': return 'carrying coffee';
+      case 'camera': return `walking toward ${destination}`;
+      case 'broom': return 'heading to the cleanup zone';
+      case 'phone': return 'walking while checking the phone';
+      case 'worker': return 'heading to the job site';
+      default: return `heading toward ${destination}`;
+    }
+  }
+
+  // These are operational needs inferred from the live schedule, not claims
+  // about private motives. Keeping them destination-based makes the snapshot
+  // useful without inventing resident simulation that does not exist.
+  function residentNeedFor(data, destination) {
+    if (data.interaction?.kind === 'conversation') return 'a brief exchange with a neighbor';
+    if (data.interaction?.kind === 'handoff') {
+      return data.interaction.side === 'courier'
+        ? 'to complete the delivery handoff'
+        : 'to receive the delivery';
+    }
+    if (data.state === STATE_CROSS) {
+      if (data.crossing?.phase === 'wait') return `a safe crossing to ${destination}`;
+      if (data.crossing?.phase === 'cross') return 'to clear the crossing safely';
+      return 'to reach the crosswalk';
+    }
+    if (data.state === STATE_WORK) return `to finish at ${destination}`;
+    if (data.state === STATE_IDLE) return `a short pause at ${destination}`;
+    return `to reach ${destination}`;
+  }
+
+  function residentIntentFor(data, destination) {
+    if (data.interaction?.kind === 'conversation') {
+      return data.interaction.side === 'listener'
+        ? 'listen before moving on'
+        : 'share a quick update';
+    }
+    if (data.interaction?.kind === 'handoff') {
+      return data.interaction.side === 'courier'
+        ? 'get the parcel to the counter'
+        : 'get the order ready for the next stop';
+    }
+    if (data.state === STATE_CROSS) {
+      if (data.crossing?.phase === 'wait') return 'wait for a walk signal';
+      if (data.crossing?.phase === 'cross') return 'get across before clearance';
+      return 'approach the crosswalk';
+    }
+    if (data.state === STATE_WORK) return `work at ${destination}`;
+    if (data.state === STATE_IDLE) return `pause, then continue toward ${destination}`;
+    return `continue toward ${destination}`;
+  }
+
+  // "Mood" is visible-mode shorthand, not an emotional diagnosis. "Choice"
+  // names the state-machine branch currently being executed, so neither field
+  // invents private preferences that the simulation does not model.
+  function residentMoodAndChoiceFor(data) {
+    if (data.interaction?.kind === 'conversation') {
+      return {
+        mood: 'social',
+        choice: data.interaction.side === 'listener' ? 'listen' : 'speak',
+      };
+    }
+    if (data.interaction?.kind === 'handoff') {
+      return {
+        mood: 'engaged',
+        choice: data.interaction.side === 'courier'
+          ? 'hand over the parcel'
+          : 'receive the delivery',
+      };
+    }
+    if (data.state === STATE_CROSS) {
+      if (data.crossing?.phase === 'wait') {
+        return { mood: 'watchful', choice: 'wait for the walk signal' };
+      }
+      if (data.crossing?.phase === 'cross') {
+        return {
+          mood: data.crossing.hurried ? 'hurrying' : 'steady',
+          choice: 'finish crossing',
+        };
+      }
+      return { mood: 'watchful', choice: 'approach the crosswalk' };
+    }
+    if (data.state === STATE_WORK) {
+      return { mood: 'occupied', choice: `stay at ${residentDestinationFor(data)}` };
+    }
+    if (data.state === STATE_IDLE) return { mood: 'paused', choice: 'pause here' };
+    return { mood: 'on the move', choice: 'continue along the route' };
+  }
+
+  function residentSceneCueFor(data) {
+    if (data.interaction?.kind === 'handoff') return 'delivery handoff';
+    if (data.interaction?.kind === 'conversation') return 'conversation';
+    const vignette = data.vignette;
+    if (!vignette) return null;
+    const separator = vignette.indexOf(':');
+    const kind = separator >= 0 ? vignette.slice(0, separator) : vignette;
+    const detail = separator >= 0 ? vignette.slice(separator + 1) : '';
+    if (kind === 'viewpoint') return 'viewpoint pause';
+    if (kind === 'work') return detail ? `work stop: ${detail}` : 'work stop';
+    if (kind === 'activity') return detail ? `role activity: ${detail}` : 'role activity';
+    if (kind === 'dwelling') return detail ? `pause: ${detail}` : 'pause';
+    if (kind === 'crossing') return 'crosswalk';
+    return vignette;
+  }
+
+  function getFeaturedResidentSnapshots() {
+    return FEATURED_RESIDENTS.map((identity) => {
+      const data = pool[identity.actorIndex];
+      if (!data) return null;
+      const destination = residentDestinationFor(data);
+      const partner = data.interaction?.partner;
+      const partnerIdentity = partner ? residentIdentityFor(partner) : null;
+      const { mood, choice } = residentMoodAndChoiceFor(data);
+      return {
+        id: identity.id,
+        label: identity.label,
+        role: data.job.id,
+        activity: residentActivityFor(data),
+        action: residentActionFor(data, destination),
+        mood,
+        choice,
+        destination,
+        need: residentNeedFor(data, destination),
+        intent: residentIntentFor(data, destination),
+        visible: data.mesh.visible,
+        relationship: partner
+          ? {
+            kind: data.interaction.kind,
+            actorId: partnerIdentity.id,
+            actorLabel: partnerIdentity.label,
+            role: partner.job?.id || null,
+            side: data.interaction.side || null,
+          }
+          : null,
+        sceneCue: residentSceneCueFor(data),
+      };
+    }).filter(Boolean);
+  }
+
   function getStats() {
     let walking = 0;
     let working = 0;
+    let paused = 0;
     let crossing = 0;
+    let withBehaviorTree = 0;
+    const intentCounts = Object.create(null);
     for (const data of pool) {
       if (data.state === STATE_WALK) walking += 1;
-      if (data.state === STATE_IDLE || data.state === STATE_WORK) working += 1;
+      if (data.state === STATE_WORK) working += 1;
+      if (data.state === STATE_IDLE) paused += 1;
       if (data.state === STATE_CROSS) crossing += 1;
+      if (data.behaviorTree) withBehaviorTree += 1;
+      const intent = data.btIntent || data.blackboard?.intent || 'none';
+      intentCounts[intent] = (intentCounts[intent] || 0) + 1;
     }
-    return { active: pool.length, walking, working, crossing };
+    return {
+      active: pool.length,
+      visible: pool.reduce((count, data) => count + (data.mesh.visible ? 1 : 0), 0),
+      walking,
+      working,
+      paused,
+      crossing,
+      withBehaviorTree,
+      intentCounts,
+      dayHour: getDayHour(),
+    };
+  }
+
+  function setFocus(position, radius = 340) {
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) {
+      focusActive = false;
+      focusRadiusSquared = Infinity;
+      return;
+    }
+    focusActive = true;
+    focusX = position.x;
+    focusZ = position.z;
+    const safeRadius = Number.isFinite(radius) ? Math.max(32, radius) : 340;
+    focusRadiusSquared = safeRadius * safeRadius;
+    if (qaSoloGroupIndex == null) {
+      pool.forEach((data) => {
+        data.mesh.visible = (data.mesh.position.x - focusX) ** 2
+          + (data.mesh.position.z - focusZ) ** 2 <= focusRadiusSquared;
+      });
+    }
+  }
+
+  function setQaSolo(groupIndex = null, { forceWalk = true } = {}) {
+    qaSoloGroupIndex = Number.isInteger(groupIndex) ? groupIndex : null;
+    qaForceWalkIndex = qaSoloGroupIndex != null && forceWalk ? qaSoloGroupIndex : null;
+    if (qaForceWalkIndex != null) {
+      const data = pool.find((entry) => entry.index === qaForceWalkIndex)
+        || pool.find((entry) => group.children.indexOf(entry.mesh) === qaForceWalkIndex);
+      if (data) {
+        setBehaviorState(data, STATE_WALK, 14, 'qa:force-walk');
+        data.gaitBlend = 1;
+      }
+    }
   }
 
   function setWeather(mode = 'clear') {
     system.weather = WEATHER_MODES.has(mode) ? mode : 'clear';
   }
 
+  function getNearestPerson(position, maxDistance = 4) {
+    if (!position) return null;
+    let nearest = null;
+    let nearestDistance = Infinity;
+    for (const data of pool) {
+      if (!data.mesh.visible) continue;
+      const distance = Math.hypot(
+        data.mesh.position.x - position.x,
+        data.mesh.position.z - position.z,
+      );
+      if (distance <= maxDistance && distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = {
+          mesh: data.mesh,
+          job: data.job,
+          distance,
+          heading: data.heading,
+        };
+      }
+    }
+    return nearest;
+  }
+
   setWeather('clear');
-  return Object.assign(system, { group, update, getStats, setWeather });
+  return Object.assign(system, {
+    group,
+    update,
+    setFocus,
+    setQaSolo,
+    getStats,
+    getFeaturedResidentSnapshots,
+    getNearestPerson,
+    setWeather,
+    setDayHour,
+    getDayHour,
+  });
 }

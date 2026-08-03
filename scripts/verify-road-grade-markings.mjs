@@ -78,7 +78,15 @@ camera.position.set(576, 80, 200);
 camera.lookAt(576, 0, 0);
 camera.updateMatrixWorld(true);
 streaming.update(new THREE.Vector3(576, 2, 0), camera, 0.3, 0.3);
-
+for (let step = 0; step < 240; step += 1) {
+  if (getDetailedSector(scene, '1:0') && getDetailedSector(scene, '2:0')) break;
+  streaming.update(
+    new THREE.Vector3(576, 2, 0),
+    camera,
+    0.25,
+    0.3 + (step + 1) * 0.25,
+  );
+}
 const west = getDetailedSector(scene, '1:0');
 const east = getDetailedSector(scene, '2:0');
 assert(west && east, 'Adjacent detailed sectors 1:0 and 2:0 were not active.');

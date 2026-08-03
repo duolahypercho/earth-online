@@ -3,6 +3,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import {
+  createStreetDesign,
+  streetDesignToMapMeta,
+} from '../src/realmap/street-design.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -180,22 +184,43 @@ async function main() {
     });
   }
 
-  const detailBuildings = [];
+  // Keep peninsula-wide detail roads, but budget footprint meshes so the
+  // browser pack stays downloadable. Prefer named / amenity / taller parcels.
+  const DETAIL_BUILDING_CAP = Number(process.env.SF_DETAIL_BUILDING_CAP || 28000);
+  const detailCandidates = [];
   for (const building of atlas.detailBuildings ?? []) {
     if (!building.centroid || !pointInsideBoundary(building.centroid, boundaryRings)) continue;
-    detailBuildings.push({
-      id: building.id,
-      name: building.name || '',
-      addr: building.addr || '',
-      building: building.building || 'yes',
-      amenity: building.amenity || '',
-      levels: Math.max(1, Math.round(building.levels || 1)),
-      height: Math.round((Number(building.height) || 0) * 10) / 10,
-      area: Math.round(building.area || 0),
-      centroid: [round1(building.centroid.x), round1(building.centroid.z)],
-      points: flatPoints(building.points || []),
+    const name = building.name || '';
+    const amenity = building.amenity || '';
+    const levels = Math.max(1, Math.round(building.levels || 1));
+    const height = Math.round((Number(building.height) || 0) * 10) / 10;
+    const area = Math.round(building.area || 0);
+    const priority = (name ? 40 : 0)
+      + (amenity ? 30 : 0)
+      + Math.min(levels, 20)
+      + Math.min(height / 4, 25)
+      + Math.min(area / 120, 20);
+    detailCandidates.push({
+      priority,
+      record: {
+        id: building.id,
+        name,
+        addr: building.addr || '',
+        building: building.building || 'yes',
+        amenity,
+        levels,
+        height,
+        area,
+        centroid: [round1(building.centroid.x), round1(building.centroid.z)],
+        points: flatPoints(building.points || []),
+      },
     });
   }
+  detailCandidates.sort((left, right) => right.priority - left.priority);
+  const detailBuildings = detailCandidates
+    .slice(0, DETAIL_BUILDING_CAP)
+    .map((entry) => entry.record);
+  console.log(`Detail buildings kept ${detailBuildings.length}/${detailCandidates.length} (cap ${DETAIL_BUILDING_CAP})`);
 
   const coarseBuildings = [];
   for (const building of atlas.buildings ?? []) {
@@ -220,16 +245,22 @@ async function main() {
     }
   }
 
+  const streetDesign = streetDesignToMapMeta(createStreetDesign());
+
   const city = {
     meta: {
       generatedAt: new Date().toISOString(),
       center: CENTER,
       projection: atlas.meta.projection,
       boundaryRings: boundary.length,
+      detailBBox: atlas.meta?.detailBBox || null,
+      /** Street/sidewalk sizing knobs — consumed by realmap Full City */
+      streetDesign,
       counts: {
         roads: cityRoads.length,
         detailRoads: detailRoads.length,
         detailBuildings: detailBuildings.length,
+        detailBuildingCandidates: detailCandidates.length,
         coarseBuildings: coarseBuildings.length,
         signals: signals.length,
       },

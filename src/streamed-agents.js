@@ -3,6 +3,9 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { signalOffsetForPosition, signalPhaseAt } from './signals.js';
 import { getStreamedVehicleVisualProfile } from './traffic.js';
 import { getStreamedPedestrianVisualProfile } from './pedestrians.js';
+import { AUTHORED_DISTRICT_BY_SECTOR } from './district_massing.js';
+import { createBlackboard, tick as tickBehaviorTree } from './npc-behavior-tree.js';
+import { createStreamedTreeForActivity } from './npc-trees.js';
 
 const CORE_KEY = '0:0';
 const SECTOR_SIZE = 384;
@@ -21,7 +24,7 @@ const PARK_Y = -10000;
 const VEHICLE_LANE_OFFSET = 2.62;
 const SIDEWALK_OFFSET = 10;
 const STREET_LINE_OFFSETS = Object.freeze([-192, -128, -64, 0, 64, 128, 192]);
-const SIDEWALK_ROAM_OFFSETS = Object.freeze([7.35, 8.55, 9.55]);
+const SIDEWALK_ROAM_OFFSETS = Object.freeze([6.15, 6.85, 7.55]);
 const VEHICLE_SPACING_JITTER = 10;
 const PEDESTRIAN_SPACING_JITTER = 6.5;
 // The active sector gets a compact, deterministic street-level tableau. It is
@@ -30,31 +33,139 @@ const PEDESTRIAN_SPACING_JITTER = 6.5;
 // remain legible from the 1280x720 QA framing.
 const FOCUS_TABLEAU_VEHICLES = 6;
 const FOCUS_TABLEAU_PEDESTRIANS = 10;
-const FOCUS_VEHICLE_SPACING = 24;
-const FOCUS_PEDESTRIAN_SPACING = 9;
+const FOCUS_VEHICLE_SPACING = 22;
+const FOCUS_PEDESTRIAN_SPACING = 7.5;
 const FOCUS_RESTAGE_DISTANCE = 40;
+// The roam camera sits ~64 m behind the focus target. Negative longitudinal
+// offsets place actors between the lens and focus, which repeatedly clipped
+// the same lower-left silhouette in every district capture.
+const ROAM_CAMERA_BEHIND_FOCUS = 64;
+const TABLEAU_MIN_FORWARD_OFFSET = 18;
+const TABLEAU_MAX_FORWARD_OFFSET = 88;
 const FOCUS_TABLEAU_ROUTES = Object.freeze({
   vehicle: Object.freeze([
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: -76 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: -52 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: 52 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: 76 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: -68 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: 68 }),
+    // The roam camera settles behind its focus and looks down the positive
+    // z-axis. Keep the six deterministic tableau vehicles on that readable
+    // street axis so a detailed sector visibly carries traffic instead of
+    // hiding most of its live representatives on the two cross streets.
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: -54 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: -22 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 22 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 54 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 88 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 120 }),
   ]),
   pedestrian: Object.freeze([
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: -78 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: -62 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: -46 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: 46 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: 62 }),
-    Object.freeze({ orientation: 'east-west', longitudinalOffset: 78 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: -70 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: -52 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: 52 }),
-    Object.freeze({ orientation: 'north-south', longitudinalOffset: 70 }),
+    // Every offset is forward of the focus so actors land mid-block (~82–152 m
+    // from the camera) instead of clipping the lower-left foreground.
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 18, sidewalkSide: 1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 28, sidewalkSide: -1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 38, sidewalkSide: 1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 38, sidewalkSide: -1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 48, sidewalkSide: -1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 58, sidewalkSide: 1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 68, sidewalkSide: -1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 74, sidewalkSide: 1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 80, sidewalkSide: -1 }),
+    Object.freeze({ orientation: 'north-south', longitudinalOffset: 88, sidewalkSide: 1 }),
   ]),
 });
+const FOCUS_TABLEAU_MICRO_STORIES = Object.freeze([
+  Object.freeze({
+    label: 'Elena Park',
+    role: 'commuter',
+    beat: 'checking the phone before rejoining the flow',
+    mood: 'hurried',
+    choice: 'finish the message, then walk',
+    destination: 'office district',
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Marcus Webb',
+    role: 'tourist',
+    beat: 'framing a street photo',
+    mood: 'curious',
+    choice: 'take the shot, then move on',
+    destination: 'viewpoint',
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Diana Ruiz',
+    role: 'delivery',
+    beat: 'handing a parcel to the café counter',
+    mood: 'engaged',
+    choice: 'complete the handoff',
+    destination: 'drop-off',
+    partnerSlot: 3,
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Noah Kim',
+    role: 'barista',
+    beat: 'receiving the morning delivery',
+    mood: 'engaged',
+    choice: 'sign for the order',
+    destination: 'coffee counter',
+    partnerSlot: 2,
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Priya Shah',
+    role: 'worker',
+    beat: 'waiting for a walk signal with tools ready',
+    mood: 'watchful',
+    choice: 'cross when the light turns',
+    destination: 'jobsite',
+    dwell: false,
+  }),
+  Object.freeze({
+    label: 'Jonah Ellis',
+    role: 'shopper',
+    beat: 'comparing two storefronts mid-block',
+    mood: 'deciding',
+    choice: 'pick a shop and go in',
+    destination: 'market block',
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Amelia Cruz',
+    role: 'student',
+    beat: 'walking with a backpack toward campus',
+    mood: 'on the move',
+    choice: 'keep pace with the crowd',
+    destination: 'campus',
+    dwell: false,
+  }),
+  Object.freeze({
+    label: 'Renata Lopez',
+    role: 'services',
+    beat: 'checking a service clipboard at the curb',
+    mood: 'occupied',
+    choice: 'move to the next call',
+    destination: 'service call',
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Theo Nguyen',
+    role: 'resident',
+    beat: 'chatting with a neighbor on the sidewalk',
+    mood: 'social',
+    choice: 'share a quick update',
+    destination: 'neighborhood',
+    partnerSlot: 9,
+    dwell: true,
+  }),
+  Object.freeze({
+    label: 'Grace Okonkwo',
+    role: 'resident',
+    beat: 'listening to a neighbor before errands',
+    mood: 'social',
+    choice: 'listen, then continue',
+    destination: 'neighborhood',
+    partnerSlot: 8,
+    dwell: true,
+  }),
+]);
 const VALID_WEATHER = new Set(['clear', 'fog', 'drizzle']);
 
 const PEDESTRIAN_ROLE_CUES = Object.freeze({
@@ -63,6 +174,7 @@ const PEDESTRIAN_ROLE_CUES = Object.freeze({
   delivery: Object.freeze({ width: 1.04, depth: 1.06, limb: 1.02, gait: 1.08 }),
   services: Object.freeze({ width: 1.06, depth: 1.04, limb: 1, gait: 0.94 }),
   student: Object.freeze({ width: 0.98, depth: 0.98, limb: 1.04, gait: 1.05 }),
+  beachgoer: Object.freeze({ width: 1.02, depth: 1.04, limb: 0.98, gait: 0.86 }),
 });
 const DEFAULT_PEDESTRIAN_ROLE_CUE = Object.freeze({
   width: 1,
@@ -75,43 +187,115 @@ const DEFAULT_PEDESTRIAN_ROLE_CUE = Object.freeze({
 // vocabularies keep the readability pass restrained while preventing every
 // low-poly actor from collapsing into the same dark value under the district
 // lighting.
+// Four identity classes must read instantly at QA distance:
+// taxi (yellow roof sign), SFMTA bus (cream + red stripe), service/delivery
+// van (orange rack/stripe), private sedan/SUV (lighter body + subtle chrome).
 const VEHICLE_ACCENT_COLORS = Object.freeze({
-  sedan: 0xc7d5da,
-  suv: 0x9db8c0,
-  taxi: 0xffd04b,
-  van: 0xe29a4b,
+  sedan: 0xd5e2e8,
+  suv: 0xb5cdd4,
+  taxi: 0x1f1a14,
+  van: 0xff8a2b,
+  bus: 0xc8352c,
+  bike: 0xffc75a,
 });
 const VEHICLE_ROOF_CUE_COLORS = Object.freeze({
-  sedan: 0x879ba3,
-  suv: 0x78949f,
-  taxi: 0xffd04b,
-  van: 0xd95b3d,
+  sedan: 0x9aadb6,
+  suv: 0x8aa5af,
+  taxi: 0xffd24a,
+  van: 0xff6a1f,
+  bus: 0xd23a32,
+  bike: 0x2c5f8a,
 });
 const VEHICLE_ROOF_CUE_SIZES = Object.freeze({
-  sedan: Object.freeze({ width: 0.22, height: 0.1, length: 0.42 }),
-  suv: Object.freeze({ width: 0.28, height: 0.1, length: 0.46 }),
-  taxi: Object.freeze({ width: 0.34, height: 0.14, length: 0.56 }),
-  van: Object.freeze({ width: 0.46, height: 0.13, length: 0.5 }),
+  sedan: Object.freeze({ width: 0.3, height: 0.1, length: 0.48 }),
+  suv: Object.freeze({ width: 0.42, height: 0.12, length: 0.68 }),
+  taxi: Object.freeze({ width: 0.56, height: 0.28, length: 0.9 }),
+  van: Object.freeze({ width: 0.7, height: 0.2, length: 0.86 }),
+  bus: Object.freeze({ width: 1.05, height: 0.22, length: 1.35 }),
+  bike: Object.freeze({ width: 0.18, height: 0.08, length: 0.34 }),
 });
 const FOCUS_VEHICLE_BODY_COLORS = Object.freeze({
-  sedan: Object.freeze([0xd6d7cd, 0x6f8f98, 0xb29d82, 0x8c6c76, 0x78947f]),
-  suv: Object.freeze([0xc2c9c0, 0x6e8e96, 0x7c916f, 0x9b886e, 0x6f7ea0]),
+  sedan: Object.freeze([0xf0f1ec, 0xd7dde2, 0x8eb0bc, 0xc9b39a, 0x8fa58a, 0xb48a94]),
+  suv: Object.freeze([0xe7ece8, 0xc5d6db, 0x8aa67c, 0xb49a74, 0x7f91b8, 0xd0c4a8]),
   taxi: Object.freeze([0xffc324]),
-  van: Object.freeze([0xe2a15d, 0xd6d7cb, 0x7694a0, 0xb8756c, 0x8c9b76]),
+  van: Object.freeze([0xf3f1ea, 0xff9a3d, 0xd7d8cf, 0x7ea0ad, 0xb87468]),
+  bus: Object.freeze([0xe9e6e0]),
+  bike: Object.freeze([0x2c5f8a, 0xc45c2a, 0x2f6b4f, 0x343a44, 0xb08a3e]),
+});
+// traffic.js only exposes the compact sedan/suv/taxi/van profile. Bus is
+// authored for the core fleet; keep a matching local spec so streamed
+// districts can show SFMTA coaches without changing the shared export.
+const STREAMED_BUS_CLASS = Object.freeze({
+  len: 11.0,
+  wid: 2.55,
+  hgt: 3.0,
+  wheelR: 0.47,
+});
+const BUS_BODY_COLOR = 0xe9e6e0;
+const FOCUS_VEHICLE_CLASS_ORDER = Object.freeze([
+  'taxi',
+  'bus',
+  'van',
+  'bike',
+  'sedan',
+  'suv',
+]);
+const VEHICLE_CLASS_LANE_BIAS = Object.freeze({
+  sedan: 0,
+  suv: 0.06,
+  taxi: 0.2,
+  van: 0.32,
+  bus: 0.48,
+  bike: -0.85,
+});
+const VEHICLE_CLASS_SPACING = Object.freeze({
+  sedan: 0,
+  suv: 1.5,
+  taxi: 3.5,
+  van: 6,
+  bus: 12,
+  bike: -2,
+});
+const VEHICLE_SILHOUETTE = Object.freeze({
+  sedan: Object.freeze({
+    bodyHeight: 0.48, cabinHeight: 0.4, cabinLength: 0.46, cabinWidth: 0.7,
+    cabinLift: 0.7, roofLift: 0.94, cabinShift: 0.04, wheelBase: 0.31, trimHeight: 0.16,
+  }),
+  suv: Object.freeze({
+    bodyHeight: 0.54, cabinHeight: 0.46, cabinLength: 0.54, cabinWidth: 0.78,
+    cabinLift: 0.76, roofLift: 1.0, cabinShift: 0.0, wheelBase: 0.32, trimHeight: 0.18,
+  }),
+  taxi: Object.freeze({
+    bodyHeight: 0.48, cabinHeight: 0.4, cabinLength: 0.46, cabinWidth: 0.7,
+    cabinLift: 0.7, roofLift: 1.06, cabinShift: 0.04, wheelBase: 0.31, trimHeight: 0.17,
+  }),
+  van: Object.freeze({
+    bodyHeight: 0.64, cabinHeight: 0.52, cabinLength: 0.74, cabinWidth: 0.86,
+    cabinLift: 0.84, roofLift: 1.1, cabinShift: -0.05, wheelBase: 0.34, trimHeight: 0.22,
+  }),
+  bus: Object.freeze({
+    bodyHeight: 0.74, cabinHeight: 0.5, cabinLength: 0.9, cabinWidth: 0.92,
+    cabinLift: 0.9, roofLift: 1.16, cabinShift: 0.0, wheelBase: 0.38, trimHeight: 0.2,
+  }),
+  bike: Object.freeze({
+    bodyHeight: 0.22, cabinHeight: 0.28, cabinLength: 0.42, cabinWidth: 0.34,
+    cabinLift: 0.55, roofLift: 0.78, cabinShift: -0.08, wheelBase: 0.36, trimHeight: 0.08,
+  }),
 });
 const PEDESTRIAN_HAIR_COLORS = Object.freeze([
   0x252326, 0x3a2b27, 0x59402f, 0x765333, 0x4a4e4a, 0x1e2930,
 ]);
 const PEDESTRIAN_ROLE_ACCENTS = Object.freeze({
-  commuter: Object.freeze({ kind: 'badge', color: 0xb9cbd0 }),
-  resident: Object.freeze({ kind: 'tote', color: 0xc4b59d }),
-  shopper: Object.freeze({ kind: 'tote', color: 0xd6b36d }),
-  worker: Object.freeze({ kind: 'hi-vis', color: 0xe1b05a }),
-  services: Object.freeze({ kind: 'hi-vis', color: 0x9fbe78 }),
-  delivery: Object.freeze({ kind: 'backpack', color: 0xe39a4b }),
-  tourist: Object.freeze({ kind: 'badge', color: 0x4e9bb0 }),
-  student: Object.freeze({ kind: 'backpack', color: 0x8b6a9c }),
-  runner: Object.freeze({ kind: 'band', color: 0x6fa9a5 }),
+  commuter: Object.freeze({ kind: 'badge', color: 0x8dc7d8 }),
+  resident: Object.freeze({ kind: 'tote', color: 0xd5c2a4 }),
+  shopper: Object.freeze({ kind: 'tote', color: 0xf0b85d }),
+  worker: Object.freeze({ kind: 'hi-vis', color: 0xffc75a }),
+  services: Object.freeze({ kind: 'hi-vis', color: 0xa8cf72 }),
+  delivery: Object.freeze({ kind: 'backpack', color: 0xff974e }),
+  tourist: Object.freeze({ kind: 'badge', color: 0x59c5dd }),
+  student: Object.freeze({ kind: 'backpack', color: 0xac89e1 }),
+  runner: Object.freeze({ kind: 'band', color: 0x78d3bd }),
+  beachgoer: Object.freeze({ kind: 'beach-gear', color: 0x45b6c8 }),
 });
 const DEFAULT_PEDESTRIAN_ROLE_ACCENT = Object.freeze({
   kind: 'band',
@@ -128,7 +312,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x243b53, 0x31424f, 0x425a4a, 0x5b4d74, 0x39434d, 0x70443c],
       bottoms: [0x1c2530, 0x30343a, 0x394954, 0x42372f, 0x353c45],
     }),
-    classWeights: [['sedan', 38], ['suv', 24], ['taxi', 24], ['van', 14]],
+    classWeights: [['sedan', 22], ['bike', 8], ['suv', 18], ['taxi', 22], ['van', 14], ['bus', 16]],
   }),
   SoMa: Object.freeze({
     roles: [
@@ -139,7 +323,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x4d4038, 0x8a3d32, 0x315c4c, 0x2d3438, 0x7a6b55, 0x59433a],
       bottoms: [0x2f3033, 0x354a57, 0x42372f, 0x4d4d4b, 0x1c2530],
     }),
-    classWeights: [['sedan', 34], ['van', 30], ['suv', 20], ['taxi', 16]],
+    classWeights: [['sedan', 16], ['bike', 8], ['suv', 16], ['taxi', 14], ['van', 28], ['bus', 18]],
   }),
   'North Beach': Object.freeze({
     roles: [
@@ -150,7 +334,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x8d3f32, 0x59433a, 0x7a6b55, 0x315c4c, 0xc4b59d, 0x5b4d74],
       bottoms: [0x42372f, 0x4d4d4b, 0x2f3033, 0x354a57],
     }),
-    classWeights: [['sedan', 38], ['taxi', 26], ['suv', 22], ['van', 14]],
+    classWeights: [['sedan', 20], ['bike', 8], ['suv', 18], ['taxi', 24], ['van', 14], ['bus', 16]],
   }),
   'Pacific Heights': Object.freeze({
     roles: [
@@ -161,7 +345,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x5b4d74, 0x425a4a, 0x31424f, 0x9b8068, 0x29333b, 0x70443c],
       bottoms: [0x30343a, 0x394954, 0x353c45, 0x42372f],
     }),
-    classWeights: [['sedan', 42], ['suv', 30], ['taxi', 14], ['van', 14]],
+    classWeights: [['sedan', 28], ['bike', 8], ['suv', 26], ['taxi', 12], ['van', 14], ['bus', 12]],
   }),
   'Marina / Fisherman’s Wharf': Object.freeze({
     roles: [
@@ -172,7 +356,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0xb8c2a4, 0xd6c7a4, 0x315c4c, 0x8d3f32, 0x203a58, 0x59433a],
       bottoms: [0x354a57, 0x4d4d4b, 0x42372f, 0x30343a],
     }),
-    classWeights: [['sedan', 34], ['taxi', 30], ['suv', 22], ['van', 14]],
+    classWeights: [['sedan', 16], ['bike', 8], ['suv', 18], ['taxi', 28], ['van', 14], ['bus', 16]],
   }),
   Sunset: Object.freeze({
     roles: [
@@ -183,18 +367,18 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x315c4c, 0x203a58, 0x7a6b55, 0xc4b59d, 0x59433a, 0x8d3f32],
       bottoms: [0x2f3033, 0x354a57, 0x42372f, 0x4d4d4b],
     }),
-    classWeights: [['sedan', 46], ['suv', 24], ['van', 18], ['taxi', 12]],
+    classWeights: [['sedan', 30], ['bike', 8], ['suv', 22], ['taxi', 12], ['van', 16], ['bus', 12]],
   }),
   'Outer Sunset': Object.freeze({
     roles: [
-      ['resident', 46], ['student', 14], ['commuter', 16], ['shopper', 10],
-      ['services', 8], ['delivery', 6],
+      ['resident', 38], ['beachgoer', 12], ['student', 14], ['commuter', 16],
+      ['shopper', 10], ['services', 6], ['delivery', 4],
     ],
     wardrobe: Object.freeze({
       tops: [0x315c4c, 0x7a6b55, 0x2d3438, 0xc4b59d, 0x203a58, 0x59433a],
       bottoms: [0x2f3033, 0x42372f, 0x4d4d4b, 0x354a57],
     }),
-    classWeights: [['sedan', 48], ['suv', 24], ['van', 18], ['taxi', 10]],
+    classWeights: [['sedan', 32], ['bike', 8], ['suv', 22], ['taxi', 10], ['van', 16], ['bus', 12]],
   }),
   Richmond: Object.freeze({
     roles: [
@@ -205,7 +389,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x203a58, 0x315c4c, 0x5b4d74, 0x7a6b55, 0xc4b59d, 0x8d3f32],
       bottoms: [0x1c2530, 0x354a57, 0x2f3033, 0x42372f],
     }),
-    classWeights: [['sedan', 44], ['suv', 24], ['van', 18], ['taxi', 14]],
+    classWeights: [['sedan', 28], ['bike', 8], ['suv', 22], ['taxi', 14], ['van', 16], ['bus', 12]],
   }),
   Mission: Object.freeze({
     roles: [
@@ -216,7 +400,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x8d3f32, 0x5b4d74, 0x315c4c, 0x59433a, 0x7a6b55, 0x2d3438],
       bottoms: [0x42372f, 0x354a57, 0x4d4d4b, 0x30343a],
     }),
-    classWeights: [['sedan', 38], ['suv', 24], ['van', 22], ['taxi', 16]],
+    classWeights: [['sedan', 20], ['bike', 8], ['suv', 20], ['taxi', 14], ['van', 22], ['bus', 16]],
   }),
   'Castro / Noe Valley': Object.freeze({
     roles: [
@@ -227,7 +411,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x8d3f32, 0x5b4d74, 0x425a4a, 0xc4b59d, 0x59433a, 0x203a58],
       bottoms: [0x354a57, 0x30343a, 0x42372f, 0x4d4d4b],
     }),
-    classWeights: [['sedan', 44], ['suv', 26], ['van', 16], ['taxi', 14]],
+    classWeights: [['sedan', 28], ['bike', 8], ['suv', 24], ['taxi', 12], ['van', 14], ['bus', 14]],
   }),
   'Civic Center': Object.freeze({
     roles: [
@@ -238,7 +422,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x243b53, 0x39434d, 0x5b4d74, 0x31424f, 0x70443c, 0x425a4a],
       bottoms: [0x1c2530, 0x394954, 0x30343a, 0x353c45],
     }),
-    classWeights: [['sedan', 40], ['taxi', 24], ['suv', 20], ['van', 16]],
+    classWeights: [['sedan', 22], ['bike', 8], ['suv', 16], ['taxi', 22], ['van', 14], ['bus', 18]],
   }),
   Presidio: Object.freeze({
     roles: [
@@ -249,7 +433,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x315c4c, 0x2d3438, 0x203a58, 0x8d3f32, 0x7a6b55, 0xc4b59d],
       bottoms: [0x354a57, 0x2f3033, 0x42372f, 0x4d4d4b],
     }),
-    classWeights: [['sedan', 44], ['suv', 28], ['van', 16], ['taxi', 12]],
+    classWeights: [['sedan', 28], ['bike', 8], ['suv', 26], ['taxi', 12], ['van', 14], ['bus', 12]],
   }),
   'Presidio Heights': Object.freeze({
     roles: [
@@ -260,7 +444,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x5b4d74, 0x425a4a, 0x31424f, 0x9b8068, 0x29333b, 0x70443c],
       bottoms: [0x30343a, 0x394954, 0x353c45, 0x1c2530],
     }),
-    classWeights: [['sedan', 46], ['suv', 28], ['van', 14], ['taxi', 12]],
+    classWeights: [['sedan', 30], ['bike', 8], ['suv', 26], ['taxi', 12], ['van', 12], ['bus', 12]],
   }),
   Bayview: Object.freeze({
     roles: [
@@ -271,7 +455,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x59433a, 0x8a3d32, 0x315c4c, 0x2d3438, 0x7a6b55, 0x5b4d74],
       bottoms: [0x42372f, 0x2f3033, 0x354a57, 0x4d4d4b],
     }),
-    classWeights: [['sedan', 36], ['van', 30], ['suv', 22], ['taxi', 12]],
+    classWeights: [['sedan', 18], ['bike', 8], ['suv', 18], ['taxi', 10], ['van', 28], ['bus', 18]],
   }),
   Excelsior: Object.freeze({
     roles: [
@@ -282,7 +466,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x315c4c, 0x59433a, 0x7a6b55, 0x203a58, 0x8d3f32, 0xc4b59d],
       bottoms: [0x2f3033, 0x42372f, 0x354a57, 0x4d4d4b],
     }),
-    classWeights: [['sedan', 46], ['suv', 24], ['van', 20], ['taxi', 10]],
+    classWeights: [['sedan', 30], ['bike', 8], ['suv', 22], ['taxi', 10], ['van', 18], ['bus', 12]],
   }),
   'Mission Bay': Object.freeze({
     roles: [
@@ -293,7 +477,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x243b53, 0x425a4a, 0x39434d, 0x5b4d74, 0x8d3f32, 0x29333b],
       bottoms: [0x1c2530, 0x394954, 0x30343a, 0x353c45],
     }),
-    classWeights: [['sedan', 40], ['suv', 22], ['van', 20], ['taxi', 18]],
+    classWeights: [['sedan', 22], ['bike', 8], ['suv', 18], ['taxi', 16], ['van', 18], ['bus', 18]],
   }),
   'Golden Gate': Object.freeze({
     roles: [
@@ -304,7 +488,7 @@ const DISTRICT_PROFILES = Object.freeze({
       tops: [0x315c4c, 0xb8c2a4, 0x203a58, 0x2d3438, 0x8d3f32, 0xc4b59d],
       bottoms: [0x354a57, 0x4d4d4b, 0x2f3033, 0x42372f],
     }),
-    classWeights: [['sedan', 38], ['suv', 26], ['taxi', 22], ['van', 14]],
+    classWeights: [['sedan', 20], ['bike', 8], ['suv', 22], ['taxi', 20], ['van', 14], ['bus', 16]],
   }),
 });
 
@@ -317,7 +501,7 @@ const FALLBACK_DISTRICT_PROFILE = Object.freeze({
     tops: [0x203a58, 0x2d3438, 0x59433a, 0x315c4c, 0x8d3f32, 0x5b4d74, 0x7a6b55, 0xc4b59d],
     bottoms: [0x1c2530, 0x2f3033, 0x354a57, 0x42372f, 0x4d4d4b],
   }),
-  classWeights: [['sedan', 42], ['suv', 24], ['van', 18], ['taxi', 16]],
+  classWeights: [['sedan', 26], ['bike', 8], ['suv', 20], ['taxi', 14], ['van', 16], ['bus', 16]],
 });
 
 const DAY_HOUR_OFFSET = 7;
@@ -395,6 +579,13 @@ const ROLE_SCHEDULES = Object.freeze({
     Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'neighborhood', pace: 0.9 }),
     Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'home district', pace: 0.8 }),
   ]),
+  beachgoer: Object.freeze([
+    Object.freeze({ start: 6, end: 9, activity: 'commuting', destination: 'Ocean Beach', pace: 1.02 }),
+    Object.freeze({ start: 9, end: 17, activity: 'leisure', destination: 'Ocean Beach surf line', pace: 0.84 }),
+    Object.freeze({ start: 17, end: 20, activity: 'commuting', destination: 'N Judah stop', pace: 1.04 }),
+    Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'Outer Sunset cafe', pace: 0.9 }),
+    Object.freeze({ start: 23, end: 6, activity: 'resting', destination: 'home district', pace: 0.8 }),
+  ]),
 });
 
 const FALLBACK_ROLE_SCHEDULE = Object.freeze([
@@ -408,32 +599,76 @@ const FALLBACK_ROLE_SCHEDULE = Object.freeze([
 const VEHICLE_SCHEDULES = Object.freeze({
   taxi: Object.freeze([
     Object.freeze({
-      start: 0,
-      end: 24,
-      activity: 'transit',
-      destination: 'transit hub',
+      start: 5,
+      end: 22,
+      activity: 'cruising',
+      destination: 'curb hail',
       pace: 1.08,
-      fleetRole: 'transit',
+      fleetRole: 'taxi',
+    }),
+    Object.freeze({
+      start: 22,
+      end: 5,
+      activity: 'night-shift',
+      destination: 'late curb hail',
+      pace: 1.02,
+      fleetRole: 'taxi',
+    }),
+  ]),
+  bus: Object.freeze([
+    Object.freeze({
+      start: 5,
+      end: 21,
+      activity: 'route-service',
+      destination: 'muni stop',
+      pace: 0.86,
+      fleetRole: 'sfmta',
+    }),
+    Object.freeze({
+      start: 21,
+      end: 5,
+      activity: 'returning',
+      destination: 'muni yard',
+      pace: 0.78,
+      fleetRole: 'sfmta',
+    }),
+  ]),
+  bike: Object.freeze([
+    Object.freeze({
+      start: 6,
+      end: 21,
+      activity: 'cycling',
+      destination: 'bike lane',
+      pace: 1.12,
+      fleetRole: 'bike',
+    }),
+    Object.freeze({
+      start: 21,
+      end: 6,
+      activity: 'night-ride',
+      destination: 'neighborhood loop',
+      pace: 0.98,
+      fleetRole: 'bike',
     }),
   ]),
   van: Object.freeze([
-    Object.freeze({ start: 5, end: 20, activity: 'delivering', destination: 'drop-off', pace: 1.12, fleetRole: 'delivery' }),
-    Object.freeze({ start: 20, end: 23, activity: 'returning', destination: 'depot', pace: 1, fleetRole: 'delivery' }),
-    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'depot', pace: 0.88, fleetRole: 'delivery' }),
+    Object.freeze({ start: 5, end: 20, activity: 'delivering', destination: 'drop-off', pace: 1.06, fleetRole: 'delivery' }),
+    Object.freeze({ start: 20, end: 23, activity: 'returning', destination: 'depot', pace: 0.96, fleetRole: 'delivery' }),
+    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'depot', pace: 0.84, fleetRole: 'delivery' }),
   ]),
   sedan: Object.freeze([
-    Object.freeze({ start: 5, end: 10, activity: 'commuting', destination: 'office district', pace: 1.12, fleetRole: 'commute' }),
-    Object.freeze({ start: 10, end: 16, activity: 'errands', destination: 'local route', pace: 0.98, fleetRole: 'local' }),
-    Object.freeze({ start: 16, end: 20, activity: 'commuting', destination: 'home district', pace: 1.1, fleetRole: 'commute' }),
-    Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'local route', pace: 0.94, fleetRole: 'local' }),
-    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'local route', pace: 0.9, fleetRole: 'local' }),
+    Object.freeze({ start: 5, end: 10, activity: 'commuting', destination: 'office district', pace: 1.12, fleetRole: 'private' }),
+    Object.freeze({ start: 10, end: 16, activity: 'errands', destination: 'local route', pace: 0.98, fleetRole: 'private' }),
+    Object.freeze({ start: 16, end: 20, activity: 'commuting', destination: 'home district', pace: 1.1, fleetRole: 'private' }),
+    Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'local route', pace: 0.94, fleetRole: 'private' }),
+    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'local route', pace: 0.9, fleetRole: 'private' }),
   ]),
   suv: Object.freeze([
-    Object.freeze({ start: 5, end: 10, activity: 'commuting', destination: 'office district', pace: 1.1, fleetRole: 'commute' }),
-    Object.freeze({ start: 10, end: 16, activity: 'errands', destination: 'local route', pace: 0.96, fleetRole: 'local' }),
-    Object.freeze({ start: 16, end: 20, activity: 'commuting', destination: 'home district', pace: 1.08, fleetRole: 'commute' }),
-    Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'local route', pace: 0.92, fleetRole: 'local' }),
-    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'local route', pace: 0.88, fleetRole: 'local' }),
+    Object.freeze({ start: 5, end: 10, activity: 'commuting', destination: 'office district', pace: 1.1, fleetRole: 'private' }),
+    Object.freeze({ start: 10, end: 16, activity: 'errands', destination: 'local route', pace: 0.96, fleetRole: 'private' }),
+    Object.freeze({ start: 16, end: 20, activity: 'commuting', destination: 'home district', pace: 1.08, fleetRole: 'private' }),
+    Object.freeze({ start: 20, end: 23, activity: 'leisure', destination: 'local route', pace: 0.92, fleetRole: 'private' }),
+    Object.freeze({ start: 23, end: 5, activity: 'resting', destination: 'local route', pace: 0.88, fleetRole: 'private' }),
   ]),
 });
 
@@ -441,20 +676,29 @@ function dayHourAt(elapsed) {
   return modulo((elapsed * HOURS_PER_ELAPSED_SECOND + DAY_HOUR_OFFSET) % 24, 24);
 }
 
-function schedulePhaseForRole(role, dayHour) {
+function phaseContainsHour(phase, dayHour) {
+  const hour = modulo(dayHour, 24);
+  const start = modulo(phase.start, 24);
+  const end = modulo(phase.end, 24);
+  return start < end
+    ? hour >= start && hour < end
+    : hour >= start || hour < end;
+}
+
+export function schedulePhaseForRole(role, dayHour) {
   const phases = ROLE_SCHEDULES[role] || FALLBACK_ROLE_SCHEDULE;
   for (let index = 0; index < phases.length; index += 1) {
     const phase = phases[index];
-    if (dayHour >= phase.start && dayHour < phase.end) return phase;
+    if (phaseContainsHour(phase, dayHour)) return phase;
   }
   return phases[0];
 }
 
-function vehicleSchedulePhaseFor(className, dayHour) {
+export function vehicleSchedulePhaseFor(className, dayHour) {
   const phases = VEHICLE_SCHEDULES[className] || VEHICLE_SCHEDULES.sedan;
   for (let index = 0; index < phases.length; index += 1) {
     const phase = phases[index];
-    if (dayHour >= phase.start && dayHour < phase.end) return phase;
+    if (phaseContainsHour(phase, dayHour)) return phase;
   }
   return phases[0];
 }
@@ -469,6 +713,7 @@ function districtForPosition(x, z) {
 }
 
 function districtForSector(sectorKey) {
+  if (AUTHORED_DISTRICT_BY_SECTOR[sectorKey]) return AUTHORED_DISTRICT_BY_SECTOR[sectorKey];
   const coordinates = parseSectorKey(sectorKey);
   if (!coordinates) return 'Unknown';
   return districtForPosition(coordinates.x * SECTOR_SIZE, coordinates.z * SECTOR_SIZE);
@@ -598,8 +843,13 @@ function nearFocusStreetLine(sectorKey, focusPosition, orientation, fallbackLine
   );
 }
 
-function focusTableauRoute(kind, localSlot) {
-  return FOCUS_TABLEAU_ROUTES[kind]?.[localSlot] || null;
+function focusTableauRoute(kind, localSlot, sectorKey = CORE_KEY) {
+  const routes = FOCUS_TABLEAU_ROUTES[kind];
+  if (!routes?.length) return null;
+  if (kind !== 'pedestrian') return routes[localSlot] || null;
+  const rotation = hash32(`${sectorKey}:tableau-rotation`) % routes.length;
+  const index = (localSlot + rotation) % routes.length;
+  return routes[index] || null;
 }
 
 function nearFocusProgress(
@@ -672,24 +922,32 @@ function createPools(scene) {
 
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x162126,
+    emissiveIntensity: 0.26,
     roughness: 0.68,
     metalness: 0.12,
     vertexColors: true,
   });
   const vehicleAccentMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x142028,
+    emissiveIntensity: 0.32,
     roughness: 0.52,
     metalness: 0.1,
     vertexColors: true,
   });
   const vehicleIdentityMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x2a1d0d,
+    emissiveIntensity: 0.42,
     roughness: 0.46,
     metalness: 0.08,
     vertexColors: true,
   });
   const glassMaterial = new THREE.MeshStandardMaterial({
     color: 0x90a8b2,
+    emissive: 0x0d1c24,
+    emissiveIntensity: 0.24,
     roughness: 0.2,
     metalness: 0.22,
     vertexColors: true,
@@ -700,35 +958,47 @@ function createPools(scene) {
   });
   const headlightMaterial = new THREE.MeshStandardMaterial({
     color: 0xeaf4ff,
-    emissive: 0xdcecff,
-    emissiveIntensity: 0,
+    emissive: 0xffe1ac,
+    emissiveIntensity: 0.78,
     roughness: 0.26,
     vertexColors: true,
   });
   const torsoMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.82,
-    vertexColors: true,
+    emissive: 0x101820,
+    emissiveIntensity: 0.12,
+    roughness: 0.78,
+    vertexColors: false,
   });
   const skinMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x2a1810,
+    emissiveIntensity: 0.08,
     roughness: 0.8,
-    vertexColors: true,
+    vertexColors: false,
   });
   const clothingMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x101418,
+    emissiveIntensity: 0.1,
     roughness: 0.84,
-    vertexColors: true,
+    vertexColors: false,
   });
   const hairMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x0c1014,
+    emissiveIntensity: 0.08,
     roughness: 0.88,
-    vertexColors: true,
+    vertexColors: false,
   });
   const roleCueMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    emissive: 0x0c1014,
+    emissiveIntensity: 0.1,
     roughness: 0.72,
-    vertexColors: true,
+    metalness: 0.04,
+    vertexColors: false,
+    fog: true,
   });
 
   const bodyGeometry = new RoundedBoxGeometry(1, 1, 1, 2, 0.1);
@@ -738,11 +1008,12 @@ function createPools(scene) {
   const wheelGeometry = new THREE.CylinderGeometry(1, 1, 1, 12);
   wheelGeometry.rotateZ(Math.PI * 0.5);
   const lampGeometry = new THREE.BoxGeometry(1, 1, 1);
-  const torsoGeometry = new THREE.CapsuleGeometry(0.23, 0.62, 3, 8);
-  const headGeometry = new THREE.SphereGeometry(0.16, 10, 7);
-  const hairGeometry = new THREE.SphereGeometry(0.16, 8, 5);
+  const torsoGeometry = new THREE.CapsuleGeometry(0.26, 0.66, 3, 8);
+  const shoulderGeometry = new THREE.CapsuleGeometry(0.1, 0.24, 2, 6);
+  const headGeometry = new THREE.SphereGeometry(0.17, 10, 7);
+  const hairGeometry = new THREE.SphereGeometry(0.17, 8, 5);
   const roleCueGeometry = new RoundedBoxGeometry(1, 1, 1, 2, 0.05);
-  const limbGeometry = new THREE.CapsuleGeometry(0.065, 0.52, 2, 6);
+  const limbGeometry = new THREE.CapsuleGeometry(0.072, 0.56, 2, 6);
 
   const meshes = {
     vehicleBodies: createInstancedMesh(
@@ -786,6 +1057,12 @@ function createPools(scene) {
       torsoMaterial,
       PEDESTRIAN_CAPACITY,
       'Streamed pedestrian torsos',
+    ),
+    pedestrianShoulders: createInstancedMesh(
+      shoulderGeometry,
+      clothingMaterial,
+      PEDESTRIAN_CAPACITY * 2,
+      'Streamed pedestrian shoulder layers',
     ),
     pedestrianHeads: createInstancedMesh(
       headGeometry,
@@ -884,9 +1161,22 @@ function createActorSlots(capacity, kind) {
     sidewalkSide: 1,
     dwelling: false,
     dwellUntil: 0,
+    signalIntent: null,
+    indicatorSide: 0,
     focusTableau: false,
     focusStageRevision: 0,
+    storyLabel: null,
+    storyBeat: null,
+    storyMood: null,
+    storyChoice: null,
+    storyPartnerSlot: -1,
     appearance: null,
+    behaviorTree: null,
+    behaviorActivity: null,
+    blackboard: null,
+    btIntent: null,
+    btAnimCue: null,
+    btUrgency: 0.55,
     position: new THREE.Vector3(0, PARK_Y, 0),
   }));
 }
@@ -915,12 +1205,15 @@ export function createStreamedAgentSystem({
   const travel = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
   const rotation = new THREE.Quaternion();
+  const yawQuat = new THREE.Quaternion();
+  const pitchQuat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   const workPosition = new THREE.Vector3();
   const localOffset = new THREE.Vector3();
   const cueScale = new THREE.Vector3();
   const cueOffset = new THREE.Vector3();
   const yAxis = new THREE.Vector3(0, 1, 0);
+  const xAxis = new THREE.Vector3(1, 0, 0);
   let activeSectorKeys = [];
   let previousEdgeCandidates = [];
   let edgeSectorKeys = [];
@@ -944,12 +1237,21 @@ export function createStreamedAgentSystem({
   let tierTransitions = 0;
   let configuredRepresentatives = 0;
   let statesQueried = 0;
+  let matricesDirty = true;
+  let colorsDirty = true;
 
-  const setMatrix = (mesh, index, position, yaw, sx, sy, sz) => {
-    rotation.setFromAxisAngle(yAxis, yaw);
+  const setMatrix = (mesh, index, position, yaw, sx, sy, sz, pitch = 0) => {
+    yawQuat.setFromAxisAngle(yAxis, yaw);
+    if (pitch) {
+      pitchQuat.setFromAxisAngle(xAxis, pitch);
+      rotation.copy(yawQuat).multiply(pitchQuat);
+    } else {
+      rotation.copy(yawQuat);
+    }
     scale.set(sx, sy, sz);
     matrix.compose(position, rotation, scale);
     mesh.setMatrixAt(index, matrix);
+    matricesDirty = true;
   };
 
   const parkActorVisual = (actor) => {
@@ -965,6 +1267,8 @@ export function createStreamedAgentSystem({
       }
     } else {
       setMatrix(pools.meshes.pedestrianTorsos, actor.poolIndex, workPosition, 0, 0.001, 0.001, 0.001);
+      setMatrix(pools.meshes.pedestrianShoulders, actor.poolIndex * 2, workPosition, 0, 0.001, 0.001, 0.001);
+      setMatrix(pools.meshes.pedestrianShoulders, actor.poolIndex * 2 + 1, workPosition, 0, 0.001, 0.001, 0.001);
       setMatrix(pools.meshes.pedestrianHeads, actor.poolIndex, workPosition, 0, 0.001, 0.001, 0.001);
       setMatrix(pools.meshes.pedestrianHair, actor.poolIndex, workPosition, 0, 0.001, 0.001, 0.001);
       setMatrix(pools.meshes.pedestrianRoleCues, actor.poolIndex, workPosition, 0, 0.001, 0.001, 0.001);
@@ -990,6 +1294,13 @@ export function createStreamedAgentSystem({
     actor.crossingProgress = 0;
     actor.dwelling = false;
     actor.dwellUntil = 0;
+    actor.signalIntent = null;
+    actor.indicatorSide = 0;
+    actor.storyLabel = null;
+    actor.storyBeat = null;
+    actor.storyMood = null;
+    actor.storyChoice = null;
+    actor.storyPartnerSlot = -1;
     parkActorVisual(actor);
   };
 
@@ -1024,27 +1335,51 @@ export function createStreamedAgentSystem({
     const seed = hash32(`${state.stateId}:${localSlot}:vehicle`);
     const district = districtForSector(sectorKey);
     const profile = districtProfileFor(sectorKey);
-    const className = pickWeighted(seed, 1, profile.classWeights);
-    const spec = pools.vehicleProfile.classes[className];
-    const schedulePhase = vehicleSchedulePhaseFor(className, dayHourAt(elapsedTime));
-    const bodyColors = pools.vehicleProfile.bodyColors;
     const focusTableau = Boolean(
       tier === 'detail'
       && localSlot < FOCUS_TABLEAU_VEHICLES
       && focusPosition,
     );
+    const tableauSlot = localSlot < FOCUS_TABLEAU_VEHICLES;
+    // Focus tableau locks a readable four-class set so taxi / SFMTA bus /
+    // service van / private do not collapse into repeated black boxes.
+    const className = tableauSlot
+      ? FOCUS_VEHICLE_CLASS_ORDER[localSlot % FOCUS_VEHICLE_CLASS_ORDER.length]
+      : pickWeighted(seed, 1, profile.classWeights);
+    const spec = className === 'bus'
+      ? STREAMED_BUS_CLASS
+      : (pools.vehicleProfile.classes[className] || pools.vehicleProfile.classes.sedan);
+    const schedulePhase = vehicleSchedulePhaseFor(className, dayHourAt(elapsedTime));
+    const bodyColors = pools.vehicleProfile.bodyColors;
     const focusBodyPalette = FOCUS_VEHICLE_BODY_COLORS[className]
       || FOCUS_VEHICLE_BODY_COLORS.sedan;
     const bodyColor = className === 'taxi'
       ? pools.vehicleProfile.taxiColor
-      : focusBodyPalette[Math.floor(seededUnit(seed, 2) * focusBodyPalette.length)]
-        || bodyColors[Math.floor(seededUnit(seed, 2) * bodyColors.length)];
+      : className === 'bus'
+        ? BUS_BODY_COLOR
+        : focusBodyPalette[Math.floor(seededUnit(seed, 2) * focusBodyPalette.length)]
+          || bodyColors[Math.floor(seededUnit(seed, 2) * bodyColors.length)];
     const bodyTint = new THREE.Color(bodyColor);
-    liftReadableColor(bodyTint, 0.4, 0.16);
+    // Private cars still get a lift so graphite paints do not read as black boxes.
+    const minLightness = className === 'bus'
+      ? (tableauSlot ? 0.58 : 0.5)
+      : className === 'taxi'
+        ? (tableauSlot ? 0.62 : 0.54)
+        : className === 'bike'
+          ? (tableauSlot ? 0.48 : 0.4)
+        : className === 'van'
+          ? (tableauSlot ? 0.52 : 0.44)
+          : (tableauSlot ? 0.5 : 0.42);
+    liftReadableColor(
+      bodyTint,
+      minLightness,
+      className === 'taxi' || className === 'van' || className === 'bike' ? 0.24 : 0.16,
+    );
     const displayBodyColor = bodyTint.getHex();
     const accentColor = VEHICLE_ACCENT_COLORS[className] || VEHICLE_ACCENT_COLORS.sedan;
     const roofCueColor = VEHICLE_ROOF_CUE_COLORS[className] || VEHICLE_ROOF_CUE_COLORS.sedan;
     const roofCueSize = VEHICLE_ROOF_CUE_SIZES[className] || VEHICLE_ROOF_CUE_SIZES.sedan;
+    const silhouette = VEHICLE_SILHOUETTE[className] || VEHICLE_SILHOUETTE.sedan;
     const previousProgress = actor.progress;
     actor.sectorKey = sectorKey;
     actor.sectorSeed = seed;
@@ -1061,21 +1396,31 @@ export function createStreamedAgentSystem({
     actor.roadLine = streetLineFor(sectorKey, localSlot, 'vehicle');
     actor.direction = localSlot % 2 === 0 ? 1 : -1;
     actor.sidewalkSide = localSlot % 4 < 2 ? -1 : 1;
-    actor.laneOffset = VEHICLE_LANE_OFFSET + (seededUnit(seed, 4) - 0.5) * 0.42;
-    actor.spacingOffset = (seededUnit(seed, 5) - 0.5) * VEHICLE_SPACING_JITTER;
+    const laneBias = VEHICLE_CLASS_LANE_BIAS[className] || 0;
+    actor.laneOffset = VEHICLE_LANE_OFFSET
+      + laneBias
+      + (seededUnit(seed, 4) - 0.5) * (className === 'bus' ? 0.18 : className === 'bike' ? 0.12 : 0.34);
+    actor.spacingOffset = (seededUnit(seed, 5) - 0.5) * VEHICLE_SPACING_JITTER
+      + (VEHICLE_CLASS_SPACING[className] || 0) * (actor.direction > 0 ? 1 : -1);
     actor.focusTableau = focusTableau;
-    actor.visualScale = focusTableau
-      ? 1.07 + seededUnit(seed, 6) * 0.1
-      : 0.96 + seededUnit(seed, 6) * 0.1;
+    actor.visualScale = tableauSlot
+      ? (className === 'bus' ? 1.02 : className === 'bike' ? 1.2 : 1.08) + seededUnit(seed, 6) * 0.08
+      : (className === 'bus' ? 0.94 : className === 'bike' ? 1.08 : 0.97) + seededUnit(seed, 6) * 0.08;
+    actor.dwelling = false;
+    actor.dwellUntil = 0;
+    actor.signalIntent = null;
+    actor.indicatorSide = 0;
     const focusPhase = focusTableau
       ? (seededUnit(seed, 13) - 0.5) * 0.18
       : 0;
+    const focusSpacing = FOCUS_VEHICLE_SPACING
+      + (className === 'bus' ? 10 : className === 'van' ? 4 : 0);
     actor.progress = nearFocusProgress(
       sectorKey,
       focusPosition,
       actor.orientation,
       localSlot,
-      FOCUS_VEHICLE_SPACING,
+      focusSpacing,
       focusPhase,
       FOCUS_TABLEAU_VEHICLES,
     ) ?? modulo(
@@ -1084,7 +1429,16 @@ export function createStreamedAgentSystem({
         + state.trafficClock * GRID_STEP,
       SECTOR_SIZE,
     );
-    actor.speed = 8.4 + seededUnit(seed, 3) * 1.4;
+    const baseSpeed = className === 'bus'
+      ? 6.4
+      : className === 'bike'
+        ? 5.8
+      : className === 'van'
+        ? 7.4
+        : className === 'taxi'
+          ? 8.8
+          : 8.2;
+    actor.speed = baseSpeed + seededUnit(seed, 3) * (className === 'bus' ? 0.9 : className === 'bike' ? 1.1 : 1.4);
     actor.destination = `${district} ${schedulePhase.destination} ${localSlot + 1}`;
     actor.appearance = {
       className,
@@ -1099,21 +1453,33 @@ export function createStreamedAgentSystem({
       accentColor,
       roofCueColor,
       roofCueSize: {
-        width: roofCueSize.width * 1.12,
-        height: roofCueSize.height * 1.08,
-        length: roofCueSize.length * 1.08,
+        width: roofCueSize.width * (tableauSlot ? 1.18 : 1.08),
+        height: roofCueSize.height * (tableauSlot ? 1.16 : 1.08),
+        length: roofCueSize.length * (tableauSlot ? 1.14 : 1.06),
       },
+      silhouette: { ...silhouette },
+      cabinColor: className === 'bus'
+        ? 0x6f8fa0
+        : className === 'taxi'
+          ? 0xd8e8ef
+          : 0xc1d9e2,
+      indicatorColor: 0xffa51f,
+      brakeColor: 0xff3d4a,
     };
     if (keepMotion) actor.progress = previousProgress;
     pools.meshes.vehicleBodies.setColorAt(actor.poolIndex, bodyTint);
-    pools.meshes.vehicleCabins.setColorAt(actor.poolIndex, new THREE.Color(0xa1b7be));
+    pools.meshes.vehicleCabins.setColorAt(
+      actor.poolIndex,
+      new THREE.Color(actor.appearance.cabinColor),
+    );
     pools.meshes.vehicleRoofDetails.setColorAt(actor.poolIndex, new THREE.Color(roofCueColor));
     pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2, new THREE.Color(accentColor));
     pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2 + 1, new THREE.Color(accentColor));
-    const rearLamp = new THREE.Color(0xa83b43);
-    const frontLamp = new THREE.Color(0xfff0c2);
+    const rearLamp = new THREE.Color(actor.appearance.brakeColor);
+    const frontLamp = new THREE.Color(0xfff4cf);
     pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2, rearLamp);
     pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2 + 1, frontLamp);
+    colorsDirty = true;
   };
 
   const configurePedestrian = (
@@ -1130,33 +1496,47 @@ export function createStreamedAgentSystem({
     const profile = pools.pedestrianProfile;
     const district = districtForSector(sectorKey);
     const districtProfile = districtProfileFor(sectorKey);
-    const role = pickWeighted(seed, 1, districtProfile.roles);
     const focusTableau = Boolean(
       tier === 'detail'
       && localSlot < FOCUS_TABLEAU_PEDESTRIANS
       && focusPosition,
     );
+    const tableauSlot = localSlot < FOCUS_TABLEAU_PEDESTRIANS;
+    const tableauStory = tableauSlot ? FOCUS_TABLEAU_MICRO_STORIES[localSlot] : null;
+    let role = tableauStory?.role || pickWeighted(seed, 1, districtProfile.roles);
+    if (districtForSector(sectorKey) === 'Outer Sunset' && localSlot === 4) {
+      // Guarantee an Outer Sunset focus always carries a beachgoer
+      // representative; weighted sampling can otherwise roll zero on a quiet
+      // morning and the district loses its Ocean Beach identity cue.
+      role = 'beachgoer';
+    }
     const schedulePhase = schedulePhaseForRole(role, dayHourAt(elapsedTime));
     const wardrobe = districtProfile.wardrobe;
     const topColors = wardrobe.tops.length ? wardrobe.tops : profile.topColors;
     const bottomColors = wardrobe.bottoms.length ? wardrobe.bottoms : profile.bottomColors;
+    const roleAccent = PEDESTRIAN_ROLE_ACCENTS[role] || DEFAULT_PEDESTRIAN_ROLE_ACCENT;
+    const roleCueColor = new THREE.Color(roleAccent.color);
+    liftReadableColor(roleCueColor, tableauSlot ? 0.62 : 0.52, 0.28);
     const topColor = new THREE.Color(
       topColors[Math.floor(seededUnit(seed, 2) * topColors.length)],
     );
-    liftReadableColor(topColor, 0.36, 0.16);
+    const northBeachTableau = sectorKey === '4:4' && tableauSlot;
+    liftReadableColor(topColor, northBeachTableau ? 0.52 : 0.48, 0.2);
+    if (tableauSlot) {
+      topColor.lerp(roleCueColor, 0.42);
+      liftReadableColor(topColor, northBeachTableau ? 0.62 : 0.55, 0.24);
+    }
     const skinColor = new THREE.Color(
       profile.skinColors[Math.floor(seededUnit(seed, 1) * profile.skinColors.length)],
     );
-    liftReadableColor(skinColor, 0.36, 0.12);
+    liftReadableColor(skinColor, 0.48, 0.14);
     const bottomColor = new THREE.Color(
       bottomColors[Math.floor(seededUnit(seed, 3) * bottomColors.length)],
     );
-    liftReadableColor(bottomColor, 0.26, 0.1);
+    liftReadableColor(bottomColor, 0.4, 0.12);
     const hairColor = new THREE.Color(
       PEDESTRIAN_HAIR_COLORS[Math.floor(seededUnit(seed, 12) * PEDESTRIAN_HAIR_COLORS.length)],
     );
-    const roleAccent = PEDESTRIAN_ROLE_ACCENTS[role] || DEFAULT_PEDESTRIAN_ROLE_ACCENT;
-    const roleCueColor = new THREE.Color(roleAccent.color);
     const previousProgress = actor.progress;
     actor.sectorKey = sectorKey;
     actor.sectorSeed = seed;
@@ -1180,14 +1560,26 @@ export function createStreamedAgentSystem({
     actor.spacingOffset = (seededUnit(seed, 6) - 0.5) * PEDESTRIAN_SPACING_JITTER;
     const roleCue = PEDESTRIAN_ROLE_CUES[role] || DEFAULT_PEDESTRIAN_ROLE_CUE;
     actor.focusTableau = focusTableau;
-    actor.bodyWidthScale = roleCue.width * (
-      focusTableau ? 1.02 + seededUnit(seed, 7) * 0.1 : 0.96 + seededUnit(seed, 7) * 0.08
+    actor.storyLabel = tableauStory?.label || null;
+    actor.storyBeat = tableauStory?.beat || null;
+    actor.storyMood = tableauStory?.mood || null;
+    actor.storyChoice = tableauStory?.choice || null;
+    actor.storyPartnerSlot = tableauStory?.partnerSlot ?? -1;
+    if (tableauStory?.dwell && seededUnit(seed, 64) < 0.5) {
+      actor.dwelling = true;
+      actor.dwellUntil = elapsedTime + 2.4 + seededUnit(seed, 63) * 2.2;
+      actor.moving = false;
+      actor.waiting = false;
+    }
+    const tableauScaleBoost = northBeachTableau ? 1.12 : 1;
+    actor.bodyWidthScale = roleCue.width * tableauScaleBoost * (
+      tableauSlot ? 1.06 + seededUnit(seed, 7) * 0.1 : 0.96 + seededUnit(seed, 7) * 0.08
     );
-    actor.bodyDepthScale = roleCue.depth * (
-      focusTableau ? 1.01 + seededUnit(seed, 8) * 0.1 : 0.95 + seededUnit(seed, 8) * 0.1
+    actor.bodyDepthScale = roleCue.depth * tableauScaleBoost * (
+      tableauSlot ? 1.05 + seededUnit(seed, 8) * 0.1 : 0.95 + seededUnit(seed, 8) * 0.1
     );
     actor.limbScale = roleCue.limb * (
-      focusTableau ? 1.01 + seededUnit(seed, 9) * 0.1 : 0.96 + seededUnit(seed, 9) * 0.08
+      tableauSlot ? 1.01 + seededUnit(seed, 9) * 0.1 : 0.96 + seededUnit(seed, 9) * 0.08
     );
     actor.gaitScale = roleCue.gait;
     actor.gaitRate = 7.4 + seededUnit(seed, 10) * 1.2;
@@ -1220,6 +1612,8 @@ export function createStreamedAgentSystem({
       district,
       role,
       destination: actor.destination,
+      storyLabel: actor.storyLabel,
+      storyBeat: actor.storyBeat,
       heightScale: 1 + seededUnit(seed, 5) * 0.14,
     };
     if (keepMotion) actor.progress = previousProgress;
@@ -1231,6 +1625,58 @@ export function createStreamedAgentSystem({
     pools.meshes.pedestrianLegs.setColorAt(actor.poolIndex * 2 + 1, new THREE.Color(actor.appearance.bottomColor));
     pools.meshes.pedestrianArms.setColorAt(actor.poolIndex * 2, new THREE.Color(actor.appearance.topColor));
     pools.meshes.pedestrianArms.setColorAt(actor.poolIndex * 2 + 1, new THREE.Color(actor.appearance.topColor));
+    pools.meshes.pedestrianShoulders.setColorAt(actor.poolIndex * 2, new THREE.Color(actor.appearance.topColor));
+    pools.meshes.pedestrianShoulders.setColorAt(actor.poolIndex * 2 + 1, new THREE.Color(actor.appearance.topColor));
+    colorsDirty = true;
+  };
+
+  const ensurePedestrianBehaviorTree = (actor) => {
+    if (actor.kind !== 'pedestrian' || !actor.activity) return;
+    if (actor.behaviorActivity !== actor.activity || !actor.behaviorTree) {
+      actor.behaviorTree = createStreamedTreeForActivity(actor.activity);
+      actor.behaviorActivity = actor.activity;
+      actor.blackboard = createBlackboard({
+        roleId: actor.role,
+        activity: actor.activity,
+        atCrossing: false,
+        signalClear: false,
+        atDestination: false,
+        preferWork: false,
+        handoffReady: false,
+        intent: 'walk',
+        animCue: 'stream-commute',
+        urgency: 0.55,
+      });
+    }
+  };
+
+  const tickStreamedPedestrianBehavior = (actor, step) => {
+    if (actor.kind !== 'pedestrian') return;
+    ensurePedestrianBehaviorTree(actor);
+    if (!actor.behaviorTree || !actor.blackboard) return;
+    const bb = actor.blackboard;
+    bb.roleId = actor.role;
+    bb.activity = actor.activity;
+    bb.atCrossing = Boolean(actor.crossing || actor.waiting);
+    bb.signalClear = Boolean(actor.crossing) && !actor.waiting;
+    bb.atDestination = Boolean(actor.dwelling);
+    bb.preferWork = actor.dwelling && (
+      actor.activity === 'working'
+      || actor.activity === 'service'
+      || actor.activity === 'shopping'
+      || actor.activity === 'studying'
+    );
+    tickBehaviorTree(actor.behaviorTree, bb, step);
+    actor.btIntent = bb.intent;
+    actor.btAnimCue = bb.animCue;
+    actor.btUrgency = Number.isFinite(bb.urgency) ? bb.urgency : 0.55;
+    if (actor.btIntent === 'walk' || actor.btIntent === 'cross') {
+      actor.pace = THREE.MathUtils.clamp(
+        actor.pace * (0.92 + actor.btUrgency * 0.2),
+        0.72,
+        1.45,
+      );
+    }
   };
 
   const refreshActorSchedule = (actor) => {
@@ -1248,6 +1694,7 @@ export function createStreamedAgentSystem({
       actor.pace = phase.pace;
       actor.destination = `${actor.appearance.district} ${phase.destination} ${actor.localSlot + 1}`;
       actor.appearance.destination = actor.destination;
+      ensurePedestrianBehaviorTree(actor);
     }
   };
 
@@ -1380,7 +1827,7 @@ export function createStreamedAgentSystem({
       const isVehicle = actor.kind === 'vehicle';
       const tableauCount = isVehicle ? FOCUS_TABLEAU_VEHICLES : FOCUS_TABLEAU_PEDESTRIANS;
       if (actor.localSlot >= tableauCount) return;
-      const route = focusTableauRoute(actor.kind, actor.localSlot);
+      const route = focusTableauRoute(actor.kind, actor.localSlot, focusSectorKey);
       if (!route) return;
       const stagedProgress = nearFocusProgressAt(
         focusSectorKey,
@@ -1401,14 +1848,28 @@ export function createStreamedAgentSystem({
         actor.orientation,
         actor.roadLine,
       );
+      if (route.sidewalkSide === -1 || route.sidewalkSide === 1) {
+        actor.sidewalkSide = route.sidewalkSide;
+      }
       actor.crossing = false;
       actor.crossingProgress = 0;
       actor.waiting = false;
       actor.dwelling = false;
       actor.dwellUntil = 0;
+      actor.signalIntent = null;
+      actor.indicatorSide = 0;
       actor.moving = true;
       actor.focusTableau = true;
       actor.focusStageRevision += 1;
+      if (actor.kind === 'pedestrian') {
+        const story = FOCUS_TABLEAU_MICRO_STORIES[actor.localSlot];
+        if (story?.dwell && seededUnit(actor.sectorSeed, 64) < 0.5) {
+          actor.dwelling = true;
+          actor.dwellUntil = elapsedTime + 2.4 + seededUnit(actor.sectorSeed, 63) * 2.2;
+          actor.moving = false;
+          actor.waiting = false;
+        }
+      }
     });
     lastStageFocusPosition.copy(focusPosition);
     return true;
@@ -1515,43 +1976,75 @@ export function createStreamedAgentSystem({
     const centerX = coordinates.x * SECTOR_SIZE;
     const centerZ = coordinates.z * SECTOR_SIZE;
     const longitudinal = -SECTOR_SIZE * 0.5 + actor.progress;
+    // Pull curb-service vehicles slightly toward the near curb while dwelling.
+    const dwellPull = actor.dwelling
+      ? (actor.appearance.className === 'bus'
+        ? 0.55
+        : actor.appearance.className === 'taxi' || actor.appearance.className === 'van'
+          ? 0.42
+          : 0.18)
+      : 0;
+    const lane = actor.laneOffset + dwellPull * actor.sidewalkSide * actor.direction;
     let x;
     let z;
     let yaw;
     if (actor.orientation === 'east-west') {
       x = centerX + longitudinal;
-      z = centerZ + actor.roadLine + actor.direction * actor.laneOffset;
+      z = centerZ + actor.roadLine + actor.direction * lane;
       yaw = actor.direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
     } else {
-      x = centerX - actor.direction * actor.laneOffset + actor.roadLine;
+      x = centerX - actor.direction * lane + actor.roadLine;
       z = centerZ + longitudinal;
       yaw = actor.direction > 0 ? 0 : Math.PI;
     }
     const ground = surfaceY(x, z);
     const visual = actor.appearance;
     const visualScale = actor.visualScale;
-    actor.position.set(x, ground + visual.height * 0.38 * visualScale, z);
+    const silhouette = visual.silhouette
+      || VEHICLE_SILHOUETTE[visual.className]
+      || VEHICLE_SILHOUETTE.sedan;
+    const bodyY = ground + visual.height * silhouette.bodyHeight * 0.5 * visualScale;
+    actor.position.set(x, bodyY, z);
     setMatrix(
       pools.meshes.vehicleBodies,
       actor.poolIndex,
       actor.position,
       yaw,
       visual.width * visualScale,
-      visual.height * 0.52 * visualScale,
+      visual.height * silhouette.bodyHeight * visualScale,
       visual.length * visualScale,
     );
-    workPosition.set(x, ground + visual.height * 0.72 * visualScale, z);
+    localOffset.set(
+      0,
+      visual.height * silhouette.cabinLift * visualScale,
+      visual.length * silhouette.cabinShift * visualScale,
+    ).applyAxisAngle(yAxis, yaw);
+    workPosition.set(x, ground, z).add(localOffset);
     setMatrix(
       pools.meshes.vehicleCabins,
       actor.poolIndex,
       workPosition,
       yaw,
-      visual.width * 0.72 * visualScale,
-      visual.height * 0.42 * visualScale,
-      visual.length * 0.48 * visualScale,
+      visual.width * silhouette.cabinWidth * visualScale,
+      visual.height * silhouette.cabinHeight * visualScale,
+      visual.length * silhouette.cabinLength * visualScale,
     );
     const roofCue = visual.roofCueSize || VEHICLE_ROOF_CUE_SIZES.sedan;
-    workPosition.set(x, ground + visual.height * 0.98 * visualScale, z);
+    // Taxi roof sign sits high and short; bus route board is long and low;
+    // van keeps a cargo rack; private cars use a small roof rail.
+    const roofShiftZ = visual.className === 'taxi'
+      ? visual.length * 0.08
+      : visual.className === 'bus'
+        ? visual.length * 0.18
+        : visual.className === 'van'
+          ? -visual.length * 0.06
+          : 0;
+    localOffset.set(
+      0,
+      visual.height * silhouette.roofLift * visualScale,
+      roofShiftZ * visualScale,
+    ).applyAxisAngle(yAxis, yaw);
+    workPosition.set(x, ground, z).add(localOffset);
     setMatrix(
       pools.meshes.vehicleRoofDetails,
       actor.poolIndex,
@@ -1563,9 +2056,21 @@ export function createStreamedAgentSystem({
     );
     for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
       const sideSign = sideIndex ? 1 : -1;
+      // Bus/van side stripe is taller and longer; private chrome is thinner.
+      const trimHeight = visual.height * silhouette.trimHeight * visualScale
+        * (visual.className === 'bus' ? 1.15 : visual.className === 'van' ? 1.08 : 1);
+      const trimLength = visual.length * (
+        visual.className === 'bus' ? 0.9
+          : visual.className === 'van' ? 0.78
+            : visual.className === 'taxi' ? 0.62
+              : 0.5
+      ) * visualScale;
+      const trimThickness = (
+        visual.className === 'bus' || visual.className === 'van' ? 0.09 : 0.055
+      ) * visualScale;
       localOffset.set(
         sideSign * visual.width * 0.515 * visualScale,
-        visual.height * 0.38 * visualScale,
+        visual.height * (visual.className === 'bus' ? 0.48 : 0.36) * visualScale,
         0,
       ).applyAxisAngle(yAxis, yaw);
       workPosition.set(x, ground, z).add(localOffset);
@@ -1574,16 +2079,16 @@ export function createStreamedAgentSystem({
         actor.poolIndex * 2 + sideIndex,
         workPosition,
         yaw,
-        0.045 * visualScale,
-        visual.height * 0.14 * visualScale,
-        visual.length * 0.62 * visualScale,
+        trimThickness,
+        trimHeight,
+        trimLength,
       );
     }
     for (let axle = 0; axle < 2; axle += 1) {
       localOffset.set(
         0,
         visual.wheelRadius * visualScale,
-        (axle ? 1 : -1) * visual.length * 0.31 * visualScale,
+        (axle ? 1 : -1) * visual.length * silhouette.wheelBase * visualScale,
       );
       localOffset.applyAxisAngle(yAxis, yaw);
       workPosition.set(x, ground, z).add(localOffset);
@@ -1592,30 +2097,54 @@ export function createStreamedAgentSystem({
         actor.poolIndex * 2 + axle,
         workPosition,
         yaw,
-        visual.width * 1.02 * visualScale,
+        visual.width * (visual.className === 'bus' ? 1.08 : 1.02) * visualScale,
         visual.wheelRadius * visualScale,
         visual.wheelRadius * visualScale,
       );
+    }
+    // axle-slot 0 = rear brake/indicator pair cue, 1 = front headlamp cue.
+    const lampStates = [
+      {
+        z: -0.505,
+        y: visual.className === 'bus' ? 0.52 : 0.4,
+        width: visual.className === 'bus' ? 0.34 : 0.24,
+        height: (actor.waiting || actor.dwelling || actor.signalIntent) ? 0.17 : 0.13,
+        depth: 0.12,
+        side: actor.indicatorSide || 0,
+      },
+      {
+        z: 0.505,
+        y: visual.className === 'bus' ? 0.48 : 0.4,
+        width: visual.className === 'bus' ? 0.3 : 0.2,
+        height: 0.13,
+        depth: 0.11,
+        side: 0,
+      },
+    ];
+    for (let lampIndex = 0; lampIndex < 2; lampIndex += 1) {
+      const lamp = lampStates[lampIndex];
+      const widen = lampIndex === 0 && lamp.side !== 0 ? 1.45 : 1;
       localOffset.set(
-        (axle ? 1 : -1) * visual.width * 0.3 * visualScale,
-        visual.height * 0.43 * visualScale,
-        visual.length * 0.505 * visualScale,
+        lamp.side * visual.width * 0.16 * visualScale,
+        visual.height * lamp.y * visualScale,
+        visual.length * lamp.z * visualScale,
       ).applyAxisAngle(yAxis, yaw);
       workPosition.set(x, ground, z).add(localOffset);
       setMatrix(
         pools.meshes.vehicleHeadlights,
-        actor.poolIndex * 2 + axle,
+        actor.poolIndex * 2 + lampIndex,
         workPosition,
         yaw,
-        visual.width * 0.16 * visualScale,
-        0.11 * visualScale,
-        0.08 * visualScale,
+        visual.width * lamp.width * widen * visualScale,
+        lamp.height * visualScale,
+        lamp.depth * visualScale,
       );
     }
   };
 
   const updateVehicleActor = (actor, step) => {
     refreshActorSchedule(actor);
+    const className = actor.appearance?.className || 'sedan';
     const coordinates = parseSectorKey(actor.sectorKey);
     const centerX = coordinates.x * SECTOR_SIZE;
     const centerZ = coordinates.z * SECTOR_SIZE;
@@ -1638,7 +2167,93 @@ export function createStreamedAgentSystem({
       elapsedTime,
       signalOffsetForPosition(intersectionX, intersectionZ),
     );
-    const shouldStop = phase !== 'green' && distanceToSignal >= 4.8 && distanceToSignal < 7.2;
+    const stopWindow = className === 'bus' ? 8.4 : 7.2;
+    const stopStart = className === 'bus' ? 5.4 : 4.8;
+    const shouldStop = phase !== 'green'
+      && distanceToSignal >= stopStart
+      && distanceToSignal < stopWindow;
+
+    // Class-specific curb dwell: buses at stops, taxis/vans at mid-block curb.
+    if (actor.dwelling) {
+      actor.waiting = true;
+      actor.moving = false;
+      actor.indicatorSide = actor.sidewalkSide;
+      actor.signalIntent = 'dwell';
+      if (elapsedTime >= actor.dwellUntil) {
+        actor.dwelling = false;
+        actor.dwellUntil = 0;
+        actor.signalIntent = 'merge';
+        actor.indicatorSide = -actor.sidewalkSide;
+      }
+      // Keep brake/indicator colors live while dwelling.
+      const rear = new THREE.Color(
+        actor.signalIntent === 'dwell' || actor.waiting
+          ? actor.appearance.brakeColor
+          : 0xff5663,
+      );
+      const blinkOn = Math.floor(elapsedTime * 3.2) % 2 === 0;
+      const indicator = new THREE.Color(
+        blinkOn ? actor.appearance.indicatorColor : actor.appearance.brakeColor,
+      );
+      pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2, blinkOn ? indicator : rear);
+      colorsDirty = true;
+      placeVehicle(actor);
+      return;
+    }
+
+    // Start dwells away from the signal box so heavy vehicles do not block it.
+    const midBlock = Math.abs(longitudinal - nextGrid) > 18;
+    if (!shouldStop && midBlock && !actor.waiting) {
+      const cycle = className === 'bus'
+        ? 18 + seededUnit(actor.sectorSeed, 70) * 10
+        : className === 'taxi'
+          ? 14 + seededUnit(actor.sectorSeed, 70) * 12
+          : className === 'van'
+            ? 20 + seededUnit(actor.sectorSeed, 70) * 14
+            : 0;
+      if (cycle > 0) {
+        const window = className === 'bus' ? 1.6 : 1.1;
+        const pos = (dayHourAt(elapsedTime) * 17 + actor.localSlot * 3.1) % cycle;
+        const chance = className === 'bus' ? 0.72 : className === 'taxi' ? 0.48 : 0.38;
+        if (pos >= 0.4 && pos < 0.4 + window
+          && seededUnit(actor.sectorSeed, 71 + actor.localSlot) < chance) {
+          actor.dwelling = true;
+          actor.dwellUntil = elapsedTime
+            + (className === 'bus'
+              ? 2.8 + seededUnit(actor.sectorSeed, 72) * 2.2
+              : className === 'taxi'
+                ? 2.2 + seededUnit(actor.sectorSeed, 72) * 2.4
+                : 2.6 + seededUnit(actor.sectorSeed, 72) * 2.8);
+          actor.signalIntent = 'dwell';
+          actor.indicatorSide = actor.sidewalkSide;
+        }
+      }
+    }
+
+    // Turn-indicator window approaching intersections (yellow phase or red).
+    if (!actor.dwelling && distanceToSignal < 16 && distanceToSignal > 2.5) {
+      if (phase === 'yellow' || phase === 'red') {
+        actor.signalIntent = 'stop';
+        actor.indicatorSide = actor.sidewalkSide !== 0
+          ? actor.sidewalkSide
+          : (seededUnit(actor.sectorSeed, 73) > 0.5 ? 1 : -1);
+      } else if (phase === 'green' && distanceToSignal < 9) {
+        // Occasional protected turn read on green approach.
+        actor.signalIntent = seededUnit(actor.sectorSeed, 74 + actor.localSlot) > 0.72
+          ? 'turn'
+          : null;
+        actor.indicatorSide = actor.signalIntent
+          ? (seededUnit(actor.sectorSeed, 75) > 0.5 ? 1 : -1)
+          : 0;
+      } else {
+        actor.signalIntent = null;
+        actor.indicatorSide = 0;
+      }
+    } else if (!actor.dwelling) {
+      actor.signalIntent = null;
+      actor.indicatorSide = 0;
+    }
+
     actor.waiting = shouldStop;
     actor.moving = !shouldStop;
     if (!shouldStop) {
@@ -1648,6 +2263,22 @@ export function createStreamedAgentSystem({
         SECTOR_SIZE,
       );
     }
+
+    // Lamp color: brakes when stopped/dwelling; amber blink for turn intent.
+    const blinkOn = Math.floor(elapsedTime * 3.4) % 2 === 0;
+    let rearColor = actor.appearance.brakeColor;
+    if (actor.waiting || actor.dwelling) {
+      rearColor = actor.appearance.brakeColor;
+    } else if (actor.signalIntent === 'turn' || actor.signalIntent === 'stop') {
+      rearColor = blinkOn ? actor.appearance.indicatorColor : 0x5a2a00;
+    } else {
+      rearColor = 0xc94a52;
+    }
+    pools.meshes.vehicleHeadlights.setColorAt(
+      actor.poolIndex * 2,
+      new THREE.Color(rearColor),
+    );
+    colorsDirty = true;
     placeVehicle(actor);
   };
 
@@ -1682,39 +2313,102 @@ export function createStreamedAgentSystem({
     }
     const ground = surfaceY(x, z);
     const height = actor.appearance.heightScale;
-    const gait = actor.moving
-      ? Math.sin(elapsedTime * actor.gaitRate + actor.localSlot * 1.7 + actor.gaitPhase)
-        * 0.12 * actor.gaitScale
-      : 0;
+    const hurry = actor.crossing ? 1.12 : 1;
+    const dwell = actor.dwelling || actor.waiting;
+    const phase = elapsedTime * actor.gaitRate * hurry + actor.localSlot * 1.7 + actor.gaitPhase;
+    const sinPhase = Math.sin(phase);
+    const gaitAmp = actor.moving && !dwell ? actor.gaitScale * hurry : 0;
+    // Rotational limb swing (not Z-offset sticks). Opposite legs / arms.
+    // Clamp so hot QA/cross hurry never folds capsules into a ground V-sit.
+    const rawLeg = (actor.crossing ? 0.62 : 0.74) * gaitAmp;
+    const legPitchL = THREE.MathUtils.clamp(sinPhase * rawLeg, -0.78, 0.78);
+    const legPitchR = THREE.MathUtils.clamp(-sinPhase * rawLeg, -0.78, 0.78);
+    const armPitchL = THREE.MathUtils.clamp(-sinPhase * 0.55 * gaitAmp, -0.7, 0.7);
+    const armPitchR = THREE.MathUtils.clamp(sinPhase * 0.55 * gaitAmp, -0.7, 0.7);
+    const bob = actor.moving && !dwell
+      ? -Math.abs(Math.cos(phase)) * 0.034 * height * gaitAmp
+      : Math.sin(elapsedTime * 1.5 + actor.gaitPhase) * 0.006 * height;
+    const idleSway = dwell ? Math.sin(elapsedTime * 0.85 + actor.gaitPhase) * 0.04 : 0;
+    const torsoLean = (actor.crossing ? 0.08 : 0)
+      + (actor.activity === 'working' || actor.activity === 'service' ? 0.04 : 0)
+      + (actor.activity === 'resting' || actor.activity === 'lunch' ? -0.02 : 0);
+    const gazeSeed = Number.isFinite(actor.gazePhase) ? actor.gazePhase : actor.gaitPhase;
+    const headLook = dwell
+      ? Math.sin(elapsedTime * 0.55 + gazeSeed) * 0.22
+      : sinPhase * 0.06 * gaitAmp;
+    // CapsuleGeometry(r, length) half-height = length/2 + r; keep in sync with
+    // limbGeometry / uniform sy scale so hip pins don't open a waist hollow.
+    const legHalfExtent = (0.28 + 0.072) * height * actor.limbScale;
+    const armHalfExtent = (0.28 + 0.072) * height * 0.78 * actor.limbScale;
+    // Bulbous capsule sides sit above the geometric tip — pin hips into the
+    // lower third so side/rear views don't show a waist hollow.
+    const torsoBottomY = 0.56 * height;
+    const shoulderY = 1.42 * height;
     const bodyWidth = height * actor.bodyWidthScale;
     const bodyDepth = height * actor.bodyDepthScale;
-    actor.position.set(x, ground + 1.05 * height, z);
+    if (actor.storyPartnerSlot >= 0 && actor.focusTableau && actor.dwelling) {
+      const partner = pedestrianSlots[actor.storyPartnerSlot];
+      if (partner?.active) {
+        const partnerDeltaX = partner.position.x - x;
+        const partnerDeltaZ = partner.position.z - z;
+        if (Math.hypot(partnerDeltaX, partnerDeltaZ) > 0.05) {
+          yaw = Math.atan2(partnerDeltaX, partnerDeltaZ);
+        }
+      }
+    }
+    actor.position.set(x, ground + 1.05 * height + bob, z);
     setMatrix(
       pools.meshes.pedestrianTorsos,
       actor.poolIndex,
       actor.position,
-      yaw,
+      yaw + idleSway * 0.35,
       bodyWidth,
       height,
       bodyDepth,
+      torsoLean,
     );
-    workPosition.set(x, ground + 1.72 * height, z);
+    for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
+      const sign = sideIndex ? 1 : -1;
+      // Tuck deltoids into the capsule — large side pads read as floating cubes.
+      localOffset.set(
+        sign * bodyWidth * 0.22,
+        1.42 * height + bob,
+        bodyDepth * 0.01,
+      ).applyAxisAngle(yAxis, yaw);
+      workPosition.set(x, ground, z).add(localOffset);
+      setMatrix(
+        pools.meshes.pedestrianShoulders,
+        actor.poolIndex * 2 + sideIndex,
+        workPosition,
+        yaw,
+        bodyWidth * 0.2,
+        height * 0.12,
+        bodyDepth * 0.28,
+        sideIndex ? armPitchR * 0.44 : armPitchL * 0.44,
+      );
+    }
+    localOffset.set(
+      Math.sin(headLook) * 0.04 * height,
+      1.72 * height + bob,
+      Math.cos(headLook) * 0.02 * height,
+    ).applyAxisAngle(yAxis, yaw);
+    workPosition.set(x, ground, z).add(localOffset);
     setMatrix(
       pools.meshes.pedestrianHeads,
       actor.poolIndex,
       workPosition,
-      yaw,
+      yaw + headLook,
       bodyWidth * 0.96,
       height,
       bodyDepth * 0.96,
     );
-    localOffset.set(0, 1.84 * height, 0).applyAxisAngle(yAxis, yaw);
+    localOffset.set(0, 1.84 * height + bob, 0).applyAxisAngle(yAxis, yaw);
     workPosition.set(x, ground, z).add(localOffset);
     setMatrix(
       pools.meshes.pedestrianHair,
       actor.poolIndex,
       workPosition,
-      yaw,
+      yaw + headLook,
       bodyWidth * 1.02,
       height * 0.52,
       bodyDepth * 1.02,
@@ -1727,15 +2421,24 @@ export function createStreamedAgentSystem({
       cueScale.set(bodyWidth * 0.18, height * 0.3, bodyDepth * 0.16);
       cueOffset.set(bodyWidth * 0.31, 0.78 * height, bodyDepth * 0.1);
     } else if (roleCueKind === 'badge') {
-      cueScale.set(bodyWidth * 0.2, height * 0.2, 0.07 * height);
-      cueOffset.set(bodyWidth * 0.25, 1.2 * height, bodyDepth * 0.24);
+      // Commuter lanyard / tourist map fold — worn at the chest, not a UI marker.
+      cueScale.set(bodyWidth * 0.16, height * 0.22, bodyDepth * 0.08);
+      cueOffset.set(bodyWidth * 0.18, 1.08 * height, bodyDepth * 0.2);
     } else if (roleCueKind === 'hi-vis') {
-      cueScale.set(bodyWidth * 0.38, height * 0.34, 0.06 * height);
-      cueOffset.set(0, 1.18 * height, bodyDepth * 0.24);
+      // Vest should read as torso trim, not a floating tray around the hips.
+      cueScale.set(bodyWidth * 0.72, height * 0.34, bodyDepth * 0.52);
+      cueOffset.set(0, 1.18 * height, 0);
+    } else if (roleCueKind === 'beach-gear') {
+      cueScale.set(bodyWidth * 0.18, height * 0.8, bodyDepth * 0.12);
+      cueOffset.set(-bodyWidth * 0.42, 1.0 * height, -bodyDepth * 0.16);
     } else {
-      cueScale.set(bodyWidth * 0.52, height * 0.11, bodyDepth * 0.25);
-      cueOffset.set(0, 1.12 * height, 0);
+      // No default waist/chest band — it read as a floating UI tray from rear cams.
+      cueScale.set(0.001, 0.001, 0.001);
+      cueOffset.set(0, 1.2 * height, 0);
     }
+    // Role cues are part of the silhouette language, not floating UI.
+    if (actor.focusTableau) cueScale.multiplyScalar(1.1);
+    cueOffset.y += bob;
     cueOffset.applyAxisAngle(yAxis, yaw);
     workPosition.set(x, ground, z).add(cueOffset);
     setMatrix(
@@ -1749,10 +2452,17 @@ export function createStreamedAgentSystem({
     );
     for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
       const sign = sideIndex ? 1 : -1;
+      const legPitch = sideIndex ? legPitchR : legPitchL;
+      const armPitch = sideIndex ? armPitchR : armPitchL;
+      // Keep capsule TOP pinned at the hip while the limb pitches — placing the
+      // instance at the geometric center with only a Z sine left a hollow gap.
+      // Hinge at hip: center = hip + Rx(pitch)*(0,-half,0) so the capsule TOP
+      // stays on the waist (Z must be -sin, not +sin, or the crown walks off).
+      const legHalf = legHalfExtent * 0.96;
       localOffset.set(
-        sign * 0.115 * actor.bodyWidthScale,
-        0.48 * height,
-        gait * sign * actor.bodyDepthScale,
+        sign * 0.12 * actor.bodyWidthScale,
+        torsoBottomY + bob - Math.cos(legPitch) * legHalf,
+        -Math.sin(legPitch) * legHalf,
       ).applyAxisAngle(yAxis, yaw);
       workPosition.set(x, ground, z).add(localOffset);
       setMatrix(
@@ -1763,11 +2473,13 @@ export function createStreamedAgentSystem({
         height * actor.limbScale,
         height * actor.limbScale,
         height * actor.limbScale,
+        legPitch,
       );
+      const armHalf = armHalfExtent * 0.96;
       localOffset.set(
-        sign * 0.31 * actor.bodyWidthScale,
-        1.08 * height,
-        -gait * sign * actor.bodyDepthScale,
+        sign * 0.26 * actor.bodyWidthScale,
+        shoulderY + bob - Math.cos(armPitch) * armHalf,
+        -Math.sin(armPitch) * armHalf * 0.9,
       ).applyAxisAngle(yAxis, yaw);
       workPosition.set(x, ground, z).add(localOffset);
       setMatrix(
@@ -1778,12 +2490,54 @@ export function createStreamedAgentSystem({
         height * 0.78 * actor.limbScale,
         height * 0.78 * actor.limbScale,
         height * 0.78 * actor.limbScale,
+        armPitch,
       );
     }
   };
 
+  let qaForceWalkId = null;
+
+  const setQaForceWalk = (actorId = null) => {
+    qaForceWalkId = typeof actorId === 'string' && actorId ? actorId : null;
+    if (!qaForceWalkId) return;
+    for (const actor of pedestrianSlots) {
+      if (!actor.active || actor.id !== qaForceWalkId) continue;
+      actor.dwelling = false;
+      actor.waiting = false;
+      actor.dwellUntil = 0;
+      actor.crossing = false;
+      actor.moving = true;
+      actor.pace = Math.max(actor.pace || 1, 1.18);
+      actor.gaitScale = Math.max(actor.gaitScale || 1, 1.22);
+      actor.gaitRate = Math.max(actor.gaitRate || 7.4, 9.0);
+      actor.sidewalkOffset = Math.min(actor.sidewalkOffset || SIDEWALK_OFFSET, 6.4);
+    }
+  };
+
   const updatePedestrianActor = (actor, step) => {
+    if (qaForceWalkId && actor.id === qaForceWalkId) {
+      actor.dwelling = false;
+      actor.waiting = false;
+      actor.dwellUntil = 0;
+      actor.crossing = false;
+      actor.crossingProgress = 0;
+      actor.moving = true;
+    }
     refreshActorSchedule(actor);
+    tickStreamedPedestrianBehavior(actor, step);
+    if (qaForceWalkId && actor.id === qaForceWalkId) {
+      actor.dwelling = false;
+      actor.waiting = false;
+      actor.dwellUntil = 0;
+      actor.crossing = false;
+      actor.crossingProgress = 0;
+      actor.moving = true;
+      // Pull curb-ward so QA subjects clear facade planters.
+      actor.sidewalkOffset = Math.min(actor.sidewalkOffset || SIDEWALK_OFFSET, 6.4);
+      actor.pace = Math.max(actor.pace || 1, 1.18);
+      actor.gaitScale = Math.max(actor.gaitScale || 1, 1.22);
+      actor.gaitRate = Math.max(actor.gaitRate || 7.4, 9.0);
+    }
     const coordinates = parseSectorKey(actor.sectorKey);
     const centerX = coordinates.x * SECTOR_SIZE;
     const centerZ = coordinates.z * SECTOR_SIZE;
@@ -1801,7 +2555,12 @@ export function createStreamedAgentSystem({
       elapsedTime,
       signalOffsetForPosition(intersectionX, intersectionZ),
     );
-    const atCrosswalk = actor.localSlot < 6 && Math.abs(longitudinal - nearestGrid) < 1.3;
+    // Keep only a sparse subset near crosswalks. Earlier slots 0-5 all waited
+    // at the same intersection, so a focus frame could show most of a sector
+    // frozen on red. A modest modulo subset preserves signal behavior while
+    // leaving the street visibly alive.
+    const atCrosswalk = actor.localSlot % 5 === 0
+      && Math.abs(longitudinal - nearestGrid) < 1.3;
     if (actor.dwelling) {
       actor.moving = true;
       actor.waiting = false;
@@ -1819,6 +2578,7 @@ export function createStreamedAgentSystem({
     if (!actor.crossing
       && !actor.waiting
       && !actor.dwelling
+      && !(qaForceWalkId && actor.id === qaForceWalkId)
       && DWELL_ACTIVITIES.has(actor.activity)) {
       const cycle = 14 + seededUnit(actor.sectorSeed, 60) * 18;
       const phaseWindow = 0.75 + seededUnit(actor.sectorSeed, 61) * 0.6;
@@ -1843,7 +2603,7 @@ export function createStreamedAgentSystem({
         actor.crossingProgress = 0;
         actor.sidewalkSide *= -1;
       }
-    } else if (atCrosswalk) {
+    } else if (atCrosswalk && !(qaForceWalkId && actor.id === qaForceWalkId)) {
       actor.waiting = phase !== 'red';
       actor.moving = !actor.waiting;
       if (!actor.waiting) {
@@ -1851,6 +2611,15 @@ export function createStreamedAgentSystem({
         actor.crossingLine = nearestGrid;
         actor.crossingProgress = 0.001;
       }
+    } else if (atCrosswalk && qaForceWalkId && actor.id === qaForceWalkId) {
+      // Keep strolling through the intersection for animation QA.
+      actor.waiting = false;
+      actor.moving = true;
+      actor.progress = modulo(
+        actor.progress
+          + actor.direction * actor.speed * pedestrianWeatherFactor() * scheduleBeat.pedestrianPace * actor.pace * step,
+        SECTOR_SIZE,
+      );
     } else {
       actor.waiting = false;
       actor.moving = true;
@@ -1864,10 +2633,13 @@ export function createStreamedAgentSystem({
   };
 
   const flagMatrices = () => {
+    if (!matricesDirty && !colorsDirty) return;
     Object.values(pools.meshes).forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (matricesDirty) mesh.instanceMatrix.needsUpdate = true;
+      if (colorsDirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     });
+    matricesDirty = false;
+    colorsDirty = false;
   };
 
   const update = (position, dt = 0, elapsed = undefined) => {
@@ -1915,7 +2687,7 @@ export function createStreamedAgentSystem({
     weather = VALID_WEATHER.has(mode) ? mode : 'clear';
     pools.bodyMaterial.roughness = weather === 'drizzle' ? 0.54 : weather === 'fog' ? 0.74 : 0.68;
     pools.glassMaterial.opacity = weather === 'fog' ? 0.82 : 1;
-    pools.headlightMaterial.emissiveIntensity = weather === 'clear' ? 0 : weather === 'fog' ? 2.8 : 3.4;
+    pools.headlightMaterial.emissiveIntensity = weather === 'clear' ? 0.78 : weather === 'fog' ? 2.8 : 3.4;
     // Keep the low-energy lamp/tail contrast visible in clear weather too;
     // fog and drizzle still raise emissive intensity for distance readability.
     pools.meshes.vehicleHeadlights.visible = true;
@@ -1945,6 +2717,22 @@ export function createStreamedAgentSystem({
       y: Math.round(actor.position.y * 1000) / 1000,
       z: Math.round(actor.position.z * 1000) / 1000,
     },
+    progress: Math.round(actor.progress * 1000) / 1000,
+    gaitPhase: Math.round(actor.gaitPhase * 1000) / 1000,
+    gaitScale: Math.round((actor.gaitScale || 1) * 1000) / 1000,
+    // Synthetic limb drives for QA — instanced capsules have no bone tree.
+    legSwing: actor.moving
+      ? Math.round(Math.sin(
+        elapsedTime * (actor.gaitRate || 8) * (actor.crossing ? 1.12 : 1)
+          + actor.localSlot * 1.7
+          + actor.gaitPhase,
+      ) * (actor.gaitScale || 1) * 1000) / 1000
+      : 0,
+    axis: actor.axis,
+    direction: actor.direction,
+    yaw: actor.axis === 'x'
+      ? (actor.direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5)
+      : (actor.direction > 0 ? 0 : Math.PI),
     appearance: { ...actor.appearance },
   });
 
@@ -2019,6 +2807,12 @@ export function createStreamedAgentSystem({
         visible: activeVehicles.length,
         moving: activeVehicles.filter((actor) => actor.moving).length,
         waiting: activeVehicles.filter((actor) => actor.waiting).length,
+        dwelling: activeVehicles.filter((actor) => actor.dwelling).length,
+        classes: activeVehicles.reduce((counts, actor) => {
+          const key = actor.appearance?.className || 'unknown';
+          counts[key] = (counts[key] || 0) + 1;
+          return counts;
+        }, {}),
         crossing: 0,
         fleetRoles: vehicleFleetRoles,
         activities: vehicleActivities,
@@ -2117,6 +2911,56 @@ export function createStreamedAgentSystem({
     };
   };
 
+  const getFeaturedResidentSnapshots = () => {
+    const focusPedestrians = pedestrianSlots
+      .filter((actor) => actor.active && actor.tier === 'detail' && actor.focusTableau)
+      .sort((a, b) => a.localSlot - b.localSlot);
+    return focusPedestrians.map((actor) => {
+      const story = FOCUS_TABLEAU_MICRO_STORIES[actor.localSlot];
+      const partner = actor.storyPartnerSlot >= 0
+        ? pedestrianSlots[actor.storyPartnerSlot]
+        : null;
+      const partnerLabel = partner?.storyLabel || partner?.appearance?.role || null;
+      const destination = story?.destination || actor.destination || 'sidewalk stop';
+      const action = actor.storyBeat
+        || (actor.dwelling ? `paused at ${destination}` : `heading toward ${destination}`);
+      return {
+        id: `stream-${actor.sectorKey}-${actor.localSlot}`,
+        label: actor.storyLabel || story?.label || `Walker ${actor.localSlot + 1}`,
+        role: actor.role,
+        activity: actor.dwelling ? 'paused' : actor.crossing ? 'crossing' : 'walking',
+        action,
+        mood: actor.storyMood || story?.mood || (actor.dwelling ? 'paused' : 'on the move'),
+        choice: actor.storyChoice || story?.choice || 'continue along the route',
+        destination,
+        need: partnerLabel
+          ? (actor.storyPartnerSlot < actor.localSlot
+            ? `a brief exchange with ${partnerLabel}`
+            : `to finish with ${partnerLabel}`)
+          : `to reach ${destination}`,
+        intent: actor.storyChoice || story?.choice || `continue toward ${destination}`,
+        visible: actor.active && actor.sectorKey === focusSectorKey,
+        relationship: partner?.active && partnerLabel
+          ? {
+            kind: (actor.localSlot === 2 || actor.localSlot === 3
+              || actor.storyPartnerSlot === 2 || actor.storyPartnerSlot === 3)
+              ? 'handoff'
+              : 'conversation',
+            actorId: `stream-${partner.sectorKey}-${partner.localSlot}`,
+            actorLabel: partnerLabel,
+            role: partner.role,
+            side: actor.localSlot === 2 || actor.storyPartnerSlot === 3 ? 'courier' : 'listener',
+          }
+          : null,
+        sceneCue: (actor.localSlot === 2 || actor.localSlot === 3)
+          ? 'delivery handoff'
+          : (actor.localSlot === 8 || actor.localSlot === 9)
+            ? 'conversation'
+            : (actor.dwelling ? 'work stop' : 'street walk'),
+      };
+    });
+  };
+
   setWeather('clear');
   flagMatrices();
 
@@ -2124,8 +2968,10 @@ export function createStreamedAgentSystem({
     group: pools.root,
     update,
     setWeather,
+    setQaForceWalk,
     getStats,
     getEvidenceState,
+    getFeaturedResidentSnapshots,
     get stats() {
       return getStats();
     },

@@ -25,11 +25,14 @@ const errors = [];
 const httpErrors = [];
 const checks = [];
 const stops = [
-  { key: '1:0', position: { x: 256, z: -59 }, name: 'Civic Center edge' },
-  { key: '4:0', position: { x: 1600, z: 0 }, name: 'Financial District edge' },
-  { key: '0:4', position: { x: 0, z: 1536 }, name: 'Pacific Heights' },
-  { key: '4:4', position: { x: 1600, z: 1536 }, name: 'North Beach edge' },
-  { key: '-4:1', position: { x: -1600, z: 384 }, name: 'Presidio Heights edge' },
+  { key: '1:0', position: { x: 256, z: -59 }, name: 'Civic Center edge', district: 'Civic Center' },
+  { key: '4:0', position: { x: 1600, z: 0 }, name: 'Financial District edge', district: 'Financial District' },
+  { key: '0:4', position: { x: 0, z: 1536 }, name: 'Pacific Heights', district: 'Pacific Heights' },
+  { key: '4:4', position: { x: 1600, z: 1536 }, name: 'North Beach edge', district: 'North Beach' },
+  { key: '-4:1', position: { x: -1600, z: 384 }, name: 'Presidio Heights edge', district: 'Presidio' },
+  { key: '-3:-2', position: { x: -1152, z: -768 }, name: 'Mission District', district: 'Mission' },
+  { key: '4:-4', position: { x: 1600, z: -1536 }, name: 'Mission Bay', district: 'Mission Bay', waterfront: true },
+  { key: '-5:-4', position: { x: -1920, z: -1536 }, name: 'Outer Sunset', district: 'Outer Sunset', waterfront: true },
 ];
 
 const check = (name, pass, detail = null) => {
@@ -91,13 +94,22 @@ try {
       const stats = sim.streaming.getStats();
       const agents = stats.streamedAgents;
       const portal = sim.streaming.getNearestEnterablePortal(position, 1800);
+      const volumes = sim.streaming.getSectorBuildingVolumes?.(stats.focusSector) || [];
       return {
         focusSector: stats.focusSector,
         activeDetailed: stats.activeDetailed,
         activeProxies: stats.activeProxies,
         enterableBuildings: stats.enterableBuildings,
         enterableSectors: stats.enterableSectors,
-        district: sim.streaming.getSectorPresentation(stats.focusSector)?.presentation?.district || null,
+        presentation: sim.streaming.getSectorPresentation(stats.focusSector)?.presentation || null,
+        buildingVolumes: volumes.map((volume) => ({
+          id: volume.id,
+          entrance: Boolean(volume.entrance),
+          rooms: volume.rooms?.length || 0,
+          interiorState: volume.interiorState || null,
+          collisionMode: volume.collisionMode || null,
+          returnPath: volume.entrance?.returnPath?.length || 0,
+        })),
         vehicles: agents?.vehicles?.visible ?? null,
         pedestrians: agents?.pedestrians?.visible ?? null,
         portal: portal ? {
@@ -110,6 +122,33 @@ try {
       };
     }, stop.position);
     check(`${stop.key} reaches streamed focus`, evidence.focusSector === stop.key, evidence);
+    check(`${stop.key} preserves authored district identity`, evidence.presentation?.district === stop.district, evidence);
+    check(`${stop.key} uses live authored massing`, evidence.presentation?.massingSource?.startsWith('authored-') === true, evidence);
+    // Presidio and Outer Sunset are deliberately open low-rise districts:
+    // their visible generated layers are lower density, while the authored
+    // overlays still carry the full enterable frontage. Keep the quality gate
+    // honest to that geography instead of adding artificial towers to make a
+    // universal count pass.
+    const visibleBuildingMinimum = stop.key === '-4:1'
+      ? 12
+      : stop.key === '-5:-4'
+        ? 15
+        : 24;
+    const authoredBuildingCount = evidence.presentation?.authoredOverlay?.buildingCount ?? 0;
+    check(`${stop.key} exposes dense detail massing`,
+      evidence.presentation?.buildingCount >= visibleBuildingMinimum
+      && authoredBuildingCount >= 24,
+      { ...evidence, visibleBuildingMinimum, authoredBuildingCount });
+    check(`${stop.key} exposes authored district cue`, typeof evidence.presentation?.authoredOverlay?.landmark === 'string', evidence);
+    check(`${stop.key} building metadata is enterable`, evidence.buildingVolumes.length >= (evidence.presentation?.buildingCount || 0)
+      && evidence.buildingVolumes.every((volume) => volume.entrance
+        && volume.rooms > 0
+        && volume.interiorState
+        && volume.collisionMode === 'aabb-shell'
+        && volume.returnPath === 2), evidence);
+    if (stop.waterfront) {
+      check(`${stop.key} exposes waterfront datum`, evidence.presentation?.waterfront?.distance > 0, evidence);
+    }
     check(`${stop.key} exposes detail buildings`, evidence.enterableBuildings > 0, evidence);
     check(`${stop.key} exposes live representatives`, evidence.vehicles > 0 && evidence.pedestrians > 0, evidence);
     check(`${stop.key} exposes an enterable portal`, Boolean(evidence.portal), evidence);
@@ -117,6 +156,10 @@ try {
     if (evidence.portal) {
       await page.evaluate((approach) => window.__SF_SIM__.setRoamPose(approach), evidence.portal.approach);
       await settle();
+      await page.waitForFunction(
+        () => window.__SF_SIM__.getInteractionState?.().portal?.enabled === true,
+        { timeout: 12000 },
+      );
       await page.keyboard.press('e');
       // Interior transitions include the staged shadow/lighting handoff;
       // match the production gate's settled window so low-elevation sectors

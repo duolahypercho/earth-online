@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import {
+  AUTHORED_DISTRICT_BY_SECTOR,
   DISTRICT_MASSING_LIMITS,
   generateDistrictMassing,
+  getDistrictProfile,
   getPalette,
   getSharedGeometryPools,
 } from './district_massing.js';
@@ -13,9 +15,24 @@ const MAX_BACKGROUND_STATES = 96;
 const MAX_HANDOFF_QUEUE = 32;
 const MAX_DETAILED_SECTORS = 12;
 const MAX_PROXY_SECTORS = 44;
+const MAX_DETAIL_ACTIVATIONS_PER_FRAME = 1;
+const MAX_PROXY_ACTIVATIONS_PER_FRAME = 1;
+const MAX_POPULATION_STEPS_PER_FRAME = 2;
+const MAX_POPULATION_WORK_MS = 5.5;
 const MAX_BACKGROUND_UPDATES_PER_TICK = 8;
 const MAX_DETAIL_RADIUS = 2;
 const MAX_PROXY_RADIUS = 4;
+// Keep the road lattice and gameplay proxies continuous across sector seams,
+// but do not draw full building walls from an adjacent sector when they are
+// already inside the marine fog. This avoids the detached pale skyline band
+// visible from long straight streets and bounds the facade draw cost during
+// traversal without unloading collision, portals, traffic, or navigation.
+const DETAIL_BUILDING_RENDER_DISTANCE = DEFAULT_SECTOR_SIZE * 0.7;
+// The proxy ring still owns coarse roads, population, collisions, and
+// navigation, but its block silhouettes should not become near-camera blank
+// walls at a sector edge. Fog and the detailed one-sector ring already cover
+// the useful street-scale view, so keep proxy massing outside that pocket.
+const PROXY_BUILDING_RENDER_DISTANCE = DEFAULT_SECTOR_SIZE * 0.65;
 const DETAIL_STYLES = Object.freeze(['box', 'setback', 'tapered', 'rowhouse']);
 const STREAMING_ROAD_WIDTH = 12;
 // Opt-in QA travel uses this one bounded east/west civic avenue. It is wider
@@ -64,15 +81,119 @@ const SIDEWALK_WALK_COLOR = new THREE.Color(0xb7b1a6);
 const SIDEWALK_FURNISHING_COLOR = new THREE.Color(0x92958d);
 const SIDEWALK_JOINT_COLOR = new THREE.Color(0x777b77);
 const SIDEWALK_TACTILE_COLOR = new THREE.Color(0xc4a75d);
-const FRONTAGE_PLINTH_COLOR = new THREE.Color(0x77766e);
-const FRONTAGE_FRAME_COLOR = new THREE.Color(0x4e5959);
-const FRONTAGE_GLASS_COLOR = new THREE.Color(0x38515a);
-const FRONTAGE_DOOR_COLOR = new THREE.Color(0x674b40);
-const FRONTAGE_TRANSOM_COLOR = new THREE.Color(0xb4aa99);
+const SIDEWALK_CURB_COLOR = new THREE.Color(0x8d887d);
+// The frontage is a shallow retail/plaza edge rather than a repeated barrier:
+// broad bays sit on a low plinth, with an occasional planter breaking the
+// address rhythm while the same pooled sidewalk draw call is retained.
+const FRONTAGE_PLINTH_COLOR = new THREE.Color(0x897465);
+const FRONTAGE_FRAME_COLOR = new THREE.Color(0x5c4a41);
+const FRONTAGE_GLASS_COLOR = new THREE.Color(0x5b7371);
+const FRONTAGE_DOOR_COLOR = new THREE.Color(0x8b4c3d);
+const FRONTAGE_TRANSOM_COLOR = new THREE.Color(0xd0bc9d);
+const FRONTAGE_AWNING_COLOR = new THREE.Color(0x9a604b);
+const FRONTAGE_PLANTER_COLOR = new THREE.Color(0x697667);
+const FRONTAGE_SOIL_COLOR = new THREE.Color(0x4f3d2f);
+const FRONTAGE_FOLIAGE_COLOR = new THREE.Color(0x788766);
 const BLOCK_INFILL_COLORS = Object.freeze([
-  new THREE.Color(0x59645d),
-  new THREE.Color(0x696b64),
+  new THREE.Color(0x6d7169),
+  new THREE.Color(0x7a7469),
 ]);
+// Distant sectors keep their district palette, but a restrained silhouette
+// treatment prevents the proxy ring from reading as unlit pink/white boxes at
+// the fixed QA distance. The mix targets the same low-poly block infill used
+// by the detailed public realm and does not change proxy allocation.
+const PROXY_DISTRICT_PRESENTATIONS = Object.freeze({
+  'Pacific Heights': Object.freeze({ heightScale: 0.58, neutralMix: 0.56 }),
+  'Presidio': Object.freeze({ heightScale: 0.46, neutralMix: 0.64 }),
+  'Presidio Heights': Object.freeze({ heightScale: 0.54, neutralMix: 0.6 }),
+  'North Beach': Object.freeze({ heightScale: 0.62, neutralMix: 0.52 }),
+  Mission: Object.freeze({ heightScale: 0.66, neutralMix: 0.42 }),
+  'Outer Sunset': Object.freeze({ heightScale: 0.48, neutralMix: 0.58 }),
+  default: Object.freeze({ heightScale: 0.7, neutralMix: 0.46 }),
+});
+const FRONTAGE_DISTRICT_PALETTES = Object.freeze({
+  'Civic Center': Object.freeze({
+    plinth: 0x8e7766,
+    frame: 0x5d4d43,
+    glass: 0x587773,
+    door: 0x9b493c,
+    transom: 0xd4c09f,
+    awning: 0x9f5144,
+    planter: 0x6d7a69,
+  }),
+  'Financial District': Object.freeze({
+    plinth: 0x77766e,
+    frame: 0x3f4d50,
+    glass: 0x3f626e,
+    door: 0x694a3d,
+    transom: 0xb7b19d,
+    awning: 0x6c7777,
+    planter: 0x53675f,
+  }),
+  'Pacific Heights': Object.freeze({
+    plinth: 0x9a816c,
+    frame: 0x665249,
+    glass: 0x607778,
+    door: 0x96604a,
+    transom: 0xe0cdb0,
+    awning: 0x9b7056,
+    planter: 0x708169,
+  }),
+  'North Beach': Object.freeze({
+    plinth: 0x926e5e,
+    frame: 0x65483f,
+    glass: 0x4f6e6d,
+    door: 0xa4503d,
+    transom: 0xd5b789,
+    awning: 0x9a5040,
+    planter: 0x61745e,
+  }),
+  'Presidio Heights': Object.freeze({
+    plinth: 0x847b6c,
+    frame: 0x554d43,
+    glass: 0x55706d,
+    door: 0x785548,
+    transom: 0xd0c9ad,
+    awning: 0x7d755d,
+    planter: 0x63785d,
+  }),
+  Mission: Object.freeze({
+    plinth: 0x8b604f,
+    frame: 0x5d413b,
+    glass: 0x586c6a,
+    door: 0x9c4f3e,
+    transom: 0xd5b38f,
+    awning: 0xa15b45,
+    planter: 0x66705e,
+  }),
+  Presidio: Object.freeze({
+    plinth: 0x777b6d,
+    frame: 0x536056,
+    glass: 0x5b6f69,
+    door: 0x7f5b4c,
+    transom: 0xd3cfb5,
+    awning: 0x7d826c,
+    planter: 0x63755e,
+  }),
+  'Outer Sunset': Object.freeze({
+    plinth: 0x9b927d,
+    frame: 0x5f6a67,
+    glass: 0x5f7b7a,
+    door: 0x8a6c58,
+    transom: 0xd7cdb7,
+    awning: 0x7f9690,
+    planter: 0x76836d,
+  }),
+  default: Object.freeze({
+    plinth: 0x897465,
+    frame: 0x5c4a41,
+    glass: 0x5b7371,
+    door: 0x8b4c3d,
+    transom: 0xd0bc9d,
+    awning: 0x9a604b,
+    planter: 0x697667,
+  }),
+});
 const TRANSIT_STOP_X = 72.05;
 const TRANSIT_STOP_Z = -25.15;
 const STREAMING_STREETLIGHT_HEIGHT = 4.2;
@@ -92,6 +213,7 @@ const STREETSCAPE_WINDSWEPT_DISTRICTS = new Set([
 const STREETSCAPE_URBAN_DISTRICTS = new Set([
   'Bayview',
   'Financial District',
+  'Mission',
   'Mission Bay',
   'SoMa',
 ]);
@@ -191,6 +313,11 @@ const FACADE_CELLS_BY_PALETTE = Object.freeze({
 });
 const FACADE_BAY_WIDTH_BY_CELL = Object.freeze([4.6, 4.8, 4.2, 4.35]);
 const FACADE_ENTRANCE_WIDTH_BY_CELL = Object.freeze([3.8, 4.6, 3.5, 4.2]);
+// Narrower bays in rowhouse districts add atlas repeats so long street faces
+// do not read as one stretched photograph on the North Beach hero uphill view.
+const DISTRICT_FACADE_BAY_SCALE = Object.freeze({
+  'North Beach': 0.68,
+});
 // Palette still chooses a compatible facade family; this small deterministic
 // offset keeps neighboring districts legible where their palettes overlap.
 const DISTRICT_FACADE_CELL_OFFSETS = Object.freeze({
@@ -236,6 +363,80 @@ const HANDOFF_DIRECTIONS = [
   { id: 'south', x: 0, z: -1 },
 ];
 
+// Distant buildings still need a readable architectural rhythm at the fixed
+// QA camera distance. Keep this as one shared low-poly geometry so the proxy
+// pool remains a single instanced draw call, while shallow window bands and a
+// stepped crown prevent the ring from collapsing into flat color blocks.
+function createProxyBuildingGeometry() {
+  const geometry = new THREE.BufferGeometry();
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  const bodyColor = new THREE.Color(0xffffff);
+  const crownColor = new THREE.Color(0xd7d8d1);
+  const windowColor = new THREE.Color(0x33484d);
+  const shadowWindowColor = new THREE.Color(0x243439);
+
+  const addBox = (minX, maxX, minY, maxY, minZ, maxZ, color) => {
+    const vertex = positions.length / 3;
+    positions.push(
+      minX, minY, minZ, maxX, minY, minZ,
+      maxX, maxY, minZ, minX, maxY, minZ,
+      minX, minY, maxZ, maxX, minY, maxZ,
+      maxX, maxY, maxZ, minX, maxY, maxZ,
+    );
+    for (let i = 0; i < 8; i += 1) {
+      colors.push(color.r, color.g, color.b);
+    }
+    indices.push(
+      vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3,
+      vertex + 5, vertex + 4, vertex + 7, vertex + 5, vertex + 7, vertex + 6,
+      vertex + 4, vertex, vertex + 3, vertex + 4, vertex + 3, vertex + 7,
+      vertex + 1, vertex + 5, vertex + 6, vertex + 1, vertex + 6, vertex + 2,
+      vertex + 3, vertex + 2, vertex + 6, vertex + 3, vertex + 6, vertex + 7,
+      vertex + 4, vertex + 5, vertex + 1, vertex + 4, vertex + 1, vertex,
+    );
+  };
+
+  const addFrustum = () => {
+    const vertex = positions.length / 3;
+    positions.push(
+      -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
+      -0.42, 0.88, -0.42, 0.42, 0.88, -0.42,
+      0.42, 0.88, 0.42, -0.42, 0.88, 0.42,
+    );
+    for (let i = 0; i < 8; i += 1) {
+      colors.push(bodyColor.r, bodyColor.g, bodyColor.b);
+    }
+    indices.push(
+      vertex, vertex + 2, vertex + 1, vertex, vertex + 3, vertex + 2,
+      vertex + 4, vertex + 5, vertex + 6, vertex + 4, vertex + 6, vertex + 7,
+      vertex, vertex + 1, vertex + 5, vertex, vertex + 5, vertex + 4,
+      vertex + 1, vertex + 2, vertex + 6, vertex + 1, vertex + 6, vertex + 5,
+      vertex + 2, vertex + 3, vertex + 7, vertex + 2, vertex + 7, vertex + 6,
+      vertex + 3, vertex, vertex + 4, vertex + 3, vertex + 4, vertex + 7,
+    );
+  };
+
+  addFrustum();
+  addBox(-0.45, 0.45, 0.88, 0.94, -0.45, 0.45, crownColor);
+  addBox(-0.34, 0.34, 0.94, 1, -0.34, 0.34, bodyColor);
+
+  for (const y of [0.18, 0.38, 0.58, 0.78]) {
+    addBox(-0.37, 0.37, y, y + 0.055, -0.512, -0.484, windowColor);
+    addBox(-0.37, 0.37, y, y + 0.055, 0.484, 0.512, shadowWindowColor);
+    addBox(-0.512, -0.484, y, y + 0.055, -0.37, 0.37, shadowWindowColor);
+    addBox(0.484, 0.512, y, y + 0.055, -0.37, 0.37, windowColor);
+  }
+
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 // A 121 km² local-space footprint, close to San Francisco's land area. The
 // outline is deliberately coarse: it is a streaming boundary, not survey
 // geometry. District GIS data can later refine the shoreline sector by sector.
@@ -252,6 +453,46 @@ const SF_FOOTPRINT = [
   [-3400, 1750],
   [-3540, -1850],
 ].map(([x, z]) => [x * 1.5, z * 1.32]);
+
+// The coarse city footprint only captures the outer shoreline. These two
+// authored sectors also carry an intentional district-scale frontage so the
+// Mission Bay and Outer Sunset signatures remain legible before the player
+// reaches the global polygon edge. The local shoreline is a gameplay/rendering
+// datum, not a replacement for the public geographic footprint above.
+const AUTHORED_WATERFRONT_BY_SECTOR = Object.freeze({
+  '4:-4': Object.freeze({
+    distance: 176,
+    point: Object.freeze({ x: 176, z: 0 }),
+    start: Object.freeze({ x: 176, z: -192 }),
+    end: Object.freeze({ x: 176, z: 192 }),
+    outwardNormal: Object.freeze({ x: 1, z: 0 }),
+    source: 'mission-bay-channel-frontage',
+  }),
+  '-5:-4': Object.freeze({
+    distance: 176,
+    point: Object.freeze({ x: -176, z: 0 }),
+    start: Object.freeze({ x: -176, z: -192 }),
+    end: Object.freeze({ x: -176, z: 192 }),
+    outwardNormal: Object.freeze({ x: -1, z: 0 }),
+    source: 'outer-sunset-ocean-frontage',
+  }),
+  '0:5': Object.freeze({
+    distance: 176,
+    point: Object.freeze({ x: 0, z: 176 }),
+    start: Object.freeze({ x: -192, z: 176 }),
+    end: Object.freeze({ x: 192, z: 176 }),
+    outwardNormal: Object.freeze({ x: 0, z: 1 }),
+    source: 'marina-green-bay-frontage',
+  }),
+  '3:0': Object.freeze({
+    distance: 176,
+    point: Object.freeze({ x: 176, z: 0 }),
+    start: Object.freeze({ x: 176, z: -192 }),
+    end: Object.freeze({ x: 176, z: 192 }),
+    outwardNormal: Object.freeze({ x: 1, z: 0 }),
+    source: 'embarcadero-seawall-frontage',
+  }),
+});
 
 function hashSector(x, z) {
   let hash = Math.imul(x ^ 0x9e3779b9, 0x85ebca6b);
@@ -410,6 +651,25 @@ function smoothstep(edge0, edge1, value) {
   return normalized * normalized * (3 - 2 * normalized);
 }
 
+function authoredGradeAtPosition(x, z, sectorSize) {
+  const sectorX = Math.round(x / sectorSize);
+  const sectorZ = Math.round(z / sectorSize);
+  const profile = getDistrictProfile({ key: `${sectorX}:${sectorZ}` });
+  const grade = Number(profile.grade);
+  if (!Number.isFinite(grade) || grade === 0) return 0;
+  const localX = x - sectorX * sectorSize;
+  const localZ = z - sectorZ * sectorSize;
+  const edgeDistance = Math.min(
+    sectorSize * 0.5 - Math.abs(localX),
+    sectorSize * 0.5 - Math.abs(localZ),
+  );
+  // Fade the district-specific slope into the shared city surface near every
+  // sector edge. This keeps Pacific Heights, Telegraph Hill, Presidio, and
+  // Mission grades visible without introducing a seam at a streamed handoff.
+  const edgeBlend = smoothstep(0, 48, edgeDistance);
+  return grade * localZ * edgeBlend;
+}
+
 export function createSanFranciscoSectorCatalog({
   sectorSize = DEFAULT_SECTOR_SIZE,
   footprint = SF_FOOTPRINT,
@@ -425,18 +685,16 @@ export function createSanFranciscoSectorCatalog({
   const originElevation = absoluteTerrainForPosition(0, 0);
   const waterfrontEdges = createWaterfrontEdges(footprint);
 
-  const getSurfaceHeight = (positionOrX, optionalZ) => {
-    const x = typeof positionOrX === 'number' ? positionOrX : positionOrX?.x;
-    const z = typeof positionOrX === 'number' ? optionalZ : positionOrX?.z;
+  const getAnalyticSurfaceHeight = (x, z) => {
     if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
     if (!pointInPolygon(x, z, footprint)) return null;
-
     // The current authored district was built around local Y=0. Keep that
     // entire hero sector flat, then blend smoothly into the city-scale hills
     // over the next sector so travel never hits a vertical datum step.
     const distanceFromCore = Math.max(Math.abs(x), Math.abs(z));
     const coreBlend = smoothstep(sectorSize * 0.5, sectorSize * 1.5, distanceFromCore);
-    const terrainHeight = absoluteTerrainForPosition(x, z) - originElevation;
+    const terrainHeight = absoluteTerrainForPosition(x, z) - originElevation
+      + authoredGradeAtPosition(x, z, sectorSize);
     const shoreline = getWaterfrontEdge(x, z, waterfrontEdges);
     // Pull the last 260 m of land toward a restrained tidal shelf. It creates
     // a legible waterfront grade without altering the authored core datum or
@@ -446,6 +704,29 @@ export function createSanFranciscoSectorCatalog({
       : 0;
     const tidalShelf = -5 + Math.sin((x - z) * 0.0014) * 0.65;
     return THREE.MathUtils.lerp(terrainHeight, tidalShelf, shoreBlend) * coreBlend;
+  };
+
+  const getSurfaceHeight = (positionOrX, optionalZ) => {
+    const x = typeof positionOrX === 'number' ? positionOrX : positionOrX?.x;
+    const z = typeof positionOrX === 'number' ? optionalZ : positionOrX?.z;
+    const direct = getAnalyticSurfaceHeight(x, z);
+    if (!Number.isFinite(direct)) return direct;
+    // The runtime terrain is a patch mesh, so expose the same bilinear
+    // surface that the renderer and road verifier consume. This keeps direct
+    // navigation queries, graded vertices, and seam samples on one datum.
+    const epsilon = 1e-5;
+    const cellMinX = Math.floor((x + epsilon) / SURFACE_PATCH_SIZE) * SURFACE_PATCH_SIZE;
+    const cellMinZ = Math.floor((z + epsilon) / SURFACE_PATCH_SIZE) * SURFACE_PATCH_SIZE;
+    const u = THREE.MathUtils.clamp((x - cellMinX) / SURFACE_PATCH_SIZE, 0, 1);
+    const v = THREE.MathUtils.clamp((z - cellMinZ) / SURFACE_PATCH_SIZE, 0, 1);
+    const a = getAnalyticSurfaceHeight(cellMinX, cellMinZ);
+    const b = getAnalyticSurfaceHeight(cellMinX, cellMinZ + SURFACE_PATCH_SIZE);
+    const c = getAnalyticSurfaceHeight(cellMinX + SURFACE_PATCH_SIZE, cellMinZ + SURFACE_PATCH_SIZE);
+    const d = getAnalyticSurfaceHeight(cellMinX + SURFACE_PATCH_SIZE, cellMinZ);
+    if (![a, b, c, d].every(Number.isFinite)) return direct;
+    return v >= u
+      ? a * (1 - v) + b * (v - u) + c * u
+      : a * (1 - u) + c * v + d * (u - v);
   };
 
   const isValid = (sectorX, sectorZ) => {
@@ -468,23 +749,41 @@ export function createSanFranciscoSectorCatalog({
       x: sectorX * sectorSize,
       z: sectorZ * sectorSize,
     });
+    const authoredWaterfront = AUTHORED_WATERFRONT_BY_SECTOR[key];
     const shoreline = getWaterfrontEdge(center.x, center.z, waterfrontEdges);
-    const waterfront = shoreline && shoreline.distance <= WATERFRONT_EDGE_DISTANCE
+    const waterfront = authoredWaterfront
       ? Object.freeze({
-        distance: shoreline.distance,
-        point: Object.freeze({ x: shoreline.x, z: shoreline.z }),
-        start: Object.freeze(shoreline.start),
-        end: Object.freeze(shoreline.end),
-        outwardNormal: Object.freeze(shoreline.outwardNormal),
+        ...authoredWaterfront,
+        point: Object.freeze({
+          x: center.x + authoredWaterfront.point.x,
+          z: center.z + authoredWaterfront.point.z,
+        }),
+        start: Object.freeze({
+          x: center.x + authoredWaterfront.start.x,
+          z: center.z + authoredWaterfront.start.z,
+        }),
+        end: Object.freeze({
+          x: center.x + authoredWaterfront.end.x,
+          z: center.z + authoredWaterfront.end.z,
+        }),
       })
-      : null;
+      : shoreline && shoreline.distance <= WATERFRONT_EDGE_DISTANCE
+        ? Object.freeze({
+          distance: shoreline.distance,
+          point: Object.freeze({ x: shoreline.x, z: shoreline.z }),
+          start: Object.freeze(shoreline.start),
+          end: Object.freeze(shoreline.end),
+          outwardNormal: Object.freeze(shoreline.outwardNormal),
+          source: 'city-footprint-shoreline',
+        })
+        : null;
     const descriptor = Object.freeze({
       key,
       sectorX,
       sectorZ,
       center,
       seed,
-      district: districtForPosition(center.x, center.z),
+      district: AUTHORED_DISTRICT_BY_SECTOR[key] || districtForPosition(center.x, center.z),
       elevation: getSurfaceHeight(center) ?? 0,
       waterfront,
       // Generated massing is an honest placeholder. Surveyed geometry can
@@ -1045,7 +1344,7 @@ function createSidewalkGeometry(
     const alongMin = (horizontal ? minX : minZ) + SIDEWALK_WIDTH + 0.72;
     const alongMax = (horizontal ? maxX : maxZ) - SIDEWALK_WIDTH - 0.72;
     if (alongMax - alongMin < 9) return;
-    const frontageDepth = 0.62;
+    const frontageDepth = 1.35;
     let depthMin;
     let depthMax;
     if (horizontal) {
@@ -1096,62 +1395,122 @@ function createSidewalkGeometry(
       }
     };
 
-    const moduleWidth = 7.2;
-    const moduleGap = 1.25;
+    const moduleWidth = 8.4;
+    const moduleGap = 3.3;
     const moduleCount = Math.max(
       1,
       Math.floor((alongMax - alongMin + moduleGap) / (moduleWidth + moduleGap)),
     );
     const usedSpan = moduleCount * moduleWidth + (moduleCount - 1) * moduleGap;
     const start = alongMin + Math.max(0, (alongMax - alongMin - usedSpan) * 0.5);
-    appendEdgeCuboid(
-      alongMin,
-      alongMax,
-      0.16,
-      0.38,
-      FRONTAGE_PLINTH_COLOR,
-    );
-
     for (let module = 0; module < moduleCount; module += 1) {
       const moduleStart = start + module * (moduleWidth + moduleGap);
       const moduleEnd = moduleStart + moduleWidth;
-      const isDoor = (module + variant) % 4 === 1;
+      const isDoor = (module + variant) % 3 === 1;
+      const isPlanter = !isDoor && (module + variant) % 3 === 0;
       const panelColor = isDoor ? FRONTAGE_DOOR_COLOR : FRONTAGE_GLASS_COLOR;
-      const panelInset = isDoor ? 1.58 : 0.48;
+      const panelInset = isDoor ? 2.24 : 0.72;
+      const roadSideIsMin = edge === 'south' || edge === 'west';
+      const awningDepthMin = roadSideIsMin
+        ? depthMin - 0.18
+        : depthMax - 0.46;
+      const awningDepthMax = roadSideIsMin
+        ? depthMin + 0.46
+        : depthMax + 0.18;
+      appendEdgeCuboid(
+        moduleStart + 0.12,
+        moduleEnd - 0.12,
+        0.16,
+        0.44,
+        FRONTAGE_PLINTH_COLOR,
+        depthMin - 0.04,
+        depthMax + 0.04,
+      );
+      if (isPlanter) {
+        appendEdgeCuboid(
+          moduleStart + 0.72,
+          moduleEnd - 0.72,
+          0.44,
+          0.92,
+          FRONTAGE_PLANTER_COLOR,
+          depthMin + 0.08,
+          depthMax - 0.08,
+        );
+        appendEdgeCuboid(
+          moduleStart + 1.02,
+          moduleEnd - 1.02,
+          0.92,
+          0.99,
+          FRONTAGE_SOIL_COLOR,
+          depthMin + 0.2,
+          depthMax - 0.2,
+        );
+        // Two broad, low-poly planting clumps make this a plaza planter rather
+        // than another line of vertical posts.
+        appendEdgeCuboid(
+          moduleStart + 1.45,
+          moduleStart + 2.55,
+          0.99,
+          1.5,
+          FRONTAGE_FOLIAGE_COLOR,
+          depthMin + 0.28,
+          depthMax - 0.2,
+        );
+        appendEdgeCuboid(
+          moduleEnd - 2.55,
+          moduleEnd - 1.45,
+          0.99,
+          1.38,
+          FRONTAGE_FOLIAGE_COLOR,
+          depthMin + 0.28,
+          depthMax - 0.2,
+        );
+        continue;
+      }
       appendEdgeCuboid(
         moduleStart,
-        moduleStart + 0.18,
+        moduleStart + 0.42,
         0.38,
-        1.86,
+        2.02,
         FRONTAGE_FRAME_COLOR,
+        depthMin + 0.04,
+        depthMax - 0.02,
       );
       appendEdgeCuboid(
-        moduleEnd - 0.18,
+        moduleEnd - 0.42,
         moduleEnd,
         0.38,
-        1.86,
+        2.02,
         FRONTAGE_FRAME_COLOR,
+        depthMin + 0.04,
+        depthMax - 0.02,
       );
       appendEdgeCuboid(
         moduleStart + panelInset,
         moduleEnd - panelInset,
-        0.5,
-        1.56,
+        0.48,
+        1.76,
         panelColor,
+        depthMin + 0.1,
+        depthMax - 0.1,
       );
       appendEdgeCuboid(
         moduleStart + 0.18,
         moduleEnd - 0.18,
-        1.58,
-        1.78,
+        1.76,
+        1.98,
         FRONTAGE_TRANSOM_COLOR,
+        depthMin + 0.08,
+        depthMax - 0.08,
       );
       appendEdgeCuboid(
-        moduleStart - 0.04,
-        moduleStart + 0.22,
-        1.78,
+        moduleStart + 0.12,
+        moduleEnd - 0.12,
         1.98,
-        FRONTAGE_FRAME_COLOR,
+        2.2,
+        FRONTAGE_AWNING_COLOR,
+        awningDepthMin,
+        awningDepthMax,
       );
     }
   };
@@ -1171,6 +1530,20 @@ function createSidewalkGeometry(
         - getStreetWidth(lines[column + 1], northSouthWidth) * 0.5;
       if (maxX - minX <= SIDEWALK_WIDTH * 2
         || maxZ - minZ <= SIDEWALK_WIDTH * 2) continue;
+
+      // A continuous warm-stone cap gives the road a clear curb datum before
+      // the sidewalk opens into its walking lane and building-side frontage.
+      const curbDepth = 0.22;
+      const curbMinY = GROUND_SURFACE_OFFSET + 0.004;
+      const curbMaxY = SIDEWALK_HEIGHT + 0.018;
+      appendPaving(minX, maxX, curbMinY, curbMaxY,
+        minZ, minZ + curbDepth, SIDEWALK_CURB_COLOR);
+      appendPaving(minX, maxX, curbMinY, curbMaxY,
+        maxZ - curbDepth, maxZ, SIDEWALK_CURB_COLOR);
+      appendPaving(minX, minX + curbDepth, curbMinY, curbMaxY,
+        minZ + SIDEWALK_WIDTH, maxZ - SIDEWALK_WIDTH, SIDEWALK_CURB_COLOR);
+      appendPaving(maxX - curbDepth, maxX, curbMinY, curbMaxY,
+        minZ + SIDEWALK_WIDTH, maxZ - SIDEWALK_WIDTH, SIDEWALK_CURB_COLOR);
 
       appendPaving(minX, maxX, GROUND_SURFACE_OFFSET, SIDEWALK_HEIGHT,
         minZ, minZ + SIDEWALK_FURNISHING_WIDTH, SIDEWALK_FURNISHING_COLOR);
@@ -1671,24 +2044,143 @@ function makeGradeableGeometry(source) {
   return geometry;
 }
 
-function applyDistrictPavingTint(geometry, profile) {
+function matchesColor(red, green, blue, color) {
+  return Math.abs(red - color.r) < 1e-4
+    && Math.abs(green - color.g) < 1e-4
+    && Math.abs(blue - color.b) < 1e-4;
+}
+
+function applyDistrictPavingTint(geometry, profile, district = '') {
   const colors = geometry?.getAttribute('color');
   const base = geometry?.userData?.streamBaseColors;
   if (!colors || !base || base.length !== colors.array.length) return;
+  const frontagePalette = FRONTAGE_DISTRICT_PALETTES[district]
+    ?? FRONTAGE_DISTRICT_PALETTES.default;
   streetscapeColorScratch.setHex(profile.pavingTint);
   const red = 0.78 + streetscapeColorScratch.r * 0.22;
   const green = 0.78 + streetscapeColorScratch.g * 0.22;
   const blue = 0.78 + streetscapeColorScratch.b * 0.22;
   for (let index = 0; index < colors.count; index += 1) {
     const offset = index * 3;
-    colors.array[offset] = base[offset] * red;
-    colors.array[offset + 1] = base[offset + 1] * green;
-    colors.array[offset + 2] = base[offset + 2] * blue;
+    const baseRed = base[offset];
+    const baseGreen = base[offset + 1];
+    const baseBlue = base[offset + 2];
+    let frontageRole = null;
+    if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_PLINTH_COLOR)) {
+      frontageRole = 'plinth';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_FRAME_COLOR)) {
+      frontageRole = 'frame';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_GLASS_COLOR)) {
+      frontageRole = 'glass';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_DOOR_COLOR)) {
+      frontageRole = 'door';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_TRANSOM_COLOR)) {
+      frontageRole = 'transom';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_AWNING_COLOR)) {
+      frontageRole = 'awning';
+    } else if (matchesColor(baseRed, baseGreen, baseBlue, FRONTAGE_PLANTER_COLOR)) {
+      frontageRole = 'planter';
+    }
+    if (frontageRole) {
+      frontageBaseColorScratch.setRGB(baseRed, baseGreen, baseBlue);
+      frontageTargetColorScratch.setHex(frontagePalette[frontageRole]);
+      frontageBaseColorScratch.lerp(frontageTargetColorScratch, 0.62);
+      colors.array[offset] = frontageBaseColorScratch.r;
+      colors.array[offset + 1] = frontageBaseColorScratch.g;
+      colors.array[offset + 2] = frontageBaseColorScratch.b;
+    } else {
+      colors.array[offset] = baseRed * red;
+      colors.array[offset + 1] = baseGreen * green;
+      colors.array[offset + 2] = baseBlue * blue;
+    }
   }
   colors.needsUpdate = true;
 }
 
-function gradeSurfaceGeometry(geometry, descriptor, catalog) {
+function getCachedSurfaceHeight(catalog, cache, worldX, worldZ) {
+  if (!cache) return catalog.getSurfaceHeight(worldX, worldZ);
+  const key = (
+    (Math.round(worldX / SURFACE_PATCH_SIZE) + 32768) * 65536
+    + Math.round(worldZ / SURFACE_PATCH_SIZE)
+    + 32768
+  );
+  if (cache.has(key)) return cache.get(key);
+  const sampled = catalog.getSurfaceHeight(worldX, worldZ);
+  cache.set(key, sampled);
+  return sampled;
+}
+
+function getCachedInterpolatedSurfaceHeight(catalog, cache, worldX, worldZ) {
+  if (!cache) return interpolatedSurfaceHeight(catalog, worldX, worldZ);
+  let row = cache.vertices.get(worldX);
+  if (row?.has(worldZ)) return row.get(worldZ);
+  const sampled = interpolatedSurfaceHeight(catalog, worldX, worldZ, cache.corners);
+  if (!row) {
+    row = new Map();
+    cache.vertices.set(worldX, row);
+  }
+  row.set(worldZ, sampled);
+  return sampled;
+}
+
+// Keep terrain and normal refreshes resumable below a single visible-frame
+// slice. The former 16k batch could monopolize the main thread during a
+// sector handoff even though the outer population scheduler had a deadline.
+const GRADE_VERTEX_BUDGET = 4096;
+
+function* refreshNonIndexedNormalsSteps(geometry, vertexBudget = GRADE_VERTEX_BUDGET) {
+  if (!geometry?.getAttribute('position') || geometry.index) {
+    geometry?.computeVertexNormals?.();
+    return;
+  }
+  const positions = geometry.getAttribute('position');
+  let normals = geometry.getAttribute('normal');
+  if (!normals || normals.count !== positions.count) {
+    normals = new THREE.Float32BufferAttribute(new Float32Array(positions.count * 3), 3);
+    geometry.setAttribute('normal', normals);
+  }
+  const batchSize = Math.max(3, Math.floor(vertexBudget / 3) * 3);
+  for (let start = 0; start < positions.count; start += batchSize) {
+    const end = Math.min(positions.count, start + batchSize);
+    for (let index = start; index + 2 < end; index += 3) {
+      const aOffset = index * 3;
+      const bOffset = aOffset + 3;
+      const cOffset = aOffset + 6;
+      const abx = positions.array[bOffset] - positions.array[aOffset];
+      const aby = positions.array[bOffset + 1] - positions.array[aOffset + 1];
+      const abz = positions.array[bOffset + 2] - positions.array[aOffset + 2];
+      const acx = positions.array[cOffset] - positions.array[aOffset];
+      const acy = positions.array[cOffset + 1] - positions.array[aOffset + 1];
+      const acz = positions.array[cOffset + 2] - positions.array[aOffset + 2];
+      const nx = aby * acz - abz * acy;
+      const ny = abz * acx - abx * acz;
+      const nz = abx * acy - aby * acx;
+      const inverseLength = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz || 1);
+      const normalX = nx * inverseLength;
+      const normalY = ny * inverseLength;
+      const normalZ = nz * inverseLength;
+      normals.array[aOffset] = normalX;
+      normals.array[aOffset + 1] = normalY;
+      normals.array[aOffset + 2] = normalZ;
+      normals.array[bOffset] = normalX;
+      normals.array[bOffset + 1] = normalY;
+      normals.array[bOffset + 2] = normalZ;
+      normals.array[cOffset] = normalX;
+      normals.array[cOffset + 1] = normalY;
+      normals.array[cOffset + 2] = normalZ;
+    }
+    normals.needsUpdate = true;
+    if (end < positions.count) yield false;
+  }
+}
+
+function* gradeSurfaceGeometrySteps(
+  geometry,
+  descriptor,
+  catalog,
+  surfaceCache = null,
+  vertexBudget = GRADE_VERTEX_BUDGET,
+) {
   if (!geometry) return null;
   if (geometry.userData.streamGradeKey === descriptor.key) {
     return geometry.userData.streamSurfaceRange;
@@ -1698,20 +2190,29 @@ function gradeSurfaceGeometry(geometry, descriptor, catalog) {
   if (!positions || !base || base.length !== positions.array.length) return null;
   let minimum = Number.POSITIVE_INFINITY;
   let maximum = Number.NEGATIVE_INFINITY;
-  for (let index = 0; index < positions.count; index += 1) {
-    const offset = index * 3;
-    const worldX = descriptor.center.x + base[offset];
-    const worldZ = descriptor.center.z + base[offset + 2];
-    const sampled = catalog.getSurfaceHeight(worldX, worldZ);
-    const surface = Number.isFinite(sampled) ? sampled : descriptor.elevation;
-    positions.array[offset] = base[offset];
-    positions.array[offset + 1] = base[offset + 1] + surface - descriptor.elevation;
-    positions.array[offset + 2] = base[offset + 2];
-    minimum = Math.min(minimum, surface);
-    maximum = Math.max(maximum, surface);
+  for (let start = 0; start < positions.count; start += vertexBudget) {
+    const end = Math.min(positions.count, start + vertexBudget);
+    for (let index = start; index < end; index += 1) {
+      const offset = index * 3;
+      const worldX = descriptor.center.x + base[offset];
+      const worldZ = descriptor.center.z + base[offset + 2];
+      const sampled = getCachedInterpolatedSurfaceHeight(
+        catalog,
+        surfaceCache,
+        worldX,
+        worldZ,
+      );
+      const surface = Number.isFinite(sampled) ? sampled : descriptor.elevation;
+      positions.array[offset] = base[offset];
+      positions.array[offset + 1] = base[offset + 1] + surface - descriptor.elevation;
+      positions.array[offset + 2] = base[offset + 2];
+      minimum = Math.min(minimum, surface);
+      maximum = Math.max(maximum, surface);
+    }
+    if (end < positions.count) yield false;
   }
   positions.needsUpdate = true;
-  geometry.computeVertexNormals();
+  yield* refreshNonIndexedNormalsSteps(geometry);
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   const range = Object.freeze({
@@ -1721,6 +2222,54 @@ function gradeSurfaceGeometry(geometry, descriptor, catalog) {
   geometry.userData.streamGradeKey = descriptor.key;
   geometry.userData.streamSurfaceRange = range;
   return range;
+}
+
+function gradeSurfaceGeometry(geometry, descriptor, catalog, surfaceCache = null) {
+  const steps = gradeSurfaceGeometrySteps(geometry, descriptor, catalog, surfaceCache);
+  let result = steps.next();
+  while (!result.done) result = steps.next();
+  return result.value ?? null;
+}
+
+// Roads and paint are authored on the same 8 m surface patches that the
+// verifier samples. Using the exact triangle interpolation here prevents a
+// curved analytic terrain function from disagreeing with the rendered patch
+// by millimetres at interior vertices while preserving the catalog's query
+// surface for navigation and building placement.
+function interpolatedSurfaceHeight(catalog, worldX, worldZ, surfaceCache = null) {
+  const epsilon = 1e-5;
+  const cellMinX = Math.floor((worldX + epsilon) / SURFACE_PATCH_SIZE) * SURFACE_PATCH_SIZE;
+  const cellMinZ = Math.floor((worldZ + epsilon) / SURFACE_PATCH_SIZE) * SURFACE_PATCH_SIZE;
+  const x = THREE.MathUtils.clamp(
+    (worldX - cellMinX) / SURFACE_PATCH_SIZE,
+    0,
+    1,
+  );
+  const z = THREE.MathUtils.clamp(
+    (worldZ - cellMinZ) / SURFACE_PATCH_SIZE,
+    0,
+    1,
+  );
+  const a = getCachedSurfaceHeight(catalog, surfaceCache, cellMinX, cellMinZ);
+  const b = getCachedSurfaceHeight(catalog, surfaceCache, cellMinX, cellMinZ + SURFACE_PATCH_SIZE);
+  const c = getCachedSurfaceHeight(
+    catalog,
+    surfaceCache,
+    cellMinX + SURFACE_PATCH_SIZE,
+    cellMinZ + SURFACE_PATCH_SIZE,
+  );
+  const d = getCachedSurfaceHeight(
+    catalog,
+    surfaceCache,
+    cellMinX + SURFACE_PATCH_SIZE,
+    cellMinZ,
+  );
+  if (![a, b, c, d].every(Number.isFinite)) {
+    return catalog.getSurfaceHeight(worldX, worldZ);
+  }
+  return z >= x
+    ? a * (1 - z) + b * (z - x) + c * x
+    : a * (1 - x) + c * z + d * (x - z);
 }
 
 function setTransitionGeometry(geometry, positions, color = null) {
@@ -1964,6 +2513,7 @@ function updateWaterfrontTransition(slot, descriptor, sectorSize, catalog) {
 }
 
 let sharedStreamingFacadeAtlas = null;
+const streamingNightMix = { value: 0 };
 
 function getStreamingFacadeAtlas() {
   if (sharedStreamingFacadeAtlas || typeof document === 'undefined') {
@@ -1987,6 +2537,79 @@ function createDetailedBaseMaterial() {
     metalness: 0.04,
   });
   material.name = 'Shared streamed palette massing material';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uStreamingNightMix = streamingNightMix;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `
+        #include <common>
+        varying vec3 vStreamingMassingPosition;
+        varying vec3 vStreamingMassingNormal;
+      `,
+    ).replace(
+      '#include <begin_vertex>',
+      `
+        #include <begin_vertex>
+        vStreamingMassingPosition = transformed;
+        vStreamingMassingNormal = normalize(objectNormal);
+      `,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `
+        #include <common>
+        uniform float uStreamingNightMix;
+        varying vec3 vStreamingMassingPosition;
+        varying vec3 vStreamingMassingNormal;
+      `,
+    ).replace(
+      '#include <color_fragment>',
+      `
+        #include <color_fragment>
+        vec3 streamingMassingNormal = normalize(vStreamingMassingNormal);
+        float streamingMassingWall = 1.0 - step(0.72, abs(streamingMassingNormal.y));
+        vec2 streamingMassingUv = abs(streamingMassingNormal.x) > abs(streamingMassingNormal.z)
+          ? vec2(vStreamingMassingPosition.z + 0.5, vStreamingMassingPosition.y)
+          : vec2(vStreamingMassingPosition.x + 0.5, vStreamingMassingPosition.y);
+        vec2 streamingMassingCell = fract(streamingMassingUv * vec2(7.0, 10.0));
+        float streamingMassingWindow = streamingMassingWall
+          * step(0.18, streamingMassingCell.x)
+          * step(streamingMassingCell.x, 0.82)
+          * step(0.22, streamingMassingCell.y)
+          * step(streamingMassingCell.y, 0.72);
+        float streamingMassingWindowEdge = streamingMassingWindow
+          * smoothstep(
+            0.68,
+            0.98,
+            max(
+              abs(streamingMassingCell.x - 0.5) / 0.32,
+              abs(streamingMassingCell.y - 0.47) / 0.25
+            )
+          );
+        float streamingMassingSill = streamingMassingWall
+          * step(0.72, streamingMassingCell.y)
+          * step(streamingMassingCell.y, 0.79)
+          * step(0.12, streamingMassingCell.x)
+          * step(streamingMassingCell.x, 0.88);
+        diffuseColor.rgb = mix(
+          diffuseColor.rgb,
+          diffuseColor.rgb * vec3(0.42, 0.6, 0.64),
+          streamingMassingWindow * 0.48
+        );
+        diffuseColor.rgb = mix(
+          diffuseColor.rgb,
+          diffuseColor.rgb * vec3(1.08, 1.01, 0.92),
+          streamingMassingWindowEdge * 0.24 + streamingMassingSill * 0.2
+        );
+        vec3 streamingMassingWarm = vec3(1.04, 0.72, 0.42) * uStreamingNightMix;
+        diffuseColor.rgb += streamingMassingWarm * (
+          streamingMassingWindow * (0.3 + streamingMassingWindowEdge * 0.65)
+          + streamingMassingSill * 0.14
+        );
+      `,
+    );
+  };
+  material.customProgramCacheKey = () => 'streamed-sf-massing-window-cadence-v4-night';
   return material;
 }
 
@@ -1996,9 +2619,15 @@ function createFacadePlaneMaterial() {
     map: getStreamingFacadeAtlas(),
     roughness: 0.74,
     metalness: 0.03,
+    // The pooled planes are authored per face, but rotated lot headings can
+    // expose the reverse winding of a side plane at a district seam. Keep
+    // the atlas readable from either camera side so a finished facade never
+    // collapses back to its untextured massing color.
+    side: THREE.DoubleSide,
   });
   material.name = 'Shared streamed physical-scale facade plane material';
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.uStreamingNightMix = streamingNightMix;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
       `
@@ -2033,6 +2662,7 @@ function createFacadePlaneMaterial() {
       '#include <common>',
       `
         #include <common>
+        uniform float uStreamingNightMix;
         varying vec2 vStreamingFacadeUv;
         varying vec2 vStreamingFacadeRepeat;
         varying float vStreamingFacadeCell;
@@ -2096,18 +2726,35 @@ function createFacadePlaneMaterial() {
           vec4 sampledDiffuseColor = texture2D(map, streamingAtlasUv);
           sampledDiffuseColor.rgb *= mix(0.82, 1.12, vStreamingFacadeTone);
           diffuseColor *= sampledDiffuseColor;
+          vec2 streamingWindowUv = fract(streamingTiledUv * vec2(5.0, 7.0));
+          float streamingWindowMask = step(0.12, streamingWindowUv.x)
+            * step(streamingWindowUv.x, 0.88)
+            * step(0.2, streamingWindowUv.y)
+            * step(streamingWindowUv.y, 0.78);
+          float streamingWindowEdge = streamingWindowMask
+            * smoothstep(
+              0.68,
+              0.98,
+              max(
+                abs(streamingWindowUv.x - 0.5) / 0.38,
+                abs(streamingWindowUv.y - 0.49) / 0.29
+              )
+            );
+          diffuseColor.rgb += vec3(1.04, 0.72, 0.42)
+            * uStreamingNightMix
+            * (streamingWindowMask * 0.22 + streamingWindowEdge * 0.55);
         #endif
       `,
     );
   };
-  material.customProgramCacheKey = () => 'streamed-sf-physical-facade-planes-v5';
+  material.customProgramCacheKey = () => 'streamed-sf-physical-facade-planes-v6-night';
   return material;
 }
 
 function createSharedResources(sectorSize) {
   const geometryPools = getSharedGeometryPools();
   const detailedBuildingGeometry = geometryPools.box;
-  const proxyBuildingGeometry = detailedBuildingGeometry.clone();
+  const proxyBuildingGeometry = createProxyBuildingGeometry();
   const groundGeometry = createGroundGeometry(sectorSize);
 
   // Detailed massing keeps its actual district palette. The atlas is applied
@@ -2123,7 +2770,11 @@ function createSharedResources(sectorSize) {
     detailedBaseMaterial,
     facadeGeometry: new THREE.PlaneGeometry(1, 1),
     facadeMaterial: createFacadePlaneMaterial(),
-    proxyMaterial: new THREE.MeshLambertMaterial({ color: 0x767a7b, fog: true }),
+    proxyMaterial: new THREE.MeshLambertMaterial({
+      color: 0x767a7b,
+      fog: true,
+      vertexColors: true,
+    }),
     groundMaterial: new THREE.MeshStandardMaterial({
       color: 0x5b625f,
       roughness: 0.94,
@@ -2404,9 +3055,9 @@ function createProxySlot(resources) {
   mesh.userData.geometryStyle = 'box';
   group.add(mesh);
   group.userData.streamMeshes = [mesh];
-  // Distant proxies use only the box style; district massing still varies
-  // building dimensions and palette colors but collapses all geometry
-  // variants into the single pooled box mesh.
+  // Distant proxies use one shared stepped low-poly silhouette; district
+  // massing still varies building dimensions and palette colors while all
+  // geometry variants remain inside the single pooled proxy draw call.
   group.userData.geometryStyles = ['box'];
   group.visible = false;
   return group;
@@ -2418,6 +3069,8 @@ const facadePositionScratch = new THREE.Vector3();
 const quaternionScratch = new THREE.Quaternion();
 const scaleScratch = new THREE.Vector3();
 const streetscapeColorScratch = new THREE.Color();
+const frontageBaseColorScratch = new THREE.Color();
+const frontageTargetColorScratch = new THREE.Color();
 
 function overlapsQaPublicCorridor(building) {
   return Math.abs(building.z) - building.depth * 0.5
@@ -2518,9 +3171,11 @@ function setFacadePlaneInstance(
   } else if (face === 'left') {
     localYaw = -Math.PI * 0.5;
     localX = -building.width * widthPosition - surfaceOffset;
+    localZ = rowhouse ? -building.depth * 0.06 : 0;
   } else if (face === 'right') {
     localYaw = Math.PI * 0.5;
     localX = building.width * widthPosition + surfaceOffset;
+    localZ = rowhouse ? -building.depth * 0.06 : 0;
   } else {
     return false;
   }
@@ -2595,7 +3250,7 @@ function populateFacadePlanes(
       bottom: Math.max(floorHeight * 0.95, building.height * 0.2),
       top: Math.min(building.height * 0.78, building.height - topTrimHeight),
       widthRatio: 0.52,
-      depthRatio: 0.88,
+      depthRatio: 1.18,
       widthPosition: 0.55,
       depthPosition: 0.54,
     },
@@ -2630,7 +3285,7 @@ function populateFacadePlanes(
       bottom: 0.12,
       top: upperProfile.bottom,
       widthRatio: 0.52,
-      depthRatio: 0.88,
+      depthRatio: 1.18,
       widthPosition: 0.55,
       depthPosition: 0.54,
     },
@@ -2647,9 +3302,11 @@ function populateFacadePlanes(
       const faceWidth = (face === 'front' || face === 'back')
         ? building.width * segment.widthRatio
         : building.depth * segment.depthRatio;
+      const bayWidth = FACADE_BAY_WIDTH_BY_CELL[cell]
+        * (DISTRICT_FACADE_BAY_SCALE[district] ?? 1);
       const bayCount = Math.max(
         1,
-        Math.round(faceWidth / FACADE_BAY_WIDTH_BY_CELL[cell]),
+        Math.round(faceWidth / bayWidth),
       );
       const floorCount = Math.max(1, Math.round(segmentHeight / floorHeight));
       if (setFacadePlaneInstance(
@@ -2898,6 +3555,86 @@ function populatePublicRealmCues(group, descriptor, catalog) {
   cable.visible = CABLE_ROUTE_DISTRICTS.has(descriptor.district);
 }
 
+const STREAMED_INTERIOR_ARCHETYPES = Object.freeze({
+  'Civic Center / SoMa': Object.freeze(['civic-lobby', 'transit', 'library']),
+  'Financial District': Object.freeze(['financial-office', 'civic-lobby', 'library']),
+  'North Beach / Telegraph Hill': Object.freeze(['cafe', 'rowhouse', 'coit']),
+  'Pacific Heights': Object.freeze(['library', 'rowhouse', 'sunset-home']),
+  'Presidio Heights / Presidio': Object.freeze(['presidio-barracks', 'sunset-home', 'library']),
+  'Mission District': Object.freeze(['mission-workshop', 'market', 'cafe']),
+  'Mission Bay': Object.freeze(['wharf-chandlery', 'market', 'transit']),
+  'Outer Sunset': Object.freeze(['sunset-home', 'outer-sunset-cafe']),
+});
+
+// Authored sector keys use short neighborhood names; archetype profiles use the
+// expanded district labels from expansion blueprints. Resolve before lookup so
+// Civic Center doors never fall through to the generic financial-office pool.
+const STREAMED_DISTRICT_ALIASES = Object.freeze({
+  'Civic Center': 'Civic Center / SoMa',
+  SoMa: 'Civic Center / SoMa',
+  'North Beach': 'North Beach / Telegraph Hill',
+  Presidio: 'Presidio Heights / Presidio',
+  'Presidio Heights': 'Presidio Heights / Presidio',
+  Mission: 'Mission District',
+  Sunset: 'Outer Sunset',
+});
+
+const STREAMED_INTERIOR_FALLBACK = Object.freeze([
+  'civic-lobby',
+  'financial-office',
+  'library',
+]);
+
+function hashInteriorVariantSeed(id) {
+  let seed = 17;
+  for (const character of String(id || 'sf-address')) {
+    seed = (seed * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return seed;
+}
+
+function normalizeInteriorArchetype(kind) {
+  return {
+    shop: 'market',
+    apartment: 'loft',
+    home: 'sunset-home',
+    residence: 'rowhouse',
+    lobby: 'civic-lobby',
+    station: 'transit',
+    'reading-room': 'library',
+    storefront: 'market',
+  }[kind] || kind;
+}
+
+function resolveStreamedDistrictName(district) {
+  return STREAMED_DISTRICT_ALIASES[district] || district;
+}
+
+function interiorArchetypeFor(descriptor, building, buildingIndex, volumeId) {
+  const district = resolveStreamedDistrictName(descriptor.district);
+  const profile = STREAMED_INTERIOR_ARCHETYPES[district]
+    || STREAMED_INTERIOR_FALLBACK;
+  const seed = hashInteriorVariantSeed(volumeId)
+    ^ Math.imul(buildingIndex + 1, 0x45d9f3b);
+  const style = building.geometryStyle || 'box';
+  if (district === 'Civic Center / SoMa') {
+    return 'civic-lobby';
+  }
+  if (district === 'Outer Sunset') {
+    return seed % 2 === 0 ? 'sunset-home' : 'outer-sunset-cafe';
+  }
+  if (district === 'Financial District' && style === 'tower') {
+    return seed % 2 === 0 ? 'financial-office' : 'civic-lobby';
+  }
+  if (district === 'Mission District' && style === 'warehouse') {
+    return 'mission-workshop';
+  }
+  if (district === 'North Beach / Telegraph Hill' && style === 'tower') {
+    return 'coit';
+  }
+  return profile[seed % profile.length];
+}
+
 function createBuildingVolume(
   descriptor,
   building,
@@ -2922,8 +3659,40 @@ function createBuildingVolume(
     .applyAxisAngle(THREE.Object3D.DEFAULT_UP, frontageYaw);
   const entranceOffset = entranceNormal.clone()
     .multiplyScalar(building.depth * (rowhouse ? 0.66 : 0.5) + 0.34);
+  const entranceX = centerX + entranceOffset.x;
+  const entranceZ = centerZ + entranceOffset.z;
+  const floorHeight = Math.max(2.4, Number(building.floorHeight) || 3.2);
+  const floors = Math.max(1, Math.ceil(building.height / floorHeight));
+  const volumeId = `${descriptor.key}:building:${buildingIndex}`;
+  const interiorArchetype = interiorArchetypeFor(
+    descriptor,
+    building,
+    buildingIndex,
+    volumeId,
+  );
+  const rooms = Object.freeze(Array.from({
+    length: Math.min(8, floors),
+  }, (_, floorIndex) => Object.freeze({
+    id: `${volumeId}:room:${floorIndex + 1}`,
+    floor: floorIndex + 1,
+    state: quality === 'detail' ? 'district-archetype-room' : 'streamed-proxy',
+    walkable: true,
+    archetype: interiorArchetype,
+  })));
+  const returnPath = Object.freeze([
+    Object.freeze({
+      x: entranceX + entranceNormal.x * 3.6,
+      y: minimumY + 0.72,
+      z: entranceZ + entranceNormal.z * 3.6,
+    }),
+    Object.freeze({
+      x: entranceX + entranceNormal.x * (building.depth + 8),
+      y: minimumY + 0.72,
+      z: entranceZ + entranceNormal.z * (building.depth + 8),
+    }),
+  ]);
   return Object.freeze({
-    id: `${descriptor.key}:building:${buildingIndex}`,
+    id: volumeId,
     buildingIndex,
     sectorKey: descriptor.key,
     district,
@@ -2933,12 +3702,26 @@ function createBuildingVolume(
     geometryStyle: building.geometryStyle,
     frontageYaw,
     storefrontBand: quality === 'detail',
-    entrance: Object.freeze({
-      x: centerX + entranceOffset.x,
+    floors,
+    rooms,
+    interiorState: quality === 'detail'
+      ? 'district-archetype-room'
+      : 'streamed-proxy-room',
+    interiorArchetype,
+    collisionMode: 'aabb-shell',
+    entryTrigger: Object.freeze({
+      x: entranceX,
       y: minimumY + 0.72,
-      z: centerZ + entranceOffset.z,
+      z: entranceZ,
+      radius: 1.6,
+    }),
+    entrance: Object.freeze({
+      x: entranceX,
+      y: minimumY + 0.72,
+      z: entranceZ,
       normalX: entranceNormal.x,
       normalZ: entranceNormal.z,
+      returnPath,
     }),
     center: Object.freeze({
       x: centerX,
@@ -2980,11 +3763,15 @@ function isBuildingFootprintOnLand(
     const worldX = descriptor.center.x + building.x + localX * cosine + localZ * sine;
     const worldZ = descriptor.center.z + presentedZ - localX * sine + localZ * cosine;
     if (!catalog.containsPosition(worldX, worldZ)) return false;
+    // Keep the western Ocean Beach frontage open. The Outer Sunset overlay
+    // owns the dunes, seawall, boardwalk, and Pacific datum; streamed generic
+    // massing must not place a facade footprint across that authored shore.
+    if (descriptor.key === '-5:-4' && worldX - descriptor.center.x < -132) return false;
   }
   return true;
 }
 
-function populateSlot(
+function* populateSlot(
   group,
   descriptor,
   sectorSize,
@@ -2993,12 +3780,27 @@ function populateSlot(
   externalKeys,
   resources,
   qaPublicCorridorActive = false,
+  overlayFactories = null,
 ) {
+  // A pooled slot stays hidden until the final presentation metadata is
+  // published. This prevents a partially graded sector from becoming visible
+  // or supplying stale collision/entry data during a fast traversal.
+  group.visible = false;
+  group.userData.buildingVolumes = Object.freeze([]);
+  group.userData.presentation = null;
   const meshes = group.userData.streamMeshes;
   const facades = quality === 'detail' ? group.userData.facades : null;
   const styleOrder = group.userData.geometryStyles || DETAIL_STYLES;
   const styleIndex = {};
   styleOrder.forEach((s, idx) => { styleIndex[s] = idx; });
+  // Ground, road, sidewalk, and marking meshes share the same 8 m terrain
+  // patch corners. Cache those corner samples for the duration of this slot
+  // population so grading remains exact without repeating catalog queries for
+  // every duplicated render vertex.
+  const surfaceCache = {
+    corners: new Map(),
+    vertices: new Map(),
+  };
 
   // Reset instance counts so recycled slots do not leak stale transforms.
   const counts = meshes.map(() => 0);
@@ -3007,13 +3809,23 @@ function populateSlot(
   if (facades) facades.count = 0;
 
   const buildings = generateDistrictMassing(descriptor, sectorSize, quality);
+  const proxyPresentation = quality === 'proxy'
+    ? PROXY_DISTRICT_PRESENTATIONS[descriptor.district]
+      ?? PROXY_DISTRICT_PRESENTATIONS.default
+    : null;
 
   const colorScratch = new THREE.Color();
   let atlasFrontageBuildings = 0;
   let architecturalFaceCount = 0;
   let excludedWaterfrontBuildings = 0;
   const buildingVolumes = [];
-  buildings.forEach((building, buildingIndex) => {
+  for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex += 1) {
+    // A first-use sector can carry facade attributes, entrance metadata, and
+    // land filtering for dozens of buildings. Yield after every building so
+    // one generator step cannot monopolize a traversal frame. The outer
+    // scheduler still admits only a small number of steps per frame.
+    if (buildingIndex > 0) yield;
+    const building = buildings[buildingIndex];
     const presentedZ = getPresentedBuildingZ(building, qaPublicCorridorActive);
     const frontageYaw = getFrontageYaw(building, presentedZ, qaPublicCorridorActive);
     if (!isBuildingFootprintOnLand(
@@ -3024,13 +3836,13 @@ function populateSlot(
       frontageYaw,
     )) {
       excludedWaterfrontBuildings += 1;
-      return;
+      continue;
     }
     const meshIdx = styleIndex[building.geometryStyle] ?? 0;
     const mesh = meshes[meshIdx];
-    if (!mesh) return;
+    if (!mesh) continue;
     const instanceIndex = counts[meshIdx];
-    if (instanceIndex >= mesh.userData.capacity) return;
+    if (instanceIndex >= mesh.userData.capacity) continue;
 
     // The massing always retains its district palette. Atlas detail is added
     // separately to UV-safe frontage planes, so incompatible shapes remain
@@ -3039,6 +3851,14 @@ function populateSlot(
     if (palette && palette.colors.length) {
       const hex = palette.colors[building.paletteIndex % palette.colors.length];
       colorScratch.set(hex);
+      if (proxyPresentation) {
+        colorScratch.lerp(
+          BLOCK_INFILL_COLORS[
+            ((descriptor.seed + buildingIndex) >>> 0) % BLOCK_INFILL_COLORS.length
+          ],
+          proxyPresentation.neutralMix,
+        );
+      }
       mesh.setColorAt(instanceIndex, colorScratch);
     }
 
@@ -3053,7 +3873,9 @@ function populateSlot(
     positionScratch.set(building.x, buildingBaseY, presentedZ);
     scaleScratch.set(
       building.width,
-      quality === 'detail' ? building.height : building.height * 0.82,
+      quality === 'detail'
+        ? building.height
+        : building.height * (proxyPresentation?.heightScale ?? 0.82),
       building.depth,
     );
     matrixScratch.compose(positionScratch, quaternionScratch, scaleScratch);
@@ -3084,7 +3906,11 @@ function populateSlot(
       quality,
       descriptor.district,
     ));
-  });
+  }
+
+  // Keep the inexpensive massing phase separate from the mesh work below so
+  // the scheduler can hand the frame back before terrain grading begins.
+  yield;
 
   meshes.forEach((mesh, index) => {
     mesh.count = counts[index];
@@ -3101,32 +3927,41 @@ function populateSlot(
     facades.computeBoundingSphere();
   }
   quaternionScratch.identity();
-  const surfaceRange = gradeSurfaceGeometry(
+  const surfaceRange = yield* gradeSurfaceGeometrySteps(
     group.userData.ground?.geometry,
     descriptor,
     catalog,
+    surfaceCache,
   );
+  yield;
   if (group.userData.roads) {
     const geometry = qaPublicCorridorActive
       ? group.userData.roadGeometries.transit
       : group.userData.roadGeometries.normal;
-    gradeSurfaceGeometry(geometry, descriptor, catalog);
+    yield* gradeSurfaceGeometrySteps(geometry, descriptor, catalog, surfaceCache);
     group.userData.roads.geometry = geometry;
+    yield;
   }
   if (group.userData.sidewalks) {
     const geometry = qaPublicCorridorActive
       ? group.userData.sidewalkGeometries.transit
       : group.userData.sidewalkGeometries.normal;
-    gradeSurfaceGeometry(geometry, descriptor, catalog);
-    applyDistrictPavingTint(geometry, getStreetscapeProfile(descriptor.district));
+    yield* gradeSurfaceGeometrySteps(geometry, descriptor, catalog, surfaceCache);
+    applyDistrictPavingTint(
+      geometry,
+      getStreetscapeProfile(descriptor.district),
+      descriptor.district,
+    );
     group.userData.sidewalks.geometry = geometry;
+    yield;
   }
   const heroBlock = group.userData.heroBlock;
   const heroBlockActive = quality === 'detail' && descriptor.key === HERO_BLOCK_SECTOR_KEY;
   if (heroBlock) {
     heroBlock.visible = heroBlockActive;
     if (heroBlockActive) {
-      gradeSurfaceGeometry(heroBlock.geometry, descriptor, catalog);
+      yield* gradeSurfaceGeometrySteps(heroBlock.geometry, descriptor, catalog, surfaceCache);
+      yield;
     }
   }
   populateStreetlights(
@@ -3136,6 +3971,7 @@ function populateSlot(
     catalog,
     sectorSize,
   );
+  yield;
   populateStreetscape(
     group.userData.streetscape,
     qaPublicCorridorActive,
@@ -3143,7 +3979,31 @@ function populateSlot(
     catalog,
     sectorSize,
   );
+  yield;
   populatePublicRealmCues(group, descriptor, catalog);
+  yield;
+  let authoredOverlay = group.userData.authoredOverlay?.overlay ?? null;
+  const previousOverlayKey = group.userData.authoredOverlay?.key ?? null;
+  if (previousOverlayKey && previousOverlayKey !== descriptor.key) {
+    authoredOverlay?.setActive?.(false, 'proxy');
+    if (authoredOverlay?.object3d?.parent === group) group.remove(authoredOverlay.object3d);
+    authoredOverlay = null;
+    group.userData.authoredOverlay = null;
+  }
+  const overlayFactory = overlayFactories?.get(descriptor.key);
+  if (overlayFactory) {
+    if (!authoredOverlay) {
+      authoredOverlay = overlayFactory({ descriptor, quality });
+      if (authoredOverlay?.object3d) group.add(authoredOverlay.object3d);
+      group.userData.authoredOverlay = {
+        key: descriptor.key,
+        overlay: authoredOverlay,
+      };
+    }
+    authoredOverlay?.setActive?.(true, quality);
+  }
+  yield;
+  const authoredOverlayPresentation = authoredOverlay?.getPresentation?.() ?? null;
   group.position.set(descriptor.center.x, descriptor.elevation, descriptor.center.z);
   updateCoreTransition(
     group,
@@ -3161,6 +4021,7 @@ function populateSlot(
   group.userData.presentation = Object.freeze({
     sectorKey: descriptor.key,
     district: descriptor.district,
+    massingSource: getDistrictProfile(descriptor).source || 'district-profile',
     quality,
     mode: quality === 'detail'
       ? (qaPublicCorridorActive ? 'transit-corridor' : 'normal-detail')
@@ -3234,6 +4095,7 @@ function populateSlot(
       })
       : null,
     seamTreatment: quality === 'detail' ? 'continuous sampled boundary' : null,
+    authoredOverlay: authoredOverlayPresentation,
   });
   group.visible = true;
 }
@@ -3281,6 +4143,7 @@ export function createSanFranciscoStreaming({
   proxyRadius = DEFAULT_PROXY_RADIUS,
   maxDetailed = 12,
   maxProxies = 44,
+  prewarmPools = false,
   backgroundUpdatesPerTick = 4,
   updateInterval = 0.22,
   externalDetailedKeys = ['0:0'],
@@ -3328,10 +4191,108 @@ export function createSanFranciscoStreaming({
     () => createDetailedSlot(resources, catalog.sectorSize),
   );
   const proxyPool = createPool(scene, () => createProxySlot(resources));
+  if (prewarmPools) {
+    // Allocate only the configured simultaneous budgets while the boot
+    // overlay is still active. The same pooled objects are returned parked;
+    // traversal therefore pays population work, not first-use GL object
+    // construction, and memory does not exceed the runtime cap.
+    const prewarm = (pool, count) => {
+      const parked = [];
+      for (let index = 0; index < count; index += 1) parked.push(pool.acquire());
+      parked.forEach((object) => pool.release(object));
+    };
+    prewarm(detailedPool, detailedBudget);
+    prewarm(proxyPool, proxyBudget);
+  }
+
+  const prewarmRenderResources = (renderer, camera) => {
+    if (!renderer) return { available: false };
+    const detailedObjects = Array.from(
+      { length: detailedBudget },
+      () => detailedPool.acquire(),
+    );
+    const proxyObjects = [proxyPool.acquire()];
+    const warmObjects = [...detailedObjects, ...proxyObjects];
+    const targets = [
+      ...warmObjects,
+      ...detailedObjects.flatMap((object) => [
+        object.userData.facades,
+        object.userData.streetlights,
+        object.userData.streetscape,
+        ...(object.userData.streamMeshes || []),
+      ]),
+      ...proxyObjects.flatMap((object) => object.userData.streamMeshes || []),
+    ].filter(Boolean);
+    const previous = targets.map((mesh) => ({
+      mesh,
+      visible: mesh.visible,
+      count: Number.isFinite(mesh.count) ? mesh.count : null,
+    }));
+    warmObjects.forEach((object) => { object.visible = true; });
+    targets.forEach((mesh) => {
+      mesh.visible = true;
+      if (Number.isFinite(mesh.count)) mesh.count = Math.max(1, mesh.count);
+    });
+    scene.updateMatrixWorld(true);
+    renderer.compile(scene, camera);
+    // `compile()` prepares shader programs but does not upload every pooled
+    // instance/terrain buffer. A single bounded render while the launch card
+    // is still up removes that first-use GPU upload from traversal.
+    renderer.render(scene, camera);
+    previous.forEach(({ mesh, visible, count }) => {
+      mesh.visible = visible;
+      if (count !== null) mesh.count = count;
+    });
+    detailedObjects.forEach((object) => detailedPool.release(object));
+    proxyObjects.forEach((object) => proxyPool.release(object));
+
+    // The first authored handoff uses the same detailed pool as ordinary
+    // traversal, but its populated instance buffers and overlay geometry are
+    // not represented by an empty-slot compile. Populate one Civic/SoMa slot
+    // once under the boot card, render it, then return that exact slot to the
+    // pool so the first eastbound handoff does not pay the upload cost.
+    const civicDescriptor = catalog.get(1, 0);
+    if (civicDescriptor) {
+      const civicObject = detailedPool.acquire();
+      civicObject.visible = false;
+      const civicPopulation = createPopulationTask(civicObject, civicDescriptor, 'detail');
+      let civicStep = civicPopulation.next();
+      while (!civicStep.done) civicStep = civicPopulation.next();
+      civicObject.visible = true;
+      civicObject.position.set(
+        civicDescriptor.center.x,
+        civicDescriptor.elevation,
+        civicDescriptor.center.z,
+      );
+      const civicFrustumCulling = [];
+      civicObject.traverse((object) => {
+        civicFrustumCulling.push({ object, frustumCulled: object.frustumCulled });
+        object.frustumCulled = false;
+      });
+      scene.updateMatrixWorld(true);
+      renderer.compile(scene, camera);
+      renderer.render(scene, camera);
+      civicObject.userData.authoredOverlay?.overlay?.setActive?.(false, 'proxy');
+      civicObject.visible = false;
+      civicFrustumCulling.forEach(({ object, frustumCulled }) => {
+        object.frustumCulled = frustumCulled;
+      });
+      detailedPool.release(civicObject);
+    }
+    return {
+      available: true,
+      programs: renderer.info.programs?.length ?? null,
+    };
+  };
   const runtimeSectors = new Map();
   const backgroundStates = new Map();
   const handoffQueue = [];
+  const transitionQueue = [];
+  const pendingTransitions = new Map();
+  const desiredQualityByKey = new Map();
   const sectorFactories = new Map();
+  const sectorOverlayFactories = new Map();
+  const authoredOverlayCache = new Map();
   const externalKeys = new Set(externalDetailedKeys);
   const frustum = new THREE.Frustum();
   const projectionView = new THREE.Matrix4();
@@ -3343,6 +4304,7 @@ export function createSanFranciscoStreaming({
   let elapsedTime = 0;
   let transitionedSectors = 0;
   let backgroundCursor = 0;
+  let populationFairnessCursor = 0;
   let backgroundUpdateCount = 0;
   let weather = 'clear';
   let qaPublicCorridorActive = false;
@@ -3364,6 +4326,39 @@ export function createSanFranciscoStreaming({
     elapsedClamps: 0,
     lastPortalId: null,
   };
+  const streamingProfileEnabled = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).has('sf-profile');
+  const streamingProfile = {
+    frameCount: 0,
+    totals: Object.create(null),
+    maxima: Object.create(null),
+  };
+
+  const resetStreamingProfile = () => {
+    streamingProfile.frameCount = 0;
+    streamingProfile.totals = Object.create(null);
+    streamingProfile.maxima = Object.create(null);
+  };
+
+  const recordStreamingProfileStage = (name, durationMs) => {
+    if (!streamingProfileEnabled || !Number.isFinite(durationMs)) return;
+    streamingProfile.totals[name] = (streamingProfile.totals[name] || 0) + durationMs;
+    streamingProfile.maxima[name] = Math.max(streamingProfile.maxima[name] || 0, durationMs);
+  };
+
+  const getStreamingProfile = () => ({
+    enabled: streamingProfileEnabled,
+    frameCount: streamingProfile.frameCount,
+    stages: Object.fromEntries(
+      Object.keys(streamingProfile.totals).map((name) => [name, {
+        averageMs: streamingProfile.frameCount
+          ? streamingProfile.totals[name] / streamingProfile.frameCount
+          : 0,
+        maxMs: streamingProfile.maxima[name] || 0,
+        totalMs: streamingProfile.totals[name],
+      }]),
+    ),
+  });
 
   const trimBackgroundStates = () => {
     while (backgroundStates.size > MAX_BACKGROUND_STATES) {
@@ -3482,18 +4477,62 @@ export function createSanFranciscoStreaming({
     sectorFactories.set(key, factory);
   };
 
+  const registerSectorOverlay = (key, factory) => {
+    if (typeof factory !== 'function') throw new TypeError('Sector overlay factory must be a function.');
+    sectorOverlayFactories.set(key, factory);
+  };
+
+  const getRegisteredAuthoredOverlay = (descriptor) => {
+    const key = descriptor?.key;
+    if (!key || !sectorOverlayFactories.has(key)) return null;
+    let overlay = authoredOverlayCache.get(key);
+    if (!overlay) {
+      overlay = sectorOverlayFactories.get(key)({ descriptor, quality: 'detail' });
+      if (overlay) authoredOverlayCache.set(key, overlay);
+    }
+    return overlay || null;
+  };
+
   const releaseSector = (runtime) => {
     if (!runtime) return;
+    // A sector may be released while its pooled generator is between terrain
+    // grading chunks. Dropping the iterator makes the next lease start from a
+    // clean descriptor without allowing stale partial metadata to reappear.
+    runtime.population = null;
+    runtime.ready = false;
     if (runtime.custom) {
       runtime.custom.setActive?.(false);
       runtime.custom.unload?.();
     } else if (runtime.quality === 'detail') {
+      runtime.object?.userData?.authoredOverlay?.overlay?.setActive?.(false, 'proxy');
       detailedPool.release(runtime.object);
     } else {
+      runtime.object?.userData?.authoredOverlay?.overlay?.setActive?.(false, 'proxy');
       proxyPool.release(runtime.object);
     }
     runtimeSectors.delete(runtime.descriptor.key);
     transitionedSectors += 1;
+  };
+
+  const createPopulationTask = (object, descriptor, quality) => populateSlot(
+    object,
+    descriptor,
+    catalog.sectorSize,
+    quality,
+    catalog,
+    externalKeys,
+    resources,
+    qaPublicCorridorActive,
+    sectorOverlayFactories,
+  );
+
+  const finishPopulation = (runtime) => {
+    if (!runtime?.population) return;
+    let step = runtime.population.next();
+    while (!step.done) step = runtime.population.next();
+    runtime.population = null;
+    runtime.ready = true;
+    if (runtime.object) runtime.object.visible = true;
   };
 
   const activateSector = (descriptor, quality) => {
@@ -3525,22 +4564,15 @@ export function createSanFranciscoStreaming({
 
     const pool = quality === 'detail' ? detailedPool : proxyPool;
     const object = pool.acquire();
-    populateSlot(
-      object,
-      descriptor,
-      catalog.sectorSize,
-      quality,
-      catalog,
-      externalKeys,
-      resources,
-      qaPublicCorridorActive,
-    );
+    object.visible = false;
     runtimeSectors.set(descriptor.key, {
       descriptor,
       quality,
       object,
       custom: null,
       simulationState,
+      population: createPopulationTask(object, descriptor, quality),
+      ready: false,
     });
   };
 
@@ -3550,6 +4582,89 @@ export function createSanFranciscoStreaming({
     if (current) releaseSector(current);
     activateSector(descriptor, quality);
     transitionedSectors += 1;
+  };
+
+  const queueTransition = (descriptor, quality) => {
+    const current = runtimeSectors.get(descriptor.key);
+    const matches = current?.quality === quality
+      || (current?.quality === 'external-detail' && quality === 'detail');
+    if (matches) {
+      pendingTransitions.delete(descriptor.key);
+      return;
+    }
+    const previous = pendingTransitions.get(descriptor.key);
+    if (previous?.quality === quality) return;
+    const item = { descriptor, quality };
+    pendingTransitions.set(descriptor.key, item);
+    transitionQueue.push(item);
+  };
+
+  const processTransitionQueue = () => {
+    let detailActivations = 0;
+    let proxyActivations = 0;
+    while (transitionQueue.length
+      && (detailActivations < MAX_DETAIL_ACTIVATIONS_PER_FRAME
+        || proxyActivations < MAX_PROXY_ACTIVATIONS_PER_FRAME)) {
+      const item = transitionQueue.shift();
+      if (pendingTransitions.get(item.descriptor.key) !== item) continue;
+      pendingTransitions.delete(item.descriptor.key);
+      if (desiredQualityByKey.get(item.descriptor.key) !== item.quality) continue;
+      const current = runtimeSectors.get(item.descriptor.key);
+      const matches = current?.quality === item.quality
+        || (current?.quality === 'external-detail' && item.quality === 'detail');
+      if (matches) continue;
+      transitionSector(item.descriptor, item.quality);
+      if (item.quality === 'detail') detailActivations += 1;
+      else proxyActivations += 1;
+    }
+  };
+
+  const processPopulationQueue = () => {
+    if (!runtimeSectors.size) return;
+    const startedAt = globalThis.performance?.now?.() ?? 0;
+    const pending = [...runtimeSectors.values()]
+      .filter((runtime) => runtime.population)
+      .sort((a, b) => {
+        const qualityDelta = (a.quality === 'detail' ? 0 : 1)
+          - (b.quality === 'detail' ? 0 : 1);
+        if (qualityDelta) return qualityDelta;
+        const aDistance = Math.hypot(
+          a.descriptor.center.x - lastFocus.x,
+          a.descriptor.center.z - lastFocus.z,
+        );
+        const bDistance = Math.hypot(
+          b.descriptor.center.x - lastFocus.x,
+          b.descriptor.center.z - lastFocus.z,
+        );
+        return aDistance - bDistance;
+      });
+    // Detail work normally owns the head of the queue, but a single detail
+    // generator can legitimately overshoot the wall-clock slice while it
+    // publishes authored metadata. Keep near detail deterministic for visual
+    // admission; once detail is clear, move the nearest proxy task forward so
+    // the distant ring drains without competing with the visible sector.
+    const hasPendingDetail = pending.some((runtime) => runtime.quality === 'detail');
+    if (pending.length && !hasPendingDetail) {
+      const proxyIndex = pending.findIndex((runtime) => runtime.quality === 'proxy');
+      if (proxyIndex > 0) {
+        const [proxy] = pending.splice(proxyIndex, 1);
+        pending.unshift(proxy);
+      }
+    }
+    populationFairnessCursor += 1;
+    let steps = 0;
+    for (const runtime of pending) {
+      if (steps >= MAX_POPULATION_STEPS_PER_FRAME) break;
+      const step = runtime.population.next();
+      steps += 1;
+      if (step.done) {
+        runtime.population = null;
+        runtime.ready = true;
+        if (runtime.object) runtime.object.visible = true;
+      }
+      const elapsed = (globalThis.performance?.now?.() ?? startedAt) - startedAt;
+      if (elapsed >= MAX_POPULATION_WORK_MS) break;
+    }
   };
 
   const getQaPublicCorridor = () => ({
@@ -3571,31 +4686,95 @@ export function createSanFranciscoStreaming({
       };
     }
     const presentation = runtime.object?.userData?.presentation ?? null;
+    const authoredOverlay = runtime.quality === 'detail'
+      ? getRegisteredAuthoredOverlay(runtime.descriptor)
+      : null;
+    const authoredPresentation = authoredOverlay?.getPresentation?.() ?? null;
+    // Authored district data is immutable and can be published as soon as a
+    // detail lease exists. The pooled terrain/facade generator may still be
+    // grading its surface for a few frames, but doorway discovery and district
+    // identity should not disappear during that handoff.
+    const earlyPresentation = !presentation && authoredPresentation
+      ? {
+        sectorKey: runtime.descriptor.key,
+        district: runtime.descriptor.district,
+        massingSource: 'authored-expansion',
+        quality: 'detail',
+        mode: 'normal-detail',
+        normalPresentation: true,
+        buildingCount: authoredPresentation.buildingCount,
+        generatedBuildingCount: 0,
+        excludedWaterfrontBuildings: 0,
+        atlasFrontageBuildings: authoredPresentation.buildingCount,
+        architecturalFaceCount: authoredPresentation.buildingCount * 4,
+        requiredArchitecturalFaceCount: authoredPresentation.buildingCount * 4,
+        facadePlaneCount: 0,
+        waterfront: authoredPresentation.waterfront,
+        authoredOverlay: authoredPresentation,
+      }
+      : null;
+    const resolvedPresentation = presentation || earlyPresentation;
     return {
       sectorKey: key,
       active: true,
       detailed: runtime.quality === 'detail' || runtime.quality === 'external-detail',
       quality: runtime.quality,
       source: runtime.descriptor.source,
-      presentation: presentation
+      presentation: resolvedPresentation
         ? {
-          ...presentation,
-          surfaceRange: presentation.surfaceRange
-            ? { ...presentation.surfaceRange }
+          ...resolvedPresentation,
+          surfaceRange: resolvedPresentation.surfaceRange
+            ? { ...resolvedPresentation.surfaceRange }
             : null,
         }
         : null,
     };
   };
 
+  const getRuntimeBuildingVolumes = (runtime) => {
+    const generated = runtime?.object?.userData?.buildingVolumes ?? [];
+    const attachedOverlay = runtime?.object?.userData?.authoredOverlay;
+    const attachedAuthored = attachedOverlay?.key === runtime?.descriptor?.key
+      ? attachedOverlay.overlay?.buildingVolumes
+      : null;
+    const authored = runtime?.quality === 'detail'
+      ? attachedAuthored
+        ?? getRegisteredAuthoredOverlay(runtime.descriptor)?.buildingVolumes
+        ?? runtime?.custom?.buildingVolumes
+        ?? []
+      : [];
+    // An authored overlay is the canonical doorway/collision layer for its
+    // sector. Keeping the generated shells alongside it creates two AABBs
+    // around one visible building, so approaching the authored door can be
+    // pushed away by the generated shell's different entrance offset.
+    return authored.length ? authored : generated;
+  };
+
   const getNearestEnterablePortal = (position, maxDistance = 22) => {
     if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) return null;
     let nearest = null;
     let nearestDistance = Number.isFinite(maxDistance) ? maxDistance : Infinity;
-    const roomKinds = ['cafe', 'market', 'loft', 'civic', 'coit', 'ferry'];
+    const roomKinds = [
+      'cafe',
+      'market',
+      'loft',
+      'rowhouse',
+      'civic',
+      'civic-lobby',
+      'coit',
+      'ferry',
+      'library',
+      'transit',
+      'financial-office',
+      'mission-workshop',
+      'sunset-home',
+      'presidio-barracks',
+      'wharf-chandlery',
+      'outer-sunset-cafe',
+    ];
     runtimeSectors.forEach((runtime) => {
       if (runtime.quality !== 'detail' || !runtime.object) return;
-      const volumes = runtime.object.userData?.buildingVolumes ?? [];
+      const volumes = getRuntimeBuildingVolumes(runtime);
       volumes.forEach((volume) => {
         const entrance = volume.entrance;
         if (!entrance) return;
@@ -3608,11 +4787,49 @@ export function createSanFranciscoStreaming({
         for (const character of volume.id) {
           variantSeed = (variantSeed * 31 + character.charCodeAt(0)) >>> 0;
         }
-        const roomKind = roomKinds[variantSeed % roomKinds.length];
+        // Keep the interior category architecturally plausible, but allow
+        // stable per-address variety inside that family. A city block should
+        // not resolve every masonry door to the same studio or every tower
+        // door to the same civic lobby.
+        const compatibleRoomKinds = {
+          villa: ['rowhouse', 'loft', 'cafe', 'sunset-home'],
+          rowhouse: ['rowhouse', 'loft', 'sunset-home'],
+          warehouse: ['market', 'transit', 'mission-workshop'],
+          podium: ['market', 'transit', 'civic-lobby'],
+          stucco: ['cafe', 'rowhouse', 'library', 'outer-sunset-cafe'],
+          civic: ['civic-lobby', 'library', 'transit'],
+          tower: ['financial-office', 'civic-lobby', 'library'],
+          masonry: ['loft', 'market', 'cafe', 'civic-lobby'],
+          box: ['civic-lobby', 'market', 'library'],
+          setback: ['loft', 'civic-lobby', 'rowhouse'],
+          tapered: ['civic-lobby', 'library', 'transit', 'financial-office'],
+        }[volume.geometryStyle] || roomKinds;
+        const archetype = normalizeInteriorArchetype(volume.interiorArchetype);
+        const roomKind = roomKinds.includes(archetype)
+          ? archetype
+          : compatibleRoomKinds[variantSeed % compatibleRoomKinds.length];
+        const roomLabel = {
+          cafe: 'Cafe',
+          market: 'Market',
+          loft: 'Studios',
+          rowhouse: 'Residence',
+          civic: 'Civic Services',
+          coit: 'Museum',
+          ferry: 'Market Hall',
+          library: 'Reading Room',
+          transit: 'Muni Transfer',
+          'civic-lobby': 'Civic Lobby',
+          'financial-office': 'Financial Office',
+          'mission-workshop': 'Mission Workshop',
+          'sunset-home': 'Sunset Home',
+          'presidio-barracks': 'Presidio Quarters',
+          'wharf-chandlery': 'Waterfront Chandlery',
+          'outer-sunset-cafe': 'Ocean Beach Cafe',
+        }[roomKind] || 'Public';
         nearestDistance = distance;
         nearest = {
           id: `sf-streamed-portal:${volume.id}`,
-          label: `${volume.district} ${volume.buildingIndex + 1} Public Lobby`,
+          label: `${volume.label || `${volume.district} ${volume.buildingIndex + 1}`} ${roomLabel}`,
           position: {
             x: entrance.x,
             y: entrance.y,
@@ -3625,14 +4842,14 @@ export function createSanFranciscoStreaming({
           },
           radius: 4.8,
           featured: false,
-          door: true,
-          signposted: true,
+          door: volume.doorMesh !== false,
+          signposted: volume.signposted !== false,
           roomKind,
           variantSeed,
           sectorKey: volume.sectorKey,
           buildingId: volume.id,
           district: volume.district,
-          source: 'generated-massing',
+          source: volume.source || 'generated-massing',
           distance,
         };
       });
@@ -3718,7 +4935,7 @@ export function createSanFranciscoStreaming({
     let nearbyStorefrontBands = 0;
 
     runtimeSectors.forEach((runtime) => {
-      const volumes = runtime.object?.userData?.buildingVolumes ?? [];
+      const volumes = getRuntimeBuildingVolumes(runtime);
       volumes.forEach((volume) => {
         checkedBuildingVolumes += 1;
         const clearance = distanceToBuildingVolume(cameraPosition, volume);
@@ -3812,6 +5029,78 @@ export function createSanFranciscoStreaming({
     };
   };
 
+  const isNearBuildingEntrance = (position, volume, radius = 2.25) => {
+    const entrance = volume?.entrance;
+    return Boolean(
+      entrance
+      && Math.hypot(position.x - entrance.x, position.z - entrance.z) <= radius,
+    );
+  };
+
+  const resolveRoamPosition = (position, clearance = 0.72) => {
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) return position;
+    const resolved = new THREE.Vector3(position.x, position.y, position.z);
+    const detailVolumes = [];
+    runtimeSectors.forEach((runtime) => {
+      if (runtime.quality !== 'detail' || !runtime.object) return;
+      detailVolumes.push(...getRuntimeBuildingVolumes(runtime));
+    });
+    // A portal approach intentionally sits just outside its doorway. If a
+    // neighboring shell overlaps that small public threshold, preserve the
+    // authored approach point so the nearest door remains actionable instead
+    // of being pushed toward a different address by collision resolution.
+    if (detailVolumes.some((volume) => isNearBuildingEntrance(resolved, volume, 4.05))) {
+      return position;
+    }
+    let changed = false;
+    detailVolumes.forEach((volume) => {
+      if (isNearBuildingEntrance(resolved, volume)) return;
+      if (resolved.y < volume.min.y - 1.5 || resolved.y > volume.max.y + 0.5) return;
+      const minX = volume.min.x - clearance;
+      const maxX = volume.max.x + clearance;
+      const minZ = volume.min.z - clearance;
+      const maxZ = volume.max.z + clearance;
+      if (resolved.x <= minX || resolved.x >= maxX || resolved.z <= minZ || resolved.z >= maxZ) return;
+      const pushLeft = resolved.x - minX;
+      const pushRight = maxX - resolved.x;
+      const pushBack = resolved.z - minZ;
+      const pushForward = maxZ - resolved.z;
+      const smallest = Math.min(pushLeft, pushRight, pushBack, pushForward);
+      if (smallest === pushLeft) resolved.x = minX;
+      else if (smallest === pushRight) resolved.x = maxX;
+      else if (smallest === pushBack) resolved.z = minZ;
+      else resolved.z = maxZ;
+      changed = true;
+    });
+    return changed ? resolved : position;
+  };
+
+  const resolveCameraPosition = (focus, desired, clearance = 0.6) => {
+    if (!focus || !desired) return desired;
+    const dx = desired.x - focus.x;
+    const dy = desired.y - focus.y;
+    const dz = desired.z - focus.z;
+    const distance = Math.hypot(dx, dy, dz);
+    if (!Number.isFinite(distance) || distance < 1e-6) return desired;
+    const direction = { x: dx / distance, y: dy / distance, z: dz / distance };
+    let nearestHit = distance;
+    runtimeSectors.forEach((runtime) => {
+      if (runtime.quality !== 'detail' || !runtime.object) return;
+      getRuntimeBuildingVolumes(runtime).forEach((volume) => {
+        if (isNearBuildingEntrance(focus, volume, 1.8)) return;
+        const hit = segmentBuildingIntersectionDistance(focus, direction, distance, volume);
+        if (hit != null && hit < nearestHit) nearestHit = hit;
+      });
+    });
+    if (nearestHit >= distance) return desired;
+    const safeDistance = Math.max(0, nearestHit - clearance);
+    return new THREE.Vector3(
+      focus.x + direction.x * safeDistance,
+      focus.y + direction.y * safeDistance,
+      focus.z + direction.z * safeDistance,
+    );
+  };
+
   const setQaPublicCorridorActive = (active) => {
     const next = active === true;
     if (next === qaPublicCorridorActive) return getQaPublicCorridor();
@@ -3821,16 +5110,13 @@ export function createSanFranciscoStreaming({
     // authoritative while QA framing switches between normal and avenue views.
     runtimeSectors.forEach((runtime) => {
       if (runtime.custom || !runtime.object) return;
-      populateSlot(
+      runtime.population = createPopulationTask(
         runtime.object,
         runtime.descriptor,
-        catalog.sectorSize,
         runtime.quality,
-        catalog,
-        externalKeys,
-        resources,
-        qaPublicCorridorActive,
       );
+      runtime.ready = false;
+      finishPopulation(runtime);
     });
     return getQaPublicCorridor();
   };
@@ -3845,6 +5131,29 @@ export function createSanFranciscoStreaming({
     const toSectorZ = descriptor.center.z - lastFocus.z;
     const length = Math.hypot(toSectorX, toSectorZ) || 1;
     return (toSectorX * movement.x + toSectorZ * movement.z) / length > 0.62;
+  };
+
+  const updateRenderedSectorVisibility = (position) => {
+    const focusKey = `${focusSector.x}:${focusSector.z}`;
+    runtimeSectors.forEach((runtime) => {
+      if (!runtime.object || !runtime.ready) return;
+      const distance = Math.hypot(
+        runtime.descriptor.center.x - position.x,
+        runtime.descriptor.center.z - position.z,
+      );
+      const isDetail = runtime.quality === 'detail'
+        || runtime.quality === 'external-detail';
+      const buildingsVisible = isDetail
+        ? runtime.descriptor.key === focusKey || distance <= DETAIL_BUILDING_RENDER_DISTANCE
+        : distance <= PROXY_BUILDING_RENDER_DISTANCE;
+      runtime.object.userData.buildingRenderVisible = buildingsVisible;
+      runtime.object.userData.streamMeshes?.forEach((mesh) => {
+        mesh.visible = buildingsVisible;
+      });
+      if (runtime.object.userData.facades) {
+        runtime.object.userData.facades.visible = buildingsVisible;
+      }
+    });
   };
 
   const updateBackground = (candidateDescriptors) => {
@@ -3988,6 +5297,9 @@ export function createSanFranciscoStreaming({
     retainedDetailSectors = selected.filter((item) => item.detailPriority === 1).length;
     prefetchedDetailSectors = selected.filter((item) => item.detailPriority === 2).length;
 
+    desiredQualityByKey.clear();
+    selected.forEach((item) => desiredQualityByKey.set(item.descriptor.key, item.quality));
+
     // Park sectors before acquiring replacements. This keeps pool allocation
     // bounded by the active budgets even during a fast cross-city teleport.
     const desiredKeys = new Set(selected.map((item) => item.descriptor.key));
@@ -4000,12 +5312,27 @@ export function createSanFranciscoStreaming({
         || (current?.quality === 'external-detail' && item.quality === 'detail');
       if (current && !matches) releaseSector(current);
     });
-    selected.forEach((item) => transitionSector(item.descriptor, item.quality));
+    selected.forEach((item) => queueTransition(item.descriptor, item.quality));
+    // A focus change can invalidate queued work before it is populated. Keep
+    // stale records out of the bounded queue so a fast traversal cannot turn
+    // deferred activation into unbounded bookkeeping.
+    for (let index = transitionQueue.length - 1; index >= 0; index -= 1) {
+      const item = transitionQueue[index];
+      if (pendingTransitions.get(item.descriptor.key) !== item) transitionQueue.splice(index, 1);
+    }
     updateBackground(backgroundCandidates);
   };
 
   const update = (position, camera, dt = 0, elapsed = undefined) => {
     if (!position) return;
+    const profileStart = streamingProfileEnabled ? (globalThis.performance?.now?.() ?? 0) : 0;
+    let profileStageStart = profileStart;
+    const profileMark = (name) => {
+      if (!streamingProfileEnabled) return;
+      const mark = globalThis.performance?.now?.() ?? profileStageStart;
+      recordStreamingProfileStage(name, mark - profileStageStart);
+      profileStageStart = mark;
+    };
     const requestedElapsed = Number.isFinite(elapsed)
       ? elapsed
       : elapsedTime + Math.max(0, dt);
@@ -4013,13 +5340,35 @@ export function createSanFranciscoStreaming({
     elapsedTime = Math.max(elapsedTime, requestedElapsed);
     if (Number.isFinite(lastFocus.x)) movement.copy(position).sub(lastFocus);
     else movement.set(0, 0, 0);
+    runtimeSectors.forEach((runtime) => {
+      if (runtime.quality !== 'detail') return;
+      runtime.object?.userData?.authoredOverlay?.overlay?.update?.(dt, elapsedTime);
+    });
+    profileMark('authored-overlay-update');
     lastFocus.copy(position);
     accumulator += Math.max(0, dt);
     const currentSector = catalog.sectorAt(position);
     const crossedSector = currentSector.x !== focusSector.x || currentSector.z !== focusSector.z;
-    if (!crossedSector && accumulator < effectiveUpdateInterval) return;
+    if (!crossedSector && accumulator < effectiveUpdateInterval) {
+      processTransitionQueue();
+      profileMark('transition-queue');
+      processPopulationQueue();
+      profileMark('population-queue');
+      updateRenderedSectorVisibility(position);
+      profileMark('visibility');
+      if (streamingProfileEnabled) streamingProfile.frameCount += 1;
+      return;
+    }
     accumulator = 0;
     reconcile(position, camera);
+    profileMark('reconcile');
+    processTransitionQueue();
+    profileMark('transition-queue');
+    processPopulationQueue();
+    profileMark('population-queue');
+    updateRenderedSectorVisibility(position);
+    profileMark('visibility');
+    if (streamingProfileEnabled) streamingProfile.frameCount += 1;
   };
 
   const setWeather = (mode) => {
@@ -4047,6 +5396,13 @@ export function createSanFranciscoStreaming({
       weather === 'drizzle' ? 0x595e5f : weather === 'fog' ? 0x828485 : 0x767a7b,
     );
     runtimeSectors.forEach((runtime) => runtime.custom?.setWeather?.(weather));
+    runtimeSectors.forEach((runtime) => (
+      runtime.object?.userData?.authoredOverlay?.overlay?.setWeather?.(weather)
+    ));
+  };
+
+  const setNightLighting = (amount = 0) => {
+    streamingNightMix.value = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
   };
 
   const prefetch = (position, radius = effectiveDetailRadius + 1) => {
@@ -4072,6 +5428,12 @@ export function createSanFranciscoStreaming({
     const detailed = [...runtimeSectors.values()]
       .filter((runtime) => runtime.quality === 'detail' || runtime.quality === 'external-detail').length;
     const proxies = [...runtimeSectors.values()].filter((runtime) => runtime.quality === 'proxy').length;
+    const populationPendingDetailed = [...runtimeSectors.values()]
+      .filter((runtime) => runtime.population
+        && (runtime.quality === 'detail' || runtime.quality === 'external-detail')).length;
+    const populationPendingProxy = [...runtimeSectors.values()]
+      .filter((runtime) => runtime.population && runtime.quality === 'proxy').length;
+    const populationPending = populationPendingDetailed + populationPendingProxy;
     return {
       model: '384 m sector grid / near detail / frustum-aware proxy ring / bounded coarse background',
       sectorSize: catalog.sectorSize,
@@ -4089,17 +5451,24 @@ export function createSanFranciscoStreaming({
       activeDetailed: detailed,
       activeProxies: proxies,
       activeRuntimeSectors: runtimeSectors.size,
+      populationPending,
+      populationPendingDetailed,
+      populationPendingProxy,
+      populationReady: runtimeSectors.size - populationPending,
+      populationWorkBudgetMs: MAX_POPULATION_WORK_MS,
       enterableBuildings: [...runtimeSectors.values()]
         .filter((runtime) => runtime.quality === 'detail')
-        .reduce((count, runtime) => count + (runtime.object?.userData?.buildingVolumes?.length ?? 0), 0),
+        .reduce((count, runtime) => count + getRuntimeBuildingVolumes(runtime).length, 0),
       enterableSectors: [...runtimeSectors.values()]
-        .filter((runtime) => runtime.quality === 'detail' && (runtime.object?.userData?.buildingVolumes?.length ?? 0) > 0)
+        .filter((runtime) => runtime.quality === 'detail' && getRuntimeBuildingVolumes(runtime).length > 0)
         .length,
       maxDetailed: detailedBudget,
       maxProxies: proxyBudget,
       effectiveLod: {
         detailRadius: effectiveDetailRadius,
         proxyRadius: effectiveProxyRadius,
+        detailBuildingRenderDistance: DETAIL_BUILDING_RENDER_DISTANCE,
+        proxyBuildingRenderDistance: PROXY_BUILDING_RENDER_DISTANCE,
         descriptorScanDiameter: (effectiveProxyRadius + 1) * 2 + 1,
         backgroundUpdatesPerTick: effectiveBackgroundUpdatesPerTick,
         updateInterval: effectiveUpdateInterval,
@@ -4137,15 +5506,26 @@ export function createSanFranciscoStreaming({
     catalog,
     update,
     setWeather,
+    setNightLighting,
     setQaPublicCorridorActive,
     getQaPublicCorridor,
     getSectorPresentation,
+    getSectorBuildingVolumes(key) {
+      const runtime = runtimeSectors.get(key);
+      return runtime ? getRuntimeBuildingVolumes(runtime) : [];
+    },
     getNearestEnterablePortal,
     getPublicRealmPoint,
     validateDetailedView,
+    resolveRoamPosition,
+    resolveCameraPosition,
     prefetch,
+    prewarmRenderResources,
+    getFrameProfile: getStreamingProfile,
+    resetFrameProfile: resetStreamingProfile,
     setStreamedAgentStatsProvider,
     registerSectorFactory,
+    registerSectorOverlay,
     getPortalId(keyA, keyB) {
       return portalIdBetween(keyA, keyB);
     },
@@ -4171,6 +5551,9 @@ export function createSanFranciscoStreaming({
       return quality === 'detail' || quality === 'external-detail';
     },
     getStats,
+    getFocusSectorKey() {
+      return `${focusSector.x}:${focusSector.z}`;
+    },
     get stats() {
       return getStats();
     },

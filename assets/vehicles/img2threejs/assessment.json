@@ -1,0 +1,94 @@
+{
+  "targetName": "SF Taxi",
+  "sourceImage": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/assets/vehicles/sf-taxi-theme-polished.png",
+  "preSpecAssessment": {
+    "objectClass": {
+      "primaryType": "vehicle-sedan-taxi",
+      "primaryDomain": "object",
+      "formLanguage": ["low-poly", "hard-surface", "rounded-box", "modern-sedan"],
+      "structureKind": ["wheeled-vehicle", "four-door-sedan", "roof-signage"],
+      "motionPotential": ["wheel-spin", "idle-bob", "headlight-glow"],
+      "materialFamilies": ["automotive-paint", "dark-glass", "rubber", "emissive-plastic"],
+      "notes": "Polished low-poly SF taxi hero reference. Warm taxi yellow body, cream roof TAXI sign, dark cabin glass, simple disc wheels, lit headlights, red taillight blocks. Fits Earth Online Chapter 01 traffic language."
+    },
+    "complexity": {
+      "tier": "moderate",
+      "scores": {
+        "silhouetteComplexity": 0.45,
+        "componentCount": 0.55,
+        "hierarchyDepth": 0.4,
+        "repetitionDensity": 0.5,
+        "materialLayerCount": 0.45,
+        "localDetailDensity": 0.4,
+        "occlusionRisk": 0.35,
+        "actionReadinessNeed": 0.5
+      },
+      "estimatedCounts": {
+        "macroComponents": 4,
+        "mesoComponents": 8,
+        "microFeatureGroups": 6,
+        "materialLayers": 5,
+        "repetitionSystems": 1
+      },
+      "reasoning": [
+        "Clear sedan three-box silhouette with taxi roof sign as identity marker.",
+        "Low-poly language means few micro fasteners; prioritize bevels, glass rake, and light volumes."
+      ]
+    },
+    "specDepthDecision": {
+      "requiredDepth": "moderate",
+      "minimumComponentLevels": ["macro", "meso", "micro"],
+      "needsRepetitionSystems": true,
+      "needsMaterialLocalOverrides": true,
+      "needsMultipleReviewViews": true,
+      "needsActionReadyHierarchy": true,
+      "rationale": "Hero traffic prop for Earth Online SF chapter; must stay low-poly but polished."
+    },
+    "unknownsToResolveBeforeImplementation": [
+      "Rear three-quarter is inferred by mirroring the visible side.",
+      "Undercarriage and interior are not visible; keep cabin opaque-dark glass."
+    ],
+    "detailInventory": {
+      "scanMethod": "component-zones",
+      "targetMinDetails": 8,
+      "details": [
+        { "id": "taxi-yellow-body", "zone": "body", "kind": "finish", "note": "Solid warm yellow #ffc324 paint, satin clearcoat" },
+        { "id": "roof-taxi-sign", "zone": "roof", "kind": "signage", "note": "Cream rectangular roof box with bold black TAXI lettering" },
+        { "id": "dark-cabin-glass", "zone": "cabin", "kind": "glass", "note": "Dark navy-gray translucent cabin, raked windshield" },
+        { "id": "lit-headlights", "zone": "front", "kind": "emissive", "note": "Soft warm-white glowing rectangular headlight volumes" },
+        { "id": "red-taillights", "zone": "rear", "kind": "emissive", "note": "Red geometric taillight blocks" },
+        { "id": "disc-wheels", "zone": "wheels", "kind": "form", "note": "Simple dark disc wheels, no chrome spokes" },
+        { "id": "soft-bevel-body", "zone": "body", "kind": "bevel", "note": "Rounded-box body edges, not sharp voxels" },
+        { "id": "low-poly-facets", "zone": "silhouette", "kind": "form-language", "note": "Visible planar facets; not photoreal curves" }
+      ]
+    },
+    "anatomy": {
+      "applies": false
+    },
+    "sourceImage": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/assets/vehicles/sf-taxi-theme-polished.png"
+  },
+  "qualityContract": {
+    "qualityBar": "strict",
+    "definitionOfDone": [
+      "Silhouette reads as a modern low-poly sedan taxi at three-quarter front.",
+      "Roof TAXI sign is readable and cream/yellow, not chrome.",
+      "Body color matches warm SF taxi yellow used in traffic.js (0xffc324).",
+      "No vintage Checker cab cues (no chrome grille, no checker stripe).",
+      "Wheels are simple discs; headlights/taillights are emissive blocks."
+    ],
+    "minimumSpecDepth": {
+      "macroComponents": 4,
+      "mesoComponents": 6,
+      "microFeatureGroups": 4,
+      "materialLayers": 4,
+      "repetitionSystems": 1,
+      "reviewViewpoints": 3
+    },
+    "featureGroups": [
+      { "id": "overall-silhouette", "name": "Sedan silhouette", "required": true },
+      { "id": "taxi-identity", "name": "Yellow body + roof TAXI sign", "required": true },
+      { "id": "lighting-blocks", "name": "Headlights and taillights", "required": true },
+      { "id": "wheel-set", "name": "Four disc wheels", "required": true }
+    ]
+  }
+}
