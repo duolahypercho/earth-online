@@ -63,6 +63,8 @@ Open `/citygen.html` for the low-poly arbitrary-city generator. It can produce
 a seeded SF-style, gridiron, or garden city on demand, or attempt a real map
 fetch from OpenStreetMap for any city. Every block, building, street, one-way
 rule, lane, sidewalk, intersection, and signal is inspectable at runtime.
+The **SF Built-in** option loads the repo's real San Francisco OSM data as a
+playable district slice without depending on the public Overpass service.
 
 ## Add your own town
 

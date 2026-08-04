@@ -104,7 +104,9 @@ function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetma
   for (const element of elements) {
     const tags = element.tags || {};
     if (element.type !== 'way') continue;
-    const points = (element.geometry || []).map((node) => projectPoint(node.lat, node.lon, center));
+    const points = (element.geometry || [])
+      .map((node) => projectPoint(node.lat, node.lon, center))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.z));
     if (points.length < 2) continue;
 
     const highway = tags.highway;

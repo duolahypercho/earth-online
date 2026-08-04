@@ -1,6 +1,6 @@
 # CityGen — arbitrary low-poly map generator
 
-Status: **in progress — critic gate passing 100/100**
+Status: **in progress — critic gate passing 100/100 including real SF slice**
 
 ## Items
 
@@ -11,6 +11,8 @@ Status: **in progress — critic gate passing 100/100**
    OpenStreetMap (Nominatim geocode + Overpass), converted into the same
    metadata model. Public Overpass mirrors are currently flaky, so failures
    fall back to procedural with a visible status. `src/citygen/osm.js`
+   A guaranteed offline real SF path loads the repo's prebuilt OSM data and
+   adapts it into the CityGen model (`src/citygen/sf-data.js`).
 3. **Rich metadata** — every block, building, street, road segment, one-way
    direction, lane count, sidewalk width, signal phase, and intersection is
    inspectable at runtime and included in `window.__CITYGEN__.getCity()`.
@@ -43,6 +45,9 @@ Status: **in progress — critic gate passing 100/100**
 - Aerial: dense skyline, 7 hues
 - Night: lit windows, neon, lamps, traffic, 6 hues
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
+- Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
+  22 signals, real street names (e.g. 6th Street), rendered and captured
+  through the same stylized pipeline.
 
 Note: the EffectComposer pipeline collapses to a single draw call in this
 runtime on Three r180, so the renderer currently uses the direct

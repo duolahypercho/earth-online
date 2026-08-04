@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { generateCity, describeCity, lookupAt, ringArea, clamp } from './core.js';
 import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
+import { loadSfData } from './sf-data.js';
 import { TrafficSim } from './traffic.js';
 import './styles.css';
 
@@ -340,7 +341,7 @@ async function generate(style, seed) {
 async function fetchRealCity(query) {
   osmStatus.textContent = 'Contacting OpenStreetMap…';
   try {
-    const city = await fetchOsmCity({ query, radius: 850 });
+    const city = await fetchOsmCity({ query, radius: 520 });
     if (!city.buildings.length && !city.segments.length) throw new Error('No map data returned');
     await buildCity(city);
     osmOverlay.hidden = true;
@@ -349,6 +350,18 @@ async function fetchRealCity(query) {
     osmStatus.textContent = `Could not fetch ${query}. Showing procedural fallback.`;
     await generate(state.style, state.seed);
     osmOverlay.hidden = true;
+  }
+}
+
+async function loadBuiltinSf() {
+  osmStatus.textContent = 'Loading prebuilt real San Francisco data…';
+  try {
+    const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+    await buildCity(city);
+    osmOverlay.hidden = true;
+  } catch (error) {
+    state.errors.push(`SF built-in failed: ${error.message}`);
+    osmStatus.textContent = `Could not load built-in SF. ${error.message}`;
   }
 }
 
@@ -508,6 +521,9 @@ async function boot() {
   });
   document.querySelector('[data-action="osm-go"]').addEventListener('click', async () => {
     await fetchRealCity(osmCityInput.value.trim() || 'San Francisco, CA');
+  });
+  document.querySelector('[data-action="sf-builtin"]').addEventListener('click', async () => {
+    await loadBuiltinSf();
   });
   document.querySelector('[data-action="osm-cancel"]').addEventListener('click', () => {
     osmOverlay.hidden = true;

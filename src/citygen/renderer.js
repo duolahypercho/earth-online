@@ -809,8 +809,9 @@ export class CityRenderer {
     for (const segment of city.segments) {
       const pts = segment.points;
       for (let i = 0; i < pts.length - 1; i += 1) {
-        const a = pts[i];
-        const b = pts[i + 1];
+      const a = pts[i];
+      const b = pts[i + 1];
+      if (!Number.isFinite(a.x) || !Number.isFinite(a.z) || !Number.isFinite(b.x) || !Number.isFinite(b.z)) continue;
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const len = Math.hypot(dx, dz);
@@ -1042,7 +1043,9 @@ export class CityRenderer {
       positions.add(`${signal.position.x.toFixed(0)}-${signal.position.z.toFixed(0)}`);
     }
     const bounds = city.meta.bounds;
+    const maxLamps = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 240 : 900;
     for (const street of city.streets) {
+      if (positions.size >= maxLamps) break;
       if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
       const axis = street.axis;
       const position = street.position;
@@ -1089,20 +1092,34 @@ export class CityRenderer {
     const random = mulberry32(Number(city.meta.seedInt) + 991);
     const treeData = [];
     const bounds = city.meta.bounds;
-    for (const street of city.streets) {
-      const perpendicular = street.axis === 'x' ? 'z' : 'x';
-      const position = street.position;
-      const spacing = street.highway === 'primary' || street.highway === 'secondary' ? 58 : 44;
-      const start = bounds[perpendicular === 'z' ? 'minZ' : 'minX'] + 18;
-      const end = bounds[perpendicular === 'z' ? 'maxZ' : 'maxX'] - 18;
-      for (let v = start; v < end; v += spacing + random() * 18) {
-        if (random() < 0.12) continue;
-        const side = random() < 0.5 ? -1 : 1;
-        const sidewalkHalf = street.sidewalkW + street.asphaltWidth / 2 + 1.6;
-        const x = street.axis === 'x' ? position + side * sidewalkHalf : v;
-        const z = street.axis === 'z' ? position + side * sidewalkHalf : v;
-        if (Math.abs(x) > bounds.maxX - 8 || Math.abs(z) > bounds.maxZ - 8) continue;
-        treeData.push({ x, z, scale: 0.8 + random() * 0.6 });
+    if (city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap') {
+      // Real map roads are arbitrary polylines; sample trees sparsely inside
+      // the district instead of walking street-by-street.
+      const width = bounds.maxX - bounds.minX;
+      const depth = bounds.maxZ - bounds.minZ;
+      const count = Math.min(420, Math.round((width * depth) / 2400));
+      for (let i = 0; i < count; i += 1) {
+        const x = bounds.minX + random() * width;
+        const z = bounds.minZ + random() * depth;
+        if (random() < 0.35) continue;
+        treeData.push({ x, z, scale: 0.85 + random() * 0.75 });
+      }
+    } else {
+      for (const street of city.streets) {
+        const perpendicular = street.axis === 'x' ? 'z' : 'x';
+        const position = street.position;
+        const spacing = street.highway === 'primary' || street.highway === 'secondary' ? 58 : 44;
+        const start = bounds[perpendicular === 'z' ? 'minZ' : 'minX'] + 18;
+        const end = bounds[perpendicular === 'z' ? 'maxZ' : 'maxX'] - 18;
+        for (let v = start; v < end; v += spacing + random() * 18) {
+          if (random() < 0.12) continue;
+          const side = random() < 0.5 ? -1 : 1;
+          const sidewalkHalf = street.sidewalkW + street.asphaltWidth / 2 + 1.6;
+          const x = street.axis === 'x' ? position + side * sidewalkHalf : v;
+          const z = street.axis === 'z' ? position + side * sidewalkHalf : v;
+          if (Math.abs(x) > bounds.maxX - 8 || Math.abs(z) > bounds.maxZ - 8) continue;
+          treeData.push({ x, z, scale: 0.8 + random() * 0.6 });
+        }
       }
     }
     for (const block of city.blocks) {
@@ -1115,38 +1132,39 @@ export class CityRenderer {
         if (pointInPolygon({ x, z }, block.polygon)) treeData.push({ x, z, scale: 1.0 + random() * 0.9, park: true });
       }
     }
+    // Trees are instanced: hundreds of low-poly trees cost three draw calls.
+    const trunkGeometry = new THREE.CylinderGeometry(0.16, 0.24, 1.5, 5);
+    const canopyGeometry = new THREE.ConeGeometry(1.25, 2.6, 7);
+    const topGeometry = new THREE.SphereGeometry(0.55, 6, 5);
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x7a5a44, roughness: 0.9, flatShading: true });
-    const canopyMaterials = [
-      new THREE.MeshStandardMaterial({ color: 0x6f9a63, roughness: 0.85, flatShading: true }),
-      new THREE.MeshStandardMaterial({ color: 0x87a96b, roughness: 0.85, flatShading: true }),
-      new THREE.MeshStandardMaterial({ color: 0x5f8a5d, roughness: 0.85, flatShading: true }),
-    ];
-    for (const tree of treeData) {
-      const group = new THREE.Group();
+    const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x7ba265, roughness: 0.85, flatShading: true });
+    const topMaterial = new THREE.MeshStandardMaterial({ color: 0x8faf72, roughness: 0.85, flatShading: true });
+    const trunkMesh = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, treeData.length);
+    const canopyMesh = new THREE.InstancedMesh(canopyGeometry, canopyMaterial, treeData.length);
+    const topMesh = new THREE.InstancedMesh(topGeometry, topMaterial, treeData.length);
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const position = new THREE.Vector3();
+    for (let i = 0; i < treeData.length; i += 1) {
+      const tree = treeData[i];
       const y = (this.terrain?.heightAt ? this.terrain.heightAt(tree.x, tree.z) : 0) + 0.05;
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16 * tree.scale, 0.24 * tree.scale, 1.5 * tree.scale, 5), trunkMaterial);
-      trunk.position.y = 0.75 * tree.scale;
-      group.add(trunk);
-      const canopy = new THREE.Mesh(
-        new THREE.ConeGeometry(1.25 * tree.scale, 2.6 * tree.scale, 7),
-        canopyMaterials[Math.floor(random() * canopyMaterials.length)],
-      );
-      canopy.position.y = 2.5 * tree.scale;
-      canopy.castShadow = true;
-      group.add(canopy);
-      const top = new THREE.Mesh(
-        new THREE.SphereGeometry(0.55 * tree.scale, 6, 5),
-        canopyMaterials[Math.floor(random() * canopyMaterials.length)],
-      );
-      top.position.y = 3.1 * tree.scale;
-      top.castShadow = true;
-      group.add(top);
-      group.position.set(tree.x, y, tree.z);
-      group.userData = { kind: 'tree', park: Boolean(tree.park) };
-      root.add(group);
-      this.pickables.push(group);
-      this.geometryCache.push(trunk.geometry, canopy.geometry, top.geometry);
+      position.set(tree.x, y + 0.75 * tree.scale, tree.z);
+      scale.set(tree.scale, tree.scale, tree.scale);
+      matrix.compose(position, quaternion, scale);
+      trunkMesh.setMatrixAt(i, matrix);
+      position.y = y + 2.5 * tree.scale;
+      matrix.compose(position, quaternion, scale);
+      canopyMesh.setMatrixAt(i, matrix);
+      position.y = y + 3.1 * tree.scale;
+      matrix.compose(position, quaternion, scale);
+      topMesh.setMatrixAt(i, matrix);
     }
+    trunkMesh.castShadow = true;
+    canopyMesh.castShadow = true;
+    topMesh.castShadow = true;
+    root.add(trunkMesh, canopyMesh, topMesh);
+    this.geometryCache.push(trunkGeometry, canopyGeometry, topGeometry);
     this.buildSidewalkProps(root, city, random);
   }
 
@@ -1157,7 +1175,9 @@ export class CityRenderer {
     const hydrantColor = new THREE.MeshStandardMaterial({ color: 0xc9483a, roughness: 0.55, metalness: 0.3, flatShading: true });
     const props = [];
     const bounds = city.meta.bounds;
+    const maxProps = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 300 : 900;
     for (const street of city.streets) {
+      if (props.length >= maxProps) break;
       if (street.highway === 'pedestrian' || street.highway === 'footway' || street.highway === 'cycleway') continue;
       const axis = street.axis;
       const position = street.position;
@@ -1197,6 +1217,7 @@ export class CityRenderer {
         group.rotation.y = random() * Math.PI;
         group.userData = { kind: 'street-prop' };
         props.push(group);
+        if (props.length >= maxProps) break;
       }
     }
     const group = new THREE.Group();

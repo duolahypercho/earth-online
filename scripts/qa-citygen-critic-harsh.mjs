@@ -41,6 +41,16 @@ try {
       critic.notes.push(`FAIL ${label}`);
     }
   }
+  const sf = results.sfBuiltin;
+  if (sf) {
+    critic.maxScore += 1;
+    const sfPass = sf.buildings >= 500 && sf.signals >= 5 && sf.streets >= 1000;
+    if (sfPass) critic.score += 1;
+    else {
+      critic.blockers.push('real SF metadata');
+      critic.notes.push(`FAIL real SF metadata: ${sf.buildings} buildings / ${sf.signals} signals / ${sf.streets} streets`);
+    }
+  }
 
   for (const frame of frames) {
     const metrics = results.frames?.[frame.file] || {};

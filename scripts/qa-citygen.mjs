@@ -121,6 +121,28 @@ try {
     }
   }
   results.errors = errors;
+  if (process.env.SF_QA_SF_BUILTIN === '1') {
+    const sfLoaded = await page.evaluate(async () => {
+      const mod = await import('/src/citygen/sf-data.js');
+      const city = await mod.loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+      window.__CITYGEN__.getRenderer().clearCity();
+      await window.__CITYGEN__.getRenderer().buildCity(city, { day: true });
+      return {
+        buildings: city.buildings.length,
+        blocks: city.blocks.length,
+        streets: city.streets.length,
+        signals: city.signals.length,
+        oneWayStreets: city.streets.filter((street) => street.oneway !== 'both').length,
+        signalMeta: city.signals[0] || null,
+        streetMeta: city.streets[0] || null,
+        generator: city.meta.generator,
+      };
+    });
+    await page.waitForTimeout(900);
+    await page.screenshot({ path: '.qa-citygen-sf.png' });
+    results.sfBuiltin = sfLoaded;
+    results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');
+  }
   await writeFile('.qa-citygen-results.json', JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results, null, 2));
 } catch (error) {
