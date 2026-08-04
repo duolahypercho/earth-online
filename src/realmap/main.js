@@ -4210,11 +4210,20 @@ function createSimpleRoadMeshes(roads, options = {}) {
           flatA = merged;
           flatB = merged;
         }
+        // Keep each quad planar: sample the centerline at its two ends and use
+        // that grade for both lane edges. Per-corner terrain sampling twists the
+        // two triangles and makes roads on hills fold/wave.
+        const yA = flatA != null
+          ? flatA
+          : elevationAt(a.x, a.z) + roadSurfaceLift();
+        const yB = flatB != null
+          ? flatB
+          : elevationAt(b.x, b.z) + roadSurfaceLift();
         positions.push(
-          a1.x, roadSurfaceY(a1.x, a1.z, flatA), a1.z,
-          a2.x, roadSurfaceY(a2.x, a2.z, flatA), a2.z,
-          b1.x, roadSurfaceY(b1.x, b1.z, flatB), b1.z,
-          b2.x, roadSurfaceY(b2.x, b2.z, flatB), b2.z,
+          a1.x, yA, a1.z,
+          a2.x, yA, a2.z,
+          b1.x, yB, b1.z,
+          b2.x, yB, b2.z,
         );
         indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
         vertexOffset += 4;
@@ -4324,12 +4333,18 @@ function pushApproachCorners(entry, point, neighbor, half) {
   entry.maxHalf = Math.max(entry.maxHalf || 0, half);
   // Keep each approach as its own quad so we never convex-hull into a diamond.
   entry.quads = entry.quads || [];
-  entry.quads.push([
-    { x: point.x + nx * wide, z: point.z + nz * wide },
-    { x: point.x + ux * along + nx * wide, z: point.z + uz * along + nz * wide },
-    { x: point.x + ux * along - nx * wide, z: point.z + uz * along - nz * wide },
-    { x: point.x - nx * wide, z: point.z - nz * wide },
-  ]);
+  entry.quads.push({
+    point,
+    ux,
+    uz,
+    along,
+    points: [
+      { x: point.x + nx * wide, z: point.z + nz * wide },
+      { x: point.x + ux * along + nx * wide, z: point.z + uz * along + nz * wide },
+      { x: point.x + ux * along - nx * wide, z: point.z + uz * along - nz * wide },
+      { x: point.x - nx * wide, z: point.z - nz * wide },
+    ],
+  });
 }
 
 function distanceToRoadCenterline(road, point) {
@@ -4473,16 +4488,33 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
         return hull.length >= 3 ? [hull] : [];
       })();
     for (const quad of quads) {
-      if (!quad || quad.length < 3) continue;
-      if (quad.length === 4) {
+      if (!quad) continue;
+      const points = Array.isArray(quad) ? quad : quad.points;
+      if (!points || points.length < 3) continue;
+      // Sloped junction: lift each approach along its own road grade so pads
+      // meet the ribbons instead of floating as a horizontal plate.
+      const ys = Array.isArray(quad)
+        ? null
+        : [
+          roadSurfaceY(quad.point.x, quad.point.z) - (fullCityMode ? 0.02 : 0),
+          roadSurfaceY(
+            quad.point.x + quad.ux * quad.along,
+            quad.point.z + quad.uz * quad.along,
+          ) - (fullCityMode ? 0.02 : 0),
+        ];
+      if (points.length === 4) {
         const base = vertexOffset;
-        for (const point of quad) positions.push(point.x, y, point.z);
+        for (let index = 0; index < 4; index += 1) {
+          const point = points[index];
+          const pointY = ys ? (index === 1 || index === 2 ? ys[1] : ys[0]) : y;
+          positions.push(point.x, pointY, point.z);
+        }
         indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
         vertexOffset += 4;
         padCount += 1;
         continue;
       }
-      const ring = quad.map((point) => new THREE.Vector2(point.x, point.z));
+      const ring = points.map((point) => new THREE.Vector2(point.x, point.z));
       let faces;
       try {
         faces = THREE.ShapeUtils.triangulateShape(ring, []);
@@ -4491,11 +4523,11 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
       }
       if (!faces?.length) continue;
       const base = vertexOffset;
-      for (const point of quad) positions.push(point.x, y, point.z);
+      for (const point of points) positions.push(point.x, y, point.z);
       for (const tri of faces) {
         indices.push(base + tri[0], base + tri[1], base + tri[2]);
       }
-      vertexOffset += quad.length;
+      vertexOffset += points.length;
       padCount += 1;
     }
   }
@@ -4661,11 +4693,15 @@ function createSimpleSidewalkMeshes(roads, options = {}) {
           const a2 = { x: a.x - nx * halfW, z: a.z - nz * halfW };
           const b1 = { x: b.x + nx * halfW, z: b.z + nz * halfW };
           const b2 = { x: b.x - nx * halfW, z: b.z - nz * halfW };
+          // Follow the road grade from the OSM centerline instead of sampling
+          // each sidewalk corner; the latter twists the ribbon on hillsides.
+          const yA = elevationAt(points[i].x, points[i].z) + lift;
+          const yB = elevationAt(points[i + 1].x, points[i + 1].z) + lift;
           positions.push(
-            a1.x, elevationAt(a1.x, a1.z) + lift, a1.z,
-            a2.x, elevationAt(a2.x, a2.z) + lift, a2.z,
-            b1.x, elevationAt(b1.x, b1.z) + lift, b1.z,
-            b2.x, elevationAt(b2.x, b2.z) + lift, b2.z,
+            a1.x, yA, a1.z,
+            a2.x, yA, a2.z,
+            b1.x, yB, b1.z,
+            b2.x, yB, b2.z,
           );
           indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
           vertexOffset += 4;
@@ -4847,31 +4883,25 @@ function createSidewalkCornerPads(roads, junctionNodes) {
   const indices = [];
   let vertexOffset = 0;
   let count = 0;
-  const lift = roadSurfaceLift() + 0.06;
-
-  const pushCornerQuad = (p00, p10, p01, p11) => {
-    const flatY = roadSurfaceY(
-      (p00.x + p10.x + p01.x + p11.x) * 0.25,
-      (p00.z + p10.z + p01.z + p11.z) * 0.25,
-    ) + 0.12;
+  const pushCornerQuad = (baseY, p00, p10, p01, p11) => {
     positions.push(
-      p00.x, flatY, p00.z,
-      p10.x, flatY, p10.z,
-      p01.x, flatY, p01.z,
-      p11.x, flatY, p11.z,
+      p00.x, baseY, p00.z,
+      p10.x, baseY, p10.z,
+      p01.x, baseY, p01.z,
+      p11.x, baseY, p11.z,
     );
     indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
     vertexOffset += 4;
     count += 1;
   };
 
-  const pushCornerQuadOutsideAsphalt = (cx, cz, asphaltHalf, p00, p10, p01, p11) => {
+  const pushCornerQuadOutsideAsphalt = (cx, cz, asphaltHalf, baseY, p00, p10, p01, p11) => {
     // Reject only when the whole quad sits inside the asphalt box (curb L lives outside).
     const limit = asphaltHalf * 0.92;
     const midX = (p00.x + p10.x + p01.x + p11.x) * 0.25;
     const midZ = (p00.z + p10.z + p01.z + p11.z) * 0.25;
     if (Math.abs(midX - cx) <= limit && Math.abs(midZ - cz) <= limit) return;
-    pushCornerQuad(p00, p10, p01, p11);
+    pushCornerQuad(baseY, p00, p10, p01, p11);
   };
 
   for (const entry of byNode.values()) {
@@ -4894,6 +4924,9 @@ function createSidewalkCornerPads(roads, junctionNodes) {
     const cx = entry.point.x;
     const cz = entry.point.z;
     const maxAsphalt = Math.max(...unique.map((arm) => arm.asphaltHalf || 0));
+    // Anchor the block-corner pad to the junction grade, not each quad's own
+    // terrain sample, so corners don't float above or dive under the approach.
+    const baseY = roadSurfaceY(cx, cz) + 0.12;
     const ring = [...unique, { ...unique[0], angle: unique[0].angle + Math.PI * 2 }];
     for (let i = 0; i < unique.length; i += 1) {
       const a = ring[i];
@@ -4932,18 +4965,18 @@ function createSidewalkCornerPads(roads, junctionNodes) {
       };
 
       // Sector fill at the junction vertex.
-      pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt, innerCorner, outerAlongA, outerAlongB, outerCorner);
+      pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt, baseY, innerCorner, outerAlongA, outerAlongB, outerCorner);
 
       if (extend > 0.35) {
         // Leg along arm A — bridges ribbon trim gap back toward the corridor.
-        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt,
+        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt, baseY,
           { x: innerCorner.x - a.ux * extend, z: innerCorner.z - a.uz * extend },
           { x: outerAlongA.x - a.ux * extend, z: outerAlongA.z - a.uz * extend },
           innerCorner,
           outerAlongA,
         );
         // Leg along arm B.
-        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt,
+        pushCornerQuadOutsideAsphalt(cx, cz, maxAsphalt, baseY,
           { x: innerCorner.x - b.ux * extend, z: innerCorner.z - b.uz * extend },
           innerCorner,
           { x: outerAlongB.x - b.ux * extend, z: outerAlongB.z - b.uz * extend },
@@ -5036,11 +5069,13 @@ function createLotApronMeshes(roads, options = {}) {
         const a2 = { x: a.x - nx * halfW, z: a.z - nz * halfW };
         const b1 = { x: b.x + nx * halfW, z: b.z + nz * halfW };
         const b2 = { x: b.x - nx * halfW, z: b.z - nz * halfW };
+        const yA = elevationAt(points[i].x, points[i].z) + lift;
+        const yB = elevationAt(points[i + 1].x, points[i + 1].z) + lift;
         positions.push(
-          a1.x, elevationAt(a1.x, a1.z) + lift, a1.z,
-          a2.x, elevationAt(a2.x, a2.z) + lift, a2.z,
-          b1.x, elevationAt(b1.x, b1.z) + lift, b1.z,
-          b2.x, elevationAt(b2.x, b2.z) + lift, b2.z,
+          a1.x, yA, a1.z,
+          a2.x, yA, a2.z,
+          b1.x, yB, b1.z,
+          b2.x, yB, b2.z,
         );
         indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
         vertexOffset += 4;
@@ -5202,15 +5237,21 @@ function createCorridorCurbs(roads) {
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     const direction = new THREE.Vector3(segment.dx / segment.length, 0, segment.dz / segment.length);
+    const yA = elevationAt(segment.a.x, segment.a.z);
+    const yB = elevationAt(segment.b.x, segment.b.z);
+    if (!Number.isFinite(yA) || !Number.isFinite(yB)) continue;
     const midX = (segment.a.x + segment.b.x) / 2;
     const midZ = (segment.a.z + segment.b.z) / 2;
-    const groundY = elevationAt(midX, midZ);
-    if (!Number.isFinite(groundY)) continue;
-    dummy.position.set(midX, groundY + roadSurfaceLift() + 0.12, midZ);
+    // Orient the curb with the road grade; horizontal boxes on hillsides
+    // stick up out of the slope at their leading edge.
+    const pitch = Math.atan2(yB - yA, segment.length);
+    const pitchQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -pitch);
+    dummy.position.set(midX, (yA + yB) * 0.5 + roadSurfaceLift() + 0.07, midZ);
     if (direction.dot(zAxis) < -0.999) {
       dummy.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
     } else {
-      dummy.quaternion.setFromUnitVectors(zAxis, direction);
+      const align = new THREE.Quaternion().setFromUnitVectors(zAxis, direction);
+      dummy.quaternion.copy(align).multiply(pitchQ);
     }
     dummy.scale.set(segment.width || 0.22, 1, segment.length);
     dummy.updateMatrix();
@@ -10213,6 +10254,75 @@ function start() {
         byClass,
         osmNear,
         osmNearest,
+      };
+    },
+    debugRoadWaviness: (focus = { x: PREBUILT_SPAWN.x, z: PREBUILT_SPAWN.z }, radius = 220) => {
+      if (!cityWideRoadGroup) return { error: 'no cityWideRoadGroup' };
+      const worst = [];
+      const counts = { roads: 0, sidewalks: 0, pads: 0, wideRoads: 0, wideSidewalks: 0 };
+      let maxRoadDeviation = 0;
+      let maxSidewalkDeviation = 0;
+      const planeDeviation = (a, b, c, d) => {
+        const ux = b.x - a.x;
+        const uy = b.y - a.y;
+        const uz = b.z - a.z;
+        const vx = c.x - a.x;
+        const vy = c.y - a.y;
+        const vz = c.z - a.z;
+        const nx = uy * vz - uz * vy;
+        const ny = uz * vx - ux * vz;
+        const nz = ux * vy - uy * vx;
+        const len = Math.hypot(nx, ny, nz);
+        if (len < 1e-6) return 0;
+        const dist = (d.x - a.x) * nx + (d.y - a.y) * ny + (d.z - a.z) * nz;
+        return Math.abs(dist) / len;
+      };
+      cityWideRoadGroup.traverse((object) => {
+        if (!object.isMesh) return;
+        const name = object.name || '';
+        const isRoad = name.startsWith('Simple real road');
+        const isSidewalk = name === 'Full City sidewalk ribbons';
+        const isPad = name === 'Simple junction asphalt pads';
+        if (!isRoad && !isSidewalk && !isPad) return;
+        const positions = object.geometry?.attributes?.position;
+        if (!positions) return;
+        const pointAt = (index) => new THREE.Vector3(
+          positions.getX(index),
+          positions.getY(index),
+          positions.getZ(index),
+        );
+        const devName = isRoad ? 'roads' : isSidewalk ? 'sidewalks' : 'pads';
+        for (let i = 0; i + 3 < positions.count; i += 4) {
+          const p0 = pointAt(i);
+          const p1 = pointAt(i + 1);
+          const p2 = pointAt(i + 2);
+          const p3 = pointAt(i + 3);
+          const cx = (p0.x + p1.x + p2.x + p3.x) * 0.25;
+          const cz = (p0.z + p1.z + p2.z + p3.z) * 0.25;
+          if (Math.hypot(cx - focus.x, cz - focus.z) > radius) continue;
+          const deviation = planeDeviation(p0, p1, p2, p3);
+          counts[devName] += 1;
+          if (deviation > 0.05) counts[`wide${devName[0].toUpperCase()}${devName.slice(1)}`] += 1;
+          if (isRoad) maxRoadDeviation = Math.max(maxRoadDeviation, deviation);
+          if (isSidewalk) maxSidewalkDeviation = Math.max(maxSidewalkDeviation, deviation);
+          if (worst.length < 24 && deviation > 0.08) {
+            worst.push({
+              name,
+              deviation: Number(deviation.toFixed(3)),
+              x: Number(cx.toFixed(1)),
+              z: Number(cz.toFixed(1)),
+            });
+          }
+        }
+      });
+      worst.sort((a, b) => b.deviation - a.deviation);
+      return {
+        focus,
+        radius,
+        counts,
+        maxRoadDeviation: Number(maxRoadDeviation.toFixed(3)),
+        maxSidewalkDeviation: Number(maxSidewalkDeviation.toFixed(3)),
+        worst: worst.slice(0, 12),
       };
     },
     build: () => buildCity().catch((error) => {

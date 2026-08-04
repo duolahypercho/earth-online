@@ -28,6 +28,7 @@
     "verify:physics": "node scripts/verify-physics.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
     "verify:online": "node scripts/verify-online.mjs",
+    "verify:realmap-planarity": "node scripts/verify-realmap-planarity.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
     "qa:visual-critic": "node scripts/qa-visual-critic.mjs",
