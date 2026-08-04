@@ -689,16 +689,36 @@ export function buildTrafficGraph(city) {
       // graph is connected at every crossing. The lane offset only applies
       // along the straight portion of the block.
       const vertical = segment.streetId.startsWith('v');
-      const points = segment.points.map((p, index, list) => {
+      let points = segment.points.map((p, index, list) => {
         const atEnd = index === 0 || index === list.length - 1;
+        // Right-hand traffic: on a vertical street (+x forward) the driver
+        // sits at -z; on a horizontal street (+z forward) the driver sits at
+        // +x. The old code applied the same sign to both axes, so horizontal
+        // streets drove on the wrong side.
         const lane = vertical
           ? (dir > 0 ? -offset : offset)
-          : (dir > 0 ? -offset : offset);
+          : (dir > 0 ? offset : -offset);
         return {
           x: p.x + (vertical && !atEnd ? lane : 0),
           z: p.z + (!vertical && !atEnd ? lane : 0),
         };
       });
+      // Grid segments are exactly two vertices, which would put every car on
+      // the centerline. Insert a mid-block vertex with the real lane offset
+      // so traffic visibly drives on the correct side of the road.
+      if (points.length === 2) {
+        const lane = vertical
+          ? (dir > 0 ? -offset : offset)
+          : (dir > 0 ? offset : -offset);
+        points = [
+          points[0],
+          {
+            x: (points[0].x + points[1].x) / 2 + (vertical ? 0 : lane),
+            z: (points[0].z + points[1].z) / 2 + (vertical ? lane : 0),
+          },
+          points[1],
+        ];
+      }
       if (dir < 0) points.reverse();
       edges.push({
         id: `${segment.id}-${dir > 0 ? 'fwd' : 'rev'}`,

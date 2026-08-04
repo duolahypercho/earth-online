@@ -1889,10 +1889,12 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
     throw new Error('Road graph could not converge for this boundary.');
   }
   const strategies = [
-    // Prefer endpoint snaps after our shared-node splits (cheap, stable on OSM).
-    { splitInteriorCrossings: false, snapTolerance: 0.9, junctionPortalSetback: 3.2 },
-    { splitInteriorCrossings: false, snapTolerance: 0.55, junctionPortalSetback: 2.6 },
-    { splitInteriorCrossings: false, snapTolerance: 0.32, junctionPortalSetback: 2.1 },
+    // Start tight so short OSM stubs stay in the mesh instead of being
+    // dropped (which leaves holes in the street network). The wider profiles
+    // only matter when a tight portal cannot satisfy the compiler.
+    { splitInteriorCrossings: false, snapTolerance: 0.32, junctionPortalSetback: 1.6 },
+    { splitInteriorCrossings: false, snapTolerance: 0.2, junctionPortalSetback: 1.3 },
+    { splitInteriorCrossings: true, snapTolerance: 0.2, junctionPortalSetback: 1.2 },
   ];
   let splitRoads = splitRoadsAtJunctions(selectedRoads)
     .filter((road) => !removed.has(`road-${road.id}`));
@@ -1954,7 +1956,6 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
         return { compilation, roads: splitRoads };
       } catch (error) {
         lastError = error;
-        console.error('Road resolution strategy failed', options, error.message);
         const culprit = culpritFrom(error.message);
         if (culprit && splitRoads.length > 1) {
           const before = splitRoads.length;
@@ -1983,6 +1984,7 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
     console.warn(`Reducing road set from ${selectedRoads.length} to ${robust.length} for a robust build`);
     return compileSafely(robust, removed, depth + 1);
   }
+  if (lastError) console.error('Road graph could not be compiled', lastError.message);
   throw lastError || new Error('Road graph could not be compiled for this boundary.');
 }
 
@@ -3415,7 +3417,11 @@ function createOneWayArrows(roads) {
 function buildPaths(roads) {
   const paths = [];
   const vehicleClasses = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service']);
-  for (const road of roads) {
+  // Split ways at every shared OSM node first. A raw OSM way often crosses
+  // several intersections in one polyline, so traffic built from the raw way
+  // can only turn at road endpoints and stalls everywhere else.
+  const junctionRoads = splitRoadsAtJunctions(roads);
+  for (const road of junctionRoads) {
     if (!vehicleClasses.has(road.highway)) continue;
     const points = roadPoints(road);
     if (points.length < 2) continue;
@@ -3457,7 +3463,14 @@ function connectPaths(paths) {
       }
     }
     const unique = [...new Set(candidates)];
-    path.next = unique;
+    path.next = unique.filter((index) => {
+      const next = paths[index];
+      if (!next || next.id === path.id) return false;
+      const start = next.points[0];
+      // Junction cuts land within ~1.4 m of each other; this is stricter than
+      // the old 4 m snap so traffic cannot turn through mismatched road ends.
+      return Math.hypot(start.x - end.x, start.z - end.z) <= 2.5;
+    });
   }
 }
 
@@ -8511,7 +8524,10 @@ function updateDrivenVehicle(dt) {
       vehicle.path = bestNext;
       vehicle.s = 0;
     } else {
-      vehicle.s = 0.5;
+      // No legal connection: hold at the end instead of teleporting to the
+      // start of the same way, which read as cars "not knowing where to go".
+      vehicle.s = Math.max(0, vehicle.path.length - 1);
+      vehicle.speed = Math.min(vehicle.speed, 0.8);
     }
   }
   const state = pathPosition(vehicle.path, vehicle.s);
@@ -9109,7 +9125,8 @@ function updateTraffic(dt, time) {
         vehicle.path = bestNext;
         vehicle.s = 0;
       } else {
-        vehicle.s = 0.5;
+        vehicle.s = Math.max(0, vehicle.path.length - 1);
+        vehicle.speed = Math.min(vehicle.speed, 0.8);
       }
     }
 
@@ -10287,7 +10304,11 @@ function start() {
       if (!trafficState) return null;
       const oneWayPaths = new Map();
       const twoWayPaths = new Map();
+      let connectedPaths = 0;
+      let deadEndPaths = 0;
       for (const path of trafficState.paths) {
+        if (Array.isArray(path.next) && path.next.length > 0) connectedPaths += 1;
+        else deadEndPaths += 1;
         const roadId = path.road?.id;
         if (roadId == null) continue;
         const bucket = path.road.oneway ? oneWayPaths : twoWayPaths;
@@ -10302,6 +10323,11 @@ function start() {
         twoWayRoads: twoWayPaths.size,
         oneWayViolations: oneWayViolations.length,
         twoWayViolations: twoWayViolations.length,
+        connectedPaths,
+        deadEndPaths,
+        connectivity: trafficState.paths.length
+          ? Number((connectedPaths / trafficState.paths.length).toFixed(3))
+          : 0,
       };
     },
     getSignalLegalityDiagnostics: () => {

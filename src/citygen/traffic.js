@@ -127,14 +127,50 @@ export class TrafficSim {
       if (car.distance >= segmentLength) {
         if (car.pathIndex >= points.length - 2) {
           const outgoing = (car.edge.outgoing || []).filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
-          const next = outgoing.length ? outgoing[Math.floor(Math.random() * outgoing.length)] : null;
+          let next = null;
+          if (outgoing.length) {
+            // Prefer a straight continuation, allow turns, and strongly
+            // discourage immediate U-turns so traffic reads as destination-
+            // aware instead of randomly reversing through the city.
+            const inDx = b.x - a.x;
+            const inDz = b.z - a.z;
+            const inLen = Math.hypot(inDx, inDz) || 1;
+            let totalWeight = 0;
+            const weighted = outgoing.map((edge) => {
+              const out = edge.points[0];
+              const nextP = edge.points[Math.min(1, edge.points.length - 1)];
+              const outDx = nextP.x - out.x;
+              const outDz = nextP.z - out.z;
+              const outLen = Math.hypot(outDx, outDz) || 1;
+              const dot = (inDx * outDx + inDz * outDz) / (inLen * outLen);
+              let weight = 0.3;
+              if (dot > 0.82) weight = 4;
+              else if (dot > -0.35) weight = 1.6;
+              const nextStart = edge.points[0];
+              if (Math.hypot(nextStart.x - a.x, nextStart.z - a.z) < 0.5) weight *= 0.15;
+              totalWeight += weight;
+              return { edge, weight };
+            });
+            let pick = Math.random() * totalWeight;
+            for (const candidate of weighted) {
+              pick -= candidate.weight;
+              if (pick <= 0) {
+                next = candidate.edge;
+                break;
+              }
+            }
+          }
           if (next) {
             car.edge = next;
             car.pathIndex = 0;
             car.distance = 0;
             continue;
           }
-          car.distance = 0;
+          // No legal onward edge: hold at the terminus instead of looping
+          // back to the start of the same street.
+          car.stopped = true;
+          car.distance = Math.min(car.distance, Math.max(0, segmentLength - 4.6));
+          car.speed = Math.min(car.speed, 0.8);
         } else {
           car.pathIndex += 1;
           car.distance = 0;

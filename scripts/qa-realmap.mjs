@@ -253,6 +253,7 @@ try {
   const trafficPaths = await page.evaluate(() => window.__SF_REALMAP__.getTrafficPathDiagnostics());
   check('One-way roads get exactly one legal direction', Boolean(trafficPaths && trafficPaths.oneWayRoads > 0 && trafficPaths.oneWayViolations === 0), trafficPaths);
   check('Two-way roads get exactly two legal directions', Boolean(trafficPaths && trafficPaths.twoWayRoads > 0 && trafficPaths.twoWayViolations === 0), trafficPaths);
+  check('Traffic network is junction-connected', Number(trafficPaths?.connectivity || 0) >= 0.85, trafficPaths);
   const signalLegality = await page.evaluate(() => window.__SF_REALMAP__.getSignalLegalityDiagnostics());
   check('Traffic signals are legal on paths', Boolean(signalLegality?.legal && signalLegality.stopsOnPath > 0), signalLegality);
   check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);
