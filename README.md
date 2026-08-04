@@ -57,6 +57,12 @@ inspectable metadata. See `Docs/REAL_MAP_SANDBOX.md`.
 This lab is also the seed for future towns — draw a place, generate it, then
 bring it into the world.
 
+Real Map alignment is enforced from one shared right-of-way contract: every
+road, curb, sidewalk, junction pad, and building footprint reads the same OSM
+centerline plus `streetDesign` section. The QA gate samples building facades
+and fails on any facade that overlaps the road ROW (`getAlignmentDiagnostics`
+on `window.__SF_REALMAP__`).
+
 ### CityGen Lab
 
 Open `/citygen.html` for the low-poly arbitrary-city generator. It can produce

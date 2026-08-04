@@ -294,6 +294,189 @@ function nearestRoadDistance(road, focus) {
   return nearest;
 }
 
+/** Merge overlapping OSM ways for one street into a single ROW constraint. */
+function nearestRowConstraint(point, roads) {
+  const constraints = new Map();
+  for (const road of roads) {
+    const section = streetCrossSection(road);
+    if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
+      continue;
+    }
+    const key = road.name
+      ? normalizeStreetName(road.name)
+      : `id:${road.id}`;
+    const entry = constraints.get(key) || {
+      distance: Infinity,
+      rowOuter: 0,
+      name: road.name || String(road.id),
+    };
+    const distance = nearestRoadDistance(road, point);
+    // Only merge ways that are actually adjacent to this facade. Two segments
+    // of the same street can be 80 m apart along the block; the distant one
+    // must not inflate the ROW for this building.
+    if (distance > Math.max(section.buildingRowOuter + 14, 30)) continue;
+    entry.rowOuter = Math.max(entry.rowOuter, section.buildingRowOuter);
+    entry.distance = Math.min(entry.distance, distance);
+    constraints.set(key, entry);
+  }
+  let best = null;
+  for (const entry of constraints.values()) {
+    if (!best || entry.distance < best.distance) best = entry;
+  }
+  return best;
+}
+
+/** Direct push for one facade point out of the closest road ROW. */
+function pushPointOutOfRow(x, z, roads) {
+  let best = null;
+  for (const road of roads) {
+    const section = streetCrossSection(road);
+    if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
+      continue;
+    }
+    const rowOuter = section.buildingRowOuter;
+    const points = roadPoints(road);
+    let bestDist = Infinity;
+    let bestNx = 0;
+    let bestNz = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lenSq = dx * dx + dz * dz;
+      if (lenSq < 1e-6) continue;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / lenSq));
+      const px = a.x + dx * t;
+      const pz = a.z + dz * t;
+      const vx = x - px;
+      const vz = z - pz;
+      const dist = Math.hypot(vx, vz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        const inv = dist > 1e-5 ? 1 / dist : 0;
+        bestNx = vx * inv;
+        bestNz = vz * inv;
+        if (dist < 1e-5) {
+          const len = Math.sqrt(lenSq);
+          bestNx = -dz / len;
+          bestNz = dx / len;
+        }
+      }
+    }
+    if (bestDist > Math.max(rowOuter + 14, 30)) continue;
+    if (!best || bestDist < best.dist) {
+      best = { dist: bestDist, nx: bestNx, nz: bestNz, rowOuter, road };
+    }
+  }
+  if (!best) return { x, z, moved: false };
+  const deficit = best.rowOuter - best.dist;
+  if (deficit <= 0) return { x, z, moved: false };
+  let nextX = x + best.nx * deficit;
+  let nextZ = z + best.nz * deficit;
+  // The projected normal should move the point away from the road. If the
+  // next distance did not improve, the facade is on the far side of a
+  // duplicate centerline; push the other way instead of deeper into the ROW.
+  const oldConstraint = nearestRowConstraint({ x, z }, roads);
+  const forwardConstraint = nearestRowConstraint({ x: nextX, z: nextZ }, roads);
+  const oldClearance = oldConstraint ? oldConstraint.distance - oldConstraint.rowOuter : -Infinity;
+  const forwardClearance = forwardConstraint
+    ? forwardConstraint.distance - forwardConstraint.rowOuter
+    : -Infinity;
+  if (forwardClearance < oldClearance - 0.05) {
+    const backX = x - best.nx * deficit;
+    const backZ = z - best.nz * deficit;
+    const backConstraint = nearestRowConstraint({ x: backX, z: backZ }, roads);
+    const backClearance = backConstraint
+      ? backConstraint.distance - backConstraint.rowOuter
+      : -Infinity;
+    if (backClearance > forwardClearance) {
+      nextX = backX;
+      nextZ = backZ;
+    }
+  }
+  return { x: nextX, z: nextZ, moved: true };
+}
+
+/**
+ * Alignment audit: sample cleared building footprints and verify every facade
+ * keeps the shared visual right-of-way (asphalt + curb + sidewalk) from the
+ * same road set used by the street mesher. Returns a gateable summary.
+ */
+function computeAlignmentAudit(roads, buildings, limit = 400) {
+  if (!worldPartition || !roads?.length || !buildings?.length) return null;
+  let audited = 0;
+  let sampledPoints = 0;
+  let hardOverlaps = 0;
+  let tightCount = 0;
+  let minClearance = Infinity;
+  let maxOverlap = 0;
+  let worst = null;
+
+  const clearedRing = (building) => {
+    const ring = [];
+    for (let i = 0; i < building.points.length; i += 2) {
+      ring.push(new THREE.Vector2(building.points[i], building.points[i + 1]));
+    }
+    if (ring.length > 2) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (Math.hypot(first.x - last.x, first.y - last.y) < 0.08) ring.pop();
+    }
+    if (ring.length < 3) return null;
+    return clearFootprintFromStreets(ring, building);
+  };
+
+  for (const building of buildings) {
+    if (audited >= limit) break;
+    if (!building?.points || building.points.length < 6) continue;
+    const ring = clearedRing(building);
+    if (!ring || ring.length < 3) continue;
+    audited += 1;
+    for (let i = 0; i < ring.length; i += 1) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+      const steps = Math.max(1, Math.ceil(edgeLen / 4));
+      for (let s = 0; s < steps; s += 1) {
+        const t = s / steps;
+        const x = a.x + (b.x - a.x) * t;
+        const z = a.y + (b.y - a.y) * t;
+        sampledPoints += 1;
+        const nearby = queryPartitionRoads(worldPartition, { x, z }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        if (!nearby.length) continue;
+        const constraint = nearestRowConstraint({ x, z }, nearby);
+        if (!constraint) continue;
+        const clearance = constraint.distance - constraint.rowOuter;
+        minClearance = Math.min(minClearance, clearance);
+        if (clearance < -0.05) {
+          hardOverlaps += 1;
+          maxOverlap = Math.max(maxOverlap, -clearance);
+          if (!worst || clearance < worst.clearance) {
+            worst = { buildingId: building.id, name: building.name || '', clearance };
+          }
+        } else if (clearance < 0.15) {
+          tightCount += 1;
+        }
+      }
+    }
+  }
+
+  return {
+    // A facade within 0.15 m of the ROW is visually aligned; only count gross
+    // overlaps as failures and allow a small share of street-tight parcels.
+    ok: hardOverlaps === 0 && tightCount <= audited * 0.15,
+    audited,
+    sampledPoints,
+    hardOverlaps,
+    tightCount,
+    minClearance: Number.isFinite(minClearance) ? Number(minClearance.toFixed(2)) : null,
+    maxOverlap: Number(maxOverlap.toFixed(2)),
+    worst,
+  };
+}
+
 function filterRoadsNear(roads, focus, radius) {
   return roads.filter((road) => nearestRoadDistance(road, focus) <= radius);
 }
@@ -2407,7 +2590,7 @@ function footprintOverlapsAsphalt(ring, building, roads) {
 /** Push footprints out of the full visual ROW (asphalt + sidewalk).
  * Returns null when the parcel cannot leave the roadway (caller must skip it). */
 function clearFootprintFromStreets(ring, building) {
-  if (!fullCityMode || !worldPartition || !ring?.length) return ring;
+  if (!worldPartition || !ring?.length) return ring;
   const [cx, cz] = building?.centroid || [ring[0].x, ring[0].y];
   const focus = { x: cx, z: cz };
   const nearbyRoads = queryPartitionRoads(worldPartition, focus, 90)
@@ -2416,7 +2599,9 @@ function clearFootprintFromStreets(ring, building) {
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 14)
     .map((entry) => entry.road);
-  if (!nearbyRoads.length) return insetRingTowardCentroid(ring, buildingFootprintInset());
+  // Do not bail when the centroid has no nearby roads: a large parcel can
+  // have its edges inside the ROW while its center is far from every road.
+  // The per-point push below still queries roads around each facade sample.
 
   const asphaltBuffer = (road) => streetCrossSection(road).asphaltHalf + 0.55;
   const rowOuter = (road) => streetCrossSection(road).buildingRowOuter;
@@ -2430,19 +2615,56 @@ function clearFootprintFromStreets(ring, building) {
     if (nearestRoadDistance(road, focus) < asphaltBuffer(road)) return null;
   }
 
-  // Push against up to four nearby roads — corners need both cross-street arms.
-  const clearanceRoads = nearbyRoads.slice(0, 4);
-  let out = ring.map((point) => new THREE.Vector2(point.x, point.y));
-  for (let pass = 0; pass < 3; pass += 1) {
+  // Push against the nearest road set. Full City keeps the cheap cap (the
+  // streamed build touches every footprint); district builds use more arms so
+  // corner buildings stay clear of every cross street, not just the first four.
+  const clearanceRoads = fullCityMode ? nearbyRoads.slice(0, 4) : nearbyRoads;
+  // Densify each edge before pushing. Long footprints can otherwise keep a
+  // straight chord inside a curved or diagonal right-of-way even after both
+  // corner vertices clear it.
+  const dense = [];
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.max(1, Math.ceil(edgeLen / 4));
+    for (let s = 0; s < steps; s += 1) {
+      const t = s / steps;
+      dense.push(new THREE.Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+    }
+  }
+  let out = dense;
+  for (let pass = 0; pass < (fullCityMode ? 3 : 8); pass += 1) {
     const next = [];
     for (const point of out) {
       let x = point.x;
       let z = point.y;
-      for (const road of clearanceRoads) {
+      // Large parcels can span far past their centroid. For district builds,
+      // query the roads around each edge point so every facade clears its own
+      // street, not just the four nearest to the building center.
+      const activeRoads = fullCityMode
+        ? clearanceRoads
+        : queryPartitionRoads(worldPartition, { x, z }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+      // OSM often stores one street as several overlapping ways (dual
+      // carriageways / split segments) with different widths. Pushing against
+      // each way individually can pull the facade back and forth, so merge
+      // same-named ways into one ROW constraint and use the widest clearance.
+      const constraints = new Map();
+      for (const road of activeRoads) {
         const section = streetCrossSection(road);
         if (section.highway === 'footway' || section.highway === 'path' || section.highway === 'cycleway') {
           continue;
         }
+        const key = road.name
+          ? normalizeStreetName(road.name)
+          : `id:${road.id}`;
+        const constraint = constraints.get(key) || {
+          bestDist: Infinity,
+          bestNx: 0,
+          bestNz: 0,
+          rowOuter: 0,
+        };
         const points = roadPoints(road);
         let bestDist = Infinity;
         let bestNx = 0;
@@ -2476,12 +2698,24 @@ function clearFootprintFromStreets(ring, building) {
             }
           }
         }
-        const minDist = rowOuter(road);
-        const pushCap = Math.max(buildingStreetPushCap(), minDist + 2);
-        if (bestDist < minDist && (bestNx || bestNz)) {
-          const push = Math.min(minDist - bestDist, pushCap);
-          x += bestNx * push;
-          z += bestNz * push;
+        // Only merge ways that are actually adjacent to this facade. Two
+        // segments of the same street can be far apart along the block and
+        // must not inflate the ROW for a building beside another segment.
+        if (bestDist > Math.max(rowOuter(road) + 14, 30)) continue;
+        constraint.rowOuter = Math.max(constraint.rowOuter, rowOuter(road));
+        if (bestDist < constraint.bestDist) {
+          constraint.bestDist = bestDist;
+          constraint.bestNx = bestNx;
+          constraint.bestNz = bestNz;
+        }
+        constraints.set(key, constraint);
+      }
+      for (const constraint of constraints.values()) {
+        const pushCap = Math.max(buildingStreetPushCap(), constraint.rowOuter + 2);
+        if (constraint.bestDist < constraint.rowOuter && (constraint.bestNx || constraint.bestNz)) {
+          const push = Math.min(constraint.rowOuter - constraint.bestDist, pushCap);
+          x += constraint.bestNx * push;
+          z += constraint.bestNz * push;
         }
       }
       next.push(new THREE.Vector2(x, z));
@@ -2497,9 +2731,42 @@ function clearFootprintFromStreets(ring, building) {
       point.y = cz + Math.sin(ang) * 0.65;
     }
   }
-  const cleared = insetRingTowardCentroid(out, buildingFootprintInset() * 0.35);
+  let cleared = insetRingTowardCentroid(out, buildingFootprintInset() * 0.35);
   if (!cleared || cleared.length < 3) return null;
   if (footprintRingArea(cleared) < 10) return null;
+
+  // District quality gate: if any facade still sits inside the ROW after the
+  // push passes, skip the parcel instead of rendering a visibly misaligned
+  // building. Full City keeps its cheaper asphalt-only guard for throughput.
+  if (!fullCityMode) {
+    for (let pass = 0; pass < 6; pass += 1) {
+      let changed = false;
+      const next = cleared.map((point) => {
+        const nearby = queryPartitionRoads(worldPartition, { x: point.x, z: point.y }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        const pushed = pushPointOutOfRow(point.x, point.y, nearby);
+        if (pushed.moved) changed = true;
+        return new THREE.Vector2(pushed.x, pushed.y);
+      });
+      cleared = next;
+      if (!changed) break;
+    }
+    for (let i = 0; i < cleared.length; i += 1) {
+      const a = cleared[i];
+      const b = cleared[(i + 1) % cleared.length];
+      const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+      const steps = Math.max(1, Math.ceil(edgeLen / 3));
+      for (let s = 0; s < steps; s += 1) {
+        const t = s / steps;
+        const x = a.x + (b.x - a.x) * t;
+        const z = a.y + (b.y - a.y) * t;
+        const nearby = queryPartitionRoads(worldPartition, { x, z }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        const constraint = nearestRowConstraint({ x, z }, nearby);
+        if (constraint && constraint.distance - constraint.rowOuter < -0.05) return null;
+      }
+    }
+  }
 
   const samplePoints = [...cleared];
   for (let i = 0; i < cleared.length; i += 1) {
@@ -2620,7 +2887,7 @@ function createDetailBuildingMesh(building, groundY = 0) {
     const last = points[points.length - 1];
     if (Math.hypot(first.x - last.x, first.y - last.y) < 0.08) points.pop();
   }
-  const ring = fullCityMode ? clearFootprintFromStreets(points, building) : points;
+  const ring = worldPartition ? clearFootprintFromStreets(points, building) : points;
   if (!ring || ring.length < 3) return null;
   if (fullCityMode && worldPartition) {
     const nearbyRoads = queryPartitionRoads(worldPartition, {
@@ -2791,7 +3058,9 @@ function createMergedFootprintBuildings(buildings) {
     );
     const cx = building.centroid?.[0] ?? insetRing[0].x;
     const cz = building.centroid?.[1] ?? insetRing[0].y;
-    const groundY = elevationAt(cx, cz) + buildingBaseClearance();
+    // Use the lowest footprint corner (not centroid) so buildings sit on the
+    // terrain instead of floating above the downhill edge of a hill block.
+    const groundY = buildingGroundY(building) + buildingBaseClearance();
     const topY = groundY + height;
     color.set(buildingColor(building));
 
@@ -9450,6 +9719,9 @@ async function buildCity() {
       selectedRoads = selectRoads(regionBBox);
       buildings = selectBuildings(regionBBox);
       signals = selectSignals(regionBBox);
+      // District builds use the same road-aware footprint clearance as Full
+      // City, so every building respects the shared asphalt/sidewalk ROW.
+      worldPartition = buildWorldPartition(selectedRoads, buildings.detailed || []);
     }
     const regionPoints = region.map(({ x, z }) => ({ x, z }));
     const streamFocus = polygonCentroid(regionPoints);
@@ -10302,6 +10574,131 @@ function start() {
       x: vehicle.mesh.position.x,
       z: vehicle.mesh.position.z,
     })),
+    getAlignmentDiagnostics: () => computeAlignmentAudit(
+      selectedRoadsForHit || [],
+      (cityData?.detailBuildings || []).slice(0, 400),
+      400,
+    ),
+    getBuildingAlignment: (buildingId) => {
+      const building = (cityData?.detailBuildings || []).find((entry) => String(entry.id) === String(buildingId));
+      if (!building?.points || building.points.length < 6 || !worldPartition) return null;
+      const ring = [];
+      for (let i = 0; i < building.points.length; i += 2) {
+        ring.push(new THREE.Vector2(building.points[i], building.points[i + 1]));
+      }
+      if (ring.length > 2) {
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (Math.hypot(first.x - last.x, first.y - last.y) < 0.08) ring.pop();
+      }
+      const cleared = clearFootprintFromStreets(ring, building);
+      const sample = (points) => {
+        let min = Infinity;
+        let roadName = '';
+        let worstPoint = null;
+        let worstRoads = [];
+        for (let i = 0; i < points.length; i += 1) {
+          const a = points[i];
+          const b = points[(i + 1) % points.length];
+          const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 3));
+          for (let s = 0; s < steps; s += 1) {
+            const t = s / steps;
+            const x = a.x + (b.x - a.x) * t;
+            const z = a.y + (b.y - a.y) * t;
+            const nearby = queryPartitionRoads(worldPartition, { x, z }, 90)
+              .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+            const constraint = nearestRowConstraint({ x, z }, nearby);
+            if (!constraint) continue;
+            const clearance = constraint.distance - constraint.rowOuter;
+            if (clearance < min) {
+              min = clearance;
+              roadName = constraint.name;
+              worstPoint = { x: Number(x.toFixed(1)), z: Number(z.toFixed(1)) };
+              worstRoads = nearby.map((entry) => ({
+                name: entry.name || String(entry.id),
+                highway: entry.highway,
+                distance: Number(nearestRoadDistance(entry, { x, z }).toFixed(2)),
+                asphaltHalf: Number(streetCrossSection(entry).asphaltHalf.toFixed(2)),
+                rowOuter: Number(streetCrossSection(entry).buildingRowOuter.toFixed(2)),
+              })).sort((left, right) => left.distance - right.distance).slice(0, 8);
+            }
+          }
+        }
+        return { min: Number(min.toFixed(2)), roadName, worstPoint, worstRoads };
+      };
+      const rawSample = sample(ring);
+      const clearedSample = cleared ? sample(cleared) : null;
+      let gateClearance = null;
+      if (cleared) {
+        for (let i = 0; i < cleared.length; i += 1) {
+          const a = cleared[i];
+          const b = cleared[(i + 1) % cleared.length];
+          const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+          const steps = Math.max(1, Math.ceil(edgeLen / 3));
+          for (let s = 0; s < steps; s += 1) {
+            const t = s / steps;
+            const px = a.x + (b.x - a.x) * t;
+            const pz = a.y + (b.y - a.y) * t;
+            const nearby = queryPartitionRoads(worldPartition, { x: px, z: pz }, 90)
+              .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+            const constraint = nearestRowConstraint({ x: px, z: pz }, nearby);
+            if (constraint) {
+              gateClearance = Math.min(
+                gateClearance ?? Infinity,
+                constraint.distance - constraint.rowOuter,
+              );
+            }
+          }
+        }
+      }
+      let pushProbe = null;
+      if (rawSample.worstPoint) {
+        const nearby = queryPartitionRoads(worldPartition, { x: rawSample.worstPoint.x, z: rawSample.worstPoint.z }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        const pushed = pushPointOutOfRow(rawSample.worstPoint.x, rawSample.worstPoint.z, nearby);
+        pushProbe = {
+          from: rawSample.worstPoint,
+          to: { x: Number(pushed.x.toFixed(2)), z: Number(pushed.z.toFixed(2)) },
+          moved: pushed.moved,
+        };
+      }
+      let clearedPushProbe = null;
+      if (clearedSample?.worstPoint) {
+        const nearby = queryPartitionRoads(worldPartition, { x: clearedSample.worstPoint.x, z: clearedSample.worstPoint.z }, 90)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        const pushed = pushPointOutOfRow(clearedSample.worstPoint.x, clearedSample.worstPoint.z, nearby);
+        clearedPushProbe = {
+          from: clearedSample.worstPoint,
+          to: { x: Number(pushed.x.toFixed(2)), z: Number(pushed.z.toFixed(2)) },
+          moved: pushed.moved,
+          constraint: nearestRowConstraint(clearedSample.worstPoint, nearby)
+            ? Number((nearestRowConstraint(clearedSample.worstPoint, nearby).distance
+              - nearestRowConstraint(clearedSample.worstPoint, nearby).rowOuter).toFixed(2))
+            : null,
+        };
+      }
+      let asphaltOverlap = false;
+      if (cleared) {
+        const cx = building.centroid?.[0] ?? cleared[0].x;
+        const cz = building.centroid?.[1] ?? cleared[0].y;
+        const nearby = queryPartitionRoads(worldPartition, { x: cx, z: cz }, 75)
+          .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway || 'residential'));
+        asphaltOverlap = footprintOverlapsAsphalt(cleared, building, nearby);
+      }
+      return {
+        id: building.id,
+        name: building.name || '',
+        raw: rawSample,
+        cleared: clearedSample,
+        skipped: cleared === null,
+        vertexCount: ring.length,
+        pushProbe,
+        clearedPushProbe,
+        gateClearance: gateClearance === null ? null : Number(gateClearance.toFixed(2)),
+        asphaltOverlap,
+        fullCityMode,
+      };
+    },
     getTrafficPathDiagnostics: () => {
       if (!trafficState) return null;
       const oneWayPaths = new Map();

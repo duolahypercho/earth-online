@@ -256,6 +256,12 @@ try {
   check('Traffic network is junction-connected', Number(trafficPaths?.connectivity || 0) >= 0.85, trafficPaths);
   const signalLegality = await page.evaluate(() => window.__SF_REALMAP__.getSignalLegalityDiagnostics());
   check('Traffic signals are legal on paths', Boolean(signalLegality?.legal && signalLegality.stopsOnPath > 0), signalLegality);
+  const alignment = await page.evaluate(() => window.__SF_REALMAP__.getAlignmentDiagnostics());
+  check(
+    'Building/road ROW alignment audit passes',
+    Boolean(alignment && alignment.audited > 50 && alignment.ok),
+    alignment,
+  );
   check('Real elevation terrain loaded', Boolean(cityState.terrain && cityState.terrain.width > 100), cityState.terrain);
   check('SF hills present in heightmap', Number(cityState.terrain?.maxElevation || 0) > 100, cityState.terrain?.maxElevation);
   const hillProbe = await page.evaluate(() => {
