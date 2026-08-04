@@ -408,6 +408,14 @@ async function boot() {
       streets: state.city?.streets?.length || 0,
       signals: state.city?.signals?.length || 0,
       oneWayStreets: (state.city?.streets || []).filter((s) => s.oneway !== 'both').length,
+      avgBuildingHeight: (() => {
+        const list = state.city?.buildings || [];
+        return list.length ? Number((list.reduce((sum, b) => sum + (b.height || 0), 0) / list.length).toFixed(1)) : 0;
+      })(),
+      avgStreetWidth: (() => {
+        const list = state.city?.streets || [];
+        return list.length ? Number((list.reduce((sum, s) => sum + (s.asphaltWidth || 0), 0) / list.length).toFixed(1)) : 0;
+      })(),
       signalMeta: (state.city?.signals || [])[0] || null,
       streetMeta: (state.city?.streets || [])[0] || null,
       generator: state.city?.meta?.generator || null,

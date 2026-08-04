@@ -25,13 +25,16 @@ export const HIGHWAY_PROFILE = Object.freeze({
 });
 
 export const BUILDING_TYPES = Object.freeze({
-  tower: { label: 'Tower', heights: [5, 16], density: 0.82 },
-  midrise: { label: 'Mid-rise', heights: [3, 8], density: 0.9 },
-  rowhouse: { label: 'Rowhouse', heights: [2, 4], density: 0.88 },
-  warehouse: { label: 'Warehouse', heights: [1, 3], density: 0.78 },
-  shop: { label: 'Shopfront', heights: [1, 3], density: 0.72 },
-  civic: { label: 'Civic', heights: [2, 5], density: 0.95 },
-  landmark: { label: 'Landmark', heights: [6, 18], density: 1.0 },
+  // These are real-ish story counts. The old minimums produced 6-13 m
+  // buildings next to full-size cars, which read as toys; the floor is
+  // raised so the massing reads like a city from the sidewalk.
+  tower: { label: 'Tower', heights: [8, 18], density: 0.82 },
+  midrise: { label: 'Mid-rise', heights: [4, 9], density: 0.9 },
+  rowhouse: { label: 'Rowhouse', heights: [3, 5], density: 0.88 },
+  warehouse: { label: 'Warehouse', heights: [2, 4], density: 0.78 },
+  shop: { label: 'Shopfront', heights: [2, 4], density: 0.72 },
+  civic: { label: 'Civic', heights: [3, 7], density: 0.95 },
+  landmark: { label: 'Landmark', heights: [9, 20], density: 1.0 },
   park: { label: 'Park', heights: [0, 0], density: 0 },
 });
 
@@ -580,6 +583,14 @@ export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 
   };
   const styleProfile = styles[style] || styles.sanfrancisco;
   const grid = buildGridStreets(null, random, styleProfile);
+  // Apply real street proportions before blocks are carved: full-size cars
+  // need curb-to-curb asphalt, not unscaled OSM centerlines.
+  const streetScale = 1.9;
+  const sidewalkScale = 1.35;
+  for (const street of grid.streets) {
+    street.asphaltWidth = Number((street.asphaltWidth * streetScale).toFixed(2));
+    street.sidewalkW = Number((street.sidewalkW * sidewalkScale).toFixed(2));
+  }
   const city = {
     schemaVersion: CITY_SCHEMA_VERSION,
     meta: {
@@ -592,8 +603,8 @@ export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 
       bounds: { minX: -extent / 2, maxX: extent / 2, minZ: -extent / 2, maxZ: extent / 2 },
       terrain: { type: 'soft-hills', flattenNearRoads: true },
       streetDesign: {
-        streetScale: 1,
-        sidewalkScale: 1,
+        streetScale,
+        sidewalkScale,
         curbHeight: 0.16,
         roadLift: 0.5,
       },

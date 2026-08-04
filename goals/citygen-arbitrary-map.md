@@ -48,6 +48,9 @@ Status: **in progress — critic gate passing 100/100 including real SF slice**
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
+- Scale gate: generated streets average 13.9 m curb-to-curb and buildings
+  average 17.1 m tall, so full-size cars and pedestrians no longer dominate
+  the street.
 
 Note: the EffectComposer pipeline collapses to a single draw call in this
 runtime on Three r180, so the renderer currently uses the direct

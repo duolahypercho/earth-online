@@ -31,6 +31,8 @@ try {
     ['one-way metadata present', (results.state?.oneWayStreets || 0) > 0],
     ['street metadata has oneway/lanes/sidewalk', Boolean(results.state?.streetMeta?.oneway && results.state?.streetMeta?.lanes && results.state?.streetMeta?.sidewalkW)],
     ['signal metadata has phase/streets', Boolean(results.state?.signalMeta?.period && results.state?.signalMeta?.streetIds?.length >= 2)],
+    ['street width is full-size (avg >= 11m)', Number(results.state?.avgStreetWidth || 0) >= 11],
+    ['building massing reads urban (avg >= 14m)', Number(results.state?.avgBuildingHeight || 0) >= 14],
     ['no fatal page errors', !(results.errors || []).some((error) => error.includes('Uncaught') || error.includes('TypeError') || error.includes('ReferenceError'))],
   ];
   for (const [label, pass] of checks) {

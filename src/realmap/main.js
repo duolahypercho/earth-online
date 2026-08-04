@@ -3621,7 +3621,9 @@ function createVehicle(color, variant) {
     taillight.position.set(hx, 0.7, 2.32);
     group.add(taillight);
   }
-  group.scale.setScalar(1.2);
+  // Vehicles were 20% larger than their real 4.45 m body, which made every
+  // car dominate the street. Full-size scale reads much closer to SF traffic.
+  group.scale.setScalar(1.0);
   return group;
 }
 
