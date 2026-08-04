@@ -242,6 +242,10 @@ console.log(JSON.stringify({
   threeRoads: coverage.nearThreeRoads,
   fps: coverage.fps,
   roadGroupChildren: coverage.roadGroupChildren,
+  centerlineDashes: coverage.centerlineDashes,
+  crosswalkStripes: coverage.crosswalkStripes,
+  sidewalkCorners: coverage.sidewalkCorners,
+  junctionPads: coverage.junctionPads,
   errors: errors.slice(0, 6),
 }, null, 2));
 await browser.close();

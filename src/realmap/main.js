@@ -3179,7 +3179,7 @@ function createSignalGroup(position, index) {
   return group;
 }
 
-function createCrosswalks(signals, roads) {
+function createCrosswalks(signals, roads, options = {}) {
   const group = new THREE.Group();
   group.name = 'Real map zebra crossings';
   const stripeMaterial = fullCityMode
@@ -3196,9 +3196,27 @@ function createCrosswalks(signals, roads) {
       roughness: 0.62,
       metalness: 0.01,
     });
-  const stripeGeometry = new THREE.BoxGeometry(0.58, fullCityMode ? 0.035 : 0.045, 7.4);
+  const stripeGeometry = new THREE.BoxGeometry(0.55, fullCityMode ? 0.045 : 0.045, 1);
   const placements = [];
-  for (const signal of signals) {
+  const seenKeys = new Set();
+
+  const pushZebraAt = (crossX, crossZ, roadX, roadZ, heading, asphaltWidth = 11) => {
+    const key = `${Math.round(crossX * 0.4)},${Math.round(crossZ * 0.4)},${Math.round(heading * 3)}`;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    const span = Math.max(6.2, Math.min(asphaltWidth * 0.92, 14));
+    for (let i = 0; i < 6; i += 1) {
+      const offset = (i - 2.5) * 0.72;
+      placements.push({
+        x: crossX + roadX * offset,
+        z: crossZ + roadZ * offset,
+        heading,
+        span,
+      });
+    }
+  };
+
+  const pushApproachZebra = (origin) => {
     let best = null;
     let bestDistance = 9;
     for (const road of roads) {
@@ -3210,45 +3228,120 @@ function createCrosswalks(signals, roads) {
         const dz = b.z - a.z;
         const lengthSq = dx * dx + dz * dz;
         if (lengthSq < 0.01) continue;
-        const t = Math.max(0, Math.min(1, ((signal[0] - a.x) * dx + (signal[1] - a.z) * dz) / lengthSq));
+        const t = Math.max(0, Math.min(1, ((origin.x - a.x) * dx + (origin.z - a.z) * dz) / lengthSq));
         const px = a.x + dx * t;
         const pz = a.z + dz * t;
-        const distance = Math.hypot(px - signal[0], pz - signal[1]);
+        const distance = Math.hypot(px - origin.x, pz - origin.z);
         if (distance < bestDistance) {
           bestDistance = distance;
           best = {
             position: { x: px, z: pz },
             heading: Math.atan2(dz, dx),
             direction: { x: dx, z: dz },
+            half: streetCrossSection(road).asphaltHalf,
           };
         }
       }
     }
-    if (!best) continue;
+    if (!best) return;
     const length = Math.hypot(best.direction.x, best.direction.z) || 1;
     const roadX = best.direction.x / length;
     const roadZ = best.direction.z / length;
-    for (let i = 0; i < 7; i += 1) {
-      const offset = (i - 3) * 0.58;
-      placements.push({
-        x: best.position.x + roadX * offset,
-        z: best.position.z + roadZ * offset,
-        heading: best.heading + Math.PI * 0.5,
-      });
+    const setback = fullCityMode ? Math.max(4.8, (best.half || 5) * 0.95) : 0;
+    pushZebraAt(
+      best.position.x - roadX * setback,
+      best.position.z - roadZ * setback,
+      roadX,
+      roadZ,
+      best.heading + Math.PI * 0.5,
+      (best.half || 5) * 2,
+    );
+  };
+
+  /** Place stop-line zebras on every outbound arm from a junction node. */
+  const pushJunctionZebras = (jp, road) => {
+    const points = roadPoints(road);
+    if (points.length < 2) return;
+    let bestIdx = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+      const d = Math.hypot(points[i].x - jp.x, points[i].z - jp.z);
+      if (d < bestD) {
+        bestD = d;
+        bestIdx = i;
+      }
     }
+    if (bestD > 2.6) return;
+    const half = streetCrossSection(road).asphaltHalf;
+    const setback = Math.max(4.8, half * 0.95);
+    const neighbors = [];
+    if (bestIdx > 0) neighbors.push(points[bestIdx - 1]);
+    if (bestIdx < points.length - 1) neighbors.push(points[bestIdx + 1]);
+    for (const neighbor of neighbors) {
+      const dx = neighbor.x - jp.x;
+      const dz = neighbor.z - jp.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const roadX = dx / len;
+      const roadZ = dz / len;
+      pushZebraAt(
+        jp.x + roadX * setback,
+        jp.z + roadZ * setback,
+        roadX,
+        roadZ,
+        Math.atan2(roadZ, roadX) + Math.PI * 0.5,
+        half * 2,
+      );
+    }
+  };
+
+  for (const signal of signals || []) {
+    pushApproachZebra({ x: signal[0], z: signal[1] });
+  }
+
+  const junctionCap = Number(options.junctionCap) || 220;
+  const junctionPoints = options.junctionPoints || [];
+  if (fullCityMode && junctionPoints.length) {
+    let placedJunctions = 0;
+    for (const jp of junctionPoints) {
+      if (placedJunctions >= junctionCap) break;
+      const before = placements.length;
+      const touching = [];
+      for (const road of roads) {
+        const points = roadPoints(road);
+        for (const point of points) {
+          if (Math.hypot(point.x - jp.x, point.z - jp.z) > 2.4) continue;
+          touching.push(road);
+          break;
+        }
+        if (touching.length >= 4) break;
+      }
+      if (touching.length >= 2) {
+        for (const road of touching) pushJunctionZebras(jp, road);
+      } else {
+        pushApproachZebra(jp);
+      }
+      if (placements.length > before) placedJunctions += 1;
+    }
+  }
+
+  if (!placements.length) {
+    group.userData = { type: 'crosswalks', stripes: 0 };
+    return group;
   }
   const mesh = new THREE.InstancedMesh(stripeGeometry, stripeMaterial, placements.length);
   const dummy = new THREE.Object3D();
   for (let i = 0; i < placements.length; i += 1) {
     const placement = placements[i];
-    dummy.position.set(placement.x, elevationAt(placement.x, placement.z) + roadSurfaceLift() + (fullCityMode ? 0.12 : 0.09), placement.z);
+    dummy.position.set(placement.x, elevationAt(placement.x, placement.z) + roadSurfaceLift() + (fullCityMode ? 0.14 : 0.09), placement.z);
     dummy.rotation.set(0, placement.heading, 0);
+    dummy.scale.set(1, 1, placement.span || 8);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
   mesh.receiveShadow = !fullCityMode;
-  mesh.renderOrder = fullCityMode ? 7 : 0;
+  mesh.renderOrder = fullCityMode ? 12 : 0;
+  mesh.frustumCulled = false;
   group.add(mesh);
   group.userData = { type: 'crosswalks', stripes: placements.length };
   return group;
@@ -3573,21 +3666,35 @@ function buildTraffic(selectedRoads, signals) {
 
 function createRoadMeshes(compilation, options = {}) {
   const cheap = Boolean(options.cheap || fullCityMode);
-  // Cheap/near Full City: drop corridor dashes. Unresolved or overlapping portals
-  // otherwise paint a chaotic + scribble; junction patches + approach-hull pads
-  // carry the readable asphalt fill instead.
+  // Full City near field: asphalt corridor ribbons only. three-roads junction
+  // patches were the misaligned raised "slab" over dashes; city approach-hull
+  // pads already seal crossings in matching charcoal.
+  const asphaltOnly = Boolean(cheap && fullCityMode);
   const arrowFreeNetwork = {
     ...compilation.network,
-    roads: compilation.network.roads.map((road) => ({
-      ...road,
-      markings: cheap
-        ? []
-        : (road.markings || []).filter((marking) => marking.kind !== 'arrow'),
-    })),
+    junctions: asphaltOnly ? [] : compilation.network.junctions,
+    roads: compilation.network.roads
+      .filter((road) => !asphaltOnly || road.kind !== 'connector')
+      .map((road) => ({
+        ...road,
+        markings: cheap
+          ? []
+          : (road.markings || []).filter((marking) => marking.kind !== 'arrow'),
+      })),
   };
+  const topology = asphaltOnly
+    ? {
+      ...compilation.physicalTopology,
+      junctions: [],
+      corridors: (compilation.physicalTopology?.corridors || []).filter((corridor) => {
+        const road = compilation.network.roads.find((entry) => entry.id === corridor.roadId);
+        return road && road.kind !== 'connector';
+      }),
+    }
+    : compilation.physicalTopology;
   let surface;
   try {
-    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, cheap
+    surface = buildRoadSurfaceModel(arrowFreeNetwork, topology, cheap
       ? {
         maxSegmentLength: 7,
         maxChordError: 0.055,
@@ -3600,7 +3707,7 @@ function createRoadMeshes(compilation, options = {}) {
       });
   } catch (error) {
     console.error('Road surface mesher failed on dense profile', error.message);
-    surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
+    surface = buildRoadSurfaceModel(arrowFreeNetwork, topology, {
       maxSegmentLength: 8,
       maxChordError: 0.06,
       junctionTessellationStep: 3.6,
@@ -3609,12 +3716,14 @@ function createRoadMeshes(compilation, options = {}) {
   if (cheap) {
     surface.markings = [];
     surface.decals = [];
-    // Portal cutouts with no junction fill become tan pits — refuse and let
-    // simple strips + approach-hull pads carry the crossing.
-    const expectedJunctions = compilation?.network?.junctions?.length || 0;
-    if (expectedJunctions > 0 && !(surface.junctionPatches?.length)) {
-      console.warn('Cheap road mesh missing junction patches — skipping torn portals');
-      return null;
+    surface.junctionPatches = asphaltOnly ? [] : surface.junctionPatches;
+    // Non–Full-City: portal cutouts with no junction fill become tan pits.
+    if (!asphaltOnly) {
+      const expectedJunctions = compilation?.network?.junctions?.length || 0;
+      if (expectedJunctions > 0 && !(surface.junctionPatches?.length)) {
+        console.warn('Cheap road mesh missing junction patches — skipping torn portals');
+        return null;
+      }
     }
   }
   let bundle;
@@ -3623,7 +3732,7 @@ function createRoadMeshes(compilation, options = {}) {
   } catch (error) {
     console.error('Whole-model mesh failed, retrying coarser junctions', error.message);
     try {
-      surface = buildRoadSurfaceModel(arrowFreeNetwork, compilation.physicalTopology, {
+      surface = buildRoadSurfaceModel(arrowFreeNetwork, topology, {
         maxSegmentLength: 9,
         maxChordError: 0.08,
         junctionTessellationStep: 4.2,
@@ -3631,22 +3740,26 @@ function createRoadMeshes(compilation, options = {}) {
       if (cheap) {
         surface.markings = [];
         surface.decals = [];
+        if (asphaltOnly) surface.junctionPatches = [];
       }
       bundle = meshRoadSurfaceModel(surface);
-    } catch (retryError) {
-      console.error('Junction mesh still failing — refusing torn portal mesh', retryError.message);
-      // Clearing junctionPatches leaves portal setback holes (tan ground / voids).
-      // Caller should fall back to simple strips + approach-hull pads.
-      return null;
-    }
+   } catch (retryError) {
+      // Callers seal refused crossings with charcoal approach pads, so a
+      // torn-portal refusal is a designed fallback, not a failure.
+      console.warn('Junction mesh refusing torn portal — pad fallback', retryError.message);
+     // Clearing junctionPatches leaves portal setback holes (tan ground / voids).
+     // Caller should fall back to simple strips + approach-hull pads.
+     return null;
+   }
   }
   const group = new THREE.Group();
   const surfaceParts = indexedMeshToGeometries(bundle.surface);
   for (const part of surfaceParts) {
     const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass, { cheap }));
     applyTerrainToMesh(mesh, { flat: Boolean(cheap && fullCityMode) });
-    // Sit above city-wide simple asphalt + pads so near three-roads wins.
-    if (cheap) mesh.position.y += fullCityMode ? 0.07 : 0.06;
+    // Sit above city-wide simple asphalt; keep lift tiny in Full City so pads
+    // and markings are not buried under a floating junction plate.
+    if (cheap) mesh.position.y += asphaltOnly ? 0.015 : 0.06;
     mesh.castShadow = !cheap;
     mesh.receiveShadow = !cheap;
     mesh.name = `Real map road surface ${part.materialClass}`;
@@ -3665,6 +3778,7 @@ function createRoadMeshes(compilation, options = {}) {
     type: 'roads',
     compilation,
     cheap,
+    asphaltOnly,
     hasJunctionPatches: (surface.junctionPatches?.length || 0) > 0,
   };
   return group;
@@ -3778,11 +3892,11 @@ function createSimpleRoadMeshes(roads, options = {}) {
         const ux = dx / length;
         const uz = dz / length;
         // Use shared ROW asphaltHalf so ribbons align with sidewalks/curbs.
-        // Mild extend into the junction so strips meet approach-hull pads.
+        // Mild extend into the junction so strips meet at the crossing.
         const half = streetCrossSection(road).asphaltHalf;
         const aAtJunction = isNearJunctionNode(a, junctionNodes, junctionPoints);
         const bAtJunction = isNearJunctionNode(b, junctionNodes, junctionPoints);
-        const extend = fullCityMode ? half * 0.42 : 0.35;
+        const extend = fullCityMode ? half * 0.55 : 0.35;
         if (aAtJunction) {
           a = { x: a.x - ux * extend, z: a.z - uz * extend };
         }
@@ -3914,10 +4028,9 @@ function pushApproachCorners(entry, point, neighbor, half) {
   const uz = dz / length;
   const nx = -uz;
   const nz = ux;
-  // Reach past portal setbacks so pads fill cutouts and strip corner tears.
-  // Hull of real approaches only — empty T quadrant stays empty.
-  const along = Math.min(length * 0.85, Math.max(half * 1.42, 5.8));
-  const wide = half * 1.12;
+  // Tight road-aligned approach quads (NOT a convex hull — hulls became diamond slabs).
+  const along = Math.min(length * 0.5, Math.max(half * 1.02, 3.2));
+  const wide = half * 1.0;
   entry.corners.push(
     { x: point.x + nx * wide, z: point.z + nz * wide },
     { x: point.x - nx * wide, z: point.z - nz * wide },
@@ -3925,6 +4038,14 @@ function pushApproachCorners(entry, point, neighbor, half) {
     { x: point.x + ux * along - nx * wide, z: point.z + uz * along - nz * wide },
   );
   entry.maxHalf = Math.max(entry.maxHalf || 0, half);
+  // Keep each approach as its own quad so we never convex-hull into a diamond.
+  entry.quads = entry.quads || [];
+  entry.quads.push([
+    { x: point.x + nx * wide, z: point.z + nz * wide },
+    { x: point.x + ux * along + nx * wide, z: point.z + uz * along + nz * wide },
+    { x: point.x + ux * along - nx * wide, z: point.z + uz * along - nz * wide },
+    { x: point.x - nx * wide, z: point.z - nz * wide },
+  ]);
 }
 
 function distanceToRoadCenterline(road, point) {
@@ -3982,7 +4103,7 @@ function createJunctionPadsFromNodes(junctionHalfByKey, junctionPoints) {
 function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
   const junctions = new Map();
   const ensureEntry = (key, point) => {
-    const entry = junctions.get(key) || { point, roadIds: new Set(), corners: [], maxHalf: 0 };
+    const entry = junctions.get(key) || { point, roadIds: new Set(), corners: [], quads: [], maxHalf: 0 };
     junctions.set(key, entry);
     return entry;
   };
@@ -4059,26 +4180,40 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
   let padCount = 0;
   for (const entry of junctions.values()) {
     if (entry.roadIds.size < 2 || entry.maxHalf <= 0) continue;
-    const hull = convexHullXZ(entry.corners);
-    if (hull.length < 3) continue;
-    const y = elevationAt(entry.point.x, entry.point.z) + roadSurfaceLift();
-    const ring = hull.map((point) => new THREE.Vector2(point.x, point.z));
-    let faces;
-    try {
-      faces = THREE.ShapeUtils.triangulateShape(ring, []);
-    } catch {
-      continue;
+    // Match junction ribbon planar height — a higher pad reads as a floating slab.
+    const y = roadSurfaceY(entry.point.x, entry.point.z) - (fullCityMode ? 0.02 : 0);
+    const quads = entry.quads?.length
+      ? entry.quads
+      : (() => {
+        const hull = convexHullXZ(entry.corners);
+        return hull.length >= 3 ? [hull] : [];
+      })();
+    for (const quad of quads) {
+      if (!quad || quad.length < 3) continue;
+      if (quad.length === 4) {
+        const base = vertexOffset;
+        for (const point of quad) positions.push(point.x, y, point.z);
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        vertexOffset += 4;
+        padCount += 1;
+        continue;
+      }
+      const ring = quad.map((point) => new THREE.Vector2(point.x, point.z));
+      let faces;
+      try {
+        faces = THREE.ShapeUtils.triangulateShape(ring, []);
+      } catch {
+        continue;
+      }
+      if (!faces?.length) continue;
+      const base = vertexOffset;
+      for (const point of quad) positions.push(point.x, y, point.z);
+      for (const tri of faces) {
+        indices.push(base + tri[0], base + tri[1], base + tri[2]);
+      }
+      vertexOffset += quad.length;
+      padCount += 1;
     }
-    if (!faces?.length) continue;
-    const base = vertexOffset;
-    for (const point of hull) {
-      positions.push(point.x, y, point.z);
-    }
-    for (const tri of faces) {
-      indices.push(base + tri[0], base + tri[1], base + tri[2]);
-    }
-    vertexOffset += hull.length;
-    padCount += 1;
   }
 
   const group = new THREE.Group();
@@ -4100,15 +4235,12 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
       depthTest: true,
       side: THREE.DoubleSide,
       toneMapped: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -4,
-      polygonOffsetUnits: -4,
     })
     : new THREE.MeshStandardMaterial({ color: 0x404034, roughness: 0.95, metalness: 0.01 });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'Simple junction asphalt pads';
   mesh.receiveShadow = !fullCityMode;
-  mesh.renderOrder = 3;
+  mesh.renderOrder = fullCityMode ? 1 : 3;
   group.add(mesh);
   group.userData = { type: 'simple-junction-pads', count: padCount };
   return group;
@@ -4212,10 +4344,8 @@ function createSimpleSidewalkMeshes(roads, options = {}) {
       const points = roadPoints(road);
       if (points.length < 2) continue;
       const halfW = section.sidewalkWidth * 0.5;
-      // Trim ribbons back — corner L-pads + extend legs bridge the block wrap.
-      const innerEdge = section.asphaltHalf + (section.curbWidth || 0.28);
-      const cornerReach = Math.min(section.asphaltHalf * 0.28, 3.2);
-      const trim = junctionNodes ? Math.min(innerEdge + cornerReach + 0.4, 11) : 0;
+      // Mild trim — corner L-pads only need to close a short curb gap.
+      const trim = junctionNodes ? Math.min(section.sidewalkWidth * 1.1 + 0.6, 4.8) : 0;
       for (const sideSign of [1, -1]) {
         const center = offsetPolyline(points, sideSign * section.sidewalkCenter);
         for (let i = 0; i < center.length - 1; i += 1) {
@@ -4399,7 +4529,8 @@ function createSidewalkCornerPads(roads, junctionNodes) {
     const points = roadPoints(road);
     const inner = section.asphaltHalf + (section.curbWidth || 0);
     const outer = section.sidewalkOuter;
-    const extend = Math.min(section.asphaltHalf * 0.18, 1.4);
+    // Match the shorter ribbon trim so L-legs meet the sidewalk ends.
+    const extend = Math.min(section.sidewalkWidth * 1.1 + 0.8, 5.2);
     const asphaltHalf = section.asphaltHalf;
     for (let i = 0; i < points.length; i += 1) {
       const point = points[i];
@@ -4451,9 +4582,11 @@ function createSidewalkCornerPads(roads, junctionNodes) {
   };
 
   const pushCornerQuadOutsideAsphalt = (cx, cz, asphaltHalf, p00, p10, p01, p11) => {
-    const limit = asphaltHalf * 0.97;
-    const inside = (p) => Math.abs(p.x - cx) <= limit && Math.abs(p.z - cz) <= limit;
-    if (inside(p00) || inside(p10) || inside(p01) || inside(p11)) return;
+    // Reject only when the whole quad sits inside the asphalt box (curb L lives outside).
+    const limit = asphaltHalf * 0.92;
+    const midX = (p00.x + p10.x + p01.x + p11.x) * 0.25;
+    const midZ = (p00.z + p10.z + p01.z + p11.z) * 0.25;
+    if (Math.abs(midX - cx) <= limit && Math.abs(midZ - cz) <= limit) return;
     pushCornerQuad(p00, p10, p01, p11);
   };
 
@@ -4809,45 +4942,40 @@ function createCorridorCurbs(roads) {
 
 function createCorridorCenterlines(roads, options = {}) {
   const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
-  const clearRadius = fullCityMode ? 26 : 17;
-  const clearRadiusSq = clearRadius * clearRadius;
-  // Skip dashes inside approach-hull junction zones so T/+ centers stay clean.
-  const nodeCounts = new Map();
-  for (const road of roads) {
-    if (!corridorClasses.has(road.highway)) continue;
-    const seen = new Set();
-    for (const point of roadPoints(road)) {
-      const key = nodeKey(point);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      nodeCounts.set(key, (nodeCounts.get(key) || 0) + 1);
-    }
-  }
-  const clearKeys = new Set();
-  const markClear = (jx, jz) => {
-    for (let dx = -clearRadius; dx <= clearRadius; dx += 1) {
-      for (let dz = -clearRadius; dz <= clearRadius; dz += 1) {
-        if (dx * dx + dz * dz > clearRadiusSq) continue;
-        clearKeys.add(`${jx + dx},${jz + dz}`);
-      }
-    }
-  };
+  // Metres cleared around junctions along each road (no giant city-wide Set — that OOM'd).
+  const clearMeters = fullCityMode ? 9.5 : 8.5;
   const junctionNodes = options.junctionNodes instanceof Set ? options.junctionNodes : null;
-  if (junctionNodes?.size) {
-    for (const key of junctionNodes) {
-      const [jx, jz] = key.split(',').map(Number);
-      markClear(jx, jz);
-    }
-  }
-  for (const [key, count] of nodeCounts) {
-    if (count < 2) continue;
-    const [jx, jz] = key.split(',').map(Number);
-    markClear(jx, jz);
-  }
-  // Also clear around T-stubs (endpoint on another centerline).
+
+  const dashes = [];
   for (const road of roads) {
     if (!corridorClasses.has(road.highway)) continue;
-    for (const end of roadEndpoints(road)) {
+    const points = roadPoints(road);
+    if (points.length < 2) continue;
+
+    // Junction s-positions along this road only.
+    const junctionS = [];
+    let length = 0;
+    const segLens = [];
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const seg = Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+      segLens.push(seg);
+      length += seg;
+    }
+    let walked = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const atJunction = junctionNodes
+        ? junctionNodes.has(nodeKey(points[i]))
+        : false;
+      // Shared-node heuristic when junctionNodes not provided.
+      const shared = !junctionNodes && i > 0 && i < points.length - 1;
+      if (atJunction || shared || i === 0 || i === points.length - 1) {
+        // Endpoints often land on T-stubs / cross streets — always clear them in Full City.
+        if (atJunction || i === 0 || i === points.length - 1) junctionS.push(walked);
+      }
+      if (i < segLens.length) walked += segLens[i];
+    }
+    // T-stub: endpoint on another centerline.
+    for (const end of [points[0], points[points.length - 1]]) {
       const candidates = worldPartition
         ? queryPartitionRoads(worldPartition, end, STREAM.nearThreeRoadsConnectRadius + 6)
         : roads;
@@ -4856,41 +4984,39 @@ function createCorridorCenterlines(roads, options = {}) {
         const hit = distanceToRoadCenterline(other, end);
         if (!hit || hit.distance > STREAM.nearThreeRoadsConnectRadius) continue;
         if (hit.t <= 0.04 || hit.t >= 0.96) continue;
-        const [jx, jz] = nodeKey(hit.point).split(',').map(Number);
-        markClear(jx, jz);
+        junctionS.push(end === points[0] ? 0 : length);
         break;
       }
     }
-  }
-  const dashes = [];
-  for (const road of roads) {
-    if (!corridorClasses.has(road.highway)) continue;
-    const points = roadPoints(road);
-    let length = 0;
-    for (let i = 0; i < points.length - 1; i += 1) {
-      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
-    }
+
+    const nearJunction = (s) => {
+      for (const js of junctionS) {
+        if (Math.abs(s - js) <= clearMeters) return true;
+      }
+      return false;
+    };
+
     const dashStep = fullCityMode ? 7.5 : 5.5;
     const maxDashes = fullCityMode ? 48 : 80;
     const count = Math.min(maxDashes, Math.floor(length / dashStep));
     for (let c = 0; c < count; c += 1) {
       const target = ((c + 0.5) / count) * length;
-      let walked = 0;
+      if (nearJunction(target)) continue;
+      let walk = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
         const a = points[i];
         const b = points[i + 1];
-        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
-        if (walked + segLength >= target) {
-          const t = segLength > 0 ? (target - walked) / segLength : 0;
+        const segLength = segLens[i];
+        if (walk + segLength >= target) {
+          const t = segLength > 0 ? (target - walk) / segLength : 0;
           const x = a.x + (b.x - a.x) * t;
           const z = a.z + (b.z - a.z) * t;
-          if (clearKeys.has(nodeKey({ x, z }))) break;
           const dx = b.x - a.x;
           const dz = b.z - a.z;
           dashes.push({ x, z, heading: Math.atan2(dx, dz), length: 2.4 });
           break;
         }
-        walked += segLength;
+        walk += segLength;
       }
     }
   }
@@ -5558,27 +5684,57 @@ async function loadNearThreeRoadsChunk() {
     const junctionCount = compilation?.network?.junctions?.length || 0;
     let meshes = createRoadMeshes(compilation, { cheap: true });
     if (fullCityMode) {
-      // City-wide approach-hull pads already seal crossings. Only accept a clean
-      // three-roads mesh with junction patches — never stack a second pad layer.
-      if (!meshes?.userData?.hasJunctionPatches) {
-        if (meshes) disposeRoot(meshes);
-        meshes = null;
-      } else {
-        // Tint all near three-roads surfaces to match city-wide charcoal asphalt.
-        meshes.traverse((child) => {
-          if (!child.isMesh || !child.material) return;
-          if (child.material.name?.includes('marking')) return;
-          if (child.material.isMeshBasicMaterial && child.material.color) {
-            child.material.color.setHex(0x404034);
-          }
-        });
+      // City-wide pads already seal crossings. Prefer asphalt ribbons; if the
+      // mesh only has torn portals, skip rather than stack a second pad layer.
+      // Keep junction-patched meshes but they must stay charcoal (no light slabs).
+     if (!meshes) {
+       // Placeholder reserves ids (avoids per-frame recompile hitch).
+       meshes = new THREE.Group();
+       meshes.userData = {
+         type: 'near-three-roads-chunk',
+         cheap: true,
+         skipped: true,
+         roadIds: sourceIds,
+         junctionCount: 0,
+       };
+       meshes.name = `Near three-roads skip · ${sourceIds.length} ways`;
+       // The mesher refused a torn portal mesh; seal the crossing with
+       // charcoal approach pads so no tan hole remains at the junction.
+       const pads = createSimpleJunctionPads(chunk);
+       if (pads.userData?.count) {
+         pads.position.y += 0.02;
+         pads.traverse((child) => {
+           if (child.isMesh && child.material?.color) {
+             child.material = child.material.clone();
+             child.material.color.setHex(0x404034);
+           }
+         });
+         meshes.add(pads);
+       }
+       nearThreeRoadsGroup.add(meshes);
+        for (const id of sourceIds) {
+          nearThreeRoadsIds.add(id);
+          detailRoadCompiledIds.add(id);
+        }
+        nearFieldStats.threeRoadsChunks = nearThreeRoadsGroup.children.length;
+        nearFieldStats.threeRoads = nearThreeRoadsIds.size;
+        return;
       }
-    } else if (!meshes) {
-      // Keep approach-hull pads so crossings stay continuous even when three-roads
-      // refuses a torn portal mesh.
-      meshes = new THREE.Group();
-      meshes.userData = { type: 'roads', cheap: true, padsOnly: true };
-      const pads = createSimpleJunctionPads(chunk);
+      meshes.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        for (const mat of mats) {
+          if (!mat || mat.name?.includes('marking')) continue;
+          if (mat.color) mat.color.setHex(0x404034);
+          mat.needsUpdate = true;
+        }
+      });
+   } else if (!meshes) {
+     // Keep approach-hull pads so crossings stay continuous even when three-roads
+     // refuses a torn portal mesh.
+     meshes = new THREE.Group();
+     meshes.userData = { type: 'roads', cheap: true, padsOnly: true };
+     const pads = createSimpleJunctionPads(chunk);
       if (pads.userData?.count) {
         pads.position.y += 0.02;
         meshes.add(pads);
@@ -5858,7 +6014,8 @@ async function buildCityStreetByStreet(allRoads, footprintBuildings, focus) {
     await tick();
   }
 
-  // Approach-hull pads (road-oriented) — axis AABB boxes leave diamond gaps on SF grid.
+  // Road-aligned approach quads seal portal gaps. Flat at roadSurfaceY (not a
+  // convex hull — hulls became diamond slabs; elevated pads read as floating plates).
   const junctionPads = createSimpleJunctionPads(trafficRoads, junctionHalfByKey);
   cityWideRoadGroup.add(junctionPads);
   detailRoadStreamStats.junctionPads = junctionPads.userData?.count || 0;
@@ -5878,9 +6035,18 @@ async function buildCityStreetByStreet(allRoads, footprintBuildings, focus) {
   cityWideRoadGroup.add(centerlines);
   detailRoadStreamStats.centerlineDashes = centerlines.userData?.dashes || 0;
 
-  // Zebras at real signal nodes (capped for FPS).
+  // Zebras at signal nodes + major junction stop-lines (prefer spawn neighborhood).
   const signalPool = (cityData.signals || []).slice(0, Math.max(STREAM.maxSignals * 4, 180));
-  const crosswalks = createCrosswalks(signalPool, trafficRoads);
+  const focusX = focus?.x ?? PREBUILT_SPAWN.x;
+  const focusZ = focus?.z ?? PREBUILT_SPAWN.z;
+  const majorJunctions = junctionPoints
+    .filter((jp) => (nodeHits.get(nodeKey(jp)) || 0) >= 3)
+    .sort((a, b) => Math.hypot(a.x - focusX, a.z - focusZ) - Math.hypot(b.x - focusX, b.z - focusZ))
+    .slice(0, 320);
+  const crosswalks = createCrosswalks(signalPool, trafficRoads, {
+    junctionPoints: majorJunctions,
+    junctionCap: 280,
+  });
   if (crosswalks.userData?.stripes) {
     cityWideRoadGroup.add(crosswalks);
     detailRoadStreamStats.crosswalkStripes = crosswalks.userData.stripes;
@@ -9651,6 +9817,38 @@ function start() {
       const nearVerts = [];
       const radiusBuckets = { r50: 0, r150: 0, r400: 0, r1000: 0 };
       cityWideRoadGroup.traverse((object) => {
+        if (object.isInstancedMesh && object.count > 0) {
+          const label = object.name || object.parent?.name || 'instanced';
+          if (/zebra|crosswalk|centerline|One-way|arrow/i.test(label)) {
+            const m = new THREE.Matrix4();
+            const p = new THREE.Vector3();
+            let best = Infinity;
+            let bestP = null;
+            const isZebra = /zebra|crosswalk/i.test(label);
+            const step = isZebra ? 1 : Math.max(1, Math.floor(object.count / 2500));
+            for (let i = 0; i < object.count; i += step) {
+              object.getMatrixAt(i, m);
+              p.setFromMatrixPosition(m);
+              const dist = Math.hypot(p.x - spawn.x, p.z - spawn.z);
+              if (dist < best) {
+                best = dist;
+                bestP = {
+                  name: label,
+                  dist: Number(dist.toFixed(2)),
+                  x: Number(p.x.toFixed(2)),
+                  y: Number(p.y.toFixed(2)),
+                  z: Number(p.z.toFixed(2)),
+                  count: object.count,
+                  frustumCulled: object.frustumCulled,
+                  visible: object.visible,
+                  renderOrder: object.renderOrder,
+                };
+              }
+              if (isZebra && dist < 20) break;
+            }
+            if (bestP) nearVerts.push(bestP);
+          }
+        }
         if (!object.isMesh) return;
         meshCount += 1;
         const positions = object.geometry?.attributes?.position;
