@@ -1,0 +1,34 @@
+# CityGen — arbitrary low-poly map generator
+
+Status: **in progress**
+
+## Items
+
+1. **Arbitrary map generator** — deterministic procedural cities via seeded
+   street grid, blocks, parcels, buildings, districts, sidewalks, traffic
+   roads, signals. Styles: SF-style, gridiron, garden. `src/citygen/core.js`
+2. **Real map support** — OSM import for San Francisco and any city from
+   OpenStreetMap (Nominatim geocode + Overpass), converted into the same
+   metadata model. Public Overpass mirrors are currently flaky, so failures
+   fall back to procedural with a visible status. `src/citygen/osm.js`
+3. **Rich metadata** — every block, building, street, road segment, one-way
+   direction, lane count, sidewalk width, signal phase, and intersection is
+   inspectable at runtime and included in `window.__CITYGEN__.getCity()`.
+4. **AAA stylized look** — low-poly pastel materials, procedural facade
+   textures, soft fog, warm directional light, contact shadows, bay bridge,
+   water, lamps, day/night emissive windows, traffic, pedestrians.
+   `src/citygen/renderer.js`
+5. **Runtime experience** — orbit/walk modes, WASD, click inspector,
+   minimap, seeded regenerate, style presets, real-map dialog.
+6. **Visual QA loop** — `npm run qa:citygen` captures hero/street/aerial/
+   night frames and validates metadata; `npm run qa:citygen-critic` scores
+   them against the real SF reference. Iterate until the critic and pixel
+   metrics pass the polish bar.
+
+## Definition of done
+
+- City generator produces San Francisco-flavored and generic cities.
+- Real OSM import either succeeds or fails cleanly to procedural.
+- Inspector proves building/street/signal metadata is present.
+- Traffic and walk modes run without console errors.
+- QA frames are non-blank, varied, colorful, and score well.

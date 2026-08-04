@@ -34,6 +34,8 @@
     "qa:beauty-frames": "node scripts/qa-beauty-frames.mjs",
     "qa:time-of-day": "node scripts/qa-time-of-day.mjs",
     "qa:blind-ab": "node scripts/build-blind-ab.mjs",
+    "qa:citygen": "node scripts/qa-citygen.mjs",
+    "qa:citygen-critic": "node scripts/qa-citygen-critic.mjs",
     "profile:frame": "node scripts/profile-frame.mjs",
     "qa:district-visual": "node scripts/qa-district-visual.mjs",
     "qa:interior-visual": "node scripts/qa-interior-variants.mjs",

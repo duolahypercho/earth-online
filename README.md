@@ -57,6 +57,13 @@ inspectable metadata. See `Docs/REAL_MAP_SANDBOX.md`.
 This lab is also the seed for future towns — draw a place, generate it, then
 bring it into the world.
 
+### CityGen Lab
+
+Open `/citygen.html` for the low-poly arbitrary-city generator. It can produce
+a seeded SF-style, gridiron, or garden city on demand, or attempt a real map
+fetch from OpenStreetMap for any city. Every block, building, street, one-way
+rule, lane, sidewalk, intersection, and signal is inspectable at runtime.
+
 ## Add your own town
 
 Fork the repo, build a place that feels like home, and open a pull request.

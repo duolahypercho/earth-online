@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16303d" />
+    <meta name="description" content="CityGen — arbitrary low-poly city generator with rich street, block, building, and signal metadata." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>CityGen / Low-Poly Map Sandbox</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="scene-canvas" aria-label="Generated city"></canvas>
+
+      <header class="brand">
+        <span class="brand-mark">CG</span>
+        <div>
+          <h1>CityGen</h1>
+          <p id="city-name">San Francisco</p>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="City generator tools">
+        <div class="tool-group" data-toolbar="styles">
+          <button type="button" class="preset is-active" data-preset="sanfrancisco">SF Style</button>
+          <button type="button" class="preset" data-preset="gridiron">Gridiron</button>
+          <button type="button" class="preset" data-preset="garden">Garden</button>
+        </div>
+        <div class="tool-group" data-toolbar="actions">
+          <button type="button" class="action" data-action="regenerate" title="New seeded city">Regenerate</button>
+          <button type="button" class="action" data-action="seed" title="Copy seed">Seed</button>
+          <button type="button" class="action" data-action="osm" title="Fetch real map from OpenStreetMap">Real Map</button>
+          <button type="button" class="action" data-action="mode" title="Orbit or walk">Orbit</button>
+          <button type="button" class="action" data-action="time" title="Toggle day / night">Day</button>
+        </div>
+      </section>
+
+      <section class="readout" aria-label="City readout">
+        <span id="readout-buildings">0 buildings</span>
+        <span id="readout-blocks">0 blocks</span>
+        <span id="readout-streets">0 streets</span>
+        <span id="readout-seed">seed —</span>
+      </section>
+
+      <section class="hint" aria-label="Controls">
+        <span>Drag orbit · wheel zoom · click inspect · WASD walk in Walk mode</span>
+      </section>
+
+      <aside id="inspector" class="inspector" aria-label="Feature inspector">
+        <button type="button" id="inspector-close" class="inspector-close" aria-label="Close inspector">×</button>
+        <h2 id="inspector-title">Inspector</h2>
+        <dl id="inspector-fields"></dl>
+      </aside>
+
+      <section id="minimap" class="minimap" aria-label="City minimap">
+        <canvas id="minimap-canvas" width="220" height="220"></canvas>
+      </section>
+
+      <div id="osm-overlay" class="osm-overlay" hidden>
+        <div class="osm-panel">
+          <p class="boot-kicker">OPENSTREETMAP</p>
+          <h2>Build a real city</h2>
+          <p>Fetch roads and building footprints from OSM. Defaults to San Francisco downtown.</p>
+          <label for="osm-city">City name or lat,lon,radius (m)</label>
+          <input id="osm-city" value="San Francisco, CA" spellcheck="false" />
+          <div class="osm-actions">
+            <button type="button" class="action is-primary" data-action="osm-go">Fetch</button>
+            <button type="button" class="action" data-action="osm-cancel">Cancel</button>
+          </div>
+          <p class="osm-status" id="osm-status"></p>
+        </div>
+      </div>
+      <noscript>This experience requires JavaScript and WebGL2.</noscript>
+    </main>
+    <script type="module" src="/src/citygen/main.js"></script>
+  </body>
+</html>
