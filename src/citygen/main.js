@@ -339,7 +339,7 @@ async function generate(style, seed) {
 }
 
 async function fetchRealCity(query) {
-  osmStatus.textContent = 'Contacting OpenStreetMap…';
+  osmStatus.textContent = 'Contacting OpenStreetMap… this can take up to 45s.';
   try {
     const city = await fetchOsmCity({ query, radius: 520 });
     if (!city.buildings.length && !city.segments.length) throw new Error('No map data returned');
