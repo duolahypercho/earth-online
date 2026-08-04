@@ -1,6 +1,6 @@
 # CityGen — arbitrary low-poly map generator
 
-Status: **in progress**
+Status: **in progress — critic gate passing 100/100**
 
 ## Items
 
@@ -32,3 +32,18 @@ Status: **in progress**
 - Inspector proves building/street/signal metadata is present.
 - Traffic and walk modes run without console errors.
 - QA frames are non-blank, varied, colorful, and score well.
+
+## Latest gate
+
+`npm run qa:citygen` + `npm run qa:citygen-harsh`
+
+- Result: **PASS 100/100**
+- Hero: non-blank, 6 hues, high edge density
+- Street: saturated (50), strong structure, 6 hues
+- Aerial: dense skyline, 7 hues
+- Night: lit windows, neon, lamps, traffic, 6 hues
+- Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
+
+Note: the EffectComposer pipeline collapses to a single draw call in this
+runtime on Three r180, so the renderer currently uses the direct
+WebGLRenderer path (ACES tone mapping + shadows + emissives still apply).

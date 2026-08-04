@@ -36,6 +36,7 @@
     "qa:blind-ab": "node scripts/build-blind-ab.mjs",
     "qa:citygen": "node scripts/qa-citygen.mjs",
     "qa:citygen-critic": "node scripts/qa-citygen-critic.mjs",
+    "qa:citygen-harsh": "node scripts/qa-citygen-critic-harsh.mjs",
     "profile:frame": "node scripts/profile-frame.mjs",
     "qa:district-visual": "node scripts/qa-district-visual.mjs",
     "qa:interior-visual": "node scripts/qa-interior-variants.mjs",

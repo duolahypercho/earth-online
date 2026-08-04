@@ -405,6 +405,51 @@ async function boot() {
     setTime: (hour) => {
       state.renderer.setTimeOfDay(hour);
     },
+    setCameraPose: (pose) => {
+      const camera = state.renderer.camera;
+      const controls = state.renderer.controls;
+      if (pose === 'street') {
+        const city = state.city;
+        const primary = city.streets.find((street) => street.highway === 'primary');
+        const axis = primary?.axis || 'x';
+        const position = primary?.position || 0;
+        const bounds = city.meta.bounds;
+        const along = (bounds.maxZ - bounds.minZ) / 2 - 60;
+        const eye = axis === 'x'
+          ? { x: position - 13, z: -along * 0.25 }
+          : { x: -along * 0.25, z: position - 13 };
+        const target = axis === 'x'
+          ? { x: position + 5, z: -along }
+          : { x: -along, z: position + 5 };
+        camera.position.set(eye.x, 3.4, eye.z);
+        camera.lookAt(target.x, 1.2, target.z);
+        controls.target.set(target.x, 1.2, target.z);
+      } else if (pose === 'aerial') {
+        camera.position.set(90, 230, 140);
+        camera.lookAt(0, 8, 0);
+        controls.target.set(0, 8, 0);
+      } else if (pose === 'night') {
+        const city = state.city;
+        // Close corner framing: shopfronts, neon, lamps, and traffic fill the
+        // frame instead of a long dark road.
+        const primary = city.streets.find((street) => street.highway === 'primary');
+        const axis = primary?.axis || 'x';
+        const position = primary?.position || 0;
+        const along = 62;
+        const eye = axis === 'x'
+          ? { x: position - 10, z: -along }
+          : { x: -along, z: position - 10 };
+        const target = axis === 'x'
+          ? { x: position - 2, z: -along + 18 }
+          : { x: -along + 18, z: position - 2 };
+        camera.position.set(eye.x, 3.2, eye.z);
+        camera.lookAt(target.x, 1.6, target.z);
+        controls.target.set(target.x, 1.6, target.z);
+      } else {
+        frameCityCamera(state.city);
+      }
+      controls.update();
+    },
     setMode,
     frameCityCamera,
     inspectWorld,

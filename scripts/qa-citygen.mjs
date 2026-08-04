@@ -97,35 +97,17 @@ try {
   });
   await page.screenshot({ path: '.qa-citygen-hero.png' });
 
-  await page.evaluate(() => {
-    const api = window.__CITYGEN__;
-    const camera = api.getRenderer().camera;
-    camera.position.set(14, 3.4, 6);
-    camera.lookAt(8, 1, -6);
-    api.getRenderer().controls.target.set(8, 1, -6);
-    api.getRenderer().controls.update();
-  });
+  await page.evaluate(() => window.__CITYGEN__.setCameraPose('street'));
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.qa-citygen-street.png' });
 
-  await page.evaluate(() => {
-    const api = window.__CITYGEN__;
-    api.getRenderer().camera.position.set(90, 230, 140);
-    api.getRenderer().controls.target.set(0, 8, 0);
-    api.getRenderer().controls.update();
-  });
+  await page.evaluate(() => window.__CITYGEN__.setCameraPose('aerial'));
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.qa-citygen-aerial.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setTime(21.5));
   await page.waitForTimeout(600);
-  await page.evaluate(() => {
-    const api = window.__CITYGEN__;
-    api.getRenderer().camera.position.set(60, 8, 28);
-    api.getRenderer().camera.lookAt(24, 2, -12);
-    api.getRenderer().controls.target.set(24, 2, -12);
-    api.getRenderer().controls.update();
-  });
+  await page.evaluate(() => window.__CITYGEN__.setCameraPose('night'));
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.qa-citygen-night.png' });
   await page.evaluate(() => window.__CITYGEN__.setTime(15));

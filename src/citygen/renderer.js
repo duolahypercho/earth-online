@@ -80,6 +80,26 @@ function drawFacade(context, width, height, random, style, material, { day = tru
     context.fillRect(8, height - 24, (width - 16) / 2 - 4, 18);
     context.fillStyle = '#7fb5d8';
     context.fillRect((width - 16) / 2 + 8, height - 24, (width - 16) / 2 - 4, 18);
+    // Saturated striped awning above the shopfront.
+    const awningColors = ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0'];
+    const awning = awningColors[Math.floor(random() * awningColors.length)];
+    context.fillStyle = awning;
+    for (let i = 0; i < width; i += 12) {
+      context.fillRect(i, height - 34, 6, 8);
+    }
+    context.fillStyle = 'rgba(255,255,255,0.22)';
+    for (let i = 0; i < width; i += 24) {
+      context.fillRect(i, height - 34, 3, 8);
+    }
+    if (!day) {
+      const neonColors = ['#ff5fa2', '#35d7d7', '#ffc43d'];
+      const neon = neonColors[Math.floor(random() * neonColors.length)];
+      context.shadowColor = neon;
+      context.shadowBlur = 10;
+      context.fillStyle = neon;
+      context.fillRect(8, height - 40, 40, 4);
+      context.fillRect((width - 16) / 2 + 8, height - 40, 40, 4);
+    }
   }
   if (style === 'bay-window') {
     context.fillStyle = 'rgba(90,70,55,0.35)';
@@ -107,13 +127,13 @@ function drawAsphalt(context, width, height, random) {
 }
 
 function drawSidewalk(context, width, height, random) {
-  context.fillStyle = '#c9bfae';
+  context.fillStyle = '#d1bc9d';
   context.fillRect(0, 0, width, height);
   for (let i = 0; i < 30; i += 1) {
     context.fillStyle = 'rgba(140,120,100,0.1)';
     context.fillRect(random() * width, random() * height, 6 + random() * 16, 1.4);
   }
-  context.strokeStyle = 'rgba(110,95,80,0.22)';
+  context.strokeStyle = 'rgba(130,100,70,0.3)';
   context.lineWidth = 1.4;
   for (let y = 16; y < height; y += 32) {
     context.beginPath();
@@ -272,6 +292,7 @@ export class CityRenderer {
     this.city = null;
     this.nightEmissive = [];
     this.lampBulbs = [];
+    this.lampLights = [];
 
     this.sun = new THREE.DirectionalLight(0xfff1dd, 2.4);
     this.sun.position.set(-260, 380, 120);
@@ -293,7 +314,6 @@ export class CityRenderer {
     this.rim = new THREE.DirectionalLight(0xbcd7e8, 0.55);
     this.rim.position.set(320, 240, -260);
     this.scene.add(this.rim);
-
 
     this.onResize = this.resize.bind(this);
     window.addEventListener('resize', this.onResize);
@@ -879,6 +899,7 @@ export class CityRenderer {
         return false;
       });
       const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
+      if (!Number.isFinite(half)) continue;
       const y = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(p.x, p.z) : 0);
       pushQuad(asphaltAttrs, asphaltVertex,
         { x: p.x - half, y, z: p.z - half },
@@ -1037,6 +1058,7 @@ export class CityRenderer {
       }
     }
     const group = new THREE.Group();
+    const lightPositions = [];
     for (const key of positions) {
       const [x, z] = key.split('-').map(Number);
       if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
@@ -1050,6 +1072,15 @@ export class CityRenderer {
       lamp.position.set(x, y, z);
       group.add(lamp);
       this.lampBulbs.push(bulb);
+    }
+    for (const signal of city.signals.slice(0, 16)) {
+      lightPositions.push({ x: signal.position.x, z: signal.position.z });
+    }
+    for (const lp of lightPositions) {
+      const light = new THREE.PointLight(0xffc46a, 0, 46, 1.8);
+      light.position.set(lp.x, 5.4, lp.z);
+      group.add(light);
+      this.lampLights.push(light);
     }
     root.add(group);
   }
@@ -1116,6 +1147,62 @@ export class CityRenderer {
       this.pickables.push(group);
       this.geometryCache.push(trunk.geometry, canopy.geometry, top.geometry);
     }
+    this.buildSidewalkProps(root, city, random);
+  }
+
+  buildSidewalkProps(root, city, random) {
+    const planterColor = new THREE.MeshStandardMaterial({ color: 0x8a5f46, roughness: 0.85, flatShading: true });
+    const leafColor = new THREE.MeshStandardMaterial({ color: 0x4f7f4a, roughness: 0.85, flatShading: true });
+    const benchColor = new THREE.MeshStandardMaterial({ color: 0x6f5c48, roughness: 0.8, flatShading: true });
+    const hydrantColor = new THREE.MeshStandardMaterial({ color: 0xc9483a, roughness: 0.55, metalness: 0.3, flatShading: true });
+    const props = [];
+    const bounds = city.meta.bounds;
+    for (const street of city.streets) {
+      if (street.highway === 'pedestrian' || street.highway === 'footway' || street.highway === 'cycleway') continue;
+      const axis = street.axis;
+      const position = street.position;
+      const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.5;
+      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 22;
+      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 22;
+      for (let v = start; v < end; v += 34 + random() * 22) {
+        if (random() < 0.34) continue;
+        const side = random() < 0.5 ? -1 : 1;
+        const x = axis === 'x' ? position + side * sidewalk : v;
+        const z = axis === 'z' ? position + side * sidewalk : v;
+        if (Math.abs(x) > bounds.maxX - 6 || Math.abs(z) > bounds.maxZ - 6) continue;
+        const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.05 : 0.05;
+        const roll = random();
+        const group = new THREE.Group();
+        if (roll < 0.4) {
+          const planter = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.8), planterColor);
+          planter.position.y = 0.28;
+          const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 5), leafColor);
+          leaf.position.y = 1.05;
+          group.add(planter, leaf);
+          this.geometryCache.push(planter.geometry, leaf.geometry);
+        } else if (roll < 0.72) {
+          const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.62), benchColor);
+          bench.position.y = 0.45;
+          const back = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.08), benchColor);
+          back.position.set(0, 0.8, -0.28);
+          group.add(bench, back);
+          this.geometryCache.push(bench.geometry, back.geometry);
+        } else {
+          const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6), hydrantColor);
+          hydrant.position.y = 0.4;
+          group.add(hydrant);
+          this.geometryCache.push(hydrant.geometry);
+        }
+        group.position.set(x, y, z);
+        group.rotation.y = random() * Math.PI;
+        group.userData = { kind: 'street-prop' };
+        props.push(group);
+      }
+    }
+    const group = new THREE.Group();
+    group.name = 'sidewalk-props';
+    for (const prop of props) group.add(prop);
+    root.add(group);
   }
 
   setTimeOfDay(hour) {
@@ -1135,6 +1222,9 @@ export class CityRenderer {
     }
     for (const bulb of this.lampBulbs) {
       bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
+    }
+    for (const light of this.lampLights) {
+      light.intensity = night ? 1.5 : 0;
     }
     const fogColor = nightFactor > 0.92
       ? new THREE.Color('#1b2c3d')
@@ -1175,7 +1265,6 @@ export class CityRenderer {
     }
   }
 
-  /** Current frame path: composer when healthy, direct render otherwise. */
   renderFrame() {
     this.renderer.render(this.scene, this.camera);
   }
