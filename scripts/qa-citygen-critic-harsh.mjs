@@ -127,6 +127,7 @@ try {
       ['real SF frame exposure', (sfFrame.meanLuma || 0) > 60 && (sfFrame.meanLuma || 0) < 230, `${Math.round(sfFrame.meanLuma || 0)} luma`],
       ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.15, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
       ['real SF frame color', (sfFrame.meanSaturation || 0) >= 34 && (sfFrame.saturatedHues || 0) >= 5, `${Math.round(sfFrame.meanSaturation || 0)} sat / ${sfFrame.saturatedHues || 0} hues`],
+      ['real SF frame hue variety', (sfFrame.saturatedHues || 0) >= 6, `${sfFrame.saturatedHues || 0} hues`],
     ];
     for (const [label, pass, detail] of sfChecks) {
       if (pass) critic.score += 1;
