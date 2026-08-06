@@ -73,6 +73,8 @@ Add mode lets you click any buildable block to place a new building with live
 footprint validation and full block/street/type/facade metadata; Undo restores
 the previous city state. In Walk mode press `E` to enter the nearest car and
 drive the same one-way traffic graph and signal phases used by AI traffic.
+The HUD readout shows building, block, street, one-way, and signal counts and
+labels real OSM maps as real map data instead of a procedural seed.
 The **SF Built-in** option loads the repo's real San
 Francisco OSM data as a playable district slice without depending on the
 public Overpass service.

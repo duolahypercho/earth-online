@@ -25,7 +25,9 @@ building authoring and real SF slice**
    minimap, seeded regenerate, style presets, real-map dialog.
    Drive mode enters the nearest car with `E`, throttles/steers with WASD,
    follows the same one-way traffic graph and signal phases as AI traffic,
-   and exits back to the player with `E`.
+   and exits back to the player with `E`. The readout shows building, block,
+   street, one-way, and signal counts; real OSM maps label their source
+   instead of a procedural seed.
 6. **Dynamic authoring** — Add mode places a new building on any buildable
    block with live footprint preview, right-of-way and overlap validation,
    and full metadata (block, district, street, address, type, facade,
