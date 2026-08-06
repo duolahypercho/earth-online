@@ -73,6 +73,9 @@ building authoring and real SF slice**
   (6th Street) instead of an open freeway segment, with avenue bunting and
   full building mass in view; shopfront awnings/signs resolve the nearest
   arbitrary OSM road so real-map street dressing follows road orientation.
+  A furniture gate asserts the real slice is dressed with >=120 sidewalk
+  props and >=60 parked cars; current QA: 800 props / 360 cars / 126 awnings
+  / 2600 bunting flags.
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings

@@ -678,6 +678,7 @@ async function boot() {
       day: state.day,
       buildingsPlaced: state.sandboxStats.buildingsPlaced,
       blocksTouched: state.sandboxStats.blocksTouched.size,
+      furniture: state.renderer?.streetFurniture || null,
       errors: state.errors,
       mode: () => state.mode,
     }),

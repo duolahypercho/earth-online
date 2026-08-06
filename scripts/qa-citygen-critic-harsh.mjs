@@ -153,10 +153,12 @@ try {
       }
     }
     if (results.sfExport) {
-      critic.maxScore += 2;
+      critic.maxScore += 4;
       const sfExportChecks = [
         ['real SF export carries real street names', results.sfExport.streets === results.sfBuiltin.streets && Boolean(results.sfExport.streetSample?.name)],
         ['real SF export includes one-way metadata', results.sfExport.oneWayStreets === results.sfBuiltin.oneWayStreets],
+        ['real SF street has sidewalk props', Number(results.sfBuiltin?.furniture?.props || 0) >= 120],
+        ['real SF street has parked cars', Number(results.sfBuiltin?.furniture?.cars || 0) >= 60],
       ];
       for (const [label, pass] of sfExportChecks) {
         if (pass) critic.score += 1;
