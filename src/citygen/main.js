@@ -25,6 +25,8 @@ const readoutStreets = document.querySelector('#readout-streets');
 const readoutOneway = document.querySelector('#readout-oneway');
 const readoutSignals = document.querySelector('#readout-signals');
 const readoutSeed = document.querySelector('#readout-seed');
+const readoutClock = document.querySelector('#readout-clock');
+const readoutCash = document.querySelector('#readout-cash');
 const inspector = document.querySelector('#inspector');
 const inspectorTitle = document.querySelector('#inspector-title');
 const inspectorFields = document.querySelector('#inspector-fields');
@@ -39,6 +41,12 @@ const state = {
   style: 'sanfrancisco',
   seed: 731,
   day: true,
+  clock: 9.0,
+  cash: 1250,
+  sandboxStats: {
+    buildingsPlaced: 0,
+    blocksTouched: new Set(),
+  },
   mode: 'orbit',
   placement: false,
   addedBuildings: [],
@@ -132,11 +140,22 @@ function updateReadout(city) {
   readoutStreets.textContent = `${fmt(stats.streets)} streets`;
   readoutOneway.textContent = `${fmt(stats.oneWayStreets)} one-way`;
   readoutSignals.textContent = `${fmt(stats.signals)} signals`;
+  readoutClock.textContent = formatClock(state.clock);
+  readoutCash.textContent = `$${fmt(state.cash)}`;
   readoutSeed.textContent = city.meta.generator === 'procedural'
     ? `seed ${stats.seed}`
     : city.meta.generator === 'sf-builtin'
       ? 'real San Francisco OSM'
       : 'real OSM';
+}
+
+function formatClock(hour) {
+  const rounded = Math.floor(hour * 4) / 4;
+  const whole = Math.floor(rounded);
+  const minutes = Math.round((rounded - whole) * 60);
+  const suffix = whole >= 12 ? 'PM' : 'AM';
+  const display = ((whole + 11) % 12) + 1;
+  return `${display}:${String(minutes).padStart(2, '0')} ${suffix}`;
 }
 
 function frameCityCamera(city) {
@@ -256,6 +275,9 @@ async function placeAt(x, z) {
     return false;
   }
   state.addedBuildings.push(result.building.id);
+  state.sandboxStats.buildingsPlaced += 1;
+  state.sandboxStats.blocksTouched.add(result.building.blockId);
+  state.cash += Math.round(result.building.height * 4 + 150);
   await buildCity(state.city, { reframe: false });
   updateGhost(x, z);
   return true;
@@ -558,6 +580,10 @@ async function generate(style, seed) {
   state.style = style;
   state.seed = seed;
   state.addedBuildings = [];
+  state.sandboxStats.buildingsPlaced = 0;
+  state.sandboxStats.blocksTouched.clear();
+  state.cash = 1250;
+  state.clock = 9;
   togglePlacement(false);
   await buildCity(makeCity(style, seed));
 }
@@ -647,6 +673,11 @@ async function boot() {
       webgl2: Boolean(state.renderer?.renderer?.capabilities?.isWebGL2),
       vehicle: Boolean(state.vehicle),
       vehicleSpeed: Math.round(state.vehicleSpeed),
+      clock: state.clock,
+      cash: state.cash,
+      day: state.day,
+      buildingsPlaced: state.sandboxStats.buildingsPlaced,
+      blocksTouched: state.sandboxStats.blocksTouched.size,
       errors: state.errors,
       mode: () => state.mode,
     }),
@@ -657,6 +688,13 @@ async function boot() {
     setDay: (day) => {
       state.day = Boolean(day);
       document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
+    },
+    setClock: (hour) => {
+      state.clock = clamp(Number(hour) || 9, 0, 24);
+      state.day = state.clock >= 6 && state.clock < 20;
+      state.renderer.setTimeOfDay(state.clock);
+      document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
+      updateReadout(state.city);
     },
     setCameraPose: (pose) => {
       const camera = state.renderer.camera;
@@ -898,10 +936,11 @@ async function boot() {
   function loop(now) {
     const delta = Math.min(0.05, (now - last) / 1000);
     last = now;
+    state.clock = (state.clock + delta * 0.6) % 24;
     updatePlayer(delta);
     updateVehicle(delta);
     state.renderer.update(delta, {
-      time: state.day ? 15 : 21.5,
+      time: state.clock,
       traffic: state.traffic,
     });
     state.renderer.renderFrame();

@@ -31,7 +31,9 @@ building authoring and real SF slice**
    follows the same one-way traffic graph and signal phases as AI traffic,
    and exits back to the player with `E`. The readout shows building, block,
    street, one-way, and signal counts; real OSM maps label their source
-   instead of a procedural seed.
+   instead of a procedural seed. A live day-cycle clock advances continuously,
+   drives renderer lighting (Day/Night), and building sandbox actions pay cash
+   and track blocks touched.
 6. **Dynamic authoring** — Add mode places a new building on any buildable
    block with live footprint preview, right-of-way and overlap validation,
    and full metadata (block, district, street, address, type, facade,
@@ -92,6 +94,8 @@ building authoring and real SF slice**
   cycle. Browser QA also asserts WebGL2 is active and walk physics moves the
   player under keyboard input; drive QA enters a vehicle, accelerates along
   the road graph, and records real displacement.
+- Sandbox clock/economy: QA asserts the clock advances, `setClock(21.5)` flips
+  to Night, placing a building increases cash, and build stats track blocks.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
   average 17.1 m tall, so full-size cars and pedestrians no longer dominate
   the street.

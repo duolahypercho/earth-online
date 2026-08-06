@@ -39,6 +39,10 @@ try {
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
+    ['sandbox clock advances', Number(results.clockEnd || 0) > Number(results.clockStart || 0)],
+    ['sandbox clock drives night', Boolean(results.clockNight?.clock === 21.5 && results.clockNight?.day === false && results.clockNight?.timeLabel === 'Night')],
+    ['building sandbox pays cash', Number(results.sandboxAfterBuild?.cash || 0) > Number(results.sandboxStartCash || 0)],
+    ['building sandbox tracks blocks', Number(results.sandboxAfterBuild?.buildingsPlaced || 0) >= 1 && Number(results.sandboxAfterBuild?.blocksTouched || 0) >= 1],
     ['export metadata matches city counts', Boolean(results.export)
       && results.export.counts?.buildings === results.state?.buildings
       && results.export.counts?.streets === results.state?.streets
