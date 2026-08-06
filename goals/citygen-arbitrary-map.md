@@ -20,7 +20,9 @@ building authoring and real SF slice**
    The **Export** button downloads the full metadata model as a portable
    JSON file (schema version, bounds, counts, blocks, buildings, streets,
    segments, intersections, signals), proven for procedural, real SF, and
-   arbitrary OSM maps.
+   arbitrary OSM maps. **Import** loads an exported JSON back into a CityGen
+   session offline, preserving generator type and exact counts, so a map can
+   be shipped as data when live OSM is unavailable.
 4. **AAA stylized look** — low-poly pastel materials, procedural facade
    textures, soft fog, warm directional light, contact shadows, bay bridge,
    water, lamps, day/night emissive windows, traffic, pedestrians.

@@ -5,6 +5,7 @@ import {
   proposeBuildingPlacement,
   removeBuildingById,
   exportCityMetadata,
+  importCityMetadata,
 } from '../src/citygen/core.js';
 
 // Deterministic proof that the same CityGen OSM importer used for San
@@ -105,6 +106,13 @@ if (!exported || exported.buildings.length !== city.buildings.length || exported
 }
 if (!exported.streets.some((street) => street.oneway !== 'both')) failures.push('export one-way metadata missing');
 if (!exported.signals.length) failures.push('export signal metadata missing');
+const importedCity = importCityMetadata(exported);
+if (!importedCity
+  || importedCity.buildings.length !== city.buildings.length
+  || importedCity.streets.length !== city.streets.length
+  || importedCity.signals.length !== city.signals.length) {
+  failures.push('export/import round-trip failed for arbitrary OSM city');
+}
 let placementPoint = null;
 for (const block of city.blocks) {
   if (block.landUse === 'park' || !block.polygon?.length) continue;

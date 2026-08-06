@@ -961,7 +961,7 @@ export function exportCityMetadata(city) {
       id: block.id,
       district: block.district,
       landUse: block.landUse || 'mixed',
-      buildings: (block.buildings || []).length,
+      buildings: block.buildings || [],
       streets: block.streets || [],
       polygon: block.polygon || [],
     })),
@@ -994,8 +994,11 @@ export function exportCityMetadata(city) {
       sidewalkW: street.sidewalkW,
       asphaltWidth: street.asphaltWidth,
       oneway: street.oneway,
-      blocks: (street.blocks || []).length,
+      blocks: street.blocks || [],
       signalIds: street.signalIds || [],
+      orientation: street.orientation,
+      axis: street.axis,
+      position: street.position,
     })),
     segments: (city.segments || []).map((segment) => ({
       id: segment.id,
@@ -1025,6 +1028,95 @@ export function exportCityMetadata(city) {
       phaseOffset: signal.phaseOffset,
       period: signal.period,
     })),
+  };
+}
+
+/**
+ * Rebuild a CityGen city from an exported JSON payload. This is the offline
+ * path for regenerating a map without live OSM: export once, then import the
+ * same metadata into any CityGen session.
+ */
+export function importCityMetadata(payload) {
+  if (!payload || !Array.isArray(payload.buildings) || !Array.isArray(payload.streets)) {
+    return null;
+  }
+  const seedInt = Number(payload.seedInt)
+    || (payload.seed ? Math.abs(hashString(String(payload.seed)) % 2147483647) || 731 : 731);
+  const blocks = (payload.blocks || []).map((block) => ({
+    id: block.id,
+    district: block.district || 'Downtown',
+    landUse: block.landUse || 'mixed',
+    buildings: Array.isArray(block.buildings) ? [...block.buildings] : [],
+    streets: Array.isArray(block.streets) ? [...block.streets] : [],
+    polygon: Array.isArray(block.polygon) ? block.polygon.map((p) => ({ x: p.x, z: p.z })) : [],
+  }));
+  const buildings = payload.buildings.map((building) => ({
+    ...building,
+    polygon: Array.isArray(building.polygon) ? building.polygon.map((p) => ({ x: p.x, z: p.z })) : [],
+    userAdded: Boolean(building.userAdded),
+    landmark: Boolean(building.landmark),
+  }));
+  const streets = payload.streets.map((street) => ({
+    ...street,
+    blocks: Array.isArray(street.blocks) ? [...street.blocks] : [],
+    signalIds: Array.isArray(street.signalIds) ? [...street.signalIds] : [],
+  }));
+  const segments = (payload.segments || []).map((segment) => ({
+    ...segment,
+    points: Array.isArray(segment.points) ? segment.points.map((p) => ({ x: p.x, z: p.z })) : [],
+  }));
+  const intersections = (payload.intersections || []).map((intersection) => ({
+    id: intersection.id,
+    position: { ...intersection.position },
+    streetIds: Array.isArray(intersection.streetIds) ? [...intersection.streetIds] : [],
+    signalId: intersection.signalId || null,
+  }));
+  const signals = (payload.signals || []).map((signal) => ({
+    id: signal.id,
+    intersectionId: signal.intersectionId,
+    streetIds: Array.isArray(signal.streetIds) ? [...signal.streetIds] : [],
+    position: { ...signal.position },
+    heading: signal.heading,
+    phaseOffset: signal.phaseOffset,
+    period: signal.period,
+  }));
+  for (const block of blocks) {
+    if (!block.buildings.length) {
+      block.buildings = buildings.filter((building) => building.blockId === block.id).map((building) => building.id);
+    }
+  }
+  const generator = payload.generator === 'procedural' ? 'procedural'
+    : payload.generator === 'sf-builtin' ? 'sf-builtin'
+      : 'openstreetmap';
+  const terrainType = generator === 'procedural' ? 'soft-hills' : 'osm-flat';
+  return {
+    schemaVersion: payload.schemaVersion || CITY_SCHEMA_VERSION,
+    meta: {
+      name: payload.name || 'Imported City',
+      seed: payload.seed,
+      seedInt,
+      style: payload.style || 'osm',
+      generator,
+      imported: true,
+      center: payload.center || { x: 0, z: 0 },
+      bounds: payload.bounds || {
+        minX: -330, maxX: 330, minZ: -330, maxZ: 330,
+      },
+      terrain: { type: terrainType, flattenNearRoads: false },
+      streetDesign: payload.streetDesign || { streetScale: 1, sidewalkScale: 1, curbHeight: 0.16, roadLift: 0.45 },
+      generatedAt: new Date().toISOString(),
+    },
+    blocks,
+    buildings,
+    streets,
+    segments,
+    intersections,
+    signals,
+    terrain: {
+      type: terrainType,
+      seed: seedInt,
+      heightAt: (x, z) => terrainHeight(x, z, seedInt) * (generator === 'procedural' ? 0.16 : 0.05),
+    },
   };
 }
 

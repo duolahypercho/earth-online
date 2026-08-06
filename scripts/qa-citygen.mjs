@@ -110,6 +110,25 @@ try {
       buildingSample: payload.buildings[0],
     };
   });
+  results.importRoundtrip = await page.evaluate(async () => {
+    const api = window.__CITYGEN__;
+    const original = api.getState();
+    const payload = JSON.parse(api.exportMetadata());
+    const result = await api.importMetadata(payload);
+    if (!result.ok) return { ok: false, reason: result.reason };
+    const imported = api.getState();
+    const ok = imported.buildings === original.buildings
+      && imported.streets === original.streets
+      && imported.signals === original.signals
+      && api.getCity().meta.imported === true;
+    await api.generate('sanfrancisco', 731);
+    return {
+      ok,
+      importedGenerator: api.getCity().meta.generator,
+      before: { buildings: original.buildings, streets: original.streets, signals: original.signals },
+      after: { buildings: imported.buildings, streets: imported.streets, signals: imported.signals },
+    };
+  });
   results.clockStart = await page.evaluate(() => window.__CITYGEN__.getState().clock);
   await page.waitForTimeout(700);
   results.clockEnd = await page.evaluate(() => window.__CITYGEN__.getState().clock);
@@ -362,15 +381,30 @@ try {
       });
       await page.evaluate(() => window.__CITYGEN__.undoLastAdded());
       await page.waitForTimeout(800);
-      results.sfAfterUndo = await page.evaluate(() => {
-        const api = window.__CITYGEN__;
-        return { placedBuildings: api.getState().placedBuildings, buildings: api.getState().buildings };
-      });
-    }
-    await page.evaluate(() => window.__CITYGEN__.setCameraPose('sf'));
-    await page.waitForTimeout(700);
-    await page.screenshot({ path: '.qa-citygen-sf.png' });
-    results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');
+    results.sfAfterUndo = await page.evaluate(() => {
+      const api = window.__CITYGEN__;
+      return { placedBuildings: api.getState().placedBuildings, buildings: api.getState().buildings };
+    });
+  }
+  await page.evaluate(() => window.__CITYGEN__.setCameraPose('sf'));
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: '.qa-citygen-sf.png' });
+  results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');
+  if (process.env.SF_QA_SF_BUILTIN === '1') {
+    results.sfImportRoundtrip = await page.evaluate(async () => {
+      const api = window.__CITYGEN__;
+      const before = api.getState().buildings;
+      const payload = JSON.parse(api.exportMetadata());
+      const result = await api.importMetadata(payload);
+      if (!result.ok) return { ok: false, reason: result.reason };
+      const after = api.getState().buildings;
+      return {
+        ok: after === before && api.getCity().meta.imported === true,
+        generator: api.getCity().meta.generator,
+        buildings: after,
+      };
+    });
+  }
   }
   await writeFile('.qa-citygen-results.json', JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results, null, 2));

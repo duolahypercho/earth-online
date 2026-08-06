@@ -9,6 +9,7 @@ import {
   proposeBuildingPlacement,
   removeBuildingById,
   exportCityMetadata,
+  importCityMetadata,
 } from './core.js';
 import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
@@ -323,6 +324,25 @@ function exportMetadata() {
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return text;
+}
+
+async function importMetadataFile(file) {
+  const text = await file.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: 'Not valid JSON' };
+  }
+  const city = importCityMetadata(payload);
+  if (!city) return { ok: false, reason: 'Missing blocks, streets, or buildings' };
+  state.style = city.meta.style || 'osm';
+  state.seed = String(city.meta.seed ?? state.seed);
+  state.addedBuildings = [];
+  state.sandboxStats.buildingsPlaced = 0;
+  state.sandboxStats.blocksTouched.clear();
+  await buildCity(city);
+  return { ok: true, city };
 }
 
 function setMode(mode) {
@@ -842,6 +862,17 @@ async function boot() {
     enterVehicle: (force = false) => toggleVehicle(force),
     exitVehicle: () => toggleVehicle(false),
     exportMetadata,
+    importMetadata: async (payload) => {
+      const city = importCityMetadata(payload);
+      if (!city) return { ok: false, reason: 'Invalid metadata payload' };
+      state.style = city.meta.style || 'osm';
+      state.seed = String(city.meta.seed ?? state.seed);
+      state.addedBuildings = [];
+      state.sandboxStats.buildingsPlaced = 0;
+      state.sandboxStats.blocksTouched.clear();
+      await buildCity(city);
+      return { ok: true, city };
+    },
   };
   await generate('sanfrancisco', 731);
   makeGhost();
@@ -900,6 +931,15 @@ async function boot() {
   });
   document.querySelector('[data-action="export"]').addEventListener('click', () => {
     exportMetadata();
+  });
+  document.querySelector('[data-action="import"]').addEventListener('click', () => {
+    document.querySelector('#import-file').click();
+  });
+  document.querySelector('#import-file').addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await importMetadataFile(file);
+    event.target.value = '';
   });
   document.querySelector('[data-action="mode"]').addEventListener('click', () => {
     if (state.vehicle) toggleVehicle(false);
