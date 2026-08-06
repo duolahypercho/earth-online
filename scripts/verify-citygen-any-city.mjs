@@ -1,6 +1,11 @@
 import { writeFile } from 'node:fs/promises';
 import { osmJsonToCity } from '../src/citygen/osm.js';
-import { planBuildingPlacement, proposeBuildingPlacement, removeBuildingById } from '../src/citygen/core.js';
+import {
+  planBuildingPlacement,
+  proposeBuildingPlacement,
+  removeBuildingById,
+  exportCityMetadata,
+} from '../src/citygen/core.js';
 
 // Deterministic proof that the same CityGen OSM importer used for San
 // Francisco also converts an arbitrary city's road/building tags into the
@@ -86,6 +91,12 @@ const elements = [
 
 const city = osmJsonToCity({ elements }, { center, name: 'Portland, OR', source: 'openstreetmap' });
 const failures = [];
+const exported = exportCityMetadata(city);
+if (!exported || exported.buildings.length !== city.buildings.length || exported.streets.length !== city.streets.length) {
+  failures.push('export metadata does not match city');
+}
+if (!exported.streets.some((street) => street.oneway !== 'both')) failures.push('export one-way metadata missing');
+if (!exported.signals.length) failures.push('export signal metadata missing');
 let placementPoint = null;
 for (const block of city.blocks) {
   if (block.landUse === 'park' || !block.polygon?.length) continue;

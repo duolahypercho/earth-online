@@ -95,6 +95,21 @@ try {
     const api = window.__CITYGEN__;
     return api.getState();
   });
+  results.export = await page.evaluate(() => {
+    const payload = JSON.parse(window.__CITYGEN__.exportMetadata());
+    return {
+      generator: payload.generator,
+      counts: payload.counts,
+      buildings: payload.buildings.length,
+      streets: payload.streets.length,
+      blocks: payload.blocks.length,
+      segments: payload.segments.length,
+      signals: payload.signals.length,
+      oneWayStreets: payload.oneWayStreets.length,
+      streetSample: payload.streets[0],
+      buildingSample: payload.buildings[0],
+    };
+  });
   results.walkPhysics = await page.evaluate(async () => {
     const api = window.__CITYGEN__;
     const renderer = api.getRenderer();
@@ -239,6 +254,19 @@ try {
         signalMeta: state.signalMeta,
         streetMeta: state.streetMeta,
         generator: state.generator,
+      };
+    });
+    results.sfExport = await page.evaluate(() => {
+      const payload = JSON.parse(window.__CITYGEN__.exportMetadata());
+      return {
+        generator: payload.generator,
+        buildings: payload.buildings.length,
+        streets: payload.streets.length,
+        blocks: payload.blocks.length,
+        signals: payload.signals.length,
+        oneWayStreets: payload.oneWayStreets.length,
+        streetSample: payload.streets[0],
+        buildingSample: payload.buildings[0],
       };
     });
     const sfPlacementPlan = await page.evaluate(() => {

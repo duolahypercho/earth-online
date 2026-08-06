@@ -17,6 +17,10 @@ building authoring and real SF slice**
 3. **Rich metadata** — every block, building, street, road segment, one-way
    direction, lane count, sidewalk width, signal phase, and intersection is
    inspectable at runtime and included in `window.__CITYGEN__.getCity()`.
+   The **Export** button downloads the full metadata model as a portable
+   JSON file (schema version, bounds, counts, blocks, buildings, streets,
+   segments, intersections, signals), proven for procedural, real SF, and
+   arbitrary OSM maps.
 4. **AAA stylized look** — low-poly pastel materials, procedural facade
    textures, soft fog, warm directional light, contact shadows, bay bridge,
    water, lamps, day/night emissive windows, traffic, pedestrians.

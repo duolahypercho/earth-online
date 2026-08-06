@@ -934,6 +934,100 @@ export function removeBuildingById(city, id) {
   return true;
 }
 
+/**
+ * Serialize the full CityGen metadata model to plain JSON. This is the
+ * portable contract used by the Export button and by any downstream tool
+ * that needs block/street/building/signal metadata without loading the scene.
+ */
+export function exportCityMetadata(city) {
+  if (!city) return null;
+  const counts = describeCity(city);
+  return {
+    schemaVersion: city.schemaVersion || CITY_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    name: city.meta?.name,
+    generator: city.meta?.generator,
+    seed: city.meta?.seed,
+    style: city.meta?.style,
+    center: city.meta?.center,
+    bounds: city.meta?.bounds,
+    terrain: city.meta?.terrain,
+    streetDesign: city.meta?.streetDesign,
+    counts,
+    oneWayStreets: (city.streets || [])
+      .filter((street) => street.oneway !== 'both')
+      .map((street) => ({ id: street.id, name: street.name, oneway: street.oneway })),
+    blocks: (city.blocks || []).map((block) => ({
+      id: block.id,
+      district: block.district,
+      landUse: block.landUse || 'mixed',
+      buildings: (block.buildings || []).length,
+      streets: block.streets || [],
+      polygon: block.polygon || [],
+    })),
+    buildings: (city.buildings || []).map((building) => ({
+      id: building.id,
+      name: building.name || '',
+      address: building.address || '',
+      blockId: building.blockId,
+      district: building.district,
+      type: building.type,
+      typeLabel: building.typeLabel,
+      usage: building.usage,
+      material: building.material,
+      facade: building.facade,
+      stories: building.stories,
+      height: building.height,
+      footprintArea: building.footprintArea,
+      yearBuilt: building.yearBuilt,
+      facingStreet: building.facingStreet || '',
+      landmark: Boolean(building.landmark),
+      userAdded: Boolean(building.userAdded),
+      polygon: building.polygon || [],
+    })),
+    streets: (city.streets || []).map((street) => ({
+      id: street.id,
+      name: street.name,
+      highway: street.highway,
+      lanes: street.lanes,
+      laneW: street.laneW,
+      sidewalkW: street.sidewalkW,
+      asphaltWidth: street.asphaltWidth,
+      oneway: street.oneway,
+      blocks: (street.blocks || []).length,
+      signalIds: street.signalIds || [],
+    })),
+    segments: (city.segments || []).map((segment) => ({
+      id: segment.id,
+      streetId: segment.streetId,
+      streetName: segment.streetName,
+      highway: segment.highway,
+      lanes: segment.lanes,
+      oneway: segment.oneway,
+      width: segment.width,
+      sidewalkW: segment.sidewalkW,
+      signalId: segment.signalId || null,
+      intersectionId: segment.intersectionId || null,
+      points: segment.points || [],
+    })),
+    intersections: (city.intersections || []).map((intersection) => ({
+      id: intersection.id,
+      position: intersection.position,
+      streetIds: intersection.streetIds,
+      signalId: intersection.signalId || null,
+    })),
+    signals: (city.signals || []).map((signal) => ({
+      id: signal.id,
+      intersectionId: signal.intersectionId,
+      streetIds: signal.streetIds,
+      position: signal.position,
+      heading: signal.heading,
+      phaseOffset: signal.phaseOffset,
+      period: signal.period,
+    })),
+  };
+}
+
 function nearestSegmentForPoint(city, x, z) {
   let best = null;
   let bestDistance = Infinity;

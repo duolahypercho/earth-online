@@ -39,6 +39,12 @@ try {
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
+    ['export metadata matches city counts', Boolean(results.export)
+      && results.export.counts?.buildings === results.state?.buildings
+      && results.export.counts?.streets === results.state?.streets
+      && results.export.counts?.signals === results.state?.signals],
+    ['export includes street metadata', Boolean(results.export?.streetSample?.oneway && results.export?.streetSample?.sidewalkW && results.export?.streetSample?.asphaltWidth)],
+    ['export includes building metadata', Boolean(results.export?.buildingSample?.blockId && results.export?.buildingSample?.material && results.export?.buildingSample?.facade)],
   ];
   for (const [label, pass] of checks) {
     critic.maxScore += 1;
@@ -135,6 +141,20 @@ try {
       ];
       for (const [label, pass] of sfAuthoringChecks) {
         critic.maxScore += 1;
+        if (pass) critic.score += 1;
+        else {
+          critic.blockers.push(label);
+          critic.notes.push(`FAIL ${label}`);
+        }
+      }
+    }
+    if (results.sfExport) {
+      critic.maxScore += 2;
+      const sfExportChecks = [
+        ['real SF export carries real street names', results.sfExport.streets === results.sfBuiltin.streets && Boolean(results.sfExport.streetSample?.name)],
+        ['real SF export includes one-way metadata', results.sfExport.oneWayStreets === results.sfBuiltin.oneWayStreets],
+      ];
+      for (const [label, pass] of sfExportChecks) {
         if (pass) critic.score += 1;
         else {
           critic.blockers.push(label);

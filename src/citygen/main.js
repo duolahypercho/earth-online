@@ -8,6 +8,7 @@ import {
   planBuildingPlacement,
   proposeBuildingPlacement,
   removeBuildingById,
+  exportCityMetadata,
 } from './core.js';
 import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
@@ -283,6 +284,23 @@ function togglePlacement(force = null) {
   if (state.placement && state.mode !== 'orbit') setMode('orbit');
   if (!state.placement && state.ghost) state.ghost.group.visible = false;
   syncPlacementState();
+}
+
+function exportMetadata() {
+  const payload = exportCityMetadata(state.city);
+  if (!payload) return null;
+  const text = JSON.stringify(payload, null, 2);
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  const safeName = String(payload.name || 'city').replace(/[^a-z0-9-_]+/gi, '-').toLowerCase();
+  anchor.href = url;
+  anchor.download = `${safeName}-citygen.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return text;
 }
 
 function setMode(mode) {
@@ -769,6 +787,7 @@ async function boot() {
     togglePlacement,
     enterVehicle: (force = false) => toggleVehicle(force),
     exitVehicle: () => toggleVehicle(false),
+    exportMetadata,
   };
   await generate('sanfrancisco', 731);
   makeGhost();
@@ -824,6 +843,9 @@ async function boot() {
   });
   document.querySelector('[data-action="seed"]').addEventListener('click', async () => {
     await navigator.clipboard?.writeText(String(state.seed)).catch(() => {});
+  });
+  document.querySelector('[data-action="export"]').addEventListener('click', () => {
+    exportMetadata();
   });
   document.querySelector('[data-action="mode"]').addEventListener('click', () => {
     if (state.vehicle) toggleVehicle(false);
