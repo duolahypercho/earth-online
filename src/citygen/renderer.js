@@ -1537,6 +1537,7 @@ export class CityRenderer {
 
   buildShopAwnings(root, city) {
     const random = mulberry32(Number(city.meta.seedInt || 1) + 401);
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     const awningColors = ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0', '#d95f5f', '#3f8f9e'];
     const materials = [];
     const neonSigns = [];
@@ -1545,6 +1546,7 @@ export class CityRenderer {
     const group = new THREE.Group();
     group.name = 'shopfront-awnings';
     let count = 0;
+    const maxAwnings = realMap ? 320 : 140;
     let lastAwning = null;
     for (const building of city.buildings) {
       if (building.type !== 'shop' && building.facade !== 'shopfront') continue;
@@ -1557,7 +1559,21 @@ export class CityRenderer {
       if (maxX - minX < 6 || maxZ - minZ < 6) continue;
       let face = 'z';
       let side = 1;
-      if (building.facingStreet) {
+      if (realMap && !building.facingStreet) {
+        const near = this.nearestRoadSegment(city, { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 });
+        if (near) {
+          const a = near.points[0];
+          const b = near.points[near.points.length - 1];
+          const horizontal = Math.abs(b.x - a.x) >= Math.abs(b.z - a.z);
+          if (horizontal) {
+            face = 'z';
+            side = a.z > (minZ + maxZ) / 2 ? 1 : -1;
+          } else {
+            face = 'x';
+            side = a.x > (minX + maxX) / 2 ? 1 : -1;
+          }
+        }
+      } else if (building.facingStreet) {
         const street = city.streets.find((s) => s.name === building.facingStreet);
         if (street?.axis === 'x') {
           face = 'x';
@@ -1650,7 +1666,7 @@ export class CityRenderer {
           });
         }
       }
-      if (count >= 140) break;
+      if (count >= maxAwnings) break;
     }
     if (count) {
       root.add(group);
@@ -1745,6 +1761,22 @@ export class CityRenderer {
       root.add(lights);
       this.geometryCache.push(bistroGeometry);
     }
+  }
+
+  nearestRoadSegment(city, point) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const segment of city.segments || []) {
+      if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway') continue;
+      const a = segment.points[0];
+      const b = segment.points[segment.points.length - 1];
+      const d = pointToSegmentDistance(point, a, b);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = segment;
+      }
+    }
+    return bestDistance < 46 ? best : null;
   }
 
   setTimeOfDay(hour) {
@@ -1845,4 +1877,13 @@ export class CityRenderer {
 function smoothstep(a, b, x) {
   const t = clamp((x - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq === 0) return Math.hypot(p.x - a.x, p.z - a.z);
+  const t = clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq, 0, 1);
+  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
 }

@@ -786,7 +786,22 @@ async function boot() {
             }
             return count;
           };
+          const shopCount = (segment) => {
+            const mid = segment.points[Math.floor(segment.points.length / 2)] || segment.points[0];
+            let count = 0;
+            for (const building of city.buildings || []) {
+              if (building.type !== 'shop' && building.facade !== 'shopfront') continue;
+              const xs = building.polygon?.map((p) => p.x) || [];
+              const zs = building.polygon?.map((p) => p.z) || [];
+              if (!xs.length) continue;
+              const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+              const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+              if (Math.hypot(cx - mid.x, cz - mid.z) < 110) count += 1;
+            }
+            return count;
+          };
           const rank = (segment) => density(segment) * 1000
+            + shopCount(segment) * 260
             + (segment.highway === 'primary' || segment.highway === 'secondary' ? 3 : segment.highway === 'tertiary' ? 2 : 1) * 10
             + Math.min(10, len(segment) / 40);
           return rank(b) - rank(a);
