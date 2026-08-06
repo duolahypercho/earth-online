@@ -95,6 +95,67 @@ try {
     const api = window.__CITYGEN__;
     return api.getState();
   });
+
+  const placement = await page.evaluate(() => {
+    const api = window.__CITYGEN__;
+    const city = api.getCity();
+    for (const block of city.blocks) {
+      if (block.landUse === 'park' || !block.polygon?.length) continue;
+      const xs = block.polygon.map((p) => p.x);
+      const zs = block.polygon.map((p) => p.z);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      if (api.planPlacement(cx, cz).ok) return { ok: true, x: cx, z: cz };
+      for (let dx = -12; dx <= 12; dx += 4) {
+        for (let dz = -12; dz <= 12; dz += 4) {
+          if (api.planPlacement(cx + dx, cz + dz).ok) return { ok: true, x: cx + dx, z: cz + dz };
+        }
+      }
+    }
+    return { ok: false };
+  });
+  results.placementPlan = placement;
+  if (placement.ok) {
+    const placed = await page.evaluate(({ x, z }) => window.__CITYGEN__.placeBuildingAt(x, z), placement);
+    await page.waitForTimeout(900);
+    results.placement = {
+      placed,
+      ...(await page.evaluate(() => {
+        const api = window.__CITYGEN__;
+        const city = api.getCity();
+        const last = [...city.buildings].filter((b) => b.userAdded).at(-1) || null;
+        return {
+          placedBuildings: api.getState().placedBuildings,
+          buildings: api.getState().buildings,
+          lastAdded: last ? {
+            id: last.id,
+            typeLabel: last.typeLabel,
+            usage: last.usage,
+            blockId: last.blockId,
+            district: last.district,
+            material: last.material,
+            facade: last.facade,
+            height: last.height,
+            stories: last.stories,
+            facingStreet: last.facingStreet,
+            address: last.address,
+            userAdded: last.userAdded,
+          } : null,
+        };
+      })),
+    };
+    await page.screenshot({ path: '.qa-citygen-placed.png' });
+    results.frames = results.frames || {};
+    results.frames['.qa-citygen-placed.png'] = await analyzeImage('.qa-citygen-placed.png');
+    await page.evaluate(() => window.__CITYGEN__.undoLastAdded());
+    await page.waitForTimeout(800);
+    results.afterUndo = await page.evaluate(() => {
+      const api = window.__CITYGEN__;
+      return { placedBuildings: api.getState().placedBuildings, buildings: api.getState().buildings };
+    });
+    await page.evaluate(() => window.__CITYGEN__.setCameraPose('hero'));
+    await page.waitForTimeout(400);
+  }
   await page.screenshot({ path: '.qa-citygen-hero.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('street'));
@@ -105,21 +166,24 @@ try {
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.qa-citygen-aerial.png' });
 
+  await page.evaluate(() => window.__CITYGEN__.setDay(false));
   await page.evaluate(() => window.__CITYGEN__.setTime(21.5));
   await page.waitForTimeout(600);
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('night'));
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.qa-citygen-night.png' });
+  await page.evaluate(() => window.__CITYGEN__.setDay(true));
   await page.evaluate(() => window.__CITYGEN__.setTime(15));
 
-  results.frames = {};
+  const mainFrames = {};
   for (const file of ['.qa-citygen-hero.png', '.qa-citygen-street.png', '.qa-citygen-aerial.png', '.qa-citygen-night.png']) {
     try {
-      results.frames[path.basename(file)] = await analyzeImage(file);
+      mainFrames[path.basename(file)] = await analyzeImage(file);
     } catch (error) {
-      results.frames[path.basename(file)] = { error: error.message };
+      mainFrames[path.basename(file)] = { error: error.message };
     }
   }
+  results.frames = { ...(results.frames || {}), ...mainFrames };
   results.errors = errors;
   if (process.env.SF_QA_SF_BUILTIN === '1') {
     const sfLoaded = await page.evaluate(async () => {

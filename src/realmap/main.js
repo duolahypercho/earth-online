@@ -788,8 +788,8 @@ function getSuggestedCameraPoses() {
   // elevationAware poses treat Y as height ABOVE terrain. Do not pre-add
   // elevationAt() here or resolveCameraPose will double-count and fling the
   // camera into the sky (broken canyon/drizzle frames).
-  const heroDistance = THREE.MathUtils.clamp(span * 0.2, 180, 380);
-  const heroHeight = THREE.MathUtils.clamp(span * 0.055, 42, 78);
+  const heroDistance = THREE.MathUtils.clamp(span * 0.13, 160, 300);
+  const heroHeight = THREE.MathUtils.clamp(span * 0.04, 36, 62);
   const heroCamX = skylineTarget.x - viewNx * heroDistance;
   const heroCamZ = skylineTarget.z - viewNz * heroDistance;
   const heroTargetLift = Math.min(58, skylineTarget.height * 0.24);
@@ -3196,13 +3196,33 @@ function createWaterPlane(regionPoints) {
   const bounds = bboxOfPoints(regionPoints);
   const width = Math.max(bounds.maxX - bounds.minX, 800) + 1400;
   const height = Math.max(bounds.maxZ - bounds.minZ, 800) + 1400;
-  const geometry = new THREE.PlaneGeometry(width, height, 1, 1);
+  const geometry = new THREE.PlaneGeometry(width, height, 40, 40);
   geometry.rotateX(-Math.PI / 2);
+  const positions = geometry.attributes.position.array;
+  const colors = new Float32Array(positions.length);
+  const light = new THREE.Color(0x2d6b85);
+  const dark = new THREE.Color(0x12384c);
+  const color = new THREE.Color();
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i];
+    const z = positions[i + 2];
+    const wave = Math.sin(x * 0.011 + z * 0.019) * 0.5
+      + Math.sin((x + z) * 0.007 + 1.7) * 0.5;
+    color.copy(dark).lerp(light, 0.22 + wave * 0.22);
+    colors[i] = color.r;
+    colors[i + 1] = color.g;
+    colors[i + 2] = color.b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const material = new THREE.MeshStandardMaterial({
     color: 0x1a4d63,
-    roughness: 0.22,
-    metalness: 0.18,
+    vertexColors: true,
+    roughness: 0.16,
+    metalness: 0.22,
+    emissive: 0x000000,
+    emissiveIntensity: 0,
   });
+  waterMaterial = material;
   const water = new THREE.Mesh(geometry, material);
   water.position.set(
     (bounds.minX + bounds.maxX) / 2,
@@ -3211,6 +3231,376 @@ function createWaterPlane(regionPoints) {
   );
   water.userData = { type: 'water' };
   return water;
+}
+
+function createCloudLayer(center) {
+  cloudGroup = new THREE.Group();
+  cloudGroup.name = 'Low-poly coastal clouds';
+  const material = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.92,
+    fog: false,
+    depthWrite: false,
+  });
+  const seedRandom = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  for (let i = 0; i < 16; i += 1) {
+    const angle = (i / 16) * Math.PI * 2 + seedRandom(i + 4) * 0.7;
+    const radius = 580 + seedRandom(i + 11) * 620;
+    const cloud = new THREE.Group();
+    cloud.position.set(
+      center.x + Math.cos(angle) * radius,
+      210 + seedRandom(i + 17) * 150,
+      center.z + Math.sin(angle) * radius,
+    );
+    const pieces = 2 + Math.floor(seedRandom(i + 23) * 3);
+    for (let p = 0; p < pieces; p += 1) {
+      const puff = new THREE.Mesh(
+        new THREE.BoxGeometry(38 + seedRandom(i * 7 + p) * 42, 9 + seedRandom(i * 3 + p) * 8, 18 + seedRandom(i * 5 + p) * 16),
+        material,
+      );
+      puff.position.set(
+        (p - pieces * 0.5) * 24 + seedRandom(i + p) * 10,
+        seedRandom(i * 13 + p) * 6,
+        seedRandom(i * 19 + p) * 12,
+      );
+      cloud.add(puff);
+    }
+    cloudGroup.add(cloud);
+  }
+  return cloudGroup;
+}
+
+function createSfBackdrop(regionBBox, skylineTarget, heroView, nightView) {
+  backdropGroup = new THREE.Group();
+  backdropGroup.name = 'SF horizon backdrop';
+  const extent = Math.max(regionBBox.maxX - regionBBox.minX, regionBBox.maxZ - regionBBox.minZ);
+  const skyX = skylineTarget.x;
+  const skyZ = skylineTarget.z;
+  const heroAngle = Math.atan2(heroView.z, heroView.x);
+  const nightAngle = Math.atan2(nightView.z, nightView.x);
+  const arcStart = Math.min(heroAngle, nightAngle) - 0.45;
+  const arcEnd = Math.max(heroAngle, nightAngle) + 0.45;
+  const arcSpan = arcEnd - arcStart;
+  const pointAt = (angle, depth) => ({
+    x: skyX + Math.cos(angle) * depth,
+    z: skyZ + Math.sin(angle) * depth,
+  });
+  const seedRandom = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+
+  const towerCount = 96;
+  const towerGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const towerMaterial = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    emissive: 0xffc98f,
+    emissiveIntensity: 0,
+    fog: false,
+  });
+  backdropNightMaterials.push(towerMaterial);
+  const towerMesh = new THREE.InstancedMesh(towerGeometry, towerMaterial, towerCount);
+  const capMesh = new THREE.InstancedMesh(towerGeometry, towerMaterial, towerCount);
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  for (let i = 0; i < towerCount; i += 1) {
+    const progress = towerCount === 1 ? 0 : i / (towerCount - 1);
+    const angle = arcStart + progress * arcSpan;
+    const ringDepth = extent * 0.5 + 620 + (seedRandom(i + 2) - 0.5) * extent * 0.1;
+    const point = pointAt(angle, ringDepth);
+    const height = 36 + seedRandom(i + 2) * 232;
+    const width = 22 + seedRandom(i + 9) * 34;
+    const depth = 20 + seedRandom(i + 3) * 26;
+    dummy.position.set(point.x, height * 0.5 - 2, point.z);
+    dummy.scale.set(width, height, depth);
+    dummy.updateMatrix();
+    towerMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(point.x, height - 2, point.z);
+    dummy.scale.set(width * 0.68, 7 + seedRandom(i + 13) * 8, depth * 0.68);
+    dummy.updateMatrix();
+    capMesh.setMatrixAt(i, dummy.matrix);
+    tint.setHSL(0.07 + seedRandom(i + 5) * 0.055, 0.1, 0.6 + seedRandom(i + 7) * 0.16);
+    towerMesh.setColorAt(i, tint);
+    capMesh.setColorAt(i, tint);
+  }
+  towerMesh.instanceMatrix.needsUpdate = true;
+  if (towerMesh.instanceColor) towerMesh.instanceColor.needsUpdate = true;
+  capMesh.instanceMatrix.needsUpdate = true;
+  if (capMesh.instanceColor) capMesh.instanceColor.needsUpdate = true;
+  backdropGroup.add(towerMesh, capMesh);
+
+  // Denser near ring: this is the skyline mass visible behind downtown, not a
+  // sparse far ridge. Stepped rooftop boxes keep the silhouette readable.
+  const nearCount = 128;
+  const nearTowerMaterial = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    emissive: 0xffd9a0,
+    emissiveIntensity: 0,
+    fog: false,
+  });
+  backdropNightMaterials.push(nearTowerMaterial);
+  const nearTowerMesh = new THREE.InstancedMesh(towerGeometry, nearTowerMaterial, nearCount);
+  const nearCapMesh = new THREE.InstancedMesh(towerGeometry, nearTowerMaterial, nearCount);
+  for (let i = 0; i < nearCount; i += 1) {
+    const progress = nearCount === 1 ? 0 : i / (nearCount - 1);
+    const angle = arcStart + progress * arcSpan;
+    const ringDepth = extent * 0.34 + 340 + (seedRandom(i + 53) - 0.5) * extent * 0.08;
+    const point = pointAt(angle, ringDepth);
+    const height = 42 + seedRandom(i + 51) * 188;
+    const width = 24 + seedRandom(i + 57) * 30;
+    const depth = 22 + seedRandom(i + 61) * 24;
+    dummy.position.set(point.x, height * 0.5 - 1, point.z);
+    dummy.scale.set(width, height, depth);
+    dummy.updateMatrix();
+    nearTowerMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(point.x, height - 1.5, point.z);
+    dummy.scale.set(width * 0.72, 8 + seedRandom(i + 67) * 9, depth * 0.72);
+    dummy.updateMatrix();
+    nearCapMesh.setMatrixAt(i, dummy.matrix);
+    tint.setHSL(0.06 + seedRandom(i + 71) * 0.06, 0.12, 0.58 + seedRandom(i + 73) * 0.18);
+    nearTowerMesh.setColorAt(i, tint);
+    nearCapMesh.setColorAt(i, tint);
+  }
+  nearTowerMesh.instanceMatrix.needsUpdate = true;
+  if (nearTowerMesh.instanceColor) nearTowerMesh.instanceColor.needsUpdate = true;
+  nearCapMesh.instanceMatrix.needsUpdate = true;
+  if (nearCapMesh.instanceColor) nearCapMesh.instanceColor.needsUpdate = true;
+  backdropGroup.add(nearTowerMesh, nearCapMesh);
+
+  const hillCount = 36;
+  const hillGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const hillMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, fog: false });
+  const hillMesh = new THREE.InstancedMesh(hillGeometry, hillMaterial, hillCount);
+  for (let i = 0; i < hillCount; i += 1) {
+    const progress = hillCount === 1 ? 0 : i / (hillCount - 1);
+    const angle = arcStart + progress * arcSpan;
+    const depth = extent * 0.58 + 700 + (seedRandom(i + 33) - 0.5) * extent * 0.1;
+    const point = pointAt(angle, depth);
+    const height = 46 + seedRandom(i + 31) * 96;
+    const width = 120 + seedRandom(i + 37) * 180;
+    dummy.position.set(point.x, height * 0.5 - 8, point.z);
+    dummy.scale.set(width, height, 90 + seedRandom(i + 41) * 90);
+    dummy.updateMatrix();
+    hillMesh.setMatrixAt(i, dummy.matrix);
+    tint.setHSL(0.42 + seedRandom(i + 43) * 0.08, 0.2, 0.34 + seedRandom(i + 47) * 0.12);
+    hillMesh.setColorAt(i, tint);
+  }
+  hillMesh.instanceMatrix.needsUpdate = true;
+  if (hillMesh.instanceColor) hillMesh.instanceColor.needsUpdate = true;
+  backdropGroup.add(hillMesh);
+
+  const addBridge = (angle, depth, deckLength) => {
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+    const perpX = -dirZ;
+    const perpZ = dirX;
+    const center = pointAt(angle, depth);
+    const deckYaw = Math.atan2(-perpZ, perpX);
+    const bridgeMaterial = new THREE.MeshLambertMaterial({ color: 0x6a7078, fog: false });
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(deckLength, 2.4, 16), bridgeMaterial);
+    deck.position.set(center.x, 54, center.z);
+    deck.rotation.y = deckYaw;
+    backdropGroup.add(deck);
+    const towerMaterialBridge = new THREE.MeshLambertMaterial({ color: 0x8b8f96, fog: false });
+    for (const side of [-1, 1]) {
+      const towerX = center.x + perpX * side * deckLength * 0.42;
+      const towerZ = center.z + perpZ * side * deckLength * 0.42;
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(11, 96, 9), towerMaterialBridge);
+      tower.position.set(towerX, 48, towerZ);
+      backdropGroup.add(tower);
+      const beaconMaterial = new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: false });
+      for (const beaconAcross of [side * deckLength * 0.42, side * deckLength * 0.21]) {
+        const beacon = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.6, 3.2), beaconMaterial);
+        beacon.position.set(center.x + perpX * beaconAcross, 94, center.z + perpZ * beaconAcross);
+        backdropGroup.add(beacon);
+      }
+      for (const cableSide of [-7.5, 7.5]) {
+        const positions = [];
+        const steps = 26;
+        for (let s = 0; s <= steps; s += 1) {
+          const t = s / steps;
+          const inv = 1 - t;
+          const across = side * deckLength * 0.42 * inv * inv
+            + side * deckLength * 0.16 * 2 * inv * t;
+          const y = 96 * inv * inv + 62 * 2 * inv * t + 56 * t * t;
+          positions.push(
+            center.x + perpX * across + dirX * cableSide,
+            y,
+            center.z + perpZ * across + dirZ * cableSide,
+          );
+        }
+        const cableGeometry = new THREE.BufferGeometry();
+        cableGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const cable = new THREE.Line(cableGeometry, new THREE.LineBasicMaterial({
+          color: 0xc7cad0,
+          transparent: true,
+          opacity: 0.9,
+          fog: false,
+        }));
+        backdropGroup.add(cable);
+      }
+    }
+    const deckLightMaterial = new THREE.MeshBasicMaterial({ color: 0xffc98f, fog: false });
+    const deckLightCount = 26;
+    const deckLightGeometry = new THREE.BoxGeometry(1.6, 0.7, 1.6);
+    const deckLights = new THREE.InstancedMesh(deckLightGeometry, deckLightMaterial, deckLightCount);
+    for (let i = 0; i < deckLightCount; i += 1) {
+      const t = (i / (deckLightCount - 1)) - 0.5;
+      const side = i % 2 === 0 ? -1 : 1;
+      dummy.position.set(
+        center.x + perpX * t * deckLength * 0.94 + dirX * side * 6.5,
+        55.6,
+        center.z + perpZ * t * deckLength * 0.94 + dirZ * side * 6.5,
+      );
+      dummy.rotation.set(0, deckYaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      deckLights.setMatrixAt(i, dummy.matrix);
+    }
+    deckLights.instanceMatrix.needsUpdate = true;
+    backdropGroup.add(deckLights);
+  };
+  addBridge(heroAngle, extent * 0.36 + 380, Math.min(1150, Math.max(640, extent * 0.42)));
+  addBridge(nightAngle, extent * 0.42 + 420, Math.min(940, Math.max(520, extent * 0.32)));
+  return backdropGroup;
+}
+
+function createNightBayStreaks(skylineTarget, heroView, nightView, extent) {
+  const group = new THREE.Group();
+  group.name = 'Night bay light streaks';
+  const count = 46;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xffc98f,
+    transparent: true,
+    opacity: 0.82,
+    fog: false,
+    depthWrite: false,
+  });
+  const streaks = new THREE.InstancedMesh(geometry, material, count);
+  const dummy = new THREE.Object3D();
+  const seedRandom = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  const heroAngle = Math.atan2(heroView.z, heroView.x);
+  const nightAngle = Math.atan2(nightView.z, nightView.x);
+  const arcStart = Math.min(heroAngle, nightAngle) - 0.5;
+  const arcEnd = Math.max(heroAngle, nightAngle) + 0.5;
+  const arcSpan = arcEnd - arcStart;
+  for (let i = 0; i < count; i += 1) {
+    const angle = arcStart + seedRandom(i + 17) * arcSpan;
+    const along = extent * 0.08 + seedRandom(i + 3) * extent * 0.3;
+    const x = skylineTarget.x + Math.cos(angle) * along;
+    const z = skylineTarget.z + Math.sin(angle) * along;
+    const length = 16 + seedRandom(i + 11) * 34;
+    dummy.position.set(x, SEA_LEVEL_Y + 0.22, z);
+    dummy.rotation.set(0, angle + Math.PI * 0.5, 0);
+    dummy.scale.set(length, 0.7, 1.6);
+    dummy.updateMatrix();
+    streaks.setMatrixAt(i, dummy.matrix);
+  }
+  streaks.instanceMatrix.needsUpdate = true;
+  streaks.visible = timeOfDay === 'night' || timeOfDay === 'dusk' || timeOfDay === 'dawn';
+  group.add(streaks);
+  nightBayStreaksGroup = group;
+  return group;
+}
+
+function createParkedCars(roads) {
+  parkedCarGroup = new THREE.Group();
+  parkedCarGroup.name = 'Curbside parked cars';
+  const classes = new Set(['primary', 'secondary', 'tertiary', 'residential']);
+  const spots = [];
+  const seedRandom = (seed) => {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  for (const road of roads) {
+    if (!classes.has(road.highway)) continue;
+    const points = roadPoints(road);
+    let length = 0;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+    }
+    if (length < 38 || spots.length >= 170) continue;
+    const count = Math.min(6, Math.floor(length / 27));
+    for (let c = 0; c < count && spots.length < 170; c += 1) {
+      const target = ((c + 0.62) / count) * length;
+      let walked = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + segLength >= target) {
+          const t = segLength > 0 ? (target - walked) / segLength : 0;
+          const x = a.x + (b.x - a.x) * t;
+          const z = a.z + (b.z - a.z) * t;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const side = c % 2 === 0 ? 1 : -1;
+          const offset = roadHalfWidth(road) + 1.25;
+          spots.push({
+            x: x - (dz / len) * side * offset,
+            z: z + (dx / len) * side * offset,
+            heading: Math.atan2(dx, dz),
+            color: seedRandom(road.id * 13 + c),
+          });
+          break;
+        }
+        walked += segLength;
+      }
+    }
+  }
+  if (!spots.length) {
+    cityRoot.add(parkedCarGroup);
+    return parkedCarGroup;
+  }
+  const bodyGeometry = new THREE.BoxGeometry(1.8, 0.56, 3.9);
+  const cabGeometry = new THREE.BoxGeometry(1.5, 0.52, 1.7);
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.38,
+    metalness: 0.5,
+    flatShading: true,
+  });
+  const cabMaterial = new THREE.MeshStandardMaterial({
+    color: 0xb9d3e0,
+    roughness: 0.22,
+    metalness: 0.2,
+    flatShading: true,
+  });
+  const bodies = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, spots.length);
+  const cabs = new THREE.InstancedMesh(cabGeometry, cabMaterial, spots.length);
+  const dummy = new THREE.Object3D();
+  const paints = [0xd94f4a, 0xe8b23a, 0x4f86c8, 0x3f9e8f, 0x8f74c8, 0xd47a3f, 0xf2e9d8, 0x6fbf73];
+  const color = new THREE.Color();
+  for (let i = 0; i < spots.length; i += 1) {
+    const spot = spots[i];
+    const groundY = elevationAt(spot.x, spot.z);
+    dummy.position.set(spot.x, groundY + 0.32, spot.z);
+    dummy.rotation.set(0, spot.heading, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    bodies.setMatrixAt(i, dummy.matrix);
+    cabs.setMatrixAt(i, dummy.matrix);
+    color.set(paints[Math.floor(spot.color * paints.length)]);
+    bodies.setColorAt(i, color);
+  }
+  bodies.instanceMatrix.needsUpdate = true;
+  cabs.instanceMatrix.needsUpdate = true;
+  if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
+  bodies.castShadow = true;
+  bodies.receiveShadow = true;
+  cabs.castShadow = true;
+  parkedCarGroup.add(bodies, cabs);
+  cityRoot.add(parkedCarGroup);
+  return parkedCarGroup;
 }
 
 const SF_LANDMARK_SPECS = [
@@ -6581,6 +6971,14 @@ let driveIndex = -1;
 let missionState = null;
 let composer = null;
 let skyDome = null;
+let waterMaterial = null;
+let starsGroup = null;
+let moonDiscMaterial = null;
+let moonGlowMaterial = null;
+let cloudGroup = null;
+let backdropGroup = null;
+let parkedCarGroup = null;
+let nightBayStreaksGroup = null;
 let sceneTriangleCount = 0;
 let weatherIndex = 0;
 let weatherMode = 'clear';
@@ -6626,6 +7024,7 @@ let mistVelocities = null;
 const windowMaterials = [];
 const streetLightMaterials = [];
 const vehicleHeadlightMaterials = [];
+const backdropNightMaterials = [];
 const CELL_SIZE = 24;
 
 const WEATHER_MODES = {
@@ -6642,6 +7041,7 @@ const WEATHER_MODES = {
     skyMid: 0x6eaed0,
     skyHorizon: 0xe8c898,
     skySun: 0xffc070,
+    cityGlow: 0x000000,
   },
   fog: {
     label: 'PACIFIC FOG',
@@ -6656,6 +7056,7 @@ const WEATHER_MODES = {
     skyMid: 0xb0c0c8,
     skyHorizon: 0xc3c8c4,
     skySun: 0xd7d3c8,
+    cityGlow: 0x000000,
   },
   drizzle: {
     label: 'PACIFIC DRIZZLE',
@@ -6670,6 +7071,7 @@ const WEATHER_MODES = {
     skyMid: 0x849aa2,
     skyHorizon: 0xa5a89f,
     skySun: 0xc0b498,
+    cityGlow: 0x000000,
   },
 };
 
@@ -6691,6 +7093,7 @@ const TIME_OF_DAY_MODES = {
     skyMid: 0x6eaed0,
     skyHorizon: 0xe8c898,
     skySun: 0xffc070,
+    cityGlow: 0x000000,
     night: 0,
   },
   dusk: {
@@ -6709,6 +7112,7 @@ const TIME_OF_DAY_MODES = {
     skyTop: 0x3b5474,
     skyHorizon: 0xd89070,
     skySun: 0xffa66e,
+    cityGlow: 0x8a5a3a,
     night: 0.42,
   },
   night: {
@@ -6722,11 +7126,12 @@ const TIME_OF_DAY_MODES = {
     sunPosition: [-420, 120, -380],
     hemisphereSky: 0x243652,
     hemisphereGround: 0x141820,
-    hemisphereIntensity: 0.55,
-    exposure: 1.08,
-    skyTop: 0x0c1524,
-    skyHorizon: 0x243448,
+    hemisphereIntensity: 0.62,
+    exposure: 1.22,
+    skyTop: 0x0f1a2e,
+    skyHorizon: 0x2c3e58,
     skySun: 0xb8c8e0,
+    cityGlow: 0x59442e,
     night: 1,
   },
   dawn: {
@@ -6745,6 +7150,7 @@ const TIME_OF_DAY_MODES = {
     skyTop: 0x6f8ba8,
     skyHorizon: 0xe6b390,
     skySun: 0xffc79b,
+    cityGlow: 0xa56a44,
     night: 0.28,
   },
 };
@@ -9063,6 +9469,7 @@ function setupScene() {
         midColor: { value: new THREE.Color(0x6eaed0) },
         horizonColor: { value: new THREE.Color(0xe8c898) },
         sunColor: { value: new THREE.Color(0xffc070) },
+        cityGlowColor: { value: new THREE.Color(0x000000) },
       },
       vertexShader: `
         varying vec3 vWorldPosition;
@@ -9077,6 +9484,7 @@ function setupScene() {
         uniform vec3 midColor;
         uniform vec3 horizonColor;
         uniform vec3 sunColor;
+        uniform vec3 cityGlowColor;
         varying vec3 vWorldPosition;
         void main() {
           float h = normalize(vWorldPosition).y;
@@ -9086,6 +9494,8 @@ function setupScene() {
           color = mix(color, topColor, tHigh);
           float sunGlow = clamp(1.0 - distance(normalize(vWorldPosition), normalize(vec3(-0.32, 0.38, -0.28))) * 2.8, 0.0, 1.0);
           color += sunColor * sunGlow * sunGlow * 0.38;
+          float horizonBand = clamp(1.0 - abs(h) * 3.4, 0.0, 1.0);
+          color += cityGlowColor * horizonBand * horizonBand * 0.55;
           gl_FragColor = vec4(color, 1.0);
         }
       `,
@@ -9094,6 +9504,52 @@ function setupScene() {
   skyDome.name = 'Real map gradient sky';
   skyDome.renderOrder = -10;
   scene.add(skyDome);
+
+  starsGroup = new THREE.Group();
+  starsGroup.name = 'SF night stars';
+  const starCount = 640;
+  const starPositions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i += 1) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(THREE.MathUtils.lerp(0.12, 1, Math.random()));
+    const radius = 1260;
+    starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+    starPositions[i * 3 + 1] = radius * Math.cos(phi);
+    starPositions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+  }
+  const starGeometry = new THREE.BufferGeometry();
+  starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+  const starMaterial = new THREE.PointsMaterial({
+    color: 0xeaf3ff,
+    size: 3.4,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    fog: false,
+  });
+  starsGroup.add(new THREE.Points(starGeometry, starMaterial));
+  moonDiscMaterial = new THREE.MeshBasicMaterial({
+    color: 0xfff2cc,
+    transparent: true,
+    opacity: 0,
+    fog: false,
+  });
+  moonGlowMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd8d2ff,
+    transparent: true,
+    opacity: 0,
+    fog: false,
+    depthWrite: false,
+  });
+  const moonGlow = new THREE.Mesh(new THREE.CircleGeometry(92, 28), moonGlowMaterial);
+  moonGlow.position.set(920, 620, -780);
+  moonGlow.lookAt(0, 20, 0);
+  const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(38, 28), moonDiscMaterial);
+  moonDisc.position.set(920, 620, -780);
+  moonDisc.lookAt(0, 20, 0);
+  starsGroup.add(moonGlow, moonDisc);
+  scene.add(starsGroup);
 
   hemisphereLight = new THREE.HemisphereLight(0xb8dff0, 0x5a5648, 0.92);
   scene.add(hemisphereLight);
@@ -9257,6 +9713,9 @@ function setWeatherMode(mode) {
     }
     skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
+    if (skyDome.material.uniforms.cityGlowColor) {
+      skyDome.material.uniforms.cityGlowColor.value.set(config.cityGlow || 0x000000);
+    }
   }
   applyWeatherRoadTuning(mode);
   if (scene && !rainGroup) createRainSystem();
@@ -9288,6 +9747,20 @@ function setTimeOfDay(mode) {
     }
     skyDome.material.uniforms.horizonColor.value.set(config.skyHorizon);
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
+    if (skyDome.material.uniforms.cityGlowColor) {
+      skyDome.material.uniforms.cityGlowColor.value.set(config.cityGlow || 0x000000);
+    }
+  }
+  if (starsGroup) {
+    const night = config.night || 0;
+    starsGroup.traverse((object) => {
+      if (object.isPoints && object.material) object.material.opacity = night * 0.95;
+    });
+    if (moonDiscMaterial) moonDiscMaterial.opacity = 0.2 + night * 0.8;
+    if (moonGlowMaterial) moonGlowMaterial.opacity = night * 0.22;
+  }
+  if (nightBayStreaksGroup) {
+    nightBayStreaksGroup.visible = mode === 'night' || mode === 'dusk' || mode === 'dawn';
   }
   updateNightGlow(config.night);
   return timeOfDay;
@@ -9296,7 +9769,7 @@ function setTimeOfDay(mode) {
 function updateNightGlow(amount) {
   const night = THREE.MathUtils.clamp(amount, 0, 1);
   // Keep ambient night dark; let windows/streetlights carry the glow.
-  const windowGlow = night * 1.28;
+  const windowGlow = night * 1.75;
   for (let index = 0; index < windowMaterials.length; index += 1) {
     const material = windowMaterials[index];
     if (!material) continue;
@@ -9321,8 +9794,19 @@ function updateNightGlow(amount) {
     material.emissiveIntensity = 0.55 + night * 2.2;
     material.needsUpdate = true;
   }
-  if (moonFill) moonFill.intensity = night * 0.35;
-  if (nightAmbient) nightAmbient.intensity = night * 0.18;
+  for (let index = 0; index < backdropNightMaterials.length; index += 1) {
+    const material = backdropNightMaterials[index];
+    if (!material) continue;
+    material.emissiveIntensity = night * (index === 1 ? 1.4 : 0.75);
+    material.needsUpdate = true;
+  }
+  if (moonFill) moonFill.intensity = 0.12 + night * 0.7;
+  if (nightAmbient) nightAmbient.intensity = 0.14 + night * 0.34;
+  if (waterMaterial) {
+    waterMaterial.emissive.set(0x123048);
+    waterMaterial.emissiveIntensity = night * 0.9;
+    waterMaterial.needsUpdate = true;
+  }
   if (ssaoPassRef) ssaoPassRef.enabled = night < 0.65;
 }
 
@@ -9817,6 +10301,33 @@ async function buildCity() {
     await tick();
     cityRoot.add(createWaterPlane(terrainPoints));
     cityRoot.add(createGround(terrainPoints));
+    cityRoot.add(createCloudLayer(playFocus));
+    let backdropSkyline = { x: playFocus.x, z: playFocus.z };
+    let backdropView = { x: 0.63, z: 0.77 };
+    let nightView = { x: 0.3, z: 0.95 };
+    try {
+      const suggested = getSuggestedCameraPoses();
+      const hero = suggested?.hero;
+      const night = suggested?.night;
+      if (hero?.position && hero?.target) {
+        const vx = hero.target[0] - hero.position[0];
+        const vz = hero.target[2] - hero.position[2];
+        const vl = Math.hypot(vx, vz) || 1;
+        backdropView = { x: vx / vl, z: vz / vl };
+        backdropSkyline = { x: hero.target[0], z: hero.target[2] };
+      }
+      if (night?.position && night?.target) {
+        const vx = night.target[0] - night.position[0];
+        const vz = night.target[2] - night.position[2];
+        const vl = Math.hypot(vx, vz) || 1;
+        nightView = { x: vx / vl, z: vz / vl };
+      }
+    } catch {
+      // Fall back to a bay-northeast horizon if pose analysis fails.
+    }
+    cityRoot.add(createSfBackdrop(regionBBox, backdropSkyline, backdropView, nightView));
+    const backdropExtent = Math.max(regionBBox.maxX - regionBBox.minX, regionBBox.maxZ - regionBBox.minZ);
+    cityRoot.add(createNightBayStreaks(backdropSkyline, backdropView, nightView, backdropExtent));
 
     streamRoadById = new Map((cityData.roads || usedRoads).map((road) => [road.id, road]));
     let activeRoads = usedRoads;
@@ -9961,6 +10472,7 @@ async function buildCity() {
     if (!fullCityMode) createStreetTrees(activeRoads);
     if (!fullCityMode) {
       createStreetFurniture(activeRoads);
+      createParkedCars(activeRoads);
       createWetWeatherVisuals(activeRoads);
     }
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
@@ -10408,6 +10920,52 @@ function start() {
       } : null,
       renderer: renderStats,
       geometryTriangles: sceneTriangleCount,
+      };
+    },
+    getSceneInfo: () => {
+      if (!scene) return null;
+      const groups = {};
+      scene.traverse((object) => {
+        if (object.name) groups[object.name] = (groups[object.name] || 0) + 1;
+      });
+      const instancedSamples = (groupName) => {
+        const group = scene.getObjectByName(groupName);
+        if (!group) return null;
+        const rows = [];
+        for (const child of group.children) {
+          if (!child.isInstancedMesh) continue;
+          const arr = child.instanceMatrix.array;
+          const points = [];
+          for (let i = 0; i < Math.min(2, child.count); i += 1) {
+            points.push([
+              Number(arr[i * 16 + 12].toFixed(1)),
+              Number(arr[i * 16 + 13].toFixed(1)),
+              Number(arr[i * 16 + 14].toFixed(1)),
+            ]);
+          }
+          rows.push({ type: child.type, count: child.count, points });
+        }
+        return rows;
+      };
+      const streaks = scene.getObjectByName('Night bay light streaks');
+      const backdrop = scene.getObjectByName('SF horizon backdrop');
+      return {
+        groups,
+        backdrop: instancedSamples('SF horizon backdrop'),
+        backdropMeshes: backdrop
+          ? backdrop.children
+            .filter((child) => child.isMesh)
+            .slice(0, 12)
+            .map((child) => ({
+              x: Number(child.position.x.toFixed(1)),
+              y: Number(child.position.y.toFixed(1)),
+              z: Number(child.position.z.toFixed(1)),
+              width: child.geometry?.parameters?.width ?? null,
+              length: child.geometry?.parameters?.height ?? null,
+            }))
+          : [],
+        parkedCars: instancedSamples('Curbside parked cars'),
+        nightStreaksVisible: streaks?.children[0]?.visible ?? null,
       };
     },
     setCityMode: (mode) => setCityMode(mode),

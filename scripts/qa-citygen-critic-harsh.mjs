@@ -34,6 +34,7 @@ try {
     ['street width is full-size (avg >= 11m)', Number(results.state?.avgStreetWidth || 0) >= 11],
     ['building massing reads urban (avg >= 14m)', Number(results.state?.avgBuildingHeight || 0) >= 14],
     ['no fatal page errors', !(results.errors || []).some((error) => error.includes('Uncaught') || error.includes('TypeError') || error.includes('ReferenceError'))],
+    ['no NaN geometry warnings', !(results.errors || []).some((error) => error.includes('NaN'))],
   ];
   for (const [label, pass] of checks) {
     critic.maxScore += 1;
@@ -41,6 +42,36 @@ try {
     else {
       critic.blockers.push(label);
       critic.notes.push(`FAIL ${label}`);
+    }
+  }
+  if (results.placementPlan?.ok) {
+    const placed = results.placement;
+    const last = placed?.lastAdded;
+    const placedChecks = [
+      ['dynamic add places a building', placed?.placed === true && placed?.placedBuildings >= 1],
+      ['added building carries block metadata', Boolean(last?.blockId && last?.district && last?.typeLabel)],
+      ['added building carries street metadata', Boolean(last?.facingStreet && last?.address)],
+      ['added building carries visual metadata', Boolean(last?.material && last?.facade && last?.height && last?.stories)],
+      ['undo restores original building count', results.afterUndo?.buildings === results.state?.buildings && results.afterUndo?.placedBuildings === 0],
+    ];
+    for (const [label, pass] of placedChecks) {
+      critic.maxScore += 1;
+      if (pass) critic.score += 1;
+      else {
+        critic.blockers.push(label);
+        critic.notes.push(`FAIL ${label}`);
+      }
+    }
+    const placedFrame = results.frames?.['.qa-citygen-placed.png'] || {};
+    const placedFrameChecks = [
+      ['placed frame non-blank', (placedFrame.nonBlankRatio || 0) >= 0.98],
+      ['placed frame exposure', (placedFrame.meanLuma || 0) > 60 && (placedFrame.meanLuma || 0) < 230],
+      ['placed frame structure', (placedFrame.edgeDensity || 0) >= 0.1],
+    ];
+    for (const [label, pass] of placedFrameChecks) {
+      critic.maxScore += 1;
+      if (pass) critic.score += 1;
+      else critic.notes.push(`placed/${label}`);
     }
   }
   const sf = results.sfBuiltin;

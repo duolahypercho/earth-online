@@ -135,6 +135,12 @@ button {
   color: #0b1a13;
 }
 
+.action.is-active {
+  background: var(--accent);
+  color: #0b1a13;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28) inset;
+}
+
 .action.is-primary {
   background: var(--warm);
   color: #241505;

@@ -69,8 +69,16 @@ Open `/citygen.html` for the low-poly arbitrary-city generator. It can produce
 a seeded SF-style, gridiron, or garden city on demand, or attempt a real map
 fetch from OpenStreetMap for any city. Every block, building, street, one-way
 rule, lane, sidewalk, intersection, and signal is inspectable at runtime.
-The **SF Built-in** option loads the repo's real San Francisco OSM data as a
-playable district slice without depending on the public Overpass service.
+Add mode lets you click any buildable block to place a new building with live
+footprint validation and full block/street/type/facade metadata; Undo restores
+the previous city state. The **SF Built-in** option loads the repo's real San
+Francisco OSM data as a playable district slice without depending on the
+public Overpass service.
+
+Visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh` (currently
+100/100), and `npm run qa:citygen-blind-ab` builds a shuffled side-by-side
+page of the latest CityGen frames against real San Francisco reference
+photos for a human blind comparison.
 
 ## Add your own town
 
