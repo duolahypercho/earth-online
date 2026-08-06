@@ -21,6 +21,8 @@ const cityNameEl = document.querySelector('#city-name');
 const readoutBuildings = document.querySelector('#readout-buildings');
 const readoutBlocks = document.querySelector('#readout-blocks');
 const readoutStreets = document.querySelector('#readout-streets');
+const readoutOneway = document.querySelector('#readout-oneway');
+const readoutSignals = document.querySelector('#readout-signals');
 const readoutSeed = document.querySelector('#readout-seed');
 const inspector = document.querySelector('#inspector');
 const inspectorTitle = document.querySelector('#inspector-title');
@@ -127,7 +129,13 @@ function updateReadout(city) {
   readoutBuildings.textContent = `${fmt(stats.buildings)} buildings`;
   readoutBlocks.textContent = `${fmt(stats.blocks)} blocks`;
   readoutStreets.textContent = `${fmt(stats.streets)} streets`;
-  readoutSeed.textContent = `seed ${stats.seed}`;
+  readoutOneway.textContent = `${fmt(stats.oneWayStreets)} one-way`;
+  readoutSignals.textContent = `${fmt(stats.signals)} signals`;
+  readoutSeed.textContent = city.meta.generator === 'procedural'
+    ? `seed ${stats.seed}`
+    : city.meta.generator === 'sf-builtin'
+      ? 'real San Francisco OSM'
+      : 'real OSM';
 }
 
 function frameCityCamera(city) {
@@ -267,7 +275,7 @@ function syncPlacementState() {
       ? 'Add mode · click a block to build · drag orbit · Esc to exit'
       : state.mode === 'walk'
         ? 'Walk mode · WASD move · E enter a car · M orbit'
-        : 'Drag orbit · wheel zoom · click inspect · WASD walk in Walk mode';
+        : 'Drag orbit · click inspect · WASD walk · E enter a car · Esc exit';
 }
 
 function togglePlacement(force = null) {
