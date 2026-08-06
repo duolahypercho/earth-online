@@ -35,6 +35,8 @@ try {
     ['building massing reads urban (avg >= 14m)', Number(results.state?.avgBuildingHeight || 0) >= 14],
     ['no fatal page errors', !(results.errors || []).some((error) => error.includes('Uncaught') || error.includes('TypeError') || error.includes('ReferenceError'))],
     ['no NaN geometry warnings', !(results.errors || []).some((error) => error.includes('NaN'))],
+    ['WebGL2 renderer active', results.state?.webgl2 === true],
+    ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
   ];
   for (const [label, pass] of checks) {
     critic.maxScore += 1;
