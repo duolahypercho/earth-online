@@ -1,5 +1,14 @@
 import * as THREE from 'three';
-import { generateCity, describeCity, lookupAt, ringArea, clamp } from './core.js';
+import {
+  generateCity,
+  describeCity,
+  lookupAt,
+  ringArea,
+  clamp,
+  planBuildingPlacement,
+  proposeBuildingPlacement,
+  removeBuildingById,
+} from './core.js';
 import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
 import { loadSfData } from './sf-data.js';
@@ -21,15 +30,19 @@ const minimapCanvas = document.querySelector('#minimap-canvas');
 const osmOverlay = document.querySelector('#osm-overlay');
 const osmCityInput = document.querySelector('#osm-city');
 const osmStatus = document.querySelector('#osm-status');
+const hintEl = document.querySelector('.hint span');
 
 const state = {
   style: 'sanfrancisco',
   seed: 731,
   day: true,
   mode: 'orbit',
+  placement: false,
+  addedBuildings: [],
   city: null,
   renderer: null,
   traffic: null,
+  ghost: null,
   player: {
     x: 0,
     z: 0,
@@ -164,7 +177,7 @@ function buildCollisionGrid(city, cell = 2) {
   } };
 }
 
-async function buildCity(city) {
+async function buildCity(city, { reframe = true } = {}) {
   state.city = city;
   state.renderer.clearCity();
   await state.renderer.buildCity(city, { day: state.day });
@@ -173,14 +186,93 @@ async function buildCity(city) {
   }
   state.traffic = new TrafficSim(state.renderer, city, { count: city.meta.generator === 'openstreetmap' ? 14 : 26 });
   state.collision = buildCollisionGrid(city);
-  frameCityCamera(city);
+  if (reframe) frameCityCamera(city);
   updateReadout(city);
   drawMinimap(city);
+}
+
+function makeGhost() {
+  const group = new THREE.Group();
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({
+      color: 0x35d07f,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(box.geometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }),
+  );
+  group.add(box, edges);
+  group.visible = false;
+  state.renderer.scene.add(group);
+  state.ghost = { group, box, edges };
+}
+
+function updateGhost(x, z) {
+  if (!state.ghost || !state.city) return;
+  const result = planBuildingPlacement(state.city, x, z, { commit: false });
+  if (!result.ok || !result.building) {
+    state.ghost.group.visible = false;
+    return;
+  }
+  const points = result.building.polygon;
+  const width = Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x));
+  const depth = Math.max(...points.map((p) => p.z)) - Math.min(...points.map((p) => p.z));
+  const y = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(x, z) : 0;
+  state.ghost.box.scale.set(width, result.building.height, depth);
+  state.ghost.box.position.set(x, y + result.building.height / 2, z);
+  state.ghost.edges.scale.copy(state.ghost.box.scale);
+  state.ghost.edges.position.copy(state.ghost.box.position);
+  state.ghost.box.material.color.set('#35d07f');
+  state.ghost.box.material.opacity = 0.32;
+  state.ghost.group.visible = true;
+}
+
+async function placeAt(x, z) {
+  const result = proposeBuildingPlacement(state.city, x, z);
+  if (!result.ok) {
+    if (state.ghost) {
+      state.ghost.box.material.color.set('#e5484d');
+      state.ghost.box.material.opacity = 0.5;
+    }
+    return false;
+  }
+  state.addedBuildings.push(result.building.id);
+  await buildCity(state.city, { reframe: false });
+  updateGhost(x, z);
+  return true;
+}
+
+async function undoLastAdded() {
+  const id = state.addedBuildings.pop();
+  if (!id) return;
+  removeBuildingById(state.city, id);
+  await buildCity(state.city, { reframe: false });
+}
+
+function syncPlacementState() {
+  document.querySelector('[data-action="place"]').classList.toggle('is-active', state.placement);
+  hintEl.textContent = state.placement
+    ? 'Add mode · click a block to build · drag orbit · Esc to exit'
+    : 'Drag orbit · wheel zoom · click inspect · WASD walk in Walk mode';
+}
+
+function togglePlacement(force = null) {
+  state.placement = force == null ? !state.placement : force;
+  if (state.placement && state.mode !== 'orbit') setMode('orbit');
+  if (!state.placement && state.ghost) state.ghost.group.visible = false;
+  syncPlacementState();
 }
 
 function setMode(mode) {
   state.mode = mode;
   document.querySelector('[data-action="mode"]').textContent = mode === 'orbit' ? 'Orbit' : 'Walk';
+  if (mode === 'walk' && state.placement) togglePlacement(false);
   if (mode === 'walk') {
     state.player.x = 0;
     state.player.z = 0;
@@ -314,6 +406,16 @@ function nearestSegment(city, x, z) {
   return distance < 24 ? best : null;
 }
 
+function pointerWorld(pointer) {
+  const renderer = state.renderer;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(pointer, renderer.camera);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const point = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, point)) return point;
+  return null;
+}
+
 function pointInPolygonBox(block, x, z) {
   if (!block.polygon?.length) return false;
   return x >= Math.min(...block.polygon.map((p) => p.x)) - 0.1
@@ -335,6 +437,8 @@ function distanceToSegment(p, a, b) {
 async function generate(style, seed) {
   state.style = style;
   state.seed = seed;
+  state.addedBuildings = [];
+  togglePlacement(false);
   await buildCity(makeCity(style, seed));
 }
 
@@ -419,12 +523,17 @@ async function boot() {
       signalMeta: (state.city?.signals || [])[0] || null,
       streetMeta: (state.city?.streets || [])[0] || null,
       generator: state.city?.meta?.generator || null,
+      placedBuildings: state.addedBuildings.length,
       errors: state.errors,
       mode: () => state.mode,
     }),
     generate,
     setTime: (hour) => {
       state.renderer.setTimeOfDay(hour);
+    },
+    setDay: (day) => {
+      state.day = Boolean(day);
+      document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
     },
     setCameraPose: (pose) => {
       const camera = state.renderer.camera;
@@ -437,35 +546,62 @@ async function boot() {
         const bounds = city.meta.bounds;
         const along = (bounds.maxZ - bounds.minZ) / 2 - 60;
         const eye = axis === 'x'
-          ? { x: position - 13, z: -along * 0.25 }
-          : { x: -along * 0.25, z: position - 13 };
+          ? { x: position - 9, z: -along * 0.18 }
+          : { x: -along * 0.18, z: position - 9 };
         const target = axis === 'x'
-          ? { x: position + 5, z: -along }
-          : { x: -along, z: position + 5 };
-        camera.position.set(eye.x, 3.4, eye.z);
-        camera.lookAt(target.x, 1.2, target.z);
-        controls.target.set(target.x, 1.2, target.z);
+          ? { x: position + 8, z: -along * 0.82 }
+          : { x: -along * 0.82, z: position + 8 };
+        camera.position.set(eye.x, 2.9, eye.z);
+        camera.lookAt(target.x, 0.9, target.z);
+        controls.target.set(target.x, 0.9, target.z);
       } else if (pose === 'aerial') {
         camera.position.set(90, 230, 140);
         camera.lookAt(0, 8, 0);
         controls.target.set(0, 8, 0);
       } else if (pose === 'night') {
         const city = state.city;
-        // Close corner framing: shopfronts, neon, lamps, and traffic fill the
-        // frame instead of a long dark road.
-        const primary = city.streets.find((street) => street.highway === 'primary');
-        const axis = primary?.axis || 'x';
-        const position = primary?.position || 0;
-        const along = 62;
-        const eye = axis === 'x'
-          ? { x: position - 10, z: -along }
-          : { x: -along, z: position - 10 };
-        const target = axis === 'x'
-          ? { x: position - 2, z: -along + 18 }
-          : { x: -along + 18, z: position - 2 };
-        camera.position.set(eye.x, 3.2, eye.z);
-        camera.lookAt(target.x, 1.6, target.z);
-        controls.target.set(target.x, 1.6, target.z);
+        // Frame an actual storefront on a major avenue so neon, awnings,
+        // lamps, and traffic fill the frame instead of a dark residential wall.
+        const avenue = city.streets.find((street) => street.highway === 'primary' || street.highway === 'secondary');
+        const shops = city.buildings
+          .filter((building) => building.type === 'shop' || building.facade === 'shopfront')
+          .map((building) => {
+            const xs = building.polygon.map((p) => p.x);
+            const zs = building.polygon.map((p) => p.z);
+            const width = Math.max(...xs) - Math.min(...xs);
+            const depth = Math.max(...zs) - Math.min(...zs);
+            return { building, width, depth, area: width * depth };
+          })
+          .sort((a, b) => b.area - a.area);
+        const shop = shops.find((entry) => entry.width >= 7 || entry.depth >= 7)?.building
+          || shops[0]?.building
+          || city.buildings[0];
+        const xs = shop.polygon.map((p) => p.x);
+        const zs = shop.polygon.map((p) => p.z);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minZ = Math.min(...zs);
+        const maxZ = Math.max(...zs);
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        const street = city.streets.find((s) => s.name === shop.facingStreet) || avenue;
+        const faceAxis = street?.axis || 'x';
+        const baseY = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(centerX, centerZ) : 0;
+        let eye;
+        let target;
+        if (faceAxis === 'x') {
+          const side = (street?.position ?? 0) > centerX ? 1 : -1;
+          eye = { x: side > 0 ? maxX + 15 : minX - 15, z: centerZ };
+          target = { x: side > 0 ? maxX + 0.6 : minX - 0.6, z: centerZ };
+        } else {
+          const side = (street?.position ?? 0) > centerZ ? 1 : -1;
+          eye = { x: centerX, z: side > 0 ? maxZ + 15 : minZ - 15 };
+          target = { x: centerX, z: side > 0 ? maxZ + 0.6 : minZ - 0.6 };
+        }
+        const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eye.x, eye.z) : 0) + 2.8;
+        camera.position.set(eye.x, eyeY, eye.z);
+        camera.lookAt(target.x, baseY + 3.6, target.z);
+        controls.target.set(target.x, baseY + 3.6, target.z);
       } else {
         frameCityCamera(state.city);
       }
@@ -474,8 +610,13 @@ async function boot() {
     setMode,
     frameCityCamera,
     inspectWorld,
+    planPlacement: (x, z) => planBuildingPlacement(state.city, x, z, { commit: false }),
+    placeBuildingAt: async (x, z) => placeAt(x, z),
+    undoLastAdded: async () => undoLastAdded(),
+    togglePlacement,
   };
   await generate('sanfrancisco', 731);
+  makeGhost();
 
   const pointer = new THREE.Vector2();
   renderer.renderer.domElement.addEventListener('pointerdown', (event) => {
@@ -485,17 +626,31 @@ async function boot() {
     }
     pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
     pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    if (state.placement) {
+      const point = pointerWorld(pointer);
+      if (point) placeAt(point.x, point.z);
+      return;
+    }
     const hit = renderer.pick(pointer);
     const world = hit?.point || new THREE.Vector3();
     inspectWorld(world, hit);
   });
   renderer.renderer.domElement.addEventListener('pointermove', (event) => {
-    if (state.mode !== 'walk' || !state.player.lastPointer) return;
-    const dx = event.clientX - state.player.lastPointer.x;
-    const dy = event.clientY - state.player.lastPointer.y;
-    state.player.lastPointer = { x: event.clientX, y: event.clientY };
-    state.player.yaw -= dx * 0.0035;
-    state.player.pitch = clamp(state.player.pitch + dy * 0.003, -1.1, 1.0);
+    if (state.mode === 'walk') {
+      if (!state.player.lastPointer) return;
+      const dx = event.clientX - state.player.lastPointer.x;
+      const dy = event.clientY - state.player.lastPointer.y;
+      state.player.lastPointer = { x: event.clientX, y: event.clientY };
+      state.player.yaw -= dx * 0.0035;
+      state.player.pitch = clamp(state.player.pitch + dy * 0.003, -1.1, 1.0);
+      return;
+    }
+    if (state.placement) {
+      pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      const point = pointerWorld(pointer);
+      if (point) updateGhost(point.x, point.z);
+    }
   });
   window.addEventListener('pointerup', () => {
     state.player.lastPointer = null;
@@ -519,9 +674,13 @@ async function boot() {
     setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
   });
   document.querySelector('[data-action="time"]').addEventListener('click', () => {
-    state.day = !state.day;
-    document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
-    state.renderer.setTimeOfDay(state.day ? 15 : 21.5);
+    window.__CITYGEN__.setDay(!state.day);
+  });
+  document.querySelector('[data-action="place"]').addEventListener('click', () => {
+    togglePlacement();
+  });
+  document.querySelector('[data-action="undo"]').addEventListener('click', async () => {
+    await undoLastAdded();
   });
   document.querySelector('[data-action="osm"]').addEventListener('click', () => {
     osmOverlay.hidden = false;
@@ -541,7 +700,10 @@ async function boot() {
   });
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
-    if (key === 'escape') inspector.hidden = true;
+    if (key === 'escape') {
+      if (state.placement) togglePlacement(false);
+      else inspector.hidden = true;
+    }
     if (key === 'm') setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
     state.player.keys.add(key);
   });

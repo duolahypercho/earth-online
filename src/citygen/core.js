@@ -423,8 +423,16 @@ function buildBlocksAndBuildings(city, random, style, grid) {
           footprintArea: ringArea(polygon),
           yearBuilt: 1875 + Math.floor(random() * 145),
           density: spec.density,
-          material: style.materials[Math.floor(random() * style.materials.length)],
-          facade: style.facades[Math.floor(random() * style.facades.length)],
+          material: (() => {
+            const pool = type !== 'tower' && type !== 'landmark'
+              ? ['painted', 'painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone'].filter((m) => style.materials.includes(m))
+              : style.materials;
+            return pool[Math.floor(random() * pool.length)] || style.materials[0];
+          })(),
+          facade: type === 'shop' ? 'shopfront'
+            : type === 'rowhouse' ? (random() < 0.5 ? 'bay-window' : 'edwardian')
+              : type === 'tower' ? (random() < 0.5 ? 'modern-grid' : 'loft')
+                : style.facades[Math.floor(random() * style.facades.length)],
           landmark: isLandmark,
           facingStreet: p === 0 ? south.name : p === parcelRects.length - 1 ? north.name : (random() < 0.5 ? west.name : east.name),
         };
@@ -552,7 +560,7 @@ export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 
       districts: ['North Beach', 'Financial', 'SoMa', 'Mission', 'Presidio', 'Sunset'],
       verticalNames: ['Presidio Ave', 'Van Ness Blvd', 'Gough St', 'Franklin St', 'Polk St', '1st Ave', '3rd Ave', '5th Ave', '8th Ave', 'Great Hwy'],
       horizontalNames: ['Chestnut St', 'Green St', 'Union St', 'Market St', 'Mission St', 'Valencia St', 'Castro St', 'Haight St', 'Divisadero St', 'Taraval St'],
-      materials: ['plaster', 'brick', 'concrete', 'clapboard', 'glass', 'stone'],
+      materials: ['painted', 'plaster', 'brick', 'concrete', 'clapboard', 'glass', 'stone', 'painted'],
       facades: ['edwardian', 'modern-grid', 'bay-window', 'shopfront', 'loft', 'art-deco'],
       namePrefix: 'Civic',
       extent,
@@ -563,7 +571,7 @@ export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 
       districts: ['Old Town', 'Midtown', 'Southside', 'Eastside', 'Northside', 'Westend'],
       verticalNames: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'],
       horizontalNames: ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'],
-      materials: ['brick', 'stone', 'concrete', 'plaster'],
+      materials: ['painted', 'brick', 'stone', 'concrete', 'plaster'],
       facades: ['modern-grid', 'shopfront', 'loft', 'art-deco'],
       namePrefix: 'Main',
       extent,
@@ -574,7 +582,7 @@ export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 
       districts: ['Grove', 'Meadow', 'Orchard', 'River', 'Hillcrest', 'Fairview'],
       verticalNames: ['Willow Ave', 'Cedar Ave', 'Birch Ave', 'Oak Ave', 'Maple Ave', 'Pine Ave'],
       horizontalNames: ['Meadow St', 'Orchard St', 'River St', 'Grove St', 'Hillcrest St'],
-      materials: ['clapboard', 'stone', 'plaster', 'brick'],
+      materials: ['painted', 'clapboard', 'stone', 'plaster', 'brick'],
       facades: ['edwardian', 'bay-window', 'shopfront'],
       namePrefix: 'Cedar',
       extent,
@@ -774,4 +782,150 @@ export function describeCity(city) {
   stats.areaKm2 = Number((((city?.meta?.bounds?.maxX || 0) - (city?.meta?.bounds?.minX || 0))
     * ((city?.meta?.bounds?.maxZ || 0) - (city?.meta?.bounds?.minZ || 0)) / 1e6).toFixed(2));
   return stats;
+}
+
+/**
+ * Validate and append a player-authored building at an arbitrary world point.
+ *
+ * The generator already produces full block metadata, so placement reuses the
+ * same block/district/street model: the new building becomes an ordinary city
+ * building with a `userAdded` flag instead of a separate object type.
+ */
+export function planBuildingPlacement(city, x, z, { type = null, random = null } = {}) {
+  if (!city || !Array.isArray(city.blocks)) {
+    return { ok: false, reason: 'City is not ready' };
+  }
+  const rng = random || mulberry32((Date.now() ^ Math.floor(x * 1000)) >>> 0);
+  const block = city.blocks.find((candidate) => (
+    candidate.landUse !== 'park'
+    && candidate.polygon?.length
+    && pointInPolygon({ x, z }, candidate.polygon)
+  ));
+  if (!block) {
+    return { ok: false, reason: 'Click inside a buildable block' };
+  }
+
+  const bounds = polygonBounds(block.polygon);
+  const nearStreet = nearestSegmentForPoint(city, x, z);
+  const streetDistance = nearStreet?.distance ?? Infinity;
+  if (nearStreet && streetDistance < nearStreet.segment.width / 2 + nearStreet.segment.sidewalkW + 1.6) {
+    return { ok: false, reason: 'Keep buildings off sidewalks and roads' };
+  }
+
+  const district = block.district || 'Downtown';
+  let buildingType = type;
+  if (!buildingType) {
+    const downtown = district === 'Financial' || district === 'SoMa';
+    if (streetDistance < 26 && rng() < 0.55) buildingType = 'shop';
+    else if (downtown) buildingType = rng() < 0.42 ? 'midrise' : rng() < 0.7 ? 'shop' : 'tower';
+    else if (district === 'North Beach' || district === 'Mission') buildingType = rng() < 0.6 ? 'rowhouse' : rng() < 0.82 ? 'midrise' : 'shop';
+    else buildingType = rng() < 0.6 ? 'rowhouse' : rng() < 0.85 ? 'midrise' : 'shop';
+  }
+  const spec = BUILDING_TYPES[buildingType] || BUILDING_TYPES.midrise;
+  const width = clamp(13, 8, Math.max(8, bounds.maxX - bounds.minX - 2));
+  const depth = clamp(11, 7, Math.max(7, bounds.maxZ - bounds.minZ - 2));
+  const footprint = {
+    minX: x - width / 2,
+    maxX: x + width / 2,
+    minZ: z - depth / 2,
+    maxZ: z + depth / 2,
+  };
+  const corners = [
+    { x: footprint.minX, z: footprint.minZ },
+    { x: footprint.maxX, z: footprint.minZ },
+    { x: footprint.maxX, z: footprint.maxZ },
+    { x: footprint.minX, z: footprint.maxZ },
+  ];
+  if (corners.some((p) => !pointInPolygon(p, block.polygon))) {
+    return { ok: false, reason: 'Building must fit inside the block' };
+  }
+  for (const building of city.buildings) {
+    const bx = polygonBounds(building.polygon || []);
+    const pad = 1.1;
+    if (footprint.minX - pad < bx.maxX && footprint.maxX + pad > bx.minX
+      && footprint.minZ - pad < bx.maxZ && footprint.maxZ + pad > bx.minZ) {
+      return { ok: false, reason: 'Too close to an existing building' };
+    }
+  }
+  for (const corner of corners) {
+    const near = nearestSegmentForPoint(city, corner.x, corner.z);
+    if (near && near.distance < near.segment.width / 2 + near.segment.sidewalkW + 0.9) {
+      return { ok: false, reason: 'Building would overlap the street right-of-way' };
+    }
+  }
+
+  const stories = Math.round(spec.heights[0] + rng() * (spec.heights[1] - spec.heights[0]));
+  const height = stories * (buildingType === 'warehouse' ? 3.4 : buildingType === 'tower' ? 3.8 : 3.15) + (rng() < 0.35 ? 1.5 : 0);
+  const street = nearStreet?.segment ? city.streets.find((s) => s.id === nearStreet.segment.streetId) : null;
+  const materialPool = buildingType === 'shop' || buildingType === 'rowhouse'
+    ? ['painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone']
+    : ['painted', 'brick', 'concrete', 'glass', 'stone', 'plaster'];
+  const facade = buildingType === 'shop' ? 'shopfront'
+    : buildingType === 'rowhouse' ? (rng() < 0.5 ? 'bay-window' : 'edwardian')
+      : buildingType === 'tower' ? (rng() < 0.5 ? 'modern-grid' : 'loft')
+        : ['modern-grid', 'shopfront', 'loft', 'art-deco'][Math.floor(rng() * 4)];
+  const houseNumber = Math.max(1, Math.round(Math.abs(x + z) / 3) + 100);
+  const building = {
+    id: `user-${city.buildings.length}-${Math.floor(rng() * 1e6)}`,
+    blockId: block.id,
+    district,
+    type: buildingType,
+    typeLabel: spec.label,
+    usage: buildingType === 'tower' ? 'office'
+      : buildingType === 'rowhouse' ? 'residential'
+        : buildingType === 'civic' ? 'civic'
+          : buildingType === 'landmark' ? 'landmark'
+            : buildingType === 'warehouse' ? 'industrial' : 'retail',
+    name: '',
+    address: street ? `${houseNumber} ${street.name}` : `${houseNumber} Unknown St`,
+    polygon: rectPolygon(footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ),
+    stories,
+    height,
+    footprintArea: ringArea(rectPolygon(footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ)),
+    yearBuilt: 1890 + Math.floor(rng() * 130),
+    density: spec.density,
+    material: materialPool[Math.floor(rng() * materialPool.length)],
+    facade,
+    landmark: false,
+    facingStreet: street?.name || '',
+    userAdded: true,
+  };
+  return { ok: true, building, block, street };
+}
+
+export function proposeBuildingPlacement(city, x, z, options = {}) {
+  const result = planBuildingPlacement(city, x, z, options);
+  if (!result.ok) return result;
+  const { building, block } = result;
+  city.buildings.push(building);
+  block.buildings.push(building.id);
+  return result;
+}
+
+export function removeBuildingById(city, id) {
+  if (!city || !id) return false;
+  const index = city.buildings.findIndex((building) => building.id === id);
+  if (index < 0) return false;
+  const [building] = city.buildings.splice(index, 1);
+  const block = city.blocks.find((candidate) => candidate.id === building.blockId);
+  if (block) {
+    const blockIndex = block.buildings.indexOf(building.id);
+    if (blockIndex >= 0) block.buildings.splice(blockIndex, 1);
+  }
+  return true;
+}
+
+function nearestSegmentForPoint(city, x, z) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const segment of city.segments || []) {
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const d = distanceToSegment({ x, z }, a, b);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = segment;
+    }
+  }
+  return best ? { segment: best, distance: bestDistance } : null;
 }

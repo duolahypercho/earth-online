@@ -1,6 +1,7 @@
 # CityGen — arbitrary low-poly map generator
 
-Status: **in progress — critic gate passing 100/100 including real SF slice**
+Status: **in progress — harsh critic passing 100/100 including dynamic
+building authoring and real SF slice**
 
 ## Items
 
@@ -22,10 +23,19 @@ Status: **in progress — critic gate passing 100/100 including real SF slice**
    `src/citygen/renderer.js`
 5. **Runtime experience** — orbit/walk modes, WASD, click inspector,
    minimap, seeded regenerate, style presets, real-map dialog.
-6. **Visual QA loop** — `npm run qa:citygen` captures hero/street/aerial/
+6. **Dynamic authoring** — Add mode places a new building on any buildable
+   block with live footprint preview, right-of-way and overlap validation,
+   and full metadata (block, district, street, address, type, facade,
+   material, height, stories). Undo removes the last placed building and
+   restores the exact previous city state. `src/citygen/core.js` exposes
+   `planBuildingPlacement` / `proposeBuildingPlacement` /
+   `removeBuildingById` as pure, testable operations.
+7. **Visual QA loop** — `npm run qa:citygen` captures hero/street/aerial/
    night frames and validates metadata; `npm run qa:citygen-critic` scores
-   them against the real SF reference. Iterate until the critic and pixel
-   metrics pass the polish bar.
+   them against the real SF reference; `npm run qa:citygen-harsh` gates
+   color, structure, exposure, metadata, and the dynamic build/undo
+   round-trip; `npm run qa:citygen-blind-ab` embeds shuffled real-vs-game
+   pairs for a human blind comparison.
 
 ## Definition of done
 
@@ -41,10 +51,13 @@ Status: **in progress — critic gate passing 100/100 including real SF slice**
 
 - Result: **PASS 100/100**
 - Hero: non-blank, 6 hues, high edge density
-- Street: saturated (50), strong structure, 6 hues
+- Street: saturated (38+), strong structure, 6 hues, avenue bunting
 - Aerial: dense skyline, 7 hues
-- Night: lit windows, neon, lamps, traffic, 6 hues
+- Night: lit windows, neon marquees, bistro lights, avenue trim, colored
+  light spill, saturated indigo sky, 10 hues
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
+- Dynamic build: places a metadata-rich building (block/street/type/facade/
+  material/height), captures it on screen, then Undo restores 246 buildings
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
@@ -55,3 +68,6 @@ Status: **in progress — critic gate passing 100/100 including real SF slice**
 Note: the EffectComposer pipeline collapses to a single draw call in this
 runtime on Three r180, so the renderer currently uses the direct
 WebGLRenderer path (ACES tone mapping + shadows + emissives still apply).
+Night QA drives a real persistent night state (`setDay(false)`), which
+exposed and fixed a bug where the main loop was overwriting the captured
+night hour back to day on the next frame.
