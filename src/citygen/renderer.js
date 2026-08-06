@@ -1175,32 +1175,62 @@ export class CityRenderer {
   }
 
   buildStreetBunting(root, city) {
-    if (city.meta.generator !== 'procedural') return;
     const bounds = city.meta.bounds;
     const colors = ['#e5484d', '#12a594', '#ffb224', '#30a46c', '#8e4ec6', '#ff5c8a', '#f2c14e'];
     const flags = [];
     const random = mulberry32(Number(city.meta.seedInt || 1) + 3301);
     const classes = new Set(['primary', 'secondary']);
-    for (const street of city.streets) {
-      if (!classes.has(street.highway)) continue;
-      if (flags.length >= 700) break;
-      const axis = street.axis;
-      const position = street.position;
-      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 26;
-      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 26;
-      for (let v = start; v < end; v += 3.6 + random() * 2.4) {
+    if (city.meta.generator === 'procedural') {
+      for (const street of city.streets) {
+        if (!classes.has(street.highway)) continue;
         if (flags.length >= 700) break;
-        if (random() < 0.18) continue;
-        const side = random() < 0.5 ? -1 : 1;
-        const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
-        const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
-        if (Math.abs(x) > bounds.maxX - 4 || Math.abs(z) > bounds.maxZ - 4) continue;
-        flags.push({
-          x,
-          z,
-          axis,
-          color: colors[Math.floor(random() * colors.length)],
-        });
+        const axis = street.axis;
+        const position = street.position;
+        const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 26;
+        const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 26;
+        for (let v = start; v < end; v += 3.6 + random() * 2.4) {
+          if (flags.length >= 700) break;
+          if (random() < 0.18) continue;
+          const side = random() < 0.5 ? -1 : 1;
+          const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
+          const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
+          if (Math.abs(x) > bounds.maxX - 4 || Math.abs(z) > bounds.maxZ - 4) continue;
+          flags.push({
+            x,
+            z,
+            axis,
+            color: colors[Math.floor(random() * colors.length)],
+          });
+        }
+      }
+    } else {
+      for (const segment of city.segments || []) {
+        if (flags.length >= 1500) break;
+        if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway' || segment.highway === 'motorway') continue;
+        const a = segment.points[0];
+        const b = segment.points[segment.points.length - 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 36 || length > 420) continue;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const count = Math.min(10, Math.max(4, Math.round(length / 12)));
+        for (let i = 0; i < count; i += 1) {
+          if (flags.length >= 1500) break;
+          if (random() < 0.22) continue;
+          const t = (i + 0.5) / count;
+          const side = (i % 2 === 0 ? 1 : -1);
+          const offset = segment.sidewalkW + 0.9;
+          const x = a.x + dx * t + nx * offset * side;
+          const z = a.z + dz * t + nz * offset * side;
+          flags.push({
+            x,
+            z,
+            axis: Math.abs(dx) > Math.abs(dz) ? 'x' : 'z',
+            color: colors[Math.floor(random() * colors.length)],
+          });
+        }
       }
     }
     if (!flags.length) return;

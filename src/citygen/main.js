@@ -602,6 +602,54 @@ async function boot() {
         camera.position.set(eye.x, eyeY, eye.z);
         camera.lookAt(target.x, baseY + 3.6, target.z);
         controls.target.set(target.x, baseY + 3.6, target.z);
+      } else if (pose === 'sf') {
+        const city = state.renderer.city || state.city;
+        const candidates = (city.segments || []).filter((segment) => {
+          if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway') return false;
+          if (!segment.streetName) return false;
+          const a = segment.points[0];
+          const b = segment.points[segment.points.length - 1];
+          return Math.hypot(b.x - a.x, b.z - a.z) > 70;
+        }).sort((a, b) => {
+          const len = (segment) => Math.hypot(segment.points.at(-1).x - segment.points[0].x, segment.points.at(-1).z - segment.points[0].z);
+          const density = (segment) => {
+            const mid = segment.points[Math.floor(segment.points.length / 2)] || segment.points[0];
+            let count = 0;
+            for (const building of city.buildings || []) {
+              const xs = building.polygon?.map((p) => p.x) || [];
+              const zs = building.polygon?.map((p) => p.z) || [];
+              if (!xs.length) continue;
+              const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+              const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+              if (Math.hypot(cx - mid.x, cz - mid.z) < 140) count += 1;
+            }
+            return count;
+          };
+          const rank = (segment) => density(segment) * 1000
+            + (segment.highway === 'primary' || segment.highway === 'secondary' ? 3 : segment.highway === 'tertiary' ? 2 : 1) * 10
+            + Math.min(10, len(segment) / 40);
+          return rank(b) - rank(a);
+        });
+        const segment = candidates[0] || city.segments[0];
+        if (segment) {
+          const a = segment.points[0];
+          const b = segment.points[segment.points.length - 1];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const length = Math.hypot(dx, dz) || 1;
+          const nx = -dz / length;
+          const nz = dx / length;
+          const side = (segment.points[0].x + segment.points[0].z) % 2 === 0 ? 1 : -1;
+          const eyeX = a.x - dx * 0.16 + nx * 9 * side;
+          const eyeZ = a.z - dz * 0.16 + nz * 9 * side;
+          const targetX = b.x - dx * 0.08;
+          const targetZ = b.z - dz * 0.08;
+          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 2.6;
+          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.4;
+          camera.position.set(eyeX, eyeY, eyeZ);
+          camera.lookAt(targetX, targetY, targetZ);
+          controls.target.set(targetX, targetY, targetZ);
+        }
       } else {
         frameCityCamera(state.city);
       }

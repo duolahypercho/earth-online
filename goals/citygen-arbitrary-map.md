@@ -35,7 +35,9 @@ building authoring and real SF slice**
    them against the real SF reference; `npm run qa:citygen-harsh` gates
    color, structure, exposure, metadata, and the dynamic build/undo
    round-trip; `npm run qa:citygen-blind-ab` embeds shuffled real-vs-game
-   pairs for a human blind comparison.
+   pairs plus official Schedule I screenshot pairs for a human blind
+   comparison; `npm run qa:citygen-schedule-critic` records the matching
+   Schedule I visual metrics.
 
 ## Definition of done
 
@@ -55,12 +57,17 @@ building authoring and real SF slice**
 - Aerial: dense skyline, 7 hues
 - Night: lit windows, neon marquees, bistro lights, avenue trim, colored
   light spill, saturated indigo sky, 10 hues
+- Real SF slice: street-level camera now frames a dense named street
+  (6th Street) instead of an open freeway segment, with avenue bunting and
+  full building mass in view
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
+- Blind A/B: 7 shuffled pairs covering real San Francisco photos and official
+  Schedule I screenshots (street, night, street life) with local verdict JSON.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
   average 17.1 m tall, so full-size cars and pedestrians no longer dominate
   the street.
