@@ -203,6 +203,8 @@ try {
       };
     });
     await page.waitForTimeout(900);
+    await page.evaluate(() => window.__CITYGEN__.setCameraPose('sf'));
+    await page.waitForTimeout(700);
     await page.screenshot({ path: '.qa-citygen-sf.png' });
     results.sfBuiltin = sfLoaded;
     results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');

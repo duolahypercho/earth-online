@@ -1,8 +1,9 @@
 import { readFile, writeFile, access } from 'node:fs/promises';
 
 // Usage: node scripts/build-citygen-blind-ab.mjs [--out .qa-citygen-blind-ab.html]
-// Embeds the latest CityGen QA frames and real San Francisco reference photos
-// as shuffled blind A/B pairs, so a human critic can judge them side by side.
+// Embeds the latest CityGen QA frames against real San Francisco reference
+// photos and official Schedule I screenshots as shuffled blind A/B pairs, so
+// a human critic can judge the build against both reference targets.
 const args = process.argv.slice(2);
 const outPath = args[args.indexOf('--out') + 1] || '.qa-citygen-blind-ab.html';
 
@@ -10,25 +11,50 @@ const pairs = [
   {
     id: 'skyline',
     label: 'Downtown skyline',
+    kind: 'sf',
     ref: 'public/data/reference-sf.jpg',
     game: '.qa-citygen-hero.png',
   },
   {
     id: 'street-life',
     label: 'Street life',
+    kind: 'sf',
     ref: 'public/data/reference-sf-street.jpg',
     game: '.qa-citygen-street.png',
   },
   {
     id: 'night-city',
     label: 'Night city',
+    kind: 'sf',
     ref: 'public/data/reference-sf-night.jpg',
     game: '.qa-citygen-night.png',
   },
   {
     id: 'authored-block',
     label: 'Authored block (player-placed building)',
+    kind: 'sf',
     ref: 'public/data/reference-sf-street.jpg',
+    game: '.qa-citygen-placed.png',
+  },
+  {
+    id: 'schedule1-street',
+    label: 'Schedule I street',
+    kind: 'schedule1',
+    ref: 'public/data/reference/schedule1-street.jpg',
+    game: '.qa-citygen-street.png',
+  },
+  {
+    id: 'schedule1-night',
+    label: 'Schedule I night',
+    kind: 'schedule1',
+    ref: 'public/data/reference/schedule1-night.jpg',
+    game: '.qa-citygen-night.png',
+  },
+  {
+    id: 'schedule1-streetlife',
+    label: 'Schedule I street life',
+    kind: 'schedule1',
+    ref: 'public/data/reference/schedule1-streetlife.jpg',
     game: '.qa-citygen-placed.png',
   },
 ];
@@ -59,7 +85,7 @@ const html = `<!doctype html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blind A/B - Real San Francisco vs CityGen</title>
+  <title>Blind A/B - Real San Francisco / Schedule I vs CityGen</title>
   <style>
     :root { color-scheme: dark; --ink:#f5f0e7; --muted:rgba(245,240,231,.62); --line:rgba(245,240,231,.16); --gold:#f2b56d; --teal:#6bd6c5; }
     * { box-sizing: border-box; }
@@ -88,8 +114,8 @@ const html = `<!doctype html>
 </head>
 <body>
   <header>
-    <h1>Blind A/B - Real San Francisco vs CityGen</h1>
-    <p>Choose which side of each pair reads as the real San Francisco. Sides are shuffled per pair. Paste the JSON verdict back into the QA record after judging.</p>
+    <h1>Blind A/B - Real San Francisco / Schedule I vs CityGen</h1>
+    <p>Choose which side of each pair reads as the reference target: real San Francisco for SF pairs, Schedule I for game pairs. Sides are shuffled per pair. Paste the JSON verdict back into the QA record after judging.</p>
   </header>
   <main id="main"></main>
   <script>
@@ -139,18 +165,20 @@ const html = `<!doctype html>
         const actions = document.createElement('div');
         actions.className = 'actions';
         const a = document.createElement('button');
-        a.textContent = 'A looks more like SF';
+        a.textContent = 'A looks more like the reference';
         a.disabled = Boolean(choices[pair.id]);
         a.addEventListener('click', () => { choices[pair.id] = 'A'; save(); render(); });
         const b = document.createElement('button');
-        b.textContent = 'B looks more like SF';
+        b.textContent = 'B looks more like the reference';
         b.disabled = Boolean(choices[pair.id]);
         b.addEventListener('click', () => { choices[pair.id] = 'B'; save(); render(); });
         const verdict = document.createElement('div');
         verdict.className = 'verdict';
         if (choices[pair.id]) {
           const pickedRef = (choices[pair.id] === 'A') === order[pair.id];
-          verdict.textContent = pickedRef ? 'You picked the real San Francisco photo.' : 'You picked the Three.js build.';
+          verdict.textContent = pickedRef
+            ? (pair.kind === 'schedule1' ? 'You picked the Schedule I screenshot.' : 'You picked the real San Francisco photo.')
+            : 'You picked the Three.js build.';
         }
         actions.append(a, b, verdict);
         section.append(actions);
@@ -168,8 +196,15 @@ const html = `<!doctype html>
           const id = section.querySelector('.pair-id').textContent;
           const orderForPair = order[id];
           const labels = section.querySelectorAll('.frame-label');
-          labels[0].textContent = orderForPair ? 'A / REAL' : 'A / GAME';
-          labels[1].textContent = orderForPair ? 'B / GAME' : 'B / REAL';
+          const refLabel = orderForPair ? 'A' : 'B';
+          const gameLabel = orderForPair ? 'B' : 'A';
+          const referenceName = pairs.find((pair) => pair.id === id)?.kind === 'schedule1' ? 'SCHEDULE I' : 'REAL SF';
+          labels[0].textContent = orderForPair
+            ? refLabel + ' / ' + referenceName
+            : gameLabel + ' / GAME';
+          labels[1].textContent = orderForPair
+            ? gameLabel + ' / GAME'
+            : refLabel + ' / ' + referenceName;
         }
         reveal.disabled = true;
       });

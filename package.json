@@ -37,6 +37,7 @@
     "qa:blind-ab": "node scripts/build-blind-ab.mjs",
     "qa:citygen": "node scripts/qa-citygen.mjs",
     "qa:citygen-critic": "node scripts/qa-citygen-critic.mjs",
+    "qa:citygen-schedule-critic": "node scripts/qa-citygen-schedule-critic.mjs",
     "qa:citygen-harsh": "node scripts/qa-citygen-critic-harsh.mjs",
     "qa:citygen-blind-ab": "node scripts/build-citygen-blind-ab.mjs",
     "profile:frame": "node scripts/profile-frame.mjs",
