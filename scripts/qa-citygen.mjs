@@ -293,6 +293,7 @@ try {
         streets: state.streets,
         signals: state.signals,
         oneWayStreets: state.oneWayStreets,
+        furniture: state.furniture,
         signalMeta: state.signalMeta,
         streetMeta: state.streetMeta,
         generator: state.generator,

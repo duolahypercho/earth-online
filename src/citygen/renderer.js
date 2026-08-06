@@ -302,6 +302,7 @@ export class CityRenderer {
     this.phaseClock = 0;
     this.terrain = null;
     this.city = null;
+    this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.nightEmissive = [];
     this.neonGlowMaterials = [];
     this.lampBulbs = [];
@@ -368,6 +369,7 @@ export class CityRenderer {
     this.pickables = [];
     this.neonGlowMaterials = [];
     this.neonLights = [];
+    this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     const root = new THREE.Group();
     root.name = 'city-root';
 
@@ -1234,6 +1236,7 @@ export class CityRenderer {
       }
     }
     if (!flags.length) return;
+    this.streetFurniture.bunting = flags.length;
     const geometry = new THREE.BoxGeometry(0.72, 0.5, 0.05);
     const material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -1432,6 +1435,7 @@ export class CityRenderer {
     const group = new THREE.Group();
     group.name = 'sidewalk-props';
     for (const prop of props) group.add(prop);
+    this.streetFurniture.props = props.length;
     root.add(group);
   }
 
@@ -1492,6 +1496,7 @@ export class CityRenderer {
       }
     }
     if (!spots.length) return;
+    this.streetFurniture.cars = spots.length;
     const bodyGeometry = new THREE.BoxGeometry(1.8, 0.58, 3.9);
     const cabGeometry = new THREE.BoxGeometry(1.5, 0.5, 1.7);
     const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -1670,6 +1675,7 @@ export class CityRenderer {
     }
     if (count) {
       root.add(group);
+      this.streetFurniture.awnings = count;
       this.geometryCache.push(lastAwning.geometry);
       for (const material of materials) {
         this.nightEmissive.push({ material, texture: null, nightTexture: null });
