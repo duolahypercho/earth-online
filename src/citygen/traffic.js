@@ -18,12 +18,13 @@ export class TrafficSim {
       const car = this.spawnCar(edge, paint[Math.floor(random() * paint.length)]);
       this.cars.push(car);
     }
-    const pedestrianCount = 14;
-    const sidewalkPoints = this.buildSidewalkWaypoints(city);
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const pedestrianCount = realMap ? 48 : 26;
+    const sidewalkPaths = this.buildSidewalkPaths(city);
     for (let i = 0; i < pedestrianCount; i += 1) {
-      const start = sidewalkPoints[Math.floor(random() * sidewalkPoints.length)];
-      if (!start) continue;
-      this.pedestrians.push(this.spawnPedestrian(start, random() < 0.4 ? 0x79a8c9 : 0xd09a6f));
+      const path = sidewalkPaths[Math.floor(random() * sidewalkPaths.length)];
+      if (!path?.length) continue;
+      this.pedestrians.push(this.spawnPedestrian(path, random() < 0.45 ? 0x79a8c9 : random() < 0.6 ? 0xd09a6f : 0xc75d8e));
     }
     this.renderer.scene.add(this.group);
   }
@@ -71,7 +72,7 @@ export class TrafficSim {
     };
   }
 
-  spawnPedestrian(point, color) {
+  spawnPedestrian(path, color) {
     const group = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.CapsuleGeometry(0.24, 0.72, 4, 6),
@@ -85,13 +86,13 @@ export class TrafficSim {
     );
     head.position.y = 1.52;
     group.add(head);
-    group.position.set(point.x, 0, point.z);
+    group.position.set(path[0].x, 0, path[0].z);
     this.group.add(group);
-    return { group, points: [point], target: 0, speed: 1.2 + Math.random() * 0.8, time: Math.random() * 10 };
+    return { group, points: path, target: 1, distance: 0, speed: 1.3 + Math.random() * 0.9, time: Math.random() * 10 };
   }
 
-  buildSidewalkWaypoints(city) {
-    const points = [];
+  buildSidewalkPaths(city) {
+    const paths = [];
     for (const segment of city.segments) {
       const half = segment.width / 2 + segment.sidewalkW - 1;
       if (half <= 0.5) continue;
@@ -100,12 +101,14 @@ export class TrafficSim {
       const len = Math.hypot(dx, dz) || 1;
       const nx = -dz / len;
       const nz = dx / len;
-      points.push({ x: segment.points[0].x + nx * half, z: segment.points[0].z + nz * half });
-      points.push({ x: segment.points[1].x + nx * half, z: segment.points[1].z + nz * half });
-      points.push({ x: segment.points[0].x - nx * half, z: segment.points[0].z - nz * half });
-      points.push({ x: segment.points[1].x - nx * half, z: segment.points[1].z - nz * half });
+      for (const side of [1, -1]) {
+        const a = { x: segment.points[0].x + nx * half * side, z: segment.points[0].z + nz * half * side };
+        const b = { x: segment.points[1].x + nx * half * side, z: segment.points[1].z + nz * half * side };
+        if (Math.hypot(b.x - a.x, b.z - a.z) < 4) continue;
+        paths.push([a, b]);
+      }
     }
-    return points;
+    return paths;
   }
 
   update(delta) {
@@ -155,12 +158,28 @@ export class TrafficSim {
       car.group.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
     }
     for (const pedestrian of this.pedestrians) {
-      const point = pedestrian.points[0];
-      const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(point.x, point.z) + 0.08 : 0.08;
-      pedestrian.group.position.x += Math.sin(this.phase * 0.7 + pedestrian.time) * pedestrian.speed * delta * 0.16;
-      pedestrian.group.position.z += Math.cos(this.phase * 0.53 + pedestrian.time * 1.3) * pedestrian.speed * delta * 0.16;
+      const points = pedestrian.points;
+      const a = points[pedestrian.target - 1] || points[0];
+      const b = points[pedestrian.target] || points[points.length - 1];
+      const segmentLength = Math.hypot(b.x - a.x, b.z - a.z) || 0.01;
+      pedestrian.distance += pedestrian.speed * delta;
+      if (pedestrian.distance >= segmentLength) {
+        pedestrian.target += 1;
+        pedestrian.distance = 0;
+        if (pedestrian.target >= points.length) {
+          pedestrian.target = 1;
+          pedestrian.distance = 0;
+        }
+      }
+      const updatedA = points[pedestrian.target - 1] || points[0];
+      const updatedB = points[pedestrian.target] || points[points.length - 1];
+      const t = clamp(pedestrian.distance / (Math.hypot(updatedB.x - updatedA.x, updatedB.z - updatedA.z) || 0.01), 0, 1);
+      const x = updatedA.x + (updatedB.x - updatedA.x) * t;
+      const z = updatedA.z + (updatedB.z - updatedA.z) * t;
+      const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
+      pedestrian.group.position.set(x, y, z);
       pedestrian.group.position.y = y + Math.abs(Math.sin(this.phase * 3 + pedestrian.time)) * 0.12;
-      pedestrian.group.rotation.y = Math.atan2(Math.sin(this.phase * 0.7 + pedestrian.time) * 0.16, Math.cos(this.phase * 0.53 + pedestrian.time * 1.3) * 0.16);
+      pedestrian.group.rotation.y = Math.atan2(updatedB.x - updatedA.x, updatedB.z - updatedA.z);
     }
   }
 

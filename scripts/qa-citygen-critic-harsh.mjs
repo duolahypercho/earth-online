@@ -39,6 +39,8 @@ try {
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
+    ['sidewalk pedestrians exist', Number(results.state?.pedestrians || 0) >= 12],
+    ['sidewalk pedestrians move', Number(results.pedestrianPhysics?.moved || 0) > 0.05],
     ['sandbox clock advances', Number(results.clockEnd || 0) > Number(results.clockStart || 0)],
     ['sandbox clock drives night', Boolean(Number(results.clockNight?.clock || 0) >= 21.4 && Number(results.clockNight?.clock || 0) <= 22 && results.clockNight?.day === false && results.clockNight?.timeLabel === 'Night')],
     ['building sandbox pays cash', Number(results.sandboxAfterBuild?.cash || 0) > Number(results.sandboxStartCash || 0)],
