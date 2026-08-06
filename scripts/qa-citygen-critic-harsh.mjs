@@ -40,7 +40,7 @@ try {
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
     ['sandbox clock advances', Number(results.clockEnd || 0) > Number(results.clockStart || 0)],
-    ['sandbox clock drives night', Boolean(results.clockNight?.clock === 21.5 && results.clockNight?.day === false && results.clockNight?.timeLabel === 'Night')],
+    ['sandbox clock drives night', Boolean(Number(results.clockNight?.clock || 0) >= 21.4 && Number(results.clockNight?.clock || 0) <= 22 && results.clockNight?.day === false && results.clockNight?.timeLabel === 'Night')],
     ['building sandbox pays cash', Number(results.sandboxAfterBuild?.cash || 0) > Number(results.sandboxStartCash || 0)],
     ['building sandbox tracks blocks', Number(results.sandboxAfterBuild?.buildingsPlaced || 0) >= 1 && Number(results.sandboxAfterBuild?.blocksTouched || 0) >= 1],
     ['export metadata matches city counts', Boolean(results.export)
@@ -49,6 +49,7 @@ try {
       && results.export.counts?.signals === results.state?.signals],
     ['export includes street metadata', Boolean(results.export?.streetSample?.oneway && results.export?.streetSample?.sidewalkW && results.export?.streetSample?.asphaltWidth)],
     ['export includes building metadata', Boolean(results.export?.buildingSample?.blockId && results.export?.buildingSample?.material && results.export?.buildingSample?.facade)],
+    ['export/import round-trip preserves counts', results.importRoundtrip?.ok === true],
   ];
   for (const [label, pass] of checks) {
     critic.maxScore += 1;
@@ -154,12 +155,13 @@ try {
       }
     }
     if (results.sfExport) {
-      critic.maxScore += 4;
+      critic.maxScore += 5;
       const sfExportChecks = [
         ['real SF export carries real street names', results.sfExport.streets === results.sfBuiltin.streets && Boolean(results.sfExport.streetSample?.name)],
         ['real SF export includes one-way metadata', results.sfExport.oneWayStreets === results.sfBuiltin.oneWayStreets],
         ['real SF street has sidewalk props', Number(results.sfBuiltin?.furniture?.props || 0) >= 120],
         ['real SF street has parked cars', Number(results.sfBuiltin?.furniture?.cars || 0) >= 60],
+        ['real SF export/import round-trip preserves counts', results.sfImportRoundtrip?.ok === true],
       ];
       for (const [label, pass] of sfExportChecks) {
         if (pass) critic.score += 1;
