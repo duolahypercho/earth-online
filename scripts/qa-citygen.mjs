@@ -110,6 +110,43 @@ try {
       buildingSample: payload.buildings[0],
     };
   });
+  results.clockStart = await page.evaluate(() => window.__CITYGEN__.getState().clock);
+  await page.waitForTimeout(700);
+  results.clockEnd = await page.evaluate(() => window.__CITYGEN__.getState().clock);
+  await page.evaluate(() => window.__CITYGEN__.setClock(21.5));
+  results.clockNight = await page.evaluate(() => {
+    const state = window.__CITYGEN__.getState();
+    return { clock: state.clock, day: state.day, timeLabel: document.querySelector('[data-action="time"]').textContent };
+  });
+  await page.evaluate(() => window.__CITYGEN__.setClock(9));
+  await page.evaluate(() => window.__CITYGEN__.setDay(true));
+  results.sandboxStartCash = await page.evaluate(() => window.__CITYGEN__.getState().cash);
+  results.sandboxPlan = await page.evaluate(() => {
+    const api = window.__CITYGEN__;
+    const city = api.getCity();
+    for (const block of city.blocks) {
+      if (block.landUse === 'park' || !block.polygon?.length) continue;
+      const xs = block.polygon.map((p) => p.x);
+      const zs = block.polygon.map((p) => p.z);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      if (api.planPlacement(cx, cz).ok) return { ok: true, x: cx, z: cz };
+      for (let dx = -12; dx <= 12; dx += 4) {
+        for (let dz = -12; dz <= 12; dz += 4) {
+          if (api.planPlacement(cx + dx, cz + dz).ok) return { ok: true, x: cx + dx, z: cz + dz };
+        }
+      }
+    }
+    return { ok: false };
+  });
+  if (results.sandboxPlan.ok) {
+    await page.evaluate(({ x, z }) => window.__CITYGEN__.placeBuildingAt(x, z), results.sandboxPlan);
+    await page.waitForTimeout(300);
+  }
+  results.sandboxAfterBuild = await page.evaluate(() => {
+    const state = window.__CITYGEN__.getState();
+    return { cash: state.cash, buildingsPlaced: state.buildingsPlaced, blocksTouched: state.blocksTouched };
+  });
   results.walkPhysics = await page.evaluate(async () => {
     const api = window.__CITYGEN__;
     const renderer = api.getRenderer();
@@ -196,7 +233,12 @@ try {
     await page.screenshot({ path: '.qa-citygen-placed.png' });
     results.frames = results.frames || {};
     results.frames['.qa-citygen-placed.png'] = await analyzeImage('.qa-citygen-placed.png');
-    await page.evaluate(() => window.__CITYGEN__.undoLastAdded());
+    await page.evaluate(async () => {
+      const api = window.__CITYGEN__;
+      while (api.getState().placedBuildings > 0) {
+        await api.undoLastAdded();
+      }
+    });
     await page.waitForTimeout(800);
     results.afterUndo = await page.evaluate(() => {
       const api = window.__CITYGEN__;
