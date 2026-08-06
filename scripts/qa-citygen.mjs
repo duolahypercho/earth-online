@@ -109,6 +109,24 @@ try {
     const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
     return { moved: Number(moved.toFixed(2)), before, after };
   });
+  results.drivePhysics = await page.evaluate(async () => {
+    const api = window.__CITYGEN__;
+    if (!api.enterVehicle(true)) return { entered: false };
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const car = api.getTraffic().cars.find((entry) => entry.controlled);
+    if (!car) return { entered: false };
+    const before = car.group.position.toArray();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w' }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const after = car.group.position.toArray();
+    const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
+    const speed = api.getState().vehicleSpeed;
+    api.exitVehicle();
+    api.setMode('orbit');
+    return { entered: true, moved: Number(moved.toFixed(2)), speed };
+  });
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('hero'));
   await page.waitForTimeout(400);
 

@@ -23,6 +23,9 @@ building authoring and real SF slice**
    `src/citygen/renderer.js`
 5. **Runtime experience** — orbit/walk modes, WASD, click inspector,
    minimap, seeded regenerate, style presets, real-map dialog.
+   Drive mode enters the nearest car with `E`, throttles/steers with WASD,
+   follows the same one-way traffic graph and signal phases as AI traffic,
+   and exits back to the player with `E`.
 6. **Dynamic authoring** — Add mode places a new building on any buildable
    block with live footprint preview, right-of-way and overlap validation,
    and full metadata (block, district, street, address, type, facade,
@@ -81,7 +84,8 @@ building authoring and real SF slice**
   one-way streets produce exactly one legal direction, two-way streets two,
   and every signal-controlled edge alternates red/green through a full phase
   cycle. Browser QA also asserts WebGL2 is active and walk physics moves the
-  player under keyboard input.
+  player under keyboard input; drive QA enters a vehicle, accelerates along
+  the road graph, and records real displacement.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
   average 17.1 m tall, so full-size cars and pedestrians no longer dominate
   the street.
