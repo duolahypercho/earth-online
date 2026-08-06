@@ -1,5 +1,5 @@
 import { writeFile } from 'node:fs/promises';
-import { osmJsonToCity } from '../src/citygen/osm.js';
+import { osmJsonToCity, parseLatLon } from '../src/citygen/osm.js';
 import {
   planBuildingPlacement,
   proposeBuildingPlacement,
@@ -91,6 +91,14 @@ const elements = [
 
 const city = osmJsonToCity({ elements }, { center, name: 'Portland, OR', source: 'openstreetmap' });
 const failures = [];
+const parsed = parseLatLon('45.5152,-122.6784,320');
+if (!parsed || parsed.lat !== 45.5152 || parsed.lon !== -122.6784 || parsed.radius !== 320) {
+  failures.push('lat,lon,radius parsing failed');
+}
+if (!parseLatLon('45.5152,-122.6784') || parseLatLon('45.5152,-122.6784').radius !== null) {
+  failures.push('lat,lon should parse without radius');
+}
+if (parseLatLon('not coordinates')) failures.push('invalid coordinate should be rejected');
 const exported = exportCityMetadata(city);
 if (!exported || exported.buildings.length !== city.buildings.length || exported.streets.length !== city.streets.length) {
   failures.push('export metadata does not match city');

@@ -3,6 +3,8 @@ import { HIGHWAY_PROFILE, hashString, mulberry32, terrainHeight, CITY_SCHEMA_VER
 const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
 ];
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const METERS_PER_DEG_LAT = 110574;
@@ -27,7 +29,12 @@ export function projectPoint(lat, lon, center) {
 export async function geocodePlace(query) {
   const direct = parseLatLon(query);
   if (direct) {
-    return { lat: direct.lat, lon: direct.lon, name: `${direct.lat.toFixed(4)},${direct.lon.toFixed(4)}` };
+    return {
+      lat: direct.lat,
+      lon: direct.lon,
+      radius: direct.radius,
+      name: `${direct.lat.toFixed(4)},${direct.lon.toFixed(4)}`,
+    };
   }
   const attempts = [
     async () => {
@@ -82,6 +89,7 @@ export async function geocodePlace(query) {
 export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 } = {}) {
   const place = await geocodePlace(query);
   const center = { lat: place.lat, lon: place.lon };
+  if (place.radius) radius = place.radius;
   const dLat = radius / METERS_PER_DEG_LAT;
   const dLon = radius / metersPerDegLon(center.lat);
   const bbox = [
@@ -123,13 +131,15 @@ export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 }
   return osmJsonToCity(json, { center, name: place.name, source: 'openstreetmap' });
 }
 
-function parseLatLon(value) {
-  const match = String(value || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)$/);
+export function parseLatLon(value) {
+  const match = String(value || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)(?:\s*[,;]\s*(\d+))?$/);
   if (!match) return null;
   const lat = Number(match[1]);
   const lon = Number(match[2]);
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-  return { lat, lon };
+  const radius = match[3] ? Number(match[3]) : null;
+  if (radius != null && (!Number.isFinite(radius) || radius < 50 || radius > 5000)) return null;
+  return { lat, lon, radius };
 }
 
 export function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetmap' } = {}) {
