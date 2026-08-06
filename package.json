@@ -30,6 +30,7 @@
     "verify:online": "node scripts/verify-online.mjs",
     "verify:realmap-planarity": "node scripts/verify-realmap-planarity.mjs",
     "verify:citygen-any-city": "node scripts/verify-citygen-any-city.mjs",
+    "verify:citygen-simulation": "node scripts/verify-citygen-simulation.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
     "qa:visual-critic": "node scripts/qa-visual-critic.mjs",

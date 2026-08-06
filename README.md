@@ -85,6 +85,9 @@ non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
 add/undo metadata. `SF_QA_SF_BUILTIN=1 npm run qa:citygen` also verifies the
 real San Francisco built-in map through the UI, including placing and undoing
 a building with real street metadata on Brannan Street.
+`npm run verify:citygen-simulation` gates one-way traffic direction legality
+and red/green signal behavior, and CityGen browser QA asserts WebGL2 plus
+keyboard-driven walk physics.
 
 ## Add your own town
 

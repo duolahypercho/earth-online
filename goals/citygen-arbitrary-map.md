@@ -77,6 +77,11 @@ building authoring and real SF slice**
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and
   dynamic add/undo all work for a non-SF city.
+- Simulation: `npm run verify:citygen-simulation` gates the traffic graph:
+  one-way streets produce exactly one legal direction, two-way streets two,
+  and every signal-controlled edge alternates red/green through a full phase
+  cycle. Browser QA also asserts WebGL2 is active and walk physics moves the
+  player under keyboard input.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
   average 17.1 m tall, so full-size cars and pedestrians no longer dominate
   the street.

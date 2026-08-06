@@ -95,6 +95,22 @@ try {
     const api = window.__CITYGEN__;
     return api.getState();
   });
+  results.walkPhysics = await page.evaluate(async () => {
+    const api = window.__CITYGEN__;
+    const renderer = api.getRenderer();
+    api.setMode('walk');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const before = renderer.camera.position.toArray();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w' }));
+    const after = renderer.camera.position.toArray();
+    api.setMode('orbit');
+    const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
+    return { moved: Number(moved.toFixed(2)), before, after };
+  });
+  await page.evaluate(() => window.__CITYGEN__.setCameraPose('hero'));
+  await page.waitForTimeout(400);
 
   const placement = await page.evaluate(() => {
     const api = window.__CITYGEN__;

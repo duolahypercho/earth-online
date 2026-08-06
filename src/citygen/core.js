@@ -741,6 +741,8 @@ export function buildTrafficGraph(city) {
       if (dir < 0) points.reverse();
       edges.push({
         id: `${segment.id}-${dir > 0 ? 'fwd' : 'rev'}`,
+        segmentId: segment.id,
+        direction: dir > 0 ? 'increasing' : 'decreasing',
         streetId: segment.streetId,
         streetName: segment.streetName,
         highway: segment.highway,

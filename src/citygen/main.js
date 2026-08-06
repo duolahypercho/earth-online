@@ -524,6 +524,7 @@ async function boot() {
       streetMeta: (state.city?.streets || [])[0] || null,
       generator: state.city?.meta?.generator || null,
       placedBuildings: state.addedBuildings.length,
+      webgl2: Boolean(state.renderer?.renderer?.capabilities?.isWebGL2),
       errors: state.errors,
       mode: () => state.mode,
     }),
