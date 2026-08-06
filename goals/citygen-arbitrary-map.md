@@ -64,10 +64,14 @@ building authoring and real SF slice**
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings
+- Real SF dynamic build: through the SF Built-in UI, places a Shopfront on
+  Brannan Street (block `sf-block-11`, address `559 Brannan Street`) with
+  full metadata, then Undo restores the exact 700-building real map
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
-- Blind A/B: 7 shuffled pairs covering real San Francisco photos and official
+- Blind A/B: 8 shuffled pairs covering real San Francisco photos (including
+  the real SF built-in street) and official
   Schedule I screenshots (street, night, street life) with local verdict JSON.
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street

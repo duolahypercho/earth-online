@@ -121,6 +121,23 @@ try {
         critic.notes.push(`real SF/${label}: ${detail}`);
       }
     }
+    if (results.sfPlacementPlan?.ok) {
+      const placed = results.sfPlacement;
+      const last = placed?.lastAdded;
+      const sfAuthoringChecks = [
+        ['real SF dynamic add places a building', placed?.placedBuildings >= 1 && placed?.buildings === results.sfBuiltin.buildings + 1],
+        ['real SF added building carries street metadata', Boolean(last?.blockId && last?.facingStreet && last?.address && last?.typeLabel && last?.material && last?.facade)],
+        ['real SF undo restores original building count', results.sfAfterUndo?.buildings === results.sfBuiltin.buildings && results.sfAfterUndo?.placedBuildings === 0],
+      ];
+      for (const [label, pass] of sfAuthoringChecks) {
+        critic.maxScore += 1;
+        if (pass) critic.score += 1;
+        else {
+          critic.blockers.push(label);
+          critic.notes.push(`FAIL ${label}`);
+        }
+      }
+    }
   }
 
   critic.score = Math.round((critic.score / critic.maxScore) * 1000) / 10;

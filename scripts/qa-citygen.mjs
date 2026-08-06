@@ -186,27 +186,85 @@ try {
   results.frames = { ...(results.frames || {}), ...mainFrames };
   results.errors = errors;
   if (process.env.SF_QA_SF_BUILTIN === '1') {
-    const sfLoaded = await page.evaluate(async () => {
-      const mod = await import('/src/citygen/sf-data.js');
-      const city = await mod.loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
-      window.__CITYGEN__.getRenderer().clearCity();
-      await window.__CITYGEN__.getRenderer().buildCity(city, { day: true });
+    await page.click('[data-action="osm"]');
+    await page.waitForTimeout(250);
+    await page.click('[data-action="sf-builtin"]');
+    await page.waitForFunction(
+      () => window.__CITYGEN__?.getState?.().generator === 'sf-builtin' && window.__CITYGEN__.getState().buildings >= 500,
+      { timeout: 60000 },
+    );
+    await page.waitForTimeout(900);
+    results.sfBuiltin = await page.evaluate(() => {
+      const state = window.__CITYGEN__.getState();
       return {
-        buildings: city.buildings.length,
-        blocks: city.blocks.length,
-        streets: city.streets.length,
-        signals: city.signals.length,
-        oneWayStreets: city.streets.filter((street) => street.oneway !== 'both').length,
-        signalMeta: city.signals[0] || null,
-        streetMeta: city.streets[0] || null,
-        generator: city.meta.generator,
+        buildings: state.buildings,
+        blocks: state.blocks,
+        streets: state.streets,
+        signals: state.signals,
+        oneWayStreets: state.oneWayStreets,
+        signalMeta: state.signalMeta,
+        streetMeta: state.streetMeta,
+        generator: state.generator,
       };
     });
-    await page.waitForTimeout(900);
+    const sfPlacementPlan = await page.evaluate(() => {
+      const api = window.__CITYGEN__;
+      const city = api.getCity();
+      for (const block of city.blocks) {
+        if (block.landUse === 'park' || !block.polygon?.length) continue;
+        const xs = block.polygon.map((p) => p.x);
+        const zs = block.polygon.map((p) => p.z);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+        const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+        const candidates = [[cx, cz]];
+        for (let dx = -24; dx <= 24; dx += 4) {
+          for (let dz = -24; dz <= 24; dz += 4) {
+            if (dx === 0 && dz === 0) continue;
+            candidates.push([cx + dx, cz + dz]);
+          }
+        }
+        for (const [x, z] of candidates) {
+          const plan = api.planPlacement(x, z);
+          if (plan.ok) return { ok: true, x, z, blockId: plan.block.id, blockBuildings: plan.block.buildings.length };
+        }
+      }
+      return { ok: false };
+    });
+    results.sfPlacementPlan = sfPlacementPlan;
+    if (sfPlacementPlan.ok) {
+      await page.evaluate(({ x, z }) => window.__CITYGEN__.placeBuildingAt(x, z), sfPlacementPlan);
+      await page.waitForTimeout(900);
+      results.sfPlacement = await page.evaluate(() => {
+        const api = window.__CITYGEN__;
+        const city = api.getCity();
+        const last = [...city.buildings].filter((b) => b.userAdded).at(-1) || null;
+        return {
+          placedBuildings: api.getState().placedBuildings,
+          buildings: api.getState().buildings,
+          lastAdded: last ? {
+            id: last.id,
+            blockId: last.blockId,
+            district: last.district,
+            typeLabel: last.typeLabel,
+            material: last.material,
+            facade: last.facade,
+            height: last.height,
+            address: last.address,
+            facingStreet: last.facingStreet,
+            userAdded: last.userAdded,
+          } : null,
+        };
+      });
+      await page.evaluate(() => window.__CITYGEN__.undoLastAdded());
+      await page.waitForTimeout(800);
+      results.sfAfterUndo = await page.evaluate(() => {
+        const api = window.__CITYGEN__;
+        return { placedBuildings: api.getState().placedBuildings, buildings: api.getState().buildings };
+      });
+    }
     await page.evaluate(() => window.__CITYGEN__.setCameraPose('sf'));
     await page.waitForTimeout(700);
     await page.screenshot({ path: '.qa-citygen-sf.png' });
-    results.sfBuiltin = sfLoaded;
     results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');
   }
   await writeFile('.qa-citygen-results.json', JSON.stringify(results, null, 2));

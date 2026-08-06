@@ -82,7 +82,9 @@ official Schedule I screenshots for a human blind comparison, and
 `npm run qa:citygen-blind-verdict` records an automated per-pair verdict.
 `npm run verify:citygen-any-city` proves the OSM importer also converts a
 non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
-add/undo metadata.
+add/undo metadata. `SF_QA_SF_BUILTIN=1 npm run qa:citygen` also verifies the
+real San Francisco built-in map through the UI, including placing and undoing
+a building with real street metadata on Brannan Street.
 
 ## Add your own town
 
