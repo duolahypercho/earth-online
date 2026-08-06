@@ -75,7 +75,8 @@ building authoring and real SF slice**
   arbitrary OSM road so real-map street dressing follows road orientation.
   A furniture gate asserts the real slice is dressed with >=120 sidewalk
   props and >=60 parked cars; current QA: 800 props / 360 cars / 126 awnings
-  / 2600 bunting flags.
+  / 2600 bunting flags. A hue gate now also requires >=6 saturated hues;
+  real SF currently scores 6 hues with richer mural and storefront colors.
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings

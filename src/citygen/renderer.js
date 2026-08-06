@@ -66,10 +66,10 @@ function drawFacade(context, width, height, random, style, material, { day = tru
   context.fillRect(0, height - 7, width, 7);
   context.fillStyle = 'rgba(60,45,35,0.28)';
   context.fillRect(0, 7, width, 3);
-  if (style === 'loft' || style === 'art-deco' || random() < 0.3) {
-    const murals = ['rgba(194,75,63,0.42)', 'rgba(47,127,143,0.42)', 'rgba(201,143,58,0.42)', 'rgba(79,127,79,0.42)', 'rgba(127,79,143,0.42)'];
+  if (style === 'loft' || style === 'art-deco' || style === 'shopfront' || random() < 0.42) {
+    const murals = ['rgba(194,75,63,0.5)', 'rgba(47,127,143,0.55)', 'rgba(201,143,58,0.5)', 'rgba(79,127,79,0.55)', 'rgba(127,79,143,0.55)', 'rgba(46,151,136,0.5)', 'rgba(220,92,138,0.5)'];
     context.fillStyle = murals[Math.floor(random() * murals.length)];
-    context.fillRect(0, Math.floor(height * 0.38), width, Math.floor(height * 0.14));
+    context.fillRect(0, Math.floor(height * 0.36), width, Math.floor(height * 0.2));
   }
   if (style === 'art-deco') {
     context.fillStyle = 'rgba(120,90,60,0.5)';
@@ -82,9 +82,13 @@ function drawFacade(context, width, height, random, style, material, { day = tru
     context.fillRect(0, height - 30, width, 30);
     context.fillStyle = '#8a5a3a';
     context.fillRect(0, height - 30, width, 5);
-    context.fillStyle = '#f3d9a4';
+    const storefrontColors = ['#f3d9a4', '#7fb5d8', '#efb36b', '#8fc39a', '#e28d9e', '#c4a7e6'];
+    const leftColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
+    let rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
+    while (rightColor === leftColor) rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
+    context.fillStyle = leftColor;
     context.fillRect(8, height - 24, (width - 16) / 2 - 4, 18);
-    context.fillStyle = '#7fb5d8';
+    context.fillStyle = rightColor;
     context.fillRect((width - 16) / 2 + 8, height - 24, (width - 16) / 2 - 4, 18);
     // Saturated striped awning above the shopfront.
     const awningColors = ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0'];
