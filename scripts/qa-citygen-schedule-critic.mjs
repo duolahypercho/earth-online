@@ -19,6 +19,11 @@ const pairs = [
     ref: 'public/data/reference/schedule1-streetlife.jpg',
     frames: ['.qa-citygen-placed.png'],
   },
+  {
+    id: 'real-sf-street',
+    ref: 'public/data/reference/schedule1-streetlife.jpg',
+    frames: ['.qa-citygen-sf.png'],
+  },
 ];
 
 const combined = {

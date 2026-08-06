@@ -30,6 +30,11 @@ Each objective requirement with its authoritative evidence and current status.
 | Walk and drive physics | Browser QA measures keyboard walk displacement and vehicle displacement along the traffic graph | Complete |
 | Harsh visual critic / blind Schedule I comparison | `.qa-citygen-blind-ab.html` embeds 8 shuffled real-SF and Schedule I pairs; `.qa-citygen-blind-verdict.json` records automated per-pair scores; harsh critic is 100/100 | Complete for tooling; human verdict pending |
 
+Latest blind verdict: the CityGen build wins SF night, Schedule I night,
+Schedule I street life, and the Schedule I vs real SF built-in street pair;
+the real SF reference photos win day skyline/street pairs. The human A/B
+page now embeds 9 shuffled pairs.
+
 ## Performance note
 
 Application-owned frame work is green everywhere (`applicationWorstFrameMs`

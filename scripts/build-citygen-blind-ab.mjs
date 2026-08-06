@@ -64,6 +64,13 @@ const pairs = [
     ref: 'public/data/reference/schedule1-streetlife.jpg',
     game: '.qa-citygen-placed.png',
   },
+  {
+    id: 'schedule1-real-sf-street',
+    label: 'Schedule I vs real SF built-in street',
+    kind: 'schedule1',
+    ref: 'public/data/reference/schedule1-streetlife.jpg',
+    game: '.qa-citygen-sf.png',
+  },
 ];
 
 for (const pair of pairs) {

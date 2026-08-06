@@ -12,6 +12,7 @@ const pairs = [
   { id: 'schedule1-street', reference: 'public/data/reference/schedule1-street.jpg', frame: '.qa-citygen-street.png' },
   { id: 'schedule1-night', reference: 'public/data/reference/schedule1-night.jpg', frame: '.qa-citygen-night.png' },
   { id: 'schedule1-streetlife', reference: 'public/data/reference/schedule1-streetlife.jpg', frame: '.qa-citygen-placed.png' },
+  { id: 'schedule1-real-sf-street', reference: 'public/data/reference/schedule1-streetlife.jpg', frame: '.qa-citygen-sf.png' },
 ];
 
 function score(metrics) {
