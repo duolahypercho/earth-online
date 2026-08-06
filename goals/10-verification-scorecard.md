@@ -28,12 +28,13 @@ Each objective requirement with its authoritative evidence and current status.
 | One-way vs two-way metadata | `verify:citygen-simulation` asserts exactly one legal direction on one-way streets and two on two-way | Complete |
 | Traffic lights with phases | 14 procedural / 22 real SF signals; simulation gate proves each signal edge alternates red/green | Complete |
 | Walk and drive physics | Browser QA measures keyboard walk displacement and vehicle displacement along the traffic graph | Complete |
+| Sidewalk pedestrians | CityGen spawns 26 procedural / 48 real-map path-following pedestrians; QA asserts they exist and move | Complete |
 | Harsh visual critic / blind Schedule I comparison | `.qa-citygen-blind-ab.html` embeds 8 shuffled real-SF and Schedule I pairs; `.qa-citygen-blind-verdict.json` records automated per-pair scores; harsh critic is 100/100 | Complete for tooling; human verdict pending |
 
 Latest blind verdict: the CityGen build wins SF night, Schedule I night,
 Schedule I street life, and the Schedule I vs real SF built-in street pair;
 the real SF reference photos win day skyline/street pairs. The human A/B
-page now embeds 9 shuffled pairs.
+page now embeds 9 shuffled pairs. Harsh critic is currently 101.5/100.
 
 ## Performance note
 
