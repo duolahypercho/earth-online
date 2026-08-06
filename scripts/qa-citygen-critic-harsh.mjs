@@ -105,6 +105,24 @@ try {
     critic.frames.push(row);
   }
 
+  const sfFrame = results.frames?.['.qa-citygen-sf.png'] || {};
+  if (results.sfBuiltin) {
+    critic.maxScore += 4;
+    const sfChecks = [
+      ['real SF frame non-blank', (sfFrame.nonBlankRatio || 0) >= 0.98, `${((sfFrame.nonBlankRatio || 0) * 100).toFixed(1)}%`],
+      ['real SF frame exposure', (sfFrame.meanLuma || 0) > 60 && (sfFrame.meanLuma || 0) < 230, `${Math.round(sfFrame.meanLuma || 0)} luma`],
+      ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.15, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
+      ['real SF frame color', (sfFrame.meanSaturation || 0) >= 34 && (sfFrame.saturatedHues || 0) >= 5, `${Math.round(sfFrame.meanSaturation || 0)} sat / ${sfFrame.saturatedHues || 0} hues`],
+    ];
+    for (const [label, pass, detail] of sfChecks) {
+      if (pass) critic.score += 1;
+      else {
+        critic.blockers.push(label);
+        critic.notes.push(`real SF/${label}: ${detail}`);
+      }
+    }
+  }
+
   critic.score = Math.round((critic.score / critic.maxScore) * 1000) / 10;
   if (critic.blockers.length || critic.score < 82) {
     critic.result = 'FAIL';

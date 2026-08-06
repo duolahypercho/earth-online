@@ -806,14 +806,31 @@ export function planBuildingPlacement(city, x, z, { type = null, random = null }
   }
 
   const bounds = polygonBounds(block.polygon);
+  const district = block.district || 'Downtown';
+  const candidates = [[x, z]];
+  for (const dx of [0, 4, -4, 8, -8, 12, -12]) {
+    for (const dz of [0, 4, -4, 8, -8, 12, -12]) {
+      if (dx === 0 && dz === 0) continue;
+      candidates.push([x + dx, z + dz]);
+    }
+  }
+  let lastFailure = { ok: false, reason: 'No buildable space in this block' };
+  for (const [px, pz] of candidates) {
+    const result = tryPlaceAt(city, block, bounds, district, px, pz, rng, type);
+    if (result.ok) return result;
+    lastFailure = result;
+  }
+  return lastFailure;
+}
+
+function tryPlaceAt(city, block, bounds, district, x, z, rng, requestedType) {
   const nearStreet = nearestSegmentForPoint(city, x, z);
   const streetDistance = nearStreet?.distance ?? Infinity;
   if (nearStreet && streetDistance < nearStreet.segment.width / 2 + nearStreet.segment.sidewalkW + 1.6) {
     return { ok: false, reason: 'Keep buildings off sidewalks and roads' };
   }
 
-  const district = block.district || 'Downtown';
-  let buildingType = type;
+  let buildingType = requestedType;
   if (!buildingType) {
     const downtown = district === 'Financial' || district === 'SoMa';
     if (streetDistance < 26 && rng() < 0.55) buildingType = 'shop';
