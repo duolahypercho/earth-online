@@ -88,9 +88,12 @@ building authoring and real SF slice**
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
-- Blind A/B: 8 shuffled pairs covering real San Francisco photos (including
+- Blind A/B: 9 shuffled pairs covering real San Francisco photos (including
   the real SF built-in street) and official
   Schedule I screenshots (street, night, street life) with local verdict JSON.
+  The latest automated verdict also compares the real SF built-in street
+  against Schedule I street life (game wins), and the human page includes
+  that pair.
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and
