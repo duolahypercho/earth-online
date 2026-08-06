@@ -37,6 +37,8 @@ try {
     ['no NaN geometry warnings', !(results.errors || []).some((error) => error.includes('NaN'))],
     ['WebGL2 renderer active', results.state?.webgl2 === true],
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
+    ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
+    ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
   ];
   for (const [label, pass] of checks) {
     critic.maxScore += 1;

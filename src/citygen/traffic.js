@@ -111,6 +111,7 @@ export class TrafficSim {
   update(delta) {
     this.phase += delta;
     for (const car of this.cars) {
+      if (car.controlled) continue;
       if (!car.edge) continue;
       const points = car.edge.points;
       const targetIndex = Math.min(points.length - 1, car.pathIndex + 1);
@@ -120,46 +121,15 @@ export class TrafficSim {
       const signalStop = this.signalBlocked(car);
       car.stopped = signalStop;
       if (car.stopped) {
-        car.distance = Math.min(car.distance, Math.max(0, segmentLength - 4.6));
+        const stopLine = Math.max(0, segmentLength - 4.6);
+        if (car.distance >= stopLine) car.distance = Math.min(car.distance, stopLine);
+        else car.distance += car.speed * delta;
       } else {
         car.distance += car.speed * delta;
       }
       if (car.distance >= segmentLength) {
         if (car.pathIndex >= points.length - 2) {
-          const outgoing = (car.edge.outgoing || []).filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
-          let next = null;
-          if (outgoing.length) {
-            // Prefer a straight continuation, allow turns, and strongly
-            // discourage immediate U-turns so traffic reads as destination-
-            // aware instead of randomly reversing through the city.
-            const inDx = b.x - a.x;
-            const inDz = b.z - a.z;
-            const inLen = Math.hypot(inDx, inDz) || 1;
-            let totalWeight = 0;
-            const weighted = outgoing.map((edge) => {
-              const out = edge.points[0];
-              const nextP = edge.points[Math.min(1, edge.points.length - 1)];
-              const outDx = nextP.x - out.x;
-              const outDz = nextP.z - out.z;
-              const outLen = Math.hypot(outDx, outDz) || 1;
-              const dot = (inDx * outDx + inDz * outDz) / (inLen * outLen);
-              let weight = 0.3;
-              if (dot > 0.82) weight = 4;
-              else if (dot > -0.35) weight = 1.6;
-              const nextStart = edge.points[0];
-              if (Math.hypot(nextStart.x - a.x, nextStart.z - a.z) < 0.5) weight *= 0.15;
-              totalWeight += weight;
-              return { edge, weight };
-            });
-            let pick = Math.random() * totalWeight;
-            for (const candidate of weighted) {
-              pick -= candidate.weight;
-              if (pick <= 0) {
-                next = candidate.edge;
-                break;
-              }
-            }
-          }
+          const next = this.chooseNextEdge(car, a, b);
           if (next) {
             car.edge = next;
             car.pathIndex = 0;
@@ -192,6 +162,75 @@ export class TrafficSim {
       pedestrian.group.position.y = y + Math.abs(Math.sin(this.phase * 3 + pedestrian.time)) * 0.12;
       pedestrian.group.rotation.y = Math.atan2(Math.sin(this.phase * 0.7 + pedestrian.time) * 0.16, Math.cos(this.phase * 0.53 + pedestrian.time * 1.3) * 0.16);
     }
+  }
+
+  driveCar(car, speed, delta) {
+    if (!car || !car.edge) return;
+    const points = car.edge.points;
+    const targetIndex = Math.min(points.length - 1, car.pathIndex + 1);
+    const a = points[car.pathIndex];
+    const b = points[targetIndex];
+    const segmentLength = Math.hypot(b.x - a.x, b.z - a.z) || 0.01;
+    if (this.signalBlocked(car)) {
+      const stopLine = Math.max(0, segmentLength - 4.6);
+      if (car.distance >= stopLine) car.distance = Math.min(car.distance, stopLine);
+      else car.distance += speed * delta;
+    } else {
+      car.distance += speed * delta;
+    }
+    if (car.distance >= segmentLength) {
+      if (car.pathIndex >= points.length - 2) {
+        const next = this.chooseNextEdge(car, a, b);
+        if (next) {
+          car.edge = next;
+          car.pathIndex = 0;
+          car.distance = 0;
+        } else {
+          car.distance = Math.min(car.distance, Math.max(0, segmentLength - 4.6));
+        }
+      } else {
+        car.pathIndex += 1;
+        car.distance = 0;
+      }
+    }
+    const updated = car.edge.points[car.pathIndex];
+    const next = car.edge.points[Math.min(car.edge.points.length - 1, car.pathIndex + 1)];
+    const t = clamp(car.distance / (Math.hypot(next.x - updated.x, next.z - updated.z) || 0.01), 0, 1);
+    const x = updated.x + (next.x - updated.x) * t;
+    const z = updated.z + (next.z - updated.z) * t;
+    const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
+    car.group.position.set(x, y, z);
+    car.group.rotation.y = Math.atan2(next.x - updated.x, next.z - updated.z) + (car.steerYaw || 0);
+  }
+
+  chooseNextEdge(car, a, b) {
+    const outgoing = (car.edge.outgoing || []).filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
+    if (!outgoing.length) return null;
+    const inDx = b.x - a.x;
+    const inDz = b.z - a.z;
+    const inLen = Math.hypot(inDx, inDz) || 1;
+    let totalWeight = 0;
+    const weighted = outgoing.map((edge) => {
+      const out = edge.points[0];
+      const nextP = edge.points[Math.min(1, edge.points.length - 1)];
+      const outDx = nextP.x - out.x;
+      const outDz = nextP.z - out.z;
+      const outLen = Math.hypot(outDx, outDz) || 1;
+      const dot = (inDx * outDx + inDz * outDz) / (inLen * outLen);
+      let weight = 0.3;
+      if (dot > 0.82) weight = 4;
+      else if (dot > -0.35) weight = 1.6;
+      const nextStart = edge.points[0];
+      if (Math.hypot(nextStart.x - a.x, nextStart.z - a.z) < 0.5) weight *= 0.15;
+      totalWeight += weight;
+      return { edge, weight };
+    });
+    let pick = Math.random() * totalWeight;
+    for (const candidate of weighted) {
+      pick -= candidate.weight;
+      if (pick <= 0) return candidate.edge;
+    }
+    return weighted[weighted.length - 1].edge;
   }
 
   signalBlocked(car) {

@@ -43,6 +43,9 @@ const state = {
   renderer: null,
   traffic: null,
   ghost: null,
+  vehicle: null,
+  vehicleSpeed: 0,
+  vehicleSteer: 0,
   player: {
     x: 0,
     z: 0,
@@ -179,6 +182,7 @@ function buildCollisionGrid(city, cell = 2) {
 
 async function buildCity(city, { reframe = true } = {}) {
   state.city = city;
+  if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
   await state.renderer.buildCity(city, { day: state.day });
   if (state.traffic) {
@@ -257,9 +261,13 @@ async function undoLastAdded() {
 
 function syncPlacementState() {
   document.querySelector('[data-action="place"]').classList.toggle('is-active', state.placement);
-  hintEl.textContent = state.placement
-    ? 'Add mode · click a block to build · drag orbit · Esc to exit'
-    : 'Drag orbit · wheel zoom · click inspect · WASD walk in Walk mode';
+  hintEl.textContent = state.vehicle
+    ? 'Drive mode · W throttle · S brake · A/D steer · E exit'
+    : state.placement
+      ? 'Add mode · click a block to build · drag orbit · Esc to exit'
+      : state.mode === 'walk'
+        ? 'Walk mode · WASD move · E enter a car · M orbit'
+        : 'Drag orbit · wheel zoom · click inspect · WASD walk in Walk mode';
 }
 
 function togglePlacement(force = null) {
@@ -271,18 +279,104 @@ function togglePlacement(force = null) {
 
 function setMode(mode) {
   state.mode = mode;
-  document.querySelector('[data-action="mode"]').textContent = mode === 'orbit' ? 'Orbit' : 'Walk';
+  document.querySelector('[data-action="mode"]').textContent = mode === 'drive' ? 'Drive' : mode === 'orbit' ? 'Orbit' : 'Walk';
   if (mode === 'walk' && state.placement) togglePlacement(false);
+  if (mode === 'orbit') {
+    state.renderer.setWalkMode(false);
+    frameCityCamera(state.city);
+  } else {
+    state.renderer.setWalkMode(true);
+  }
   if (mode === 'walk') {
     state.player.x = 0;
     state.player.z = 0;
     state.player.yaw = Math.PI * 0.12;
     state.player.pitch = -0.12;
-    state.renderer.setWalkMode(true);
-  } else {
-    state.renderer.setWalkMode(false);
-    frameCityCamera(state.city);
   }
+  syncPlacementState();
+}
+
+function nearestVehicle(force = false) {
+  if (!state.traffic?.cars?.length) return null;
+  const candidates = state.traffic.cars.filter((car) => car.edge && !car.controlled);
+  if (force && candidates.some((car) => !car.edge.signalId && car.pathIndex < car.edge.points.length - 1)) {
+    const free = candidates.filter((car) => !car.edge.signalId && car.pathIndex < car.edge.points.length - 1);
+    let best = null;
+    let bestDistance = Infinity;
+    for (const car of free) {
+      const distance = Math.hypot(car.group.position.x - state.player.x, car.group.position.z - state.player.z);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = car;
+      }
+    }
+    return best;
+  }
+  let best = null;
+  let bestDistance = force ? Infinity : 14;
+  for (const car of candidates) {
+    const distance = Math.hypot(car.group.position.x - state.player.x, car.group.position.z - state.player.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = car;
+    }
+  }
+  return best;
+}
+
+function toggleVehicle(force = null) {
+  const enter = force == null ? !state.vehicle : Boolean(force);
+  if (enter && !state.vehicle) {
+    const car = nearestVehicle(force === true);
+    if (!car) return false;
+    state.vehicle = car;
+    car.controlled = true;
+    car.steerYaw = 0;
+    state.vehicleSpeed = 0;
+    state.vehicleSteer = 0;
+    setMode('drive');
+    return true;
+  }
+  if (state.vehicle) {
+    const car = state.vehicle;
+    const exitX = car.group.position.x;
+    const exitZ = car.group.position.z;
+    car.controlled = false;
+    car.steerYaw = 0;
+    state.vehicle = null;
+    state.vehicleSpeed = 0;
+    state.vehicleSteer = 0;
+    setMode('walk');
+    state.player.x = exitX;
+    state.player.z = exitZ;
+  }
+  return true;
+}
+
+function updateVehicle(delta) {
+  if (state.mode !== 'drive' || !state.vehicle || !state.traffic) return;
+  const keys = state.player.keys;
+  let throttle = 0;
+  if (keys.has('w')) throttle += 1;
+  if (keys.has('s')) throttle -= 0.65;
+  if (keys.has('a')) state.vehicleSteer = clamp(state.vehicleSteer + delta * 2.4, -0.55, 0.55);
+  if (keys.has('d')) state.vehicleSteer = clamp(state.vehicleSteer - delta * 2.4, -0.55, 0.55);
+  if (!keys.has('a') && !keys.has('d')) state.vehicleSteer *= Math.max(0, 1 - delta * 5);
+  state.vehicleSpeed = clamp(
+    state.vehicleSpeed + throttle * 13 * delta - Math.sign(state.vehicleSpeed) * 4.5 * delta,
+    0,
+    22,
+  );
+  const car = state.vehicle;
+  car.steerYaw = state.vehicleSteer;
+  state.traffic.driveCar(car, state.vehicleSpeed, delta);
+  const forward = new THREE.Vector3(Math.sin(car.group.rotation.y), 0, Math.cos(car.group.rotation.y));
+  const camera = state.renderer.camera;
+  const pos = car.group.position;
+  camera.position.set(pos.x - forward.x * 7.2, pos.y + 3.1, pos.z - forward.z * 7.2);
+  camera.lookAt(pos.x + forward.x * 8, pos.y + 0.8, pos.z + forward.z * 8);
+  state.renderer.controls.target.set(pos.x + forward.x * 4, pos.y + 0.8, pos.z + forward.z * 4);
+  state.renderer.controls.update();
 }
 
 function addField(label, value) {
@@ -525,6 +619,8 @@ async function boot() {
       generator: state.city?.meta?.generator || null,
       placedBuildings: state.addedBuildings.length,
       webgl2: Boolean(state.renderer?.renderer?.capabilities?.isWebGL2),
+      vehicle: Boolean(state.vehicle),
+      vehicleSpeed: Math.round(state.vehicleSpeed),
       errors: state.errors,
       mode: () => state.mode,
     }),
@@ -663,6 +759,8 @@ async function boot() {
     placeBuildingAt: async (x, z) => placeAt(x, z),
     undoLastAdded: async () => undoLastAdded(),
     togglePlacement,
+    enterVehicle: (force = false) => toggleVehicle(force),
+    exitVehicle: () => toggleVehicle(false),
   };
   await generate('sanfrancisco', 731);
   makeGhost();
@@ -720,7 +818,8 @@ async function boot() {
     await navigator.clipboard?.writeText(String(state.seed)).catch(() => {});
   });
   document.querySelector('[data-action="mode"]').addEventListener('click', () => {
-    setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
+    if (state.vehicle) toggleVehicle(false);
+    else setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
   });
   document.querySelector('[data-action="time"]').addEventListener('click', () => {
     window.__CITYGEN__.setDay(!state.day);
@@ -751,9 +850,14 @@ async function boot() {
     const key = event.key.toLowerCase();
     if (key === 'escape') {
       if (state.placement) togglePlacement(false);
+      else if (state.vehicle) toggleVehicle(false);
       else inspector.hidden = true;
     }
-    if (key === 'm') setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
+    if (key === 'e') toggleVehicle();
+    if (key === 'm') {
+      if (state.vehicle) toggleVehicle(false);
+      else setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
+    }
     state.player.keys.add(key);
   });
   window.addEventListener('keyup', (event) => {
@@ -765,6 +869,7 @@ async function boot() {
     const delta = Math.min(0.05, (now - last) / 1000);
     last = now;
     updatePlayer(delta);
+    updateVehicle(delta);
     state.renderer.update(delta, {
       time: state.day ? 15 : 21.5,
       traffic: state.traffic,
