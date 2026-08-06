@@ -198,6 +198,17 @@ try {
     api.setMode('orbit');
     return { entered: true, moved: Number(moved.toFixed(2)), speed };
   });
+  results.pedestrianPhysics = await page.evaluate(async () => {
+    const api = window.__CITYGEN__;
+    const pedestrians = api.getTraffic()?.pedestrians || [];
+    if (!pedestrians.length) return { count: 0 };
+    const pedestrian = pedestrians[0];
+    const before = pedestrian.group.position.toArray();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const after = pedestrian.group.position.toArray();
+    const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
+    return { count: pedestrians.length, moved: Number(moved.toFixed(2)) };
+  });
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('hero'));
   await page.waitForTimeout(400);
 

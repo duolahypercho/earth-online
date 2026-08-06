@@ -699,6 +699,7 @@ async function boot() {
       buildingsPlaced: state.sandboxStats.buildingsPlaced,
       blocksTouched: state.sandboxStats.blocksTouched.size,
       furniture: state.renderer?.streetFurniture || null,
+      pedestrians: state.traffic?.pedestrians?.length || 0,
       errors: state.errors,
       mode: () => state.mode,
     }),

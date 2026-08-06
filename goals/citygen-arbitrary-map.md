@@ -103,7 +103,9 @@ building authoring and real SF slice**
   and every signal-controlled edge alternates red/green through a full phase
   cycle. Browser QA also asserts WebGL2 is active and walk physics moves the
   player under keyboard input; drive QA enters a vehicle, accelerates along
-  the road graph, and records real displacement.
+  the road graph, and records real displacement. Sidewalk pedestrians now
+  follow road-side waypoints (26 procedural / 48 real-map) and QA asserts
+  they exist and move.
 - Sandbox clock/economy: QA asserts the clock advances, `setClock(21.5)` flips
   to Night, placing a building increases cash, and build stats track blocks.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
