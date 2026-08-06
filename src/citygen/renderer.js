@@ -812,17 +812,17 @@ export class CityRenderer {
     const curbAttrs = lineQuadAttrs(quads.curb);
     const crosswalkAttrs = lineQuadAttrs(quads.crosswalk);
     const asphaltColors = {
-      motorway: new THREE.Color('#565655'),
-      trunk: new THREE.Color('#585857'),
-      primary: new THREE.Color('#5f5e5c'),
-      secondary: new THREE.Color('#666564'),
-      tertiary: new THREE.Color('#6c6b69'),
-      residential: new THREE.Color('#74736f'),
-      service: new THREE.Color('#7b7a76'),
+      motorway: new THREE.Color('#555e68'),
+      trunk: new THREE.Color('#5a636d'),
+      primary: new THREE.Color('#626a73'),
+      secondary: new THREE.Color('#6b737b'),
+      tertiary: new THREE.Color('#737b83'),
+      residential: new THREE.Color('#7b8287'),
+      service: new THREE.Color('#848a8c'),
     };
-    const sidewalkColor = new THREE.Color('#c9bfae');
-    const curbColor = new THREE.Color('#a89f91');
-    const crosswalkColor = new THREE.Color('#e8e2d2');
+    const sidewalkColor = new THREE.Color('#d8bd92');
+    const curbColor = new THREE.Color('#b98a68');
+    const crosswalkColor = new THREE.Color('#f2ead8');
     let asphaltVertex = 0;
     let sidewalkVertex = 0;
     let curbVertex = 0;
@@ -1205,7 +1205,7 @@ export class CityRenderer {
       }
     } else {
       for (const segment of city.segments || []) {
-        if (flags.length >= 1500) break;
+        if (flags.length >= 2600) break;
         if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway' || segment.highway === 'motorway') continue;
         const a = segment.points[0];
         const b = segment.points[segment.points.length - 1];
@@ -1215,10 +1215,10 @@ export class CityRenderer {
         if (length < 36 || length > 420) continue;
         const nx = -dz / length;
         const nz = dx / length;
-        const count = Math.min(10, Math.max(4, Math.round(length / 12)));
+        const count = Math.min(16, Math.max(6, Math.round(length / 8)));
         for (let i = 0; i < count; i += 1) {
-          if (flags.length >= 1500) break;
-          if (random() < 0.22) continue;
+          if (flags.length >= 2600) break;
+          if (random() < 0.1) continue;
           const t = (i + 0.5) / count;
           const side = (i % 2 === 0 ? 1 : -1);
           const offset = segment.sidewalkW + 0.9;
@@ -1248,7 +1248,7 @@ export class CityRenderer {
       const y = (this.terrain?.heightAt ? this.terrain.heightAt(flag.x, flag.z) : 0) + 3.35;
       dummy.position.set(flag.x, y, flag.z);
       dummy.rotation.set(0, flag.axis === 'x' ? Math.PI / 2 : 0, 0);
-      dummy.scale.set(1, 1, 1);
+      dummy.scale.set(1.7, 1.7, 1.7);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       color.set(flag.color);
@@ -1347,57 +1347,86 @@ export class CityRenderer {
     const hydrantColor = new THREE.MeshStandardMaterial({ color: 0xc9483a, roughness: 0.55, metalness: 0.3, flatShading: true });
     const props = [];
     const bounds = city.meta.bounds;
-    const maxProps = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 300 : 900;
-    for (const street of city.streets) {
-      if (props.length >= maxProps) break;
-      if (street.highway === 'pedestrian' || street.highway === 'footway' || street.highway === 'cycleway') continue;
-      const axis = street.axis;
-      const position = street.position;
-      const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.5;
-      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 22;
-      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 22;
-      for (let v = start; v < end; v += 34 + random() * 22) {
-        if (random() < 0.34) continue;
-        const side = random() < 0.5 ? -1 : 1;
-        const x = axis === 'x' ? position + side * sidewalk : v;
-        const z = axis === 'z' ? position + side * sidewalk : v;
-        if (Math.abs(x) > bounds.maxX - 6 || Math.abs(z) > bounds.maxZ - 6) continue;
-        const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.05 : 0.05;
-        const roll = random();
-        const group = new THREE.Group();
-        if (roll < 0.4) {
-          const planter = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.8), planterColor);
-          planter.position.y = 0.28;
-          const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 5), leafColor);
-          leaf.position.y = 1.05;
-          group.add(planter, leaf);
-          const flowerColors = ['#e84393', '#ff4f6d', '#ffd23f', '#7a5cff'];
-          const flowerMaterial = new THREE.MeshBasicMaterial({ color: flowerColors[Math.floor(random() * flowerColors.length)], fog: false });
-          for (let f = 0; f < 3; f += 1) {
-            const flower = new THREE.Mesh(new THREE.SphereGeometry(0.09, 5, 4), flowerMaterial);
-            flower.position.set((random() - 0.5) * 0.7, 1.32, (random() - 0.5) * 0.7);
-            group.add(flower);
-          }
-          this.geometryCache.push(flowerMaterial);
-          this.geometryCache.push(planter.geometry, leaf.geometry);
-        } else if (roll < 0.72) {
-          const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.62), benchColor);
-          bench.position.y = 0.45;
-          const back = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.08), benchColor);
-          back.position.set(0, 0.8, -0.28);
-          group.add(bench, back);
-          this.geometryCache.push(bench.geometry, back.geometry);
-        } else {
-          const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6), hydrantColor);
-          hydrant.position.y = 0.4;
-          group.add(hydrant);
-          this.geometryCache.push(hydrant.geometry);
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const maxProps = realMap ? 800 : 900;
+    const pushProp = (x, z) => {
+      if (props.length >= maxProps) return;
+      const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.05 : 0.05;
+      const roll = random();
+      const group = new THREE.Group();
+      if (roll < 0.55) {
+        const planter = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.8), planterColor);
+        planter.position.y = 0.28;
+        const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 5), leafColor);
+        leaf.position.y = 1.05;
+        group.add(planter, leaf);
+        const flowerColors = ['#e84393', '#ff4f6d', '#ffd23f', '#7a5cff'];
+        const flowerMaterial = new THREE.MeshBasicMaterial({ color: flowerColors[Math.floor(random() * flowerColors.length)], fog: false });
+        for (let f = 0; f < 3; f += 1) {
+          const flower = new THREE.Mesh(new THREE.SphereGeometry(0.09, 5, 4), flowerMaterial);
+          flower.position.set((random() - 0.5) * 0.7, 1.32, (random() - 0.5) * 0.7);
+          group.add(flower);
         }
-        group.position.set(x, y, z);
-        group.rotation.y = random() * Math.PI;
-        group.userData = { kind: 'street-prop' };
-        props.push(group);
+        this.geometryCache.push(flowerMaterial);
+        this.geometryCache.push(planter.geometry, leaf.geometry);
+      } else if (roll < 0.72) {
+        const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.62), benchColor);
+        bench.position.y = 0.45;
+        const back = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.08), benchColor);
+        back.position.set(0, 0.8, -0.28);
+        group.add(bench, back);
+        this.geometryCache.push(bench.geometry, back.geometry);
+      } else {
+        const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6), hydrantColor);
+        hydrant.position.y = 0.4;
+        group.add(hydrant);
+        this.geometryCache.push(hydrant.geometry);
+      }
+      group.position.set(x, y, z);
+      group.rotation.y = random() * Math.PI;
+      group.userData = { kind: 'street-prop' };
+      props.push(group);
+    };
+    if (realMap) {
+      for (const segment of city.segments || []) {
         if (props.length >= maxProps) break;
+        if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway' || segment.highway === 'motorway') continue;
+        const a = segment.points[0];
+        const b = segment.points[segment.points.length - 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 24 || length > 460) continue;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const count = Math.min(8, Math.max(2, Math.round(length / 36)));
+        for (let i = 0; i < count; i += 1) {
+          if (props.length >= maxProps) break;
+          if (random() < 0.25) continue;
+          const t = (i + 0.5) / count;
+          const side = i % 2 === 0 ? 1 : -1;
+          const offset = segment.sidewalkW + 0.8;
+          pushProp(a.x + dx * t + nx * offset * side, a.z + dz * t + nz * offset * side);
+        }
+      }
+    } else {
+      for (const street of city.streets) {
+        if (props.length >= maxProps) break;
+        if (street.highway === 'pedestrian' || street.highway === 'footway' || street.highway === 'cycleway') continue;
+        const axis = street.axis;
+        const position = street.position;
+        const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.5;
+        const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 22;
+        const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 22;
+        for (let v = start; v < end; v += 34 + random() * 22) {
+          if (props.length >= maxProps) break;
+          if (random() < 0.22) continue;
+          const side = random() < 0.5 ? -1 : 1;
+          const x = axis === 'x' ? position + side * sidewalk : v;
+          const z = axis === 'z' ? position + side * sidewalk : v;
+          if (Math.abs(x) > bounds.maxX - 6 || Math.abs(z) > bounds.maxZ - 6) continue;
+          pushProp(x, z);
+        }
       }
     }
     const group = new THREE.Group();
@@ -1410,25 +1439,57 @@ export class CityRenderer {
     const random = mulberry32(Number(city.meta.seedInt || 1) + 711);
     const spots = [];
     const bounds = city.meta.bounds;
-    const maxCars = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 260 : 640;
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const maxCars = realMap ? 360 : 640;
     const classes = new Set(['primary', 'secondary', 'tertiary', 'residential']);
-    for (const street of city.streets) {
-      if (!classes.has(street.highway)) continue;
-      const axis = street.axis;
-      const position = street.position;
-      const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.4;
-      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 24;
-      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 24;
-      for (let v = start; v < end; v += 20 + random() * 12) {
-        if (random() < 0.18) continue;
-        const side = random() < 0.5 ? -1 : 1;
-        const x = axis === 'x' ? position + side * sidewalk : v;
-        const z = axis === 'z' ? position + side * sidewalk : v;
-        if (Math.abs(x) > bounds.maxX - 6 || Math.abs(z) > bounds.maxZ - 6) continue;
-        spots.push({ x, z, heading: axis === 'x' ? (side > 0 ? 0 : Math.PI) : (side > 0 ? Math.PI / 2 : -Math.PI / 2) });
+    if (realMap) {
+      for (const segment of city.segments || []) {
+        if (spots.length >= maxCars) break;
+        if (!classes.has(segment.highway)) continue;
+        const a = segment.points[0];
+        const b = segment.points[segment.points.length - 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 30 || length > 420) continue;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const heading = Math.atan2(dx, dz);
+        const count = Math.min(6, Math.max(1, Math.round(length / 34)));
+        for (let i = 0; i < count; i += 1) {
+          if (spots.length >= maxCars) break;
+          if (random() < 0.2) continue;
+          const t = (i + 0.5) / count;
+          const side = i % 2 === 0 ? 1 : -1;
+          const offset = segment.width / 2 + 1.05;
+          spots.push({
+            x: a.x + dx * t + nx * offset * side,
+            z: a.z + dz * t + nz * offset * side,
+            heading,
+          });
+        }
+      }
+    } else {
+      for (const street of city.streets) {
+        if (spots.length >= maxCars) break;
+        if (!classes.has(street.highway)) continue;
+        const axis = street.axis;
+        const position = street.position;
+        const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.4;
+        const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 24;
+        const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 24;
+        for (let v = start; v < end; v += 20 + random() * 12) {
+          if (spots.length >= maxCars) break;
+          if (random() < 0.18) continue;
+          const side = random() < 0.5 ? -1 : 1;
+          const x = axis === 'x' ? position + side * sidewalk : v;
+          const z = axis === 'z' ? position + side * sidewalk : v;
+          if (Math.abs(x) > bounds.maxX - 6 || Math.abs(z) > bounds.maxZ - 6) continue;
+          spots.push({ x, z, heading: axis === 'x' ? (side > 0 ? 0 : Math.PI) : (side > 0 ? Math.PI / 2 : -Math.PI / 2) });
+          if (spots.length >= maxCars) break;
+        }
         if (spots.length >= maxCars) break;
       }
-      if (spots.length >= maxCars) break;
     }
     if (!spots.length) return;
     const bodyGeometry = new THREE.BoxGeometry(1.8, 0.58, 3.9);

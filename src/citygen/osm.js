@@ -25,29 +25,58 @@ export function projectPoint(lat, lon, center) {
 }
 
 export async function geocodePlace(query) {
-  const url = new URL(NOMINATIM_URL);
-  url.searchParams.set('q', query);
-  url.searchParams.set('format', 'json');
-  url.searchParams.set('limit', '1');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
-  try {
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`Geocode HTTP ${response.status}`);
-    const results = await response.json();
-    if (!Array.isArray(results) || !results.length) throw new Error('Place not found');
-    const first = results[0];
-    return {
-      lat: Number(first.lat),
-      lon: Number(first.lon),
-      name: first.display_name,
-    };
-  } finally {
-    clearTimeout(timer);
+  const direct = parseLatLon(query);
+  if (direct) {
+    return { lat: direct.lat, lon: direct.lon, name: `${direct.lat.toFixed(4)},${direct.lon.toFixed(4)}` };
   }
+  const attempts = [
+    async () => {
+      const url = new URL(NOMINATIM_URL);
+      url.searchParams.set('q', query);
+      url.searchParams.set('format', 'json');
+      url.searchParams.set('limit', '1');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 9000);
+      try {
+        const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
+        if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
+        const results = await response.json();
+        if (!Array.isArray(results) || !results.length) throw new Error('Place not found');
+        const first = results[0];
+        return { lat: Number(first.lat), lon: Number(first.lon), name: first.display_name };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async () => {
+      const url = new URL('https://photon.komoot.io/api/');
+      url.searchParams.set('q', query);
+      url.searchParams.set('limit', '1');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 9000);
+      try {
+        const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
+        if (!response.ok) throw new Error(`Photon HTTP ${response.status}`);
+        const json = await response.json();
+        const feature = json?.features?.[0];
+        if (!feature) throw new Error('Place not found');
+        const [lon, lat] = feature.geometry.coordinates;
+        const props = feature.properties || {};
+        return { lat: Number(lat), lon: Number(lon), name: props.name || props.city || props.state || 'OSM City' };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  ];
+  let lastError = null;
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(lastError?.message || 'Could not geocode place');
 }
 
 export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 } = {}) {
@@ -94,7 +123,16 @@ export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 }
   return osmJsonToCity(json, { center, name: place.name, source: 'openstreetmap' });
 }
 
-function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetmap' } = {}) {
+function parseLatLon(value) {
+  const match = String(value || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lon = Number(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+export function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetmap' } = {}) {
   const elements = Array.isArray(json?.elements) ? json.elements : [];
   const roads = [];
   const buildings = [];
@@ -144,8 +182,8 @@ function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetma
         stories: Math.max(1, Math.round(height / 3.15)),
         yearBuilt: tags.start_date ? Number(String(tags.start_date).match(/\d{4}/)?.[0] || 1900) : 1900,
         footprintArea: area,
-        material: inferMaterial(tags),
-        facade: inferFacade(tags),
+        material: inferMaterial(tags, type),
+        facade: inferFacade(tags, type),
         landmark: Boolean(tags.amenity || tags.tourism || tags.building === 'public'),
       });
     }
@@ -337,21 +375,33 @@ function inferUsage(type, tags) {
   return 'mixed';
 }
 
-function inferMaterial(tags) {
+function inferMaterial(tags, type) {
   const material = String(tags.material || tags.building_material || '').toLowerCase();
   if (material.includes('brick')) return 'brick';
   if (material.includes('concrete')) return 'concrete';
   if (material.includes('wood') || material.includes('clap')) return 'clapboard';
   if (material.includes('stone')) return 'stone';
   if (material.includes('glass')) return 'glass';
-  return 'plaster';
+  const hash = hashString(`osm-material-${tags.id || ''}-${tags.name || ''}-${type || ''}`);
+  if (type === 'rowhouse') return ['painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone'][hash % 6];
+  if (type === 'shop') return ['painted', 'brick', 'plaster', 'stone', 'clapboard', 'brick'][hash % 6];
+  if (type === 'tower') return ['glass', 'concrete', 'brick', 'painted', 'glass', 'concrete'][hash % 6];
+  if (type === 'civic') return ['stone', 'stone', 'concrete', 'painted', 'brick', 'plaster'][hash % 6];
+  if (type === 'warehouse') return ['brick', 'brick', 'concrete', 'painted', 'stone', 'plaster'][hash % 6];
+  return ['painted', 'brick', 'concrete', 'glass', 'stone', 'plaster'][hash % 6];
 }
 
-function inferFacade(tags) {
+function inferFacade(tags, type) {
   const style = String(tags['building:architecture'] || '').toLowerCase();
   if (style.includes('art')) return 'art-deco';
   if (style.includes('modern')) return 'modern-grid';
   if (style.includes('victorian') || style.includes('edward')) return 'edwardian';
   if (tags.shop) return 'shopfront';
-  return 'modern-grid';
+  const hash = hashString(`osm-facade-${tags.id || ''}-${tags.name || ''}-${type || ''}`);
+  if (type === 'rowhouse') return hash % 2 === 0 ? 'bay-window' : 'edwardian';
+  if (type === 'shop') return 'shopfront';
+  if (type === 'tower') return hash % 2 === 0 ? 'modern-grid' : 'loft';
+  if (type === 'civic') return hash % 2 === 0 ? 'edwardian' : 'art-deco';
+  if (type === 'warehouse') return hash % 2 === 0 ? 'loft' : 'modern-grid';
+  return ['modern-grid', 'shopfront', 'loft', 'art-deco', 'bay-window'][hash % 5];
 }

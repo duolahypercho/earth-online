@@ -54,8 +54,8 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       footprintArea: area,
       yearBuilt: 1900,
       density: 0.9,
-      material: inferMaterial(building),
-      facade: inferFacade(building),
+      material: inferMaterial(building, type),
+      facade: inferFacade(building, type),
       landmark: Boolean(building.name && (building.amenity || building.tourism)),
       facingStreet: '',
     };
@@ -247,22 +247,43 @@ function inferUsage(type) {
         : type === 'warehouse' ? 'industrial' : 'retail';
 }
 
-function inferMaterial(building) {
+function inferMaterial(building, type) {
   const material = String(building.material || '').toLowerCase();
   if (material.includes('brick')) return 'brick';
   if (material.includes('concrete')) return 'concrete';
   if (material.includes('wood')) return 'clapboard';
   if (material.includes('stone')) return 'stone';
-  if (Number(building.levels || 0) >= 8) return 'glass';
-  return 'plaster';
+  const hash = hashString(`sf-material-${building.id}-${building.name || ''}`);
+  if (type === 'rowhouse') {
+    return ['painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone'][hash % 6];
+  }
+  if (type === 'shop') {
+    return ['painted', 'brick', 'plaster', 'stone', 'clapboard', 'brick'][hash % 6];
+  }
+  if (type === 'tower') {
+    return ['glass', 'concrete', 'brick', 'painted', 'glass', 'concrete'][hash % 6];
+  }
+  if (type === 'civic') {
+    return ['stone', 'stone', 'concrete', 'painted', 'brick', 'plaster'][hash % 6];
+  }
+  if (type === 'warehouse') {
+    return ['brick', 'brick', 'concrete', 'painted', 'stone', 'plaster'][hash % 6];
+  }
+  return ['painted', 'brick', 'concrete', 'glass', 'stone', 'plaster'][hash % 6];
 }
 
-function inferFacade(building) {
+function inferFacade(building, type) {
   const name = String(building.name || '');
-  if (name.includes('Transamerica')) return 'art-deco';
+  if (name.includes('Transamerica') || type === 'landmark') return 'art-deco';
   if (building.shop || String(building.building).includes('retail')) return 'shopfront';
   if (String(building.amenity || '') === 'place_of_worship') return 'edwardian';
-  return Number(building.levels || 0) >= 8 ? 'modern-grid' : 'bay-window';
+  const hash = hashString(`sf-facade-${building.id}-${building.name || ''}`);
+  if (type === 'rowhouse') return hash % 2 === 0 ? 'bay-window' : 'edwardian';
+  if (type === 'shop') return 'shopfront';
+  if (type === 'tower') return hash % 2 === 0 ? 'modern-grid' : 'loft';
+  if (type === 'civic') return hash % 2 === 0 ? 'edwardian' : 'art-deco';
+  if (type === 'warehouse') return hash % 2 === 0 ? 'loft' : 'modern-grid';
+  return ['modern-grid', 'shopfront', 'loft', 'art-deco', 'bay-window'][hash % 5];
 }
 
 function nearbyStreetIds(segments, x, z, tolerance) {

@@ -79,7 +79,10 @@ Visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh` (currently
 100/100). `npm run qa:citygen-blind-ab` builds a shuffled side-by-side page of
 the latest CityGen frames against real San Francisco reference photos and
 official Schedule I screenshots for a human blind comparison, and
-`npm run qa:citygen-schedule-critic` records the matching visual metrics.
+`npm run qa:citygen-blind-verdict` records an automated per-pair verdict.
+`npm run verify:citygen-any-city` proves the OSM importer also converts a
+non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
+add/undo metadata.
 
 ## Add your own town
 

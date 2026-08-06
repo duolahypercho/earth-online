@@ -36,8 +36,9 @@ building authoring and real SF slice**
    color, structure, exposure, metadata, and the dynamic build/undo
    round-trip; `npm run qa:citygen-blind-ab` embeds shuffled real-vs-game
    pairs plus official Schedule I screenshot pairs for a human blind
-   comparison; `npm run qa:citygen-schedule-critic` records the matching
-   Schedule I visual metrics.
+   comparison; `npm run qa:citygen-blind-verdict` records an automated
+   visual-richness verdict per pair; `npm run qa:citygen-schedule-critic`
+   records the matching Schedule I visual metrics.
 
 ## Definition of done
 
@@ -68,6 +69,10 @@ building authoring and real SF slice**
   through the same stylized pipeline.
 - Blind A/B: 7 shuffled pairs covering real San Francisco photos and official
   Schedule I screenshots (street, night, street life) with local verdict JSON.
+- Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
+  fixture through the same importer used for San Francisco, proving street
+  names, one-way directions, sidewalks, signals, type-aware materials, and
+  dynamic add/undo all work for a non-SF city.
 - Scale gate: generated streets average 13.9 m curb-to-curb and buildings
   average 17.1 m tall, so full-size cars and pedestrians no longer dominate
   the street.
