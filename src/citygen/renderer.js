@@ -4,13 +4,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mulberry32, ringArea, pointInPolygon, terrainHeight, clamp } from './core.js';
 
 const PALETTES = Object.freeze({
-  painted: ['#d95f5f', '#3f8f9e', '#e0b14e', '#5f80b5', '#d88742', '#8fae68', '#c46f92'],
-  plaster: ['#f3cfae', '#e8ae8c', '#f6ddc0', '#e2b294', '#eecba4'],
-  brick: ['#d68b5f', '#cd6f4e', '#e39a70', '#b85a42', '#d9815c'],
-  concrete: ['#ddd9cf', '#c9c4b8', '#ece7dd', '#d3cfc3', '#e0dbd2'],
-  clapboard: ['#8fb9d8', '#e0b186', '#a6cf9b', '#e5aebd', '#9db8dc'],
-  glass: ['#86b8d8', '#77a8cf', '#b0d4e6', '#9cc9dc', '#7fadd0'],
-  stone: ['#d3cbb8', '#c4bba8', '#e0d8c8', '#ccc2ae', '#d8d0c0'],
+  painted: ['#e05f5f', '#3f9fb3', '#e5b64f', '#6f8fd6', '#e08a45', '#a2c46e', '#d1759f'],
+  plaster: ['#f7d3ae', '#eda987', '#ffe0bd', '#e9b28f', '#f6d2a1'],
+  brick: ['#e0925f', '#d96f4c', '#efa373', '#c05a3f', '#e2845a'],
+  concrete: ['#e2ded2', '#cfc9ba', '#f1ece0', '#d8d3c4', '#e7e2d5'],
+  clapboard: ['#9fc8e8', '#e8b98a', '#b5dca5', '#efb6c8', '#a9c4e8'],
+  glass: ['#8fc8e8', '#79b2d9', '#bce0ee', '#a5d4e6', '#86b6db'],
+  stone: ['#ddd4be', '#ccc0a8', '#e8dfca', '#d4c8b0', '#e0d6c2'],
 });
 
 const FACADE_STYLES = ['edwardian', 'modern-grid', 'bay-window', 'shopfront', 'loft', 'art-deco'];
@@ -38,7 +38,7 @@ function drawFacade(context, width, height, random, style, material, { day = tru
   const gapX = (width - margin * 2) / columns;
   const gapY = (height - margin * 2) / rows;
   const lit = material === 'glass'
-    ? ['#cfe4ef', '#d9e9f2', '#bcd6e6']
+    ? ['#d8ecf7', '#e5f3fb', '#c2e0f0']
     : ['#ffd98f', '#ffc96a', '#ffe9ae', '#f0b967'];
   const cool = material === 'glass';
   for (let row = 0; row < rows; row += 1) {
@@ -67,7 +67,7 @@ function drawFacade(context, width, height, random, style, material, { day = tru
   context.fillStyle = 'rgba(60,45,35,0.28)';
   context.fillRect(0, 7, width, 3);
   if (style === 'loft' || style === 'art-deco' || style === 'shopfront' || random() < 0.42) {
-    const murals = ['rgba(194,75,63,0.5)', 'rgba(47,127,143,0.55)', 'rgba(201,143,58,0.5)', 'rgba(79,127,79,0.55)', 'rgba(127,79,143,0.55)', 'rgba(46,151,136,0.5)', 'rgba(220,92,138,0.5)'];
+    const murals = ['rgba(224,80,66,0.58)', 'rgba(41,150,171,0.62)', 'rgba(232,164,44,0.58)', 'rgba(89,158,74,0.62)', 'rgba(151,86,178,0.62)', 'rgba(41,178,158,0.58)', 'rgba(235,97,158,0.58)'];
     context.fillStyle = murals[Math.floor(random() * murals.length)];
     context.fillRect(0, Math.floor(height * 0.36), width, Math.floor(height * 0.2));
   }
@@ -82,7 +82,7 @@ function drawFacade(context, width, height, random, style, material, { day = tru
     context.fillRect(0, height - 30, width, 30);
     context.fillStyle = '#8a5a3a';
     context.fillRect(0, height - 30, width, 5);
-    const storefrontColors = ['#f3d9a4', '#7fb5d8', '#efb36b', '#8fc39a', '#e28d9e', '#c4a7e6'];
+    const storefrontColors = ['#f7dca2', '#7fc0e5', '#f2b76c', '#8fd0a0', '#e994a6', '#c9adea'];
     const leftColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
     let rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
     while (rightColor === leftColor) rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
@@ -140,7 +140,7 @@ function drawAsphalt(context, width, height, random) {
 }
 
 function drawSidewalk(context, width, height, random) {
-  context.fillStyle = '#d1bc9d';
+  context.fillStyle = '#e2c79a';
   context.fillRect(0, 0, width, height);
   for (let i = 0; i < 30; i += 1) {
     context.fillStyle = 'rgba(140,120,100,0.1)';
@@ -157,7 +157,7 @@ function drawSidewalk(context, width, height, random) {
 }
 
 function drawGround(context, width, height, random) {
-  context.fillStyle = '#a3bd8b';
+  context.fillStyle = '#9fc38a';
   context.fillRect(0, 0, width, height);
   for (let i = 0; i < 60; i += 1) {
     context.fillStyle = random() < 0.5 ? 'rgba(110,140,95,0.3)' : 'rgba(198,214,176,0.28)';
@@ -275,17 +275,19 @@ export class CityRenderer {
   constructor(container, { pixelRatioCap = 1.5 } = {}) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xcfe3ea, 380, 1500);
+    this.scene.fog = new THREE.Fog(0xd9e9ef, 380, 1500);
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.5, 4200);
     this.camera.position.set(180, 150, 260);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 0.82;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
     container.appendChild(this.renderer.domElement);
+    // Stylized color grade: richer, warmer low-poly look without postprocessing.
+    this.renderer.domElement.style.filter = 'saturate(1.7) contrast(1.12) brightness(0.94)';
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -313,7 +315,7 @@ export class CityRenderer {
     this.lampLights = [];
     this.neonLights = [];
 
-    this.sun = new THREE.DirectionalLight(0xfff1dd, 2.4);
+    this.sun = new THREE.DirectionalLight(0xffe8c8, 2.6);
     this.sun.position.set(-260, 380, 120);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -326,11 +328,11 @@ export class CityRenderer {
     this.sun.shadow.bias = -0.0004;
     this.scene.add(this.sun);
 
-    this.hemi = new THREE.HemisphereLight(0xe8f4ff, 0x9aa86f, 1.25);
+    this.hemi = new THREE.HemisphereLight(0xe9f6ff, 0x9fb47a, 1.38);
     this.scene.add(this.hemi);
-    this.ambient = new THREE.AmbientLight(0xfff3e0, 0.3);
+    this.ambient = new THREE.AmbientLight(0xfff2dc, 0.3);
     this.scene.add(this.ambient);
-    this.rim = new THREE.DirectionalLight(0xbcd7e8, 0.55);
+    this.rim = new THREE.DirectionalLight(0xcfe3f0, 0.6);
     this.rim.position.set(320, 240, -260);
     this.scene.add(this.rim);
 
@@ -394,6 +396,8 @@ export class CityRenderer {
     this.buildStreetNeonTrim(root, city);
     // Festival bunting adds street-level color in daylight too.
     this.buildStreetBunting(root, city);
+    // Utility poles and sagging wires along major avenues.
+    this.buildUtilityLines(root, city);
     // Signals with metadata.
     this.buildSignals(root, city);
     // Trees.
@@ -443,9 +447,9 @@ export class CityRenderer {
     const geometry = new THREE.SphereGeometry(1900, 32, 16);
     const colors = [];
     const positions = geometry.attributes.position.array;
-    const top = new THREE.Color('#5f9fd1');
-    const mid = new THREE.Color('#aed5e4');
-    const bottom = new THREE.Color('#f6e7c9');
+    const top = new THREE.Color('#4f9fd6');
+    const mid = new THREE.Color('#a7d7e8');
+    const bottom = new THREE.Color('#ffe2b8');
     for (let i = 0; i < positions.length; i += 3) {
       const y = positions[i + 1] / 1900;
       const c = y > 0.08 ? top.clone().lerp(mid, clamp(y, 0, 1)) : bottom.clone().lerp(mid, 1 - clamp(-y, 0, 1) * 4);
@@ -473,9 +477,9 @@ export class CityRenderer {
     geometry.rotateX(-Math.PI / 2);
     const positions = geometry.attributes.position.array;
     const colors = [];
-    const park = new THREE.Color('#a4be8e');
-    const field = new THREE.Color('#839a68');
-    const waterEdge = new THREE.Color('#b2cb9c');
+    const park = new THREE.Color('#9fc38a');
+    const field = new THREE.Color('#7f9a66');
+    const waterEdge = new THREE.Color('#a9c99b');
     for (let i = 0; i < positions.length; i += 3) {
       const x = positions[i] + (bounds.minX + bounds.maxX) / 2;
       const z = positions[i + 2] + (bounds.minZ + bounds.maxZ) / 2;
@@ -504,7 +508,7 @@ export class CityRenderer {
     const geometry = new THREE.PlaneGeometry(680, bounds.maxZ - bounds.minZ + 520);
     geometry.rotateX(-Math.PI / 2);
     const material = new THREE.MeshStandardMaterial({
-      color: 0x3f8aa8,
+      color: 0x2f8fae,
       roughness: 0.24,
       metalness: 0.3,
       transparent: true,
@@ -810,33 +814,31 @@ export class CityRenderer {
       }
     }
     quads.asphalt += city.intersections.length;
-    for (const intersection of city.intersections) {
-      if (intersection.signal) quads.crosswalk += 4 * 4;
-    }
+    quads.crosswalk += city.intersections.length * 4 * 4;
     const asphaltAttrs = lineQuadAttrs(quads.asphalt);
     const sidewalkAttrs = lineQuadAttrs(quads.sidewalk);
     const curbAttrs = lineQuadAttrs(quads.curb);
     const crosswalkAttrs = lineQuadAttrs(quads.crosswalk);
     const asphaltColors = {
-      motorway: new THREE.Color('#555e68'),
-      trunk: new THREE.Color('#5a636d'),
-      primary: new THREE.Color('#626a73'),
-      secondary: new THREE.Color('#6b737b'),
-      tertiary: new THREE.Color('#737b83'),
-      residential: new THREE.Color('#7b8287'),
-      service: new THREE.Color('#848a8c'),
+      motorway: new THREE.Color('#5d6570'),
+      trunk: new THREE.Color('#626a74'),
+      primary: new THREE.Color('#6b737d'),
+      secondary: new THREE.Color('#747c84'),
+      tertiary: new THREE.Color('#7d848b'),
+      residential: new THREE.Color('#858b90'),
+      service: new THREE.Color('#8d9294'),
     };
-    const sidewalkColor = new THREE.Color('#d8bd92');
-    const curbColor = new THREE.Color('#b98a68');
-    const crosswalkColor = new THREE.Color('#f2ead8');
+    const sidewalkColor = new THREE.Color('#e2c79a');
+    const curbColor = new THREE.Color('#c0936b');
+    const crosswalkColor = new THREE.Color('#fff4dc');
     let asphaltVertex = 0;
     let sidewalkVertex = 0;
     let curbVertex = 0;
     let crosswalkVertex = 0;
     const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
     const curbHeight = Number(city.meta.streetDesign?.curbHeight ?? 0.16);
-    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xf2ead8, transparent: true, opacity: 0.9 });
-    const centerLineMaterial = new THREE.LineBasicMaterial({ color: 0xe0b64b, transparent: true, opacity: 0.9 });
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
+    const centerLineMaterial = new THREE.LineBasicMaterial({ color: 0xe9c04f, transparent: true, opacity: 0.92 });
 
     for (const segment of city.segments) {
       const pts = segment.points;
@@ -909,16 +911,15 @@ export class CityRenderer {
             root.add(makeLine([a, b], 0xe0b64b, 0.13, ya + 0.075, dash));
           }
         }
-        if (segment.highway === 'primary' || segment.highway === 'secondary') {
-          root.add(makeLine(
-            [{ x: a.x + nx * (half - 0.35), z: a.z + nz * (half - 0.35) }, { x: b.x + nx * (half - 0.35), z: b.z + nz * (half - 0.35) }],
-            0xf2ead8, 0.1, ya + 0.075, 3,
-          ));
-          root.add(makeLine(
-            [{ x: a.x - nx * (half - 0.35), z: a.z - nz * (half - 0.35) }, { x: b.x - nx * (half - 0.35), z: b.z - nz * (half - 0.35) }],
-            0xf2ead8, 0.1, ya + 0.075, 3,
-          ));
-        }
+        const edgeWidth = segment.highway === 'primary' || segment.highway === 'secondary' ? 0.1 : 0.08;
+        root.add(makeLine(
+          [{ x: a.x + nx * (half - 0.35), z: a.z + nz * (half - 0.35) }, { x: b.x + nx * (half - 0.35), z: b.z + nz * (half - 0.35) }],
+          0xf2ead8, edgeWidth, ya + 0.075, 3,
+        ));
+        root.add(makeLine(
+          [{ x: a.x - nx * (half - 0.35), z: a.z - nz * (half - 0.35) }, { x: b.x - nx * (half - 0.35), z: b.z - nz * (half - 0.35) }],
+          0xf2ead8, edgeWidth, ya + 0.075, 3,
+        ));
       }
     }
 
@@ -944,10 +945,16 @@ export class CityRenderer {
       asphaltVertex += 4;
     }
 
-    // Crosswalks at signalled intersections.
+    // Crosswalks at intersections.
     for (const intersection of city.intersections) {
-      if (!intersection.signal) continue;
       const p = intersection.position;
+      const crossing = city.segments.filter((segment) => {
+        for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
+          if (Math.hypot(point.x - p.x, point.z - p.z) < 0.5) return true;
+        }
+        return false;
+      });
+      const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
       const size = 2.6;
       for (let s = -1; s <= 1; s += 2) {
         for (let e = -1; e <= 1; e += 2) {
@@ -967,6 +974,25 @@ export class CityRenderer {
           }
         }
       }
+      // Stop bars just before each approach.
+      const y = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(p.x, p.z) : 0);
+      const stop = 3.4;
+      root.add(makeLine(
+        [{ x: p.x - stop, z: p.z - half }, { x: p.x - stop, z: p.z + half }],
+        0xffffff, 0.17, y + 0.085,
+      ));
+      root.add(makeLine(
+        [{ x: p.x + stop, z: p.z - half }, { x: p.x + stop, z: p.z + half }],
+        0xffffff, 0.17, y + 0.085,
+      ));
+      root.add(makeLine(
+        [{ x: p.x - half, z: p.z - stop }, { x: p.x + half, z: p.z - stop }],
+        0xffffff, 0.17, y + 0.085,
+      ));
+      root.add(makeLine(
+        [{ x: p.x - half, z: p.z + stop }, { x: p.x + half, z: p.z + stop }],
+        0xffffff, 0.17, y + 0.085,
+      ));
     }
 
     finalizeAttrs(asphaltAttrs, asphaltVertex);
@@ -1188,14 +1214,14 @@ export class CityRenderer {
     const classes = new Set(['primary', 'secondary']);
     if (city.meta.generator === 'procedural') {
       for (const street of city.streets) {
-        if (!classes.has(street.highway)) continue;
-        if (flags.length >= 700) break;
+        if (!classes.has(street.highway) && street.highway !== 'tertiary' && street.highway !== 'residential') continue;
+        if (flags.length >= 1400) break;
         const axis = street.axis;
         const position = street.position;
         const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 26;
         const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 26;
         for (let v = start; v < end; v += 3.6 + random() * 2.4) {
-          if (flags.length >= 700) break;
+          if (flags.length >= 1400) break;
           if (random() < 0.18) continue;
           const side = random() < 0.5 ? -1 : 1;
           const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
@@ -1241,6 +1267,33 @@ export class CityRenderer {
     }
     if (!flags.length) return;
     this.streetFurniture.bunting = flags.length;
+    // Sagging festival wires connect flags into continuous street decor.
+    const wirePoints = [];
+    const sortedFlags = [...flags].sort((a, b) => {
+      if (a.axis !== b.axis) return a.axis === 'x' ? -1 : 1;
+      return a.axis === 'x' ? a.z - b.z : a.x - b.x;
+    });
+    for (let i = 1; i < sortedFlags.length; i += 1) {
+      const a = sortedFlags[i - 1];
+      const b = sortedFlags[i];
+      if (a.axis !== b.axis) continue;
+      const dist = a.axis === 'x' ? Math.abs(b.z - a.z) : Math.abs(b.x - a.x);
+      if (dist < 1.2 || dist > 7) continue;
+      const midX = (a.x + b.x) / 2;
+      const midZ = (a.z + b.z) / 2;
+      const y1 = (this.terrain?.heightAt ? this.terrain.heightAt(a.x, a.z) : 0) + 3.45;
+      const y2 = (this.terrain?.heightAt ? this.terrain.heightAt(b.x, b.z) : 0) + 3.45;
+      const sagY = (y1 + y2) / 2 - 0.55;
+      wirePoints.push(a.x, y1, a.z, midX, sagY, midZ);
+      wirePoints.push(midX, sagY, midZ, b.x, y2, b.z);
+    }
+    if (wirePoints.length) {
+      const wireGeometry = new THREE.BufferGeometry();
+      wireGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wirePoints, 3));
+      const wireMaterial = new THREE.LineBasicMaterial({ color: 0x6b4a3a, transparent: true, opacity: 0.55 });
+      root.add(new THREE.LineSegments(wireGeometry, wireMaterial));
+      this.geometryCache.push(wireGeometry, wireMaterial);
+    }
     const geometry = new THREE.BoxGeometry(0.72, 0.5, 0.05);
     const material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -1265,6 +1318,69 @@ export class CityRenderer {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     root.add(mesh);
     this.geometryCache.push(geometry);
+  }
+
+  buildUtilityLines(root, city) {
+    if (city.meta.generator !== 'procedural') return;
+    const bounds = city.meta.bounds;
+    const random = mulberry32(Number(city.meta.seedInt || 1) + 881);
+    const poles = [];
+    const wirePoints = [];
+    for (const street of city.streets) {
+      if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
+      if (poles.length >= 90) break;
+      const axis = street.axis;
+      const position = street.position;
+      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 20;
+      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 20;
+      let prev = null;
+      for (let v = start; v < end; v += 70 + random() * 40) {
+        if (poles.length >= 90) break;
+        const side = random() < 0.5 ? -1 : 1;
+        const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
+        const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
+        if (Math.abs(x) > bounds.maxX - 3 || Math.abs(z) > bounds.maxZ - 3) continue;
+        poles.push({ x, z });
+        if (prev) {
+          const dist = axis === 'x' ? Math.abs(prev.z - z) : Math.abs(prev.x - x);
+          if (dist < 95) {
+            const y1 = (this.terrain?.heightAt ? this.terrain.heightAt(prev.x, prev.z) : 0) + 5.6;
+            const y2 = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + 5.6;
+            const midX = (prev.x + x) / 2;
+            const midZ = (prev.z + z) / 2;
+            const sagY = (y1 + y2) / 2 - 0.8;
+            wirePoints.push(prev.x, y1, prev.z, midX, sagY, midZ);
+            wirePoints.push(midX, sagY, midZ, x, y2, z);
+          }
+        }
+        prev = { x, z };
+      }
+    }
+    if (!poles.length && !wirePoints.length) return;
+    if (poles.length) {
+      const poleGeometry = new THREE.CylinderGeometry(0.07, 0.1, 6.6, 5);
+      const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x6b513c, roughness: 0.8, flatShading: true });
+      const instanced = new THREE.InstancedMesh(poleGeometry, poleMaterial, poles.length);
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < poles.length; i += 1) {
+        const pole = poles[i];
+        dummy.position.set(pole.x, (this.terrain?.heightAt ? this.terrain.heightAt(pole.x, pole.z) : 0) + 3.3, pole.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        instanced.setMatrixAt(i, dummy.matrix);
+      }
+      instanced.instanceMatrix.needsUpdate = true;
+      root.add(instanced);
+      this.geometryCache.push(poleGeometry, poleMaterial);
+    }
+    if (wirePoints.length) {
+      const wireGeometry = new THREE.BufferGeometry();
+      wireGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wirePoints, 3));
+      const wireMaterial = new THREE.LineBasicMaterial({ color: 0x3d3028, transparent: true, opacity: 0.55 });
+      root.add(new THREE.LineSegments(wireGeometry, wireMaterial));
+      this.geometryCache.push(wireGeometry, wireMaterial);
+    }
   }
 
   buildTrees(root, city) {
@@ -1352,16 +1468,20 @@ export class CityRenderer {
     const leafColor = new THREE.MeshStandardMaterial({ color: 0x4f7f4a, roughness: 0.85, flatShading: true });
     const benchColor = new THREE.MeshStandardMaterial({ color: 0x6f5c48, roughness: 0.8, flatShading: true });
     const hydrantColor = new THREE.MeshStandardMaterial({ color: 0xc9483a, roughness: 0.55, metalness: 0.3, flatShading: true });
+    const coneColor = new THREE.MeshStandardMaterial({ color: 0xff7a1f, roughness: 0.6, flatShading: true });
+    const signPoleColor = new THREE.MeshStandardMaterial({ color: 0x4b4f54, roughness: 0.6, metalness: 0.4, flatShading: true });
+    const signBoardColors = ['#e85d4a', '#2f9fb0', '#e5a72f', '#4f9e58', '#8a5fc0'];
+    const signBoardMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, flatShading: true });
     const props = [];
     const bounds = city.meta.bounds;
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
-    const maxProps = realMap ? 800 : 900;
+    const maxProps = realMap ? 900 : 1000;
     const pushProp = (x, z) => {
       if (props.length >= maxProps) return;
       const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.05 : 0.05;
       const roll = random();
       const group = new THREE.Group();
-      if (roll < 0.55) {
+      if (roll < 0.45) {
         const planter = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.8), planterColor);
         planter.position.y = 0.28;
         const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 5), leafColor);
@@ -1376,18 +1496,37 @@ export class CityRenderer {
         }
         this.geometryCache.push(flowerMaterial);
         this.geometryCache.push(planter.geometry, leaf.geometry);
-      } else if (roll < 0.72) {
+      } else if (roll < 0.62) {
         const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.62), benchColor);
         bench.position.y = 0.45;
         const back = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.08), benchColor);
         back.position.set(0, 0.8, -0.28);
         group.add(bench, back);
         this.geometryCache.push(bench.geometry, back.geometry);
-      } else {
+      } else if (roll < 0.78) {
         const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6), hydrantColor);
         hydrant.position.y = 0.4;
         group.add(hydrant);
         this.geometryCache.push(hydrant.geometry);
+      } else if (roll < 0.9) {
+        const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.2, 0.55, 6), coneColor);
+        cone.position.y = 0.28;
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.1, 6), signPoleColor);
+        band.position.y = 0.24;
+        group.add(cone, band);
+        this.geometryCache.push(cone.geometry, band.geometry);
+      } else {
+        const pole = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), signPoleColor);
+        pole.position.y = 0.75;
+        const board = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.42, 0.06), signBoardMaterial);
+        board.position.y = 1.55;
+        board.material = new THREE.MeshStandardMaterial({
+          color: signBoardColors[Math.floor(random() * signBoardColors.length)],
+          roughness: 0.65,
+          flatShading: true,
+        });
+        group.add(pole, board);
+        this.geometryCache.push(pole.geometry, board.geometry, board.material);
       }
       group.position.set(x, y, z);
       group.rotation.y = random() * Math.PI;
@@ -1425,7 +1564,7 @@ export class CityRenderer {
         const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.5;
         const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 22;
         const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 22;
-        for (let v = start; v < end; v += 34 + random() * 22) {
+        for (let v = start; v < end; v += 26 + random() * 14) {
           if (props.length >= maxProps) break;
           if (random() < 0.22) continue;
           const side = random() < 0.5 ? -1 : 1;
@@ -1448,7 +1587,7 @@ export class CityRenderer {
     const spots = [];
     const bounds = city.meta.bounds;
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
-    const maxCars = realMap ? 360 : 640;
+    const maxCars = realMap ? 360 : 800;
     const classes = new Set(['primary', 'secondary', 'tertiary', 'residential']);
     if (realMap) {
       for (const segment of city.segments || []) {
@@ -1486,7 +1625,7 @@ export class CityRenderer {
         const sidewalk = street.sidewalkW + street.asphaltWidth / 2 + 1.4;
         const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 24;
         const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 24;
-        for (let v = start; v < end; v += 20 + random() * 12) {
+        for (let v = start; v < end; v += 15 + random() * 9) {
           if (spots.length >= maxCars) break;
           if (random() < 0.18) continue;
           const side = random() < 0.5 ? -1 : 1;
