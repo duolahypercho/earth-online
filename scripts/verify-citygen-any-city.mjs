@@ -1,5 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { osmJsonToCity, parseLatLon } from '../src/citygen/osm.js';
+import { buildTrafficGraph } from '../src/citygen/core.js';
+import { TrafficSim } from '../src/citygen/traffic.js';
 import {
   planBuildingPlacement,
   proposeBuildingPlacement,
@@ -20,6 +22,21 @@ const points = (lat, lon, offsetX, offsetZ) => [
 ];
 
 const elements = [
+  // Real OSM traffic-signal nodes at the two major intersections.
+  {
+    type: 'node',
+    id: 3001,
+    lat: 45.5231,
+    lon: -122.6800,
+    tags: { highway: 'traffic_signals' },
+  },
+  {
+    type: 'node',
+    id: 3002,
+    lat: 45.5270,
+    lon: -122.6900,
+    tags: { highway: 'traffic_signals' },
+  },
   // Burnside St: named one-way primary with a real sidewalk width.
   {
     type: 'way',
@@ -92,6 +109,26 @@ const elements = [
 
 const city = osmJsonToCity({ elements }, { center, name: 'Portland, OR', source: 'openstreetmap' });
 const failures = [];
+const edges = buildTrafficGraph(city);
+const signalEdges = edges.filter((edge) => edge.signalId);
+const fakeRenderer = { terrain: { heightAt: () => 0 }, scene: { add() {}, remove() {} } };
+const sim = new TrafficSim(fakeRenderer, city, { count: 0 });
+let signalEdgesChecked = 0;
+for (const signal of city.signals) {
+  for (const edge of signalEdges) {
+    if (edge.signalId !== signal.id) continue;
+    signalEdgesChecked += 1;
+    let blocked = false;
+    let free = false;
+    for (let phase = 0; phase < 32; phase += 1) {
+      sim.phase = phase;
+      if (sim.signalBlocked({ edge, distance: 0 })) blocked = true;
+      else free = true;
+    }
+    if (!blocked || !free) failures.push(`${edge.id} does not alternate red/green at ${signal.id}`);
+  }
+}
+if (!signalEdgesChecked) failures.push('real OSM signal nodes produced no signal-controlled traffic edges');
 const parsed = parseLatLon('45.5152,-122.6784,320');
 if (!parsed || parsed.lat !== 45.5152 || parsed.lon !== -122.6784 || parsed.radius !== 320) {
   failures.push('lat,lon,radius parsing failed');
@@ -106,6 +143,9 @@ if (!exported || exported.buildings.length !== city.buildings.length || exported
 }
 if (!exported.streets.some((street) => street.oneway !== 'both')) failures.push('export one-way metadata missing');
 if (!exported.signals.length) failures.push('export signal metadata missing');
+if (city.segments.filter((segment) => segment.signalId).length < 2) {
+  failures.push('real OSM signal nodes were not wired onto road segments');
+}
 const importedCity = importCityMetadata(exported);
 if (!importedCity
   || importedCity.buildings.length !== city.buildings.length
@@ -206,6 +246,7 @@ if (checks.segments < 8) failures.push('segments < 8');
 if (checks.oneWayStreets < 2) failures.push('one-way metadata missing');
 if (!checks.sidewalkCoverage) failures.push('sidewalk metadata missing');
 if (!checks.signalMetadata.length) failures.push('signals missing');
+checks.signalEdges = signalEdgesChecked;
 if (!checks.buildingMetadata.some((b) => b.material !== 'plaster')) failures.push('materials not type-aware');
 if (!checks.buildingMetadata.some((b) => b.facade === 'shopfront')) failures.push('shopfront facade missing');
 if (!checks.buildingMetadata.some((b) => b.facade === 'edwardian')) failures.push('rowhouse facade missing');

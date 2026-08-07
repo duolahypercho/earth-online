@@ -175,6 +175,22 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     }
   }
 
+  // Wire signal phases onto road segments approaching each district signal.
+  for (const intersection of intersections) {
+    if (!intersection.signal) continue;
+    const p = intersection.position;
+    for (const segment of segments) {
+      if (segment.signalId) continue;
+      for (const point of segment.points) {
+        if (Math.hypot(point.x - p.x, point.z - p.z) < 14) {
+          segment.signalId = intersection.signal.id;
+          segment.intersectionId = intersection.id;
+          break;
+        }
+      }
+    }
+  }
+
   const allPoints = [...segments.flatMap((s) => s.points), ...cityBuildings.flatMap((b) => b.polygon)];
   const minX = Math.min(...allPoints.map((p) => p.x)) - 30;
   const maxX = Math.max(...allPoints.map((p) => p.x)) + 30;
