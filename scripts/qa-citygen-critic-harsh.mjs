@@ -4,10 +4,10 @@ import { spawnSync } from 'node:child_process';
 // Harsh gate: frames must be rich, varied, colorful, and structurally sound;
 // metadata must prove one-way streets, signals, and building data exist.
 const frames = [
-  { file: '.qa-citygen-hero.png', name: 'hero', minEdge: 0.12, minSat: 30 },
-  { file: '.qa-citygen-street.png', name: 'street', minEdge: 0.09, minSat: 38 },
-  { file: '.qa-citygen-aerial.png', name: 'aerial', minEdge: 0.2, minSat: 32 },
-  { file: '.qa-citygen-night.png', name: 'night', minEdge: 0.05, minSat: 35 },
+  { file: '.qa-citygen-hero.png', name: 'hero', minEdge: 0.3, minSat: 55 },
+  { file: '.qa-citygen-street.png', name: 'street', minEdge: 0.2, minSat: 60 },
+  { file: '.qa-citygen-aerial.png', name: 'aerial', minEdge: 0.35, minSat: 55 },
+  { file: '.qa-citygen-night.png', name: 'night', minEdge: 0.18, minSat: 60 },
 ];
 
 const critic = {
@@ -128,9 +128,9 @@ try {
     const sfChecks = [
       ['real SF frame non-blank', (sfFrame.nonBlankRatio || 0) >= 0.98, `${((sfFrame.nonBlankRatio || 0) * 100).toFixed(1)}%`],
       ['real SF frame exposure', (sfFrame.meanLuma || 0) > 60 && (sfFrame.meanLuma || 0) < 230, `${Math.round(sfFrame.meanLuma || 0)} luma`],
-      ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.15, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
-      ['real SF frame color', (sfFrame.meanSaturation || 0) >= 34 && (sfFrame.saturatedHues || 0) >= 5, `${Math.round(sfFrame.meanSaturation || 0)} sat / ${sfFrame.saturatedHues || 0} hues`],
-      ['real SF frame hue variety', (sfFrame.saturatedHues || 0) >= 6, `${sfFrame.saturatedHues || 0} hues`],
+      ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.25, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
+      ['real SF frame color', (sfFrame.meanSaturation || 0) >= 55 && (sfFrame.saturatedHues || 0) >= 8, `${Math.round(sfFrame.meanSaturation || 0)} sat / ${sfFrame.saturatedHues || 0} hues`],
+      ['real SF frame hue variety', (sfFrame.saturatedHues || 0) >= 8, `${sfFrame.saturatedHues || 0} hues`],
     ];
     for (const [label, pass, detail] of sfChecks) {
       if (pass) critic.score += 1;
