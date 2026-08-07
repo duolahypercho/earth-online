@@ -822,11 +822,13 @@ export class CityRenderer {
           textureGroups.set(key, group);
         }
         const repeatY = Math.max(1, Math.round(height / 4.6));
+        const repeatX = Math.max(1, Math.round(width / 12));
         const geometry = new THREE.BoxGeometry(width, height, depth);
-        // Bake the vertical repeat into the UVs so merged buildings sharing one
-        // texture keep their own story count.
+        // Bake the per-face repeat into UVs so merged buildings sharing one
+        // texture keep their own story and window counts.
         const uv = geometry.attributes.uv;
         for (let i = 0; i < uv.count; i += 1) {
+          uv.setX(i, uv.getX(i) * repeatX);
           uv.setY(i, uv.getY(i) * repeatY);
         }
         geometry.translate(center.x, baseY, center.z);
@@ -1895,16 +1897,32 @@ export class CityRenderer {
     const treeData = [];
     const bounds = city.meta.bounds;
     if (city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap') {
-      // Real map roads are arbitrary polylines; sample trees sparsely inside
-      // the district instead of walking street-by-street.
-      const width = bounds.maxX - bounds.minX;
-      const depth = bounds.maxZ - bounds.minZ;
-      const count = Math.min(420, Math.round((width * depth) / 2400));
-      for (let i = 0; i < count; i += 1) {
-        const x = bounds.minX + random() * width;
-        const z = bounds.minZ + random() * depth;
-        if (random() < 0.35) continue;
-        treeData.push({ x, z, scale: 0.85 + random() * 0.75 });
+      // Dense sidewalk trees along real polylines, like a real SF street.
+      for (const segment of city.segments || []) {
+        if (treeData.length >= 700) break;
+        if (!['primary', 'secondary', 'tertiary', 'residential'].includes(segment.highway)) continue;
+        const a = segment.points[0];
+        const b = segment.points[segment.points.length - 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 18 || length > 360) continue;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const spacing = segment.highway === 'primary' || segment.highway === 'secondary' ? 17 : 14;
+        const count = Math.min(20, Math.max(2, Math.round(length / spacing)));
+        for (let i = 0; i < count; i += 1) {
+          if (treeData.length >= 700) break;
+          if (random() < 0.08) continue;
+          const t = (i + 0.5) / count;
+          const side = i % 2 === 0 ? 1 : -1;
+          const offset = segment.width / 2 + segment.sidewalkW * 0.55;
+          treeData.push({
+            x: a.x + dx * t + nx * offset * side,
+            z: a.z + dz * t + nz * offset * side,
+            scale: 0.8 + random() * 0.6,
+          });
+        }
       }
     } else {
       for (const street of city.streets) {
@@ -2112,10 +2130,10 @@ export class CityRenderer {
         const nx = -dz / length;
         const nz = dx / length;
         const heading = Math.atan2(dx, dz);
-        const count = Math.min(8, Math.max(2, Math.round(length / 26)));
+        const count = Math.min(12, Math.max(3, Math.round(length / 18)));
         for (let i = 0; i < count; i += 1) {
           if (spots.length >= maxCars) break;
-          if (random() < 0.1) continue;
+          if (random() < 0.06) continue;
           const t = (i + 0.5) / count;
           const side = i % 2 === 0 ? 1 : -1;
           // Park inside the striped stall lane, not on the sidewalk.
@@ -2493,6 +2511,14 @@ export class CityRenderer {
     }
     this.scene.fog.color.copy(fogColor);
     if (this.scene.background) this.scene.background.copy(fogColor);
+    const isNight = hour >= 19.5 || hour <= 6;
+    if (isNight) {
+      this.nightBoost = { remaining: 1.2 };
+      this.renderer.toneMappingExposure = 0.96;
+    } else {
+      this.nightBoost = null;
+      this.renderer.toneMappingExposure = 0.82;
+    }
   }
 
   pick(pointer) {
@@ -2529,6 +2555,11 @@ export class CityRenderer {
     if (this.water && this.water.material) {
       const wave = Math.sin(this.phaseClock * 0.6) * 0.05;
       this.water.position.y = 0.45 + wave;
+    }
+    if (this.nightBoost && this.nightBoost.remaining > 0) {
+      this.nightBoost.remaining -= delta;
+      const boost = Math.min(1, this.nightBoost.remaining / 0.8);
+      this.renderer.toneMappingExposure = 0.82 + boost * 0.14;
     }
   }
 
