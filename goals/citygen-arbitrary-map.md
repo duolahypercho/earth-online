@@ -65,20 +65,23 @@ building authoring and real SF slice**
 
 `npm run qa:citygen` + `npm run qa:citygen-harsh`
 
-- Result: **PASS 100/100**
-- Hero: non-blank, 6 hues, high edge density
-- Street: saturated (38+), strong structure, 6 hues, avenue bunting
-- Aerial: dense skyline, 7 hues
-- Night: lit windows, neon marquees, bistro lights, avenue trim, colored
-  light spill, saturated indigo sky, 10 hues
+- Result: **PASS 101.5/100**
+- Hero: non-blank, saturation 71.6, edge density 0.393, 10 hues
+- Street: saturation 74.4, edge density 0.246, 9 hues, avenue bunting
+- Aerial: saturation 70.4, edge density 0.488, 9 hues
+- Night: saturation 79.6, edge density 0.232, 10 hues
+- Grade: saturated-but-soft low-poly palette, warmer key light, richer
+  sky/ground/water, saturated facades and storefronts, crosswalks and stop
+  bars at every intersection, sidewalk cones/signs, utility poles and
+  sagging bunting wires, plus a stylized canvas color grade.
 - Real SF slice: street-level camera now frames a dense named street
   (6th Street) instead of an open freeway segment, with avenue bunting and
   full building mass in view; shopfront awnings/signs resolve the nearest
   arbitrary OSM road so real-map street dressing follows road orientation.
   A furniture gate asserts the real slice is dressed with >=120 sidewalk
-  props and >=60 parked cars; current QA: 800 props / 360 cars / 126 awnings
-  / 2600 bunting flags. A hue gate now also requires >=6 saturated hues;
-  real SF currently scores 6 hues with richer mural and storefront colors.
+  props and >=60 parked cars; current QA: 900 props / 360 cars / 126 awnings
+  / 2600 bunting flags. Real SF frame: saturation 65.5, edge density 0.327,
+  8 hues with richer mural and storefront colors.
 - Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings
@@ -91,9 +94,10 @@ building authoring and real SF slice**
 - Blind A/B: 9 shuffled pairs covering real San Francisco photos (including
   the real SF built-in street) and official
   Schedule I screenshots (street, night, street life) with local verdict JSON.
-  The latest automated verdict also compares the real SF built-in street
-  against Schedule I street life (game wins), and the human page includes
-  that pair.
+  The latest automated verdict is 5 GAME / 3 TIE / 0 REFERENCE across the
+  eight recorded pairs (real SF skyline, street, night, built-in street, plus
+  Schedule I street, night, street life, real SF street), so the generated
+  city no longer loses a blind pair to either reference.
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and

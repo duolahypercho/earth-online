@@ -162,8 +162,10 @@ function formatClock(hour) {
 function frameCityCamera(city) {
   const bounds = city.meta.bounds;
   const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+  state.renderer.camera.fov = 52;
+  state.renderer.camera.updateProjectionMatrix();
   state.renderer.camera.position.set(span * 0.34, span * 0.27, span * 0.52);
-  state.renderer.controls.target.set(0, 8, 0);
+  state.renderer.controls.target.set(0, 12, 0);
   state.renderer.controls.update();
   state.renderer.controls.maxDistance = span * 1.8;
   state.renderer.controls.minDistance = 4;
@@ -721,6 +723,10 @@ async function boot() {
     setCameraPose: (pose) => {
       const camera = state.renderer.camera;
       const controls = state.renderer.controls;
+      const setFov = (fov) => {
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+      };
       if (pose === 'street') {
         const city = state.city;
         const primary = city.streets.find((street) => street.highway === 'primary');
@@ -728,20 +734,25 @@ async function boot() {
         const position = primary?.position || 0;
         const bounds = city.meta.bounds;
         const along = (bounds.maxZ - bounds.minZ) / 2 - 60;
+        setFov(48);
         const eye = axis === 'x'
-          ? { x: position - 9, z: -along * 0.18 }
-          : { x: -along * 0.18, z: position - 9 };
+          ? { x: position - 7.5, z: -along * 0.2 }
+          : { x: -along * 0.2, z: position - 7.5 };
         const target = axis === 'x'
-          ? { x: position + 8, z: -along * 0.82 }
-          : { x: -along * 0.82, z: position + 8 };
-        camera.position.set(eye.x, 2.9, eye.z);
-        camera.lookAt(target.x, 0.9, target.z);
-        controls.target.set(target.x, 0.9, target.z);
+          ? { x: position + 7.5, z: -along * 0.8 }
+          : { x: -along * 0.8, z: position + 7.5 };
+        const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eye.x, eye.z) : 0) + 2.25;
+        const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(target.x, target.z) : 0) + 1.1;
+        camera.position.set(eye.x, eyeY, eye.z);
+        camera.lookAt(target.x, targetY, target.z);
+        controls.target.set(target.x, targetY, target.z);
       } else if (pose === 'aerial') {
+        setFov(52);
         camera.position.set(90, 230, 140);
         camera.lookAt(0, 8, 0);
         controls.target.set(0, 8, 0);
       } else if (pose === 'night') {
+        setFov(52);
         const city = state.city;
         // Frame an actual storefront on a major avenue so neon, awnings,
         // lamps, and traffic fill the frame instead of a dark residential wall.
@@ -838,17 +849,19 @@ async function boot() {
           const nx = -dz / length;
           const nz = dx / length;
           const side = (segment.points[0].x + segment.points[0].z) % 2 === 0 ? 1 : -1;
-          const eyeX = a.x - dx * 0.16 + nx * 9 * side;
-          const eyeZ = a.z - dz * 0.16 + nz * 9 * side;
+          const eyeX = a.x - dx * 0.16 + nx * 7 * side;
+          const eyeZ = a.z - dz * 0.16 + nz * 7 * side;
           const targetX = b.x - dx * 0.08;
           const targetZ = b.z - dz * 0.08;
-          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 2.6;
-          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.4;
+          setFov(50);
+          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 2.2;
+          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.2;
           camera.position.set(eyeX, eyeY, eyeZ);
           camera.lookAt(targetX, targetY, targetZ);
           controls.target.set(targetX, targetY, targetZ);
         }
       } else {
+        setFov(52);
         frameCityCamera(state.city);
       }
       controls.update();
