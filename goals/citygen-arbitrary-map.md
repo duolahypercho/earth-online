@@ -101,7 +101,9 @@ building authoring and real SF slice**
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and
-  dynamic add/undo all work for a non-SF city.
+  dynamic add/undo all work for a non-SF city. The fixture now includes real
+  `highway=traffic_signals` nodes, and the gate asserts those nodes wire onto
+  10 signal-controlled traffic edges that alternate red/green.
 - Simulation: `npm run verify:citygen-simulation` gates the traffic graph:
   one-way streets produce exactly one legal direction, two-way streets two,
   and every signal-controlled edge alternates red/green through a full phase
