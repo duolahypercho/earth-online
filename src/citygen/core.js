@@ -875,7 +875,9 @@ function tryPlaceAt(city, block, bounds, district, x, z, rng, requestedType) {
 
   const stories = Math.round(spec.heights[0] + rng() * (spec.heights[1] - spec.heights[0]));
   const height = stories * (buildingType === 'warehouse' ? 3.4 : buildingType === 'tower' ? 3.8 : 3.15) + (rng() < 0.35 ? 1.5 : 0);
-  const street = nearStreet?.segment ? city.streets.find((s) => s.id === nearStreet.segment.streetId) : null;
+  const named = namedSegmentForPoint(city, x, z, 90);
+  const street = (named?.segment ? city.streets.find((s) => s.id === named.segment.streetId) : null)
+    || (nearStreet?.segment ? city.streets.find((s) => s.id === nearStreet.segment.streetId) : null);
   const materialPool = buildingType === 'shop' || buildingType === 'rowhouse'
     ? ['painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone']
     : ['painted', 'brick', 'concrete', 'glass', 'stone', 'plaster'];
@@ -983,6 +985,10 @@ export function exportCityMetadata(city) {
       facingStreet: building.facingStreet || '',
       landmark: Boolean(building.landmark),
       userAdded: Boolean(building.userAdded),
+      roofShape: building.roofShape || '',
+      shop: building.shop || '',
+      amenity: building.amenity || '',
+      tourism: building.tourism || '',
       polygon: building.polygon || [],
     })),
     streets: (city.streets || []).map((street) => ({
@@ -992,6 +998,12 @@ export function exportCityMetadata(city) {
       lanes: street.lanes,
       laneW: street.laneW,
       sidewalkW: street.sidewalkW,
+      sidewalkLeft: street.sidewalkLeft ?? street.sidewalkW ?? 0,
+      sidewalkRight: street.sidewalkRight ?? street.sidewalkW ?? 0,
+      maxspeed: street.maxspeed || '',
+      maxspeedKmh: street.maxspeedKmh || 0,
+      maxspeedSource: street.maxspeedSource || 'zone-default',
+      cycleway: street.cycleway || '',
       asphaltWidth: street.asphaltWidth,
       oneway: street.oneway,
       blocks: street.blocks || [],
@@ -1009,6 +1021,11 @@ export function exportCityMetadata(city) {
       oneway: segment.oneway,
       width: segment.width,
       sidewalkW: segment.sidewalkW,
+      sidewalkLeft: segment.sidewalkLeft ?? segment.sidewalkW ?? 0,
+      sidewalkRight: segment.sidewalkRight ?? segment.sidewalkW ?? 0,
+      maxspeed: segment.maxspeed || '',
+      maxspeedKmh: segment.maxspeedKmh || 0,
+      cycleway: segment.cycleway || '',
       signalId: segment.signalId || null,
       intersectionId: segment.intersectionId || null,
       points: segment.points || [],
@@ -1124,6 +1141,23 @@ function nearestSegmentForPoint(city, x, z) {
   let best = null;
   let bestDistance = Infinity;
   for (const segment of city.segments || []) {
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const d = distanceToSegment({ x, z }, a, b);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = segment;
+    }
+  }
+  return best ? { segment: best, distance: bestDistance } : null;
+}
+
+function namedSegmentForPoint(city, x, z, maxDistance = 90) {
+  const isSynthetic = (name) => /^(SF Rd |Unnamed Road)/.test(name || '');
+  let best = null;
+  let bestDistance = maxDistance;
+  for (const segment of city.segments || []) {
+    if (!segment.streetName || isSynthetic(segment.streetName)) continue;
     const a = segment.points[0];
     const b = segment.points[segment.points.length - 1];
     const d = distanceToSegment({ x, z }, a, b);

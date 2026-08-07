@@ -41,7 +41,7 @@ const elements = [
   {
     type: 'way',
     id: 1001,
-    tags: { highway: 'primary', name: 'Burnside St', lanes: '2', oneway: 'yes', sidewalk_width: '2.8' },
+    tags: { highway: 'primary', name: 'Burnside St', lanes: '2', oneway: 'yes', sidewalk_width: '2.8', maxspeed: '25 mph', cycleway: 'lane' },
     geometry: [
       { lat: 45.5231, lon: -122.6900 },
       { lat: 45.5231, lon: -122.6800 },
@@ -52,7 +52,7 @@ const elements = [
   {
     type: 'way',
     id: 1002,
-    tags: { highway: 'secondary', name: '6th Ave', lanes: '3' },
+    tags: { highway: 'secondary', name: '6th Ave', lanes: '3', 'sidewalk:left': 'no', 'sidewalk:right': 'yes' },
     geometry: [
       { lat: 45.5190, lon: -122.6800 },
       { lat: 45.5231, lon: -122.6800 },
@@ -84,7 +84,7 @@ const elements = [
   {
     type: 'way',
     id: 2001,
-    tags: { building: 'retail', shop: 'cafe', name: 'Morning Coffee', levels: '2' },
+    tags: { building: 'retail', shop: 'cafe', name: 'Morning Coffee', levels: '2', 'addr:housenumber': '412', 'addr:street': 'Burnside St', 'roof:shape': 'flat' },
     geometry: points(45.5231, -122.68255, -2, -2),
   },
   {
@@ -146,12 +146,53 @@ if (!exported.signals.length) failures.push('export signal metadata missing');
 if (city.segments.filter((segment) => segment.signalId).length < 2) {
   failures.push('real OSM signal nodes were not wired onto road segments');
 }
+// Road metadata: tags flow through to streets and segments, with zone
+// defaults where OSM has no tag.
+const burnside = city.streets.find((street) => street.name === 'Burnside St');
+if (!burnside || burnside.maxspeed !== '25 mph' || burnside.maxspeedKmh !== 40 || burnside.cycleway !== 'lane') {
+  failures.push('Burnside maxspeed/cycleway tags did not flow onto the street');
+}
+const sixthAve = city.streets.find((street) => street.name === '6th Ave');
+if (!sixthAve || sixthAve.sidewalkLeft !== 0 || !(sixthAve.sidewalkRight > 0)) {
+  failures.push('per-side sidewalk tags did not flow onto the street');
+}
+if (!city.streets.every((street) => street.maxspeedKmh > 0 && street.sidewalkLeft != null && street.sidewalkRight != null)) {
+  failures.push('street maxspeed/sidewalk defaults missing');
+}
+if (!city.segments.every((segment) => segment.maxspeedKmh > 0 && segment.cycleway != null)) {
+  failures.push('segment maxspeed/cycleway metadata missing');
+}
+// Blocks: snapped polygons stay off the road right-of-way and carry streets.
+for (const block of city.blocks) {
+  if (!block.streets.length) failures.push(`${block.id} has no streets`);
+  if (new Set(block.streets).size !== block.streets.length) failures.push(`${block.id} street list has duplicates`);
+  if (block.polygon.length !== 4) failures.push(`${block.id} polygon is not a rectangle`);
+  if (block.polygon.length === 4
+    && (block.polygon[1].x - block.polygon[0].x < 4 || block.polygon[3].z - block.polygon[0].z < 4)) {
+    failures.push(`${block.id} polygon collapsed below a buildable size`);
+  }
+}
+// Building metadata: address, roof shape, and shop tags survive conversion.
+const coffee = city.buildings.find((building) => building.name === 'Morning Coffee');
+if (!coffee || coffee.address !== '412 Burnside St' || coffee.roofShape !== 'flat' || coffee.shop !== 'cafe') {
+  failures.push('building address/roof/shop tags did not flow into metadata');
+}
 const importedCity = importCityMetadata(exported);
 if (!importedCity
   || importedCity.buildings.length !== city.buildings.length
   || importedCity.streets.length !== city.streets.length
   || importedCity.signals.length !== city.signals.length) {
   failures.push('export/import round-trip failed for arbitrary OSM city');
+}
+if (importedCity) {
+  const reBurnside = importedCity.streets.find((street) => street.name === 'Burnside St');
+  if (!reBurnside || reBurnside.maxspeedKmh !== 40 || reBurnside.cycleway !== 'lane') {
+    failures.push('export/import lost road maxspeed/cycleway metadata');
+  }
+  const reCoffee = importedCity.buildings.find((building) => building.name === 'Morning Coffee');
+  if (!reCoffee || reCoffee.address !== '412 Burnside St' || reCoffee.roofShape !== 'flat') {
+    failures.push('export/import lost building address/roof metadata');
+  }
 }
 let placementPoint = null;
 for (const block of city.blocks) {

@@ -34,7 +34,19 @@ const inspectorFields = document.querySelector('#inspector-fields');
 const inspectorClose = document.querySelector('#inspector-close');
 const minimapCanvas = document.querySelector('#minimap-canvas');
 const osmOverlay = document.querySelector('#osm-overlay');
+const osmForm = document.querySelector('#osm-form');
 const osmCityInput = document.querySelector('#osm-city');
+const osmProgress = document.querySelector('#osm-progress');
+const osmFetchButton = document.querySelector('[data-action="osm-go"]');
+const osmSfButton = document.querySelector('[data-action="sf-builtin"]');
+const osmCancelButton = document.querySelector('[data-action="osm-cancel"]');
+const osmResult = document.querySelector('#osm-result');
+const osmResultTitle = document.querySelector('#osm-result-title');
+const osmResultDetail = document.querySelector('#osm-result-detail');
+const statusPill = document.querySelector('#status-pill');
+const statusPillText = document.querySelector('#status-pill-text');
+const inspectorEmpty = document.querySelector('#inspector-empty');
+const placeChip = document.querySelector('#place-chip');
 const osmStatus = document.querySelector('#osm-status');
 const hintEl = document.querySelector('.hint span');
 
@@ -69,6 +81,33 @@ const state = {
   errors: [],
 };
 
+let pillTimer = null;
+
+function showPill(message, kind = 'error', timeoutMs = 6000) {
+  if (!message) return;
+  statusPillText.textContent = message;
+  statusPill.classList.toggle('is-info', kind === 'info');
+  statusPill.hidden = false;
+  if (pillTimer) clearTimeout(pillTimer);
+  if (timeoutMs > 0) pillTimer = setTimeout(() => { statusPill.hidden = true; }, timeoutMs);
+}
+
+function reportError(message, source) {
+  const entry = `${message}${source ? ` (${source})` : ''}`;
+  if (state.errors.includes(entry)) return;
+  state.errors.push(entry);
+  if (state.errors.length > 30) state.errors.shift();
+  console.error(`${source || 'citygen'}:`, message);
+  showPill(entry);
+}
+
+window.addEventListener('error', (event) => reportError(event.message || 'Unknown error', 'page'));
+window.addEventListener('unhandledrejection', (event) => reportError(event.reason?.message || String(event.reason), 'async'));
+
+function syncDayTheme() {
+  document.body.dataset.day = state.day ? 'true' : 'false';
+}
+
 function makeCity(style, seed) {
   return generateCity({ seed, style, extent: 660 });
 }
@@ -77,88 +116,152 @@ function fmt(value) {
   return Number(value).toLocaleString('en-US');
 }
 
-function drawMinimap(city) {
-  if (!city) return;
-  const context = minimapCanvas.getContext('2d');
-  const size = minimapCanvas.width;
+const MINIMAP = {
+  css: 148,
+  pad: 10,
+  bitmap: null,
+  bounds: null,
+  scale: 1,
+  transform: new DOMMatrix(),
+};
+
+function minimapTrace(context, polygon) {
+  context.moveTo(polygon[0].x, polygon[0].z);
+  for (let i = 1; i < polygon.length; i += 1) context.lineTo(polygon[i].x, polygon[i].z);
+  context.closePath();
+}
+
+function drawMinimapBase(city) {
   const bounds = city.meta.bounds;
-  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
-  const scale = (size - 24) / span;
-  const toX = (x) => 12 + (x - bounds.minX) * scale;
-  const toY = (z) => size - 12 - (z - bounds.minZ) * scale;
-  context.clearRect(0, 0, size, size);
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ) || 1;
+  const scale = (MINIMAP.css - 2 * MINIMAP.pad) / span;
+  MINIMAP.bounds = bounds;
+  MINIMAP.scale = scale;
+  MINIMAP.transform = new DOMMatrix()
+    .translate(MINIMAP.pad, MINIMAP.css - MINIMAP.pad)
+    .scale(scale, -scale)
+    .translate(-bounds.minX, -bounds.minZ);
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (!MINIMAP.bitmap) {
+    MINIMAP.bitmap = document.createElement('canvas');
+    MINIMAP.bitmap.width = MINIMAP.css * dpr;
+    MINIMAP.bitmap.height = MINIMAP.css * dpr;
+  }
+  const context = MINIMAP.bitmap.getContext('2d');
+  const px = MINIMAP.bitmap.width / MINIMAP.css;
+  const t = MINIMAP.transform;
+  // Background in device space, then world-space transform for geometry.
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, MINIMAP.bitmap.width, MINIMAP.bitmap.height);
   context.fillStyle = '#cfe0cf';
-  context.fillRect(0, 0, size, size);
+  context.fillRect(0, 0, MINIMAP.bitmap.width, MINIMAP.bitmap.height);
+  context.setTransform(px * t.a, px * t.b, px * t.c, px * t.d, px * t.e, px * t.f);
+  const cssWidth = (widthCss) => widthCss / scale;
 
-  context.fillStyle = 'rgba(90, 132, 170, 0.65)';
-  context.fillRect(toX(bounds.maxX - 40), 0, size, size);
-
+  // Blocks
   for (const block of city.blocks) {
-    context.fillStyle = block.landUse === 'park' ? 'rgba(122, 168, 106, 0.85)' : 'rgba(232, 224, 205, 0.85)';
+    if (!block.polygon?.length) continue;
+    context.fillStyle = block.landUse === 'park' ? '#a8cf9d' : '#e7dfc9';
     context.beginPath();
-    context.moveTo(toX(block.polygon[0].x), toY(block.polygon[0].z));
-    for (let i = 1; i < block.polygon.length; i += 1) {
-      context.lineTo(toX(block.polygon[i].x), toY(block.polygon[i].z));
-    }
-    context.closePath();
+    minimapTrace(context, block.polygon);
     context.fill();
   }
-
   for (const park of city.parks || []) {
-    const points = park.polygon;
-    if (!points?.length) continue;
-    context.fillStyle = 'rgba(122, 168, 106, 0.9)';
+    if (!park.polygon?.length) continue;
+    context.fillStyle = '#93c58a';
     context.beginPath();
-    context.moveTo(toX(points[0].x), toY(points[0].z));
-    for (let i = 1; i < points.length; i += 1) context.lineTo(toX(points[i].x), toY(points[i].z));
-    context.closePath();
+    minimapTrace(context, park.polygon);
     context.fill();
   }
   for (const water of city.water || []) {
-    const points = water.polygon;
-    if (!points?.length) continue;
-    context.fillStyle = 'rgba(90, 150, 190, 0.9)';
+    if (!water.polygon?.length) continue;
+    context.fillStyle = '#8fb9d9';
     context.beginPath();
-    context.moveTo(toX(points[0].x), toY(points[0].z));
-    for (let i = 1; i < points.length; i += 1) context.lineTo(toX(points[i].x), toY(points[i].z));
-    context.closePath();
+    minimapTrace(context, water.polygon);
     context.fill();
   }
 
-  const roadColor = {
-    primary: '#e8a45c',
-    secondary: '#d7c47d',
-    tertiary: '#c9c4ad',
-    residential: '#aeb1a5',
-    service: '#b7bab0',
+  // Streets follow actual road geometry, not the generator's axis grid.
+  const roadStyle = {
+    primary: ['#e8a45c', 5],
+    secondary: ['#d7c47d', 4],
+    tertiary: ['#cdc7ae', 3],
+    residential: ['#b4b7aa', 2.4],
+    service: ['#bcbfb4', 2],
+    pedestrian: ['#d3cdbb', 1.6],
+    footway: ['#d3cdbb', 1.4],
+    path: ['#d3cdbb', 1.2],
+    cycleway: ['#9fbfae', 1.6],
   };
   context.lineCap = 'round';
-  for (const street of city.streets) {
-    context.strokeStyle = roadColor[street.highway] || '#aeb1a5';
-    context.lineWidth = street.highway === 'primary' ? 4 : street.highway === 'secondary' ? 3.2 : 2.4;
-    const axis = street.axis;
-    const position = street.position;
-    const a = axis === 'x' ? { x: position, z: bounds.minZ } : { x: bounds.minX, z: position };
-    const b = axis === 'x' ? { x: position, z: bounds.maxZ } : { x: bounds.maxX, z: position };
+  context.lineJoin = 'round';
+  const ordered = [...city.segments].sort((a, b) => {
+    const rank = (segment) => (segment.highway === 'primary' ? 4 : segment.highway === 'secondary' ? 3 : segment.highway === 'tertiary' ? 2 : 1);
+    return rank(a) - rank(b);
+  });
+  for (const segment of ordered) {
+    const [stroke, widthCss] = roadStyle[segment.highway] || ['#b4b7aa', 2];
+    const points = segment.points;
+    if (!points?.length) continue;
+    context.strokeStyle = stroke;
+    context.lineWidth = cssWidth(Math.max(widthCss, (segment.width || 6) * scale * 0.8));
     context.beginPath();
-    context.moveTo(toX(a.x), toY(a.z));
-    context.lineTo(toX(b.x), toY(b.z));
+    context.moveTo(points[0].x, points[0].z);
+    for (let i = 1; i < points.length; i += 1) context.lineTo(points[i].x, points[i].z);
     context.stroke();
   }
 
   context.fillStyle = '#d96a4f';
   for (const signal of city.signals) {
     context.beginPath();
-    context.arc(toX(signal.position.x), toY(signal.position.z), 2.8, 0, Math.PI * 2);
+    context.arc(signal.position.x, signal.position.z, 2 / scale, 0, Math.PI * 2);
     context.fill();
+  }
+}
+
+function minimapProject(x, z) {
+  const t = MINIMAP.transform;
+  return { x: t.a * x + t.c * z + t.e, y: t.b * x + t.d * z + t.f };
+}
+
+function drawMinimap(city) {
+  if (!city || !state.renderer) return;
+  if (!MINIMAP.bitmap) drawMinimapBase(city);
+  const context = minimapCanvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const sizePx = MINIMAP.css * dpr;
+  if (minimapCanvas.width !== sizePx) {
+    minimapCanvas.width = sizePx;
+    minimapCanvas.height = sizePx;
+  }
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, MINIMAP.css, MINIMAP.css);
+  if (MINIMAP.bitmap) {
+    context.drawImage(MINIMAP.bitmap, 0, 0, MINIMAP.css, MINIMAP.css);
   }
 
   const camera = state.renderer.camera.position;
+  const target = state.renderer.controls?.target;
+  const pos = minimapProject(camera.x, camera.z);
+
+  // View direction wedge points toward the controls target.
+  if (target) {
+    const aim = minimapProject(target.x, target.z);
+    const angle = Math.atan2(aim.y - pos.y, aim.x - pos.x);
+    context.fillStyle = 'rgba(28, 42, 51, 0.18)';
+    context.beginPath();
+    context.moveTo(pos.x, pos.y);
+    context.arc(pos.x, pos.y, 22, angle - 0.42, angle + 0.42);
+    context.closePath();
+    context.fill();
+  }
+
   context.fillStyle = '#ffffff';
   context.strokeStyle = '#1c2a33';
-  context.lineWidth = 2;
+  context.lineWidth = 1.6;
   context.beginPath();
-  context.arc(toX(camera.x), toY(camera.z), 3.4, 0, Math.PI * 2);
+  context.arc(pos.x, pos.y, 3.6, 0, Math.PI * 2);
   context.fill();
   context.stroke();
 }
@@ -243,6 +346,7 @@ function buildCollisionGrid(city, cell = 2) {
 
 async function buildCity(city, { reframe = true } = {}) {
   state.city = city;
+  MINIMAP.bitmap = null;
   if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
   await state.renderer.buildCity(city, { day: state.day });
@@ -254,6 +358,7 @@ async function buildCity(city, { reframe = true } = {}) {
   if (reframe) frameCityCamera(city);
   updateReadout(city);
   drawMinimap(city);
+  syncUndoButton();
 }
 
 function makeGhost() {
@@ -283,6 +388,7 @@ function updateGhost(x, z) {
   const result = planBuildingPlacement(state.city, x, z, { commit: false });
   if (!result.ok || !result.building) {
     state.ghost.group.visible = false;
+    showPlaceChip(result.reason || 'Off buildable block', false);
     return;
   }
   const points = result.building.polygon;
@@ -296,6 +402,11 @@ function updateGhost(x, z) {
   state.ghost.box.material.color.set('#35d07f');
   state.ghost.box.material.opacity = 0.32;
   state.ghost.group.visible = true;
+  const block = state.city.blocks.find((b) => b.id === result.building.blockId);
+  const street = result.street?.name || result.building.facingStreet;
+  const context = `${block?.district || ''}${street ? ` · ${street}` : ''}`.trim();
+  const size = `${width.toFixed(0)}×${depth.toFixed(0)} m`;
+  showPlaceChip(`Ready to build · ${result.building.typeLabel} ${size}${context ? ` · ${context}` : ''}`, true);
 }
 
 async function placeAt(x, z) {
@@ -305,6 +416,8 @@ async function placeAt(x, z) {
       state.ghost.box.material.color.set('#e5484d');
       state.ghost.box.material.opacity = 0.5;
     }
+    showPlaceChip(result.reason || 'Cannot build here', false);
+    showPill(result.reason || 'Cannot build here', 'error', 2600);
     return false;
   }
   state.addedBuildings.push(result.building.id);
@@ -313,18 +426,26 @@ async function placeAt(x, z) {
   state.cash += Math.round(result.building.height * 4 + 150);
   await buildCity(state.city, { reframe: false });
   updateGhost(x, z);
+  showPill(`Built ${result.building.typeLabel} · +$${Math.round(result.building.height * 4 + 150)}`, 'info', 2200);
   return true;
 }
 
 async function undoLastAdded() {
   const id = state.addedBuildings.pop();
-  if (!id) return;
+  if (!id) {
+    if (state.placement) showPill('Nothing to undo', 'info', 1600);
+    return;
+  }
   removeBuildingById(state.city, id);
   await buildCity(state.city, { reframe: false });
+  showPill(`Removed building · ${state.addedBuildings.length} placement${state.addedBuildings.length === 1 ? '' : 's'} left to undo`, 'info', 2200);
 }
 
 function syncPlacementState() {
   document.querySelector('[data-action="place"]').classList.toggle('is-active', state.placement);
+  syncUndoButton();
+  if (placeChip) placeChip.hidden = !state.placement;
+  if (state.placement) showPlaceChip('Hover a block to preview a footprint', null);
   hintEl.textContent = state.vehicle
     ? 'Drive mode · W throttle · S brake · A/D steer · E exit'
     : state.placement
@@ -332,6 +453,10 @@ function syncPlacementState() {
       : state.mode === 'walk'
         ? 'Walk mode · WASD move · E enter a car · M orbit'
         : 'Drag orbit · click inspect · WASD walk · E enter a car · Esc exit';
+}
+
+function syncUndoButton() {
+  document.querySelector('[data-action="undo"]').disabled = state.addedBuildings.length === 0;
 }
 
 function togglePlacement(force = null) {
@@ -479,6 +604,16 @@ function updateVehicle(delta) {
   state.renderer.controls.update();
 }
 
+function showPlaceChip(message, ok) {
+  if (!placeChip) return;
+  const strong = placeChip.querySelector('strong');
+  const msg = placeChip.querySelector('.place-msg');
+  strong.textContent = ok === true ? 'Ready' : ok === false ? 'Blocked' : 'Add';
+  msg.textContent = message || '';
+  placeChip.classList.toggle('is-ok', ok === true);
+  placeChip.classList.toggle('is-bad', ok === false);
+}
+
 function addField(label, value) {
   const dt = document.createElement('dt');
   dt.textContent = label;
@@ -487,11 +622,41 @@ function addField(label, value) {
   inspectorFields.append(dt, dd);
 }
 
-function showInspector(title, fields) {
+function addSection(label) {
+  const dt = document.createElement('dt');
+  dt.className = 'section';
+  dt.textContent = label;
+  inspectorFields.append(dt);
+}
+
+// sections: { [sectionName]: { [label]: value } } — rendered as grouped field sets.
+function showInspector(title, sections) {
   inspectorTitle.textContent = title;
+  inspectorTitle.setAttribute('title', title);
   inspectorFields.replaceChildren();
-  for (const [label, value] of Object.entries(fields)) addField(label, value);
-  inspector.dataset.copyText = [title, ...Object.entries(fields).map(([label, value]) => `${label}: ${value ?? '—'}`)].join('\n');
+  const copyLines = [];
+  for (const [section, fields] of Object.entries(sections)) {
+    const entries = Object.entries(fields);
+    if (!entries.length) continue;
+    addSection(section);
+    copyLines.push(section.toUpperCase());
+    for (const [label, value] of entries) {
+      addField(label, value);
+      copyLines.push(`${label}: ${value ?? '—'}`);
+    }
+  }
+  inspectorEmpty.hidden = true;
+  inspector.dataset.copyText = [title, '', ...copyLines].join('\n');
+  inspector.hidden = false;
+}
+
+function resetInspector(message) {
+  inspectorTitle.textContent = 'Inspector';
+  inspectorTitle.removeAttribute('title');
+  inspectorFields.replaceChildren();
+  inspectorEmpty.hidden = false;
+  inspectorEmpty.textContent = message || 'Nothing selected. Click a building, street, signal, or block.';
+  delete inspector.dataset.copyText;
   inspector.hidden = false;
 }
 
@@ -505,12 +670,14 @@ function inspectWorld(point, hit) {
     if (signal) {
       const streets = signal.streetIds.map((id) => city.streets.find((s) => s.id === id)?.name || id);
       showInspector(`Signal ${signal.id}`, {
-        'Intersection': signal.intersectionId,
-        'Streets': streets.join(' × '),
-        'Phase period': `${signal.period}s`,
-        'Phase offset': `${signal.phaseOffset}s`,
-        'Heading': signal.heading,
-        'Position': `${Math.round(x)}, ${Math.round(z)}`,
+        'Signal': {
+          'Intersection': signal.intersectionId,
+          'Streets': streets.join(' × '),
+          'Phase period': `${signal.period}s`,
+          'Phase offset': `${signal.phaseOffset}s`,
+          'Heading': signal.heading,
+          'Position': `${Math.round(x)}, ${Math.round(z)}`,
+        },
       });
       return;
     }
@@ -520,23 +687,31 @@ function inspectWorld(point, hit) {
   const effectiveBuilding = building || near.building || nearestBuilding(city, x, z);
   if (effectiveBuilding) {
     showInspector(effectiveBuilding.name || effectiveBuilding.typeLabel, {
-      'ID': effectiveBuilding.id,
-      'Name': effectiveBuilding.name || '—',
-      'Type': effectiveBuilding.typeLabel,
-      'Usage': effectiveBuilding.usage,
-      'District': effectiveBuilding.district,
-      'Block': effectiveBuilding.blockId,
-      'Address': effectiveBuilding.address || `${Math.round(x)}, ${Math.round(z)}`,
-      'Facing': effectiveBuilding.facingStreet || '—',
-      'Landmark': effectiveBuilding.landmark ? 'Yes' : 'No',
-      'Stories': effectiveBuilding.stories,
-      'Height': `${effectiveBuilding.height.toFixed(1)} m`,
-      'Footprint': `${fmt(Math.round(effectiveBuilding.footprintArea))} m²`,
-      'Built': effectiveBuilding.yearBuilt,
-      'Material': effectiveBuilding.material,
-      'Facade': effectiveBuilding.facade,
-      'Shop': effectiveBuilding.shop || '—',
-      'Amenity': effectiveBuilding.amenity || '—',
+      'Building': {
+        'Name': effectiveBuilding.name || '—',
+        'Type': effectiveBuilding.typeLabel,
+        'Usage': effectiveBuilding.usage,
+        'Address': effectiveBuilding.address || `${Math.round(x)}, ${Math.round(z)}`,
+        'Landmark': effectiveBuilding.landmark ? 'Yes' : 'No',
+      },
+      'Block': {
+        'ID': effectiveBuilding.id,
+        'Block': effectiveBuilding.blockId,
+        'District': effectiveBuilding.district,
+        'Facing': effectiveBuilding.facingStreet || '—',
+      },
+      'Form': {
+        'Stories': effectiveBuilding.stories,
+        'Height': `${effectiveBuilding.height.toFixed(1)} m`,
+        'Footprint': `${fmt(Math.round(effectiveBuilding.footprintArea))} m²`,
+      },
+      'Character': {
+        'Built': effectiveBuilding.yearBuilt,
+        'Material': effectiveBuilding.material,
+        'Facade': effectiveBuilding.facade,
+        'Shop': effectiveBuilding.shop || '—',
+        'Amenity': effectiveBuilding.amenity || '—',
+      },
     });
     return;
   }
@@ -544,36 +719,44 @@ function inspectWorld(point, hit) {
   if (segment && near.streetDistance < 18) {
     const street = city.streets.find((s) => s.id === segment.streetId);
     showInspector(street?.name || segment.streetName, {
-      'ID': segment.id,
-      'Street': segment.streetId,
-      'Highway': segment.highway,
-      'Lanes': segment.lanes,
-      'Traffic': segment.oneway === 'both' ? 'Two-way' : `One-way (${segment.oneway})`,
-      'Asphalt': `${segment.width.toFixed(1)} m`,
-      'Sidewalk': `${segment.sidewalkW.toFixed(1)} m`,
-      'Max speed': segment.maxspeed || '—',
-      'Cycleway': segment.cycleway || '—',
-      'Signal': segment.signalId || 'none',
+      'Street': {
+        'ID': segment.id,
+        'Street': segment.streetId,
+        'Highway': segment.highway,
+        'Lanes': segment.lanes,
+        'Traffic': segment.oneway === 'both' ? 'Two-way' : `One-way (${segment.oneway})`,
+        'Max speed': segment.maxspeed || '—',
+      },
+      'Section': {
+        'Asphalt': `${segment.width.toFixed(1)} m`,
+        'Sidewalk': `${segment.sidewalkW.toFixed(1)} m`,
+        'Cycleway': segment.cycleway || '—',
+        'Signal': segment.signalId || 'none',
+      },
     });
     return;
   }
   const block = near.block || city.blocks.find((b) => pointInPolygonBox(b, x, z));
   if (block) {
     showInspector(`Block ${block.id}`, {
-      'District': block.district,
-      'Land use': block.landUse || 'mixed',
-      'Buildings': fmt(block.buildings.length),
-      'Streets': block.streets.map((id) => city.streets.find((s) => s.id === id)?.name || id).join(' · '),
-      'Position': `${Math.round(x)}, ${Math.round(z)}`,
+      'Block': {
+        'District': block.district,
+        'Land use': block.landUse || 'mixed',
+        'Buildings': fmt(block.buildings.length),
+        'Streets': block.streets.map((id) => city.streets.find((s) => s.id === id)?.name || id).join(' · '),
+        'Position': `${Math.round(x)}, ${Math.round(z)}`,
+      },
     });
     return;
   }
   showInspector('City', {
-    'Name': city.meta.name,
-    'Generator': city.meta.generator,
-    'Buildings': fmt(city.buildings.length),
-    'Streets': fmt(city.streets.length),
-    'Signals': fmt(city.signals.length),
+    'City': {
+      'Name': city.meta.name,
+      'Generator': city.meta.generator,
+      'Buildings': fmt(city.buildings.length),
+      'Streets': fmt(city.streets.length),
+      'Signals': fmt(city.signals.length),
+    },
   });
 }
 
@@ -647,30 +830,75 @@ async function generate(style, seed) {
   await buildCity(makeCity(style, seed));
 }
 
+let osmBusy = false;
+let osmResultTimer = null;
+
+function setOsmBusy(busy, statusText) {
+  osmBusy = busy;
+  osmFetchButton.disabled = busy;
+  osmSfButton.disabled = busy;
+  osmCancelButton.disabled = busy;
+  osmCityInput.disabled = busy;
+  osmProgress.hidden = !busy;
+  osmStatus.classList.remove('is-error');
+  osmStatus.textContent = statusText || '';
+}
+
+function openOsmPanel() {
+  osmForm.hidden = false;
+  osmResult.hidden = true;
+  osmStatus.classList.remove('is-error');
+  osmStatus.textContent = '';
+  osmOverlay.hidden = false;
+  osmCityInput.focus();
+  osmCityInput.select();
+}
+
+function showOsmResult(city) {
+  const stats = describeCity(city);
+  const source = city.meta.generator === 'sf-builtin'
+    ? 'built-in San Francisco OSM extract'
+    : `OpenStreetMap · ${city.meta.center ? `${city.meta.center.lat.toFixed(4)}, ${city.meta.center.lon.toFixed(4)}` : 'network'}`;
+  osmResultTitle.textContent = `${city.meta.name} loaded`;
+  osmResultDetail.textContent = `${fmt(stats.buildings)} buildings · ${fmt(stats.streets)} streets · ${fmt(stats.blocks)} blocks · ${fmt(stats.signals)} signals — ${source}`;
+  osmForm.hidden = true;
+  osmResult.hidden = false;
+  setOsmBusy(false, '');
+  // Auto-dismiss so camera QA screenshots are never occluded.
+  if (osmResultTimer) clearTimeout(osmResultTimer);
+  osmResultTimer = setTimeout(() => { osmOverlay.hidden = true; }, 3200);
+  showPill(`Real map loaded: ${city.meta.name}`, 'info', 3000);
+}
+
 async function fetchRealCity(query) {
-  osmStatus.textContent = 'Contacting OpenStreetMap… this can take up to 45s.';
+  if (osmBusy) return;
+  const label = query || 'San Francisco, CA';
+  setOsmBusy(true, `Geocoding ${label}… then fetching roads and footprints. Can take ~45s.`);
   try {
-    const city = await fetchOsmCity({ query, radius: 520 });
+    const city = await fetchOsmCity({ query: label, radius: 520 });
     if (!city.buildings.length && !city.segments.length) throw new Error('No map data returned');
     await buildCity(city);
-    osmOverlay.hidden = true;
+    showOsmResult(city);
   } catch (error) {
-    state.errors.push(`OSM failed: ${error.message}`);
-    osmStatus.textContent = `Could not fetch ${query}. Showing procedural fallback.`;
-    await generate(state.style, state.seed);
-    osmOverlay.hidden = true;
+    reportError(`Real map fetch failed: ${error.message}`, 'osm');
+    setOsmBusy(false, '');
+    osmStatus.classList.add('is-error');
+    osmStatus.textContent = `Could not fetch “${label}”: ${error.message}. Check the query and connection, then try again.`;
   }
 }
 
 async function loadBuiltinSf() {
-  osmStatus.textContent = 'Loading prebuilt real San Francisco data…';
+  if (osmBusy) return;
+  setOsmBusy(true, 'Loading prebuilt San Francisco OSM extract…');
   try {
     const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
     await buildCity(city);
-    osmOverlay.hidden = true;
+    showOsmResult(city);
   } catch (error) {
-    state.errors.push(`SF built-in failed: ${error.message}`);
-    osmStatus.textContent = `Could not load built-in SF. ${error.message}`;
+    reportError(`Built-in SF failed: ${error.message}`, 'sf-builtin');
+    setOsmBusy(false, '');
+    osmStatus.classList.add('is-error');
+    osmStatus.textContent = `Could not load built-in San Francisco: ${error.message}`;
   }
 }
 
@@ -749,12 +977,14 @@ async function boot() {
     setDay: (day) => {
       state.day = Boolean(day);
       document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
+      syncDayTheme();
     },
     setClock: (hour) => {
       state.clock = clamp(Number(hour) || 9, 0, 24);
       state.day = state.clock >= 6 && state.clock < 20;
       state.renderer.setTimeOfDay(state.clock);
       document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
+      syncDayTheme();
       updateReadout(state.city);
     },
     setCameraPose: (pose) => {
@@ -927,6 +1157,16 @@ async function boot() {
   };
   await generate('sanfrancisco', 731);
   makeGhost();
+  syncDayTheme();
+  resetInspector();
+
+  // Crisp minimap: physical pixels backing a 148px CSS box.
+  const minimapDpr = Math.min(window.devicePixelRatio || 1, 2);
+  minimapCanvas.width = MINIMAP.css * minimapDpr;
+  minimapCanvas.height = MINIMAP.css * minimapDpr;
+  minimapCanvas.setAttribute('role', 'button');
+  minimapCanvas.setAttribute('tabindex', '0');
+  minimapCanvas.setAttribute('aria-label', 'City minimap: click to fly the camera to a spot');
 
   const pointer = new THREE.Vector2();
   renderer.renderer.domElement.addEventListener('pointerdown', (event) => {
@@ -938,7 +1178,7 @@ async function boot() {
     pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
     if (state.placement) {
       const point = pointerWorld(pointer);
-      if (point) placeAt(point.x, point.z);
+      if (point) placeAt(point.x, point.z).catch((error) => reportError(error.message, 'placement'));
       return;
     }
     const hit = renderer.pick(pointer);
@@ -1006,17 +1246,26 @@ async function boot() {
     await undoLastAdded();
   });
   document.querySelector('[data-action="osm"]').addEventListener('click', () => {
-    osmOverlay.hidden = false;
-    osmStatus.textContent = '';
+    openOsmPanel();
   });
-  document.querySelector('[data-action="osm-go"]').addEventListener('click', async () => {
+  osmForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
     await fetchRealCity(osmCityInput.value.trim() || 'San Francisco, CA');
   });
-  document.querySelector('[data-action="sf-builtin"]').addEventListener('click', async () => {
+  osmSfButton.addEventListener('click', async () => {
     await loadBuiltinSf();
   });
-  document.querySelector('[data-action="osm-cancel"]').addEventListener('click', () => {
+  osmCancelButton.addEventListener('click', () => {
+    if (osmBusy) return;
     osmOverlay.hidden = true;
+  });
+  document.querySelector('[data-action="osm-done"]').addEventListener('click', () => {
+    if (osmResultTimer) clearTimeout(osmResultTimer);
+    osmOverlay.hidden = true;
+  });
+  document.querySelector('[data-action="osm-retry"]').addEventListener('click', () => {
+    if (osmResultTimer) clearTimeout(osmResultTimer);
+    openOsmPanel();
   });
   inspectorClose.addEventListener('click', () => {
     inspector.hidden = true;
@@ -1024,26 +1273,34 @@ async function boot() {
   const inspectorCopy = document.querySelector('#inspector-copy');
   inspectorCopy.addEventListener('click', async () => {
     const text = inspector.dataset.copyText || inspectorTitle.textContent || '';
+    const label = inspectorCopy.querySelector('span');
     try {
       await navigator.clipboard.writeText(text);
-      const original = inspectorCopy.textContent;
-      inspectorCopy.textContent = 'Copied';
-      setTimeout(() => { inspectorCopy.textContent = original; }, 1200);
+      inspectorCopy.classList.remove('is-fail');
+      inspectorCopy.classList.add('is-ok');
+      label.textContent = 'Copied';
+      setTimeout(() => {
+        inspectorCopy.classList.remove('is-ok');
+        label.textContent = 'Copy';
+      }, 1400);
     } catch {
-      inspectorCopy.textContent = 'Copy failed';
-      setTimeout(() => { inspectorCopy.textContent = 'Copy'; }, 1200);
+      inspectorCopy.classList.remove('is-ok');
+      inspectorCopy.classList.add('is-fail');
+      label.textContent = 'Copy failed';
+      setTimeout(() => {
+        inspectorCopy.classList.remove('is-fail');
+        label.textContent = 'Copy';
+      }, 1600);
     }
   });
   minimapCanvas.addEventListener('click', (event) => {
     if (!state.city) return;
     const rect = minimapCanvas.getBoundingClientRect();
-    const px = ((event.clientX - rect.left) / rect.width) * minimapCanvas.width;
-    const py = ((event.clientY - rect.top) / rect.height) * minimapCanvas.height;
-    const bounds = state.city.meta.bounds;
-    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
-    const scale = (minimapCanvas.width - 24) / span;
-    const worldX = bounds.minX + (px - 12) / scale;
-    const worldZ = bounds.maxZ - (py - 12) / scale;
+    const cssX = ((event.clientX - rect.left) / rect.width) * MINIMAP.css;
+    const cssY = ((event.clientY - rect.top) / rect.height) * MINIMAP.css;
+    const inv = MINIMAP.transform.inverse();
+    const worldX = inv.a * cssX + inv.c * cssY + inv.e;
+    const worldZ = inv.b * cssX + inv.d * cssY + inv.f;
     const y = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(worldX, worldZ) : 0;
     if (state.mode !== 'orbit') setMode('orbit');
     state.renderer.controls.target.set(worldX, y + 6, worldZ);
@@ -1051,9 +1308,29 @@ async function boot() {
     state.renderer.camera.lookAt(worldX, y + 4, worldZ);
     state.renderer.controls.update();
   });
+  minimapCanvas.addEventListener('keydown', (event) => {
+    if ((event.key === 'Enter' || event.key === ' ') && state.city) {
+      event.preventDefault();
+      // Fly to the city center when activated by keyboard.
+      minimapCanvas.dispatchEvent(new MouseEvent('click', { clientX: rectCenter().x, clientY: rectCenter().y, bubbles: true }));
+    }
+  });
+  function rectCenter() {
+    const rect = minimapCanvas.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
+    const typing = event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA');
+    if (typing) {
+      if (key === 'escape') event.target.blur();
+      else return;
+    }
     if (key === 'escape') {
+      if (!osmOverlay.hidden) {
+        if (!osmBusy) osmOverlay.hidden = true;
+        return;
+      }
       if (state.placement) togglePlacement(false);
       else if (state.vehicle) toggleVehicle(false);
       else inspector.hidden = true;
@@ -1093,6 +1370,5 @@ async function boot() {
 }
 
 boot().catch((error) => {
-  state.errors.push(error.message);
-  console.error(error);
+  reportError(error.message, 'boot');
 });

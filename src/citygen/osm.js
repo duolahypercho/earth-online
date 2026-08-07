@@ -179,19 +179,22 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     if (highway && ROAD_KEYS.has(highway)) {
       const profile = HIGHWAY_PROFILE[highway] || HIGHWAY_PROFILE.residential;
       const name = tags.name || tags.ref || 'Unnamed Road';
+      const lanes = Math.max(1, Number(tags.lanes) || profile.lanes);
       roads.push({
         id: `osm-road-${roadId++}`,
         name,
         highway: profile.class,
-        lanes: Math.max(1, Number(tags.lanes) || profile.lanes),
+        lanes,
         laneW: profile.laneW,
         sidewalkW: parseSidewalk(tags, profile),
-        asphaltWidth: (Number(tags.width) || (Math.max(1, Number(tags.lanes) || profile.lanes) * profile.laneW)),
+        sidewalkLeft: parseSidewalkSide(tags, 'left', profile),
+        sidewalkRight: parseSidewalkSide(tags, 'right', profile),
+        asphaltWidth: (Number(tags.width) || (lanes * profile.laneW)),
         oneway: tags.oneway === 'yes' ? 'increasing'
           : tags.oneway === '-1' ? 'decreasing'
             : tags.junction === 'roundabout' ? 'increasing' : 'both',
-        maxspeed: tags.maxspeed ? String(tags.maxspeed) : '',
-        cycleway: tags.cycleway ? String(tags.cycleway) : '',
+        maxspeed: parseMaxspeed(tags, profile),
+        cycleway: parseCycleway(tags),
         points,
       });
     } else if (tags.building && points.length >= 3) {
@@ -203,6 +206,7 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
       buildings.push({
         id: `osm-building-${buildingId++}`,
         name: tags.name || '',
+        address: formatAddress(tags),
         type,
         typeLabel: type,
         usage: inferUsage(type, tags),
@@ -249,6 +253,11 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
         oneway: road.oneway,
         width: road.asphaltWidth,
         sidewalkW: road.sidewalkW,
+        sidewalkLeft: road.sidewalkLeft,
+        sidewalkRight: road.sidewalkRight,
+        maxspeed: road.maxspeed?.raw || '',
+        maxspeedKmh: road.maxspeed?.kmh || 0,
+        cycleway: road.cycleway || '',
         points: [road.points[i], road.points[i + 1]],
       });
     }
@@ -278,6 +287,11 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     building.blockId = block.id;
     building.facingStreet = '';
   }
+  const segmentBounds = segments.map((segment) => {
+    const xs = segment.points.map((p) => p.x);
+    const zs = segment.points.map((p) => p.z);
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+  });
   for (const block of blocks) {
     const buildingPoints = block.buildings
       .map((id) => buildings.find((b) => b.id === id))
@@ -287,17 +301,25 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     const maxX = Math.max(...buildingPoints.map((p) => p.x));
     const minZ = Math.min(...buildingPoints.map((p) => p.z));
     const maxZ = Math.max(...buildingPoints.map((p) => p.z));
+    const snapped = snapBlockToRoads(segments, segmentBounds, { minX, maxX, minZ, maxZ });
     block.polygon = [
-      { x: minX - 6, z: minZ - 6 },
-      { x: maxX + 6, z: minZ - 6 },
-      { x: maxX + 6, z: maxZ + 6 },
-      { x: minX - 6, z: maxZ + 6 },
+      { x: snapped.minX, z: snapped.minZ },
+      { x: snapped.maxX, z: snapped.minZ },
+      { x: snapped.maxX, z: snapped.maxZ },
+      { x: snapped.minX, z: snapped.maxZ },
     ];
-    const nearest = segments
+    const roadNames = new Map(roads.map((road) => [road.id, road.name]));
+    const namedSnap = snapped.streets.filter((id) => {
+      const roadName = roadNames.get(id);
+      return roadName && roadName !== 'Unnamed Road';
+    });
+    block.streets = [...new Set(namedSnap.length ? namedSnap : snapped.streets)];
+    if (!block.streets.length) block.streets = segments
       .map((segment, index) => ({ index, d: Math.hypot(segment.points[0].x - (minX + maxX) / 2, segment.points[0].z - (minZ + maxZ) / 2) }))
       .sort((a, b) => a.d - b.d)
-      .slice(0, 4);
-    block.streets = nearest.map((n) => segments[n.index].streetId);
+      .slice(0, 4)
+      .map((n) => segments[n.index].streetId);
+    block.streets = [...new Set(block.streets)];
   }
 
   // Assign each OSM building the nearest named road as its facing street.
@@ -326,6 +348,8 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
       }
     }
     building.facingStreet = bestName;
+    // Street-level address fallback for buildings without addr:* tags.
+    if (!building.address && bestName) building.address = bestName;
   }
 
   // Signals: prefer real OSM traffic-signal nodes, then fall back to junctions.
@@ -416,8 +440,15 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     name: road.name,
     highway: road.highway,
     lanes: road.lanes,
+    laneW: road.laneW,
     oneway: road.oneway,
     sidewalkW: road.sidewalkW,
+    sidewalkLeft: road.sidewalkLeft,
+    sidewalkRight: road.sidewalkRight,
+    maxspeed: road.maxspeed?.raw || '',
+    maxspeedKmh: road.maxspeed?.kmh || 0,
+    maxspeedSource: road.maxspeed?.source || 'zone-default',
+    cycleway: road.cycleway || '',
     asphaltWidth: road.asphaltWidth,
     orientation: 'osm',
     axis: 'osm',
@@ -509,6 +540,103 @@ function polygonArea(points) {
   return area / 2;
 }
 
+/**
+ * Shrink a block's rectangular envelope toward the roads that actually bound
+ * it. The old +6 m padding ignored the road network, so blocks floated over
+ * asphalt and street right-of-way; now each side snaps to the outer edge of
+ * the nearest parallel segment (centerline + half asphalt + sidewalk) with a
+ * small curb clearance. Falls back to the padded bounds when no road bounds a
+ * side. `block.streets` comes from the same bounding segments.
+ */
+export function snapBlockToRoads(segments, segmentBounds, bounds, { buffer = 30, clearance = 1.8, minSide = 6 } = {}) {
+  const inflated = {
+    minX: bounds.minX - buffer,
+    maxX: bounds.maxX + buffer,
+    minZ: bounds.minZ - buffer,
+    maxZ: bounds.maxZ + buffer,
+  };
+  const candidates = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const sb = segmentBounds[i];
+    if (sb.maxX < inflated.minX || sb.minX > inflated.maxX || sb.maxZ < inflated.minZ || sb.minZ > inflated.maxZ) continue;
+    candidates.push(segments[i]);
+  }
+  const snapSide = (side) => {
+    let bestEdge = null;
+    for (const segment of candidates) {
+      const a = segment.points[0];
+      const b = segment.points[segment.points.length - 1];
+      const horizontal = Math.abs(b.x - a.x) >= Math.abs(b.z - a.z);
+      if ((side === 'minZ' || side === 'maxZ') !== horizontal) continue;
+      if (horizontal) {
+        const overlapsX = Math.max(a.x, b.x) >= bounds.minX - 2 && Math.min(a.x, b.x) <= bounds.maxX + 2;
+        if (!overlapsX) continue;
+      } else {
+        const overlapsZ = Math.max(a.z, b.z) >= bounds.minZ - 2 && Math.min(a.z, b.z) <= bounds.maxZ + 2;
+        if (!overlapsZ) continue;
+      }
+      const d = distancePolylineToRect(segment.points, bounds);
+      const halfRightOfWay = segment.width / 2 + segment.sidewalkW + clearance;
+      if (d > buffer) continue;
+      if (side === 'minX') {
+        const candidateEdge = Math.max(a.x, b.x) + halfRightOfWay;
+        if (candidateEdge < bounds.minX && (bestEdge === null || candidateEdge > bestEdge.edge)) bestEdge = { edge: candidateEdge, streetId: segment.streetId };
+      } else if (side === 'maxX') {
+        const candidateEdge = Math.min(a.x, b.x) - halfRightOfWay;
+        if (candidateEdge > bounds.maxX && (bestEdge === null || candidateEdge < bestEdge.edge)) bestEdge = { edge: candidateEdge, streetId: segment.streetId };
+      } else if (side === 'minZ') {
+        const candidateEdge = Math.max(a.z, b.z) + halfRightOfWay;
+        if (candidateEdge < bounds.minZ && (bestEdge === null || candidateEdge > bestEdge.edge)) bestEdge = { edge: candidateEdge, streetId: segment.streetId };
+      } else {
+        const candidateEdge = Math.min(a.z, b.z) - halfRightOfWay;
+        if (candidateEdge > bounds.maxZ && (bestEdge === null || candidateEdge < bestEdge.edge)) bestEdge = { edge: candidateEdge, streetId: segment.streetId };
+      }
+    }
+    return bestEdge;
+  };
+  const sides = { minX: snapSide('minX'), maxX: snapSide('maxX'), minZ: snapSide('minZ'), maxZ: snapSide('maxZ') };
+  let minX = sides.minX ? sides.minX.edge : bounds.minX - 6;
+  let maxX = sides.maxX ? sides.maxX.edge : bounds.maxX + 6;
+  let minZ = sides.minZ ? sides.minZ.edge : bounds.minZ - 6;
+  let maxZ = sides.maxZ ? sides.maxZ.edge : bounds.maxZ + 6;
+  // Never let snapping invert or over-shrink the block; keep a usable interior.
+  if (maxX - minX < minSide) {
+    minX = bounds.minX - 3;
+    maxX = bounds.maxX + 3;
+  }
+  if (maxZ - minZ < minSide) {
+    minZ = bounds.minZ - 3;
+    maxZ = bounds.maxZ + 3;
+  }
+  const streets = [...new Set([sides.minX, sides.maxX, sides.minZ, sides.maxZ]
+    .filter(Boolean)
+    .map((s) => s.streetId))];
+  return { minX, maxX, minZ, maxZ, streets };
+}
+
+/** Minimum distance from a polyline to a rectangle (0 when it overlaps). */
+function distancePolylineToRect(points, rect) {
+  let best = Infinity;
+  const clampToRect = (p) => ({
+    x: Math.max(rect.minX, Math.min(rect.maxX, p.x)),
+    z: Math.max(rect.minZ, Math.min(rect.maxZ, p.z)),
+  });
+  const inside = points.some((p) => p.x >= rect.minX && p.x <= rect.maxX && p.z >= rect.minZ && p.z <= rect.maxZ);
+  if (inside) return 0;
+  for (const p of points) {
+    const c = clampToRect(p);
+    best = Math.min(best, Math.hypot(p.x - c.x, p.z - c.z));
+  }
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+    const c = clampToRect(mid);
+    best = Math.min(best, Math.hypot(mid.x - c.x, mid.z - c.z));
+  }
+  return best;
+}
+
 function parseSidewalk(tags, profile) {
   const raw = String(tags.sidewalk || '').toLowerCase();
   if (raw === 'no' || raw === 'none') return 0;
@@ -520,6 +648,82 @@ function parseSidewalk(tags, profile) {
   if (left === 'no' && right === 'no') return 0;
   if (left === 'no' || right === 'no') return profile.sidewalk * 0.65;
   return profile.sidewalk;
+}
+
+/**
+ * Per-side sidewalk width. Honors `sidewalk:left/right` presence/width tags
+ * first, then falls back to the aggregate `sidewalk` tag, then to the
+ * highway-class default. A side tagged `no`/`none` is always 0.
+ */
+function parseSidewalkSide(tags, side, profile) {
+  const sideTag = String(tags[`sidewalk:${side}`] || '').toLowerCase();
+  const sideWidth = Number(tags[`sidewalk:${side}:width`]);
+  if (Number.isFinite(sideWidth) && sideWidth > 0) return sideWidth;
+  if (sideTag === 'no' || sideTag === 'none') return 0;
+  if (sideTag === 'yes' || sideTag === 'left' || sideTag === 'right' || sideTag === 'both') return profile.sidewalk;
+  const aggregate = String(tags.sidewalk || '').toLowerCase();
+  if (aggregate === 'no' || aggregate === 'none') return 0;
+  if (aggregate === 'left' && side === 'right') return 0;
+  if (aggregate === 'right' && side === 'left') return 0;
+  if (aggregate === 'both' || aggregate === 'yes' || aggregate === 'separate') return profile.sidewalk;
+  const bothWidth = Number(tags.sidewalk_width || tags['sidewalk:both:width']);
+  if (Number.isFinite(bothWidth) && bothWidth > 0) return bothWidth;
+  return profile.sidewalk;
+}
+
+/**
+ * Normalized speed limit. OSM `maxspeed` is a raw tag ("30 mph", "50",
+ * "DE:urban"); we keep the raw string for display and also expose a numeric
+ * km/h value for gameplay. Zone defaults follow the highway class when the
+ * tag is absent, so imported cities never ship empty speed metadata.
+ */
+function parseMaxspeed(tags, profile) {
+  const raw = tags.maxspeed != null ? String(tags.maxspeed) : '';
+  const kmh = maxspeedToKmh(raw);
+  const zone = DEFAULT_MAXSPEED_KMH[profile.class] || 50;
+  return { raw, kmh: kmh || zone, source: kmh ? 'osm' : 'zone-default' };
+}
+
+const DEFAULT_MAXSPEED_KMH = Object.freeze({
+  motorway: 100,
+  trunk: 90,
+  primary: 60,
+  secondary: 50,
+  tertiary: 50,
+  unclassified: 45,
+  residential: 40,
+  living_street: 20,
+  service: 25,
+  pedestrian: 10,
+  footway: 6,
+  cycleway: 20,
+});
+
+function maxspeedToKmh(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return 0;
+  if (/^[A-Z]{2}:/.test(value)) return 0; // implicit zone signs (e.g. DE:urban)
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*(mph|km\/h|kph|knots)?$/i);
+  if (!match) return 0;
+  const speed = Number(match[1]);
+  const unit = (match[2] || 'km/h').toLowerCase();
+  if (unit === 'mph') return Math.round(speed * 1.609);
+  if (unit === 'knots') return Math.round(speed * 1.852);
+  return Math.round(speed);
+}
+
+function parseCycleway(tags) {
+  return String(tags.cycleway || tags['cycleway:both'] || tags['cycleway:left'] || tags['cycleway:right'] || '');
+}
+
+/** Best-effort street address from OSM addr:* tags. */
+function formatAddress(tags) {
+  const house = tags['addr:housenumber'] ? String(tags['addr:housenumber']) : '';
+  const street = tags['addr:street'] ? String(tags['addr:street']) : '';
+  if (house && street) return `${house} ${street}`;
+  if (street) return street;
+  if (house) return house;
+  return '';
 }
 
 function isPark(tags) {

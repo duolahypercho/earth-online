@@ -52,13 +52,27 @@
       </section>
 
       <section class="hint" aria-label="Controls">
-        <span>Drag orbit · click inspect · WASD walk · E enter a car · Esc exit</span>
+        <span></span>
       </section>
 
+      <div id="place-chip" class="place-chip" aria-live="polite" hidden>
+        <span class="place-dot" aria-hidden="true"></span>
+        <strong>Add mode</strong>
+        <span class="place-msg">Hover a block to preview a footprint</span>
+      </div>
+
       <aside id="inspector" class="inspector" aria-label="Feature inspector">
-        <button type="button" id="inspector-close" class="inspector-close" aria-label="Close inspector">×</button>
-        <h2 id="inspector-title">Inspector</h2>
-        <button type="button" id="inspector-copy" class="inspector-copy" aria-label="Copy inspector">Copy</button>
+        <header class="inspector-head">
+          <h2 id="inspector-title">Inspector</h2>
+          <div class="inspector-tools">
+            <button type="button" id="inspector-copy" class="inspector-copy" aria-label="Copy inspector data to clipboard">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy</span>
+            </button>
+            <button type="button" id="inspector-close" class="inspector-close" aria-label="Close inspector">×</button>
+          </div>
+        </header>
+        <p id="inspector-empty" class="inspector-empty">Nothing selected. Click a building, street, signal, or block.</p>
         <dl id="inspector-fields"></dl>
       </aside>
 
@@ -67,19 +81,35 @@
       </section>
 
       <div id="osm-overlay" class="osm-overlay" hidden>
-        <div class="osm-panel">
+        <div class="osm-panel" role="dialog" aria-modal="true" aria-labelledby="osm-title">
           <p class="boot-kicker">OPENSTREETMAP</p>
-          <h2>Build a real city</h2>
-          <p>Fetch roads and building footprints from OSM. Defaults to San Francisco downtown. Accepts a city name or lat,lon[,radius] coordinates.</p>
-          <label for="osm-city">City name or lat,lon[,radius]</label>
-          <input id="osm-city" value="San Francisco, CA" spellcheck="false" />
-          <div class="osm-actions">
-            <button type="button" class="action is-primary" data-action="osm-go">Fetch</button>
-            <button type="button" class="action" data-action="sf-builtin">SF Built-in</button>
-            <button type="button" class="action" data-action="osm-cancel">Cancel</button>
+          <h2 id="osm-title">Build a real city</h2>
+          <p>Fetch roads and building footprints from OSM. Defaults to San Francisco. Enter a city name or lat,lon[,radius].</p>
+          <form id="osm-form">
+            <label for="osm-city">City name or lat,lon[,radius]</label>
+            <input id="osm-city" value="San Francisco, CA" spellcheck="false" autocomplete="off" />
+            <div class="osm-progress" id="osm-progress" hidden>
+              <div class="osm-progress-bar" id="osm-progress-bar"></div>
+            </div>
+            <div class="osm-actions">
+              <button type="submit" class="action is-primary" data-action="osm-go">Fetch</button>
+              <button type="button" class="action" data-action="sf-builtin">SF Built-in</button>
+              <button type="button" class="action" data-action="osm-cancel">Cancel</button>
+            </div>
+          </form>
+          <div class="osm-result" id="osm-result" hidden>
+            <p class="osm-result-title" id="osm-result-title"></p>
+            <p class="osm-result-detail" id="osm-result-detail"></p>
+            <div class="osm-actions">
+              <button type="button" class="action is-primary" data-action="osm-done">Done</button>
+              <button type="button" class="action" data-action="osm-retry">Fetch another</button>
+            </div>
           </div>
-          <p class="osm-status" id="osm-status"></p>
+          <p class="osm-status" id="osm-status" role="status" aria-live="polite"></p>
         </div>
+      </div>
+      <div id="status-pill" class="status-pill" role="status" aria-live="polite" hidden>
+        <span id="status-pill-text"></span>
       </div>
       <noscript>This experience requires JavaScript and WebGL2.</noscript>
     </main>

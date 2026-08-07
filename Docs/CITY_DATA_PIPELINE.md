@@ -356,3 +356,15 @@ Runtime policy:
 11. **P2 — Full-city performance certification:** run the validation suite,
     visual fixture comparisons, accessibility checks, and minimum-device frame
     budgets before calling the full-city build shippable.
+
+## Runtime CityGen metadata notes (worker_data2)
+
+The CityGen importer (`src/citygen/osm.js`) now normalizes OSM road tags into
+gameplay-ready values before they reach the renderer: speed limits keep the
+raw tag string plus a numeric km/h value (mph converted, implicit zone signs
+like `DE:urban` fall back to highway-class defaults), sidewalks are tracked
+per side (`sidewalk:left/right`), and cycleway tags flow onto streets and
+segments. Block polygons snap to the road right-of-way instead of a fixed
+padding, and buildings carry `addr:*` addresses through export/import. The
+export schema remains version 1 with additive optional fields; the Portland
+fixture in `scripts/verify-citygen-any-city.mjs` gates all of this offline.
