@@ -2,6 +2,8 @@ import { CITY_SCHEMA_VERSION, hashString, terrainHeight } from './core.js';
 
 const DATA_URL = '/data/sf/sf-city.json.gz';
 const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
+const ELEVATION_URL = '/data/sf/sf-elevation.json';
+const ELEVATION_FALLBACK_URL = '/data/sf/sf-elevation.json.gz';
 
 /**
  * Load the repo's prebuilt real San Francisco OSM slice and convert it to the
@@ -10,6 +12,12 @@ const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
  */
 export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildings = 900 } = {}) {
   const json = await fetchWithFallback();
+  let elevation = null;
+  try {
+    elevation = await fetchElevation();
+  } catch {
+    elevation = null;
+  }
   const detail = json.detailBuildings || [];
   const roads = json.roads || [];
   const signals = json.signals || [];
@@ -173,6 +181,18 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
   const minZ = Math.min(...allPoints.map((p) => p.z)) - 30;
   const maxZ = Math.max(...allPoints.map((p) => p.z)) + 30;
   const seedInt = hashString('san-francisco-builtin');
+  const elevationGrid = elevation;
+  const heightAt = (x, z) => {
+    if (elevationGrid) {
+      const gx = Math.floor((x - elevationGrid.originX) / elevationGrid.cellSize);
+      const gz = Math.floor((z - elevationGrid.originZ) / elevationGrid.cellSize);
+      if (gx >= 0 && gx < elevationGrid.width && gz >= 0 && gz < elevationGrid.height) {
+        const value = elevationGrid.grid[gz * elevationGrid.width + gx];
+        if (Number.isFinite(value)) return value * 0.28;
+      }
+    }
+    return terrainHeight(x, z, seedInt) * 0.05;
+  };
   const parks = [];
   const water = [];
   for (const area of green) {
@@ -212,10 +232,10 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     parks,
     water,
     terrain: {
-      type: 'sf-flat',
+      type: 'sf-elevation',
       seed: seedInt,
-      flattenNearRoads: false,
-      heightAt: (x, z) => terrainHeight(x, z, seedInt) * 0.05,
+      flattenNearRoads: true,
+      heightAt,
     },
   };
 }
@@ -230,6 +250,23 @@ async function fetchWithFallback() {
   const response = await fetch(DATA_FALLBACK_URL);
   if (!response.ok) throw new Error(`SF data load failed: ${response.status}`);
   return response.json();
+}
+
+async function fetchElevation() {
+  try {
+    const response = await fetch(ELEVATION_URL, { headers: { 'Accept-Encoding': 'gzip' } });
+    if (response.ok) {
+      const json = await response.json();
+      if (Array.isArray(json?.grid)) return json;
+    }
+  } catch {
+    // fall through
+  }
+  const response = await fetch(ELEVATION_FALLBACK_URL);
+  if (!response.ok) throw new Error(`SF elevation load failed: ${response.status}`);
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  const decompressed = await new Response(new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return JSON.parse(decompressed);
 }
 
 function flatToPoints(flat) {
