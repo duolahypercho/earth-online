@@ -294,11 +294,51 @@ function formatClock(hour) {
 
 function frameCityCamera(city) {
   const bounds = city.meta.bounds;
-  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
   state.renderer.camera.fov = 52;
   state.renderer.camera.updateProjectionMatrix();
-  state.renderer.camera.position.set(span * 0.34, span * 0.27, span * 0.52);
-  state.renderer.controls.target.set(0, 12, 0);
+  const buildings = city.buildings || [];
+  let cx = 0;
+  let cz = 0;
+  let count = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const building of buildings.slice(0, 1200)) {
+    const xs = building.polygon?.map((p) => p.x) || [];
+    const zs = building.polygon?.map((p) => p.z) || [];
+    if (!xs.length) continue;
+    const bx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const bz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    cx += bx;
+    cz += bz;
+    count += 1;
+    minX = Math.min(minX, bx);
+    maxX = Math.max(maxX, bx);
+    minZ = Math.min(minZ, bz);
+    maxZ = Math.max(maxZ, bz);
+  }
+  if (count === 0) {
+    cx = (bounds.minX + bounds.maxX) / 2;
+    cz = (bounds.minZ + bounds.maxZ) / 2;
+    minX = bounds.minX;
+    maxX = bounds.maxX;
+    minZ = bounds.minZ;
+    maxZ = bounds.maxZ;
+  } else {
+    cx /= count;
+    cz /= count;
+  }
+  const span = Math.max(maxX - minX, maxZ - minZ, 160);
+  const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+  const distance = realMap ? Math.max(320, span * 0.62) : Math.max(160, span * 0.62);
+  const eyeX = cx + distance * 0.72;
+  const eyeZ = cz + distance * 0.92;
+  const targetY = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(cx, cz) + 10 : 10;
+  const groundEyeY = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0;
+  const eyeY = Math.max(groundEyeY + 8, targetY + span * 0.3);
+  state.renderer.camera.position.set(eyeX, eyeY, eyeZ);
+  state.renderer.controls.target.set(cx, targetY, cz);
   state.renderer.controls.update();
   state.renderer.controls.maxDistance = span * 1.8;
   state.renderer.controls.minDistance = 4;
@@ -972,7 +1012,13 @@ async function boot() {
     }),
     generate,
     setTime: (hour) => {
-      state.renderer.setTimeOfDay(hour);
+      const value = clamp(Number(hour) || 9, 0, 24);
+      state.clock = value;
+      state.day = value >= 6 && value < 20;
+      state.renderer.setTimeOfDay(value);
+      document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
+      syncDayTheme();
+      updateReadout(state.city);
     },
     setDay: (day) => {
       state.day = Boolean(day);
@@ -1021,9 +1067,10 @@ async function boot() {
       } else if (pose === 'night') {
         setFov(52);
         const city = state.city;
-        // Frame an actual storefront on a major avenue so neon, awnings,
-        // lamps, and traffic fill the frame instead of a dark residential wall.
-        const avenue = city.streets.find((street) => street.highway === 'primary' || street.highway === 'secondary');
+        // Street-corridor night shot: stand on the facing street centerline,
+        // 30-45m down-street, and look along the avenue so shopfronts,
+        // lamps, signals, and traffic fill the frame.
+        const avenue = city.streets.find((street) => street.highway === 'primary' || street.highway === 'secondary' || street.highway === 'tertiary');
         const shops = city.buildings
           .filter((building) => building.type === 'shop' || building.facade === 'shopfront')
           .map((building) => {
@@ -1048,23 +1095,22 @@ async function boot() {
         const street = city.streets.find((s) => s.name === shop.facingStreet) || avenue;
         const faceAxis = street?.axis || 'x';
         const baseY = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(centerX, centerZ) : 0;
-        let eye;
-        let target;
-        if (faceAxis === 'x') {
-          const side = (street?.position ?? 0) > centerX ? 1 : -1;
-          eye = { x: side > 0 ? maxX + 15 : minX - 15, z: centerZ };
-          target = { x: side > 0 ? maxX + 0.6 : minX - 0.6, z: centerZ };
-        } else {
-          const side = (street?.position ?? 0) > centerZ ? 1 : -1;
-          eye = { x: centerX, z: side > 0 ? maxZ + 15 : minZ - 15 };
-          target = { x: centerX, z: side > 0 ? maxZ + 0.6 : minZ - 0.6 };
-        }
-        const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eye.x, eye.z) : 0) + 2.8;
+        const side = faceAxis === 'x'
+          ? ((street?.position ?? 0) > centerX ? 1 : -1)
+          : ((street?.position ?? 0) > centerZ ? 1 : -1);
+        const downStreet = faceAxis === 'x'
+          ? { x: centerX, z: centerZ - 34 * side }
+          : { x: centerX - 34 * side, z: centerZ };
+        const eye = faceAxis === 'x'
+          ? { x: centerX + (street?.position ?? centerX) - centerX + 8 * side, z: centerZ - 34 * side }
+          : { x: centerX - 34 * side, z: centerZ + (street?.position ?? centerZ) - centerZ + 8 * side };
+        const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eye.x, eye.z) : 0) + 5.6;
         camera.position.set(eye.x, eyeY, eye.z);
-        camera.lookAt(target.x, baseY + 3.6, target.z);
-        controls.target.set(target.x, baseY + 3.6, target.z);
+        camera.lookAt(downStreet.x, baseY + 2.6, downStreet.z);
+        controls.target.set(downStreet.x, baseY + 2.6, downStreet.z);
       } else if (pose === 'sf') {
         const city = state.renderer.city || state.city;
+        const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
         const candidates = (city.segments || []).filter((segment) => {
           if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway') return false;
           if (!segment.streetName) return false;
@@ -1082,7 +1128,7 @@ async function boot() {
               if (!xs.length) continue;
               const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
               const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
-              if (Math.hypot(cx - mid.x, cz - mid.z) < 140) count += 1;
+              if (Math.hypot(cx - mid.x, cz - mid.z) < 110) count += 1;
             }
             return count;
           };
@@ -1116,13 +1162,13 @@ async function boot() {
           const nx = -dz / length;
           const nz = dx / length;
           const side = (segment.points[0].x + segment.points[0].z) % 2 === 0 ? 1 : -1;
-          const eyeX = a.x - dx * 0.16 + nx * 7 * side;
-          const eyeZ = a.z - dz * 0.16 + nz * 7 * side;
-          const targetX = b.x - dx * 0.08;
-          const targetZ = b.z - dz * 0.08;
-          setFov(50);
-          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 2.2;
-          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.2;
+          const eyeX = a.x - dx * 0.24 + nx * (realMap ? 13 : 11) * side;
+          const eyeZ = a.z - dz * 0.24 + nz * (realMap ? 13 : 11) * side;
+          const targetX = b.x - dx * 0.05;
+          const targetZ = b.z - dz * 0.05;
+          setFov(46);
+          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 3.4;
+          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 2.0;
           camera.position.set(eyeX, eyeY, eyeZ);
           camera.lookAt(targetX, targetY, targetZ);
           controls.target.set(targetX, targetY, targetZ);
