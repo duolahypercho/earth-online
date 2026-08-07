@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mulberry32, ringArea, pointInPolygon, terrainHeight, clamp } from './core.js';
+import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp } from './core.js';
 
 const PALETTES = Object.freeze({
   painted: ['#e05f5f', '#3f9fb3', '#e5b64f', '#6f8fd6', '#e08a45', '#a2c46e', '#d1759f'],
@@ -383,6 +383,9 @@ export class CityRenderer {
     root.add(this.makeSky());
     // Terrain base + park ground.
     root.add(this.makeGround(city));
+    // OSM parks and water polygons on real maps.
+    this.buildOsmParks(root, city);
+    this.buildOsmWater(root, city);
     // Waterfront for the east edge.
     root.add(this.makeWater(city));
 
@@ -521,6 +524,76 @@ export class CityRenderer {
     this.water = water;
     this.buildBayProps(water.parent || this.scene, city, bounds);
     return water;
+  }
+
+  buildOsmParks(root, city) {
+    const parks = city.parks || [];
+    if (!parks.length) return;
+    const parkMaterial = new THREE.MeshStandardMaterial({ color: 0x9fc38a, roughness: 1, flatShading: true });
+    const pathMaterial = new THREE.MeshStandardMaterial({ color: 0xdfc69c, roughness: 0.95, flatShading: true });
+    const treeMaterial = new THREE.MeshStandardMaterial({ color: 0x4f7f4a, roughness: 0.9, flatShading: true });
+    const random = mulberry32(Number(city.meta.seedInt || 1) + 7711);
+    for (const park of parks) {
+      const points = park.polygon;
+      if (!points || points.length < 3) continue;
+      const shape = new THREE.Shape();
+      shape.moveTo(points[0].x, points[0].z);
+      for (let i = 1; i < points.length; i += 1) shape.lineTo(points[i].x, points[i].z);
+      shape.closePath();
+      const geometry = new THREE.ShapeGeometry(shape);
+      const mesh = new THREE.Mesh(geometry, parkMaterial);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = 0.03;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+      this.geometryCache.push(geometry);
+      const pathGeo = new THREE.ShapeGeometry(shape);
+      const path = new THREE.Mesh(pathGeo, pathMaterial);
+      path.rotation.x = -Math.PI / 2;
+      path.position.y = 0.045;
+      path.receiveShadow = true;
+      root.add(path);
+      this.geometryCache.push(pathGeo);
+      const bounds = polygonBounds(points);
+      const count = Math.min(80, Math.max(6, Math.round((bounds.maxX - bounds.minX) * (bounds.maxZ - bounds.minZ) / 900)));
+      for (let i = 0; i < count; i += 1) {
+        const x = bounds.minX + random() * (bounds.maxX - bounds.minX);
+        const z = bounds.minZ + random() * (bounds.maxZ - bounds.minZ);
+        if (!pointInPolygon({ x, z }, points)) continue;
+        const tree = new THREE.Mesh(new THREE.ConeGeometry(0.8, 2.4, 6), treeMaterial);
+        tree.position.set(x, 1.2, z);
+        tree.castShadow = true;
+        root.add(tree);
+        this.geometryCache.push(tree.geometry);
+      }
+    }
+  }
+
+  buildOsmWater(root, city) {
+    const waters = city.water || [];
+    if (!waters.length) return;
+    const waterMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2f8fae,
+      roughness: 0.24,
+      metalness: 0.3,
+      transparent: true,
+      opacity: 0.94,
+    });
+    for (const water of waters) {
+      const points = water.polygon;
+      if (!points || points.length < 3) continue;
+      const shape = new THREE.Shape();
+      shape.moveTo(points[0].x, points[0].z);
+      for (let i = 1; i < points.length; i += 1) shape.lineTo(points[i].x, points[i].z);
+      shape.closePath();
+      const geometry = new THREE.ShapeGeometry(shape);
+      const mesh = new THREE.Mesh(geometry, waterMaterial);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = 0.16;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+      this.geometryCache.push(geometry);
+    }
   }
 
   buildBayProps(scene, city, bounds) {
