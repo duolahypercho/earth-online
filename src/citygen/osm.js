@@ -361,6 +361,22 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     }
   }
 
+  // Wire signal phases onto the road segments that approach each signal.
+  for (const intersection of intersections) {
+    if (!intersection.signal) continue;
+    const p = intersection.position;
+    for (const segment of segments) {
+      if (segment.signalId) continue;
+      for (const point of segment.points) {
+        if (Math.hypot(point.x - p.x, point.z - p.z) < 14) {
+          segment.signalId = intersection.signal.id;
+          segment.intersectionId = intersection.id;
+          break;
+        }
+      }
+    }
+  }
+
   const allPoints = [...roads.flatMap((r) => r.points), ...buildings.flatMap((b) => b.polygon)];
   const minX = Math.min(...allPoints.map((p) => p.x)) - 40;
   const maxX = Math.max(...allPoints.map((p) => p.x)) + 40;
