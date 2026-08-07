@@ -1138,10 +1138,14 @@ export class CityRenderer {
       );
       housing.position.y = 3.7;
       group.add(housing);
-      const lampMaterial = new THREE.MeshStandardMaterial({ color: 0x2b2f33, emissive: 0x000000 });
+      const lampMaterials = [
+        new THREE.MeshStandardMaterial({ color: 0x2b2f33, emissive: 0x000000, emissiveIntensity: 0 }),
+        new THREE.MeshStandardMaterial({ color: 0x2b2f33, emissive: 0x000000, emissiveIntensity: 0 }),
+        new THREE.MeshStandardMaterial({ color: 0x2b2f33, emissive: 0x000000, emissiveIntensity: 0 }),
+      ];
       const positions = [3.18, 3.62, 4.06];
       for (let i = 0; i < 3; i += 1) {
-        const lamp = new THREE.Mesh(lampGeometry, lampMaterial);
+        const lamp = new THREE.Mesh(lampGeometry, lampMaterials[i]);
         lamp.position.set(0, positions[i], 0.24);
         group.add(lamp);
       }
@@ -1149,8 +1153,9 @@ export class CityRenderer {
       group.userData = { kind: 'signal', id: signal.id, signalId: signal.id };
       root.add(group);
       this.pickables.push(group);
-      this.signalMeshes.push({ group, signal, lampMaterial });
+      this.signalMeshes.push({ group, signal, lampMaterials });
       this.geometryCache.push(pole.geometry, housing.geometry);
+      for (const material of lampMaterials) this.geometryCache.push(material);
     }
   }
 
@@ -2067,14 +2072,19 @@ export class CityRenderer {
     this.controls.update();
     if (time != null) this.setTimeOfDay(time);
     if (this.signalMeshes) {
-      const phase = Math.floor(this.signalPhaseClock / 8);
       for (const entry of this.signalMeshes) {
         const offset = entry.signal.phaseOffset || 0;
         const local = Math.floor((this.signalPhaseClock + offset) / 8) % 4;
-        const state = local === 0 ? 'green' : local === 2 ? 'red' : 'yellow';
-        const colors = { red: 0xe0443a, yellow: 0xe8b23a, green: 0x5bbf6a };
-        entry.lampMaterial.emissive.set(colors[state]);
-        entry.lampMaterial.emissiveIntensity = 0.9;
+        const red = local === 0 || local === 1;
+        const yellow = local === 2;
+        const green = local === 3;
+        const colors = [0xe0443a, 0xe8b23a, 0x5bbf6a];
+        for (let i = 0; i < 3; i += 1) {
+          const on = i === 0 ? red : i === 1 ? yellow : green;
+          entry.lampMaterials[i].emissive.set(on ? colors[i] : 0x000000);
+          entry.lampMaterials[i].emissiveIntensity = on ? 1.0 : 0.05;
+          entry.lampMaterials[i].color.set(on ? colors[i] : 0x2b2f33);
+        }
       }
     }
     if (traffic) traffic.update(delta);

@@ -10,7 +10,6 @@ export class TrafficSim {
     this.cars = [];
     this.pedestrians = [];
     this.phase = 0;
-    this.signalLights = [];
     const random = mulberry32(Number(city.meta.seedInt || 1) + 77);
     const paint = ['#d94f4a', '#e8b23a', '#4f86c8', '#3f9e8f', '#8f74c8', '#d47a3f', '#f2e9d8', '#6fbf73'];
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
@@ -30,13 +29,11 @@ export class TrafficSim {
       const hair = random() < 0.5 ? 0x2e241f : random() < 0.8 ? 0x6b4a2f : 0xd9c9a0;
       this.pedestrians.push(this.spawnPedestrian(path, outfit, hair, random));
     }
-    this.buildSignalLightMeshes();
     this.renderer.scene.add(this.group);
   }
 
   dispose() {
     this.renderer.scene.remove(this.group);
-    this.signalLights = [];
   }
 
   spawnCar(edge, color, random = Math.random) {
@@ -152,36 +149,6 @@ export class TrafficSim {
     return paths;
   }
 
-  buildSignalLightMeshes() {
-    this.signalLights = [];
-    const geometry = new THREE.SphereGeometry(0.13, 8, 6);
-    for (const signal of this.city.signals || []) {
-      const group = new THREE.Group();
-      const housing = new THREE.Mesh(
-        new THREE.BoxGeometry(0.52, 1.3, 0.34),
-        new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.45, metalness: 0.4 }),
-      );
-      housing.position.y = 0;
-      group.add(housing);
-      const bulbs = [];
-      for (let i = 0; i < 3; i += 1) {
-        const material = new THREE.MeshStandardMaterial({
-          color: 0x222222,
-          emissive: 0x000000,
-          emissiveIntensity: 0,
-        });
-        const bulb = new THREE.Mesh(geometry, material);
-        bulb.position.set(0, 0.38 - i * 0.38, 0.2);
-        group.add(bulb);
-        bulbs.push(material);
-      }
-      group.position.set(signal.position.x, 3.5, signal.position.z);
-      group.userData = { kind: 'signal-light', id: signal.id, signal };
-      this.group.add(group);
-      this.signalLights.push({ signal, bulbs });
-    }
-  }
-
   laneOffsetFor(edge) {
     if (edge.oneway === 'increasing' || edge.oneway === 'decreasing') return 0;
     if (edge.lanes <= 1) return 0;
@@ -206,21 +173,7 @@ export class TrafficSim {
 
   update(delta) {
     this.phase += delta;
-    for (const { signal, bulbs } of this.signalLights) {
-      const local = Math.floor((this.phase + (signal.phaseOffset || 0)) / (signal.period || 8)) % 4;
-      const red = local === 0 || local === 1;
-      const yellow = local === 2;
-      const green = local === 3;
-      bulbs[0].emissive.set(red ? 0xff2a1a : 0x000000);
-      bulbs[1].emissive.set(yellow ? 0xffb61a : 0x000000);
-      bulbs[2].emissive.set(green ? 0x27d857 : 0x000000);
-      bulbs[0].emissiveIntensity = red ? 1.4 : 0.06;
-      bulbs[1].emissiveIntensity = yellow ? 1.2 : 0.06;
-      bulbs[2].emissiveIntensity = green ? 1.2 : 0.06;
-      bulbs[0].color.set(red ? 0xff2a1a : 0x222222);
-      bulbs[1].color.set(yellow ? 0xffb61a : 0x222222);
-      bulbs[2].color.set(green ? 0x27d857 : 0x222222);
-    }
+    this.updateCarSpacing();
     for (const car of this.cars) {
       if (car.controlled) continue;
       if (!car.edge) continue;
@@ -236,7 +189,8 @@ export class TrafficSim {
         if (car.distance >= stopLine) car.distance = Math.min(car.distance, stopLine);
         else car.distance += car.speed * delta;
       } else {
-        car.distance += Math.min(car.speed, car.maxSpeed || 9) * delta;
+        const speed = Math.min(car.speed, car.maxSpeed || 9);
+        car.distance += (car.blockedByTraffic ? speed * 0.35 : speed) * delta;
       }
       if (car.distance >= segmentLength) {
         if (car.pathIndex >= points.length - 2) {
@@ -302,6 +256,28 @@ export class TrafficSim {
       pedestrian.group.position.set(x, y, z);
       pedestrian.group.position.y = y + Math.abs(Math.sin(this.phase * 3 + pedestrian.time)) * 0.12;
       pedestrian.group.rotation.y = Math.atan2(updatedB.x - updatedA.x, updatedB.z - updatedA.z);
+    }
+  }
+
+  updateCarSpacing() {
+    const byEdge = new Map();
+    for (const car of this.cars) {
+      if (car.controlled || !car.edge) continue;
+      const points = car.edge.points;
+      const target = Math.min(points.length - 1, car.pathIndex + 1);
+      const segmentLength = Math.hypot(points[target].x - points[car.pathIndex].x, points[target].z - points[car.pathIndex].z) || 1;
+      const progress = car.pathIndex + clamp(car.distance / segmentLength, 0, 1);
+      if (!byEdge.has(car.edge)) byEdge.set(car.edge, []);
+      byEdge.get(car.edge).push({ car, progress });
+    }
+    for (const entries of byEdge.values()) {
+      entries.sort((a, b) => a.progress - b.progress);
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const current = entries[i].car;
+        const ahead = entries[i + 1];
+        const gap = ahead ? ahead.progress - entries[i].progress : Infinity;
+        current.blockedByTraffic = gap > 0 && gap < 0.12;
+      }
     }
   }
 
