@@ -15,6 +15,15 @@ const PALETTES = Object.freeze({
 
 const FACADE_STYLES = ['edwardian', 'modern-grid', 'bay-window', 'shopfront', 'loft', 'art-deco'];
 
+function landmarkKind(building) {
+  const name = String(building.name || '').toLowerCase();
+  if (name.includes('transamerica')) return 'transamerica';
+  if (name.includes('coit')) return 'coit';
+  if (name.includes('ferry building')) return 'ferry';
+  if (name.includes('salesforce')) return 'salesforce';
+  return null;
+}
+
 function seededTexture(seed, draw, width = 128, height = 128) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -669,6 +678,19 @@ export class CityRenderer {
     for (const building of city.buildings) {
       const points = building.polygon;
       if (points.length < 4) continue;
+      const landmarkKey = landmarkKind(building);
+      if (landmarkKey) {
+        const minX = Math.min(...points.map((p) => p.x));
+        const maxX = Math.max(...points.map((p) => p.x));
+        const minZ = Math.min(...points.map((p) => p.z));
+        const maxZ = Math.max(...points.map((p) => p.z));
+        const width = maxX - minX;
+        const depth = maxZ - minZ;
+        const height = building.height;
+        const baseY = this.terrain?.heightAt ? this.terrain.heightAt((minX + maxX) / 2, (minZ + maxZ) / 2) : 0;
+        this.buildLandmark(root, landmarkKey, building, width, depth, height, baseY, minX, minZ);
+        continue;
+      }
       const minX = Math.min(...points.map((p) => p.x));
       const maxX = Math.max(...points.map((p) => p.x));
       const minZ = Math.min(...points.map((p) => p.z));
@@ -774,6 +796,66 @@ export class CityRenderer {
       this.pickables.push(mesh);
       // Per-building pick metadata via spatial map in main.
     }
+  }
+
+  buildLandmark(root, kind, building, width, depth, height, baseY, minX, minZ) {
+    const cx = minX + width / 2;
+    const cz = minZ + depth / 2;
+    const base = new THREE.MeshStandardMaterial({ color: 0xdfe4e6, roughness: 0.55, metalness: 0.12, flatShading: true });
+    const glass = new THREE.MeshStandardMaterial({ color: 0x8fb7d8, roughness: 0.28, metalness: 0.45, flatShading: true });
+    const warm = new THREE.MeshStandardMaterial({ color: 0xe7cfa8, roughness: 0.6, metalness: 0.05, flatShading: true });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x4a5a6a, roughness: 0.5, metalness: 0.25, flatShading: true });
+    const group = new THREE.Group();
+    if (kind === 'transamerica') {
+      const pyramid = new THREE.ConeGeometry(Math.max(width, depth) * 0.62, height, 4);
+      pyramid.rotateY(Math.PI / 4);
+      const mesh = new THREE.Mesh(pyramid, warm);
+      mesh.position.set(cx, baseY + height / 2, cz);
+      group.add(mesh);
+      this.geometryCache.push(pyramid, warm);
+    } else if (kind === 'coit') {
+      const shaft = new THREE.CylinderGeometry(Math.max(width, depth) * 0.2, Math.max(width, depth) * 0.3, height * 0.78, 12);
+      const shaftMesh = new THREE.Mesh(shaft, base);
+      shaftMesh.position.set(cx, baseY + height * 0.39, cz);
+      const cap = new THREE.CylinderGeometry(Math.max(width, depth) * 0.08, Math.max(width, depth) * 0.2, height * 0.18, 12);
+      const capMesh = new THREE.Mesh(cap, dark);
+      capMesh.position.set(cx, baseY + height * 0.9, cz);
+      group.add(shaftMesh, capMesh);
+      this.geometryCache.push(shaft, cap, base, dark);
+    } else if (kind === 'ferry') {
+      const hall = new THREE.BoxGeometry(width, height * 0.72, depth);
+      hall.translate(cx, baseY + height * 0.36, cz);
+      const hallMesh = new THREE.Mesh(hall, warm);
+      const tower = new THREE.BoxGeometry(Math.min(width, 10), height, Math.min(depth, 10));
+      tower.translate(cx, baseY + height / 2, cz);
+      const towerMesh = new THREE.Mesh(tower, base);
+      const roof = new THREE.ConeGeometry(6.2, 6.5, 4);
+      roof.rotateY(Math.PI / 4);
+      roof.translate(cx, baseY + height + 2.8, cz);
+      const roofMesh = new THREE.Mesh(roof, dark);
+      group.add(hallMesh, towerMesh, roofMesh);
+      this.geometryCache.push(hall, tower, roof, warm, base, dark);
+    } else if (kind === 'salesforce') {
+      const taper = new THREE.CylinderGeometry(Math.max(width, depth) * 0.3, Math.max(width, depth) * 0.55, height, 4);
+      taper.rotateY(Math.PI / 4);
+      const mesh = new THREE.Mesh(taper, glass);
+      mesh.position.set(cx, baseY + height / 2, cz);
+      const crown = new THREE.BoxGeometry(Math.max(width, depth) * 0.34, height * 0.03, Math.max(width, depth) * 0.34);
+      crown.translate(cx, baseY + height * 0.99, cz);
+      const crownMesh = new THREE.Mesh(crown, dark);
+      group.add(mesh, crownMesh);
+      this.geometryCache.push(taper, crown, glass, dark);
+    } else {
+      const box = new THREE.BoxGeometry(width, height, depth);
+      box.translate(cx, baseY + height / 2, cz);
+      const mesh = new THREE.Mesh(box, base);
+      group.add(mesh);
+      this.geometryCache.push(box, base);
+    }
+    group.userData = { kind: 'building', id: building.id, buildingId: building.id };
+    group.position.y = 0;
+    root.add(group);
+    this.pickables.push(group);
   }
 
   buildContactShadows(root, city) {
