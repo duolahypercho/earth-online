@@ -27,6 +27,7 @@ Each objective requirement with its authoritative evidence and current status.
 | Building/block/street metadata | Runtime inspector plus `exportCityMetadata` JSON exposes every field; export QA matches runtime counts | Complete |
 | One-way vs two-way metadata | `verify:citygen-simulation` asserts exactly one legal direction on one-way streets and two on two-way | Complete |
 | Traffic lights with phases | 14 procedural / 22 real SF signals; simulation gate proves each signal edge alternates red/green | Complete |
+| Real OSM traffic-signal nodes | Live OSM fetch returns 661 signals with no errors; `verify:citygen-any-city` adds `highway=traffic_signals` nodes and asserts they produce signal-controlled traffic edges that alternate red/green | Complete |
 | Walk and drive physics | Browser QA measures keyboard walk displacement and vehicle displacement along the traffic graph | Complete |
 | Sidewalk pedestrians | CityGen spawns 26 procedural / 48 real-map path-following pedestrians; QA asserts they exist and move | Complete |
 | Harsh visual critic / blind Schedule I comparison | `.qa-citygen-blind-ab.html` embeds 8 shuffled real-SF and Schedule I pairs; `.qa-citygen-blind-verdict.json` records automated per-pair scores; harsh critic is 101.5/100 | Complete for tooling; human verdict pending |
