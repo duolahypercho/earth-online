@@ -13,6 +13,7 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
   const detail = json.detailBuildings || [];
   const roads = json.roads || [];
   const signals = json.signals || [];
+  const green = json.parks || json.green || json.landuse || [];
   const buildings = [];
   const roadSlice = [];
 
@@ -57,6 +58,10 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       material: inferMaterial(building, type),
       facade: inferFacade(building, type),
       landmark: Boolean(building.name && (building.amenity || building.tourism)),
+      shop: building.shop ? String(building.shop) : '',
+      amenity: building.amenity ? String(building.amenity) : '',
+      tourism: building.tourism ? String(building.tourism) : '',
+      roofShape: building.roofShape || '',
       facingStreet: '',
     };
   });
@@ -76,6 +81,8 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       lanes,
       oneway: road.oneway ? (road.oneway === -1 ? 'decreasing' : 'increasing') : 'both',
       sidewalkW,
+      maxspeed: road.maxspeed ? String(road.maxspeed) : '',
+      cycleway: road.cycleway ? String(road.cycleway) : '',
       asphaltWidth: lanes * 3.2,
       orientation: 'osm',
       axis: 'osm',
@@ -97,6 +104,8 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
         points: [points[i], points[i + 1]],
         signalId: null,
         intersectionId: null,
+        maxspeed: street.maxspeed || '',
+        cycleway: street.cycleway || '',
       });
     }
   }
@@ -115,6 +124,10 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     }
     block.buildings.push(building.id);
     building.blockId = block.id;
+  }
+  for (const building of cityBuildings) {
+    const [cx, cz] = centroidOf(building.polygon);
+    building.facingStreet = nearestStreetName(segments, { x: cx, z: cz }, 28) || '';
   }
   for (const block of blocks) {
     const points = block.buildings.map((id) => cityBuildings.find((b) => b.id === id)).filter(Boolean).flatMap((b) => b.polygon);
@@ -148,6 +161,10 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     });
     intersection.signalId = districtSignals[districtSignals.length - 1].id;
     intersection.signal = districtSignals[districtSignals.length - 1];
+    for (const streetId of streetIds) {
+      const street = streets.find((s) => s.id === streetId);
+      if (street && !street.signalIds.includes(intersection.signalId)) street.signalIds.push(intersection.signalId);
+    }
   }
 
   const allPoints = [...segments.flatMap((s) => s.points), ...cityBuildings.flatMap((b) => b.polygon)];
@@ -156,6 +173,22 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
   const minZ = Math.min(...allPoints.map((p) => p.z)) - 30;
   const maxZ = Math.max(...allPoints.map((p) => p.z)) + 30;
   const seedInt = hashString('san-francisco-builtin');
+  const parks = [];
+  const water = [];
+  for (const area of green) {
+    if (!area || !Array.isArray(area.points)) continue;
+    const points = flatToPoints(area.points);
+    if (points.length < 3) continue;
+    const cx = (Math.min(...points.map((p) => p.x)) + Math.max(...points.map((p) => p.x))) / 2;
+    const cz = (Math.min(...points.map((p) => p.z)) + Math.max(...points.map((p) => p.z))) / 2;
+    if (Math.hypot(cx - center[0], cz - center[1]) > radius * 1.35) continue;
+    const kind = String(area.kind || area.landuse || area.leisure || 'park').toLowerCase();
+    if (kind === 'water' || kind === 'bay' || kind === 'beach') {
+      water.push({ id: `sf-water-${water.length}`, name: area.name || '', polygon: points, kind });
+    } else {
+      parks.push({ id: `sf-park-${parks.length}`, name: area.name || '', polygon: points, kind });
+    }
+  }
   return {
     schemaVersion: CITY_SCHEMA_VERSION,
     meta: {
@@ -176,7 +209,14 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     segments,
     intersections,
     signals: districtSignals,
-    terrain: { type: 'sf-flat', seed: seedInt, heightAt: (x, z) => terrainHeight(x, z, seedInt) * 0.05 },
+    parks,
+    water,
+    terrain: {
+      type: 'sf-flat',
+      seed: seedInt,
+      flattenNearRoads: false,
+      heightAt: (x, z) => terrainHeight(x, z, seedInt) * 0.05,
+    },
   };
 }
 
@@ -298,4 +338,30 @@ function nearbyStreetIds(segments, x, z, tolerance) {
     }
   }
   return [...found];
+}
+
+function nearestStreetName(segments, point, maxDistance = 40) {
+  let best = null;
+  let bestDistance = maxDistance;
+  for (const segment of segments) {
+    if (!segment.streetName) continue;
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const distance = pointToSegmentDistance(point, a, b);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = segment.streetName;
+    }
+  }
+  return best;
+}
+
+function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq < 0.0001) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + dx * t), p.z - (a.z + dz * t));
 }

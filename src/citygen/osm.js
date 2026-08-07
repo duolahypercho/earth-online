@@ -90,6 +90,7 @@ export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 }
   const place = await geocodePlace(query);
   const center = { lat: place.lat, lon: place.lon };
   if (place.radius) radius = place.radius;
+  if (radius > 2200) radius = 2200;
   const dLat = radius / METERS_PER_DEG_LAT;
   const dLon = radius / metersPerDegLon(center.lat);
   const bbox = [
@@ -104,6 +105,11 @@ export async function fetchOsmCity({ query = 'San Francisco, CA', radius = 850 }
       way["highway"](${bbox.join(',')});
       way["building"](${bbox.join(',')});
       way["building:part"](${bbox.join(',')});
+      way["landuse"~"^(grass|forest|park|recreation_ground|meadow|village_green)$"](${bbox.join(',')});
+      way["leisure"~"^(park|garden|playground|recreation_ground)$"](${bbox.join(',')});
+      way["natural"~"^(water|beach|bay)$"](${bbox.join(',')});
+      node["highway"="traffic_signals"](${bbox.join(',')});
+      node["highway"="crossing"](${bbox.join(',')});
     );
     out geom 2000;
   `;
@@ -146,15 +152,27 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
   const elements = Array.isArray(json?.elements) ? json.elements : [];
   const roads = [];
   const buildings = [];
+  const parks = [];
+  const water = [];
+  const signalNodes = [];
   let buildingId = 0;
   let roadId = 0;
 
   for (const element of elements) {
     const tags = element.tags || {};
-    if (element.type !== 'way') continue;
     const points = (element.geometry || [])
       .map((node) => projectPoint(node.lat, node.lon, center))
       .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.z));
+    if (element.type === 'node') {
+      if (tags.highway === 'traffic_signals' || tags.highway === 'crossing') {
+        const p = projectPoint(element.lat, element.lon, center);
+        if (Number.isFinite(p.x) && Number.isFinite(p.z)) {
+          signalNodes.push({ x: p.x, z: p.z, id: element.id, tags });
+        }
+      }
+      continue;
+    }
+    if (element.type !== 'way') continue;
     if (points.length < 2) continue;
 
     const highway = tags.highway;
@@ -167,11 +185,13 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
         highway: profile.class,
         lanes: Math.max(1, Number(tags.lanes) || profile.lanes),
         laneW: profile.laneW,
-        sidewalkW: Number(tags.sidewalk_width) || profile.sidewalk,
+        sidewalkW: parseSidewalk(tags, profile),
         asphaltWidth: (Number(tags.width) || (Math.max(1, Number(tags.lanes) || profile.lanes) * profile.laneW)),
         oneway: tags.oneway === 'yes' ? 'increasing'
           : tags.oneway === '-1' ? 'decreasing'
             : tags.junction === 'roundabout' ? 'increasing' : 'both',
+        maxspeed: tags.maxspeed ? String(tags.maxspeed) : '',
+        cycleway: tags.cycleway ? String(tags.cycleway) : '',
         points,
       });
     } else if (tags.building && points.length >= 3) {
@@ -192,9 +212,27 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
         stories: Math.max(1, Math.round(height / 3.15)),
         yearBuilt: tags.start_date ? Number(String(tags.start_date).match(/\d{4}/)?.[0] || 1900) : 1900,
         footprintArea: area,
+        roofShape: tags['roof:shape'] || '',
         material: inferMaterial(tags, type),
         facade: inferFacade(tags, type),
         landmark: Boolean(tags.amenity || tags.tourism || tags.building === 'public'),
+        shop: tags.shop ? String(tags.shop) : '',
+        amenity: tags.amenity ? String(tags.amenity) : '',
+        tourism: tags.tourism ? String(tags.tourism) : '',
+      });
+    } else if (points.length >= 3 && isPark(tags)) {
+      parks.push({
+        id: `osm-park-${parks.length}`,
+        name: tags.name || '',
+        polygon: points,
+        kind: parkKind(tags),
+      });
+    } else if (points.length >= 3 && isWater(tags)) {
+      water.push({
+        id: `osm-water-${water.length}`,
+        name: tags.name || '',
+        polygon: points,
+        kind: tags.natural || 'water',
       });
     }
   }
@@ -262,7 +300,7 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     block.streets = nearest.map((n) => segments[n.index].streetId);
   }
 
-  // Signals where roads converge.
+  // Signals: prefer real OSM traffic-signal nodes, then fall back to junctions.
   const junctionKeys = new Map();
   for (const segment of segments) {
     for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
@@ -274,8 +312,33 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
   const intersections = [];
   const signals = [];
   let signalId = 0;
+  const signalNodesInRange = signalNodes.filter((node) => {
+    const streetIds = nearbyStreetIds(segments, node.x, node.z, 12);
+    return streetIds.length >= 1;
+  });
+  const usedJunctionKeys = new Set();
+  for (const node of signalNodesInRange) {
+    const key = `${Math.round(node.x / 3) * 3}-${Math.round(node.z / 3) * 3}`;
+    usedJunctionKeys.add(key);
+    const streetIds = nearbyStreetIds(segments, node.x, node.z, 12);
+    const position = { x: node.x, z: node.z };
+    const intersection = { id: `osm-int-${intersections.length}`, position, streetIds };
+    intersections.push(intersection);
+    const signal = {
+      id: `osm-sig-${signalId++}`,
+      intersectionId: intersection.id,
+      streetIds,
+      position: { x: node.x - 2.5, z: node.z - 2.5 },
+      heading: 'north',
+      phaseOffset: Math.round(node.x * 7 + node.z * 13) % 4,
+      period: 8,
+    };
+    signals.push(signal);
+    intersection.signalId = signal.id;
+    intersection.signal = signal;
+  }
   for (const [key, hits] of junctionKeys) {
-    if (hits.length < 2) continue;
+    if (hits.length < 2 || usedJunctionKeys.has(key)) continue;
     const [xText, zText] = key.split('-');
     const position = { x: Number(xText), z: Number(zText) };
     const streetIds = [...new Set(hits.map((s) => s.streetId))];
@@ -318,8 +381,49 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     blocks: [],
     signalIds: [],
   }));
+  for (const signal of signals) {
+    for (const streetId of signal.streetIds) {
+      const street = streets.find((s) => s.id === streetId);
+      if (street) street.signalIds.push(signal.id);
+    }
+  }
   for (const street of streets) {
     street.blocks = blocks.filter((b) => b.streets.includes(street.id)).map((b) => b.id);
+  }
+  const landUseBlocks = [];
+  for (const park of parks) {
+    const centroid = polygonCentroid(park.polygon);
+    const block = {
+      id: `osm-park-block-${landUseBlocks.length}`,
+      district: 'OSM',
+      polygon: park.polygon,
+      streets: [],
+      buildings: [],
+      landUse: 'park',
+      name: park.name || '',
+      park: true,
+      kind: park.kind,
+    };
+    const nearest = segments
+      .map((segment, index) => ({ index, d: distanceToPoint(segment.points[0], centroid) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 4);
+    block.streets = nearest.map((n) => segments[n.index].streetId);
+    landUseBlocks.push(block);
+  }
+  const waterBlocks = [];
+  for (const w of water) {
+    waterBlocks.push({
+      id: `osm-water-block-${waterBlocks.length}`,
+      district: 'OSM',
+      polygon: w.polygon,
+      streets: [],
+      buildings: [],
+      landUse: 'water',
+      name: w.name || '',
+      water: true,
+      kind: w.kind,
+    });
   }
   return {
     schemaVersion: CITY_SCHEMA_VERSION,
@@ -341,6 +445,8 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     segments,
     intersections,
     signals,
+    parks: [...parks, ...landUseBlocks.map((block) => ({ id: block.id, name: block.name || '', polygon: block.polygon, kind: block.kind }))],
+    water: waterBlocks.map((block) => ({ id: block.id, name: block.name || '', polygon: block.polygon, kind: block.kind })),
     terrain: {
       type: 'osm-flat',
       seed: seedInt,
@@ -357,6 +463,63 @@ function polygonArea(points) {
     area += a.x * b.z - b.x * a.z;
   }
   return area / 2;
+}
+
+function parseSidewalk(tags, profile) {
+  const raw = String(tags.sidewalk || '').toLowerCase();
+  if (raw === 'no' || raw === 'none') return 0;
+  if (raw === 'separate' || raw === 'both') return profile.sidewalk;
+  const width = Number(tags.sidewalk_width || tags['sidewalk:both:width'] || tags['sidewalk:left:width'] || tags['sidewalk:right:width']);
+  if (Number.isFinite(width) && width > 0) return width;
+  const left = String(tags['sidewalk:left'] || '').toLowerCase();
+  const right = String(tags['sidewalk:right'] || '').toLowerCase();
+  if (left === 'no' && right === 'no') return 0;
+  if (left === 'no' || right === 'no') return profile.sidewalk * 0.65;
+  return profile.sidewalk;
+}
+
+function isPark(tags) {
+  return Boolean(
+    (tags.landuse && ['grass', 'forest', 'park', 'recreation_ground', 'meadow', 'village_green'].includes(String(tags.landuse).toLowerCase()))
+    || (tags.leisure && ['park', 'garden', 'playground', 'recreation_ground'].includes(String(tags.leisure).toLowerCase()))
+  );
+}
+
+function parkKind(tags) {
+  if (tags.landuse) return String(tags.landuse);
+  return String(tags.leisure || 'park');
+}
+
+function isWater(tags) {
+  return Boolean(tags.natural && ['water', 'beach', 'bay'].includes(String(tags.natural).toLowerCase()));
+}
+
+function polygonCentroid(points) {
+  let x = 0;
+  let z = 0;
+  for (const p of points) {
+    x += p.x;
+    z += p.z;
+  }
+  return { x: x / points.length, z: z / points.length };
+}
+
+function distanceToPoint(p, target) {
+  return Math.hypot(p.x - target.x, p.z - target.z);
+}
+
+function nearbyStreetIds(segments, x, z, tolerance) {
+  const found = new Set();
+  for (const segment of segments) {
+    if (found.size >= 4) break;
+    for (const point of segment.points) {
+      if (Math.hypot(point.x - x, point.z - z) <= tolerance) {
+        found.add(segment.streetId);
+        break;
+      }
+    }
+  }
+  return [...found];
 }
 
 function defaultLevels(area) {
