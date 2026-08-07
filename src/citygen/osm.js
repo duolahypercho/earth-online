@@ -300,6 +300,34 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     block.streets = nearest.map((n) => segments[n.index].streetId);
   }
 
+  // Assign each OSM building the nearest named road as its facing street.
+  const namedSegments = segments.filter((segment) => segment.streetName && segment.streetName !== 'Unnamed Road');
+  for (const building of buildings) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const p of building.polygon) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z);
+      maxZ = Math.max(maxZ, p.z);
+    }
+    const center = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+    let bestName = '';
+    let bestDistance = 40;
+    for (const segment of namedSegments) {
+      const a = segment.points[0];
+      const b = segment.points[segment.points.length - 1];
+      const distance = pointToSegmentDistance(center, a, b);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestName = segment.streetName;
+      }
+    }
+    building.facingStreet = bestName;
+  }
+
   // Signals: prefer real OSM traffic-signal nodes, then fall back to junctions.
   const junctionKeys = new Map();
   for (const segment of segments) {
@@ -522,6 +550,16 @@ function polygonCentroid(points) {
 
 function distanceToPoint(p, target) {
   return Math.hypot(p.x - target.x, p.z - target.z);
+}
+
+function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq < 0.0001) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + dx * t), p.z - (a.z + dz * t));
 }
 
 function nearbyStreetIds(segments, x, z, tolerance) {

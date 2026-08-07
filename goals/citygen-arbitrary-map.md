@@ -103,7 +103,8 @@ building authoring and real SF slice**
   names, one-way directions, sidewalks, signals, type-aware materials, and
   dynamic add/undo all work for a non-SF city. The fixture now includes real
   `highway=traffic_signals` nodes, and the gate asserts those nodes wire onto
-  10 signal-controlled traffic edges that alternate red/green.
+  10 signal-controlled traffic edges that alternate red/green. Every OSM
+  building also gets a `facingStreet` from its nearest named road segment.
 - Simulation: `npm run verify:citygen-simulation` gates the traffic graph:
   one-way streets produce exactly one legal direction, two-way streets two,
   and every signal-controlled edge alternates red/green through a full phase
