@@ -1,9 +1,26 @@
 import { CITY_SCHEMA_VERSION, hashString, terrainHeight } from './core.js';
+import { snapBlockToRoads } from './osm.js';
 
 const DATA_URL = '/data/sf/sf-city.json.gz';
 const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
 const ELEVATION_URL = '/data/sf/sf-elevation.json';
 const ELEVATION_FALLBACK_URL = '/data/sf/sf-elevation.json.gz';
+
+/** Zone speed defaults (km/h) applied when the prebuilt slice has no tag. */
+const SF_ZONE_MAXSPEED_KMH = Object.freeze({
+  motorway: 100,
+  trunk: 90,
+  primary: 60,
+  secondary: 50,
+  tertiary: 50,
+  unclassified: 45,
+  residential: 40,
+  living_street: 20,
+  service: 25,
+  pedestrian: 10,
+  footway: 6,
+  cycleway: 20,
+});
 
 /**
  * Load the repo's prebuilt real San Francisco OSM slice and convert it to the
@@ -81,17 +98,26 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     const highway = normalizeHighway(road.highway);
     const lanes = Math.max(1, Number(road.lanes) || (highway === 'residential' ? 2 : 4));
     const sidewalkW = road.sidewalk === 'no' ? 0 : highway === 'residential' ? 2.2 : highway === 'service' ? 0.8 : 2.5;
+    const sidewalkSide = String(road.sidewalk || '').toLowerCase();
+    const sidewalkLeft = sidewalkSide === 'no' ? 0 : sidewalkSide === 'right' ? 0 : sidewalkW;
+    const sidewalkRight = sidewalkSide === 'no' ? 0 : sidewalkSide === 'left' ? 0 : sidewalkW;
+    const asphaltWidth = lanes * 3.2;
     const streetId = `sf-street-${road.id}`;
     const street = {
       id: streetId,
       name: road.name || `SF Rd ${road.id}`,
       highway,
       lanes,
+      laneW: Number((asphaltWidth / lanes).toFixed(2)),
       oneway: road.oneway ? (road.oneway === -1 ? 'decreasing' : 'increasing') : 'both',
       sidewalkW,
+      sidewalkLeft,
+      sidewalkRight,
       maxspeed: road.maxspeed ? String(road.maxspeed) : '',
+      maxspeedKmh: road.maxspeed ? Math.round(Number(String(road.maxspeed).match(/(\d+(?:\.\d+)?)/)?.[1] || 0) * (/mph/i.test(String(road.maxspeed)) ? 1.609 : 1)) : SF_ZONE_MAXSPEED_KMH[highway] || 40,
+      maxspeedSource: road.maxspeed ? 'osm' : 'zone-default',
       cycleway: road.cycleway ? String(road.cycleway) : '',
-      asphaltWidth: lanes * 3.2,
+      asphaltWidth,
       orientation: 'osm',
       axis: 'osm',
       position: 0,
@@ -109,10 +135,13 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
         oneway: street.oneway,
         width: street.asphaltWidth,
         sidewalkW,
+        sidewalkLeft,
+        sidewalkRight,
         points: [points[i], points[i + 1]],
         signalId: null,
         intersectionId: null,
         maxspeed: street.maxspeed || '',
+        maxspeedKmh: street.maxspeedKmh,
         cycleway: street.cycleway || '',
       });
     }
@@ -135,16 +164,24 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
   }
   for (const building of cityBuildings) {
     const [cx, cz] = centroidOf(building.polygon);
-    building.facingStreet = nearestStreetName(segments, { x: cx, z: cz }, 28) || '';
+    building.facingStreet = nearestStreetName(segments, { x: cx, z: cz }, 48) || '';
   }
+  const sfSegmentBounds = segmentBoundsOf(segments);
   for (const block of blocks) {
     const points = block.buildings.map((id) => cityBuildings.find((b) => b.id === id)).filter(Boolean).flatMap((b) => b.polygon);
-    const minX = Math.min(...points.map((p) => p.x)) - 8;
-    const maxX = Math.max(...points.map((p) => p.x)) + 8;
-    const minZ = Math.min(...points.map((p) => p.z)) - 8;
-    const maxZ = Math.max(...points.map((p) => p.z)) + 8;
-    block.polygon = [{ x: minX, z: minZ }, { x: maxX, z: minZ }, { x: maxX, z: maxZ }, { x: minX, z: maxZ }];
-    block.streets = [];
+    const xs = points.map((p) => p.x);
+    const zs = points.map((p) => p.z);
+    const bounds = {
+      minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
+    };
+    const snapped = snapBlockToRoads(segments, sfSegmentBounds, bounds);
+    block.polygon = [
+      { x: snapped.minX, z: snapped.minZ },
+      { x: snapped.maxX, z: snapped.minZ },
+      { x: snapped.maxX, z: snapped.maxZ },
+      { x: snapped.minX, z: snapped.maxZ },
+    ];
+    block.streets = snapped.streets.length ? snapped.streets : nearbyStreetIds(segments, (bounds.minX + bounds.maxX) / 2, (bounds.minZ + bounds.maxZ) / 2, 120);
   }
 
   // Signals near district roads.
@@ -311,6 +348,14 @@ function centroidOf(points) {
   return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
 }
 
+function segmentBoundsOf(segments) {
+  return segments.map((segment) => {
+    const xs = segment.points.map((p) => p.x);
+    const zs = segment.points.map((p) => p.z);
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+  });
+}
+
 function defaultLevels(area) {
   if (area > 2600) return 8;
   if (area > 1200) return 5;
@@ -394,10 +439,11 @@ function nearbyStreetIds(segments, x, z, tolerance) {
 }
 
 function nearestStreetName(segments, point, maxDistance = 40) {
+  const isSynthetic = (name) => /^(SF Rd |Unnamed Road)/.test(name || '');
   let best = null;
   let bestDistance = maxDistance;
   for (const segment of segments) {
-    if (!segment.streetName) continue;
+    if (!segment.streetName || isSynthetic(segment.streetName)) continue;
     const a = segment.points[0];
     const b = segment.points[segment.points.length - 1];
     const distance = pointToSegmentDistance(point, a, b);
@@ -406,6 +452,20 @@ function nearestStreetName(segments, point, maxDistance = 40) {
       best = segment.streetName;
     }
   }
+  if (best) return best;
+  let fallback = null;
+  let fallbackDistance = maxDistance * 1.5;
+  for (const segment of segments) {
+    if (!segment.streetName) continue;
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const distance = pointToSegmentDistance(point, a, b);
+    if (distance < fallbackDistance) {
+      fallbackDistance = distance;
+      fallback = segment.streetName;
+    }
+  }
+  if (fallback) return fallback;
   return best;
 }
 

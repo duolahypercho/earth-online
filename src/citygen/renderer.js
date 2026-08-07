@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp } from './core.js';
+import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp, hashString } from './core.js';
 
 const PALETTES = Object.freeze({
   painted: ['#e05f5f', '#3f9fb3', '#e5b64f', '#6f8fd6', '#e08a45', '#a2c46e', '#d1759f'],
@@ -9,7 +9,9 @@ const PALETTES = Object.freeze({
   brick: ['#e0925f', '#d96f4c', '#efa373', '#c05a3f', '#e2845a'],
   concrete: ['#e2ded2', '#cfc9ba', '#f1ece0', '#d8d3c4', '#e7e2d5'],
   clapboard: ['#9fc8e8', '#e8b98a', '#b5dca5', '#efb6c8', '#a9c4e8'],
-  glass: ['#8fc8e8', '#79b2d9', '#bce0ee', '#a5d4e6', '#86b6db'],
+  glass: ['#7fb2e0', '#68a4d4', '#a8d8ee', '#8fc8e0', '#74a8d4', '#9cc8e8', '#86b6db', '#e0a95f', '#d09448', '#c98fd0', '#e08fb0', '#7fc8ae'],
+  // Bronze and sea-glass tower variants break the single-hue blue wall on
+  // real-map slices while staying inside the soft low-poly grade.
   stone: ['#ddd4be', '#ccc0a8', '#e8dfca', '#d4c8b0', '#e0d6c2'],
 });
 
@@ -36,9 +38,30 @@ function seededTexture(seed, draw, width = 128, height = 128) {
   return texture;
 }
 
-function drawFacade(context, width, height, random, style, material, { day = true } = {}) {
+function drawFacade(context, width, height, random, style, material, { day = true, vivid = false } = {}) {
   const base = PALETTES[material] || PALETTES.plaster;
-  context.fillStyle = base[Math.floor(random() * base.length)];
+  let baseFill = base[Math.floor(random() * base.length)];
+  if (vivid) {
+    // Real-map slices get a gentle saturation lift on painted materials so
+    // facades carry more hue variety; glass stays soft so towers keep the
+    // stylized low-poly look.
+    if (material !== 'glass') {
+      const c = new THREE.Color(baseFill);
+      const hsl = { h: 0, s: 0, l: 0 };
+      c.getHSL(hsl);
+      c.setHSL(hsl.h, clamp(hsl.s * 1.12 + 0.04, 0, 0.68), clamp(hsl.l, 0.45, 0.85));
+      baseFill = `#${c.getHexString()}`;
+    }
+  } else if (material !== 'glass' && material !== 'concrete' && material !== 'stone') {
+    // Gentle chroma lift on painted facades keeps the soft look while giving
+    // painted cities a touch more saturation headroom.
+    const c = new THREE.Color(baseFill);
+    const hsl = { h: 0, s: 0, l: 0 };
+    c.getHSL(hsl);
+    c.setHSL(hsl.h, clamp(hsl.s * 1.1 + 0.03, 0, 0.8), clamp(hsl.l, 0.45, 0.85));
+    baseFill = `#${c.getHexString()}`;
+  }
+  context.fillStyle = baseFill;
   context.fillRect(0, 0, width, height);
   const vertical = style === 'modern-grid' || style === 'loft';
   const columns = vertical ? 3 + Math.floor(random() * 3) : 2 + Math.floor(random() * 2);
@@ -57,7 +80,7 @@ function drawFacade(context, width, height, random, style, material, { day = tru
       const w = gapX * 0.62;
       const h = gapY * 0.62;
       const litWindow = random() < (day ? 0.24 : 0.86);
-      context.fillStyle = cool ? (litWindow ? '#e7f3f8' : '#86a8bb') : (litWindow ? lit[Math.floor(random() * lit.length)] : '#39434c');
+      context.fillStyle = cool ? (litWindow ? '#bfe0f2' : '#6f9fc4') : (litWindow ? lit[Math.floor(random() * lit.length)] : '#39434c');
       context.fillRect(x, y, w, h);
       if (cool && !litWindow) {
         context.fillStyle = 'rgba(255,255,255,0.24)';
@@ -69,16 +92,36 @@ function drawFacade(context, width, height, random, style, material, { day = tru
       }
     }
   }
+  if (cool) {
+    // Spandrel bands and mullions give glass towers an architectural grid so
+    // large facades carry edge detail without raising saturation.
+    context.fillStyle = 'rgba(30,45,60,0.26)';
+    for (let row = 0; row <= rows; row += 1) {
+      context.fillRect(0, Math.max(0, margin + row * gapY - 3), width, 3);
+    }
+    for (let col = 0; col <= columns; col += 1) {
+      context.fillRect(Math.max(0, margin + col * gapX - 1), 0, 1.5, height);
+    }
+  }
   // Cornice + parapet bands.
   context.fillStyle = 'rgba(255,255,255,0.22)';
   context.fillRect(0, 0, width, 7);
   context.fillRect(0, height - 7, width, 7);
   context.fillStyle = 'rgba(60,45,35,0.28)';
   context.fillRect(0, 7, width, 3);
-  if (style === 'loft' || style === 'art-deco' || style === 'shopfront' || random() < 0.42) {
-    const murals = ['rgba(224,80,66,0.58)', 'rgba(41,150,171,0.62)', 'rgba(232,164,44,0.58)', 'rgba(89,158,74,0.62)', 'rgba(151,86,178,0.62)', 'rgba(41,178,158,0.58)', 'rgba(235,97,158,0.58)'];
+  const muralChance = vivid ? 0.52 : 0.42;
+  // Glass towers skip murals: repeated bands read as giant stripes at height.
+  if (material !== 'glass' && (style === 'loft' || style === 'art-deco' || style === 'shopfront' || random() < muralChance)) {
+    const murals = vivid
+      ? ['rgba(224,52,79,0.72)', 'rgba(217,47,143,0.72)', 'rgba(143,63,214,0.72)', 'rgba(47,159,214,0.66)', 'rgba(242,160,31,0.72)', 'rgba(63,191,111,0.66)', 'rgba(255,107,53,0.72)', 'rgba(255,92,168,0.72)']
+      : ['rgba(224,80,66,0.58)', 'rgba(41,150,171,0.62)', 'rgba(232,164,44,0.58)', 'rgba(89,158,74,0.62)', 'rgba(151,86,178,0.62)', 'rgba(41,178,158,0.58)', 'rgba(235,97,158,0.58)'];
     context.fillStyle = murals[Math.floor(random() * murals.length)];
     context.fillRect(0, Math.floor(height * 0.36), width, Math.floor(height * 0.2));
+    if (vivid && random() < 0.5) {
+      // A second offset band reads as layered street art from the sidewalk.
+      context.fillStyle = murals[Math.floor(random() * murals.length)];
+      context.fillRect(Math.floor(width * 0.16), Math.floor(height * 0.3), Math.floor(width * 0.68), Math.floor(height * 0.1));
+    }
   }
   if (style === 'art-deco') {
     context.fillStyle = 'rgba(120,90,60,0.5)';
@@ -91,7 +134,9 @@ function drawFacade(context, width, height, random, style, material, { day = tru
     context.fillRect(0, height - 30, width, 30);
     context.fillStyle = '#8a5a3a';
     context.fillRect(0, height - 30, width, 5);
-    const storefrontColors = ['#f7dca2', '#7fc0e5', '#f2b76c', '#8fd0a0', '#e994a6', '#c9adea'];
+    const storefrontColors = vivid
+      ? ['#ff4d5e', '#ff8a3d', '#ffd23f', '#3fc96f', '#2fb3c9', '#4f7fe0', '#a95fd6', '#ff5ca8', '#f2e05a', '#ff7043']
+      : ['#f7dca2', '#7fc0e5', '#f2b76c', '#8fd0a0', '#e994a6', '#c9adea'];
     const leftColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
     let rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
     while (rightColor === leftColor) rightColor = storefrontColors[Math.floor(random() * storefrontColors.length)];
@@ -100,7 +145,9 @@ function drawFacade(context, width, height, random, style, material, { day = tru
     context.fillStyle = rightColor;
     context.fillRect((width - 16) / 2 + 8, height - 24, (width - 16) / 2 - 4, 18);
     // Saturated striped awning above the shopfront.
-    const awningColors = ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0'];
+    const awningColors = vivid
+      ? ['#e02f3f', '#ff5ca8', '#8f3fd6', '#1f9fbf', '#f2a01f', '#3f9f4f', '#ff7043', '#d92f8f']
+      : ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0'];
     const awning = awningColors[Math.floor(random() * awningColors.length)];
     context.fillStyle = awning;
     for (let i = 0; i < width; i += 12) {
@@ -219,6 +266,49 @@ function lineQuadAttrs(capacity = 0) {
   };
 }
 
+ function dynQuadAttrs() {
+   // Dynamic quad buffers for counts that depend on segment lengths; avoids a
+   // second pre-count pass and any overflow risk.
+   return { position: [], normal: [], color: [], index: [] };
+ }
+
+ function pushQuadDyn(attrs, a, b, c, d, color = null) {
+   const base = attrs.position.length / 3;
+   const q = quad(a, b, c, d);
+   for (let i = 0; i < q.count; i += 1) {
+     attrs.position.push(q.positions[i * 3], q.positions[i * 3 + 1], q.positions[i * 3 + 2]);
+     attrs.normal.push(q.normalsArr[i * 3], q.normalsArr[i * 3 + 1], q.normalsArr[i * 3 + 2]);
+     if (color) attrs.color.push(color.r, color.g, color.b);
+   }
+   for (const qi of q.indices) attrs.index.push(base + qi);
+ }
+
+ function buildDynGeometry(attrs) {
+   const geometry = new THREE.BufferGeometry();
+   geometry.setAttribute('position', new THREE.Float32BufferAttribute(attrs.position, 3));
+   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(attrs.normal, 3));
+   geometry.setAttribute('color', new THREE.Float32BufferAttribute(attrs.color, 3));
+   geometry.setIndex(attrs.index);
+   return geometry;
+ }
+
+ function pushStripDyn(attrs, p, q, width, yAt, color) {
+   // Flat ribbon along p->q, `width` wide, following terrain via yAt.
+   const dx = q.x - p.x;
+   const dz = q.z - p.z;
+   const length = Math.hypot(dx, dz);
+   if (length < 0.01) return;
+   const mx = (-dz / length) * (width / 2);
+   const mz = (dx / length) * (width / 2);
+   pushQuadDyn(attrs,
+     { x: p.x + mx, y: yAt(p.x, p.z), z: p.z + mz },
+     { x: q.x + mx, y: yAt(q.x, q.z), z: q.z + mz },
+     { x: q.x - mx, y: yAt(q.x, q.z), z: q.z - mz },
+     { x: p.x - mx, y: yAt(p.x, p.z), z: p.z - mz },
+     color,
+   );
+ }
+
 function buildAttrGeometry(attrs) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', attrs.position);
@@ -248,49 +338,18 @@ function shade(color, amount) {
   return c;
 }
 
-function makeLine(points, color, width = 0.14, y = 0.035, dash = null) {
-  const geometry = new THREE.BufferGeometry();
-  const positions = [];
-  const linePoints = [];
-  if (dash) {
-    for (let i = 0; i < points.length - 1; i += 1) {
-      const a = points[i];
-      const b = points[i + 1];
-      const length = Math.hypot(b.x - a.x, b.z - a.z);
-      const steps = Math.max(1, Math.floor(length / dash));
-      for (let s = 0; s < steps; s += 1) {
-        const t0 = s / steps;
-        const t1 = (s + 0.5) / steps;
-        linePoints.push(
-          { x: a.x + (b.x - a.x) * t0, z: a.z + (b.z - a.z) * t0 },
-          { x: a.x + (b.x - a.x) * t1, z: a.z + (b.z - a.z) * t1 },
-        );
-      }
-    }
-  } else {
-    linePoints.push(...points);
-  }
-  for (const p of linePoints) {
-    positions.push(p.x, y, p.z);
-  }
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92 });
-  const line = new THREE.Line(geometry, material);
-  line.renderOrder = 3;
-  return line;
-}
-
 export class CityRenderer {
   constructor(container, { pixelRatioCap = 1.5 } = {}) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xd9e9ef, 380, 1500);
+    // Soft warm haze: closer fog start wraps distant blocks gently.
+    this.scene.fog = new THREE.Fog(0xe2e8e2, 330, 1380);
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.5, 4200);
     this.camera.position.set(180, 150, 260);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.82;
+    this.renderer.toneMappingExposure = 0.86;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
@@ -324,7 +383,7 @@ export class CityRenderer {
     this.lampLights = [];
     this.neonLights = [];
 
-    this.sun = new THREE.DirectionalLight(0xffe8c8, 2.6);
+    this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
     this.sun.position.set(-260, 380, 120);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -390,6 +449,10 @@ export class CityRenderer {
 
     // Sky dome.
     root.add(this.makeSky());
+    if (this.cloudMesh) {
+      root.add(this.cloudMesh);
+      this.cloudMesh = null;
+    }
     // Terrain base + park ground.
     root.add(this.makeGround(city));
     // OSM parks and water polygons on real maps.
@@ -399,7 +462,9 @@ export class CityRenderer {
     root.add(this.makeWater(city));
 
     // Buildings with per-facade canvas textures.
+    this.roofBatch = { parapets: [], tanks: [], cells: [] };
     await this.buildBuildings(root, city);
+    this.flushRoofDetails(root);
     // Soft contact shadows ground the buildings.
     this.buildContactShadows(root, city);
     // Roads, sidewalks, curbs, markings, crosswalks.
@@ -460,7 +525,7 @@ export class CityRenderer {
     const colors = [];
     const positions = geometry.attributes.position.array;
     const top = new THREE.Color('#4f9fd6');
-    const mid = new THREE.Color('#a7d7e8');
+    const mid = new THREE.Color('#8cc8e2');
     const bottom = new THREE.Color('#ffe2b8');
     for (let i = 0; i < positions.length; i += 3) {
       const y = positions[i + 1] / 1900;
@@ -478,6 +543,42 @@ export class CityRenderer {
     sky.renderOrder = -10;
     this.geometryCache.push(geometry);
     this.skyMesh = sky;
+    // Soft stylized cloud layer adds gentle structure to the sky dome.
+    const cloudTexture = seededTexture(505, (context, width, height, random) => {
+      context.clearRect(0, 0, width, height);
+      for (let i = 0; i < 14; i += 1) {
+        const cx = random() * width;
+        const cy = height * (0.18 + random() * 0.4);
+        const blobs = 3 + Math.floor(random() * 4);
+        // Warm-tinted clouds keep the sky saturation high under the soft
+        // warm key light.
+        context.fillStyle = `rgba(255,222,186,${0.28 + random() * 0.24})`;
+        for (let bIdx = 0; bIdx < blobs; bIdx += 1) {
+          context.beginPath();
+          context.ellipse(
+            cx + (random() - 0.5) * 90,
+            cy + (random() - 0.5) * 18,
+            26 + random() * 46,
+            7 + random() * 10,
+            0, 0, Math.PI * 2,
+          );
+          context.fill();
+        }
+      }
+    }, 512, 256);
+    cloudTexture.wrapS = THREE.RepeatWrapping;
+    const cloudGeometry = new THREE.SphereGeometry(1840, 32, 16);
+    const cloudMaterial = new THREE.MeshBasicMaterial({
+      map: cloudTexture,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.BackSide,
+      fog: false,
+    });
+    const clouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
+    clouds.renderOrder = -9;
+    this.geometryCache.push(cloudGeometry);
+    this.cloudMesh = clouds;
     return sky;
   }
 
@@ -672,8 +773,13 @@ export class CityRenderer {
 
   async buildBuildings(root, city) {
     const flatGroups = new Map();
+    // Textured facades are bucketed by (facade, material, vivid, variety) so
+    // hundreds of real-map buildings share ~90 cached day/night texture pairs
+    // and merge into one mesh per bucket instead of one mesh per building.
+    const textureGroups = new Map();
     const facadeSeed = Number(city.meta.seedInt || 1);
     const random = mulberry32(facadeSeed);
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
 
     for (const building of city.buildings) {
       const points = building.polygon;
@@ -706,43 +812,26 @@ export class CityRenderer {
       const materialKey = building.material;
 
       if (useTexture) {
-        const facadeStyle = building.facade;
-        const textureSeed = facadeSeed + Number(building.id.replace(/\D/g, '') || 0) * 13 + (building.facade || '').length;
-        const dayRnd = mulberry32(textureSeed);
-        const texture = seededTexture(textureSeed, (context, w, h) => {
-          drawFacade(context, w, h, dayRnd, facadeStyle, building.material, { day: true });
-        }, 128, 192);
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1, Math.max(1, Math.round(height / 4.6)));
-        const material = new THREE.MeshStandardMaterial({
-          map: texture,
-          emissive: 0xfff0b8,
-          emissiveMap: texture,
-          emissiveIntensity: 0,
-          roughness: 0.68,
-          metalness: 0.06,
-          flatShading: true,
-        });
-        const nightRnd = mulberry32(textureSeed);
-        const nightTexture = seededTexture(textureSeed + 31, (context, w, h) => {
-          drawFacade(context, w, h, nightRnd, facadeStyle, building.material, { day: false });
-        }, 128, 192);
-        nightTexture.wrapS = THREE.RepeatWrapping;
-        nightTexture.wrapT = THREE.RepeatWrapping;
-        nightTexture.repeat.copy(texture.repeat);
-        material.emissiveMap = nightTexture;
-        this.nightEmissive.push({ material, texture, nightTexture });
+        const facadeStyle = building.facade || 'modern-grid';
+        const varietyCount = realMap ? 6 : 2;
+        const variety = Math.floor(hashString(`${facadeStyle}-${building.material}-${building.id}`) % varietyCount);
+        const key = `${facadeStyle}|${building.material}|${realMap ? 1 : 0}|${variety}`;
+        let group = textureGroups.get(key);
+        if (!group) {
+          group = { geoms: [], facadeStyle, material: building.material, vivid: realMap, variety };
+          textureGroups.set(key, group);
+        }
+        const repeatY = Math.max(1, Math.round(height / 4.6));
         const geometry = new THREE.BoxGeometry(width, height, depth);
+        // Bake the vertical repeat into the UVs so merged buildings sharing one
+        // texture keep their own story count.
+        const uv = geometry.attributes.uv;
+        for (let i = 0; i < uv.count; i += 1) {
+          uv.setY(i, uv.getY(i) * repeatY);
+        }
         geometry.translate(center.x, baseY, center.z);
         geometry.translate(0, height / 2, 0);
-        geometry.computeVertexNormals();
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.userData = { kind: 'building', id: building.id, buildingId: building.id };
-        root.add(mesh);
-        this.pickables.push(mesh);
+        group.geoms.push(geometry);
         this.geometryCache.push(geometry);
         this.addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, building.material, random);
         continue;
@@ -795,6 +884,42 @@ export class CityRenderer {
       root.add(mesh);
       this.pickables.push(mesh);
       // Per-building pick metadata via spatial map in main.
+    }
+
+    for (const [key, group] of textureGroups) {
+      const merged = mergeGeometries(group.geoms, false);
+      if (!merged) continue;
+      merged.computeVertexNormals();
+      const textureSeed = facadeSeed + hashString(key) * 17;
+      const dayRnd = mulberry32(textureSeed);
+      const texture = seededTexture(textureSeed, (context, w, h) => {
+        drawFacade(context, w, h, dayRnd, group.facadeStyle, group.material, { day: true, vivid: group.vivid });
+      }, 128, 192);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      const nightRnd = mulberry32(textureSeed);
+      const nightTexture = seededTexture(textureSeed + 31, (context, w, h) => {
+        drawFacade(context, w, h, nightRnd, group.facadeStyle, group.material, { day: false, vivid: group.vivid });
+      }, 128, 192);
+      nightTexture.wrapS = THREE.RepeatWrapping;
+      nightTexture.wrapT = THREE.RepeatWrapping;
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        emissive: 0xfff0b8,
+        emissiveMap: nightTexture,
+        emissiveIntensity: 0,
+        roughness: 0.68,
+        metalness: 0.06,
+        flatShading: true,
+      });
+      this.nightEmissive.push({ material, texture, nightTexture });
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = { kind: 'buildings-textured', facade: key };
+      root.add(mesh);
+      this.pickables.push(mesh);
+      this.geometryCache.push(merged);
     }
   }
 
@@ -859,7 +984,6 @@ export class CityRenderer {
   }
 
   buildContactShadows(root, city) {
-    const shadows = [];
     const alphaTexture = seededTexture(2048, (context, width, height) => {
       drawShadowAlpha(context, width, height);
     }, 64, 64);
@@ -873,6 +997,11 @@ export class CityRenderer {
       alphaMap: alphaTexture,
     });
     this.contactShadowMaterial = material;
+    // One merged plane-set replaces one mesh per building (700+ draw calls -> 1).
+    const positions = [];
+    const uvs = [];
+    const normals = [];
+    const indices = [];
     for (const building of city.buildings) {
       const points = building.polygon;
       if (points.length < 4) continue;
@@ -882,77 +1011,105 @@ export class CityRenderer {
       const maxZ = Math.max(...points.map((p) => p.z));
       if (maxX - minX < 2 || maxZ - minZ < 2) continue;
       const y = this.terrain?.heightAt ? this.terrain.heightAt((minX + maxX) / 2, (minZ + maxZ) / 2) : 0;
-      const geometry = new THREE.PlaneGeometry(1, 1);
-      geometry.rotateX(-Math.PI / 2);
-      const position = geometry.attributes.position.array;
-      const uv = geometry.attributes.uv.array;
       const width = maxX - minX + 2.2;
       const depth = maxZ - minZ + 2.2;
-      for (let i = 0; i < position.length; i += 3) {
-        position[i] = minX - 1.1 + (position[i] + 0.5) * width;
-        position[i + 1] = y + 0.052;
-        position[i + 2] = minZ - 1.1 + (position[i + 2] + 0.5) * depth;
-      }
-      for (let i = 0; i < uv.length; i += 2) {
-        uv[i] = 0.5 + (uv[i] - 0.5) * 0.92;
-        uv[i + 1] = 0.5 + (uv[i + 1] - 0.5) * 0.92;
-      }
-      geometry.computeVertexNormals();
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = 1;
-      shadows.push(mesh);
-      this.geometryCache.push(geometry);
+      const baseIndex = positions.length / 3;
+      positions.push(
+        minX - 1.1, y + 0.052, minZ - 1.1,
+        minX - 1.1 + width, y + 0.052, minZ - 1.1,
+        minX - 1.1 + width, y + 0.052, minZ - 1.1 + depth,
+        minX - 1.1, y + 0.052, minZ - 1.1 + depth,
+      );
+      normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+      uvs.push(0.04, 0.04, 0.96, 0.04, 0.96, 0.96, 0.04, 0.96);
+      indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
     }
     this.geometryCache.push(alphaTexture);
-    const group = new THREE.Group();
-    group.name = 'contact-shadows';
-    for (const mesh of shadows) group.add(mesh);
-    root.add(group);
+    if (!positions.length) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 1;
+    mesh.name = 'contact-shadows';
+    root.add(mesh);
+    this.geometryCache.push(geometry);
   }
 
   addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, material, random) {
+    // Roof props are accumulated into this.roofBatch and flushed once per
+    // build so parapets/tanks/cells cost three draw calls total, not one each.
+    const batch = this.roofBatch;
     const topY = baseY + height;
     const cx = minX + width / 2;
     const cz = minZ + depth / 2;
     const parapet = new THREE.BoxGeometry(width + 0.5, 0.42, depth + 0.5);
     parapet.translate(cx, topY + 0.14, cz);
-    const parapetColor = PALETTES[material]?.[0] || '#cfc9bb';
-    const parapetMesh = new THREE.Mesh(parapet, new THREE.MeshStandardMaterial({
-      color: shade(colorFromHex(parapetColor), -0.2),
-      roughness: 0.8,
-      flatShading: true,
-    }));
-    parapetMesh.castShadow = true;
-    root.add(parapetMesh);
-    this.geometryCache.push(parapet);
+    const parapetColor = shade(colorFromHex(PALETTES[material]?.[0] || '#cfc9bb'), -0.2);
+    const positionCount = parapet.attributes.position.count;
+    const colors = new Float32Array(positionCount * 3);
+    for (let i = 0; i < positionCount; i += 1) {
+      colors[i * 3] = parapetColor.r;
+      colors[i * 3 + 1] = parapetColor.g;
+      colors[i * 3 + 2] = parapetColor.b;
+    }
+    parapet.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    batch.parapets.push(parapet);
     if ((building.type === 'rowhouse' || building.type === 'midrise') && random() < 0.42) {
       const tankR = 0.9 + random() * 0.5;
       const tankH = 1.4 + random() * 0.9;
       const tank = new THREE.CylinderGeometry(tankR * 0.82, tankR, tankH, 8);
       tank.translate(cx + width * (random() - 0.5) * 0.36, topY + 0.28 + tankH / 2, cz + depth * (random() - 0.5) * 0.36);
-      const tankMesh = new THREE.Mesh(tank, new THREE.MeshStandardMaterial({
-        color: '#b5725a',
-        roughness: 0.55,
-        metalness: 0.25,
-        flatShading: true,
-      }));
-      tankMesh.castShadow = true;
-      root.add(tankMesh);
-      this.geometryCache.push(tank);
+      batch.tanks.push(tank);
     } else if (building.type === 'tower' && random() < 0.6) {
-      const cellR = 0.55;
       const cellH = 2.6 + random() * 2;
-      const cell = new THREE.CylinderGeometry(cellR * 0.9, cellR, cellH, 6);
+      const cell = new THREE.CylinderGeometry(0.5, 0.55, cellH, 6);
       cell.translate(cx + width * 0.22, topY + cellH / 2 + 0.3, cz + depth * 0.18);
-      const cellMesh = new THREE.Mesh(cell, new THREE.MeshStandardMaterial({
-        color: '#c4beb4',
-        roughness: 0.5,
-        metalness: 0.5,
-        flatShading: true,
-      }));
-      cellMesh.castShadow = true;
-      root.add(cellMesh);
-      this.geometryCache.push(cell);
+      batch.cells.push(cell);
+    }
+  }
+
+  flushRoofDetails(root) {
+    const batch = this.roofBatch;
+    this.roofBatch = null;
+    if (!batch) return;
+    if (batch.parapets.length) {
+      const merged = mergeGeometries(batch.parapets, false);
+      batch.parapets.length = 0;
+      if (merged) {
+        merged.computeVertexNormals();
+        const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, flatShading: true });
+        const mesh = new THREE.Mesh(merged, material);
+        mesh.castShadow = true;
+        root.add(mesh);
+        this.geometryCache.push(merged, material);
+      }
+    }
+    if (batch.tanks.length) {
+      const merged = mergeGeometries(batch.tanks, false);
+      batch.tanks.length = 0;
+      if (merged) {
+        merged.computeVertexNormals();
+        const material = new THREE.MeshStandardMaterial({ color: '#b5725a', roughness: 0.55, metalness: 0.25, flatShading: true });
+        const mesh = new THREE.Mesh(merged, material);
+        mesh.castShadow = true;
+        root.add(mesh);
+        this.geometryCache.push(merged, material);
+      }
+    }
+    if (batch.cells.length) {
+      const merged = mergeGeometries(batch.cells, false);
+      batch.cells.length = 0;
+      if (merged) {
+        merged.computeVertexNormals();
+        const material = new THREE.MeshStandardMaterial({ color: '#c4beb4', roughness: 0.5, metalness: 0.5, flatShading: true });
+        const mesh = new THREE.Mesh(merged, material);
+        mesh.castShadow = true;
+        root.add(mesh);
+        this.geometryCache.push(merged, material);
+      }
     }
   }
 
@@ -969,11 +1126,19 @@ export class CityRenderer {
       }
     }
     quads.asphalt += city.intersections.length;
-    quads.crosswalk += city.intersections.length * 4 * 4;
     const asphaltAttrs = lineQuadAttrs(quads.asphalt);
     const sidewalkAttrs = lineQuadAttrs(quads.sidewalk);
     const curbAttrs = lineQuadAttrs(quads.curb);
-    const crosswalkAttrs = lineQuadAttrs(quads.crosswalk);
+    // Crosswalk stripe count depends on approach widths, so use a dynamic buffer.
+    const crosswalkAttrs = dynQuadAttrs();
+    // Merged marking ribbons replace thousands of THREE.Line objects:
+    // one draw call for lane dashes, one for edge lines, one for stop bars,
+    // and one for sidewalk expansion joints.
+    const laneAttrs = dynQuadAttrs();
+    const edgeAttrs = dynQuadAttrs();
+    const stopAttrs = dynQuadAttrs();
+    const jointAttrs = dynQuadAttrs();
+    const patchAttrs = dynQuadAttrs();
     const asphaltColors = {
       motorway: new THREE.Color('#5d6570'),
       trunk: new THREE.Color('#626a74'),
@@ -986,14 +1151,19 @@ export class CityRenderer {
     const sidewalkColor = new THREE.Color('#e2c79a');
     const curbColor = new THREE.Color('#c0936b');
     const crosswalkColor = new THREE.Color('#fff4dc');
+    const laneWhite = new THREE.Color('#efe8d4');
+    const laneYellow = new THREE.Color('#e6b93f');
+    const edgeWhite = new THREE.Color('#f2ead8');
+    const jointColor = new THREE.Color('#8d7a5e');
+    const patchDark = new THREE.Color('#4c4b48');
+    const patchMid = new THREE.Color('#9c8f7d');
+    const manholeColor = new THREE.Color('#3a3a38');
     let asphaltVertex = 0;
     let sidewalkVertex = 0;
     let curbVertex = 0;
-    let crosswalkVertex = 0;
     const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
     const curbHeight = Number(city.meta.streetDesign?.curbHeight ?? 0.16);
-    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
-    const centerLineMaterial = new THREE.LineBasicMaterial({ color: 0xe9c04f, transparent: true, opacity: 0.92 });
+    const yAt = (x, z, lift = 0.075) => roadLift + lift + (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0);
 
     for (const segment of city.segments) {
       const pts = segment.points;
@@ -1039,6 +1209,21 @@ export class CityRenderer {
             sidewalkColor,
           );
           sidewalkVertex += 4;
+          // Expansion joints: tight dark seams every ~2.8m give sidewalks a
+          // paved, walkable texture at street level.
+          const jointStep = 2.8;
+          const joints = Math.floor(len / jointStep);
+          for (let j = 1; j <= joints; j += 1) {
+            const t = j * jointStep / len;
+            const jx = a.x + dx * t;
+            const jz = a.z + dz * t;
+            const jy = yAt(jx, jz, 0.05);
+            for (const side of [1, -1]) {
+              const inner = { x: jx + nx * half * side, z: jz + nz * half * side };
+              const outer = { x: jx + nx * (sidewalkHalf - 0.12) * side, z: jz + nz * (sidewalkHalf - 0.12) * side };
+              pushStripDyn(jointAttrs, inner, outer, 0.13, () => jy, jointColor);
+            }
+          }
           // Curb lips.
           pushQuad(curbAttrs, curbVertex,
             { x: a.x + nx * (half + 0.08), y: ya + 0.045, z: a.z + nz * (half + 0.08) },
@@ -1060,21 +1245,105 @@ export class CityRenderer {
         // Markings.
         if (segment.lanes >= 2 && segment.highway !== 'service') {
           const dash = segment.highway === 'primary' || segment.highway === 'secondary' ? 5.5 : 3.6;
-          if (segment.lanes >= 3) {
-            root.add(makeLine([a, b], 0xe8dfcb, 0.12, ya + 0.075, dash));
+          const dashLen = dash * 0.52;
+          const major = segment.highway === 'primary' || segment.highway === 'secondary';
+          const laneColor = segment.lanes >= 3 ? laneWhite : laneYellow;
+          // Solid double-yellow spine on major avenues.
+          if (major && segment.lanes >= 3) {
+            const midY = (x, z) => yAt(x, z, 0.075);
+            pushStripDyn(laneAttrs, a, b, 0.11, midY, laneYellow);
+            pushStripDyn(laneAttrs,
+              { x: a.x + nx * 0.28, z: a.z + nz * 0.28 },
+              { x: b.x + nx * 0.28, z: b.z + nz * 0.28 },
+              0.11, midY, laneYellow);
+            // Dashed white lane separators.
+            const lanes = Math.max(2, segment.lanes - 2);
+            for (let li = 1; li <= lanes; li += 1) {
+              const off = (li - (lanes + 1) / 2) * (segment.width / (lanes + 1)) * 0.5;
+              const pa = { x: a.x + nx * off, z: a.z + nz * off };
+              const pb = { x: b.x + nx * off, z: b.z + nz * off };
+              const steps = Math.max(1, Math.floor(len / (dash * 2)));
+              for (let s = 0; s < steps; s += 1) {
+                const t0 = (s * dash * 2) / len;
+                const t1 = Math.min(1, (s * dash * 2 + dashLen) / len);
+                pushStripDyn(laneAttrs,
+                  { x: pa.x + (pb.x - pa.x) * t0, z: pa.z + (pb.z - pa.z) * t0 },
+                  { x: pa.x + (pb.x - pa.x) * t1, z: pa.z + (pb.z - pa.z) * t1 },
+                  0.12, (x, z) => yAt(x, z, 0.075), laneWhite);
+              }
+            }
           } else {
-            root.add(makeLine([a, b], 0xe0b64b, 0.13, ya + 0.075, dash));
+            const steps = Math.max(1, Math.floor(len / dash));
+            for (let s = 0; s < steps; s += 1) {
+              const t0 = (s * dash) / len;
+              const t1 = Math.min(1, (s * dash + dashLen) / len);
+              pushStripDyn(laneAttrs,
+                { x: a.x + dx * t0, z: a.z + dz * t0 },
+                { x: a.x + dx * t1, z: a.z + dz * t1 },
+                0.14, (x, z) => yAt(x, z, 0.075), laneColor);
+            }
           }
         }
-        const edgeWidth = segment.highway === 'primary' || segment.highway === 'secondary' ? 0.1 : 0.08;
-        root.add(makeLine(
-          [{ x: a.x + nx * (half - 0.35), z: a.z + nz * (half - 0.35) }, { x: b.x + nx * (half - 0.35), z: b.z + nz * (half - 0.35) }],
-          0xf2ead8, edgeWidth, ya + 0.075, 3,
-        ));
-        root.add(makeLine(
-          [{ x: a.x - nx * (half - 0.35), z: a.z - nz * (half - 0.35) }, { x: b.x - nx * (half - 0.35), z: b.z - nz * (half - 0.35) }],
-          0xf2ead8, edgeWidth, ya + 0.075, 3,
-        ));
+        const edgeWidth = segment.highway === 'primary' || segment.highway === 'secondary' ? 0.14 : 0.1;
+        pushStripDyn(edgeAttrs,
+          { x: a.x + nx * (half - 0.35), z: a.z + nz * (half - 0.35) },
+          { x: b.x + nx * (half - 0.35), z: b.z + nz * (half - 0.35) },
+          edgeWidth, (x, z) => yAt(x, z, 0.075), edgeWhite);
+        pushStripDyn(edgeAttrs,
+          { x: a.x - nx * (half - 0.35), z: a.z - nz * (half - 0.35) },
+          { x: b.x - nx * (half - 0.35), z: b.z - nz * (half - 0.35) },
+          edgeWidth, (x, z) => yAt(x, z, 0.075), edgeWhite);
+        // Parking stall stripes along curbs: short white ticks that break up
+        // large asphalt planes at street level.
+        if (segment.sidewalkW > 0 && segment.highway !== 'motorway') {
+          const stallStep = 5.2;
+          const stalls = Math.floor(len / stallStep);
+          for (let sIdx = 1; sIdx < stalls; sIdx += 1) {
+            const t = (sIdx * stallStep) / len;
+            const sx = a.x + dx * t;
+            const sz = a.z + dz * t;
+            const sy = yAt(sx, sz, 0.06);
+            for (const side of [1, -1]) {
+              const inner = { x: sx + nx * (half - 0.18) * side, z: sz + nz * (half - 0.18) * side };
+              const outer = { x: sx + nx * (half - 2.3) * side, z: sz + nz * (half - 2.3) * side };
+              pushStripDyn(laneAttrs, inner, outer, 0.14, () => sy, edgeWhite);
+            }
+          }
+        }
+        // Tar patches and manholes: dark quads on the asphalt plane give the
+        // road surface a worn, detailed read at street level.
+        const patchStep = 8;
+        const patches = Math.floor(len / patchStep);
+        for (let pi = 0; pi < patches; pi += 1) {
+          const t = ((pi + 0.5) * patchStep) / len;
+          const px = a.x + dx * t;
+          const pz = a.z + dz * t;
+          const lateral = (((pi * 37) % 7) - 3) * 0.14 * half;
+          const cxp = px + nx * lateral;
+          const czp = pz + nz * lateral;
+          const py = yAt(cxp, czp, 0.045);
+          const pw = 1.3 + ((pi * 13) % 5) * 0.34;
+          const pd = 0.9 + ((pi * 7) % 4) * 0.26;
+          pushQuadDyn(patchAttrs,
+            { x: cxp - nx * pw - (dx / len) * pd, y: py, z: czp - nz * pw - (dz / len) * pd },
+            { x: cxp + nx * pw - (dx / len) * pd, y: py, z: czp + nz * pw - (dz / len) * pd },
+            { x: cxp + nx * pw + (dx / len) * pd, y: py, z: czp + nz * pw + (dz / len) * pd },
+            { x: cxp - nx * pw + (dx / len) * pd, y: py, z: czp - nz * pw + (dz / len) * pd },
+            pi % 2 === 0 ? patchMid : patchDark,
+          );
+          if (pi % 4 === 2) {
+            const mx = px - nx * lateral * 0.5;
+            const mz = pz - nz * lateral * 0.5;
+            const my = yAt(mx, mz, 0.05);
+            pushQuadDyn(patchAttrs,
+              { x: mx - 0.45, y: my, z: mz - 0.45 },
+              { x: mx + 0.45, y: my, z: mz - 0.45 },
+              { x: mx + 0.45, y: my, z: mz + 0.45 },
+              { x: mx - 0.45, y: my, z: mz + 0.45 },
+              manholeColor,
+            );
+          }
+        }
       }
     }
 
@@ -1110,50 +1379,63 @@ export class CityRenderer {
         return false;
       });
       const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
-      const size = 2.6;
-      for (let s = -1; s <= 1; s += 2) {
-        for (let e = -1; e <= 1; e += 2) {
-          const x = p.x + s * size;
-          const z = p.z + e * size;
-          const y = roadLift + 0.08;
-          for (let i = 0; i < 4; i += 1) {
-            const offset = i * 0.55 - 0.85;
-            pushQuad(crosswalkAttrs, crosswalkVertex,
-              { x: x + offset, y, z: z - 0.4 },
-              { x: x + offset, y, z: z + 0.4 },
-              { x: x + offset + 0.26, y, z: z + 0.4 },
-              { x: x + offset + 0.26, y, z: z - 0.4 },
-              crosswalkColor,
-            );
-            crosswalkVertex += 4;
-          }
-        }
+      // Zebra crosswalks: one striped band per approach, stripes parallel to
+      // the road axis so they read as paint from street level.
+      const approaches = [];
+      for (const segment of crossing) {
+        const other = segment.points.find((pt) => Math.hypot(pt.x - p.x, pt.z - p.z) >= 0.5) || segment.points[0];
+        const adx = other.x - p.x;
+        const adz = other.z - p.z;
+        const alen = Math.hypot(adx, adz) || 1;
+        approaches.push({
+          ux: adx / alen,
+          uz: adz / alen,
+          roadHalf: segment.width / 2,
+        });
       }
-      // Stop bars just before each approach.
-      const y = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(p.x, p.z) : 0);
-      const stop = 3.4;
-      root.add(makeLine(
-        [{ x: p.x - stop, z: p.z - half }, { x: p.x - stop, z: p.z + half }],
-        0xffffff, 0.17, y + 0.085,
-      ));
-      root.add(makeLine(
-        [{ x: p.x + stop, z: p.z - half }, { x: p.x + stop, z: p.z + half }],
-        0xffffff, 0.17, y + 0.085,
-      ));
-      root.add(makeLine(
-        [{ x: p.x - half, z: p.z - stop }, { x: p.x + half, z: p.z - stop }],
-        0xffffff, 0.17, y + 0.085,
-      ));
-      root.add(makeLine(
-        [{ x: p.x - half, z: p.z + stop }, { x: p.x + half, z: p.z + stop }],
-        0xffffff, 0.17, y + 0.085,
-      ));
+      const bands = approaches.length ? approaches : [
+        { ux: 1, uz: 0, roadHalf: half },
+        { ux: -1, uz: 0, roadHalf: half },
+        { ux: 0, uz: 1, roadHalf: half },
+        { ux: 0, uz: -1, roadHalf: half },
+      ];
+      for (const approach of bands) {
+        const bandCenter = 3.1;
+        const stripePitch = 0.78;
+        const stripes = Math.max(2, Math.floor((approach.roadHalf * 2) / stripePitch));
+        const px = -approach.uz;
+        const pz = approach.ux;
+        for (let i = 0; i < stripes; i += 1) {
+          const off = (i - (stripes - 1) / 2) * stripePitch;
+          const cx = p.x + approach.ux * bandCenter + px * off;
+          const cz = p.z + approach.uz * bandCenter + pz * off;
+          const stripeHalf = stripePitch * 0.3;
+          const alongHalf = 0.95;
+          pushQuadDyn(crosswalkAttrs,
+            { x: cx - px * stripeHalf - approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz - pz * stripeHalf - approach.uz * alongHalf },
+            { x: cx - px * stripeHalf + approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz - pz * stripeHalf + approach.uz * alongHalf },
+            { x: cx + px * stripeHalf + approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz + pz * stripeHalf + approach.uz * alongHalf },
+            { x: cx + px * stripeHalf - approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz + pz * stripeHalf - approach.uz * alongHalf },
+            crosswalkColor,
+          );
+        }
+        // Stop bar just behind the band.
+        const barCenter = bandCenter + 1.5;
+        const bx = p.x + approach.ux * barCenter;
+        const bz = p.z + approach.uz * barCenter;
+        pushQuadDyn(stopAttrs,
+          { x: bx - px * approach.roadHalf - approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz - pz * approach.roadHalf - approach.uz * 0.2 },
+          { x: bx + px * approach.roadHalf - approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz + pz * approach.roadHalf - approach.uz * 0.2 },
+          { x: bx + px * approach.roadHalf + approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz + pz * approach.roadHalf + approach.uz * 0.2 },
+          { x: bx - px * approach.roadHalf + approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz - pz * approach.roadHalf + approach.uz * 0.2 },
+          new THREE.Color('#f4f0e2'),
+        );
+      }
     }
 
     finalizeAttrs(asphaltAttrs, asphaltVertex);
     finalizeAttrs(sidewalkAttrs, sidewalkVertex);
     finalizeAttrs(curbAttrs, curbVertex);
-    finalizeAttrs(crosswalkAttrs, crosswalkVertex);
 
     const asphaltMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -1193,12 +1475,38 @@ export class CityRenderer {
       roughness: 0.7,
       flatShading: true,
     });
-    const crosswalkMesh = new THREE.Mesh(buildAttrGeometry(crosswalkAttrs), crosswalkMaterial);
+    const crosswalkMesh = new THREE.Mesh(buildDynGeometry(crosswalkAttrs), crosswalkMaterial);
     crosswalkMesh.renderOrder = 2;
     root.add(crosswalkMesh);
 
+    // Merged marking ribbons: lane dashes, edge lines, stop bars, joints.
+    const markingMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.62,
+      metalness: 0,
+      flatShading: true,
+    });
+    const jointMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.95,
+      metalness: 0,
+      flatShading: true,
+    });
+    const laneMesh = new THREE.Mesh(buildDynGeometry(laneAttrs), markingMaterial);
+    const edgeMesh = new THREE.Mesh(buildDynGeometry(edgeAttrs), markingMaterial);
+    const stopMesh = new THREE.Mesh(buildDynGeometry(stopAttrs), markingMaterial);
+    const jointMesh = new THREE.Mesh(buildDynGeometry(jointAttrs), jointMaterial);
+    const patchMesh = new THREE.Mesh(buildDynGeometry(patchAttrs), jointMaterial);
+    for (const mesh of [laneMesh, edgeMesh, stopMesh, jointMesh, patchMesh]) {
+      mesh.renderOrder = 2;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+      this.geometryCache.push(mesh.geometry);
+    }
+    this.geometryCache.push(laneMesh.material, jointMesh.material, crosswalkMaterial, markingMaterial);
+
     // Keep pickable geometry references for click metadata.
-    this.roadMeshes = { asphalt: asphaltMesh, sidewalk: sidewalkMesh, curbs: curbMesh, crosswalks: crosswalkMesh };
+    this.roadMeshes = { asphalt: asphaltMesh, sidewalk: sidewalkMesh, curbs: curbMesh, crosswalks: crosswalkMesh, markings: laneMesh };
   }
 
   buildSignals(root, city) {
@@ -1413,7 +1721,7 @@ export class CityRenderer {
           if (random() < 0.1) continue;
           const t = (i + 0.5) / count;
           const side = (i % 2 === 0 ? 1 : -1);
-          const offset = segment.sidewalkW + 0.9;
+          const offset = segment.width / 2 + segment.sidewalkW * 0.5;
           const x = a.x + dx * t + nx * offset * side;
           const z = a.z + dz * t + nz * offset * side;
           flags.push({
@@ -1481,58 +1789,97 @@ export class CityRenderer {
   }
 
   buildUtilityLines(root, city) {
-    if (city.meta.generator !== 'procedural') return;
     const bounds = city.meta.bounds;
     const random = mulberry32(Number(city.meta.seedInt || 1) + 881);
     const poles = [];
     const wirePoints = [];
-    for (const street of city.streets) {
-      if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
-      if (poles.length >= 90) break;
-      const axis = street.axis;
-      const position = street.position;
-      const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 20;
-      const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 20;
-      let prev = null;
-      for (let v = start; v < end; v += 70 + random() * 40) {
+    const connectWire = (prev, cur) => {
+      const dist = Math.hypot(cur.x - prev.x, cur.z - prev.z);
+      if (dist > 95) return;
+      const y1 = (this.terrain?.heightAt ? this.terrain.heightAt(prev.x, prev.z) : 0) + 5.6;
+      const y2 = (this.terrain?.heightAt ? this.terrain.heightAt(cur.x, cur.z) : 0) + 5.6;
+      const midX = (prev.x + cur.x) / 2;
+      const midZ = (prev.z + cur.z) / 2;
+      const sagY = (y1 + y2) / 2 - 0.8;
+      wirePoints.push(prev.x, y1, prev.z, midX, sagY, midZ);
+      wirePoints.push(midX, sagY, midZ, cur.x, y2, cur.z);
+    };
+    if (city.meta.generator === 'procedural') {
+      for (const street of city.streets) {
+        if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
         if (poles.length >= 90) break;
-        const side = random() < 0.5 ? -1 : 1;
-        const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
-        const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
-        if (Math.abs(x) > bounds.maxX - 3 || Math.abs(z) > bounds.maxZ - 3) continue;
-        poles.push({ x, z });
-        if (prev) {
-          const dist = axis === 'x' ? Math.abs(prev.z - z) : Math.abs(prev.x - x);
-          if (dist < 95) {
-            const y1 = (this.terrain?.heightAt ? this.terrain.heightAt(prev.x, prev.z) : 0) + 5.6;
-            const y2 = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + 5.6;
-            const midX = (prev.x + x) / 2;
-            const midZ = (prev.z + z) / 2;
-            const sagY = (y1 + y2) / 2 - 0.8;
-            wirePoints.push(prev.x, y1, prev.z, midX, sagY, midZ);
-            wirePoints.push(midX, sagY, midZ, x, y2, z);
-          }
+        const axis = street.axis;
+        const position = street.position;
+        const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 20;
+        const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 20;
+        let prev = null;
+        for (let v = start; v < end; v += 70 + random() * 40) {
+          if (poles.length >= 90) break;
+          const side = random() < 0.5 ? -1 : 1;
+          const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
+          const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
+          if (Math.abs(x) > bounds.maxX - 3 || Math.abs(z) > bounds.maxZ - 3) continue;
+          poles.push({ x, z });
+          if (prev) connectWire(prev, { x, z });
+          prev = { x, z };
         }
-        prev = { x, z };
+      }
+    } else {
+      // Real maps: follow road polylines and drop poles along the curbside.
+      const eligible = new Set(['primary', 'secondary', 'tertiary']);
+      const maxPoles = city.meta.generator === 'sf-builtin' ? 150 : 120;
+      const seenStreets = new Set();
+      for (const segment of city.segments || []) {
+        if (poles.length >= maxPoles) break;
+        if (!eligible.has(segment.highway)) continue;
+        const length = polylineLength(segment.points);
+        if (length < 46 || length > 520) continue;
+        // One pole run per named street keeps the pattern legible.
+        if (seenStreets.has(segment.streetId)) continue;
+        seenStreets.add(segment.streetId);
+        const side = random() < 0.5 ? -1 : 1;
+        const spacing = 46 + random() * 22;
+        const steps = Math.max(2, Math.floor(length / spacing));
+        let prev = null;
+        for (let s = 0; s <= steps; s += 1) {
+          if (poles.length >= maxPoles) break;
+          const t = s / steps;
+          const point = pointAlongPolyline(segment.points, t * length);
+          const offset = segment.width / 2 + segment.sidewalkW + 0.9;
+          const x = point.x + point.nx * offset * side;
+          const z = point.z + point.nz * offset * side;
+          if (x < bounds.minX + 2 || x > bounds.maxX - 2 || z < bounds.minZ + 2 || z > bounds.maxZ - 2) continue;
+          poles.push({ x, z, heading: Math.atan2(point.tx, point.tz) });
+          if (prev) connectWire(prev, { x, z });
+          prev = { x, z };
+        }
       }
     }
     if (!poles.length && !wirePoints.length) return;
     if (poles.length) {
       const poleGeometry = new THREE.CylinderGeometry(0.07, 0.1, 6.6, 5);
       const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x6b513c, roughness: 0.8, flatShading: true });
+      const armGeometry = new THREE.BoxGeometry(1.5, 0.09, 0.14);
+      const armMaterial = new THREE.MeshStandardMaterial({ color: 0x5a4434, roughness: 0.85, flatShading: true });
       const instanced = new THREE.InstancedMesh(poleGeometry, poleMaterial, poles.length);
+      const arms = new THREE.InstancedMesh(armGeometry, armMaterial, poles.length);
       const dummy = new THREE.Object3D();
       for (let i = 0; i < poles.length; i += 1) {
         const pole = poles[i];
         dummy.position.set(pole.x, (this.terrain?.heightAt ? this.terrain.heightAt(pole.x, pole.z) : 0) + 3.3, pole.z);
-        dummy.rotation.set(0, 0, 0);
+        dummy.rotation.set(0, pole.heading || 0, 0);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
         instanced.setMatrixAt(i, dummy.matrix);
+        dummy.position.y = (this.terrain?.heightAt ? this.terrain.heightAt(pole.x, pole.z) : 0) + 5.45;
+        dummy.updateMatrix();
+        arms.setMatrixAt(i, dummy.matrix);
       }
       instanced.instanceMatrix.needsUpdate = true;
-      root.add(instanced);
-      this.geometryCache.push(poleGeometry, poleMaterial);
+      arms.instanceMatrix.needsUpdate = true;
+      instanced.castShadow = true;
+      root.add(instanced, arms);
+      this.geometryCache.push(poleGeometry, poleMaterial, armGeometry, armMaterial);
     }
     if (wirePoints.length) {
       const wireGeometry = new THREE.BufferGeometry();
@@ -1563,11 +1910,11 @@ export class CityRenderer {
       for (const street of city.streets) {
         const perpendicular = street.axis === 'x' ? 'z' : 'x';
         const position = street.position;
-        const spacing = street.highway === 'primary' || street.highway === 'secondary' ? 58 : 44;
+        const spacing = street.highway === 'primary' || street.highway === 'secondary' ? 36 : 27;
         const start = bounds[perpendicular === 'z' ? 'minZ' : 'minX'] + 18;
         const end = bounds[perpendicular === 'z' ? 'maxZ' : 'maxX'] - 18;
         for (let v = start; v < end; v += spacing + random() * 18) {
-          if (random() < 0.12) continue;
+          if (random() < 0.04) continue;
           const side = random() < 0.5 ? -1 : 1;
           const sidewalkHalf = street.sidewalkW + street.asphaltWidth / 2 + 1.6;
           const x = street.axis === 'x' ? position + side * sidewalkHalf : v;
@@ -1593,7 +1940,7 @@ export class CityRenderer {
     const topGeometry = new THREE.SphereGeometry(0.55, 6, 5);
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x7a5a44, roughness: 0.9, flatShading: true });
     const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x7ba265, roughness: 0.85, flatShading: true });
-    const topMaterial = new THREE.MeshStandardMaterial({ color: 0x8faf72, roughness: 0.85, flatShading: true });
+    const topMaterial = new THREE.MeshStandardMaterial({ color: 0x93b56f, roughness: 0.85, flatShading: true });
     const trunkMesh = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, treeData.length);
     const canopyMesh = new THREE.InstancedMesh(canopyGeometry, canopyMaterial, treeData.length);
     const topMesh = new THREE.InstancedMesh(topGeometry, topMaterial, treeData.length);
@@ -1636,9 +1983,10 @@ export class CityRenderer {
     const bounds = city.meta.bounds;
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     const maxProps = realMap ? 900 : 1000;
+    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
     const pushProp = (x, z) => {
       if (props.length >= maxProps) return;
-      const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.05 : 0.05;
+      const y = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + roadLift + 0.04;
       const roll = random();
       const group = new THREE.Group();
       if (roll < 0.45) {
@@ -1711,7 +2059,8 @@ export class CityRenderer {
           if (random() < 0.25) continue;
           const t = (i + 0.5) / count;
           const side = i % 2 === 0 ? 1 : -1;
-          const offset = segment.sidewalkW + 0.8;
+          // Center of the sidewalk band, not the road edge.
+          const offset = segment.width / 2 + segment.sidewalkW * 0.55;
           pushProp(a.x + dx * t + nx * offset * side, a.z + dz * t + nz * offset * side);
         }
       }
@@ -1747,7 +2096,8 @@ export class CityRenderer {
     const spots = [];
     const bounds = city.meta.bounds;
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
-    const maxCars = realMap ? 360 : 800;
+    const maxCars = realMap ? 520 : 800;
+    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
     const classes = new Set(['primary', 'secondary', 'tertiary', 'residential']);
     if (realMap) {
       for (const segment of city.segments || []) {
@@ -1758,17 +2108,18 @@ export class CityRenderer {
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const length = Math.hypot(dx, dz);
-        if (length < 30 || length > 420) continue;
+        if (length < 24 || length > 420) continue;
         const nx = -dz / length;
         const nz = dx / length;
         const heading = Math.atan2(dx, dz);
-        const count = Math.min(6, Math.max(1, Math.round(length / 34)));
+        const count = Math.min(8, Math.max(2, Math.round(length / 26)));
         for (let i = 0; i < count; i += 1) {
           if (spots.length >= maxCars) break;
-          if (random() < 0.2) continue;
+          if (random() < 0.1) continue;
           const t = (i + 0.5) / count;
           const side = i % 2 === 0 ? 1 : -1;
-          const offset = segment.width / 2 + 1.05;
+          // Park inside the striped stall lane, not on the sidewalk.
+          const offset = segment.width / 2 - 1.3;
           spots.push({
             x: a.x + dx * t + nx * offset * side,
             z: a.z + dz * t + nz * offset * side,
@@ -1824,7 +2175,7 @@ export class CityRenderer {
     const color = new THREE.Color();
     for (let i = 0; i < spots.length; i += 1) {
       const spot = spots[i];
-      const y = (this.terrain?.heightAt ? this.terrain.heightAt(spot.x, spot.z) : 0) + 0.34;
+      const y = (this.terrain?.heightAt ? this.terrain.heightAt(spot.x, spot.z) : 0) + roadLift + 0.3;
       position.set(spot.x, y, spot.z);
       quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), spot.heading);
       matrix.compose(position, quaternion, scale);
@@ -2097,7 +2448,7 @@ export class CityRenderer {
       const positions = this.skyMesh.geometry.attributes.position.array;
       const colors = this.skyMesh.geometry.attributes.color.array;
       const top = night ? new THREE.Color('#1e2450') : new THREE.Color('#5f9fd1');
-      const mid = night ? new THREE.Color('#33396b') : new THREE.Color('#aed5e4');
+      const mid = night ? new THREE.Color('#33396b') : new THREE.Color('#93c8e0');
       const bottom = night ? new THREE.Color('#5b4a7d') : new THREE.Color('#f6e7c9');
       const c = new THREE.Color();
       for (let i = 0; i < positions.length; i += 3) {
@@ -2136,6 +2487,10 @@ export class CityRenderer {
     const fogColor = nightFactor < 0.28
       ? new THREE.Color('#2a2e58')
       : new THREE.Color('#cfe3ea').lerp(new THREE.Color('#8a9fb8'), 1 - nightFactor);
+    // Daylight haze leans warm to match the key light.
+    if (nightFactor >= 0.28) {
+      fogColor.copy(new THREE.Color('#ead9bd').lerp(new THREE.Color('#cfe3ea'), nightFactor * 0.4));
+    }
     this.scene.fog.color.copy(fogColor);
     if (this.scene.background) this.scene.background.copy(fogColor);
   }
@@ -2201,3 +2556,38 @@ function pointToSegmentDistance(p, a, b) {
   const t = clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq, 0, 1);
   return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
 }
+
+ function polylineLength(points) {
+   let length = 0;
+   for (let i = 0; i < points.length - 1; i += 1) {
+     length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+   }
+   return length;
+ }
+
+ function pointAlongPolyline(points, distance) {
+   let remaining = distance;
+   for (let i = 0; i < points.length - 1; i += 1) {
+     const a = points[i];
+     const b = points[i + 1];
+     const dx = b.x - a.x;
+     const dz = b.z - a.z;
+     const segLength = Math.hypot(dx, dz);
+     if (segLength <= 0) continue;
+     if (remaining <= segLength) {
+       const t = remaining / segLength;
+       return {
+         x: a.x + dx * t,
+         z: a.z + dz * t,
+         tx: dx / segLength,
+         tz: dz / segLength,
+         nx: -dz / segLength,
+         nz: dx / segLength,
+       };
+     }
+     remaining -= segLength;
+   }
+   const last = points[points.length - 2] || points[0];
+   const end = points[points.length - 1];
+   return { x: end.x, z: end.z, tx: end.x - last.x, tz: end.z - last.z, nx: -(end.z - last.z), nz: end.x - last.x };
+ }

@@ -125,3 +125,21 @@ WebGLRenderer path (ACES tone mapping + shadows + emissives still apply).
 Night QA drives a real persistent night state (`setDay(false)`), which
 exposed and fixed a bug where the main loop was overwriting the captured
 night hour back to day on the next frame.
+
+## Data-metadata pass (worker_data2)
+
+- OSM blocks keep the 90 m grouping but the rectangle now snaps inward to the
+  outer edge of the bounding roads (centerline + half asphalt + sidewalk +
+  1.8 m clearance) instead of a fixed 6 m pad, and `block.streets` is filled
+  from those named bounding roads (deduped). Dynamic add/undo still works:
+  the Portland fixture places and removes a building inside a snapped block.
+- Roads carry real metadata everywhere: `maxspeed` (raw tag + numeric
+  `maxspeedKmh`, with highway-class zone defaults when OSM has no tag),
+  `cycleway`, per-side `sidewalkLeft`/`sidewalkRight`, and lane counts on
+  streets and segments for both OSM and the SF built-in slice (SF zone
+  defaults apply where the prebuilt tags are empty).
+- Buildings carry `address` (OSM `addr:*`, falling back to the facing
+  street), `roofShape`, `shop`, `amenity`, `tourism`, `landmark`, and
+  `facingStreet` through export/import; SF facingStreet coverage went from
+  ~655/700 to 698/700.
+- Schema stays version 1; the new fields are additive.

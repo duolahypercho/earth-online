@@ -1,5 +1,15 @@
 import * as THREE from 'three';
 import { buildTrafficGraph, mulberry32 } from './core.js';
+import { buildVehicle, buildPedestrian } from './actors.js';
+
+// Driving model constants (meters, seconds).
+const ACCEL = 2.6;          // gentle throttle
+const DECEL = 5.2;          // comfortable braking toward a stop point
+const FOLLOW_DECEL = 4.2;   // braking while trailing a leader
+const MIN_BUMPER_GAP = 1.8; // required free space behind the leader bumper
+const STOP_LINE = 4.6;      // stop line distance before the node
+const SIGNAL_LOOKAHEAD = 42; // start reacting to a red below this distance
+const TURN_SIGNAL_DIST = 16; // blink before the intersection
 
 export class TrafficSim {
   constructor(renderer, city, { count = 26 } = {}) {
@@ -10,24 +20,33 @@ export class TrafficSim {
     this.cars = [];
     this.pedestrians = [];
     this.phase = 0;
+    // Cumulative arc lengths let spacing and stop logic work in meters
+    // instead of segment-progress units.
+    for (const edge of this.edges) {
+      const cum = [0];
+      for (let i = 1; i < edge.points.length; i += 1) {
+        cum.push(cum[i - 1] + Math.hypot(edge.points[i].x - edge.points[i - 1].x, edge.points[i].z - edge.points[i - 1].z));
+      }
+      edge.cum = cum;
+      edge.totalLength = cum[cum.length - 1];
+    }
+    this.signalById = new Map((city.signals || []).map((signal) => [signal.id, signal]));
     const random = mulberry32(Number(city.meta.seedInt || 1) + 77);
+    this.random = random;
     const paint = ['#d94f4a', '#e8b23a', '#4f86c8', '#3f9e8f', '#8f74c8', '#d47a3f', '#f2e9d8', '#6fbf73'];
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     const trafficCount = realMap ? 42 : count;
     for (let i = 0; i < trafficCount; i += 1) {
-      const edge = this.edges[Math.floor(random() * this.edges.length)];
-      if (!edge) continue;
-      const car = this.spawnCar(edge, paint[Math.floor(random() * paint.length)], random);
-      this.cars.push(car);
+      if (!this.edges.length) break;
+      const car = this.spawnCar(this.edges[Math.floor(random() * this.edges.length)], paint[Math.floor(random() * paint.length)], random);
+      if (car) this.cars.push(car);
     }
     const pedestrianCount = realMap ? 48 : 26;
     const sidewalkPaths = this.buildSidewalkPaths(city);
     for (let i = 0; i < pedestrianCount; i += 1) {
       const path = sidewalkPaths[Math.floor(random() * sidewalkPaths.length)];
       if (!path?.length) continue;
-      const outfit = random() < 0.45 ? 0x79a8c9 : random() < 0.6 ? 0xd09a6f : 0xc75d8e;
-      const hair = random() < 0.5 ? 0x2e241f : random() < 0.8 ? 0x6b4a2f : 0xd9c9a0;
-      this.pedestrians.push(this.spawnPedestrian(path, outfit, hair, random));
+      this.pedestrians.push(this.spawnPedestrian(path, random));
     }
     this.renderer.scene.add(this.group);
   }
@@ -37,96 +56,101 @@ export class TrafficSim {
   }
 
   spawnCar(edge, color, random = Math.random) {
-    const group = new THREE.Group();
-    const kind = random() < 0.68 ? 'sedan' : random() < 0.86 ? 'taxi' : random() < 0.95 ? 'truck' : 'bus';
-    const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.55, flatShading: true });
-    const cabMaterial = new THREE.MeshStandardMaterial({ color: 0xb9d3e0, roughness: 0.2, metalness: 0.2, flatShading: true });
-    const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.85 });
-    const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.24, 8);
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 });
-    wheelGeo.rotateZ(Math.PI / 2);
-    if (kind === 'bus') {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(2.35, 1.7, 7.8), bodyMaterial);
-      body.position.y = 1.05;
-      group.add(body);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.38, 0.35, 7.82), cabMaterial);
-      stripe.position.set(0, 1.02, 0);
-      group.add(stripe);
-      for (const [wx, wz] of [[-1.05, 2.45], [1.05, 2.45], [-1.05, -2.45], [1.05, -2.45]]) {
-        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-        wheel.position.set(wx, 0.3, wz);
-        group.add(wheel);
-      }
-    } else if (kind === 'truck') {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.35, 4.6), bodyMaterial);
-      body.position.y = 0.92;
-      group.add(body);
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.8, 1.6), cabMaterial);
-      cab.position.set(0, 1.18, 1.7);
-      group.add(cab);
-      for (const [wx, wz] of [[-0.98, 1.6], [0.98, 1.6], [-0.98, -1.7], [0.98, -1.7]]) {
-        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-        wheel.position.set(wx, 0.3, wz);
-        group.add(wheel);
-      }
-    } else {
-      const width = kind === 'taxi' ? 1.75 : 1.7;
-      const body = new THREE.Mesh(new THREE.BoxGeometry(width, 0.62, 3.6), bodyMaterial);
-      body.position.y = 0.62;
-      group.add(body);
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.5, 1.6), cabMaterial);
-      cab.position.set(0, 1.12, -0.4);
-      group.add(cab);
-      for (const [wx, wz] of [[-width / 2, 1.1], [width / 2, 1.1], [-width / 2, -1.1], [width / 2, -1.1]]) {
-        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-        wheel.position.set(wx, 0.3, wz);
-        group.add(wheel);
-      }
-      if (kind === 'taxi') {
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.34), darkMaterial);
-        roof.position.set(0, 1.55, -0.4);
-        group.add(roof);
+    const roll = random();
+    const kind = roll < 0.68 ? 'sedan' : roll < 0.86 ? 'taxi' : roll < 0.95 ? 'truck' : 'bus';
+    const group = buildVehicle(kind, color);
+    // Try a few placements; reject ones that overlap cars already on the
+    // street so traffic never starts life in a pile-up.
+    let placement = null;
+    for (let attempt = 0; attempt < 10 && !placement; attempt += 1) {
+      const candidateEdge = attempt === 0 ? edge : this.edges[Math.floor(random() * this.edges.length)];
+      const pathIndex = Math.floor(random() * Math.max(1, candidateEdge.points.length - 1));
+      const segLen = candidateEdge.cum[pathIndex + 1] - candidateEdge.cum[pathIndex] || 1;
+      const distance = random() * segLen;
+      const arc = candidateEdge.cum[pathIndex] + distance;
+      const clear = !this.cars.some((other) => {
+        if (other.edge !== candidateEdge) return false;
+        return Math.abs(this.edgeArc(other) - arc) < 7;
+      });
+      if (clear) placement = { edge: candidateEdge, pathIndex, distance };
+    }
+    if (!placement) return null;
+    const car = {
+      group,
+      kind,
+      dims: group.userData.rig.dims,
+      edge: null,
+      signal: null,
+      pathIndex: 0,
+      distance: 0,
+      speed: 1.5 + random() * 2.5,
+      maxSpeed: placement.edge.highway === 'primary' || placement.edge.highway === 'trunk' ? 12 : placement.edge.highway === 'secondary' ? 10.5 : placement.edge.highway === 'tertiary' ? 9 : 7.2,
+      stopped: false,
+      braking: false,
+      laneOffset: 0,
+      corner: null,
+      nextEdge: null,
+      turnSide: 0,
+      leaderGap: null,
+      leaderLength: 4,
+      terminalTimer: 0,
+    };
+    this.assignEdge(car, placement.edge, placement.pathIndex, placement.distance);
+    this.group.add(group);
+    return car;
+  }
+
+  assignEdge(car, edge, pathIndex = 0, distance = 0) {
+    car.edge = edge;
+    car.pathIndex = clamp(pathIndex, 0, Math.max(0, edge.points.length - 2));
+    car.distance = distance;
+    car.signal = edge.signalId ? this.signalById.get(edge.signalId) || null : null;
+    car.nextEdge = null;
+    car.turnSide = 0;
+    car.corner = null;
+    car.terminalTimer = 0;
+  }
+
+  respawnCar(car) {
+    // Recycle a car stuck on a dead-end street: find a clear spot elsewhere.
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const edge = this.edges[Math.floor(this.random() * this.edges.length)];
+      if (!edge) return;
+      const pathIndex = Math.floor(this.random() * Math.max(1, edge.points.length - 1));
+      const segLen = edge.cum[pathIndex + 1] - edge.cum[pathIndex] || 1;
+      const distance = this.random() * segLen;
+      const arc = edge.cum[pathIndex] + distance;
+      const clear = !this.cars.some((other) => other !== car && other.edge === edge
+        && Math.abs(this.edgeArc(other) - arc) < 7);
+      if (clear) {
+        this.assignEdge(car, edge, pathIndex, distance);
+        car.speed = 1 + this.random() * 2;
+        car.stopped = false;
+        car.braking = false;
+        return;
       }
     }
-    const headlightMat = new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffe9a8, emissiveIntensity: 0.4 });
-    const taillightMat = new THREE.MeshStandardMaterial({ color: 0xff4433, emissive: 0xff2a1a, emissiveIntensity: 0.25 });
-    const halfW = kind === 'bus' ? 1.05 : kind === 'truck' ? 0.98 : 0.7;
-    const rearZ = kind === 'bus' ? 3.9 : kind === 'truck' ? -2.3 : -1.8;
-    for (const wx of [-halfW, halfW]) {
-      const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.08), headlightMat);
-      headlight.position.set(wx, kind === 'bus' ? 1.0 : kind === 'truck' ? 1.25 : 0.55, kind === 'bus' ? 3.91 : kind === 'truck' ? 2.4 : 1.82);
-      group.add(headlight);
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.12, 0.08), taillightMat);
-      tail.position.set(wx, kind === 'bus' ? 1.0 : kind === 'truck' ? 1.2 : 0.5, rearZ);
-      group.add(tail);
+  }
+
+  spawnPedestrian(path, random = Math.random) {
+    const group = buildPedestrian(random);
+    const cum = [0];
+    for (let i = 1; i < path.length; i += 1) {
+      cum.push(cum[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z));
     }
+    const total = cum[cum.length - 1] || 0.01;
+    group.position.set(path[0].x, 0, path[0].z);
     this.group.add(group);
     return {
       group,
-      edge,
-      kind,
-      pathIndex: Math.floor(Math.random() * Math.max(1, edge.points.length - 1)),
-      distance: Math.random() * 4,
-      speed: 7.2 + Math.random() * 3.4,
-      maxSpeed: edge.highway === 'primary' || edge.highway === 'trunk' ? 12 : edge.highway === 'secondary' ? 10.5 : edge.highway === 'tertiary' ? 9 : 7.2,
-      stopped: false,
-      laneOffset: 0,
+      points: path,
+      cum,
+      total,
+      s: random() * total,
+      seg: 0,
+      dir: random() < 0.5 ? 1 : -1,
+      speed: 1.3 + random() * 0.9,
     };
-  }
-
-  spawnPedestrian(path, color, hair, random = Math.random) {
-    const group = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.68, 4, 6), new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true }));
-    body.position.y = 0.82;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), new THREE.MeshStandardMaterial({ color: 0xc99a74, roughness: 0.9 }));
-    head.position.y = 1.42;
-    const hairMesh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), new THREE.MeshStandardMaterial({ color: hair, roughness: 0.9 }));
-    hairMesh.position.y = 1.52;
-    hairMesh.scale.y = 0.72;
-    group.add(body, head, hairMesh);
-    group.position.set(path[0].x, 0, path[0].z);
-    this.group.add(group);
-    return { group, points: path, target: 1, distance: 0, speed: 1.3 + random() * 0.9, time: random() * 10 };
   }
 
   buildSidewalkPaths(city) {
@@ -171,125 +195,273 @@ export class TrafficSim {
     return { x: mx + nx * bulge, z: mz + nz * bulge };
   }
 
+  groundY(x, z) {
+    return this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
+  }
+
+  edgeArc(car) {
+    const points = car.edge.points;
+    const index = clamp(car.pathIndex, 0, points.length - 2);
+    const segLen = car.edge.cum[index + 1] - car.edge.cum[index] || 1;
+    return car.edge.cum[index] + clamp(car.distance, 0, segLen);
+  }
+
   update(delta) {
     this.phase += delta;
     this.updateCarSpacing();
     for (const car of this.cars) {
-      if (car.controlled) continue;
-      if (!car.edge) continue;
-      const points = car.edge.points;
-      const targetIndex = Math.min(points.length - 1, car.pathIndex + 1);
-      const a = points[car.pathIndex];
-      const b = points[targetIndex];
-      const segmentLength = Math.hypot(b.x - a.x, b.z - a.z);
-      const signalStop = this.signalBlocked(car);
-      car.stopped = signalStop;
-      if (car.stopped) {
-        const stopLine = Math.max(0, segmentLength - 4.6);
-        if (car.distance >= stopLine) car.distance = Math.min(car.distance, stopLine);
-        else car.distance += car.speed * delta;
-      } else {
-        const speed = Math.min(car.speed, car.maxSpeed || 9);
-        car.distance += (car.blockedByTraffic ? speed * 0.35 : speed) * delta;
-      }
-      if (car.distance >= segmentLength) {
-        if (car.pathIndex >= points.length - 2) {
-          const next = this.chooseNextEdge(car, a, b);
-          if (next) {
-            car.corner = { from: b, to: next.points[0], t: 0 };
-            car.edge = next;
-            car.pathIndex = 0;
-            car.distance = 0;
-            continue;
-          }
-          // No legal onward edge: hold at the terminus instead of looping
-          // back to the start of the same street.
-          car.stopped = true;
-          car.distance = Math.min(car.distance, Math.max(0, segmentLength - 4.6));
-          car.speed = Math.min(car.speed, 0.8);
-        } else {
-          car.pathIndex += 1;
-          car.distance = 0;
-          continue;
-        }
-      }
-      if (car.corner) {
-        car.corner.t = Math.min(1, (car.corner.t || 0) + delta * 2.4);
-        const p = this.cornerArc(car.corner.from, car.corner.to, car.corner.t);
-        const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(p.x, p.z) + 0.08 : 0.08;
-        car.group.position.set(p.x, y, p.z);
-        car.group.rotation.y = Math.atan2(car.corner.to.x - car.corner.from.x, car.corner.to.z - car.corner.from.z);
-        if (car.corner.t >= 1) car.corner = null;
-        continue;
-      }
-      const t = clamp(car.distance / segmentLength, 0, 1);
-      const x = a.x + (b.x - a.x) * t;
-      const z = a.z + (b.z - a.z) * t;
-      const nx = -(b.z - a.z) / segmentLength;
-      const nz = (b.x - a.x) / segmentLength;
-      const offset = this.laneOffsetFor(car.edge) * (car.distance > segmentLength / 2 ? 1 : 1);
-      car.laneOffset = offset;
-      const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
-      car.group.position.set(x + nx * offset, y, z + nz * offset);
-      car.group.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+      if (car.controlled || !car.edge) continue;
+      this.updateAiCar(car, delta);
+      this.animateCar(car, delta);
     }
     for (const pedestrian of this.pedestrians) {
-      const points = pedestrian.points;
-      const a = points[pedestrian.target - 1] || points[0];
-      const b = points[pedestrian.target] || points[points.length - 1];
-      const segmentLength = Math.hypot(b.x - a.x, b.z - a.z) || 0.01;
-      pedestrian.distance += pedestrian.speed * delta;
-      if (pedestrian.distance >= segmentLength) {
-        pedestrian.target += 1;
-        pedestrian.distance = 0;
-        if (pedestrian.target >= points.length) {
-          pedestrian.target = 1;
-          pedestrian.distance = 0;
-        }
-      }
-      const updatedA = points[pedestrian.target - 1] || points[0];
-      const updatedB = points[pedestrian.target] || points[points.length - 1];
-      const t = clamp(pedestrian.distance / (Math.hypot(updatedB.x - updatedA.x, updatedB.z - updatedA.z) || 0.01), 0, 1);
-      const x = updatedA.x + (updatedB.x - updatedA.x) * t;
-      const z = updatedA.z + (updatedB.z - updatedA.z) * t;
-      const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
-      pedestrian.group.position.set(x, y, z);
-      pedestrian.group.position.y = y + Math.abs(Math.sin(this.phase * 3 + pedestrian.time)) * 0.12;
-      pedestrian.group.rotation.y = Math.atan2(updatedB.x - updatedA.x, updatedB.z - updatedA.z);
+      this.updatePedestrian(pedestrian, delta);
     }
+  }
+
+  updateAiCar(car, delta) {
+    if (car.corner) {
+      this.updateCorner(car, delta);
+      return;
+    }
+    const points = car.edge.points;
+    const a = points[car.pathIndex];
+    const b = points[Math.min(points.length - 1, car.pathIndex + 1)];
+    const segmentLength = Math.hypot(b.x - a.x, b.z - a.z) || 0.01;
+    const remaining = car.edge.totalLength - this.edgeArc(car);
+
+    // Choose the onward edge early so braking, turn speed, and blinkers all
+    // know about the maneuver before the car reaches the node.
+    if (!car.nextEdge && remaining < TURN_SIGNAL_DIST + 2) {
+      const lastA = points[points.length - 2];
+      const lastB = points[points.length - 1];
+      car.nextEdge = this.chooseNextEdge(car, lastA, lastB);
+      car.turnSide = car.nextEdge ? this.turnDirection(car.edge, car.nextEdge) : 0;
+    }
+
+    let target = car.maxSpeed;
+    const terminus = !(car.edge.outgoing || []).length;
+
+    if (car.nextEdge && remaining < 14) {
+      const angle = this.turnAngle(car.edge, car.nextEdge);
+      const turnSpeed = angle > 1.05 ? 4.0 : angle > 0.55 ? 5.6 : 7.5;
+      target = Math.min(target, Math.max(turnSpeed, 2.2));
+    }
+
+    const sig = this.signalState(car);
+    car.signalState = sig;
+    const holdAtLine = (sig === 'red' || sig === 'yellow') && remaining <= SIGNAL_LOOKAHEAD;
+    if (holdAtLine) {
+      const distToStop = remaining - STOP_LINE;
+      if (distToStop >= 0) {
+        // Speed that lets the car brake to zero exactly at the stop line.
+        const stopSpeed = Math.sqrt(Math.max(0, 2 * DECEL * Math.max(0, distToStop)));
+        target = Math.min(target, distToStop < 1.4 ? Math.min(stopSpeed, 0.9) : stopSpeed);
+        if (distToStop <= 0.35) target = 0;
+      }
+      // Already past the line: keep moving so the intersection clears.
+    }
+    if (terminus && remaining < 9) {
+      target = Math.min(target, Math.sqrt(Math.max(0, 2 * DECEL * Math.max(0, remaining - 2.6))));
+      if (remaining <= 2.9) target = 0;
+    }
+    if (car.leaderGap != null) {
+      const clearance = car.leaderGap - (car.dims.length + car.leaderLength) / 2;
+      if (clearance <= MIN_BUMPER_GAP) target = 0;
+      else target = Math.min(target, Math.sqrt(2 * FOLLOW_DECEL * Math.max(0, clearance - MIN_BUMPER_GAP)) + 0.4);
+    }
+    // Never roll into a node whose next edge is still occupied near the
+    // entry; this keeps corner entries from stacking onto each other.
+    if (car.nextEdge && remaining < 16 && !this.entryClear(car.nextEdge, car)) {
+      const stopSpeed = Math.sqrt(Math.max(0, 2 * DECEL * Math.max(0, remaining - 1.2)));
+      target = Math.min(target, remaining < 2.2 ? 0 : stopSpeed);
+    }
+
+    const rate = target < car.speed ? DECEL : ACCEL;
+    car.speed += clamp(target - car.speed, -rate * delta, rate * delta);
+    if (target <= 0.02 && car.speed < 0.06) car.speed = 0;
+    car.braking = target < car.speed - 0.08 || (target <= 0.02 && car.speed > 0.02);
+    car.stopped = car.speed <= 0.02;
+
+    // Dead-end streets: stop cleanly, then recycle the car elsewhere so
+    // termini do not pile up into permanent queues.
+    if (terminus && car.speed === 0) {
+      car.terminalTimer += delta;
+      if (car.terminalTimer > 4) {
+        this.respawnCar(car);
+        return;
+      }
+    } else {
+      car.terminalTimer = 0;
+    }
+
+    car.distance += car.speed * delta;
+    if (car.distance >= segmentLength) {
+      if (car.pathIndex >= points.length - 2) {
+        const next = car.nextEdge || this.chooseNextEdge(car, a, b);
+        if (next && this.entryClear(next, car)) {
+          const angle = this.turnAngle(car.edge, next);
+          const corner = {
+            from: points[points.length - 1],
+            to: next.points[0],
+            t: 0,
+            duration: clamp(0.45 + angle * 0.5, 0.4, 1.4),
+          };
+          const turnSide = car.turnSide || this.turnDirection(car.edge, next);
+          this.assignEdge(car, next, 0, 0);
+          car.corner = corner; // assignEdge clears corner/turnSide, restore for the arc
+          car.turnSide = turnSide;
+        } else {
+          car.distance = Math.min(car.distance, Math.max(0, segmentLength - 0.6));
+          car.speed = Math.min(car.speed, 0.4);
+        }
+      } else {
+        car.distance -= segmentLength;
+        car.pathIndex += 1;
+      }
+    }
+
+    if (car.corner) {
+      this.updateCorner(car, delta);
+      return;
+    }
+    const segA = points[car.pathIndex];
+    const segB = points[Math.min(points.length - 1, car.pathIndex + 1)];
+    const segLen = Math.hypot(segB.x - segA.x, segB.z - segA.z) || 0.01;
+    const t = clamp(car.distance / segLen, 0, 1);
+    const x = segA.x + (segB.x - segA.x) * t;
+    const z = segA.z + (segB.z - segA.z) * t;
+    const nx = -(segB.z - segA.z) / segLen;
+    const nz = (segB.x - segA.x) / segLen;
+    const offset = this.laneOffsetFor(car.edge);
+    car.laneOffset = offset;
+    car.group.position.set(x + nx * offset, this.groundY(x, z), z + nz * offset);
+    car.group.rotation.y = Math.atan2(segB.x - segA.x, segB.z - segA.z);
+  }
+
+  updateCorner(car, delta) {
+    const corner = car.corner;
+    corner.t = Math.min(1, corner.t + delta / corner.duration);
+    const p = this.cornerArc(corner.from, corner.to, corner.t);
+    // Heading follows the arc tangent; when the two intersection endpoints
+    // nearly coincide (edges meet on the centerline) fall back to the
+    // outgoing edge's first segment so the car still rotates through the
+    // turn instead of snapping.
+    const ahead = this.cornerArc(corner.from, corner.to, Math.min(1, corner.t + 0.08));
+    let heading;
+    if (Math.hypot(ahead.x - p.x, ahead.z - p.z) > 0.05) {
+      heading = Math.atan2(ahead.x - p.x, ahead.z - p.z);
+    } else {
+      const pts = car.edge.points;
+      const q = pts[Math.min(1, pts.length - 1)];
+      heading = Math.atan2(q.x - corner.to.x, q.z - corner.to.z);
+    }
+    let dyaw = heading - car.group.rotation.y;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    car.group.rotation.y += dyaw * clamp(delta * 8, 0, 1);
+    car.group.position.set(p.x, this.groundY(p.x, p.z), p.z);
+    if (corner.t >= 1) {
+      car.corner = null;
+      car.turnSide = 0; // maneuver finished; stop the blinker
+    }
+  }
+
+  animateCar(car, delta) {
+    const rig = car.group.userData.rig;
+    if (!rig) return;
+    const speed = car.speed || 0;
+    rig.spin += (speed * delta) / 0.3;
+    for (const wheel of rig.wheels) wheel.rotation.x = rig.spin;
+    rig.bobTime += delta * (2.2 + speed * 0.55);
+    const bobAmp = 0.01 + 0.018 * clamp(speed / 9, 0, 1);
+    rig.body.position.y = Math.sin(rig.bobTime) * bobAmp;
+    const leanTarget = car.corner && car.turnSide ? -car.turnSide * 0.035 : 0;
+    rig.body.rotation.z += (leanTarget - rig.body.rotation.z) * clamp(delta * 6, 0, 1);
+    rig.taillightMat.emissiveIntensity = car.braking ? 1.6 : speed < 0.25 ? 0.85 : 0.25;
+    // Blinkers run while approaching and traversing a chosen turn.
+    const nearNode = car.corner
+      || (car.nextEdge && car.edge && car.edge.totalLength - this.edgeArc(car) < TURN_SIGNAL_DIST);
+    const blinkOn = (this.phase * 1.9) % 1 < 0.55;
+    const intensity = car.turnSide !== 0 && nearNode && blinkOn ? 1.5 : 0;
+    const signals = rig.turnSignals;
+    if (!signals) return;
+    const active = car.turnSide > 0 ? signals.left : signals.right;
+    const idle = car.turnSide > 0 ? signals.right : signals.left;
+    for (const mat of active || []) mat.emissiveIntensity = intensity;
+    for (const mat of idle || []) mat.emissiveIntensity = 0;
+  }
+
+  updatePedestrian(pedestrian, delta) {
+    const walk = pedestrian.group.userData.walk;
+    pedestrian.s += pedestrian.dir * pedestrian.speed * delta;
+    if (pedestrian.s >= pedestrian.total) {
+      pedestrian.s = pedestrian.total;
+      pedestrian.dir = -1;
+    } else if (pedestrian.s <= 0) {
+      pedestrian.s = 0;
+      pedestrian.dir = 1;
+    }
+    const points = pedestrian.points;
+    while (pedestrian.seg < points.length - 2 && pedestrian.s > pedestrian.cum[pedestrian.seg + 1]) pedestrian.seg += 1;
+    while (pedestrian.seg > 0 && pedestrian.s < pedestrian.cum[pedestrian.seg]) pedestrian.seg -= 1;
+    const a = points[pedestrian.seg];
+    const b = points[Math.min(points.length - 1, pedestrian.seg + 1)];
+    const segLen = pedestrian.cum[pedestrian.seg + 1] - pedestrian.cum[pedestrian.seg] || 0.01;
+    const t = clamp((pedestrian.s - pedestrian.cum[pedestrian.seg]) / segLen, 0, 1);
+    const x = a.x + (b.x - a.x) * t;
+    const z = a.z + (b.z - a.z) * t;
+    const y = this.groundY(x, z);
+    pedestrian.group.position.set(x, y + Math.abs(Math.sin(this.phase * walk.cadence + walk.time)) * walk.bob, z);
+    const fx = pedestrian.dir > 0 ? b.x - a.x : a.x - b.x;
+    const fz = pedestrian.dir > 0 ? b.z - a.z : a.z - b.z;
+    pedestrian.group.rotation.y = Math.atan2(fx, fz);
   }
 
   updateCarSpacing() {
     const byEdge = new Map();
     for (const car of this.cars) {
       if (car.controlled || !car.edge) continue;
-      const points = car.edge.points;
-      const target = Math.min(points.length - 1, car.pathIndex + 1);
-      const segmentLength = Math.hypot(points[target].x - points[car.pathIndex].x, points[target].z - points[car.pathIndex].z) || 1;
-      const progress = car.pathIndex + clamp(car.distance / segmentLength, 0, 1);
+      // Cars traversing the corner arc already belong to the next edge;
+      // count them at its entry so followers braking into the node see them.
+      const arc = car.corner ? 0 : this.edgeArc(car);
       if (!byEdge.has(car.edge)) byEdge.set(car.edge, []);
-      byEdge.get(car.edge).push({ car, progress });
+      byEdge.get(car.edge).push({ car, arc });
     }
     for (const entries of byEdge.values()) {
-      entries.sort((a, b) => a.progress - b.progress);
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
+      entries.sort((a, b) => a.arc - b.arc);
+      for (let i = 0; i < entries.length; i += 1) {
         const current = entries[i].car;
         const ahead = entries[i + 1];
-        const gap = ahead ? ahead.progress - entries[i].progress : Infinity;
-        current.blockedByTraffic = gap > 0 && gap < 0.12;
+        current.leaderGap = ahead ? ahead.arc - entries[i].arc : null;
+        current.leaderLength = ahead ? ahead.car.dims.length : 4;
       }
     }
   }
 
+  entryClear(edge, car) {
+    const halfFollower = (car.dims.length || 4) / 2;
+    for (const other of this.cars) {
+      if (other === car || other.controlled || other.edge !== edge) continue;
+      const otherArc = other.corner ? 0 : this.edgeArc(other);
+      const otherHalf = (other.dims.length || 4) / 2;
+      if (otherArc - otherHalf < halfFollower + 3.5) return false;
+    }
+    return true;
+  }
+
   driveCar(car, speed, delta) {
     if (!car || !car.edge) return;
+    car.braking = speed < (car.lastDriveSpeed ?? speed) - 0.08 || (this.signalBlocked(car) && speed < 1.5);
+    car.lastDriveSpeed = speed;
+    car.speed = speed;
     const points = car.edge.points;
     const targetIndex = Math.min(points.length - 1, car.pathIndex + 1);
     const a = points[car.pathIndex];
     const b = points[targetIndex];
     const segmentLength = Math.hypot(b.x - a.x, b.z - a.z) || 0.01;
     if (this.signalBlocked(car)) {
-      const stopLine = Math.max(0, segmentLength - 4.6);
+      const stopLine = Math.max(0, segmentLength - STOP_LINE);
       if (car.distance >= stopLine) car.distance = Math.min(car.distance, stopLine);
       else car.distance += speed * delta;
     } else {
@@ -299,11 +471,9 @@ export class TrafficSim {
       if (car.pathIndex >= points.length - 2) {
         const next = this.chooseNextEdge(car, a, b);
         if (next) {
-          car.edge = next;
-          car.pathIndex = 0;
-          car.distance = 0;
+          this.assignEdge(car, next, 0, 0);
         } else {
-          car.distance = Math.min(car.distance, Math.max(0, segmentLength - 4.6));
+          car.distance = Math.min(car.distance, Math.max(0, segmentLength - STOP_LINE));
         }
       } else {
         car.pathIndex += 1;
@@ -321,19 +491,21 @@ export class TrafficSim {
     const nx = -dz / len;
     const nz = dx / len;
     const offset = this.laneOffsetFor(car.edge);
-    const y = this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
-    car.group.position.set(x + nx * offset, y, z + nz * offset);
+    car.group.position.set(x + nx * offset, this.groundY(x, z), z + nz * offset);
     car.group.rotation.y = Math.atan2(next.x - updated.x, next.z - updated.z) + (car.steerYaw || 0);
+    this.animateCar(car, delta);
   }
 
   chooseNextEdge(car, a, b) {
-    const outgoing = (car.edge.outgoing || []).filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
-    if (!outgoing.length) return null;
+    const raw = car.edge.outgoing || [];
+    const outgoing = raw.filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
+    const pool = outgoing.length ? outgoing : raw;
+    if (!pool.length) return null;
     const inDx = b.x - a.x;
     const inDz = b.z - a.z;
     const inLen = Math.hypot(inDx, inDz) || 1;
     let totalWeight = 0;
-    const weighted = outgoing.map((edge) => {
+    const weighted = pool.map((edge) => {
       const out = edge.points[0];
       const nextP = edge.points[Math.min(1, edge.points.length - 1)];
       const outDx = nextP.x - out.x;
@@ -356,12 +528,55 @@ export class TrafficSim {
     return weighted[weighted.length - 1].edge;
   }
 
-  signalBlocked(car) {
-    if (!car.edge.signalId) return false;
-    const signal = this.city.signals.find((s) => s.id === car.edge.signalId);
-    if (!signal) return false;
+  turnAngle(edge, next) {
+    const pts = edge.points;
+    const a = pts[pts.length - 2] || pts[0];
+    const b = pts[pts.length - 1];
+    const c = next.points[Math.min(1, next.points.length - 1)];
+    const inDx = b.x - a.x;
+    const inDz = b.z - a.z;
+    const outDx = c.x - b.x;
+    const outDz = c.z - b.z;
+    const inLen = Math.hypot(inDx, inDz) || 1;
+    const outLen = Math.hypot(outDx, outDz) || 1;
+    return Math.acos(clamp((inDx * outDx + inDz * outDz) / (inLen * outLen), -1, 1));
+  }
+
+  turnDirection(edge, next) {
+    const pts = edge.points;
+    const a = pts[pts.length - 2] || pts[0];
+    const b = pts[pts.length - 1];
+    const c = next.points[Math.min(1, next.points.length - 1)];
+    const inDx = b.x - a.x;
+    const inDz = b.z - a.z;
+    const outDx = c.x - b.x;
+    const outDz = c.z - b.z;
+    const inLen = Math.hypot(inDx, inDz) || 1;
+    const outLen = Math.hypot(outDx, outDz) || 1;
+    const sin = (inDz * outDx - inDx * outDz) / (inLen * outLen);
+    if (Math.abs(sin) < 0.35) return 0;
+    // +y cross product means the heading rotates from +z toward +x, which is
+    // the vehicle's left side in three.js coordinates.
+    return sin > 0 ? 1 : -1;
+  }
+
+  /**
+   * Phase state for the car's signal, mirroring the renderer bulb math:
+   * local = floor((clock + phaseOffset) / period) % 4 with red on 0-1,
+   * yellow on 2, green on 3. Returns null when the edge has no signal.
+   */
+  signalState(car) {
+    if (!car.edge?.signalId) return null;
+    const signal = car.signal ?? this.city.signals.find((s) => s.id === car.edge.signalId);
+    if (!signal) return null;
     const local = Math.floor((this.phase + (signal.phaseOffset || 0)) / (signal.period || 8)) % 4;
-    return local === 0 || local === 1;
+    if (local === 0 || local === 1) return 'red';
+    if (local === 2) return 'yellow';
+    return 'green';
+  }
+
+  signalBlocked(car) {
+    return this.signalState(car) === 'red';
   }
 }
 
