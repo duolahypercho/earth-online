@@ -461,6 +461,7 @@ function showInspector(title, fields) {
   inspectorTitle.textContent = title;
   inspectorFields.replaceChildren();
   for (const [label, value] of Object.entries(fields)) addField(label, value);
+  inspector.dataset.copyText = [title, ...Object.entries(fields).map(([label, value]) => `${label}: ${value ?? '—'}`)].join('\n');
   inspector.hidden = false;
 }
 
@@ -490,18 +491,22 @@ function inspectWorld(point, hit) {
   if (effectiveBuilding) {
     showInspector(effectiveBuilding.name || effectiveBuilding.typeLabel, {
       'ID': effectiveBuilding.id,
+      'Name': effectiveBuilding.name || '—',
       'Type': effectiveBuilding.typeLabel,
       'Usage': effectiveBuilding.usage,
       'District': effectiveBuilding.district,
       'Block': effectiveBuilding.blockId,
-      'Address': `${Math.round(x)}, ${Math.round(z)}`,
+      'Address': effectiveBuilding.address || `${Math.round(x)}, ${Math.round(z)}`,
+      'Facing': effectiveBuilding.facingStreet || '—',
+      'Landmark': effectiveBuilding.landmark ? 'Yes' : 'No',
       'Stories': effectiveBuilding.stories,
       'Height': `${effectiveBuilding.height.toFixed(1)} m`,
       'Footprint': `${fmt(Math.round(effectiveBuilding.footprintArea))} m²`,
       'Built': effectiveBuilding.yearBuilt,
       'Material': effectiveBuilding.material,
       'Facade': effectiveBuilding.facade,
-      'Facing': effectiveBuilding.facingStreet || '—',
+      'Shop': effectiveBuilding.shop || '—',
+      'Amenity': effectiveBuilding.amenity || '—',
     });
     return;
   }
@@ -516,6 +521,8 @@ function inspectWorld(point, hit) {
       'Traffic': segment.oneway === 'both' ? 'Two-way' : `One-way (${segment.oneway})`,
       'Asphalt': `${segment.width.toFixed(1)} m`,
       'Sidewalk': `${segment.sidewalkW.toFixed(1)} m`,
+      'Max speed': segment.maxspeed || '—',
+      'Cycleway': segment.cycleway || '—',
       'Signal': segment.signalId || 'none',
     });
     return;
@@ -983,6 +990,36 @@ async function boot() {
   });
   inspectorClose.addEventListener('click', () => {
     inspector.hidden = true;
+  });
+  const inspectorCopy = document.querySelector('#inspector-copy');
+  inspectorCopy.addEventListener('click', async () => {
+    const text = inspector.dataset.copyText || inspectorTitle.textContent || '';
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = inspectorCopy.textContent;
+      inspectorCopy.textContent = 'Copied';
+      setTimeout(() => { inspectorCopy.textContent = original; }, 1200);
+    } catch {
+      inspectorCopy.textContent = 'Copy failed';
+      setTimeout(() => { inspectorCopy.textContent = 'Copy'; }, 1200);
+    }
+  });
+  minimapCanvas.addEventListener('click', (event) => {
+    if (!state.city) return;
+    const rect = minimapCanvas.getBoundingClientRect();
+    const px = ((event.clientX - rect.left) / rect.width) * minimapCanvas.width;
+    const py = ((event.clientY - rect.top) / rect.height) * minimapCanvas.height;
+    const bounds = state.city.meta.bounds;
+    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+    const scale = (minimapCanvas.width - 24) / span;
+    const worldX = bounds.minX + (px - 12) / scale;
+    const worldZ = bounds.maxZ - (py - 12) / scale;
+    const y = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(worldX, worldZ) : 0;
+    if (state.mode !== 'orbit') setMode('orbit');
+    state.renderer.controls.target.set(worldX, y + 6, worldZ);
+    state.renderer.camera.position.set(worldX + 70, y + 48, worldZ + 70);
+    state.renderer.camera.lookAt(worldX, y + 4, worldZ);
+    state.renderer.controls.update();
   });
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();

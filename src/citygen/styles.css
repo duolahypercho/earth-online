@@ -215,6 +215,21 @@ button {
   letter-spacing: 0;
 }
 
+.inspector-copy {
+  position: absolute;
+  top: 10px;
+  right: 42px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
+
+.inspector-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .inspector dl {
   display: grid;
   grid-template-columns: 96px 1fr;
