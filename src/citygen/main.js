@@ -104,6 +104,27 @@ function drawMinimap(city) {
     context.fill();
   }
 
+  for (const park of city.parks || []) {
+    const points = park.polygon;
+    if (!points?.length) continue;
+    context.fillStyle = 'rgba(122, 168, 106, 0.9)';
+    context.beginPath();
+    context.moveTo(toX(points[0].x), toY(points[0].z));
+    for (let i = 1; i < points.length; i += 1) context.lineTo(toX(points[i].x), toY(points[i].z));
+    context.closePath();
+    context.fill();
+  }
+  for (const water of city.water || []) {
+    const points = water.polygon;
+    if (!points?.length) continue;
+    context.fillStyle = 'rgba(90, 150, 190, 0.9)';
+    context.beginPath();
+    context.moveTo(toX(points[0].x), toY(points[0].z));
+    for (let i = 1; i < points.length; i += 1) context.lineTo(toX(points[i].x), toY(points[i].z));
+    context.closePath();
+    context.fill();
+  }
+
   const roadColor = {
     primary: '#e8a45c',
     secondary: '#d7c47d',
@@ -131,6 +152,15 @@ function drawMinimap(city) {
     context.arc(toX(signal.position.x), toY(signal.position.z), 2.8, 0, Math.PI * 2);
     context.fill();
   }
+
+  const camera = state.renderer.camera.position;
+  context.fillStyle = '#ffffff';
+  context.strokeStyle = '#1c2a33';
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(toX(camera.x), toY(camera.z), 3.4, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
 }
 
 function updateReadout(city) {
@@ -1040,6 +1070,7 @@ async function boot() {
   });
 
   let last = performance.now();
+  let lastMinimapSecond = -1;
   function loop(now) {
     const delta = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -1051,6 +1082,11 @@ async function boot() {
       traffic: state.traffic,
     });
     state.renderer.renderFrame();
+    const second = Math.floor(now / 1000);
+    if (second !== lastMinimapSecond) {
+      lastMinimapSecond = second;
+      if (state.city) drawMinimap(state.city);
+    }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
