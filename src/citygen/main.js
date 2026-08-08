@@ -19,6 +19,15 @@ import './styles.css';
 
 const app = document.querySelector('#app');
 const canvasHost = app;
+const explorerUi = installExplorerUi();
+const locationForm = explorerUi.locationForm;
+const locationInput = explorerUi.locationInput;
+const loadingHud = explorerUi.loadingHud;
+const loadingTitle = explorerUi.loadingTitle;
+const loadingDetail = explorerUi.loadingDetail;
+const fieldGuide = explorerUi.fieldGuide;
+const guideToggle = explorerUi.guideToggle;
+const inspectorKind = explorerUi.inspectorKind;
 const cityNameEl = document.querySelector('#city-name');
 const readoutBuildings = document.querySelector('#readout-buildings');
 const readoutBlocks = document.querySelector('#readout-blocks');
@@ -79,9 +88,155 @@ const state = {
     lastPointer: null,
   },
   errors: [],
+  busy: false,
 };
 
 let pillTimer = null;
+
+function installExplorerUi() {
+  const toolbar = document.querySelector('.toolbar');
+  const styleTools = toolbar.querySelector('[data-toolbar="styles"]');
+  const actionTools = toolbar.querySelector('[data-toolbar="actions"]');
+  const brand = document.querySelector('.brand');
+  const inspectorHead = document.querySelector('.inspector-head');
+  const inspectorHeading = inspectorHead.querySelector('h2');
+
+  brand.querySelector('.brand-mark').textContent = '37°';
+  brand.querySelector('h1').textContent = 'CITYGEN / FIELD MAP';
+  brand.insertAdjacentHTML('afterbegin', '<span class="brand-pulse" aria-hidden="true"></span>');
+
+  styleTools.setAttribute('aria-label', 'Procedural city styles');
+  styleTools.insertAdjacentHTML('afterbegin', '<span class="tool-label">Generate</span>');
+  actionTools.setAttribute('aria-label', 'Explorer actions');
+  actionTools.insertAdjacentHTML('afterbegin', '<span class="tool-label">Tools</span>');
+
+  const locationForm = document.createElement('form');
+  locationForm.className = 'city-search';
+  locationForm.setAttribute('role', 'search');
+  locationForm.setAttribute('aria-label', 'Search for a real city');
+  locationForm.innerHTML = `
+    <label class="sr-only" for="location-search">Search city or coordinates</label>
+    <span class="search-glyph" aria-hidden="true"></span>
+    <input id="location-search" type="search" placeholder="Find any city…" autocomplete="off" spellcheck="false" aria-describedby="location-search-help" />
+    <span id="location-search-help" class="sr-only">Enter a city, or latitude, longitude and optional radius. Press slash to focus.</span>
+    <kbd aria-hidden="true">/</kbd>
+    <button type="submit" aria-label="Load real city">GO</button>
+  `;
+  toolbar.insertBefore(locationForm, styleTools);
+
+  const guideToggle = document.createElement('button');
+  guideToggle.type = 'button';
+  guideToggle.className = 'action guide-toggle';
+  guideToggle.dataset.action = 'guide';
+  guideToggle.textContent = '?';
+  guideToggle.title = 'Show field guide (?)';
+  guideToggle.setAttribute('aria-label', 'Show explorer controls');
+  guideToggle.setAttribute('aria-controls', 'field-guide');
+  guideToggle.setAttribute('aria-expanded', 'true');
+  actionTools.append(guideToggle);
+
+  const fieldGuide = document.createElement('aside');
+  fieldGuide.id = 'field-guide';
+  fieldGuide.className = 'field-guide';
+  fieldGuide.setAttribute('aria-label', 'Explorer field guide');
+  fieldGuide.innerHTML = `
+    <header><span>FIELD GUIDE</span><button type="button" data-action="guide-close" aria-label="Close field guide">×</button></header>
+    <p>Build a district, inspect its systems, then drop to street level.</p>
+    <dl>
+      <div><dt><kbd>Drag</kbd></dt><dd>Orbit camera</dd></div>
+      <div><dt><kbd>Click</kbd></dt><dd>Inspect a feature</dd></div>
+      <div><dt><kbd>M</kbd></dt><dd>Orbit / walk</dd></div>
+      <div><dt><kbd>WASD</kbd></dt><dd>Move or drive</dd></div>
+      <div><dt><kbd>E</kbd></dt><dd>Enter nearest car</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Exit current mode</dd></div>
+    </dl>
+    <button type="button" class="guide-cta" data-action="guide-dismiss">Got it — start exploring</button>
+  `;
+  app.append(fieldGuide);
+
+  const loadingHud = document.createElement('div');
+  loadingHud.className = 'loading-hud';
+  loadingHud.setAttribute('role', 'status');
+  loadingHud.setAttribute('aria-live', 'polite');
+  loadingHud.innerHTML = `
+    <div class="loading-card">
+      <span class="loading-radar" aria-hidden="true"></span>
+      <div><p>GENERATING SECTOR</p><strong>Plotting streets…</strong><span>Assembling the city model</span></div>
+    </div>
+  `;
+  app.append(loadingHud);
+  const loadingTitle = loadingHud.querySelector('strong');
+  const loadingDetail = loadingHud.querySelector('.loading-card div > span');
+
+  const inspectorKind = document.createElement('p');
+  inspectorKind.id = 'inspector-kind';
+  inspectorKind.className = 'inspector-kind';
+  inspectorKind.textContent = 'FEATURE DATA';
+  inspectorHead.insertBefore(inspectorKind, inspectorHeading);
+
+  const osmFormEl = document.querySelector('#osm-form');
+  const osmInput = document.querySelector('#osm-city');
+  osmInput.setAttribute('list', 'city-suggestions');
+  osmInput.insertAdjacentHTML('afterend', `
+    <datalist id="city-suggestions">
+      <option value="San Francisco, CA"></option>
+      <option value="New York, NY"></option>
+      <option value="Tokyo, Japan"></option>
+      <option value="Barcelona, Spain"></option>
+      <option value="Lisbon, Portugal"></option>
+    </datalist>
+    <div class="location-presets" aria-label="Suggested locations">
+      <span>Quick coordinates</span>
+      <button type="button" data-location="San Francisco, CA">San Francisco</button>
+      <button type="button" data-location="New York, NY">New York</button>
+      <button type="button" data-location="Tokyo, Japan">Tokyo</button>
+      <button type="button" data-location="Barcelona, Spain">Barcelona</button>
+    </div>
+  `);
+  document.querySelector('[data-action="osm"]').textContent = 'Find city';
+  document.querySelector('[data-action="regenerate"]').textContent = 'Remix';
+  document.querySelector('[data-action="place"]').textContent = 'Build';
+  document.querySelector('[data-action="seed"]').setAttribute('aria-keyshortcuts', 'S');
+  document.querySelector('[data-action="regenerate"]').setAttribute('aria-keyshortcuts', 'G');
+
+  return {
+    locationForm,
+    locationInput: locationForm.querySelector('input'),
+    loadingHud,
+    loadingTitle,
+    loadingDetail,
+    fieldGuide,
+    guideToggle,
+    inspectorKind,
+    osmForm: osmFormEl,
+  };
+}
+
+function setExplorerBusy(busy, title = 'Plotting streets…', detail = 'Assembling the city model') {
+  state.busy = busy;
+  app.setAttribute('aria-busy', String(busy));
+  document.body.classList.toggle('is-generating', busy);
+  loadingHud.hidden = !busy;
+  loadingTitle.textContent = title;
+  loadingDetail.textContent = detail;
+  document.querySelectorAll('.toolbar button, .toolbar input').forEach((control) => {
+    control.disabled = busy;
+  });
+  if (!busy) syncUndoButton();
+}
+
+function setFieldGuide(open, { remember = false } = {}) {
+  fieldGuide.hidden = !open;
+  guideToggle.setAttribute('aria-expanded', String(open));
+  guideToggle.classList.toggle('is-active', open);
+  if (remember) {
+    try {
+      localStorage.setItem('citygen-field-guide-seen', 'true');
+    } catch {
+      // The guide still works when persistent storage is unavailable.
+    }
+  }
+}
 
 function showPill(message, kind = 'error', timeoutMs = 6000) {
   if (!message) return;
@@ -397,8 +552,12 @@ async function buildCity(city, { reframe = true } = {}) {
   state.collision = buildCollisionGrid(city);
   if (reframe) frameCityCamera(city);
   updateReadout(city);
+  document.querySelectorAll('.preset').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.preset === city.meta.style);
+  });
   drawMinimap(city);
   syncUndoButton();
+  resetInspector(`Select a building, road, sidewalk, signal, or block in ${city.meta.name}.`);
 }
 
 function makeGhost() {
@@ -524,22 +683,31 @@ function exportMetadata() {
 }
 
 async function importMetadataFile(file) {
-  const text = await file.text();
-  let payload;
+  if (state.busy) return { ok: false, reason: 'A city is already loading' };
+  setExplorerBusy(true, 'Reading city archive…', file.name);
   try {
-    payload = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: 'Not valid JSON' };
+    const text = await file.text();
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return { ok: false, reason: 'Not valid JSON' };
+    }
+    const city = importCityMetadata(payload);
+    if (!city) return { ok: false, reason: 'Missing blocks, streets, or buildings' };
+    state.style = city.meta.style || 'osm';
+    state.seed = String(city.meta.seed ?? state.seed);
+    state.addedBuildings = [];
+    state.sandboxStats.buildingsPlaced = 0;
+    state.sandboxStats.blocksTouched.clear();
+    await buildCity(city);
+    showPill(`Imported ${city.meta.name}`, 'info', 2400);
+    return { ok: true, city };
+  } catch (error) {
+    return { ok: false, reason: error.message };
+  } finally {
+    setExplorerBusy(false);
   }
-  const city = importCityMetadata(payload);
-  if (!city) return { ok: false, reason: 'Missing blocks, streets, or buildings' };
-  state.style = city.meta.style || 'osm';
-  state.seed = String(city.meta.seed ?? state.seed);
-  state.addedBuildings = [];
-  state.sandboxStats.buildingsPlaced = 0;
-  state.sandboxStats.blocksTouched.clear();
-  await buildCity(city);
-  return { ok: true, city };
 }
 
 function setMode(mode) {
@@ -670,7 +838,9 @@ function addSection(label) {
 }
 
 // sections: { [sectionName]: { [label]: value } } — rendered as grouped field sets.
-function showInspector(title, sections) {
+function showInspector(title, sections, kind = 'Feature') {
+  inspectorKind.textContent = `${kind.toUpperCase()} DATA`;
+  inspector.dataset.kind = kind.toLowerCase();
   inspectorTitle.textContent = title;
   inspectorTitle.setAttribute('title', title);
   inspectorFields.replaceChildren();
@@ -691,6 +861,8 @@ function showInspector(title, sections) {
 }
 
 function resetInspector(message) {
+  inspectorKind.textContent = 'FEATURE DATA';
+  delete inspector.dataset.kind;
   inspectorTitle.textContent = 'Inspector';
   inspectorTitle.removeAttribute('title');
   inspectorFields.replaceChildren();
@@ -700,13 +872,58 @@ function resetInspector(message) {
   inspector.hidden = false;
 }
 
+function showStreetInspector(segment, { sidewalk = false } = {}) {
+  if (!segment) return false;
+  const street = state.city.streets.find((candidate) => candidate.id === segment.streetId);
+  const name = street?.name || segment.streetName || 'Unnamed street';
+  const direction = segment.oneway === 'both' ? 'Two-way' : `One-way (${segment.oneway})`;
+  const sidewalkWidth = Number(segment.sidewalkW || 0);
+  if (sidewalk) {
+    showInspector(`${name} sidewalk`, {
+      'Sidewalk': {
+        'Street': name,
+        'Clear width': sidewalkWidth > 0 ? `${sidewalkWidth.toFixed(1)} m each side` : 'No mapped sidewalk',
+        'Edges': sidewalkWidth > 0 ? 'Both sides' : '—',
+        'Surface': 'Paved',
+        'Segment': segment.id,
+      },
+      'Street context': {
+        'Road class': segment.highway,
+        'Carriageway': `${Number(segment.width || 0).toFixed(1)} m`,
+        'Full corridor': `${(Number(segment.width || 0) + sidewalkWidth * 2).toFixed(1)} m`,
+        'Traffic': direction,
+        'Crossing signal': segment.signalId || 'None on segment',
+      },
+    }, 'Sidewalk');
+    return true;
+  }
+  showInspector(name, {
+    'Road': {
+      'Segment': segment.id,
+      'Street ID': segment.streetId,
+      'Class': segment.highway,
+      'Lanes': segment.lanes,
+      'Traffic': direction,
+      'Speed limit': segment.maxspeed || '—',
+    },
+    'Right of way': {
+      'Asphalt': `${Number(segment.width || 0).toFixed(1)} m`,
+      'Sidewalk': sidewalkWidth > 0 ? `${sidewalkWidth.toFixed(1)} m each side` : 'None mapped',
+      'Cycleway': segment.cycleway || '—',
+      'Traffic signal': segment.signalId || 'None on segment',
+    },
+  }, 'Road');
+  return true;
+}
+
 function inspectWorld(point, hit) {
   const city = state.city;
   const x = point.x;
   const z = point.z;
   const hitKind = hit?.object?.userData?.kind;
-  if (hitKind === 'signal') {
-    const signal = city.signals.find((s) => s.id === hit.object.userData.id);
+  const near = lookupAt(city, x, z, { maxBuildingDistance: 8 });
+  if (hitKind === 'signal' || near.signal) {
+    const signal = city.signals.find((s) => s.id === hit?.object?.userData?.id) || near.signal;
     if (signal) {
       const streets = signal.streetIds.map((id) => city.streets.find((s) => s.id === id)?.name || id);
       showInspector(`Signal ${signal.id}`, {
@@ -715,15 +932,27 @@ function inspectWorld(point, hit) {
           'Streets': streets.join(' × '),
           'Phase period': `${signal.period}s`,
           'Phase offset': `${signal.phaseOffset}s`,
-          'Heading': signal.heading,
+          'Heading': `${signal.heading}°`,
           'Position': `${Math.round(x)}, ${Math.round(z)}`,
         },
-      });
+        'Operations': {
+          'Control': 'Timed traffic signal',
+          'Cycle': `${signal.period}s`,
+          'Offset': `${signal.phaseOffset}s`,
+        },
+      }, 'Signal');
       return;
     }
   }
+  if (hitKind === 'sidewalks') {
+    showStreetInspector(near.street || nearestSegment(city, x, z), { sidewalk: true });
+    return;
+  }
+  if (hitKind === 'roads') {
+    showStreetInspector(near.street || nearestSegment(city, x, z));
+    return;
+  }
   const building = city.buildings.find((b) => b.id === hit?.object?.userData?.buildingId);
-  const near = lookupAt(city, x, z);
   const effectiveBuilding = building || near.building || nearestBuilding(city, x, z);
   if (effectiveBuilding) {
     showInspector(effectiveBuilding.name || effectiveBuilding.typeLabel, {
@@ -752,28 +981,12 @@ function inspectWorld(point, hit) {
         'Shop': effectiveBuilding.shop || '—',
         'Amenity': effectiveBuilding.amenity || '—',
       },
-    });
+    }, 'Building');
     return;
   }
   const segment = near.street || nearestSegment(city, x, z);
   if (segment && near.streetDistance < 18) {
-    const street = city.streets.find((s) => s.id === segment.streetId);
-    showInspector(street?.name || segment.streetName, {
-      'Street': {
-        'ID': segment.id,
-        'Street': segment.streetId,
-        'Highway': segment.highway,
-        'Lanes': segment.lanes,
-        'Traffic': segment.oneway === 'both' ? 'Two-way' : `One-way (${segment.oneway})`,
-        'Max speed': segment.maxspeed || '—',
-      },
-      'Section': {
-        'Asphalt': `${segment.width.toFixed(1)} m`,
-        'Sidewalk': `${segment.sidewalkW.toFixed(1)} m`,
-        'Cycleway': segment.cycleway || '—',
-        'Signal': segment.signalId || 'none',
-      },
-    });
+    showStreetInspector(segment);
     return;
   }
   const block = near.block || city.blocks.find((b) => pointInPolygonBox(b, x, z));
@@ -786,7 +999,7 @@ function inspectWorld(point, hit) {
         'Streets': block.streets.map((id) => city.streets.find((s) => s.id === id)?.name || id).join(' · '),
         'Position': `${Math.round(x)}, ${Math.round(z)}`,
       },
-    });
+    }, 'Block');
     return;
   }
   showInspector('City', {
@@ -797,7 +1010,7 @@ function inspectWorld(point, hit) {
       'Streets': fmt(city.streets.length),
       'Signals': fmt(city.signals.length),
     },
-  });
+  }, 'City');
 }
 
 function nearestBuilding(city, x, z) {
@@ -859,6 +1072,9 @@ function distanceToSegment(p, a, b) {
 }
 
 async function generate(style, seed) {
+  if (state.busy) return;
+  const label = style === 'sanfrancisco' ? 'San Francisco' : style === 'gridiron' ? 'Gridiron' : 'Garden city';
+  setExplorerBusy(true, `Generating ${label}…`, `Resolving seed ${seed} into streets, blocks, and buildings`);
   state.style = style;
   state.seed = seed;
   state.addedBuildings = [];
@@ -867,7 +1083,12 @@ async function generate(style, seed) {
   state.cash = 1250;
   state.clock = 9;
   togglePlacement(false);
-  await buildCity(makeCity(style, seed));
+  try {
+    await buildCity(makeCity(style, seed));
+    showPill(`${label} ready · seed ${seed}`, 'info', 1800);
+  } finally {
+    setExplorerBusy(false);
+  }
 }
 
 let osmBusy = false;
@@ -911,9 +1132,11 @@ function showOsmResult(city) {
 }
 
 async function fetchRealCity(query) {
-  if (osmBusy) return;
+  if (osmBusy || state.busy) return;
   const label = query || 'San Francisco, CA';
+  locationInput.value = label;
   setOsmBusy(true, `Geocoding ${label}… then fetching roads and footprints. Can take ~45s.`);
+  setExplorerBusy(true, `Locating ${label}…`, 'Contacting OpenStreetMap, then assembling local geometry');
   try {
     const city = await fetchOsmCity({ query: label, radius: 520 });
     if (!city.buildings.length && !city.segments.length) throw new Error('No map data returned');
@@ -924,12 +1147,15 @@ async function fetchRealCity(query) {
     setOsmBusy(false, '');
     osmStatus.classList.add('is-error');
     osmStatus.textContent = `Could not fetch “${label}”: ${error.message}. Check the query and connection, then try again.`;
+  } finally {
+    setExplorerBusy(false);
   }
 }
 
 async function loadBuiltinSf() {
-  if (osmBusy) return;
+  if (osmBusy || state.busy) return;
   setOsmBusy(true, 'Loading prebuilt San Francisco OSM extract…');
+  setExplorerBusy(true, 'Opening San Francisco extract…', 'Building streets, terrain, and structures from local OSM data');
   try {
     const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
     await buildCity(city);
@@ -939,6 +1165,8 @@ async function loadBuiltinSf() {
     setOsmBusy(false, '');
     osmStatus.classList.add('is-error');
     osmStatus.textContent = `Could not load built-in San Francisco: ${error.message}`;
+  } finally {
+    setExplorerBusy(false);
   }
 }
 
@@ -1022,8 +1250,11 @@ async function boot() {
     },
     setDay: (day) => {
       state.day = Boolean(day);
+      state.clock = state.day ? 9 : 21;
+      state.renderer.setTimeOfDay(state.clock);
       document.querySelector('[data-action="time"]').textContent = state.day ? 'Day' : 'Night';
       syncDayTheme();
+      updateReadout(state.city);
     },
     setClock: (hour) => {
       state.clock = clamp(Number(hour) || 9, 0, 24);
@@ -1205,6 +1436,13 @@ async function boot() {
   makeGhost();
   syncDayTheme();
   resetInspector();
+  let guideSeen = false;
+  try {
+    guideSeen = localStorage.getItem('citygen-field-guide-seen') === 'true';
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+  setFieldGuide(!guideSeen);
 
   // Crisp minimap: physical pixels backing a 148px CSS box.
   const minimapDpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1215,6 +1453,7 @@ async function boot() {
   minimapCanvas.setAttribute('aria-label', 'City minimap: click to fly the camera to a spot');
 
   const pointer = new THREE.Vector2();
+  let inspectPointerStart = null;
   renderer.renderer.domElement.addEventListener('pointerdown', (event) => {
     if (state.mode === 'walk') {
       state.player.lastPointer = { x: event.clientX, y: event.clientY };
@@ -1227,9 +1466,7 @@ async function boot() {
       if (point) placeAt(point.x, point.z).catch((error) => reportError(error.message, 'placement'));
       return;
     }
-    const hit = renderer.pick(pointer);
-    const world = hit?.point || new THREE.Vector3();
-    inspectWorld(world, hit);
+    inspectPointerStart = { x: event.clientX, y: event.clientY, moved: false };
   });
   renderer.renderer.domElement.addEventListener('pointermove', (event) => {
     if (state.mode === 'walk') {
@@ -1246,22 +1483,41 @@ async function boot() {
       pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
       const point = pointerWorld(pointer);
       if (point) updateGhost(point.x, point.z);
+      return;
+    }
+    if (inspectPointerStart && Math.hypot(
+      event.clientX - inspectPointerStart.x,
+      event.clientY - inspectPointerStart.y,
+    ) > 5) {
+      inspectPointerStart.moved = true;
     }
   });
-  window.addEventListener('pointerup', () => {
+  window.addEventListener('pointerup', (event) => {
     state.player.lastPointer = null;
+    if (!inspectPointerStart) return;
+    const shouldInspect = !inspectPointerStart.moved
+      && event.target === renderer.renderer.domElement
+      && state.mode === 'orbit'
+      && !state.placement;
+    inspectPointerStart = null;
+    if (!shouldInspect) return;
+    pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    const hit = renderer.pick(pointer);
+    const world = hit?.point || pointerWorld(pointer) || new THREE.Vector3();
+    inspectWorld(world, hit);
   });
 
   document.querySelectorAll('.preset').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       document.querySelectorAll('.preset').forEach((b) => b.classList.remove('is-active'));
       button.classList.add('is-active');
-      generate(button.dataset.preset, state.seed);
+      await generate(button.dataset.preset, state.seed);
     });
   });
-  document.querySelector('[data-action="regenerate"]').addEventListener('click', () => {
+  document.querySelector('[data-action="regenerate"]').addEventListener('click', async () => {
     const seed = Math.floor(Math.random() * 99999);
-    generate(state.style, seed);
+    await generate(state.style, seed);
   });
   document.querySelector('[data-action="seed"]').addEventListener('click', async () => {
     await navigator.clipboard?.writeText(String(state.seed)).catch(() => {});
@@ -1275,7 +1531,8 @@ async function boot() {
   document.querySelector('#import-file').addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    await importMetadataFile(file);
+    const result = await importMetadataFile(file);
+    if (!result.ok) showPill(`Import failed: ${result.reason}`);
     event.target.value = '';
   });
   document.querySelector('[data-action="mode"]').addEventListener('click', () => {
@@ -1293,6 +1550,34 @@ async function boot() {
   });
   document.querySelector('[data-action="osm"]').addEventListener('click', () => {
     openOsmPanel();
+  });
+  locationForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const query = locationInput.value.trim();
+    if (!query) {
+      openOsmPanel();
+      return;
+    }
+    osmCityInput.value = query;
+    openOsmPanel();
+    await fetchRealCity(query);
+  });
+  document.querySelectorAll('[data-location]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const query = button.dataset.location;
+      osmCityInput.value = query;
+      locationInput.value = query;
+      await fetchRealCity(query);
+    });
+  });
+  guideToggle.addEventListener('click', () => {
+    setFieldGuide(fieldGuide.hidden);
+  });
+  fieldGuide.querySelector('[data-action="guide-close"]').addEventListener('click', () => {
+    setFieldGuide(false);
+  });
+  fieldGuide.querySelector('[data-action="guide-dismiss"]').addEventListener('click', () => {
+    setFieldGuide(false, { remember: true });
   });
   osmForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1372,6 +1657,19 @@ async function boot() {
       if (key === 'escape') event.target.blur();
       else return;
     }
+    if (key === '/') {
+      event.preventDefault();
+      locationInput.focus();
+      return;
+    }
+    if (key === '?') {
+      setFieldGuide(fieldGuide.hidden);
+      return;
+    }
+    if (key === 'g' && !state.busy) {
+      document.querySelector('[data-action="regenerate"]').click();
+      return;
+    }
     if (key === 'escape') {
       if (!osmOverlay.hidden) {
         if (!osmBusy) osmOverlay.hidden = true;
@@ -1408,7 +1706,10 @@ async function boot() {
     const second = Math.floor(now / 1000);
     if (second !== lastMinimapSecond) {
       lastMinimapSecond = second;
-      if (state.city) drawMinimap(state.city);
+      if (state.city) {
+        drawMinimap(state.city);
+        readoutClock.textContent = formatClock(state.clock);
+      }
     }
     requestAnimationFrame(loop);
   }
