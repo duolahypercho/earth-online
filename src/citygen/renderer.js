@@ -4,12 +4,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp, hashString } from './core.js';
 
 const PALETTES = Object.freeze({
-  painted: ['#e05f5f', '#3f9fb3', '#e5b64f', '#6f8fd6', '#e08a45', '#a2c46e', '#d1759f'],
+  painted: ['#c96b66', '#5f93a2', '#d4ad61', '#7486a8', '#c88455', '#89a876', '#b87892'],
   plaster: ['#f7d3ae', '#eda987', '#ffe0bd', '#e9b28f', '#f6d2a1'],
   brick: ['#e0925f', '#d96f4c', '#efa373', '#c05a3f', '#e2845a'],
   concrete: ['#e2ded2', '#cfc9ba', '#f1ece0', '#d8d3c4', '#e7e2d5'],
   clapboard: ['#9fc8e8', '#e8b98a', '#b5dca5', '#efb6c8', '#a9c4e8'],
-  glass: ['#7fb2e0', '#68a4d4', '#a8d8ee', '#8fc8e0', '#74a8d4', '#9cc8e8', '#86b6db', '#e0a95f', '#d09448', '#c98fd0', '#e08fb0', '#7fc8ae'],
+  glass: ['#7fa7bd', '#6d98ad', '#a7c4cf', '#8eb2bf', '#789eae', '#9dbbc5', '#88aab8', '#b89a70', '#a88762', '#7ca99c'],
   // Bronze and sea-glass tower variants break the single-hue blue wall on
   // real-map slices while staying inside the soft low-poly grade.
   stone: ['#ddd4be', '#ccc0a8', '#e8dfca', '#d4c8b0', '#e0d6c2'],
@@ -79,7 +79,7 @@ function drawFacade(context, width, height, random, style, material, { day = tru
       const y = margin + row * gapY + random() * 4;
       const w = gapX * 0.62;
       const h = gapY * 0.62;
-      const litWindow = random() < (day ? 0.24 : 0.86);
+      const litWindow = random() < (day ? 0.24 : 0.48);
       context.fillStyle = cool ? (litWindow ? '#bfe0f2' : '#6f9fc4') : (litWindow ? lit[Math.floor(random() * lit.length)] : '#39434c');
       context.fillRect(x, y, w, h);
       if (cool && !litWindow) {
@@ -109,9 +109,12 @@ function drawFacade(context, width, height, random, style, material, { day = tru
   context.fillRect(0, height - 7, width, 7);
   context.fillStyle = 'rgba(60,45,35,0.28)';
   context.fillRect(0, 7, width, 3);
-  const muralChance = vivid ? 0.52 : 0.42;
+  const muralChance = vivid ? 0.24 : 0.06;
   // Glass towers skip murals: repeated bands read as giant stripes at height.
-  if (material !== 'glass' && (style === 'loft' || style === 'art-deco' || style === 'shopfront' || random() < muralChance)) {
+  const muralFacade = style === 'shopfront'
+    || ((style === 'loft' || style === 'art-deco') && random() < 0.3)
+    || random() < muralChance;
+  if (material !== 'glass' && muralFacade) {
     const murals = vivid
       ? ['rgba(224,52,79,0.72)', 'rgba(217,47,143,0.72)', 'rgba(143,63,214,0.72)', 'rgba(47,159,214,0.66)', 'rgba(242,160,31,0.72)', 'rgba(63,191,111,0.66)', 'rgba(255,107,53,0.72)', 'rgba(255,92,168,0.72)']
       : ['rgba(224,80,66,0.58)', 'rgba(41,150,171,0.62)', 'rgba(232,164,44,0.58)', 'rgba(89,158,74,0.62)', 'rgba(151,86,178,0.62)', 'rgba(41,178,158,0.58)', 'rgba(235,97,158,0.58)'];
@@ -354,8 +357,9 @@ export class CityRenderer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
     container.appendChild(this.renderer.domElement);
-    // Stylized color grade: richer, warmer low-poly look without postprocessing.
-    this.renderer.domElement.style.filter = 'saturate(1.7) contrast(1.12) brightness(0.94)';
+    // A restrained filmic grade keeps the pastel material palette intact and
+    // avoids turning large real-map facades into neon color fields.
+    this.renderer.domElement.style.filter = 'saturate(1.16) contrast(1.04) brightness(1.01)';
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -448,7 +452,7 @@ export class CityRenderer {
     root.name = 'city-root';
 
     // Sky dome.
-    root.add(this.makeSky());
+    root.add(this.makeSky(city));
     if (this.cloudMesh) {
       root.add(this.cloudMesh);
       this.cloudMesh = null;
@@ -520,7 +524,10 @@ export class CityRenderer {
     }
   }
 
-  makeSky() {
+  makeSky(city) {
+    const bounds = city.meta.bounds;
+    const skyCenterX = (bounds.minX + bounds.maxX) / 2;
+    const skyCenterZ = (bounds.minZ + bounds.maxZ) / 2;
     const geometry = new THREE.SphereGeometry(1900, 32, 16);
     const colors = [];
     const positions = geometry.attributes.position.array;
@@ -540,6 +547,7 @@ export class CityRenderer {
       depthWrite: false,
     });
     const sky = new THREE.Mesh(geometry, material);
+    sky.position.set(skyCenterX, 0, skyCenterZ);
     sky.renderOrder = -10;
     this.geometryCache.push(geometry);
     this.skyMesh = sky;
@@ -571,11 +579,13 @@ export class CityRenderer {
     const cloudMaterial = new THREE.MeshBasicMaterial({
       map: cloudTexture,
       transparent: true,
+      opacity: city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 0.12 : 0.28,
       depthWrite: false,
       side: THREE.BackSide,
       fog: false,
     });
     const clouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
+    clouds.position.set(skyCenterX, 0, skyCenterZ);
     clouds.renderOrder = -9;
     this.geometryCache.push(cloudGeometry);
     this.cloudMesh = clouds;
@@ -807,7 +817,7 @@ export class CityRenderer {
       const height = building.height;
       const baseY = this.terrain?.heightAt ? this.terrain.heightAt((minX + maxX) / 2, (minZ + maxZ) / 2) : 0;
       const center = new THREE.Vector3((minX + maxX) / 2, baseY + height / 2, (minZ + maxZ) / 2);
-      const isFlat = building.type === 'rowhouse' || building.type === 'warehouse' || building.type === 'civic' || building.type === 'park';
+      const isFlat = building.type === 'warehouse' || building.type === 'civic' || building.type === 'park';
       const useTexture = !isFlat && random() < 0.88;
       const materialKey = building.material;
 
@@ -815,10 +825,11 @@ export class CityRenderer {
         const facadeStyle = building.facade || 'modern-grid';
         const varietyCount = realMap ? 6 : 2;
         const variety = Math.floor(hashString(`${facadeStyle}-${building.material}-${building.id}`) % varietyCount);
-        const key = `${facadeStyle}|${building.material}|${realMap ? 1 : 0}|${variety}`;
+        const vividFacade = building.type === 'shop' || facadeStyle === 'shopfront';
+        const key = `${facadeStyle}|${building.material}|${vividFacade ? 1 : 0}|${variety}`;
         let group = textureGroups.get(key);
         if (!group) {
-          group = { geoms: [], facadeStyle, material: building.material, vivid: realMap, variety };
+          group = { geoms: [], facadeStyle, material: building.material, vivid: vividFacade, variety };
           textureGroups.set(key, group);
         }
         const repeatY = Math.max(1, Math.round(height / 4.6));
@@ -1684,14 +1695,14 @@ export class CityRenderer {
     const classes = new Set(['primary', 'secondary']);
     if (city.meta.generator === 'procedural') {
       for (const street of city.streets) {
-        if (!classes.has(street.highway) && street.highway !== 'tertiary' && street.highway !== 'residential') continue;
-        if (flags.length >= 1400) break;
+        if (!classes.has(street.highway)) continue;
+        if (flags.length >= 320) break;
         const axis = street.axis;
         const position = street.position;
         const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 26;
         const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 26;
         for (let v = start; v < end; v += 3.6 + random() * 2.4) {
-          if (flags.length >= 1400) break;
+          if (flags.length >= 320) break;
           if (random() < 0.18) continue;
           const side = random() < 0.5 ? -1 : 1;
           const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 1.1) : v;
@@ -1701,14 +1712,15 @@ export class CityRenderer {
             x,
             z,
             axis,
+            runId: street.id,
             color: colors[Math.floor(random() * colors.length)],
           });
         }
       }
     } else {
       for (const segment of city.segments || []) {
-        if (flags.length >= 2600) break;
-        if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway' || segment.highway === 'motorway') continue;
+        if (flags.length >= 480) break;
+        if (!['primary', 'secondary', 'tertiary'].includes(segment.highway)) continue;
         const a = segment.points[0];
         const b = segment.points[segment.points.length - 1];
         const dx = b.x - a.x;
@@ -1717,9 +1729,9 @@ export class CityRenderer {
         if (length < 36 || length > 420) continue;
         const nx = -dz / length;
         const nz = dx / length;
-        const count = Math.min(16, Math.max(6, Math.round(length / 8)));
+        const count = Math.min(10, Math.max(4, Math.round(length / 14)));
         for (let i = 0; i < count; i += 1) {
-          if (flags.length >= 2600) break;
+          if (flags.length >= 480) break;
           if (random() < 0.1) continue;
           const t = (i + 0.5) / count;
           const side = (i % 2 === 0 ? 1 : -1);
@@ -1730,6 +1742,7 @@ export class CityRenderer {
             x,
             z,
             axis: Math.abs(dx) > Math.abs(dz) ? 'x' : 'z',
+            runId: segment.streetId,
             color: colors[Math.floor(random() * colors.length)],
           });
         }
@@ -1740,13 +1753,14 @@ export class CityRenderer {
     // Sagging festival wires connect flags into continuous street decor.
     const wirePoints = [];
     const sortedFlags = [...flags].sort((a, b) => {
+      if (a.runId !== b.runId) return String(a.runId).localeCompare(String(b.runId));
       if (a.axis !== b.axis) return a.axis === 'x' ? -1 : 1;
       return a.axis === 'x' ? a.z - b.z : a.x - b.x;
     });
     for (let i = 1; i < sortedFlags.length; i += 1) {
       const a = sortedFlags[i - 1];
       const b = sortedFlags[i];
-      if (a.axis !== b.axis) continue;
+      if (a.runId !== b.runId || a.axis !== b.axis) continue;
       const dist = a.axis === 'x' ? Math.abs(b.z - a.z) : Math.abs(b.x - a.x);
       if (dist < 1.2 || dist > 7) continue;
       const midX = (a.x + b.x) / 2;
@@ -1757,7 +1771,7 @@ export class CityRenderer {
       wirePoints.push(a.x, y1, a.z, midX, sagY, midZ);
       wirePoints.push(midX, sagY, midZ, b.x, y2, b.z);
     }
-    if (wirePoints.length) {
+    if (wirePoints.length && city.meta.generator === 'openstreetmap') {
       const wireGeometry = new THREE.BufferGeometry();
       wireGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wirePoints, 3));
       const wireMaterial = new THREE.LineBasicMaterial({ color: 0x6b4a3a, transparent: true, opacity: 0.55 });
@@ -1809,14 +1823,14 @@ export class CityRenderer {
     if (city.meta.generator === 'procedural') {
       for (const street of city.streets) {
         if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
-        if (poles.length >= 90) break;
+        if (poles.length >= 36) break;
         const axis = street.axis;
         const position = street.position;
         const start = bounds[axis === 'x' ? 'minZ' : 'minX'] + 20;
         const end = bounds[axis === 'x' ? 'maxZ' : 'maxX'] - 20;
         let prev = null;
         for (let v = start; v < end; v += 70 + random() * 40) {
-          if (poles.length >= 90) break;
+          if (poles.length >= 36) break;
           const side = random() < 0.5 ? -1 : 1;
           const x = axis === 'x' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
           const z = axis === 'z' ? position + side * (street.asphaltWidth / 2 + street.sidewalkW + 0.8) : v;
@@ -1829,7 +1843,7 @@ export class CityRenderer {
     } else {
       // Real maps: follow road polylines and drop poles along the curbside.
       const eligible = new Set(['primary', 'secondary', 'tertiary']);
-      const maxPoles = city.meta.generator === 'sf-builtin' ? 150 : 120;
+      const maxPoles = city.meta.generator === 'sf-builtin' ? 64 : 52;
       const seenStreets = new Set();
       for (const segment of city.segments || []) {
         if (poles.length >= maxPoles) break;
@@ -1883,10 +1897,10 @@ export class CityRenderer {
       root.add(instanced, arms);
       this.geometryCache.push(poleGeometry, poleMaterial, armGeometry, armMaterial);
     }
-    if (wirePoints.length) {
+    if (wirePoints.length && city.meta.generator === 'openstreetmap') {
       const wireGeometry = new THREE.BufferGeometry();
       wireGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wirePoints, 3));
-      const wireMaterial = new THREE.LineBasicMaterial({ color: 0x3d3028, transparent: true, opacity: 0.55 });
+      const wireMaterial = new THREE.LineBasicMaterial({ color: 0x3d3028, transparent: true, opacity: 0.32 });
       root.add(new THREE.LineSegments(wireGeometry, wireMaterial));
       this.geometryCache.push(wireGeometry, wireMaterial);
     }
@@ -2488,7 +2502,7 @@ export class CityRenderer {
     this.ambient.intensity = 0.08 + nightFactor * 0.26;
     this.rim.intensity = 0.1 + nightFactor * 0.55;
     for (const entry of this.nightEmissive) {
-      entry.material.emissiveIntensity = night ? (entry.texture || entry.nightTexture ? 1.35 : 2.1) : 0;
+      entry.material.emissiveIntensity = night ? (entry.texture || entry.nightTexture ? 0.58 : 1.1) : 0;
     }
     for (const material of this.neonGlowMaterials) {
       material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
@@ -2497,10 +2511,10 @@ export class CityRenderer {
       bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
     }
     for (const light of this.lampLights) {
-      light.intensity = night ? 2.2 : 0;
+      light.intensity = night ? 1.45 : 0;
     }
     for (const light of this.neonLights) {
-      light.intensity = night ? 7 : 0;
+      light.intensity = night ? 2.8 : 0;
     }
     const fogColor = nightFactor < 0.28
       ? new THREE.Color('#2a2e58')
@@ -2514,7 +2528,7 @@ export class CityRenderer {
     const isNight = hour >= 19.5 || hour <= 6;
     if (isNight) {
       this.nightBoost = { remaining: 1.2 };
-      this.renderer.toneMappingExposure = 0.96;
+      this.renderer.toneMappingExposure = 0.88;
     } else {
       this.nightBoost = null;
       this.renderer.toneMappingExposure = 0.82;

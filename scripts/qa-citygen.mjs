@@ -245,7 +245,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 120));
     const before = renderer.camera.position.toArray();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await new Promise((resolve) => setTimeout(resolve, 900));
     window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w' }));
     const after = renderer.camera.position.toArray();
     api.setMode('orbit');
@@ -260,7 +260,7 @@ try {
     if (!car) return { entered: false };
     const before = car.group.position.toArray();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 2200));
     window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w' }));
     await new Promise((resolve) => setTimeout(resolve, 120));
     const after = car.group.position.toArray();
@@ -349,6 +349,10 @@ try {
     await page.evaluate(() => window.__CITYGEN__.setCameraPose('hero'));
     await page.waitForTimeout(400);
   }
+  await page.evaluate(() => {
+    const status = document.querySelector('#status-pill');
+    if (status) status.hidden = true;
+  });
   await page.screenshot({ path: '.qa-citygen-hero.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('street'));
