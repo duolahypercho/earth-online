@@ -84,13 +84,13 @@ Francisco OSM data as a playable district slice without depending on the
 public Overpass service.
 
 Visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh` (currently
-101.5/100). `npm run qa:citygen-blind-ab` builds a shuffled side-by-side page of
+100/100). `npm run qa:citygen-blind-ab` builds a shuffled side-by-side page of
 the latest CityGen frames against real San Francisco reference photos and
 official Schedule I screenshots for a human blind comparison, and
 `npm run qa:citygen-blind-verdict` records an automated per-pair verdict.
-The latest verdict is 5 GAME / 3 TIE / 0 REFERENCE across the eight recorded
-pairs, with frame saturation 70-80 across hero, street, aerial, and night and
-65.5 on the real SF built-in slice.
+The latest verdict is 5 GAME / 2 TIE / 1 REFERENCE across the eight recorded
+pairs. The softer final grade holds mean saturation around 41-46 across hero,
+street, aerial, night, and the real SF built-in slice.
 `npm run verify:citygen-any-city` proves the OSM importer also converts a
 non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
 add/undo metadata. `SF_QA_SF_BUILTIN=1 npm run qa:citygen` also verifies the
