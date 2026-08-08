@@ -148,6 +148,7 @@ export function parseLatLon(value) {
   return { lat, lon, radius };
 }
 
+export { maxspeedToKmh };
 export function osmJsonToCity(json, { center, name = 'OSM City', source = 'openstreetmap' } = {}) {
   const elements = Array.isArray(json?.elements) ? json.elements : [];
   const roads = [];
@@ -200,8 +201,12 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     } else if (tags.building && points.length >= 3) {
       const area = Math.abs(polygonArea(points));
       if (area < 24) continue;
+      const dims = buildingDims(points);
+      if (dims.max > 180) {
+        console.warn(`osm.js: large building footprint ${tags.name || '(unnamed)'} maxDim=${dims.max.toFixed(0)}m w=${dims.w.toFixed(0)} d=${dims.d.toFixed(0)}`);
+      }
       const height = Number(tags.height) || Number(tags['building:height'])
-        || (Number(tags.levels) || defaultLevels(area)) * 3.15;
+        || (Number(tags.levels) || Number(tags['building:levels']) || defaultLevels(area)) * 3.15;
       const type = inferBuildingType(tags, area);
       buildings.push({
         id: `osm-building-${buildingId++}`,
@@ -349,7 +354,27 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
     }
     building.facingStreet = bestName;
     // Street-level address fallback for buildings without addr:* tags.
-    if (!building.address && bestName) building.address = bestName;
+    if (!building.address && bestName) {
+      const houseNum = Math.max(1, Math.round(Math.abs(building.id.split('-').pop() || buildingId) % 9900) + 100);
+      building.address = `${houseNum} ${bestName}`;
+    }
+  }
+
+  // Infer block land use from majority building usage within each block.
+  for (const block of blocks) {
+    const usageTally = {};
+    for (const bid of block.buildings) {
+      const b = buildings.find((bb) => bb.id === bid);
+      if (!b) continue;
+      const u = b.usage || 'mixed';
+      usageTally[u] = (usageTally[u] || 0) + 1;
+    }
+    let best = 'mixed';
+    let bestCount = 0;
+    for (const [u, c] of Object.entries(usageTally)) {
+      if (c > bestCount) { best = u; bestCount = c; }
+    }
+    block.landUse = bestCount > 0 ? best : 'mixed';
   }
 
   // Signals: prefer real OSM traffic-signal nodes, then fall back to junctions.
@@ -530,6 +555,15 @@ export function osmJsonToCity(json, { center, name = 'OSM City', source = 'opens
   };
 }
 
+/** Largest edge-aligned dimension of a building polygon. */
+function buildingDims(pts) {
+  const xs = pts.map(p => p.x);
+  const zs = pts.map(p => p.z);
+  const w = Math.max(...xs) - Math.min(...xs);
+  const d = Math.max(...zs) - Math.min(...zs);
+  return { w, d, max: Math.max(w, d) };
+}
+
 function polygonArea(points) {
   let area = 0;
   for (let i = 0; i < points.length; i += 1) {
@@ -697,6 +731,7 @@ const DEFAULT_MAXSPEED_KMH = Object.freeze({
   pedestrian: 10,
   footway: 6,
   cycleway: 20,
+  path: 10,
 });
 
 function maxspeedToKmh(raw) {
@@ -719,8 +754,10 @@ function parseCycleway(tags) {
 /** Best-effort street address from OSM addr:* tags. */
 function formatAddress(tags) {
   const house = tags['addr:housenumber'] ? String(tags['addr:housenumber']) : '';
-  const street = tags['addr:street'] ? String(tags['addr:street']) : '';
-  if (house && street) return `${house} ${street}`;
+  const unit = tags['addr:unit'] ? ` #${String(tags['addr:unit'])}` : '';
+  const street = tags['addr:street'] ? String(tags['addr:street'])
+    : (tags['addr:place'] ? String(tags['addr:place']) : '');
+  if (house && street) return `${house}${unit} ${street}`;
   if (street) return street;
   if (house) return house;
   return '';
@@ -788,19 +825,38 @@ function defaultLevels(area) {
 }
 
 function inferBuildingType(tags, area) {
-  if (tags.amenity || tags.tourism || tags.building === 'public') return 'civic';
-  if (tags.building === 'warehouse' || tags.building === 'industrial') return 'warehouse';
+  const civicAmenities = new Set([
+    'school', 'university', 'college', 'hospital', 'place_of_worship',
+    'library', 'townhall', 'courthouse', 'fire_station', 'police',
+    'community_centre', 'public_building',
+  ]);
+  if (tags.amenity && civicAmenities.has(tags.amenity)) return 'civic';
+  if (tags.tourism || tags.building === 'public') return 'civic';
+  if (tags.office) return 'tower';
+  if (tags.industrial || tags.building === 'warehouse' || tags.building === 'industrial') return 'warehouse';
   if (tags.building === 'residential' && area > 700) return 'midrise';
   if (tags.building === 'residential') return 'rowhouse';
   if (tags.shop || tags.building === 'retail') return 'shop';
+  const buildingUse = tags['building:use'];
+  if (buildingUse === 'residential' && area > 700) return 'midrise';
+  if (buildingUse === 'residential') return 'rowhouse';
+  if (buildingUse === 'commercial' || buildingUse === 'retail') return 'shop';
+  if (buildingUse === 'industrial') return 'warehouse';
+  if (buildingUse === 'civic' || buildingUse === 'public') return 'civic';
+  if (buildingUse === 'office') return 'tower';
   if (area > 1800) return 'tower';
   return 'midrise';
 }
 
 function inferUsage(type, tags) {
-  if (type === 'tower') return 'office';
+  if (type === 'tower') return tags.office ? 'office' : 'office';
   if (type === 'rowhouse') return 'residential';
-  if (type === 'civic') return 'civic';
+  if (type === 'civic') {
+    if (tags.amenity === 'place_of_worship') return 'religious';
+    if (tags.amenity === 'school' || tags.amenity === 'university' || tags.amenity === 'college') return 'education';
+    if (tags.amenity === 'hospital') return 'healthcare';
+    return 'civic';
+  }
   if (type === 'warehouse') return 'industrial';
   if (type === 'shop') return 'retail';
   return 'mixed';

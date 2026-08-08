@@ -1,5 +1,5 @@
-import { CITY_SCHEMA_VERSION, hashString, terrainHeight } from './core.js';
-import { snapBlockToRoads } from './osm.js';
+import { CITY_SCHEMA_VERSION, hashString, terrainHeight, HIGHWAY_PROFILE } from './core.js';
+import { snapBlockToRoads, maxspeedToKmh } from './osm.js';
 
 const DATA_URL = '/data/sf/sf-city.json.gz';
 const DATA_FALLBACK_URL = '/data/sf/sf-city.json';
@@ -59,11 +59,21 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
     buildings.push(building);
   }
 
-  const cityBuildings = buildings.map((building) => {
+  const cityBuildings = buildings
+    .filter((building) => {
+      const polygon = flatToPoints(building.points);
+      if (polygon.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.z))) return false;
+      const dims = buildingDims(polygon);
+      if (dims.max > 180) {
+        console.warn(`sf-data: large building footprint ${building.name || '(unnamed)'} id=${building.id} maxDim=${dims.max.toFixed(0)}m w=${dims.w.toFixed(0)} d=${dims.d.toFixed(0)}`);
+      }
+      return true;
+    })
+    .map((building) => {
     const polygon = flatToPoints(building.points);
     if (polygon.length < 3) polygon.push(polygon[0]);
     const area = polygonArea(polygon);
-    const height = Number(building.height) || (Number(building.levels) || defaultLevels(area)) * 3.2;
+    const height = Number(building.height) || (Number(building.levels) || Number(building['building:levels']) || defaultLevels(area)) * 3.2;
     const type = inferType(building);
     return {
       id: `sf-building-${building.id}`,
@@ -86,7 +96,7 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       shop: building.shop ? String(building.shop) : '',
       amenity: building.amenity ? String(building.amenity) : '',
       tourism: building.tourism ? String(building.tourism) : '',
-      roofShape: building.roofShape || '',
+      roofShape: building.roofShape || building['roof:shape'] || '',
       facingStreet: '',
     };
   });
@@ -96,8 +106,10 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
   for (const road of roadSlice) {
     const points = flatToPoints(road.points);
     const highway = normalizeHighway(road.highway);
-    const lanes = Math.max(1, Number(road.lanes) || (highway === 'residential' ? 2 : 4));
-    const sidewalkW = road.sidewalk === 'no' ? 0 : highway === 'residential' ? 2.2 : highway === 'service' ? 0.8 : 2.5;
+    const profile = HIGHWAY_PROFILE[highway] || HIGHWAY_PROFILE.residential;
+    const lanes = Math.max(1, Number(road.lanes) || profile.lanes);
+    const sidewalkW = road.sidewalk === 'no' || road.sidewalk === 'none' ? 0
+      : profile.sidewalk;
     const sidewalkSide = String(road.sidewalk || '').toLowerCase();
     const sidewalkLeft = sidewalkSide === 'no' ? 0 : sidewalkSide === 'right' ? 0 : sidewalkW;
     const sidewalkRight = sidewalkSide === 'no' ? 0 : sidewalkSide === 'left' ? 0 : sidewalkW;
@@ -114,7 +126,7 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       sidewalkLeft,
       sidewalkRight,
       maxspeed: road.maxspeed ? String(road.maxspeed) : '',
-      maxspeedKmh: road.maxspeed ? Math.round(Number(String(road.maxspeed).match(/(\d+(?:\.\d+)?)/)?.[1] || 0) * (/mph/i.test(String(road.maxspeed)) ? 1.609 : 1)) : SF_ZONE_MAXSPEED_KMH[highway] || 40,
+      maxspeedKmh: road.maxspeed ? maxspeedToKmh(String(road.maxspeed)) || SF_ZONE_MAXSPEED_KMH[highway] || 40 : SF_ZONE_MAXSPEED_KMH[highway] || 40,
       maxspeedSource: road.maxspeed ? 'osm' : 'zone-default',
       cycleway: road.cycleway ? String(road.cycleway) : '',
       asphaltWidth,
@@ -262,6 +274,22 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
       parks.push({ id: `sf-park-${parks.length}`, name: area.name || '', polygon: points, kind });
     }
   }
+  // Create water blocks for consistency with the OSM import path.
+  const waterBlocks = [];
+  for (const w of water) {
+    waterBlocks.push({
+      id: `sf-water-block-${waterBlocks.length}`,
+      district: 'San Francisco',
+      polygon: w.polygon,
+      streets: [],
+      buildings: [],
+      landUse: 'water',
+      name: w.name || '',
+      water: true,
+      kind: w.kind,
+    });
+  }
+  blocks.push(...waterBlocks);
   return {
     schemaVersion: CITY_SCHEMA_VERSION,
     meta: {
@@ -342,6 +370,15 @@ function polygonArea(points) {
   return Math.abs(area / 2);
 }
 
+/** Largest edge-aligned dimension of a building polygon. */
+function buildingDims(pts) {
+  const xs = pts.map(p => p.x);
+  const zs = pts.map(p => p.z);
+  const w = Math.max(...xs) - Math.min(...xs);
+  const d = Math.max(...zs) - Math.min(...zs);
+  return { w, d, max: Math.max(w, d) };
+}
+
 function centroidOf(points) {
   const xs = points.map((p) => p.x);
   const zs = points.map((p) => p.z);
@@ -365,24 +402,39 @@ function defaultLevels(area) {
 
 function normalizeHighway(highway) {
   const value = String(highway || '').toLowerCase();
-  if (['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'service', 'pedestrian'].includes(value)) return value;
+  if (['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'service',
+       'pedestrian', 'footway', 'path', 'cycleway', 'living_street', 'bridleway', 'steps'].includes(value)) return value;
   return 'residential';
 }
 
 function inferType(building) {
-  if (building.amenity || building.tourism || building.name === 'Transamerica Pyramid') return 'civic';
+  const civicAmenities = new Set([
+    'school', 'university', 'college', 'hospital', 'place_of_worship',
+    'library', 'townhall', 'courthouse', 'fire_station', 'police',
+    'community_centre', 'public_building',
+  ]);
+  if (building.amenity && civicAmenities.has(building.amenity)) return 'civic';
+  if (building.tourism || building.name === 'Transamerica Pyramid') return 'civic';
+  if (building.office) return 'tower';
+  if (building.industrial) return 'warehouse';
   const buildingType = String(building.building || '');
   if (buildingType.includes('warehouse')) return 'warehouse';
-  if (Number(building.levels || 0) >= 7 || (building.height || 0) >= 24) return 'tower';
+  const buildingUse = String(building['building:use'] || '');
+  if (buildingUse.includes('industrial')) return 'warehouse';
+  if (buildingUse.includes('commercial') || buildingUse.includes('retail')) return 'shop';
+  if (buildingUse.includes('office')) return 'tower';
+  if (Number(building.levels || building['building:levels'] || 0) >= 7 || (building.height || 0) >= 24) return 'tower';
   if (buildingType.includes('retail') || building.shop) return 'shop';
   return buildingType.includes('residential') ? 'rowhouse' : 'midrise';
 }
 
 function inferUsage(type) {
-  return type === 'tower' ? 'office'
-    : type === 'rowhouse' ? 'residential'
-      : type === 'civic' ? 'civic'
-        : type === 'warehouse' ? 'industrial' : 'retail';
+  if (type === 'tower') return 'office';
+  if (type === 'rowhouse') return 'residential';
+  if (type === 'civic') return 'civic';
+  if (type === 'warehouse') return 'industrial';
+  if (type === 'shop' || type === 'retail') return 'retail';
+  return 'mixed';
 }
 
 function inferMaterial(building, type) {
