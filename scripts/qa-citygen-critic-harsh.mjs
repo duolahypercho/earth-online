@@ -35,7 +35,9 @@ try {
     ['building massing reads urban (avg >= 14m)', Number(results.state?.avgBuildingHeight || 0) >= 14],
     ['no fatal page errors', !(results.errors || []).some((error) => error.includes('Uncaught') || error.includes('TypeError') || error.includes('ReferenceError'))],
     ['no NaN geometry warnings', !(results.errors || []).some((error) => error.includes('NaN'))],
-    ['WebGL2 renderer active', results.state?.webgl2 === true],
+    ['Three.js r180 package active', results.capture?.threeRevision === 180],
+    ['Three WebGLRenderer active', results.runtime?.rendererType === 'WebGLRenderer'],
+    ['WebGL2 renderer active', results.state?.webgl2 === true && /^WebGL 2\.0/.test(results.runtime?.webglVersion || '')],
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 1],
@@ -92,7 +94,11 @@ try {
     }
   }
   const sf = results.sfBuiltin;
-  if (sf) {
+  if (!sf) {
+    critic.maxScore += 1;
+    critic.blockers.push('real SF built-in capture missing');
+    critic.notes.push('FAIL real SF built-in capture missing (run qa-citygen without SF_QA_SF_BUILTIN=0)');
+  } else {
     critic.maxScore += 1;
     const sfPass = sf.buildings >= 500 && sf.signals >= 5 && sf.streets >= 1000;
     if (sfPass) critic.score += 1;
@@ -124,14 +130,15 @@ try {
 
   const sfFrame = results.frames?.['.qa-citygen-sf.png'] || {};
   if (results.sfBuiltin) {
-    critic.maxScore += 4;
     const sfChecks = [
+      ['real SF frame is not boxed or low visibility', results.sfCapture?.acceptable === true, results.sfCapture?.selected || 'no selected frame'],
       ['real SF frame non-blank', (sfFrame.nonBlankRatio || 0) >= 0.98, `${((sfFrame.nonBlankRatio || 0) * 100).toFixed(1)}%`],
       ['real SF frame exposure', (sfFrame.meanLuma || 0) > 60 && (sfFrame.meanLuma || 0) < 230, `${Math.round(sfFrame.meanLuma || 0)} luma`],
       ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.25, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
       ['real SF frame color', (sfFrame.meanSaturation || 0) >= 55 && (sfFrame.saturatedHues || 0) >= 8, `${Math.round(sfFrame.meanSaturation || 0)} sat / ${sfFrame.saturatedHues || 0} hues`],
       ['real SF frame hue variety', (sfFrame.saturatedHues || 0) >= 8, `${sfFrame.saturatedHues || 0} hues`],
     ];
+    critic.maxScore += sfChecks.length;
     for (const [label, pass, detail] of sfChecks) {
       if (pass) critic.score += 1;
       else {
