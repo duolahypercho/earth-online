@@ -1291,10 +1291,14 @@ async function boot() {
         camera.lookAt(target.x, targetY, target.z);
         controls.target.set(target.x, targetY, target.z);
       } else if (pose === 'aerial') {
+        const bounds = state.city.meta.bounds;
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+        const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
         setFov(52);
-        camera.position.set(90, 230, 140);
-        camera.lookAt(0, 8, 0);
-        controls.target.set(0, 8, 0);
+        camera.position.set(centerX + span * 0.26, Math.max(230, span * 0.34), centerZ + span * 0.38);
+        camera.lookAt(centerX, 12, centerZ);
+        controls.target.set(centerX, 12, centerZ);
       } else if (pose === 'night') {
         setFov(52);
         const city = state.city;
@@ -1342,12 +1346,32 @@ async function boot() {
       } else if (pose === 'sf') {
         const city = state.renderer.city || state.city;
         const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+        const buildingBoxes = (city.buildings || []).map((building) => {
+          const xs = building.polygon?.map((point) => point.x) || [];
+          const zs = building.polygon?.map((point) => point.z) || [];
+          return xs.length ? {
+            minX: Math.min(...xs) - 4,
+            maxX: Math.max(...xs) + 4,
+            minZ: Math.min(...zs) - 4,
+            maxZ: Math.max(...zs) + 4,
+          } : null;
+        }).filter(Boolean);
+        const pointIsClear = (x, z) => !buildingBoxes.some((box) => (
+          x >= box.minX && x <= box.maxX && z >= box.minZ && z <= box.maxZ
+        ));
+        const corridorIsClear = (segment) => {
+          const a = segment.points[0];
+          const b = segment.points[segment.points.length - 1];
+          return [0.18, 0.34, 0.5, 0.66, 0.82].every((t) => (
+            pointIsClear(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)
+          ));
+        };
         const candidates = (city.segments || []).filter((segment) => {
           if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway') return false;
           if (!segment.streetName) return false;
           const a = segment.points[0];
           const b = segment.points[segment.points.length - 1];
-          return Math.hypot(b.x - a.x, b.z - a.z) > 70;
+          return Math.hypot(b.x - a.x, b.z - a.z) > 70 && corridorIsClear(segment);
         }).sort((a, b) => {
           const len = (segment) => Math.hypot(segment.points.at(-1).x - segment.points[0].x, segment.points.at(-1).z - segment.points[0].z);
           const density = (segment) => {
@@ -1393,10 +1417,11 @@ async function boot() {
           const nx = -dz / length;
           const nz = dx / length;
           const side = (segment.points[0].x + segment.points[0].z) % 2 === 0 ? 1 : -1;
-          const eyeX = a.x - dx * 0.24 + nx * (realMap ? 13 : 11) * side;
-          const eyeZ = a.z - dz * 0.24 + nz * (realMap ? 13 : 11) * side;
-          const targetX = b.x - dx * 0.05;
-          const targetZ = b.z - dz * 0.05;
+          const lateralOffset = realMap ? 0.35 : 1.2;
+          const eyeX = a.x + dx * 0.2 + nx * lateralOffset * side;
+          const eyeZ = a.z + dz * 0.2 + nz * lateralOffset * side;
+          const targetX = a.x + dx * 0.78;
+          const targetZ = a.z + dz * 0.78;
           setFov(46);
           const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 3.4;
           const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 2.0;
