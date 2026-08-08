@@ -65,7 +65,7 @@ building authoring and real SF slice**
 
 `npm run qa:citygen` + `npm run qa:citygen-harsh`
 
-- Result: **PASS 101.5/100**
+- Result: **PASS 100/100**
 - Hero: non-blank, saturation 71.6, edge density 0.393, 10 hues
 - Street: saturation 74.4, edge density 0.246, 9 hues, avenue bunting
 - Aerial: saturation 70.4, edge density 0.488, 9 hues
@@ -79,10 +79,10 @@ building authoring and real SF slice**
   full building mass in view; shopfront awnings/signs resolve the nearest
   arbitrary OSM road so real-map street dressing follows road orientation.
   A furniture gate asserts the real slice is dressed with >=120 sidewalk
-  props and >=60 parked cars; current QA: 900 props / 360 cars / 126 awnings
-  / 2600 bunting flags. Real SF frame: saturation 65.5, edge density 0.327,
-  8 hues with richer mural and storefront colors.
-- Metadata: 279 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
+  props and >=60 parked cars; current QA: 900 props / 520 cars / 137 awnings
+  / 480 bunting flags. Real SF frame: saturation 41.0, edge density 0.259,
+  8 hues with a building-clear named-street corridor and restrained materials.
+- Metadata: 246 buildings / 81 blocks / 20 streets / 5 one-way / 14 signals
 - Dynamic build: places a metadata-rich building (block/street/type/facade/
   material/height), captures it on screen, then Undo restores 246 buildings
 - Real SF dynamic build: through the SF Built-in UI, places a Shopfront on
@@ -94,10 +94,10 @@ building authoring and real SF slice**
 - Blind A/B: 9 shuffled pairs covering real San Francisco photos (including
   the real SF built-in street) and official
   Schedule I screenshots (street, night, street life) with local verdict JSON.
-  The latest automated verdict is 5 GAME / 3 TIE / 0 REFERENCE across the
+  The latest automated verdict is 5 GAME / 2 TIE / 1 REFERENCE across the
   eight recorded pairs (real SF skyline, street, night, built-in street, plus
-  Schedule I street, night, street life, real SF street), so the generated
-  city no longer loses a blind pair to either reference.
+  Schedule I street, night, street life, real SF street); the only reference
+  win is the photographic SF skyline comparison.
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and
