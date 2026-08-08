@@ -22,6 +22,7 @@ export const HIGHWAY_PROFILE = Object.freeze({
   pedestrian: { lanes: 1, laneW: 3.4, sidewalk: 0, class: 'pedestrian' },
   footway: { lanes: 1, laneW: 2.0, sidewalk: 0, class: 'footway' },
   cycleway: { lanes: 1, laneW: 2.2, sidewalk: 0, class: 'cycleway' },
+  path: { lanes: 1, laneW: 1.8, sidewalk: 0, class: 'path' },
 });
 
 export const BUILDING_TYPES = Object.freeze({
@@ -187,6 +188,12 @@ function classifyRoad(type) {
     asphaltWidth: profile.lanes * profile.laneW,
   };
 }
+/** Zone speed defaults (km/h) for procedural streets that lack OSM tags. */
+const ZONE_MAXSPEED_KMH = Object.freeze({
+  motorway: 100, trunk: 90, primary: 60, secondary: 50, tertiary: 50,
+  unclassified: 45, residential: 40, living_street: 20, service: 25,
+  pedestrian: 10, footway: 6, cycleway: 20, path: 10,
+});
 
 function buildGridStreets(city, random, style) {
   const vertical = [];
@@ -232,6 +239,12 @@ function buildGridStreets(city, random, style) {
       highway: type,
       ...classifyRoad(type),
       oneway: random() < 0.22 ? (random() < 0.5 ? 'increasing' : 'decreasing') : 'both',
+      maxspeed: '',
+      maxspeedKmh: ZONE_MAXSPEED_KMH[type] || 40,
+      maxspeedSource: 'zone-default',
+      cycleway: '',
+      sidewalkLeft: classifyRoad(type).sidewalkW,
+      sidewalkRight: classifyRoad(type).sidewalkW,
       blocks: [],
       signalIds: [],
     });
@@ -245,6 +258,12 @@ function buildGridStreets(city, random, style) {
       highway: type,
       ...classifyRoad(type),
       oneway: random() < 0.2 ? (random() < 0.5 ? 'increasing' : 'decreasing') : 'both',
+      maxspeed: '',
+      maxspeedKmh: ZONE_MAXSPEED_KMH[type] || 40,
+      maxspeedSource: 'zone-default',
+      cycleway: '',
+      sidewalkLeft: classifyRoad(type).sidewalkW,
+      sidewalkRight: classifyRoad(type).sidewalkW,
       blocks: [],
       signalIds: [],
     });
@@ -435,6 +454,11 @@ function buildBlocksAndBuildings(city, random, style, grid) {
                 : style.facades[Math.floor(random() * style.facades.length)],
           landmark: isLandmark,
           facingStreet: p === 0 ? south.name : p === parcelRects.length - 1 ? north.name : (random() < 0.5 ? west.name : east.name),
+          address: '',
+          roofShape: '',
+          shop: '',
+          amenity: '',
+          tourism: '',
         };
         buildings.push(building);
         block.buildings.push(building.id);
@@ -518,6 +542,11 @@ function buildRoadSegments(city, grid, intersections) {
         oneway: v.oneway,
         width: v.asphaltWidth,
         sidewalkW: v.sidewalkW,
+        sidewalkLeft: v.sidewalkLeft,
+        sidewalkRight: v.sidewalkRight,
+        maxspeed: v.maxspeed || '',
+        maxspeedKmh: v.maxspeedKmh || 0,
+        cycleway: v.cycleway || '',
         points: [a, b],
         signalId: intersection?.signal?.id || null,
         intersectionId: intersection?.id || null,
@@ -538,6 +567,11 @@ function buildRoadSegments(city, grid, intersections) {
         oneway: h.oneway,
         width: h.asphaltWidth,
         sidewalkW: h.sidewalkW,
+        sidewalkLeft: h.sidewalkLeft,
+        sidewalkRight: h.sidewalkRight,
+        maxspeed: h.maxspeed || '',
+        maxspeedKmh: h.maxspeedKmh || 0,
+        cycleway: h.cycleway || '',
         points: [a, b],
         signalId: intersection?.signal?.id || null,
         intersectionId: intersection?.id || null,
