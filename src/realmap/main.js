@@ -2838,15 +2838,24 @@ function createMergedFootprintBuildings(buildings) {
   // distant city blocks inexpensive (one shared texture/material per batch)
   // while preventing the Full City fallback from reading as blank prisms.
   projectBuildingFacadeUVs(geometry);
-  const facadeMap = facadeWindowTexture(0, 'plaster');
+  // Keep one material per merged batch (no draw-call fan-out), but vary the
+  // deterministic atlas/style by the first real OSM footprint in that batch.
+  // Street batches therefore retain distinct plaster/Edwardian/commercial/glass
+  // families at distance instead of repeating one blank facade everywhere.
+  const batchSeed = Math.abs(Number(placed[0]?.id) || 0);
+  const facadeStyles = ['plaster', 'edwardian', 'edwardian2', 'victorian', 'commercial', 'glass'];
+  const facadeStyle = facadeStyles[batchSeed % facadeStyles.length];
+  const facadeMap = facadeWindowTexture(batchSeed, facadeStyle);
+  const nightTints = [0xc88962, 0x6b9dcc, 0xb98e6b, 0x7297bf, 0xd09a6c, 0x77a8d5];
+  const nightTint = nightTints[batchSeed % nightTints.length];
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeMap });
   material.emissiveMap = facadeMap;
-  material.emissive.set(0x344a64);
-  material.emissiveIntensity = fullCityMode ? 0.18 : 0;
+  material.emissive.set(nightTint);
+  material.emissiveIntensity = fullCityMode ? 0.22 : 0;
   // Full City massing is built from one merged Lambert material per street batch.
   // Register those materials with the night pass so their broad side faces retain
   // a readable silhouette instead of becoming unlit black slabs at night.
-  material.userData = { fullCityMassing: true };
+  material.userData = { fullCityMassing: true, facadeStyle, nightTint };
   if (fullCityMode) windowMaterials.push(material);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.castShadow = false;
@@ -8845,11 +8854,11 @@ function updateNightGlow(amount) {
     const material = windowMaterials[index];
     if (!material) continue;
     if (material.userData?.fullCityMassing) {
-      material.emissive.set(0x344a64);
+      material.emissive.set(material.userData.nightTint || 0x6b9dcc);
       // A small day fill keeps the atlas readable on sun-facing and shadowed
-      // walls alike; night adds a restrained blue city glow without flattening
-      // the warm/cool window cues on the textured near facades.
-      material.emissiveIntensity = 0.18 + night * 0.62;
+      // walls alike; night adds a warm/cool city glow without flattening the
+      // window rhythm on the textured near facades.
+      material.emissiveIntensity = 0.22 + night * 0.52;
       material.needsUpdate = true;
       continue;
     }
