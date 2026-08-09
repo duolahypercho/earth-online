@@ -3319,6 +3319,42 @@ const SF_LANDMARK_SPECS = [
   { match: 'coit tower', kind: 'coit', fallback: [1193, 2695.4], height: 64 },
 ];
 
+// Full City photo tours use named OSM landmarks rather than whichever merged
+// parcel batch happened to be streamed first.  The bridge waypoint follows the
+// visible SF-side OSM bridge span used by createBayBridgeLandmark().
+const PHOTO_TOUR_LANDMARK_SPECS = [
+  {
+    id: 'bay-bridge',
+    name: 'Bay Bridge',
+    match: null,
+    fallback: [2656, 1148],
+    pose: 'bridge',
+    osmWayIds: [1343738800, 8921938],
+    osmName: 'Dwight D. Eisenhower Highway',
+  },
+  {
+    id: 'transamerica-pyramid',
+    name: 'Transamerica Pyramid',
+    match: 'transamerica pyramid',
+    fallback: [1473.7, 1900.5],
+    pose: 'hero',
+  },
+  {
+    id: 'salesforce-tower',
+    name: 'Salesforce Tower',
+    match: 'salesforce tower',
+    fallback: [1974.5, 1302.6],
+    pose: 'hero',
+  },
+  {
+    id: 'coit-tower',
+    name: 'Coit Tower',
+    match: 'coit tower',
+    fallback: [1193, 2695.4],
+    pose: 'hills',
+  },
+];
+
 const SF_LANDMARK_SKIP = new Set(SF_LANDMARK_SPECS.map((spec) => spec.match));
 
 function resolveSfLandmark(spec) {
@@ -8720,11 +8756,30 @@ function buildingFootprintPoints(building) {
   return points;
 }
 
+function detailedBuildingsFromMeshes() {
+  const buildings = [];
+  const seen = new Set();
+  for (const mesh of detailBuildingMeshes) {
+    const list = mesh.userData?.buildings || (mesh.userData?.building ? [mesh.userData.building] : []);
+    for (const building of list) {
+      if (!building?.points || building.points.length < 6) continue;
+      if (building.id != null && seen.has(building.id)) continue;
+      if (building.id != null) seen.add(building.id);
+      buildings.push(building);
+    }
+  }
+  if (buildings.length) return buildings;
+  return (enterableBuildingIndex || []).filter((building) => building?.points && building.points.length >= 6);
+}
+
 function nearestEnterableBuilding(position, radius = 4.2) {
   let best = null;
   let bestDistance = radius;
   const candidates = fullCityMode && worldPartition
-    ? queryPartitionBuildings(worldPartition, position, Math.max(radius * 6, 36))
+    // Entrance anchors sit a few metres outside the footprint, while large
+    // OSM parcels can place their centroid much farther away.  Query by a
+    // generous centroid aperture, then use the true polygon distance below.
+    ? queryPartitionBuildings(worldPartition, position, Math.max(radius * 12, 120))
     : null;
   if (candidates) {
     for (const building of candidates) {
@@ -8736,20 +8791,28 @@ function nearestEnterableBuilding(position, radius = 4.2) {
         best = { building, mesh: null, distance, points };
       }
     }
-    return best;
-  }
-  for (const mesh of detailBuildingMeshes) {
-    const single = mesh.userData?.building;
-    const many = mesh.userData?.buildings;
-    const list = many || (single ? [single] : []);
-    for (const building of list) {
-      if (!building?.points) continue;
+    if (best) return best;
+    // A sparse/irregular footprint may still have its centroid outside the
+    // partition aperture.  The enterable index is bounded to detailed OSM
+    // footprints, so this fallback remains a cheap, deterministic safety net
+    // for the explicit test/teleport entry path.
+    for (const building of enterableBuildingIndex || []) {
+      if (!building?.points || building.points.length < 6) continue;
       const points = buildingFootprintPoints(building);
       const distance = distanceToPolygon(position, points);
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = { building, mesh, distance, points };
+        best = { building, mesh: null, distance, points };
       }
+    }
+    return best;
+  }
+  for (const building of detailedBuildingsFromMeshes()) {
+    const points = buildingFootprintPoints(building);
+    const distance = distanceToPolygon(position, points);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { building, mesh: null, distance, points };
     }
   }
   return best;
@@ -9018,6 +9081,19 @@ function residentScheduleActive(schedule, timeOfDay) {
   return true;
 }
 
+function osmBuildingMetadata(building) {
+  return {
+    id: building?.id ?? null,
+    name: building?.name || '',
+    address: building?.addr || '',
+    building: building?.building || '',
+    amenity: building?.amenity || '',
+    levels: building?.levels ?? null,
+    height: building?.height ?? null,
+    area: building?.area ?? null,
+  };
+}
+
 function createGeneratedInterior(building) {
   const points = buildingFootprintPoints(building);
   if (!points.length) return null;
@@ -9107,6 +9183,7 @@ function enterNearestBuilding() {
   const data = room.userData;
   interiorState = {
     building: nearest.building,
+    osm: osmBuildingMetadata(nearest.building),
     archetype,
     room,
     entrance: {
@@ -9309,8 +9386,59 @@ function updateCityReadout() {
   }
 }
 
+function photoTourBuildingForSpec(spec) {
+  if (!spec.match || !cityData?.detailBuildings?.length) return null;
+  const match = spec.match.toLowerCase();
+  return cityData.detailBuildings.find((building) => (
+    building?.name && building.name.toLowerCase().includes(match)
+  )) || null;
+}
+
+function photoTourLandmarkFromSpec(spec, poses) {
+  const building = photoTourBuildingForSpec(spec);
+  const point = building?.centroid || spec.fallback;
+  if (!point?.length) return null;
+  const metadata = building || {
+    id: spec.id,
+    name: spec.name,
+    addr: '',
+    building: spec.id === 'bay-bridge' ? 'bridge' : 'landmark',
+    ...(spec.osmWayIds ? { osmWayIds: spec.osmWayIds } : {}),
+    ...(spec.osmName ? { osmName: spec.osmName } : {}),
+  };
+  return {
+    id: building?.id ?? spec.id,
+    name: building?.name || spec.name,
+    x: point[0],
+    z: point[1],
+    visited: false,
+    pose: spec.pose,
+    cameraPose: poses?.[spec.pose] || null,
+    osmId: building?.id ?? null,
+    address: building?.addr || '',
+    building: building?.building || metadata.building || '',
+    metadata,
+  };
+}
+
 function startPhotoTour() {
   if (!detailBuildingMeshes.length) return null;
+  if (fullCityMode) {
+    const poses = getSuggestedCameraPoses();
+    const landmarks = PHOTO_TOUR_LANDMARK_SPECS
+      .map((spec) => photoTourLandmarkFromSpec(spec, poses))
+      .filter(Boolean);
+    if (landmarks.length >= 2) {
+      missionState = {
+        landmarks,
+        visitedCount: 0,
+        complete: false,
+        startedAt: performance.now(),
+      };
+      updateCityReadout();
+      return missionState;
+    }
+  }
   const knownNames = [
     'transamerica',
     'ferry building',
@@ -10803,6 +10931,9 @@ function start() {
       interior: interiorState ? {
         name: interiorState.building?.name || 'Unnamed building',
         address: interiorState.building?.addr || '',
+        osmId: interiorState.building?.id ?? null,
+        building: interiorState.building?.building || '',
+        osm: interiorState.osm || osmBuildingMetadata(interiorState.building),
         archetype: interiorState.archetype || null,
         residents: interiorResidents.map((resident) => ({
           role: resident.mesh.userData.role,
@@ -10826,6 +10957,9 @@ function start() {
     getInteriorState: () => interiorState ? {
       name: interiorState.building?.name || 'Unnamed building',
       address: interiorState.building?.addr || '',
+      osmId: interiorState.building?.id ?? null,
+      buildingType: interiorState.building?.building || '',
+      osm: interiorState.osm || osmBuildingMetadata(interiorState.building),
       archetype: interiorState.archetype || null,
       residents: interiorResidents.map((resident) => ({
         role: resident.mesh.userData.role,
@@ -10838,8 +10972,17 @@ function start() {
       building: interiorState.building,
     } : null,
     getBuildingEntrance: (index = 0) => {
-      const building = detailBuildingMeshes[index]?.userData?.building;
-      return building ? buildingEntrancePoint(building) : null;
+      const building = detailedBuildingsFromMeshes()[index];
+      const point = building ? buildingEntrancePoint(building) : null;
+      if (!point) return null;
+      return {
+        ...point,
+        osmId: building.id ?? null,
+        name: building.name || '',
+        address: building.addr || '',
+        building: building.building || '',
+        osm: osmBuildingMetadata(building),
+      };
     },
     setCameraPose: (pose) => {
       if (!controls || !camera) return false;
