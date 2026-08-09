@@ -2873,7 +2873,7 @@ function updateInteraction() {
     hud.setInteraction({
       label: `DRIVING / ${(drivingState?.class || 'CAR').toUpperCase()} / ${Math.round(drivingState?.speed || 0)} KM/H${heatLabel}`,
       prompt: heatState?.pursuitActive
-        ? 'WASD DRIVE · BRAKE TO LOSE TAIL'
+        ? 'E / TAP EXIT · WASD DRIVE · BRAKE TO LOSE TAIL'
         : 'E / TAP  EXIT · WASD DRIVE',
       enabled: true,
     });
