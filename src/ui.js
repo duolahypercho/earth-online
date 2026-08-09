@@ -1,4 +1,5 @@
 import './styles.css';
+import { createUiAudio } from './audio.js';
 
 const HUD_DATA_ATTRIBUTE = 'data-hud';
 const FPS_WINDOW_SECONDS = 2;
@@ -6,6 +7,10 @@ const FPS_STABLE_WINDOW_SECONDS = 0.8;
 const SIMULATION_START_HOUR = 7;
 const SIMULATION_HOURS_PER_SECOND = 0.033;
 const RESIDENT_STORY_ROTATION_SECONDS = 6;
+const CALLOUT_DURATION_MS = 3400;
+const COMPLETE_CALLOUT_DURATION_MS = 5400;
+const LOW_NEED_WARNING_INTERVAL_MS = 6000;
+const PULSE_DURATION_MS = 820;
 
 function createElement(tagName, className, text) {
   const element = document.createElement(tagName);
@@ -409,9 +414,14 @@ export function createHud({
   );
   const missionMeta = createElement('div', 'hud__mission-meta');
   const missionDistance = createElement('span', 'hud__mission-distance', 'DISTANCE / —');
+  const missionObjectiveCount = createElement(
+    'span',
+    'hud__mission-objective-count',
+    'OBJECTIVE / —',
+  );
   const missionScore = createElement('span', 'hud__mission-score', 'SCORE / 0000');
   const missionClock = createElement('span', 'hud__mission-clock', 'SHIFT / 00:00');
-  missionMeta.append(missionDistance, missionScore, missionClock);
+  missionMeta.append(missionDistance, missionObjectiveCount, missionScore, missionClock);
   const missionProgress = createElement('div', 'hud__mission-progress');
   missionProgress.setAttribute('role', 'progressbar');
   missionProgress.setAttribute('aria-label', 'Waterfront loop progress');
@@ -646,6 +656,18 @@ export function createHud({
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
   message.hidden = true;
+  const messageDot = createElement('span', 'hud__message-dot');
+  messageDot.setAttribute('aria-hidden', 'true');
+  const messageText = createElement('span', 'hud__message-text');
+  message.append(messageDot, messageText);
+
+  const callout = createElement('section', 'hud__callout');
+  callout.setAttribute('role', 'status');
+  callout.hidden = true;
+  const calloutKicker = createElement('span', 'hud__callout-kicker', 'SHIFT PULSE');
+  const calloutTitle = createElement('strong', 'hud__callout-title');
+  const calloutDetail = createElement('span', 'hud__callout-detail');
+  callout.append(calloutKicker, calloutTitle, calloutDetail);
 
   const footer = createElement('footer', 'hud__footer');
   const controls = createElement('ul', 'hud__controls');
@@ -720,6 +742,8 @@ export function createHud({
     const track = createElement('span', 'hud__life-bar-track');
     const fill = createElement('span', 'hud__life-bar-fill');
     fill.setAttribute('aria-hidden', 'true');
+    row.setAttribute('aria-valuemin', '0');
+    row.setAttribute('aria-valuemax', '100');
     track.append(fill);
     row.append(label, track);
     lifeBarNodes.set(key, { row, fill, label });
@@ -763,7 +787,7 @@ export function createHud({
   chatRow.append(chatInput, chatSend);
   onlinePanel.append(onlineHeader, playerList, chatLog, chatRow);
 
-  root.append(header, mission, telemetry, state, interaction, lifePanel, onlinePanel, drivePanel, message, footer, touchControls, mapOverlay);
+  root.append(header, mission, telemetry, state, interaction, lifePanel, onlinePanel, drivePanel, message, callout, footer, touchControls, mapOverlay);
   const mountPoint = document.querySelector('#hud-root') || document.body;
   mountPoint.append(root);
 
@@ -788,6 +812,56 @@ export function createHud({
   const missionStepNodes = new Map();
   let mapOpen = false;
   const mapRemoteNodes = new Map();
+  let lastCompletedSteps = null;
+  let lastMissionStatus = null;
+  let calloutTimer = null;
+  let lastLowNeedAt = 0;
+  const previousNeeds = new Map();
+  let uiAudio = null;
+  let uiAudioPrimed = false;
+
+  function primeUiAudio() {
+    if (uiAudioPrimed) return;
+    uiAudioPrimed = true;
+    uiAudio?.prime?.();
+  }
+
+  function showCallout({ kind = 'info', kicker = 'SHIFT PULSE', title = '', detail = '' } = {}) {
+    if (disposed) return;
+
+    const calloutKind = ['objective', 'complete', 'low', 'info'].includes(kind) ? kind : 'info';
+    callout.dataset.kind = calloutKind;
+    calloutKicker.textContent = String(kicker || 'SHIFT PULSE');
+    calloutTitle.textContent = String(title || '');
+    calloutDetail.textContent = String(detail || '');
+    callout.classList.remove('hud__callout--closing');
+    callout.hidden = false;
+    window.clearTimeout(calloutTimer);
+    window.requestAnimationFrame(() => {
+      callout.dataset.open = 'true';
+    });
+
+    const duration = calloutKind === 'complete'
+      ? COMPLETE_CALLOUT_DURATION_MS
+      : CALLOUT_DURATION_MS;
+    calloutTimer = window.setTimeout(() => {
+      callout.dataset.open = 'false';
+      callout.classList.add('hud__callout--closing');
+      window.setTimeout(() => {
+        callout.hidden = true;
+        callout.classList.remove('hud__callout--closing');
+      }, 220);
+    }, duration);
+  }
+
+  function pulseMission() {
+    mission.dataset.pulse = 'true';
+    missionProgressFill.dataset.pulse = 'true';
+    window.setTimeout(() => {
+      mission.dataset.pulse = 'false';
+      missionProgressFill.dataset.pulse = 'false';
+    }, PULSE_DURATION_MS);
+  }
 
   function setTelemetryMode(mode = 'compact') {
     if (disposed) return;
@@ -914,6 +988,9 @@ export function createHud({
         : `DISTANCE / ${Math.round(distance)} M`;
     missionScore.textContent = `SCORE / ${String(score).padStart(4, '0')}`;
     missionClock.textContent = `SHIFT / ${String(gameState.clock || '00:00')}`;
+    missionObjectiveCount.textContent = totalSteps > 0
+      ? `OBJECTIVE / ${completedSteps} OF ${totalSteps}`
+      : 'OBJECTIVE / FREE ROAM';
     missionProgressFill.style.width = `${Math.round(progress * 100)}%`;
     missionProgress.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
     missionProgress.setAttribute(
@@ -946,6 +1023,42 @@ export function createHud({
     });
     missionRestart.hidden = status !== 'complete';
     missionRestart.disabled = status !== 'complete';
+
+    const previousCompleted = lastCompletedSteps;
+    const previousStatus = lastMissionStatus;
+    const freshState = previousCompleted === null || previousStatus === null;
+    const becameComplete = !freshState
+      && status === 'complete'
+      && previousStatus !== 'complete';
+    const advanced = !freshState && completedSteps > previousCompleted;
+
+    if (becameComplete || advanced) {
+      if (becameComplete) {
+        pulseMission();
+        showCallout({
+          kind: 'complete',
+          kicker: 'SHIFT COMPLETE',
+          title: String(gameState.title || 'The Waterfront Loop'),
+          detail: `${totalSteps} OBJECTIVES CLEARED · SCORE / ${String(score).padStart(4, '0')}`,
+        });
+        uiAudio?.play?.('complete');
+      } else {
+        const completedStep = steps[previousCompleted] || null;
+        if (completedStep) {
+          const nextStep = steps[completedSteps] || null;
+          pulseMission();
+          showCallout({
+            kind: 'objective',
+            kicker: 'OBJECTIVE COMPLETE',
+            title: completedStep.label || 'Objective complete',
+            detail: nextStep ? `NEXT / ${nextStep.label}` : 'SHIFT CLEAR',
+          });
+          uiAudio?.play?.('objective');
+        }
+      }
+    }
+    lastCompletedSteps = completedSteps;
+    lastMissionStatus = status;
   }
 
   function setMapOpen(open) {
@@ -1067,7 +1180,7 @@ export function createHud({
     if (disposed) return;
 
     const nextMessage = text === null || text === undefined ? '' : String(text).trim();
-    message.textContent = nextMessage;
+    messageText.textContent = nextMessage;
     message.hidden = !nextMessage;
     root.dataset.message = nextMessage ? 'visible' : 'hidden';
   }
@@ -1166,6 +1279,7 @@ export function createHud({
     lifeMood.textContent = String(lifeState.mood || 'GOOD').toUpperCase();
     lifeMood.dataset.mood = String(lifeState.mood || 'good');
     const needs = lifeState.needs || {};
+    const lowCrossings = [];
     for (const [key, node] of lifeBarNodes) {
       const value = Math.min(100, Math.max(0, Number(needs[key]) || 0));
       node.fill.style.width = `${value}%`;
@@ -1175,6 +1289,40 @@ export function createHud({
       node.row.dataset.low = String(value < 30);
       node.label.textContent = `${key.toUpperCase()} ${Math.round(value)}`;
       node.row.setAttribute('aria-label', `${key}: ${Math.round(value)} out of 100`);
+      node.row.setAttribute('aria-valuenow', String(Math.round(value)));
+      const previousValue = previousNeeds.get(key);
+      if (previousValue !== undefined && previousValue >= 30 && value < 30) {
+        lowCrossings.push(key);
+        node.row.dataset.flash = 'true';
+        window.setTimeout(() => {
+          node.row.dataset.flash = 'false';
+        }, PULSE_DURATION_MS);
+      }
+      previousNeeds.set(key, value);
+    }
+    if (lowCrossings.length) {
+      const now = performance.now();
+      if (now - lastLowNeedAt >= LOW_NEED_WARNING_INTERVAL_MS) {
+        lastLowNeedAt = now;
+        const labels = lowCrossings.map((key) => key.toUpperCase()).join(', ');
+        const hint = String(
+          lifeState.needHint
+          || (lowCrossings.includes('hunger')
+            ? 'Grab a bite at the Ferry Building market hall.'
+            : lowCrossings.includes('social')
+              ? 'Talk to residents along the avenue.'
+              : lowCrossings.includes('fun')
+                ? 'Take a car out for a spin.'
+                : 'Rest for a moment to recover energy.'),
+        );
+        showCallout({
+          kind: 'low',
+          kicker: 'NEED WARNING',
+          title: labels,
+          detail: hint,
+        });
+        uiAudio?.play?.('low');
+      }
     }
   }
 
@@ -1306,10 +1454,26 @@ export function createHud({
     }
   });
 
+  uiAudio = createUiAudio();
+  const uiAudioEventNames = ['pointerdown', 'keydown', 'touchstart'];
+  if (uiAudio && typeof window !== 'undefined') {
+    uiAudioEventNames.forEach((eventName) => {
+      window.addEventListener(eventName, primeUiAudio, { capture: true, passive: true });
+    });
+  }
+
   function dispose() {
     if (disposed) return;
 
     disposed = true;
+    window.clearTimeout(calloutTimer);
+    if (uiAudio && typeof window !== 'undefined') {
+      uiAudioEventNames.forEach((eventName) => {
+        window.removeEventListener(eventName, primeUiAudio, { capture: true });
+      });
+      uiAudio.dispose();
+      uiAudio = null;
+    }
     root.remove();
   }
 

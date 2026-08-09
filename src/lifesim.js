@@ -81,6 +81,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   }
 
   function getState() {
+    const summary = needsSummary();
     return {
       day: state.day,
       clock: state.clock,
@@ -91,6 +92,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       cash: Math.round(state.cash),
       activity: state.lastActivity,
       mood: getMood(),
+      lowNeeds: summary ? summary.labels.split(', ').filter(Boolean) : [],
+      needHint: summary?.hint || null,
     };
   }
 
