@@ -85,6 +85,7 @@ export function createPlayerAvatar({ name = 'Traveler', paletteIndex = 0, scale 
   root.userData.nameTag = nameTag;
   root.userData.phase = 0;
   root.userData.gaitBlend = 0;
+  root.userData.smoothedSpeedRatio = 0;
   return root;
 }
 
@@ -309,12 +310,35 @@ export function animatePlayerAvatar(avatar, { moving = false, speedRatio = 0, el
   if (ud.leftLeg && ud.leftHipY != null) ud.leftLeg.position.y = ud.leftHipY;
   if (ud.rightLeg && ud.rightHipY != null) ud.rightLeg.position.y = ud.rightHipY;
 
+  // ── AAA on-foot acceleration/deceleration feel ──────────────────────
+  // The raw speedRatio (0.58 walk, 1.0 sprint) snaps instantly, which makes
+  // the avatar lean, rig tilt, and head tilt pop rather than ramp.  Damp it
+  // internally with separate attack (responsive) and decay (weighted) rates
+  // so the locomotion layer reads a physically-grounded blend every frame.
+  const TARGET_SPEED_RATIO = moving ? speedRatio : 0;
+  const ATTACK_DAMP = 10.5;
+  const DECAY_DAMP  = 3.8;
+  const dampRate = TARGET_SPEED_RATIO > (ud.smoothedSpeedRatio ?? 0)
+    ? ATTACK_DAMP
+    : DECAY_DAMP;
+  ud.smoothedSpeedRatio = THREE.MathUtils.damp(
+    ud.smoothedSpeedRatio ?? 0,
+    TARGET_SPEED_RATIO,
+    dampRate,
+    delta,
+  );
+  const internalSpeedRatio = ud.smoothedSpeedRatio;
+
+  // Keep the locomotion phase advancing while gaitBlend decays so the walk
+  // cycle does not freeze mid-step when the player releases WASD.
+  const movingEffective = moving || internalSpeedRatio > 0.015;
+
   resetAdditivePose(ud);
   const { gait, phase } = updateLocomotionPhase({
     state: layer,
-    speed: moving ? 1.05 + speedRatio * 0.55 : 0,
+    speed: movingEffective ? 1.05 + internalSpeedRatio * 0.55 : 0,
     cadence: 1,
-    gaitBlendTarget: moving ? 1 : 0,
+    gaitBlendTarget: movingEffective ? 1 : 0,
     delta,
     stride: 1,
   });
@@ -323,13 +347,13 @@ export function animatePlayerAvatar(avatar, { moving = false, speedRatio = 0, el
   applyLocomotionLayer(ud, {
     gait,
     phase,
-    speedRatio,
+    speedRatio: internalSpeedRatio,
     turnLean,
     hurry: 1,
     stride: 1,
     armSwing: 1,
   });
-  if (gait < 0.2) {
+  if (gait < 0.22) {
     applyIdleLayer(ud, elapsed + phase, 1 - gait);
   }
   const shadowScale = 1 + gait * Math.abs(Math.sin(phase)) * 0.05;
