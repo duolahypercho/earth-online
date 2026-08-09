@@ -4810,7 +4810,15 @@ function createCorridorCurbs(roads) {
 function createCorridorCenterlines(roads, options = {}) {
   const corridorClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
   const clearRadius = fullCityMode ? 26 : 17;
-  const clearRadiusSq = clearRadius * clearRadius;
+  // Full City has tens of thousands of OSM junctions. Clearing a full
+  // 26 m-radius lattice around every node creates millions of string keys and
+  // can exhaust the JS Set before the city has rendered. Only the camera
+  // aperture needs dash suppression; approach-hull pads carry the distant
+  // crossings. Keep this bounded and local while preserving the district path.
+  const clearFocus = fullCityMode ? (streamFocusPoint || PREBUILT_SPAWN) : null;
+  const clearFocusRadius = fullCityMode ? Math.max(960, STREAM.nearRadius * 4) : Infinity;
+  const clearFocusRadiusSq = clearFocusRadius * clearFocusRadius;
+  const maxClearKeys = fullCityMode ? 450_000 : Infinity;
   // Skip dashes inside approach-hull junction zones so T/+ centers stay clean.
   const nodeCounts = new Map();
   for (const road of roads) {
@@ -4825,9 +4833,17 @@ function createCorridorCenterlines(roads, options = {}) {
   }
   const clearKeys = new Set();
   const markClear = (jx, jz) => {
-    for (let dx = -clearRadius; dx <= clearRadius; dx += 1) {
-      for (let dz = -clearRadius; dz <= clearRadius; dz += 1) {
-        if (dx * dx + dz * dz > clearRadiusSq) continue;
+    if (clearFocus) {
+      const worldX = jx * 0.5;
+      const worldZ = jz * 0.5;
+      if ((worldX - clearFocus.x) ** 2 + (worldZ - clearFocus.z) ** 2 > clearFocusRadiusSq) return;
+    }
+    const radius = fullCityMode ? Math.min(clearRadius, 12) : clearRadius;
+    const radiusSq = radius * radius;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dz = -radius; dz <= radius; dz += 1) {
+        if (dx * dx + dz * dz > radiusSq) continue;
+        if (clearKeys.size >= maxClearKeys) return;
         clearKeys.add(`${jx + dx},${jz + dz}`);
       }
     }
