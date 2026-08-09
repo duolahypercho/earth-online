@@ -15,7 +15,7 @@ import { createSanFranciscoStreaming } from './streaming.js';
 import { createStreamedAgentSystem } from './streamed-agents.js';
 import { createSanFranciscoExpansion } from './sf-expansion.js';
 import { SIGNAL_PERIOD } from './signals.js';
-import { createCityShift, createStreetHeat } from './gameplay.js';
+import { createCityShift, createStreetHeat, createCombatLoop } from './gameplay.js';
 import { createHud } from './ui.js';
 import { createPlayerAvatar, animatePlayerAvatar, setAvatarLook } from './player.js';
 import { createLifeSim } from './lifesim.js';
@@ -32,6 +32,163 @@ const sceneTransition = document.createElement('div');
 sceneTransition.className = 'scene-transition';
 sceneTransition.setAttribute('aria-hidden', 'true');
 app?.append(sceneTransition);
+
+// The action readout is deliberately a tiny DOM layer over the authored HUD:
+// it stays pointer-transparent, only becomes visible after launch, and keeps
+// the reticle/ammo/health feedback legible against both dark streets and the
+// bright waterfront without changing the existing HUD layout.
+const combatOverlay = document.createElement('section');
+combatOverlay.className = 'combat-overlay';
+combatOverlay.setAttribute('aria-label', 'On-foot action status');
+combatOverlay.hidden = true;
+Object.assign(combatOverlay.style, {
+  position: 'fixed',
+  inset: '0',
+  zIndex: '14',
+  pointerEvents: 'none',
+  color: '#f5f0e7',
+  fontFamily: 'var(--hud-mono, monospace)',
+  opacity: '0',
+  transition: 'opacity 180ms ease',
+});
+const combatReticle = document.createElement('div');
+combatReticle.className = 'combat-reticle';
+Object.assign(combatReticle.style, {
+  position: 'absolute',
+  left: '50%',
+  top: '50%',
+  width: '38px',
+  height: '38px',
+  transform: 'translate(-50%, -50%)',
+  border: '1px solid rgba(245,240,231,0.52)',
+  borderRadius: '50%',
+  boxSizing: 'border-box',
+  transition: 'border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease',
+});
+const reticleDot = document.createElement('span');
+Object.assign(reticleDot.style, {
+  position: 'absolute',
+  left: '50%',
+  top: '50%',
+  width: '4px',
+  height: '4px',
+  transform: 'translate(-50%, -50%)',
+  borderRadius: '50%',
+  background: '#f2b56d',
+  boxShadow: '0 0 12px #f2b56d',
+});
+combatReticle.append(reticleDot);
+const combatHitConfirm = document.createElement('div');
+Object.assign(combatHitConfirm.style, {
+  position: 'absolute',
+  left: '50%',
+  top: 'calc(50% - 82px)',
+  transform: 'translate(-50%, 0)',
+  minWidth: '168px',
+  padding: '6px 10px 5px',
+  border: '1px solid rgba(107,214,197,0.8)',
+  borderRadius: '4px',
+  background: 'rgba(8,13,16,0.76)',
+  color: '#6bd6c5',
+  textAlign: 'center',
+  letterSpacing: '0.13em',
+  fontSize: '10px',
+  fontWeight: '700',
+  opacity: '0',
+  transition: 'opacity 90ms ease, transform 120ms ease',
+});
+const combatHitLabel = document.createElement('strong');
+combatHitLabel.style.display = 'block';
+const combatHitTarget = document.createElement('span');
+combatHitTarget.style.display = 'block';
+combatHitTarget.style.marginTop = '2px';
+combatHitTarget.style.color = '#f2b56d';
+combatHitTarget.style.fontSize = '9px';
+combatHitConfirm.append(combatHitLabel, combatHitTarget);
+const combatReadout = document.createElement('div');
+Object.assign(combatReadout.style, {
+  position: 'absolute',
+  right: '28px',
+  bottom: '28px',
+  minWidth: '176px',
+  padding: '10px 12px',
+  border: '1px solid rgba(245,240,231,0.2)',
+  borderRadius: '6px',
+  background: 'rgba(8,13,16,0.72)',
+  boxShadow: '0 12px 28px rgba(0,0,0,0.24)',
+  lineHeight: '1.25',
+  letterSpacing: '0.08em',
+  fontSize: '11px',
+});
+const combatModeLabel = document.createElement('strong');
+combatModeLabel.style.display = 'block';
+combatModeLabel.style.color = '#6bd6c5';
+const combatAmmoLabel = document.createElement('span');
+combatAmmoLabel.style.display = 'block';
+const combatHealthLabel = document.createElement('span');
+combatHealthLabel.style.display = 'block';
+const combatHealthTrack = document.createElement('span');
+Object.assign(combatHealthTrack.style, {
+  display: 'block',
+  height: '3px',
+  marginTop: '7px',
+  borderRadius: '3px',
+  background: 'rgba(245,240,231,0.18)',
+  overflow: 'hidden',
+});
+const combatHealthFill = document.createElement('span');
+Object.assign(combatHealthFill.style, {
+  display: 'block',
+  width: '100%',
+  height: '100%',
+  background: '#6bd6c5',
+  transition: 'width 120ms ease, background 120ms ease',
+});
+combatHealthTrack.append(combatHealthFill);
+combatReadout.append(combatModeLabel, combatAmmoLabel, combatHealthLabel, combatHealthTrack);
+combatOverlay.append(combatReticle, combatHitConfirm, combatReadout);
+app?.append(combatOverlay);
+
+function updateCombatOverlay(combatState) {
+  if (!combatState) return;
+  const combatIsOnFoot = playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !beautyMode
+    && !qaCameraPose;
+  const visible = combatIsOnFoot && (combatState.active || combatState.status === 'downed');
+  combatOverlay.hidden = !visible;
+  combatOverlay.style.opacity = visible ? '1' : '0';
+  combatReticle.style.opacity = combatState.status === 'downed' ? '0.3' : '1';
+  combatReticle.style.borderColor = combatState.hitConfirm
+    ? '#6bd6c5'
+    : combatState.aiming
+      ? combatState.lockedTargetId ? '#ee806f' : '#f2b56d'
+      : 'rgba(245,240,231,0.52)';
+  combatReticle.style.boxShadow = combatState.hitConfirm
+    ? '0 0 0 7px rgba(107,214,197,0.2), 0 0 18px rgba(107,214,197,0.6)'
+    : 'none';
+  combatReticle.style.transform = combatState.recoil > 0.04
+    ? `translate(-50%, -50%) scale(${1 + combatState.recoil * 0.08})`
+    : 'translate(-50%, -50%) scale(1)';
+  combatModeLabel.textContent = combatState.status === 'downed'
+    ? 'DOWN / RECOVERING'
+    : combatState.aiming ? 'AIM / READY' : 'ON FOOT / READY';
+  combatAmmoLabel.textContent = combatState.reloading
+    ? `RELOAD / ${Math.ceil((1 - combatState.reloadProgress) * 1.18 * 10) / 10}s`
+    : `AMMO / ${combatState.ammo} + ${combatState.reserveAmmo}`;
+  combatHealthLabel.textContent = `HEALTH / ${Math.round(combatState.health)}`;
+  combatHealthFill.style.width = `${Math.max(0, Math.min(100, combatState.health))}%`;
+  combatHealthFill.style.background = combatState.damageFlash > 0 ? '#ee806f' : '#6bd6c5';
+  combatHitConfirm.style.opacity = combatState.hitConfirm ? '1' : '0';
+  combatHitConfirm.style.transform = combatState.hitConfirm
+    ? 'translate(-50%, 0) scale(1)'
+    : 'translate(-50%, -4px) scale(0.94)';
+  combatHitLabel.textContent = combatState.hitConfirm ? 'HIT CONFIRMED' : '';
+  combatHitTarget.textContent = combatState.hitConfirm
+    ? `${String(combatState.hitLabel || combatState.lastHit?.kind || 'TARGET').toUpperCase()} / REACTING`
+    : '';
+}
 
 const setBootStatus = (message, isError = false) => {
   if (!bootStatus) return;
@@ -759,6 +916,7 @@ let postProcessingActive = false;
 let hud;
 let cityShift;
 let streetHeat;
+let combat;
 
 function getRenderQualitySnapshot() {
   const profile = renderProfiles[renderQuality.mode];
@@ -1020,8 +1178,13 @@ hud = createHud({
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
+    controls.combatPointerId = null;
+    controls.combatTriggerPointerId = null;
+    combat?.setAiming(false);
+    combat?.setTriggerHeld(false);
     cityShift?.restart();
     streetHeat?.restart();
+    combat?.restart();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Shift reset · follow the amber beacon to the Welcome Center.');
   },
@@ -1070,16 +1233,164 @@ const controls = {
   touchPoints: new Map(),
   pinchDistance: null,
   keys: new Set(),
+  combatPointerId: null,
+  combatTriggerPointerId: null,
   interiorMode: false,
   activePortal: null,
   exteriorSnapshot: null,
 };
+
+const combatCameraState = {
+  active: false,
+  savedPitch: 0.62,
+  savedDistance: 17,
+  savedCameraPitch: 0.62,
+  savedCameraDistance: 17,
+};
+const combatAimAnchor = new THREE.Vector3();
+const combatAimPosition = new THREE.Vector3();
+const combatAimLookTarget = new THREE.Vector3();
+const combatGroundPosition = new THREE.Vector3();
+const combatForward = new THREE.Vector3();
+const combatRight = new THREE.Vector3();
+const combatWeaponDirection = new THREE.Vector3();
+const combatWeaponQuaternion = new THREE.Quaternion();
+const combatWeaponUp = new THREE.Vector3(0, 0, 1);
+const combatWeaponMuzzleLocal = new THREE.Vector3(0, 0, 0.51);
+let playerWeapon = null;
 
 function playerMoving() {
   return controls.keys.has('keyw')
     || controls.keys.has('keys')
     || controls.keys.has('keya')
     || controls.keys.has('keyd');
+}
+
+const COMBAT_WEAPON_MUZZLE_OFFSET = 0.51;
+const COMBAT_WEAPON_SHOULDER_OFFSET = -1.25;
+const COMBAT_WEAPON_HEIGHT = 1.55;
+const COMBAT_SHOULDER_CAMERA_BACK = 6.6;
+const COMBAT_SHOULDER_CAMERA_HEIGHT = 3.1;
+const COMBAT_SHOULDER_LOOK_HEIGHT = 1.35;
+const COMBAT_SHOULDER_LOOK_DISTANCE = 24;
+const COMBAT_SHOULDER_PITCH_SCALE = 4.6;
+
+function createPlayerWeapon() {
+  const root = new THREE.Group();
+  root.name = 'Traveler low-poly sidearm';
+  root.visible = false;
+  root.frustumCulled = false;
+  root.renderOrder = 12;
+  const sleeveMaterial = new THREE.MeshStandardMaterial({
+    color: 0x45538d,
+    roughness: 0.78,
+    metalness: 0.03,
+  });
+  const skinMaterial = new THREE.MeshStandardMaterial({
+    color: 0xe0aa7e,
+    roughness: 0.72,
+    metalness: 0.01,
+  });
+  const gunMaterial = new THREE.MeshStandardMaterial({
+    color: 0x667680,
+    roughness: 0.42,
+    metalness: 0.78,
+  });
+  const accentMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffc86b,
+    emissive: 0xd0672b,
+    emissiveIntensity: 0.9,
+    roughness: 0.34,
+    metalness: 0.18,
+  });
+  // The arm silhouette is intentionally offset toward the camera's lower
+  // right while the barrel remains on the true muzzle anchor below.
+  const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.38, 0.42), sleeveMaterial);
+  shoulder.position.set(-0.22, -0.2, -0.24);
+  shoulder.rotation.z = -0.16;
+  const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.27, 0.68), sleeveMaterial);
+  sleeve.position.set(-0.14, -0.12, -0.16);
+  sleeve.rotation.z = -0.1;
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 4), skinMaterial);
+  hand.position.set(-0.05, -0.06, 0.08);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.42), gunMaterial);
+  body.position.set(0, 0, 0.21);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.3, 6), gunMaterial);
+  barrel.rotation.x = Math.PI * 0.5;
+  // Local tip is 0.51m from the root, matching COMBAT_WEAPON_MUZZLE_OFFSET.
+  barrel.position.set(0, 0, 0.36);
+  const barrelBand = new THREE.Mesh(new THREE.CylinderGeometry(0.073, 0.073, 0.06, 6), accentMaterial);
+  barrelBand.rotation.x = Math.PI * 0.5;
+  barrelBand.position.set(0, 0, 0.48);
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.12), accentMaterial);
+  sight.position.set(0, 0.15, 0.3);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.34, 0.18), gunMaterial);
+  grip.position.set(0, -0.18, 0.16);
+  grip.rotation.x = -0.16;
+  root.add(shoulder, sleeve, hand, body, barrel, barrelBand, sight, grip);
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    // This camera-facing shoulder rig is presentation geometry. Render its
+    // actual child meshes after the street depth pass; setting renderOrder on
+    // the parent Group alone does not affect them.
+    child.renderOrder = 12;
+    child.material.depthTest = false;
+    child.material.depthWrite = false;
+  });
+  scene.add(root);
+  return root;
+}
+
+function getCombatGroundPosition(target = combatGroundPosition) {
+  const surface = streaming.getSurfaceHeight?.(controls.target);
+  const groundY = Number.isFinite(surface)
+    ? surface
+    : controls.target.y - QA_ROAM_CLEARANCE;
+  target.set(controls.target.x, groundY, controls.target.z);
+  return target;
+}
+
+function getCombatMuzzleOrigin(target, direction) {
+  if (playerWeapon?.visible) {
+    target.copy(combatWeaponMuzzleLocal);
+    playerWeapon.localToWorld(target);
+    return true;
+  }
+  getCombatGroundPosition(combatGroundPosition);
+  combatForward.set(Math.sin(controls.yaw), 0, Math.cos(controls.yaw));
+  combatRight.set(combatForward.z, 0, -combatForward.x);
+  target.copy(combatGroundPosition)
+    .addScaledVector(combatRight, COMBAT_WEAPON_SHOULDER_OFFSET)
+    .y += COMBAT_WEAPON_HEIGHT;
+  target.addScaledVector(direction, COMBAT_WEAPON_MUZZLE_OFFSET);
+  return true;
+}
+
+function updatePlayerWeapon(combatState) {
+  if (!playerWeapon) return;
+  const visible = Boolean(
+    combatState?.aiming
+      && playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !beautyMode
+      && !qaCameraPose,
+  );
+  playerWeapon.visible = visible;
+  if (!visible) return;
+  // Keep the low-poly avatar's torso facing the same heading as the sidearm
+  // while aiming, even when the player is standing still.
+  if (playerAvatar) setAvatarLook(playerAvatar, controls.yaw);
+  getCombatGroundPosition(combatGroundPosition);
+  combatForward.set(Math.sin(controls.yaw), 0, Math.cos(controls.yaw));
+  combatRight.set(combatForward.z, 0, -combatForward.x);
+  combatAimAnchor.copy(combatGroundPosition)
+    .addScaledVector(combatRight, COMBAT_WEAPON_SHOULDER_OFFSET);
+  combatAimAnchor.y += COMBAT_WEAPON_HEIGHT;
+  camera.getWorldDirection(combatWeaponDirection).normalize();
+  combatWeaponQuaternion.setFromUnitVectors(combatWeaponUp, combatWeaponDirection);
+  playerWeapon.position.copy(combatAimAnchor);
+  playerWeapon.quaternion.copy(combatWeaponQuaternion);
 }
 
 function startPlayerLayer() {
@@ -1098,6 +1409,7 @@ function startPlayerLayer() {
     playerAvatar.visible = false;
     scene.add(playerAvatar);
   }
+  if (!playerWeapon) playerWeapon = createPlayerWeapon();
   playerLayerActive = true;
   controls.distance = 17;
   controls.pitch = 0.62;
@@ -1155,6 +1467,7 @@ function enterPlayerCar(index) {
   if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
   const entered = traffic.enterPlayerVehicle?.(index);
   if (!entered) return false;
+  combat?.setEnabled(false);
   if (audioContext) {
     try {
       audioContext.resume?.();
@@ -1211,6 +1524,7 @@ function exitPlayerCar() {
     controls.distance = 17;
   }
   snapCameraToControls();
+  combat?.setEnabled(true);
   hud.setMessage('You stepped back onto the avenue.');
   return true;
 }
@@ -1290,6 +1604,45 @@ streetHeat = createStreetHeat({
   onEvent: ({ message, score }) => {
     if (score) cityShift?.awardBonus?.(score);
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
+    hud?.setMessage(message);
+  },
+});
+
+const combatPedestrianCandidates = [];
+function getCombatPedestrianCandidates(_origin, _maxRange, out = combatPedestrianCandidates) {
+  out.length = 0;
+  const children = pedestrians.group?.children || [];
+  for (let index = 0; index < children.length; index += 1) {
+    const mesh = children[index];
+    // Contact shadows are the first child and do not carry the rig marker.
+    if (!mesh?.visible || !mesh.userData?.rig) continue;
+    out.push({
+      kind: 'pedestrian',
+      id: `pedestrian:${index}`,
+      label: `Resident ${String(index + 1).padStart(2, '0')}`,
+      mesh,
+      radius: 0.72,
+      height: 1.18,
+    });
+  }
+  return out;
+}
+
+combat = createCombatLoop({
+  scene,
+  camera,
+  getPlayerPosition: getCombatGroundPosition,
+  getPlayerHeading: () => controls.yaw,
+  getMuzzleOrigin: getCombatMuzzleOrigin,
+  getPedestrianCandidates: getCombatPedestrianCandidates,
+  getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
+  getTrafficRoot: (index) => traffic.group?.children?.[index] || null,
+  streetHeat,
+  onRecoil: (amount) => {
+    controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
+  },
+  onEvent: ({ kind, message }) => {
+    if (kind === 'shot') return;
     hud?.setMessage(message);
   },
 });
@@ -2536,24 +2889,81 @@ function getTouchDistance() {
   return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
 }
 
-function updateCamera(dt) {
-  if (qaCameraPose) {
+function combatAimActive() {
+  return Boolean(
+    combat?.getState?.().aiming
+      && playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !beautyMode
+      && !qaCameraPose,
+  );
+}
+
+function syncCombatCameraMode() {
+  const aiming = combatAimActive();
+  if (aiming && !combatCameraState.active) {
+    combatCameraState.active = true;
+    combatCameraState.savedPitch = controls.pitch;
+    combatCameraState.savedDistance = controls.distance;
+    combatCameraState.savedCameraPitch = controls.cameraPitch;
+    combatCameraState.savedCameraDistance = controls.cameraDistance;
+  } else if (!aiming && combatCameraState.active) {
+    combatCameraState.active = false;
+    // Keep the heading acquired during aim. Only the ordinary orbit pitch and
+    // distance are restored; the next orbit frame eases back from the current
+    // shoulder view without snapping the player to the pre-aim yaw.
+    controls.pitch = combatCameraState.savedPitch;
+    controls.distance = combatCameraState.savedDistance;
+    controls.cameraYaw = controls.yaw;
+    controls.cameraPitch = combatCameraState.savedCameraPitch;
+    controls.cameraDistance = combatCameraState.savedCameraDistance;
+    controls.focus.copy(controls.target);
     previousCameraTarget.copy(controls.target);
     cameraVelocity.set(0, 0, 0);
-    camera.position.copy(qaCameraPose.position);
-    camera.lookAt(qaCameraPose.lookAt);
-    camera.updateMatrixWorld(true);
-    return;
   }
-  const qaTourActive = updateQaStreamingTour(dt);
-  const drivingActive = traffic.isPlayerDriving?.() === true;
-  const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
-  const axis = cameraAxis.set(
-    (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
-    0,
-    (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0),
-  );
+  return aiming;
+}
 
+function updateCombatShoulderCamera(dt) {
+  // The shoulder camera keeps a bounded pitch so vertical RMB/Q aim changes
+  // the same center-screen ray used by combat without allowing a flip.
+  controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.3, 1.35);
+  getCombatGroundPosition(combatGroundPosition);
+  combatForward.set(Math.sin(controls.yaw), 0, Math.cos(controls.yaw));
+  combatRight.set(combatForward.z, 0, -combatForward.x);
+  combatAimAnchor.set(
+    combatGroundPosition.x,
+    combatGroundPosition.y + 1.48,
+    combatGroundPosition.z,
+  );
+  combatAimPosition.copy(combatAimAnchor)
+    .addScaledVector(combatRight, 1.2)
+    .addScaledVector(combatForward, -COMBAT_SHOULDER_CAMERA_BACK);
+  combatAimPosition.y = combatGroundPosition.y + COMBAT_SHOULDER_CAMERA_HEIGHT;
+  combatAimLookTarget.copy(combatAimAnchor)
+    .addScaledVector(combatForward, COMBAT_SHOULDER_LOOK_DISTANCE);
+  combatAimLookTarget.y = THREE.MathUtils.clamp(
+    combatGroundPosition.y + COMBAT_SHOULDER_LOOK_HEIGHT
+      + (combatCameraState.savedPitch - controls.pitch) * COMBAT_SHOULDER_PITCH_SCALE,
+    combatGroundPosition.y + 0.72,
+    combatGroundPosition.y + 2.8,
+  );
+  const citySafeCamera = city.resolveCameraPosition?.(combatAimAnchor, combatAimPosition)
+    || combatAimPosition;
+  const safeCamera = streaming.resolveCameraPosition?.(combatAimAnchor, citySafeCamera)
+    || citySafeCamera;
+  camera.position.lerp(safeCamera, 1 - Math.exp(-18 * dt));
+  camera.lookAt(combatAimLookTarget);
+  camera.updateMatrixWorld(true);
+  controls.cameraYaw = controls.yaw;
+  controls.cameraPitch = controls.pitch;
+  controls.cameraDistance = camera.position.distanceTo(combatAimAnchor);
+  hud?.setCameraState({ mode: 'aim / shoulder', distance: controls.cameraDistance });
+}
+
+function updateRoamTarget(dt, qaTourActive, drivingActive, axis) {
+  const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
   if (!qaTourActive && !drivingActive && axis.lengthSq() > 0) {
     // A regular movement input returns the pooled street presentation to its
     // ordinary layout. The broad avenue is intentionally an opt-in QA view.
@@ -2591,6 +3001,32 @@ function updateCamera(dt) {
     if (collisionSafeTarget && collisionSafeTarget !== controls.target) {
       controls.target.copy(collisionSafeTarget);
     }
+  }
+}
+
+function updateCamera(dt) {
+  const aiming = syncCombatCameraMode();
+  if (qaCameraPose) {
+    previousCameraTarget.copy(controls.target);
+    cameraVelocity.set(0, 0, 0);
+    camera.position.copy(qaCameraPose.position);
+    camera.lookAt(qaCameraPose.lookAt);
+    camera.updateMatrixWorld(true);
+    return;
+  }
+  const qaTourActive = updateQaStreamingTour(dt);
+  const drivingActive = traffic.isPlayerDriving?.() === true;
+  const axis = cameraAxis.set(
+    (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
+    0,
+    (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0),
+  );
+  // Apply the same on-foot target movement before either camera presentation;
+  // aiming changes framing, not locomotion.
+  updateRoamTarget(dt, qaTourActive, drivingActive, axis);
+  if (aiming) {
+    updateCombatShoulderCamera(dt);
+    return;
   }
 
   // Track focus motion separately from input so the camera can lead a moving
@@ -2638,8 +3074,61 @@ function updateCamera(dt) {
   });
 }
 
+function combatInputAvailable() {
+  return Boolean(
+    combat
+      && playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !beautyMode
+      && !qaCameraPose,
+  );
+}
+
+// Pointer Events only emit `pointerdown` for the first mouse button in a
+// multi-button chord. A separate mousedown bridge keeps LMB fire reliable
+// while RMB is held for aim (the normal pointer path still handles a solo
+// click and touch/camera controls).
+function onMouseDown(event) {
+  if (event.button !== 0
+    || !combatInputAvailable()
+    || !combat?.getState?.().aiming
+    || combat?.getState?.().triggerHeld) return;
+  const result = combat.fire();
+  if (result.fired) {
+    event.preventDefault();
+    combat.setTriggerHeld(true);
+  }
+}
+
+function onMouseUp(event) {
+  if (event.button !== 0 || !combat?.getState?.().triggerHeld) return;
+  combat.setTriggerHeld(false);
+}
+
 function onPointerDown(event) {
   canvas.focus({ preventScroll: true });
+  if (event.pointerType === 'mouse' && event.button === 2 && combatInputAvailable()) {
+    controls.combatPointerId = event.pointerId;
+    controls.lastX = event.clientX;
+    controls.lastY = event.clientY;
+    combat.setAiming(true);
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
+  if (event.pointerType === 'mouse'
+    && event.button === 0
+    && combatInputAvailable()
+    && combat?.getState?.().aiming) {
+    const result = combat.fire();
+    if (result.fired) {
+      event.preventDefault();
+      controls.combatTriggerPointerId = event.pointerId;
+      combat.setTriggerHeld(true);
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+  }
   controls.pointerId = event.pointerId;
   controls.lastX = event.clientX;
   controls.lastY = event.clientY;
@@ -2653,6 +3142,24 @@ function onPointerDown(event) {
 
 function onPointerMove(event) {
   if (sceneTransitioning) return;
+  if (event.pointerType === 'mouse'
+    && controls.keys.has('keyq')
+    && combatAimActive()) {
+    controls.yaw -= event.movementX * 0.0038;
+    controls.pitch += event.movementY * 0.0038 * 0.72;
+    return;
+  }
+  if (controls.combatPointerId === event.pointerId) {
+    const dx = event.clientX - controls.lastX;
+    const dy = event.clientY - controls.lastY;
+    controls.lastX = event.clientX;
+    controls.lastY = event.clientY;
+    controls.yaw -= dx * 0.0038;
+    controls.pitch += dy * 0.0038 * 0.72;
+    return;
+  }
+  if (controls.combatPointerId === event.pointerId
+    || controls.combatTriggerPointerId === event.pointerId) return;
   if (event.pointerType === 'touch' && controls.touchPoints.has(event.pointerId)) {
     controls.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const pinchDistance = getTouchDistance();
@@ -2673,6 +3180,24 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
+  if ((event.button === 2 && controls.combatPointerId === event.pointerId)
+    || (event.type === 'pointercancel' && controls.combatPointerId === event.pointerId)) {
+    controls.combatPointerId = null;
+    combat?.setAiming(false);
+    controls.combatTriggerPointerId = null;
+    combat?.setTriggerHeld(false);
+    if (canvas.hasPointerCapture(event.pointerId)
+      && controls.combatTriggerPointerId == null) canvas.releasePointerCapture(event.pointerId);
+    return;
+  }
+  if ((event.button === 0 && controls.combatTriggerPointerId === event.pointerId)
+    || (event.type === 'pointercancel' && controls.combatTriggerPointerId === event.pointerId)) {
+    controls.combatTriggerPointerId = null;
+    combat?.setTriggerHeld(false);
+    if (canvas.hasPointerCapture(event.pointerId)
+      && controls.combatPointerId == null) canvas.releasePointerCapture(event.pointerId);
+    return;
+  }
   if (event.pointerType === 'touch') {
     controls.touchPoints.delete(event.pointerId);
     controls.pinchDistance = getTouchDistance();
@@ -2717,8 +3242,15 @@ function onKeyDown(event) {
     event.preventDefault();
     return;
   }
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX'].includes(code)) event.preventDefault();
-  if (code === 'KeyR' && !event.repeat) cycleWeather();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY'].includes(code)) event.preventDefault();
+  if (code === 'KeyR' && !event.repeat) {
+    const combatState = combat?.getState?.();
+    if (!(combatInputAvailable() && combatState?.ammo < combatState?.magazineSize && combat.reload())) {
+      cycleWeather();
+    }
+  }
+  if (code === 'KeyY' && !event.repeat && combatInputAvailable()) combat.reload();
+  if (code === 'KeyQ' && combatInputAvailable()) combat.setAiming(true);
   if (code === 'KeyH' && !event.repeat) toggleBeautyMode();
   if (code === 'KeyC' && !event.repeat) setRenderQuality(renderQuality.mode === 'cinematic' ? 'auto' : 'cinematic');
   if (code === 'KeyM' && !event.repeat) hud?.toggleMap?.();
@@ -2765,6 +3297,7 @@ function onKeyUp(event) {
   const rawCode = event.code || event.key || '';
   const code = rawCode.length === 1 ? `Key${rawCode.toUpperCase()}` : rawCode;
   controls.keys.delete(code.toLowerCase());
+  if (code === 'KeyQ') combat?.setAiming(false);
 }
 
 function enterNearestInterior() {
@@ -2991,13 +3524,26 @@ canvas.addEventListener('pointerdown', onPointerDown);
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', onPointerUp);
 canvas.addEventListener('pointercancel', onPointerUp);
+canvas.addEventListener('mousedown', onMouseDown);
+canvas.addEventListener('mouseup', onMouseUp);
+canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 canvas.addEventListener('wheel', onWheel, { passive: false });
 canvas.addEventListener('keydown', onKeyDown);
 canvas.addEventListener('keyup', onKeyUp);
 window.addEventListener('keyup', onKeyUp);
-window.addEventListener('blur', () => controls.keys.clear());
+window.addEventListener('blur', () => {
+  controls.keys.clear();
+  controls.combatPointerId = null;
+  controls.combatTriggerPointerId = null;
+  combat?.setAiming(false);
+  combat?.setTriggerHeld(false);
+});
 document.addEventListener('visibilitychange', () => {
   controls.keys.clear();
+  controls.combatPointerId = null;
+  controls.combatTriggerPointerId = null;
+  combat?.setAiming(false);
+  combat?.setTriggerHeld(false);
   if (!document.hidden) {
     // Avoid treating time spent backgrounded as a real frame stall and
     // immediately downshifting quality when the tab becomes visible again.
@@ -3062,6 +3608,7 @@ function startExperience() {
   canvas.focus({ preventScroll: true });
   cityShift?.start();
   streetHeat?.start();
+  combat?.start();
   hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
   const featured = city.getFeaturedPortal?.(controls.target);
   hud.setMessage(
@@ -3144,6 +3691,15 @@ function frame(now) {
     position: drivingState?.position ?? controls.target,
     playerVehicleId: drivingState?.index ?? null,
   });
+  const combatState = combat?.update?.(motionDt, {
+    active: playerLayerActive
+      && !drivingState
+      && !controls.interiorMode
+      && !beautyMode
+      && !qaCameraPose,
+  });
+  updateCombatOverlay(combatState);
+  updatePlayerWeapon(combatState);
   const displayedGameState = gameState && streetHeatState
     && (streetHeatState.pursuitActive || streetHeatState.heat > 0)
     ? { ...gameState, hint: streetHeatState.hint }
@@ -3235,6 +3791,7 @@ window.__SF_SIM__ = {
   expansion,
   cityShift,
   streetHeat,
+  combat,
   staticCityRendering,
   hud,
   setRenderQuality,
@@ -3321,6 +3878,39 @@ window.__SF_SIM__ = {
   },
   getStreetHeatState() {
     return streetHeat?.getState?.() ?? null;
+  },
+  getCombatState() {
+    const state = combat?.getState?.();
+    if (!state) return null;
+    return {
+      ...state,
+      camera: {
+        mode: combatCameraState.active ? 'shoulder-aim' : 'orbit',
+        distance: combatCameraState.active ? controls.cameraDistance : controls.distance,
+        yaw: controls.yaw,
+        pitch: controls.pitch,
+      },
+      weapon: {
+        visible: Boolean(playerWeapon?.visible),
+        name: playerWeapon?.name || 'Traveler low-poly sidearm',
+        muzzleOffset: COMBAT_WEAPON_MUZZLE_OFFSET,
+      },
+    };
+  },
+  setCombatAim(aiming) {
+    return combat?.setAiming?.(aiming) ?? false;
+  },
+  fireCombat() {
+    return combat?.fire?.() ?? { fired: false, reason: 'unavailable' };
+  },
+  restartCombat() {
+    return combat?.restart?.() ?? null;
+  },
+  reloadCombat() {
+    return combat?.reload?.() ?? false;
+  },
+  damagePlayer(amount, source) {
+    return combat?.damagePlayer?.(amount, source) ?? false;
   },
   get renderQuality() {
     return {

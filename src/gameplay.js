@@ -414,6 +414,43 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     });
   }
 
+  // Public incident ingress for non-driving systems (for example the on-foot
+  // combat loop). Keeping heat mutation here means every source shares the
+  // same pursuit thresholds, level transitions, and HUD event stream instead
+  // of maintaining a second, conflicting heat counter in the caller.
+  function addHeat(amount = 0, {
+    kind = 'incident',
+    message = null,
+    score = 0,
+    notify = true,
+  } = {}) {
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, 100);
+    if (state.status !== 'running' || delta <= 0) return getState();
+    const previousHeat = state.heat;
+    state.heat = THREE.MathUtils.clamp(state.heat + delta, 0, 100);
+    state.safeElapsed = 0;
+    if (notify && (message || state.heat > previousHeat)) {
+      emitEvent(
+        kind,
+        message || `Street heat +${formatHeat(delta)} · heat ${formatHeat(state.heat)}`,
+        score,
+      );
+    }
+    if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
+      state.pursuitActive = true;
+      state.targetId = null;
+      state.targetPosition = null;
+      state.safeElapsed = 0;
+      state.level = currentLevel();
+      emitEvent(
+        'pursuit-start',
+        'Traffic heat · a tail picked you up. Keep moving, then cool off.',
+      );
+    }
+    state.level = currentLevel();
+    return getState();
+  }
+
   function reset() {
     state.status = 'running';
     state.heat = 0;
@@ -657,8 +694,847 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
   return {
     start,
     restart,
+    addHeat,
+    reportIncident: addHeat,
     update,
     getState,
+    dispose,
+    get status() {
+      return state.status;
+    },
+  };
+}
+
+const COMBAT_MAGAZINE_SIZE = 12;
+const COMBAT_STARTING_RESERVE = 48;
+const COMBAT_FIRE_INTERVAL = 0.18;
+const COMBAT_RELOAD_SECONDS = 1.18;
+const COMBAT_MAX_RANGE = 42;
+const COMBAT_HEALTH_MAX = 100;
+const COMBAT_HEALTH_RECOVERY_DELAY = 2.1;
+const COMBAT_HEALTH_RECOVERY_RATE = 18;
+const COMBAT_DOWNED_SECONDS = 2.4;
+const COMBAT_TRACER_POOL_SIZE = 8;
+const COMBAT_MUZZLE_POOL_SIZE = 4;
+const COMBAT_IMPACT_POOL_SIZE = 10;
+
+function combatVectorFrom(value, target, fallbackY = 0) {
+  if (value?.isVector3) {
+    target.copy(value);
+    return true;
+  }
+  if (!Number.isFinite(value?.x) || !Number.isFinite(value?.z)) return false;
+  target.set(value.x, Number.isFinite(value.y) ? value.y : fallbackY, value.z);
+  return true;
+}
+
+/**
+ * Small, deterministic third-person action layer. The city remains the owner
+ * of pedestrian/traffic motion; this module only samples their public pose
+ * snapshots when a shot is fired and adds pooled presentation effects.
+ */
+export function createCombatLoop({
+  scene,
+  camera = null,
+  getPlayerPosition,
+  getPlayerHeading,
+  getAimDirection,
+  getPedestrianCandidates,
+  getTrafficSnapshot,
+  getTrafficRoot,
+  getTargets,
+  getMuzzleOrigin,
+  streetHeat = null,
+  onEvent,
+  onRecoil,
+} = {}) {
+  if (!scene?.isScene) {
+    throw new TypeError('createCombatLoop requires a THREE.Scene.');
+  }
+
+  const state = {
+    status: 'ready',
+    enabled: false,
+    aiming: false,
+    triggerHeld: false,
+    ammo: COMBAT_MAGAZINE_SIZE,
+    reserveAmmo: COMBAT_STARTING_RESERVE,
+    reloadTimer: 0,
+    cooldown: 0,
+    health: COMBAT_HEALTH_MAX,
+    damageFlash: 0,
+    downedTimer: 0,
+    recoveryDelay: 0,
+    recoil: 0,
+    shots: 0,
+    hits: 0,
+    misses: 0,
+    hitStreak: 0,
+    lockedTargetId: null,
+    lastHit: null,
+    hitConfirmTimer: 0,
+    lastEvent: null,
+    clock: 0,
+  };
+
+  const playerPosition = new THREE.Vector3();
+  const rayOrigin = new THREE.Vector3();
+  const muzzleOrigin = new THREE.Vector3();
+  const aimDirection = new THREE.Vector3(0, 0, -1);
+  const fallbackDirection = new THREE.Vector3();
+  const candidatePoint = new THREE.Vector3();
+  const closestPoint = new THREE.Vector3();
+  const linePoint = new THREE.Vector3();
+  const upAxis = new THREE.Vector3(0, 1, 0);
+  const forwardAxis = new THREE.Vector3(0, 0, 1);
+  const effectQuaternion = new THREE.Quaternion();
+  const targetCandidates = [];
+  const targetStates = new Map();
+
+  const tracerPool = [];
+  const muzzlePool = [];
+  const impactPool = [];
+
+  function makeTracer(index) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const material = new THREE.LineBasicMaterial({
+      color: 0xffd18a,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const line = new THREE.Line(geometry, material);
+    line.name = `Combat tracer ${index + 1}`;
+    line.frustumCulled = false;
+    line.visible = false;
+    scene.add(line);
+    return {
+      line,
+      material,
+      life: 0,
+      maxLife: 0.16,
+      index,
+    };
+  }
+
+  function makeMuzzle(index) {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffb45b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.72, 5), material);
+    mesh.name = `Combat muzzle flash ${index + 1}`;
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return {
+      mesh,
+      material,
+      life: 0,
+      maxLife: 0.11,
+      index,
+    };
+  }
+
+  function makeImpact(index) {
+    const group = new THREE.Group();
+    group.name = `Combat impact ${index + 1}`;
+    group.visible = false;
+    group.frustumCulled = false;
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0x71e0ce,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffc86b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 0), coreMaterial);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.05, 5, 10), ringMaterial);
+    const shardA = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    const shardB = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    const shardC = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    shardA.position.set(0.31, 0.08, 0);
+    shardB.position.set(-0.2, 0.27, 0.04);
+    shardC.position.set(-0.06, -0.3, -0.03);
+    group.add(core, ring, shardA, shardB, shardC);
+    scene.add(group);
+    return {
+      group,
+      core,
+      ring,
+      shards: [shardA, shardB, shardC],
+      coreMaterial,
+      ringMaterial,
+      life: 0,
+      maxLife: 0.42,
+      index,
+      attachMesh: null,
+      attachHeight: 1.15,
+    };
+  }
+
+  for (let index = 0; index < COMBAT_TRACER_POOL_SIZE; index += 1) {
+    tracerPool.push(makeTracer(index));
+  }
+  for (let index = 0; index < COMBAT_MUZZLE_POOL_SIZE; index += 1) {
+    muzzlePool.push(makeMuzzle(index));
+  }
+  for (let index = 0; index < COMBAT_IMPACT_POOL_SIZE; index += 1) {
+    impactPool.push(makeImpact(index));
+  }
+
+  let tracerCursor = 0;
+  let muzzleCursor = 0;
+  let impactCursor = 0;
+
+  function emitEvent(kind, message, details = {}) {
+    state.lastEvent = {
+      kind,
+      message,
+      at: Math.round(state.clock * 1000) / 1000,
+      ...details,
+    };
+    onEvent?.({
+      kind,
+      message,
+      ...details,
+      state: getState(),
+    });
+  }
+
+  function clearEffects() {
+    tracerPool.forEach((effect) => {
+      effect.life = 0;
+      effect.line.visible = false;
+      effect.material.opacity = 0;
+    });
+    muzzlePool.forEach((effect) => {
+      effect.life = 0;
+      effect.mesh.visible = false;
+      effect.material.opacity = 0;
+    });
+    impactPool.forEach((effect) => {
+      effect.life = 0;
+      effect.group.visible = false;
+      effect.coreMaterial.opacity = 0;
+      effect.ringMaterial.opacity = 0;
+      effect.attachMesh = null;
+    });
+  }
+
+  function reset({ running = true } = {}) {
+    state.status = running ? 'running' : 'ready';
+    state.enabled = running;
+    state.aiming = false;
+    state.triggerHeld = false;
+    state.ammo = COMBAT_MAGAZINE_SIZE;
+    state.reserveAmmo = COMBAT_STARTING_RESERVE;
+    state.reloadTimer = 0;
+    state.cooldown = 0;
+    state.health = COMBAT_HEALTH_MAX;
+    state.damageFlash = 0;
+    state.downedTimer = 0;
+    state.recoveryDelay = 0;
+    state.recoil = 0;
+    state.shots = 0;
+    state.hits = 0;
+    state.misses = 0;
+    state.hitStreak = 0;
+    state.lockedTargetId = null;
+    state.lastHit = null;
+    state.hitConfirmTimer = 0;
+    state.lastEvent = null;
+    state.clock = 0;
+    tracerCursor = 0;
+    muzzleCursor = 0;
+    impactCursor = 0;
+    targetStates.forEach((target) => {
+      if (target.mesh) {
+        target.mesh.rotation.z = 0;
+        if (target.mesh.userData) target.mesh.userData.combatReaction = 'settled';
+      }
+    });
+    targetStates.clear();
+    clearEffects();
+  }
+
+  function start() {
+    reset({ running: true });
+    return getState();
+  }
+
+  function restart() {
+    reset({ running: true });
+    emitEvent('restart', 'On-foot kit reset · 12 rounds ready.');
+    return getState();
+  }
+
+  function stop() {
+    reset({ running: false });
+    return getState();
+  }
+
+  function setEnabled(enabled = true) {
+    state.enabled = Boolean(enabled) && state.status === 'running';
+    if (!state.enabled) {
+      state.aiming = false;
+      state.triggerHeld = false;
+    }
+    return state.enabled;
+  }
+
+  function setAiming(aiming = false) {
+    if (state.status !== 'running' || !state.enabled) {
+      state.aiming = false;
+      return false;
+    }
+    state.aiming = Boolean(aiming);
+    return state.aiming;
+  }
+
+  function setTriggerHeld(held = false) {
+    state.triggerHeld = Boolean(held) && state.status === 'running' && state.enabled;
+    return state.triggerHeld;
+  }
+
+  function getPlayerOrigin(target, height = 1.38) {
+    const source = getPlayerPosition?.();
+    if (!combatVectorFrom(source, target, 0)) return false;
+    target.y += height;
+    return true;
+  }
+
+  function getAimRay() {
+    if (!getPlayerOrigin(rayOrigin, 0)) return false;
+    if (camera?.isCamera) {
+      camera.getWorldPosition(rayOrigin);
+      camera.getWorldDirection(aimDirection).normalize();
+    } else if (getAimDirection) {
+      const result = getAimDirection(aimDirection);
+      if (result?.isVector3) aimDirection.copy(result).normalize();
+      else if (aimDirection.lengthSq() < 0.5) return false;
+    } else {
+      const heading = Number(getPlayerHeading?.());
+      const safeHeading = Number.isFinite(heading) ? heading : 0;
+      fallbackDirection.set(Math.sin(safeHeading), 0, Math.cos(safeHeading));
+      aimDirection.copy(fallbackDirection);
+    }
+    if (aimDirection.lengthSq() < 0.5) return false;
+    aimDirection.normalize();
+    return true;
+  }
+
+  function collectTargets() {
+    targetCandidates.length = 0;
+    if (getTargets) {
+      const supplied = getTargets(rayOrigin, COMBAT_MAX_RANGE, targetCandidates);
+      if (Array.isArray(supplied) && supplied !== targetCandidates) {
+        supplied.forEach((target) => targetCandidates.push(target));
+      }
+      return targetCandidates;
+    }
+    const pedestrianTargets = getPedestrianCandidates?.(
+      rayOrigin,
+      COMBAT_MAX_RANGE,
+      targetCandidates,
+    );
+    if (Array.isArray(pedestrianTargets) && pedestrianTargets !== targetCandidates) {
+      pedestrianTargets.forEach((target) => targetCandidates.push(target));
+    }
+    const trafficSnapshot = getTrafficSnapshot?.();
+    const vehicles = Array.isArray(trafficSnapshot?.vehicles)
+      ? trafficSnapshot.vehicles
+      : [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!vehicle || vehicle.visible === false || !Number.isFinite(vehicle.position?.x)) continue;
+      targetCandidates.push({
+        kind: 'traffic',
+        id: `traffic:${vehicle.id ?? index}`,
+        label: vehicle.identity?.label || vehicle.class || 'Traffic',
+        position: vehicle.position,
+        mesh: getTrafficRoot?.(vehicle.id ?? index) || null,
+        radius: vehicle.class === 'bus' ? 1.65 : 1.2,
+        height: vehicle.class === 'bus' ? 1.15 : 0.82,
+        vehicle,
+      });
+    }
+    return targetCandidates;
+  }
+
+  function candidateCenter(candidate, target) {
+    if (candidate?.mesh?.getWorldPosition) {
+      candidate.mesh.getWorldPosition(target);
+    } else if (!combatVectorFrom(candidate?.position, target, 0)) {
+      return false;
+    }
+    target.y += Number.isFinite(candidate?.height)
+      ? candidate.height
+      : candidate?.kind === 'traffic' ? 0.82 : 1.15;
+    return true;
+  }
+
+  function findHit() {
+    if (!getAimRay()) return null;
+    const candidates = collectTargets();
+    let best = null;
+    let bestDistance = Infinity;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      if (!candidate || candidate.visible === false || candidate.mesh?.visible === false) continue;
+      if (!candidateCenter(candidate, candidatePoint)) continue;
+      linePoint.copy(candidatePoint).sub(rayOrigin);
+      const distance = linePoint.dot(aimDirection);
+      if (distance < 0 || distance > COMBAT_MAX_RANGE || distance >= bestDistance) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(distance).add(rayOrigin);
+      const radius = Number.isFinite(candidate.radius)
+        ? candidate.radius
+        : candidate.kind === 'traffic' ? 1.2 : 0.72;
+      if (closestPoint.distanceToSquared(candidatePoint) > radius * radius) continue;
+      best = candidate;
+      bestDistance = distance;
+    }
+    if (!best) return null;
+    return {
+      candidate: best,
+      distance: bestDistance,
+      point: closestPoint.clone(),
+    };
+  }
+
+  function spawnTracer(start, end) {
+    const effect = tracerPool[tracerCursor % tracerPool.length];
+    tracerCursor += 1;
+    const attribute = effect.line.geometry.getAttribute('position');
+    attribute.setXYZ(0, start.x, start.y, start.z);
+    attribute.setXYZ(1, end.x, end.y, end.z);
+    attribute.needsUpdate = true;
+    effect.line.geometry.computeBoundingSphere();
+    effect.life = effect.maxLife;
+    effect.line.visible = true;
+    effect.material.opacity = 0.94;
+  }
+
+  function spawnMuzzle(origin, direction) {
+    const effect = muzzlePool[muzzleCursor % muzzlePool.length];
+    muzzleCursor += 1;
+    effectQuaternion.setFromUnitVectors(upAxis, direction);
+    effect.mesh.position.copy(origin);
+    effect.mesh.quaternion.copy(effectQuaternion);
+    // Deterministic alternating flare length keeps replay probes stable.
+    effect.mesh.scale.set(1, 0.84 + ((state.shots + effect.index) % 3) * 0.08, 1);
+    effect.life = effect.maxLife;
+    effect.mesh.visible = true;
+    effect.material.opacity = 0.98;
+  }
+
+  function spawnImpact(position, kind = 'pedestrian', targetMesh = null, targetHeight = 1.15) {
+    const effect = impactPool[impactCursor % impactPool.length];
+    impactCursor += 1;
+    effect.group.position.copy(position);
+    effectQuaternion.setFromUnitVectors(forwardAxis, aimDirection);
+    effect.group.quaternion.copy(effectQuaternion);
+    effect.group.scale.setScalar(kind === 'traffic' ? 1.22 : 1);
+    effect.life = effect.maxLife;
+    effect.group.visible = true;
+    effect.attachMesh = targetMesh || null;
+    effect.attachHeight = Number.isFinite(targetHeight) ? targetHeight : 1.15;
+    effect.coreMaterial.color.setHex(kind === 'traffic' ? 0xffc86b : 0x71e0ce);
+    effect.coreMaterial.opacity = 0.96;
+    effect.ringMaterial.opacity = 0.84;
+    effect.shards.forEach((shard, index) => {
+      shard.rotation.set(0.4 * index, 0.8 - index * 0.22, index * 1.1);
+    });
+  }
+
+  function markReaction(candidate, kind) {
+    const id = String(candidate.id ?? `${kind}:unknown`);
+    let target = targetStates.get(id);
+    if (!target) {
+      target = {
+        id,
+        kind,
+        label: String(candidate.label || (kind === 'traffic' ? 'Traffic' : 'Pedestrian')),
+        health: kind === 'traffic' ? 4 : 2,
+        hits: 0,
+        reactionUntil: 0,
+        defeated: false,
+        mesh: candidate.mesh || null,
+      };
+      targetStates.set(id, target);
+    }
+    target.hits += 1;
+    target.health = Math.max(0, target.health - 1);
+    target.reactionUntil = state.clock + (kind === 'traffic' ? 0.5 : 0.68);
+    target.mesh = candidate.mesh || target.mesh;
+    target.defeated = target.health <= 0;
+    if (target.mesh) {
+      const userData = target.mesh.userData || (target.mesh.userData = {});
+      userData.combatReaction = target.defeated ? 'staggered' : 'hit-react';
+      userData.combatHitCount = target.hits;
+      userData.combatHitUntil = target.reactionUntil;
+    }
+    return target;
+  }
+
+  function reportHeat(kind, hit) {
+    if (!streetHeat?.addHeat) return null;
+    const amount = hit
+      ? kind === 'pedestrian' ? 14 : 9
+      : 2.5;
+    const message = hit
+      ? `${kind === 'pedestrian' ? 'Civilian' : 'Traffic'} impact · street heat +${amount}`
+      : `Unsafe fire · street heat +${amount}`;
+    return streetHeat.addHeat(amount, {
+      kind: hit ? 'combat-impact' : 'combat-fire',
+      message,
+      notify: false,
+    });
+  }
+
+  function reload() {
+    if (state.status !== 'running' || !state.enabled) return false;
+    if (state.reloadTimer > 0 || state.ammo >= COMBAT_MAGAZINE_SIZE || state.reserveAmmo <= 0) return false;
+    state.reloadTimer = COMBAT_RELOAD_SECONDS;
+    state.triggerHeld = false;
+    emitEvent('reload-start', 'Reloading · keep your head up.');
+    return true;
+  }
+
+  function fire() {
+    if (state.status !== 'running' || !state.enabled) return { fired: false, reason: 'inactive' };
+    if (state.reloadTimer > 0) return { fired: false, reason: 'reloading' };
+    if (state.cooldown > 0) return { fired: false, reason: 'cooldown' };
+    if (state.ammo <= 0) {
+      reload();
+      return { fired: false, reason: 'empty' };
+    }
+    state.ammo -= 1;
+    state.shots += 1;
+    state.cooldown = COMBAT_FIRE_INTERVAL;
+    state.recoil = Math.min(1, state.recoil + 0.68);
+    onRecoil?.(0.026);
+
+    if (!getAimRay()) return { fired: false, reason: 'no-aim' };
+    const customMuzzle = getMuzzleOrigin?.(muzzleOrigin, aimDirection);
+    if (!customMuzzle) {
+      muzzleOrigin.copy(rayOrigin).addScaledVector(aimDirection, 0.32);
+      // Pull the visual muzzle back to the avatar when a player pose is
+      // available; the ray itself remains camera-centre so third-person aim
+      // is predictable and independent of camera distance.
+      const playerMuzzle = getPlayerOrigin(playerPosition, 1.22);
+      if (playerMuzzle) muzzleOrigin.copy(playerPosition).addScaledVector(aimDirection, 0.48);
+    }
+    const hit = findHit();
+    linePoint.copy(rayOrigin).addScaledVector(aimDirection, hit?.distance ?? COMBAT_MAX_RANGE);
+    spawnTracer(muzzleOrigin, hit?.point || linePoint);
+    spawnMuzzle(muzzleOrigin, aimDirection);
+    if (!hit) {
+      state.misses += 1;
+      state.hitStreak = 0;
+      state.lockedTargetId = null;
+      reportHeat('street', false);
+      emitEvent('shot', 'Shot fired · watch the street heat.', {
+        hit: false,
+        targetId: null,
+      });
+      return { fired: true, hit: false, ammo: state.ammo };
+    }
+
+    const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle ? 'traffic' : 'pedestrian';
+    const target = markReaction(hit.candidate, kind);
+    state.hits += 1;
+    state.hitStreak += 1;
+    state.lockedTargetId = target.id;
+    state.lastHit = {
+      targetId: target.id,
+      kind,
+      label: target.label,
+      distance: Math.round(hit.distance * 100) / 100,
+      hits: target.hits,
+      defeated: target.defeated,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    state.hitConfirmTimer = 0.62;
+    spawnImpact(hit.point, kind, target.mesh, hit.candidate.height);
+    reportHeat(kind, true);
+    emitEvent(
+      'impact',
+      `${kind === 'traffic' ? 'Vehicle' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
+      {
+        hit: true,
+        targetId: target.id,
+        targetKind: kind,
+        defeated: target.defeated,
+      },
+    );
+    return {
+      fired: true,
+      hit: true,
+      targetId: target.id,
+      targetKind: kind,
+      defeated: target.defeated,
+      ammo: state.ammo,
+    };
+  }
+
+  function damage(amount = 0, source = 'street') {
+    if (state.status !== 'running' || !state.enabled) return false;
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, COMBAT_HEALTH_MAX);
+    if (delta <= 0) return false;
+    state.health = Math.max(0, state.health - delta);
+    state.damageFlash = Math.max(state.damageFlash, 0.42);
+    state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
+    state.lastEvent = {
+      kind: 'damage',
+      message: `Damage received · ${Math.round(delta)} health`,
+      source,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    onEvent?.({
+      kind: 'damage',
+      message: state.lastEvent.message,
+      source,
+      amount: delta,
+      state: getState(),
+    });
+    if (state.health <= 0) {
+      state.status = 'downed';
+      state.enabled = false;
+      state.aiming = false;
+      state.triggerHeld = false;
+      state.downedTimer = COMBAT_DOWNED_SECONDS;
+      emitEvent('downed', 'You are down · recovering in the street.');
+    }
+    return true;
+  }
+
+  function heal(amount = 0) {
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, COMBAT_HEALTH_MAX);
+    if (delta <= 0 || state.status !== 'running') return false;
+    state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta);
+    return true;
+  }
+
+  function updateReactions() {
+    targetStates.forEach((target) => {
+      const mesh = target.mesh;
+      if (!mesh) return;
+      const userData = mesh.userData || (mesh.userData = {});
+      const remaining = target.reactionUntil - state.clock;
+      if (remaining > 0) {
+        const pulse = THREE.MathUtils.clamp(remaining / 0.68, 0, 1);
+        mesh.rotation.z = Math.sin(state.clock * 28 + target.hits) * 0.2 * pulse;
+        userData.combatReaction = target.defeated ? 'staggered' : 'hit-react';
+      } else if (userData.combatReaction) {
+        mesh.rotation.z = THREE.MathUtils.damp(mesh.rotation.z, 0, 16, 1 / 60);
+        if (Math.abs(mesh.rotation.z) < 0.005) {
+          mesh.rotation.z = 0;
+          userData.combatReaction = 'settled';
+        }
+      }
+    });
+  }
+
+  function updateEffects(delta) {
+    tracerPool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.line.visible = false;
+        effect.material.opacity = 0;
+        return;
+      }
+      effect.material.opacity = THREE.MathUtils.clamp(effect.life / effect.maxLife, 0, 1) * 0.94;
+    });
+    muzzlePool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.mesh.visible = false;
+        effect.material.opacity = 0;
+        return;
+      }
+      effect.material.opacity = THREE.MathUtils.clamp(effect.life / effect.maxLife, 0, 1);
+      effect.mesh.scale.x = 0.78 + effect.life / effect.maxLife * 0.36;
+      effect.mesh.scale.z = effect.mesh.scale.x;
+    });
+    impactPool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.group.visible = false;
+        effect.coreMaterial.opacity = 0;
+        effect.ringMaterial.opacity = 0;
+        effect.attachMesh = null;
+        return;
+      }
+      if (effect.attachMesh?.visible && effect.attachMesh.getWorldPosition) {
+        effect.attachMesh.getWorldPosition(candidatePoint);
+        candidatePoint.y += effect.attachHeight;
+        effect.group.position.copy(candidatePoint);
+      }
+      const progress = 1 - effect.life / effect.maxLife;
+      effect.coreMaterial.opacity = (1 - progress) * 0.96;
+      effect.ringMaterial.opacity = (1 - progress) * 0.84;
+      effect.group.scale.setScalar(0.84 + progress * 1.45);
+      effect.ring.rotation.z += delta * 7;
+      effect.shards.forEach((shard, index) => {
+        shard.rotation.x += delta * (4.2 + index * 0.7);
+        shard.rotation.y -= delta * (3.5 + index * 0.5);
+      });
+    });
+  }
+
+  function update(dt = 0, { active = true } = {}) {
+    const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
+    state.clock += delta;
+    if (state.status === 'ready') {
+      updateEffects(delta);
+      return getState();
+    }
+    if (active === false) setEnabled(false);
+    else if (state.status === 'running') state.enabled = true;
+
+    state.cooldown = Math.max(0, state.cooldown - delta);
+    state.recoil = Math.max(0, state.recoil - delta * 4.8);
+    state.damageFlash = Math.max(0, state.damageFlash - delta);
+    state.hitConfirmTimer = Math.max(0, state.hitConfirmTimer - delta);
+    updateEffects(delta);
+    updateReactions();
+
+    if (state.status === 'downed') {
+      state.downedTimer = Math.max(0, state.downedTimer - delta);
+      if (state.downedTimer <= 0) {
+        state.status = 'running';
+        state.enabled = true;
+        state.health = 58;
+        state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
+        emitEvent('revive', 'Back on your feet · stay sharp.');
+      }
+      return getState();
+    }
+    if (state.reloadTimer > 0) {
+      state.reloadTimer = Math.max(0, state.reloadTimer - delta);
+      if (state.reloadTimer <= 0) {
+        const needed = COMBAT_MAGAZINE_SIZE - state.ammo;
+        const loaded = Math.min(needed, state.reserveAmmo);
+        state.ammo += loaded;
+        state.reserveAmmo -= loaded;
+        emitEvent('reload-complete', `Reloaded · ${state.ammo}/${COMBAT_MAGAZINE_SIZE}`);
+      }
+    }
+    if (state.recoveryDelay > 0) {
+      state.recoveryDelay = Math.max(0, state.recoveryDelay - delta);
+    } else if (state.health < COMBAT_HEALTH_MAX) {
+      state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta * COMBAT_HEALTH_RECOVERY_RATE);
+    }
+    if (state.enabled && state.triggerHeld && state.reloadTimer <= 0 && state.cooldown <= 0) {
+      fire();
+    }
+    return getState();
+  }
+
+  function getState() {
+    return {
+      status: state.status,
+      active: state.status === 'running' && state.enabled,
+      aiming: state.aiming,
+      triggerHeld: state.triggerHeld,
+      ammo: state.ammo,
+      magazineSize: COMBAT_MAGAZINE_SIZE,
+      reserveAmmo: state.reserveAmmo,
+      reloading: state.reloadTimer > 0,
+      reloadProgress: state.reloadTimer > 0
+        ? THREE.MathUtils.clamp(1 - state.reloadTimer / COMBAT_RELOAD_SECONDS, 0, 1)
+        : 0,
+      cooldown: state.cooldown,
+      health: Math.round(state.health * 10) / 10,
+      maxHealth: COMBAT_HEALTH_MAX,
+      damageFlash: state.damageFlash,
+      downedTimer: state.downedTimer,
+      recovering: state.health < COMBAT_HEALTH_MAX && state.recoveryDelay <= 0,
+      recoil: state.recoil,
+      shots: state.shots,
+      hits: state.hits,
+      misses: state.misses,
+      hitStreak: state.hitStreak,
+      lockedTargetId: state.lockedTargetId,
+      lastHit: state.lastHit ? { ...state.lastHit } : null,
+      hitConfirm: state.hitConfirmTimer > 0,
+      hitConfirmTimer: Math.round(state.hitConfirmTimer * 1000) / 1000,
+      hitLabel: state.lastHit?.label || null,
+      lastEvent: state.lastEvent ? { ...state.lastEvent } : null,
+    };
+  }
+
+  function getTargetState(id) {
+    const target = targetStates.get(String(id));
+    if (!target) return null;
+    return {
+      id: target.id,
+      kind: target.kind,
+      label: target.label,
+      health: target.health,
+      hits: target.hits,
+      defeated: target.defeated,
+      reaction: target.reactionUntil > state.clock ? 'staggered' : 'settled',
+    };
+  }
+
+  function dispose() {
+    tracerPool.forEach((effect) => {
+      effect.line.removeFromParent();
+      effect.line.geometry.dispose();
+      effect.material.dispose();
+    });
+    muzzlePool.forEach((effect) => {
+      effect.mesh.removeFromParent();
+      effect.mesh.geometry.dispose();
+      effect.material.dispose();
+    });
+    impactPool.forEach((effect) => {
+      effect.group.removeFromParent();
+      effect.core.geometry.dispose();
+      effect.ring.geometry.dispose();
+      effect.shards.forEach((shard) => shard.geometry.dispose());
+      effect.coreMaterial.dispose();
+      effect.ringMaterial.dispose();
+    });
+    targetStates.clear();
+  }
+
+  return {
+    start,
+    restart,
+    stop,
+    update,
+    fire,
+    reload,
+    damage,
+    damagePlayer: damage,
+    heal,
+    setAiming,
+    aim: setAiming,
+    setTriggerHeld,
+    setEnabled,
+    getState,
+    getTargetState,
     dispose,
     get status() {
       return state.status;
