@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SIGNAL_PERIOD, signalOffsetForPosition, signalPhaseAt } from './signals.js';
+import { HYDE_MEASURED_GRADE } from './district_massing.js';
 
 // Geographic references used for the authored signatures (geography only;
 // no proprietary meshes or textures): OpenStreetMap/ODbL landmark and street
@@ -15,6 +16,7 @@ const ROAD_MARKING_OFFSET = 0.044;
 const SIGNAL_UPDATE_INTERVAL = 0.05;
 const MAX_DETAIL_BUILDINGS = 36;
 const MAX_PROXY_BUILDINGS = 24;
+const publicAsset = (path) => `${import.meta.env?.BASE_URL ?? '/'}${path.replace(/^\//, '')}`;
 const SIGNAL_GROUPS = Object.freeze({ eastWest: 0, northSouth: 1 });
 
 const EXPANSION_SECTORS = Object.freeze([
@@ -192,7 +194,7 @@ const EXPANSION_SECTORS = Object.freeze([
     landmark: 'lombard-switchback',
     treeCadence: 8,
     signalEvery: 2,
-    grade: 0.095,
+    grade: HYDE_MEASURED_GRADE,
   }),
   Object.freeze({
     key: '0:5',
@@ -445,6 +447,86 @@ function createSharedResources() {
   const trunk = new THREE.CylinderGeometry(0.11, 0.14, 1, 6);
   const pole = new THREE.CylinderGeometry(0.035, 0.05, 1, 6);
   const window = new THREE.BoxGeometry(1, 1, 1);
+  const facadePanel = new THREE.PlaneGeometry(1, 1, 2, 2);
+  const loadFacadePhoto = (assetPath) => {
+    // Node invariant scripts construct the shared scene without a DOM. Keep
+    // their material graph deterministic while allowing the browser path to
+    // load the public photographic skins normally.
+    if (typeof document === 'undefined') return null;
+    const texture = new THREE.TextureLoader().load(publicAsset(assetPath));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    return texture;
+  };
+  const makeFacadePhotoMaterial = (texture, color, offsetX, repeatX) => {
+    const map = texture?.clone?.() ?? null;
+    if (map) {
+      map.offset.x = offsetX;
+      map.repeat.x = repeatX;
+      map.needsUpdate = true;
+    }
+    return new THREE.MeshStandardMaterial({
+      ...(map ? { map, bumpMap: map, bumpScale: 0.055 } : {}),
+      color,
+      roughness: 0.84,
+      metalness: 0.01,
+      side: THREE.DoubleSide,
+    });
+  };
+  const makeFacadePhotoVariants = (texture, color, repeatX = 0.22) => (
+    [0.01, 0.255, 0.5, 0.745].map((offsetX) => (
+      makeFacadePhotoMaterial(texture, color, offsetX, repeatX)
+    ))
+  );
+  const edwardianFacade = loadFacadePhoto('assets/sf-edwardian-facade.png');
+  const edwardianFacadeAlt = loadFacadePhoto('assets/sf-edwardian-facade-2.png');
+  const facadePaintedLadyPhotos = makeFacadePhotoVariants(edwardianFacade, 0xe7d4c5);
+  const facadeStuccoPhotos = makeFacadePhotoVariants(edwardianFacadeAlt, 0xd8c7b1);
+  const facadeBrickPhotos = makeFacadePhotoVariants(edwardianFacadeAlt, 0xc18268);
+  const facadePhotoMaterials = [facadePaintedLadyPhotos, facadeStuccoPhotos, facadeBrickPhotos];
+  const facadePhotoBaseColors = facadePhotoMaterials.map((family) => (
+    family.map((material) => material.color.clone())
+  ));
+  const facadeNightMaterials = [
+    new THREE.MeshStandardMaterial({
+      color: 0xf4a45d,
+      emissive: 0xff702c,
+      emissiveIntensity: 0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.42,
+    }),
+    new THREE.MeshStandardMaterial({
+      color: 0xd6e2d8,
+      emissive: 0x9fc9c0,
+      emissiveIntensity: 0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.4,
+    }),
+    new THREE.MeshStandardMaterial({
+      color: 0xd88752,
+      emissive: 0xe75525,
+      emissiveIntensity: 0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.46,
+    }),
+    new THREE.MeshStandardMaterial({
+      color: 0x8b9da6,
+      emissive: 0x536e7d,
+      emissiveIntensity: 0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.48,
+    }),
+  ];
   const materials = {
     road: new THREE.MeshStandardMaterial({ color: 0x3d4546, roughness: 0.94, metalness: 0.02 }),
     sidewalk: new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.92 }),
@@ -485,8 +567,26 @@ function createSharedResources() {
       emissive: 0x4d2519,
       emissiveIntensity: 0.2,
     }),
+    // Shared photographic skins keep the Hyde modules in the same Edwardian
+    // visual language as the rest of the city while leaving the pooled
+    // low-poly cornices, bays, awnings, and storefronts visible.
+    facadePaintedLadyPhotos,
+    facadeStuccoPhotos,
+    facadeBrickPhotos,
+    facadeNight: facadeNightMaterials,
   };
-  return { box, tower, canopy, trunk, pole, window, materials };
+  return {
+    box,
+    tower,
+    canopy,
+    trunk,
+    pole,
+    window,
+    facadePanel,
+    facadePhotoMaterials,
+    facadePhotoBaseColors,
+    materials,
+  };
 }
 
 function appendQuad(positions, colors, a, b, c, d, color) {
@@ -3138,6 +3238,241 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     }
     const overlook = addSurfaceBox('Russian Hill overlook pad', x, z, [14, 0.4, 10], shared.materials.landmarkStone);
     overlook.castShadow = true;
+
+    // Hyde encounter slice: three ordinary blocks (about 146 m from
+    // z=-105 to z=41) sit on the existing raised sidewalks.  The modules are
+    // shallow street-wall cues rather than a second massing system; each uses
+    // the pooled box/window materials and follows the same local grade as the
+    // streamed road surface.  Alternating families keep the corridor legible
+    // at eye level without filling the whole Russian Hill sector with bespoke
+    // meshes.
+    const hydeGradeAt = (xAt, zAt, span = 12) => (
+      (surfaceAt(xAt, zAt + span) - surfaceAt(xAt, zAt - span)) / (span * 2)
+    );
+    const hydeFacade = ({ family, side, z: facadeZ, width, height, body, roof, accent, photoMaterials, photoFamilyIndex }) => {
+      const x = side < 0 ? -82 : -54;
+      const facing = side < 0 ? 1 : -1;
+      const baseY = surfaceAt(x, facadeZ);
+      const facade = new THREE.Group();
+      facade.name = `Hyde corridor ${family} facade ${facadeZ}`;
+      facade.position.set(x, baseY, facadeZ);
+      facade.userData.encounterGrade = HYDE_MEASURED_GRADE;
+      facade.userData.measuredGrade = HYDE_MEASURED_GRADE;
+      // Follow the sampled terrain grade at each block.  The shared profile
+      // owns the exact vertical datum; using a local finite difference keeps
+      // both ends of a long frontage seated on that datum with no float or
+      // buried corner when the analytic terrain adds its gentle cross-slope.
+      facade.rotation.x = -Math.atan(hydeGradeAt(x, facadeZ, width * 0.5));
+      const part = (name, scale, px, py, pz, material, rotationY = 0) => {
+        const mesh = new THREE.Mesh(shared.box, material);
+        mesh.name = name;
+        mesh.position.set(px, py + scale[1] * 0.5, pz);
+        mesh.scale.set(scale[0], scale[1], scale[2]);
+        mesh.rotation.y = rotationY;
+        mesh.userData.facadeFamily = family;
+        facade.add(mesh);
+        return mesh;
+      };
+
+      part(`${family} grounded plinth`, [4.0, 0.42, width], 0, 0, 0, shared.materials.landmarkStone);
+      part(`${family} body`, [3.5, height, width - 0.8], 0, 0.42, 0, body);
+      part(`${family} roof cap`, [3.9, 0.34, width + 0.4], 0, 0.42 + height, 0, roof);
+
+      const frontX = facing * 1.82;
+      // The photo carries its own aligned window rhythm; suppress the old
+      // flat front window bands so they do not fight the photographic skin.
+      // Keep the low-poly body, cornice, and family-specific depth cues below.
+      const photoBayWidth = 7.6;
+      const photoBayHeight = height - 0.38;
+      const photoBayCenters = [-12, -4, 4, 12];
+      photoBayCenters.forEach((bayCenter, bayIndex) => {
+        const photoPanel = new THREE.Mesh(
+          shared.facadePanel,
+          photoMaterials?.[bayIndex % photoMaterials.length] ?? shared.materials.landmarkStone,
+        );
+        photoPanel.name = `${family} road-facing Edwardian photo bay ${bayIndex + 1}`;
+        photoPanel.position.set(
+          frontX + facing * 0.045,
+          0.42 + photoBayHeight * 0.5,
+          bayCenter,
+        );
+        photoPanel.rotation.y = facing * Math.PI * 0.5;
+        photoPanel.scale.set(photoBayWidth, photoBayHeight, 1);
+        photoPanel.userData.facadeFamily = family;
+        photoPanel.userData.facadePhoto = true;
+        photoPanel.userData.photoBayWidth = photoBayWidth;
+        facade.add(photoPanel);
+
+        // Each bay has three outward depth layers: recessed photo, reveal
+        // jambs, then projecting casing/sill. The 0.4 m gaps keep the four
+        // crops distinct instead of creating a stretched repeating stripe.
+        const revealX = frontX + facing * 0.14;
+        const casingX = frontX + facing * 0.28;
+        const edgeOffset = photoBayWidth * 0.5 + 0.09;
+        part(`${family} photo bay ${bayIndex + 1} recessed reveal left`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter - edgeOffset, shared.materials.trim);
+        part(`${family} photo bay ${bayIndex + 1} recessed reveal right`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter + edgeOffset, shared.materials.trim);
+        part(`${family} photo bay ${bayIndex + 1} casing left`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter - edgeOffset, accent);
+        part(`${family} photo bay ${bayIndex + 1} casing right`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter + edgeOffset, accent);
+        part(`${family} photo bay ${bayIndex + 1} projecting sill`, [0.34, 0.16, photoBayWidth + 0.28], casingX, 0.42 + photoBayHeight - 0.2, bayCenter, shared.materials.trim);
+
+        // Keep the photographic texture intact by day, but break its dense
+        // repeated night stripe with a few deterministic, per-bay occupancy
+        // panes. These are tiny pooled window meshes, hidden at day and never
+        // large enough to read as a broad emissive slab.
+        const bayHash = (salt) => {
+          const value = Math.sin(
+            (facadeZ * 0.73) + (side * 17.1) + (photoFamilyIndex * 29.7)
+              + (bayIndex * 11.3) + (salt * 7.9),
+          ) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        const litPaneCount = 1 + Math.floor(bayHash(1) * 3);
+        for (let paneIndex = 0; paneIndex < litPaneCount; paneIndex += 1) {
+          const pane = new THREE.Mesh(
+            shared.window,
+            shared.materials.facadeNight[(photoFamilyIndex + bayIndex + paneIndex) % shared.materials.facadeNight.length],
+          );
+          const paneHeight = 0.34 + bayHash(paneIndex + 2) * 0.38;
+          const paneY = Math.min(
+            0.42 + photoBayHeight - paneHeight * 0.7,
+            1.55 + bayHash(paneIndex + 4) * 6.8,
+          );
+          pane.name = `${family} photo bay ${bayIndex + 1} sparse night pane ${paneIndex + 1}`;
+          pane.position.set(
+            frontX + facing * 0.105,
+            paneY,
+            bayCenter + (bayHash(paneIndex + 5) - 0.5) * 4.8,
+          );
+          pane.scale.set(0.04, paneHeight, 0.38 + bayHash(paneIndex + 6) * 0.42);
+          pane.userData.facadeFamily = family;
+          pane.userData.facadeNightOverlay = true;
+          pane.userData.nightBay = bayIndex + 1;
+          pane.userData.nightOccupancy = litPaneCount / 3;
+          pane.castShadow = false;
+          pane.receiveShadow = false;
+          facade.add(pane);
+        }
+      });
+
+      // A grounded threshold and a small family-specific street treatment
+      // keep the frontage from reading as a blank colored slab.
+      part(`${family} curb threshold`, [1.52, 0.18, 2.05], frontX + facing * 0.14, 0, 0, shared.materials.sidewalk);
+      part(`${family} public doorway`, [0.14, 2.12, 1.12], frontX + facing * 0.2, 0.18, 0, shared.materials.door);
+      part(`${family} entry header`, [0.18, 0.22, 1.52], frontX + facing * 0.24, 2.45, 0, shared.materials.entryHeader);
+      if (family === 'painted-lady') {
+        part('painted-lady cornice bay left', [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, -12, accent);
+        part('painted-lady cornice bay right', [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, 12, accent);
+      } else if (family === 'stucco') {
+        part('stucco awning band', [0.36, 0.18, width * 0.72], frontX + facing * 0.24, 3.88, 0, accent);
+        part('stucco balcony rail', [0.26, 0.1, width * 0.54], frontX + facing * 0.3, 6.55, 0, shared.materials.trim);
+      } else {
+        part('brick mercantile storefront band', [0.3, 1.28, width * 0.66], frontX + facing * 0.22, 0.72, 0, shared.materials.landmarkOrange);
+        part('brick mercantile sign rail', [0.28, 0.18, width * 0.58], frontX + facing * 0.25, 3.88, 0, accent);
+      }
+      facade.traverse((object) => {
+        if (!object.isMesh) return;
+        object.castShadow = !object.userData.facadeNightOverlay;
+        object.receiveShadow = !object.userData.facadeNightOverlay;
+      });
+      group.add(facade);
+    };
+
+    [
+      { z: -88, family: 'painted-lady', body: shared.materials.landmarkStone, roof: shared.materials.roof, accent: shared.materials.landmarkOrange, photoMaterials: shared.materials.facadePaintedLadyPhotos, photoFamilyIndex: 0 },
+      { z: -32, family: 'stucco', body: shared.materials.trim, roof: shared.materials.roof, accent: shared.materials.landmarkStone, photoMaterials: shared.materials.facadeStuccoPhotos, photoFamilyIndex: 1 },
+      { z: 24, family: 'brick-mercantile', body: shared.materials.landmarkBrick, roof: shared.materials.roof, accent: shared.materials.landmarkOrange, photoMaterials: shared.materials.facadeBrickPhotos, photoFamilyIndex: 2 },
+    ].forEach((module) => {
+      [-1, 1].forEach((side) => hydeFacade({ ...module, side, width: 34, height: side < 0 ? 11.2 : 9.6 }));
+    });
+
+    const hydeCurbWest = addSurfaceStrip(
+      'Hyde corridor west curb cap',
+      [-77.95, -106],
+      [-77.95, 42],
+      0.18,
+      shared.materials.curb,
+      SURFACE_OFFSET + 0.09,
+      24,
+    );
+    const hydeCurbEast = addSurfaceStrip(
+      'Hyde corridor east curb cap',
+      [-58.05, -106],
+      [-58.05, 42],
+      0.18,
+      shared.materials.curb,
+      SURFACE_OFFSET + 0.09,
+      24,
+    );
+    hydeCurbWest.userData.encounterGrade = HYDE_MEASURED_GRADE;
+    hydeCurbEast.userData.encounterGrade = HYDE_MEASURED_GRADE;
+
+    const hydeTree = (name, xTree, zTree, scale = 1) => {
+      const tree = new THREE.Group();
+      tree.name = name;
+      tree.position.set(xTree, surfaceAt(xTree, zTree), zTree);
+      tree.rotation.x = -Math.atan(hydeGradeAt(xTree, zTree, 4));
+      const trunk = new THREE.Mesh(shared.trunk, shared.materials.trunk);
+      trunk.name = `${name} grounded trunk`;
+      trunk.position.y = 1.08 * scale;
+      trunk.scale.set(0.24 * scale, 2.16 * scale, 0.24 * scale);
+      const canopy = new THREE.Mesh(shared.canopy, shared.materials.tree);
+      canopy.name = `${name} canopy`;
+      canopy.position.y = 4.1 * scale;
+      canopy.scale.set(2.15 * scale, 4.2 * scale, 2.15 * scale);
+      tree.add(trunk, canopy);
+      tree.userData.grounded = true;
+      tree.userData.encounterGrade = HYDE_MEASURED_GRADE;
+      group.add(tree);
+    };
+    [
+      [-76.4, -76, 1.06],
+      [-76.4, -20, 0.98],
+      [-59.6, 4, 1.02],
+      [-59.6, 36, 0.92],
+    ].forEach(([treeX, treeZ, scale], index) => {
+      hydeTree(`Hyde corridor street tree ${index + 1}`, treeX, treeZ, scale);
+    });
+
+    const hydeBench = (name, xBench, zBench, heading = 0) => {
+      const bench = new THREE.Group();
+      bench.name = name;
+      bench.position.set(xBench, surfaceAt(xBench, zBench), zBench);
+      bench.rotation.x = -Math.atan(hydeGradeAt(xBench, zBench, 2));
+      bench.rotation.y = heading;
+      const seat = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      seat.name = `${name} seat`;
+      seat.position.y = 0.78;
+      seat.scale.set(0.9, 0.18, 3.2);
+      const back = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      back.name = `${name} back`;
+      back.position.set(0, 1.38, 0.38);
+      back.scale.set(0.9, 0.92, 3.2);
+      const legA = new THREE.Mesh(shared.box, shared.materials.signalHousing);
+      legA.position.set(0, 0.36, -1.06);
+      legA.scale.set(0.7, 0.72, 0.18);
+      const legB = legA.clone();
+      legB.position.z = 0.82;
+      bench.add(seat, back, legA, legB);
+      bench.userData.grounded = true;
+      group.add(bench);
+    };
+    hydeBench('Hyde corridor public bench north', -76.2, -54, Math.PI * 0.5);
+    hydeBench('Hyde corridor public bench south', -59.8, 28, -Math.PI * 0.5);
+
+    const hydrant = new THREE.Group();
+    hydrant.name = 'Hyde corridor grounded hydrant';
+    hydrant.position.set(-75.8, surfaceAt(-75.8, -4), -4);
+    hydrant.rotation.x = -Math.atan(hydeGradeAt(-75.8, -4, 1));
+    const hydrantBody = new THREE.Mesh(shared.trunk, shared.materials.landmarkOrange);
+    hydrantBody.position.y = 0.58;
+    hydrantBody.scale.set(3.2, 1.18, 3.2);
+    const hydrantCap = new THREE.Mesh(shared.box, shared.materials.landmarkOrange);
+    hydrantCap.position.y = 0.93;
+    hydrantCap.scale.set(0.32, 0.12, 0.32);
+    hydrant.add(hydrantBody, hydrantCap);
+    hydrant.userData.grounded = true;
+    group.add(hydrant);
+
     landmark = {
       x,
       z,
@@ -4306,6 +4641,21 @@ function createExpansionOverlay({ descriptor, blueprint, catalog, shared }) {
     const night = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
     shared.materials.window.emissiveIntensity = THREE.MathUtils.lerp(0.22, 1.85, night);
     shared.materials.entryHeader.emissiveIntensity = THREE.MathUtils.lerp(0.16, 1.1, night);
+    // At sunset the baked photo grid is only a dark architectural skin;
+    // sparse per-bay panes below own the readable occupancy lights.
+    const bakedGridBrightness = [0.16, 0.075, 0.2, 0.1];
+    shared.facadePhotoMaterials.forEach((family, familyIndex) => {
+      family.forEach((material, bayIndex) => {
+        const base = shared.facadePhotoBaseColors[familyIndex][bayIndex];
+        const nightBrightness = bakedGridBrightness[bayIndex];
+        material.color.copy(base).multiplyScalar(THREE.MathUtils.lerp(1, nightBrightness, night));
+      });
+    });
+    shared.materials.facadeNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.08 + occupancy * 0.16);
+      material.emissiveIntensity = night * (0.55 + occupancy * 0.45);
+    });
   };
   let lastSignalUpdate = -Infinity;
   const update = (dt, elapsed) => {
@@ -4880,6 +5230,21 @@ export function createSanFranciscoExpansion({
     const night = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
     shared.materials.window.emissiveIntensity = THREE.MathUtils.lerp(0.22, 1.85, night);
     shared.materials.entryHeader.emissiveIntensity = THREE.MathUtils.lerp(0.16, 1.1, night);
+    // Match the overlay treatment above so the baked grid stays subdued
+    // while the bounded warm/cool panes remain the only bright occupancy cue.
+    const bakedGridBrightness = [0.16, 0.075, 0.2, 0.1];
+    shared.facadePhotoMaterials.forEach((family, familyIndex) => {
+      family.forEach((material, bayIndex) => {
+        const base = shared.facadePhotoBaseColors[familyIndex][bayIndex];
+        const nightBrightness = bakedGridBrightness[bayIndex];
+        material.color.copy(base).multiplyScalar(THREE.MathUtils.lerp(1, nightBrightness, night));
+      });
+    });
+    shared.materials.facadeNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.08 + occupancy * 0.16);
+      material.emissiveIntensity = night * (0.55 + occupancy * 0.45);
+    });
     cache.forEach((runtime) => runtime.setNightLighting?.(night));
   };
 

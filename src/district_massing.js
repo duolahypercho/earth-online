@@ -490,6 +490,13 @@ const DISTRICT_PROFILES = {
   },
 };
 
+// Hyde's authored encounter uses one measured centerline datum.  The profile
+// below compensates for the catalog's analytic cross-slope; callers that need
+// the observable street grade should use HYDE_MEASURED_GRADE instead of the
+// compensated profile value.
+export const HYDE_MEASURED_GRADE = 0.07235;
+export const HYDE_COMPENSATED_PROFILE_GRADE = 0.08163575;
+
 // The authored expansion blueprint is intentionally reduced to the four
 // geometry families the pooled renderer already supports. This keeps the
 // district plan on the live streaming path without adding a second building
@@ -609,7 +616,10 @@ const AUTHORED_MASSING_BY_SECTOR = Object.freeze({
     minHeight: 5,
     maxHeight: 30,
     fillRatio: 0.84,
-    grade: 0.095,
+    // The analytic terrain contributes a -0.00928575 cross-slope along Hyde.
+    // Apply the named compensation here; the measured public datum remains
+    // HYDE_MEASURED_GRADE for road/facade metadata and QA sampling.
+    grade: HYDE_COMPENSATED_PROFILE_GRADE,
     landmarkClearance: Object.freeze({ x: 80, z: 176, radius: 40 }),
   }),
   '0:5': Object.freeze({
