@@ -610,7 +610,7 @@ function getSuggestedCameraPoses() {
   const heroCamX = skylineTarget.x - viewNx * heroDistance;
   const heroCamZ = skylineTarget.z - viewNz * heroDistance;
   const heroTargetLift = Math.min(58, skylineTarget.height * 0.24);
-  const hero = makeCameraPose(
+  let hero = makeCameraPose(
     [heroCamX, heroHeight, heroCamZ],
     [skylineTarget.x, heroTargetLift, skylineTarget.z],
     true,
@@ -663,7 +663,7 @@ function getSuggestedCameraPoses() {
   const bayZ = THREE.MathUtils.lerp(skylineTarget.z, bounds.maxZ, 0.44);
   const nightTargetX = THREE.MathUtils.lerp(skylineTarget.x, bayX, 0.38);
   const nightTargetZ = THREE.MathUtils.lerp(skylineTarget.z, bayZ, 0.42);
-  const night = makeCameraPose(
+  let night = makeCameraPose(
     [heroCamX + viewNz * 36, heroHeight * 0.86, heroCamZ - viewNx * 36],
     [nightTargetX, heroTargetLift * 0.42, nightTargetZ],
     true,
@@ -709,6 +709,34 @@ function getSuggestedCameraPoses() {
 
   if (fullCityMode) {
     const j = PREBUILT_SPAWN;
+    // Full City has real Transamerica + Salesforce silhouettes. Pull the hero
+    // back to a shared southwest view so the pyramid apex and a second SF
+    // landmark can read together, with the existing bay plane on the horizon.
+    const primaryLandmark = resolveSfLandmark(SF_LANDMARK_SPECS[0]);
+    const secondaryLandmark = resolveSfLandmark(SF_LANDMARK_SPECS[1]);
+    const landmarkMidX = THREE.MathUtils.lerp(primaryLandmark.x, secondaryLandmark.x, 0.42);
+    const landmarkMidZ = THREE.MathUtils.lerp(primaryLandmark.z, secondaryLandmark.z, 0.42);
+    const landmarkSpan = Math.hypot(
+      secondaryLandmark.x - primaryLandmark.x,
+      secondaryLandmark.z - primaryLandmark.z,
+    );
+    const heroBackX = (heroCamX - skylineTarget.x) / Math.max(1, heroDistance);
+    const heroBackZ = (heroCamZ - skylineTarget.z) / Math.max(1, heroDistance);
+    const pairDistance = THREE.MathUtils.clamp(landmarkSpan * 0.9, 620, 820);
+    const pairCamX = landmarkMidX + heroBackX * pairDistance;
+    const pairCamZ = landmarkMidZ + heroBackZ * pairDistance;
+    hero = makeCameraPose(
+      [pairCamX, Math.max(92, heroHeight), pairCamZ],
+      [landmarkMidX, 42, landmarkMidZ],
+      true,
+    );
+    const nightPairBayX = THREE.MathUtils.lerp(landmarkMidX, bayX, 0.24);
+    const nightPairBayZ = THREE.MathUtils.lerp(landmarkMidZ, bayZ, 0.24);
+    night = makeCameraPose(
+      [pairCamX + viewNz * 42, Math.max(82, heroHeight * 0.96), pairCamZ - viewNx * 42],
+      [nightPairBayX, 30, nightPairBayZ],
+      true,
+    );
     // Keep the full-city beauty cameras on the Jessie Street sidewalk. The
     // previous offsets ([j.x - 28, j.z - 36]) landed inside the large OSM
     // footprint immediately northwest of the spawn, so its extruded facade
@@ -2044,6 +2072,7 @@ const roadMarkingColors = {
 
 const sandboxTextureCache = {};
 const facadeWindowTextureCache = new Map();
+const facadeNightTextureCache = new Map();
 const roadMaterialCache = new Map();
 
 function proceduralSurfaceMap(kind, size = 256) {
@@ -2214,6 +2243,46 @@ function facadeWindowTexture(seed, style = 'plaster') {
   texture.wrapT = THREE.RepeatWrapping;
   texture.anisotropy = 4;
   facadeWindowTextureCache.set(key, texture);
+  return texture;
+}
+
+// Sparse inhabited-window map for merged Full City massing. The facade atlas
+// remains the daylight skin; this separate low-density map makes only a
+// deterministic subset of windows emit at night, preserving dark wall area
+// and a recognizable warm/cool occupancy rhythm without extra draw calls.
+function facadeNightTexture(seed, style = 'plaster') {
+  const variant = Math.abs(Number(seed) || 0) % 6;
+  const key = `${style}-${variant}`;
+  if (facadeNightTextureCache.has(key)) return facadeNightTextureCache.get(key);
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'rgba(7, 14, 25, 0.18)';
+  context.fillRect(0, 0, 256, 256);
+  const styleBias = style === 'commercial' || style === 'glass' ? 2 : 0;
+  for (let row = 1; row <= 7; row += 1) {
+    const bandY = row * 30 - 6;
+    for (let col = 1; col <= 9; col += 1) {
+      const hash = (row * 17 + col * 11 + variant * 29 + styleBias * 13) % 13;
+      // Roughly one third of windows are occupied, with a stable per-batch
+      // cadence rather than a whole facade wash.
+      if (hash > 3 && hash !== 8) continue;
+      const x = (col * 26) - 12 + ((row * 5 + col * 3 + variant) % 3);
+      const y = bandY + 4;
+      const warm = ((hash + row + variant) % 3) !== 1;
+      context.fillStyle = warm ? 'rgba(255, 194, 118, 0.92)' : 'rgba(118, 192, 255, 0.9)';
+      context.fillRect(x, y, 11, 18);
+      context.fillStyle = warm ? 'rgba(255, 232, 185, 0.72)' : 'rgba(192, 231, 255, 0.68)';
+      context.fillRect(x + 1, y + 1, 4, 4);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 4;
+  facadeNightTextureCache.set(key, texture);
   return texture;
 }
 
@@ -2846,16 +2915,15 @@ function createMergedFootprintBuildings(buildings) {
   const facadeStyles = ['plaster', 'edwardian', 'edwardian2', 'victorian', 'commercial', 'glass'];
   const facadeStyle = facadeStyles[batchSeed % facadeStyles.length];
   const facadeMap = facadeWindowTexture(batchSeed, facadeStyle);
-  const nightTints = [0xc88962, 0x6b9dcc, 0xb98e6b, 0x7297bf, 0xd09a6c, 0x77a8d5];
-  const nightTint = nightTints[batchSeed % nightTints.length];
+  const nightMap = facadeNightTexture(batchSeed, facadeStyle);
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeMap });
-  material.emissiveMap = facadeMap;
-  material.emissive.set(nightTint);
-  material.emissiveIntensity = fullCityMode ? 0.22 : 0;
+  material.emissiveMap = nightMap;
+  material.emissive.set(0xffffff);
+  material.emissiveIntensity = fullCityMode ? 0.06 : 0;
   // Full City massing is built from one merged Lambert material per street batch.
   // Register those materials with the night pass so their broad side faces retain
   // a readable silhouette instead of becoming unlit black slabs at night.
-  material.userData = { fullCityMassing: true, facadeStyle, nightTint };
+  material.userData = { fullCityMassing: true, facadeStyle, nightMap };
   if (fullCityMode) windowMaterials.push(material);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.castShadow = false;
@@ -8854,11 +8922,11 @@ function updateNightGlow(amount) {
     const material = windowMaterials[index];
     if (!material) continue;
     if (material.userData?.fullCityMassing) {
-      material.emissive.set(material.userData.nightTint || 0x6b9dcc);
-      // A small day fill keeps the atlas readable on sun-facing and shadowed
-      // walls alike; night adds a warm/cool city glow without flattening the
-      // window rhythm on the textured near facades.
-      material.emissiveIntensity = 0.22 + night * 0.52;
+      material.emissive.set(0xffffff);
+      // Keep the day fill nearly off; the night map itself contains sparse
+      // warm/cool windows so dark wall area remains dark and inhabited bays
+      // read as discrete lights instead of a whole-building tint.
+      material.emissiveIntensity = 0.06 + night * 1.18;
       material.needsUpdate = true;
       continue;
     }
