@@ -735,16 +735,18 @@ function getSuggestedCameraPoses() {
       const length = Math.hypot(dx, dz) || 1;
       const dirX = dx / length;
       const dirZ = dz / length;
-      const cameraDistance = Math.min(28, length * 0.16);
-      const targetDistance = Math.min(length - 18, Math.max(92, length * 0.55));
-      const curbOffset = 8;
+      // Hyde's measured low-grade station keeps both curbs in-frame while
+      // retaining the local hill rise for a grounded near-to-far street read.
+      const cameraDistance = Math.min(40, length - 1);
+      const targetDistance = Math.min(80, length - 18);
+      const curbOffset = 4;
       const cameraX = low.x + dirX * cameraDistance - dirZ * curbOffset;
       const cameraZ = low.z + dirZ * cameraDistance + dirX * curbOffset;
       const targetX = low.x + dirX * targetDistance;
       const targetZ = low.z + dirZ * targetDistance;
       street = makeCameraPose(
-        [cameraX, 2.1, cameraZ],
-        [targetX, 2.2, targetZ],
+        [cameraX, 7, cameraZ],
+        [targetX, 1, targetZ],
         true,
       );
       canyon = makeCameraPose(
@@ -6516,11 +6518,40 @@ function reseedFullCityLife(focus) {
     cityRoot.add(vehicle.mesh);
   }
   createPedestrianSystem(roads);
-  for (let i = 0; i < Math.min(4, trafficState.vehicles.length, focalTrafficPaths.length); i += 1) {
+  // Stage the nearest cars in the camera's travel direction. The old fixed
+  // offsets were authored around the stream focus and could put a vehicle
+  // behind the camera (or directly across its near clip) when a pose looked
+  // back along a path. Use camera/target progress on each path so this stays
+  // correct for either one-way direction and arbitrary orbit poses.
+  const cameraPoint = camera ? { x: camera.position.x, z: camera.position.z } : focus;
+  const targetPoint = controls ? { x: controls.target.x, z: controls.target.z } : focus;
+  const orientFocalPath = (focal) => {
+    const cameraS = closestProgressOnPoints(focal.path.points, cameraPoint).s;
+    const targetS = closestProgressOnPoints(focal.path.points, targetPoint).s;
+    const direction = Math.sign(targetS - cameraS) || 1;
+    const availableAhead = direction > 0 ? focal.path.length - cameraS : cameraS;
+    return { ...focal, cameraS, targetS, direction, availableAhead };
+  };
+  const stagePathsAhead = (paths, minimumAhead) => {
+    const oriented = paths.map(orientFocalPath).sort((a, b) => a.distance - b.distance);
+    const eligible = oriented.filter((focal) => focal.availableAhead >= minimumAhead);
+    return eligible.length ? eligible : oriented;
+  };
+  const stagedVehiclePaths = stagePathsAhead(focalTrafficPaths, 23);
+  for (let i = 0; i < Math.min(4, trafficState.vehicles.length, stagedVehiclePaths.length); i += 1) {
     const vehicle = trafficState.vehicles[i];
-    const focal = focalTrafficPaths[i % Math.min(2, focalTrafficPaths.length)];
+    const focal = stagedVehiclePaths[i % Math.min(2, stagedVehiclePaths.length)];
     vehicle.path = focal.path;
-    vehicle.s = THREE.MathUtils.clamp(focal.s - 28 + i * 17, 0.5, focal.path.length - 0.5);
+    // Keep opposing path directions separated as buildPaths shares the road
+    // centerline; a per-vehicle lead avoids two staged meshes occupying the
+    // same world point while retaining a 22m+ camera clearance.
+    const leadDistance = 22 + i * 24;
+    const safeLead = Math.min(leadDistance, Math.max(8, focal.availableAhead - 1));
+    vehicle.s = THREE.MathUtils.clamp(
+      focal.cameraS + focal.direction * safeLead,
+      0.5,
+      focal.path.length - 0.5,
+    );
     const pose = pathPosition(vehicle.path, vehicle.s);
     vehicle.mesh.position.copy(pose.position);
     vehicle.mesh.rotation.set(0, pose.heading, 0);
@@ -6528,11 +6559,18 @@ function reseedFullCityLife(focus) {
   const focalPedestrianPaths = pedestrianState
     .map((person) => ({ path: person.path, ...closestProgressOnPoints(person.path.points, focus) }))
     .sort((a, b) => a.distance - b.distance);
-  for (let i = 0; i < Math.min(6, pedestrianState.length, focalPedestrianPaths.length); i += 1) {
+  const stagedPedestrianPaths = stagePathsAhead(focalPedestrianPaths, 18);
+  for (let i = 0; i < Math.min(6, pedestrianState.length, stagedPedestrianPaths.length); i += 1) {
     const person = pedestrianState[i];
-    const focal = focalPedestrianPaths[i % Math.min(2, focalPedestrianPaths.length)];
+    const focal = stagedPedestrianPaths[i % Math.min(2, stagedPedestrianPaths.length)];
     person.path = focal.path;
-    person.s = THREE.MathUtils.clamp(focal.s - 30 + i * 4.5, 0.5, focal.path.length - 0.5);
+    const leadDistance = 16 + Math.floor(i / 2) * 14;
+    const safeLead = Math.min(leadDistance, Math.max(8, focal.availableAhead - 1));
+    person.s = THREE.MathUtils.clamp(
+      focal.cameraS + focal.direction * safeLead,
+      0.5,
+      focal.path.length - 0.5,
+    );
     const pose = pointAlongPath(person.path.points, person.s);
     person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     person.mesh.rotation.y = pose.heading;
@@ -7028,7 +7066,7 @@ function createPedestrianAvatar(palette) {
   const right = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.45, 0.15), legMaterial);
   right.position.set(0.1, 0.225, 0);
   legs.add(left, right);
-  group.add(legs);
+  group.add(body, legs);
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(0.14, 10, 8),
     new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.65 }),
