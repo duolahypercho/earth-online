@@ -15,7 +15,7 @@ import { createSanFranciscoStreaming } from './streaming.js';
 import { createStreamedAgentSystem } from './streamed-agents.js';
 import { createSanFranciscoExpansion } from './sf-expansion.js';
 import { SIGNAL_PERIOD } from './signals.js';
-import { createCityShift } from './gameplay.js';
+import { createCityShift, createStreetHeat } from './gameplay.js';
 import { createHud } from './ui.js';
 import { createPlayerAvatar, animatePlayerAvatar, setAvatarLook } from './player.js';
 import { createLifeSim } from './lifesim.js';
@@ -758,6 +758,7 @@ function resetPerformanceTelemetry() {
 let postProcessingActive = false;
 let hud;
 let cityShift;
+let streetHeat;
 
 function getRenderQualitySnapshot() {
   const profile = renderProfiles[renderQuality.mode];
@@ -1020,6 +1021,7 @@ hud = createHud({
   },
   onRestartGame: () => {
     cityShift?.restart();
+    streetHeat?.restart();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Shift reset · follow the amber beacon to the Welcome Center.');
   },
@@ -1275,6 +1277,18 @@ cityShift = createCityShift({
   scene,
   city,
   onAdvance: ({ message }) => {
+    hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
+    hud?.setMessage(message);
+  },
+});
+streetHeat = createStreetHeat({
+  scene,
+  // Sampling is throttled inside the gameplay layer so the authored traffic
+  // snapshot remains a cheap presentation signal instead of a new hot-loop
+  // dependency.
+  getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
+  onEvent: ({ message, score }) => {
+    if (score) cityShift?.awardBonus?.(score);
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);
   },
@@ -2850,9 +2864,17 @@ function exitInterior() {
 function updateInteraction() {
   if (traffic.isPlayerDriving?.()) {
     const drivingState = traffic.getPlayerVehicleState?.();
+    const heatState = streetHeat?.getState?.();
+    const heatLabel = heatState?.pursuitActive
+      ? ` · HEAT ${heatState.level}`
+      : heatState?.heat > 0
+        ? ` · HEAT ${heatState.heat}`
+        : '';
     hud.setInteraction({
-      label: `DRIVING / ${(drivingState?.class || 'CAR').toUpperCase()} / ${Math.round(drivingState?.speed || 0)} KM/H`,
-      prompt: 'E / TAP  EXIT · WASD DRIVE',
+      label: `DRIVING / ${(drivingState?.class || 'CAR').toUpperCase()} / ${Math.round(drivingState?.speed || 0)} KM/H${heatLabel}`,
+      prompt: heatState?.pursuitActive
+        ? 'WASD DRIVE · BRAKE TO LOSE TAIL'
+        : 'E / TAP  EXIT · WASD DRIVE',
       enabled: true,
     });
     return;
@@ -3039,6 +3061,7 @@ function startExperience() {
   app?.classList.add('is-live');
   canvas.focus({ preventScroll: true });
   cityShift?.start();
+  streetHeat?.start();
   hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
   const featured = city.getFeaturedPortal?.(controls.target);
   hud.setMessage(
@@ -3112,6 +3135,19 @@ function frame(now) {
   pedestrians.update?.(motionDt, elapsed);
   profileMark('pedestrians');
   const gameState = cityShift?.update?.(motionDt, controls.target, controls.activePortal);
+  const drivingState = traffic.isPlayerDriving?.()
+    ? traffic.getPlayerVehicleState?.()
+    : null;
+  const streetHeatState = streetHeat?.update?.(motionDt, {
+    driving: Boolean(drivingState),
+    speed: drivingState?.speed ?? 0,
+    position: drivingState?.position ?? controls.target,
+    playerVehicleId: drivingState?.index ?? null,
+  });
+  const displayedGameState = gameState && streetHeatState
+    && (streetHeatState.pursuitActive || streetHeatState.heat > 0)
+    ? { ...gameState, hint: streetHeatState.hint }
+    : gameState;
   if (!cachedStreamingStats
     || elapsed - hudStatsElapsed >= HUD_STATS_INTERVAL
     || hudStatsFocusSector !== focusSectorKey) {
@@ -3143,7 +3179,7 @@ function frame(now) {
     mapX: THREE.MathUtils.clamp((controls.target.x / 5760 + 0.5) * 100, 4, 96),
     mapY: THREE.MathUtils.clamp((controls.target.z / 5760 + 0.5) * 100, 4, 96),
   };
-  hud.update?.(frameDelta, elapsed, gameState, mapState);
+  hud.update?.(frameDelta, elapsed, displayedGameState, mapState);
   updateInteraction();
   // The city owns weather-aware materials and particles; this pass owns the
   // shared light/fog/exposure crossfade and runs after city.update(), which
@@ -3198,6 +3234,7 @@ window.__SF_SIM__ = {
   streaming,
   expansion,
   cityShift,
+  streetHeat,
   staticCityRendering,
   hud,
   setRenderQuality,
@@ -3281,6 +3318,9 @@ window.__SF_SIM__ = {
   },
   getInteractionState() {
     return getQaInteractionState();
+  },
+  getStreetHeatState() {
+    return streetHeat?.getState?.() ?? null;
   },
   get renderQuality() {
     return {
