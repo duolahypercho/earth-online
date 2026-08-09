@@ -2600,32 +2600,16 @@ function clearFootprintFromStreets(ring, building) {
   return cleared;
 }
 
-function roadSurfaceY(x, z, flatY = null) {
-  if (flatY != null && Number.isFinite(flatY)) return flatY;
+function roadSurfaceY(x, z) {
   return elevationAt(x, z) + roadSurfaceLift();
 }
 
-function applyTerrainToMesh(mesh, options = {}) {
+function applyTerrainToMesh(mesh) {
   const positions = mesh.geometry.attributes.position;
-  if (options.flat && positions.count > 0) {
-    // Keep junction patches planar — per-vertex elevation tilts them into ramps.
-    let sx = 0;
-    let sz = 0;
-    for (let i = 0; i < positions.count; i += 1) {
-      sx += positions.getX(i);
-      sz += positions.getZ(i);
-    }
-    const inv = 1 / positions.count;
-    const y = elevationAt(sx * inv, sz * inv) + roadSurfaceLift();
-    for (let i = 0; i < positions.count; i += 1) {
-      positions.setY(i, y);
-    }
-  } else {
-    for (let i = 0; i < positions.count; i += 1) {
-      const x = positions.getX(i);
-      const z = positions.getZ(i);
-      positions.setY(i, elevationAt(x, z) + roadSurfaceLift());
-    }
+  for (let i = 0; i < positions.count; i += 1) {
+    const x = positions.getX(i);
+    const z = positions.getZ(i);
+    positions.setY(i, elevationAt(x, z) + roadSurfaceLift());
   }
   positions.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
@@ -2959,8 +2943,9 @@ function createGround(regionPoints) {
   for (const point of regionPoints) flat.push(point.x, point.z);
   const spanX = Math.max(40, bounds.maxX - bounds.minX);
   const spanZ = Math.max(40, bounds.maxZ - bounds.minZ);
-  // Keep Full City land coarse for FPS; deep groundSink (below) clears asphalt.
-  const cell = THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 48);
+  // Keep Full City land coarse for FPS while tightening the shoreline/road
+  // interpolation enough to follow the fine terrain ribbons.
+  const cell = THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 24);
   const cols = Math.max(8, Math.ceil(spanX / cell));
   const rows = Math.max(8, Math.ceil(spanZ / cell));
   const positions = [];
@@ -2971,8 +2956,8 @@ function createGround(regionPoints) {
   const highColor = new THREE.Color(0x6d7874);
   const color = new THREE.Color();
   const heightSamples = [];
-  // Mild sink so coarse land triangles don't z-fight asphalt; deep pits look like
-  // teal canyons under floating ribbons from street-level cameras.
+  // Keep coarse land close to the fine terrain surface; tighter cells above
+  // prevent a steep triangle from overtopping the road without sinking lots.
   const groundSink = fullCityMode ? 0.02 : 0.04;
   const noise = (x, z) => {
     const value = Math.sin(x * 0.018 + z * 0.023) * 4.71
@@ -3008,10 +2993,15 @@ function createGround(regionPoints) {
       const b = a + 1;
       const c = a + (cols + 1);
       const d = c + 1;
-      const land = [heightSamples[a], heightSamples[b], heightSamples[c], heightSamples[d]]
-        .filter((value) => value > SEA_LEVEL_Y).length;
-      if (land < 2) continue;
-      indices.push(a, c, b, b, c, d);
+      const land = (index) => heightSamples[index] > SEA_LEVEL_Y;
+      if (!fullCityMode) {
+        const landCount = [a, b, c, d].filter(land).length;
+        if (landCount >= 2) indices.push(a, c, b, b, c, d);
+      } else {
+        // Full City keeps only all-land cells; mixed corners otherwise paint
+        // diagonal slabs over the bay. The shoreline support fills this edge.
+        if (land(a) && land(b) && land(c) && land(d)) indices.push(a, c, b, b, c, d);
+      }
     }
   }
   const geometry = new THREE.BufferGeometry();
@@ -3033,6 +3023,131 @@ function createGround(regionPoints) {
   ground.renderOrder = fullCityMode ? -2 : 0;
   ground.userData = { type: 'ground' };
   return ground;
+}
+
+function createShorelineSupport(regionPoints) {
+  if (!fullCityMode || !regionPoints || regionPoints.length < 3) return null;
+  const flat = [];
+  for (const point of regionPoints) flat.push(point.x, point.z);
+  const maxLandInset = 24;
+  const minLandInset = 4;
+  const waterOffset = 5;
+  const probeOffset = 8;
+  const baseY = SEA_LEVEL_Y - 0.12;
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  const topColor = new THREE.Color(0x7e7a70);
+  const wallColor = new THREE.Color(0x4d514f);
+  const pushVertex = (point, y, color) => {
+    const index = positions.length / 6;
+    positions.push(point.x, y, point.z, color.r, color.g, color.b);
+    return index;
+  };
+  for (let i = 0; i < regionPoints.length; i += 1) {
+    const rawA = regionPoints[i];
+    const rawB = regionPoints[(i + 1) % regionPoints.length];
+    const rawLength = Math.hypot(rawB.x - rawA.x, rawB.z - rawA.z);
+    const edgeSegments = Math.max(1, Math.ceil(rawLength / 24));
+    for (let edgePart = 0; edgePart < edgeSegments; edgePart += 1) {
+      const t0 = edgePart / edgeSegments;
+      const t1 = (edgePart + 1) / edgeSegments;
+      const a = edgePart === 0
+        ? rawA
+        : { x: rawA.x + (rawB.x - rawA.x) * t0, z: rawA.z + (rawB.z - rawA.z) * t0 };
+      const b = edgePart === edgeSegments - 1
+        ? rawB
+        : { x: rawA.x + (rawB.x - rawA.x) * t1, z: rawA.z + (rawB.z - rawA.z) * t1 };
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.4) continue;
+      const nx = -dz / length;
+      const nz = dx / length;
+      const midpoint = { x: (a.x + b.x) * 0.5, z: (a.z + b.z) * 0.5 };
+      const insidePlus = pointInFlatRing(
+        { x: midpoint.x + nx * probeOffset, z: midpoint.z + nz * probeOffset },
+        flat,
+      );
+      const insideMinus = pointInFlatRing(
+        { x: midpoint.x - nx * probeOffset, z: midpoint.z - nz * probeOffset },
+        flat,
+      );
+      if (insidePlus === insideMinus) continue;
+      const landSign = insidePlus ? 1 : -1;
+      const landNx = nx * landSign;
+      const landNz = nz * landSign;
+      const waterNx = -landNx;
+      const waterNz = -landNz;
+      const landEdge = (point) => {
+        for (let inset = maxLandInset; inset >= minLandInset; inset = inset === minLandInset
+          ? minLandInset - 1
+          : Math.max(minLandInset, inset * 0.5)) {
+          const candidate = { x: point.x + landNx * inset, z: point.z + landNz * inset };
+          if (pointInFlatRing(candidate, flat)) return candidate;
+        }
+        return null;
+      };
+      const landA = landEdge(a);
+      const landB = landEdge(b);
+      if (!landA || !landB) continue;
+      const waterA = { x: a.x + waterNx * waterOffset, z: a.z + waterNz * waterOffset };
+      const waterB = { x: b.x + waterNx * waterOffset, z: b.z + waterNz * waterOffset };
+      const landAElevation = elevationAt(landA.x, landA.z);
+      const landBElevation = elevationAt(landB.x, landB.z);
+      if (landAElevation > 12 || landBElevation > 12) continue;
+      const aTopY = Math.max(SEA_LEVEL_Y + 0.4, landAElevation + roadSurfaceLift() - 0.04);
+      const bTopY = Math.max(SEA_LEVEL_Y + 0.4, landBElevation + roadSurfaceLift() - 0.04);
+      const base = positions.length / 6;
+      pushVertex(landA, aTopY, topColor);
+      pushVertex(landB, bTopY, topColor);
+      pushVertex(waterA, aTopY, topColor);
+      pushVertex(waterB, bTopY, topColor);
+      pushVertex(waterA, baseY, wallColor);
+      pushVertex(waterB, baseY, wallColor);
+      if (landSign > 0) {
+        indices.push(
+          base, base + 1, base + 2,
+          base + 1, base + 3, base + 2,
+          base + 2, base + 3, base + 4,
+          base + 3, base + 5, base + 4,
+        );
+      } else {
+        indices.push(
+          base, base + 2, base + 1,
+          base + 1, base + 2, base + 3,
+          base + 2, base + 4, base + 3,
+          base + 3, base + 4, base + 5,
+        );
+      }
+    }
+  }
+  if (!positions.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  const xyz = [];
+  const rgb = [];
+  for (let i = 0; i < positions.length; i += 6) {
+    xyz.push(positions[i], positions[i + 1], positions[i + 2]);
+    rgb.push(positions[i + 3], positions[i + 4], positions[i + 5]);
+  }
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(xyz, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(rgb, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.98,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const support = new THREE.Mesh(geometry, material);
+  support.name = 'Full City shoreline support';
+  support.renderOrder = 0.8;
+  support.receiveShadow = true;
+  support.userData = { type: 'shoreline-support', segments: indices.length / 12 };
+  return support;
 }
 
 function createWaterPlane(regionPoints) {
@@ -3884,7 +3999,10 @@ function createRoadMeshes(compilation, options = {}) {
   const surfaceParts = indexedMeshToGeometries(bundle.surface);
   for (const part of surfaceParts) {
     const mesh = new THREE.Mesh(part.geometry, makeRoadMaterial(part.materialClass, { cheap }));
-    applyTerrainToMesh(mesh, { flat: Boolean(cheap && fullCityMode) });
+    // Keep every cheap near-three vertex on the real terrain. A semantic mesh
+    // may span a steep junction; flattening it to one average Y buries one end
+    // of a hill and makes the city-wide strip/sidewalk layers disagree.
+    applyTerrainToMesh(mesh);
     // Sit above city-wide simple asphalt + pads so near three-roads wins.
     if (cheap) mesh.position.y += fullCityMode ? 0.07 : 0.06;
     mesh.castShadow = !cheap;
@@ -4034,50 +4152,81 @@ function createSimpleRoadMeshes(roads, options = {}) {
         const span = segLen || length;
         const nx = -(b.z - a.z) / span;
         const nz = (b.x - a.x) / span;
-        const a1 = { x: a.x + nx * half, z: a.z + nz * half };
-        const a2 = { x: a.x - nx * half, z: a.z - nz * half };
-        const b1 = { x: b.x + nx * half, z: b.z + nz * half };
-        const b2 = { x: b.x - nx * half, z: b.z - nz * half };
-        // Junction approach ribbons must stay planar — per-corner elevation tilts quads into ramps.
-        let flatA = null;
-        let flatB = null;
-        if (fullCityMode && aAtJunction) {
-          flatA = roadSurfaceY(points[i].x, points[i].z);
+        // Long OSM ways can span an entire hill block between nodes. Start at
+        // a short terrain step, then split only intervals whose midpoint
+        // deviates from the fine surface by more than 4 cm. This keeps flat
+        // city strips cheap while preserving a bounded grade on steep ways.
+        const dxSegment = b.x - a.x;
+        const dzSegment = b.z - a.z;
+        const initialSegments = fullCityMode ? Math.max(1, Math.ceil(segLen / 16)) : 1;
+        const subIntervals = [];
+        for (let sub = 0; sub < initialSegments; sub += 1) {
+          subIntervals.push({ t0: sub / initialSegments, t1: (sub + 1) / initialSegments });
         }
-        if (fullCityMode && bAtJunction) {
-          flatB = roadSurfaceY(points[i + 1].x, points[i + 1].z);
+        if (fullCityMode) {
+          const maxSubdivisions = 128;
+          const terrainChordError = (t0, t1) => {
+            let error = 0;
+            for (const side of [-1, 0, 1]) {
+              const p0 = { x: a.x + dxSegment * t0 + nx * half * side, z: a.z + dzSegment * t0 + nz * half * side };
+              const p1 = { x: a.x + dxSegment * t1 + nx * half * side, z: a.z + dzSegment * t1 + nz * half * side };
+              const y0 = roadSurfaceY(p0.x, p0.z);
+              const y1 = roadSurfaceY(p1.x, p1.z);
+              for (const fraction of [0.25, 0.5, 0.75]) {
+                const t = t0 + (t1 - t0) * fraction;
+                const pm = { x: a.x + dxSegment * t + nx * half * side, z: a.z + dzSegment * t + nz * half * side };
+                const chord = y0 + (y1 - y0) * fraction;
+                error = Math.max(error, Math.abs(chord - roadSurfaceY(pm.x, pm.z)));
+              }
+            }
+            return error;
+          };
+          for (let cursor = 0; cursor < subIntervals.length && subIntervals.length < maxSubdivisions; cursor += 1) {
+            const interval = subIntervals[cursor];
+            if (terrainChordError(interval.t0, interval.t1) <= 0.04) continue;
+            const mid = (interval.t0 + interval.t1) * 0.5;
+            subIntervals.splice(cursor, 1, { t0: interval.t0, t1: mid }, { t0: mid, t1: interval.t1 });
+            cursor -= 1;
+          }
         }
-        if (flatA != null && flatB != null) {
-          const merged = (flatA + flatB) * 0.5;
-          flatA = merged;
-          flatB = merged;
+        for (const interval of subIntervals) {
+          const t0 = interval.t0;
+          const t1 = interval.t1;
+          const subA = t0 <= 0
+            ? a
+            : { x: a.x + dxSegment * t0, z: a.z + dzSegment * t0 };
+          const subB = t1 >= 1
+            ? b
+            : { x: a.x + dxSegment * t1, z: a.z + dzSegment * t1 };
+          const a1 = { x: subA.x + nx * half, z: subA.z + nz * half };
+          const a2 = { x: subA.x - nx * half, z: subA.z - nz * half };
+          const b1 = { x: subB.x + nx * half, z: subB.z + nz * half };
+          const b2 = { x: subB.x - nx * half, z: subB.z - nz * half };
+          positions.push(
+            a1.x, roadSurfaceY(a1.x, a1.z), a1.z,
+            a2.x, roadSurfaceY(a2.x, a2.z), a2.z,
+            b1.x, roadSurfaceY(b1.x, b1.z), b1.z,
+            b2.x, roadSurfaceY(b2.x, b2.z), b2.z,
+          );
+          indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
+          vertexOffset += 4;
         }
-        positions.push(
-          a1.x, roadSurfaceY(a1.x, a1.z, flatA), a1.z,
-          a2.x, roadSurfaceY(a2.x, a2.z, flatA), a2.z,
-          b1.x, roadSurfaceY(b1.x, b1.z, flatB), b1.z,
-          b2.x, roadSurfaceY(b2.x, b2.z, flatB), b2.z,
-        );
-        indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3);
-        vertexOffset += 4;
       }
     }
     if (!positions.length) continue;
     const meshGeometry = new THREE.BufferGeometry();
     meshGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    if (fullCityMode) {
-      const normals = new Float32Array(positions.length);
-      for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
-      meshGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    } else {
+    if (!fullCityMode) {
       const uvs = [];
       const repeat = Math.max(1, Math.floor(entry.roads.reduce((sum, road) => sum + roadLengthOf(road), 0) / 90));
       for (let i = 0; i < vertexOffset; i += 1) uvs.push(i % 2 === 0 ? 0 : 1, ((i / 4) * repeat) % 200);
       meshGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       meshGeometry.setIndex(indices);
-      meshGeometry.computeVertexNormals();
     }
     if (fullCityMode) meshGeometry.setIndex(indices);
+    // Terrain-following strips need normals from the sloped triangles; a
+    // constant up normal makes the new grade read as a lighting seam.
+    meshGeometry.computeVertexNormals();
     meshGeometry.computeBoundingBox();
     meshGeometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(meshGeometry, material);
@@ -9712,6 +9861,8 @@ async function buildCity() {
     cityRoot.add(createWaterPlane(terrainPoints));
     if (fullCityMode) cityRoot.add(createBayReflections());
     cityRoot.add(createGround(terrainPoints));
+    const shorelineSupport = createShorelineSupport(terrainPoints);
+    if (shorelineSupport) cityRoot.add(shorelineSupport);
 
     streamRoadById = new Map((cityData.roads || usedRoads).map((road) => [road.id, road]));
     let activeRoads = usedRoads;
