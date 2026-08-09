@@ -709,14 +709,24 @@ function getSuggestedCameraPoses() {
 
   if (fullCityMode) {
     const j = PREBUILT_SPAWN;
+    // Keep the full-city beauty cameras on the Jessie Street sidewalk. The
+    // previous offsets ([j.x - 28, j.z - 36]) landed inside the large OSM
+    // footprint immediately northwest of the spawn, so its extruded facade
+    // read as a vertical road/building slab across Street and Canyon frames.
+    // This curb-side anchor is outside that footprint and looks along Jessie
+    // toward the next block, preserving continuous asphalt + sidewalk bands.
+    const sidewalkX = j.x + 14;
+    const sidewalkZ = j.z + 28;
+    const roadLookX = j.x + 98;
+    const roadLookZ = j.z + 108;
     street = makeCameraPose(
-      [j.x - 28, 10, j.z - 36],
-      [j.x + 40, 1, j.z + 50],
+      [sidewalkX, 7, sidewalkZ],
+      [roadLookX, 3.2, roadLookZ],
       true,
     );
     canyon = makeCameraPose(
-      [j.x - 18, 36, j.z - 28],
-      [j.x + 8, 1, j.z + 10],
+      [sidewalkX, 28, sidewalkZ],
+      [roadLookX, 3.2, roadLookZ],
       true,
     );
   }
@@ -2824,8 +2834,20 @@ function createMergedFootprintBuildings(buildings) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // Reuse the deterministic atlas on the merged footprint path. This keeps
+  // distant city blocks inexpensive (one shared texture/material per batch)
+  // while preventing the Full City fallback from reading as blank prisms.
+  projectBuildingFacadeUVs(geometry);
+  const facadeMap = facadeWindowTexture(0, 'plaster');
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeMap });
+  material.emissiveMap = facadeMap;
+  material.emissive.set(0x344a64);
+  material.emissiveIntensity = fullCityMode ? 0.18 : 0;
+  // Full City massing is built from one merged Lambert material per street batch.
+  // Register those materials with the night pass so their broad side faces retain
+  // a readable silhouette instead of becoming unlit black slabs at night.
+  material.userData = { fullCityMassing: true };
+  if (fullCityMode) windowMaterials.push(material);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.castShadow = false;
   mesh.receiveShadow = false;
@@ -4061,7 +4083,6 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
     if (entry.roadIds.size < 2 || entry.maxHalf <= 0) continue;
     const hull = convexHullXZ(entry.corners);
     if (hull.length < 3) continue;
-    const y = elevationAt(entry.point.x, entry.point.z) + roadSurfaceLift();
     const ring = hull.map((point) => new THREE.Vector2(point.x, point.z));
     let faces;
     try {
@@ -4072,7 +4093,10 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
     if (!faces?.length) continue;
     const base = vertexOffset;
     for (const point of hull) {
-      positions.push(point.x, y, point.z);
+      // Follow the terrain at every hull corner. A single center elevation
+      // leaves a broad pad floating or buried on SF grades, which projects as
+      // a thick road wall when the camera looks across the slope.
+      positions.push(point.x, roadSurfaceY(point.x, point.z), point.z);
     }
     for (const tri of faces) {
       indices.push(base + tri[0], base + tri[1], base + tri[2]);
@@ -4090,9 +4114,7 @@ function createSimpleJunctionPads(roads, junctionHalfByKey = new Map()) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
-  const normals = new Float32Array(positions.length);
-  for (let n = 1; n < normals.length; n += 3) normals[n] = 1;
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.computeVertexNormals();
   const material = fullCityMode
     ? new THREE.MeshBasicMaterial({
       color: 0x404034,
@@ -8822,6 +8844,15 @@ function updateNightGlow(amount) {
   for (let index = 0; index < windowMaterials.length; index += 1) {
     const material = windowMaterials[index];
     if (!material) continue;
+    if (material.userData?.fullCityMassing) {
+      material.emissive.set(0x344a64);
+      // A small day fill keeps the atlas readable on sun-facing and shadowed
+      // walls alike; night adds a restrained blue city glow without flattening
+      // the warm/cool window cues on the textured near facades.
+      material.emissiveIntensity = 0.18 + night * 0.62;
+      material.needsUpdate = true;
+      continue;
+    }
     const tone = index % 5;
     const warm = tone === 0 || tone === 2 || tone === 4;
     const cool = tone === 1;
