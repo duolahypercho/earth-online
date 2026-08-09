@@ -642,7 +642,20 @@ const AUTHORED_MASSING_BY_SECTOR = Object.freeze({
     maxHeight: 160,
     fillRatio: 0.85,
     grade: 0.01,
-    landmarkClearance: Object.freeze({ x: 40, z: 90, radius: 48 }),
+    // Embarcadero's authored landmarks now sit on the west-side C3 vista at
+    // local (-120,0) / (-126,48). Keep the generated setback shell out of
+    // that shared sightline; the previous east-frontage clearance no longer
+    // covered the moved Salesforce anchor.
+    landmarkClearance: Object.freeze({ x: -120, z: 24, radius: 34 }),
+    // The fixed C3 ray crosses the four z≈32 lot slots before reaching the
+    // west-side anchors. Keep those exact generated shells out of the
+    // landmark sightline without blanketing the surrounding Embarcadero grid.
+    landmarkClearances: Object.freeze([
+      Object.freeze({ x: -96, z: 32, radius: 38 }),
+      Object.freeze({ x: -32, z: 32, radius: 38 }),
+      Object.freeze({ x: 32, z: 32, radius: 38 }),
+      Object.freeze({ x: 96, z: 32, radius: 38 }),
+    ]),
   }),
   '2:-1': Object.freeze({
     source: 'authored-soma-design-plan',
@@ -789,7 +802,10 @@ export function generateDistrictMassing(descriptor, sectorSize, quality) {
 
   const buildings = [];
   let candidateIndex = 0;
-  const landmarkClearance = profile.landmarkClearance;
+  const landmarkClearances = [
+    ...(profile.landmarkClearance ? [profile.landmarkClearance] : []),
+    ...(profile.landmarkClearances || []),
+  ];
 
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
@@ -856,9 +872,9 @@ export function generateDistrictMassing(descriptor, sectorSize, quality) {
 
       const slotX = -sectorSize * 0.5 + blockStep * (column + 0.5);
       const slotZ = -sectorSize * 0.5 + blockStep * (row + 0.5);
-      if (landmarkClearance
-        && Math.hypot(slotX - landmarkClearance.x, slotZ - landmarkClearance.z)
-          < landmarkClearance.radius) continue;
+      if (landmarkClearances.some((clearance) => (
+        Math.hypot(slotX - clearance.x, slotZ - clearance.z) < clearance.radius
+      ))) continue;
       const xSlack = Math.max(0, maxBlockSize - width);
       const zSlack = Math.max(0, maxBlockSize - depth);
       const x = slotX + (

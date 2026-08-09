@@ -1978,10 +1978,10 @@ const TIME_OF_DAY_STOPS = Object.freeze([
   }),
   Object.freeze({
     hour: 22,
-    light: 0.08,
-    exposure: 0.5,
+    light: 0.14,
+    exposure: 0.62,
     sunColor: 0x8fa3c9,
-    hemisphere: 0.3,
+    hemisphere: 0.48,
     skyTop: 0x111a2a,
     skyHorizon: 0x22314a,
     skySun: 0xb7c6e4,
