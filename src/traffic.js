@@ -1713,6 +1713,15 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   let focusX = 0;
   let focusZ = 0;
   let focusRadiusSquared = Infinity;
+  const pursuitResponder = {
+    active: false,
+    targetIndex: -1,
+    playerVehicleId: null,
+    playerX: 0,
+    playerZ: 0,
+    level: 1,
+    distance: null,
+  };
 
   // Muni coach curb program: per-direction stop lines along each road, far
   // enough from intersections that a dwelling bus never blocks the box. The
@@ -1872,6 +1881,8 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           pullOutBlockedSince: null,
           hazardUntil: 0,
           mergeSignalUntil: 0,
+          pursuitResponder: false,
+          pursuitLevel: 0,
         });
         placed = true;
         placedParked = spawnParked;
@@ -2932,6 +2943,18 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
     for (const v of vehicles) {
       let road = roads[v.road];
+      const pursuitResponderActive = pursuitResponder.active
+        && v === vehicles[pursuitResponder.targetIndex]
+        && !v.playerControlled
+        && !v.remoteControlled;
+      if (pursuitResponderActive) {
+        v.pursuitResponder = true;
+        v.pursuitLevel = pursuitResponder.level;
+        const userData = v.mesh.root.userData || (v.mesh.root.userData = {});
+        userData.pursuitResponder = true;
+        userData.pursuitLevel = pursuitResponder.level;
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.42);
+      }
       const combatData = v.mesh.root.userData || {};
       const combatBrakeUntil = Number(combatData.combatBrakeUntil);
       const combatBrakeActive = Number.isFinite(combatBrakeUntil)
@@ -3000,6 +3023,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const targetRoad = v.turn ? roads[v.turn.route.road] : road;
       let desired = roadCruise(v, targetRoad)
         * (1 + 0.035 * Math.sin(t * 0.31 + v.bobPhase));
+      if (pursuitResponderActive && !v.parked) {
+        const roadLimit = targetRoad.speedLimit ?? v.cruise;
+        desired = Math.max(
+          desired,
+          Math.min(v.cruise * 1.28, roadLimit * 1.22),
+        );
+      }
       let holdS = null;
       let curbHoldS = null;
       let curbApproach = 0;
@@ -3822,6 +3852,127 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     focusRadiusSquared = safeRadius * safeRadius;
   }
 
+  function clearPursuitResponder() {
+    for (const vehicle of vehicles) {
+      if (!vehicle.pursuitResponder) continue;
+      vehicle.pursuitResponder = false;
+      vehicle.pursuitLevel = 0;
+      const userData = vehicle.mesh.root.userData || {};
+      userData.pursuitResponder = false;
+      userData.pursuitLevel = 0;
+    }
+    pursuitResponder.active = false;
+    pursuitResponder.targetIndex = -1;
+    pursuitResponder.playerVehicleId = null;
+    pursuitResponder.distance = null;
+  }
+
+  function setPursuitResponder({
+    active = false,
+    position = null,
+    playerVehicleId = null,
+    level = 1,
+  } = {}) {
+    if (!active || !Number.isFinite(position?.x) || !Number.isFinite(position?.z)) {
+      clearPursuitResponder();
+      return getPursuitResponder();
+    }
+    pursuitResponder.active = true;
+    pursuitResponder.playerVehicleId = Number.isInteger(playerVehicleId) ? playerVehicleId : null;
+    pursuitResponder.playerX = position.x;
+    pursuitResponder.playerZ = position.z;
+    pursuitResponder.level = Math.max(1, Math.floor(Number(level) || 1));
+    const current = vehicles[pursuitResponder.targetIndex];
+    const currentValid = current
+      && current.mesh.root.visible
+      && !current.playerControlled
+      && !current.remoteControlled
+      && !current.parked
+      && current.cls !== 'bike'
+      && current.cls !== 'bus'
+      && current.cls !== 'truck';
+    if (!currentValid) {
+      if (current?.pursuitResponder) {
+        current.pursuitResponder = false;
+        current.pursuitLevel = 0;
+        current.mesh.root.userData.pursuitResponder = false;
+        current.mesh.root.userData.pursuitLevel = 0;
+      }
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+      for (let index = 0; index < vehicles.length; index += 1) {
+        const vehicle = vehicles[index];
+        if (index === pursuitResponder.playerVehicleId
+          || !vehicle.mesh.root.visible
+          || vehicle.playerControlled
+          || vehicle.remoteControlled
+          || vehicle.parked
+          || vehicle.cls === 'bike'
+          || vehicle.cls === 'bus'
+          || vehicle.cls === 'truck') continue;
+        const dx = vehicle.mesh.root.position.x - pursuitResponder.playerX;
+        const dz = vehicle.mesh.root.position.z - pursuitResponder.playerZ;
+        const distanceSquared = dx * dx + dz * dz;
+        const distance = Math.sqrt(distanceSquared);
+        const toPlayerX = -dx / Math.max(0.1, distance);
+        const toPlayerZ = -dz / Math.max(0.1, distance);
+        const facingPlayer = Math.sin(vehicle.mesh.root.rotation.y) * toPlayerX
+          + Math.cos(vehicle.mesh.root.rotation.y) * toPlayerZ;
+        const pursuitScore = distance * (facingPlayer > 0.1 ? 0.52 : 1.2);
+        if (pursuitScore < bestDistance) {
+          bestDistance = pursuitScore;
+          bestIndex = index;
+        }
+      }
+      pursuitResponder.targetIndex = bestIndex;
+    }
+    const target = vehicles[pursuitResponder.targetIndex];
+    if (!target) {
+      pursuitResponder.active = false;
+      pursuitResponder.distance = null;
+      return getPursuitResponder();
+    }
+    target.pursuitResponder = true;
+    target.pursuitLevel = pursuitResponder.level;
+    const userData = target.mesh.root.userData || (target.mesh.root.userData = {});
+    userData.pursuitResponder = true;
+    userData.pursuitLevel = pursuitResponder.level;
+    pursuitResponder.distance = Math.hypot(
+      target.mesh.root.position.x - pursuitResponder.playerX,
+      target.mesh.root.position.z - pursuitResponder.playerZ,
+    );
+    return getPursuitResponder();
+  }
+
+  function getPursuitResponder() {
+    const target = vehicles[pursuitResponder.targetIndex];
+    if (!pursuitResponder.active || !target) {
+      return {
+        active: false,
+        id: null,
+        index: null,
+        distance: null,
+        position: null,
+        level: 0,
+      };
+    }
+    const point = target.mesh.root.position;
+    const distance = Math.hypot(point.x - pursuitResponder.playerX, point.z - pursuitResponder.playerZ);
+    pursuitResponder.distance = distance;
+    return {
+      active: true,
+      id: pursuitResponder.targetIndex,
+      index: pursuitResponder.targetIndex,
+      class: target.cls,
+      label: target.identity.label,
+      distance: Math.round(distance * 10) / 10,
+      position: { x: point.x, y: point.y, z: point.z },
+      speed: Math.round(target.speed * 10) / 10,
+      level: pursuitResponder.level,
+      closing: target.speed > 0,
+    };
+  }
+
   function getDiagnostics() {
     return {
       ...diagnostics,
@@ -3855,6 +4006,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         && Number.isFinite(combatBrakeUntil)
         && combatBrakeUntil > 0
         && (combatReaction === 'brake' || combatReaction === 'staggered');
+      const pursuitResponderActive = pursuitResponder.active
+        && v === vehicles[pursuitResponder.targetIndex]
+        && v.pursuitResponder;
       const curbside = Number.isFinite(v.curbDwellUntil);
       const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
       const activeRoute = v.turn?.route || v.route;
@@ -3863,7 +4017,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (combatBrakeActive) {
+      if (pursuitResponderActive) {
+        actionKey = 'pursuit-responder';
+        actionLabel = 'Pursuit responder';
+        actionDetail = 'closing on player';
+      } else if (combatBrakeActive) {
         actionKey = 'combat-brake';
         actionLabel = 'Braking after gunfire';
         actionDetail = 'reacting to nearby fire';
@@ -3981,6 +4139,16 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
             key: 'brake',
             source: combatData.combatReactionSource || 'combat',
             remaining: null,
+          }
+          : null,
+        pursuit: pursuitResponderActive
+          ? {
+            active: true,
+            level: pursuitResponder.level,
+            distance: Math.round(Math.hypot(
+              v.mesh.root.position.x - pursuitResponder.playerX,
+              v.mesh.root.position.z - pursuitResponder.playerZ,
+            ) * 10) / 10,
           }
           : null,
       });
@@ -4199,6 +4367,8 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     getStats,
     getDiagnostics,
     getVehicleLifeSnapshot,
+    setPursuitResponder,
+    getPursuitResponder,
     getRuleProbeSample,
     setWeather,
     setNightLighting,

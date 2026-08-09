@@ -1601,6 +1601,7 @@ streetHeat = createStreetHeat({
   // snapshot remains a cheap presentation signal instead of a new hot-loop
   // dependency.
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
+  getPursuitResponder: () => traffic.getPursuitResponder?.(),
   onEvent: ({ message, score }) => {
     if (score) cityShift?.awardBonus?.(score);
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
@@ -3398,8 +3399,11 @@ function updateInteraction() {
   if (traffic.isPlayerDriving?.()) {
     const drivingState = traffic.getPlayerVehicleState?.();
     const heatState = streetHeat?.getState?.();
+    const responderDistance = Number.isFinite(heatState?.responderDistance)
+      ? ` · TAIL ${heatState.responderDistance.toFixed(1)} M`
+      : '';
     const heatLabel = heatState?.pursuitActive
-      ? ` · HEAT ${heatState.level}`
+      ? ` · HEAT ${heatState.level}${responderDistance}`
       : heatState?.heat > 0
         ? ` · HEAT ${heatState.heat}`
         : '';
@@ -3427,6 +3431,16 @@ function updateInteraction() {
     hud.setInteraction({
       label: `INTERIOR / ${controls.activePortal?.room?.userData?.interiorLabel || 'ROOM'}`,
       prompt: 'E / TAP  EXIT',
+      enabled: true,
+    });
+    return;
+  }
+  const onFootHeat = streetHeat?.getState?.();
+  if (onFootHeat?.pursuitActive && Number.isFinite(onFootHeat.responderDistance)) {
+    const responder = traffic.getPursuitResponder?.();
+    hud.setInteraction({
+      label: `${String(responder?.label || 'TRAFFIC TAIL').toUpperCase()} / TAIL ${onFootHeat.responderDistance.toFixed(1)} M`,
+      prompt: 'KEEP MOVING · BREAK CONTACT TO LOSE TAIL',
       enabled: true,
     });
     return;
@@ -3677,6 +3691,16 @@ function frame(now) {
   // streamed representative pool owns the visible crowd. Keep the core
   // walkers simulated, but do not leak them across a district seam.
   pedestrians.setFocus?.(streamingFocus, coreSimulationActive ? 280 : 32);
+  const pursuitVehicleState = traffic.isPlayerDriving?.()
+    ? traffic.getPlayerVehicleState?.()
+    : null;
+  const pursuitHeatState = streetHeat?.getState?.();
+  traffic.setPursuitResponder?.({
+    active: Boolean(pursuitHeatState?.pursuitActive),
+    position: pursuitVehicleState?.position ?? controls.target,
+    playerVehicleId: pursuitVehicleState?.index ?? null,
+    level: pursuitHeatState?.level ?? 1,
+  });
   traffic.update?.(motionDt, elapsed);
   profileMark('traffic');
   pedestrians.update?.(motionDt, elapsed);
@@ -3690,6 +3714,12 @@ function frame(now) {
     speed: drivingState?.speed ?? 0,
     position: drivingState?.position ?? controls.target,
     playerVehicleId: drivingState?.index ?? null,
+  });
+  traffic.setPursuitResponder?.({
+    active: Boolean(streetHeatState?.pursuitActive),
+    position: drivingState?.position ?? controls.target,
+    playerVehicleId: drivingState?.index ?? null,
+    level: streetHeatState?.level ?? 1,
   });
   const combatState = combat?.update?.(motionDt, {
     active: playerLayerActive

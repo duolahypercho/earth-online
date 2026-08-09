@@ -334,7 +334,7 @@ function formatHeat(value) {
  * traffic system remains the only owner of vehicle motion and collision
  * safety.
  */
-export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
+export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponder, onEvent } = {}) {
   if (!scene?.isScene) {
     throw new TypeError('createStreetHeat requires a THREE.Scene.');
   }
@@ -346,6 +346,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     level: 0,
     targetId: null,
     targetPosition: null,
+    responderId: null,
+    responderDistance: null,
     nearestDistance: null,
     nearMisses: 0,
     safeElapsed: 0,
@@ -466,6 +468,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     state.level = 0;
     state.targetId = null;
     state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
     state.nearestDistance = null;
     state.nearMisses = 0;
     state.safeElapsed = 0;
@@ -569,6 +573,35 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       state.sampleElapsed = 0;
       nearestDistance = sampleTraffic(latestPosition, playerVehicleId);
     }
+    if (state.pursuitActive) {
+      const responder = getPursuitResponder?.();
+      if (responder?.active && Number.isFinite(responder.position?.x)
+        && Number.isFinite(responder.position?.z)) {
+        state.responderId = responder.id;
+        state.responderDistance = Number.isFinite(responder.distance)
+          ? responder.distance
+          : Math.hypot(
+            responder.position.x - (latestPosition?.x ?? 0),
+            responder.position.z - (latestPosition?.z ?? 0),
+          );
+        state.targetId = responder.id;
+        state.targetPosition = {
+          x: responder.position.x,
+          z: responder.position.z,
+        };
+        nearestDistance = state.responderDistance;
+      } else {
+        state.responderId = null;
+        state.responderDistance = null;
+        if (!latestDriving) {
+          state.targetId = null;
+          state.targetPosition = null;
+        }
+      }
+    } else {
+      state.responderId = null;
+      state.responderDistance = null;
+    }
 
     const speedRisk = latestDriving
       ? THREE.MathUtils.clamp(
@@ -607,6 +640,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       state.pursuitActive = true;
       state.targetId = null;
       state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
       state.safeElapsed = 0;
       state.level = currentLevel();
       emitEvent(
@@ -639,6 +674,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       state.level = 0;
       state.targetId = null;
       state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
       state.safeElapsed = 0;
       state.heat = 0;
       emitEvent('escaped', 'Tail lost · clean getaway +420', 420);
@@ -686,6 +723,10 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       level: state.level,
       pursuitActive: state.pursuitActive,
       targetId: state.targetId,
+      responderId: state.responderId,
+      responderDistance: state.responderDistance === null
+        ? null
+        : Math.round(state.responderDistance * 10) / 10,
       nearestDistance: state.nearestDistance,
       nearMisses: state.nearMisses,
       combatHold: Math.round(state.combatHold * 10) / 10,
