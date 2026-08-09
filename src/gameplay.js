@@ -318,6 +318,9 @@ const STREET_HEAT_NEAR_MISS_RADIUS = 4.8;
 const STREET_HEAT_NEAR_MISS_COOLDOWN = 2.2;
 const STREET_HEAT_ESCAPE_WINDOW = 3.4;
 const STREET_HEAT_PURSUIT_COOL_RATE = 6.2;
+const STREET_HEAT_COMBAT_HOLD_SECONDS = 2.8;
+const STREET_HEAT_COMBAT_DECAY = 2.4;
+const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 
 function formatHeat(value) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
@@ -348,6 +351,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     safeElapsed: 0,
     sampleElapsed: STREET_HEAT_SAMPLE_INTERVAL,
     nearMissCooldown: 0,
+    combatHold: 0,
     lastEvent: null,
   };
 
@@ -423,12 +427,16 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     message = null,
     score = 0,
     notify = true,
+    source = 'street',
   } = {}) {
     const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, 100);
     if (state.status !== 'running' || delta <= 0) return getState();
     const previousHeat = state.heat;
     state.heat = THREE.MathUtils.clamp(state.heat + delta, 0, 100);
     state.safeElapsed = 0;
+    if (source === 'combat') {
+      state.combatHold = Math.max(state.combatHold, STREET_HEAT_COMBAT_HOLD_SECONDS);
+    }
     if (notify && (message || state.heat > previousHeat)) {
       emitEvent(
         kind,
@@ -463,6 +471,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     state.safeElapsed = 0;
     state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
     state.nearMissCooldown = 0;
+    state.combatHold = 0;
     state.lastEvent = null;
     latestPosition = null;
     latestSpeed = 0;
@@ -552,6 +561,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       state.targetPosition = null;
     }
     state.nearMissCooldown = Math.max(0, state.nearMissCooldown - delta);
+    state.combatHold = Math.max(0, state.combatHold - delta);
     state.sampleElapsed += delta;
 
     let nearestDistance = state.nearestDistance ?? Infinity;
@@ -576,7 +586,10 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
     } else if (latestDriving) {
       state.heat -= delta * (state.pursuitActive ? STREET_HEAT_PURSUIT_COOL_RATE : 12);
     } else {
-      state.heat -= delta * (state.pursuitActive ? 10.5 : 17);
+      const combatDecay = state.combatHold > 0
+        ? (state.pursuitActive ? STREET_HEAT_COMBAT_PURSUIT_DECAY : STREET_HEAT_COMBAT_DECAY)
+        : (state.pursuitActive ? 10.5 : 17);
+      state.heat -= delta * combatDecay;
     }
     state.heat = THREE.MathUtils.clamp(state.heat, 0, 100);
 
@@ -675,6 +688,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, onEvent } = {}) {
       targetId: state.targetId,
       nearestDistance: state.nearestDistance,
       nearMisses: state.nearMisses,
+      combatHold: Math.round(state.combatHold * 10) / 10,
+      combatActive: state.combatHold > 0,
       safeElapsed: state.safeElapsed,
       hint,
       label: state.pursuitActive ? `HEAT ${state.level}` : heat > 0 ? `HEAT ${heat}` : 'HEAT CLEAR',
@@ -717,6 +732,10 @@ const COMBAT_DOWNED_SECONDS = 2.4;
 const COMBAT_TRACER_POOL_SIZE = 8;
 const COMBAT_MUZZLE_POOL_SIZE = 4;
 const COMBAT_IMPACT_POOL_SIZE = 10;
+const COMBAT_PED_NEAR_MISS_RADIUS = 3.25;
+const COMBAT_TRAFFIC_NEAR_MISS_RADIUS = 4.4;
+const COMBAT_PED_REACTION_SECONDS = 2.35;
+const COMBAT_TRAFFIC_REACTION_SECONDS = 2.05;
 
 function combatVectorFrom(value, target, fallbackY = 0) {
   if (value?.isVector3) {
@@ -774,6 +793,8 @@ export function createCombatLoop({
     lastHit: null,
     hitConfirmTimer: 0,
     lastEvent: null,
+    lastReaction: null,
+    reactionCount: 0,
     clock: 0,
   };
 
@@ -790,6 +811,7 @@ export function createCombatLoop({
   const effectQuaternion = new THREE.Quaternion();
   const targetCandidates = [];
   const targetStates = new Map();
+  const reactionMeshes = new Set();
 
   const tracerPool = [];
   const muzzlePool = [];
@@ -956,10 +978,25 @@ export function createCombatLoop({
     state.lastHit = null;
     state.hitConfirmTimer = 0;
     state.lastEvent = null;
+    state.lastReaction = null;
+    state.reactionCount = 0;
     state.clock = 0;
     tracerCursor = 0;
     muzzleCursor = 0;
     impactCursor = 0;
+    reactionMeshes.forEach((mesh) => {
+      const userData = mesh?.userData;
+      if (!userData) return;
+      mesh.rotation.z = 0;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionDirectionX = 0;
+      userData.combatReactionDirectionZ = 0;
+      userData.combatReactionStrength = 0;
+      userData.combatBrakeUntil = 0;
+    });
+    reactionMeshes.clear();
     targetStates.forEach((target) => {
       if (target.mesh) {
         target.mesh.rotation.z = 0;
@@ -1114,6 +1151,70 @@ export function createCombatLoop({
     };
   }
 
+  function setWorldReaction(candidate, reaction, duration, directionX = 0, directionZ = 0, source = 'combat') {
+    const mesh = candidate?.mesh;
+    if (!mesh) return false;
+    const userData = mesh.userData || (mesh.userData = {});
+    const length = Math.hypot(directionX, directionZ);
+    const normalizedX = length > 0.001 ? directionX / length : 0;
+    const normalizedZ = length > 0.001 ? directionZ / length : 0;
+    const until = state.clock + Math.max(0.25, duration);
+    userData.combatReaction = reaction;
+    userData.combatReactionUntil = until;
+    userData.combatReactionSource = source;
+    userData.combatReactionDirectionX = normalizedX;
+    userData.combatReactionDirectionZ = normalizedZ;
+    userData.combatReactionStrength = 1;
+    userData.combatBrakeUntil = reaction === 'brake' ? until : 0;
+    reactionMeshes.add(mesh);
+    state.reactionCount += 1;
+    state.lastReaction = {
+      targetId: String(candidate.id ?? `${candidate.kind || 'actor'}:unknown`),
+      kind: candidate.kind === 'traffic' || candidate.vehicle ? 'traffic' : 'pedestrian',
+      reaction,
+      source,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    return true;
+  }
+
+  function markNearMisses() {
+    let reactionCount = 0;
+    for (let index = 0; index < targetCandidates.length; index += 1) {
+      const candidate = targetCandidates[index];
+      if (!candidate || !candidate.mesh || candidate.visible === false || candidate.mesh.visible === false) continue;
+      const kind = candidate.kind === 'traffic' || candidate.vehicle ? 'traffic' : 'pedestrian';
+      const maxRadius = kind === 'traffic'
+        ? COMBAT_TRAFFIC_NEAR_MISS_RADIUS
+        : COMBAT_PED_NEAR_MISS_RADIUS;
+      if (!candidateCenter(candidate, candidatePoint)) continue;
+      linePoint.copy(candidatePoint).sub(rayOrigin);
+      const distance = linePoint.dot(aimDirection);
+      if (distance < 0 || distance > COMBAT_MAX_RANGE || distance > 32) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(distance).add(rayOrigin);
+      if (closestPoint.distanceToSquared(candidatePoint) > maxRadius * maxRadius) continue;
+      const userData = candidate.mesh.userData || (candidate.mesh.userData = {});
+      if (Number(userData.combatReactionUntil) > state.clock
+        && userData.combatReactionSource === 'combat') continue;
+      let directionX = candidatePoint.x - closestPoint.x;
+      let directionZ = candidatePoint.z - closestPoint.z;
+      if (directionX * directionX + directionZ * directionZ < 0.0001) {
+        directionX = -aimDirection.z;
+        directionZ = aimDirection.x;
+      }
+      if (setWorldReaction(
+        candidate,
+        kind === 'traffic' ? 'brake' : 'flee',
+        kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
+        directionX,
+        directionZ,
+        'near-miss',
+      )) reactionCount += 1;
+      if (reactionCount >= 3) break;
+    }
+    return reactionCount;
+  }
+
   function spawnTracer(start, end) {
     const effect = tracerPool[tracerCursor % tracerPool.length];
     tracerCursor += 1;
@@ -1177,15 +1278,24 @@ export function createCombatLoop({
     }
     target.hits += 1;
     target.health = Math.max(0, target.health - 1);
-    target.reactionUntil = state.clock + (kind === 'traffic' ? 0.5 : 0.68);
+    target.reactionUntil = state.clock + (kind === 'traffic'
+      ? COMBAT_TRAFFIC_REACTION_SECONDS
+      : COMBAT_PED_REACTION_SECONDS);
     target.mesh = candidate.mesh || target.mesh;
     target.defeated = target.health <= 0;
     if (target.mesh) {
       const userData = target.mesh.userData || (target.mesh.userData = {});
-      userData.combatReaction = target.defeated ? 'staggered' : 'hit-react';
       userData.combatHitCount = target.hits;
       userData.combatHitUntil = target.reactionUntil;
     }
+    setWorldReaction(
+      candidate,
+      kind === 'traffic' ? 'brake' : target.defeated ? 'staggered' : 'hit-react',
+      kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
+      0,
+      0,
+      'hit',
+    );
     return target;
   }
 
@@ -1201,6 +1311,7 @@ export function createCombatLoop({
       kind: hit ? 'combat-impact' : 'combat-fire',
       message,
       notify: false,
+      source: 'combat',
     });
   }
 
@@ -1245,12 +1356,14 @@ export function createCombatLoop({
       state.misses += 1;
       state.hitStreak = 0;
       state.lockedTargetId = null;
+      const nearReactions = markNearMisses();
       reportHeat('street', false);
       emitEvent('shot', 'Shot fired · watch the street heat.', {
         hit: false,
         targetId: null,
+        nearReactions,
       });
-      return { fired: true, hit: false, ammo: state.ammo };
+      return { fired: true, hit: false, nearReactions, ammo: state.ammo };
     }
 
     const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle ? 'traffic' : 'pedestrian';
@@ -1267,7 +1380,7 @@ export function createCombatLoop({
       defeated: target.defeated,
       at: Math.round(state.clock * 1000) / 1000,
     };
-    state.hitConfirmTimer = 0.62;
+    state.hitConfirmTimer = 1.15;
     spawnImpact(hit.point, kind, target.mesh, hit.candidate.height);
     reportHeat(kind, true);
     emitEvent(
@@ -1328,6 +1441,21 @@ export function createCombatLoop({
     return true;
   }
 
+  function updateWorldReactions() {
+    reactionMeshes.forEach((mesh) => {
+      const userData = mesh?.userData;
+      if (!userData || Number(userData.combatReactionUntil) > state.clock) return;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionDirectionX = 0;
+      userData.combatReactionDirectionZ = 0;
+      userData.combatReactionStrength = 0;
+      userData.combatBrakeUntil = 0;
+      reactionMeshes.delete(mesh);
+    });
+  }
+
   function updateReactions() {
     targetStates.forEach((target) => {
       const mesh = target.mesh;
@@ -1335,9 +1463,14 @@ export function createCombatLoop({
       const userData = mesh.userData || (mesh.userData = {});
       const remaining = target.reactionUntil - state.clock;
       if (remaining > 0) {
-        const pulse = THREE.MathUtils.clamp(remaining / 0.68, 0, 1);
+        const duration = target.kind === 'traffic'
+          ? COMBAT_TRAFFIC_REACTION_SECONDS
+          : COMBAT_PED_REACTION_SECONDS;
+        const pulse = THREE.MathUtils.clamp(remaining / duration, 0, 1);
         mesh.rotation.z = Math.sin(state.clock * 28 + target.hits) * 0.2 * pulse;
-        userData.combatReaction = target.defeated ? 'staggered' : 'hit-react';
+        userData.combatReaction = target.kind === 'traffic'
+          ? 'brake'
+          : target.defeated ? 'staggered' : 'hit-react';
       } else if (userData.combatReaction) {
         mesh.rotation.z = THREE.MathUtils.damp(mesh.rotation.z, 0, 16, 1 / 60);
         if (Math.abs(mesh.rotation.z) < 0.005) {
@@ -1416,6 +1549,7 @@ export function createCombatLoop({
     state.damageFlash = Math.max(0, state.damageFlash - delta);
     state.hitConfirmTimer = Math.max(0, state.hitConfirmTimer - delta);
     updateEffects(delta);
+    updateWorldReactions();
     updateReactions();
 
     if (state.status === 'downed') {
@@ -1479,6 +1613,9 @@ export function createCombatLoop({
       hitConfirm: state.hitConfirmTimer > 0,
       hitConfirmTimer: Math.round(state.hitConfirmTimer * 1000) / 1000,
       hitLabel: state.lastHit?.label || null,
+      lastReaction: state.lastReaction ? { ...state.lastReaction } : null,
+      reactionCount: state.reactionCount,
+      activeWorldReactions: reactionMeshes.size,
       lastEvent: state.lastEvent ? { ...state.lastEvent } : null,
     };
   }
@@ -1517,6 +1654,7 @@ export function createCombatLoop({
       effect.ringMaterial.dispose();
     });
     targetStates.clear();
+    reactionMeshes.clear();
   }
 
   return {

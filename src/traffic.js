@@ -2932,6 +2932,14 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
     for (const v of vehicles) {
       let road = roads[v.road];
+      const combatData = v.mesh.root.userData || {};
+      const combatBrakeUntil = Number(combatData.combatBrakeUntil);
+      const combatBrakeActive = Number.isFinite(combatBrakeUntil)
+        && combatBrakeUntil > 0
+        && (combatData.combatReaction === 'brake' || combatData.combatReaction === 'staggered');
+      if (combatBrakeActive) {
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.75);
+      }
 
       // A remote player owns this vehicle: the networking layer drives its
       // mesh directly and the local AI must not move, queue, or rehome it.
@@ -3276,6 +3284,22 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
             v.longitudinalAccel,
           );
         }
+      }
+
+      // A nearby shot makes civilian traffic brake hard for a brief, visible
+      // beat. The normal kinematic envelope still owns the actual movement,
+      // so lane safety, turns, and recovery back to cruising remain intact.
+      if (combatBrakeActive && !v.parked) {
+        const urgency = 1;
+        const brakeTarget = Math.max(
+          0,
+          v.speed - v.spec.brake * (0.78 + urgency * 0.34) * dt,
+        );
+        desired = Math.min(desired, brakeTarget);
+        v.longitudinalAccel = Math.min(
+          v.longitudinalAccel,
+          -v.spec.brake * (0.4 + urgency * 0.45),
+        );
       }
 
       // Servicing a curb hold: stay stopped in the parking lane until the
@@ -3685,6 +3709,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const brakeOn = !v.parked
         && (actualAccel <= BRAKE_LIGHT_DECEL
           || holdActive
+          || combatBrakeActive
           || (desired < 0.05 && v.speed < 0.12)
           || (v.playerControlled && playerInput.brake > 0 && v.speed > 0.4));
       const tailLights = v.mesh.tailLights;
@@ -3823,6 +3848,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     let featuredCount = 0;
     for (let index = 0; index < vehicles.length; index += 1) {
       const v = vehicles[index];
+      const combatData = v.mesh.root.userData || {};
+      const combatReaction = combatData.combatReaction;
+      const combatBrakeUntil = Number(combatData.combatBrakeUntil);
+      const combatBrakeActive = !v.parked
+        && Number.isFinite(combatBrakeUntil)
+        && combatBrakeUntil > 0
+        && (combatReaction === 'brake' || combatReaction === 'staggered');
       const curbside = Number.isFinite(v.curbDwellUntil);
       const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
       const activeRoute = v.turn?.route || v.route;
@@ -3831,7 +3863,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (v.parked) {
+      if (combatBrakeActive) {
+        actionKey = 'combat-brake';
+        actionLabel = 'Braking after gunfire';
+        actionDetail = 'reacting to nearby fire';
+      } else if (v.parked) {
         actionKey = 'parked';
         actionLabel = 'Parked at curb';
         actionDetail = parkedDwellEnd > t ? 'dwelling' : 'pull-out pending';
@@ -3940,6 +3976,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         visible: v.mesh.root.visible,
         featured,
         heroCue,
+        reaction: combatBrakeActive
+          ? {
+            key: 'brake',
+            source: combatData.combatReactionSource || 'combat',
+            remaining: null,
+          }
+          : null,
       });
     }
     return {

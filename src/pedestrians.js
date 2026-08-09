@@ -3632,6 +3632,52 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
   }
 
+  // Combat owns only the short-lived reaction cue on the pooled mesh. The
+  // pedestrian system consumes that cue here so navigation, spacing, and
+  // normal schedule behavior remain the source of truth once it settles.
+  function applyCombatReactionMovement(data, delta) {
+    const userData = data.mesh.userData;
+    const reaction = userData?.combatReaction;
+    if (!userData || !reaction || reaction === 'settled') return false;
+    if (reaction !== 'flee') return reaction === 'hit-react' || reaction === 'staggered';
+
+    let directionX = Number(userData.combatReactionDirectionX) || 0;
+    let directionZ = Number(userData.combatReactionDirectionZ) || 0;
+    const directionLength = Math.hypot(directionX, directionZ);
+    if (directionLength < 0.001) {
+      directionX = Math.sin(data.heading + Math.PI);
+      directionZ = Math.cos(data.heading + Math.PI);
+    } else {
+      directionX /= directionLength;
+      directionZ /= directionLength;
+    }
+    if (data.state !== STATE_WALK && data.state !== STATE_CROSS) {
+      setBehaviorState(data, STATE_WALK, 1.6, 'combat:flee');
+    }
+    data.walkPace = Math.max(data.walkPace || 1, 1.28);
+    data.mesh.position.x += directionX * 2.8 * delta;
+    data.mesh.position.z += directionZ * 2.8 * delta;
+    data.heading = Math.atan2(directionX, directionZ);
+    data.mesh.rotation.y = data.heading;
+    data.turnRate = 0;
+    return true;
+  }
+
+  function applyCombatReactionPose(data, elapsed, active) {
+    if (!active) return;
+    const userData = data.mesh.userData;
+    const reaction = userData?.combatReaction;
+    if (reaction !== 'hit-react' && reaction !== 'staggered') return;
+    const pulse = 0.72 + Math.sin(elapsed * 26 + data.phase) * 0.28;
+    const stagger = reaction === 'staggered' ? 1.18 : 1;
+    userData.body.rotation.x += 0.11 * stagger;
+    userData.body.rotation.z += Math.sin(elapsed * 24 + data.phase) * 0.11 * stagger;
+    userData.headPivot.rotation.z += Math.sin(elapsed * 18 + data.phase) * 0.16 * pulse;
+    userData.leftArm.rotation.z += 0.16 * pulse * stagger;
+    userData.rightArm.rotation.z -= 0.16 * pulse * stagger;
+    userData.rig.position.x += Math.sin(elapsed * 22 + data.phase) * 0.012 * stagger;
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
@@ -3711,7 +3757,9 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       } else {
         tickNpcBehavior(data, delta);
       }
+      const combatReactionActive = applyCombatReactionMovement(data, delta);
       animate(data, elapsed, delta);
+      applyCombatReactionPose(data, elapsed, combatReactionActive);
 
       const soloMesh = qaSoloGroupIndex != null ? group.children[qaSoloGroupIndex] : null;
       const visible = soloMesh
