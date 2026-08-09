@@ -618,6 +618,7 @@ function getSuggestedCameraPoses() {
 
   let canyon = hero;
   let street = hero;
+  let bridge = hero;
   if (bestCorridor) {
     const { a, b } = bestCorridor;
     const dx = b.x - a.x;
@@ -721,6 +722,11 @@ function getSuggestedCameraPoses() {
       [1680, 45, 1600],
       true,
     );
+    bridge = makeCameraPose(
+      [3200, 82, 1000],
+      [1680, 50, 1500],
+      true,
+    );
     // Hyde Street is a dense real OSM corridor with a pronounced but mesh-safe grade.
     // Frame it from the lower endpoint looking uphill so the street views carry
     // an immediately legible San Francisco slope instead of a flat SoMa lot.
@@ -757,7 +763,7 @@ function getSuggestedCameraPoses() {
     }
   }
 
-  return { hero, canyon, street, night, hills };
+  return { hero, canyon, street, night, hills, bridge };
 }
 
 function pointInFlatRing(point, flat) {
@@ -3220,6 +3226,16 @@ function createBayReflections() {
     { x: 2467, z: 1665, reach: 90, width: 15, color: 0xffd18a, yaw: -0.025 },
     { x: 2457, z: 1640, reach: 130, width: 24, color: 0x8bd8de, yaw: 0.035 },
     { x: 2480, z: 1615, reach: 105, width: 18, color: 0xffa95f, yaw: -0.03 },
+    // Bridge-linked water glints follow the OSM Bay Bridge span
+    // [2522.5,907.1] -> [4584.9,3325.9] at t=.02..19. Their
+    // irregular reach/yaw keeps them reading as soft reflections, not lanes.
+    { x: 2563.7, z: 944, reach: 92, width: 16, color: 0xffb86a, yaw: -0.12 },
+    { x: 2625.6, z: 1040, reach: 138, width: 24, color: 0x79c7f2, yaw: 0.07 },
+    { x: 2687.5, z: 1088, reach: 84, width: 13, color: 0xffd18a, yaw: -0.04 },
+    { x: 2749.4, z: 1185, reach: 164, width: 28, color: 0x8bd8de, yaw: 0.14 },
+    { x: 2811.2, z: 1233, reach: 112, width: 18, color: 0xffa95f, yaw: -0.09 },
+    { x: 2873.1, z: 1330, reach: 148, width: 22, color: 0x9fc8ff, yaw: 0.11 },
+    { x: 2914.4, z: 1353, reach: 88, width: 15, color: 0xffc77a, yaw: -0.16 },
   ];
   const reflectionCanvas = document.createElement('canvas');
   reflectionCanvas.width = 256;
@@ -3469,6 +3485,385 @@ function createCoitSilhouette(x, z, targetHeight) {
   tower.add(cap);
   tower.userData = { type: 'landmark', label: 'Coit Tower' };
   return tower;
+}
+
+function createBayBridgeLandmark() {
+  if (!fullCityMode || !cityData?.roads?.length) return null;
+  const osmWayIds = [1343738800, 8921938];
+  const sourceWays = osmWayIds
+    .map((id) => cityData.roads.find((road) => road.id === id))
+    .filter(Boolean);
+  if (sourceWays.length < 2) return null;
+
+  // Dwight D. Eisenhower Highway, OSM bridge ways 1343738800 + 8921938.
+  // The visible SF-side slice deliberately stops at t=.20; the rest of the
+  // span is outside this low-poly landmark's bounded composition.
+  const spanStart = { x: 2522.5, z: 907.1 };
+  const spanEnd = { x: 4584.9, z: 3325.9 };
+  const direction = { x: 0.648820, z: 0.760942 };
+  const lateral = { x: -direction.z, z: direction.x };
+  const spanLength = Math.hypot(spanEnd.x - spanStart.x, spanEnd.z - spanStart.z);
+  const visibleEndT = 0.20;
+  const pointAt = (t, offset = 0) => ({
+    x: spanStart.x + direction.x * spanLength * t + lateral.x * offset,
+    z: spanStart.z + direction.z * spanLength * t + lateral.z * offset,
+  });
+  const deckWidth = 28;
+  const deckTopY = SEA_LEVEL_Y + 25;
+  const deckThickness = 3.2;
+  const deckCenterY = deckTopY - deckThickness * 0.5;
+  const pylonHeight = 136;
+  const pylonTopY = deckTopY + pylonHeight;
+  const structuralPositions = [];
+  const structuralIndices = [];
+  const latticePositions = [];
+  const latticeIndices = [];
+  const lightPositions = [];
+
+  const pushFace = (a, b, c, d, positions = structuralPositions, indices = structuralIndices) => {
+    const base = positions.length / 3;
+    positions.push(
+      a.x, a.y, a.z,
+      b.x, b.y, b.z,
+      c.x, c.y, c.z,
+      d.x, d.y, d.z,
+    );
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  const pushBox = (center, alongSize, lateralSize, height, centerY) => {
+    const ha = alongSize * 0.5;
+    const hl = lateralSize * 0.5;
+    const hy = height * 0.5;
+    const corner = (along, across, y) => ({
+      x: center.x + direction.x * along + lateral.x * across,
+      y: centerY + y,
+      z: center.z + direction.z * along + lateral.z * across,
+    });
+    const c0 = corner(-ha, -hl, -hy);
+    const c1 = corner(ha, -hl, -hy);
+    const c2 = corner(ha, hl, -hy);
+    const c3 = corner(-ha, hl, -hy);
+    const c4 = corner(-ha, -hl, hy);
+    const c5 = corner(ha, -hl, hy);
+    const c6 = corner(ha, hl, hy);
+    const c7 = corner(-ha, hl, hy);
+    pushFace(c0, c1, c2, c3);
+    pushFace(c4, c7, c6, c5);
+    pushFace(c0, c4, c5, c1);
+    pushFace(c3, c2, c6, c7);
+    pushFace(c0, c3, c7, c4);
+    pushFace(c1, c5, c6, c2);
+  };
+  const pushTaperedColumn = (center, baseAlong, baseLateral, topAlong, topLateral, bottomY, topY) => {
+    const corner = (along, across, y) => ({
+      x: center.x + direction.x * along + lateral.x * across,
+      y,
+      z: center.z + direction.z * along + lateral.z * across,
+    });
+    const hbA = baseAlong * 0.5;
+    const hbL = baseLateral * 0.5;
+    const htA = topAlong * 0.5;
+    const htL = topLateral * 0.5;
+    const b0 = corner(-hbA, -hbL, bottomY);
+    const b1 = corner(hbA, -hbL, bottomY);
+    const b2 = corner(hbA, hbL, bottomY);
+    const b3 = corner(-hbA, hbL, bottomY);
+    const t0 = corner(-htA, -htL, topY);
+    const t1 = corner(htA, -htL, topY);
+    const t2 = corner(htA, htL, topY);
+    const t3 = corner(-htA, htL, topY);
+    pushFace(b0, b1, b2, b3);
+    pushFace(t0, t3, t2, t1);
+    pushFace(b0, t0, t1, b1);
+    pushFace(b3, b2, t2, t3);
+    pushFace(b0, b3, t3, t0);
+    pushFace(b1, t1, t2, b2);
+  };
+  const pushBeam = (a, b, width, height, positions = structuralPositions, indices = structuralIndices) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dy, dz);
+    if (length < 0.01) return;
+    const axis = { x: dx / length, y: dy / length, z: dz / length };
+    let side = { x: axis.z, y: 0, z: -axis.x };
+    const sideLength = Math.hypot(side.x, side.z);
+    if (sideLength < 0.01) side = { x: 1, y: 0, z: 0 };
+    else {
+      side.x /= sideLength;
+      side.z /= sideLength;
+    }
+    const up = {
+      x: side.z * axis.y,
+      y: side.x * axis.z - side.z * axis.x,
+      z: -side.x * axis.y,
+    };
+    const center = { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5, z: (a.z + b.z) * 0.5 };
+    const ha = length * 0.5;
+    const hs = width * 0.5;
+    const hu = height * 0.5;
+    const corner = (along, across, vertical) => ({
+      x: center.x + axis.x * along + side.x * across + up.x * vertical,
+      y: center.y + axis.y * along + side.y * across + up.y * vertical,
+      z: center.z + axis.z * along + side.z * across + up.z * vertical,
+    });
+    const c0 = corner(-ha, -hs, -hu);
+    const c1 = corner(ha, -hs, -hu);
+    const c2 = corner(ha, hs, -hu);
+    const c3 = corner(-ha, hs, -hu);
+    const c4 = corner(-ha, -hs, hu);
+    const c5 = corner(ha, -hs, hu);
+    const c6 = corner(ha, hs, hu);
+    const c7 = corner(-ha, hs, hu);
+    pushFace(c0, c1, c2, c3, positions, indices);
+    pushFace(c4, c7, c6, c5, positions, indices);
+    pushFace(c0, c4, c5, c1, positions, indices);
+    pushFace(c3, c2, c6, c7, positions, indices);
+    pushFace(c0, c3, c7, c4, positions, indices);
+    pushFace(c1, c5, c6, c2, positions, indices);
+  };
+  const pushLightSegment = (a, b) => {
+    lightPositions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+  };
+
+  pushBox(pointAt(visibleEndT * 0.5), spanLength * visibleEndT, deckWidth, deckThickness, deckCenterY);
+  for (const t of [0, visibleEndT]) {
+    const end = pointAt(t);
+    pushBox(end, 5, deckWidth + 1.6, 2.2, deckTopY + 0.6);
+  }
+  for (const t of [0.08, 0.14]) {
+    const station = pointAt(t);
+    for (const offset of [-8.5, 8.5]) {
+      pushTaperedColumn(
+        pointAt(t, offset),
+        7.2, 7.2,
+        5.8, 5.8,
+        deckTopY - 1,
+        pylonTopY,
+      );
+    }
+    pushBox(station, 7.2, deckWidth + 2, 7, pylonTopY - 3.5);
+    pushBox(station, 6.2, deckWidth + 1.5, 5, deckTopY + 65);
+  }
+  for (const offset of [-12.5, 12.5]) {
+    pushBox(pointAt(visibleEndT * 0.5, offset), spanLength * visibleEndT, 2.2, 4.8, deckTopY + 1.4);
+  }
+  const lowerDeckTopY = deckTopY - 8.5;
+  pushBox(
+    pointAt(visibleEndT * 0.5),
+    spanLength * visibleEndT,
+    deckWidth - 2,
+    2.6,
+    lowerDeckTopY - 1.3,
+  );
+  for (const offset of [-11.5, 11.5]) {
+    pushBox(pointAt(visibleEndT * 0.5, offset), spanLength * visibleEndT, 1.8, 4.8, lowerDeckTopY + 1.6);
+  }
+  const suspenderTs = [0.015, 0.035, 0.055, 0.075, 0.095, 0.115, 0.135, 0.155, 0.175, 0.195];
+  for (const offset of [-11.5, 11.5]) {
+    for (const t of suspenderTs) {
+      pushBox(
+        pointAt(t, offset),
+        0.9,
+        0.9,
+        deckTopY - lowerDeckTopY + 1.8,
+        (deckTopY + lowerDeckTopY) * 0.5 + 0.9,
+      );
+    }
+  }
+  for (const t of [0.08, 0.14]) {
+    const leftHigh = pointAt(t, -8.5);
+    const rightHigh = pointAt(t, 8.5);
+    leftHigh.y = deckTopY + 8;
+    rightHigh.y = pylonTopY - 10;
+    pushBeam(leftHigh, rightHigh, 1.2, 1.2);
+    const leftLow = pointAt(t, -8.5);
+    const rightLow = pointAt(t, 8.5);
+    leftLow.y = pylonTopY - 10;
+    rightLow.y = deckTopY + 8;
+    pushBeam(leftLow, rightLow, 1.2, 1.2);
+  }
+  const trussTs = [0.02, 0.05, 0.08, 0.11, 0.14, 0.17, visibleEndT];
+  for (const offset of [-11.5, 11.5]) {
+    for (let i = 0; i < trussTs.length - 1; i += 1) {
+      const a = pointAt(trussTs[i], offset);
+      const b = pointAt(trussTs[i + 1], offset);
+      a.y = deckTopY + 1.4;
+      b.y = lowerDeckTopY + 1.2;
+      pushBeam(a, b, 0.8, 0.8);
+    }
+  }
+
+  // Keep the double-deck/truss silhouette readable at the dedicated bridge
+  // pose: a separate weathered-steel mesh carries repeated side-lattice Xs
+  // and the two pylon portal braces; cable and light lines stay in one draw.
+  const sideLatticeTs = Array.from({ length: 17 }, (_, index) => index * visibleEndT / 16);
+  for (const offset of [-14, 14]) {
+    for (let i = 0; i < sideLatticeTs.length - 1; i += 1) {
+      const t0 = sideLatticeTs[i];
+      const t1 = sideLatticeTs[i + 1];
+      const upper0 = pointAt(t0, offset);
+      const upper1 = pointAt(t1, offset);
+      const lower0 = pointAt(t0, offset);
+      const lower1 = pointAt(t1, offset);
+      upper0.y = upper1.y = deckTopY + 3.7;
+      lower0.y = lower1.y = lowerDeckTopY + 3;
+      pushBeam(upper0, lower1, 2.8, 2.8, latticePositions, latticeIndices);
+      pushBeam(lower0, upper1, 2.8, 2.8, latticePositions, latticeIndices);
+    }
+  }
+  for (const t of [0.08, 0.14]) {
+    const leftHigh = pointAt(t, -5.2);
+    const rightHigh = pointAt(t, 5.2);
+    leftHigh.y = deckTopY + 8;
+    rightHigh.y = pylonTopY - 10;
+    pushBeam(leftHigh, rightHigh, 3.8, 3.8, latticePositions, latticeIndices);
+    const leftLow = pointAt(t, -5.2);
+    const rightLow = pointAt(t, 5.2);
+    leftLow.y = pylonTopY - 10;
+    rightLow.y = deckTopY + 8;
+    pushBeam(leftLow, rightLow, 3.8, 3.8, latticePositions, latticeIndices);
+  }
+
+  const cableHeight = (t) => {
+    if (t <= 0.08) return THREE.MathUtils.lerp(deckTopY + 7, pylonTopY - 5, t / 0.08);
+    if (t <= 0.14) return pylonTopY - 5 - 28 * Math.sin(((t - 0.08) / 0.06) * Math.PI);
+    return THREE.MathUtils.lerp(pylonTopY - 5, deckTopY + 7, (t - 0.14) / 0.06);
+  };
+  const cableSamples = [0, 0.04, 0.08, 0.11, 0.14, 0.17, visibleEndT];
+  for (const offset of [-10.5, 10.5]) {
+    for (let i = 0; i < cableSamples.length - 1; i += 1) {
+      const a = pointAt(cableSamples[i], offset);
+      const b = pointAt(cableSamples[i + 1], offset);
+      a.y = cableHeight(cableSamples[i]);
+      b.y = cableHeight(cableSamples[i + 1]);
+      pushLightSegment(a, b);
+    }
+    for (const t of [0.02, 0.04, 0.06, 0.10, 0.12, 0.16, 0.18]) {
+      const top = pointAt(t, offset);
+      const bottom = pointAt(t, offset);
+      top.y = cableHeight(t);
+      bottom.y = deckTopY + 3.7;
+      pushLightSegment(top, bottom);
+    }
+  }
+  for (const offset of [-12.5, 12.5]) {
+    const a = pointAt(0, offset);
+    const b = pointAt(visibleEndT, offset);
+    a.y = b.y = deckTopY + 3.7;
+    pushLightSegment(a, b);
+  }
+  for (const offset of [-11.5, 11.5]) {
+    const a = pointAt(0, offset);
+    const b = pointAt(visibleEndT, offset);
+    a.y = b.y = lowerDeckTopY + 3;
+    pushLightSegment(a, b);
+  }
+  for (const t of [0.08, 0.14]) {
+    const a = pointAt(t, -14);
+    const b = pointAt(t, 14);
+    a.y = b.y = pylonTopY - 1;
+    pushLightSegment(a, b);
+  }
+  // Sparse deck/tower lights remain short ticks in the existing line draw,
+  // avoiding a broad emissive strip while preserving the OSM bridge read.
+  const deckLightTs = [0.012, 0.032, 0.052, 0.072, 0.092, 0.112, 0.132, 0.152, 0.172, 0.192];
+  for (const offset of [-14, 14]) {
+    for (const t of deckLightTs) {
+      const a = pointAt(t, offset);
+      const b = pointAt(t, offset);
+      a.y = deckTopY + 3.5;
+      b.y = deckTopY + 7;
+      pushLightSegment(a, b);
+    }
+  }
+  for (const t of [0.08, 0.14]) {
+    for (const offset of [-8.5, 8.5]) {
+      const lowA = pointAt(t, offset);
+      const lowB = pointAt(t, offset);
+      lowA.y = deckTopY + 20;
+      lowB.y = deckTopY + 24;
+      pushLightSegment(lowA, lowB);
+      const highA = pointAt(t, offset);
+      const highB = pointAt(t, offset);
+      highA.y = pylonTopY - 13;
+      highB.y = pylonTopY - 8;
+      pushLightSegment(highA, highB);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(structuralPositions, 3));
+  geometry.setIndex(structuralIndices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x4c5962,
+    roughness: 0.72,
+    metalness: 0.28,
+    emissive: 0x2e3c46,
+    emissiveIntensity: 0.2,
+    flatShading: true,
+  });
+  material.userData.bayBridgeStructure = true;
+  const bridgeMesh = new THREE.Mesh(geometry, material);
+  bridgeMesh.name = 'Bay Bridge OSM structural landmark';
+  bridgeMesh.castShadow = true;
+  bridgeMesh.receiveShadow = true;
+  bridgeMesh.userData = {
+    type: 'landmark',
+    label: 'Bay Bridge',
+    osmWayIds,
+    osmName: 'Dwight D. Eisenhower Highway',
+    bridge: true,
+    spanStart: [spanStart.x, spanStart.z],
+    spanEnd: [spanEnd.x, spanEnd.z],
+    visibleT: [0, visibleEndT],
+    pylonT: [0.08, 0.14],
+  };
+  const lightGeometry = new THREE.BufferGeometry();
+  lightGeometry.setAttribute('position', new THREE.Float32BufferAttribute(lightPositions, 3));
+  const lightMaterial = new THREE.LineBasicMaterial({
+    color: 0x9aa8b4,
+    transparent: true,
+    opacity: 0.56,
+    toneMapped: false,
+  });
+  lightMaterial.userData.bayBridgeLights = true;
+  const bridgeLights = new THREE.LineSegments(lightGeometry, lightMaterial);
+  bridgeLights.name = 'Bay Bridge restrained night edge lights';
+  bridgeLights.renderOrder = 1;
+  bridgeLights.userData = { type: 'landmark-light', label: 'Bay Bridge warm edge lights' };
+  const latticeGeometry = new THREE.BufferGeometry();
+  latticeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(latticePositions, 3));
+  latticeGeometry.setIndex(latticeIndices);
+  latticeGeometry.computeVertexNormals();
+  const latticeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa8b5b9,
+    roughness: 0.68,
+    metalness: 0.2,
+    emissive: 0x6f9eae,
+    emissiveIntensity: 0.08,
+    flatShading: true,
+  });
+  latticeMaterial.userData.bayBridgeLattice = true;
+  const latticeMesh = new THREE.Mesh(latticeGeometry, latticeMaterial);
+  latticeMesh.name = 'Bay Bridge weathered steel lattice';
+  latticeMesh.castShadow = true;
+  latticeMesh.receiveShadow = true;
+  latticeMesh.userData = { type: 'landmark-lattice', label: 'Bay Bridge repeated truss lattice' };
+
+  const group = new THREE.Group();
+  group.name = 'Bay Bridge OSM landmark';
+  group.userData = {
+    type: 'landmark',
+    label: 'Bay Bridge',
+    osmWayIds,
+    osmName: 'Dwight D. Eisenhower Highway',
+    geometryDrawCalls: 3,
+    triangleCount: (structuralIndices.length + latticeIndices.length) / 3,
+  };
+  group.add(bridgeMesh, latticeMesh, bridgeLights);
+  return group;
 }
 
 function createSfLandmarkSilhouettes(regionBBox, isFullCity) {
@@ -9375,6 +9770,31 @@ function updateNightGlow(amount) {
     material.emissiveIntensity = windowGlow * (warm ? 1 : cool ? 0.78 : 0.88);
     material.needsUpdate = true;
   }
+  const bayBridge = cityRoot?.getObjectByName('Bay Bridge OSM landmark');
+  const bayBridgeStructure = bayBridge?.getObjectByName('Bay Bridge OSM structural landmark');
+  const bayBridgeStructureMaterial = bayBridgeStructure?.material;
+  if (bayBridgeStructureMaterial?.userData?.bayBridgeStructure) {
+    bayBridgeStructureMaterial.color.set(night >= 0.3 ? 0x52616b : 0x4c5962);
+    bayBridgeStructureMaterial.emissive.set(0x2e3c46);
+    bayBridgeStructureMaterial.emissiveIntensity = 0.2 + night * 1.7;
+    bayBridgeStructureMaterial.needsUpdate = true;
+  }
+  const bayBridgeLattice = bayBridge?.getObjectByName('Bay Bridge weathered steel lattice');
+  const bayBridgeLatticeMaterial = bayBridgeLattice?.material;
+  if (bayBridgeLatticeMaterial?.userData?.bayBridgeLattice) {
+    bayBridgeLatticeMaterial.color.set(night >= 0.3 ? 0xb8c2c4 : 0xa8b5b9);
+    bayBridgeLatticeMaterial.emissive.set(0x6f9eae);
+    bayBridgeLatticeMaterial.emissiveIntensity = 0.08 + night * 2;
+    bayBridgeLatticeMaterial.needsUpdate = true;
+  }
+  const bayBridgeLights = bayBridge?.getObjectByName('Bay Bridge restrained night edge lights');
+  const bayBridgeLightMaterial = bayBridgeLights?.material;
+  if (bayBridgeLightMaterial?.userData?.bayBridgeLights) {
+    const duskMix = THREE.MathUtils.smoothstep(night, 0.2, 0.72);
+    bayBridgeLightMaterial.color.set(duskMix > 0.45 ? 0xffb46b : 0x9aa8b4);
+    bayBridgeLightMaterial.opacity = THREE.MathUtils.lerp(0.56, 0.9, duskMix);
+    bayBridgeLightMaterial.needsUpdate = true;
+  }
   for (const material of streetLightMaterials) {
     if (!material) continue;
     material.emissive.set(0xffe8b8);
@@ -10005,6 +10425,10 @@ async function buildCity() {
       updateNearbyDoorways(playFocus);
       cityWideReady = true;
     }
+    if (fullCityMode) {
+      const bayBridge = createBayBridgeLandmark();
+      if (bayBridge) cityRoot.add(bayBridge);
+    }
     cityRoot.add(createSfLandmarkSilhouettes(regionBBox, fullCityMode));
 
     // Guarantee no leftover interior room is visible until a door is opened.
@@ -10422,6 +10846,7 @@ function start() {
       const resolved = resolveCameraPose(pose);
       if (resolved?.position) camera.position.set(resolved.position[0], resolved.position[1], resolved.position[2]);
       if (resolved?.target) controls.target.set(resolved.target[0], resolved.target[1], resolved.target[2]);
+      camera.updateProjectionMatrix();
       controls.update();
       const clearance = camera.position.y - elevationAt(camera.position.x, camera.position.z);
       const streetAperture = fullCityMode && clearance <= 36;
