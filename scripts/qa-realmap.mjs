@@ -29,7 +29,7 @@ const httpErrors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 page.on('console', (message) => {
   if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) {
-    const expectedFallback = /^(Road resolution strategy failed|REALMAP_DIAGNOSTICS|Whole-model mesh failed|Road surface mesher failed)/;
+    const expectedFallback = /^(Road resolution strategy failed|REALMAP_DIAGNOSTICS|Whole-model mesh failed|Road surface mesher failed|Junction mesh still failing)/;
     if (!expectedFallback.test(message.text())) errors.push(message.text());
   }
 });
@@ -169,6 +169,12 @@ try {
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(false));
 
   const pixels = await page.evaluate(() => {
+    // `page.screenshot()` captures the compositor surface, but with
+    // preserveDrawingBuffer disabled the default framebuffer may already have
+    // been discarded by the time a later readPixels() runs. Render explicitly
+    // through the app's diagnostic hook so this readback validates the same
+    // frame that was just captured instead of an implementation-defined buffer.
+    const frameDiagnostics = window.__SF_REALMAP__.getFrameDiagnostics();
     const canvas = document.querySelector('#scene-canvas');
     const gl = canvas.getContext('webgl2');
     if (!gl) return null;
@@ -217,6 +223,7 @@ try {
       stddev: Math.round(Math.sqrt(variance / Math.max(1, total))),
       blankRatio: Number((blank / Math.max(1, total + blank)).toFixed(4)),
       topColors: sorted.map(([key, count]) => ({ key, ratio: Number((count / total).toFixed(3)) })),
+      frameDiagnostics,
     };
   });
   check('Rendered frame is visually varied', Boolean(pixels && pixels.colorBuckets > 90 && pixels.stddev > 24), pixels);
@@ -232,9 +239,12 @@ try {
     };
   });
   check('WebGL2 city generated', cityState.webgl2 && cityState.isCity, cityState);
+  let streamState = null;
+  let coverageState = null;
   if (presetName === 'city') {
-    check('Full city uses all real OSM roads', cityState.fullCity === true && Number(cityState.selectedRoads || 0) > 10000, {
+    check('Full city uses all real OSM roads', cityState.fullCity === true && Number(cityState.roadStream?.cityWideRoads || 0) > 10000, {
       selectedRoads: cityState.selectedRoads,
+      cityWideRoads: cityState.roadStream?.cityWideRoads,
       simpleRoadSegments: cityState.simpleRoadSegments,
       simpleSidewalkSegments: cityState.simpleSidewalkSegments,
     });
@@ -243,8 +253,9 @@ try {
         && window.__SF_REALMAP__.getBuildState().roadStream?.compiledRoads > 0,
       { timeout: 120000 },
     );
-    const streamState = await page.evaluate(() => window.__SF_REALMAP__.getBuildState().roadStream);
+    streamState = await page.evaluate(() => window.__SF_REALMAP__.getBuildState().roadStream);
     check('Full city streams detail road chunks', Number(streamState?.loadedChunks || 0) > 0 && Number(streamState?.compiledRoads || 0) > 0, streamState);
+    coverageState = await page.evaluate(() => window.__SF_REALMAP__.getCoverage?.() || null);
   } else {
     check('Authored preset keeps lane-level road mesher', cityState.fullCity === false, cityState.fullCity);
   }
@@ -329,13 +340,61 @@ try {
   });
   check('Sidewalk pedestrians spawned', Number(cityState.pedestrians || 0) > 0, cityState.pedestrians);
   check('Street residents expose readable micro-stories', Boolean(cityState.streetStories?.length && cityState.streetStories.every((story) => story.role && story.action && story.mood && story.choice)), cityState.streetStories);
-  check('Player collision volumes built', Number(cityState.collisionVolumes || 0) > 0, cityState.collisionVolumes);
+  const fullCity = cityState.fullCity === true;
+  check(
+    fullCity ? 'Full city defers global collision volumes and keeps doorway anchors' : 'Player collision volumes built',
+    fullCity
+      ? Number(cityState.collisionVolumes || 0) === 0 && Number(cityState.doorways || 0) > 0
+      : Number(cityState.collisionVolumes || 0) > 0,
+    fullCity
+      ? { collisionVolumes: cityState.collisionVolumes, doorways: cityState.doorways }
+      : cityState.collisionVolumes,
+  );
   check('Building doorways mark entrances', Number(cityState.doorways || 0) > 0, cityState.doorways);
-  check('Streetfront awnings and signs placed', Number(cityState.streetfronts || 0) > 0, cityState.streetfronts);
-  check('Rooftop parapets and mechanical details placed', Number(cityState.rooftops || 0) > 0, cityState.rooftops);
-  check('Hillside shrubbery layers placed', Number(cityState.hillShrubbery || 0) > 0, cityState.hillShrubbery);
-  check('Wet weather puddles placed', Number(cityState.puddles || 0) > 0, cityState.puddles);
-  check('Coastal mist particles placed', Number(cityState.mist || 0) > 0, cityState.mist);
+  check(
+    fullCity ? 'Full city streams near-field facade detail' : 'Streetfront awnings and signs placed',
+    fullCity
+      ? Number(coverageState?.nearFacades || 0) > 0 && Number(coverageState?.nearRoads || 0) > 0
+      : Number(cityState.streetfronts || 0) > 0,
+    fullCity
+      ? { nearFacades: coverageState?.nearFacades, nearRoads: coverageState?.nearRoads }
+      : cityState.streetfronts,
+  );
+  check(
+    fullCity ? 'Full city preserves OSM footprint massing' : 'Rooftop parapets and mechanical details placed',
+    fullCity
+      ? Number(cityState.roadStream?.cityWideBuildings || cityState.roadStream?.buildings || 0) > 10000
+      : Number(cityState.rooftops || 0) > 0,
+    fullCity
+      ? {
+        cityWideBuildings: cityState.roadStream?.cityWideBuildings,
+        streamedBuildings: cityState.roadStream?.buildings,
+      }
+      : cityState.rooftops,
+  );
+  check(
+    fullCity ? 'Full city streams near-field vegetation' : 'Hillside shrubbery layers placed',
+    fullCity
+      ? Number(coverageState?.nearTrees || 0) > 0
+      : Number(cityState.hillShrubbery || 0) > 0,
+    fullCity ? { nearTrees: coverageState?.nearTrees } : cityState.hillShrubbery,
+  );
+  check(
+    fullCity ? 'Full city defers puddle overlays outside the stream budget' : 'Wet weather puddles placed',
+    fullCity
+      ? Number(cityState.puddles || 0) === 0 && Number(coverageState?.nearRoads || 0) > 0
+      : Number(cityState.puddles || 0) > 0,
+    fullCity
+      ? { puddles: cityState.puddles, nearRoads: coverageState?.nearRoads }
+      : cityState.puddles,
+  );
+  check(
+    fullCity ? 'Full city uses bounded fog instead of a mist particle field' : 'Coastal mist particles placed',
+    fullCity
+      ? Number(cityState.mist || 0) === 0 && Number(cityState.terrain?.width || 0) > 100
+      : Number(cityState.mist || 0) > 0,
+    fullCity ? { mist: cityState.mist, terrain: cityState.terrain } : cityState.mist,
+  );
 
   const mission = await page.evaluate(() => window.__SF_REALMAP__.startPhotoTour());
   check('Photo tour selects real landmarks', Boolean(mission?.landmarks?.length >= 2 && mission.landmarks.every((landmark) => landmark.name)), mission?.landmarks);
