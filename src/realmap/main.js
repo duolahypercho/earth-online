@@ -2917,13 +2917,15 @@ function createMergedFootprintBuildings(buildings) {
   const facadeMap = facadeWindowTexture(batchSeed, facadeStyle);
   const nightMap = facadeNightTexture(batchSeed, facadeStyle);
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeMap });
-  material.emissiveMap = nightMap;
+  // Keep the daylight atlas available as a gentle fill; the sparse occupancy
+  // atlas is swapped in by updateNightGlow only once the scene enters dusk.
+  material.emissiveMap = facadeMap;
   material.emissive.set(0xffffff);
-  material.emissiveIntensity = fullCityMode ? 0.06 : 0;
+  material.emissiveIntensity = fullCityMode ? 0.24 : 0;
   // Full City massing is built from one merged Lambert material per street batch.
   // Register those materials with the night pass so their broad side faces retain
   // a readable silhouette instead of becoming unlit black slabs at night.
-  material.userData = { fullCityMassing: true, facadeStyle, nightMap };
+  material.userData = { fullCityMassing: true, facadeStyle, dayMap: facadeMap, nightMap };
   if (fullCityMode) windowMaterials.push(material);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.castShadow = false;
@@ -8923,10 +8925,17 @@ function updateNightGlow(amount) {
     if (!material) continue;
     if (material.userData?.fullCityMassing) {
       material.emissive.set(0xffffff);
-      // Keep the day fill nearly off; the night map itself contains sparse
-      // warm/cool windows so dark wall area remains dark and inhabited bays
-      // read as discrete lights instead of a whole-building tint.
-      material.emissiveIntensity = 0.06 + night * 1.18;
+      // Daylight keeps the full facade atlas as a low-key fill so broad
+      // Lambert faces stay legible. Once dusk is established, swap to the
+      // sparse warm/cool occupancy map; this avoids washing whole buildings
+      // while preserving the inhabited-window rhythm at night.
+      const nightActive = night >= 0.3;
+      material.emissiveMap = nightActive
+        ? material.userData.nightMap
+        : material.userData.dayMap;
+      material.emissiveIntensity = nightActive
+        ? 0.06 + night * 1.18
+        : 0.24 + (0.3 - night) * 0.18;
       material.needsUpdate = true;
       continue;
     }
