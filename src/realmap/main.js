@@ -2277,9 +2277,13 @@ function facadeNightTexture(seed, style = 'plaster') {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.minFilter = THREE.NearestMipmapNearestFilter;
-  texture.magFilter = THREE.NearestFilter;
-  texture.anisotropy = 2;
+  // Far skyline faces span many projected UV cycles. Lower the repeat before
+  // minification and use mip-aware linear sampling so occupied windows remain
+  // discrete instead of collapsing into horizontal alias stripes.
+  texture.repeat.set(0.52, 0.12);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 4;
   facadeNightTextureCache.set(key, texture);
   return texture;
 }
@@ -2674,7 +2678,10 @@ function projectBuildingFacadeUVs(geometry, seamless = false) {
       // Merged batches share corner vertices across adjacent walls. A single
       // diagonal world projection keeps both triangles of every wall coherent
       // without duplicating millions of vertices just to split UV seams.
-      uvs[i * 2] = (x + z) * 0.078;
+      // Use a deliberately off-diagonal basis so walls aligned with x + z
+      // still receive horizontal UV variation instead of stretching one atlas
+      // column across the full facade.
+      uvs[i * 2] = x * 0.095 + z * 0.065;
       uvs[i * 2 + 1] = y * 0.22;
     } else if (ny >= nx && ny >= nz) {
       uvs[i * 2] = x * 0.045;
@@ -9161,7 +9168,7 @@ function updateNightGlow(amount) {
         ? material.userData.nightMap
         : material.userData.dayMap;
       material.emissiveIntensity = nightActive
-        ? 0.06 + night * 1.18
+        ? 0.06 + night * 1.45
         : 0.24 + (0.3 - night) * 0.18;
       material.needsUpdate = true;
       continue;
