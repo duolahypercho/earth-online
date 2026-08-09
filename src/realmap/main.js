@@ -221,7 +221,7 @@ const STREAM = Object.freeze({
   maxCoarseBuildings: 28000,
   maxSignals: 64,
   maxTrees: 40,
-  maxFurniture: 0,
+  maxFurniture: 48,
   maxHillVegetation: 0,
   maxHillShrubbery: 0,
   maxTrafficRoads: 1200,
@@ -708,7 +708,6 @@ function getSuggestedCameraPoses() {
   }
 
   if (fullCityMode) {
-    const j = PREBUILT_SPAWN;
     // Full City has real Transamerica + Salesforce silhouettes. Pull the hero
     // back to a shared southwest view so the pyramid apex and a second SF
     // landmark can read together, with the existing bay plane on the horizon.
@@ -737,26 +736,38 @@ function getSuggestedCameraPoses() {
       [nightPairBayX, 30, nightPairBayZ],
       true,
     );
-    // Keep the full-city beauty cameras on the Jessie Street sidewalk. The
-    // previous offsets ([j.x - 28, j.z - 36]) landed inside the large OSM
-    // footprint immediately northwest of the spawn, so its extruded facade
-    // read as a vertical road/building slab across Street and Canyon frames.
-    // This curb-side anchor is outside that footprint and looks along Jessie
-    // toward the next block, preserving continuous asphalt + sidewalk bands.
-    const sidewalkX = j.x + 14;
-    const sidewalkZ = j.z + 28;
-    const roadLookX = j.x + 98;
-    const roadLookZ = j.z + 108;
-    street = makeCameraPose(
-      [sidewalkX, 7, sidewalkZ],
-      [roadLookX, 3.2, roadLookZ],
-      true,
-    );
-    canyon = makeCameraPose(
-      [sidewalkX, 28, sidewalkZ],
-      [roadLookX, 3.2, roadLookZ],
-      true,
-    );
+    // Hyde Street is a dense real OSM corridor with a pronounced but mesh-safe grade.
+    // Frame it from the lower endpoint looking uphill so the street views carry
+    // an immediately legible San Francisco slope instead of a flat SoMa lot.
+    const hillRoad = cityData?.roads?.find((road) => road.id === 26938418);
+    const hillPoints = hillRoad ? roadPoints(hillRoad) : [];
+    if (hillPoints.length >= 2) {
+      let low = hillPoints[0];
+      let high = hillPoints[hillPoints.length - 1];
+      if (elevationAt(low.x, low.z) > elevationAt(high.x, high.z)) [low, high] = [high, low];
+      const dx = high.x - low.x;
+      const dz = high.z - low.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const dirX = dx / length;
+      const dirZ = dz / length;
+      const cameraDistance = Math.min(28, length * 0.16);
+      const targetDistance = Math.min(length - 18, Math.max(92, length * 0.55));
+      const curbOffset = 8;
+      const cameraX = low.x + dirX * cameraDistance - dirZ * curbOffset;
+      const cameraZ = low.z + dirZ * cameraDistance + dirX * curbOffset;
+      const targetX = low.x + dirX * targetDistance;
+      const targetZ = low.z + dirZ * targetDistance;
+      street = makeCameraPose(
+        [cameraX, 2.1, cameraZ],
+        [targetX, 2.2, targetZ],
+        true,
+      );
+      canyon = makeCameraPose(
+        [cameraX, 9.5, cameraZ],
+        [targetX, 3.2, targetZ],
+        true,
+      );
+    }
   }
 
   return { hero, canyon, street, night, hills };
@@ -2660,7 +2671,7 @@ function buildingGroundY(building) {
   return Number.isFinite(minY) ? minY : elevationAt(building.centroid[0], building.centroid[1]);
 }
 
-function projectBuildingFacadeUVs(geometry) {
+function projectBuildingFacadeUVs(geometry, seamless = false) {
   geometry.computeVertexNormals();
   const pos = geometry.attributes.position;
   const norm = geometry.attributes.normal;
@@ -2672,7 +2683,13 @@ function projectBuildingFacadeUVs(geometry) {
     const nx = Math.abs(norm.getX(i));
     const ny = Math.abs(norm.getY(i));
     const nz = Math.abs(norm.getZ(i));
-    if (ny >= nx && ny >= nz) {
+    if (seamless) {
+      // Merged batches share corner vertices across adjacent walls. A single
+      // diagonal world projection keeps both triangles of every wall coherent
+      // without duplicating millions of vertices just to split UV seams.
+      uvs[i * 2] = (x + z) * 0.078;
+      uvs[i * 2 + 1] = y * 0.22;
+    } else if (ny >= nx && ny >= nz) {
       uvs[i * 2] = x * 0.045;
       uvs[i * 2 + 1] = z * 0.045;
     } else if (nx >= nz) {
@@ -2866,16 +2883,18 @@ function createMergedFootprintBuildings(buildings) {
       3,
       Math.min(Number(building.height) || (levels > 0 ? levels * 3.15 : 9), 320),
     );
-    const cx = building.centroid?.[0] ?? insetRing[0].x;
-    const cz = building.centroid?.[1] ?? insetRing[0].y;
-    const groundY = elevationAt(cx, cz) + buildingBaseClearance();
-    const topY = groundY + height;
+    // A single centroid base leaves downhill corners suspended on SF grades.
+    // Terrain-anchor every footprint corner and keep only the roof level so
+    // the lower facade becomes a grounded foundation instead of a sky wedge.
+    const baseY = insetRing.map((point) => elevationAt(point.x, point.y) + 0.02);
+    const topY = Math.max(...baseY) + height;
     color.set(buildingColor(building));
 
     const base = vertexOffset;
     const count = insetRing.length;
-    for (const point of insetRing) {
-      positions.push(point.x, groundY, point.y);
+    for (let i = 0; i < insetRing.length; i += 1) {
+      const point = insetRing[i];
+      positions.push(point.x, baseY[i], point.y);
       colors.push(color.r * 0.78, color.g * 0.78, color.b * 0.78);
     }
     for (const point of insetRing) {
@@ -2906,7 +2925,7 @@ function createMergedFootprintBuildings(buildings) {
   // Reuse the deterministic atlas on the merged footprint path. This keeps
   // distant city blocks inexpensive (one shared texture/material per batch)
   // while preventing the Full City fallback from reading as blank prisms.
-  projectBuildingFacadeUVs(geometry);
+  projectBuildingFacadeUVs(geometry, true);
   // Keep one material per merged batch (no draw-call fan-out), but vary the
   // deterministic atlas/style by the first real OSM footprint in that batch.
   // Street batches therefore retain distinct plaster/Edwardian/commercial/glass
@@ -2960,7 +2979,7 @@ function createGround(regionPoints) {
   const heightSamples = [];
   // Mild sink so coarse land triangles don't z-fight asphalt; deep pits look like
   // teal canyons under floating ribbons from street-level cameras.
-  const groundSink = fullCityMode ? 0.1 : 0.04;
+  const groundSink = fullCityMode ? 0.02 : 0.04;
   const noise = (x, z) => {
     const value = Math.sin(x * 0.018 + z * 0.023) * 4.71
       + Math.sin(x * 0.041 - z * 0.017) * 2.83
@@ -4225,6 +4244,7 @@ function createCableCarTracks(roads) {
     flatShading: true,
   });
   const eligibleClasses = new Set(['primary', 'secondary', 'tertiary', 'residential', 'unclassified']);
+  const namedCableStreets = new Set(['California Street', 'Hyde Street', 'Mason Street', 'Powell Street']);
   const positions = [];
   const indices = [];
   const railPositions = [];
@@ -4245,7 +4265,7 @@ function createCableCarTracks(roads) {
       if (length < 24) continue;
       const grade = Math.abs(elevationAt(b.x, b.z) - elevationAt(a.x, a.z)) / length;
       const northSouth = Math.abs(dz) > Math.abs(dx) * 1.15;
-      if (!northSouth || grade < 0.085) continue;
+      if (!namedCableStreets.has(road.name) && (!northSouth || grade < 0.085)) continue;
       const nx = -dz / length;
       const nz = dx / length;
       const a1 = { x: a.x + nx * trackHalf, z: a.z + nz * trackHalf };
@@ -5425,6 +5445,7 @@ function rebuildNearStreetscape(focus) {
   const roads = (worldPartition
     ? queryPartitionRoads(worldPartition, focus, STREAM.nearRadius)
     : [])
+    .sort((a, b) => nearestRoadDistance(a, focus) - nearestRoadDistance(b, focus))
     .slice(0, STREAM.nearRoadMax);
   nearFieldStats.roads = roads.length;
   if (roads.length) {
@@ -5438,7 +5459,9 @@ function rebuildNearStreetscape(focus) {
     }
     const trees = buildNearStreetTreeGroup(roads, STREAM.nearTreeMax);
     nearStreetscapeGroup.add(trees);
+    if (fullCityMode) nearStreetscapeGroup.add(createCableCarTracks(roads));
     nearFieldStats.trees = trees.userData.treeCount || 0;
+    if (fullCityMode) createStreetFurniture(roads);
   } else {
     nearFieldStats.trees = 0;
   }
@@ -6159,9 +6182,43 @@ function applyFullCityPerfMode() {
 }
 
 function lifeFocusPoint() {
+  // Beauty/orbit poses move the near-field stream focus to the selected real
+  // street target. Keep traffic and pedestrians in that same aperture instead
+  // of culling them around the hidden player spawn left by the initial build.
+  if (fullCityMode && cityMode === 'orbit' && streamFocusPoint) return streamFocusPoint;
   if (playerState) return { x: playerState.x, z: playerState.z };
   if (camera) return { x: camera.position.x, z: camera.position.z };
   return streamFocusPoint || PREBUILT_SPAWN;
+}
+
+function reseedFullCityLife(focus) {
+  if (!fullCityMode || cityMode !== 'orbit' || !cityWideReady || !worldPartition || !cityRoot) return;
+  const cell = partitionCellKey(focus.x, focus.z, STREAM.nearCellSize);
+  if (cell === lifeSeedCell) return;
+  const roads = queryPartitionRoads(worldPartition, focus, STREAM.nearRadius)
+    .filter((road) => FULL_CITY_TRAFFIC_HIGHWAYS.has(road.highway))
+    .sort((a, b) => nearestRoadDistance(a, focus) - nearestRoadDistance(b, focus))
+    .slice(0, STREAM.maxTrafficRoads);
+  if (!roads.length) return;
+  const signals = (cityData.signals || [])
+    .filter(([x, z]) => Math.hypot(x - focus.x, z - focus.z) <= STREAM.nearRadius)
+    .slice(0, STREAM.maxSignals);
+
+  if (trafficState) {
+    for (const vehicle of trafficState.vehicles) cityRoot.remove(vehicle.mesh);
+  }
+  driveIndex = -1;
+  trafficState = buildTraffic(roads, signals);
+  for (const vehicle of trafficState.vehicles) {
+    vehicle.mesh.castShadow = false;
+    vehicle.mesh.traverse?.((child) => {
+      child.castShadow = false;
+      child.receiveShadow = false;
+    });
+    cityRoot.add(vehicle.mesh);
+  }
+  createPedestrianSystem(roads);
+  lifeSeedCell = cell;
 }
 
 let renderer;
@@ -6231,6 +6288,7 @@ let streamBuildingPool = [];
 let streamRoadById = new Map();
 let worldPartition = null;
 let streamFocusPoint = PREBUILT_SPAWN;
+let lifeSeedCell = '';
 let detailRoadStreamStats = {
   loadedChunks: 0,
   compiledRoads: 0,
@@ -6759,6 +6817,7 @@ function createPedestrianSystem(roads) {
   const paths = buildSidewalkPaths(roads);
   if (pedestrianGroup) {
     cityRoot.remove(pedestrianGroup);
+    disposeRoot(pedestrianGroup);
     pedestrianGroup = null;
   }
   pedestrianGroup = new THREE.Group();
@@ -6950,6 +7009,7 @@ function createStreetTrees(roads) {
 function createStreetFurniture(roads) {
   if (furnitureGroup) {
     cityRoot.remove(furnitureGroup);
+    disposeRoot(furnitureGroup);
     furnitureGroup = null;
   }
   furnitureGroup = new THREE.Group();
@@ -9439,6 +9499,7 @@ async function buildCity() {
 
     const playFocus = fullCityMode ? { ...PREBUILT_SPAWN } : streamFocus;
     streamFocusPoint = playFocus;
+    lifeSeedCell = '';
     cityWideReady = false;
     doorwayFocusCell = '';
     fullCityPerfApplied = false;
@@ -9974,12 +10035,21 @@ function start() {
       if (resolved?.position) camera.position.set(resolved.position[0], resolved.position[1], resolved.position[2]);
       if (resolved?.target) controls.target.set(resolved.target[0], resolved.target[1], resolved.target[2]);
       controls.update();
+      const clearance = camera.position.y - elevationAt(camera.position.x, camera.position.z);
+      const streetAperture = fullCityMode && clearance <= 36;
       const focus = {
-        x: resolved?.target?.[0] ?? camera.position.x,
-        z: resolved?.target?.[2] ?? camera.position.z,
+        x: streetAperture
+          ? THREE.MathUtils.lerp(camera.position.x, controls.target.x, 0.5)
+          : controls.target.x,
+        z: streetAperture
+          ? THREE.MathUtils.lerp(camera.position.z, controls.target.z, 0.5)
+          : controls.target.z,
       };
       streamFocusPoint = focus;
-      if (fullCityMode && cityWideReady) updateNearFieldFidelity(focus);
+      if (fullCityMode && cityWideReady) {
+        updateNearFieldFidelity(focus);
+        if (streetAperture) reseedFullCityLife(focus);
+      }
       return true;
     },
     /** Teleport player + stream focus (drive/walk). Orbit uses camera target. */
