@@ -708,32 +708,17 @@ function getSuggestedCameraPoses() {
   }
 
   if (fullCityMode) {
-    // Full City has real Transamerica + Salesforce silhouettes. Pull the hero
-    // back to a shared southwest view so the pyramid apex and a second SF
-    // landmark can read together, with the existing bay plane on the horizon.
-    const primaryLandmark = resolveSfLandmark(SF_LANDMARK_SPECS[0]);
-    const secondaryLandmark = resolveSfLandmark(SF_LANDMARK_SPECS[1]);
-    const landmarkMidX = THREE.MathUtils.lerp(primaryLandmark.x, secondaryLandmark.x, 0.42);
-    const landmarkMidZ = THREE.MathUtils.lerp(primaryLandmark.z, secondaryLandmark.z, 0.42);
-    const landmarkSpan = Math.hypot(
-      secondaryLandmark.x - primaryLandmark.x,
-      secondaryLandmark.z - primaryLandmark.z,
-    );
-    const heroBackX = (heroCamX - skylineTarget.x) / Math.max(1, heroDistance);
-    const heroBackZ = (heroCamZ - skylineTarget.z) / Math.max(1, heroDistance);
-    const pairDistance = THREE.MathUtils.clamp(landmarkSpan * 0.9, 620, 820);
-    const pairCamX = landmarkMidX + heroBackX * pairDistance;
-    const pairCamZ = landmarkMidZ + heroBackZ * pairDistance;
+    // Bay-side composition verified against the real shoreline: water and the
+    // Embarcadero fill the foreground while Transamerica and Salesforce stay
+    // separated against the western hill mass.
     hero = makeCameraPose(
-      [pairCamX, Math.max(92, heroHeight), pairCamZ],
-      [landmarkMidX, 42, landmarkMidZ],
+      [2850, 82, 1550],
+      [1680, 50, 1600],
       true,
     );
-    const nightPairBayX = THREE.MathUtils.lerp(landmarkMidX, bayX, 0.24);
-    const nightPairBayZ = THREE.MathUtils.lerp(landmarkMidZ, bayZ, 0.24);
     night = makeCameraPose(
-      [pairCamX + viewNz * 42, Math.max(82, heroHeight * 0.96), pairCamZ - viewNx * 42],
-      [nightPairBayX, 30, nightPairBayZ],
+      [2720, 74, 1550],
+      [1680, 45, 1600],
       true,
     );
     // Hyde Street is a dense real OSM corridor with a pronounced but mesh-safe grade.
@@ -2272,27 +2257,29 @@ function facadeNightTexture(seed, style = 'plaster') {
   context.fillStyle = 'rgba(7, 14, 25, 0.18)';
   context.fillRect(0, 0, 256, 256);
   const styleBias = style === 'commercial' || style === 'glass' ? 2 : 0;
-  for (let row = 1; row <= 7; row += 1) {
-    const bandY = row * 30 - 6;
-    for (let col = 1; col <= 9; col += 1) {
+  for (let row = 1; row <= 11; row += 1) {
+    const bandY = row * 21 - 5;
+    for (let col = 1; col <= 15; col += 1) {
       const hash = (row * 17 + col * 11 + variant * 29 + styleBias * 13) % 13;
-      // Roughly one third of windows are occupied, with a stable per-batch
-      // cadence rather than a whole facade wash.
-      if (hash > 3 && hash !== 8) continue;
-      const x = (col * 26) - 12 + ((row * 5 + col * 3 + variant) % 3);
+      // Smaller, denser apertures read as individual occupied rooms at skyline
+      // distance instead of merging into broad horizontal emissive bands.
+      if (hash > 5 && hash !== 8) continue;
+      const x = (col * 16) - 8 + ((row * 5 + col * 3 + variant) % 3);
       const y = bandY + 4;
       const warm = ((hash + row + variant) % 3) !== 1;
       context.fillStyle = warm ? 'rgba(255, 194, 118, 0.92)' : 'rgba(118, 192, 255, 0.9)';
-      context.fillRect(x, y, 11, 18);
+      context.fillRect(x, y, 7, 11);
       context.fillStyle = warm ? 'rgba(255, 232, 185, 0.72)' : 'rgba(192, 231, 255, 0.68)';
-      context.fillRect(x + 1, y + 1, 4, 4);
+      context.fillRect(x + 1, y + 1, 3, 3);
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.anisotropy = 4;
+  texture.minFilter = THREE.NearestMipmapNearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.anisotropy = 2;
   facadeNightTextureCache.set(key, texture);
   return texture;
 }
@@ -3047,11 +3034,49 @@ function createWaterPlane(regionPoints) {
   const height = Math.max(bounds.maxZ - bounds.minZ, 800) + 1400;
   const geometry = new THREE.PlaneGeometry(width, height, 1, 1);
   geometry.rotateX(-Math.PI / 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#17485d';
+  context.fillRect(0, 0, 128, 128);
+  let rippleSeed = 9187;
+  const rippleRandom = () => {
+    rippleSeed = (rippleSeed * 1664525 + 1013904223) >>> 0;
+    return rippleSeed / 4294967296;
+  };
+  for (let ripple = 0; ripple < 150; ripple += 1) {
+    const x = rippleRandom() * 136 - 4;
+    const y = rippleRandom() * 136 - 4;
+    const length = 4 + rippleRandom() * 21;
+    const bend = (rippleRandom() - 0.5) * 8;
+    const cool = ripple % 4 === 0;
+    context.strokeStyle = cool
+      ? `rgba(96,176,205,${0.12 + rippleRandom() * 0.2})`
+      : `rgba(50,121,153,${0.1 + rippleRandom() * 0.22})`;
+    context.lineWidth = 0.45 + rippleRandom() * 1.45;
+    context.beginPath();
+    context.moveTo(x, y);
+    context.bezierCurveTo(x + length * 0.28, y + bend, x + length * 0.72, y - bend * 0.55, x + length, y + bend * 0.18);
+    context.stroke();
+  }
+  const surfaceMap = new THREE.CanvasTexture(canvas);
+  surfaceMap.colorSpace = THREE.SRGBColorSpace;
+  surfaceMap.wrapS = THREE.RepeatWrapping;
+  surfaceMap.wrapT = THREE.RepeatWrapping;
+  surfaceMap.repeat.set(14, 12);
+  surfaceMap.anisotropy = Math.min(4, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
   const material = new THREE.MeshStandardMaterial({
-    color: 0x1a4d63,
-    roughness: 0.22,
-    metalness: 0.18,
+    color: 0xffffff,
+    map: surfaceMap,
+    roughness: 0.28,
+    metalness: 0.16,
+    emissive: 0x3c829f,
+    emissiveMap: surfaceMap,
+    emissiveIntensity: 0.05,
   });
+  bayWaterMaterial = material;
+  material.userData.surfaceMap = surfaceMap;
   const water = new THREE.Mesh(geometry, material);
   water.position.set(
     (bounds.minX + bounds.maxX) / 2,
@@ -3060,6 +3085,92 @@ function createWaterPlane(regionPoints) {
   );
   water.userData = { type: 'water' };
   return water;
+}
+
+function createBayReflections() {
+  const group = new THREE.Group();
+  group.name = 'Bay night reflections';
+  const reflectionSources = [
+    { x: 2445, z: 1725, reach: 100, width: 17, color: 0xffb96b, yaw: -0.04 },
+    { x: 2446, z: 1695, reach: 114, width: 21, color: 0x79c7f2, yaw: 0.03 },
+    { x: 2467, z: 1665, reach: 90, width: 15, color: 0xffd18a, yaw: -0.025 },
+    { x: 2457, z: 1640, reach: 130, width: 24, color: 0x8bd8de, yaw: 0.035 },
+    { x: 2480, z: 1615, reach: 105, width: 18, color: 0xffa95f, yaw: -0.03 },
+  ];
+  const reflectionCanvas = document.createElement('canvas');
+  reflectionCanvas.width = 256;
+  reflectionCanvas.height = 64;
+  const reflectionContext = reflectionCanvas.getContext('2d');
+  reflectionContext.lineCap = 'round';
+  const reflectionGradient = reflectionContext.createLinearGradient(0, 0, 256, 0);
+  reflectionGradient.addColorStop(0, 'rgba(255,255,255,0.72)');
+  reflectionGradient.addColorStop(0.4, 'rgba(255,255,255,0.42)');
+  reflectionGradient.addColorStop(1, 'rgba(255,255,255,0)');
+  const fragments = [[6, 48], [70, 108], [133, 174], [201, 235]];
+  for (let fragment = 0; fragment < fragments.length; fragment += 1) {
+    const [start, finish] = fragments[fragment];
+    reflectionContext.filter = `blur(${5 + fragment * 0.9}px)`;
+    reflectionContext.strokeStyle = reflectionGradient;
+    reflectionContext.lineWidth = 18 + fragment * 3;
+    reflectionContext.beginPath();
+    reflectionContext.moveTo(start, 31 + Math.sin(fragment * 2.1) * 5);
+    reflectionContext.bezierCurveTo(
+      start + (finish - start) * 0.3,
+      22 + fragment * 3,
+      start + (finish - start) * 0.72,
+      43 - fragment * 2,
+      finish,
+      31 + Math.cos(fragment * 1.7) * 6,
+    );
+    reflectionContext.stroke();
+  }
+  reflectionContext.filter = 'none';
+  const reflectionMap = new THREE.CanvasTexture(reflectionCanvas);
+  reflectionMap.colorSpace = THREE.SRGBColorSpace;
+  reflectionMap.minFilter = THREE.LinearFilter;
+  reflectionMap.magFilter = THREE.LinearFilter;
+  bayReflectionMaterial = new THREE.MeshBasicMaterial({
+    map: reflectionMap,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const reflectionGeometry = new THREE.PlaneGeometry(1, 1, 1, 1);
+  reflectionGeometry.rotateX(-Math.PI / 2);
+  const reflections = new THREE.InstancedMesh(reflectionGeometry, bayReflectionMaterial, reflectionSources.length);
+  const reflectionTransform = new THREE.Object3D();
+  const reflectionColor = new THREE.Color();
+  for (let index = 0; index < reflectionSources.length; index += 1) {
+    const source = reflectionSources[index];
+    reflectionTransform.position.set(source.x + source.reach * 0.5, SEA_LEVEL_Y + 0.06, source.z);
+    reflectionTransform.rotation.set(0, source.yaw, 0);
+    reflectionTransform.scale.set(source.reach, 1, source.width);
+    reflectionTransform.updateMatrix();
+    reflections.setMatrixAt(index, reflectionTransform.matrix);
+    reflections.setColorAt(index, reflectionColor.set(source.color));
+  }
+  reflections.instanceMatrix.needsUpdate = true;
+  if (reflections.instanceColor) reflections.instanceColor.needsUpdate = true;
+  reflections.name = 'Bay window-light reflections';
+  reflections.renderOrder = 2;
+  const glowGeometry = new THREE.PlaneGeometry(4200, 4000, 1, 1);
+  glowGeometry.rotateX(-Math.PI / 2);
+  bayGlowMaterial = new THREE.MeshBasicMaterial({
+    color: 0x24617a,
+    map: bayWaterMaterial?.userData?.surfaceMap || null,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const glow = new THREE.Mesh(glowGeometry, bayGlowMaterial);
+  glow.name = 'Bay night surface glow';
+  glow.position.set(3500, SEA_LEVEL_Y + 0.035, 1500);
+  glow.renderOrder = 1;
+  group.add(glow, reflections);
+  return group;
 }
 
 const SF_LANDMARK_SPECS = [
@@ -3157,19 +3268,21 @@ function createSalesforceSilhouette(x, z, targetHeight) {
   const height = Math.min(320, Math.max(180, targetHeight * 0.96));
   const width = height * 0.17;
   const glassBright = new THREE.MeshStandardMaterial({
-    color: 0x7eb0d0,
-    roughness: 0.16,
-    metalness: 0.46,
+    color: 0x587f99,
+    roughness: 0.3,
+    metalness: 0.28,
     emissive: 0x000000,
     emissiveIntensity: 0,
   });
   const glassDark = new THREE.MeshStandardMaterial({
-    color: 0x3a5878,
-    roughness: 0.2,
-    metalness: 0.4,
+    color: 0x304a62,
+    roughness: 0.32,
+    metalness: 0.25,
     emissive: 0x000000,
     emissiveIntensity: 0,
   });
+  glassBright.userData.landmarkGlass = true;
+  glassDark.userData.landmarkGlass = true;
   windowMaterials.push(glassBright, glassDark);
   const shaft = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.92, width), glassBright);
   shaft.position.y = height * 0.46;
@@ -5445,7 +5558,11 @@ function rebuildNearStreetscape(focus) {
   const roads = (worldPartition
     ? queryPartitionRoads(worldPartition, focus, STREAM.nearRadius)
     : [])
-    .sort((a, b) => nearestRoadDistance(a, focus) - nearestRoadDistance(b, focus))
+    .sort((a, b) => {
+      if (a.id === 26938418) return -1;
+      if (b.id === 26938418) return 1;
+      return nearestRoadDistance(a, focus) - nearestRoadDistance(b, focus);
+    })
     .slice(0, STREAM.nearRoadMax);
   nearFieldStats.roads = roads.length;
   if (roads.length) {
@@ -6191,6 +6308,28 @@ function lifeFocusPoint() {
   return streamFocusPoint || PREBUILT_SPAWN;
 }
 
+function closestProgressOnPoints(points, focus) {
+  let walked = 0;
+  let bestDistance = Infinity;
+  let bestS = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length <= 0.001) continue;
+    const t = THREE.MathUtils.clamp(((focus.x - a.x) * dx + (focus.z - a.z) * dz) / (length * length), 0, 1);
+    const distance = Math.hypot(a.x + dx * t - focus.x, a.z + dz * t - focus.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestS = walked + length * t;
+    }
+    walked += length;
+  }
+  return { distance: bestDistance, s: bestS };
+}
+
 function reseedFullCityLife(focus) {
   if (!fullCityMode || cityMode !== 'orbit' || !cityWideReady || !worldPartition || !cityRoot) return;
   const cell = partitionCellKey(focus.x, focus.z, STREAM.nearCellSize);
@@ -6209,6 +6348,9 @@ function reseedFullCityLife(focus) {
   }
   driveIndex = -1;
   trafficState = buildTraffic(roads, signals);
+  const focalTrafficPaths = trafficState.paths
+    .map((path) => ({ path, ...closestProgressOnPoints(path.points, focus) }))
+    .sort((a, b) => a.distance - b.distance);
   for (const vehicle of trafficState.vehicles) {
     vehicle.mesh.castShadow = false;
     vehicle.mesh.traverse?.((child) => {
@@ -6218,6 +6360,27 @@ function reseedFullCityLife(focus) {
     cityRoot.add(vehicle.mesh);
   }
   createPedestrianSystem(roads);
+  for (let i = 0; i < Math.min(4, trafficState.vehicles.length, focalTrafficPaths.length); i += 1) {
+    const vehicle = trafficState.vehicles[i];
+    const focal = focalTrafficPaths[i % Math.min(2, focalTrafficPaths.length)];
+    vehicle.path = focal.path;
+    vehicle.s = THREE.MathUtils.clamp(focal.s - 28 + i * 17, 0.5, focal.path.length - 0.5);
+    const pose = pathPosition(vehicle.path, vehicle.s);
+    vehicle.mesh.position.copy(pose.position);
+    vehicle.mesh.rotation.set(0, pose.heading, 0);
+  }
+  const focalPedestrianPaths = pedestrianState
+    .map((person) => ({ path: person.path, ...closestProgressOnPoints(person.path.points, focus) }))
+    .sort((a, b) => a.distance - b.distance);
+  for (let i = 0; i < Math.min(6, pedestrianState.length, focalPedestrianPaths.length); i += 1) {
+    const person = pedestrianState[i];
+    const focal = focalPedestrianPaths[i % Math.min(2, focalPedestrianPaths.length)];
+    person.path = focal.path;
+    person.s = THREE.MathUtils.clamp(focal.s - 30 + i * 4.5, 0.5, focal.path.length - 0.5);
+    const pose = pointAlongPath(person.path.points, person.s);
+    person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
+    person.mesh.rotation.y = pose.heading;
+  }
   lifeSeedCell = cell;
 }
 
@@ -6304,6 +6467,9 @@ let rainPositions = null;
 let rainVelocities = null;
 let wetWeatherGroup = null;
 let puddleMaterial = null;
+let bayWaterMaterial = null;
+let bayGlowMaterial = null;
+let bayReflectionMaterial = null;
 let mistGroup = null;
 let mistPositions = null;
 let mistVelocities = null;
@@ -6397,19 +6563,20 @@ const TIME_OF_DAY_MODES = {
   },
   night: {
     label: 'NIGHT',
-    background: 0x101826,
-    fogColor: 0x152033,
+    background: 0x18263a,
+    fogColor: 0x24344d,
     fogNear: 280,
     fogFar: 1900,
     sunColor: 0x8aa4c8,
     sunIntensity: 0.28,
     sunPosition: [-420, 120, -380],
-    hemisphereSky: 0x243652,
-    hemisphereGround: 0x141820,
-    hemisphereIntensity: 0.55,
-    exposure: 1.08,
-    skyTop: 0x0c1524,
-    skyHorizon: 0x243448,
+    hemisphereSky: 0x304766,
+    hemisphereGround: 0x1c2430,
+    hemisphereIntensity: 0.68,
+    exposure: 1.14,
+    skyTop: 0x142238,
+    skyMid: 0x1d3048,
+    skyHorizon: 0x3a506b,
     skySun: 0xb8c8e0,
     night: 1,
   },
@@ -8999,6 +9166,12 @@ function updateNightGlow(amount) {
       material.needsUpdate = true;
       continue;
     }
+    if (material.userData?.landmarkGlass) {
+      material.emissive.set(0x38566e);
+      material.emissiveIntensity = night * 0.2;
+      material.needsUpdate = true;
+      continue;
+    }
     const tone = index % 5;
     const warm = tone === 0 || tone === 2 || tone === 4;
     const cool = tone === 1;
@@ -9020,8 +9193,21 @@ function updateNightGlow(amount) {
     material.emissiveIntensity = 0.55 + night * 2.2;
     material.needsUpdate = true;
   }
-  if (moonFill) moonFill.intensity = night * 0.35;
-  if (nightAmbient) nightAmbient.intensity = night * 0.18;
+  if (bayReflectionMaterial) {
+    bayReflectionMaterial.opacity = THREE.MathUtils.clamp((night - 0.2) / 0.8, 0, 1) * 0.46;
+  }
+  if (bayGlowMaterial) {
+    bayGlowMaterial.opacity = night * 0.36;
+  }
+  if (bayWaterMaterial) {
+    const nightWater = night >= 0.3;
+    bayWaterMaterial.emissiveMap = nightWater ? null : bayWaterMaterial.userData.surfaceMap;
+    bayWaterMaterial.emissive.set(nightWater ? 0x17465f : 0x3c829f);
+    bayWaterMaterial.emissiveIntensity = nightWater ? 0.72 : 0.05;
+    bayWaterMaterial.needsUpdate = true;
+  }
+  if (moonFill) moonFill.intensity = night * 0.5;
+  if (nightAmbient) nightAmbient.intensity = night * 0.32;
   if (ssaoPassRef) ssaoPassRef.enabled = night < 0.65;
 }
 
@@ -9512,6 +9698,7 @@ async function buildCity() {
       : 'Laying the land slab and bay water…', 0.4);
     await tick();
     cityRoot.add(createWaterPlane(terrainPoints));
+    if (fullCityMode) cityRoot.add(createBayReflections());
     cityRoot.add(createGround(terrainPoints));
 
     streamRoadById = new Map((cityData.roads || usedRoads).map((road) => [road.id, road]));
