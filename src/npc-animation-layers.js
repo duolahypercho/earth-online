@@ -16,6 +16,12 @@ import * as THREE from 'three';
 const ADULT_STEP_LENGTH = 0.68;
 const GAIT_START_DAMP = 10.2;
 const GAIT_STOP_DAMP = 5.4;
+// Small contact envelopes keep the authored rigs planted without introducing
+// a per-actor IK solver or any new geometry/draw calls.
+const CONTACT_PELVIS_DROP = 0.008;
+const CONTACT_PELVIS_ROLL = 0.035;
+const CONTACT_KNEE_BEND = 0.045;
+const CONTACT_TOE_ROLL = 0.06;
 
 export function createAnimLayerState(seed = 0) {
   return {
@@ -67,18 +73,29 @@ export function applyLocomotionLayer(ud, {
   const rightStance = Math.pow(stanceRight, 2.4);
   const leftHeel = Math.pow(Math.max(0, Math.cos(phase + 0.12)), 14) * gait;
   const rightHeel = Math.pow(Math.max(0, -Math.cos(phase + 0.12)), 14) * gait;
+  const leftToeOff = Math.pow(Math.max(0, -Math.sin(phase - 0.18)), 8) * gait;
+  const rightToeOff = Math.pow(Math.max(0, Math.sin(phase - 0.18)), 8) * gait;
+  const leftContact = leftStance * (0.62 + leftHeel * 0.38);
+  const rightContact = rightStance * (0.62 + rightHeel * 0.38);
+  const contactBalance = rightContact - leftContact;
+  const contactWeight = Math.max(leftContact, rightContact);
   const strideScale = gait * stride * hurry;
   const swing = sin * 0.46 * strideScale;
   const shoulderTwist = sin * 0.13 * gait;
   const bob = gait > 0.001
-    ? (-Math.pow(Math.abs(cos), 4) * 0.016 * gait - Math.max(leftHeel, rightHeel) * 0.35)
+    ? (-Math.pow(Math.abs(cos), 4) * 0.016 * gait
+      - Math.max(leftHeel, rightHeel) * 0.35
+      - contactWeight * CONTACT_PELVIS_DROP)
     : 0;
   const hipDrop = 0.026 * gait;
 
   ud.rig.position.y = bob;
-  ud.rig.position.x = -sin * 0.02 * gait;
+  ud.rig.position.x = -sin * 0.02 * gait + contactBalance * 0.006;
   ud.rig.rotation.x = 0.018 * gait + speedRatio * 0.04 * gait + (hurry - 1) * 0.04 * gait;
-  ud.rig.rotation.z = -sin * 0.024 * gait - turnLean;
+  // Let the pelvis settle over the planted foot. The envelope is deliberately
+  // subtle: it reads as weight transfer at street distance without becoming a
+  // visible side-to-side sway or changing navigation transforms.
+  ud.rig.rotation.z = -sin * 0.024 * gait + contactBalance * CONTACT_PELVIS_ROLL * gait - turnLean;
 
   if (ud.leftLeg) {
     ud.leftLeg.position.y += (leftSwing * 0.026 - leftStance * hipDrop) * gait;
@@ -91,10 +108,20 @@ export function applyLocomotionLayer(ud, {
     ud.rightLeg.rotation.z = -sin * 0.03 * gait;
   }
   if (ud.leftShin) {
-    ud.leftShin.rotation.x = (leftSwing * 0.82 - leftStance * 0.07 + leftHeel * 0.04) * gait;
+    ud.leftShin.rotation.x = (
+      leftSwing * 0.82
+      - leftStance * 0.07
+      - leftContact * CONTACT_KNEE_BEND
+      + leftHeel * 0.04
+    ) * gait;
   }
   if (ud.rightShin) {
-    ud.rightShin.rotation.x = (rightSwing * 0.82 - rightStance * 0.07 + rightHeel * 0.04) * gait;
+    ud.rightShin.rotation.x = (
+      rightSwing * 0.82
+      - rightStance * 0.07
+      - rightContact * CONTACT_KNEE_BEND
+      + rightHeel * 0.04
+    ) * gait;
   }
 
   const footNeutralX = ud.footNeutralX ?? Math.PI * 0.5;
@@ -104,13 +131,13 @@ export function applyLocomotionLayer(ud, {
     ud.leftFoot.position.y += leftSwing * 0.052 * gait * (1 - leftStance * 0.92);
     ud.leftFoot.position.z += leftFootZ;
     ud.leftFoot.rotation.x = footNeutralX
-      + (leftSwing * 0.3 - leftStance * 0.12 + leftHeel * 0.08) * gait;
+      + (leftSwing * 0.3 - leftStance * 0.12 + leftHeel * 0.08 - leftToeOff * CONTACT_TOE_ROLL) * gait;
   }
   if (ud.rightFoot) {
     ud.rightFoot.position.y += rightSwing * 0.052 * gait * (1 - rightStance * 0.92);
     ud.rightFoot.position.z += rightFootZ;
     ud.rightFoot.rotation.x = footNeutralX
-      + (rightSwing * 0.3 - rightStance * 0.12 + rightHeel * 0.08) * gait;
+      + (rightSwing * 0.3 - rightStance * 0.12 + rightHeel * 0.08 - rightToeOff * CONTACT_TOE_ROLL) * gait;
   }
 
   if (ud.leftArm) {
@@ -133,7 +160,7 @@ export function applyLocomotionLayer(ud, {
   }
   if (ud.body) {
     ud.body.rotation.y = -shoulderTwist * 0.72 + turnLean * 0.32;
-    ud.body.rotation.z = -sin * 0.022 * gait;
+    ud.body.rotation.z = -sin * 0.022 * gait + contactBalance * 0.02 * gait;
     ud.body.rotation.x += speedRatio * 0.03 * gait;
   }
   if (ud.headPivot) {

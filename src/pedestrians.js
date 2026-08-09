@@ -37,6 +37,12 @@ const ADULT_STEP_LENGTH = 0.68;
 const GAIT_START_DAMP = 10.2;
 const GAIT_STOP_DAMP = 5.4;
 const MAX_DT = 0.05;
+// Shared contact envelope for the inline crowd animator. It is intentionally
+// small so the fixed pool stays grounded without a per-actor IK pass.
+const CONTACT_PELVIS_DROP = 0.008;
+const CONTACT_PELVIS_ROLL = 0.035;
+const CONTACT_KNEE_BEND = 0.045;
+const CONTACT_TOE_ROLL = 0.06;
 
 const STATE_WALK = 0;
 const STATE_IDLE = 1;
@@ -1068,8 +1074,13 @@ function createSharedGeometry() {
     // while using one paired arm and one paired leg mesh instead of the
     // close-up component stack. The navigation and behavior rigs still
     // receive the same transform handles below.
-    crowdArms: new THREE.BoxGeometry(0.16, 0.72, 0.14),
-    crowdLegs: new THREE.BoxGeometry(0.22, 0.84, 0.2),
+    // Background actors keep the same two-mesh-per-side budget, but rounded
+    // low-poly limb caps avoid the rectangular "action figure" silhouette at
+    // street distance. Capsule dimensions preserve the previous 0.72 m arm
+    // and 0.84 m leg envelopes, so existing pivots and gait amplitudes remain
+    // unchanged while feet/hand ends catch a softer contact highlight.
+    crowdArms: new THREE.CapsuleGeometry(0.085, 0.55, 2, 6),
+    crowdLegs: new THREE.CapsuleGeometry(0.12, 0.6, 2, 6),
     hood: new THREE.TorusGeometry(0.145, 0.03, 5, 12),
     beanie: new THREE.SphereGeometry(0.19, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.54),
     capBrim: new THREE.BoxGeometry(0.18, 0.026, 0.11),
@@ -3013,6 +3024,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     const rightHeelStrike = Math.pow(Math.max(0, -Math.cos(phase + 0.12)), 14) * gait;
     const leftToeOff = Math.pow(Math.max(0, -Math.sin(phase - 0.18)), 8) * gait;
     const rightToeOff = Math.pow(Math.max(0, Math.sin(phase - 0.18)), 8) * gait;
+    const leftContact = leftStance * (0.62 + leftHeelStrike * 0.38);
+    const rightContact = rightStance * (0.62 + rightHeelStrike * 0.38);
+    const contactBalance = rightContact - leftContact;
+    const contactWeight = Math.max(leftContact, rightContact);
     const turnRate = data.turnRate;
     const turnLean = THREE.MathUtils.clamp(
       turnRate * 0.032 + data.turnIntent * 0.045,
@@ -3030,19 +3045,25 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     const swing = sinPhase * 0.62 * strideScale * crowdBoost * heroBoost;
     const shoulderTwist = sinPhase * 0.19 * gait;
     const bob = gait > 0.001
-      ? (-Math.pow(Math.abs(cosPhase), 4) * 0.019 * gait - data.stepPulse * 0.009)
+      ? (-Math.pow(Math.abs(cosPhase), 4) * 0.019 * gait
+        - data.stepPulse * 0.009
+        - contactWeight * CONTACT_PELVIS_DROP)
         * gaitCue.bob
       : Math.sin(elapsed * 1.7 + data.phase) * 0.006;
     ud.rig.position.y = bob;
     // Pelvis drops over the planted hip while the swing side rises.
     const hipDrop = 0.032 * gait;
-    ud.rig.position.x = -sinPhase * 0.028 * gait;
+    ud.rig.position.x = -sinPhase * 0.028 * gait + contactBalance * 0.006;
     ud.rig.rotation.x = 0.018 * gait
       + Math.sin(phase * 2) * 0.01 * gait
       + gaitCue.lean * gait
       + (crossingCross ? 0.014 * gait : 0)
       - data.grade * 0.055 * gait;
-    ud.rig.rotation.z = -sinPhase * 0.032 * gait - turnLean;
+    // A restrained pelvis roll follows the planted foot, making the capsule
+    // crowd and the skinned heroes share the same weighted contact read.
+    ud.rig.rotation.z = -sinPhase * 0.032 * gait
+      + contactBalance * CONTACT_PELVIS_ROLL * gait
+      - turnLean;
     const leftHipY = ud.leftHipY;
     const rightHipY = ud.rightHipY;
     const leftHipX = ud.leftHipX ?? 0;
@@ -3064,10 +3085,18 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     ud.rightLeg.rotation.y = sinPhase * 0.055 * gait;
     const footLiftScale = skinnedRig ? 0.72 : 1;
     ud.leftShin.rotation.x = (
-      leftSwing * 0.88 * footLiftScale - leftStance * 0.09 + leftHeelStrike * 0.06 - leftToeOff * 0.04
+      leftSwing * 0.88 * footLiftScale
+      - leftStance * 0.09
+      - leftContact * CONTACT_KNEE_BEND
+      + leftHeelStrike * 0.06
+      - leftToeOff * 0.04
     ) * gait;
     ud.rightShin.rotation.x = (
-      rightSwing * 0.88 * footLiftScale - rightStance * 0.09 + rightHeelStrike * 0.06 - rightToeOff * 0.04
+      rightSwing * 0.88 * footLiftScale
+      - rightStance * 0.09
+      - rightContact * CONTACT_KNEE_BEND
+      + rightHeelStrike * 0.06
+      - rightToeOff * 0.04
     ) * gait;
     // Feet advance only during swing; stance holds the shoe line to kill skate.
     const leftFootZOffset = leftSwing * 0.052 * gait;
@@ -3090,10 +3119,18 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     // Skinned foot bones detach when pitch is exaggerated — keep rotation mild.
     const footPitchScale = skinnedRig ? 0.48 : 1;
     ud.leftFoot.rotation.x = footNeutralX
-      + (leftSwing * 0.38 * footPitchScale - leftStance * 0.08 + leftFootPlant * 0.06 + leftHeelStrike * 0.04 - leftToeOff * 0.03) * gait
+      + (leftSwing * 0.38 * footPitchScale
+        - leftStance * 0.08
+        + leftFootPlant * 0.06
+        + leftHeelStrike * 0.04
+        - leftToeOff * CONTACT_TOE_ROLL) * gait
       - data.grade * 0.025 * gait;
     ud.rightFoot.rotation.x = footNeutralX
-      + (rightSwing * 0.38 * footPitchScale - rightStance * 0.08 + rightFootPlant * 0.06 + rightHeelStrike * 0.04 - rightToeOff * 0.03) * gait
+      + (rightSwing * 0.38 * footPitchScale
+        - rightStance * 0.08
+        + rightFootPlant * 0.06
+        + rightHeelStrike * 0.04
+        - rightToeOff * CONTACT_TOE_ROLL) * gait
       - data.grade * 0.025 * gait;
     const armSwing = swing * 0.92 * ud.armSwing * gaitCue.arm;
     ud.leftArm.rotation.x = -armSwing;
@@ -3118,7 +3155,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       ud.rightLeg.rotation.x *= 1.12;
     }
     ud.body.rotation.z = gait > 0.001
-      ? -sinPhase * 0.032 * gait
+      ? -sinPhase * 0.032 * gait + contactBalance * 0.02 * gait
       : Math.sin(elapsed + data.phase) * 0.014;
     ud.body.rotation.x += data.grade * 0.12 * gait;
     ud.body.rotation.y = -shoulderTwist * 0.88 + turnLean * 0.32 + data.turnIntent * 0.035 * gait;
