@@ -9412,9 +9412,14 @@ function renderLoop() {
   updateCityReadout();
   updateMission();
   updateSandboxAudio();
-  const streamFocus = playerState
-    ? { x: playerState.x, z: playerState.z }
-    : { x: camera.position.x, z: camera.position.z };
+  // Orbit beauty poses explicitly seed the near-field stream around their
+  // selected street/canyon focus.  Do not overwrite that focus with the
+  // hidden player spawn on every frame; walk/drive still follow playerState.
+  const streamFocus = fullCityMode && cityMode === 'orbit' && streamFocusPoint
+    ? streamFocusPoint
+    : playerState
+      ? { x: playerState.x, z: playerState.z }
+      : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
   updateRain(dt);
   updateWeatherVisuals(dt);
@@ -10233,10 +10238,10 @@ function start() {
       const streetAperture = fullCityMode && clearance <= 36;
       const focus = {
         x: streetAperture
-          ? THREE.MathUtils.lerp(camera.position.x, controls.target.x, 0.5)
+          ? THREE.MathUtils.lerp(camera.position.x, controls.target.x, 0.4)
           : controls.target.x,
         z: streetAperture
-          ? THREE.MathUtils.lerp(camera.position.z, controls.target.z, 0.5)
+          ? THREE.MathUtils.lerp(camera.position.z, controls.target.z, 0.4)
           : controls.target.z,
       };
       streamFocusPoint = focus;
