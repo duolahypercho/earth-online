@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-vertical-water-reference-source-lock",
+  "status": "source-locked-station-datum-conversion-preview-only",
+  "id": "sf-ferry-3dep-2023-vertical-water-reference-v1",
+  "title": "Ferry 3DEP NAVD88 and NOAA station 9414290 water-reference lock",
+  "scope": "This lock converts only the accepted 1983-2001 tidal datums published for NOAA CO-OPS station 9414290 to that station's published NAVD88 reference. It is a preview-only reference for the locked Ferry 3DEP extent. It neither establishes a local Ferry waterfront tidal datum nor authorizes production terrain, water, navigation, flood, survey, or safety use.",
+  "sourceEvidence": {
+    "locked3depProduct": {
+      "sourceLock": "public/data/world/source-locks/sf-ferry-3dep-2023.lock.json",
+      "productMetadataUrl": "https://thor-f5.er.usgs.gov/ngtoc/metadata/waf/elevation/1_meter/geotiff/CA_SanFrancisco_B23/USGS_1M_10_x55y419_CA_SanFrancisco_B23.xml",
+      "productMetadataSha256": "55f267f782295ebf3f7250ee3418649e58fb89b4783d69f4d9b7fdb0b9f42301",
+      "exactVerticalDeclaration": "All bare earth elevation values are in meters and are referenced to the North American Vertical Datum of 1988 (NAVD88).",
+      "geotiffVerticalGeoKeys": "absent (as locked and verified by the parent source lock)",
+      "verticalAccuracy": "not supplied in the distributable XML; it directs users to original product metadata if provided"
+    },
+    "usgsSpecification": {
+      "acquisitionEraSpecification": {
+        "title": "Lidar Base Specification 2022 rev. A",
+        "url": "https://d9-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/media/files/Lidar-Base-Specification-2022-rev-A.docx",
+        "sha256": "454e2b333c2ccfc52e3a85bf878d410312ae82b5a0c8884675fe1d0db158eeba",
+        "relevance": "For CONUS, its default is NAVD88 orthometric heights and the latest NGS hybrid geoid, then GEOID18; it permits an advance USGS/user agreement to specify otherwise and requires the delivered vertical CRS and geoid model to be identified."
+      },
+      "currentSpecification": {
+        "title": "Lidar Base Specification 2025 rev. A",
+        "url": "https://d9-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/media/files/Lidar-Base-Specification-2025-rev-A.docx",
+        "sha256": "9469ff8235c850dd8fb3629a1d1b5e8b71ae9af27cfa1532299aecc68f62285e",
+        "relevance": "The current specification likewise identifies NAVD88 and then-current GEOID18 as the CONUS default and requires vertical-system/geoid identification in DEM georeferencing or accompanying information. It does not retrospectively prove this product's omitted geoid or datum realization."
+      }
+    },
+    "ngs": {
+      "verticalDatums": {
+        "url": "https://geodesy.noaa.gov/datums/vertical/index.shtml",
+        "sha256": "359c062b1fa19cd6d15a1dbe650db3bbaea82d958264ea5731f6197d738f1a95",
+        "relevance": "NGS identifies NAVD88 as the current vertical datum for CONUS and says deriving a NAVD88 orthometric height from GNSS requires an ellipsoid height and a hybrid geoid model."
+      },
+      "geoid18": {
+        "url": "https://geodesy.noaa.gov/GEOID/GEOID18/",
+        "sha256": "074ba712722a680d3225ea5a240a626943d5c19cf1e710be1fede657a4d7e430",
+        "relevance": "GEOID18 is intended for NAD83(2011), epoch 2010.00, and returns NAVD88-consistent orthometric heights. It is not selected by this lock."
+      }
+    },
+    "coopsStation9414290": {
+      "stationUrl": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9414290.json",
+      "stationSha256": "23d1c617cdb91ed6b8f8082406cf1bb0d5e64d32f717bc6efcbf02d9d67c16a4",
+      "datumsUrl": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9414290/datums.json?units=metric",
+      "datumsSha256": "7b5d1b79efb7656499fd91508fec05bce539f1eec177f42456ac6aa4b1b4c79f",
+      "id": "9414290",
+      "name": "San Francisco",
+      "positionWgs84": [-122.46589, 37.806305],
+      "units": "meters",
+      "orthometricDatum": "NAVD88",
+      "accepted": "Apr 17 2003",
+      "tidalDatumEpoch": "1983-2001",
+      "datumAnalysisPeriod": "01/01/1983 - 12/31/2001",
+      "publishedStationDatumValuesMetres": {
+        "STND": 0,
+        "MHHW": 3.602,
+        "MHW": 3.416,
+        "MSL": 2.773,
+        "MLLW": 1.822,
+        "NAVD88": 1.804
+      }
+    }
+  },
+  "claims": {
+    "dem": {
+      "surface": "bare-earth DEM",
+      "verticalDatum": "NAVD88",
+      "verticalUnits": "metres",
+      "geoidModel": "not claimed; no model is present in the product XML or embedded GeoTIFF keys",
+      "verticalCoordinateEpoch": "not claimed; NAVD88 is declared, but no vertical coordinate epoch is supplied",
+      "horizontalRealizationOrEpoch": "not claimed; neither is required for the same-datum station conversion"
+    },
+    "stationDatumConversion": {
+      "direction": "positive up",
+      "stationDatumDefinition": "CO-OPS datum values are elevations in metres above STND; STND is zero.",
+      "equation": "H_NAVD88(D) = H_STND(D) - H_STND(NAVD88)",
+      "inverseEquation": "H_STND = H_NAVD88 + H_STND(NAVD88)",
+      "constantHStndNavd88Metres": 1.804,
+      "computedTidalDatumHeightsNavd88Metres": {
+        "MHHW": 1.798,
+        "MHW": 1.612,
+        "MSL": 0.969,
+        "MLLW": 0.018
+      },
+      "observedWaterLevelEquation": "For a station observation w reported above any one listed station datum D, H_NAVD88(w) = w + H_NAVD88(D).",
+      "precision": "Values are arithmetic differences of CO-OPS three-decimal-metre published datum values; they are not uncertainty estimates."
+    },
+    "previewApplicability": {
+      "lockedFerryExtentCenterWgs84": [-122.39321408949999, 37.79536393725],
+      "stationToLockedExtentCenterDistanceMetres": 6500.196346472907,
+      "distanceMethod": "Spherical haversine distance using mean Earth radius 6371008.8 m, station coordinates from the CO-OPS station endpoint, and the center of the parent locked WGS84 extent.",
+      "permittedUse": "A static preview plane may deliberately use station 9414290 MSL (+0.969 m NAVD88) or MHW (+1.612 m NAVD88) as a labeled station-reference visual baseline.",
+      "notEstablished": "CO-OPS has not supplied a Ferry-waterfront gauge, tidal-datum transfer, local offset, spatial interpolation, hydrodynamic model result, or uncertainty for this extent in the evidence above. The station conversion must not be described as the local Ferry waterfront MSL or MHW."
+    }
+  },
+  "limitations": {
+    "geoid": "No geoid conversion is performed or needed to subtract two values already published against NAVD88. GEOID18 is only a specification/default-model inference, not evidence that this specific distributable GeoTIFF used it.",
+    "epoch": "The CO-OPS tidal datum epoch is 1983-2001. It is not a DEM vertical-coordinate epoch, a survey epoch, or a current water-level prediction.",
+    "accuracy": "The product XML supplies no product-specific vertical accuracy, the CO-OPS endpoint supplies no uncertainty for these datum values or their 6.50 km spatial transfer, and no combined uncertainty may be claimed.",
+    "water": "The DEM is bare earth, not bathymetry or a water surface. This lock does not infer shoreline, hydroflattening level, tide-at-time, surge, wave setup, sea-level trend, or inundation.",
+    "production": "No production datum reconciliation, terrain artifact, manifest, runtime behavior, or production claim is authorized by this lock."
+  },
+  "authorityReceipts": {
+    "retrievedOn": "2026-08-10",
+    "hashAlgorithm": "SHA-256 over the retrieved response bytes",
+    "allUrls": "The URLs and SHA-256 receipts above are the authority receipts for this lock."
+  },
+  "testVectors": [
+    {
+      "id": "station-msl-to-navd88",
+      "stationDatum": "MSL",
+      "stationDatumHeightMetres": 2.773,
+      "expectedNavd88Metres": 0.969
+    },
+    {
+      "id": "station-mhw-to-navd88",
+      "stationDatum": "MHW",
+      "stationDatumHeightMetres": 3.416,
+      "expectedNavd88Metres": 1.612
+    },
+    {
+      "id": "station-mllw-to-navd88",
+      "stationDatum": "MLLW",
+      "stationDatumHeightMetres": 1.822,
+      "expectedNavd88Metres": 0.018
+    },
+    {
+      "id": "navd88-zero-to-stnd",
+      "inputNavd88Metres": 0,
+      "expectedStationDatumMetres": 1.804
+    }
+  ],
+  "integrationStatus": {
+    "terrainArtifact": "not-built",
+    "terrainManifestChanged": false,
+    "runtimeChanged": false,
+    "productionClaim": false,
+    "nextRequiredAuthorityForLocalFerryWater": "Obtain a NOAA/CO-OPS or other responsible-agency Ferry-waterfront tidal-datum transfer or local gauge/model with uncertainty and an explicit product decision for any use beyond a labeled station-reference preview."
+  }
+}
