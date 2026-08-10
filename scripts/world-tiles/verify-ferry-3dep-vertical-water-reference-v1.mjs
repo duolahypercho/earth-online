@@ -61,9 +61,6 @@ assert.deepEqual(lock.sourceEvidence.usgsSpecification.acquisitionEraSpecificati
   sha256: '454e2b333c2ccfc52e3a85bf878d410312ae82b5a0c8884675fe1d0db158eeba',
   relevance: 'For CONUS, its default is NAVD88 orthometric heights and the latest NGS hybrid geoid, then GEOID18; it permits an advance USGS/user agreement to specify otherwise and requires the delivered vertical CRS and geoid model to be identified.',
 }, 'Acquisition-era USGS specification receipt drifted');
-assert.equal(lock.sourceEvidence.usgsSpecification.currentSpecification.sha256, '9469ff8235c850dd8fb3629a1d1b5e8b71ae9af27cfa1532299aecc68f62285e', 'Current USGS specification receipt drifted');
-assert.equal(lock.sourceEvidence.ngs.verticalDatums.sha256, '359c062b1fa19cd6d15a1dbe650db3bbaea82d958264ea5731f6197d738f1a95', 'NGS vertical-datum receipt drifted');
-assert.equal(lock.sourceEvidence.ngs.geoid18.sha256, '074ba712722a680d3225ea5a240a626943d5c19cf1e710be1fede657a4d7e430', 'NGS GEOID18 receipt drifted');
 
 const station = lock.sourceEvidence.coopsStation9414290;
 assert.equal(station.id, '9414290', 'CO-OPS station identity drifted');
@@ -77,16 +74,67 @@ assert.equal(station.datumAnalysisPeriod, '01/01/1983 - 12/31/2001', 'CO-OPS dat
 assert.deepEqual(station.publishedStationDatumValuesMetres, {
   STND: 0, MHHW: 3.602, MHW: 3.416, MSL: 2.773, MLLW: 1.822, NAVD88: 1.804,
 }, 'CO-OPS source datum values drifted');
-assert.match(station.stationUrl, /^https:\/\/api\.tidesandcurrents\.noaa\.gov\//, 'Station source must be official CO-OPS');
-assert.match(station.datumsUrl, /^https:\/\/api\.tidesandcurrents\.noaa\.gov\//, 'Datum source must be official CO-OPS');
-assert.match(station.stationSha256, /^[a-f0-9]{64}$/, 'Station receipt hash must be SHA-256');
-assert.match(station.datumsSha256, /^[a-f0-9]{64}$/, 'Datum receipt hash must be SHA-256');
+assert.deepEqual([
+  {
+    url: lock.sourceEvidence.locked3depProduct.productMetadataUrl,
+    sha256: lock.sourceEvidence.locked3depProduct.productMetadataSha256,
+  },
+  {
+    url: lock.sourceEvidence.usgsSpecification.acquisitionEraSpecification.url,
+    sha256: lock.sourceEvidence.usgsSpecification.acquisitionEraSpecification.sha256,
+  },
+  {
+    url: lock.sourceEvidence.usgsSpecification.currentSpecification.url,
+    sha256: lock.sourceEvidence.usgsSpecification.currentSpecification.sha256,
+  },
+  {
+    url: lock.sourceEvidence.ngs.verticalDatums.url,
+    sha256: lock.sourceEvidence.ngs.verticalDatums.sha256,
+  },
+  {
+    url: lock.sourceEvidence.ngs.geoid18.url,
+    sha256: lock.sourceEvidence.ngs.geoid18.sha256,
+  },
+  { url: station.stationUrl, sha256: station.stationSha256 },
+  { url: station.datumsUrl, sha256: station.datumsSha256 },
+], [
+  {
+    url: 'https://thor-f5.er.usgs.gov/ngtoc/metadata/waf/elevation/1_meter/geotiff/CA_SanFrancisco_B23/USGS_1M_10_x55y419_CA_SanFrancisco_B23.xml',
+    sha256: '55f267f782295ebf3f7250ee3418649e58fb89b4783d69f4d9b7fdb0b9f42301',
+  },
+  {
+    url: 'https://d9-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/media/files/Lidar-Base-Specification-2022-rev-A.docx',
+    sha256: '454e2b333c2ccfc52e3a85bf878d410312ae82b5a0c8884675fe1d0db158eeba',
+  },
+  {
+    url: 'https://d9-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/media/files/Lidar-Base-Specification-2025-rev-A.docx',
+    sha256: '9469ff8235c850dd8fb3629a1d1b5e8b71ae9af27cfa1532299aecc68f62285e',
+  },
+  {
+    url: 'https://geodesy.noaa.gov/datums/vertical/index.shtml',
+    sha256: '359c062b1fa19cd6d15a1dbe650db3bbaea82d958264ea5731f6197d738f1a95',
+  },
+  {
+    url: 'https://geodesy.noaa.gov/GEOID/GEOID18/',
+    sha256: '074ba712722a680d3225ea5a240a626943d5c19cf1e710be1fede657a4d7e430',
+  },
+  {
+    url: 'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9414290.json',
+    sha256: '23d1c617cdb91ed6b8f8082406cf1bb0d5e64d32f717bc6efcbf02d9d67c16a4',
+  },
+  {
+    url: 'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9414290/datums.json?units=metric',
+    sha256: '7b5d1b79efb7656499fd91508fec05bce539f1eec177f42456ac6aa4b1b4c79f',
+  },
+], 'Source receipt URLs or SHA-256 values drifted');
 
 const conversion = lock.claims.stationDatumConversion;
 assert.equal(conversion.direction, 'positive up', 'Vertical sign convention drifted');
 assert.equal(conversion.constantHStndNavd88Metres, station.publishedStationDatumValuesMetres.NAVD88, 'NAVD88 station-datum constant must come from CO-OPS');
 assert.equal(conversion.equation, 'H_NAVD88(D) = H_STND(D) - H_STND(NAVD88)', 'Forward equation drifted');
 assert.equal(conversion.inverseEquation, 'H_STND = H_NAVD88 + H_STND(NAVD88)', 'Inverse equation drifted');
+assert.equal(conversion.stationDatumDefinition, 'CO-OPS datum values are elevations in metres above STND; STND is zero.', 'Station-datum definition drifted');
+assert.equal(conversion.observedWaterLevelEquation, 'For a station observation w reported above any one listed station datum D, H_NAVD88(w) = w + H_NAVD88(D).', 'Observed-water-level equation drifted');
 
 for (const vector of lock.testVectors.filter((vector) => 'stationDatum' in vector)) {
   close(
@@ -113,7 +161,9 @@ close(
 );
 assert.match(applicability.notEstablished, /not be described as the local Ferry waterfront MSL or MHW/, 'Local Ferry equivalence must remain unclaimed');
 assert.equal(lock.limitations.geoid, 'No geoid conversion is performed or needed to subtract two values already published against NAVD88. GEOID18 is only a specification/default-model inference, not evidence that this specific distributable GeoTIFF used it.', 'Geoid limitation drifted');
+assert.equal(lock.limitations.epoch, 'The CO-OPS tidal datum epoch is 1983-2001. It is not a DEM vertical-coordinate epoch, a survey epoch, or a current water-level prediction.', 'Epoch limitation drifted');
 assert.match(lock.limitations.accuracy, /no combined uncertainty may be claimed/, 'Accuracy limitation must remain explicit');
+assert.equal(lock.limitations.water, 'The DEM is bare earth, not bathymetry or a water surface. This lock does not infer shoreline, hydroflattening level, tide-at-time, surge, wave setup, sea-level trend, or inundation.', 'Water limitation drifted');
 assert.equal(lock.integrationStatus.terrainArtifact, 'not-built', 'This lock must not imply a terrain artifact');
 assert.equal(lock.integrationStatus.terrainManifestChanged, false, 'This lock must not change terrain manifests');
 assert.equal(lock.integrationStatus.runtimeChanged, false, 'This lock must not change runtime behavior');
