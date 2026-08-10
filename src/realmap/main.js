@@ -32,6 +32,7 @@ import {
   normalizeStreetName,
 } from './street-design.js';
 import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
+import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import './styles.css';
 
 // ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
@@ -1262,6 +1263,7 @@ function setupToolbar() {
   });
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
     if (interiorState) exitInterior();
+    disposeHeroAtmosphere();
     if (document.pointerLockElement) document.exitPointerLock();
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) trafficState.vehicles[driveIndex].manual = false;
     driveIndex = -1;
@@ -7107,6 +7109,9 @@ let rainGroup = null;
 let rainPositions = null;
 let rainVelocities = null;
 let wetWeatherGroup = null;
+let heroAtmosphere = null;
+let heroAtmosphereWetRoots = [];
+let heroAtmosphereWetMaterialBindings = 0;
 let puddleMaterial = null;
 let bayWaterMaterial = null;
 let bayGlowMaterial = null;
@@ -8440,6 +8445,71 @@ function updateWeatherVisuals(dt) {
     }
     mistGroup.geometry.attributes.position.needsUpdate = true;
   }
+}
+
+function heroAtmosphereConditions() {
+  return {
+    weather: weatherMode,
+    timeOfDay,
+    night: TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0,
+  };
+}
+
+function syncHeroAtmosphereConditions() {
+  if (!heroAtmosphere) return null;
+  return heroAtmosphere.setConditions(heroAtmosphereConditions());
+}
+
+function disposeHeroAtmosphere() {
+  heroAtmosphere?.dispose();
+  heroAtmosphere = null;
+  heroAtmosphereWetRoots = [];
+  heroAtmosphereWetMaterialBindings = 0;
+}
+
+function initializeHeroAtmosphere() {
+  disposeHeroAtmosphere();
+  if (!activeHeroTile || !cityRoot || !scene) return null;
+
+  heroAtmosphere = createFerryBuildingAtmosphere({
+    scene,
+    parent: cityRoot,
+    conditions: heroAtmosphereConditions(),
+  });
+
+  const wetRoots = [
+    { root: roadMeshes, label: 'lane-level roads', response: 1 },
+    { root: cityRoot.getObjectByName('Simple sidewalks'), label: 'sidewalks', response: 0.28 },
+    { root: cityRoot.getObjectByName('Street corridor sidewalk pads'), label: 'sidewalk pads', response: 0.32 },
+    { root: cityRoot.getObjectByName('Street corridor curbs'), label: 'curbs', response: 0.18 },
+  ].filter(({ root }) => root?.isObject3D);
+
+  heroAtmosphereWetRoots = wetRoots.map(({ label, response }) => ({ label, response }));
+  heroAtmosphereWetMaterialBindings = wetRoots.reduce(
+    (total, { root, response }) => total + heroAtmosphere.registerWetRoot(root, response),
+    0,
+  );
+  syncHeroAtmosphereConditions();
+  return heroAtmosphere;
+}
+
+function getHeroAtmosphereDiagnostics() {
+  const root = heroAtmosphere?.root;
+  return {
+    active: Boolean(heroAtmosphere),
+    tileId: activeHeroTile?.id || null,
+    attached: Boolean(root?.parent),
+    objects: root ? root.children.length : 0,
+    waterVisible: Boolean(heroAtmosphere?.water?.visible),
+    wetRoots: heroAtmosphereWetRoots.map((record) => ({ ...record })),
+    wetMaterialBindings: heroAtmosphereWetMaterialBindings,
+    lightBudget: heroAtmosphere?.getLightBudget() || {
+      pointLights: 0,
+      shadowCastingLights: 0,
+      maxPointLights: 0,
+    },
+    conditions: heroAtmosphere ? heroAtmosphereConditions() : null,
+  };
 }
 
 function createBuildingDoorways(buildings) {
@@ -9853,6 +9923,7 @@ function setWeatherMode(mode) {
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
   applyWeatherRoadTuning(mode);
+  syncHeroAtmosphereConditions();
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
   return weatherMode;
@@ -9884,6 +9955,7 @@ function setTimeOfDay(mode) {
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
   updateNightGlow(config.night);
+  syncHeroAtmosphereConditions();
   return timeOfDay;
 }
 
@@ -10185,6 +10257,7 @@ function renderLoop() {
   updateRoadStreaming(streamFocus);
   updateRain(dt);
   updateWeatherVisuals(dt);
+  heroAtmosphere?.update(dt);
   if (composer) composer.render();
   else renderer.render(scene, camera);
   updateReadout3d();
@@ -10449,6 +10522,7 @@ async function buildCity() {
     streetLightMaterials.length = 0;
     vehicleHeadlightMaterials.length = 0;
     if (cityRoot) {
+      disposeHeroAtmosphere();
       scene.remove(cityRoot);
       disposeRoot(cityRoot);
     }
@@ -10626,6 +10700,7 @@ async function buildCity() {
       createStreetFurniture(activeRoads);
       createWetWeatherVisuals(activeRoads);
     }
+    initializeHeroAtmosphere();
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
     sceneTriangleCount = fullCityMode ? 0 : countSceneTriangles(cityRoot);
 
@@ -10773,6 +10848,7 @@ function start() {
       stream: fullCityMode ? { ...detailRoadStreamStats } : null,
       drawCalls: renderer?.info?.render?.calls ?? null,
       triangles: renderer?.info?.render?.triangles ?? null,
+      heroAtmosphere: getHeroAtmosphereDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -10979,6 +11055,7 @@ function start() {
     },
     setCityMode: (mode) => setCityMode(mode),
     getHeroTile: () => activeHeroTile,
+    getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
