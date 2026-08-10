@@ -84,6 +84,8 @@ try {
   assert.equal(stats.vehiclesActive, 1, 'distant vehicle should remain rendered');
   assert.equal(stats.vehiclesDetailed, 1, 'near-field vehicle must keep wheel detail');
   assert.equal(stats.activePracticals, 3, 'night practical hierarchy should activate supplied warm anchors');
+  assert.ok(stats.practicalLightPower > 6, 'night anchors must carry enough bounded local light to read on facade and paving');
+  assert.ok(stats.practicalGlowOpacity >= 0.75, 'night drizzle must expose the bounded emissive practical response');
   assert.equal(stats.pointLights, 6, 'strict practical-light cap regressed');
   assert.equal(stats.drawCalls, 10, 'fixed instanced draw-call budget regressed');
   assert.equal(stats.materials, 8, 'shared material budget regressed');
@@ -120,7 +122,14 @@ try {
   assert.equal(day.night, 0, 'day condition must turn off practical hierarchy');
   stats = presentation.update({ camera, hero, elapsedSeconds: 2, deltaSeconds: 1 / 60 });
   assert.equal(stats.activePracticals, 0, 'day practicals should remain uncounted as active');
+  assert.equal(stats.practicalGlowOpacity, 0, 'day must not inherit the night-only glow cards');
   assert.equal(stats.detailedActors, 4, 'final verifier snapshot must retain active detailed adults');
+
+  presentation.setConditions({ timeOfDay: 'night', weather: 'drizzle' });
+  stats = presentation.update({ camera, hero, elapsedSeconds: 2.2, deltaSeconds: 1 / 60 });
+  assert.equal(stats.conditions.wetness, 0.9, 'drizzle must derive the expected wet practical response');
+  assert.ok(stats.practicalGlowOpacity >= 0.75, 'drizzle must retain a visible local glow response');
+  assert.ok(stats.practicalLightPower > 6, 'drizzle cannot collapse local storefront light power');
 
   const lightCount = presentation.group.children.filter((child) => child.isPointLight).length;
   assert.equal(lightCount, HERO_LIFE_LIGHTING_BUDGET.maxPracticals, 'adapter must create no more than six shadowless point lights');
