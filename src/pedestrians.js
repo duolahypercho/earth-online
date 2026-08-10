@@ -4330,6 +4330,27 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     return out;
   }
 
+  function getCombatCandidates(out = []) {
+    out.length = 0;
+    for (const data of pool) {
+      if (!data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated === true || userData.combatDisabled === true) continue;
+      const identity = residentIdentityFor(data);
+      out.push({
+        kind: 'pedestrian',
+        id: identity.id,
+        residentId: identity.id,
+        groupIndex: group.children.indexOf(data.mesh),
+        label: identity.label,
+        mesh: data.mesh,
+        radius: 0.72,
+        height: 1.18,
+      });
+    }
+    return out;
+  }
+
   function registerVehicleImpact(residentId, { directionX = 0, directionZ = 0 } = {}) {
     const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
     if (!data?.mesh?.visible) return null;
@@ -4435,6 +4456,14 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     };
   }
 
+  function registerIncidentWitnessReaction(witnessId, options = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data) return null;
+    const activeUntil = Number(data.mesh.userData?.vehicleWitnessUntil) || 0;
+    if (activeUntil > lastUpdateElapsed) return null;
+    return registerVehicleWitnessReaction(witnessId, options);
+  }
+
   function getVehicleWitnessState(witnessId) {
     const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
     if (!data) return null;
@@ -4469,12 +4498,16 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     getStats,
     getFeaturedResidentSnapshots,
     getNearestPerson,
+    getCombatCandidates,
     getVehicleImpactCandidates,
     registerVehicleImpact,
     getVehicleImpactState,
     getVehicleImpactWitness,
     registerVehicleWitnessReaction,
     getVehicleWitnessState,
+    getIncidentWitness: getVehicleImpactWitness,
+    registerWitnessReaction: registerIncidentWitnessReaction,
+    getWitnessState: getVehicleWitnessState,
     setWeather,
     setDayHour,
     getDayHour,

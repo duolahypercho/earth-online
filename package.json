@@ -43,6 +43,7 @@
     "verify:resident-talk": "node scripts/verify-resident-talk.mjs",
     "verify:vehicle-ped-impact": "node scripts/verify-vehicle-ped-impact.mjs",
     "verify:witness-reaction": "node scripts/verify-witness-reaction.mjs",
+    "verify:gunfire-witness": "node scripts/verify-gunfire-witness.mjs",
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",
