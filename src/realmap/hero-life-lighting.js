@@ -3,6 +3,7 @@
 // writes their positions, rotations, paths, or behaviour state.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { animatePlayerAvatar, createPlayerAvatar } from '../player.js';
 
 export const HERO_LIFE_LIGHTING_BUDGET = Object.freeze({
@@ -21,6 +22,62 @@ const PEDESTRIAN_PALETTE = Object.freeze([
 const SKIN_PALETTE = Object.freeze([0xd5aa86, 0xb77d5b, 0xe0ba94, 0x80502f, 0xc4926c]);
 const VEHICLE_PALETTE = Object.freeze([0xc44737, 0x2f6fae, 0xd6ad35, 0xdedfe0, 0x4a856c]);
 const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786, vehicle: 0xffd99a });
+const PRACTICAL_HALO_DROP = 2.05;
+const PRACTICAL_GLOW_VARIATION = Object.freeze([0.76, 0.94, 0.68, 0.86, 0.62, 0.8]);
+
+function colorGeometry(geometry, color, centerColor = null) {
+  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  const outer = new THREE.Color(color);
+  const center = new THREE.Color(centerColor || color);
+  for (let index = 0; index < geometry.attributes.position.count; index += 1) {
+    // CircleGeometry keeps its centre at index zero. A dark outer ring makes
+    // the practical's additive pool feather out instead of reading as a decal.
+    const source = centerColor && index === 0 ? center : outer;
+    colors[index * 3] = source.r;
+    colors[index * 3 + 1] = source.g;
+    colors[index * 3 + 2] = source.b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geometry;
+}
+
+function createPracticalGeometry() {
+  const bulb = colorGeometry(new THREE.SphereGeometry(0.11, 8, 6), 0xffffff);
+  const halfWidth = 2.05;
+  const bottom = -2.05;
+  const spring = -0.88;
+  const arch = new THREE.Shape()
+    .moveTo(-halfWidth, bottom)
+    .lineTo(halfWidth, bottom)
+    .lineTo(halfWidth, spring)
+    .absarc(0, spring, halfWidth, 0, Math.PI, false)
+    .lineTo(-halfWidth, bottom);
+  // Arched silhouettes align the glow to the authored first-floor rhythm;
+  // these are not rectangular emissive billboards. The perpendicular pair is
+  // deliberately shallow so one card faces any camera-facing OSM facade.
+  const facadeX = colorGeometry(new THREE.ShapeGeometry(arch, 12).translate(0, 0, -0.035), 0xcf6d24);
+  const facadeZ = colorGeometry(
+    new THREE.ShapeGeometry(arch, 12).rotateY(Math.PI / 2).translate(0.035, 0, 0),
+    0xcf6d24,
+  );
+  // Two subdued crossed ellipses reach along the approach from the facade.
+  // Vertex color falls from a warm centre to near-black at the rim, leaving
+  // the upper facade and sky entirely unaltered.
+  const poolAlongX = colorGeometry(
+    new THREE.CircleGeometry(1, 28).scale(19, 7.2, 1).rotateX(-Math.PI / 2).translate(0, -PRACTICAL_HALO_DROP, 0),
+    0x160500,
+    0xff9c46,
+  );
+  const poolAlongZ = colorGeometry(
+    new THREE.CircleGeometry(1, 28).scale(7.2, 19, 1).rotateX(-Math.PI / 2).translate(0, -PRACTICAL_HALO_DROP, 0),
+    0x160500,
+    0xff9c46,
+  );
+  const merged = mergeGeometries([bulb, facadeX, facadeZ, poolAlongX, poolAlongZ]);
+  [bulb, facadeX, facadeZ, poolAlongX, poolAlongZ].forEach((geometry) => geometry.dispose());
+  if (!merged) throw new Error('Ferry hero practical geometry merge is unavailable');
+  return merged;
+}
 
 function clamp(value, min, max) {
   return THREE.MathUtils.clamp(Number(value) || 0, min, max);
@@ -95,7 +152,7 @@ export function createHeroLifeLighting(options = {}) {
   const vehicleCabinGeometry = new THREE.BoxGeometry(1, 1, 1);
   const wheelGeometry = new THREE.CylinderGeometry(1, 1, 1, 12);
   wheelGeometry.rotateZ(Math.PI / 2);
-  const practicalGeometry = new THREE.SphereGeometry(0.11, 8, 6);
+  const practicalGeometry = createPracticalGeometry();
 
   const clothingMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.72, metalness: 0.02 });
   const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.82 });
@@ -104,7 +161,18 @@ export function createHeroLifeLighting(options = {}) {
   const vehicleMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.33, metalness: 0.22, clearcoat: 0.35, clearcoatRoughness: 0.15 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: 0x1c2e39, roughness: 0.18, metalness: 0.12, transparent: true, opacity: 0.84 });
   const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x151719, roughness: 0.93 });
-  const practicalMaterial = new THREE.MeshStandardMaterial({ color: 0xffc07a, emissive: 0xff9f50, emissiveIntensity: 0, roughness: 0.44 });
+  const practicalMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    emissive: 0xa94c17,
+    emissiveIntensity: 0,
+    roughness: 0.44,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
 
   const meshes = {
     torso: instanced(torsoGeometry, clothingMaterial, maxPedestrians, 'Hero life pedestrian torsos'),
@@ -173,6 +241,7 @@ export function createHeroLifeLighting(options = {}) {
     pedestrianDetailDistance, performanceTargetFps: 60,
     vehiclesAttached: 0, vehiclesActive: 0, vehiclesExcluded: 0, vehiclesDetailed: 0, vehiclesDropped: 0,
     practicals: 0, activePracticals: 0, pointLights: HERO_LIFE_LIGHTING_BUDGET.maxPracticals,
+    practicalLightPower: 0, practicalGlowOpacity: 0,
     drawCalls: HERO_LIFE_LIGHTING_BUDGET.drawCalls, materials: HERO_LIFE_LIGHTING_BUDGET.materials,
   };
   const sourcePosition = new THREE.Vector3();
@@ -186,6 +255,7 @@ export function createHeroLifeLighting(options = {}) {
   const localScale = new THREE.Vector3();
   const identity = new THREE.Quaternion();
   const warmColor = new THREE.Color();
+  const practicalGlowColor = new THREE.Color();
   const detailCandidates = [];
   const detailSourceSet = new Set();
   const detailWorldPosition = new THREE.Vector3();
@@ -461,8 +531,18 @@ export function createHeroLifeLighting(options = {}) {
 
   function updatePracticals() {
     const weatherDamping = conditions.weather === 'fog' ? 0.68 : conditions.weather === 'drizzle' ? 0.86 : 1;
-    const intensity = (0.08 + conditions.night * 1.25) * weatherDamping;
-    practicalMaterial.emissiveIntensity = conditions.night * 1.45 + conditions.wetness * 0.2;
+    const baseIntensity = (0.08 + conditions.night * 1.25) * weatherDamping;
+    // The two runtime Ferry anchors are intentionally local. This gain lifts
+    // only their facade and immediate paving response, rather than changing
+    // ambient/exposure or expanding the practical-light budget.
+    const localizedNightGain = conditions.night > 0.02
+      ? 2.6 + conditions.wetness * 0.4
+      : 1;
+    practicalMaterial.opacity = conditions.night > 0.02 ? 0.68 + conditions.wetness * 0.1 : 0;
+    practicalMaterial.emissiveIntensity = conditions.night > 0.02
+      ? 1.15 + conditions.wetness * 0.35
+      : 0;
+    stats.practicalGlowOpacity = practicalMaterial.opacity;
     for (let index = 0; index < HERO_LIFE_LIGHTING_BUDGET.maxPracticals; index += 1) {
       const practical = practicals[index];
       const light = lights[index];
@@ -475,10 +555,14 @@ export function createHeroLifeLighting(options = {}) {
       group.worldToLocal(sourcePosition);
       warmColor.setHex(PRACTICAL_COLORS[practical.kind]);
       light.color.copy(warmColor);
+      practicalGlowColor.copy(warmColor).multiplyScalar(PRACTICAL_GLOW_VARIATION[index]);
+      meshes.practical.setColorAt(index, practicalGlowColor);
       light.position.copy(sourcePosition);
-      light.intensity = intensity * practical.intensity;
-      light.distance = practical.kind === 'vehicle' ? 8 : 15;
-      set(meshes.practical, index, new THREE.Matrix4(), sourcePosition.x, sourcePosition.y, sourcePosition.z, practical.kind === 'storefront' ? 0.28 : 0.16, practical.kind === 'storefront' ? 0.12 : 0.16, 0.16);
+      light.intensity = baseIntensity * localizedNightGain * practical.intensity;
+      light.distance = practical.kind === 'vehicle' ? 8 : practical.kind === 'storefront' ? 32 : 16;
+      const presentationScale = practical.kind === 'storefront' ? 1 : 0.16;
+      set(meshes.practical, index, new THREE.Matrix4(), sourcePosition.x, sourcePosition.y, sourcePosition.z, presentationScale, presentationScale, presentationScale);
+      stats.practicalLightPower += light.intensity;
       if (conditions.night > 0.02) stats.activePracticals += 1;
     }
   }
@@ -501,6 +585,8 @@ export function createHeroLifeLighting(options = {}) {
     stats.vehiclesExcluded = 0;
     stats.vehiclesDetailed = 0;
     stats.activePracticals = 0;
+    stats.practicalLightPower = 0;
+    stats.practicalGlowOpacity = 0;
     const safeDelta = clamp(deltaSeconds, 0, 0.05) || 1 / 60;
     updateDetailedActors(cameraPosition, heroPosition, Number(elapsedSeconds) || 0, safeDelta);
     pedestrians.forEach((entry, index) => updatePedestrian(index, entry, cameraPosition, heroPosition, Number(elapsedSeconds) || 0));
