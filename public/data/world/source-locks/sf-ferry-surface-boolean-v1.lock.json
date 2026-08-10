@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "sf-ferry-surface-boolean-v1-source-lock",
+  "status": "offline-preview-plan-not-for-runtime-or-manifest-promotion",
+  "purpose": "Locks the source bytes and exact toolchain contract for deterministic, 1 mm Ferry OSM surface Boolean preparation. It does not grant runtime, collision, navigation, survey, or production-terrain use.",
+  "inputs": {
+    "surfaceArtifact": {
+      "path": "public/data/world/preview-artifacts/sf-ferry-osm-surfaces-v1/sf-ferry-osm-surfaces-v1.json",
+      "bytes": 108787,
+      "sha256": "83c38436aabeca3219905f7eafe8f2b3c6cbe3760546d8777b761e08bc9d1f9c"
+    },
+    "rawPbf": {
+      "path": "public/data/sf/SanFrancisco.osm.pbf",
+      "bytes": 32742133,
+      "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae"
+    }
+  },
+  "toolchain": {
+    "node": "22.23.1",
+    "packageLock": { "format": 3, "path": "package-lock.json", "sha256": "0afab6daaed9b340120f79deebf8a3011b7c960bfe645b3512b6f7741c4f415f" },
+    "clipper2Ts": {
+      "package": "clipper2-ts",
+      "version": "2.0.1-18",
+      "integrity": "sha512-WuRO1ZHzyYTVHY78r4wVWVydvQ+1lx9qZ+DeZa/8zhvrxIgCVzElJ6lwSMGtUUKFPefhvfJsHZ5C9RNkgisCOQ==",
+      "license": "BSL-1.0",
+      "triangulation": "prohibited"
+    },
+    "three": { "package": "three", "version": "0.180.0", "revision": "180", "api": "ShapeUtils.triangulateShape", "algorithm": "Earcut-via-three" }
+  },
+  "coordinateContract": {
+    "frame": "sf-atlas-linear-v1",
+    "axisOrder": ["east", "north"],
+    "runtimeAxisOrder": ["x", "z"],
+    "originMetres": [2304, 1920],
+    "gridMetres": 0.001,
+    "ticksPerMetre": 1000,
+    "maxAbsTick": 10000000,
+    "sourceWgs84AnchorLonLatDegrees": [-122.4194, 37.778],
+    "sourceMetresPerDegreeLonLat": [87986.24747640654, 110574],
+    "quantization": "sign(v) * floor(abs(v) + 0.5), after WGS84-to-shared-local projection",
+    "winding": { "outer": "CCW", "hole": "CW" },
+    "fillRule": "NonZero"
+  }
+}
