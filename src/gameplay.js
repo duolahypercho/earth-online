@@ -56,6 +56,8 @@ const SHIFT_STEPS = Object.freeze([
     portalLabel: 'Coit Tower observation deck',
   },
 ]);
+const SHIFT_TIME_LIMIT_SECONDS = 480;
+const SHIFT_BASE_CASH_REWARD = 180;
 
 function findPortal(city, label) {
   return city?.portals?.find((portal) => portal.room && portal.label === label) || null;
@@ -90,6 +92,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     score: 0,
     elapsed: 0,
     lastAdvance: null,
+    cashReward: 0,
+    failureReason: null,
   };
 
   const marker = new THREE.Group();
@@ -180,15 +184,37 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     const timeBonus = Math.max(80, 520 - Math.round(state.elapsed * 4));
     state.score += baseReward + timeBonus;
     state.lastAdvance = step.id;
+    state.cashReward = completed
+      ? SHIFT_BASE_CASH_REWARD + Math.max(0, Math.ceil((SHIFT_TIME_LIMIT_SECONDS - state.elapsed) / 60) * 10)
+      : 0;
     const message = completed
-      ? `Waterfront loop complete · ${formatClock(state.elapsed)} · score ${state.score}`
+      ? `Waterfront loop complete · ${formatClock(state.elapsed)} · $${state.cashReward} paid`
       : `${step.shortLabel} logged · next: ${currentStep()?.shortLabel || 'free roam'}`;
     onAdvance?.({
       step,
       completed,
       message,
       score: state.score,
+      cashReward: state.cashReward,
     });
+  }
+
+  function fail(reason = 'time-limit') {
+    if (state.status !== 'running') return null;
+    state.status = 'failed';
+    state.failureReason = String(reason || 'time-limit');
+    state.cashReward = 0;
+    marker.visible = false;
+    const message = `Shift failed · ${formatClock(state.elapsed)} · replay to try again`;
+    onAdvance?.({
+      step: currentStep(),
+      completed: false,
+      failed: true,
+      message,
+      score: state.score,
+      cashReward: 0,
+    });
+    return { failed: true, reason: state.failureReason };
   }
 
   function advance(step) {
@@ -206,6 +232,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     state.score = 0;
     state.elapsed = 0;
     state.lastAdvance = null;
+    state.cashReward = 0;
+    state.failureReason = null;
     marker.visible = true;
   }
 
@@ -236,7 +264,13 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
 
   function update(dt = 0, position = null, activePortal = null) {
     const delta = Number.isFinite(dt) ? Math.max(0, dt) : 0;
-    if (state.status === 'running') state.elapsed += delta;
+    if (state.status === 'running') {
+      state.elapsed += delta;
+      if (state.elapsed >= SHIFT_TIME_LIMIT_SECONDS) {
+        state.elapsed = SHIFT_TIME_LIMIT_SECONDS;
+        fail('time-limit');
+      }
+    }
     markerTime += delta;
 
     const target = targetPosition(activePortal);
@@ -264,9 +298,14 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
       status: state.status,
       title: 'The Waterfront Loop',
       objective: step?.label || 'Free roam the city and make your own route.',
-      hint: step?.hint || 'Shift complete · H to hide the HUD and enjoy the view.',
-      tag: step?.tag || 'DONE',
+      hint: state.status === 'failed'
+        ? 'Time expired · replay the shift to restart the route.'
+        : step?.hint || 'Shift complete · H to hide the HUD and enjoy the view.',
+      tag: state.status === 'failed' ? 'FAILED' : step?.tag || 'DONE',
       score: state.score,
+      cashReward: state.cashReward,
+      failureReason: state.failureReason,
+      timeLimit: SHIFT_TIME_LIMIT_SECONDS,
       elapsed: state.elapsed,
       clock: formatClock(state.elapsed),
       distance,
@@ -299,6 +338,7 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     getState,
     onPortalEntered,
     onHotspotUsed,
+    fail,
     dispose,
     steps,
     get status() {

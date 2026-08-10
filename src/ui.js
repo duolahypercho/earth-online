@@ -968,9 +968,11 @@ export function createHud({
     const score = Math.max(0, Math.round(Number(gameState.score) || 0));
     const statusLabel = status === 'complete'
       ? 'COMPLETE'
-      : status === 'running'
-        ? `${completedSteps} / ${totalSteps}`
-        : 'READY';
+      : status === 'failed'
+        ? 'FAILED'
+        : status === 'running'
+          ? `${completedSteps} / ${totalSteps}`
+          : 'READY';
 
     mission.dataset.status = status;
     missionTag.textContent = statusLabel;
@@ -1021,8 +1023,9 @@ export function createHud({
         `${step.label || 'Objective'}: ${step.completed ? 'complete' : step.current ? 'current' : 'up next'}`,
       );
     });
-    missionRestart.hidden = status !== 'complete';
-    missionRestart.disabled = status !== 'complete';
+    const replayable = status === 'complete' || status === 'failed';
+    missionRestart.hidden = !replayable;
+    missionRestart.disabled = !replayable;
 
     const previousCompleted = lastCompletedSteps;
     const previousStatus = lastMissionStatus;
@@ -1030,9 +1033,12 @@ export function createHud({
     const becameComplete = !freshState
       && status === 'complete'
       && previousStatus !== 'complete';
+    const becameFailed = !freshState
+      && status === 'failed'
+      && previousStatus !== 'failed';
     const advanced = !freshState && completedSteps > previousCompleted;
 
-    if (becameComplete || advanced) {
+    if (becameComplete || becameFailed || advanced) {
       if (becameComplete) {
         pulseMission();
         showCallout({
@@ -1042,6 +1048,14 @@ export function createHud({
           detail: `${totalSteps} OBJECTIVES CLEARED · SCORE / ${String(score).padStart(4, '0')}`,
         });
         uiAudio?.play?.('complete');
+      } else if (becameFailed) {
+        showCallout({
+          kind: 'low',
+          kicker: 'SHIFT FAILED',
+          title: 'Route time expired',
+          detail: 'REPLAY THE SHIFT TO TRY AGAIN',
+        });
+        uiAudio?.play?.('low');
       } else {
         const completedStep = steps[previousCompleted] || null;
         if (completedStep) {

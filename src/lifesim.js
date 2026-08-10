@@ -176,6 +176,22 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return true;
   }
 
+  function creditMissionReward(amount = 0, label = 'Waterfront Loop') {
+    const reward = Math.max(0, Math.round(Number(amount) || 0));
+    if (reward <= 0) return false;
+    state.cash += reward;
+    state.lastActivity = 'mission:complete';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'mission-reward',
+      label: String(label || 'Mission reward'),
+      amount: reward,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    return true;
+  }
+
   function talkToNearestResident(position) {
     const person = pedestrians?.getNearestPerson?.(position, 4.6);
     if (!person?.mesh) {
@@ -283,6 +299,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     workShift,
     canAffordVehicleRepair,
     payVehicleRepair,
+    creditMissionReward,
     rest,
     noteDriving,
     needsSummary,

@@ -1643,7 +1643,10 @@ const FEATURED_PORTAL_DISCOVERY_RADIUS = 48;
 cityShift = createCityShift({
   scene,
   city,
-  onAdvance: ({ message }) => {
+  onAdvance: ({ message, completed, cashReward }) => {
+    if (completed && cashReward > 0) {
+      lifeSim?.creditMissionReward?.(cashReward, 'Waterfront Loop payout');
+    }
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);
   },
