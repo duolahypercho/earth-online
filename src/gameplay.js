@@ -671,6 +671,8 @@ export function createStreetHeat({
     position = null,
     playerVehicleId = null,
     surrendering = false,
+    onFootSurrendering = false,
+    onFootMoving = false,
   } = {}) {
     const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
     markerTime += delta;
@@ -759,12 +761,13 @@ export function createStreetHeat({
     const nearestResponderDistance = state.responderDistances.length > 0
       ? Math.min(...state.responderDistances)
       : null;
+    const surrenderEligible = latestDriving
+      ? surrendering === true && latestSpeed <= STREET_HEAT_ARREST_SPEED
+      : onFootSurrendering === true && onFootMoving !== true;
     const arresting = state.pursuitActive
       && nearestResponderDistance !== null
       && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS
-      && latestDriving
-      && surrendering === true
-      && latestSpeed <= STREET_HEAT_ARREST_SPEED;
+      && surrenderEligible;
     state.arrestHold = arresting ? state.arrestHold + delta : 0;
     if (state.pursuitActive && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
       const heatBefore = state.heat;
