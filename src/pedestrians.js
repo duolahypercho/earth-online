@@ -37,6 +37,8 @@ const ADULT_STEP_LENGTH = 0.68;
 const GAIT_START_DAMP = 10.2;
 const GAIT_STOP_DAMP = 5.4;
 const MAX_DT = 0.05;
+const VEHICLE_WITNESS_FLEE_SPEED = 2.45;
+const VEHICLE_WITNESS_MAX_TRAVEL = 4.4;
 // Shared contact envelope for the inline crowd animator. It is intentionally
 // small so the fixed pool stays grounded without a per-actor IK pass.
 const CONTACT_PELVIS_DROP = 0.008;
@@ -2118,6 +2120,8 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   let focusRadiusSquared = Infinity;
   let qaSoloGroupIndex = null;
   let qaForceWalkIndex = null;
+  let qaWitnessResidentId = null;
+  let qaWitnessPosition = null;
 
   // Enrich each crosswalk with the traffic-signal context it needs to time
   // pedestrian phases realistically. A crossing over the east-west roadway
@@ -3705,6 +3709,67 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     userData.rig.position.y -= 0.08 * remaining;
   }
 
+  function applyVehicleWitnessReaction(data, delta, elapsed) {
+    const userData = data.mesh.userData;
+    const until = Number(userData?.vehicleWitnessUntil) || 0;
+    if (!userData || until <= elapsed) {
+      if (userData && until > 0) {
+        userData.vehicleWitnessUntil = 0;
+        userData.vehicleWitnessDirectionX = 0;
+        userData.vehicleWitnessDirectionZ = 0;
+        userData.vehicleWitnessOffsetX = 0;
+        userData.vehicleWitnessOffsetZ = 0;
+        userData.vehicleWitnessTravel = 0;
+        userData.vehicleWitnessReaction = null;
+      }
+      return false;
+    }
+    let directionX = Number(userData.vehicleWitnessDirectionX) || 0;
+    let directionZ = Number(userData.vehicleWitnessDirectionZ) || 0;
+    const directionLength = Math.hypot(directionX, directionZ) || 1;
+    directionX /= directionLength;
+    directionZ /= directionLength;
+    if (data.state !== STATE_WALK && data.state !== STATE_CROSS) {
+      setBehaviorState(data, STATE_WALK, 1.8, 'vehicle-impact:witness-flee');
+    }
+    data.walkPace = Math.max(data.walkPace || 1, 1.32);
+    const travel = Math.min(
+      VEHICLE_WITNESS_MAX_TRAVEL,
+      (Number(userData.vehicleWitnessTravel) || 0) + VEHICLE_WITNESS_FLEE_SPEED * delta,
+    );
+    const baseX = Number.isFinite(userData.vehicleWitnessBaseX)
+      ? userData.vehicleWitnessBaseX
+      : data.mesh.position.x;
+    const baseZ = Number.isFinite(userData.vehicleWitnessBaseZ)
+      ? userData.vehicleWitnessBaseZ
+      : data.mesh.position.z;
+    userData.vehicleWitnessTravel = travel;
+    userData.vehicleWitnessOffsetX = directionX * travel;
+    userData.vehicleWitnessOffsetZ = directionZ * travel;
+    data.mesh.position.x = baseX + userData.vehicleWitnessOffsetX;
+    data.mesh.position.z = baseZ + userData.vehicleWitnessOffsetZ;
+    const pathLocation = locateOnPath(data.path, data.mesh.position);
+    const pathPoints = pointsForPath(data.path);
+    const pathStart = pathPoints[pathLocation.segment];
+    const pathEnd = pathPoints[pathLocation.segment + 1];
+    if (pathStart?.isVector3 && pathEnd?.isVector3) {
+      data.mesh.position.y = THREE.MathUtils.lerp(pathStart.y, pathEnd.y, pathLocation.pathT);
+      data.groundY = data.mesh.position.y;
+    } else if (Number.isFinite(userData.vehicleWitnessBaseY)) {
+      data.mesh.position.y = userData.vehicleWitnessBaseY;
+      data.groundY = data.mesh.position.y;
+    }
+    data.heading = Math.atan2(directionX, directionZ);
+    data.mesh.rotation.y = data.heading;
+    const pulse = 0.82 + Math.sin(elapsed * 18 + data.phase) * 0.18;
+    userData.body.rotation.x -= 0.08;
+    userData.headPivot.rotation.z += 0.1 * pulse;
+    userData.rightArm.rotation.x -= 0.82;
+    userData.rightArm.rotation.z += 0.72 * pulse;
+    userData.leftArm.rotation.z -= 0.28 * pulse;
+    return true;
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
@@ -3785,10 +3850,18 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       } else {
         tickNpcBehavior(data, delta);
       }
+      if (qaWitnessResidentId === residentIdentityFor(data).id && qaWitnessPosition) {
+        data.mesh.position.set(
+          qaWitnessPosition.x,
+          qaWitnessPosition.y,
+          qaWitnessPosition.z,
+        );
+      }
       const combatReactionActive = applyCombatReactionMovement(data, delta);
       animate(data, elapsed, delta);
       applyCombatReactionPose(data, elapsed, combatReactionActive);
       applyVehicleImpactPose(data, elapsed);
+      applyVehicleWitnessReaction(data, delta, elapsed);
 
       const soloMesh = qaSoloGroupIndex != null ? group.children[qaSoloGroupIndex] : null;
       const visible = soloMesh
@@ -4168,6 +4241,22 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
   }
 
+  function setQaWitnessAnchor(residentId = null, anchor = null) {
+    if (typeof residentId !== 'string'
+      || !Number.isFinite(anchor?.x)
+      || !Number.isFinite(anchor?.y)
+      || !Number.isFinite(anchor?.z)) {
+      qaWitnessResidentId = null;
+      qaWitnessPosition = null;
+      return false;
+    }
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data?.mesh?.visible) return false;
+    qaWitnessResidentId = residentId;
+    qaWitnessPosition = { x: anchor.x, y: anchor.y, z: anchor.z };
+    return true;
+  }
+
   function setWeather(mode = 'clear') {
     system.weather = WEATHER_MODES.has(mode) ? mode : 'clear';
   }
@@ -4272,18 +4361,120 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     };
   }
 
+  function getVehicleImpactWitness(residentId, maxDistance = 18) {
+    const victim = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!victim?.mesh?.visible) return null;
+    const victimPosition = victim.mesh.position;
+    const limit = Number.isFinite(maxDistance) ? Math.max(2, maxDistance) : 18;
+    const candidates = [];
+    for (const data of pool) {
+      if (data === victim || !data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated === true || userData.combatDisabled === true) continue;
+      const distance = Math.hypot(
+        data.mesh.position.x - victimPosition.x,
+        data.mesh.position.z - victimPosition.z,
+      );
+      if (distance > limit) continue;
+      const identity = residentIdentityFor(data);
+      candidates.push({
+        id: identity.id,
+        label: identity.label,
+        role: data.job.id,
+        distance,
+        position: {
+          x: data.mesh.position.x,
+          y: data.mesh.position.y,
+          z: data.mesh.position.z,
+        },
+        victimPosition: {
+          x: victimPosition.x,
+          y: victimPosition.y,
+          z: victimPosition.z,
+        },
+      });
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
+    return candidates[0] || null;
+  }
+
+  function registerVehicleWitnessReaction(witnessId, {
+    originX = 0,
+    originZ = 0,
+  } = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data?.mesh?.visible) return null;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (userData.combatDefeated === true || userData.combatDisabled === true) return null;
+    let directionX = data.mesh.position.x - (Number(originX) || 0);
+    let directionZ = data.mesh.position.z - (Number(originZ) || 0);
+    const directionLength = Math.hypot(directionX, directionZ);
+    if (directionLength < 0.001) {
+      directionX = Math.sin(data.heading + Math.PI);
+      directionZ = Math.cos(data.heading + Math.PI);
+    } else {
+      directionX /= directionLength;
+      directionZ /= directionLength;
+    }
+    userData.vehicleWitnessUntil = lastUpdateElapsed + 1.8;
+    userData.vehicleWitnessDirectionX = directionX;
+    userData.vehicleWitnessDirectionZ = directionZ;
+    userData.vehicleWitnessBaseX = data.mesh.position.x;
+    userData.vehicleWitnessBaseY = data.mesh.position.y;
+    userData.vehicleWitnessBaseZ = data.mesh.position.z;
+    userData.vehicleWitnessTravel = 0;
+    userData.vehicleWitnessOffsetX = 0;
+    userData.vehicleWitnessOffsetZ = 0;
+    userData.vehicleWitnessReaction = 'phone-flee';
+    userData.vehicleWitnessCount = (Number(userData.vehicleWitnessCount) || 0) + 1;
+    return {
+      witnessId,
+      count: userData.vehicleWitnessCount,
+      reaction: 'phone-flee',
+      remaining: 1.8,
+    };
+  }
+
+  function getVehicleWitnessState(witnessId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data) return null;
+    const userData = data.mesh.userData || {};
+    return {
+      witnessId,
+      count: Number(userData.vehicleWitnessCount) || 0,
+      reaction: userData.vehicleWitnessReaction || null,
+      active: (Number(userData.vehicleWitnessUntil) || 0) > lastUpdateElapsed,
+      remaining: Math.max(0, (Number(userData.vehicleWitnessUntil) || 0) - lastUpdateElapsed),
+      displacement: Math.hypot(
+        Number(userData.vehicleWitnessOffsetX) || 0,
+        Number(userData.vehicleWitnessOffsetZ) || 0,
+      ),
+      groundError: Math.abs(data.mesh.position.y - data.groundY),
+      combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+    };
+  }
+
   setWeather('clear');
   return Object.assign(system, {
     group,
     update,
     setFocus,
     setQaSolo,
+    setQaWitnessAnchor,
     getStats,
     getFeaturedResidentSnapshots,
     getNearestPerson,
     getVehicleImpactCandidates,
     registerVehicleImpact,
     getVehicleImpactState,
+    getVehicleImpactWitness,
+    registerVehicleWitnessReaction,
+    getVehicleWitnessState,
     setWeather,
     setDayHour,
     getDayHour,
