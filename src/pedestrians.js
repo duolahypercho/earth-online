@@ -13,6 +13,7 @@ import { createBlackboard, tick as tickBehaviorTree } from './npc-behavior-tree.
 import { createTreeForRole } from './npc-trees.js';
 
 const POOL_SIZE = 48;
+const MAX_PERSISTED_COMBAT_DEFEATS = 8;
 // Eight camera-facing actors carry the costly face/clothing treatment; the
 // remainder preserve a readable, varied background crowd inside the 48-person
 // fixed pool. This keeps the hero pass bounded on Cinema quality.
@@ -4351,6 +4352,78 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     return out;
   }
 
+  function validateCombatAftermathState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || snapshot.version !== 1) return null;
+    if (!Array.isArray(snapshot.residents)
+      || snapshot.residents.length > MAX_PERSISTED_COMBAT_DEFEATS) return null;
+    const seen = new Set();
+    const records = [];
+    for (const entry of snapshot.residents) {
+      if (!entry || typeof entry !== 'object') return null;
+      const residentId = typeof entry.residentId === 'string'
+        ? entry.residentId.trim()
+        : '';
+      const role = typeof entry.role === 'string' ? entry.role.trim() : '';
+      if (!residentId || residentId.length > 96 || !role || role.length > 48
+        || seen.has(residentId)) return null;
+      const data = pool.find((candidate) => residentIdentityFor(candidate).id === residentId);
+      if (!data || data.job.id !== role) return null;
+      seen.add(residentId);
+      records.push({ residentId, role, data });
+    }
+    return records;
+  }
+
+  function exportCombatAftermathState() {
+    const residents = [];
+    for (const data of pool) {
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated !== true && userData.combatDisabled !== true) continue;
+      const identity = residentIdentityFor(data);
+      residents.push({ residentId: identity.id, role: data.job.id });
+      if (residents.length >= MAX_PERSISTED_COMBAT_DEFEATS) break;
+    }
+    return { version: 1, residents };
+  }
+
+  function canImportCombatAftermathState(snapshot) {
+    return validateCombatAftermathState(snapshot) !== null;
+  }
+
+  function importCombatAftermathState(snapshot) {
+    const records = validateCombatAftermathState(snapshot);
+    if (!records) return false;
+    pool.forEach((data) => {
+      const userData = data.mesh.userData || (data.mesh.userData = {});
+      if (userData.combatDefeated !== true && userData.combatDisabled !== true) return;
+      data.mesh.rotation.z = 0;
+      userData.combatHitCount = 0;
+      userData.combatHitUntil = 0;
+      userData.combatDisabled = false;
+      userData.combatDefeated = false;
+      userData.combatDefeatedAt = null;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionStrength = 0;
+    });
+    records.forEach(({ data }) => {
+      const userData = data.mesh.userData || (data.mesh.userData = {});
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = 0;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'defeat-persisted';
+      userData.combatReactionStrength = 1;
+    });
+    return true;
+  }
+
+  function clearCombatAftermathState() {
+    return importCombatAftermathState({ version: 1, residents: [] });
+  }
+
   function registerVehicleImpact(residentId, { directionX = 0, directionZ = 0 } = {}) {
     const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
     if (!data?.mesh?.visible) return null;
@@ -4499,6 +4572,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     getFeaturedResidentSnapshots,
     getNearestPerson,
     getCombatCandidates,
+    exportCombatAftermathState,
+    canImportCombatAftermathState,
+    importCombatAftermathState,
+    clearCombatAftermathState,
     getVehicleImpactCandidates,
     registerVehicleImpact,
     getVehicleImpactState,

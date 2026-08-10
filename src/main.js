@@ -1301,6 +1301,7 @@ function savePlayerProgress() {
     streetHeat: streetHeat.exportState(),
     vehicle: traffic.exportPlayerVehicleState?.() ?? null,
     trafficAftermath: traffic.exportCollisionAftermathState?.() ?? null,
+    pedestrianAftermath: pedestrians.exportCombatAftermathState?.() ?? null,
     garage: traffic.exportPlayerGarageState?.() ?? null,
     world: exportPlayerWorldState(),
   };
@@ -1373,9 +1374,12 @@ function restorePlayerProgress() {
   const previousStreetHeat = streetHeat?.exportState?.();
   const previousVehicle = traffic.exportPlayerVehicleState?.() ?? null;
   const previousTrafficAftermath = traffic.exportCollisionAftermathState?.() ?? null;
+  const previousPedestrianAftermath = pedestrians.exportCombatAftermathState?.() ?? null;
   const previousGarage = traffic.exportPlayerGarageState?.() ?? null;
   const previousWorld = exportPlayerWorldState();
   const trafficAftermathSnapshot = snapshot.trafficAftermath ?? { version: 1, vehicles: [] };
+  const pedestrianAftermathSnapshot = snapshot.pedestrianAftermath
+    ?? { version: 1, residents: [] };
   const reservedVehicleIds = [
     snapshot.vehicle?.vehicleId,
     ...(Array.isArray(snapshot.garage?.slots)
@@ -1385,6 +1389,9 @@ function restorePlayerProgress() {
   const trafficAftermathValid = traffic.canImportCollisionAftermathState?.(
     trafficAftermathSnapshot,
     reservedVehicleIds,
+  ) === true;
+  const pedestrianAftermathValid = pedestrians.canImportCombatAftermathState?.(
+    pedestrianAftermathSnapshot,
   ) === true;
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
@@ -1402,7 +1409,8 @@ function restorePlayerProgress() {
     && combatRestored
     && streetHeatRestored
     && worldRestored
-    && trafficAftermathValid;
+    && trafficAftermathValid
+    && pedestrianAftermathValid;
   const garageRestored = baseRestored && snapshot.garage
     ? traffic.importPlayerGarageState?.(snapshot.garage) === true
     : baseRestored;
@@ -1416,7 +1424,14 @@ function restorePlayerProgress() {
       trafficAftermathSnapshot,
     ) === true
     : false;
-  if (baseRestored && garageRestored && vehicleRestored && aftermathRestored) {
+  const pedestrianAftermathRestored = aftermathRestored
+    ? pedestrians.importCombatAftermathState?.(pedestrianAftermathSnapshot) === true
+    : false;
+  if (baseRestored
+    && garageRestored
+    && vehicleRestored
+    && aftermathRestored
+    && pedestrianAftermathRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
@@ -1434,6 +1449,9 @@ function restorePlayerProgress() {
   }
   if (previousTrafficAftermath) {
     traffic.importCollisionAftermathState?.(previousTrafficAftermath);
+  }
+  if (previousPedestrianAftermath) {
+    pedestrians.importCombatAftermathState?.(previousPedestrianAftermath);
   }
   return false;
 }
@@ -3016,6 +3034,12 @@ combat = createCombatLoop({
       if (dispatchCombatWitness({ incidentId, residentId })) return;
     }
     if (kind === 'shot') return;
+    if (kind === 'defeat' && targetKind === 'pedestrian') {
+      savePlayerProgress();
+    } else if (kind === 'restart') {
+      pedestrians.clearCombatAftermathState?.();
+      savePlayerProgress();
+    }
     hud?.setMessage(message);
   },
 });
