@@ -78,7 +78,7 @@ export function createHeroTrafficVisuals(options = {}) {
 
   const maxVehicles = Math.max(1, Math.min(48, Math.floor(options.maxVehicles ?? 36)));
   const exclusionRadius = Math.max(0.1, options.cameraExclusionRadius ?? 4.5);
-  const fadeDistance = Math.max(0.1, options.cameraFadeDistance ?? 7.5);
+  const fadeDistance = Math.max(0.1, options.cameraFadeDistance ?? 1.5);
   const heroRadius = Math.max(exclusionRadius, options.heroRadius ?? 14);
   const detailDistance = Math.max(heroRadius, options.detailDistance ?? 58);
   const group = new THREE.Group();
@@ -132,11 +132,12 @@ export function createHeroTrafficVisuals(options = {}) {
   const localPosition = new THREE.Vector3();
   const localScale = new THREE.Vector3();
   const sourcePosition = new THREE.Vector3();
-  const sourceScale = new THREE.Vector3();
   const sourceQuaternion = new THREE.Quaternion();
-  const localQuaternion = new THREE.Quaternion();
+  const presentationScale = new THREE.Vector3(1, 1, 1);
+  const sourceWorldMatrix = new THREE.Matrix4();
+  const presentationMatrix = new THREE.Matrix4();
+  const presentationParentInverse = new THREE.Matrix4();
   const identityQuaternion = new THREE.Quaternion();
-  const excludedColor = new THREE.Color(0x101214);
   const stats = { attached: 0, dropped: 0, active: 0, excluded: 0, detailed: 0, drawCalls: 8, materials: 7 };
 
   function clearInstanceRange() {
@@ -161,18 +162,28 @@ export function createHeroTrafficVisuals(options = {}) {
     source.updateWorldMatrix(true, false);
     source.getWorldPosition(sourcePosition);
     source.getWorldQuaternion(sourceQuaternion);
-    source.getWorldScale(sourceScale);
+    // Legacy traffic primitives use arbitrary authoring scales (realmap's
+    // block car is 1.2x, while other pools can be much smaller).  Their world
+    // position and heading are simulation truth, but their scale is not. Build
+    // a clean rigid transform so the real-world style dimensions are applied
+    // exactly once below.
+    sourceWorldMatrix.compose(sourcePosition, sourceQuaternion, presentationScale);
+    presentationMatrix.multiplyMatrices(presentationParentInverse, sourceWorldMatrix);
     const style = STYLE_BY_KIND[vehicleKind(record)];
     const cameraDistance = cameraPosition ? sourcePosition.distanceTo(cameraPosition) : Infinity;
     const heroDistance = heroPosition ? Math.hypot(sourcePosition.x - heroPosition.x, sourcePosition.z - heroPosition.z) : Infinity;
     const isHeroNear = heroDistance <= heroRadius;
-    const fade = isHeroNear && cameraDistance < exclusionRadius + fadeDistance
+    const proximity = isHeroNear && cameraDistance < exclusionRadius + fadeDistance
       ? THREE.MathUtils.smoothstep(cameraDistance, exclusionRadius, exclusionRadius + fadeDistance)
       : 1;
-    const isDetailed = cameraDistance <= detailDistance && fade > 0.04;
-    entry.fade = fade;
+    // Per-instance alpha would require a custom shader. Shrinking a vehicle
+    // through this band made it read as a toy, so use the band as a tight
+    // visibility gate and always render an admitted vehicle at full scale.
+    const admitted = proximity >= 0.5;
+    const isDetailed = cameraDistance <= detailDistance && admitted;
+    entry.fade = admitted ? 1 : 0;
     entry.detail = isDetailed;
-    if (fade <= 0.04 || !source.visible && source.userData.heroTrafficPresentation !== true) {
+    if (!admitted || !source.visible && source.userData.heroTrafficPresentation !== true) {
       setEmpty(meshes.body, slot);
       setEmpty(meshes.cabin, slot);
       setEmpty(meshes.shadow, slot);
@@ -189,12 +200,11 @@ export function createHeroTrafficVisuals(options = {}) {
       return;
     }
 
-    const worldMatrix = source.matrixWorld;
-    const baseScale = Math.max(0.001, (sourceScale.x + sourceScale.y + sourceScale.z) / 3) * fade;
+    const worldMatrix = presentationMatrix;
     const formScale = isDetailed ? 1 : 0.94;
     const set = (mesh, index, x, y, z, sx, sy, sz, rotation = identityQuaternion) => {
-      localPosition.set(x * fade, y * fade, z * fade);
-      localScale.set(sx * baseScale, sy * baseScale, sz * baseScale);
+      localPosition.set(x, y, z);
+      localScale.set(sx, sy, sz);
       setTransform(mesh, index, worldMatrix, localPosition, localScale, rotation);
     };
     const bodyHeight = style.height * 0.46;
@@ -229,7 +239,7 @@ export function createHeroTrafficVisuals(options = {}) {
       }
     }
     // Instanced body paint remains shared: one material, per-instance color.
-    meshes.body.setColorAt(slot, fade < 0.22 ? excludedColor : color);
+    meshes.body.setColorAt(slot, color);
     meshes.deck.setColorAt(slot * 2, color);
     meshes.deck.setColorAt(slot * 2 + 1, color);
     stats.active += 1;
@@ -261,6 +271,8 @@ export function createHeroTrafficVisuals(options = {}) {
   function update({ camera = null, hero = null } = {}) {
     const cameraPosition = camera?.isObject3D ? camera.getWorldPosition(new THREE.Vector3()) : camera?.position || camera || null;
     const heroPosition = hero?.isObject3D ? hero.getWorldPosition(new THREE.Vector3()) : hero?.position || hero || null;
+    group.updateWorldMatrix(true, false);
+    presentationParentInverse.copy(group.matrixWorld).invert();
     stats.active = 0;
     stats.excluded = 0;
     stats.detailed = 0;
@@ -288,4 +300,3 @@ export function createHeroTrafficVisuals(options = {}) {
   const api = Object.freeze({ attach, update, dispose, getStats: () => ({ ...stats }), group });
   return api;
 }
-
