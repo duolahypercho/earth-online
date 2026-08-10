@@ -27,6 +27,7 @@
     "verify:live-soak": "node scripts/verify-live-soak.mjs",
     "verify:physics": "node scripts/verify-physics.mjs",
     "verify:combat-pursuit": "node scripts/verify-combat-pursuit.mjs",
+    "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",

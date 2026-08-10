@@ -1425,8 +1425,18 @@ export function createHud({
       : 0;
     const cardinal = Object.keys(headingLabels)[index];
     driveHeading.textContent = cardinal;
-    driveMode.textContent = `DRIVE / ${String(driveState.weather || 'CLEAR').toUpperCase()}`;
-    drivePanel.setAttribute('aria-label', `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}.`);
+    const integrity = Math.round(
+      Math.max(0, Math.min(1, Number(driveState.damage?.ratio) || 0)) * 100,
+    );
+    const disabled = driveState.damage?.disabled === true;
+    drivePanel.dataset.damage = String(driveState.damage?.state || 'clear');
+    driveMode.textContent = disabled
+      ? 'VEHICLE / DISABLED'
+      : `DRIVE / ${String(driveState.weather || 'CLEAR').toUpperCase()} · ${integrity}%`;
+    drivePanel.setAttribute(
+      'aria-label',
+      `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}. Vehicle integrity ${integrity} percent${disabled ? ', disabled' : ''}.`,
+    );
   }
 
   function appendChat(entry = {}) {

@@ -1184,6 +1184,7 @@ hud = createHud({
     controls.combatTriggerPointerId = null;
     combat?.setAiming(false);
     combat?.setTriggerHeld(false);
+    traffic.repairPlayerVehicle?.('shift-reset');
     cityShift?.restart();
     streetHeat?.restart();
     combat?.restart();
@@ -1202,6 +1203,7 @@ let playerLayerActive = false;
 let engineAudio = null;
 let windAudio = null;
 const combatAudio = createCombatAudio();
+let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
 
 lifeSim = createLifeSim({
@@ -1471,6 +1473,7 @@ function enterPlayerCar(index) {
   const entered = traffic.enterPlayerVehicle?.(index);
   if (!entered) return false;
   combat?.setEnabled(false);
+  lastVehicleDamageAt = null;
   if (audioContext) {
     try {
       audioContext.resume?.();
@@ -1504,6 +1507,7 @@ function enterPlayerCar(index) {
 function exitPlayerCar() {
   const exit = traffic.exitPlayerVehicle?.();
   if (!exit) return false;
+  lastVehicleDamageAt = null;
   if (engineAudio) {
     engineAudio.stop();
     engineAudio = null;
@@ -1552,7 +1556,15 @@ function updatePlayerLayer(dt, elapsed) {
       speed: drivingState.speed,
       heading: drivingState.heading,
       weather: weatherMode,
+      damage: drivingState.damage,
     });
+    const damageAt = drivingState.damage?.lastDamage?.at ?? null;
+    if (damageAt !== null && damageAt !== lastVehicleDamageAt) {
+      lastVehicleDamageAt = damageAt;
+      hud?.setMessage(drivingState.damage?.disabled
+        ? 'Vehicle disabled · exit or repair before driving.'
+        : `Vehicle impact · integrity ${Math.round((drivingState.damage?.ratio ?? 0) * 100)}%.`);
+    }
     lifeSim?.noteDriving?.(dt);
   } else {
     hud?.setDriveState?.({ active: false });
@@ -3249,9 +3261,15 @@ function onKeyDown(event) {
   }
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
-    const combatState = combat?.getState?.();
-    if (!(combatInputAvailable() && combatState?.ammo < combatState?.magazineSize && combat.reload())) {
-      cycleWeather();
+    const drivingState = traffic.getPlayerVehicleState?.();
+    if (drivingState?.damage?.disabled) {
+      const repair = traffic.repairPlayerVehicle?.('roadside-repair');
+      if (repair) hud?.setMessage('Roadside repair complete · systems nominal.');
+    } else {
+      const combatState = combat?.getState?.();
+      if (!(combatInputAvailable() && combatState?.ammo < combatState?.magazineSize && combat.reload())) {
+        cycleWeather();
+      }
     }
   }
   if (code === 'KeyY' && !event.repeat && combatInputAvailable()) combat.reload();
@@ -3951,6 +3969,20 @@ window.__SF_SIM__ = {
   },
   damagePlayer(amount, source) {
     return combat?.damagePlayer?.(amount, source) ?? false;
+  },
+  damagePlayerVehicle(amount, source) {
+    const damage = traffic.damagePlayerVehicle?.(amount, source) ?? null;
+    if (damage) {
+      hud?.setMessage(damage.disabled
+        ? 'Vehicle disabled · exit or repair before driving.'
+        : `Vehicle integrity ${Math.round(damage.ratio * 100)}%.`);
+    }
+    return damage;
+  },
+  repairPlayerVehicle(source) {
+    const repair = traffic.repairPlayerVehicle?.(source) ?? null;
+    if (repair) hud?.setMessage('Vehicle repaired · systems nominal.');
+    return repair;
   },
   get renderQuality() {
     return {

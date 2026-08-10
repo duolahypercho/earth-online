@@ -87,6 +87,17 @@ const TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED = 72 * 72;
 const TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED = 26 * 26;
 const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
+const VEHICLE_DAMAGE_COOLDOWN = 0.85;
+const VEHICLE_HEALTH_BY_CLASS = Object.freeze({
+  bike: 60,
+  sedan: 100,
+  taxi: 100,
+  suv: 115,
+  pickup: 125,
+  van: 135,
+  truck: 165,
+  bus: 190,
+});
 
 // Bay Area-ish body color distribution (whites/silvers/blacks dominate)
 const BODY_PALETTE = [
@@ -1705,6 +1716,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     taxiPickups: 0,
     serviceStops: 0,
     deliveryStops: 0,
+    vehicleDamageEvents: 0,
+    collisionDamageEvents: 0,
+    disabledVehicles: 0,
+    vehicleRepairs: 0,
   };
   let playerVehicle = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
@@ -1722,6 +1737,84 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     level: 1,
     distance: null,
   };
+
+  function damageStateFor(vehicle) {
+    if (vehicle.disabled || vehicle.health <= 0) return 'disabled';
+    const ratio = vehicle.health / Math.max(1, vehicle.maxHealth);
+    if (ratio <= 0.28) return 'critical';
+    if (ratio <= 0.68) return 'damaged';
+    return 'clear';
+  }
+
+  function vehicleDamageSnapshot(vehicle) {
+    if (!vehicle) return null;
+    return {
+      health: Math.round(vehicle.health * 10) / 10,
+      maxHealth: vehicle.maxHealth,
+      ratio: Math.round(vehicle.health / Math.max(1, vehicle.maxHealth) * 1000) / 1000,
+      state: vehicle.damageState,
+      disabled: vehicle.disabled,
+      lastDamage: vehicle.lastDamage ? { ...vehicle.lastDamage } : null,
+    };
+  }
+
+  function syncVehicleDamageMetadata(vehicle) {
+    const userData = vehicle.mesh.root.userData || (vehicle.mesh.root.userData = {});
+    userData.vehicleHealth = vehicle.health;
+    userData.vehicleMaxHealth = vehicle.maxHealth;
+    userData.vehicleDamageState = vehicle.damageState;
+    userData.vehicleDisabled = vehicle.disabled;
+  }
+
+  function applyVehicleDamage(vehicle, amount = 0, source = 'impact') {
+    if (!vehicle || vehicle.disabled) return vehicleDamageSnapshot(vehicle);
+    const damage = THREE.MathUtils.clamp(Number(amount) || 0, 0, vehicle.maxHealth);
+    if (damage <= 0) return vehicleDamageSnapshot(vehicle);
+    vehicle.health = Math.max(0, vehicle.health - damage);
+    vehicle.disabled = vehicle.health <= 0;
+    vehicle.damageState = damageStateFor(vehicle);
+    vehicle.lastDamage = {
+      amount: Math.round(damage * 10) / 10,
+      source: String(source || 'impact'),
+      at: Math.round(lastElapsed * 1000) / 1000,
+    };
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : Math.max(vehicle.hazardUntil, lastElapsed + 2.4);
+    diagnostics.vehicleDamageEvents += 1;
+    if (vehicle.lastDamage.source === 'traffic-impact') diagnostics.collisionDamageEvents += 1;
+    if (vehicle.disabled) {
+      diagnostics.disabledVehicles += 1;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.blinkSide = 0;
+      if (vehicle.playerControlled) {
+        playerInput.throttle = 0;
+        playerInput.brake = 1;
+        playerInput.steer = 0;
+      }
+    }
+    syncVehicleDamageMetadata(vehicle);
+    return vehicleDamageSnapshot(vehicle);
+  }
+
+  function repairVehicleRecord(vehicle, source = 'repair') {
+    if (!vehicle) return null;
+    const needsRepair = vehicle.disabled
+      || vehicle.health < vehicle.maxHealth
+      || vehicle.lastDamage !== null;
+    const wasDisabled = vehicle.disabled;
+    vehicle.health = vehicle.maxHealth;
+    vehicle.disabled = false;
+    vehicle.damageState = 'clear';
+    vehicle.damageCooldownUntil = 0;
+    vehicle.lastDamage = null;
+    if (!vehicle.pursuitResponder) vehicle.hazardUntil = 0;
+    if (wasDisabled) diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles - 1);
+    if (needsRepair) diagnostics.vehicleRepairs += 1;
+    syncVehicleDamageMetadata(vehicle);
+    return { ...vehicleDamageSnapshot(vehicle), source };
+  }
 
   // Muni coach curb program: per-direction stop lines along each road, far
   // enough from intersections that a dwelling bus never blocks the box. The
@@ -1842,6 +1935,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         const bobPhase = rng() * Math.PI * 2;
         const servicePhase = bobPhase / (Math.PI * 2);
         const serviceProfile = CURB_SERVICE_PROFILES[identity.curbService];
+        const maxHealth = VEHICLE_HEALTH_BY_CLASS[cls] || 100;
         vehicles.push({
           cls, spec, mesh, identity,
           road: ri, dir, s,
@@ -1883,6 +1977,12 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           mergeSignalUntil: 0,
           pursuitResponder: false,
           pursuitLevel: 0,
+          maxHealth,
+          health: maxHealth,
+          damageState: 'clear',
+          disabled: false,
+          damageCooldownUntil: 0,
+          lastDamage: null,
         });
         placed = true;
         placedParked = spawnParked;
@@ -1890,6 +1990,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       if (placedParked) continue;
     }
     for (const v of vehicles) group.add(v.mesh.root);
+    for (const v of vehicles) syncVehicleDamageMetadata(v);
     stats.active = vehicles.length;
     for (const vehicle of vehicles) {
       diagnostics.classMix[vehicle.cls] = (diagnostics.classMix[vehicle.cls] || 0) + 1;
@@ -2881,7 +2982,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     for (const bucket of laneBuckets) bucket.length = 0;
     for (const v of vehicles) {
       v.leader = null;
-      if (v.parked || vehicleIsCurbside(v) || v.playerControlled || v.remoteControlled) continue;
+      // A locally driven vehicle still participates in the lane ordering so
+      // its forward safety correction can produce a real impact consequence.
+      // Remote vehicles remain excluded because their network poses do not
+      // own a reliable road-progress value in this simulation.
+      if (v.parked || vehicleIsCurbside(v) || v.remoteControlled) continue;
       const bucketIndex = v.road * 2 + (v.dir === 1 ? 0 : 1);
       laneBuckets[bucketIndex].push(v);
     }
@@ -3331,6 +3436,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           -v.spec.brake * (0.4 + urgency * 0.45),
         );
       }
+      if (v.disabled) {
+        desired = 0;
+        v.playerSteer = 0;
+        v.longitudinalAccel = Math.min(0, v.longitudinalAccel);
+      }
 
       // Servicing a curb hold: stay stopped in the parking lane until the
       // dwell elapses, then merge back through a gap check.
@@ -3409,13 +3519,29 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         let nextS = v.s + v.dir * v.speed * dt;
         if (v.leader) {
           const gapAfter = (v.leadS - nextS) * v.dir - v.leadHalf - v.half;
-          const emergencyGap = MIN_GAP * weatherGapFactor()
-            + v.speed * MIN_MOVING_HEADWAY * weatherHeadwayFactor();
+          const emergencyGap = v.playerControlled
+            ? 0.12
+            : MIN_GAP * weatherGapFactor()
+              + v.speed * MIN_MOVING_HEADWAY * weatherHeadwayFactor();
           if (gapAfter < emergencyGap) {
+            const correction = emergencyGap - gapAfter;
             diagnostics.maxSafetyCorrection = Math.max(
               diagnostics.maxSafetyCorrection,
-              emergencyGap - gapAfter,
+              correction,
             );
+            const relativeImpactSpeed = Math.max(0, previousSpeed - v.leadSpeed);
+            if (v.playerControlled
+              && !v.disabled
+              && t >= v.damageCooldownUntil
+              && relativeImpactSpeed > 1.5) {
+              const damage = THREE.MathUtils.clamp(
+                relativeImpactSpeed * 7.5 + correction * 4,
+                6,
+                42,
+              );
+              applyVehicleDamage(v, damage, 'traffic-impact');
+              v.damageCooldownUntil = t + VEHICLE_DAMAGE_COOLDOWN;
+            }
             nextS = v.leadS - v.dir * (v.leadHalf + v.half + emergencyGap);
             v.speed = Math.min(v.speed, v.leadSpeed);
             v.longitudinalAccel = Math.min(0, v.longitudinalAccel);
@@ -3663,18 +3789,24 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       if (visible) visibleCount += 1;
 
       const speedRatio = Math.min(1, v.speed / v.spec.vMax);
+      const damageRatio = 1 - v.health / Math.max(1, v.maxHealth);
+      const damageSag = v.disabled ? 0.075 : damageRatio > 0.72 ? 0.035 : 0;
       v.mesh.bodyG.position.y = Math.sin(t * 8.5 + v.bobPhase) * 0.014 * speedRatio
-        + Math.sin(t * 2.05 + v.bobPhase * 2) * 0.005;
+        + Math.sin(t * 2.05 + v.bobPhase * 2) * 0.005
+        - damageSag;
       v.mesh.bodyG.rotation.x = Math.max(
         -0.045,
         Math.min(0.045, -v.accelSm * 0.012),
-      );
+      ) + (v.disabled ? 0.018 : 0);
       const rollTarget = Math.max(
         -0.06,
         Math.min(0.06, -yawRate * v.speed * 0.006),
       );
       v.rollSm += (rollTarget - v.rollSm) * Math.min(1, dt * 6);
-      v.mesh.bodyG.rotation.z = v.rollSm;
+      const damageLean = v.disabled
+        ? (v.servicePhase < 0.5 ? -0.035 : 0.035)
+        : damageRatio > 0.72 ? (v.servicePhase < 0.5 ? -0.014 : 0.014) : 0;
+      v.mesh.bodyG.rotation.z = v.rollSm + damageLean;
 
       const wheelbase = v.spec.len * (v.cls === 'bus' ? 0.62 : 0.6);
       const steerTarget = Math.max(
@@ -3737,7 +3869,8 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         || (curbHoldS !== null)
         || v.parked;
       const brakeOn = !v.parked
-        && (actualAccel <= BRAKE_LIGHT_DECEL
+        && (v.disabled
+          || actualAccel <= BRAKE_LIGHT_DECEL
           || holdActive
           || combatBrakeActive
           || (desired < 0.05 && v.speed < 0.12)
@@ -3752,7 +3885,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         v.mesh.tailMat.emissiveIntensity = brakeOn ? 2.6 : 0.8;
       }
 
-      const hazardOn = t < v.hazardUntil;
+      const hazardOn = v.disabled || t < v.hazardUntil;
       const blinkOn = (hazardOn || Boolean(v.blinkSide)) && (t * 2.2) % 1 < 0.52;
       if (Array.isArray(v.mesh.indicatorLeft) && Array.isArray(v.mesh.indicatorRight)) {
         const leftMaterial = blinkOn && (hazardOn || v.blinkSide < 0)
@@ -3887,6 +4020,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       && current.mesh.root.visible
       && !current.playerControlled
       && !current.remoteControlled
+      && !current.disabled
       && !current.parked
       && current.cls !== 'bike'
       && current.cls !== 'bus'
@@ -3906,6 +4040,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           || !vehicle.mesh.root.visible
           || vehicle.playerControlled
           || vehicle.remoteControlled
+          || vehicle.disabled
           || vehicle.parked
           || vehicle.cls === 'bike'
           || vehicle.cls === 'bus'
@@ -4017,7 +4152,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (pursuitResponderActive) {
+      if (v.disabled) {
+        actionKey = 'vehicle-disabled';
+        actionLabel = 'Vehicle disabled';
+        actionDetail = v.lastDamage?.source || 'damage';
+      } else if (pursuitResponderActive) {
         actionKey = 'pursuit-responder';
         actionLabel = 'Pursuit responder';
         actionDetail = 'closing on player';
@@ -4082,7 +4221,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         || presentationCars.includes(v);
       if (featured) featuredCount += 1;
 
-      const hazardOn = t < v.hazardUntil;
+      const hazardOn = v.disabled || t < v.hazardUntil;
       records.push({
         id: index,
         class: v.cls,
@@ -4119,6 +4258,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           colorHex,
           board: v.cls === 'bus' ? BUS_ROUTE_BOARD : null,
         },
+        damage: vehicleDamageSnapshot(v),
         indicators: {
           left: v.blinkSide < 0,
           right: v.blinkSide > 0,
@@ -4206,6 +4346,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
       if (vehicle.cls === 'bike') continue;
+      if (vehicle.disabled) continue;
       if (vehicle.playerControlled || vehicle.remoteControlled) continue;
       if (!vehicle.parked && vehicle.speed > 0.9) continue;
       const point = vehicle.mesh.root.position;
@@ -4220,7 +4361,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   function enterPlayerVehicle(index) {
     if (playerVehicle || !Number.isInteger(index)) return false;
     const vehicle = vehicles[index];
-    if (!vehicle || vehicle.playerControlled || vehicle.remoteControlled) return false;
+    if (!vehicle || vehicle.playerControlled || vehicle.remoteControlled || vehicle.disabled) return false;
     vehicle.playerControlled = true;
     vehicle.parked = false;
     vehicle.parkedAt = null;
@@ -4269,6 +4410,12 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   }
 
   function setPlayerInput(input = {}) {
+    if (playerVehicle?.disabled) {
+      playerInput.throttle = 0;
+      playerInput.brake = 1;
+      playerInput.steer = 0;
+      return;
+    }
     playerInput.throttle = THREE.MathUtils.clamp(Number(input.throttle) || 0, 0, 1);
     playerInput.brake = THREE.MathUtils.clamp(Number(input.brake) || 0, 0, 1);
     playerInput.steer = THREE.MathUtils.clamp(Number(input.steer) || 0, -1, 1);
@@ -4288,7 +4435,23 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       heading: vehicle.heading ?? 0,
       speed: vehicle.speed,
       road: vehicle.road,
+      damage: vehicleDamageSnapshot(vehicle),
     };
+  }
+
+  function damagePlayerVehicle(amount = 0, source = 'impact') {
+    if (!playerVehicle) return null;
+    return applyVehicleDamage(playerVehicle, amount, source);
+  }
+
+  function repairPlayerVehicle(source = 'repair') {
+    if (!playerVehicle) return null;
+    return repairVehicleRecord(playerVehicle, source);
+  }
+
+  function repairVehicle(index, source = 'repair') {
+    if (!Number.isInteger(index)) return null;
+    return repairVehicleRecord(vehicles[index], source);
   }
 
   /* ---- remote player vehicles ---- */
@@ -4377,6 +4540,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     exitPlayerVehicle,
     setPlayerInput,
     getPlayerVehicleState,
+    damagePlayerVehicle,
+    repairPlayerVehicle,
+    repairVehicle,
     isPlayerDriving,
     setRemotePose,
     clearRemotePose,
