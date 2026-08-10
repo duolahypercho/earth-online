@@ -57,18 +57,56 @@ function validPoint(point) {
   return Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]);
 }
 
+function normalisePoints(points) {
+  if (!Array.isArray(points)) return [];
+  if (points.every(Number.isFinite)) {
+    if (points.length % 2) return [];
+    const pairs = [];
+    for (let index = 0; index + 1 < points.length; index += 2) pairs.push([points[index], points[index + 1]]);
+    return pairs;
+  }
+  return points.filter(validPoint).map(([x, z]) => [x, z]);
+}
+
+function numberFrom(...values) {
+  for (const value of values) {
+    const result = typeof value === 'number' ? value : Number.parseFloat(value);
+    if (Number.isFinite(result) && result > 0) return result;
+  }
+  return null;
+}
+
+function resolveRoadWidth(road) {
+  const tags = road?.tags || road?.properties || {};
+  const explicitWidth = numberFrom(
+    road?.widthM, road?.width, road?.roadWidthM, road?.roadWidth,
+    road?.asphaltWidthM, road?.asphaltWidth, tags.width, tags['width:m'],
+  );
+  if (explicitWidth !== null) return clamp(explicitWidth, 3, 18);
+  const lanes = numberFrom(road?.lanes, tags.lanes);
+  const laneWidth = numberFrom(road?.laneWidthM, road?.laneWidth, tags.lane_width);
+  if (lanes !== null) return clamp(lanes * (laneWidth || 3.25), 3, 18);
+  return 8;
+}
+
+function sourceRoadIdMatches(road) {
+  return FERRY_BUILDING_STREETSCAPE_SOURCE.roadIds.some((id) => String(id) === String(road?.id));
+}
+
 function normaliseRoads(roads) {
-  const candidate = Array.isArray(roads) && roads.length ? roads : DEFAULT_ROADS;
-  return candidate.flatMap((road) => {
-    const points = Array.isArray(road?.points) ? road.points.filter(validPoint) : [];
+  const callerRoads = Array.isArray(roads) ? roads.filter(sourceRoadIdMatches) : [];
+  const normalised = callerRoads.flatMap((road) => {
+    const points = normalisePoints(road?.points);
     if (points.length < 2) return [];
     return [{
       id: road.id ?? 'caller-road',
       name: road.name || '',
-      width: clamp(Number(road.width) || 8, 3, 18),
+      width: resolveRoadWidth(road),
       points,
     }];
   });
+  if (normalised.length) return normalised;
+  return DEFAULT_ROADS.map((road) => ({ ...road, points: normalisePoints(road.points) }));
 }
 
 function forEachSegment(road, visit) {
@@ -322,8 +360,11 @@ function countTriangles(meshes) {
  *
  * `elevationAt(x, z)` (or legacy `getElevation`) should return terrain height.
  * `isSea(x, z)` can reject shoreline positions; a seaLevel fallback is kept for
- * integrations that have no shoreline predicate. `roads` may replace defaults
- * with source-extracted segments once the streamed tile provides them.
+ * integrations that have no shoreline predicate. `roads` may contain either
+ * flat OSM `[x, z, ...]` arrays or nested `[x, z]` pairs. Only known hero
+ * source IDs are consumed; defaults are used when none of those caller roads
+ * contain a valid line. Width resolves from explicit source width fields, then
+ * lanes/lane width, then the conservative eight-metre fallback.
  */
 export function createFerryBuildingStreetscape(options = {}) {
   const scene = options.scene;
@@ -360,7 +401,7 @@ export function createFerryBuildingStreetscape(options = {}) {
     drawCalls: meshes.filter((mesh) => mesh.count > 0).length,
     instances: meshes.reduce((total, mesh) => total + mesh.count, 0),
     triangles: countTriangles(meshes),
-    roads: roads.map(({ id, name }) => ({ id, name })),
+    roads: roads.map(({ id, name, width }) => ({ id, name, width })),
   });
   if (stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls
     || stats.instances > FERRY_BUILDING_STREETSCAPE_BUDGET.maxInstances
