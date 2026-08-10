@@ -4380,6 +4380,88 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   /* ---- player driving ---- */
 
+  function projectVehiclePoseToRoad(position, heading) {
+    if (!Number.isFinite(position?.x)
+      || !Number.isFinite(position?.z)
+      || !Number.isFinite(heading)) return null;
+    const headingX = Math.sin(heading);
+    const headingZ = Math.cos(heading);
+    let best = null;
+    for (let roadIndex = 0; roadIndex < roads.length; roadIndex += 1) {
+      const road = roads[roadIndex];
+      const legalDirs = Array.isArray(road.dirs) && road.dirs.length ? road.dirs : [1, -1];
+      for (let segment = 0; segment < road.px.length - 1; segment += 1) {
+        const dx = road.px[segment + 1] - road.px[segment];
+        const dz = road.pz[segment + 1] - road.pz[segment];
+        const segmentLengthSquared = dx * dx + dz * dz;
+        if (segmentLengthSquared <= 1e-8) continue;
+        const segmentLength = Math.sqrt(segmentLengthSquared);
+        const t = THREE.MathUtils.clamp(
+          ((position.x - road.px[segment]) * dx
+            + (position.z - road.pz[segment]) * dz) / segmentLengthSquared,
+          0,
+          1,
+        );
+        const centerX = road.px[segment] + dx * t;
+        const centerY = road.py[segment]
+          + (road.py[segment + 1] - road.py[segment]) * t;
+        const centerZ = road.pz[segment] + dz * t;
+        const offsetX = position.x - centerX;
+        const offsetZ = position.z - centerZ;
+        const distanceSquared = offsetX * offsetX + offsetZ * offsetZ;
+        for (const dir of legalDirs) {
+          const tangentX = dx / segmentLength * dir;
+          const tangentZ = dz / segmentLength * dir;
+          const alignment = headingX * tangentX + headingZ * tangentZ;
+          const score = distanceSquared + (1 - alignment) * 4;
+          if (best && score >= best.score) continue;
+          const rightX = tangentZ;
+          const rightZ = -tangentX;
+          best = {
+            score,
+            distanceSquared,
+            road: roadIndex,
+            dir,
+            s: road.cum[segment] + segmentLength * t,
+            lateral: offsetX * rightX + offsetZ * rightZ,
+            x: centerX + rightX * (offsetX * rightX + offsetZ * rightZ),
+            y: centerY,
+            z: centerZ + rightZ * (offsetX * rightX + offsetZ * rightZ),
+            heading: Math.atan2(tangentX, tangentZ),
+          };
+        }
+      }
+    }
+    if (!best || Math.sqrt(best.distanceSquared) > 6.5 || Math.abs(best.lateral) > 6.5) {
+      return null;
+    }
+    return best;
+  }
+
+  function activatePlayerVehicleRecord(vehicle) {
+    if (!vehicle || (playerVehicle && playerVehicle !== vehicle)) return false;
+    vehicle.playerControlled = true;
+    vehicle.parked = false;
+    vehicle.parkedAt = null;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.waitingForGreen = false;
+    vehicle.greenReleaseAt = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.nextCurbStopAt = Infinity;
+    vehicle.nextServiceAt = Infinity;
+    vehicle.busStopIndex = -1;
+    vehicle.mergeSignalUntil = 0;
+    vehicle.pullOutBlockedSince = null;
+    vehicle.playerSteer = 0;
+    playerVehicle = vehicle;
+    return true;
+  }
+
   function getNearestEnterableVehicle(position, maxDistance = 3.6) {
     if (!position) return null;
     let best = null;
@@ -4402,27 +4484,90 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     if (playerVehicle || !Number.isInteger(index)) return false;
     const vehicle = vehicles[index];
     if (!vehicle || vehicle.playerControlled || vehicle.remoteControlled || vehicle.disabled) return false;
-    vehicle.playerControlled = true;
-    vehicle.parked = false;
-    vehicle.parkedAt = null;
-    vehicle.speed = 0;
-    vehicle.longitudinalAccel = 0;
-    vehicle.accelSm = 0;
-    vehicle.route = null;
-    vehicle.turn = null;
-    vehicle.leader = null;
-    vehicle.waitingForGreen = false;
-    vehicle.greenReleaseAt = Infinity;
-    vehicle.curbDwellUntil = Infinity;
-    vehicle.nextCurbStopAt = Infinity;
-    vehicle.nextServiceAt = Infinity;
-    vehicle.busStopIndex = -1;
     vehicle.hazardUntil = 0;
-    vehicle.mergeSignalUntil = 0;
-    vehicle.pullOutBlockedSince = null;
-    vehicle.playerSteer = 0;
     vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
-    playerVehicle = vehicle;
+    return activatePlayerVehicleRecord(vehicle);
+  }
+
+  function exportPlayerVehicleState() {
+    if (!playerVehicle) return null;
+    const index = vehicles.indexOf(playerVehicle);
+    const point = playerVehicle.mesh.root.position;
+    return {
+      vehicleId: index,
+      class: playerVehicle.cls,
+      identity: playerVehicle.identity.key,
+      position: { x: point.x, z: point.z },
+      heading: playerVehicle.heading ?? playerVehicle.mesh.root.rotation.y ?? 0,
+      damage: vehicleDamageSnapshot(playerVehicle),
+      theftReported: playerVehicle.theftReported === true,
+    };
+  }
+
+  function importPlayerVehicleState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const vehicleId = Number(snapshot.vehicleId);
+    const heading = Number(snapshot.heading);
+    const health = Number(snapshot.damage?.health);
+    const maxHealth = Number(snapshot.damage?.maxHealth);
+    if (!Number.isInteger(vehicleId)
+      || !Number.isFinite(heading)
+      || !Number.isFinite(health)
+      || !Number.isFinite(maxHealth)
+      || typeof snapshot.class !== 'string'
+      || typeof snapshot.identity !== 'string'
+      || typeof snapshot.theftReported !== 'boolean'
+      || typeof snapshot.damage?.disabled !== 'boolean') return false;
+    const vehicle = vehicles[vehicleId];
+    if (!vehicle
+      || vehicle.cls !== snapshot.class
+      || vehicle.identity.key !== snapshot.identity
+      || vehicle.remoteControlled
+      || (playerVehicle && playerVehicle !== vehicle)
+      || maxHealth !== vehicle.maxHealth
+      || health < 0
+      || health > vehicle.maxHealth
+      || snapshot.damage.disabled !== (health <= 0)) return false;
+    const projection = projectVehiclePoseToRoad(snapshot.position, heading);
+    if (!projection) return false;
+    const lastDamage = snapshot.damage.lastDamage;
+    if (lastDamage !== null && lastDamage !== undefined && (
+      typeof lastDamage !== 'object'
+      || !Number.isFinite(Number(lastDamage.amount))
+      || !Number.isFinite(Number(lastDamage.at))
+      || typeof lastDamage.source !== 'string'
+    )) return false;
+
+    const wasDisabled = vehicle.disabled;
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    vehicle.health = health;
+    vehicle.disabled = snapshot.damage.disabled;
+    vehicle.damageState = damageStateFor(vehicle);
+    vehicle.lastDamage = lastDamage ? {
+      amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+      source: lastDamage.source.slice(0, 64),
+      at: Math.max(0, Number(lastDamage.at)),
+    } : null;
+    vehicle.damageCooldownUntil = 0;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    vehicle.theftReported = snapshot.theftReported;
+    if (wasDisabled !== vehicle.disabled) {
+      diagnostics.disabledVehicles += vehicle.disabled ? 1 : -1;
+      diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
+    }
+    syncVehicleDamageMetadata(vehicle);
+    if (!activatePlayerVehicleRecord(vehicle)) return false;
+    if (vehicle.disabled) {
+      playerInput.throttle = 0;
+      playerInput.brake = 1;
+      playerInput.steer = 0;
+    }
     return true;
   }
 
@@ -4601,6 +4746,8 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     setNightLighting,
     getNearestEnterableVehicle,
     enterPlayerVehicle,
+    exportPlayerVehicleState,
+    importPlayerVehicleState,
     reportPlayerVehicleTheft,
     exitPlayerVehicle,
     setPlayerInput,

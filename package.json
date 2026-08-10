@@ -29,6 +29,7 @@
     "verify:combat-pursuit": "node scripts/verify-combat-pursuit.mjs",
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:vehicle-theft": "node scripts/verify-vehicle-theft.mjs",
+    "verify:vehicle-persistence": "node scripts/verify-vehicle-persistence.mjs",
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",

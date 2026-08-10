@@ -1243,6 +1243,7 @@ function savePlayerProgress() {
     cityShift: cityShift.exportState(),
     combat: combat.exportState(),
     streetHeat: streetHeat.exportState(),
+    vehicle: traffic.exportPlayerVehicleState?.() ?? null,
     world: exportPlayerWorldState(),
   };
   try {
@@ -1262,6 +1263,7 @@ function restorePlayerProgress() {
   const previousShift = cityShift?.exportState?.();
   const previousCombat = combat?.exportState?.();
   const previousStreetHeat = streetHeat?.exportState?.();
+  const previousVehicle = traffic.exportPlayerVehicleState?.() ?? null;
   const previousWorld = exportPlayerWorldState();
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
@@ -1274,11 +1276,16 @@ function restorePlayerProgress() {
   const worldRestored = snapshot.world
     ? importPlayerWorldState(snapshot.world)
     : true;
-  if (lifeRestored
+  const baseRestored = lifeRestored
     && shiftRestored
     && combatRestored
     && streetHeatRestored
-    && worldRestored) {
+    && worldRestored;
+  const vehicleRestored = baseRestored && snapshot.vehicle
+    ? traffic.importPlayerVehicleState?.(snapshot.vehicle) === true
+      && activatePlayerVehiclePresentation({ restored: true }) !== null
+    : baseRestored;
+  if (baseRestored && vehicleRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
@@ -1287,6 +1294,10 @@ function restorePlayerProgress() {
   if (previousCombat) combat?.importState?.(previousCombat);
   if (previousStreetHeat) streetHeat?.importState?.(previousStreetHeat);
   if (previousWorld) importPlayerWorldState(previousWorld);
+  if (previousVehicle && !traffic.isPlayerDriving?.()) {
+    traffic.importPlayerVehicleState?.(previousVehicle);
+    activatePlayerVehiclePresentation({ restored: true });
+  }
   return false;
 }
 
@@ -1642,9 +1653,21 @@ function enterPlayerCar(index) {
       source: 'vehicle-theft',
     })
     : null;
-  combat?.setEnabled(false);
+  const state = activatePlayerVehiclePresentation();
+  if (!state) return false;
   lastVehicleDamageAt = null;
-  if (audioContext) {
+  hud.setMessage(theft?.reported
+    ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
+    : 'You got in. W accelerate · S brake · A/D steer · E exit.');
+  return true;
+}
+
+function activatePlayerVehiclePresentation({ restored = false } = {}) {
+  const state = traffic.getPlayerVehicleState?.();
+  if (!state) return null;
+  combat?.setEnabled(false);
+  lastVehicleDamageAt = state.damage?.lastDamage?.at ?? null;
+  if (audioContext && !engineAudio) {
     try {
       audioContext.resume?.();
       engineAudio = createEngineAudio(audioContext);
@@ -1662,18 +1685,13 @@ function enterPlayerCar(index) {
     pitch: controls.pitch,
     distance: controls.distance,
   };
-  const state = traffic.getPlayerVehicleState?.();
-  if (state) {
-    controls.target.set(state.position.x, state.position.y + 1.6, state.position.z);
-    controls.yaw = state.heading + Math.PI;
-    controls.pitch = 0.52;
-    controls.distance = 10.5;
-  }
+  controls.target.set(state.position.x, state.position.y + 1.6, state.position.z);
+  controls.yaw = state.heading + Math.PI;
+  controls.pitch = 0.52;
+  controls.distance = 10.5;
   snapCameraToControls();
-  hud.setMessage(theft?.reported
-    ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
-    : 'You got in. W accelerate · S brake · A/D steer · E exit.');
-  return true;
+  if (restored) hud?.setDriveState?.({ active: true, damage: state.damage });
+  return state;
 }
 
 function exitPlayerCar() {
@@ -4307,6 +4325,9 @@ window.__SF_SIM__ = {
   },
   saveProgress() {
     return savePlayerProgress();
+  },
+  restoreProgress() {
+    return restorePlayerProgress();
   },
   clearSavedProgress() {
     return clearPlayerProgress();
