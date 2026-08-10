@@ -32,6 +32,10 @@ import {
   normalizeStreetName,
 } from './street-design.js';
 import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
+import {
+  createHeroTileHandoffController,
+  heroTileHandoffConfigFromRuntimeTile,
+} from './hero-tile-handoff.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
@@ -75,6 +79,13 @@ const FERRY_HERO_CAMERA_FRAME = Object.freeze({
 const FERRY_HERO_ATMOSPHERE_POINT_LIGHTS = 4;
 const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
 const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
+const FERRY_HERO_REGION_REFERENCE = Object.freeze({
+  id: 'sf-ferry-building-hero',
+  url: '/data/world/regions/sf-ferry-building-hero.region.json',
+  coverageKind: '2x2-planned-tile-reference',
+  tileIds: Object.freeze(['sf-local-5-4', 'sf-local-6-4', 'sf-local-5-5', 'sf-local-6-5']),
+  runtimeHandoff: 'not-yet-backed-by-published-tile-artifacts',
+});
 
 function syncStreetDesignIntoCityMeta() {
   if (!cityData?.meta) return;
@@ -1301,6 +1312,7 @@ function setupToolbar() {
     disposeHeroTrafficVisuals();
     disposeHeroLifeLighting();
     disposeHeroLandmark();
+    disposeHeroTileHandoff();
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
@@ -2054,7 +2066,10 @@ function compileSafely(selectedRoads, removed = new Set(), depth = 0) {
         return { compilation, roads: splitRoads };
       } catch (error) {
         lastError = error;
-        console.error('Road resolution strategy failed', options, error.message);
+        // This strategy can fail on short OSM junction fragments; a later
+        // strategy/removal path is the expected recovery, so do not surface it
+        // as an uncaught browser error while compilation continues.
+        console.warn('Road resolution strategy retry', options, error.message);
         const culprit = culpritFrom(error.message);
         if (culprit && splitRoads.length > 1) {
           const before = splitRoads.length;
@@ -7097,6 +7112,8 @@ let heroCameraController = null;
 let heroCameraPriorNear = null;
 let heroCameraLastPlayerPosition = null;
 let heroCameraLastVehicleCandidates = 0;
+let heroTileHandoff = null;
+let heroTileHandoffLastMovement = null;
 let playerYaw = 0;
 let playerPitch = -0.12;
 let pointerLockActive = false;
@@ -7434,7 +7451,64 @@ function nearestRegionPoint(x, z) {
   return best;
 }
 
-function resolvePlayerPosition(x, z, radius = 0.5) {
+function disposeHeroTileHandoff() {
+  heroTileHandoff?.dispose();
+  heroTileHandoff = null;
+  heroTileHandoffLastMovement = null;
+}
+
+function initializeHeroTileHandoff() {
+  disposeHeroTileHandoff();
+  if (!activeHeroTile) return null;
+  // The live hero region spans a planned 2x2 tile set, but none of those
+  // production artifacts is published. Cardinal exits therefore remain
+  // unresolved requests until a real neighbor loader is connected.
+  heroTileHandoff = createHeroTileHandoffController(
+    heroTileHandoffConfigFromRuntimeTile(activeHeroTile),
+  );
+  return heroTileHandoff;
+}
+
+function getHeroTileHandoffDiagnostics() {
+  const diagnostics = heroTileHandoff?.getDiagnostics() || null;
+  const last = heroTileHandoffLastMovement || diagnostics?.lastResult || null;
+  const outboundEvents = diagnostics?.events || [];
+  const terrainY = playerState ? elevationAt(playerState.x, playerState.z) : null;
+  const avatarGroundError = playerAvatarGroup && terrainY != null
+    ? playerAvatarGroup.position.y - terrainY
+    : null;
+  return {
+    active: Boolean(heroTileHandoff),
+    tileId: activeHeroTile?.id || null,
+    authoritativeRuntimeCore: activeHeroTile ? {
+      bounds: { ...activeHeroTile.bounds },
+      bufferedBounds: { ...activeHeroTile.bufferedBounds },
+    } : null,
+    singleTileContractMismatch: Boolean(activeHeroTile),
+    regionReference: {
+      ...FERRY_HERO_REGION_REFERENCE,
+      tileIds: [...FERRY_HERO_REGION_REFERENCE.tileIds],
+    },
+    coreBoundaryCrossed: outboundEvents.length > 0 || Boolean(last?.coreBoundaryCrossed),
+    lastCoreBoundaryCrossed: Boolean(last?.coreBoundaryCrossed),
+    insideBuffer: Boolean(last?.insideBuffer),
+    insideCore: last?.insideCore ?? null,
+    neighborRequested: outboundEvents.length > 0 || Boolean(last?.neighborRequested),
+    neighborReady: false,
+    clampedToBuffer: Boolean(last?.clampedToBuffer),
+    reenteredCore: Boolean(last?.reenteredCore),
+    terrainY: heroTileHandoffLastMovement?.terrainY ?? null,
+    playerGrounding: playerState ? {
+      position: { x: playerState.x, y: playerAvatarGroup?.position.y ?? null, z: playerState.z },
+      terrainY,
+      error: avatarGroundError,
+      avatarVisible: Boolean(playerAvatarGroup?.visible && playerAvatarGroup?.parent),
+    } : null,
+    controller: diagnostics,
+  };
+}
+
+function resolvePlayerPosition(x, z, radius = 0.5, previousPosition = null) {
   let resolvedX = x;
   let resolvedZ = z;
   for (let pass = 0; pass < 2; pass += 1) {
@@ -7460,12 +7534,24 @@ function resolvePlayerPosition(x, z, radius = 0.5) {
       }
     }
   }
+  if (heroTileHandoff) {
+    heroTileHandoffLastMovement = heroTileHandoff.resolveMovement({
+      previousPosition,
+      candidatePosition: { x: resolvedX, z: resolvedZ },
+      elevationAt,
+    });
+    return {
+      x: heroTileHandoffLastMovement.position.x,
+      z: heroTileHandoffLastMovement.position.z,
+      y: heroTileHandoffLastMovement.terrainY,
+    };
+  }
   if (region.length >= 3 && !pointInFlatRing({ x: resolvedX, z: resolvedZ }, cityFlatRegion)) {
     const nearest = nearestRegionPoint(resolvedX, resolvedZ);
     resolvedX = nearest.x;
     resolvedZ = nearest.z;
   }
-  return { x: resolvedX, z: resolvedZ };
+  return { x: resolvedX, z: resolvedZ, y: elevationAt(resolvedX, resolvedZ) };
 }
 
 function createSandboxPlayerAvatar() {
@@ -7669,12 +7755,14 @@ function initPlayer(position) {
   };
   playerYaw = playerState.yaw;
   playerPitch = playerState.pitch;
-  playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
+  playerAvatarGroup.position.set(resolved.x, resolved.y, resolved.z);
   initializeHeroCamera();
 }
 
 function updatePlayerWalk(dt) {
-  if (!playerState) return;
+  // Async city rebuilds dispose the avatar before the replacement is ready.
+  // The render loop can legitimately tick during that short lifecycle window.
+  if (!playerState || !playerAvatarGroup) return;
   const speed = moveKeys.has('shiftleft') || moveKeys.has('shiftright') ? 9 : 5.2;
   const forward = new THREE.Vector3(Math.sin(playerYaw), 0, Math.cos(playerYaw));
   const right = new THREE.Vector3(Math.cos(playerYaw), 0, -Math.sin(playerYaw));
@@ -7686,7 +7774,13 @@ function updatePlayerWalk(dt) {
   const moving = move.lengthSq() > 0;
   if (moving) {
     move.normalize().multiplyScalar(speed * dt);
-    const resolved = resolvePlayerPosition(playerState.x + move.x, playerState.z + move.z, 0.5);
+    const previousPosition = { x: playerState.x, z: playerState.z };
+    const resolved = resolvePlayerPosition(
+      playerState.x + move.x,
+      playerState.z + move.z,
+      0.5,
+      previousPosition,
+    );
     playerState.x = resolved.x;
     playerState.z = resolved.z;
     playerState.walking += dt * 6;
@@ -7699,7 +7793,8 @@ function updatePlayerWalk(dt) {
     legs.children[0].rotation.x = swing;
     legs.children[1].rotation.x = -swing;
   }
-  playerAvatarGroup.position.set(playerState.x, elevationAt(playerState.x, playerState.z), playerState.z);
+  const playerGroundY = heroTileHandoffLastMovement?.terrainY ?? elevationAt(playerState.x, playerState.z);
+  playerAvatarGroup.position.set(playerState.x, playerGroundY, playerState.z);
   playerAvatarGroup.rotation.y = playerYaw;
   heroCharacter?.update({
     moving,
@@ -11186,6 +11281,7 @@ async function buildCity() {
     disposeHeroTrafficVisuals();
     disposeHeroLifeLighting();
     disposeHeroLandmark();
+    disposeHeroTileHandoff();
     disposeHeroPerformanceMode();
     if (cityRoot) {
       disposeHeroAtmosphere();
@@ -11396,6 +11492,7 @@ async function buildCity() {
       createHillShrubbery(regionPoints);
       createMistSystem();
     }
+    initializeHeroTileHandoff();
     const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
     initPlayer(activeHeroTile && !fullCityMode
       ? resolveHeroLaunchPose()
@@ -11530,6 +11627,7 @@ function start() {
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
+      heroTileHandoff: getHeroTileHandoffDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -11743,6 +11841,7 @@ function start() {
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
+    getHeroTileHandoff: () => getHeroTileHandoffDiagnostics(),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
@@ -11807,20 +11906,24 @@ function start() {
       const x = Number(pose.x);
       const z = Number(pose.z);
       if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
-      streamFocusPoint = { x, z };
+      const previousPosition = playerState ? { x: playerState.x, z: playerState.z } : null;
+      const resolved = playerState
+        ? resolvePlayerPosition(x, z, 0.5, previousPosition)
+        : { x, z, y: elevationAt(x, z) };
+      streamFocusPoint = { x: resolved.x, z: resolved.z };
       if (playerState) {
-        playerState.x = x;
-        playerState.z = z;
+        playerState.x = resolved.x;
+        playerState.z = resolved.z;
         if (Number.isFinite(pose.yaw)) {
           playerYaw = pose.yaw;
           playerState.yaw = pose.yaw;
         }
         if (playerAvatarGroup) {
-          playerAvatarGroup.position.set(x, elevationAt(x, z), z);
+          playerAvatarGroup.position.set(resolved.x, resolved.y, resolved.z);
         }
       }
       if (fullCityMode && cityWideReady) updateNearFieldFidelity(streamFocusPoint);
-      return { x, z };
+      return { x: resolved.x, z: resolved.z };
     },
     setStreamFocus: (point = {}) => {
       const x = Number(point.x);
@@ -12020,14 +12123,14 @@ function start() {
     getElevationAt: (x, z) => elevationAt(x, z),
     setPlayerPosition: (x, z) => {
       if (!playerState) return null;
-      const resolved = { x, z };
+      const resolved = resolvePlayerPosition(x, z, 0.5, { x: playerState.x, z: playerState.z });
       playerState.x = resolved.x;
       playerState.z = resolved.z;
-      playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
+      playerAvatarGroup.position.set(resolved.x, resolved.y, resolved.z);
       if (cityMode === 'walk') {
-        camera.position.set(resolved.x, elevationAt(resolved.x, resolved.z) + 1.68, resolved.z);
+        camera.position.set(resolved.x, resolved.y + 1.68, resolved.z);
       }
-      return resolved;
+      return { x: resolved.x, z: resolved.z };
     },
     getNearestVehicle: () => {
       const nearest = playerState ? nearestVehicle(playerState) : null;
