@@ -54,57 +54,37 @@ try {
   );
   await page.waitForTimeout(900);
 
-  await page.waitForFunction(() => {
-    const sim = window.__SF_SIM__;
-    const life = sim.traffic.getVehicleLifeSnapshot().vehicles;
-    const probe = sim.traffic.getRuleProbeSample();
-    return life.some((vehicle, index) => {
-      if (vehicle.class === 'bike' || vehicle.action?.key === 'parked' || vehicle.speed > 0.3) {
-        return false;
-      }
-      const sample = probe[index];
-      return life.some((leader, leaderIndex) => {
-        const leaderSample = probe[leaderIndex];
-        const ahead = (leader.s - vehicle.s) * sample.dir;
-        return leader.id !== vehicle.id
-          && leader.action?.key !== 'parked'
-          && leader.road === vehicle.road
-          && leaderSample.dir === sample.dir
-          && leader.speed <= 0.3
-          && ahead > 10
-          && ahead < 45;
-      });
-    });
-  }, null, { timeout: 15000 });
-
   const entry = await page.evaluate(async () => {
     const sim = window.__SF_SIM__;
     const life = sim.traffic.getVehicleLifeSnapshot().vehicles;
-    const probe = sim.traffic.getRuleProbeSample();
-    const candidate = life.find((vehicle, index) => {
-      if (vehicle.class === 'bike' || vehicle.action?.key === 'parked' || vehicle.speed > 0.3) {
-        return false;
-      }
-      const sample = probe[index];
-      return life.some((leader, leaderIndex) => {
-        const leaderSample = probe[leaderIndex];
-        const ahead = (leader.s - vehicle.s) * sample.dir;
-        return leader.id !== vehicle.id
-          && leader.action?.key !== 'parked'
-          && leader.road === vehicle.road
-          && leaderSample.dir === sample.dir
-          && leader.speed <= 0.3
-          && ahead > 10
-          && ahead < 45;
-      });
-    });
+    const candidate = life.find((vehicle) => vehicle.action?.key === 'parked'
+      && vehicle.identity?.category === 'private'
+      && vehicle.damage?.state === 'clear');
     if (!candidate) return null;
     sim.setRoamPose({ x: candidate.position.x, z: candidate.position.z });
     await new Promise((resolve) => window.setTimeout(resolve, 120));
     if (!sim.enterCar()) return null;
+    const playerId = sim.traffic.getPlayerVehicleState()?.index;
+    const victim = sim.traffic.getVehicleLifeSnapshot().vehicles.find((vehicle) => (
+      vehicle.id !== playerId
+      && vehicle.class !== 'bike'
+      && vehicle.visible !== false
+      && vehicle.action?.key !== 'parked'
+      && !vehicle.damage?.disabled
+      && vehicle.speed <= 8
+      && Number.isFinite(vehicle.heading)
+    ));
+    if (!victim) return null;
+    const snapshot = sim.traffic.exportPlayerVehicleState();
+    snapshot.position = {
+      x: victim.position.x - Math.sin(victim.heading) * 13.5,
+      z: victim.position.z - Math.cos(victim.heading) * 13.5,
+    };
+    snapshot.heading = victim.heading;
+    if (!sim.traffic.importPlayerVehicleState(snapshot)) return null;
     return sim.traffic.getPlayerVehicleState();
   });
-  assert(entry?.index >= 0, 'could not enter a stopped collision candidate', entry);
+  assert(entry?.index >= 0, 'could not enter and stage a collision candidate', entry);
   assert(entry?.damage?.state === 'clear' && entry.damage.ratio === 1,
     'entered vehicle did not start with clear damage state', entry);
 
@@ -201,12 +181,20 @@ try {
 
   await page.keyboard.press('r');
   await page.waitForTimeout(120);
-  const repaired = await page.evaluate(() => ({
-    result: window.__SF_SIM__.traffic.getPlayerVehicleState()?.damage || null,
-    diagnostics: window.__SF_SIM__.traffic.getDiagnostics(),
-    life: window.__SF_SIM__.lifeSim.getState(),
-    message: document.querySelector('.hud__message-text')?.textContent || '',
-  }));
+  const repaired = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const snapshot = sim.traffic.exportPlayerVehicleState();
+    snapshot.position.x -= Math.sin(snapshot.heading) * 32;
+    snapshot.position.z -= Math.cos(snapshot.heading) * 32;
+    const relocated = sim.traffic.importPlayerVehicleState(snapshot);
+    return {
+      result: sim.traffic.getPlayerVehicleState()?.damage || null,
+      diagnostics: sim.traffic.getDiagnostics(),
+      life: sim.lifeSim.getState(),
+      message: document.querySelector('.hud__message-text')?.textContent || '',
+      relocated,
+    };
+  });
   await page.keyboard.down('w');
   await page.waitForFunction(
     () => (window.__SF_SIM__.traffic.getPlayerVehicleState()?.speed || 0) > 0.5,
@@ -222,7 +210,8 @@ try {
       exited: sim.exitCar(),
     };
   });
-  assert(repaired.result?.state === 'clear' && repaired.result?.ratio === 1,
+  assert(repaired.relocated === true
+    && repaired.result?.state === 'clear' && repaired.result?.ratio === 1,
     'repair did not restore full integrity', repaired.result);
   assert(repaired.message.includes(`$${disabled.quote.cost} paid`),
     'repair key did not expose recovery feedback', repaired.message);
