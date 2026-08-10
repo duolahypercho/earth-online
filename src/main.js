@@ -1156,6 +1156,10 @@ hud = createHud({
   quality: getRenderQualitySnapshot(),
   onQualityChange: setRenderQuality,
   onInteraction: () => {
+    if (muniRideState?.active) {
+      hud?.setMessage(`MUNI / ${String(muniRideState.phase || 'en-route').toUpperCase()} · ONE-STOP RIDE.`);
+      return;
+    }
     if (taxiRideState?.active) {
       hud?.setMessage(`TAXI / EN ROUTE · ${Math.ceil(Math.max(0, TAXI_RIDE_DURATION - taxiRideState.elapsed))}s.`);
       return;
@@ -1170,6 +1174,11 @@ hud = createHud({
       const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
       if (delivery) {
         startDeliveryRunFromService(delivery);
+        return;
+      }
+      const muni = traffic.getNearestTransitService?.(controls.target, 3.8, 2.8);
+      if (muni) {
+        startPlayerMuniRide(muni);
         return;
       }
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
@@ -1193,7 +1202,7 @@ hud = createHud({
     }
   },
   onTouchMove: (code, pressed) => {
-    if (taxiRideState?.active) {
+    if (taxiRideState?.active || muniRideState?.active) {
       controls.keys.delete(code.toLowerCase());
       return;
     }
@@ -1205,6 +1214,8 @@ hud = createHud({
     controls.combatTriggerPointerId = null;
     traffic.cancelTaxiRide?.();
     taxiRideState = null;
+    traffic.cancelMuniRide?.();
+    muniRideState = null;
     combat?.setAiming(false);
     combat?.setTriggerHeld(false);
     traffic.repairPlayerVehicle?.('shift-reset');
@@ -1227,6 +1238,7 @@ let playerLayerActive = false;
 let engineAudio = null;
 let windAudio = null;
 let taxiRideState = null;
+let muniRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
@@ -1237,6 +1249,7 @@ const VEHICLE_IMPOUND_RETRIEVAL_FEE = 45;
 const VEHICLE_REGISTRATION_FEE = 60;
 const TAXI_RIDE_FARE = 14;
 const TAXI_RIDE_DURATION = 3.2;
+const MUNI_RIDE_FARE = 3;
 const TRAFFIC_CITATION_FINE = 18;
 const TRAFFIC_CITATION_HEAT = 12;
 let progressSaveElapsed = 0;
@@ -1932,7 +1945,7 @@ function registerParkedVehicleAtFerry() {
 
 function handleFerryGarageAction() {
   if (!ferryImpoundContext()) return null;
-  if (traffic.isPlayerDriving?.() || taxiRideState?.active) {
+  if (traffic.isPlayerDriving?.() || passengerRideActive()) {
     hud?.setMessage('Park and enter Ferry Building before using the garage.');
     return false;
   }
@@ -2116,7 +2129,7 @@ function deliveryRunInputAvailable() {
   return playerLayerActive
     && !controls.interiorMode
     && !traffic.isPlayerDriving?.()
-    && !taxiRideState?.active
+    && !passengerRideActive()
     && !beautyMode
     && !qaCameraPose
     && combatState?.status === 'running'
@@ -2180,7 +2193,7 @@ function residentFavorInputAvailable() {
   return playerLayerActive
     && !controls.interiorMode
     && !traffic.isPlayerDriving?.()
-    && !taxiRideState?.active
+    && !passengerRideActive()
     && !beautyMode
     && !qaCameraPose
     && combatState?.status === 'running'
@@ -2256,6 +2269,10 @@ function startResidentFavorFromNearby() {
   return true;
 }
 
+function passengerRideActive() {
+  return taxiRideState?.active === true || muniRideState?.active === true;
+}
+
 function getPlayerTaxiRideState() {
   if (!taxiRideState?.active) return null;
   return {
@@ -2271,6 +2288,125 @@ function getPlayerTaxiRideState() {
   };
 }
 
+function getPlayerMuniRideState() {
+  if (!muniRideState?.active) return null;
+  const transit = traffic.getMuniRideState?.();
+  return {
+    active: true,
+    vehicleId: muniRideState.vehicleId,
+    class: muniRideState.class,
+    identity: muniRideState.identity,
+    fare: MUNI_RIDE_FARE,
+    phase: transit?.phase ?? muniRideState.phase,
+    elapsed: transit?.elapsed ?? muniRideState.elapsed,
+    traveled: transit?.traveled ?? 0,
+    road: transit?.road ?? null,
+    position: transit?.position ?? null,
+  };
+}
+
+function startPlayerMuniRide(candidate) {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  const lifeState = lifeSim?.getState?.();
+  if (candidate?.index != null && heatState?.pursuitActive) {
+    hud?.setMessage('Muni unavailable · lose the StreetHeat tail first.');
+    return false;
+  }
+  if (traffic.getImpoundedVehicleState?.()) {
+    hud?.setMessage('Muni unavailable · resolve the Ferry impound hold first.');
+    return false;
+  }
+  if (lifeState?.workShift?.active
+    || lifeState?.residentFavor?.active
+    || lifeState?.deliveryRun?.active) {
+    hud?.setMessage('Finish the active job before boarding Muni.');
+    return false;
+  }
+  const available = candidate?.index != null
+    && !passengerRideActive()
+    && playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !playerMoving()
+    && !beautyMode
+    && !qaCameraPose
+    && combatState?.status === 'running'
+    && combatState?.active === true;
+  if (!available) return false;
+  if (!lifeSim?.canAffordMuniFare?.(MUNI_RIDE_FARE)) {
+    lifeSim?.payMuniFare?.(MUNI_RIDE_FARE, 'Muni one-stop ride');
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    return false;
+  }
+  const boarded = traffic.beginMuniRide?.(candidate.index);
+  if (!boarded) return false;
+  controls.keys.clear();
+  controls.combatPointerId = null;
+  controls.combatTriggerPointerId = null;
+  combat?.setAiming(false);
+  combat?.setTriggerHeld(false);
+  combat?.setEnabled(false);
+  muniRideState = {
+    active: true,
+    vehicleId: boarded.vehicleId,
+    class: boarded.class,
+    identity: boarded.identity,
+    phase: boarded.phase,
+    elapsed: boarded.elapsed,
+  };
+  hud?.setMessage(`MUNI / ONE STOP · $${MUNI_RIDE_FARE} due on arrival.`);
+  return true;
+}
+
+function updatePlayerMuniRide() {
+  if (!muniRideState?.active) return null;
+  const transit = traffic.getMuniRideState?.();
+  if (!transit) {
+    muniRideState = null;
+    combat?.setEnabled(true);
+    hud?.setMessage('Muni ride unavailable · no charge.');
+    return null;
+  }
+  muniRideState.phase = transit.phase;
+  muniRideState.elapsed = transit.elapsed;
+  if (!transit.arrived) return getPlayerMuniRideState();
+  const previousLife = lifeSim?.exportState?.();
+  const transaction = lifeSim?.payMuniFare?.(MUNI_RIDE_FARE, 'Muni one-stop ride');
+  const completed = transaction ? traffic.completeMuniRide?.() : null;
+  if (!transaction || !completed) {
+    if (previousLife) lifeSim?.importState?.(previousLife);
+    traffic.cancelMuniRide?.();
+    muniRideState = null;
+    combat?.setEnabled(true);
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage('Muni arrival unavailable · no charge.');
+    return null;
+  }
+  const heading = Number(completed.heading) || 0;
+  const exitX = completed.position.x + Math.cos(heading) * 3.1;
+  const exitZ = completed.position.z - Math.sin(heading) * 3.1;
+  const surface = streaming.getSurfaceHeight?.({ x: exitX, z: exitZ });
+  controls.target.set(
+    exitX,
+    Number.isFinite(surface) ? surface + QA_ROAM_CLEARANCE : controls.target.y,
+    exitZ,
+  );
+  controls.focus.copy(controls.target);
+  controls.keys.clear();
+  muniRideState = null;
+  combat?.setEnabled(true);
+  snapCameraToControls();
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`MUNI ARRIVAL / ONE STOP · $${MUNI_RIDE_FARE} paid.`);
+  savePlayerProgress();
+  return {
+    kind: 'muni-arrival',
+    vehicle: completed,
+    transaction,
+  };
+}
+
 function startPlayerTaxiRide(candidate) {
   const combatState = combat?.getState?.();
   const heatState = streetHeat?.getState?.();
@@ -2279,7 +2415,7 @@ function startPlayerTaxiRide(candidate) {
     return false;
   }
   const available = candidate?.index != null
-    && !taxiRideState?.active
+    && !passengerRideActive()
     && playerLayerActive
     && !controls.interiorMode
     && !traffic.isPlayerDriving?.()
@@ -2432,8 +2568,9 @@ function usePlayerMedkit() {
 }
 
 function updatePlayerLayer(dt, elapsed) {
+  updatePlayerMuniRide();
   updatePlayerTaxiRide(dt);
-  const taxiRiding = taxiRideState?.active === true;
+  const passengerRiding = passengerRideActive();
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
     if (playerAvatar) playerAvatar.visible = false;
@@ -2470,7 +2607,7 @@ function updatePlayerLayer(dt, elapsed) {
     if (playerAvatar && !controls.interiorMode) {
       // Beauty / QA locked cameras must not show the local Traveler nameplate
       // floating in hero road stills (critic pass 9/10 hard blocker).
-      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose) || taxiRiding;
+      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose) || passengerRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
         const surface = streaming.getSurfaceHeight?.(controls.target);
@@ -2496,7 +2633,7 @@ function updatePlayerLayer(dt, elapsed) {
     moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
     interior: controls.interiorMode,
     downed: combat?.getState?.().status !== 'running',
-    available: playerLayerActive && !beautyMode && !qaCameraPose && !taxiRiding,
+    available: playerLayerActive && !beautyMode && !qaCameraPose && !passengerRiding,
     position: controls.target,
   });
   if (lifeEvent?.kind === 'work-complete'
@@ -3987,7 +4124,7 @@ function updateCombatShoulderCamera(dt) {
 }
 
 function updateRoamTarget(dt, qaTourActive, drivingActive, axis) {
-  if (taxiRideState?.active) return;
+  if (passengerRideActive()) return;
   const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
   if (!qaTourActive && !drivingActive && axis.lengthSq() > 0) {
     // A regular movement input returns the pooled street presentation to its
@@ -4105,6 +4242,7 @@ function combatInputAvailable() {
       && playerLayerActive
       && !controls.interiorMode
       && !traffic.isPlayerDriving?.()
+      && !passengerRideActive()
       && !beautyMode
       && !qaCameraPose,
   );
@@ -4267,6 +4405,13 @@ function onKeyDown(event) {
     event.preventDefault();
     return;
   }
+  if (muniRideState?.active) {
+    event.preventDefault();
+    if (code === 'KeyE' && !event.repeat) {
+      hud?.setMessage(`MUNI / ${String(muniRideState.phase || 'en-route').toUpperCase()} · ONE-STOP RIDE.`);
+    }
+    return;
+  }
   if (taxiRideState?.active) {
     event.preventDefault();
     if (code === 'KeyE' && !event.repeat) {
@@ -4327,6 +4472,11 @@ function onKeyDown(event) {
       const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
       if (delivery) {
         startDeliveryRunFromService(delivery);
+        return;
+      }
+      const muni = traffic.getNearestTransitService?.(controls.target, 3.8, 2.8);
+      if (muni) {
+        startPlayerMuniRide(muni);
         return;
       }
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
@@ -4468,6 +4618,14 @@ function exitInterior() {
 }
 
 function updateInteraction() {
+  if (muniRideState?.active) {
+    hud.setInteraction({
+      label: `MUNI / ONE STOP / $${MUNI_RIDE_FARE}`,
+      prompt: `${String(muniRideState.phase || 'en-route').toUpperCase()} · STAY SEATED`,
+      enabled: false,
+    });
+    return;
+  }
   if (taxiRideState?.active) {
     hud.setInteraction({
       label: `TAXI / FERRY BUILDING / $${TAXI_RIDE_FARE}`,
@@ -4580,6 +4738,15 @@ function updateInteraction() {
       prompt: activeDelivery?.active
         ? `DELIVERY ACTIVE · ${activeDelivery.target.label}`
         : 'E / TAP  ACCEPT · $32',
+      enabled: true,
+    });
+    return;
+  }
+  const muni = traffic.getNearestTransitService?.(controls.target, 3.8, 2.8);
+  if (muni) {
+    hud.setInteraction({
+      label: `MUNI / ${muni.distance.toFixed(1)} M / ONE STOP`,
+      prompt: `E / TAP  BOARD · $${MUNI_RIDE_FARE}`,
       enabled: true,
     });
     return;
@@ -4890,6 +5057,7 @@ function frame(now) {
     active: playerLayerActive
       && !drivingState
       && !controls.interiorMode
+      && !passengerRideActive()
       && !beautyMode
       && !qaCameraPose,
   });
@@ -5139,6 +5307,12 @@ window.__SF_SIM__ = {
   },
   getTaxiFare() {
     return TAXI_RIDE_FARE;
+  },
+  getMuniRideState() {
+    return getPlayerMuniRideState();
+  },
+  getMuniFare() {
+    return MUNI_RIDE_FARE;
   },
   buyPlayerMedkit() {
     return buyPlayerMedkit();

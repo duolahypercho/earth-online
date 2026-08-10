@@ -1738,6 +1738,7 @@ export function createTrafficSystem({
   const playerGarageSlots = [null, null];
   let playerGarageRetrieveCursor = 0;
   let taxiRide = null;
+  let muniRide = null;
   let playerSignalViolationLatch = null;
   let playerPedestrianImpactProbe = null;
   let playerPedestrianImpactLatch = new Set();
@@ -3144,6 +3145,28 @@ export function createTrafficSystem({
     }
   }
 
+  function updateMuniRideProgress() {
+    if (!muniRide || muniRide.arrived) return;
+    const vehicle = muniRide.vehicle;
+    const point = vehicle.mesh.root.position;
+    muniRide.traveled += Math.hypot(point.x - muniRide.lastX, point.z - muniRide.lastZ);
+    muniRide.lastX = point.x;
+    muniRide.lastZ = point.z;
+    const dwelling = vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed;
+    if (!muniRide.departed) {
+      if (!dwelling && (muniRide.traveled > 1.5 || vehicle.speed > 0.6)) {
+        muniRide.departed = true;
+      }
+      return;
+    }
+    if (dwelling && muniRide.traveled >= 8) {
+      muniRide.arrived = true;
+      muniRide.arrivedAt = lastElapsed;
+    }
+  }
+
   function update(dt, elapsed) {
     if (!vehicles.length) return;
     if (!Number.isFinite(dt) || dt <= 0) {
@@ -4117,6 +4140,7 @@ export function createTrafficSystem({
       playerPedestrianImpactProbe = null;
       playerPedestrianImpactLatch.clear();
     }
+    updateMuniRideProgress();
   }
 
   function getStats() {
@@ -4303,6 +4327,7 @@ export function createTrafficSystem({
         && v === vehicles[pursuitResponder.targetIndex]
         && v.pursuitResponder;
       const taxiPassengerActive = taxiRide?.vehicle === v;
+      const muniPassengerActive = muniRide?.vehicle === v;
       const curbside = Number.isFinite(v.curbDwellUntil);
       const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
       const activeRoute = v.turn?.route || v.route;
@@ -4335,6 +4360,10 @@ export function createTrafficSystem({
         actionKey = 'taxi-passenger';
         actionLabel = 'Taxi passenger boarding';
         actionDetail = 'Ferry Building fare';
+      } else if (muniPassengerActive) {
+        actionKey = muniRide.arrived ? 'muni-arrival' : 'muni-passenger';
+        actionLabel = muniRide.arrived ? 'Muni passenger arrival' : 'Muni passenger ride';
+        actionDetail = 'one-stop fare';
       } else if (v.parked) {
         actionKey = 'parked';
         actionLabel = 'Parked at curb';
@@ -4370,6 +4399,8 @@ export function createTrafficSystem({
         stopCue = 'impounded';
       } else if (taxiPassengerActive) {
         stopCue = 'taxi-passenger';
+      } else if (muniPassengerActive) {
+        stopCue = muniRide.arrived ? 'muni-arrival' : 'muni-passenger';
       } else if (v.parked) {
         stopCue = 'parked';
         dwellRemaining = Math.max(0, parkedDwellEnd - t);
@@ -4639,6 +4670,7 @@ export function createTrafficSystem({
       if (vehicle.impounded) continue;
       if (vehicle.garageStored) continue;
       if (taxiAtServiceStop(vehicle)) continue;
+      if (transitAtStop(vehicle)) continue;
       if (deliveryAtServiceStop(vehicle)) continue;
       if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
       if (vehicle.playerControlled || vehicle.remoteControlled) continue;
@@ -4669,7 +4701,7 @@ export function createTrafficSystem({
   }
 
   function getNearestTaxiService(position, maxDistance = 3.8) {
-    if (!position || taxiRide) return null;
+    if (!position || taxiRide || muniRide) return null;
     let best = null;
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
@@ -4700,7 +4732,7 @@ export function createTrafficSystem({
   }
 
   function getNearestDeliveryService(position, maxDistance = 3.8) {
-    if (!position || taxiRide) return null;
+    if (!position || taxiRide || muniRide) return null;
     let best = null;
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
@@ -4723,7 +4755,7 @@ export function createTrafficSystem({
   }
 
   function acceptDeliveryService(index) {
-    if (playerVehicle || taxiRide || !Number.isInteger(index)) return null;
+    if (playerVehicle || taxiRide || muniRide || !Number.isInteger(index)) return null;
     const vehicle = vehicles[index];
     if (!deliveryAtServiceStop(vehicle)) return null;
     vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 1.2);
@@ -4738,8 +4770,114 @@ export function createTrafficSystem({
     };
   }
 
+  function transitAtStop(vehicle, minimumDwell = 0) {
+    return Boolean(
+      vehicle
+      && vehicle.cls === 'bus'
+      && vehicle.mesh.root.visible
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.garageStored
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil - lastElapsed >= Math.max(0, minimumDwell),
+    );
+  }
+
+  function getNearestTransitService(position, maxDistance = 3.8, minimumDwell = 2.8) {
+    if (!position || taxiRide || muniRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!transitAtStop(vehicle, minimumDwell)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = {
+          index,
+          distance,
+          class: vehicle.cls,
+          identity: vehicle.identity.key,
+          label: vehicle.identity.label,
+          dwellRemaining: Math.max(0, vehicle.curbDwellUntil - lastElapsed),
+          road: vehicle.road,
+          position: { x: point.x, y: point.y, z: point.z },
+        };
+      }
+    }
+    return best;
+  }
+
+  function beginMuniRide(index) {
+    if (muniRide
+      || taxiRide
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!transitAtStop(vehicle, 0.35)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.7);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    const point = vehicle.mesh.root.position;
+    muniRide = {
+      vehicle,
+      vehicleId: index,
+      startedAt: lastElapsed,
+      departed: false,
+      arrived: false,
+      arrivedAt: null,
+      traveled: 0,
+      lastX: point.x,
+      lastZ: point.z,
+    };
+    return getMuniRideState();
+  }
+
+  function getMuniRideState() {
+    if (!muniRide) return null;
+    const vehicle = muniRide.vehicle;
+    const point = vehicle.mesh.root.position;
+    return {
+      active: true,
+      phase: muniRide.arrived ? 'arrived' : muniRide.departed ? 'en-route' : 'boarding',
+      arrived: muniRide.arrived,
+      vehicleId: muniRide.vehicleId,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      position: { x: point.x, y: point.y, z: point.z },
+      heading: vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
+      road: vehicle.road,
+      s: vehicle.s,
+      traveled: Math.round(muniRide.traveled * 10) / 10,
+      elapsed: Math.max(0, lastElapsed - muniRide.startedAt),
+      dwellRemaining: Number.isFinite(vehicle.curbDwellUntil)
+        ? Math.max(0, vehicle.curbDwellUntil - lastElapsed)
+        : 0,
+    };
+  }
+
+  function completeMuniRide() {
+    const state = getMuniRideState();
+    if (!state?.arrived) return null;
+    const vehicle = muniRide.vehicle;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.6);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    muniRide = null;
+    return { ...state, active: false };
+  }
+
+  function cancelMuniRide() {
+    if (!muniRide) return false;
+    muniRide = null;
+    return true;
+  }
+
   function beginTaxiRide(index) {
     if (taxiRide
+      || muniRide
       || playerVehicle
       || !Number.isInteger(index)) return null;
     const vehicle = vehicles[index];
@@ -4784,7 +4922,7 @@ export function createTrafficSystem({
   }
 
   function enterPlayerVehicle(index) {
-    if (playerVehicle || impoundedPlayerVehicle || taxiRide || !Number.isInteger(index)) return false;
+    if (playerVehicle || impoundedPlayerVehicle || taxiRide || muniRide || !Number.isInteger(index)) return false;
     const vehicle = vehicles[index];
     if (!vehicle
       || vehicle.playerControlled
@@ -5028,6 +5166,7 @@ export function createTrafficSystem({
       || playerVehicle
       || impoundedPlayerVehicle
       || taxiRide
+      || muniRide
       || vehicle.identity.category !== 'private'
       || vehicle.registeredOwner !== true
       || vehicle.garageStored) return null;
@@ -5038,7 +5177,11 @@ export function createTrafficSystem({
   }
 
   function retrievePlayerGarageVehicle(position, heading = 0, requestedSlot = null) {
-    if (playerVehicle || lastPlayerParkedVehicle || impoundedPlayerVehicle || taxiRide) return null;
+    if (playerVehicle
+      || lastPlayerParkedVehicle
+      || impoundedPlayerVehicle
+      || taxiRide
+      || muniRide) return null;
     const hasRequestedSlot = Number.isInteger(requestedSlot);
     let slot = hasRequestedSlot ? requestedSlot : -1;
     if (hasRequestedSlot && (
@@ -5482,8 +5625,13 @@ export function createTrafficSystem({
     setNightLighting,
     getNearestEnterableVehicle,
     getNearestTaxiService,
+    getNearestTransitService,
     getNearestDeliveryService,
     acceptDeliveryService,
+    beginMuniRide,
+    getMuniRideState,
+    completeMuniRide,
+    cancelMuniRide,
     beginTaxiRide,
     getTaxiRideState,
     completeTaxiRide,
