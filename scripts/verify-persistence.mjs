@@ -90,11 +90,38 @@ try {
     const advance2 = sim.cityShift.onHotspotUsed({ id: second.hotspotId });
     return { advance1: Boolean(advance1), advance2: Boolean(advance2) };
   });
+  await page.evaluate(() => window.__SF_SIM__.setCombatAim(false));
+  await page.waitForTimeout(80);
+  const worldSetup = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const target = sim.getRoamState().target;
+    sim.setRoamPose({
+      x: target.x,
+      z: target.z,
+      yaw: 1.234,
+      pitch: 1.08,
+      distance: 36,
+    });
+    return {
+      roam: sim.getRoamState(),
+      camera: sim.getCombatState().camera,
+    };
+  });
+  await page.mouse.move(640, 360);
+  await page.keyboard.down('q');
+  await page.mouse.move(640, 650, { steps: 4 });
   await page.waitForTimeout(1300);
+  const aimedAutosave = await page.evaluate(() => ({
+    combat: window.__SF_SIM__.getCombatState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+  }));
+  await page.keyboard.up('q');
+  await page.waitForTimeout(80);
   const beforeReload = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    roam: window.__SF_SIM__.getRoamState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
   assert(progressed.advance1 && progressed.advance2
@@ -104,8 +131,22 @@ try {
     && beforeReload.combat.health === 65
     && beforeReload.combat.ammo === 11
     && beforeReload.save.snapshot?.combat?.health === 65
-    && beforeReload.save.snapshot?.combat?.ammo === 11,
-  'autosave setup did not capture economy, combat kit, and mission progress', { progressed, beforeReload });
+    && beforeReload.save.snapshot?.combat?.ammo === 11
+    && Math.abs(beforeReload.save.snapshot?.world?.x - worldSetup.roam.target.x) < 0.01
+    && Math.abs(beforeReload.save.snapshot?.world?.z - worldSetup.roam.target.z) < 0.01
+    && Math.abs(beforeReload.save.snapshot?.world?.yaw - 1.234) < 0.001
+    && Math.abs(beforeReload.save.snapshot?.world?.pitch - 1.08) < 0.001
+    && Math.abs(beforeReload.save.snapshot?.world?.distance - 36) < 0.001
+    && aimedAutosave.combat.camera.mode === 'shoulder-aim'
+    && Math.abs(aimedAutosave.combat.camera.pitch - 1.08) > 0.04
+    && Math.abs(aimedAutosave.save.snapshot?.world?.pitch - 1.08) < 0.001
+    && Math.abs(aimedAutosave.save.snapshot?.world?.distance - 36) < 0.001,
+  'autosave setup did not capture economy, combat kit, mission, and outdoor world progress', {
+    progressed,
+    worldSetup,
+    aimedAutosave,
+    beforeReload,
+  });
 
   await page.reload({ waitUntil: 'load', timeout: 30000 });
   await launch();
@@ -113,6 +154,7 @@ try {
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    roam: window.__SF_SIM__.getRoamState(),
     save: window.__SF_SIM__.getSavedProgress(),
     message: document.querySelector('.hud__message-text')?.textContent || '',
     inventoryHud: document.querySelector('.hud__life-inventory')?.textContent || '',
@@ -128,6 +170,11 @@ try {
     && restored.combat.recovering === false
     && restored.combat.ammo === beforeReload.combat.ammo
     && restored.combat.reserveAmmo === beforeReload.combat.reserveAmmo
+    && Math.abs(restored.roam.target.x - beforeReload.save.snapshot.world.x) < 0.05
+    && Math.abs(restored.roam.target.z - beforeReload.save.snapshot.world.z) < 0.05
+    && Math.abs(restored.combat.camera.yaw - beforeReload.save.snapshot.world.yaw) < 0.001
+    && Math.abs(restored.combat.camera.pitch - beforeReload.save.snapshot.world.pitch) < 0.001
+    && Math.abs(restored.combat.camera.distance - beforeReload.save.snapshot.world.distance) < 0.001
     && restored.message.includes('Progress restored')
     && restored.inventoryHud.includes('MEDKIT / 2 OF 3'),
   'reload did not restore the validated player progress snapshot', { beforeReload, restored });
@@ -172,6 +219,8 @@ try {
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    roam: window.__SF_SIM__.getRoamState(),
+    save: window.__SF_SIM__.getSavedProgress(),
   }));
   assert(restoredReplay.mission.status === 'running'
     && restoredReplay.mission.completedSteps === 0
@@ -182,6 +231,71 @@ try {
   'replay reset was not saved immediately or corrupted earned cash', restoredReplay);
 
   const storageKey = restored.save.key;
+  const legacySnapshot = await page.evaluate(({ key }) => {
+    const snapshot = JSON.parse(window.localStorage.getItem(key));
+    delete snapshot.world;
+    window.localStorage.setItem(key, JSON.stringify(snapshot));
+    return snapshot;
+  }, { key: storageKey });
+  await page.reload({ waitUntil: 'load', timeout: 30000 });
+  await launch();
+  const restoredLegacy = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    roam: window.__SF_SIM__.getRoamState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+  }));
+  assert(restoredLegacy.life.cash === restoredReplay.life.cash
+    && restoredLegacy.mission.status === 'running'
+    && restoredLegacy.mission.completedSteps === 0
+    && restoredLegacy.combat.health === restoredLegacy.combat.maxHealth
+    && restoredLegacy.save.snapshot?.world === undefined
+    && Math.hypot(
+      restoredLegacy.roam.target.x - beforeReload.save.snapshot.world.x,
+      restoredLegacy.roam.target.z - beforeReload.save.snapshot.world.z,
+    ) > 1,
+  'legacy v1 snapshot without world state did not restore compatible progress at the default spawn', {
+    legacySnapshot,
+    restoredLegacy,
+  });
+
+  const invalidWorldSnapshot = await page.evaluate(({ key }) => {
+    const snapshot = JSON.parse(window.localStorage.getItem(key));
+    snapshot.world = {
+      mode: 'outdoor',
+      x: 999999,
+      z: 999999,
+      yaw: 0,
+      pitch: 1,
+      distance: 24,
+    };
+    window.localStorage.setItem(key, JSON.stringify(snapshot));
+    return snapshot;
+  }, { key: storageKey });
+  await page.reload({ waitUntil: 'load', timeout: 30000 });
+  await launch();
+  const rejectedWorld = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    roam: window.__SF_SIM__.getRoamState(),
+    message: document.querySelector('.hud__message-text')?.textContent || '',
+  }));
+  assert(rejectedWorld.life.cash === 140
+    && rejectedWorld.life.inventory.medkit.count === 0
+    && rejectedWorld.mission.status === 'running'
+    && rejectedWorld.mission.completedSteps === 0
+    && rejectedWorld.combat.health === rejectedWorld.combat.maxHealth
+    && rejectedWorld.combat.ammo === rejectedWorld.combat.magazineSize
+    && rejectedWorld.roam.target.x === 28
+    && rejectedWorld.roam.target.z === 38
+    && !rejectedWorld.message.includes('Progress restored'),
+  'out-of-bounds world state did not atomically reject the whole progress snapshot', {
+    invalidWorldSnapshot,
+    rejectedWorld,
+  });
+
   await page.evaluate(() => window.__SF_SIM__.clearSavedProgress());
   await page.reload({ waitUntil: 'load', timeout: 30000 });
   await page.waitForFunction(
@@ -223,11 +337,14 @@ try {
     angle,
     market,
     progressed,
+    aimedAutosave,
     beforeReload,
     restored,
     completed,
     restoredComplete,
     restoredReplay,
+    restoredLegacy,
+    rejectedWorld,
     corrupted,
     performance,
     consoleErrors,

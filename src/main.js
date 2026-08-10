@@ -1211,6 +1211,7 @@ const PLAYER_PROGRESS_VERSION = 1;
 const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
 let progressSaveElapsed = 0;
 let lastProgressSave = null;
+let lastPublicWorldState = null;
 
 function readPlayerProgress() {
   try {
@@ -1238,6 +1239,7 @@ function savePlayerProgress() {
     life: lifeSim.exportState(),
     cityShift: cityShift.exportState(),
     combat: combat.exportState(),
+    world: exportPlayerWorldState(),
   };
   try {
     window.localStorage?.setItem(PLAYER_PROGRESS_STORAGE_KEY, JSON.stringify(snapshot));
@@ -1255,18 +1257,23 @@ function restorePlayerProgress() {
   const previousLife = lifeSim?.exportState?.();
   const previousShift = cityShift?.exportState?.();
   const previousCombat = combat?.exportState?.();
+  const previousWorld = exportPlayerWorldState();
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
   const combatRestored = snapshot.combat
     ? combat?.importState?.(snapshot.combat) === true
     : true;
-  if (lifeRestored && shiftRestored && combatRestored) {
+  const worldRestored = snapshot.world
+    ? importPlayerWorldState(snapshot.world)
+    : true;
+  if (lifeRestored && shiftRestored && combatRestored && worldRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
   if (previousLife) lifeSim?.importState?.(previousLife);
   if (previousShift) cityShift?.importState?.(previousShift);
   if (previousCombat) combat?.importState?.(previousCombat);
+  if (previousWorld) importPlayerWorldState(previousWorld);
   return false;
 }
 
@@ -1318,6 +1325,74 @@ const controls = {
   activePortal: null,
   exteriorSnapshot: null,
 };
+
+function exportPlayerWorldState() {
+  const outdoor = playerLayerActive
+    && !controls.interiorMode
+    && traffic.isPlayerDriving?.() !== true;
+  const orbitPitch = combatCameraState.active
+    ? lastPublicWorldState?.pitch ?? combatCameraState.savedPitch
+    : controls.pitch;
+  const orbitDistance = combatCameraState.active
+    ? lastPublicWorldState?.distance ?? combatCameraState.savedDistance
+    : controls.distance;
+  if (outdoor
+    && Number.isFinite(controls.target.x)
+    && Number.isFinite(controls.target.z)
+    && Number.isFinite(controls.yaw)
+    && Number.isFinite(orbitPitch)
+    && Number.isFinite(orbitDistance)) {
+    lastPublicWorldState = {
+      mode: 'outdoor',
+      x: controls.target.x,
+      z: controls.target.z,
+      yaw: THREE.MathUtils.euclideanModulo(controls.yaw + Math.PI, Math.PI * 2) - Math.PI,
+      pitch: THREE.MathUtils.clamp(orbitPitch, 0.28, 2.45),
+      distance: THREE.MathUtils.clamp(orbitDistance, 12, 180),
+    };
+  }
+  return lastPublicWorldState ? { ...lastPublicWorldState } : null;
+}
+
+function importPlayerWorldState(snapshot) {
+  if (!snapshot
+    || snapshot.mode !== 'outdoor'
+    || !Number.isFinite(snapshot.x)
+    || !Number.isFinite(snapshot.z)
+    || !Number.isFinite(snapshot.yaw)
+    || !Number.isFinite(snapshot.pitch)
+    || !Number.isFinite(snapshot.distance)
+    || controls.interiorMode
+    || traffic.isPlayerDriving?.() === true) {
+    return false;
+  }
+  const surfaceHeight = streaming.getSurfaceHeight?.({ x: snapshot.x, z: snapshot.z });
+  if (!Number.isFinite(surfaceHeight)) return false;
+  const target = new THREE.Vector3(
+    snapshot.x,
+    surfaceHeight + QA_ROAM_CLEARANCE,
+    snapshot.z,
+  );
+  const collisionSafeTarget = streaming.resolveRoamPosition?.(target) || target;
+  const resolvedSurface = streaming.getSurfaceHeight?.(collisionSafeTarget);
+  if (!Number.isFinite(resolvedSurface)) return false;
+  collisionSafeTarget.y = resolvedSurface + QA_ROAM_CLEARANCE;
+  controls.target.copy(collisionSafeTarget);
+  controls.focus.copy(collisionSafeTarget);
+  controls.yaw = THREE.MathUtils.euclideanModulo(snapshot.yaw + Math.PI, Math.PI * 2) - Math.PI;
+  controls.pitch = THREE.MathUtils.clamp(snapshot.pitch, 0.28, 2.45);
+  controls.distance = THREE.MathUtils.clamp(snapshot.distance, 12, 180);
+  lastPublicWorldState = {
+    mode: 'outdoor',
+    x: controls.target.x,
+    z: controls.target.z,
+    yaw: controls.yaw,
+    pitch: controls.pitch,
+    distance: controls.distance,
+  };
+  snapCameraToControls();
+  return true;
+}
 
 const combatCameraState = {
   active: false,
@@ -2806,6 +2881,19 @@ function setQaRoamPose(position) {
   cancelQaStreamingTour('superseded');
   streaming.setQaPublicCorridorActive?.(false);
   applyQaRoamPose(resolveQaRoamPose(position));
+  const hasView = ['yaw', 'pitch', 'distance'].some((key) => position?.[key] !== undefined);
+  if (hasView) {
+    if (!Number.isFinite(position?.yaw)
+      || !Number.isFinite(position?.pitch)
+      || !Number.isFinite(position?.distance)) {
+      throw new TypeError('Roam view requires finite yaw, pitch, and distance values.');
+    }
+    controls.yaw = THREE.MathUtils.euclideanModulo(position.yaw + Math.PI, Math.PI * 2) - Math.PI;
+    controls.pitch = THREE.MathUtils.clamp(position.pitch, 0.28, 2.45);
+    controls.distance = THREE.MathUtils.clamp(position.distance, 12, 180);
+    snapCameraToControls();
+  }
+  exportPlayerWorldState();
   // Teleport-based visual gates should show the district, not a stale
   // post-interior/tutorial toast from the previous pose.
   hud.setMessage(null);
@@ -3100,8 +3188,8 @@ function syncCombatCameraMode() {
   const aiming = combatAimActive();
   if (aiming && !combatCameraState.active) {
     combatCameraState.active = true;
-    combatCameraState.savedPitch = controls.pitch;
-    combatCameraState.savedDistance = controls.distance;
+    combatCameraState.savedPitch = lastPublicWorldState?.pitch ?? controls.pitch;
+    combatCameraState.savedDistance = lastPublicWorldState?.distance ?? controls.distance;
     combatCameraState.savedCameraPitch = controls.cameraPitch;
     combatCameraState.savedCameraDistance = controls.cameraDistance;
   } else if (!aiming && combatCameraState.active) {
@@ -3818,6 +3906,7 @@ function startExperience() {
   // the 60 FPS telemetry window used by traversal QA.
   resetPerformanceTelemetry();
   startPlayerLayer();
+  exportPlayerWorldState();
   canvas?.removeAttribute('inert');
   hudRoot?.removeAttribute('inert');
   bootOverlay?.classList.add('is-dismissed');
@@ -3831,7 +3920,7 @@ function startExperience() {
   const featured = city.getFeaturedPortal?.(controls.target);
   hud.setMessage(
     restoredProgress
-      ? 'Progress restored · economy, combat kit, and Waterfront Loop resumed.'
+      ? 'Progress restored · location, economy, combat kit, and Waterfront Loop resumed.'
       : featured
       ? `Featured interior · ${featured.label}, ${featured.distance.toFixed(0)} m east. Follow the lit PUBLIC LOBBY · ENTER sign.`
       : 'Tip: press R for coastal weather, C for render quality, H for beauty mode.',
@@ -3864,6 +3953,7 @@ function frame(now) {
   elapsed += motionDt;
   updateCamera(dt);
   updatePlayerLayer(motionDt, elapsed);
+  exportPlayerWorldState();
   // The sky dome is intentionally compact so its shader remains cheap, but
   // streamed districts can sit kilometres from the origin. Keep the dome
   // centered on the active camera so its gradient/cloud field remains the
