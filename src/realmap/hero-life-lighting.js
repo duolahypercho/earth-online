@@ -3,11 +3,13 @@
 // writes their positions, rotations, paths, or behaviour state.
 
 import * as THREE from 'three';
+import { animatePlayerAvatar, createPlayerAvatar } from '../player.js';
 
 export const HERO_LIFE_LIGHTING_BUDGET = Object.freeze({
   maxPedestrians: 24,
   maxVehicles: 16,
   maxPracticals: 6,
+  maxDetailedActors: 4,
   drawCalls: 10,
   materials: 8,
 });
@@ -62,7 +64,8 @@ function instanced(geometry, material, capacity, name) {
  *
  * @param {{scene: THREE.Object3D, maxPedestrians?: number, maxVehicles?: number,
  *   cameraExclusionRadius?: number, heroExclusionRadius?: number,
- *   vehicleDetailDistance?: number, replaceSources?: boolean,
+ *   vehicleDetailDistance?: number, pedestrianDetailDistance?: number,
+ *   replaceSources?: boolean,
  *   conditions?: object}} options
  */
 export function createHeroLifeLighting(options = {}) {
@@ -74,6 +77,7 @@ export function createHeroLifeLighting(options = {}) {
   const cameraExclusionRadius = Math.max(0.5, Number(options.cameraExclusionRadius) || 3.25);
   const heroExclusionRadius = Math.max(0.5, Number(options.heroExclusionRadius) || 2.35);
   const vehicleDetailDistance = Math.max(6, Number(options.vehicleDetailDistance) || 48);
+  const pedestrianDetailDistance = Math.max(4, Number(options.pedestrianDetailDistance) || 22);
   let conditions = conditionState(options.conditions);
 
   const group = new THREE.Group();
@@ -126,8 +130,47 @@ export function createHeroLifeLighting(options = {}) {
   const pedestrians = [];
   const vehicles = [];
   const practicals = [];
+  // A small player-grade pool carries the close read while the instanced
+  // presentation remains responsible for the rest of the crowd. The rigs use
+  // the existing pedestrian material cache; never dispose that cache here.
+  const detailedActors = Array.from({ length: HERO_LIFE_LIGHTING_BUDGET.maxDetailedActors }, (_, index) => {
+    const root = createPlayerAvatar({
+      name: `Ferry civilian ${index + 1}`,
+      paletteIndex: index,
+      scale: 1,
+    });
+    root.name = `Ferry detailed civilian ${index + 1}`;
+    root.visible = false;
+    root.userData.heroLifeDetailedActor = true;
+    root.userData.heroLifeSource = null;
+    // Labels and reaction UI turn a close civilian pass into HUD clutter.
+    root.traverse((object) => {
+      if (object.isSprite) object.visible = false;
+      if (object.isMesh) {
+        object.castShadow = false;
+        object.receiveShadow = true;
+      }
+    });
+    const shadow = root.userData.shadow;
+    if (shadow) {
+      shadow.visible = true;
+      shadow.position.y = -0.105;
+      shadow.material.opacity = 0.52;
+    }
+    group.add(root);
+    return {
+      root,
+      source: null,
+      paletteIndex: index,
+      previousPosition: new THREE.Vector3(),
+      hasPreviousPosition: false,
+    };
+  });
   const stats = {
     pedestriansAttached: 0, pedestriansActive: 0, pedestriansExcluded: 0, pedestriansDropped: 0,
+    detailedActors: 0, fallbackActors: 0, swaps: 0, detailDrawCost: 0, detailMaterials: 0,
+    detailAssignments: [],
+    pedestrianDetailDistance, performanceTargetFps: 60,
     vehiclesAttached: 0, vehiclesActive: 0, vehiclesExcluded: 0, vehiclesDetailed: 0, vehiclesDropped: 0,
     practicals: 0, activePracticals: 0, pointLights: HERO_LIFE_LIGHTING_BUDGET.maxPracticals,
     drawCalls: HERO_LIFE_LIGHTING_BUDGET.drawCalls, materials: HERO_LIFE_LIGHTING_BUDGET.materials,
@@ -143,6 +186,13 @@ export function createHeroLifeLighting(options = {}) {
   const localScale = new THREE.Vector3();
   const identity = new THREE.Quaternion();
   const warmColor = new THREE.Color();
+  const detailCandidates = [];
+  const detailSourceSet = new Set();
+  const detailWorldPosition = new THREE.Vector3();
+  const detailLocalPosition = new THREE.Vector3();
+  const detailWorldQuaternion = new THREE.Quaternion();
+  const detailLocalQuaternion = new THREE.Quaternion();
+  const detailInverseGroupQuaternion = new THREE.Quaternion();
 
   function sourceMatrix(source) {
     source.updateWorldMatrix(true, false);
@@ -195,8 +245,28 @@ export function createHeroLifeLighting(options = {}) {
     records.length = 0;
   }
 
+  function disposePrivateAvatarResources(root) {
+    // createPlayerAvatar only adds the tag and contact shadow privately. Its
+    // wardrobe geometries/materials are shared by the nearby crowd cache.
+    const tag = root.userData?.nameTag;
+    if (tag) {
+      tag.material?.map?.dispose?.();
+      tag.material?.dispose?.();
+      root.remove(tag);
+    }
+    const shadow = root.userData?.shadow;
+    if (shadow) {
+      shadow.material?.alphaMap?.dispose?.();
+      shadow.material?.dispose?.();
+      shadow.geometry?.dispose?.();
+      root.remove(shadow);
+    }
+  }
+
   function attachPedestrians(records = []) {
     attachRecords(pedestrians, records, maxPedestrians, PEDESTRIAN_PALETTE, 'topColor', 'pedestriansAttached', 'pedestriansDropped');
+    detailedActors.forEach(hideDetailedActor);
+    stats.swaps = 0;
     return api;
   }
 
@@ -236,12 +306,115 @@ export function createHeroLifeLighting(options = {}) {
       || (heroPosition && position.distanceTo(heroPosition) < heroExclusionRadius));
   }
 
+  function actorDrawStats() {
+    const materials = new Set();
+    let drawCost = 0;
+    for (const actor of detailedActors) {
+      if (!actor.root.visible) continue;
+      actor.root.traverse((object) => {
+        if (!object.isMesh || !object.visible) return;
+        drawCost += 1;
+        if (Array.isArray(object.material)) object.material.forEach((material) => materials.add(material));
+        else if (object.material) materials.add(object.material);
+      });
+    }
+    stats.detailDrawCost = drawCost;
+    stats.detailMaterials = materials.size;
+  }
+
+  function hideDetailedActor(actor) {
+    actor.root.visible = false;
+    actor.root.userData.heroLifeSource = null;
+    actor.source = null;
+    actor.hasPreviousPosition = false;
+  }
+
+  function chooseDetailedActors(cameraPosition, heroPosition) {
+    detailCandidates.length = 0;
+    detailSourceSet.clear();
+    if (!cameraPosition) {
+      detailedActors.forEach(hideDetailedActor);
+      return;
+    }
+    for (let slot = 0; slot < pedestrians.length; slot += 1) {
+      const entry = pedestrians[slot];
+      entry.source.getWorldPosition(detailWorldPosition);
+      const distance = detailWorldPosition.distanceTo(cameraPosition);
+      if (distance > pedestrianDetailDistance || excluded(detailWorldPosition, cameraPosition, heroPosition)) continue;
+      detailCandidates.push({ entry, slot, distance });
+    }
+    detailCandidates.sort((first, second) => first.distance - second.distance || first.slot - second.slot);
+    const selected = detailCandidates.slice(0, HERO_LIFE_LIGHTING_BUDGET.maxDetailedActors);
+    const selectedSources = new Set(selected.map(({ entry }) => entry.source));
+    // Keep an actor on its source whenever it remains selected. This prevents
+    // a wardrobe identity from teleporting between two close walkers.
+    for (const actor of detailedActors) {
+      if (actor.source && !selectedSources.has(actor.source)) hideDetailedActor(actor);
+      if (actor.source) detailSourceSet.add(actor.source);
+    }
+    for (const candidate of selected) {
+      if (detailSourceSet.has(candidate.entry.source)) continue;
+      const actor = detailedActors.find((candidateActor) => !candidateActor.source);
+      if (!actor) break;
+      actor.source = candidate.entry.source;
+      actor.root.userData.heroLifeSource = actor.source.uuid;
+      actor.root.visible = true;
+      actor.hasPreviousPosition = false;
+      stats.swaps += 1;
+      detailSourceSet.add(actor.source);
+    }
+  }
+
+  function updateDetailedActors(cameraPosition, heroPosition, elapsedSeconds, deltaSeconds) {
+    chooseDetailedActors(cameraPosition, heroPosition);
+    group.getWorldQuaternion(detailWorldQuaternion);
+    detailInverseGroupQuaternion.copy(detailWorldQuaternion).invert();
+    for (const actor of detailedActors) {
+      if (!actor.source) continue;
+      actor.source.getWorldPosition(detailWorldPosition);
+      actor.source.getWorldQuaternion(detailWorldQuaternion);
+      group.worldToLocal(detailLocalPosition.copy(detailWorldPosition));
+      detailLocalQuaternion.copy(detailInverseGroupQuaternion).multiply(detailWorldQuaternion);
+      actor.root.position.copy(detailLocalPosition);
+      actor.root.quaternion.copy(detailLocalQuaternion);
+      // Source scale is intentionally not inherited: simulation meshes can
+      // be LOD-scaled, but a nearby person must keep adult proportions.
+      actor.root.scale.setScalar(1);
+      const distance = actor.hasPreviousPosition
+        ? actor.previousPosition.distanceTo(detailWorldPosition)
+        : 0;
+      const moving = actor.hasPreviousPosition && distance > Math.max(0.008, deltaSeconds * 0.09);
+      const speedRatio = THREE.MathUtils.clamp(deltaSeconds > 0 ? distance / deltaSeconds / 1.2 : 0, 0, 1);
+      animatePlayerAvatar(actor.root, {
+        moving,
+        speedRatio: moving ? Math.max(0.48, speedRatio) : 0,
+        elapsed: elapsedSeconds + actor.paletteIndex * 0.37,
+        delta: deltaSeconds,
+      });
+      actor.previousPosition.copy(detailWorldPosition);
+      actor.hasPreviousPosition = true;
+      stats.detailedActors += 1;
+      stats.pedestriansActive += 1;
+      stats.detailAssignments.push({
+        actor: actor.root.name,
+        sourceUuid: actor.source.uuid,
+        position: [
+          Number(detailWorldPosition.x.toFixed(3)),
+          Number(detailWorldPosition.y.toFixed(3)),
+          Number(detailWorldPosition.z.toFixed(3)),
+        ],
+      });
+    }
+    actorDrawStats();
+  }
+
   function updatePedestrian(slot, entry, cameraPosition, heroPosition, elapsedSeconds) {
     const world = sourceMatrix(entry.source);
     if (!entry.source.visible && !entry.source.userData.heroLifeLightingReplacement || excluded(sourcePosition, cameraPosition, heroPosition)) {
       stats.pedestriansExcluded += 1;
       return;
     }
+    if (detailSourceSet.has(entry.source)) return;
     const stride = Math.sin(elapsedSeconds * 5.3 + slot * 1.71) * 0.16;
     set(meshes.torso, slot, world, 0, 1.13, 0, 0.48, 0.98, 0.36);
     set(meshes.head, slot, world, 0, 1.74, 0.01, 0.29, 0.29, 0.29);
@@ -255,6 +428,7 @@ export function createHeroLifeLighting(options = {}) {
     meshes.arm.setColorAt(slot * 2, entry.color);
     meshes.arm.setColorAt(slot * 2 + 1, entry.color);
     stats.pedestriansActive += 1;
+    stats.fallbackActors += 1;
   }
 
   function updateVehicle(slot, entry, cameraPosition, heroPosition) {
@@ -309,18 +483,26 @@ export function createHeroLifeLighting(options = {}) {
     }
   }
 
-  function update({ camera = null, hero = null, elapsedSeconds = 0 } = {}) {
-    const cameraPosition = camera?.isObject3D ? camera.getWorldPosition(new THREE.Vector3()) : camera?.position || camera || null;
+  function update({ camera = null, hero = null, elapsedSeconds = 0, deltaSeconds = 1 / 60 } = {}) {
+    const cameraObject = camera?.isObject3D ? camera : null;
+    const cameraPosition = cameraObject ? cameraObject.getWorldPosition(new THREE.Vector3()) : camera?.position || camera || null;
     const heroPosition = hero?.isObject3D ? hero.getWorldPosition(new THREE.Vector3()) : hero?.position || hero || null;
     group.updateWorldMatrix(true, false);
     inverseGroupWorld.copy(group.matrixWorld).invert();
     clearMeshes();
     stats.pedestriansActive = 0;
     stats.pedestriansExcluded = 0;
+    stats.detailedActors = 0;
+    stats.fallbackActors = 0;
+    stats.detailDrawCost = 0;
+    stats.detailMaterials = 0;
+    stats.detailAssignments = [];
     stats.vehiclesActive = 0;
     stats.vehiclesExcluded = 0;
     stats.vehiclesDetailed = 0;
     stats.activePracticals = 0;
+    const safeDelta = clamp(deltaSeconds, 0, 0.05) || 1 / 60;
+    updateDetailedActors(cameraPosition, heroPosition, Number(elapsedSeconds) || 0, safeDelta);
     pedestrians.forEach((entry, index) => updatePedestrian(index, entry, cameraPosition, heroPosition, Number(elapsedSeconds) || 0));
     vehicles.forEach((entry, index) => updateVehicle(index, entry, cameraPosition, heroPosition));
     updatePracticals();
@@ -338,6 +520,10 @@ export function createHeroLifeLighting(options = {}) {
   function dispose() {
     restoreRecords(pedestrians);
     restoreRecords(vehicles);
+    detailedActors.forEach((actor) => {
+      actor.root.removeFromParent();
+      disposePrivateAvatarResources(actor.root);
+    });
     group.removeFromParent();
     [torsoGeometry, headGeometry, limbGeometry, shadowGeometry, vehicleBodyGeometry, vehicleCabinGeometry, wheelGeometry, practicalGeometry].forEach((geometry) => geometry.dispose());
     [clothingMaterial, skinMaterial, trouserMaterial, shadowMaterial, vehicleMaterial, glassMaterial, tireMaterial, practicalMaterial].forEach((material) => material.dispose());
