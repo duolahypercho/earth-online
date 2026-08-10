@@ -17,6 +17,7 @@ export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
 
 const MAX_DELTA_SECONDS = 1 / 20;
 const EPSILON = 0.08;
+const FERRY_CLOCK_TOWER_HEIGHT_METRES = 74;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -284,7 +285,9 @@ export function createFerryBuildingLandmark(options = {}) {
     put(pier, boxMatrix(matrix, frame, towerAlong - 1.58, offset + hallWidth * 0.12, baseY + hallHeight * 0.46, 0.4, hallHeight * 0.82, 0.4));
   }
   const towerBase = Math.min(hallWidth * 0.5, 10.5);
-  const towerHeight = Math.max(58, hallHeight * 4.4);
+  // The historic clock tower is approximately 245 ft tall. Keep that known
+  // landmark scale explicit instead of deriving it from the 15 m terminal hall.
+  const towerHeight = FERRY_CLOCK_TOWER_HEIGHT_METRES;
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.22, towerBase, towerHeight * 0.44, towerBase));
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.58, towerBase * 0.77, towerHeight * 0.30, towerBase * 0.77));
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.80, towerBase * 0.92, towerHeight * 0.12, towerBase * 0.92));
@@ -368,6 +371,7 @@ export function createFerryBuildingLandmark(options = {}) {
         oppositeEndTarget: [frame.minAlongPoint.x, frame.minAlongPoint.y],
       },
       towerAnchor: [towerAnchor.x, towerAnchor.y, towerAnchor.z],
+      towerHeightMetres: towerHeight,
       disposed,
       stats,
     };

@@ -66,6 +66,7 @@ const towerAcross = relativeTower.dot(new THREE.Vector2(...frame.across));
 assert.ok(towerAlong >= frame.bounds.minAlong && towerAlong <= frame.bounds.maxAlong, 'clock tower must remain within authoritative along bounds');
 assert.ok(towerAcross >= frame.bounds.minAcross && towerAcross <= frame.bounds.maxAcross, 'clock tower must remain within authoritative across bounds');
 assert.ok(towerWorld.distanceTo(new THREE.Vector2(landmark.getDiagnostics().towerAnchor[0], landmark.getDiagnostics().towerAnchor[2])) < 5e-4, 'tower diagnostics must report its true world anchor');
+assert.equal(landmark.getDiagnostics().towerHeightMetres, 74, 'clock tower must retain its documented approximately 245 ft scale');
 
 const unrelated = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
 unrelated.userData.buildingId = 999;
