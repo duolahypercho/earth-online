@@ -23,6 +23,9 @@ const RESIDENT_FAVOR_DURATION = 45;
 const RESIDENT_FAVOR_REWARD = 24;
 const RESIDENT_FAVOR_SOCIAL = 14;
 const RESIDENT_FAVOR_FUN = 9;
+const DELIVERY_RUN_DURATION = 60;
+const DELIVERY_RUN_COOLDOWN = 8;
+const DELIVERY_RUN_REWARD = 32;
 
 function clampNeed(value) {
   return THREE.MathUtils.clamp(value, 0, 100);
@@ -73,6 +76,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       locationLabel: null,
     },
     residentFavor: null,
+    deliveryRun: null,
+    deliveryCooldownRemaining: 0,
   };
   let lastHudAt = -Infinity;
 
@@ -95,6 +100,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       && !state.workShift.active
       && state.workShift.cooldownRemaining <= 0
       && !state.residentFavor
+      && !state.deliveryRun
     );
   }
 
@@ -160,6 +166,18 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           reward: RESIDENT_FAVOR_REWARD,
         }
         : null,
+      deliveryRun: state.deliveryRun
+        ? {
+          active: true,
+          service: { ...state.deliveryRun.service },
+          target: { ...state.deliveryRun.target },
+          duration: DELIVERY_RUN_DURATION,
+          elapsed: state.deliveryRun.elapsed,
+          remaining: Math.max(0, DELIVERY_RUN_DURATION - state.deliveryRun.elapsed),
+          reward: DELIVERY_RUN_REWARD,
+        }
+        : null,
+      deliveryCooldownRemaining: state.deliveryCooldownRemaining,
       activity: state.lastActivity,
       mood: getMood(),
       lowNeeds: summary ? summary.labels.split(', ').filter(Boolean) : [],
@@ -196,6 +214,14 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           elapsed: state.residentFavor.elapsed,
         }
         : null,
+      deliveryRun: state.deliveryRun
+        ? {
+          service: { ...state.deliveryRun.service },
+          target: { ...state.deliveryRun.target },
+          elapsed: state.deliveryRun.elapsed,
+        }
+        : null,
+      deliveryCooldownRemaining: state.deliveryCooldownRemaining,
     };
   }
 
@@ -280,6 +306,42 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         elapsed: THREE.MathUtils.clamp(favorElapsed, 0, RESIDENT_FAVOR_DURATION),
       }
       : null;
+    state.deliveryCooldownRemaining = THREE.MathUtils.clamp(
+      Number(snapshot.deliveryCooldownRemaining) || 0,
+      0,
+      300,
+    );
+    const delivery = snapshot.deliveryRun;
+    const deliveryService = delivery?.service;
+    const deliveryTarget = delivery?.target;
+    const deliveryElapsed = Number(delivery?.elapsed);
+    state.deliveryRun = delivery
+      && typeof delivery === 'object'
+      && Number.isInteger(Number(deliveryService?.vehicleId))
+      && typeof deliveryService?.identity === 'string'
+      && typeof deliveryService?.label === 'string'
+      && typeof deliveryTarget?.id === 'string'
+      && typeof deliveryTarget?.label === 'string'
+      && Number.isFinite(Number(deliveryTarget?.x))
+      && Number.isFinite(Number(deliveryTarget?.z))
+      && Number.isFinite(deliveryElapsed)
+      && deliveryElapsed >= 0
+      && deliveryElapsed < DELIVERY_RUN_DURATION
+      ? {
+        service: {
+          vehicleId: Number(deliveryService.vehicleId),
+          identity: deliveryService.identity.slice(0, 64),
+          label: deliveryService.label.slice(0, 80),
+        },
+        target: {
+          id: deliveryTarget.id.slice(0, 96),
+          label: deliveryTarget.label.slice(0, 96),
+          x: Number(deliveryTarget.x),
+          z: Number(deliveryTarget.z),
+        },
+        elapsed: THREE.MathUtils.clamp(deliveryElapsed, 0, DELIVERY_RUN_DURATION),
+      }
+      : null;
     hud?.setLifeState?.(getState());
     return true;
   }
@@ -291,6 +353,10 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     }
     if (state.workShift.active) {
       onMessage('Finish the market shift before taking a resident favor.');
+      return false;
+    }
+    if (state.deliveryRun) {
+      onMessage(`Finish the Bay Parcel run at ${state.deliveryRun.target.label} first.`);
       return false;
     }
     if (typeof resident?.id !== 'string'
@@ -364,6 +430,89 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     };
   }
 
+  function startDeliveryRun(service, target) {
+    if (state.deliveryRun) {
+      onMessage(`BAY PARCEL ACTIVE · deliver to ${state.deliveryRun.target.label}.`);
+      return false;
+    }
+    if (state.workShift.active || state.residentFavor) {
+      onMessage('Finish the active job before taking a Bay Parcel run.');
+      return false;
+    }
+    if (state.deliveryCooldownRemaining > 0) {
+      onMessage(`Bay Parcel cooldown · ${Math.ceil(state.deliveryCooldownRemaining)}s remaining.`);
+      return false;
+    }
+    if (!Number.isInteger(Number(service?.vehicleId))
+      || typeof service?.identity !== 'string'
+      || typeof target?.id !== 'string'
+      || typeof target?.label !== 'string'
+      || !Number.isFinite(Number(target?.x))
+      || !Number.isFinite(Number(target?.z))) return false;
+    state.deliveryRun = {
+      service: {
+        vehicleId: Number(service.vehicleId),
+        identity: service.identity.slice(0, 64),
+        label: String(service.label || 'Bay Parcel').slice(0, 80),
+      },
+      target: {
+        id: target.id.slice(0, 96),
+        label: target.label.slice(0, 96),
+        x: Number(target.x),
+        z: Number(target.z),
+      },
+      elapsed: 0,
+    };
+    state.lastActivity = `delivery:${state.deliveryRun.service.vehicleId}:active`;
+    state.lastActivityAt = performance.now();
+    onMessage(`BAY PARCEL · deliver to ${state.deliveryRun.target.label} · $${DELIVERY_RUN_REWARD}.`);
+    hud?.setLifeState?.(getState());
+    return getState().deliveryRun;
+  }
+
+  function completeDeliveryRun(targetId) {
+    if (!state.deliveryRun || String(targetId || '') !== state.deliveryRun.target.id) return null;
+    const completed = state.deliveryRun;
+    state.deliveryRun = null;
+    state.deliveryCooldownRemaining = DELIVERY_RUN_COOLDOWN;
+    state.cash += DELIVERY_RUN_REWARD;
+    state.lastActivity = `delivery:${completed.service.vehicleId}:complete`;
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'delivery-reward',
+      label: `Bay Parcel / ${completed.target.label}`.slice(0, 80),
+      amount: DELIVERY_RUN_REWARD,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    const message = `BAY PARCEL COMPLETE · $${DELIVERY_RUN_REWARD} earned.`;
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'delivery-complete',
+      message,
+      reward: DELIVERY_RUN_REWARD,
+      targetId: completed.target.id,
+      transaction: { ...state.lastTransaction },
+    };
+  }
+
+  function cancelDeliveryRun(message = 'BAY PARCEL EXPIRED · dispatch reassigned the run.') {
+    if (!state.deliveryRun) return null;
+    const expired = state.deliveryRun;
+    state.deliveryRun = null;
+    state.deliveryCooldownRemaining = DELIVERY_RUN_COOLDOWN;
+    state.lastActivity = `delivery:${expired.service.vehicleId}:expired`;
+    state.lastActivityAt = performance.now();
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'delivery-timeout',
+      message,
+      targetId: expired.target.id,
+    };
+  }
+
   function cancelWorkShift(message = 'Market shift cancelled · stay near the counter and keep still.') {
     if (!state.workShift.active) return false;
     state.workShift.active = false;
@@ -415,6 +564,19 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       0,
       state.workShift.cooldownRemaining - dt,
     );
+    state.deliveryCooldownRemaining = Math.max(0, state.deliveryCooldownRemaining - dt);
+    if (state.deliveryRun) {
+      state.deliveryRun.elapsed = Math.min(
+        DELIVERY_RUN_DURATION,
+        state.deliveryRun.elapsed + dt,
+      );
+      if (state.deliveryRun.elapsed >= DELIVERY_RUN_DURATION) return cancelDeliveryRun();
+      const now = performance.now() / 1000;
+      if (now - lastHudAt >= 0.45) {
+        lastHudAt = now;
+        hud?.setLifeState?.(getState());
+      }
+    }
     if (state.residentFavor) {
       state.residentFavor.elapsed = Math.min(
         RESIDENT_FAVOR_DURATION,
@@ -754,6 +916,10 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       onMessage(`Finish the favor at ${state.residentFavor.target.label} before starting a shift.`);
       return false;
     }
+    if (state.deliveryRun) {
+      onMessage(`Finish the Bay Parcel run at ${state.deliveryRun.target.label} before starting a shift.`);
+      return false;
+    }
     if (state.workShift.active) {
       onMessage('MARKET SHIFT already in progress · stay near the counter.');
       return false;
@@ -819,6 +985,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     startResidentFavor,
     completeResidentFavor,
     cancelResidentFavor,
+    startDeliveryRun,
+    completeDeliveryRun,
+    cancelDeliveryRun,
     eatAtMarket,
     canEat,
     canAffordMeal,

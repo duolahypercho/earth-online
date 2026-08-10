@@ -1165,7 +1165,13 @@ hud = createHud({
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      if (completeDeliveryRunAtPortal()) return;
       if (completeResidentFavorAtPortal()) return;
+      const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
+      if (delivery) {
+        startDeliveryRunFromService(delivery);
+        return;
+      }
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
       if (taxi) {
         startPlayerTaxiRide(taxi);
@@ -1913,6 +1919,147 @@ function getResidentFavorTarget(resident) {
   };
 }
 
+function getDeliveryRunTarget(service) {
+  const origin = service?.position;
+  const streamedCandidates = origin
+    ? [
+      origin,
+      { x: origin.x + 48, z: origin.z },
+      { x: origin.x - 48, z: origin.z },
+      { x: origin.x, z: origin.z + 48 },
+      { x: origin.x, z: origin.z - 48 },
+    ].map((probe) => streaming?.getNearestEnterablePortal?.(probe, 120))
+      .filter(Boolean)
+      .map((portal) => {
+        const target = portal.approach ?? portal.position;
+        return {
+          portal,
+          target,
+          distance: target
+            ? Math.hypot(target.x - origin.x, target.z - origin.z)
+            : Infinity,
+        };
+      })
+      .filter(({ portal, target, distance }) => (
+        typeof portal.id === 'string'
+        && typeof portal.label === 'string'
+        && Number.isFinite(target?.x)
+        && Number.isFinite(target?.z)
+        && distance >= 16
+        && distance <= 120
+        && Math.abs(target.x - origin.x) >= 8
+        && Math.abs(target.z - origin.z) >= 8
+      ))
+      .sort((a, b) => a.distance - b.distance || a.portal.id.localeCompare(b.portal.id))
+    : [];
+  const streamed = streamedCandidates[0];
+  if (streamed) {
+    return {
+      id: streamed.portal.id,
+      label: streamed.portal.label,
+      x: streamed.target.x,
+      z: streamed.target.z,
+    };
+  }
+  const portals = (city?.portals || [])
+    .filter((portal) => (
+      typeof portal?.id === 'string'
+      && typeof portal?.label === 'string'
+      && Number.isFinite(portal.position?.x)
+      && Number.isFinite(portal.position?.z)
+    ))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (!portals.length) return null;
+  const travelPortals = origin
+    ? portals.map((portal) => ({
+      portal,
+      distance: Math.hypot(
+        portal.position.x - origin.x,
+        portal.position.z - origin.z,
+      ),
+    })).filter(({ portal, distance }) => {
+      const target = portal.approach ?? portal.position;
+      return distance >= 16
+        && distance <= 120
+        && Math.abs(target.x - origin.x) >= 8
+        && Math.abs(target.z - origin.z) >= 8;
+    })
+      .sort((a, b) => a.distance - b.distance || a.portal.id.localeCompare(b.portal.id))
+    : [];
+  const portal = travelPortals[0]?.portal;
+  if (!portal) return null;
+  return {
+    id: portal.id,
+    label: portal.label,
+    x: portal.position.x,
+    z: portal.position.z,
+  };
+}
+
+function deliveryRunInputAvailable() {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  return playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !taxiRideState?.active
+    && !beautyMode
+    && !qaCameraPose
+    && combatState?.status === 'running'
+    && combatState?.active === true
+    && heatState?.pursuitActive !== true;
+}
+
+function completeDeliveryRunAtPortal() {
+  const delivery = lifeSim?.getState?.().deliveryRun;
+  if (!delivery?.active) return false;
+  const portal = getInteractionPortal();
+  if (!portal
+    || portal.id !== delivery.target.id
+    || portal.distance > portal.radius) return false;
+  if (!deliveryRunInputAvailable()) {
+    hud?.setMessage('Bay Parcel unavailable · recover and lose any StreetHeat tail first.');
+    return true;
+  }
+  const completed = lifeSim?.completeDeliveryRun?.(portal.id);
+  if (!completed) return true;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  savePlayerProgress();
+  return true;
+}
+
+function startDeliveryRunFromService(candidate) {
+  if (candidate?.index == null) return false;
+  if (!deliveryRunInputAvailable()) {
+    hud?.setMessage('Bay Parcel unavailable · be on foot, recovered, and clear of pursuit.');
+    return true;
+  }
+  const lifeState = lifeSim?.getState?.();
+  if (lifeState?.deliveryRun?.active) {
+    hud?.setMessage(`BAY PARCEL ACTIVE · deliver to ${lifeState.deliveryRun.target.label}.`);
+    return true;
+  }
+  if (lifeState?.workShift?.active || lifeState?.residentFavor?.active) {
+    hud?.setMessage('Finish the active job before taking a Bay Parcel run.');
+    return true;
+  }
+  if ((lifeState?.deliveryCooldownRemaining ?? 0) > 0) {
+    hud?.setMessage(`Bay Parcel cooldown · ${Math.ceil(lifeState.deliveryCooldownRemaining)}s remaining.`);
+    return true;
+  }
+  const target = getDeliveryRunTarget(candidate);
+  if (!target) {
+    hud?.setMessage('Bay Parcel unavailable · no delivery destination found.');
+    return true;
+  }
+  const service = traffic.acceptDeliveryService?.(candidate.index);
+  if (!service) return false;
+  const started = lifeSim?.startDeliveryRun?.(service, target);
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  if (started) savePlayerProgress();
+  return true;
+}
+
 function residentFavorInputAvailable() {
   const combatState = combat?.getState?.();
   const heatState = streetHeat?.getState?.();
@@ -2214,7 +2361,9 @@ function updatePlayerLayer(dt, elapsed) {
     available: playerLayerActive && !beautyMode && !qaCameraPose && !taxiRiding,
     position: controls.target,
   });
-  if (lifeEvent?.kind === 'work-complete' || lifeEvent?.kind === 'favor-timeout') {
+  if (lifeEvent?.kind === 'work-complete'
+    || lifeEvent?.kind === 'favor-timeout'
+    || lifeEvent?.kind === 'delivery-timeout') {
     savePlayerProgress();
   }
 }
@@ -3981,7 +4130,13 @@ function onKeyDown(event) {
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      if (completeDeliveryRunAtPortal()) return;
       if (completeResidentFavorAtPortal()) return;
+      const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
+      if (delivery) {
+        startDeliveryRunFromService(delivery);
+        return;
+      }
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
       if (taxi) {
         startPlayerTaxiRide(taxi);
@@ -4171,6 +4326,18 @@ function updateInteraction() {
     return;
   }
   const activeFavor = lifeSim?.getState?.().residentFavor;
+  const activeDelivery = lifeSim?.getState?.().deliveryRun;
+  const deliveryPortal = activeDelivery?.active ? getInteractionPortal() : null;
+  if (activeDelivery?.active
+    && deliveryPortal?.id === activeDelivery.target.id
+    && deliveryPortal.distance <= deliveryPortal.radius) {
+    hud.setInteraction({
+      label: `BAY PARCEL / ${activeDelivery.target.label}`,
+      prompt: `E / TAP  DELIVER · $${activeDelivery.reward}`,
+      enabled: true,
+    });
+    return;
+  }
   const favorPortal = activeFavor?.active ? getInteractionPortal() : null;
   if (activeFavor?.active
     && favorPortal?.id === activeFavor.target.id
@@ -4178,6 +4345,17 @@ function updateInteraction() {
     hud.setInteraction({
       label: `FAVOR DELIVERY / ${activeFavor.target.label}`,
       prompt: `E / TAP  DELIVER · $${activeFavor.reward}`,
+      enabled: true,
+    });
+    return;
+  }
+  const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
+  if (delivery) {
+    hud.setInteraction({
+      label: `BAY PARCEL / ${delivery.label.toUpperCase()} / ${delivery.distance.toFixed(1)} M`,
+      prompt: activeDelivery?.active
+        ? `DELIVERY ACTIVE · ${activeDelivery.target.label}`
+        : 'E / TAP  ACCEPT · $32',
       enabled: true,
     });
     return;

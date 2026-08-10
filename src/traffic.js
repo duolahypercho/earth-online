@@ -4585,6 +4585,7 @@ export function createTrafficSystem({
       if (vehicle.cls === 'bike') continue;
       if (vehicle.impounded) continue;
       if (taxiAtServiceStop(vehicle)) continue;
+      if (deliveryAtServiceStop(vehicle)) continue;
       if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
       if (vehicle.playerControlled || vehicle.remoteControlled) continue;
       if (!vehicle.parked && vehicle.speed > 0.9) continue;
@@ -4626,6 +4627,61 @@ export function createTrafficSystem({
       }
     }
     return best;
+  }
+
+  function deliveryAtServiceStop(vehicle) {
+    return Boolean(
+      vehicle
+      && vehicle.identity.category === 'delivery'
+      && vehicle.identity.curbService === 'delivery'
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed,
+    );
+  }
+
+  function getNearestDeliveryService(position, maxDistance = 3.8) {
+    if (!position || taxiRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!deliveryAtServiceStop(vehicle)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = {
+          index,
+          distance,
+          class: vehicle.cls,
+          identity: vehicle.identity.key,
+          label: vehicle.identity.label,
+          dwellRemaining: Math.max(0, vehicle.curbDwellUntil - lastElapsed),
+          position: { x: point.x, y: point.y, z: point.z },
+        };
+      }
+    }
+    return best;
+  }
+
+  function acceptDeliveryService(index) {
+    if (playerVehicle || taxiRide || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!deliveryAtServiceStop(vehicle)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 1.2);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    const point = vehicle.mesh.root.position;
+    return {
+      vehicleId: index,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      label: vehicle.identity.label,
+      position: { x: point.x, y: point.y, z: point.z },
+    };
   }
 
   function beginTaxiRide(index) {
@@ -5074,6 +5130,8 @@ export function createTrafficSystem({
     setNightLighting,
     getNearestEnterableVehicle,
     getNearestTaxiService,
+    getNearestDeliveryService,
+    acceptDeliveryService,
     beginTaxiRide,
     getTaxiRideState,
     completeTaxiRide,
