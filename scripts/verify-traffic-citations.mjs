@@ -220,6 +220,7 @@ try {
     && second.state.citation?.transaction?.charged === 0
     && second.state.citation?.transaction?.unpaid === 18
     && second.state.life?.cash === 0
+    && second.state.life?.legalDebt === 18
     && beforeSecond.life?.cash === 0,
   'later distinct red crossing did not record one zero-cash unpaid citation', {
     secondRedStop,
@@ -233,6 +234,7 @@ try {
   await reloadAndLaunch();
   const restored = await evidence();
   assert(restored.life?.cash === 0
+    && restored.life?.legalDebt === 18
     && restored.life?.lastTransaction?.kind === 'traffic-citation'
     && restored.life?.lastTransaction?.at === savedTransactionAt
     && restored.life?.lastTransaction?.unpaid === 18

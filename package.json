@@ -53,6 +53,7 @@
     "verify:persistence": "node scripts/verify-persistence.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
     "verify:traffic-citations": "node scripts/verify-traffic-citations.mjs",
+    "verify:legal-debt": "node scripts/verify-legal-debt.mjs",
     "verify:delivery-job": "node scripts/verify-delivery-job.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
