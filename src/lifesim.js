@@ -54,7 +54,14 @@ function timePhase(clock) {
  * interactions that reuse the city's existing residents and portals. It
  * deliberately does not add content; it makes the player's choices matter.
  */
-export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () => {} } = {}) {
+export function createLifeSim({
+  hud,
+  city,
+  traffic,
+  pedestrians,
+  onMessage = () => {},
+  getRestContext = () => null,
+} = {}) {
   const state = {
     day: 1,
     clock: 7.0,
@@ -1048,7 +1055,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       return false;
     }
     if (state.needs.energy < 18) {
-      onMessage('You are too tired to work. Rest for a moment first.');
+      onMessage('You are too tired to work. Find a public bench and press X first.');
       return false;
     }
     if (state.residentFavor) {
@@ -1078,6 +1085,20 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   }
 
   function rest() {
+    const context = getRestContext?.();
+    const allowed = context?.onFoot === true
+      && context?.outdoor === true
+      && context?.stationary === true
+      && context?.recovered === true
+      && context?.clearOfPursuit === true
+      && context?.atRestAnchor === true
+      && !state.workShift.active
+      && !state.residentFavor
+      && !state.deliveryRun;
+    if (!allowed) {
+      onMessage('Rest is available on foot at a public bench.');
+      return false;
+    }
     if (state.needs.energy >= 96) {
       onMessage('You are already well rested.');
       return false;
@@ -1109,7 +1130,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         ? 'Talk to residents along the avenue.'
         : low.includes('fun')
           ? 'Take a car out for a spin.'
-          : 'Rest for a moment to recover energy.';
+          : 'Find a public bench and press X to recover energy.';
     return { labels, hint };
   }
 

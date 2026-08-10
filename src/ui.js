@@ -1368,7 +1368,7 @@ export function createHud({
               ? 'Talk to residents along the avenue.'
               : lowCrossings.includes('fun')
                 ? 'Take a car out for a spin.'
-                : 'Rest for a moment to recover energy.'),
+                : 'Find a public bench and press X to recover energy.'),
         );
         showCallout({
           kind: 'low',
