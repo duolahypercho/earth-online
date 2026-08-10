@@ -27,6 +27,7 @@
     "verify:live-soak": "node scripts/verify-live-soak.mjs",
     "verify:physics": "node scripts/verify-physics.mjs",
     "verify:combat-pursuit": "node scripts/verify-combat-pursuit.mjs",
+    "verify:traffic-combat-aftermath": "node scripts/verify-traffic-combat-aftermath.mjs",
     "verify:pursuit-escalation": "node scripts/verify-pursuit-escalation.mjs",
     "verify:pursuit-vehicle-recontact": "node scripts/verify-pursuit-vehicle-recontact.mjs",
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
