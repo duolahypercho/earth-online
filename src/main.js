@@ -1634,6 +1634,14 @@ function enterPlayerCar(index) {
   if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
   const entered = traffic.enterPlayerVehicle?.(index);
   if (!entered) return false;
+  const theft = traffic.reportPlayerVehicleTheft?.();
+  const theftHeat = theft?.reported
+    ? streetHeat?.reportIncident?.(18, {
+      kind: 'vehicle-theft',
+      message: `Vehicle theft · ${theft.label} reported · heat +18.`,
+      source: 'vehicle-theft',
+    })
+    : null;
   combat?.setEnabled(false);
   lastVehicleDamageAt = null;
   if (audioContext) {
@@ -1662,7 +1670,9 @@ function enterPlayerCar(index) {
     controls.distance = 10.5;
   }
   snapCameraToControls();
-  hud.setMessage('You got in. W accelerate · S brake · A/D steer · E exit.');
+  hud.setMessage(theft?.reported
+    ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
+    : 'You got in. W accelerate · S brake · A/D steer · E exit.');
   return true;
 }
 

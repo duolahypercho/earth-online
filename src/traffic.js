@@ -1720,6 +1720,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     collisionDamageEvents: 0,
     disabledVehicles: 0,
     vehicleRepairs: 0,
+    vehicleThefts: 0,
   };
   let playerVehicle = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
@@ -1983,6 +1984,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           disabled: false,
           damageCooldownUntil: 0,
           lastDamage: null,
+          theftReported: false,
         });
         placed = true;
         placedParked = spawnParked;
@@ -2289,6 +2291,40 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       serviceVan.mesh.root.userData.heroTrafficCue = 'sfmta-curb-approach';
     }
   }
+
+  // Keep two ordinary private cars available at the curb for the normal
+  // on-foot vehicle-entry loop. They remain regular fleet actors (and use the
+  // same pull-out path later); the longer opening dwell simply makes the
+  // theft consequence reachable without racing the first simulation frames.
+  const theftReadyVehicles = vehicles.filter((vehicle) => (
+    vehicle.identity.category === 'private'
+    && vehicle.cls !== 'bike'
+    && vehicle !== heroSedan
+    && !presentationCars.includes(vehicle)
+  )).slice(0, 2);
+  theftReadyVehicles.forEach((vehicle, index) => {
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = 42 + index * 4 + vehicle.servicePhase * 3;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.waitingForGreen = false;
+    vehicle.greenReleaseAt = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.nextCurbStopAt = Infinity;
+    vehicle.nextServiceAt = Infinity;
+    vehicle.busStopIndex = -1;
+    vehicle.pullOutBlockedSince = null;
+    vehicle.hazardUntil = 0;
+    vehicle.mergeSignalUntil = 0;
+    vehicle.blinkSide = 0;
+    vehicle.laneOffsetSm = CURB_LANE_OFFSET;
+    vehicle.mesh.root.userData.theftReady = true;
+  });
 
   // Wire the img2threejs polished taxi into near-detail LOD for every cab.
   // Procedural yellow shells remain the distance silhouette + rain fallback.
@@ -4259,6 +4295,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           board: v.cls === 'bus' ? BUS_ROUTE_BOARD : null,
         },
         damage: vehicleDamageSnapshot(v),
+        theft: {
+          eligible: v.identity.category === 'private',
+          reported: v.theftReported === true,
+        },
         indicators: {
           left: v.blinkSide < 0,
           right: v.blinkSide > 0,
@@ -4386,6 +4426,26 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     return true;
   }
 
+  function reportPlayerVehicleTheft() {
+    if (!playerVehicle || playerVehicle.identity.category !== 'private') return null;
+    if (playerVehicle.theftReported) {
+      return {
+        reported: false,
+        reason: 'already-reported',
+        vehicleId: vehicles.indexOf(playerVehicle),
+      };
+    }
+    playerVehicle.theftReported = true;
+    diagnostics.vehicleThefts += 1;
+    return {
+      reported: true,
+      vehicleId: vehicles.indexOf(playerVehicle),
+      class: playerVehicle.cls,
+      identity: playerVehicle.identity.key,
+      label: playerVehicle.identity.label,
+    };
+  }
+
   function exitPlayerVehicle() {
     if (!playerVehicle) return null;
     const vehicle = playerVehicle;
@@ -4436,6 +4496,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       speed: vehicle.speed,
       road: vehicle.road,
       damage: vehicleDamageSnapshot(vehicle),
+      theft: {
+        eligible: vehicle.identity.category === 'private',
+        reported: vehicle.theftReported === true,
+      },
     };
   }
 
@@ -4537,6 +4601,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     setNightLighting,
     getNearestEnterableVehicle,
     enterPlayerVehicle,
+    reportPlayerVehicleTheft,
     exitPlayerVehicle,
     setPlayerInput,
     getPlayerVehicleState,

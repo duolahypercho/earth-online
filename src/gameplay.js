@@ -404,6 +404,7 @@ const STREET_HEAT_NEAR_MISS_COOLDOWN = 2.2;
 const STREET_HEAT_ESCAPE_WINDOW = 3.4;
 const STREET_HEAT_PURSUIT_COOL_RATE = 6.2;
 const STREET_HEAT_COMBAT_HOLD_SECONDS = 2.8;
+const STREET_HEAT_THEFT_HOLD_SECONDS = 4;
 const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
@@ -441,6 +442,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     sampleElapsed: STREET_HEAT_SAMPLE_INTERVAL,
     nearMissCooldown: 0,
     combatHold: 0,
+    theftHold: 0,
     lastEvent: null,
   };
 
@@ -525,6 +527,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.safeElapsed = 0;
     if (source === 'combat') {
       state.combatHold = Math.max(state.combatHold, STREET_HEAT_COMBAT_HOLD_SECONDS);
+    } else if (source === 'vehicle-theft') {
+      state.theftHold = Math.max(state.theftHold, STREET_HEAT_THEFT_HOLD_SECONDS);
     }
     if (notify && (message || state.heat > previousHeat)) {
       emitEvent(
@@ -565,6 +569,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
     state.nearMissCooldown = 0;
     state.combatHold = 0;
+    state.theftHold = 0;
     state.lastEvent = null;
     latestPosition = null;
     latestSpeed = 0;
@@ -655,6 +660,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     }
     state.nearMissCooldown = Math.max(0, state.nearMissCooldown - delta);
     state.combatHold = Math.max(0, state.combatHold - delta);
+    state.theftHold = Math.max(0, state.theftHold - delta);
     state.sampleElapsed += delta;
 
     let nearestDistance = state.nearestDistance ?? Infinity;
@@ -718,9 +724,9 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     const drivingRisk = speedRisk * 8.8 + closeRisk * 4.5;
     if (latestDriving && drivingRisk > 0.01) {
       state.heat += delta * drivingRisk;
-    } else if (latestDriving) {
+    } else if (latestDriving && state.theftHold <= 0) {
       state.heat -= delta * (state.pursuitActive ? STREET_HEAT_PURSUIT_COOL_RATE : 12);
-    } else {
+    } else if (!latestDriving && state.theftHold <= 0) {
       const combatDecay = state.combatHold > 0
         ? (state.pursuitActive ? STREET_HEAT_COMBAT_PURSUIT_DECAY : STREET_HEAT_COMBAT_DECAY)
         : (state.pursuitActive ? 10.5 : 17);
@@ -836,6 +842,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       nearMisses: state.nearMisses,
       combatHold: Math.round(state.combatHold * 10) / 10,
       combatActive: state.combatHold > 0,
+      theftHold: Math.round(state.theftHold * 10) / 10,
       safeElapsed: state.safeElapsed,
       hint,
       label: state.pursuitActive ? `HEAT ${state.level}` : heat > 0 ? `HEAT ${heat}` : 'HEAT CLEAR',
@@ -850,6 +857,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       responderContacts: state.responderContacts,
       nearMisses: state.nearMisses,
       combatHold: state.combatHold,
+      theftHold: state.theftHold,
     };
   }
 
@@ -859,11 +867,13 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     const responderContacts = Number(snapshot.responderContacts);
     const nearMisses = Number(snapshot.nearMisses);
     const combatHold = Number(snapshot.combatHold);
+    const theftHold = snapshot.theftHold === undefined ? 0 : Number(snapshot.theftHold);
     if (!Number.isFinite(heat)
       || typeof snapshot.pursuitActive !== 'boolean'
       || !Number.isFinite(responderContacts)
       || !Number.isFinite(nearMisses)
-      || !Number.isFinite(combatHold)) {
+      || !Number.isFinite(combatHold)
+      || !Number.isFinite(theftHold)) {
       return false;
     }
     const clampedHeat = THREE.MathUtils.clamp(heat, 0, 100);
@@ -882,6 +892,11 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       combatHold,
       0,
       STREET_HEAT_COMBAT_HOLD_SECONDS,
+    );
+    state.theftHold = THREE.MathUtils.clamp(
+      theftHold,
+      0,
+      STREET_HEAT_THEFT_HOLD_SECONDS,
     );
     state.level = currentLevel();
     state.targetId = null;
