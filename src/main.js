@@ -2786,6 +2786,16 @@ streetHeat = createStreetHeat({
       combat?.setAiming?.(false);
       controls.combatPointerId = null;
       controls.combatTriggerPointerId = null;
+      const voidedContracts = [];
+      if (lifeSim?.cancelDeliveryRun?.('BAY PARCEL VOIDED · booking closed the active run.')) {
+        voidedContracts.push('BAY PARCEL');
+      }
+      if (lifeSim?.cancelResidentFavor?.('FAVOR VOIDED · booking closed the active errand.')) {
+        voidedContracts.push('FAVOR');
+      }
+      if (lifeSim?.cancelWorkShift?.('MARKET SHIFT VOIDED · booking ended the active shift.')) {
+        voidedContracts.push('MARKET SHIFT');
+      }
       let impounded = null;
       if (traffic.isPlayerDriving?.()) {
         exitPlayerCar();
@@ -2820,6 +2830,9 @@ streetHeat = createStreetHeat({
         : impounded
           ? `ARRESTED / $${paid} paid · vehicle held at Ferry.`
           : `ARRESTED / $${paid} paid · released roadside.`;
+      if (voidedContracts.length > 0) {
+        message += ` ${voidedContracts.join(' + ')} VOIDED.`;
+      }
       savePlayerProgress();
     }
     if (score) cityShift?.awardBonus?.(score);
