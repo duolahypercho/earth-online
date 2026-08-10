@@ -43,6 +43,7 @@ import {
   previewWestBounds,
   sharedWestEdgeAgreement,
 } from './hero-preview-neighbor.js';
+import { createFerryHeroShorelineMask } from './hero-shoreline.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
@@ -3031,15 +3032,20 @@ function createMergedFootprintBuildings(buildings) {
 
 const SEA_LEVEL_Y = -1.8;
 
-function createGround(regionPoints) {
+function createGround(regionPoints, options = {}) {
   const bounds = bboxOfPoints(regionPoints);
   const flat = [];
   for (const point of regionPoints) flat.push(point.x, point.z);
   const spanX = Math.max(40, bounds.maxX - bounds.minX);
   const spanZ = Math.max(40, bounds.maxZ - bounds.minZ);
+  const isLand = typeof options.isLand === 'function' ? options.isLand : null;
   // Keep Full City land coarse for FPS while tightening the shoreline/road
-  // interpolation enough to follow the fine terrain ribbons.
-  const cell = THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 24);
+  // interpolation enough to follow the fine terrain ribbons.  The DataSF
+  // Ferry shoreline was simplified at 5 m, so its source-masked hero grid
+  // keeps cells no wider than 5 m rather than producing staircase bays.
+  const cell = isLand
+    ? Math.min(5, Math.max(spanX, spanZ) / 77)
+    : THREE.MathUtils.clamp(Math.max(spanX, spanZ) / 72, 18, 24);
   const cols = Math.max(8, Math.ceil(spanX / cell));
   const rows = Math.max(8, Math.ceil(spanZ / cell));
   const positions = [];
@@ -3050,6 +3056,9 @@ function createGround(regionPoints) {
   const highColor = new THREE.Color(0x6d7874);
   const color = new THREE.Color();
   const heightSamples = [];
+  let sourceLandVertices = 0;
+  let sourceSeaVertices = 0;
+  let indexedLandCells = 0;
   // Keep coarse land close to the fine terrain surface; tighter cells above
   // prevent a steep triangle from overtopping the road without sinking lots.
   const groundSink = fullCityMode ? 0.02 : 0.04;
@@ -3064,15 +3073,21 @@ function createGround(regionPoints) {
       const x = bounds.minX + (col / cols) * spanX;
       const z = bounds.minZ + (row / rows) * spanZ;
       const inside = pointInFlatRing({ x, z }, flat);
+      const sourceLand = !isLand || isLand(x, z);
       let elevation = elevationAt(x, z);
       if (!Number.isFinite(elevation)) elevation = 0;
       // Sink land below road lift so coarse triangles cannot hide asphalt.
       // Underwater cells are culled from the index buffer below.
-      const y = inside && elevation > SEA_LEVEL_Y + 0.05
+      const land = inside && sourceLand && (!isLand ? elevation > SEA_LEVEL_Y + 0.05 : true);
+      if (isLand) {
+        if (land) sourceLandVertices += 1;
+        else sourceSeaVertices += 1;
+      }
+      const y = land
         ? elevation - groundSink
         : SEA_LEVEL_Y - 0.8;
       positions.push(x, y, z);
-      heightSamples.push(inside ? elevation : SEA_LEVEL_Y);
+      heightSamples.push(land ? elevation : SEA_LEVEL_Y);
       const t = THREE.MathUtils.clamp(Math.max(0, elevation) / 180, 0, 1);
       color.copy(lowColor).lerp(midColor, Math.min(1, t * 1.4));
       if (t > 0.7) color.lerp(highColor, (t - 0.7) / 0.3);
@@ -3088,13 +3103,27 @@ function createGround(regionPoints) {
       const c = a + (cols + 1);
       const d = c + 1;
       const land = (index) => heightSamples[index] > SEA_LEVEL_Y;
-      if (!fullCityMode) {
+      if (isLand) {
+        // A mixed source shoreline cell is intentionally omitted.  Drawing a
+        // diagonal through it would reintroduce a fabricated land slab over
+        // the Bay; the authoritative shoreline support remains visible below.
+        if (land(a) && land(b) && land(c) && land(d)) {
+          indices.push(a, c, b, b, c, d);
+          indexedLandCells += 1;
+        }
+      } else if (!fullCityMode) {
         const landCount = [a, b, c, d].filter(land).length;
-        if (landCount >= 2) indices.push(a, c, b, b, c, d);
+        if (landCount >= 2) {
+          indices.push(a, c, b, b, c, d);
+          indexedLandCells += 1;
+        }
       } else {
         // Full City keeps only all-land cells; mixed corners otherwise paint
         // diagonal slabs over the bay. The shoreline support fills this edge.
-        if (land(a) && land(b) && land(c) && land(d)) indices.push(a, c, b, b, c, d);
+        if (land(a) && land(b) && land(c) && land(d)) {
+          indices.push(a, c, b, b, c, d);
+          indexedLandCells += 1;
+        }
       }
     }
   }
@@ -3115,8 +3144,106 @@ function createGround(regionPoints) {
   const ground = new THREE.Mesh(geometry, material);
   ground.receiveShadow = true;
   ground.renderOrder = fullCityMode ? -2 : 0;
-  ground.userData = { type: 'ground' };
+  ground.userData = {
+    type: 'ground',
+    sourceMasked: Boolean(isLand),
+    grid: { cols, rows, cellSizeM: Number((Math.max(spanX, spanZ) / Math.max(cols, rows)).toFixed(3)) },
+    sourceLandVertices,
+    sourceSeaVertices,
+    indexedLandCells,
+  };
   return ground;
+}
+
+/**
+ * A source-aligned apron plus vertical sea face hides the deliberately
+ * conservative all-land grid's stair step without replacing the shoreline.
+ * Every segment is clipped from the embedded DataSF ring; it is not an
+ * authored rectangle or a draw-order workaround.
+ */
+function createHeroShorelineTransition(mask) {
+  if (!mask?.shorelineSegments?.length) return null;
+  const landInsetM = 0.9;
+  // This underlap reaches beneath the <=5 m all-land grid rather than widening
+  // the visible source shoreline. It is a seam skirt, not an altered coast.
+  const gridUnderlapM = 6;
+  const seaFaceBottomY = SEA_LEVEL_Y + 0.02;
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  const apronColor = new THREE.Color(0x706b60);
+  const faceColor = new THREE.Color(0x3f4a4c);
+  const push = (point, y, color) => {
+    const index = positions.length / 3;
+    positions.push(point.x, y, point.z);
+    colors.push(color.r, color.g, color.b);
+    return index;
+  };
+  let segments = 0;
+  for (const { a, b } of mask.shorelineSegments) {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.08) continue;
+    const nx = -dz / length;
+    const nz = dx / length;
+    const midpoint = { x: (a.x + b.x) * 0.5, z: (a.z + b.z) * 0.5 };
+    const plus = { x: midpoint.x + nx * landInsetM, z: midpoint.z + nz * landInsetM };
+    const minus = { x: midpoint.x - nx * landInsetM, z: midpoint.z - nz * landInsetM };
+    const landNormal = mask.isLand(plus.x, plus.z)
+      ? { x: nx, z: nz }
+      : mask.isLand(minus.x, minus.z)
+        ? { x: -nx, z: -nz }
+        : null;
+    if (!landNormal) continue;
+    const landA = { x: a.x + landNormal.x * gridUnderlapM, z: a.z + landNormal.z * gridUnderlapM };
+    const landB = { x: b.x + landNormal.x * gridUnderlapM, z: b.z + landNormal.z * gridUnderlapM };
+    const lipA = { x: a.x + landNormal.x * landInsetM, z: a.z + landNormal.z * landInsetM };
+    const lipB = { x: b.x + landNormal.x * landInsetM, z: b.z + landNormal.z * landInsetM };
+    const landAY = elevationAt(landA.x, landA.z) - 0.041;
+    const landBY = elevationAt(landB.x, landB.z) - 0.041;
+    const lipAY = elevationAt(lipA.x, lipA.z) - 0.041;
+    const lipBY = elevationAt(lipB.x, lipB.z) - 0.041;
+    const shoreAY = Math.max(seaFaceBottomY + 0.04, lipAY - 0.08);
+    const shoreBY = Math.max(seaFaceBottomY + 0.04, lipBY - 0.08);
+    const base = positions.length / 3;
+    push(landA, landAY, apronColor);
+    push(landB, landBY, apronColor);
+    push(lipA, lipAY, apronColor);
+    push(lipB, lipBY, apronColor);
+    push(a, shoreAY, apronColor);
+    push(b, shoreBY, apronColor);
+    push(a, seaFaceBottomY, faceColor);
+    push(b, seaFaceBottomY, faceColor);
+    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    indices.push(base + 2, base + 3, base + 4, base + 3, base + 5, base + 4);
+    indices.push(base + 4, base + 5, base + 6, base + 5, base + 7, base + 6);
+    segments += 1;
+  }
+  if (!positions.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.92,
+    metalness: 0,
+    side: THREE.DoubleSide,
+  }));
+  mesh.name = 'Ferry DataSF shoreline transition';
+  mesh.receiveShadow = true;
+  mesh.userData = {
+    type: 'shoreline-transition',
+    sourceAligned: true,
+    landInsetM,
+    gridUnderlapM,
+    segments,
+    vertices: positions.length / 3,
+  };
+  return mesh;
 }
 
 function createShorelineSupport(regionPoints) {
@@ -7127,6 +7254,7 @@ let heroCameraLastPlayerPosition = null;
 let heroCameraLastVehicleCandidates = 0;
 let heroTileHandoff = null;
 let heroTileHandoffLastMovement = null;
+let heroShorelineMask = null;
 let heroPreviewNeighbor = null;
 let heroPreviewMountPromise = null;
 let heroPreviewMountRevision = 0;
@@ -7589,6 +7717,13 @@ function getHeroTileHandoffDiagnostics() {
   };
 }
 
+function sourceLandPosition(x, z, radius) {
+  if (!activeHeroTile || !heroShorelineMask) return null;
+  const { bufferedBounds } = activeHeroTile;
+  if (x < bufferedBounds.minX || x > bufferedBounds.maxX || z < bufferedBounds.minZ || z > bufferedBounds.maxZ) return null;
+  return heroShorelineMask.nearestLandPoint(x, z, Math.max(0.55, radius + 0.05));
+}
+
 function resolvePlayerPosition(x, z, radius = 0.5, previousPosition = null) {
   let resolvedX = x;
   let resolvedZ = z;
@@ -7619,6 +7754,11 @@ function resolvePlayerPosition(x, z, radius = 0.5, previousPosition = null) {
     const previewResolved = heroPreviewNeighbor.resolvePlayerCollision({ x: resolvedX, z: resolvedZ, radius });
     resolvedX = previewResolved.x;
     resolvedZ = previewResolved.z;
+  }
+  const shorelineResolved = sourceLandPosition(resolvedX, resolvedZ, radius);
+  if (shorelineResolved?.clamped) {
+    resolvedX = shorelineResolved.x;
+    resolvedZ = shorelineResolved.z;
   }
   if (heroTileHandoff) {
     heroTileHandoffLastMovement = heroTileHandoff.resolveMovement({
@@ -7810,6 +7950,15 @@ function getHeroCameraDiagnostics() {
     active: Boolean(heroCameraController),
     tileId: activeHeroTile?.id || null,
     nearClip: camera?.near ?? null,
+    cameraPosition: camera ? [camera.position.x, camera.position.y, camera.position.z] : null,
+    lookTarget: diagnostics?.lookTarget ? [
+      diagnostics.lookTarget.x,
+      diagnostics.lookTarget.y,
+      diagnostics.lookTarget.z,
+    ] : null,
+    fov: camera?.fov ?? null,
+    aspect: camera?.aspect ?? null,
+    far: camera?.far ?? null,
     nearbyVehicleCandidates: heroCameraLastVehicleCandidates,
     occluded: diagnostics?.occluded ?? false,
     obstructionType: diagnostics?.obstructionType || 'none',
@@ -9197,6 +9346,66 @@ function getHeroAtmosphereDiagnostics() {
       maxPointLights: 0,
     },
     conditions: heroAtmosphere ? heroAtmosphereConditions() : null,
+  };
+}
+
+function getHeroShorelineDiagnostics() {
+  const ground = cityRoot?.children.find((object) => object?.userData?.type === 'ground');
+  const transition = cityRoot?.children.find((object) => object?.userData?.type === 'shoreline-transition');
+  const groundTriangleAt = (x, z) => {
+    const geometry = ground?.geometry;
+    const position = geometry?.getAttribute('position');
+    const index = geometry?.getIndex();
+    if (!position || !index) return false;
+    const contains = (ax, az, bx, bz, cx, cz) => {
+      const side = (px, pz, qx, qz, rx, rz) => (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+      const one = side(ax, az, bx, bz, x, z);
+      const two = side(bx, bz, cx, cz, x, z);
+      const three = side(cx, cz, ax, az, x, z);
+      return (one >= -1e-5 && two >= -1e-5 && three >= -1e-5)
+        || (one <= 1e-5 && two <= 1e-5 && three <= 1e-5);
+    };
+    for (let offset = 0; offset < index.count; offset += 3) {
+      const a = index.getX(offset);
+      const b = index.getX(offset + 1);
+      const c = index.getX(offset + 2);
+      if (contains(position.getX(a), position.getZ(a), position.getX(b), position.getZ(b), position.getX(c), position.getZ(c))) return true;
+    }
+    return false;
+  };
+  return {
+    active: Boolean(heroShorelineMask),
+    tileId: activeHeroTile?.id || null,
+    mask: heroShorelineMask?.getDiagnostics() || null,
+    ground: ground?.userData?.sourceMasked ? {
+      sourceMasked: true,
+      grid: ground.userData.grid,
+      sourceLandVertices: ground.userData.sourceLandVertices,
+      sourceSeaVertices: ground.userData.sourceSeaVertices,
+      indexedLandCells: ground.userData.indexedLandCells,
+    } : null,
+    transition: transition ? {
+      sourceAligned: true,
+      landInsetM: transition.userData.landInsetM,
+      gridUnderlapM: transition.userData.gridUnderlapM,
+      segments: transition.userData.segments,
+      vertices: transition.userData.vertices,
+    } : null,
+    playerOnSourceLand: playerState && heroShorelineMask
+      ? heroShorelineMask.isLand(playerState.x, playerState.z)
+      : null,
+    sourceProbe: heroShorelineMask ? {
+      waterfrontLand: {
+        position: { x: 2380, z: 1880 },
+        sourceLand: heroShorelineMask.isLand(2380, 1880),
+        groundTriangle: groundTriangleAt(2380, 1880),
+      },
+      bay: {
+        position: { x: 2400, z: 1880 },
+        sourceLand: heroShorelineMask.isLand(2400, 1880),
+        groundTriangle: groundTriangleAt(2400, 1880),
+      },
+    } : null,
   };
 }
 
@@ -11709,13 +11918,18 @@ async function buildCity() {
     cityWideBuildingGroup = null;
     resetNearFieldState();
     const terrainPoints = fullCityMode ? regionPoints : regionPoints;
+    heroShorelineMask = activeHeroTile
+      ? createFerryHeroShorelineMask(cityData, activeHeroTile.bufferedBounds)
+      : null;
     setBuildProgress('TERRAIN', fullCityMode
       ? 'Laying the SF peninsula land pad…'
       : 'Laying the land slab and bay water…', 0.4);
     await tick();
     cityRoot.add(createWaterPlane(terrainPoints));
     if (fullCityMode) cityRoot.add(createBayReflections());
-    cityRoot.add(createGround(terrainPoints));
+    cityRoot.add(createGround(terrainPoints, { isLand: heroShorelineMask?.isLand }));
+    const heroShorelineTransition = createHeroShorelineTransition(heroShorelineMask);
+    if (heroShorelineTransition) cityRoot.add(heroShorelineTransition);
     const shorelineSupport = createShorelineSupport(terrainPoints);
     if (shorelineSupport) cityRoot.add(shorelineSupport);
 
@@ -12034,6 +12248,7 @@ function start() {
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
       heroTileHandoff: getHeroTileHandoffDiagnostics(),
+      heroShoreline: getHeroShorelineDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
