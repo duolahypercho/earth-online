@@ -4945,6 +4945,11 @@ function onKeyUp(event) {
 }
 
 function enterNearestInterior() {
+  const combatState = combat?.getState?.();
+  if (combatState?.status !== 'running') {
+    hud.setMessage('INTERACTION LOCKED / RECOVER BEFORE ENTERING.');
+    return false;
+  }
   if (streetHeat?.getState?.().pursuitActive) {
     hud.setMessage('INTERIOR LOCKED / LOSE THE STREETHEAT TAIL OR SURRENDER.');
     return false;
@@ -5007,6 +5012,11 @@ function enterNearestInterior() {
 
 function performInteriorAction() {
   if (!controls.interiorMode) return;
+  const combatState = combat?.getState?.();
+  if (combatState?.status !== 'running') {
+    hud.setMessage('INTERACTION LOCKED / RECOVER BEFORE USING THIS HOTSPOT.');
+    return false;
+  }
   const hotspot = city.getInteriorInteraction?.(controls.target);
   if (!hotspot) {
     exitInterior();
