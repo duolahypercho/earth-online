@@ -10,6 +10,9 @@ const NEED_LABELS = Object.freeze({
   social: 'SOCIAL',
   fun: 'FUN',
 });
+const MEDKIT_COST = 28;
+const MEDKIT_CAPACITY = 3;
+const MEDKIT_HEAL = 45;
 
 function clampNeed(value) {
   return THREE.MathUtils.clamp(value, 0, 100);
@@ -47,6 +50,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       fun: 52,
     },
     cash: 140,
+    inventory: {
+      medkits: 0,
+    },
     lastActivity: null,
     lastActivityAt: 0,
     lastTransaction: null,
@@ -91,6 +97,14 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       needs: { ...state.needs },
       needLabels: { ...NEED_LABELS },
       cash: Math.round(state.cash),
+      inventory: {
+        medkit: {
+          count: state.inventory.medkits,
+          capacity: MEDKIT_CAPACITY,
+          cost: MEDKIT_COST,
+          heal: MEDKIT_HEAL,
+        },
+      },
       lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
       activity: state.lastActivity,
       mood: getMood(),
@@ -190,6 +204,48 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       at: state.lastActivityAt,
     };
     return true;
+  }
+
+  function buyMedkitAtMarket(position) {
+    const label = getNearestPortalLabel(position);
+    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
+      onMessage('Find a market or cafe counter to buy a medkit.');
+      return false;
+    }
+    if (state.inventory.medkits >= MEDKIT_CAPACITY) {
+      onMessage(`Medkit inventory full · ${MEDKIT_CAPACITY}/${MEDKIT_CAPACITY}.`);
+      return false;
+    }
+    if (!spendCash(MEDKIT_COST)) {
+      onMessage(`A medkit costs $${MEDKIT_COST}. You need more cash.`);
+      return false;
+    }
+    state.inventory.medkits += 1;
+    state.lastActivity = 'buy:medkit';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'inventory-purchase',
+      label: 'Market medkit',
+      amount: -MEDKIT_COST,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    onMessage(`Medkit purchased · ${state.inventory.medkits}/${MEDKIT_CAPACITY} carried.`);
+    return true;
+  }
+
+  function consumeMedkit() {
+    if (state.inventory.medkits <= 0) {
+      onMessage(`No medkits carried · buy one for $${MEDKIT_COST} at a market.`);
+      return null;
+    }
+    state.inventory.medkits -= 1;
+    state.lastActivity = 'use:medkit';
+    state.lastActivityAt = performance.now();
+    return {
+      heal: MEDKIT_HEAL,
+      remaining: state.inventory.medkits,
+    };
   }
 
   function talkToNearestResident(position) {
@@ -300,6 +356,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     canAffordVehicleRepair,
     payVehicleRepair,
     creditMissionReward,
+    buyMedkitAtMarket,
+    consumeMedkit,
     rest,
     noteDriving,
     needsSummary,

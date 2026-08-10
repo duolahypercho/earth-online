@@ -2506,6 +2506,15 @@ noscript {
   gap: 0.28rem;
 }
 
+.hud__life-inventory {
+  color: var(--hud-teal);
+  font-family: var(--hud-mono);
+  font-size: 0.46rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
 .hud__life-bar {
   display: grid;
   grid-template-columns: 4.4rem 1fr;

@@ -749,7 +749,16 @@ export function createHud({
     lifeBarNodes.set(key, { row, fill, label });
     lifeBars.append(row);
   });
-  lifePanel.append(lifeHeader, lifeBars);
+  const lifeInventory = createElement(
+    'span',
+    'hud__life-inventory',
+    'MEDKIT / 0 OF 3 · B BUY $28 · G USE',
+  );
+  lifeInventory.setAttribute(
+    'aria-label',
+    'Medkits: 0 of 3. Press B to buy for 28 dollars at a market. Press G to use.',
+  );
+  lifePanel.append(lifeHeader, lifeBars, lifeInventory);
 
   const drivePanel = createElement('section', 'hud__drive');
   drivePanel.setAttribute('aria-label', 'Driving telemetry');
@@ -1292,6 +1301,15 @@ export function createHud({
     lifeCash.textContent = `$${Math.max(0, Math.round(Number(lifeState.cash) || 0))}`;
     lifeMood.textContent = String(lifeState.mood || 'GOOD').toUpperCase();
     lifeMood.dataset.mood = String(lifeState.mood || 'good');
+    const medkit = lifeState.inventory?.medkit || {};
+    const medkitCount = Math.max(0, Math.round(Number(medkit.count) || 0));
+    const medkitCapacity = Math.max(medkitCount, Math.round(Number(medkit.capacity) || 0));
+    const medkitCost = Math.max(0, Math.round(Number(medkit.cost) || 0));
+    lifeInventory.textContent = `MEDKIT / ${medkitCount} OF ${medkitCapacity} · B BUY $${medkitCost} · G USE`;
+    lifeInventory.setAttribute(
+      'aria-label',
+      `Medkits: ${medkitCount} of ${medkitCapacity}. Press B to buy for ${medkitCost} dollars at a market. Press G to use.`,
+    );
     const needs = lifeState.needs || {};
     const lowCrossings = [];
     for (const [key, node] of lifeBarNodes) {

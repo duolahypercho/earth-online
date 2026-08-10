@@ -1573,6 +1573,38 @@ function repairCurrentPlayerVehicle(source = 'roadside-repair') {
   };
 }
 
+function buyPlayerMedkit() {
+  const purchased = lifeSim?.buyMedkitAtMarket?.(controls.target) === true;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  return purchased;
+}
+
+function usePlayerMedkit() {
+  const medkit = lifeSim?.getState?.().inventory?.medkit;
+  if (!medkit || medkit.count <= 0) {
+    lifeSim?.consumeMedkit?.();
+    return { ok: false, reason: 'empty' };
+  }
+  if (!combatInputAvailable()) {
+    hud?.setMessage('Use medkits on foot in the public realm.');
+    return { ok: false, reason: 'unavailable' };
+  }
+  const before = combat?.getState?.();
+  if (!before || before.status !== 'running' || before.health >= before.maxHealth) {
+    hud?.setMessage('Health is already full.');
+    return { ok: false, reason: 'full-health' };
+  }
+  if (!combat?.heal?.(medkit.heal)) {
+    return { ok: false, reason: 'heal-failed' };
+  }
+  const consumed = lifeSim?.consumeMedkit?.();
+  if (!consumed) return { ok: false, reason: 'consume-failed' };
+  const after = combat.getState();
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`Medkit used · health ${Math.round(after.health)} · ${consumed.remaining} left.`);
+  return { ok: true, before, after, consumed };
+}
+
 function updatePlayerLayer(dt, elapsed) {
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
@@ -3300,7 +3332,7 @@ function onKeyDown(event) {
     event.preventDefault();
     return;
   }
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY'].includes(code)) event.preventDefault();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
     const drivingState = traffic.getPlayerVehicleState?.();
     if (drivingState?.damage?.disabled) {
@@ -3323,6 +3355,8 @@ function onKeyDown(event) {
   if (code === 'KeyT' && !event.repeat) {
     lifeSim?.eatAtMarket?.(controls.target);
   }
+  if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();
+  if (code === 'KeyG' && !event.repeat) usePlayerMedkit();
   if (code === 'KeyF' && !event.repeat) {
     lifeSim?.workShift?.(controls.target);
   }
@@ -4024,6 +4058,12 @@ window.__SF_SIM__ = {
   },
   getPlayerVehicleRepairQuote() {
     return getPlayerVehicleRepairQuote();
+  },
+  buyPlayerMedkit() {
+    return buyPlayerMedkit();
+  },
+  usePlayerMedkit() {
+    return usePlayerMedkit();
   },
   get renderQuality() {
     return {
