@@ -44,10 +44,13 @@ assert.ok(roofAcross.dot(new THREE.Vector2(...frame.across)) > 0.9999, 'local +Z
 assert.ok(landmark.stats.drawCalls <= FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls, 'draw-call budget must hold');
 assert.ok(landmark.stats.triangles <= FERRY_BUILDING_LANDMARK_BUDGET.maxTriangles, 'triangle budget must hold');
 assert.ok(landmark.stats.instances <= FERRY_BUILDING_LANDMARK_BUDGET.maxInstances, 'instance budget must hold');
-assert.ok(FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls <= 15, 'landmark draw-call budget must remain hero-scene safe');
+assert.ok(FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls <= 14, 'landmark draw-call budget must remain hero-scene safe');
 assert.ok(landmark.stats.facadeBaysPerSide >= 18, 'terminal must retain a broad historic bay rhythm');
 assert.ok(landmark.stats.storefrontVariants >= 4, 'facade must retain authored storefront variation');
-assert.ok(landmark.stats.openingReliefMetres >= 0.25, 'facade openings must retain visible physical relief');
+assert.ok(landmark.stats.segmentedFacadeOpenings >= landmark.stats.facadeBaysPerSide * 4, 'both long facades need a ground and upper opening per bay');
+assert.ok(landmark.stats.facadeCavityDepthMetres >= 0.65, 'facade apertures must retain pedestrian-readable cavity depth');
+assert.ok(landmark.stats.facadeReturnDepthMetres >= 0.6, 'facade apertures must retain real jamb/header/sill returns');
+assert.equal(landmark.stats.facadeBackingClosed, true, 'authored facade cavities must remain closed rather than exposing a fake interior');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock tower pyramidal roof'), 'clock tower silhouette is required');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock faces').count === 4, 'all four clock faces are required');
 assert.equal(landmark.root.getObjectByName('Ferry Building clock face stone bezels').count, 4, 'clock faces require four stone bezels');
@@ -93,15 +96,22 @@ for (let index = 0; index < windowBays.count; index += 1) {
 }
 assert.ok(Math.abs(Math.min(...windowAcrossValues) - frame.bounds.minAcross) < 0.5, 'landside windows must hug the authoritative footprint surface');
 assert.ok(Math.abs(Math.max(...windowAcrossValues) - frame.bounds.maxAcross) < 0.5, 'bayside windows must hug the authoritative footprint surface');
-const pierAcrossValues = [];
-const arcadePiers = landmark.root.getObjectByName('Ferry Building projecting arcade piers');
-for (let index = 0; index < arcadePiers.count; index += 1) {
-  arcadePiers.getMatrixAt(index, roofMatrix);
+const surroundAcrossValues = [];
+const groundArcade = landmark.root.getObjectByName('Ferry Building segmented ground arcade masonry');
+const upperFacade = landmark.root.getObjectByName('Ferry Building segmented upper facade masonry');
+assert.equal(groundArcade.count, landmark.stats.facadeBaysPerSide * 2, 'each ground bay must be bounded by a masonry surround');
+assert.equal(upperFacade.count, landmark.stats.facadeBaysPerSide * 2, 'each upper bay must be bounded by a masonry surround');
+assert.equal(groundArcade.geometry.parameters.shapes.holes.length, 1, 'ground surrounds need a true arched aperture in their wall geometry');
+assert.equal(upperFacade.geometry.parameters.shapes.holes.length, 1, 'upper surrounds need a true rectangular aperture in their wall geometry');
+for (let index = 0; index < groundArcade.count; index += 1) {
+  groundArcade.getMatrixAt(index, roofMatrix);
   const relative = new THREE.Vector2(roofMatrix.elements[12] - building.centroid[0], roofMatrix.elements[14] - building.centroid[1]);
-  pierAcrossValues.push(relative.dot(new THREE.Vector2(...frame.across)));
+  surroundAcrossValues.push(relative.dot(new THREE.Vector2(...frame.across)));
 }
-assert.ok(Math.min(...pierAcrossValues) < Math.min(...windowAcrossValues) - 0.2, 'landside piers must project beyond recessed storefront glazing');
-assert.ok(Math.max(...pierAcrossValues) > Math.max(...windowAcrossValues) + 0.2, 'bayside piers must project beyond recessed storefront glazing');
+assert.ok(Math.min(...surroundAcrossValues) < Math.min(...windowAcrossValues) - 0.35, 'landside masonry surrounds must project beyond recessed storefront glazing');
+assert.ok(Math.max(...surroundAcrossValues) > Math.max(...windowAcrossValues) + 0.35, 'bayside masonry surrounds must project beyond recessed storefront glazing');
+assert.equal(groundArcade.material, facadeMaterial, 'segmented ground masonry must retain the Poly Haven sandstone material');
+assert.equal(upperFacade.material, facadeMaterial, 'segmented upper masonry must retain the Poly Haven sandstone material');
 roofVolumes.geometry.computeBoundingBox();
 assert.ok(roofVolumes.geometry.boundingBox.max.y - roofVolumes.geometry.boundingBox.min.y > 0.9, 'terminal wings must use pitched roof volumes');
 const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
