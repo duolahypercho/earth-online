@@ -2524,14 +2524,36 @@ function updateVehiclePedestrianImpact() {
     directionZ: impact.directionZ,
   });
   if (!reaction) return null;
+  lastVehicleDamageAt = impact.damage?.lastDamage?.at ?? lastVehicleDamageAt;
   combatAudio?.play?.('impact', { targetKind: 'pedestrian' });
   streetHeat?.reportIncident?.(14, {
     kind: 'pedestrian-impact',
     source: 'combat',
     message: `Pedestrian impact · ${impact.residentLabel} staggered · heat +14.`,
   });
+  const witness = pedestrians.getVehicleImpactWitness?.(impact.residentId, 18) ?? null;
+  const witnessReaction = witness
+    ? pedestrians.registerVehicleWitnessReaction?.(witness.id, {
+      originX: witness.victimPosition.x,
+      originZ: witness.victimPosition.z,
+    }) ?? null
+    : null;
+  const witnessReport = witnessReaction
+    ? streetHeat?.reportWitness?.({
+      incidentId: traffic.getDiagnostics?.().pedestrianImpactEvents,
+      witnessId: witness.id,
+      witnessLabel: witness.label,
+      victimId: impact.residentId,
+    }) ?? null
+    : null;
   savePlayerProgress();
-  return { ...impact, reaction };
+  return {
+    ...impact,
+    reaction,
+    witness: witnessReport?.reported
+      ? { ...witness, reaction: witnessReaction, report: witnessReport }
+      : null,
+  };
 }
 
 const combatPedestrianCandidates = [];

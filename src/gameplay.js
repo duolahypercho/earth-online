@@ -446,13 +446,17 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     arrests: 0,
     nearestDistance: null,
     nearMisses: 0,
+    witnessReports: 0,
     safeElapsed: 0,
     sampleElapsed: STREET_HEAT_SAMPLE_INTERVAL,
     nearMissCooldown: 0,
     combatHold: 0,
     theftHold: 0,
     lastEvent: null,
+    lastWitnessEvent: null,
   };
+
+  let lastWitnessIncidentId = null;
 
   const marker = new THREE.Group();
   marker.name = 'Street heat pursuit beacon';
@@ -576,12 +580,15 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.arrests = 0;
     state.nearestDistance = null;
     state.nearMisses = 0;
+    state.witnessReports = 0;
     state.safeElapsed = 0;
     state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
     state.nearMissCooldown = 0;
     state.combatHold = 0;
     state.theftHold = 0;
     state.lastEvent = null;
+    state.lastWitnessEvent = null;
+    lastWitnessIncidentId = null;
     latestPosition = null;
     latestSpeed = 0;
     latestDriving = false;
@@ -859,6 +866,50 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     return getState();
   }
 
+  function reportWitness({
+    incidentId = null,
+    witnessId = null,
+    witnessLabel = 'A resident',
+    victimId = null,
+  } = {}) {
+    const normalizedIncidentId = Number(incidentId);
+    const normalizedWitnessId = typeof witnessId === 'string' ? witnessId.slice(0, 96) : '';
+    const normalizedVictimId = typeof victimId === 'string' ? victimId.slice(0, 96) : '';
+    if (state.status !== 'running'
+      || !Number.isInteger(normalizedIncidentId)
+      || normalizedIncidentId <= 0
+      || !normalizedWitnessId
+      || !normalizedVictimId
+      || normalizedWitnessId === normalizedVictimId) return null;
+    if (lastWitnessIncidentId === normalizedIncidentId) {
+      return {
+        reported: false,
+        reason: 'incident-latched',
+        incidentId: normalizedIncidentId,
+        witnessReports: state.witnessReports,
+      };
+    }
+    lastWitnessIncidentId = normalizedIncidentId;
+    state.witnessReports += 1;
+    state.lastWitnessEvent = {
+      kind: 'witness-report',
+      incidentId: normalizedIncidentId,
+      witnessId: normalizedWitnessId,
+      victimId: normalizedVictimId,
+      witnessReports: state.witnessReports,
+      message: `${String(witnessLabel || 'A resident').slice(0, 64)} called in the impact.`,
+    };
+    onEvent?.({
+      ...state.lastWitnessEvent,
+      score: 0,
+      state: getState(),
+    });
+    return {
+      reported: true,
+      ...state.lastWitnessEvent,
+    };
+  }
+
   function getState() {
     const heat = formatHeat(state.heat);
     const escapeSeconds = Math.max(
@@ -890,6 +941,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       arrests: state.arrests,
       nearestDistance: state.nearestDistance,
       nearMisses: state.nearMisses,
+      witnessReports: state.witnessReports,
       combatHold: Math.round(state.combatHold * 10) / 10,
       combatActive: state.combatHold > 0,
       theftHold: Math.round(state.theftHold * 10) / 10,
@@ -897,6 +949,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       hint,
       label: state.pursuitActive ? `HEAT ${state.level}` : heat > 0 ? `HEAT ${heat}` : 'HEAT CLEAR',
       lastEvent: state.lastEvent,
+      lastWitnessEvent: state.lastWitnessEvent,
     };
   }
 
@@ -906,6 +959,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       pursuitActive: state.pursuitActive,
       responderContacts: state.responderContacts,
       nearMisses: state.nearMisses,
+      witnessReports: state.witnessReports,
       combatHold: state.combatHold,
       theftHold: state.theftHold,
     };
@@ -916,12 +970,16 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     const heat = Number(snapshot.heat);
     const responderContacts = Number(snapshot.responderContacts);
     const nearMisses = Number(snapshot.nearMisses);
+    const witnessReports = snapshot.witnessReports === undefined
+      ? 0
+      : Number(snapshot.witnessReports);
     const combatHold = Number(snapshot.combatHold);
     const theftHold = snapshot.theftHold === undefined ? 0 : Number(snapshot.theftHold);
     if (!Number.isFinite(heat)
       || typeof snapshot.pursuitActive !== 'boolean'
       || !Number.isFinite(responderContacts)
       || !Number.isFinite(nearMisses)
+      || !Number.isFinite(witnessReports)
       || !Number.isFinite(combatHold)
       || !Number.isFinite(theftHold)) {
       return false;
@@ -938,6 +996,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1)
       : 0;
     state.nearMisses = Math.max(0, Math.round(nearMisses));
+    state.witnessReports = THREE.MathUtils.clamp(Math.round(witnessReports), 0, 100000);
     state.combatHold = THREE.MathUtils.clamp(
       combatHold,
       0,
@@ -960,6 +1019,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
     state.nearMissCooldown = 0;
     state.lastEvent = null;
+    state.lastWitnessEvent = null;
+    lastWitnessIncidentId = null;
     latestPosition = null;
     latestSpeed = 0;
     latestDriving = false;
@@ -981,6 +1042,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     restart,
     addHeat,
     reportIncident: addHeat,
+    reportWitness,
     update,
     getState,
     exportState,
