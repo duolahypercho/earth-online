@@ -11,6 +11,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import {
+  SIGNAL_PERIOD,
   signalOffsetForPosition,
   signalPhaseAt,
 } from './signals.js';
@@ -1663,7 +1664,12 @@ function buildClassList(rng, count) {
 
 /* ---------------- factory ---------------- */
 
-export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
+export function createTrafficSystem({
+  scene,
+  roadNetwork,
+  fleetSize,
+  onPlayerTrafficViolation,
+} = {}) {
   const group = new THREE.Group();
   group.name = 'traffic';
   if (scene && typeof scene.add === 'function') scene.add(group);
@@ -1721,11 +1727,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     disabledVehicles: 0,
     vehicleRepairs: 0,
     vehicleThefts: 0,
+    playerRedLightViolations: 0,
   };
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
   let impoundedPlayerVehicle = null;
   let taxiRide = null;
+  let playerSignalViolationLatch = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -2417,6 +2425,50 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   function distanceToEnd(v, road = roads[v.road]) {
     return v.dir === 1 ? road.len - v.s : v.s;
+  }
+
+  function signalApproachFor(v, road = roads[v.road], time = lastElapsed) {
+    if (!v || !road || v.turn) return null;
+    const end = v.dir === 1 ? 1 : 0;
+    const nodeIndex = road.endNode[end];
+    const signal = signals.get(nodeIndex);
+    if (!signal) return null;
+    const group = road.signalGroup[end];
+    return {
+      nodeIndex,
+      group,
+      phase: signalPhaseAt(group, time, signal.offset),
+      remaining: signalPhaseAt.remaining(group, time, signal.offset),
+      offset: signal.offset,
+      distance: distanceToEnd(v, road) - STOP_MARGIN - v.half,
+    };
+  }
+
+  function reportPlayerRedLightCrossing(v, road, nextS, time) {
+    if (!v?.playerControlled || v.turn) return null;
+    const approach = signalApproachFor(v, road, time);
+    if (!approach || approach.phase !== 'red') return null;
+    const nextDistance = (v.dir === 1 ? road.len - nextS : nextS)
+      - STOP_MARGIN
+      - v.half;
+    if (approach.distance < 0 || nextDistance >= 0) return null;
+    const phaseCycle = Math.floor((time + approach.offset) / SIGNAL_PERIOD);
+    const key = `${v.road}:${approach.nodeIndex}:${phaseCycle}`;
+    if (playerSignalViolationLatch === key) return null;
+    playerSignalViolationLatch = key;
+    diagnostics.playerRedLightViolations += 1;
+    const event = {
+      kind: 'traffic-violation',
+      violation: 'red-light',
+      vehicleId: vehicles.indexOf(v),
+      road: v.road,
+      nodeIndex: approach.nodeIndex,
+      turnSide: v.route?.side ?? 0,
+      phase: approach.phase,
+      at: time,
+    };
+    onPlayerTrafficViolation?.(event);
+    return event;
   }
 
   function roadCruise(v, road) {
@@ -3607,6 +3659,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           v.speed = 0;
           v.longitudinalAccel = 0;
         }
+        if (v.playerControlled) {
+          // This runs before beginTurn below. Enterable vehicle front bumpers
+          // reach the authored stop line before their center reaches the
+          // TURN_SPAN curve entry, so straight and steer-selected crossings
+          // share the same red-light edge and debounce path.
+          reportPlayerRedLightCrossing(v, road, nextS, t);
+        }
         v.s = nextS;
 
         if (v.route && !v.route.uTurn) {
@@ -4512,6 +4571,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     vehicle.mergeSignalUntil = 0;
     vehicle.pullOutBlockedSince = null;
     vehicle.playerSteer = 0;
+    playerSignalViolationLatch = null;
     lastPlayerParkedVehicle = null;
     playerVehicle = vehicle;
     return true;
@@ -4907,6 +4967,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       heading: vehicle.heading ?? 0,
       speed: vehicle.speed,
       road: vehicle.road,
+      signalAhead: signalApproachFor(vehicle),
       damage: vehicleDamageSnapshot(vehicle),
       theft: {
         eligible: vehicle.identity.category === 'private',

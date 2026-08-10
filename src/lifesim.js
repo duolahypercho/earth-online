@@ -545,6 +545,25 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return { ...state.lastTransaction };
   }
 
+  function payTrafficCitation(amount = 18, label = 'Red-light citation') {
+    const due = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 12, 60);
+    const charged = Math.min(due, Math.max(0, Math.floor(state.cash)));
+    state.cash = Math.max(0, state.cash - charged);
+    state.lastActivity = 'traffic:red-light';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'traffic-citation',
+      label: String(label || 'Traffic citation').slice(0, 80),
+      amount: -charged,
+      cashAfter: Math.round(state.cash),
+      due,
+      charged,
+      unpaid: due - charged,
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
+  }
+
   function canAffordImpoundFee(amount = 0) {
     const fee = Math.max(0, Math.round(Number(amount) || 0));
     return fee > 0 && state.cash >= fee;
@@ -809,6 +828,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     canAffordVehicleRepair,
     payVehicleRepair,
     payWantedFine,
+    payTrafficCitation,
     canAffordImpoundFee,
     payImpoundFee,
     canAffordTaxiFare,

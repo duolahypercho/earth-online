@@ -497,6 +497,7 @@ const coreSignalPlans = city.roadNetwork.intersections.map((position, index) => 
 }));
 const traffic = createTrafficSystem({
   scene,
+  onPlayerTrafficViolation: (event) => handlePlayerTrafficViolation(event),
   roadNetwork: {
     ...city.roadNetwork,
     roads: [...city.roadNetwork.roads, ...expansion.roadNetwork.roads],
@@ -1229,9 +1230,12 @@ const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
 const VEHICLE_IMPOUND_RETRIEVAL_FEE = 45;
 const TAXI_RIDE_FARE = 14;
 const TAXI_RIDE_DURATION = 3.2;
+const TRAFFIC_CITATION_FINE = 18;
+const TRAFFIC_CITATION_HEAT = 12;
 let progressSaveElapsed = 0;
 let lastProgressSave = null;
 let lastPublicWorldState = null;
+let lastTrafficCitation = null;
 
 function readPlayerProgress() {
   try {
@@ -1274,6 +1278,35 @@ function savePlayerProgress() {
     lastProgressSave = { ok: false, savedAt: null };
     return false;
   }
+}
+
+function handlePlayerTrafficViolation(event) {
+  if (event?.kind !== 'traffic-violation' || event.violation !== 'red-light') return false;
+  const heatBefore = streetHeat?.getState?.().heat ?? 0;
+  const heat = streetHeat?.reportIncident?.(TRAFFIC_CITATION_HEAT, {
+    kind: 'traffic-violation',
+    message: `RED LIGHT / citation $${TRAFFIC_CITATION_FINE} · heat +${TRAFFIC_CITATION_HEAT}.`,
+    source: 'traffic-violation',
+  });
+  const transaction = lifeSim?.payTrafficCitation?.(
+    TRAFFIC_CITATION_FINE,
+    'Red-light citation',
+  );
+  if (!transaction) return false;
+  lastTrafficCitation = {
+    ...event,
+    fine: TRAFFIC_CITATION_FINE,
+    heatAdded: TRAFFIC_CITATION_HEAT,
+    heatBefore,
+    heatAfter: heat?.heat ?? heatBefore,
+    transaction: { ...transaction },
+  };
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(transaction.unpaid > 0
+    ? `RED LIGHT / $${transaction.charged} paid · $${transaction.unpaid} unpaid · heat ${Math.round(heat?.heat ?? 0)}.`
+    : `RED LIGHT / $${transaction.charged} citation paid · heat ${Math.round(heat?.heat ?? 0)}.`);
+  savePlayerProgress();
+  return true;
 }
 
 function restorePlayerProgress() {
@@ -4637,6 +4670,9 @@ window.__SF_SIM__ = {
   },
   getStreetHeatState() {
     return streetHeat?.getState?.() ?? null;
+  },
+  getLastTrafficCitation() {
+    return lastTrafficCitation ? structuredClone(lastTrafficCitation) : null;
   },
   getCombatState() {
     const state = combat?.getState?.();

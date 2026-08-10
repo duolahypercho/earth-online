@@ -41,6 +41,7 @@
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",
     "verify:persistence": "node scripts/verify-persistence.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
+    "verify:traffic-citations": "node scripts/verify-traffic-citations.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
