@@ -1653,6 +1653,37 @@ function buyPlayerMedkit() {
   return purchased;
 }
 
+function buyPlayerAmmo() {
+  if (!combatInputAvailable()) {
+    hud?.setMessage('Buy ammunition on foot in the public realm.');
+    return null;
+  }
+  const combatState = combat?.getState?.();
+  if (!combatState || !combat?.addReserveAmmo) return null;
+  if (combatState.status !== 'running' || combatState.active !== true) {
+    hud?.setMessage('Restock ammunition after recovering.');
+    return null;
+  }
+  const previousLife = lifeSim?.exportState?.();
+  const purchase = lifeSim?.buyAmmoAtMarket?.(
+    controls.target,
+    combatState.reserveAmmo,
+    combatState.reserveCapacity,
+  );
+  if (!purchase) return null;
+  const stock = combat.addReserveAmmo(purchase.rounds);
+  if (!stock || stock.added !== purchase.rounds) {
+    if (previousLife) lifeSim?.importState?.(previousLife);
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage('Ammunition restock unavailable · no charge.');
+    return null;
+  }
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`Ammunition purchased · +${stock.added} rounds · ${stock.reserveAmmo}/${stock.capacity} reserve.`);
+  savePlayerProgress();
+  return { purchase, stock };
+}
+
 function usePlayerMedkit() {
   const medkit = lifeSim?.getState?.().inventory?.medkit;
   if (!medkit || medkit.count <= 0) {
@@ -3407,7 +3438,7 @@ function onKeyDown(event) {
     event.preventDefault();
     return;
   }
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG'].includes(code)) event.preventDefault();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG', 'KeyN'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
     const drivingState = traffic.getPlayerVehicleState?.();
     if (drivingState?.damage?.disabled) {
@@ -3431,6 +3462,7 @@ function onKeyDown(event) {
     lifeSim?.eatAtMarket?.(controls.target);
   }
   if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();
+  if (code === 'KeyN' && !event.repeat) buyPlayerAmmo();
   if (code === 'KeyG' && !event.repeat) usePlayerMedkit();
   if (code === 'KeyF' && !event.repeat) {
     lifeSim?.workShift?.(controls.target);
@@ -4146,6 +4178,9 @@ window.__SF_SIM__ = {
   },
   buyPlayerMedkit() {
     return buyPlayerMedkit();
+  },
+  buyPlayerAmmo() {
+    return buyPlayerAmmo();
   },
   usePlayerMedkit() {
     return usePlayerMedkit();

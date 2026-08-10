@@ -848,6 +848,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
 
 const COMBAT_MAGAZINE_SIZE = 12;
 const COMBAT_STARTING_RESERVE = 48;
+const COMBAT_RESERVE_CAPACITY = 120;
 const COMBAT_FIRE_INTERVAL = 0.18;
 const COMBAT_RELOAD_SECONDS = 1.18;
 const COMBAT_MAX_RANGE = 42;
@@ -1194,7 +1195,7 @@ export function createCombatLoop({
     const health = Number(snapshot.health);
     if (!Number.isFinite(ammo) || !Number.isFinite(reserveAmmo) || !Number.isFinite(health)) return false;
     state.ammo = THREE.MathUtils.clamp(Math.round(ammo), 0, COMBAT_MAGAZINE_SIZE);
-    state.reserveAmmo = THREE.MathUtils.clamp(Math.round(reserveAmmo), 0, 999);
+    state.reserveAmmo = THREE.MathUtils.clamp(Math.round(reserveAmmo), 0, COMBAT_RESERVE_CAPACITY);
     state.health = THREE.MathUtils.clamp(health, 1, COMBAT_HEALTH_MAX);
     state.aiming = false;
     state.triggerHeld = false;
@@ -1512,6 +1513,19 @@ export function createCombatLoop({
     return true;
   }
 
+  function addReserveAmmo(amount = 0) {
+    if (state.status !== 'running') return null;
+    const requested = Math.max(0, Math.round(Number(amount) || 0));
+    if (requested <= 0 || state.reserveAmmo >= COMBAT_RESERVE_CAPACITY) return null;
+    const before = state.reserveAmmo;
+    state.reserveAmmo = Math.min(COMBAT_RESERVE_CAPACITY, before + requested);
+    return {
+      added: state.reserveAmmo - before,
+      reserveAmmo: state.reserveAmmo,
+      capacity: COMBAT_RESERVE_CAPACITY,
+    };
+  }
+
   function fire() {
     if (state.status !== 'running' || !state.enabled) return { fired: false, reason: 'inactive' };
     if (state.reloadTimer > 0) return { fired: false, reason: 'reloading' };
@@ -1816,6 +1830,7 @@ export function createCombatLoop({
       ammo: state.ammo,
       magazineSize: COMBAT_MAGAZINE_SIZE,
       reserveAmmo: state.reserveAmmo,
+      reserveCapacity: COMBAT_RESERVE_CAPACITY,
       reloading: state.reloadTimer > 0,
       reloadProgress: state.reloadTimer > 0
         ? THREE.MathUtils.clamp(1 - state.reloadTimer / COMBAT_RELOAD_SECONDS, 0, 1)
@@ -1893,6 +1908,7 @@ export function createCombatLoop({
     update,
     fire,
     reload,
+    addReserveAmmo,
     damage,
     damagePlayer: damage,
     heal,

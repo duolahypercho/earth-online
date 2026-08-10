@@ -752,11 +752,11 @@ export function createHud({
   const lifeInventory = createElement(
     'span',
     'hud__life-inventory',
-    'MEDKIT / 0 OF 3 · B BUY $28 · G USE',
+    'MEDKIT / 0 OF 3 · B BUY $28 · G USE · AMMO / N BUY $32',
   );
   lifeInventory.setAttribute(
     'aria-label',
-    'Medkits: 0 of 3. Press B to buy for 28 dollars at a market. Press G to use.',
+    'Medkits: 0 of 3. Press B to buy for 28 dollars at a market. Press G to use. Press N to buy ammunition for 32 dollars.',
   );
   lifePanel.append(lifeHeader, lifeBars, lifeInventory);
 
@@ -1305,10 +1305,12 @@ export function createHud({
     const medkitCount = Math.max(0, Math.round(Number(medkit.count) || 0));
     const medkitCapacity = Math.max(medkitCount, Math.round(Number(medkit.capacity) || 0));
     const medkitCost = Math.max(0, Math.round(Number(medkit.cost) || 0));
-    lifeInventory.textContent = `MEDKIT / ${medkitCount} OF ${medkitCapacity} · B BUY $${medkitCost} · G USE`;
+    const ammunition = lifeState.inventory?.ammunition || {};
+    const ammoCost = Math.max(0, Math.round(Number(ammunition.cost) || 0));
+    lifeInventory.textContent = `MEDKIT / ${medkitCount} OF ${medkitCapacity} · B BUY $${medkitCost} · G USE · AMMO / N BUY $${ammoCost}`;
     lifeInventory.setAttribute(
       'aria-label',
-      `Medkits: ${medkitCount} of ${medkitCapacity}. Press B to buy for ${medkitCost} dollars at a market. Press G to use.`,
+      `Medkits: ${medkitCount} of ${medkitCapacity}. Press B to buy for ${medkitCost} dollars at a market. Press G to use. Press N to buy ammunition for ${ammoCost} dollars.`,
     );
     const needs = lifeState.needs || {};
     const lowCrossings = [];

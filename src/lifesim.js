@@ -13,6 +13,8 @@ const NEED_LABELS = Object.freeze({
 const MEDKIT_COST = 28;
 const MEDKIT_CAPACITY = 3;
 const MEDKIT_HEAL = 45;
+const AMMO_BOX_COST = 32;
+const AMMO_BOX_ROUNDS = 24;
 
 function clampNeed(value) {
   return THREE.MathUtils.clamp(value, 0, 100);
@@ -103,6 +105,10 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           capacity: MEDKIT_CAPACITY,
           cost: MEDKIT_COST,
           heal: MEDKIT_HEAL,
+        },
+        ammunition: {
+          cost: AMMO_BOX_COST,
+          rounds: AMMO_BOX_ROUNDS,
         },
       },
       lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
@@ -303,6 +309,38 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     };
   }
 
+  function buyAmmoAtMarket(position, currentReserve = 0, reserveCapacity = 0) {
+    const label = getNearestPortalLabel(position);
+    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
+      onMessage('Find a market or cafe counter to buy ammunition.');
+      return null;
+    }
+    const current = Math.max(0, Math.round(Number(currentReserve) || 0));
+    const capacity = Math.max(0, Math.round(Number(reserveCapacity) || 0));
+    if (capacity <= 0 || current + AMMO_BOX_ROUNDS > capacity) {
+      onMessage(`Ammunition reserve full · use rounds before buying a ${AMMO_BOX_ROUNDS}-round box.`);
+      return null;
+    }
+    if (!spendCash(AMMO_BOX_COST)) {
+      onMessage(`Ammunition costs $${AMMO_BOX_COST}. You need more cash.`);
+      return null;
+    }
+    state.lastActivity = 'buy:ammunition';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'ammo-purchase',
+      label: 'Market ammunition',
+      amount: -AMMO_BOX_COST,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    return {
+      rounds: AMMO_BOX_ROUNDS,
+      cost: AMMO_BOX_COST,
+      cashAfter: Math.round(state.cash),
+    };
+  }
+
   function talkToNearestResident(position) {
     const person = pedestrians?.getNearestPerson?.(position, 4.6);
     if (!person?.mesh) {
@@ -415,6 +453,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     creditMissionReward,
     buyMedkitAtMarket,
     consumeMedkit,
+    buyAmmoAtMarket,
     rest,
     noteDriving,
     needsSummary,
