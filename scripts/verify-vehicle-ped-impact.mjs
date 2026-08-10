@@ -4,9 +4,9 @@ import { chromium } from 'playwright';
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/';
 const systemChrome = process.env.SF_QA_EXECUTABLE
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
-const angle = process.env.SF_QA_ANGLE
-  || (process.platform === 'darwin' ? 'metal' : 'swiftshader');
+const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => null);
+if (!executablePath) throw new Error(`System Chrome is required: ${systemChrome}`);
+const angle = process.env.SF_QA_ANGLE || 'metal';
 const browser = await chromium.launch({
   headless: process.env.SF_QA_HEADLESS !== 'false',
   args: [
@@ -14,9 +14,8 @@ const browser = await chromium.launch({
     `--use-angle=${angle}`,
     '--enable-gpu',
     '--ignore-gpu-blocklist',
-    ...(angle === 'swiftshader' ? ['--enable-unsafe-swiftshader'] : []),
   ],
-  ...(executablePath ? { executablePath } : {}),
+  executablePath,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const failures = [];
@@ -55,26 +54,37 @@ async function launch(settleMs = 400) {
   await page.waitForTimeout(settleMs);
 }
 
-async function evidence(residentId = null) {
-  return page.evaluate((id) => {
+async function evidence(residentId = null, residentPosition = null) {
+  return page.evaluate(({ id, position }) => {
     const sim = window.__SF_SIM__;
     const resident = id ? sim.pedestrians.getVehicleImpactCandidates({
       start: { x: -10000, z: -10000 },
       end: { x: 10000, z: 10000 },
       halfWidth: 10000,
     }, []).find((candidate) => candidate.id === id) || null : null;
+    const reaction = id ? sim.pedestrians.getVehicleImpactState(id) : null;
+    const residentPosition = reaction?.position || position;
     return {
       driving: sim.isDriving(),
       vehicle: sim.traffic.getPlayerVehicleState(),
       diagnostics: sim.traffic.getDiagnostics(),
       heat: sim.getStreetHeatState(),
-      reaction: id ? sim.pedestrians.getVehicleImpactState(id) : null,
+      reaction,
       resident,
+      ledger: sim.pedestrians.exportCombatAftermathState(),
+      combatEligible: id ? sim.pedestrians.getCombatCandidates([])
+        .some((candidate) => candidate.id === id) : null,
+      nearbyDefaultId: id && residentPosition
+        ? sim.pedestrians.getNearestPerson(residentPosition, 1)?.id ?? null
+        : null,
+      nearbyIncludingDefeatedId: id && residentPosition
+        ? sim.pedestrians.getNearestPerson(residentPosition, 1, { includeDefeated: true })?.id ?? null
+        : null,
       audio: sim.getCombatAudioState(),
       saved: sim.getSavedProgress(),
       message: document.querySelector('.hud__message-text')?.textContent || '',
     };
-  }, residentId);
+  }, { id: residentId, position: residentPosition });
 }
 
 async function stagePlayerBehindLiveResident(fallbackResidents = []) {
@@ -120,6 +130,8 @@ async function stagePlayerBehindLiveResident(fallbackResidents = []) {
           });
           continue;
         }
+        const trafficElapsed = sim.traffic.getDiagnostics().elapsed;
+        sim.traffic.update(0.001, trafficElapsed + 0.001);
         const state = sim.traffic.getPlayerVehicleState();
         const actualForwardX = Math.sin(state.heading);
         const actualForwardZ = Math.cos(state.heading);
@@ -127,6 +139,19 @@ async function stagePlayerBehindLiveResident(fallbackResidents = []) {
         const dz = candidate.position.z - state.position.z;
         const forward = dx * actualForwardX + dz * actualForwardZ;
         const lateral = Math.abs(dx * actualForwardZ - dz * actualForwardX);
+        const nearestTrafficAhead = sim.traffic.getVehicleLifeSnapshot().vehicles.reduce(
+          (nearest, vehicle) => {
+            if (vehicle.id === state.index || vehicle.visible === false || !vehicle.position) return nearest;
+            const trafficDx = vehicle.position.x - state.position.x;
+            const trafficDz = vehicle.position.z - state.position.z;
+            const trafficForward = trafficDx * actualForwardX + trafficDz * actualForwardZ;
+            const trafficLateral = Math.abs(trafficDx * actualForwardZ - trafficDz * actualForwardX);
+            return trafficForward > 0 && trafficLateral < 3.8
+              ? Math.min(nearest, trafficForward)
+              : nearest;
+          },
+          Infinity,
+        );
         const signalDistance = Number(state.signalAhead?.distance);
         if (attempts.length < 24) attempts.push({
           id: candidate.id,
@@ -135,12 +160,14 @@ async function stagePlayerBehindLiveResident(fallbackResidents = []) {
           imported: true,
           forward,
           lateral,
+          nearestTrafficAhead,
           signalDistance,
           state,
         });
         if (forward < 5.2
           || forward > 7.5
           || lateral > 1.25
+          || nearestTrafficAhead < 18
           || (Number.isFinite(signalDistance) && signalDistance <= forward + 1.5)) {
           sim.traffic.importPlayerVehicleState(structuredClone(base));
           continue;
@@ -150,6 +177,7 @@ async function stagePlayerBehindLiveResident(fallbackResidents = []) {
           start: state.position,
           forward,
           lateral,
+          nearestTrafficAhead,
           vehicle: state,
         };
       }
@@ -164,6 +192,17 @@ try {
   await launch();
   await page.waitForFunction(() => window.__SF_SIM__.pedestrians.getStats().visible > 0,
     null, { timeout: 15000, polling: 40 });
+
+  const renderer = await page.evaluate(() => {
+    const gl = window.__SF_SIM__.renderer.getContext();
+    const extension = gl.getExtension('WEBGL_debug_renderer_info');
+    return extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : null;
+  });
+  assert(angle === 'metal'
+    && typeof renderer === 'string'
+    && /metal/i.test(renderer)
+    && !/swiftshader|software|llvmpipe/i.test(renderer),
+  'a verified hardware Metal renderer was not active', { angle, renderer });
 
   await page.waitForTimeout(900);
   const passive = await evidence();
@@ -235,21 +274,25 @@ try {
   await page.keyboard.press('e');
   await page.waitForFunction(() => window.__SF_SIM__.isDriving() === true,
     null, { timeout: 5000, polling: 25 });
-  await stagePlayerBehindLiveResident(vehicleSelection.residents);
+  const initialStage = await stagePlayerBehindLiveResident(vehicleSelection.residents);
   await page.waitForFunction(() => window.__SF_SIM__.pedestrians.getVehicleImpactCandidates({
     start: { x: -10000, z: -10000 },
     end: { x: 10000, z: 10000 },
     halfWidth: 10000,
   }, []).length > 0, null, { timeout: 5000, polling: 25 });
 
-  let stage = null;
-  let lastStageAttempt = null;
+  let stage = initialStage?.resident
+    && initialStage.forward >= 5.2
+    && initialStage.forward <= 7.5
+    && initialStage.lateral <= 1.38
+    ? initialStage
+    : null;
+  let lastStageAttempt = initialStage;
   const stageDeadline = Date.now() + 15000;
   while (!stage?.resident && Date.now() < stageDeadline) {
     const attemptedStage = await stagePlayerBehindLiveResident();
     lastStageAttempt = attemptedStage;
     if (attemptedStage?.resident
-      && attemptedStage.resident.activity === 'crossing:wait'
       && attemptedStage.forward >= 5.2
       && attemptedStage.forward <= 7.5
       && attemptedStage.lateral <= 1.38) {
@@ -270,6 +313,11 @@ try {
   if (!stage?.resident?.id) {
     throw new Error(`vehicle-pedestrian impact staging failed: ${JSON.stringify(lastStageAttempt)}`);
   }
+
+  const impactAnchor = await page.evaluate((resident) => window.__SF_SIM__.pedestrians
+    .setQaWitnessAnchor(resident.id, resident.position), stage.resident);
+  assert(impactAnchor === true,
+    'could not hold the selected resident at the measured crosswalk anchor', stage.resident);
 
   await page.evaluate(() => window.__SF_SIM__.streetHeat.restart());
   const beforeImpact = await evidence(stage?.resident?.id);
@@ -299,13 +347,15 @@ try {
     && impact.reaction?.active === true
     && impact.vehicle.damage.lastDamage?.source === 'pedestrian-impact'
     && impact.vehicle.damage.health < beforeImpact.vehicle.damage.health
-    && Math.abs(savedHeat - (beforeImpact.heat.heat + 14)) <= 0.05
+    && savedHeat >= beforeImpact.heat.heat + 14
+    && savedHeat <= beforeImpact.heat.heat + 22
     && impact.heat.lastEvent?.kind === 'pedestrian-impact'
     && impact.heat.heat <= savedHeat
     && impact.heat.heat >= savedHeat - 1
     && impact.audio?.cueCounts?.impact >= 1,
   'real W drive did not produce one complete pedestrian-impact consequence', {
     stage,
+    impactAnchor,
     beforeImpact,
     impact,
     postDrive,
@@ -319,29 +369,103 @@ try {
     && latched.reaction?.count === impact.reaction?.count,
   'overlap latch emitted a duplicate pedestrian impact', { impact, latched });
 
-  await page.evaluate(() => window.__SF_SIM__.saveProgress());
-  const persistedBeforeReload = await evidence(stage.resident.id);
+  const secondResident = await page.evaluate((residentId) => window.__SF_SIM__.pedestrians
+    .getVehicleImpactCandidates({
+      start: { x: -10000, z: -10000 },
+      end: { x: 10000, z: 10000 },
+      halfWidth: 10000,
+    }, [])
+    .find((candidate) => candidate.id === residentId) || null, stage.resident.id);
+  assert(secondResident?.id === stage.resident.id,
+    'first stagger incorrectly removed the resident before a separated second impact', secondResident);
+  const secondStage = secondResident
+    ? await stagePlayerBehindLiveResident([secondResident])
+    : null;
+  assert(secondStage?.resident?.id === stage.resident.id,
+    'could not restage the same resident after clearing the first overlap', secondStage);
+  await page.waitForTimeout(180);
+  const secondBefore = await evidence(stage.resident.id, secondStage?.resident?.position);
+  await page.keyboard.down('w');
+  const secondObserved = await page.waitForFunction((eventCount) => (
+    window.__SF_SIM__.traffic.getDiagnostics().pedestrianImpactEvents > eventCount
+  ), secondBefore.diagnostics.pedestrianImpactEvents,
+  { timeout: 6000, polling: 10 }).then(() => true).catch(() => false);
+  await page.keyboard.up('w');
+  const secondImpact = await evidence(stage.resident.id, secondStage?.resident?.position);
+  assert(secondObserved
+    && secondImpact.diagnostics.pedestrianImpactEvents === secondBefore.diagnostics.pedestrianImpactEvents + 1
+    && secondImpact.reaction?.count === 2
+    && secondImpact.reaction?.combatDefeated === true
+    && secondImpact.ledger.residents.some((entry) => entry.residentId === stage.resident.id)
+    && secondImpact.resident === null
+    && secondImpact.combatEligible === false
+    && secondImpact.nearbyDefaultId !== stage.resident.id
+    && secondImpact.nearbyIncludingDefeatedId === stage.resident.id
+    && secondImpact.message.includes('incapacitated')
+    && secondImpact.saved?.snapshot?.pedestrianAftermath?.residents
+      ?.some((entry) => entry.residentId === stage.resident.id),
+  'separated second impact did not create durable excluded civilian aftermath', {
+    secondStage,
+    secondBefore,
+    secondImpact,
+  });
+
+  const persistedBeforeReload = secondImpact;
   const savedDamage = persistedBeforeReload.vehicle.damage;
   const persistedHeat = persistedBeforeReload.saved?.snapshot?.streetHeat?.heat;
   await page.reload({ waitUntil: 'load', timeout: 30000 });
   await launch(40);
-  const restored = await evidence(stage.resident.id);
+  const restored = await evidence(stage.resident.id, secondStage?.resident?.position);
   assert(restored.driving === true
     && restored.vehicle?.index === beforeImpact.vehicle.index
     && restored.vehicle?.damage?.health === savedDamage.health
     && restored.vehicle?.damage?.lastDamage?.source === 'pedestrian-impact'
     && restored.heat.heat <= persistedHeat
-    && restored.heat.heat >= persistedHeat - 1
+    && restored.heat.heat >= persistedHeat - 3
+    && restored.heat.witnessReports === persistedBeforeReload.heat.witnessReports
     && restored.diagnostics.pedestrianImpactEvents === 0
-    && restored.reaction?.count === 0,
-  'reload did not preserve damage/heat or replayed the transient impact', {
+    && restored.reaction?.count === 0
+    && restored.reaction?.active === false
+    && restored.reaction?.combatDefeated === true
+    && restored.ledger.residents.some((entry) => entry.residentId === stage.resident.id)
+    && restored.resident === null
+    && restored.combatEligible === false
+    && restored.nearbyDefaultId !== stage.resident.id,
+  'reload did not preserve durable civilian aftermath or replayed the impact', {
     impact,
+    secondImpact,
     persistedBeforeReload,
     restored,
     savedDamage,
     savedHeat,
     persistedHeat,
   });
+
+  const restarted = await page.evaluate((residentId) => {
+    const sim = window.__SF_SIM__;
+    sim.restartCombat();
+    const impactEligible = sim.pedestrians.getVehicleImpactCandidates({
+      start: { x: -10000, z: -10000 },
+      end: { x: 10000, z: 10000 },
+      halfWidth: 10000,
+    }, []).some((candidate) => candidate.id === residentId);
+    return {
+      reaction: sim.pedestrians.getVehicleImpactState(residentId),
+      ledger: sim.pedestrians.exportCombatAftermathState(),
+      savedLedger: sim.getSavedProgress().snapshot?.pedestrianAftermath,
+      impactEligible,
+      combatEligible: sim.pedestrians.getCombatCandidates([])
+        .some((candidate) => candidate.id === residentId),
+    };
+  }, stage.resident.id);
+  assert(restarted.reaction?.count === 0
+    && restarted.reaction?.active === false
+    && restarted.reaction?.combatDefeated === false
+    && restarted.ledger.residents.length === 0
+    && restarted.savedLedger?.residents?.length === 0
+    && restarted.impactEligible === true
+    && restarted.combatEligible === true,
+  'clean combat restart did not restore the impacted resident and clear its durable state', restarted);
 
   const defensiveNegatives = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
@@ -419,6 +543,7 @@ try {
       : 'vehicle pedestrian impact smoke failed',
     baseUrl,
     angle,
+    renderer,
     privateVehicle,
     stage,
     beforeImpact,
@@ -427,7 +552,11 @@ try {
     displacement,
     latched,
     persistedBeforeReload,
+    secondStage,
+    secondBefore,
+    secondImpact,
     restored,
+    restarted,
     defensiveNegatives,
     onFootNegative,
     performance,

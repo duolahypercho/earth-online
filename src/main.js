@@ -2973,7 +2973,9 @@ function updateVehiclePedestrianImpact() {
   streetHeat?.reportIncident?.(14, {
     kind: 'pedestrian-impact',
     source: 'combat',
-    message: `Pedestrian impact · ${impact.residentLabel} staggered · heat +14.`,
+    message: reaction.defeated
+      ? `Pedestrian impact · ${impact.residentLabel} incapacitated · heat +14.`
+      : `Pedestrian impact · ${impact.residentLabel} staggered · heat +14.`,
   });
   const witness = pedestrians.getVehicleImpactWitness?.(impact.residentId, 18) ?? null;
   const witnessReaction = witness
@@ -2990,6 +2992,9 @@ function updateVehiclePedestrianImpact() {
       victimId: impact.residentId,
     }) ?? null
     : null;
+  if (reaction.defeated) {
+    hud?.setMessage(`Pedestrian impact · ${impact.residentLabel} incapacitated.`);
+  }
   savePlayerProgress();
   return {
     ...impact,
