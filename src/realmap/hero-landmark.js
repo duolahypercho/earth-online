@@ -329,15 +329,19 @@ export function createFerryBuildingLandmark(options = {}) {
 
   const clockY = baseY + towerHeight * 0.73;
   for (const side of [-1, 1]) {
-    put(clockFace, boxMatrix(matrix, frame, towerAlong, side * (towerBase * 0.5 + 0.06), clockY, towerBase * 0.47, towerBase * 0.47, 1));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong + towerBase * 0.07, side * (towerBase * 0.5 + 0.12), clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong - towerBase * 0.06, side * (towerBase * 0.5 + 0.12), clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04));
+    const faceAcross = entranceAcross + side * (towerBase * 0.5 + 0.06);
+    const handAcross = entranceAcross + side * (towerBase * 0.5 + 0.12);
+    put(clockFace, boxMatrix(matrix, frame, towerAlong, faceAcross, clockY, towerBase * 0.47, towerBase * 0.47, 1));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong + towerBase * 0.07, handAcross, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong - towerBase * 0.06, handAcross, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04));
   }
   for (const side of [-1, 1]) {
     const yaw = frame.threeYaw + Math.PI / 2;
-    put(clockFace, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.06), 0, clockY, towerBase * 0.47, towerBase * 0.47, 1, yaw));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.12), towerBase * 0.07, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28, yaw));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.12), -towerBase * 0.06, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04, yaw));
+    const faceAlong = towerAlong + side * (towerBase * 0.5 + 0.06);
+    const handAlong = towerAlong + side * (towerBase * 0.5 + 0.12);
+    put(clockFace, boxMatrix(matrix, frame, faceAlong, entranceAcross, clockY, towerBase * 0.47, towerBase * 0.47, 1, yaw));
+    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross + towerBase * 0.07, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28, yaw));
+    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross - towerBase * 0.06, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04, yaw));
   }
   finishBatches(batches);
 
