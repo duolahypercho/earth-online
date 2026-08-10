@@ -144,3 +144,37 @@ for (const source of [...detailPedestrians, nearPedestrian]) {
 }
 assert.equal(vehicle.visible, true, 'dispose must restore vehicle source visibility');
 assert.equal(scene.children.includes(presentation.group), false, 'dispose must detach adapter group');
+
+const expandedScene = new THREE.Scene();
+const expandedSources = Array.from({ length: 7 }, (_, index) => {
+  const source = makePedestrian(8 + index * 2.2, index % 2 ? 2 : -2, index * 0.12);
+  expandedScene.add(source);
+  return source;
+});
+const expanded = createHeroLifeLighting({
+  scene: expandedScene,
+  maxPedestrians: 7,
+  maxDetailedActors: 7,
+  cameraExclusionRadius: 2,
+  heroExclusionRadius: 2,
+  pedestrianDetailDistance: 28,
+});
+try {
+  expanded.attachPedestrians(expandedSources.map((mesh) => ({ mesh })));
+  const expandedStats = expanded.update({
+    camera: new THREE.Vector3(0, 2, 0),
+    hero: new THREE.Vector3(0, 0, 0),
+    elapsedSeconds: 1,
+    deltaSeconds: 1 / 60,
+  });
+  assert.equal(expandedStats.budget.maxDetailedActors, 7, 'opt-in capacity must be reported without changing the default budget');
+  assert.equal(expandedStats.detailedActors, 7, 'all seven staged sources must receive detailed rigs');
+  assert.equal(expandedStats.fallbackActors, 0, 'expanded capacity must remove fallback silhouettes');
+  assert.equal(expandedStats.pedestriansActive, 7, 'expanded detail cannot drop a staged source');
+  assert.equal(new Set(expandedStats.detailAssignments.map(({ sourceUuid }) => sourceUuid)).size, 7, 'expanded detail identities must remain unique');
+} finally {
+  expanded.dispose();
+}
+for (const source of expandedSources) {
+  assert.equal(source.visible, true, 'expanded adapter disposal must restore source visibility');
+}

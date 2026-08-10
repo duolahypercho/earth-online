@@ -75,10 +75,16 @@ const FERRY_HERO_CAMERA_FRAME = Object.freeze({
   verticalOffset: -0.2,
   lookAhead: 0.38,
   lookHeight: 0.85,
+  framingOffset: Object.freeze({ x: -3.9, y: 0 }),
 });
 const FERRY_HERO_ATMOSPHERE_POINT_LIGHTS = 4;
 const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
 const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
+const FERRY_HERO_STAGED_PEDESTRIAN_COUNT = 7;
+const FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M = 1.5;
+// The source 196662077 concrete footway is rendered as a 3.4m Ferry Plaza
+// paving path. These tracks keep a 0.7m edge margin on either side.
+const FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M = 1.0;
 const FERRY_HERO_REGION_REFERENCE = Object.freeze({
   id: 'sf-ferry-building-hero',
   url: '/data/world/regions/sf-ferry-building-hero.region.json',
@@ -7121,6 +7127,7 @@ let collisionAabbs = [];
 let collisionCells = new Map();
 let pedestrianGroup = null;
 let pedestrianState = [];
+let heroPedestrianStaging = null;
 let treeGroup = null;
 let furnitureGroup = null;
 let hillVegetationGroup = null;
@@ -7881,11 +7888,27 @@ function offsetPolyline(points, offset) {
 
 function buildSidewalkPaths(roads) {
   const paths = [];
-  const classes = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service', 'pedestrian']);
+  const vehicleClasses = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service']);
+  const pedestrianClasses = new Set(['footway', 'pedestrian']);
   for (const road of roads) {
-    if (!classes.has(road.highway)) continue;
     const points = roadPoints(road);
     if (points.length < 2) continue;
+    if (pedestrianClasses.has(road.highway)) {
+      const length = pathLength(points);
+      if (length >= 6) {
+        paths.push({
+          points,
+          length,
+          speed: 1.05 + Math.random() * 0.7,
+          sourceRoadId: road.id,
+          sourceHighway: road.highway,
+          sourceSurface: road.surface || null,
+          nativePedestrianPath: true,
+        });
+      }
+      continue;
+    }
+    if (!vehicleClasses.has(road.highway)) continue;
     const offset = roadHalfWidth(road);
     const sides = [
       offsetPolyline(points, offset),
@@ -7897,10 +7920,291 @@ function buildSidewalkPaths(roads) {
         length += Math.hypot(side[i + 1].x - side[i].x, side[i + 1].z - side[i].z);
       }
       if (length < 16) continue;
-      paths.push({ points: side, length, speed: 1.05 + Math.random() * 0.7 });
+      paths.push({
+        points: side,
+        length,
+        speed: 1.05 + Math.random() * 0.7,
+        sourceRoadId: road.id,
+        sourceHighway: road.highway,
+        sourceSurface: road.surface || null,
+        nativePedestrianPath: false,
+      });
     }
   }
   return paths;
+}
+
+function isFerryBuildingHeroTile() {
+  return Boolean(activeHeroTile
+    && String(activeHeroTile.source?.landmarkOsmWay) === String(FERRY_BUILDING_OSM_WAY));
+}
+
+function stagedPedestrianBuildingCheck(point) {
+  // Hero tiles are small, so this one-time exact OSM-footprint scan is both
+  // more useful and less ambiguous than relying on the collision grid.
+  for (const building of cityData?.detailBuildings || []) {
+    if (!building?.points || building.points.length < 6) continue;
+    if (pointInFlatRing(point, building.points)) return true;
+  }
+  return false;
+}
+
+function stageFerryHeroPedestrians(paths) {
+  heroPedestrianStaging = null;
+  if (!isFerryBuildingHeroTile() || pedestrianState.length < FERRY_HERO_STAGED_PEDESTRIAN_COUNT) return null;
+
+  const launch = FERRY_HERO_PLAZA_LAUNCH;
+  const pathForRoad = (roadId, reverse = false, lateralOffsetM = 0) => {
+    const selectedPath = paths.find((candidate) => (
+      candidate.nativePedestrianPath && String(candidate.sourceRoadId) === String(roadId)
+    ));
+    if (selectedPath) {
+      const track = lateralOffsetM ? offsetPolyline(selectedPath.points, lateralOffsetM) : selectedPath.points;
+      const points = reverse ? track.slice().reverse() : track;
+      return {
+        ...selectedPath,
+        points,
+        length: pathLength(points),
+        speed: 1.3,
+        lateralOffsetM,
+        reverse,
+      };
+    }
+    // The hero build intentionally narrows `activeRoads` for performance, so
+    // its road subset can omit a short walk-only way from the OSM snapshot.
+    const sourceRoad = (cityData?.roads || []).find((road) => (
+      String(road?.id) === String(roadId) && road.highway === 'footway'
+    ));
+    if (!sourceRoad) return null;
+    const centerline = roadPoints(sourceRoad);
+    const track = lateralOffsetM ? offsetPolyline(centerline, lateralOffsetM) : centerline;
+    const points = reverse ? track.slice().reverse() : track;
+    return {
+      points,
+      length: pathLength(points),
+      speed: 1.3,
+      sourceRoadId: sourceRoad.id,
+      sourceHighway: sourceRoad.highway,
+      sourceSurface: sourceRoad.surface || null,
+      nativePedestrianPath: true,
+      lateralOffsetM,
+      reverse,
+    };
+  };
+  // Use the real 196662077 footway centerline plus bounded parallel tracks
+  // inside its source-matched 3.4m concrete envelope. The offsets add depth
+  // and shoulder separation while every civilian retains the same OSM way.
+  const assignments = [
+    { roadId: 196662077, s: 10.0, lateralOffsetM: -1.0, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 11.0, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 13.5, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 9.0, lateralOffsetM: 0.55, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 24.5, lateralOffsetM: -0.9 },
+    { roadId: 196662077, s: 26.0, lateralOffsetM: 0.55 },
+    { roadId: 196662077, s: 29.0, lateralOffsetM: -0.55 },
+  ].map((assignment) => ({
+    ...assignment,
+    path: pathForRoad(assignment.roadId, assignment.reverse, assignment.lateralOffsetM),
+  }));
+  if (assignments.some(({ path }) => !path)) return null;
+
+  const staged = [];
+  for (let index = 0; index < FERRY_HERO_STAGED_PEDESTRIAN_COUNT; index += 1) {
+    const person = pedestrianState[index];
+    const assignment = assignments[index];
+    const { path } = assignment;
+    const routeS = assignment.fromEnd ? path.length - assignment.s : assignment.s;
+    const s = THREE.MathUtils.clamp(routeS, 0.25, path.length - 0.25);
+    const pose = pointAlongPath(path.points, s);
+    person.path = path;
+    person.s = s;
+    // A shared 0.91 m/s strolling pace preserves authored gaps without
+    // freezing movement; it remains within a normal adult walking range.
+    person.speed = path.speed * 0.7;
+    person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
+    person.mesh.rotation.y = pose.heading;
+    staged.push({
+      sourceRoadId: path.sourceRoadId,
+      sourceHighway: path.sourceHighway,
+      sourceSurface: path.sourceSurface,
+      nativePedestrianPath: path.nativePedestrianPath,
+      lateralOffsetM: path.lateralOffsetM || 0,
+      withinSourceWalkwayEnvelope: Math.abs(path.lateralOffsetM || 0) <= FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M,
+      reverse: Boolean(path.reverse),
+      sourceUuid: person.mesh.uuid,
+      speedMps: Number(person.speed.toFixed(2)),
+      initialS: Number(s.toFixed(2)),
+      launchDistanceM: Number(Math.hypot(pose.x - launch.x, pose.z - launch.z).toFixed(2)),
+      position: { x: Number(pose.x.toFixed(2)), z: Number(pose.z.toFixed(2)) },
+      insideBuilding: stagedPedestrianBuildingCheck(pose),
+      // Exact OSM geometry facts rather than claims inferred from the shader:
+      // a footway path class and inclusion in the hero's active land region.
+      sourcePathIsVehicular: false,
+      insideActiveLandRegion: pointInRegion(pose),
+      person,
+    });
+  }
+  const minimumSpacing = staged.reduce((minimum, entry, index) => {
+    for (let other = index + 1; other < staged.length; other += 1) {
+      const distance = Math.hypot(
+        entry.position.x - staged[other].position.x,
+        entry.position.z - staged[other].position.z,
+      );
+      minimum = Math.min(minimum, distance);
+    }
+    return minimum;
+  }, Infinity);
+  heroPedestrianStaging = {
+    pathIds: [...new Set(staged.map(({ sourceRoadId }) => sourceRoadId))],
+    sourceHighways: [...new Set(staged.map(({ sourceHighway }) => sourceHighway))],
+    pathLengthM: Object.fromEntries(assignments.map(({ path }) => [path.sourceRoadId, Number(path.length.toFixed(2))])),
+    staged,
+    initialMinimumSpacingM: Number(minimumSpacing.toFixed(2)),
+    createdAt: performance.now(),
+  };
+  return heroPedestrianStaging;
+}
+
+function getHeroPedestrianScreenGate() {
+  if (!camera || !heroPedestrianStaging || !heroLifeLighting) return { active: false, passed: false, adults: [] };
+  camera.updateMatrixWorld();
+  const stats = heroLifeLighting.getStats();
+  const detailed = new Set((stats.detailAssignments || []).map(({ sourceUuid }) => sourceUuid));
+  const project = (position) => position.clone().project(camera);
+  const heroRoot = heroCharacter?.root || playerAvatarGroup;
+  const heroBase = heroRoot?.getWorldPosition?.(new THREE.Vector3()) || null;
+  const heroFoot = heroBase ? project(heroBase) : null;
+  const heroHead = heroBase ? project(heroBase.clone().add(new THREE.Vector3(0, 1.72, 0))) : null;
+  const heroRect = heroFoot && heroHead ? {
+    left: Math.min(heroFoot.x, heroHead.x) - 0.07,
+    right: Math.max(heroFoot.x, heroHead.x) + 0.07,
+    bottom: Math.min(heroFoot.y, heroHead.y),
+    top: Math.max(heroFoot.y, heroHead.y),
+  } : null;
+  const adults = heroPedestrianStaging.staged.map((entry) => {
+    const foot = entry.person.mesh.getWorldPosition(new THREE.Vector3());
+    const footNdc = project(foot);
+    const headNdc = project(foot.clone().add(new THREE.Vector3(0, 1.68, 0)));
+    const height = Math.abs(headNdc.y - footNdc.y);
+    const width = Math.max(0.025, height * 0.16);
+    const rect = {
+      left: footNdc.x - width,
+      right: footNdc.x + width,
+      bottom: Math.min(footNdc.y, headNdc.y),
+      top: Math.max(footNdc.y, headNdc.y),
+    };
+    const fullyInside = footNdc.z >= -1 && footNdc.z <= 1
+      && rect.left >= -0.75 && rect.right <= 0.75 && rect.bottom >= -0.9 && rect.top <= 0.9;
+    const overlapsHero = heroRect && rect.left < heroRect.right && rect.right > heroRect.left
+      && rect.bottom < heroRect.top && rect.top > heroRect.bottom;
+    return {
+      sourceUuid: entry.sourceUuid,
+      detailed: detailed.has(entry.sourceUuid),
+      ndc: [Number(footNdc.x.toFixed(3)), Number(footNdc.y.toFixed(3)), Number(footNdc.z.toFixed(3))],
+      projectedHeight: Number(height.toFixed(3)),
+      fullyInside,
+      overlapsHero,
+      readable: fullyInside && height >= 0.075 && !overlapsHero,
+      rect,
+    };
+  });
+  const readableDetailed = adults.filter(({ detailed: isDetailed, readable }) => isDetailed && readable);
+  // Extra adults may legitimately pass behind a readable trio. The gate asks
+  // for one non-overlapping set of three, rather than incorrectly rejecting a
+  // frame because a fourth adult shares part of that depth lane.
+  const separatedReadable = [];
+  for (const adult of readableDetailed) {
+    const [x1, y1] = adult.ndc;
+    if (separatedReadable.every(({ ndc: [x2, y2] }) => Math.hypot(x1 - x2, y1 - y2) >= 0.12)) {
+      separatedReadable.push(adult);
+    }
+  }
+  const pairwiseSeparated = separatedReadable.length >= 3;
+  return {
+    active: true,
+    cameraArmM: heroCameraController?.diagnostics?.armDistance ?? null,
+    heroRect,
+    adults,
+    readableDetailedCount: readableDetailed.length,
+    separatedReadableSourceUuids: separatedReadable.map(({ sourceUuid }) => sourceUuid),
+    pairwiseSeparated,
+    passed: readableDetailed.length >= 3 && pairwiseSeparated,
+  };
+}
+
+function getHeroPedestrianStagingDiagnostics() {
+  if (!heroPedestrianStaging) return {
+    active: false,
+    stagedCount: 0,
+    requiredMinimumSpacingM: FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M,
+  };
+  const launch = FERRY_HERO_PLAZA_LAUNCH;
+  const current = heroPedestrianStaging.staged.map((entry) => {
+    const mesh = entry.person.mesh;
+    return {
+      sourceRoadId: entry.sourceRoadId,
+      sourceHighway: entry.sourceHighway,
+      sourceSurface: entry.sourceSurface,
+      nativePedestrianPath: entry.nativePedestrianPath,
+      lateralOffsetM: entry.lateralOffsetM,
+      withinSourceWalkwayEnvelope: entry.withinSourceWalkwayEnvelope,
+      reverse: entry.reverse,
+      sourceUuid: entry.sourceUuid,
+      speedMps: entry.speedMps,
+      position: { x: Number(mesh.position.x.toFixed(2)), z: Number(mesh.position.z.toFixed(2)) },
+      launchDistanceM: Number(Math.hypot(mesh.position.x - launch.x, mesh.position.z - launch.z).toFixed(2)),
+      initialLaunchDistanceM: entry.launchDistanceM,
+      driftM: Number(Math.hypot(mesh.position.x - entry.position.x, mesh.position.z - entry.position.z).toFixed(2)),
+      insideBuilding: entry.insideBuilding,
+      sourcePathIsVehicular: entry.sourcePathIsVehicular,
+      insideActiveLandRegion: entry.insideActiveLandRegion,
+    };
+  });
+  let minimumSpacing = Infinity;
+  for (let index = 0; index < current.length; index += 1) {
+    for (let other = index + 1; other < current.length; other += 1) {
+      minimumSpacing = Math.min(minimumSpacing, Math.hypot(
+        current[index].position.x - current[other].position.x,
+        current[index].position.z - current[other].position.z,
+      ));
+    }
+  }
+  const sourcePathIds = [...new Set(current.map(({ sourceRoadId }) => sourceRoadId))];
+  const sourceUuids = current.map(({ sourceUuid }) => sourceUuid);
+  const cameraDistances = current.map(({ position }) => (camera
+    ? Math.hypot(position.x - camera.position.x, position.z - camera.position.z)
+    : null));
+  return {
+    active: true,
+    stagedCount: current.length,
+    sourcePathIds,
+    sourceRoadIds: sourcePathIds,
+    sourceUuids,
+    sourceUuidUnique: new Set(sourceUuids).size === sourceUuids.length,
+    sourceHighways: [...heroPedestrianStaging.sourceHighways],
+    pathLengthM: heroPedestrianStaging.pathLengthM,
+    requiredMinimumSpacingM: FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M,
+    initialMinimumSpacingM: heroPedestrianStaging.initialMinimumSpacingM,
+    minimumSpacingM: Number(minimumSpacing.toFixed(2)),
+    spacingPass: minimumSpacing >= FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M,
+    launchDistanceBandM: {
+      min: Math.min(...current.map(({ initialLaunchDistanceM }) => initialLaunchDistanceM)),
+      max: Math.max(...current.map(({ initialLaunchDistanceM }) => initialLaunchDistanceM)),
+    },
+    cameraExclusionRadiusM: HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS,
+    heroExclusionRadiusM: 2.35,
+    cameraDistancesM: cameraDistances.map((distance) => distance == null ? null : Number(distance.toFixed(2))),
+    cameraReadableAdults: cameraDistances.filter((distance) => distance >= 8 && distance <= 18).length,
+    sourceFootwayOnly: current.every(({ sourceHighway, sourcePathIsVehicular }) => (
+      (sourceHighway === 'footway' || sourceHighway === 'pedestrian') && !sourcePathIsVehicular
+    )),
+    sourceWalkwaySurfaceClear: current.every(({ sourceSurface }) => sourceSurface !== 'asphalt'),
+    sourceWalkwayEnvelopeClear: current.every(({ withinSourceWalkwayEnvelope }) => withinSourceWalkwayEnvelope),
+    buildingClear: current.every(({ insideBuilding }) => !insideBuilding),
+    activeLandRegionClear: current.every(({ insideActiveLandRegion }) => insideActiveLandRegion),
+    screenSpace: getHeroPedestrianScreenGate(),
+    current,
+  };
 }
 
 function pointAlongPath(points, s) {
@@ -7984,6 +8288,7 @@ function createPedestrianSystem(roads) {
       story,
     });
   }
+  stageFerryHeroPedestrians(paths);
 }
 
 function updatePedestrians(dt) {
@@ -9000,17 +9305,28 @@ function initializeHeroLifeLighting() {
   if (!activeHeroTile || !cityRoot || !pedestrianState.length) return null;
   const focusX = playerState?.x ?? activeHeroTile.spawn.x;
   const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
-  const pedestrians = pedestrianState.slice()
+  const stagedPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
+  const stagedSet = new Set(stagedPeople);
+  const pedestrians = (stagedPeople.length ? stagedPeople : pedestrianState.slice())
     .sort((first, second) => (
-      Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
-      - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
+      (stagedSet.has(second) ? 1 : 0) - (stagedSet.has(first) ? 1 : 0)
+      || Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
+        - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
     ))
     .slice(0, FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT);
-  heroLifeLightingSources = pedestrians.map(({ mesh }) => ({ source: mesh, visible: mesh.visible }));
+  // Ferry staging deliberately owns the visible close crowd. The remaining
+  // simulated pedestrians keep walking, but their primitive source meshes are
+  // hidden while the bounded renderer prevents duplicates/thought UI nearby.
+  const sourceRecords = stagedPeople.length ? pedestrianState : pedestrians;
+  heroLifeLightingSources = sourceRecords.map(({ mesh }) => ({ source: mesh, visible: mesh.visible }));
   heroLifeLightingLifecycle = null;
   heroLifeLighting = createHeroLifeLighting({
     scene: cityRoot,
     maxPedestrians: FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT,
+    // The staged Ferry close pass is intentionally seven sources wide. Give
+    // each source a player-grade actor so no low-detail silhouette can split
+    // the composition; other hero callers retain the four-rig default.
+    maxDetailedActors: stagedPeople.length || undefined,
     cameraExclusionRadius: HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS,
     replaceSources: true,
     conditions: heroLifeLightingConditions(),
@@ -9065,12 +9381,21 @@ function getHeroLifeLightingDiagnostics() {
     pointLights += 1;
     if (object.castShadow) shadowCastingPointLights += 1;
   });
+  const stagedSourceUuids = heroPedestrianStaging?.staged.map(({ sourceUuid }) => sourceUuid) || [];
+  const stagedSourceSet = new Set(stagedSourceUuids);
+  const detailedStagedSourceUuids = (stats?.detailAssignments || [])
+    .map(({ sourceUuid }) => sourceUuid)
+    .filter((sourceUuid) => stagedSourceSet.has(sourceUuid));
   return {
     active: Boolean(heroLifeLighting),
     tileId: activeHeroTile?.id || null,
     attached: Boolean(heroLifeLighting?.group.parent),
     stats: stats || null,
     sourcePedestrians: heroLifeLightingSources.length,
+    stagedSourceUuids,
+    stagedSourcesAttached: heroLifeLightingSources.filter(({ source }) => stagedSourceSet.has(source.uuid)).length,
+    detailedStagedSourceUuids,
+    detailedStagedSourceUnique: new Set(detailedStagedSourceUuids).size === detailedStagedSourceUuids.length,
     hiddenSourcePedestrians: heroLifeLightingSources.filter(({ source }) => !source.visible).length,
     effectiveThoughtBubbles: heroLifeLightingSources.reduce((total, { source }) => {
       let visible = 0;
@@ -11623,6 +11948,7 @@ function start() {
       heroStreetscape: getHeroStreetscapeDiagnostics(),
       heroTrafficVisuals: getHeroTrafficVisualDiagnostics(),
       heroLifeLighting: getHeroLifeLightingDiagnostics(),
+      heroPedestrianStaging: getHeroPedestrianStagingDiagnostics(),
       heroLandmark: getHeroLandmarkDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
@@ -11838,6 +12164,7 @@ function start() {
     getHeroStreetscape: () => getHeroStreetscapeDiagnostics(),
     getHeroTrafficVisuals: () => getHeroTrafficVisualDiagnostics(),
     getHeroLandmark: () => getHeroLandmarkDiagnostics(),
+    getHeroPedestrianStaging: () => getHeroPedestrianStagingDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
