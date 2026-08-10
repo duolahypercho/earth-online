@@ -406,6 +406,7 @@ const STREET_HEAT_PURSUIT_COOL_RATE = 6.2;
 const STREET_HEAT_COMBAT_HOLD_SECONDS = 2.8;
 const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
+const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
 
 function formatHeat(value) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
@@ -433,6 +434,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     targetPosition: null,
     responderId: null,
     responderDistance: null,
+    responderContacts: 0,
     nearestDistance: null,
     nearMisses: 0,
     safeElapsed: 0,
@@ -533,6 +535,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     }
     if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
       state.pursuitActive = true;
+      state.responderContacts = 0;
       state.targetId = null;
       state.targetPosition = null;
       state.safeElapsed = 0;
@@ -555,6 +558,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.targetPosition = null;
     state.responderId = null;
     state.responderDistance = null;
+    state.responderContacts = 0;
     state.nearestDistance = null;
     state.nearMisses = 0;
     state.safeElapsed = 0;
@@ -688,6 +692,19 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.responderDistance = null;
     }
 
+    if (state.pursuitActive
+      && state.responderContacts === 0
+      && state.responderDistance !== null
+      && state.responderDistance <= STREET_HEAT_RESPONDER_CONTACT_RADIUS) {
+      state.responderContacts = 1;
+      emitEvent(
+        'responder-contact',
+        latestDriving
+          ? 'Responder contact · vehicle integrity hit.'
+          : 'Responder contact · you took damage.',
+      );
+    }
+
     const speedRisk = latestDriving
       ? THREE.MathUtils.clamp(
         (latestSpeed - STREET_HEAT_SPEED_THRESHOLD) / 4.8,
@@ -723,6 +740,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
 
     if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
       state.pursuitActive = true;
+      state.responderContacts = 0;
       state.targetId = null;
       state.targetPosition = null;
       state.responderId = null;
@@ -761,6 +779,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.targetPosition = null;
       state.responderId = null;
       state.responderDistance = null;
+      state.responderContacts = 0;
       state.safeElapsed = 0;
       state.heat = 0;
       emitEvent('escaped', 'Tail lost · clean getaway +420', 420);
@@ -812,6 +831,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       responderDistance: state.responderDistance === null
         ? null
         : Math.round(state.responderDistance * 10) / 10,
+      responderContacts: state.responderContacts,
       nearestDistance: state.nearestDistance,
       nearMisses: state.nearMisses,
       combatHold: Math.round(state.combatHold * 10) / 10,

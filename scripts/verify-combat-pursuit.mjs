@@ -253,6 +253,31 @@ try {
   assert(pursuit.life?.action?.key === 'pursuit-responder', 'responder action is not exposed', pursuit.life);
   assert(pursuit.life?.indicators?.hazard === true, 'responder hazard indicator is not active', pursuit.life);
 
+  await page.evaluate((position) => {
+    window.__SF_SIM__.setRoamPose({ x: position.x, z: position.z });
+  }, pursuit.responder.position);
+  await page.waitForFunction(
+    () => {
+      const sim = window.__SF_SIM__;
+      return sim.getStreetHeatState?.().responderContacts === 1
+        && sim.getCombatState?.().health < sim.getCombatState?.().maxHealth;
+    },
+    null,
+    { timeout: 4000, polling: 50 },
+  );
+  const responderContact = await page.evaluate(() => ({
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    audio: window.__SF_SIM__.getCombatAudioState?.(),
+  }));
+  assert(responderContact.heat?.responderContacts === 1
+    && responderContact.heat?.lastEvent?.kind === 'responder-contact',
+  'live responder contact did not register once on StreetHeat', responderContact.heat);
+  assert(responderContact.combat?.health === 82,
+    'live on-foot responder contact did not apply bounded combat damage', responderContact.combat);
+  assert((responderContact.audio?.cueCounts?.damage ?? 0) === 1,
+    'responder contact did not use the combat damage audio path', responderContact.audio);
+
   const reload = await page.evaluate(async () => {
     const sim = window.__SF_SIM__;
     const started = sim.reloadCombat();
@@ -291,7 +316,7 @@ try {
     'lethal damage did not enter the downed state', recovery.downed);
   assert(recovery.revived?.status === 'running' && recovery.revived?.health === 58,
     'downed player did not revive through the real update loop', recovery.revived);
-  assert((recovery.audio?.cueCounts?.damage ?? 0) === 1
+  assert((recovery.audio?.cueCounts?.damage ?? 0) === 2
     && (recovery.audio?.cueCounts?.downed ?? 0) === 1
     && (recovery.audio?.cueCounts?.revive ?? 0) === 1,
   'combat audio recovery hooks did not cover damage/downed/revive', recovery.audio);
@@ -339,10 +364,80 @@ try {
   }, responderId);
   assert(escaped.heat?.pursuitActive === false, 'escape did not clear pursuitActive', escaped.heat);
   assert(escaped.heat?.lastEvent?.kind === 'escaped', 'escape event was not emitted', escaped.heat);
+  assert(escaped.heat?.responderContacts === 0,
+    'escape did not reset the responder contact latch', escaped.heat);
   assert(escaped.responder?.active === false && escaped.responder.id === null,
     'responder did not clear after escape', escaped.responder);
   assert(escaped.life?.pursuit === null, 'ordinary traffic still exposes pursuit metadata', escaped.life);
   assert(escaped.life?.action?.key !== 'pursuit-responder', 'ordinary traffic action remained responder', escaped.life);
+
+  const secondPursuitSetup = await page.evaluate(async (previousTargetId) => {
+    const sim = window.__SF_SIM__;
+    const snapshot = sim.traffic.getVehicleLifeSnapshot();
+    const candidate = snapshot.vehicles.find((vehicle) => (
+      vehicle.visible
+      && vehicle.id !== previousTargetId
+      && vehicle.class !== 'bike'
+      && sim.traffic.group.children[vehicle.id]?.userData?.combatDisabled !== true
+    ));
+    if (!candidate) throw new Error('no second visible traffic target for repeated pursuit smoke');
+    const root = sim.traffic.group.children[candidate.id];
+    const player = {
+      x: root.position.x - Math.sin(root.rotation.y) * 8,
+      z: root.position.z - Math.cos(root.rotation.y) * 8,
+    };
+    sim.setRoamPose(player);
+    sim.setCombatAim(true);
+    const shots = [];
+    for (let index = 0; index < 4; index += 1) {
+      if (index > 0) await new Promise((resolve) => window.setTimeout(resolve, 240));
+      sim.camera.position.set(player.x, root.position.y + 1.6, player.z);
+      sim.camera.lookAt(root.position.x, root.position.y + 0.82, root.position.z);
+      sim.camera.updateMatrixWorld(true);
+      shots.push(sim.fireCombat());
+    }
+    return { id: candidate.id, player, shots, health: sim.getCombatState().health };
+  }, setup.id);
+  assert(secondPursuitSetup.shots.filter((shot) => shot.hit).length >= 3,
+    'second real combat incident did not register enough hits', secondPursuitSetup);
+  await page.waitForFunction(
+    () => {
+      const sim = window.__SF_SIM__;
+      const heat = sim.getStreetHeatState?.();
+      const responder = sim.traffic.getPursuitResponder?.();
+      return heat?.pursuitActive === true
+        && heat?.responderContacts === 0
+        && responder?.active === true
+        && Number.isFinite(responder.position?.x)
+        && Number.isFinite(responder.position?.z);
+    },
+    null,
+    { timeout: 5000, polling: 50 },
+  );
+  const secondResponder = await page.evaluate(() => window.__SF_SIM__.traffic.getPursuitResponder());
+  await page.evaluate((position) => {
+    window.__SF_SIM__.setRoamPose({ x: position.x, z: position.z });
+  }, secondResponder.position);
+  await page.waitForFunction(
+    () => {
+      const sim = window.__SF_SIM__;
+      return sim.getStreetHeatState?.().responderContacts === 1;
+    },
+    null,
+    { timeout: 4000, polling: 50 },
+  );
+  const secondResponderContact = await page.evaluate(() => ({
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    audio: window.__SF_SIM__.getCombatAudioState?.(),
+  }));
+  assert(secondResponderContact.heat?.lastEvent?.kind === 'responder-contact'
+    && secondResponderContact.heat?.responderContacts === 1,
+  'second pursuit did not emit a fresh responder contact', secondResponderContact.heat);
+  assert(secondResponderContact.combat?.health === secondPursuitSetup.health - 18,
+    'second pursuit contact did not apply a second bounded damage consequence', secondResponderContact.combat);
+  assert((secondResponderContact.audio?.cueCounts?.damage ?? 0) === 3,
+    'second pursuit contact did not reuse the combat damage audio path', secondResponderContact.audio);
 
   const minimumDiagnosticMs = 30000;
   const remainingMs = Math.max(0, minimumDiagnosticMs - (Date.now() - perfStartedAt));
@@ -374,7 +469,10 @@ try {
     reload,
     recovery,
     pursuit,
+    responderContact,
     escaped,
+    secondPursuitSetup,
+    secondResponderContact,
     performance: {
       wallClockMs: Date.now() - perfStartedAt,
       frameCountDelta: perfFrameStart === null || perfFrameEnd === null

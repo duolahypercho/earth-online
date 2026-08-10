@@ -1871,7 +1871,14 @@ streetHeat = createStreetHeat({
   // dependency.
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
-  onEvent: ({ message, score }) => {
+  onEvent: ({ kind, message, score }) => {
+    if (kind === 'responder-contact') {
+      if (traffic.isPlayerDriving?.()) {
+        traffic.damagePlayerVehicle?.(22, 'pursuit-contact');
+      } else {
+        combat?.damagePlayer?.(18, 'pursuit-contact');
+      }
+    }
     if (score) cityShift?.awardBonus?.(score);
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);
