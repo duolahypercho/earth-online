@@ -10,14 +10,18 @@ export const FERRY_BUILDING_LANDMARK_SOURCE = Object.freeze({
 });
 
 export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
-  maxDrawCalls: 25,
+  // Shell + seven instanced passes + the tower roof. Leave enough headroom
+  // for a future authored repair, but keep this hero asset decisively cheap.
+  maxDrawCalls: 12,
   maxTriangles: 12000,
   maxInstances: 240,
 });
 
-const MAX_DELTA_SECONDS = 1 / 20;
 const EPSILON = 0.08;
 const FERRY_CLOCK_TOWER_HEIGHT_METRES = 74;
+// The clock tower is the presentation anchor captured from the shipped OSM
+// world tile. Its Y coordinate is the sampled ground elevation plus baseLift.
+export const FERRY_CLOCK_TOWER_ANCHOR = Object.freeze([2281.5306, 1.88, 1936.6459]);
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -135,12 +139,21 @@ function boxMatrix(matrix, frame, along, across, y, length, height, width, yaw =
 
 function createMaterials() {
   return {
-    sandstone: new THREE.MeshStandardMaterial({ color: 0xb89c72, roughness: 0.74, metalness: 0.03 }),
-    stoneShadow: new THREE.MeshStandardMaterial({ color: 0x745b42, roughness: 0.8, metalness: 0.02 }),
-    roof: new THREE.MeshStandardMaterial({ color: 0x576064, roughness: 0.71, metalness: 0.31 }),
-    glass: new THREE.MeshPhysicalMaterial({ color: 0x2d4850, roughness: 0.2, metalness: 0.18, clearcoat: 0.2, transparent: true, opacity: 0.92 }),
-    clock: new THREE.MeshStandardMaterial({ color: 0xefdfb4, roughness: 0.48, metalness: 0.08, emissive: 0x483a1d, emissiveIntensity: 0.12 }),
-    clockHand: new THREE.MeshStandardMaterial({ color: 0x1b2528, roughness: 0.42, metalness: 0.62 }),
+    // Ferry Building reads as sun-aged masonry rather than a saturated game
+    // prop: the base is warmer, while ledges and the tower catch more light.
+    sandstone: new THREE.MeshStandardMaterial({ color: 0xa98c67, roughness: 0.86, metalness: 0.0 }),
+    stoneShadow: new THREE.MeshStandardMaterial({ color: 0x66513d, roughness: 0.9, metalness: 0.0 }),
+    trimStone: new THREE.MeshStandardMaterial({ color: 0xc6ab83, roughness: 0.8, metalness: 0.0 }),
+    towerStone: new THREE.MeshStandardMaterial({ color: 0xbba17b, roughness: 0.82, metalness: 0.0 }),
+    // A weathered, low-sheen roof catches broad daylight without reading as
+    // chrome. The small metal component is for its seams, not a mirror gloss.
+    roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
+    // Opaque recessed glazing gives daylight reflection and interior depth
+    // without the bright, emissive-looking repeated-window grid.
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x16272c, roughness: 0.48, metalness: 0.04, clearcoat: 0.08, transparent: false }),
+    mullion: new THREE.MeshStandardMaterial({ color: 0x3e362d, roughness: 0.68, metalness: 0.18 }),
+    clock: new THREE.MeshStandardMaterial({ color: 0xd8c99f, roughness: 0.68, metalness: 0.02, emissive: 0x000000, emissiveIntensity: 0 }),
+    clockHand: new THREE.MeshStandardMaterial({ color: 0x202b2d, roughness: 0.5, metalness: 0.38 }),
   };
 }
 
@@ -222,8 +235,14 @@ export function createFerryBuildingLandmark(options = {}) {
   // The Market Street axis crosses the source footprint near its oriented
   // centre, not at either terminal end. The oriented-bounds midpoint is the
   // deterministic footprint-only equivalent of that source-road intersection.
-  const towerAlong = (frame.minAlong + frame.maxAlong) * 0.5;
-  const towerAcross = (frame.minAcross + frame.maxAcross) * 0.5;
+  // Preserve the known OSM-world tower position instead of allowing minor
+  // footprint simplification differences to make its skyline anchor drift.
+  const canonicalTowerOffset = new THREE.Vector2(
+    FERRY_CLOCK_TOWER_ANCHOR[0] - frame.center.x,
+    FERRY_CLOCK_TOWER_ANCHOR[2] - frame.center.y,
+  );
+  const towerAlong = canonicalTowerOffset.dot(frame.along);
+  const towerAcross = canonicalTowerOffset.dot(frame.across);
   const towerAnchor = localToWorld(frame, towerAlong, towerAcross, baseY);
   const materials = createMaterials();
   const root = new THREE.Group();
@@ -248,12 +267,13 @@ export function createFerryBuildingLandmark(options = {}) {
     makeBatch(root, 'Ferry Building roof masses', cube, materials.roof, 4),
     makeBatch(root, 'Ferry Building arcade piers', cube, materials.stoneShadow, 72),
     makeBatch(root, 'Ferry Building deep window bays', cube, materials.glass, 84),
-    makeBatch(root, 'Ferry Building cornices and awnings', cube, materials.sandstone, 48),
-    makeBatch(root, 'Ferry Building clock tower tiers', cube, materials.sandstone, 8),
+    makeBatch(root, 'Ferry Building masonry courses and awnings', cube, materials.trimStone, 32),
+    makeBatch(root, 'Ferry Building window mullions', cube, materials.mullion, 72),
+    makeBatch(root, 'Ferry Building clock tower tiers', cube, materials.towerStone, 8),
     makeBatch(root, 'Ferry Building clock faces', clockDisc, materials.clock, 4),
     makeBatch(root, 'Ferry Building clock hands', cube, materials.clockHand, 8),
   ];
-  const [roof, pier, windowBay, cornice, tower, clockFace, clockHands] = batches;
+  const [roof, pier, windowBay, cornice, mullion, tower, clockFace, clockHands] = batches;
   const matrix = new THREE.Matrix4();
 
   // A stepped roof and continuous cornice break the old monolithic slab into
@@ -262,6 +282,10 @@ export function createFerryBuildingLandmark(options = {}) {
   put(roof, boxMatrix(matrix, frame, hallCenterAlong + hallLength * 0.21, 0, baseY + hallHeight + 1.48, hallLength * 0.46, 0.42, hallWidth * 0.48));
   for (const side of [-1, 1]) {
     put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.12), baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34));
+    // Long unbroken courses give the facade a believable floor hierarchy;
+    // they replace the former repeated lintel strips at every other bay.
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.15), baseY + hallHeight * 0.67, hallLength * 0.985, 0.18, 0.18));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.15), baseY + hallHeight * 0.26, hallLength * 0.985, 0.14, 0.18));
   }
   put(cornice, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + 1.0, hallLength + 0.25, 0.45, hallWidth + 0.2));
 
@@ -271,14 +295,16 @@ export function createFerryBuildingLandmark(options = {}) {
     const across = side * (hallWidth * 0.5 + 0.13);
     for (let index = 0; index < bayCount; index += 1) {
       const along = hallCenterAlong - hallLength * 0.5 + baySpacing * (index + 0.5);
-      put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.66, hallHeight * 0.54, 0.11));
+      put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.64, hallHeight * 0.50, 0.18));
       put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.42, across + side * 0.16, baseY + hallHeight * 0.48, 0.34, hallHeight * 0.85, 0.36));
-      if (index % 2 === 0) put(cornice, boxMatrix(matrix, frame, along, across + side * 0.17, baseY + hallHeight * 0.73, baySpacing * 0.82, 0.17, 0.22));
+      // One central bronze mullion per bay makes the glazing legible at
+      // street distance without turning it into a luminous tiled facade.
+      put(mullion, boxMatrix(matrix, frame, along, across + side * 0.11, baseY + hallHeight * 0.47, 0.12, hallHeight * 0.49, 0.12));
     }
   }
 
-  // Market Street axis: a heavier arcade and a deliberately oversized,
-  // clocked campanile make the landmark legible before facade detail resolves.
+  // Market Street axis: a heavier arcade and a clocked campanile make the
+  // landmark legible before facade detail resolves.
   const entranceAcross = towerAcross;
   for (const offset of [-hallWidth * 0.3, 0, hallWidth * 0.3]) {
     put(windowBay, boxMatrix(matrix, frame, towerAlong - 1.4, offset, baseY + hallHeight * 0.37, 0.12, hallHeight * 0.55, hallWidth * 0.21));
@@ -334,14 +360,11 @@ export function createFerryBuildingLandmark(options = {}) {
   const sourceMesh = options.sourceMesh?.isObject3D && sourceRenderMatches(options.sourceMesh) ? options.sourceMesh : null;
   const originalSourceVisibility = sourceMesh?.visible;
   if (sourceMesh) sourceMesh.visible = false;
-  let elapsed = 0;
   let disposed = false;
-  function update(deltaSeconds = 0) {
+  function update() {
     if (disposed) return;
-    elapsed += clamp(Number(deltaSeconds) || 0, 0, MAX_DELTA_SECONDS);
-    // Preserve fixed clock geometry while lending a subtle, material-only
-    // nighttime read to its faces; this never allocates or changes draw calls.
-    materials.clock.emissiveIntensity = 0.11 + Math.sin(elapsed * 0.32) * 0.015;
+    // Materials deliberately stay passive: the landmark has no emissive
+    // clock pulse. Keep this method for the streaming lifecycle contract.
   }
   function dispose() {
     if (disposed) return;
