@@ -1,0 +1,364 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-parent-raster-engineering-preview",
+  "status": "preview-artifact-not-for-runtime-or-manifest-promotion",
+  "id": "sf-ferry-3dep-2x2-parent-preview-v1",
+  "previewOnly": true,
+  "relationship": {
+    "regionId": "sf-ferry-building-hero",
+    "requestedCoverageSource": "sf-ferry-3dep-2023.requestedCoverageWgs84",
+    "plannedCoverage": "2x2",
+    "runtimePlacement": "none",
+    "manifestPromotion": "prohibited"
+  },
+  "source": {
+    "rawGeoTiff": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+    "lockedRawSha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+    "actualRawSha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+    "sourceLockSha256": "3751942da71cf0714827f809803ffb44dc1143430e350f8d0b1bd23da6da651b",
+    "sourceBytes": 86461076,
+    "rawFileSizeChecked": true,
+    "rawHashVerifiedBeforeWindowRead": true,
+    "rawHashBytesRead": 86461076,
+    "reader": {
+      "version": "1.0.0",
+      "boundedRead": true,
+      "metadataBytesRead": 3588,
+      "exactCompressedTileBytesRead": 2738595,
+      "totalBytesRead": 2742183,
+      "tileIndices": [
+        245,
+        246,
+        247,
+        265,
+        266,
+        267
+      ],
+      "tileCoordinates": [
+        {
+          "index": 245,
+          "column": 5,
+          "row": 12
+        },
+        {
+          "index": 246,
+          "column": 6,
+          "row": 12
+        },
+        {
+          "index": 247,
+          "column": 7,
+          "row": 12
+        },
+        {
+          "index": 265,
+          "column": 5,
+          "row": 13
+        },
+        {
+          "index": 266,
+          "column": 6,
+          "row": 13
+        },
+        {
+          "index": 267,
+          "column": 7,
+          "row": 13
+        }
+      ]
+    }
+  },
+  "horizontalReference": {
+    "lock": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+    "lockSha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+    "operation": "Inverse of NAD83 to WGS 84 (1) + UTM zone 10N",
+    "accuracyMetres": 4,
+    "targetCrs": "EPSG:26910",
+    "realization": "not claimed",
+    "coordinateEpoch": "not claimed",
+    "subMetreClaim": false
+  },
+  "verticalDatumUnresolved": true,
+  "verticalReference": {
+    "sourceMetadataDeclaration": "NAVD88",
+    "embeddedTiffGeoKeys": "absent",
+    "geoidOrVerticalCrs": "not resolved"
+  },
+  "requestedCoverage": {
+    "wgs84Bounds": [
+      -122.3977602545,
+      37.7917464503,
+      -122.3886679245,
+      37.7989814242
+    ],
+    "projectedCorners": [
+      {
+        "id": "southwest",
+        "lonLatDegrees": [
+          -122.3977602545,
+          37.7917464503
+        ],
+        "enMetres": [
+          553024.4613202673,
+          4182880.0375314374
+        ]
+      },
+      {
+        "id": "southeast",
+        "lonLatDegrees": [
+          -122.3886679245,
+          37.7917464503
+        ],
+        "enMetres": [
+          553825.0070702801,
+          4182885.2330551664
+        ]
+      },
+      {
+        "id": "northwest",
+        "lonLatDegrees": [
+          -122.3977602545,
+          37.7989814242
+        ],
+        "enMetres": [
+          553019.2903085853,
+          4183682.756091124
+        ]
+      },
+      {
+        "id": "northeast",
+        "lonLatDegrees": [
+          -122.3886679245,
+          37.7989814242
+        ],
+        "enMetres": [
+          553819.7579809707,
+          4183687.951954046
+        ]
+      }
+    ],
+    "projectedEnvelopeMetres": [
+      553019.2903085853,
+      4182880.0375314374,
+      553825.0070702801,
+      4183687.951954046
+    ],
+    "nativePixelGuard": 1
+  },
+  "raster": {
+    "sampleEncoding": "float32-le",
+    "serialization": "explicit Buffer.writeFloatLE per sample; host-endian independent",
+    "samplesPerPixel": 1,
+    "interpolation": "none; direct native samples",
+    "nodata": -999999,
+    "dimensionsPixels": [
+      809,
+      810
+    ],
+    "sampleCount": 655290,
+    "byteLength": 2621160,
+    "sha256": "4975b5f6542d0ff87af840d04cfaf25ab08398889da441efb043b0fae4fafcdc",
+    "nativePixelWindow": {
+      "column": 3024,
+      "row": 6317,
+      "width": 809,
+      "height": 810
+    },
+    "affine": {
+      "coefficients": [
+        1,
+        0,
+        549993.9999840065,
+        0,
+        -1,
+        4190005.9999845778
+      ],
+      "rasterType": "PixelIsArea",
+      "modelBoundsAtPixelIsAreaEdges": [
+        553017.9999840065,
+        4182878.9999845778,
+        553826.9999840065,
+        4183688.9999845778
+      ]
+    },
+    "statistics": {
+      "nodataCount": 5577,
+      "validSampleCount": 649713,
+      "minMetres": -2.4253437519073486,
+      "maxMetres": 8.22260856628418
+    }
+  },
+  "childViews": [
+    {
+      "id": "northwest",
+      "gridIndex": [
+        0,
+        0
+      ],
+      "column": 0,
+      "row": 0,
+      "width": 405,
+      "height": 405,
+      "parentBuffer": {
+        "sampleOffset": [
+          0,
+          0
+        ],
+        "rowStrideSamples": 809,
+        "sampleEncoding": "float32-le"
+      },
+      "sourcePixelWindow": {
+        "column": 3024,
+        "row": 6317,
+        "width": 405,
+        "height": 405
+      }
+    },
+    {
+      "id": "northeast",
+      "gridIndex": [
+        1,
+        0
+      ],
+      "column": 404,
+      "row": 0,
+      "width": 405,
+      "height": 405,
+      "parentBuffer": {
+        "sampleOffset": [
+          404,
+          0
+        ],
+        "rowStrideSamples": 809,
+        "sampleEncoding": "float32-le"
+      },
+      "sourcePixelWindow": {
+        "column": 3428,
+        "row": 6317,
+        "width": 405,
+        "height": 405
+      }
+    },
+    {
+      "id": "southwest",
+      "gridIndex": [
+        0,
+        1
+      ],
+      "column": 0,
+      "row": 404,
+      "width": 405,
+      "height": 406,
+      "parentBuffer": {
+        "sampleOffset": [
+          0,
+          404
+        ],
+        "rowStrideSamples": 809,
+        "sampleEncoding": "float32-le"
+      },
+      "sourcePixelWindow": {
+        "column": 3024,
+        "row": 6721,
+        "width": 405,
+        "height": 406
+      }
+    },
+    {
+      "id": "southeast",
+      "gridIndex": [
+        1,
+        1
+      ],
+      "column": 404,
+      "row": 404,
+      "width": 405,
+      "height": 406,
+      "parentBuffer": {
+        "sampleOffset": [
+          404,
+          404
+        ],
+        "rowStrideSamples": 809,
+        "sampleEncoding": "float32-le"
+      },
+      "sourcePixelWindow": {
+        "column": 3428,
+        "row": 6721,
+        "width": 405,
+        "height": 406
+      }
+    }
+  ],
+  "sharedBoundaryProof": [
+    {
+      "id": "north-west-east-seam",
+      "childViews": [
+        "northwest",
+        "northeast"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "23b5576a41b1345768d12c2db17c60cf3e304b146b72250026a1e38bf3f13e59",
+      "byteIdentical": true,
+      "parentStartSample": [
+        404,
+        0
+      ],
+      "axis": "northing"
+    },
+    {
+      "id": "south-west-east-seam",
+      "childViews": [
+        "southwest",
+        "southeast"
+      ],
+      "sampleCount": 406,
+      "byteCount": 1624,
+      "sha256": "fe5af6d35c71a2b7656ac39ba0889c5ad4db4e64a20e2c20e757f45e4f58a65f",
+      "byteIdentical": true,
+      "parentStartSample": [
+        404,
+        404
+      ],
+      "axis": "northing"
+    },
+    {
+      "id": "west-north-south-seam",
+      "childViews": [
+        "northwest",
+        "southwest"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "20b565314fc21bfd55be5576d2f931183dfc2ed94a51dc43afdd504793a30b28",
+      "byteIdentical": true,
+      "parentStartSample": [
+        0,
+        404
+      ],
+      "axis": "easting"
+    },
+    {
+      "id": "east-north-south-seam",
+      "childViews": [
+        "northeast",
+        "southeast"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "23531d6b20bf1880206c68724e5d1cfa4ad938929df386e01d01c47a59654706",
+      "byteIdentical": true,
+      "parentStartSample": [
+        404,
+        404
+      ],
+      "axis": "easting"
+    }
+  ],
+  "limitations": [
+    "Engineering preview only; it is not a production terrain artifact and is not referenced by runtime code or tile manifests.",
+    "Horizontal conversion is the locked generic WGS 84-to-EPSG:26910 operation with 4 m accuracy; no sub-metre, realization, or epoch claim is made.",
+    "Vertical datum remains unresolved: no vertical CRS, geoid, epoch, or NAVD88 reconciliation is inferred from the GeoTIFF samples."
+  ]
+}
