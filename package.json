@@ -28,6 +28,7 @@
     "verify:physics": "node scripts/verify-physics.mjs",
     "verify:combat-pursuit": "node scripts/verify-combat-pursuit.mjs",
     "verify:pursuit-escalation": "node scripts/verify-pursuit-escalation.mjs",
+    "verify:pursuit-vehicle-recontact": "node scripts/verify-pursuit-vehicle-recontact.mjs",
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:pursuit-repair-gate": "node scripts/verify-pursuit-repair-gate.mjs",
     "verify:vehicle-collision-consequence": "node scripts/verify-vehicle-collision-consequence.mjs",

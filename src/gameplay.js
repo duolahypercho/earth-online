@@ -802,7 +802,6 @@ export function createStreetHeat({
         { contactNumber: state.responderContacts },
       );
     } else if (state.pursuitActive
-      && !latestDriving
       && responderContactLatched
       && responderContactDistance !== null
       && responderContactDistance >= STREET_HEAT_RESPONDER_REARM_RADIUS) {
@@ -1033,6 +1032,7 @@ export function createStreetHeat({
       heat: state.heat,
       pursuitActive: state.pursuitActive,
       responderContacts: state.responderContacts,
+      responderContactLatched,
       nearMisses: state.nearMisses,
       witnessReports: state.witnessReports,
       combatHold: state.combatHold,
@@ -1044,6 +1044,7 @@ export function createStreetHeat({
     if (!snapshot || typeof snapshot !== 'object') return false;
     const heat = Number(snapshot.heat);
     const responderContacts = Number(snapshot.responderContacts);
+    const responderContactLatchSnapshot = snapshot.responderContactLatched;
     const nearMisses = Number(snapshot.nearMisses);
     const witnessReports = snapshot.witnessReports === undefined
       ? 0
@@ -1053,6 +1054,8 @@ export function createStreetHeat({
     if (!Number.isFinite(heat)
       || typeof snapshot.pursuitActive !== 'boolean'
       || !Number.isFinite(responderContacts)
+      || (responderContactLatchSnapshot !== undefined
+        && typeof responderContactLatchSnapshot !== 'boolean')
       || !Number.isFinite(nearMisses)
       || !Number.isFinite(witnessReports)
       || !Number.isFinite(combatHold)
@@ -1060,17 +1063,23 @@ export function createStreetHeat({
       return false;
     }
     const clampedHeat = THREE.MathUtils.clamp(heat, 0, 100);
+    const normalizedResponderContacts = snapshot.pursuitActive
+      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1000)
+      : 0;
+    const importedResponderContactLatched = responderContactLatchSnapshot === undefined
+      ? normalizedResponderContacts > 0
+      : responderContactLatchSnapshot;
     if ((snapshot.pursuitActive && clampedHeat <= 0)
       || (!snapshot.pursuitActive && clampedHeat >= STREET_HEAT_PURSUIT_THRESHOLD)) {
       return false;
     }
+    if ((!snapshot.pursuitActive && importedResponderContactLatched)
+      || (importedResponderContactLatched && normalizedResponderContacts <= 0)) return false;
     state.status = 'running';
     state.heat = clampedHeat;
     state.pursuitActive = snapshot.pursuitActive;
-    state.responderContacts = state.pursuitActive
-      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1000)
-      : 0;
-    responderContactLatched = state.responderContacts > 0;
+    state.responderContacts = normalizedResponderContacts;
+    responderContactLatched = importedResponderContactLatched;
     state.nearMisses = Math.max(0, Math.round(nearMisses));
     state.witnessReports = THREE.MathUtils.clamp(Math.round(witnessReports), 0, 100000);
     state.combatHold = THREE.MathUtils.clamp(
