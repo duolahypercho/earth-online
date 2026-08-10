@@ -19,10 +19,18 @@ const FACADE_STYLES = ['edwardian', 'modern-grid', 'bay-window', 'shopfront', 'l
 
 function landmarkKind(building) {
   const name = String(building.name || '').toLowerCase();
-  if (name.includes('transamerica')) return 'transamerica';
-  if (name.includes('coit')) return 'coit';
-  if (name.includes('ferry building')) return 'ferry';
-  if (name.includes('salesforce')) return 'salesforce';
+  const tags = `${name} ${String(building.tourism || '')} ${String(building.amenity || '')}`.toLowerCase();
+  if (tags.includes('transamerica')) return 'transamerica';
+  if (tags.includes('coit') || tags.includes('telegraph hill')) return 'coit';
+  if (tags.includes('ferry building') || tags.includes('ferry terminal')) return 'ferry';
+  if (tags.includes('salesforce')) return 'salesforce';
+  if (tags.includes('city hall') || tags.includes('civic center')) return 'city-hall';
+  if (tags.includes('palace of fine arts')) return 'palace';
+  if (tags.includes('mission dolores') || tags.includes('dolores basilica')) return 'mission-dolores';
+  if (tags.includes('grace cathedral')) return 'cathedral';
+  if (tags.includes('sfmoma')) return 'sfmoma';
+  if (tags.includes('warfield')) return 'warfield';
+  if (tags.includes('yerba buena')) return 'yerba';
   return null;
 }
 
@@ -385,7 +393,9 @@ export class CityRenderer {
     this.neonGlowMaterials = [];
     this.lampBulbs = [];
     this.lampLights = [];
+    this.lightPools = [];
     this.neonLights = [];
+    this.terrainVisualScale = 1;
 
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
     this.sun.position.set(-260, 380, 120);
@@ -431,10 +441,36 @@ export class CityRenderer {
 
   setCity(city) {
     this.city = city;
-    if (city?.terrain?.heightAt) {
-      this.terrain = city.terrain;
+    const isSf = isSanFranciscoCity(city);
+    const bounds = city?.meta?.bounds;
+    const mapSpan = bounds
+      ? Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ)
+      : 0;
+    // The procedural sandbox is only a few blocks wide, while the built-in
+    // OSM slice spans roughly two kilometres. Scale atmospheric depth with the
+    // loaded map so aerial views retain road and skyline contrast instead of
+    // fading almost the entire city into the horizon colour.
+    if (this.scene.fog) {
+      this.scene.fog.near = Math.max(330, mapSpan * 0.55);
+      this.scene.fog.far = Math.max(1380, mapSpan * 1.5);
+    }
+    // The baked SF grid is intentionally a little compressed for data use.
+    // A restrained render-only lift restores the stepped hill silhouette while
+    // keeping every road/building query on the same height function.
+    this.terrainVisualScale = isSf ? 1.12 : 1;
+    const sourceHeightAt = city?.terrain?.heightAt;
+    if (sourceHeightAt) {
+      this.terrain = {
+        ...city.terrain,
+        heightAt: (x, z) => {
+          const value = Number(sourceHeightAt(x, z));
+          return Number.isFinite(value) ? value * this.terrainVisualScale : 0;
+        },
+      };
     } else {
-      this.terrain = { heightAt: (x, z) => terrainHeight(x, z, Number(city?.meta?.seedInt || 1)) };
+      this.terrain = {
+        heightAt: (x, z) => terrainHeight(x, z, Number(city?.meta?.seedInt || 1)) * this.terrainVisualScale,
+      };
     }
   }
 
@@ -447,6 +483,7 @@ export class CityRenderer {
     this.pickables = [];
     this.neonGlowMaterials = [];
     this.neonLights = [];
+    this.lightPools = [];
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     const root = new THREE.Group();
     root.name = 'city-root';
@@ -459,11 +496,17 @@ export class CityRenderer {
     }
     // Terrain base + park ground.
     root.add(this.makeGround(city));
+    this.buildTerrainContours(root, city);
     // OSM parks and water polygons on real maps.
     this.buildOsmParks(root, city);
     this.buildOsmWater(root, city);
     // Waterfront for the east edge.
-    root.add(this.makeWater(city));
+    const water = this.makeWater(city);
+    root.add(water);
+    // Keep authored bay props under city-root so rebuilds dispose them with
+    // the rest of the dynamic scene instead of leaking into the global scene.
+    this.buildBayProps(root, city, city.meta.bounds);
+    this.buildWaterfrontIdentity(root, city);
 
     // Buildings with per-facade canvas textures.
     this.roofBatch = { parapets: [], tanks: [], cells: [] };
@@ -479,6 +522,9 @@ export class CityRenderer {
     this.buildStreetBunting(root, city);
     // Utility poles and sagging wires along major avenues.
     this.buildUtilityLines(root, city);
+    // Real SF transit routes get paired rails and restrained overhead wires;
+    // generic/procedural maps do not inherit this city-specific clutter.
+    this.buildTransitCues(root, city);
     // Signals with metadata.
     this.buildSignals(root, city);
     // Trees.
@@ -518,6 +564,7 @@ export class CityRenderer {
       this.nightEmissive = [];
       this.lampBulbs = [];
       this.lampLights = [];
+      this.lightPools = [];
       this.neonLights = [];
       this.signalMeshes = [];
       this.root = null;
@@ -579,7 +626,7 @@ export class CityRenderer {
     const cloudMaterial = new THREE.MeshBasicMaterial({
       map: cloudTexture,
       transparent: true,
-      opacity: city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 0.12 : 0.28,
+      opacity: city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 0.05 : 0.28,
       depthWrite: false,
       side: THREE.BackSide,
       fog: false,
@@ -603,6 +650,7 @@ export class CityRenderer {
     const park = new THREE.Color('#9fc38a');
     const field = new THREE.Color('#7f9a66');
     const waterEdge = new THREE.Color('#a9c99b');
+    const slopeWarm = new THREE.Color('#c8a879');
     for (let i = 0; i < positions.length; i += 3) {
       const x = positions[i] + (bounds.minX + bounds.maxX) / 2;
       const z = positions[i + 2] + (bounds.minZ + bounds.maxZ) / 2;
@@ -610,7 +658,20 @@ export class CityRenderer {
       positions[i + 1] = y - 0.22;
       const n = Math.sin(x * 0.011 + z * 0.017 + Number(city.meta.seedInt) * 0.1) * 0.5 + 0.5;
       const nearWater = smoothstep(bounds.maxX - 160, bounds.maxX - 30, x);
+      // Elevation-aware color grading gives the baked USGS grid a readable
+      // directional hillshade instead of a uniformly green carpet. The
+      // geometry normals still carry the true grade; this only adds a gentle
+      // low-poly material cue for aerial views.
+      const sampleStep = 8;
+      const slopeX = ((this.terrain?.heightAt ? this.terrain.heightAt(x + sampleStep, z) : 0)
+        - (this.terrain?.heightAt ? this.terrain.heightAt(x - sampleStep, z) : 0)) / (sampleStep * 2);
+      const slopeZ = ((this.terrain?.heightAt ? this.terrain.heightAt(x, z + sampleStep) : 0)
+        - (this.terrain?.heightAt ? this.terrain.heightAt(x, z - sampleStep) : 0)) / (sampleStep * 2);
+      const slope = Math.hypot(slopeX, slopeZ);
+      const light = clamp(0.88 - slopeX * 0.62 + slopeZ * 0.34, 0.66, 1.08);
       const c = park.clone().lerp(field, n * 0.35).lerp(waterEdge, nearWater * 0.35);
+      c.multiplyScalar(light);
+      if (slope > 0.045) c.lerp(slopeWarm, clamp((slope - 0.045) * 0.9, 0, 0.16));
       colors.push(c.r, c.g, c.b);
     }
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -624,6 +685,82 @@ export class CityRenderer {
     mesh.receiveShadow = true;
     this.geometryCache.push(geometry);
     return mesh;
+  }
+
+  buildTerrainContours(root, city) {
+    const terrainType = String(city?.terrain?.type || city?.meta?.terrain?.type || '');
+    const sfCity = isSanFranciscoCity(city);
+    if (!sfCity && terrainType !== 'soft-hills') return;
+    const bounds = city.meta.bounds;
+    const columns = sfCity ? 30 : 22;
+    const rows = sfCity ? 30 : 22;
+    const heights = new Array((columns + 1) * (rows + 1));
+    let min = Infinity;
+    let max = -Infinity;
+    const heightAt = (x, z) => this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0;
+    for (let row = 0; row <= rows; row += 1) {
+      const z = bounds.minZ + (bounds.maxZ - bounds.minZ) * (row / rows);
+      for (let col = 0; col <= columns; col += 1) {
+        const x = bounds.minX + (bounds.maxX - bounds.minX) * (col / columns);
+        const y = heightAt(x, z);
+        heights[row * (columns + 1) + col] = y;
+        min = Math.min(min, y);
+        max = Math.max(max, y);
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 7) return;
+    const contourCount = sfCity ? 8 : 6;
+    const step = (max - min) / (contourCount + 1);
+    const positions = [];
+    const waterPolygons = (city.water || []).map((water) => water.polygon).filter(Boolean);
+    const pointIsWater = (x, z) => waterPolygons.some((polygon) => pointInPolygon({ x, z }, polygon));
+    const addEdge = (level, a, ay, b, by, hits) => {
+      if ((ay < level && by >= level) || (by < level && ay >= level)) {
+        const span = by - ay;
+        const t = Math.abs(span) < 0.0001 ? 0.5 : clamp((level - ay) / span, 0, 1);
+        hits.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, y: level + 0.09 });
+      }
+    };
+    for (let contourIndex = 1; contourIndex <= contourCount; contourIndex += 1) {
+      const level = min + step * contourIndex;
+      for (let row = 0; row < rows; row += 1) {
+        const z0 = bounds.minZ + (bounds.maxZ - bounds.minZ) * (row / rows);
+        const z1 = bounds.minZ + (bounds.maxZ - bounds.minZ) * ((row + 1) / rows);
+        for (let col = 0; col < columns; col += 1) {
+          const x0 = bounds.minX + (bounds.maxX - bounds.minX) * (col / columns);
+          const x1 = bounds.minX + (bounds.maxX - bounds.minX) * ((col + 1) / columns);
+          if (pointIsWater((x0 + x1) * 0.5, (z0 + z1) * 0.5)) continue;
+          const i00 = row * (columns + 1) + col;
+          const i10 = i00 + 1;
+          const i11 = i10 + columns + 1;
+          const i01 = i00 + columns + 1;
+          const hits = [];
+          addEdge(level, { x: x0, z: z0 }, heights[i00], { x: x1, z: z0 }, heights[i10], hits);
+          addEdge(level, { x: x1, z: z0 }, heights[i10], { x: x1, z: z1 }, heights[i11], hits);
+          addEdge(level, { x: x1, z: z1 }, heights[i11], { x: x0, z: z1 }, heights[i01], hits);
+          addEdge(level, { x: x0, z: z1 }, heights[i01], { x: x0, z: z0 }, heights[i00], hits);
+          if (hits.length >= 2) {
+            const a = hits[0];
+            const b = hits[1];
+            positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          }
+        }
+      }
+    }
+    if (!positions.length) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: sfCity ? 0x8b755d : 0x647151,
+      transparent: true,
+      opacity: sfCity ? 0.18 : 0.13,
+      depthWrite: false,
+    });
+    const contours = new THREE.LineSegments(geometry, material);
+    contours.name = 'elevation-contours';
+    contours.renderOrder = 1;
+    root.add(contours);
+    this.geometryCache.push(geometry, material);
   }
 
   makeWater(city) {
@@ -642,8 +779,46 @@ export class CityRenderer {
     water.receiveShadow = true;
     this.geometryCache.push(geometry);
     this.water = water;
-    this.buildBayProps(water.parent || this.scene, city, bounds);
     return water;
+  }
+
+  buildWaterfrontIdentity(root, city) {
+    if (!isSanFranciscoCity(city) && !(city.water || []).length) return;
+    const bounds = city.meta.bounds;
+    const random = mulberry32(Number(city.meta.seedInt || 1) + 6011);
+    const attrs = dynQuadAttrs();
+    const waterX = bounds.maxX - 70;
+    const spanZ = Math.max(40, bounds.maxZ - bounds.minZ - 20);
+    // Short, sparse low-poly ripples make the bay legible without a heavy
+    // normal-map or thousands of individual meshes.
+    for (let i = 0; i < 96; i += 1) {
+      const x = waterX - 270 + random() * 540;
+      const z = bounds.minZ + 10 + random() * spanZ;
+      const length = 3.5 + random() * 14;
+      const width = 0.055 + random() * 0.055;
+      const color = i % 3 === 0 ? new THREE.Color('#8bc4cb') : new THREE.Color('#5ea9ba');
+      pushQuadDyn(attrs,
+        { x: x - length / 2, y: 0.72 + random() * 0.02, z: z - width },
+        { x: x + length / 2, y: 0.72 + random() * 0.02, z: z - width },
+        { x: x + length / 2, y: 0.72 + random() * 0.02, z: z + width },
+        { x: x - length / 2, y: 0.72 + random() * 0.02, z: z + width },
+        color,
+      );
+    }
+    const geometry = buildDynGeometry(attrs);
+    const material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.48,
+      roughness: 0.28,
+      metalness: 0.18,
+      depthWrite: false,
+    });
+    const ripples = new THREE.Mesh(geometry, material);
+    ripples.name = 'bay-ripple-cards';
+    ripples.renderOrder = 2;
+    root.add(ripples);
+    this.geometryCache.push(geometry, material);
   }
 
   buildOsmParks(root, city) {
@@ -717,9 +892,14 @@ export class CityRenderer {
   }
 
   buildBayProps(scene, city, bounds) {
+    // The bay bridge silhouette belongs to the SF waterfront slice. Keeping
+    // it out of procedural maps removes the old center-frame pole/arm that
+    // read as an accidental obstruction in aerial and street captures.
+    if (!isSanFranciscoCity(city) && !(city.water || []).length) return;
     const y = 0.52;
-    const towerX = bounds.maxX - 150;
+    const towerX = bounds.maxX - 220;
     const towerZ = (bounds.minZ + bounds.maxZ) / 2 + 40;
+    const towerHeight = clamp((bounds.maxZ - bounds.minZ) * 0.09, 28, 52);
     const towerMaterial = new THREE.MeshStandardMaterial({
       color: 0x8a9399,
       roughness: 0.6,
@@ -731,13 +911,13 @@ export class CityRenderer {
       roughness: 0.8,
       flatShading: true,
     });
-    const towerGeometry = new THREE.BoxGeometry(5, 74, 5);
+    const towerGeometry = new THREE.BoxGeometry(3.8, towerHeight, 3.8);
     const left = new THREE.Mesh(towerGeometry, towerMaterial);
-    left.position.set(towerX - 88, y + 37, towerZ);
+    left.position.set(towerX - 74, y + towerHeight / 2, towerZ);
     const right = new THREE.Mesh(towerGeometry, towerMaterial);
-    right.position.set(towerX + 88, y + 37, towerZ);
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(230, 5, 9), deckMaterial);
-    deck.position.set(towerX, y + 4.2, towerZ);
+    right.position.set(towerX + 74, y + towerHeight / 2, towerZ);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(184, 3.4, 7), deckMaterial);
+    deck.position.set(towerX, y + 4.0, towerZ);
     scene.add(left, right, deck);
     const cableMaterial = new THREE.LineBasicMaterial({ color: 0xdfe6ea, transparent: true, opacity: 0.85 });
     for (let i = 0; i <= 10; i += 1) {
@@ -747,8 +927,8 @@ export class CityRenderer {
       for (let s = 0; s <= 10; s += 1) {
         const st = s / 10;
         points.push(new THREE.Vector3(
-          towerX - 88 + 176 * st,
-          y + 74 + (Math.sin(st * Math.PI) * -sag) + (t - 0.5) * 2,
+          towerX - 74 + 148 * st,
+          y + towerHeight + (Math.sin(st * Math.PI) * -sag * 0.75) + (t - 0.5) * 2,
           towerZ - 4.2 + t * 8.4,
         ));
       }
@@ -925,7 +1105,9 @@ export class CityRenderer {
         metalness: 0.06,
         flatShading: true,
       });
-      this.nightEmissive.push({ material, texture, nightTexture });
+      const nightIntensity = (group.material === 'glass' ? 0.26 : 0.34)
+        + (hashString(`${key}-night`) % 18) / 100;
+      this.nightEmissive.push({ material, texture, nightTexture, nightIntensity });
       const mesh = new THREE.Mesh(merged, material);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -943,36 +1125,51 @@ export class CityRenderer {
     const glass = new THREE.MeshStandardMaterial({ color: 0x8fb7d8, roughness: 0.28, metalness: 0.45, flatShading: true });
     const warm = new THREE.MeshStandardMaterial({ color: 0xe7cfa8, roughness: 0.6, metalness: 0.05, flatShading: true });
     const dark = new THREE.MeshStandardMaterial({ color: 0x4a5a6a, roughness: 0.5, metalness: 0.25, flatShading: true });
+    const terracotta = new THREE.MeshStandardMaterial({ color: 0xb66f5a, roughness: 0.72, flatShading: true });
+    const slate = new THREE.MeshStandardMaterial({ color: 0x65717c, roughness: 0.62, metalness: 0.18, flatShading: true });
     const group = new THREE.Group();
     if (kind === 'transamerica') {
-      const pyramid = new THREE.ConeGeometry(Math.max(width, depth) * 0.62, height, 4);
+      const span = Math.max(width, depth);
+      const pyramid = new THREE.ConeGeometry(span * 0.62, height * 0.94, 4);
       pyramid.rotateY(Math.PI / 4);
       const mesh = new THREE.Mesh(pyramid, warm);
-      mesh.position.set(cx, baseY + height / 2, cz);
-      group.add(mesh);
-      this.geometryCache.push(pyramid, warm);
+      mesh.position.set(cx, baseY + height * 0.47, cz);
+      const plinth = new THREE.Mesh(new THREE.BoxGeometry(span * 0.72, height * 0.08, span * 0.72), dark);
+      plinth.position.set(cx, baseY + height * 0.045, cz);
+      const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.18, Math.max(3.5, height * 0.13), 5), dark);
+      antenna.position.set(cx, baseY + height + Math.max(1.6, height * 0.065), cz);
+      group.add(mesh, plinth, antenna);
+      this.geometryCache.push(pyramid, plinth.geometry, antenna.geometry, warm, dark);
     } else if (kind === 'coit') {
-      const shaft = new THREE.CylinderGeometry(Math.max(width, depth) * 0.2, Math.max(width, depth) * 0.3, height * 0.78, 12);
+      const span = Math.max(width, depth);
+      const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(span * 0.52, span * 0.68, height * 0.12, 10), terracotta);
+      shoulder.position.set(cx, baseY + height * 0.06, cz);
+      const shaft = new THREE.CylinderGeometry(span * 0.2, span * 0.3, height * 0.72, 12);
       const shaftMesh = new THREE.Mesh(shaft, base);
-      shaftMesh.position.set(cx, baseY + height * 0.39, cz);
-      const cap = new THREE.CylinderGeometry(Math.max(width, depth) * 0.08, Math.max(width, depth) * 0.2, height * 0.18, 12);
+      shaftMesh.position.set(cx, baseY + height * 0.48, cz);
+      const cap = new THREE.CylinderGeometry(span * 0.08, span * 0.2, height * 0.18, 12);
       const capMesh = new THREE.Mesh(cap, dark);
       capMesh.position.set(cx, baseY + height * 0.9, cz);
-      group.add(shaftMesh, capMesh);
-      this.geometryCache.push(shaft, cap, base, dark);
+      group.add(shoulder, shaftMesh, capMesh);
+      this.geometryCache.push(shoulder.geometry, shaft, cap, base, dark, terracotta);
     } else if (kind === 'ferry') {
       const hall = new THREE.BoxGeometry(width, height * 0.72, depth);
       hall.translate(cx, baseY + height * 0.36, cz);
       const hallMesh = new THREE.Mesh(hall, warm);
-      const tower = new THREE.BoxGeometry(Math.min(width, 10), height, Math.min(depth, 10));
+      const towerWidth = Math.min(width * 0.2, 10);
+      const towerDepth = Math.min(depth * 0.2, 10);
+      const tower = new THREE.BoxGeometry(towerWidth, height, towerDepth);
       tower.translate(cx, baseY + height / 2, cz);
       const towerMesh = new THREE.Mesh(tower, base);
-      const roof = new THREE.ConeGeometry(6.2, 6.5, 4);
+      const roof = new THREE.ConeGeometry(Math.max(towerWidth, towerDepth) * 0.82, Math.max(5.2, height * 0.12), 4);
       roof.rotateY(Math.PI / 4);
-      roof.translate(cx, baseY + height + 2.8, cz);
+      roof.translate(cx, baseY + height + Math.max(2.3, height * 0.055), cz);
       const roofMesh = new THREE.Mesh(roof, dark);
-      group.add(hallMesh, towerMesh, roofMesh);
-      this.geometryCache.push(hall, tower, roof, warm, base, dark);
+      const clock = new THREE.Mesh(new THREE.CylinderGeometry(Math.min(2.8, towerWidth * 0.42), Math.min(2.8, towerWidth * 0.42), 0.16, 16), slate);
+      clock.rotation.x = Math.PI / 2;
+      clock.position.set(cx, baseY + height * 0.66, cz - towerDepth * 0.52);
+      group.add(hallMesh, towerMesh, roofMesh, clock);
+      this.geometryCache.push(hall, tower, roof, clock.geometry, warm, base, dark, slate);
     } else if (kind === 'salesforce') {
       const taper = new THREE.CylinderGeometry(Math.max(width, depth) * 0.3, Math.max(width, depth) * 0.55, height, 4);
       taper.rotateY(Math.PI / 4);
@@ -983,6 +1180,63 @@ export class CityRenderer {
       const crownMesh = new THREE.Mesh(crown, dark);
       group.add(mesh, crownMesh);
       this.geometryCache.push(taper, crown, glass, dark);
+    } else if (kind === 'city-hall') {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.55, depth), warm);
+      wing.position.set(cx, baseY + height * 0.275, cz);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(Math.max(width, depth) * 0.28, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), slate);
+      dome.position.set(cx, baseY + height * 0.72, cz);
+      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(width, depth) * 0.08, Math.max(width, depth) * 0.11, height * 0.2, 8), dark);
+      lantern.position.set(cx, baseY + height * 0.9, cz);
+      group.add(wing, dome, lantern);
+      this.geometryCache.push(wing.geometry, dome.geometry, lantern.geometry, warm, slate, dark);
+    } else if (kind === 'palace') {
+      const hall = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.32, depth), warm);
+      hall.position.set(cx, baseY + height * 0.16, cz);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(Math.max(width, depth) * 0.3, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), base);
+      dome.position.set(cx, baseY + height * 0.37, cz);
+      const colCount = Math.min(8, Math.max(4, Math.round(width / 4)));
+      const colGeometry = new THREE.CylinderGeometry(0.22, 0.28, height * 0.42, 6);
+      for (let i = 0; i < colCount; i += 1) {
+        const x = minX + (width * (i + 0.5)) / colCount;
+        const col = new THREE.Mesh(colGeometry, base);
+        col.position.set(x, baseY + height * 0.21, minZ - depth * 0.18);
+        group.add(col);
+      }
+      group.add(hall, dome);
+      this.geometryCache.push(hall.geometry, dome.geometry, colGeometry, warm, base);
+    } else if (kind === 'mission-dolores') {
+      const nave = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.62, depth), warm);
+      nave.position.set(cx, baseY + height * 0.31, cz);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(width, depth) * 0.5, height * 0.22, 4), terracotta);
+      roof.rotation.y = Math.PI / 4;
+      roof.position.set(cx, baseY + height * 0.73, cz);
+      const bellGeometry = new THREE.CylinderGeometry(Math.max(width, depth) * 0.13, Math.max(width, depth) * 0.17, height * 0.7, 6);
+      const leftBell = new THREE.Mesh(bellGeometry, base);
+      const rightBell = new THREE.Mesh(bellGeometry, base);
+      leftBell.position.set(cx - width * 0.31, baseY + height * 0.35, cz);
+      rightBell.position.set(cx + width * 0.31, baseY + height * 0.35, cz);
+      group.add(nave, roof, leftBell, rightBell);
+      this.geometryCache.push(nave.geometry, roof.geometry, bellGeometry, warm, terracotta, base);
+    } else if (kind === 'cathedral') {
+      const nave = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.56, depth), slate);
+      nave.position.set(cx, baseY + height * 0.28, cz);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(width, depth) * 0.56, height * 0.24, 4), dark);
+      roof.rotation.y = Math.PI / 4;
+      roof.position.set(cx, baseY + height * 0.68, cz);
+      const spireGeometry = new THREE.ConeGeometry(Math.max(width, depth) * 0.1, height * 0.5, 4);
+      const leftSpire = new THREE.Mesh(spireGeometry, slate);
+      const rightSpire = new THREE.Mesh(spireGeometry, slate);
+      leftSpire.position.set(cx - width * 0.28, baseY + height * 0.56, cz);
+      rightSpire.position.set(cx + width * 0.28, baseY + height * 0.56, cz);
+      group.add(nave, roof, leftSpire, rightSpire);
+      this.geometryCache.push(nave.geometry, roof.geometry, spireGeometry, slate, dark);
+    } else if (kind === 'sfmoma' || kind === 'warfield' || kind === 'yerba') {
+      const hall = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.72, depth), kind === 'warfield' ? terracotta : warm);
+      hall.position.set(cx, baseY + height * 0.36, cz);
+      const crown = new THREE.Mesh(new THREE.BoxGeometry(width * 0.74, height * 0.22, depth * 0.74), kind === 'sfmoma' ? glass : slate);
+      crown.position.set(cx, baseY + height * 0.83, cz);
+      group.add(hall, crown);
+      this.geometryCache.push(hall.geometry, crown.geometry, warm, terracotta, glass, slate);
     } else {
       const box = new THREE.BoxGeometry(width, height, depth);
       box.translate(cx, baseY + height / 2, cz);
@@ -1127,9 +1381,23 @@ export class CityRenderer {
   }
 
   buildRoadNetwork(root, city) {
+    const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const hiddenPathClasses = new Set(['footway', 'path', 'steps', 'cycleway', 'pedestrian', 'corridor', 'platform']);
+    const renderSegments = realMap
+      ? city.segments.filter((segment) => !hiddenPathClasses.has(segment.highway))
+      : city.segments;
+    const crossingAt = (position) => renderSegments.filter((segment) => {
+      for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
+        if (Math.hypot(point.x - position.x, point.z - position.z) < 0.5) return true;
+      }
+      return false;
+    });
+    const renderIntersections = city.intersections
+      .map((intersection) => ({ intersection, crossing: crossingAt(intersection.position) }))
+      .filter((entry) => entry.crossing.length >= 2);
     // Pre-count vertices: 4 per quad, 6 indices per quad.
     const quads = { asphalt: 0, sidewalk: 0, curb: 0, crosswalk: 0 };
-    for (const segment of city.segments) {
+    for (const segment of renderSegments) {
       for (let i = 0; i < segment.points.length - 1; i += 1) {
         quads.asphalt += 1;
         if (segment.sidewalkW > 0) {
@@ -1138,7 +1406,7 @@ export class CityRenderer {
         }
       }
     }
-    quads.asphalt += city.intersections.length;
+    quads.asphalt += renderIntersections.length;
     const asphaltAttrs = lineQuadAttrs(quads.asphalt);
     const sidewalkAttrs = lineQuadAttrs(quads.sidewalk);
     const curbAttrs = lineQuadAttrs(quads.curb);
@@ -1178,7 +1446,7 @@ export class CityRenderer {
     const curbHeight = Number(city.meta.streetDesign?.curbHeight ?? 0.16);
     const yAt = (x, z, lift = 0.075) => roadLift + lift + (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0);
 
-    for (const segment of city.segments) {
+    for (const segment of renderSegments) {
       const pts = segment.points;
       for (let i = 0; i < pts.length - 1; i += 1) {
       const a = pts[i];
@@ -1224,17 +1492,19 @@ export class CityRenderer {
           sidewalkVertex += 4;
           // Expansion joints: tight dark seams every ~2.8m give sidewalks a
           // paved, walkable texture at street level.
-          const jointStep = 2.8;
-          const joints = Math.floor(len / jointStep);
-          for (let j = 1; j <= joints; j += 1) {
-            const t = j * jointStep / len;
-            const jx = a.x + dx * t;
-            const jz = a.z + dz * t;
-            const jy = yAt(jx, jz, 0.05);
-            for (const side of [1, -1]) {
-              const inner = { x: jx + nx * half * side, z: jz + nz * half * side };
-              const outer = { x: jx + nx * (sidewalkHalf - 0.12) * side, z: jz + nz * (sidewalkHalf - 0.12) * side };
-              pushStripDyn(jointAttrs, inner, outer, 0.13, () => jy, jointColor);
+          if (!realMap) {
+            const jointStep = 2.8;
+            const joints = Math.floor(len / jointStep);
+            for (let j = 1; j <= joints; j += 1) {
+              const t = j * jointStep / len;
+              const jx = a.x + dx * t;
+              const jz = a.z + dz * t;
+              const jy = yAt(jx, jz, 0.05);
+              for (const side of [1, -1]) {
+                const inner = { x: jx + nx * half * side, z: jz + nz * half * side };
+                const outer = { x: jx + nx * (sidewalkHalf - 0.12) * side, z: jz + nz * (sidewalkHalf - 0.12) * side };
+                pushStripDyn(jointAttrs, inner, outer, 0.13, () => jy, jointColor);
+              }
             }
           }
           // Curb lips.
@@ -1308,7 +1578,7 @@ export class CityRenderer {
           edgeWidth, (x, z) => yAt(x, z, 0.075), edgeWhite);
         // Parking stall stripes along curbs: short white ticks that break up
         // large asphalt planes at street level.
-        if (segment.sidewalkW > 0 && segment.highway !== 'motorway') {
+        if (!realMap && segment.sidewalkW > 0 && segment.highway !== 'motorway') {
           const stallStep = 5.2;
           const stalls = Math.floor(len / stallStep);
           for (let sIdx = 1; sIdx < stalls; sIdx += 1) {
@@ -1326,7 +1596,7 @@ export class CityRenderer {
         // Tar patches and manholes: dark quads on the asphalt plane give the
         // road surface a worn, detailed read at street level.
         const patchStep = 8;
-        const patches = Math.floor(len / patchStep);
+        const patches = realMap ? 0 : Math.floor(len / patchStep);
         for (let pi = 0; pi < patches; pi += 1) {
           const t = ((pi + 0.5) * patchStep) / len;
           const px = a.x + dx * t;
@@ -1361,14 +1631,8 @@ export class CityRenderer {
     }
 
     // Asphalt patches close the gaps where streets cross.
-    for (const intersection of city.intersections) {
+    for (const { intersection, crossing } of renderIntersections) {
       const p = intersection.position;
-      const crossing = city.segments.filter((segment) => {
-        for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
-          if (Math.hypot(point.x - p.x, point.z - p.z) < 0.5) return true;
-        }
-        return false;
-      });
       const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
       if (!Number.isFinite(half)) continue;
       const y = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(p.x, p.z) : 0);
@@ -1383,14 +1647,8 @@ export class CityRenderer {
     }
 
     // Crosswalks at intersections.
-    for (const intersection of city.intersections) {
+    for (const { intersection, crossing } of renderIntersections) {
       const p = intersection.position;
-      const crossing = city.segments.filter((segment) => {
-        for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
-          if (Math.hypot(point.x - p.x, point.z - p.z) < 0.5) return true;
-        }
-        return false;
-      });
       const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
       // Zebra crosswalks: one striped band per approach, stripes parallel to
       // the road axis so they read as paint from street level.
@@ -1579,7 +1837,7 @@ export class CityRenderer {
     this.geometryCache.push(poleGeometry, bulbGeometry);
     const positions = new Set();
     for (const signal of city.signals) {
-      positions.add(`${signal.position.x.toFixed(0)}-${signal.position.z.toFixed(0)}`);
+      positions.add(`${signal.position.x.toFixed(0)},${signal.position.z.toFixed(0)}`);
     }
     const bounds = city.meta.bounds;
     const maxLamps = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 240 : 900;
@@ -1596,13 +1854,13 @@ export class CityRenderer {
         const side = (i % 2 === 0 ? 1 : -1) * (street.sidewalkW + street.asphaltWidth / 2 + 0.9);
         const lampX = axis === 'x' ? position + side : x;
         const lampZ = axis === 'z' ? position + side : z;
-        positions.add(`${lampX.toFixed(0)}-${lampZ.toFixed(0)}`);
+        positions.add(`${lampX.toFixed(0)},${lampZ.toFixed(0)}`);
       }
     }
     const group = new THREE.Group();
     const lightPositions = [];
     for (const key of positions) {
-      const [x, z] = key.split('-').map(Number);
+      const [x, z] = key.split(',').map(Number);
       if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
       const pole = new THREE.Mesh(poleGeometry, poleMaterial);
       pole.position.y = 2.7;
@@ -1615,14 +1873,19 @@ export class CityRenderer {
       group.add(lamp);
       this.lampBulbs.push(bulb);
     }
-    for (const signal of city.signals.slice(0, 16)) {
-      lightPositions.push({ x: signal.position.x, z: signal.position.z });
+    const maxLightPools = city.meta.generator === 'sf-builtin' || isSanFranciscoCity(city) ? 18 : 24;
+    for (const key of positions) {
+      if (lightPositions.length >= maxLightPools) break;
+      const [x, z] = key.split(',').map(Number);
+      if (Number.isFinite(x) && Number.isFinite(z)) lightPositions.push({ x, z });
     }
     for (const lp of lightPositions) {
-      const light = new THREE.PointLight(0xffc46a, 0, 46, 1.8);
-      light.position.set(lp.x, 5.4, lp.z);
+      const light = new THREE.PointLight(0xffc46a, 0, 28, 2.1);
+      const terrainY = this.terrain?.heightAt ? this.terrain.heightAt(lp.x, lp.z) : 0;
+      light.position.set(lp.x, terrainY + 4.8, lp.z);
       group.add(light);
       this.lampLights.push(light);
+      this.lightPools.push(light);
     }
     root.add(group);
   }
@@ -1688,6 +1951,9 @@ export class CityRenderer {
   }
 
   buildStreetBunting(root, city) {
+    // Authored festival flags suit the procedural showcase but look like
+    // floating signs when projected onto arbitrary OSM curb geometry.
+    if (city.meta.generator !== 'procedural') return;
     const bounds = city.meta.bounds;
     const colors = ['#e5484d', '#12a594', '#ffb224', '#30a46c', '#8e4ec6', '#ff5c8a', '#f2c14e'];
     const flags = [];
@@ -1805,6 +2071,10 @@ export class CityRenderer {
   }
 
   buildUtilityLines(root, city) {
+    // Utility poles are a generic-city cue. SF streets receive purpose-built
+    // transit wire runs below; skipping the old utility arm forest keeps a
+    // single foreground pole from owning the hero composition.
+    if (city.meta.generator === 'procedural' || isSanFranciscoCity(city)) return;
     const bounds = city.meta.bounds;
     const random = mulberry32(Number(city.meta.seedInt || 1) + 881);
     const poles = [];
@@ -1843,7 +2113,7 @@ export class CityRenderer {
     } else {
       // Real maps: follow road polylines and drop poles along the curbside.
       const eligible = new Set(['primary', 'secondary', 'tertiary']);
-      const maxPoles = city.meta.generator === 'sf-builtin' ? 64 : 52;
+      const maxPoles = 32;
       const seenStreets = new Set();
       for (const segment of city.segments || []) {
         if (poles.length >= maxPoles) break;
@@ -1875,7 +2145,7 @@ export class CityRenderer {
     if (poles.length) {
       const poleGeometry = new THREE.CylinderGeometry(0.07, 0.1, 6.6, 5);
       const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x6b513c, roughness: 0.8, flatShading: true });
-      const armGeometry = new THREE.BoxGeometry(1.5, 0.09, 0.14);
+      const armGeometry = new THREE.BoxGeometry(0.72, 0.06, 0.09);
       const armMaterial = new THREE.MeshStandardMaterial({ color: 0x5a4434, roughness: 0.85, flatShading: true });
       const instanced = new THREE.InstancedMesh(poleGeometry, poleMaterial, poles.length);
       const arms = new THREE.InstancedMesh(armGeometry, armMaterial, poles.length);
@@ -1903,6 +2173,155 @@ export class CityRenderer {
       const wireMaterial = new THREE.LineBasicMaterial({ color: 0x3d3028, transparent: true, opacity: 0.32 });
       root.add(new THREE.LineSegments(wireGeometry, wireMaterial));
       this.geometryCache.push(wireGeometry, wireMaterial);
+    }
+  }
+
+  buildTransitCues(root, city) {
+    if (!isSanFranciscoCity(city)) return;
+    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.45);
+    const cablePattern = /california|powell|hyde|mason|cable\s*car/i;
+    const trolleyPattern = /market|geary|church|judah|van\s*ness|king|third|3rd|mission|embarcadero|stockton/i;
+    const routes = [];
+    const seen = new Set();
+    for (const segment of city.segments || []) {
+      if (!segment.points || segment.points.length < 2) continue;
+      if (['motorway', 'trunk', 'footway', 'cycleway', 'pedestrian', 'steps'].includes(segment.highway)) continue;
+      const name = String(segment.streetName || segment.name || '');
+      const cable = cablePattern.test(name);
+      const trolley = cable || trolleyPattern.test(name);
+      if (!trolley) continue;
+      const key = `${segment.streetId || segment.id}-${segment.points[0].x.toFixed(1)}-${segment.points[0].z.toFixed(1)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      routes.push({ segment, cable });
+      if (routes.length >= 40) break;
+    }
+    if (!routes.length) return;
+
+    const railAttrs = dynQuadAttrs();
+    const tieAttrs = dynQuadAttrs();
+    const railColor = new THREE.Color('#747b7b');
+    const tieColor = new THREE.Color('#a49782');
+    let tieCount = 0;
+    const wirePoints = [];
+    const supportPositions = new Map();
+    const heightAt = (x, z) => this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0;
+    const yAtRail = (x, z) => heightAt(x, z) + roadLift + 0.105;
+    const addTrackSegment = (segment, cable) => {
+      const points = segment.points;
+      const offset = cable
+        ? clamp(segment.width * 0.24, 1.05, 1.42)
+        : clamp(segment.width * 0.2, 1.05, 1.62);
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 5) continue;
+        const nx = -dz / length;
+        const nz = dx / length;
+        const leftA = { x: a.x + nx * offset, z: a.z + nz * offset };
+        const leftB = { x: b.x + nx * offset, z: b.z + nz * offset };
+        const rightA = { x: a.x - nx * offset, z: a.z - nz * offset };
+        const rightB = { x: b.x - nx * offset, z: b.z - nz * offset };
+        pushStripDyn(railAttrs, leftA, leftB, 0.055, yAtRail, railColor);
+        pushStripDyn(railAttrs, rightA, rightB, 0.055, yAtRail, railColor);
+        const ties = Math.min(14, Math.max(2, Math.floor(length / 6.5)));
+        for (let tieIndex = 1; tieIndex < ties; tieIndex += 1) {
+          if (tieCount >= 360) break;
+          const t = tieIndex / ties;
+          const cx = a.x + dx * t;
+          const cz = a.z + dz * t;
+          const near = { x: cx + nx * (offset + 0.2), z: cz + nz * (offset + 0.2) };
+          const far = { x: cx - nx * (offset + 0.2), z: cz - nz * (offset + 0.2) };
+          pushStripDyn(tieAttrs, near, far, 0.045, yAtRail, tieColor);
+          tieCount += 1;
+          if (tieIndex % 5 === 0) {
+            const key = `${Math.round(cx / 12)}:${Math.round(cz / 12)}`;
+            if (!supportPositions.has(key) && supportPositions.size < 20) {
+              supportPositions.set(key, { x: cx + nx * (offset + 2.1), z: cz + nz * (offset + 2.1) });
+            }
+          }
+        }
+        const wireOffsets = [0];
+        for (const wireOffset of wireOffsets) {
+          const wa = { x: a.x + nx * wireOffset, z: a.z + nz * wireOffset };
+          const wb = { x: b.x + nx * wireOffset, z: b.z + nz * wireOffset };
+          const y1 = heightAt(wa.x, wa.z) + roadLift + 7.0;
+          const y2 = heightAt(wb.x, wb.z) + roadLift + 7.0;
+          const midX = (wa.x + wb.x) * 0.5;
+          const midZ = (wa.z + wb.z) * 0.5;
+          const sag = Math.min(1.0, 0.22 + length * 0.006);
+          const midY = (y1 + y2) * 0.5 - sag;
+          wirePoints.push(wa.x, y1, wa.z, midX, midY, midZ, midX, midY, midZ, wb.x, y2, wb.z);
+        }
+      }
+    };
+    for (const route of routes) addTrackSegment(route.segment, route.cable);
+
+    const railGeometry = buildDynGeometry(railAttrs);
+    const railMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.52,
+      metalness: 0.62,
+      flatShading: true,
+    });
+    const rails = new THREE.Mesh(railGeometry, railMaterial);
+    rails.name = 'sf-transit-rails';
+    rails.renderOrder = 2;
+    rails.receiveShadow = true;
+    root.add(rails);
+    this.geometryCache.push(railGeometry, railMaterial);
+    if (tieAttrs.position.length) {
+      const tieGeometry = buildDynGeometry(tieAttrs);
+      const tieMaterial = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.86,
+        flatShading: true,
+      });
+      const ties = new THREE.Mesh(tieGeometry, tieMaterial);
+      ties.name = 'sf-transit-ties';
+      ties.renderOrder = 2;
+      root.add(ties);
+      this.geometryCache.push(tieGeometry, tieMaterial);
+    }
+    if (wirePoints.length) {
+      const wireGeometry = new THREE.BufferGeometry();
+      wireGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wirePoints, 3));
+      const wireMaterial = new THREE.LineBasicMaterial({
+        color: 0x3d3735,
+        transparent: true,
+        opacity: 0.22,
+      });
+      const wires = new THREE.LineSegments(wireGeometry, wireMaterial);
+      wires.name = 'sf-transit-overhead';
+      root.add(wires);
+      this.geometryCache.push(wireGeometry, wireMaterial);
+    }
+    if (supportPositions.size) {
+      const supportGeometry = new THREE.CylinderGeometry(0.045, 0.065, 7.15, 5);
+      const supportMaterial = new THREE.MeshStandardMaterial({
+        color: 0x554d49,
+        roughness: 0.74,
+        metalness: 0.28,
+        flatShading: true,
+      });
+      const supports = new THREE.InstancedMesh(supportGeometry, supportMaterial, supportPositions.size);
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      let index = 0;
+      for (const support of supportPositions.values()) {
+        position.set(support.x, heightAt(support.x, support.z) + roadLift + 3.55, support.z);
+        matrix.compose(position, new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+        supports.setMatrixAt(index, matrix);
+        index += 1;
+      }
+      supports.instanceMatrix.needsUpdate = true;
+      supports.castShadow = true;
+      supports.name = 'sf-transit-supports';
+      root.add(supports);
+      this.geometryCache.push(supportGeometry, supportMaterial);
     }
   }
 
@@ -2502,7 +2921,9 @@ export class CityRenderer {
     this.ambient.intensity = 0.08 + nightFactor * 0.26;
     this.rim.intensity = 0.1 + nightFactor * 0.55;
     for (const entry of this.nightEmissive) {
-      entry.material.emissiveIntensity = night ? (entry.texture || entry.nightTexture ? 0.58 : 1.1) : 0;
+      entry.material.emissiveIntensity = night
+        ? (entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9))
+        : 0;
     }
     for (const material of this.neonGlowMaterials) {
       material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
@@ -2511,10 +2932,15 @@ export class CityRenderer {
       bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
     }
     for (const light of this.lampLights) {
-      light.intensity = night ? 1.45 : 0;
+      light.intensity = night ? 0.72 : 0;
     }
     for (const light of this.neonLights) {
       light.intensity = night ? 2.8 : 0;
+    }
+    if (this.water?.material) {
+      this.water.material.color.set(night ? 0x1d5270 : 0x2f8fae);
+      this.water.material.emissive.set(night ? 0x07192d : 0x062b35);
+      this.water.material.emissiveIntensity = night ? 0.42 : 0.08;
     }
     const fogColor = nightFactor < 0.28
       ? new THREE.Color('#2a2e58')
@@ -2591,6 +3017,14 @@ export class CityRenderer {
 function smoothstep(a, b, x) {
   const t = clamp((x - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function isSanFranciscoCity(city) {
+  const name = String(city?.meta?.name || '');
+  const seed = String(city?.meta?.seed || '');
+  return city?.meta?.generator === 'sf-builtin'
+    || (city?.meta?.generator === 'openstreetmap' && /san\s*francisco/i.test(name))
+    || /^sf(?:[-_ ]|$)/i.test(seed);
 }
 
 function pointToSegmentDistance(p, a, b) {

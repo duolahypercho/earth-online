@@ -1371,7 +1371,7 @@ async function boot() {
           if (!segment.streetName) return false;
           const a = segment.points[0];
           const b = segment.points[segment.points.length - 1];
-          return Math.hypot(b.x - a.x, b.z - a.z) > 70 && corridorIsClear(segment);
+          return Math.hypot(b.x - a.x, b.z - a.z) > (realMap ? 48 : 70) && corridorIsClear(segment);
         }).sort((a, b) => {
           const len = (segment) => Math.hypot(segment.points.at(-1).x - segment.points[0].x, segment.points.at(-1).z - segment.points[0].z);
           const density = (segment) => {
@@ -1401,7 +1401,17 @@ async function boot() {
             }
             return count;
           };
-          const rank = (segment) => density(segment) * 1000
+          const identityRank = (segment) => {
+            if (!realMap) return 0;
+            const name = String(segment.streetName || '').toLowerCase();
+            if (name.includes('market')) return 5;
+            if (name.includes('powell')) return 4;
+            if (name.includes('embarcadero')) return 3;
+            if (name.includes('mission') || name.includes('howard')) return 2;
+            return 0;
+          };
+          const rank = (segment) => identityRank(segment) * 50000
+            + density(segment) * 1000
             + shopCount(segment) * 260
             + (segment.highway === 'primary' || segment.highway === 'secondary' ? 3 : segment.highway === 'tertiary' ? 2 : 1) * 10
             + Math.min(10, len(segment) / 40);
