@@ -1212,6 +1212,8 @@ hud = createHud({
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
+    coopWaterfrontSession = null;
+    networking?.leaveCoopSession?.();
     cityShift?.restart();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Waterfront Loop replayed · follow the amber beacon to the Welcome Center.');
@@ -1222,6 +1224,8 @@ hud = createHud({
 let playerAvatar = null;
 let lifeSim = null;
 let networking = null;
+let coopWaterfrontSession = null;
+const rewardedCoopReceipts = new Set();
 let audioContext = null;
 let playerName = 'Traveler';
 let drivingExitPose = null;
@@ -1781,11 +1785,40 @@ function startPlayerLayer() {
         });
       },
       onPeerGameplayEventClear: ({ peerId }) => hud?.clearPeerGameplayEvent?.(peerId),
+      onCoopSessionChange: handleCoopSessionChange,
       onConnectionChange: () => {},
     });
   }
   networking?.setName(playerName);
   hud?.setLifeState?.(lifeSim?.getState());
+}
+
+function handleCoopSessionChange(nextSession, previousSession = coopWaterfrontSession) {
+  const prior = previousSession || coopWaterfrontSession;
+  coopWaterfrontSession = nextSession ? structuredClone(nextSession) : null;
+  if (!nextSession) {
+    if (prior?.sessionId && prior.status === 'running') {
+      const failed = cityShift?.failCanonicalSession?.(
+        prior.sessionId,
+        'co-op-session-ended',
+      );
+      if (failed) {
+        hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
+        hud?.setMessage('CO-OP WATERFRONT LOOP ENDED / NO PAYOUT.');
+        savePlayerProgress();
+      }
+    }
+    return;
+  }
+  const applied = cityShift?.applyCanonicalProgress?.(nextSession);
+  if (!applied) return;
+  hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
+  const members = Array.isArray(nextSession.members) ? nextSession.members.length : 1;
+  if (applied.applied.length === 0) {
+    hud?.setMessage(`CO-OP WATERFRONT LOOP / ${members}/2 PLAYERS · WAITING FOR ${
+      String(nextSession.currentStepId || 'NEXT OBJECTIVE').replaceAll('-', ' ').toUpperCase()
+    }.`);
+  }
 }
 
 function getNetworkState() {
@@ -1796,7 +1829,7 @@ function getNetworkState() {
     ? drivingState.position
     : { x: controls.target.x, y: groundY + PLAYER_GROUND_OFFSET, z: controls.target.z };
   const yaw = drivingState ? drivingState.heading : controls.yaw;
-  const mode = drivingState ? 'drive' : 'walk';
+  const mode = drivingState ? 'drive' : controls.interiorMode ? 'interior' : 'walk';
   const heatState = streetHeat?.getState?.() || {};
   const combatState = combat?.getState?.() || {};
   const health = Math.max(0, Math.min(100, Number(combatState.health) || 0));
@@ -1854,6 +1887,15 @@ function getNetworkState() {
       objective: missionState.objective,
     }
     : null;
+  const moveAxisX = (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0);
+  const moveAxisZ = (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0);
+  const moveLength = Math.hypot(moveAxisX, moveAxisZ);
+  const normalizedX = moveLength > 0 ? moveAxisX / moveLength : 0;
+  const normalizedZ = moveLength > 0 ? moveAxisZ / moveLength : 0;
+  const forwardX = Math.sin(controls.yaw);
+  const forwardZ = Math.cos(controls.yaw);
+  const rightX = forwardZ;
+  const rightZ = -forwardX;
   return {
     x: position.x,
     y: position.y,
@@ -1864,6 +1906,12 @@ function getNetworkState() {
     vehicleId: drivingState?.index ?? null,
     vehicleClass: drivingState?.class ?? null,
     vehicleColor: drivingState?.color ?? null,
+    coopMotion: {
+      x: drivingState ? 0 : rightX * normalizedX + forwardX * normalizedZ,
+      z: drivingState ? 0 : rightZ * normalizedX + forwardZ * normalizedZ,
+      sprint: !drivingState
+        && (controls.keys.has('shiftleft') || controls.keys.has('shiftright')),
+    },
     gameplay: {
       heat: Math.max(0, Math.min(100, Math.round(Number(heatState.heat) || 0))),
       wantedLevel: Math.max(0, Math.min(3, Math.round(Number(heatState.level) || 0))),
@@ -2830,9 +2878,40 @@ const FEATURED_PORTAL_DISCOVERY_RADIUS = 48;
 cityShift = createCityShift({
   scene,
   city,
-  onAdvance: ({ message, completed, cashReward }) => {
+  onStepAttempt: ({ step, stepIndex, totalSteps, interaction }) => {
+    const networkState = networking?.getState?.();
+    const coopSession = networking?.getCoopSession?.();
+    if (networkState?.connected !== true
+      || (!coopSession && (networkState.peerCount < 1 || stepIndex > 0))) return undefined;
+    networking.submitCoopStep?.({
+      stepIndex,
+      stepId: step.id,
+      totalSteps,
+      context: interaction,
+    });
+    hud?.setMessage(`CO-OP / VALIDATING ${step.shortLabel.toUpperCase()}…`);
+    return 'deferred';
+  },
+  onAdvance: ({
+    message,
+    completed,
+    cashReward,
+    source,
+    sessionId,
+    completionRevision,
+  }) => {
     if (completed && cashReward > 0) {
-      lifeSim?.creditMissionReward?.(cashReward, 'Waterfront Loop payout');
+      if (source === 'coop') {
+        const receipt = `${sessionId}:${completionRevision}`;
+        if (sessionId
+          && Number.isInteger(completionRevision)
+          && !rewardedCoopReceipts.has(receipt)) {
+          rewardedCoopReceipts.add(receipt);
+          lifeSim?.creditMissionReward?.(cashReward, 'Co-op Waterfront Loop payout');
+        }
+      } else {
+        lifeSim?.creditMissionReward?.(cashReward, 'Waterfront Loop payout');
+      }
     }
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);

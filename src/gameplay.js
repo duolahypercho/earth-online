@@ -76,7 +76,7 @@ function formatClock(seconds) {
  * existing interactions, so the player is rewarded for seeing the work that is
  * already in the world rather than chasing abstract UI-only checkpoints.
  */
-export function createCityShift({ scene, city, onAdvance } = {}) {
+export function createCityShift({ scene, city, onAdvance, onStepAttempt } = {}) {
   if (!scene?.isScene || !city) {
     throw new TypeError('createCityShift requires a THREE.Scene and city runtime.');
   }
@@ -143,6 +143,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
   const targetVector = new THREE.Vector3();
   const markerVector = new THREE.Vector3();
   let markerTime = 0;
+  let canonicalSessionId = null;
+  let canonicalRevision = 0;
 
   function currentStep() {
     return steps[state.stepIndex] || null;
@@ -179,13 +181,17 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     return Math.hypot(position.x - target.x, position.z - target.z);
   }
 
-  function emitAdvance(step, completed) {
+  function emitAdvance(step, completed, metadata = {}) {
     const baseReward = 280;
     const timeBonus = Math.max(80, 520 - Math.round(state.elapsed * 4));
     state.score += baseReward + timeBonus;
     state.lastAdvance = step.id;
+    const canonicalCashReward = Number(metadata.canonicalCashReward);
     state.cashReward = completed
-      ? SHIFT_BASE_CASH_REWARD + Math.max(0, Math.ceil((SHIFT_TIME_LIMIT_SECONDS - state.elapsed) / 60) * 10)
+      ? metadata.source === 'coop' && Number.isInteger(canonicalCashReward)
+        ? THREE.MathUtils.clamp(canonicalCashReward, SHIFT_BASE_CASH_REWARD, 320)
+        : SHIFT_BASE_CASH_REWARD
+          + Math.max(0, Math.ceil((SHIFT_TIME_LIMIT_SECONDS - state.elapsed) / 60) * 10)
       : 0;
     const message = completed
       ? `Waterfront loop complete · ${formatClock(state.elapsed)} · $${state.cashReward} paid`
@@ -196,6 +202,7 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
       message,
       score: state.score,
       cashReward: state.cashReward,
+      ...metadata,
     });
   }
 
@@ -217,12 +224,12 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     return { failed: true, reason: state.failureReason };
   }
 
-  function advance(step) {
+  function advance(step, metadata = {}) {
     if (state.status !== 'running' || !step || step !== currentStep()) return null;
     state.stepIndex += 1;
     const completed = state.stepIndex >= steps.length;
     if (completed) state.status = 'complete';
-    emitAdvance(step, completed);
+    emitAdvance(step, completed, metadata);
     return { completed, step };
   }
 
@@ -234,6 +241,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     state.lastAdvance = null;
     state.cashReward = 0;
     state.failureReason = null;
+    canonicalSessionId = null;
+    canonicalRevision = 0;
     marker.visible = true;
   }
 
@@ -295,6 +304,19 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     if (state.status !== 'running' || step?.kind !== 'portal' || !portal) return null;
     const matchingPortal = step.portal && portal.id === step.portal.id;
     if (!matchingPortal) return null;
+    const attempt = onStepAttempt?.({
+      step,
+      stepIndex: state.stepIndex,
+      totalSteps: steps.length,
+      interaction: {
+        kind: 'portal',
+        id: portal.id,
+        label: portal.label,
+        x: portal.position?.x,
+        z: portal.position?.z,
+      },
+    });
+    if (attempt === 'deferred') return { pending: true, step };
     return advance(step);
   }
 
@@ -302,7 +324,82 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     const step = currentStep();
     if (state.status !== 'running' || step?.kind !== 'hotspot' || !result) return null;
     if (result.id !== step.hotspotId) return null;
+    const attempt = onStepAttempt?.({
+      step,
+      stepIndex: state.stepIndex,
+      totalSteps: steps.length,
+      interaction: {
+        kind: 'hotspot',
+        id: result.id,
+        distance: result.distance,
+        enabled: result.enabled,
+      },
+    });
+    if (attempt === 'deferred') return { pending: true, step };
     return advance(step);
+  }
+
+  function applyCanonicalProgress(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const sessionId = typeof snapshot.sessionId === 'string'
+      ? snapshot.sessionId.trim().slice(0, 64)
+      : '';
+    const revision = Number(snapshot.revision);
+    const completedSteps = Number(snapshot.completedSteps);
+    const completionRevision = Number(snapshot.completionRevision);
+    const cashReward = Number(snapshot.cashReward);
+    const status = snapshot.status;
+    if (!sessionId
+      || !Number.isInteger(revision)
+      || revision < 1
+      || !Number.isInteger(completedSteps)
+      || completedSteps < 0
+      || completedSteps > steps.length
+      || !['running', 'complete'].includes(status)
+      || (status === 'complete') !== (completedSteps === steps.length)
+      || (status === 'complete' && (
+        !Number.isInteger(completionRevision)
+        || completionRevision !== revision
+        || !Number.isInteger(cashReward)
+        || cashReward < SHIFT_BASE_CASH_REWARD
+        || cashReward > 320
+      ))) return null;
+    if (canonicalSessionId && canonicalSessionId !== sessionId) return null;
+    if (revision <= canonicalRevision
+      || completedSteps < state.stepIndex
+      || completedSteps > state.stepIndex + 1) return null;
+    canonicalSessionId = sessionId;
+    canonicalRevision = revision;
+    const applied = [];
+    if (state.status === 'running' && state.stepIndex < completedSteps) {
+      const step = currentStep();
+      const result = advance(step, {
+        source: 'coop',
+        sessionId,
+        canonicalRevision: revision,
+        completionRevision: status === 'complete' ? completionRevision : null,
+        canonicalCashReward: status === 'complete' ? cashReward : 0,
+      });
+      if (!result) return null;
+      applied.push(result.step.id);
+    }
+    return {
+      sessionId,
+      revision,
+      status: state.status,
+      completedSteps: state.stepIndex,
+      applied,
+    };
+  }
+
+  function failCanonicalSession(sessionId, reason = 'co-op-session-ended') {
+    if (!canonicalSessionId
+      || canonicalSessionId !== String(sessionId || '')
+      || state.status !== 'running') return null;
+    const result = fail(reason);
+    canonicalSessionId = null;
+    canonicalRevision = 0;
+    return result;
   }
 
   function update(dt = 0, position = null, activePortal = null) {
@@ -383,6 +480,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     importState,
     onPortalEntered,
     onHotspotUsed,
+    applyCanonicalProgress,
+    failCanonicalSession,
     fail,
     dispose,
     steps,

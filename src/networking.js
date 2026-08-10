@@ -17,6 +17,14 @@ const GAMEPLAY_ACTIVITIES = new Set([
 ]);
 const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
 const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
+const COOP_STEPS = Object.freeze([
+  'welcome-center',
+  'welcome-desk',
+  'bay-route-model',
+  'map-archive',
+  'ferry-building',
+  'coit-tower',
+]);
 const GAMEPLAY_EVENT_KINDS = new Set([
   'arrested',
   'critical',
@@ -98,6 +106,57 @@ function sanitizeMissionPresence(mission) {
   };
 }
 
+function sanitizeCoopSession(session, localId) {
+  if (!session || typeof session !== 'object' || Array.isArray(session)) return null;
+  const sessionId = String(session.sessionId || '').trim().slice(0, 64);
+  const revision = Number(session.revision);
+  const completedSteps = Number(session.completedSteps);
+  const members = Array.isArray(session.members)
+    ? session.members.map((member) => String(member || '').trim().slice(0, 48))
+    : [];
+  const steps = Array.isArray(session.steps) ? session.steps : [];
+  const complete = completedSteps === COOP_STEPS.length;
+  const completionRevision = session.completionRevision == null
+    ? null
+    : Number(session.completionRevision);
+  const cashReward = Number(session.cashReward);
+  if (!sessionId
+    || !Number.isInteger(revision)
+    || revision < 1
+    || !Number.isInteger(completedSteps)
+    || completedSteps < 0
+    || completedSteps > COOP_STEPS.length
+    || !['running', 'complete'].includes(session.status)
+    || (session.status === 'complete') !== complete
+    || steps.length !== COOP_STEPS.length
+    || steps.some((step, index) => step !== COOP_STEPS[index])
+    || members.length < 1
+    || members.length > 2
+    || new Set(members).size !== members.length
+    || !members.includes(localId)
+    || session.leaderId !== members[0]
+    || (complete && (
+      !Number.isInteger(completionRevision)
+      || completionRevision !== revision
+      || !Number.isInteger(cashReward)
+      || cashReward !== 260
+    ))
+    || (!complete && (completionRevision !== null || cashReward !== 0))
+    || session.currentStepId !== (complete ? null : COOP_STEPS[completedSteps])) return null;
+  return {
+    sessionId,
+    revision,
+    status: session.status,
+    leaderId: session.leaderId,
+    members,
+    steps: [...COOP_STEPS],
+    completedSteps,
+    currentStepId: session.currentStepId,
+    completionRevision,
+    cashReward,
+  };
+}
+
 function endpointFromLocation() {
   const query = new URLSearchParams(window.location.search);
   if (query.get('net')) return query.get('net');
@@ -124,6 +183,7 @@ export function createNetworking({
   onPeerGameplayEvent,
   onPeerGameplayEventClear,
   onConnectionChange,
+  onCoopSessionChange,
 } = {}) {
   if (typeof WebSocket === 'undefined' || typeof document === 'undefined') return null;
 
@@ -148,6 +208,9 @@ export function createNetworking({
   let voiceSource = null;
   let voiceSampleTimer = 0;
   let voiceTimeData = new Uint8Array(0);
+  let coopSession = null;
+  let coopRequestSequence = 0;
+  const coopRevisionBySession = new Map();
 
   const room = new THREE.Group();
   room.name = 'Remote online players';
@@ -195,6 +258,33 @@ export function createNetworking({
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
   }
 
+  function submitCoopStep({ stepIndex, stepId, context } = {}) {
+    if (!state.connected || !Number.isInteger(stepIndex) || COOP_STEPS[stepIndex] !== stepId) {
+      return false;
+    }
+    coopRequestSequence += 1;
+    send({
+      type: 'coop:advance',
+      requestId: `${state.id || 'pending'}:${coopRequestSequence}`,
+      stepIndex,
+      stepId,
+      context: context && typeof context === 'object' ? { ...context } : null,
+    });
+    return true;
+  }
+
+  function leaveCoopSession() {
+    if (!state.connected || !coopSession) return false;
+    send({ type: 'coop:leave', sessionId: coopSession.sessionId });
+    return true;
+  }
+
+  function clearLocalCoopSession() {
+    const previous = coopSession;
+    coopSession = null;
+    if (previous) onCoopSessionChange?.(null, previous);
+  }
+
   function scheduleReconnect() {
     if (disposed || reconnectTimer) return;
     reconnectTimer = window.setTimeout(() => {
@@ -237,6 +327,7 @@ export function createNetworking({
       state.voiceOn = false;
       state.talking = false;
       cleanupAllPeers();
+      clearLocalCoopSession();
       broadcastSnapshot();
       scheduleReconnect();
     });
@@ -282,6 +373,33 @@ export function createNetworking({
       });
     } else if (message?.type === 'rtc') {
       handleRtc(message.from, message.data);
+    } else if (message?.type === 'coop:state') {
+      if (message.session == null) {
+        const previous = coopSession;
+        const sessionId = String(message.sessionId || previous?.sessionId || '').trim();
+        const revision = Number(message.revision);
+        const baseline = coopRevisionBySession.get(sessionId) || 0;
+        if (previous?.sessionId === sessionId
+          && Number.isInteger(revision)
+          && revision > baseline) {
+          coopRevisionBySession.set(sessionId, revision);
+          coopSession = null;
+          onCoopSessionChange?.(null, previous);
+        }
+      } else {
+        const next = sanitizeCoopSession(message.session, state.id);
+        const baseline = next ? coopRevisionBySession.get(next.sessionId) || 0 : Infinity;
+        if (next && next.revision > baseline
+          && (!coopSession || coopSession.sessionId === next.sessionId)) {
+          const previous = coopSession;
+          coopRevisionBySession.set(next.sessionId, next.revision);
+          coopSession = next;
+          onCoopSessionChange?.(
+            { ...next, members: [...next.members], steps: [...next.steps] },
+            previous,
+          );
+        }
+      }
     } else if (message?.type === 'roster') {
       for (const peer of message.peers || []) {
         if (peer.id === state.id) continue;
@@ -560,6 +678,9 @@ export function createNetworking({
         vehicleId: local.vehicleId ?? null,
         vehicleClass: local.vehicleClass || null,
         vehicleColor: local.vehicleColor ?? null,
+        coopMotion: local.coopMotion && typeof local.coopMotion === 'object'
+          ? { ...local.coopMotion }
+          : null,
         gameplay: sanitizeGameplayStatus(local.gameplay),
         mission: sanitizeMissionPresence(local.mission),
       });
@@ -903,6 +1024,7 @@ export function createNetworking({
     if (reconnectTimer) window.clearTimeout(reconnectTimer);
     disableVoice();
     cleanupAllPeers();
+    clearLocalCoopSession();
     ws?.close();
     room.remove();
   }
@@ -923,6 +1045,11 @@ export function createNetworking({
     setTalking,
     getVoiceDebug,
     sendChat,
+    submitCoopStep,
+    leaveCoopSession,
+    getCoopSession: () => coopSession
+      ? { ...coopSession, members: [...coopSession.members], steps: [...coopSession.steps] }
+      : null,
     getState: () => ({ ...state, peerCount: peers.size }),
     getPeers: () => [...peers.values()].map((peer) => ({
       id: peer.id,

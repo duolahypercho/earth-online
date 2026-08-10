@@ -12,6 +12,26 @@ const GAMEPLAY_ACTIVITIES = new Set([
 ]);
 const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
 const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
+const configuredCoopSessionTtl = Number(process.env.SF_COOP_SESSION_TTL_MS);
+const COOP_SESSION_TTL_MS = Number.isFinite(configuredCoopSessionTtl)
+  ? Math.max(250, Math.min(120000, configuredCoopSessionTtl))
+  : 120000;
+const COOP_CASH_REWARD = 260;
+// V1 opt-in is intentionally start-window only: both players enter through
+// Welcome before step 2. Mid-run joins fail closed instead of silently
+// granting skipped objectives or forcing a 0 -> N client progress leap.
+const COOP_JOIN_STEP_INDEX = 0;
+const COOP_STEPS = Object.freeze([
+  Object.freeze({ id: 'welcome-center', kind: 'portal', label: 'Embarcadero Welcome Center', x: 46, z: 35.91, radius: 10, enterX: 348, enterZ: 12 }),
+  Object.freeze({ id: 'welcome-desk', kind: 'hotspot', x: 348, z: 13.45, radius: 3.2 }),
+  Object.freeze({ id: 'bay-route-model', kind: 'hotspot', x: 344.4, z: 9.75, radius: 3.2 }),
+  Object.freeze({ id: 'map-archive', kind: 'hotspot', x: 352.95, z: 9.6, radius: 3.2 }),
+  Object.freeze({ id: 'ferry-building', kind: 'portal', label: 'Ferry Building market hall', x: -8, z: 99.2, radius: 10, enterX: 380, enterZ: 12 }),
+  Object.freeze({ id: 'coit-tower', kind: 'portal', label: 'Coit Tower observation deck', x: 82, z: 122.8, radius: 9, enterX: 364, enterZ: 12 }),
+]);
+let nextCoopSessionId = 1;
+let nextCoopRevision = 1;
+let activeCoopSession = null;
 const GAMEPLAY_EVENT_KINDS = new Set([
   'arrested', 'critical', 'escaped', 'high-heat', 'near-miss', 'pedestrian-impact',
   'pursuit-start', 'responder-contact', 'traffic-violation', 'vehicle-theft',
@@ -112,7 +132,9 @@ function sanitizeMission(mission, client) {
 }
 
 function sanitizeState(message, client) {
-  const mode = message.mode === 'drive' ? 'drive' : 'walk';
+  const mode = message.mode === 'drive'
+    ? 'drive'
+    : message.mode === 'interior' ? 'interior' : 'walk';
   return {
     type: 'state',
     name: client.name,
@@ -146,6 +168,184 @@ function safeSend(ws, payload) {
   }
 }
 
+function acceptCoopMotion(client, state, motion, now = Date.now()) {
+  const previous = client.coopState;
+  if (!previous) return false;
+  if (state.mode === 'drive') {
+    client.coopState = { x: previous.x, z: previous.z, mode: 'drive', at: now };
+    client.coopExit = null;
+    return false;
+  }
+  if (state.mode !== previous.mode) {
+    if (previous.mode === 'drive' && state.mode === 'walk') {
+      client.coopState = { x: previous.x, z: previous.z, mode: 'walk', at: now };
+      return true;
+    }
+    if (previous.mode === 'walk' && state.mode === 'interior') {
+      const portal = COOP_STEPS
+        .filter((step) => step.kind === 'portal')
+        .map((step) => ({ step, distance: Math.hypot(previous.x - step.x, previous.z - step.z) }))
+        .filter(({ step, distance }) => distance <= step.radius)
+        .sort((a, b) => a.distance - b.distance)[0]?.step;
+      if (!portal) return false;
+      client.coopState = { x: portal.enterX, z: portal.enterZ, mode: 'interior', at: now };
+      client.coopExit = { x: portal.x, z: portal.z, radius: portal.radius };
+      return true;
+    }
+    const exit = client.coopExit;
+    if (previous.mode !== 'interior'
+      || state.mode !== 'walk'
+      || !exit) return false;
+    client.coopExit = null;
+    client.coopState = { x: exit.x, z: exit.z, mode: 'walk', at: now };
+    return true;
+  }
+  const elapsed = Math.min(0.2, Math.max(0, (now - previous.at) / 1000));
+  const inputX = boundedNumber(motion?.x, -1, 1);
+  const inputZ = boundedNumber(motion?.z, -1, 1);
+  const inputLength = Math.hypot(inputX, inputZ);
+  const scale = inputLength > 1 ? 1 / inputLength : 1;
+  const speed = motion?.sprint === true ? 9.5 : 5.6;
+  client.coopState = {
+    x: previous.x + inputX * scale * speed * elapsed,
+    z: previous.z + inputZ * scale * speed * elapsed,
+    mode: state.mode,
+    at: now,
+  };
+  return true;
+}
+
+function coopSnapshot(session) {
+  if (!session) return null;
+  const complete = session.completedSteps === COOP_STEPS.length;
+  return {
+    sessionId: session.id,
+    revision: session.revision,
+    status: complete ? 'complete' : 'running',
+    leaderId: session.members[0] || null,
+    members: [...session.members],
+    steps: COOP_STEPS.map((step) => step.id),
+    completedSteps: session.completedSteps,
+    currentStepId: complete ? null : COOP_STEPS[session.completedSteps].id,
+    completionRevision: complete ? session.revision : null,
+    cashReward: complete ? COOP_CASH_REWARD : 0,
+  };
+}
+
+function sendCoopSnapshot(session) {
+  const snapshot = coopSnapshot(session);
+  for (const memberId of session?.members || []) {
+    safeSend(clients.get(memberId)?.ws, { type: 'coop:state', session: snapshot });
+  }
+}
+
+function endCoopSession(reason = 'ended') {
+  const session = activeCoopSession;
+  if (!session) return;
+  activeCoopSession = null;
+  const revision = nextCoopRevision;
+  nextCoopRevision += 1;
+  for (const memberId of session.members) {
+    safeSend(clients.get(memberId)?.ws, {
+      type: 'coop:state',
+      session: null,
+      sessionId: session.id,
+      revision,
+      reason,
+    });
+  }
+}
+
+function validateCoopStep(client, message, expected) {
+  const context = message.context;
+  const pose = client.coopState;
+  const expectedMode = expected?.kind === 'hotspot' ? 'interior' : 'walk';
+  if (!expected
+    || !pose
+    || Date.now() - pose.at > 750
+    || pose.mode !== expectedMode
+    || !context
+    || typeof context !== 'object') {
+    return false;
+  }
+  if (context.kind !== expected.kind) return false;
+  if (expected.kind === 'portal'
+    && (!String(context.id || '').trim() || String(context.label || '') !== expected.label)) return false;
+  if (expected.kind === 'hotspot'
+    && (String(context.id || '') !== expected.id || context.enabled !== true)) return false;
+  return Math.hypot(pose.x - expected.x, pose.z - expected.z) <= expected.radius;
+}
+
+function handleCoopAdvance(id, client, message) {
+  const requestId = String(message.requestId || '').trim().slice(0, 64);
+  const stepId = String(message.stepId || '').trim();
+  const stepIndex = Number(message.stepIndex);
+  if (!requestId || requestId === client.lastCoopRequestId
+    || !Number.isInteger(stepIndex)
+    || stepIndex < 0
+    || stepIndex >= COOP_STEPS.length
+    || COOP_STEPS[stepIndex].id !== stepId) return;
+  client.lastCoopRequestId = requestId;
+  const now = Date.now();
+  if (activeCoopSession && now - activeCoopSession.updatedAt > COOP_SESSION_TTL_MS) {
+    endCoopSession('expired');
+  }
+  let session = activeCoopSession;
+  if (!session) {
+    if (stepIndex !== 0 || !validateCoopStep(client, message, COOP_STEPS[0])) return;
+    session = {
+      id: `waterfront-${nextCoopSessionId}`,
+      revision: nextCoopRevision,
+      members: [id],
+      completedSteps: 0,
+      updatedAt: now,
+    };
+    nextCoopSessionId += 1;
+    nextCoopRevision += 1;
+    activeCoopSession = session;
+  } else if (!session.members.includes(id)) {
+    if (session.members.length >= 2
+      || session.completedSteps !== 1
+      || stepIndex !== COOP_JOIN_STEP_INDEX
+      || !validateCoopStep(client, message, COOP_STEPS[COOP_JOIN_STEP_INDEX])) return;
+    session.members.push(id);
+    session.revision = nextCoopRevision;
+    session.updatedAt = now;
+    nextCoopRevision += 1;
+    client.coopState = {
+      x: COOP_STEPS[0].enterX,
+      z: COOP_STEPS[0].enterZ,
+      mode: 'interior',
+      at: now,
+    };
+    client.coopExit = {
+      x: COOP_STEPS[0].x,
+      z: COOP_STEPS[0].z,
+      radius: COOP_STEPS[0].radius,
+    };
+    sendCoopSnapshot(session);
+    return;
+  }
+  if (session.completedSteps !== stepIndex
+    || session.status === 'complete'
+    || !validateCoopStep(client, message, COOP_STEPS[stepIndex])) return;
+  session.completedSteps += 1;
+  if (COOP_STEPS[stepIndex].kind === 'portal') {
+    const portal = COOP_STEPS[stepIndex];
+    client.coopState = {
+      x: portal.enterX,
+      z: portal.enterZ,
+      mode: 'interior',
+      at: now,
+    };
+    client.coopExit = { x: portal.x, z: portal.z, radius: portal.radius };
+  }
+  session.revision = nextCoopRevision;
+  session.updatedAt = now;
+  nextCoopRevision += 1;
+  sendCoopSnapshot(session);
+}
+
 function roster() {
   return [...clients.entries()].map(([id, client]) => ({
     id,
@@ -173,6 +373,10 @@ wss.on('connection', (ws) => {
     lastGameplayEventAt: 0,
     lastMissionRevision: 0,
     lastMission: null,
+    lastState: null,
+    lastCoopRequestId: null,
+    coopState: { x: 28, z: 38, mode: 'walk', at: Date.now() },
+    coopExit: null,
   });
 
   safeSend(ws, { type: 'welcome', id, name: clients.get(id).name, peers: roster().filter((peer) => peer.id !== id) });
@@ -199,7 +403,18 @@ wss.on('connection', (ws) => {
       const now = Date.now();
       if (now - client.lastStateAt < STATE_MIN_INTERVAL_MS) return;
       client.lastStateAt = now;
-      broadcast({ ...sanitizeState(message, client), from: id }, id);
+      const sanitized = sanitizeState(message, client);
+      client.lastState = sanitized;
+      acceptCoopMotion(client, sanitized, message.coopMotion, now);
+      broadcast({ ...sanitized, from: id }, id);
+      return;
+    }
+    if (message.type === 'coop:advance') {
+      handleCoopAdvance(id, client, message);
+      return;
+    }
+    if (message.type === 'coop:leave') {
+      if (activeCoopSession?.members.includes(id)) endCoopSession('left');
       return;
     }
     if (message.type === 'chat') {
@@ -217,13 +432,23 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    if (activeCoopSession?.members.includes(id)) endCoopSession('disconnected');
     clients.delete(id);
     broadcast({ type: 'peer:leave', id });
   });
   ws.on('error', () => {
+    if (activeCoopSession?.members.includes(id)) endCoopSession('disconnected');
     clients.delete(id);
     broadcast({ type: 'peer:leave', id });
   });
 });
+
+const coopExpiryTimer = setInterval(() => {
+  if (activeCoopSession
+    && Date.now() - activeCoopSession.updatedAt > COOP_SESSION_TTL_MS) {
+    endCoopSession('expired');
+  }
+}, Math.min(1000, Math.max(100, COOP_SESSION_TTL_MS / 4)));
+coopExpiryTimer.unref?.();
 
 console.log(`San Francisco multiplayer relay listening on ws://${HOST}:${PORT}`);
