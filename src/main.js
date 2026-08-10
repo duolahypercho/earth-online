@@ -3028,8 +3028,12 @@ combat = createCombatLoop({
   onRecoil: (amount) => {
     controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
   },
-  onEvent: ({ kind, message, targetKind, incidentId, residentId }) => {
+  onEvent: ({ kind, message, targetKind, incidentId, residentId, vehicleId }) => {
     combatAudio?.play?.(kind, { targetKind });
+    if (kind === 'impact' && targetKind === 'traffic') {
+      const result = traffic.damageTrafficVehicleFromCombat?.(vehicleId) ?? null;
+      if (result?.damage) savePlayerProgress();
+    }
     if (kind === 'impact' && targetKind === 'pedestrian') {
       if (dispatchCombatWitness({ incidentId, residentId })) return;
     }

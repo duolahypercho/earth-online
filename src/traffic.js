@@ -92,6 +92,10 @@ const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
 const VEHICLE_DAMAGE_COOLDOWN = 0.85;
 const MAX_PERSISTED_COLLISION_AFTERMATH = 8;
+const PERSISTED_COLLISION_DAMAGE_SOURCES = new Set([
+  'reckless-collision',
+  'combat-impact',
+]);
 const VEHICLE_HEALTH_BY_CLASS = Object.freeze({
   bike: 60,
   sedan: 100,
@@ -1807,6 +1811,31 @@ export function createTrafficSystem({
     userData.vehicleMaxHealth = vehicle.maxHealth;
     userData.vehicleDamageState = vehicle.damageState;
     userData.vehicleDisabled = vehicle.disabled;
+  }
+
+  function syncVehicleCombatDisabledMetadata(vehicle, disabled) {
+    const userData = vehicle?.mesh?.root?.userData;
+    if (!userData) return;
+    if (disabled) {
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+      return;
+    }
+    delete userData.combatDisabled;
+    delete userData.combatDefeated;
+    delete userData.combatDefeatedAt;
+    delete userData.combatBrakeUntil;
+  }
+
+  function vehicleEligibleForCombatDamage(vehicle) {
+    return Boolean(vehicle
+      && !vehicle.disabled
+      && vehicle !== playerVehicle
+      && vehicle !== lastPlayerParkedVehicle
+      && vehicle !== impoundedPlayerVehicle
+      && !vehicle.garageStored
+      && !vehicle.remoteControlled);
   }
 
   function applyVehicleDamage(vehicle, amount = 0, source = 'impact') {
@@ -4529,6 +4558,7 @@ export function createTrafficSystem({
           board: v.cls === 'bus' ? BUS_ROUTE_BOARD : null,
         },
         damage: vehicleDamageSnapshot(v),
+        combatEligible: vehicleEligibleForCombatDamage(v),
         theft: {
           eligible: v.identity.category === 'private',
           reported: v.theftReported === true,
@@ -5033,7 +5063,7 @@ export function createTrafficSystem({
         || vehicle === impoundedPlayerVehicle
         || vehicle.garageStored
         || vehicle.remoteControlled
-        || vehicle.lastDamage?.source !== 'reckless-collision'
+        || !PERSISTED_COLLISION_DAMAGE_SOURCES.has(vehicle.lastDamage?.source)
         || vehicle.health >= vehicle.maxHealth) continue;
       records.push({
         vehicleId: index,
@@ -5061,6 +5091,10 @@ export function createTrafficSystem({
       const maxHealth = Number(record?.damage?.maxHealth);
       const lastDamage = record?.damage?.lastDamage;
       const vehicle = vehicles[vehicleId];
+      const combatHealthStep = vehicle?.maxHealth / 4;
+      const normalizedHealth = lastDamage?.source === 'combat-impact'
+        ? Math.round(health / combatHealthStep) * combatHealthStep
+        : health;
       if (!Number.isInteger(vehicleId)
         || ids.has(vehicleId)
         || excludedIds.has(vehicleId)
@@ -5076,10 +5110,12 @@ export function createTrafficSystem({
         || !Number.isFinite(health)
         || health < 0
         || health >= vehicle.maxHealth
+        || (lastDamage?.source === 'combat-impact'
+          && Math.abs(health - normalizedHealth) > 0.051)
         || typeof record.damage?.disabled !== 'boolean'
-        || record.damage.disabled !== (health <= 0)
+        || record.damage.disabled !== (normalizedHealth <= 0)
         || !lastDamage
-        || lastDamage.source !== 'reckless-collision'
+        || !PERSISTED_COLLISION_DAMAGE_SOURCES.has(lastDamage.source)
         || !Number.isFinite(Number(lastDamage.amount))
         || Number(lastDamage.amount) <= 0
         || Number(lastDamage.amount) > vehicle.maxHealth
@@ -5087,7 +5123,7 @@ export function createTrafficSystem({
         || Number(lastDamage.at) < 0
         || Number(lastDamage.at) > 1000000000) return null;
       ids.add(vehicleId);
-      validated.push({ vehicle, health, lastDamage });
+      validated.push({ vehicle, health: normalizedHealth, lastDamage });
     }
     return validated;
   }
@@ -5100,7 +5136,7 @@ export function createTrafficSystem({
     const validated = validateCollisionAftermathState(snapshot);
     if (!validated) return false;
     for (const vehicle of vehicles) {
-      if (vehicle.lastDamage?.source !== 'reckless-collision'
+      if (!PERSISTED_COLLISION_DAMAGE_SOURCES.has(vehicle.lastDamage?.source)
         || vehicle === playerVehicle
         || vehicle === lastPlayerParkedVehicle
         || vehicle === impoundedPlayerVehicle
@@ -5113,6 +5149,7 @@ export function createTrafficSystem({
       vehicle.lastDamage = null;
       vehicle.hazardUntil = 0;
       syncVehicleDamageMetadata(vehicle);
+      syncVehicleCombatDisabledMetadata(vehicle, false);
     }
     for (const { vehicle, health, lastDamage } of validated) {
       vehicle.health = health;
@@ -5120,7 +5157,7 @@ export function createTrafficSystem({
       vehicle.damageState = damageStateFor(vehicle);
       vehicle.lastDamage = {
         amount: Math.round(Number(lastDamage.amount) * 10) / 10,
-        source: 'reckless-collision',
+        source: lastDamage.source,
         at: Math.max(0, Number(lastDamage.at)),
       };
       vehicle.damageCooldownUntil = 0;
@@ -5134,6 +5171,10 @@ export function createTrafficSystem({
         vehicle.blinkSide = 0;
       }
       syncVehicleDamageMetadata(vehicle);
+      syncVehicleCombatDisabledMetadata(
+        vehicle,
+        vehicle.disabled && lastDamage.source === 'combat-impact',
+      );
     }
     return true;
   }
@@ -5711,6 +5752,19 @@ export function createTrafficSystem({
     return applyVehicleDamage(playerVehicle, amount, source);
   }
 
+  function damageTrafficVehicleFromCombat(index) {
+    const vehicle = vehicles[index];
+    if (!vehicleEligibleForCombatDamage(vehicle)) return null;
+    const damage = applyVehicleDamage(vehicle, vehicle.maxHealth / 4, 'combat-impact');
+    if (damage?.disabled) syncVehicleCombatDisabledMetadata(vehicle, true);
+    return {
+      vehicleId: index,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      damage,
+    };
+  }
+
   function repairPlayerVehicle(source = 'repair') {
     if (!playerVehicle) return null;
     if (canRepairPlayerVehicle?.({
@@ -5838,6 +5892,7 @@ export function createTrafficSystem({
     getPlayerVehicleState,
     getPlayerPedestrianImpactProbe,
     resolvePlayerPedestrianImpact,
+    damageTrafficVehicleFromCombat,
     damagePlayerVehicle,
     repairPlayerVehicle,
     isPlayerDriving,

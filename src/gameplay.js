@@ -1560,7 +1560,11 @@ export function createCombatLoop({
       : [];
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
-      if (!vehicle || vehicle.visible === false || !Number.isFinite(vehicle.position?.x)) continue;
+      if (!vehicle
+        || vehicle.visible === false
+        || vehicle.combatEligible === false
+        || vehicle.damage?.disabled === true
+        || !Number.isFinite(vehicle.position?.x)) continue;
       targetCandidates.push({
         kind: 'traffic',
         id: `traffic:${vehicle.id ?? index}`,
@@ -1739,7 +1743,14 @@ export function createCombatLoop({
         id,
         kind,
         label: String(candidate.label || (kind === 'traffic' ? 'Traffic' : 'Pedestrian')),
-        health: kind === 'traffic' ? 4 : 2,
+        health: kind === 'traffic'
+          ? Math.max(1, Math.ceil(
+            // Traffic snapshots round health to one decimal. Remove that
+            // maximum rounding error before deriving remaining quarter-hits.
+            (Number(candidate.vehicle?.damage?.health || 0) - 0.051)
+            / Math.max(1, Number(candidate.vehicle?.damage?.maxHealth || 1) / 4),
+          ))
+          : 2,
         hits: 0,
         reactionUntil: 0,
         defeated: false,
@@ -1898,6 +1909,7 @@ export function createCombatLoop({
         targetId: target.id,
         targetKind: kind,
         residentId: hit.candidate.residentId ?? target.id,
+        vehicleId: kind === 'traffic' ? Number(hit.candidate.vehicle?.id) : null,
         defeated: target.defeated,
       },
     );
