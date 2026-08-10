@@ -1751,6 +1751,7 @@ export function createTrafficSystem({
   const pursuitResponder = {
     active: false,
     targetIndex: -1,
+    targetIndexes: [],
     playerVehicleId: null,
     playerX: 0,
     playerZ: 0,
@@ -3193,7 +3194,8 @@ export function createTrafficSystem({
     let turningCount = 0;
     let visibleCount = 0;
 
-    for (const v of vehicles) {
+    for (let vehicleIndex = 0; vehicleIndex < vehicles.length; vehicleIndex += 1) {
+      const v = vehicles[vehicleIndex];
       let road = roads[v.road];
       if (v.impounded || v.garageStored) {
         v.speed = 0;
@@ -3204,7 +3206,7 @@ export function createTrafficSystem({
         continue;
       }
       const pursuitResponderActive = pursuitResponder.active
-        && v === vehicles[pursuitResponder.targetIndex]
+        && pursuitResponder.targetIndexes.includes(vehicleIndex)
         && !v.playerControlled
         && !v.remoteControlled;
       if (pursuitResponderActive) {
@@ -4173,9 +4175,11 @@ export function createTrafficSystem({
       const userData = vehicle.mesh.root.userData || {};
       userData.pursuitResponder = false;
       userData.pursuitLevel = 0;
+      userData.pursuitSlot = null;
     }
     pursuitResponder.active = false;
     pursuitResponder.targetIndex = -1;
+    pursuitResponder.targetIndexes.length = 0;
     pursuitResponder.playerVehicleId = null;
     pursuitResponder.distance = null;
   }
@@ -4194,76 +4198,114 @@ export function createTrafficSystem({
     pursuitResponder.playerVehicleId = Number.isInteger(playerVehicleId) ? playerVehicleId : null;
     pursuitResponder.playerX = position.x;
     pursuitResponder.playerZ = position.z;
-    pursuitResponder.level = Math.max(1, Math.floor(Number(level) || 1));
-    const current = vehicles[pursuitResponder.targetIndex];
-    const currentValid = current
-      && current.mesh.root.visible
-      && !current.playerControlled
-      && !current.remoteControlled
-      && !current.impounded
-      && !current.disabled
-      && !current.parked
-      && current.cls !== 'bike'
-      && current.cls !== 'bus'
-      && current.cls !== 'truck';
-    if (!currentValid) {
-      if (current?.pursuitResponder) {
-        current.pursuitResponder = false;
-        current.pursuitLevel = 0;
-        current.mesh.root.userData.pursuitResponder = false;
-        current.mesh.root.userData.pursuitLevel = 0;
-      }
-      let bestIndex = -1;
-      let bestDistance = Infinity;
-      for (let index = 0; index < vehicles.length; index += 1) {
-        const vehicle = vehicles[index];
-        if (index === pursuitResponder.playerVehicleId
-          || !vehicle.mesh.root.visible
-          || vehicle.playerControlled
-          || vehicle.remoteControlled
-          || vehicle.impounded
-          || vehicle.disabled
-          || vehicle.parked
-          || vehicle.cls === 'bike'
-          || vehicle.cls === 'bus'
-          || vehicle.cls === 'truck') continue;
-        const dx = vehicle.mesh.root.position.x - pursuitResponder.playerX;
-        const dz = vehicle.mesh.root.position.z - pursuitResponder.playerZ;
-        const distanceSquared = dx * dx + dz * dz;
-        const distance = Math.sqrt(distanceSquared);
-        const toPlayerX = -dx / Math.max(0.1, distance);
-        const toPlayerZ = -dz / Math.max(0.1, distance);
-        const facingPlayer = Math.sin(vehicle.mesh.root.rotation.y) * toPlayerX
-          + Math.cos(vehicle.mesh.root.rotation.y) * toPlayerZ;
-        const pursuitScore = distance * (facingPlayer > 0.1 ? 0.52 : 1.2);
-        if (pursuitScore < bestDistance) {
-          bestDistance = pursuitScore;
-          bestIndex = index;
-        }
-      }
-      pursuitResponder.targetIndex = bestIndex;
+    pursuitResponder.level = THREE.MathUtils.clamp(Math.floor(Number(level) || 1), 1, 3);
+    const requiredCount = pursuitResponder.level;
+    const eligible = (vehicle, index) => Boolean(
+      vehicle
+      && index !== pursuitResponder.playerVehicleId
+      && vehicle.mesh.root.visible
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.impounded
+      && !vehicle.garageStored
+      && !vehicle.disabled
+      && !vehicle.parked
+      && !taxiAtServiceStop(vehicle)
+      && !deliveryAtServiceStop(vehicle)
+      && vehicle.cls !== 'bike'
+      && vehicle.cls !== 'bus'
+      && vehicle.cls !== 'truck'
+      && vehicle.cls !== 'taxi'
+      && vehicle.identity.category !== 'delivery',
+    );
+    const retained = pursuitResponder.targetIndexes.filter(
+      (index) => eligible(vehicles[index], index),
+    ).slice(0, requiredCount);
+    const retainedSet = new Set(retained);
+    const candidates = [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!eligible(vehicle, index) || retainedSet.has(index)) continue;
+      const dx = vehicle.mesh.root.position.x - pursuitResponder.playerX;
+      const dz = vehicle.mesh.root.position.z - pursuitResponder.playerZ;
+      const distance = Math.hypot(dx, dz);
+      const toPlayerX = -dx / Math.max(0.1, distance);
+      const toPlayerZ = -dz / Math.max(0.1, distance);
+      const facingPlayer = Math.sin(vehicle.mesh.root.rotation.y) * toPlayerX
+        + Math.cos(vehicle.mesh.root.rotation.y) * toPlayerZ;
+      candidates.push({
+        index,
+        score: distance * (facingPlayer > 0.1 ? 0.52 : 1.2),
+      });
     }
-    const target = vehicles[pursuitResponder.targetIndex];
-    if (!target) {
+    candidates.sort((a, b) => a.score - b.score || a.index - b.index);
+    while (retained.length < requiredCount && candidates.length) {
+      retained.push(candidates.shift().index);
+    }
+    const nextSet = new Set(retained);
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!vehicle.pursuitResponder || nextSet.has(index)) continue;
+      vehicle.pursuitResponder = false;
+      vehicle.pursuitLevel = 0;
+      vehicle.mesh.root.userData.pursuitResponder = false;
+      vehicle.mesh.root.userData.pursuitLevel = 0;
+      vehicle.mesh.root.userData.pursuitSlot = null;
+    }
+    pursuitResponder.targetIndexes = retained;
+    pursuitResponder.targetIndex = retained[0] ?? -1;
+    if (!retained.length) {
       pursuitResponder.active = false;
       pursuitResponder.distance = null;
       return getPursuitResponder();
     }
-    target.pursuitResponder = true;
-    target.pursuitLevel = pursuitResponder.level;
-    const userData = target.mesh.root.userData || (target.mesh.root.userData = {});
-    userData.pursuitResponder = true;
-    userData.pursuitLevel = pursuitResponder.level;
+    retained.forEach((index, slot) => {
+      const target = vehicles[index];
+      target.pursuitResponder = true;
+      target.pursuitLevel = pursuitResponder.level;
+      const userData = target.mesh.root.userData || (target.mesh.root.userData = {});
+      userData.pursuitResponder = true;
+      userData.pursuitLevel = pursuitResponder.level;
+      userData.pursuitSlot = slot;
+    });
+    const primary = vehicles[pursuitResponder.targetIndex];
     pursuitResponder.distance = Math.hypot(
-      target.mesh.root.position.x - pursuitResponder.playerX,
-      target.mesh.root.position.z - pursuitResponder.playerZ,
+      primary.mesh.root.position.x - pursuitResponder.playerX,
+      primary.mesh.root.position.z - pursuitResponder.playerZ,
     );
     return getPursuitResponder();
   }
 
+  function getPursuitResponders() {
+    if (!pursuitResponder.active) return [];
+    return pursuitResponder.targetIndexes.map((index, slot) => {
+      const target = vehicles[index];
+      if (!target) return null;
+      const point = target.mesh.root.position;
+      const distance = Math.hypot(
+        point.x - pursuitResponder.playerX,
+        point.z - pursuitResponder.playerZ,
+      );
+      return {
+        active: true,
+        id: index,
+        index,
+        slot,
+        class: target.cls,
+        identity: target.identity.key,
+        label: target.identity.label,
+        distance: Math.round(distance * 10) / 10,
+        position: { x: point.x, y: point.y, z: point.z },
+        speed: Math.round(target.speed * 10) / 10,
+        level: pursuitResponder.level,
+        closing: target.speed > 0,
+      };
+    }).filter(Boolean);
+  }
+
   function getPursuitResponder() {
-    const target = vehicles[pursuitResponder.targetIndex];
-    if (!pursuitResponder.active || !target) {
+    const primary = getPursuitResponders()[0];
+    if (!primary) {
       return {
         active: false,
         id: null,
@@ -4273,21 +4315,8 @@ export function createTrafficSystem({
         level: 0,
       };
     }
-    const point = target.mesh.root.position;
-    const distance = Math.hypot(point.x - pursuitResponder.playerX, point.z - pursuitResponder.playerZ);
-    pursuitResponder.distance = distance;
-    return {
-      active: true,
-      id: pursuitResponder.targetIndex,
-      index: pursuitResponder.targetIndex,
-      class: target.cls,
-      label: target.identity.label,
-      distance: Math.round(distance * 10) / 10,
-      position: { x: point.x, y: point.y, z: point.z },
-      speed: Math.round(target.speed * 10) / 10,
-      level: pursuitResponder.level,
-      closing: target.speed > 0,
-    };
+    pursuitResponder.distance = primary.distance;
+    return primary;
   }
 
   function getDiagnostics() {
@@ -4324,7 +4353,7 @@ export function createTrafficSystem({
         && combatBrakeUntil > 0
         && (combatReaction === 'brake' || combatReaction === 'staggered');
       const pursuitResponderActive = pursuitResponder.active
-        && v === vehicles[pursuitResponder.targetIndex]
+        && pursuitResponder.targetIndexes.includes(index)
         && v.pursuitResponder;
       const taxiPassengerActive = taxiRide?.vehicle === v;
       const muniPassengerActive = muniRide?.vehicle === v;
@@ -5620,6 +5649,7 @@ export function createTrafficSystem({
     getVehicleLifeSnapshot,
     setPursuitResponder,
     getPursuitResponder,
+    getPursuitResponders,
     getRuleProbeSample,
     setWeather,
     setNightLighting,
