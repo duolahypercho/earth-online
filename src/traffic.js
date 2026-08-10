@@ -91,6 +91,7 @@ const TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED = 26 * 26;
 const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
 const VEHICLE_DAMAGE_COOLDOWN = 0.85;
+const MAX_PERSISTED_COLLISION_AFTERMATH = 8;
 const VEHICLE_HEALTH_BY_CLASS = Object.freeze({
   bike: 60,
   sedan: 100,
@@ -5021,6 +5022,122 @@ export function createTrafficSystem({
     return serializePlayerVehicleState(lastPlayerParkedVehicle, 'parked');
   }
 
+  function exportCollisionAftermathState() {
+    const records = [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (records.length >= MAX_PERSISTED_COLLISION_AFTERMATH) break;
+      if (!vehicle
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled
+        || vehicle.lastDamage?.source !== 'reckless-collision'
+        || vehicle.health >= vehicle.maxHealth) continue;
+      records.push({
+        vehicleId: index,
+        class: vehicle.cls,
+        identity: vehicle.identity.key,
+        damage: vehicleDamageSnapshot(vehicle),
+      });
+    }
+    return { version: 1, vehicles: records };
+  }
+
+  function validateCollisionAftermathState(snapshot, excludedVehicleIds = []) {
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.vehicles)
+      || snapshot.vehicles.length > MAX_PERSISTED_COLLISION_AFTERMATH) return null;
+    const validated = [];
+    const ids = new Set();
+    const excludedIds = new Set(
+      Array.isArray(excludedVehicleIds)
+        ? excludedVehicleIds.filter((id) => Number.isInteger(id))
+        : [],
+    );
+    for (const record of snapshot.vehicles) {
+      const vehicleId = Number(record?.vehicleId);
+      const health = Number(record?.damage?.health);
+      const maxHealth = Number(record?.damage?.maxHealth);
+      const lastDamage = record?.damage?.lastDamage;
+      const vehicle = vehicles[vehicleId];
+      if (!Number.isInteger(vehicleId)
+        || ids.has(vehicleId)
+        || excludedIds.has(vehicleId)
+        || !vehicle
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled
+        || record.class !== vehicle.cls
+        || record.identity !== vehicle.identity.key
+        || maxHealth !== vehicle.maxHealth
+        || !Number.isFinite(health)
+        || health < 0
+        || health >= vehicle.maxHealth
+        || typeof record.damage?.disabled !== 'boolean'
+        || record.damage.disabled !== (health <= 0)
+        || !lastDamage
+        || lastDamage.source !== 'reckless-collision'
+        || !Number.isFinite(Number(lastDamage.amount))
+        || Number(lastDamage.amount) <= 0
+        || Number(lastDamage.amount) > vehicle.maxHealth
+        || !Number.isFinite(Number(lastDamage.at))
+        || Number(lastDamage.at) < 0
+        || Number(lastDamage.at) > 1000000000) return null;
+      ids.add(vehicleId);
+      validated.push({ vehicle, health, lastDamage });
+    }
+    return validated;
+  }
+
+  function canImportCollisionAftermathState(snapshot, excludedVehicleIds = []) {
+    return validateCollisionAftermathState(snapshot, excludedVehicleIds) !== null;
+  }
+
+  function importCollisionAftermathState(snapshot) {
+    const validated = validateCollisionAftermathState(snapshot);
+    if (!validated) return false;
+    for (const vehicle of vehicles) {
+      if (vehicle.lastDamage?.source !== 'reckless-collision'
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled) continue;
+      if (vehicle.disabled) diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles - 1);
+      vehicle.health = vehicle.maxHealth;
+      vehicle.disabled = false;
+      vehicle.damageState = 'clear';
+      vehicle.lastDamage = null;
+      vehicle.hazardUntil = 0;
+      syncVehicleDamageMetadata(vehicle);
+    }
+    for (const { vehicle, health, lastDamage } of validated) {
+      vehicle.health = health;
+      vehicle.disabled = health <= 0;
+      vehicle.damageState = damageStateFor(vehicle);
+      vehicle.lastDamage = {
+        amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+        source: 'reckless-collision',
+        at: Math.max(0, Number(lastDamage.at)),
+      };
+      vehicle.damageCooldownUntil = 0;
+      vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+      if (vehicle.disabled) {
+        diagnostics.disabledVehicles += 1;
+        vehicle.speed = 0;
+        vehicle.longitudinalAccel = 0;
+        vehicle.route = null;
+        vehicle.turn = null;
+        vehicle.blinkSide = 0;
+      }
+      syncVehicleDamageMetadata(vehicle);
+    }
+    return true;
+  }
+
   function importPlayerVehicleState(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return false;
     const mode = snapshot.mode === undefined ? 'driving' : snapshot.mode;
@@ -5702,6 +5819,9 @@ export function createTrafficSystem({
     enterPlayerVehicle,
     exportPlayerVehicleState,
     importPlayerVehicleState,
+    exportCollisionAftermathState,
+    canImportCollisionAftermathState,
+    importCollisionAftermathState,
     getPlayerGarageState,
     exportPlayerGarageState,
     importPlayerGarageState,
