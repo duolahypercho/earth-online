@@ -4,6 +4,7 @@ import {
   createFerryBuildingLandmark,
   FERRY_BUILDING_LANDMARK_BUDGET,
   FERRY_BUILDING_LANDMARK_SOURCE,
+  FERRY_CLOCK_TOWER_ANCHOR,
 } from '../src/realmap/hero-landmark.js';
 
 const building = {
@@ -36,8 +37,16 @@ assert.ok(roofAcross.dot(new THREE.Vector2(...frame.across)) > 0.9999, 'local +Z
 assert.ok(landmark.stats.drawCalls <= FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls, 'draw-call budget must hold');
 assert.ok(landmark.stats.triangles <= FERRY_BUILDING_LANDMARK_BUDGET.maxTriangles, 'triangle budget must hold');
 assert.ok(landmark.stats.instances <= FERRY_BUILDING_LANDMARK_BUDGET.maxInstances, 'instance budget must hold');
+assert.ok(FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls <= 12, 'landmark draw-call budget must remain hero-scene safe');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock tower pyramidal roof'), 'clock tower silhouette is required');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock faces').count === 4, 'all four clock faces are required');
+assert.ok(landmark.root.getObjectByName('Ferry Building window mullions').count > 0, 'recessed glazing needs a bounded mullion pass');
+const facadeMaterial = landmark.root.getObjectByName('Ferry Building authoritative OSM footprint shell').material;
+const windowMaterial = landmark.root.getObjectByName('Ferry Building deep window bays').material;
+const clockMaterial = landmark.root.getObjectByName('Ferry Building clock faces').material;
+assert.ok(facadeMaterial.roughness >= 0.8 && facadeMaterial.metalness === 0, 'facade must retain a matte stone response');
+assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed glazing rather than a bright transparent grid');
+assert.equal(clockMaterial.emissiveIntensity, 0, 'clock faces must not use an emissive toy-like treatment');
 const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
 const clockNormals = [];
 for (let index = 0; index < clockFaces.count; index += 1) {
@@ -67,6 +76,10 @@ assert.ok(towerAlong >= frame.bounds.minAlong && towerAlong <= frame.bounds.maxA
 assert.ok(towerAcross >= frame.bounds.minAcross && towerAcross <= frame.bounds.maxAcross, 'clock tower must remain within authoritative across bounds');
 assert.ok(towerWorld.distanceTo(new THREE.Vector2(landmark.getDiagnostics().towerAnchor[0], landmark.getDiagnostics().towerAnchor[2])) < 5e-4, 'tower diagnostics must report its true world anchor');
 assert.equal(landmark.getDiagnostics().towerHeightMetres, 74, 'clock tower must retain its documented approximately 245 ft scale');
+const documentedAnchor = landmark.getDiagnostics().towerAnchor;
+assert.ok(Math.abs(documentedAnchor[0] - FERRY_CLOCK_TOWER_ANCHOR[0]) < 1e-4, 'tower X anchor must remain fixed to the Ferry Building OSM-world location');
+assert.ok(Math.abs(documentedAnchor[1] - FERRY_CLOCK_TOWER_ANCHOR[1]) < 1e-4, 'tower Y anchor must remain fixed to sampled ground plus base lift');
+assert.ok(Math.abs(documentedAnchor[2] - FERRY_CLOCK_TOWER_ANCHOR[2]) < 1e-4, 'tower Z anchor must remain fixed to the Ferry Building OSM-world location');
 
 const unrelated = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
 unrelated.userData.buildingId = 999;
