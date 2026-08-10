@@ -499,6 +499,7 @@ const traffic = createTrafficSystem({
   scene,
   onPlayerTrafficViolation: (event) => handlePlayerTrafficViolation(event),
   onPlayerVehicleCollision: (event) => handlePlayerVehicleCollision(event),
+  canRepairPlayerVehicle: () => streetHeat?.getState?.().pursuitActive !== true,
   roadNetwork: {
     ...city.roadNetwork,
     roads: [...city.roadNetwork.roads, ...expansion.roadNetwork.roads],
@@ -1946,6 +1947,10 @@ function getPlayerVehicleRepairQuote() {
 function repairCurrentPlayerVehicle(source = 'roadside-repair') {
   const quote = getPlayerVehicleRepairQuote();
   if (!quote || quote.cost <= 0) return { ok: false, reason: 'not-needed', quote };
+  if (streetHeat?.getState?.().pursuitActive) {
+    hud?.setMessage('REPAIR LOCKED / LOSE THE STREETHEAT TAIL OR SURRENDER.');
+    return { ok: false, reason: 'pursuit-active', quote };
+  }
   if (!quote.affordable) {
     lifeSim?.payVehicleRepair?.(quote.cost, quote.vehicleClass);
     return { ok: false, reason: 'insufficient-funds', quote };
@@ -2718,12 +2723,15 @@ function updatePlayerLayer(dt, elapsed) {
       weather: weatherMode,
       damage: drivingState.damage,
       repairCost: getPlayerVehicleRepairQuote()?.cost ?? 0,
+      repairLocked: streetHeat?.getState?.().pursuitActive === true,
     });
     const damageAt = drivingState.damage?.lastDamage?.at ?? null;
     if (damageAt !== null && damageAt !== lastVehicleDamageAt) {
       lastVehicleDamageAt = damageAt;
       hud?.setMessage(drivingState.damage?.disabled
-        ? `Vehicle disabled · R roadside repair $${getPlayerVehicleRepairQuote()?.cost ?? 0} / E exit.`
+        ? streetHeat?.getState?.().pursuitActive
+          ? 'Vehicle disabled · repair locked during pursuit · S surrender / E exit.'
+          : `Vehicle disabled · R roadside repair $${getPlayerVehicleRepairQuote()?.cost ?? 0} / E exit.`
         : `Vehicle impact · integrity ${Math.round((drivingState.damage?.ratio ?? 0) * 100)}%.`);
     }
     lifeSim?.noteDriving?.(dt);

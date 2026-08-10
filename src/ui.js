@@ -1508,14 +1508,17 @@ export function createHud({
       Math.max(0, Math.min(1, Number(driveState.damage?.ratio) || 0)) * 100,
     );
     const disabled = driveState.damage?.disabled === true;
+    const repairLocked = driveState.repairLocked === true;
     const repairCost = Math.max(0, Math.round(Number(driveState.repairCost) || 0));
     drivePanel.dataset.damage = String(driveState.damage?.state || 'clear');
     driveMode.textContent = disabled
-      ? `VEHICLE / DISABLED · R $${repairCost}`
+      ? repairLocked
+        ? 'REPAIR LOCKED · S SURRENDER'
+        : `VEHICLE / DISABLED · R $${repairCost}`
       : `DRIVE / ${String(driveState.weather || 'CLEAR').toUpperCase()} · ${integrity}%`;
     drivePanel.setAttribute(
       'aria-label',
-      `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}. Vehicle integrity ${integrity} percent${disabled ? `, disabled, roadside repair ${repairCost} dollars` : ''}.`,
+      `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}. Vehicle integrity ${integrity} percent${disabled ? repairLocked ? ', disabled, repair locked during pursuit, hold S to surrender' : `, disabled, roadside repair ${repairCost} dollars` : ''}.`,
     );
   }
 
