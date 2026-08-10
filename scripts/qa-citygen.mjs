@@ -1,14 +1,14 @@
 import { chromium } from 'playwright';
-import { access, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { REVISION as threeRevisionString } from 'three';
 
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/citygen.html';
 const includeBuiltinSf = process.env.SF_QA_SF_BUILTIN !== '0';
 const systemChrome = process.env.SF_QA_EXECUTABLE
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
-const threePackage = JSON.parse(await readFile(new URL('../node_modules/three/package.json', import.meta.url), 'utf8'));
-const threeRevision = Number(threePackage.version.split('.')[1]);
+const threeRevision = Number(threeRevisionString);
 const browser = await chromium.launch({
   headless: true,
   args: [
@@ -53,6 +53,10 @@ async function analyzeImage(filePath) {
     let upperEdgeSum = 0;
     let upperSamples = 0;
     let facadeTintPixels = 0;
+    let upperWashedOutPixels = 0;
+    let darkPixels = 0;
+    let blackClippedPixels = 0;
+    let highlightClippedPixels = 0;
     let hueBuckets = new Array(12).fill(0);
     let samples = 0;
     const width = canvas.width;
@@ -70,6 +74,9 @@ async function analyzeImage(filePath) {
         lumaSum += luma;
         saturationSum += saturation;
         if (luma > 8) nonBlank += 1;
+        if (luma < 32) darkPixels += 1;
+        if (max <= 4) blackClippedPixels += 1;
+        if (min >= 250) highlightClippedPixels += 1;
         if (saturation > 18) {
           const hue = Math.atan2(Math.sqrt(3) * (g - b), 2 * r - g - b) * 180 / Math.PI;
           hueBuckets[Math.floor(((hue + 180) / 360) * 12) % 12] += 1;
@@ -85,6 +92,7 @@ async function analyzeImage(filePath) {
         if (y >= 140 && y < height * 0.6) {
           upperSamples += 1;
           if (r > g * 1.1 && b > g * 1.1) facadeTintPixels += 1;
+          if (luma > 200 && saturation < 28) upperWashedOutPixels += 1;
         }
         samples += 1;
       }
@@ -98,8 +106,120 @@ async function analyzeImage(filePath) {
       saturatedHues,
       upperSceneEdgeDensity: upperSamples ? upperEdgeSum / upperSamples : 0,
       facadeTintRatio: upperSamples ? facadeTintPixels / upperSamples : 0,
+      upperWashedOutRatio: upperSamples ? upperWashedOutPixels / upperSamples : 0,
+      darkPixelRatio: darkPixels / samples,
+      blackClipRatio: blackClippedPixels / samples,
+      highlightClipRatio: highlightClippedPixels / samples,
     };
   }, dataUrl);
+}
+
+async function auditUiText(stage) {
+  return page.evaluate((auditStage) => {
+    const selectors = [
+      '.brand h1',
+      '#city-name',
+      '.toolbar button',
+      '.tool-label',
+      '.city-search input',
+      '.readout span',
+      '.hint span',
+      '#inspector-title',
+      '#inspector-empty',
+    ];
+    const entries = selectors.flatMap((selector) => [...document.querySelectorAll(selector)].map((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const visible = style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+      const text = (element.value || element.placeholder || element.textContent || '').trim();
+      const clippedX = visible && text.length > 0 && element.scrollWidth > element.clientWidth + 2;
+      const clippedY = visible && text.length > 0 && element.scrollHeight > element.clientHeight + 2;
+      const outsideViewport = visible && (
+        rect.left < -1
+        || rect.top < -1
+        || rect.right > window.innerWidth + 1
+        || rect.bottom > window.innerHeight + 1
+      );
+      return {
+        selector,
+        text,
+        clippedX,
+        clippedY,
+        outsideViewport,
+        client: [element.clientWidth, element.clientHeight],
+        scroll: [element.scrollWidth, element.scrollHeight],
+      };
+    }));
+    const failures = entries.filter((entry) => entry.clippedX || entry.clippedY || entry.outsideViewport);
+    return { stage: auditStage, pass: failures.length === 0, failures, checked: entries.filter((entry) => entry.text).length };
+  }, stage);
+}
+
+async function auditScene(stage) {
+  return page.evaluate((auditStage) => {
+    const api = window.__CITYGEN__;
+    const renderer = api.getRenderer();
+    const camera = renderer.camera;
+    const badObjects = [];
+    const geometries = new Set();
+    renderer.scene.traverse((object) => {
+      const matrix = object.matrixWorld?.elements;
+      if (matrix && matrix.some((value) => !Number.isFinite(value))) {
+        badObjects.push(object.name || object.type || '(unnamed)');
+      }
+      if (object.geometry) geometries.add(object.geometry);
+    });
+    let vertices = 0;
+    let nonFiniteVertices = 0;
+    for (const geometry of geometries) {
+      const position = geometry.attributes?.position;
+      if (!position) continue;
+      vertices += position.count;
+      for (let index = 0; index < position.array.length; index += 1) {
+        if (!Number.isFinite(position.array[index])) nonFiniteVertices += 1;
+      }
+    }
+    const closeHits = [];
+    let sampledRays = 0;
+    for (const y of [0.65, 0.3, -0.05, -0.4]) {
+      for (const x of [-0.75, -0.375, 0, 0.375, 0.75]) {
+        sampledRays += 1;
+        const hit = renderer.pick({ x, y });
+        if (hit && hit.distance < 2.5) closeHits.push({ x, y, distance: Number(hit.distance.toFixed(2)) });
+      }
+    }
+    const cameraValues = [
+      ...camera.position.toArray(),
+      ...camera.quaternion.toArray(),
+      camera.fov,
+      camera.near,
+      camera.far,
+    ];
+    const glError = renderer.renderer.getContext().getError();
+    return {
+      stage: auditStage,
+      pass: cameraValues.every(Number.isFinite)
+        && camera.near > 0
+        && camera.far > camera.near
+        && badObjects.length === 0
+        && nonFiniteVertices === 0
+        && closeHits.length / sampledRays <= 0.2
+        && glError === 0,
+      camera: {
+        position: camera.position.toArray(),
+        fov: camera.fov,
+        near: camera.near,
+        far: camera.far,
+      },
+      geometry: { objects: geometries.size, vertices, nonFiniteVertices, badObjects },
+      closeHits,
+      closeHitRatio: closeHits.length / sampledRays,
+      glError,
+    };
+  }, stage);
 }
 
 function sfFrameIsBoxed(metrics) {
@@ -110,6 +230,7 @@ function sfFrameIsBoxed(metrics) {
 function sfFrameIsLowVisibility(metrics) {
   return (metrics.nonBlankRatio || 0) < 0.95
     || (metrics.meanLuma || 0) < 45
+    || (metrics.upperWashedOutRatio || 0) > 0.48
     || sfFrameIsBoxed(metrics);
 }
 
@@ -124,21 +245,18 @@ function sfFrameScore(metrics) {
 async function captureSfCandidate(name, pose) {
   await page.evaluate((cameraPose) => window.__CITYGEN__.setCameraPose(cameraPose), pose);
   await page.waitForTimeout(700);
-  const candidatePath = path.join('/tmp', `citygen-${process.pid}-${name}.png`);
+  const candidatePath = `.qa-citygen-sf-${name}.png`;
   await page.screenshot({ path: candidatePath });
-  try {
-    const metrics = await analyzeImage(candidatePath);
-    return { name, pose, metrics, boxed: sfFrameIsBoxed(metrics), lowVisibility: sfFrameIsLowVisibility(metrics) };
-  } finally {
-    await unlink(candidatePath).catch(() => {});
-  }
+  const metrics = await analyzeImage(candidatePath);
+  const scene = await auditScene(`sf-${name}`);
+  return { name, pose, file: candidatePath, metrics, scene, boxed: sfFrameIsBoxed(metrics), lowVisibility: sfFrameIsLowVisibility(metrics) };
 }
 
 let currentStep = 'launch';
 const results = {
   capture: {
     builtinSf: includeBuiltinSf,
-    threePackageVersion: threePackage.version,
+    threePackageVersion: `0.${threeRevision}.x`,
     threeRevision,
   },
 };
@@ -353,14 +471,18 @@ try {
     const status = document.querySelector('#status-pill');
     if (status) status.hidden = true;
   });
+  results.uiText = { procedural: await auditUiText('procedural') };
+  results.sceneDiagnostics = { hero: await auditScene('hero') };
   await page.screenshot({ path: '.qa-citygen-hero.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('street'));
   await page.waitForTimeout(500);
+  results.sceneDiagnostics.street = await auditScene('street');
   await page.screenshot({ path: '.qa-citygen-street.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('aerial'));
   await page.waitForTimeout(500);
+  results.sceneDiagnostics.aerial = await auditScene('aerial');
   await page.screenshot({ path: '.qa-citygen-aerial.png' });
 
   await page.evaluate(() => window.__CITYGEN__.setDay(false));
@@ -368,6 +490,7 @@ try {
   await page.waitForTimeout(600);
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('night'));
   await page.waitForTimeout(500);
+  results.sceneDiagnostics.night = await auditScene('night');
   await page.screenshot({ path: '.qa-citygen-night.png' });
   await page.evaluate(() => window.__CITYGEN__.setDay(true));
   await page.evaluate(() => window.__CITYGEN__.setTime(15));
@@ -402,6 +525,45 @@ try {
         signalMeta: state.signalMeta,
         streetMeta: state.streetMeta,
         generator: state.generator,
+      };
+    });
+    results.sfIdentity = await page.evaluate(() => {
+      const city = window.__CITYGEN__.getCity();
+      const normalize = (value) => String(value || '')
+        .toLowerCase()
+        .replace(/\bstreet\b/g, 'st')
+        .replace(/\bavenue\b/g, 'ave')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+      const expectedStreetNames = [
+        'Market St', 'Mission St', 'Howard St', 'Folsom St', 'Harrison St', 'Bryant St',
+        '3rd St', '4th St', '5th St', '6th St', '7th St', '8th St', '9th St', '10th St',
+      ];
+      const streetNames = [...new Set(city.streets.map((street) => street.name).filter(Boolean))];
+      const normalizedNames = new Set(streetNames.map(normalize));
+      const knownStreetMatches = expectedStreetNames.filter((name) => normalizedNames.has(normalize(name)));
+      const namedBuildings = city.buildings.filter((building) => String(building.name || '').trim());
+      const addressedBuildings = city.buildings.filter((building) => String(building.address || '').trim());
+      const landmarkBuildings = city.buildings.filter((building) => building.landmark === true);
+      const bearingBuckets = new Set();
+      for (const segment of city.segments || []) {
+        const start = segment.points?.[0];
+        const end = segment.points?.at(-1);
+        if (!start || !end) continue;
+        const length = Math.hypot(end.x - start.x, end.z - start.z);
+        if (length < 20) continue;
+        const bearing = (Math.atan2(end.z - start.z, end.x - start.x) * 180 / Math.PI + 180) % 180;
+        bearingBuckets.add(Math.floor(bearing / 15));
+      }
+      return {
+        source: city.meta?.generator,
+        namedStreetCount: streetNames.length,
+        knownStreetMatches,
+        namedBuildingCount: namedBuildings.length,
+        addressedBuildingCount: addressedBuildings.length,
+        landmarkCount: landmarkBuildings.length,
+        landmarkSample: landmarkBuildings.slice(0, 8).map((building) => building.name || building.address || building.id),
+        bearingBucketCount: bearingBuckets.size,
       };
     });
     results.sfExport = await page.evaluate(() => {
@@ -473,6 +635,7 @@ try {
     });
   }
   currentStep = 'choose real SF camera';
+  await page.evaluate(() => window.__CITYGEN__.setTime(14));
   const sfCandidates = [];
   for (const candidate of [
     { name: 'street', pose: 'sf' },
@@ -480,16 +643,23 @@ try {
   ]) {
     sfCandidates.push(await captureSfCandidate(candidate.name, candidate.pose));
   }
-  const sfCapture = [...sfCandidates].sort((a, b) => sfFrameScore(b.metrics) - sfFrameScore(a.metrics))[0];
+  const sfStreet = sfCandidates.find((candidate) => candidate.name === 'street');
+  const sfCapture = sfStreet && !sfStreet.lowVisibility && (sfStreet.metrics.edgeDensity || 0) >= 0.25
+    ? sfStreet
+    : [...sfCandidates].sort((a, b) => sfFrameScore(b.metrics) - sfFrameScore(a.metrics))[0];
   results.sfCapture = {
     selected: sfCapture.name,
     acceptable: !sfCapture.lowVisibility,
-    candidates: sfCandidates.map(({ name, boxed, lowVisibility, metrics }) => ({ name, boxed, lowVisibility, metrics })),
+    candidates: sfCandidates.map(({ name, file, boxed, lowVisibility, metrics, scene }) => ({ name, file, boxed, lowVisibility, metrics, scene })),
   };
+  await page.evaluate(() => window.__CITYGEN__.setTime(14));
   await page.evaluate((cameraPose) => window.__CITYGEN__.setCameraPose(cameraPose), sfCapture.pose);
   await page.waitForTimeout(700);
   await page.screenshot({ path: '.qa-citygen-sf.png' });
   results.frames['.qa-citygen-sf.png'] = await analyzeImage('.qa-citygen-sf.png');
+  for (const candidate of sfCandidates) results.frames[candidate.file] = candidate.metrics;
+  results.sceneDiagnostics.sfSelected = await auditScene(`sf-selected-${sfCapture.name}`);
+  results.uiText.sfBuiltin = await auditUiText('sf-builtin');
   if (includeBuiltinSf) {
     results.sfImportRoundtrip = await page.evaluate(async () => {
       const api = window.__CITYGEN__;

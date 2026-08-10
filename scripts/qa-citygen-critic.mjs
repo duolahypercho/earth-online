@@ -5,6 +5,8 @@ const frames = [
   '.qa-citygen-street.png',
   '.qa-citygen-aerial.png',
   '.qa-citygen-night.png',
+  '.qa-citygen-sf-street.png',
+  '.qa-citygen-sf-aerial.png',
 ];
 const outPath = '.qa-citygen-critic.json';
 const result = spawnSync(

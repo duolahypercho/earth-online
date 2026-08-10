@@ -38,6 +38,9 @@ try {
     ['Three.js r180 package active', results.capture?.threeRevision === 180],
     ['Three WebGLRenderer active', results.runtime?.rendererType === 'WebGLRenderer'],
     ['WebGL2 renderer active', results.state?.webgl2 === true && /^WebGL 2\.0/.test(results.runtime?.webglVersion || '')],
+    ['procedural UI text fits without clipping', results.uiText?.procedural?.pass === true],
+    ['camera and geometry diagnostics are clean', Object.values(results.sceneDiagnostics || {}).length >= 4
+      && Object.values(results.sceneDiagnostics || {}).every((entry) => entry?.pass === true)],
     ['walk physics moves the player', Number(results.walkPhysics?.moved || 0) > 0.5],
     ['drive mode enters a vehicle', results.drivePhysics?.entered === true],
     ['drive physics moves the vehicle', Number(results.drivePhysics?.moved || 0) > 0.5],
@@ -118,6 +121,13 @@ try {
       ['structure', (metrics.edgeDensity || 0) >= frame.minEdge, `${(metrics.edgeDensity || 0).toFixed(3)} edges`],
       ['variety', (metrics.saturatedHues || 0) >= 4, `${metrics.saturatedHues || 0} hues`],
     ];
+    if (frame.name === 'night') {
+      values.push(
+        ['controlled night shadows', (metrics.darkPixelRatio || 0) >= 0.05 && (metrics.darkPixelRatio || 0) <= 0.65, `${((metrics.darkPixelRatio || 0) * 100).toFixed(1)}% dark`],
+        ['no crushed night blacks', (metrics.blackClipRatio || 0) <= 0.04, `${((metrics.blackClipRatio || 0) * 100).toFixed(1)}% clipped black`],
+        ['no blown night highlights', (metrics.highlightClipRatio || 0) <= 0.03, `${((metrics.highlightClipRatio || 0) * 100).toFixed(1)}% clipped white`],
+      );
+    }
     for (const [label, pass, detail] of values) {
       row.checks += 1;
       if (pass) row.passes += 1;
@@ -132,6 +142,16 @@ try {
   if (results.sfBuiltin) {
     const sfChecks = [
       ['real SF frame is not boxed or low visibility', results.sfCapture?.acceptable === true, results.sfCapture?.selected || 'no selected frame'],
+      ['real SF UI text fits without clipping', results.uiText?.sfBuiltin?.pass === true, JSON.stringify(results.uiText?.sfBuiltin?.failures || [])],
+      ['real SF source identity is explicit', results.sfIdentity?.source === 'sf-builtin', results.sfIdentity?.source || 'missing'],
+      ['real SF contains known street anchors', (results.sfIdentity?.knownStreetMatches?.length || 0) >= 6, (results.sfIdentity?.knownStreetMatches || []).join(', ')],
+      ['real SF contains named and addressed places', Number(results.sfIdentity?.namedBuildingCount || 0) >= 5 && Number(results.sfIdentity?.addressedBuildingCount || 0) >= 20, `${results.sfIdentity?.namedBuildingCount || 0} named / ${results.sfIdentity?.addressedBuildingCount || 0} addressed`],
+      ['real SF contains landmark metadata', Number(results.sfIdentity?.landmarkCount || 0) >= 2, `${results.sfIdentity?.landmarkCount || 0} landmarks`],
+      ['real SF street network has non-trivial bearings', Number(results.sfIdentity?.bearingBucketCount || 0) >= 3, `${results.sfIdentity?.bearingBucketCount || 0} bearing buckets`],
+      ['real SF street and aerial evidence captured', ['street', 'aerial'].every((name) => {
+        const candidate = results.sfCapture?.candidates?.find((entry) => entry.name === name);
+        return Boolean(candidate?.file && candidate?.metrics && candidate?.scene?.pass === true && candidate?.lowVisibility === false);
+      }), `${results.sfCapture?.candidates?.length || 0} candidates`],
       ['real SF frame non-blank', (sfFrame.nonBlankRatio || 0) >= 0.98, `${((sfFrame.nonBlankRatio || 0) * 100).toFixed(1)}%`],
       ['real SF frame exposure', (sfFrame.meanLuma || 0) > 60 && (sfFrame.meanLuma || 0) < 230, `${Math.round(sfFrame.meanLuma || 0)} luma`],
       ['real SF frame structure', (sfFrame.edgeDensity || 0) >= 0.25, `${(sfFrame.edgeDensity || 0).toFixed(3)} edges`],
@@ -190,7 +210,7 @@ try {
   const criticOut = {
     result: critic.result,
     score: critic.score,
-    frames: critic.frames.map(({ name, passes, checks, nonBlankRatio, meanLuma, meanSaturation, edgeDensity, saturatedHues }) => ({
+    frames: critic.frames.map(({ name, passes, checks, nonBlankRatio, meanLuma, meanSaturation, edgeDensity, saturatedHues, darkPixelRatio, blackClipRatio, highlightClipRatio }) => ({
       name,
       passes: `${passes}/${checks}`,
       nonBlankRatio,
@@ -198,6 +218,9 @@ try {
       meanSaturation,
       edgeDensity,
       saturatedHues,
+      darkPixelRatio,
+      blackClipRatio,
+      highlightClipRatio,
     })),
     metadata: {
       buildings: critic.metadata?.buildings,
@@ -206,6 +229,9 @@ try {
       oneWayStreets: critic.metadata?.oneWayStreets,
       signals: critic.metadata?.signals,
     },
+    identity: results.sfIdentity,
+    uiText: results.uiText,
+    sceneDiagnostics: results.sceneDiagnostics,
     notes: critic.notes,
   };
   await writeFile('.qa-citygen-harsh.json', JSON.stringify(criticOut, null, 2));
