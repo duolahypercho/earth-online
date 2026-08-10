@@ -1256,6 +1256,24 @@ let progressSaveElapsed = 0;
 let lastProgressSave = null;
 let lastPublicWorldState = null;
 let lastTrafficCitation = null;
+let networkGameplayEventSequence = 0;
+let latestNetworkGameplayEvent = null;
+const NETWORK_GAMEPLAY_EVENT_LIFETIME_MS = 4500;
+
+function publishNetworkGameplayEvent({ kind, message } = {}) {
+  if (!kind || !message) return null;
+  const heatState = streetHeat?.getState?.() || {};
+  networkGameplayEventSequence += 1;
+  latestNetworkGameplayEvent = {
+    id: `local-${Date.now().toString(36)}-${networkGameplayEventSequence}`,
+    kind: String(kind),
+    message: String(message).slice(0, 96),
+    heat: Math.max(0, Math.min(100, Math.round(Number(heatState.heat) || 0))),
+    wantedLevel: Math.max(0, Math.min(3, Math.round(Number(heatState.level) || 0))),
+    expiresAt: performance.now() + NETWORK_GAMEPLAY_EVENT_LIFETIME_MS,
+  };
+  return latestNetworkGameplayEvent;
+}
 
 function readPlayerProgress() {
   try {
@@ -1694,6 +1712,16 @@ function startPlayerLayer() {
       audioContext,
       getLocalState: getNetworkState,
       onChatMessage: (entry) => hud?.appendChat?.(entry),
+      onPeerGameplayEvent: ({ peerId, peerName, event }) => {
+        hud?.appendChat?.({
+          name: peerName || 'Player',
+          text: `INCIDENT · ${event?.message || 'Street activity reported.'}`,
+          local: false,
+          peerGameplayEvent: event?.id || null,
+          peerGameplayPeer: peerId || null,
+        });
+      },
+      onPeerGameplayEventClear: ({ peerId }) => hud?.clearPeerGameplayEvent?.(peerId),
       onConnectionChange: () => {},
     });
   }
@@ -1710,6 +1738,45 @@ function getNetworkState() {
     : { x: controls.target.x, y: groundY + PLAYER_GROUND_OFFSET, z: controls.target.z };
   const yaw = drivingState ? drivingState.heading : controls.yaw;
   const mode = drivingState ? 'drive' : 'walk';
+  const heatState = streetHeat?.getState?.() || {};
+  const combatState = combat?.getState?.() || {};
+  const health = Math.max(0, Math.min(100, Number(combatState.health) || 0));
+  const healthBand = combatState.status === 'downed' || health <= 0
+    ? 'downed'
+    : health <= 30
+      ? 'critical'
+      : health < 75
+        ? 'injured'
+        : 'healthy';
+  const activity = combatState.status === 'downed'
+    ? 'downed'
+    : heatState.pursuitActive
+      ? 'pursuit'
+      : combatState.aiming
+        ? 'aiming'
+        : drivingState
+          ? 'driving'
+          : playerMoving()
+            ? 'walking'
+            : heatState.heat > 0
+              ? 'wanted'
+              : lifeSim?.getState?.().workShift?.active
+                ? 'working'
+                : 'idle';
+  if (latestNetworkGameplayEvent
+    && (!heatState.lastEvent || heatState.lastEvent.kind !== latestNetworkGameplayEvent.kind)) {
+    latestNetworkGameplayEvent = null;
+  }
+  const event = latestNetworkGameplayEvent
+    && performance.now() <= latestNetworkGameplayEvent.expiresAt
+    ? {
+      id: latestNetworkGameplayEvent.id,
+      kind: latestNetworkGameplayEvent.kind,
+      message: latestNetworkGameplayEvent.message,
+      heat: latestNetworkGameplayEvent.heat,
+      wantedLevel: latestNetworkGameplayEvent.wantedLevel,
+    }
+    : null;
   return {
     x: position.x,
     y: position.y,
@@ -1720,6 +1787,14 @@ function getNetworkState() {
     vehicleId: drivingState?.index ?? null,
     vehicleClass: drivingState?.class ?? null,
     vehicleColor: drivingState?.color ?? null,
+    gameplay: {
+      heat: Math.max(0, Math.min(100, Math.round(Number(heatState.heat) || 0))),
+      wantedLevel: Math.max(0, Math.min(3, Math.round(Number(heatState.level) || 0))),
+      pursuitActive: heatState.pursuitActive === true,
+      healthBand,
+      activity,
+      event,
+    },
   };
 }
 
@@ -2759,6 +2834,7 @@ streetHeat = createStreetHeat({
       savePlayerProgress();
     }
     if (score) cityShift?.awardBonus?.(score);
+    publishNetworkGameplayEvent({ kind, message });
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);
   },
