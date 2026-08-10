@@ -33,6 +33,7 @@ import {
 } from './street-design.js';
 import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
+import { createHeroCharacter } from './hero-character.js';
 import './styles.css';
 
 // ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
@@ -1264,6 +1265,7 @@ function setupToolbar() {
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
     if (interiorState) exitInterior();
     disposeHeroAtmosphere();
+    disposeHeroCharacter();
     if (document.pointerLockElement) document.exitPointerLock();
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) trafficState.vehicles[driveIndex].manual = false;
     driveIndex = -1;
@@ -7052,6 +7054,7 @@ let cityMode = 'orbit';
 let cityFlatRegion = [];
 let playerState = null;
 let playerAvatarGroup = null;
+let heroCharacter = null;
 let playerYaw = 0;
 let playerPitch = -0.12;
 let pointerLockActive = false;
@@ -7452,11 +7455,64 @@ function createSandboxPlayerAvatar() {
   return group;
 }
 
-function initPlayer(position) {
+function disposeHeroCharacter() {
+  if (!heroCharacter) return;
+  const root = heroCharacter.root;
+  heroCharacter.dispose();
+  heroCharacter = null;
+  if (playerAvatarGroup === root) playerAvatarGroup = null;
+}
+
+function ensurePlayerAvatar() {
+  if (activeHeroTile) {
+    if (!heroCharacter) {
+      if (playerAvatarGroup) {
+        playerAvatarGroup.removeFromParent();
+        disposeRoot(playerAvatarGroup);
+      }
+      heroCharacter = createHeroCharacter({
+        name: 'Traveler',
+        paletteIndex: 0,
+        showNameTag: false,
+      });
+      playerAvatarGroup = heroCharacter.root;
+      scene.add(playerAvatarGroup);
+    }
+    return playerAvatarGroup;
+  }
+
+  disposeHeroCharacter();
   if (!playerAvatarGroup) {
     playerAvatarGroup = createSandboxPlayerAvatar();
     scene.add(playerAvatarGroup);
   }
+  return playerAvatarGroup;
+}
+
+function getHeroCharacterDiagnostics() {
+  const root = heroCharacter?.root;
+  let meshCount = 0;
+  let shadowCasters = 0;
+  root?.traverse((object) => {
+    if (!object.isMesh) return;
+    meshCount += 1;
+    if (object.castShadow) shadowCasters += 1;
+  });
+  const focus = heroCharacter?.getCameraFocus();
+  return {
+    active: Boolean(heroCharacter),
+    tileId: activeHeroTile?.id || null,
+    attached: Boolean(root?.parent),
+    rootName: root?.name || null,
+    meshes: meshCount,
+    shadowCasters,
+    nameTagVisible: Boolean(root?.userData?.nameTag?.visible),
+    cameraFocus: focus ? [focus.x, focus.y, focus.z] : null,
+  };
+}
+
+function initPlayer(position) {
+  ensurePlayerAvatar();
   const resolved = resolvePlayerPosition(position.x, position.z, 0.5);
   playerState = {
     x: resolved.x,
@@ -7488,7 +7544,7 @@ function updatePlayerWalk(dt) {
     playerState.z = resolved.z;
     playerState.walking += dt * 6;
   }
-  const legs = playerAvatarGroup.userData.legs;
+  const legs = heroCharacter ? null : playerAvatarGroup.userData.legs;
   if (legs) {
     const swing = moving ? Math.sin(playerState.walking) * 0.42 : 0;
     legs.userData = legs.userData || {};
@@ -7498,15 +7554,20 @@ function updatePlayerWalk(dt) {
   }
   playerAvatarGroup.position.set(playerState.x, elevationAt(playerState.x, playerState.z), playerState.z);
   playerAvatarGroup.rotation.y = playerYaw;
-  if (activeHeroTile?.camera === 'third-person') {
+  heroCharacter?.update({
+    moving,
+    speedRatio: moving ? speed / 9 : 0,
+    delta: dt,
+  });
+  if (activeHeroTile?.camera === 'third-person' && heroCharacter) {
     const distance = 4.4;
-    const eyeY = elevationAt(playerState.x, playerState.z) + 2.45;
+    const focus = heroCharacter.getCameraFocus();
     camera.position.set(
       playerState.x - Math.sin(playerYaw) * distance,
-      eyeY,
+      focus.y + 1.4,
       playerState.z - Math.cos(playerYaw) * distance,
     );
-    camera.lookAt(playerState.x, elevationAt(playerState.x, playerState.z) + 1.05, playerState.z);
+    camera.lookAt(focus);
   } else {
     camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
     camera.rotation.order = 'YXZ';
@@ -10521,6 +10582,7 @@ async function buildCity() {
     windowMaterials.length = 0;
     streetLightMaterials.length = 0;
     vehicleHeadlightMaterials.length = 0;
+    disposeHeroCharacter();
     if (cityRoot) {
       disposeHeroAtmosphere();
       scene.remove(cityRoot);
@@ -10849,6 +10911,7 @@ function start() {
       drawCalls: renderer?.info?.render?.calls ?? null,
       triangles: renderer?.info?.render?.triangles ?? null,
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
+      heroCharacter: getHeroCharacterDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -11056,6 +11119,7 @@ function start() {
     setCityMode: (mode) => setCityMode(mode),
     getHeroTile: () => activeHeroTile,
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
+    getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
@@ -11154,6 +11218,7 @@ function start() {
     getSuggestedCameraPoses: () => getSuggestedCameraPoses(),
     setBeauty: (active) => {
       document.body.classList.toggle('is-beauty', Boolean(active));
+      if (active) heroCharacter?.setNameTagVisible(false);
       return Boolean(active);
     },
     /** Current street/sidewalk design knobs + residential meter summary. */
