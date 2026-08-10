@@ -167,7 +167,7 @@ function createReflectionMaterial() {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
     uniforms: {
-      active: { value: 0 },
+      activation: { value: 0 },
       color: { value: new THREE.Color(0xffbd75) },
     },
     vertexShader: `
@@ -178,14 +178,14 @@ function createReflectionMaterial() {
       }
     `,
     fragmentShader: `
-      uniform float active;
+      uniform float activation;
       uniform vec3 color;
       varying vec2 vUv;
       void main() {
         float across = 1.0 - smoothstep(0.08, 0.5, abs(vUv.x - 0.5));
         float falloff = smoothstep(1.0, 0.08, vUv.y);
         float breakup = step(0.24, fract(sin(vUv.y * 93.1) * 127.8));
-        gl_FragColor = vec4(color, across * falloff * breakup * active * 0.22);
+        gl_FragColor = vec4(color, across * falloff * breakup * activation * 0.22);
       }
     `,
   });
@@ -390,7 +390,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
       lens.material.emissiveIntensity = 0.35 + active * 2.4;
     }
     for (const reflection of lampAssembly.reflections) {
-      reflection.material.uniforms.active.value = conditions.night * (0.18 + conditions.wetness * 0.82);
+      reflection.material.uniforms.activation.value = conditions.night * (0.18 + conditions.wetness * 0.82);
     }
   }
 
