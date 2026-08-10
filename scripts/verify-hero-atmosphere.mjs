@@ -27,6 +27,22 @@ function uniformDeclarations(source) {
 
 const scene = new THREE.Scene();
 const asphalt = new THREE.MeshStandardMaterial({ color: 0x454b4d, roughness: 0.9, metalness: 0.01 });
+const rainGeometry = new THREE.BufferGeometry();
+rainGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+  -3, 8, -5, -2, 1, -4,
+  2, 11, -8, 3, 2, -7,
+  -5, 6, -16, -4, 0, -15,
+  5, 9, -28, 6, 1, -27,
+], 3));
+const originalRainMaterial = new THREE.LineBasicMaterial({
+  color: 0xd8e4f0,
+  transparent: true,
+  opacity: 0.66,
+  depthWrite: false,
+});
+const rain = new THREE.LineSegments(rainGeometry, originalRainMaterial);
+rain.name = 'Pacific drizzle rain';
+scene.add(rain);
 const atmosphere = createFerryBuildingAtmosphere({
   scene,
   conditions: { timeOfDay: 'night', weather: 'drizzle' },
@@ -37,6 +53,10 @@ try {
   assert.equal(atmosphere.registerWetMaterial(asphalt), true, 'Wet-material registration failed');
   atmosphere.update(1 / 60);
   assert(asphalt.roughness < 0.9, 'Drizzle did not lower asphalt roughness');
+  assert.equal(rain.material.isShaderMaterial, true, 'Hero drizzle did not replace the uniform white rain material');
+  assert(rain.geometry.getAttribute('rainFade'), 'Hero drizzle did not add per-streak opacity variation');
+  assert(rain.geometry.drawRange.count < rain.geometry.getAttribute('position').count, 'Hero drizzle did not reduce rain density');
+  assert.equal(rain.material.uniforms.rainOpacity.value, 0.18, 'Hero drizzle opacity regressed');
 
   const shaderMaterials = new Set();
   atmosphere.root.traverse((object) => {
@@ -64,6 +84,12 @@ try {
   assert.equal(reflection.material.uniforms.active, undefined, 'Reserved reflection uniform "active" regressed');
   assert(reflection.material.uniforms.activation.value > 0, 'Night drizzle did not activate pavement reflections');
 
+  atmosphere.setConditions({ weather: 'clear', timeOfDay: 'day' });
+  atmosphere.update(1 / 60);
+  assert.equal(rain.material, originalRainMaterial, 'Clear weather did not restore the shared rain material');
+  assert.equal(rain.geometry.drawRange.count, Infinity, 'Clear weather did not restore the full rain draw range');
+  assert.equal(asphalt.roughness, 0.9, 'Clear weather left registered asphalt wet');
+
   console.log(JSON.stringify({
     result: 'hero atmosphere shader verification passed',
     shaderMaterials: shaderMaterials.size,
@@ -73,6 +99,9 @@ try {
 } finally {
   atmosphere.dispose();
   asphalt.dispose();
+  scene.remove(rain);
+  rainGeometry.dispose();
+  originalRainMaterial.dispose();
 }
 
 assert.equal(scene.children.length, 0, 'Hero atmosphere did not detach during disposal');
