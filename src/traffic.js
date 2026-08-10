@@ -1672,6 +1672,7 @@ export function createTrafficSystem({
   fleetSize,
   onPlayerTrafficViolation,
   onPlayerVehicleCollision,
+  canRepairPlayerVehicle,
 } = {}) {
   const group = new THREE.Group();
   group.name = 'traffic';
@@ -5595,12 +5596,12 @@ export function createTrafficSystem({
 
   function repairPlayerVehicle(source = 'repair') {
     if (!playerVehicle) return null;
+    if (canRepairPlayerVehicle?.({
+      index: playerVehicle.index,
+      disabled: playerVehicle.disabled,
+      source,
+    }) === false) return null;
     return repairVehicleRecord(playerVehicle, source);
-  }
-
-  function repairVehicle(index, source = 'repair') {
-    if (!Number.isInteger(index)) return null;
-    return repairVehicleRecord(vehicles[index], source);
   }
 
   /* ---- remote player vehicles ---- */
@@ -5719,7 +5720,6 @@ export function createTrafficSystem({
     resolvePlayerPedestrianImpact,
     damagePlayerVehicle,
     repairPlayerVehicle,
-    repairVehicle,
     isPlayerDriving,
     setRemotePose,
     clearRemotePose,
