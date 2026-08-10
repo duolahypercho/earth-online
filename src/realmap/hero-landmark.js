@@ -79,13 +79,21 @@ function principalFrame(points, fallbackCentroid) {
   let maxAlong = -Infinity;
   let minAcross = Infinity;
   let maxAcross = -Infinity;
+  let minAlongPoint = null;
+  let maxAlongPoint = null;
   for (const [x, z] of points) {
     const relativeX = x - center.x;
     const relativeZ = z - center.y;
     const projectedAlong = relativeX * along.x + relativeZ * along.y;
     const projectedAcross = relativeX * across.x + relativeZ * across.y;
-    minAlong = Math.min(minAlong, projectedAlong);
-    maxAlong = Math.max(maxAlong, projectedAlong);
+    if (projectedAlong < minAlong) {
+      minAlong = projectedAlong;
+      minAlongPoint = new THREE.Vector2(x, z);
+    }
+    if (projectedAlong > maxAlong) {
+      maxAlong = projectedAlong;
+      maxAlongPoint = new THREE.Vector2(x, z);
+    }
     minAcross = Math.min(minAcross, projectedAcross);
     maxAcross = Math.max(maxAcross, projectedAcross);
   }
@@ -101,6 +109,8 @@ function principalFrame(points, fallbackCentroid) {
     maxAlong,
     minAcross,
     maxAcross,
+    minAlongPoint,
+    maxAlongPoint,
     length: maxAlong - minAlong,
     width: maxAcross - minAcross,
   };
@@ -208,7 +218,12 @@ export function createFerryBuildingLandmark(options = {}) {
   const hallLength = frame.length * 0.91;
   const hallWidth = frame.width * 0.74;
   const hallCenterAlong = (frame.minAlong + frame.maxAlong) * 0.5;
-  const towerAlong = frame.minAlong + Math.max(7.5, frame.length * 0.105);
+  // The Market Street axis crosses the source footprint near its oriented
+  // centre, not at either terminal end. The oriented-bounds midpoint is the
+  // deterministic footprint-only equivalent of that source-road intersection.
+  const towerAlong = (frame.minAlong + frame.maxAlong) * 0.5;
+  const towerAcross = (frame.minAcross + frame.maxAcross) * 0.5;
+  const towerAnchor = localToWorld(frame, towerAlong, towerAcross, baseY);
   const materials = createMaterials();
   const root = new THREE.Group();
   root.name = 'San Francisco Ferry Building landmark (OSM way 558731934)';
@@ -261,9 +276,9 @@ export function createFerryBuildingLandmark(options = {}) {
     }
   }
 
-  // Market Street end: a heavier arcade and a deliberately oversized, clocked
-  // campanile make the landmark legible well before facade detail resolves.
-  const entranceAcross = 0;
+  // Market Street axis: a heavier arcade and a deliberately oversized,
+  // clocked campanile make the landmark legible before facade detail resolves.
+  const entranceAcross = towerAcross;
   for (const offset of [-hallWidth * 0.3, 0, hallWidth * 0.3]) {
     put(windowBay, boxMatrix(matrix, frame, towerAlong - 1.4, offset, baseY + hallHeight * 0.37, 0.12, hallHeight * 0.55, hallWidth * 0.21));
     put(pier, boxMatrix(matrix, frame, towerAlong - 1.58, offset + hallWidth * 0.12, baseY + hallHeight * 0.46, 0.4, hallHeight * 0.82, 0.4));
@@ -343,7 +358,16 @@ export function createFerryBuildingLandmark(options = {}) {
         along: [frame.along.x, frame.along.y],
         across: [frame.across.x, frame.across.y],
         threeYaw: frame.threeYaw,
+        bounds: {
+          minAlong: frame.minAlong,
+          maxAlong: frame.maxAlong,
+          minAcross: frame.minAcross,
+          maxAcross: frame.maxAcross,
+        },
+        marketEndTarget: [frame.maxAlongPoint.x, frame.maxAlongPoint.y],
+        oppositeEndTarget: [frame.minAlongPoint.x, frame.minAlongPoint.y],
       },
+      towerAnchor: [towerAnchor.x, towerAnchor.y, towerAnchor.z],
       disposed,
       stats,
     };

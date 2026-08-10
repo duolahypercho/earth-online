@@ -12,7 +12,7 @@ const building = {
   height: 15,
   centroid: [2290.3, 1937.6],
   // Compact fixture matching the long, diagonal OSM terminal character.
-  points: [2325.5, 1844.6, 2346.6, 1859.9, 2223, 2018.2, 2206.4, 2006.2, 2325.5, 1844.6],
+  points: [2325.5, 1844.6, 2346.6, 1859.9, 2363.7, 1872.3, 2223, 2018.2, 2206.4, 2006.2, 2325.5, 1844.6],
 };
 const scene = new THREE.Scene();
 const sourceMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
@@ -48,6 +48,24 @@ const frameAxes = [new THREE.Vector2(...frame.along), new THREE.Vector2(...frame
 for (const axis of frameAxes) {
   assert.ok(clockNormals.some((normal) => Math.abs(normal.dot(axis)) > 0.9999), 'clock faces must remain normal to each footprint frame axis');
 }
+const towerMatrix = new THREE.Matrix4();
+landmark.root.getObjectByName('Ferry Building clock tower tiers').getMatrixAt(0, towerMatrix);
+const towerWorld = new THREE.Vector2(towerMatrix.elements[12], towerMatrix.elements[14]);
+const marketAxisLandside = new THREE.Vector2(2259.739, 1918.918);
+const marketAxisBayside = new THREE.Vector2(2299.660, 1959.198);
+const marketAxisTarget = marketAxisLandside.clone().add(marketAxisBayside).multiplyScalar(0.5);
+const marketAxisSpan = marketAxisBayside.clone().sub(marketAxisLandside);
+const marketAxisProgress = towerWorld.clone().sub(marketAxisLandside).dot(marketAxisSpan) / marketAxisSpan.lengthSq();
+assert.ok(towerWorld.distanceTo(marketAxisTarget) < 8, 'clock tower must stay near the central Market Street axis target');
+assert.ok(marketAxisProgress >= 0 && marketAxisProgress <= 1, 'clock tower must remain between both Market-axis footprint intersections');
+assert.ok(towerWorld.x >= marketAxisLandside.x && towerWorld.x <= marketAxisBayside.x, 'clock tower x must remain inside the Market-axis intersection bounds');
+assert.ok(towerWorld.y >= marketAxisLandside.y && towerWorld.y <= marketAxisBayside.y, 'clock tower z must remain inside the Market-axis intersection bounds');
+const relativeTower = towerWorld.clone().sub(new THREE.Vector2(...building.centroid));
+const towerAlong = relativeTower.dot(new THREE.Vector2(...frame.along));
+const towerAcross = relativeTower.dot(new THREE.Vector2(...frame.across));
+assert.ok(towerAlong >= frame.bounds.minAlong && towerAlong <= frame.bounds.maxAlong, 'clock tower must remain within authoritative along bounds');
+assert.ok(towerAcross >= frame.bounds.minAcross && towerAcross <= frame.bounds.maxAcross, 'clock tower must remain within authoritative across bounds');
+assert.ok(towerWorld.distanceTo(new THREE.Vector2(landmark.getDiagnostics().towerAnchor[0], landmark.getDiagnostics().towerAnchor[2])) < 5e-4, 'tower diagnostics must report its true world anchor');
 
 const unrelated = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
 unrelated.userData.buildingId = 999;
@@ -67,4 +85,10 @@ assert.equal(landmark.root.parent, null, 'dispose should detach the landmark');
 assert.equal(sourceMesh.visible, true, 'dispose should restore matching source visibility');
 assert.equal(landmark.getDiagnostics().disposed, true, 'runtime diagnostics should report lifecycle state');
 
-console.log(JSON.stringify({ result: 'passed', source: FERRY_BUILDING_LANDMARK_SOURCE, stats: landmark.stats }, null, 2));
+console.log(JSON.stringify({
+  result: 'passed',
+  source: FERRY_BUILDING_LANDMARK_SOURCE,
+  towerWorld: landmark.getDiagnostics().towerAnchor,
+  marketAxisTarget: marketAxisTarget.toArray(),
+  stats: landmark.stats,
+}, null, 2));
