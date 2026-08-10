@@ -2868,7 +2868,7 @@ streetHeat = createStreetHeat({
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
   getPursuitResponders: () => traffic.getPursuitResponders?.(),
-  onEvent: ({ kind, message, score, heatBefore = 0, reason = null }) => {
+  onEvent: ({ kind, message, score, heatBefore = 0, reason = null, damage = 0 }) => {
     if (kind === 'responder-contact') {
       if (traffic.isPlayerDriving?.()) {
         traffic.damagePlayerVehicle?.(22, 'pursuit-contact');
@@ -2882,6 +2882,17 @@ streetHeat = createStreetHeat({
           return;
         }
       }
+    }
+    if (kind === 'responder-pressure') {
+      const damaged = combat?.damagePlayer?.(damage, 'pursuit-pressure');
+      if (damaged && combat?.getState?.().status === 'downed') {
+        streetHeat?.resolveArrest?.({
+          wasDriving: false,
+          reason: 'pursuit-defeat',
+        });
+        return;
+      }
+      if (damaged) savePlayerProgress();
     }
     if (kind === 'arrested') {
       combat?.setTriggerHeld?.(false);
@@ -5497,6 +5508,14 @@ function frame(now) {
       && onFootSurrenderInputAvailable()
       && controls.keys.has('keyx'),
     onFootMoving: !drivingState && playerMoving(),
+    onFootPressureEligible: !drivingState
+      && playerLayerActive
+      && !controls.interiorMode
+      && !passengerRideActive()
+      && !beautyMode
+      && !qaCameraPose
+      && combat?.getState?.().status === 'running'
+      && combat?.getState?.().active === true,
   });
   traffic.setPursuitResponder?.({
     active: Boolean(streetHeatState?.pursuitActive),
