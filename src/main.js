@@ -2675,6 +2675,10 @@ streetHeat = createStreetHeat({
       }
     }
     if (kind === 'arrested') {
+      combat?.setTriggerHeld?.(false);
+      combat?.setAiming?.(false);
+      controls.combatPointerId = null;
+      controls.combatTriggerPointerId = null;
       let impounded = null;
       if (traffic.isPlayerDriving?.()) {
         exitPlayerCar();
@@ -4265,6 +4269,27 @@ function combatInputAvailable() {
   );
 }
 
+function onFootSurrenderInputAvailable() {
+  const heatState = streetHeat?.getState?.();
+  return Boolean(
+    playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !passengerRideActive()
+      && combat?.getState?.().status === 'running'
+      && heatState?.pursuitActive
+      && !beautyMode
+      && !qaCameraPose,
+  );
+}
+
+function onFootPursuitActive() {
+  return Boolean(
+    !traffic.isPlayerDriving?.()
+      && streetHeat?.getState?.().pursuitActive,
+  );
+}
+
 // Pointer Events only emit `pointerdown` for the first mouse button in a
 // multi-button chord. A separate mousedown bridge keeps LMB fire reliable
 // while RMB is held for aim (the normal pointer path still handles a solo
@@ -4476,7 +4501,13 @@ function onKeyDown(event) {
     startPlayerWorkShift();
   }
   if (code === 'KeyX' && !event.repeat) {
-    lifeSim?.rest?.();
+    if (onFootSurrenderInputAvailable()) {
+      hud?.setMessage('SURRENDER / HOLD X NEAR A RESPONDER · STAY STILL.');
+    } else if (onFootPursuitActive()) {
+      hud?.setMessage('SURRENDER UNAVAILABLE / RECOVER AND RETURN OUTSIDE.');
+    } else {
+      lifeSim?.rest?.();
+    }
   }
   if (code === 'KeyE' && !event.repeat) {
     if (traffic.isPlayerDriving?.()) {
@@ -4717,9 +4748,18 @@ function updateInteraction() {
   const onFootHeat = streetHeat?.getState?.();
   if (onFootHeat?.pursuitActive && Number.isFinite(onFootHeat.responderDistance)) {
     const responder = traffic.getPursuitResponder?.();
+    const responderDistances = onFootHeat.responderDistances.filter(Number.isFinite);
+    const nearestResponderDistance = responderDistances.length
+      ? Math.min(...responderDistances)
+      : onFootHeat.responderDistance;
+    const surrenderAvailable = onFootSurrenderInputAvailable();
     hud.setInteraction({
-      label: `${String(responder?.label || 'TRAFFIC TAIL').toUpperCase()} / TAIL ${onFootHeat.responderDistance.toFixed(1)} M`,
-      prompt: 'KEEP MOVING · BREAK CONTACT TO LOSE TAIL',
+      label: `${String(responder?.label || 'TRAFFIC TAIL').toUpperCase()} / TAIL ${nearestResponderDistance.toFixed(1)} M`,
+      prompt: !surrenderAvailable
+        ? 'SURRENDER UNAVAILABLE · RECOVER OUTSIDE'
+        : nearestResponderDistance <= 10
+          ? 'HOLD X  SURRENDER · STAY STILL'
+          : 'KEEP MOVING · BREAK CONTACT OR APPROACH TO SURRENDER',
       enabled: true,
     });
     return;
@@ -5063,6 +5103,10 @@ function frame(now) {
     playerVehicleId: drivingState?.index ?? null,
     surrendering: Boolean(drivingState)
       && (controls.keys.has('keys') || controls.keys.has('arrowdown')),
+    onFootSurrendering: !drivingState
+      && onFootSurrenderInputAvailable()
+      && controls.keys.has('keyx'),
+    onFootMoving: !drivingState && playerMoving(),
   });
   traffic.setPursuitResponder?.({
     active: Boolean(streetHeatState?.pursuitActive),
