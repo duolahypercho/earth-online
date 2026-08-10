@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import parse from 'osm-pbf-parser';
 import through from 'through2';
+import { canonicalBuildTimestamp } from './build-clock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -316,7 +317,22 @@ function makeRoadRecord(way, cls, points) {
   };
 }
 
+export function createAtlasMetadata({ generatedAt, counts }) {
+  return {
+    generatedAt,
+    center: CENTER,
+    projection: {
+      metersPerDegreeLat: METERS_PER_DEG_LAT,
+      metersPerDegreeLon: METERS_PER_DEG_LON,
+    },
+    cityBBox: CITY_BBOX,
+    detailBBox: DETAIL_BBOX,
+    counts,
+  };
+}
+
 async function main() {
+  const buildTimestamp = canonicalBuildTimestamp();
   const pbfPath = process.argv.includes('--download') ? null : PBF_PATH;
   const source = pbfPath && fs.existsSync(pbfPath)
     ? pbfPath
@@ -408,15 +424,8 @@ async function main() {
   }
 
   const atlas = {
-    meta: {
-      generatedAt: new Date().toISOString(),
-      center: CENTER,
-      projection: {
-        metersPerDegreeLat: METERS_PER_DEG_LAT,
-        metersPerDegreeLon: METERS_PER_DEG_LON,
-      },
-      cityBBox: CITY_BBOX,
-      detailBBox: DETAIL_BBOX,
+    meta: createAtlasMetadata({
+      generatedAt: buildTimestamp,
       counts: {
         roads: cityRoads.length,
         detailRoads: detailRoads.length,
@@ -424,7 +433,7 @@ async function main() {
         detailBuildings: detailBuildings.length,
         signals: signals.length,
       },
-    },
+    }),
     boundary: boundaryRings,
     roads: cityRoads,
     detailRoads,
