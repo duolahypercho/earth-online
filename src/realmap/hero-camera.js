@@ -12,6 +12,10 @@ export const HERO_CAMERA_DEFAULTS = Object.freeze({
   verticalOffset: 1.22,
   lookAhead: 0.38,
   lookHeight: 0.08,
+  // Camera-space aim offset.  Positive x moves the target to the character's
+  // right; positive y raises it.  It is intentionally opt-in so existing hero
+  // callers retain their centered composition.
+  framingOffset: Object.freeze({ x: 0, y: 0 }),
   focusHeight: 1.08,
   collisionRadius: 0.34,
   obstructionPadding: 0.18,
@@ -34,6 +38,14 @@ function positive(value, fallback, minimum = 0) {
   return Number.isFinite(number) ? Math.max(minimum, number) : fallback;
 }
 
+function framingOffset(value, fallback = HERO_CAMERA_DEFAULTS.framingOffset) {
+  const source = value && typeof value === 'object' ? value : fallback;
+  return Object.freeze({
+    x: finite(source.x, fallback.x),
+    y: finite(source.y, fallback.y),
+  });
+}
+
 export function resolveHeroCameraOptions(options = {}) {
   return {
     distance: positive(options.distance, HERO_CAMERA_DEFAULTS.distance, 0.25),
@@ -41,6 +53,7 @@ export function resolveHeroCameraOptions(options = {}) {
     verticalOffset: finite(options.verticalOffset, HERO_CAMERA_DEFAULTS.verticalOffset),
     lookAhead: finite(options.lookAhead, HERO_CAMERA_DEFAULTS.lookAhead),
     lookHeight: finite(options.lookHeight, HERO_CAMERA_DEFAULTS.lookHeight),
+    framingOffset: framingOffset(options.framingOffset),
     focusHeight: positive(options.focusHeight, HERO_CAMERA_DEFAULTS.focusHeight, 0),
     collisionRadius: positive(options.collisionRadius, HERO_CAMERA_DEFAULTS.collisionRadius, 0),
     obstructionPadding: positive(options.obstructionPadding, HERO_CAMERA_DEFAULTS.obstructionPadding, 0),
@@ -103,6 +116,7 @@ export function createHeroCamera(options = {}) {
     teleportReset: false,
     forcedCloseCamera: false,
     nearClip: defaults.nearClip,
+    framingOffset: defaults.framingOffset,
     focus: focusPoint,
     desiredPosition,
     position: cameraPosition,
@@ -219,14 +233,21 @@ export function createHeroCamera(options = {}) {
     if (!initialized || teleported) {
       armDistance = safeDistance;
       cameraPosition.copy(armOrigin).addScaledVector(armDirection, armDistance);
-      lookTarget.copy(armOrigin);
+      lookTarget.copy(armOrigin)
+        .addScaledVector(right, settings.framingOffset.x)
+        .addScaledVector(THREE.Object3D.DEFAULT_UP, settings.framingOffset.y);
     } else {
       armDistance = safeDistance < armDistance
         ? safeDistance
         : THREE.MathUtils.lerp(armDistance, safeDistance, smoothFactor(settings.distanceDamping, safeDt));
       desiredPosition.copy(armOrigin).addScaledVector(armDirection, armDistance);
       cameraPosition.copy(camera.position).lerp(desiredPosition, smoothFactor(settings.positionDamping, safeDt));
-      lookTarget.lerp(armOrigin, smoothFactor(settings.lookDamping, safeDt));
+      lookTarget.lerp(
+        desiredPosition.copy(armOrigin)
+          .addScaledVector(right, settings.framingOffset.x)
+          .addScaledVector(THREE.Object3D.DEFAULT_UP, settings.framingOffset.y),
+        smoothFactor(settings.lookDamping, safeDt),
+      );
     }
 
     if (camera.near == null || Math.abs(camera.near - settings.nearClip) > 0.0001) {
@@ -248,6 +269,7 @@ export function createHeroCamera(options = {}) {
     diagnostics.teleportReset = teleported;
     diagnostics.forcedCloseCamera = forcedCloseCamera;
     diagnostics.nearClip = camera.near;
+    diagnostics.framingOffset = settings.framingOffset;
     return diagnostics;
   }
 

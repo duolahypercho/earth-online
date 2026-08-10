@@ -120,6 +120,7 @@ function instanced(geometry, material, capacity, name) {
  * Creates a non-invasive near-field life presentation layer.
  *
  * @param {{scene: THREE.Object3D, maxPedestrians?: number, maxVehicles?: number,
+ *   maxDetailedActors?: number,
  *   cameraExclusionRadius?: number, heroExclusionRadius?: number,
  *   vehicleDetailDistance?: number, pedestrianDetailDistance?: number,
  *   replaceSources?: boolean,
@@ -130,6 +131,11 @@ export function createHeroLifeLighting(options = {}) {
 
   const maxPedestrians = Math.floor(clamp(options.maxPedestrians ?? HERO_LIFE_LIGHTING_BUDGET.maxPedestrians, 1, HERO_LIFE_LIGHTING_BUDGET.maxPedestrians));
   const maxVehicles = Math.floor(clamp(options.maxVehicles ?? HERO_LIFE_LIGHTING_BUDGET.maxVehicles, 1, HERO_LIFE_LIGHTING_BUDGET.maxVehicles));
+  const maxDetailedActors = Math.floor(clamp(
+    options.maxDetailedActors ?? HERO_LIFE_LIGHTING_BUDGET.maxDetailedActors,
+    1,
+    maxPedestrians,
+  ));
   const replaceSources = options.replaceSources ?? true;
   const cameraExclusionRadius = Math.max(0.5, Number(options.cameraExclusionRadius) || 3.25);
   const heroExclusionRadius = Math.max(0.5, Number(options.heroExclusionRadius) || 2.35);
@@ -201,7 +207,7 @@ export function createHeroLifeLighting(options = {}) {
   // A small player-grade pool carries the close read while the instanced
   // presentation remains responsible for the rest of the crowd. The rigs use
   // the existing pedestrian material cache; never dispose that cache here.
-  const detailedActors = Array.from({ length: HERO_LIFE_LIGHTING_BUDGET.maxDetailedActors }, (_, index) => {
+  const detailedActors = Array.from({ length: maxDetailedActors }, (_, index) => {
     const root = createPlayerAvatar({
       name: `Ferry civilian ${index + 1}`,
       paletteIndex: index,
@@ -414,7 +420,7 @@ export function createHeroLifeLighting(options = {}) {
       detailCandidates.push({ entry, slot, distance });
     }
     detailCandidates.sort((first, second) => first.distance - second.distance || first.slot - second.slot);
-    const selected = detailCandidates.slice(0, HERO_LIFE_LIGHTING_BUDGET.maxDetailedActors);
+    const selected = detailCandidates.slice(0, maxDetailedActors);
     const selectedSources = new Set(selected.map(({ entry }) => entry.source));
     // Keep an actor on its source whenever it remains selected. This prevents
     // a wardrobe identity from teleporting between two close walkers.
@@ -600,7 +606,11 @@ export function createHeroLifeLighting(options = {}) {
   }
 
   function getStats() {
-    return { ...stats, conditions: { ...conditions }, budget: { ...HERO_LIFE_LIGHTING_BUDGET } };
+    return {
+      ...stats,
+      conditions: { ...conditions },
+      budget: { ...HERO_LIFE_LIGHTING_BUDGET, maxDetailedActors },
+    };
   }
 
   function dispose() {
