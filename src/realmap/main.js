@@ -34,6 +34,11 @@ import {
 import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
+import {
+  collectHeroRenderStats,
+  enableHeroPerformanceMode,
+  updateHeroLodAndCulling,
+} from './hero-performance.js';
 import './styles.css';
 
 // ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
@@ -1266,6 +1271,7 @@ function setupToolbar() {
     if (interiorState) exitInterior();
     disposeHeroAtmosphere();
     disposeHeroCharacter();
+    disposeHeroPerformanceMode();
     if (document.pointerLockElement) document.exitPointerLock();
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) trafficState.vehicles[driveIndex].manual = false;
     driveIndex = -1;
@@ -7115,6 +7121,11 @@ let wetWeatherGroup = null;
 let heroAtmosphere = null;
 let heroAtmosphereWetRoots = [];
 let heroAtmosphereWetMaterialBindings = 0;
+let heroPerformanceMode = null;
+let heroPerformancePriorComposerPixelRatio = null;
+let heroPerformanceMarkedObjects = 0;
+let heroPerformanceShadowRefreshes = 0;
+let heroPerformanceLastCulling = { tested: 0, culled: 0, lodSwaps: 0 };
 let puddleMaterial = null;
 let bayWaterMaterial = null;
 let bayGlowMaterial = null;
@@ -8573,6 +8584,59 @@ function getHeroAtmosphereDiagnostics() {
   };
 }
 
+function disposeHeroPerformanceMode() {
+  if (composer && heroPerformancePriorComposerPixelRatio != null) {
+    composer.setPixelRatio(heroPerformancePriorComposerPixelRatio);
+  }
+  heroPerformanceMode?.dispose();
+  heroPerformanceMode = null;
+  heroPerformancePriorComposerPixelRatio = null;
+  heroPerformanceMarkedObjects = 0;
+  heroPerformanceShadowRefreshes = 0;
+  heroPerformanceLastCulling = { tested: 0, culled: 0, lodSwaps: 0 };
+}
+
+function initializeHeroPerformanceMode() {
+  disposeHeroPerformanceMode();
+  if (!activeHeroTile || !renderer || !sun) return null;
+  heroPerformancePriorComposerPixelRatio = renderer.getPixelRatio();
+  heroPerformanceMode = enableHeroPerformanceMode({ renderer, sun });
+  composer?.setPixelRatio(renderer.getPixelRatio());
+  cityRoot?.traverse((object) => {
+    if (object.userData?.heroPerformance) heroPerformanceMarkedObjects += 1;
+  });
+  heroPerformanceMode.tick(performance.now(), { forceShadows: true });
+  heroPerformanceShadowRefreshes = 1;
+  return heroPerformanceMode;
+}
+
+function updateHeroPerformance(now) {
+  if (!heroPerformanceMode) return;
+  if (heroPerformanceMode.tick(now)) heroPerformanceShadowRefreshes += 1;
+  // No inferred or blanket culling: only traverse when content explicitly opts in.
+  if (heroPerformanceMarkedObjects > 0 && cityRoot && camera) {
+    heroPerformanceLastCulling = updateHeroLodAndCulling(
+      cityRoot,
+      camera.position,
+      heroPerformanceMode.profile,
+    );
+  }
+}
+
+function getHeroPerformanceDiagnostics() {
+  return {
+    active: Boolean(heroPerformanceMode),
+    tileId: activeHeroTile?.id || null,
+    profile: heroPerformanceMode ? { ...heroPerformanceMode.profile } : null,
+    pixelRatio: renderer?.getPixelRatio?.() ?? null,
+    shadowAutoUpdate: renderer?.shadowMap?.autoUpdate ?? null,
+    shadowRefreshes: heroPerformanceShadowRefreshes,
+    markedObjects: heroPerformanceMarkedObjects,
+    culling: { ...heroPerformanceLastCulling },
+    render: heroPerformanceMode ? collectHeroRenderStats(cityRoot, renderer) : null,
+  };
+}
+
 function createBuildingDoorways(buildings) {
   if (doorwayGroup) {
     cityRoot.remove(doorwayGroup);
@@ -9985,6 +10049,7 @@ function setWeatherMode(mode) {
   }
   applyWeatherRoadTuning(mode);
   syncHeroAtmosphereConditions();
+  heroPerformanceMode?.invalidateShadows();
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
   return weatherMode;
@@ -10017,6 +10082,7 @@ function setTimeOfDay(mode) {
   }
   updateNightGlow(config.night);
   syncHeroAtmosphereConditions();
+  heroPerformanceMode?.invalidateShadows();
   return timeOfDay;
 }
 
@@ -10319,6 +10385,7 @@ function renderLoop() {
   updateRain(dt);
   updateWeatherVisuals(dt);
   heroAtmosphere?.update(dt);
+  updateHeroPerformance(now);
   if (composer) composer.render();
   else renderer.render(scene, camera);
   updateReadout3d();
@@ -10583,6 +10650,7 @@ async function buildCity() {
     streetLightMaterials.length = 0;
     vehicleHeadlightMaterials.length = 0;
     disposeHeroCharacter();
+    disposeHeroPerformanceMode();
     if (cityRoot) {
       disposeHeroAtmosphere();
       scene.remove(cityRoot);
@@ -10802,6 +10870,7 @@ async function buildCity() {
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
     sun.target.position.set(centroid.x, 0, centroid.z);
     sun.target.updateMatrixWorld();
+    initializeHeroPerformanceMode();
     controls.update();
     if (fullCityMode && controls) controls.maxDistance = 5200;
 
@@ -10855,7 +10924,9 @@ function start() {
   window.addEventListener('resize', () => {
     resize();
     if (renderer) {
-      const pixelCap = fullCityMode ? STREAM.pixelRatioCap : 2;
+      const pixelCap = heroPerformanceMode
+        ? heroPerformanceMode.profile.pixelRatioCap
+        : fullCityMode ? STREAM.pixelRatioCap : 2;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelCap));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       composer?.setSize(window.innerWidth, window.innerHeight);
@@ -10912,6 +10983,7 @@ function start() {
       triangles: renderer?.info?.render?.triangles ?? null,
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
+      heroPerformance: getHeroPerformanceDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -11120,6 +11192,7 @@ function start() {
     getHeroTile: () => activeHeroTile,
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
+    getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
