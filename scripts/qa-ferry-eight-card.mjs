@@ -60,7 +60,10 @@ try {
   await configure(page, { x: 2188, z: 1847, yaw: 0.804, time: 'dusk' });
   await capture(page, '03-building-canyon-dusk');
 
-  await configure(page, { x: 2380, z: 1880, yaw: Math.PI / 2 });
+  // DataSF shoreline: this is source land 7.3 m from the Bay edge. The heading
+  // faces the adjacent source-water side, so the card cannot depend on a
+  // camera-only ground hole.
+  await configure(page, { x: 2420, z: 1820, yaw: 2.4106859464 });
   await capture(page, '04-waterfront-day');
 
   await configure(page, { x: 2173, z: 1831.4, yaw: 0.8008, weather: 'drizzle' });
