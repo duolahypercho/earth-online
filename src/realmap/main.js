@@ -34,6 +34,7 @@ import {
 import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
+import { createHeroCamera } from './hero-camera.js';
 import {
   collectHeroRenderStats,
   enableHeroPerformanceMode,
@@ -1270,6 +1271,7 @@ function setupToolbar() {
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
     if (interiorState) exitInterior();
     disposeHeroAtmosphere();
+    disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
     if (document.pointerLockElement) document.exitPointerLock();
@@ -7061,6 +7063,10 @@ let cityFlatRegion = [];
 let playerState = null;
 let playerAvatarGroup = null;
 let heroCharacter = null;
+let heroCameraController = null;
+let heroCameraPriorNear = null;
+let heroCameraLastPlayerPosition = null;
+let heroCameraLastVehicleCandidates = 0;
 let playerYaw = 0;
 let playerPitch = -0.12;
 let pointerLockActive = false;
@@ -7522,6 +7528,78 @@ function getHeroCharacterDiagnostics() {
   };
 }
 
+function disposeHeroCamera() {
+  heroCameraController?.reset();
+  heroCameraController = null;
+  heroCameraLastPlayerPosition = null;
+  heroCameraLastVehicleCandidates = 0;
+  if (camera && heroCameraPriorNear != null && Math.abs(camera.near - heroCameraPriorNear) > 0.0001) {
+    camera.near = heroCameraPriorNear;
+    camera.updateProjectionMatrix();
+  }
+  heroCameraPriorNear = null;
+}
+
+function initializeHeroCamera() {
+  disposeHeroCamera();
+  if (!activeHeroTile || !heroCharacter || !camera) return null;
+  heroCameraPriorNear = camera.near;
+  heroCameraController = createHeroCamera();
+  return heroCameraController;
+}
+
+function updateHeroCamera(dt) {
+  if (!heroCameraController || !heroCharacter || !playerState || !camera) return null;
+  const nearbyVehicles = (trafficState?.vehicles || [])
+    .filter(({ mesh }) => Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z) <= 12)
+    .map(({ mesh }) => mesh);
+  heroCameraLastVehicleCandidates = nearbyVehicles.length;
+  const teleported = heroCameraLastPlayerPosition
+    ? Math.hypot(
+      playerState.x - heroCameraLastPlayerPosition.x,
+      playerState.z - heroCameraLastPlayerPosition.z,
+    ) > 7
+    : false;
+  heroCameraLastPlayerPosition = { x: playerState.x, z: playerState.z };
+  return heroCameraController.update({
+    camera,
+    characterRoot: heroCharacter.root,
+    focus: heroCharacter.getCameraFocus(),
+    yaw: playerYaw,
+    collisionBoxes: collisionBoxesNear(playerState.x, playerState.z, 8),
+    raycastCandidates: nearbyVehicles,
+    dt,
+    teleport: teleported,
+  });
+}
+
+function getHeroCameraDiagnostics() {
+  const diagnostics = heroCameraController?.diagnostics;
+  const cameraInsideBuilding = Boolean(camera && collisionBoxesNear(camera.position.x, camera.position.z, 0.1)
+    .some((box) => box.containsPoint(camera.position)));
+  const cameraInsideVehicle = Boolean(camera && playerState && (trafficState?.vehicles || [])
+    .filter(({ mesh }) => Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z) <= 12)
+    .some(({ mesh }) => new THREE.Box3().setFromObject(mesh).containsPoint(camera.position)));
+  return {
+    active: Boolean(heroCameraController),
+    tileId: activeHeroTile?.id || null,
+    nearClip: camera?.near ?? null,
+    nearbyVehicleCandidates: heroCameraLastVehicleCandidates,
+    occluded: diagnostics?.occluded ?? false,
+    obstructionType: diagnostics?.obstructionType || 'none',
+    obstructionDistance: diagnostics?.obstructionDistance ?? null,
+    desiredDistance: diagnostics?.desiredDistance ?? null,
+    safeDistance: diagnostics?.safeDistance ?? null,
+    armDistance: diagnostics?.armDistance ?? null,
+    collisionBoxesTested: diagnostics?.collisionBoxesTested ?? 0,
+    raycastCandidatesTested: diagnostics?.raycastCandidatesTested ?? 0,
+    forcedCloseCamera: diagnostics?.forcedCloseCamera ?? false,
+    teleportReset: diagnostics?.teleportReset ?? false,
+    cameraInsideBuilding,
+    cameraInsideVehicle,
+  };
+}
+
 function initPlayer(position) {
   ensurePlayerAvatar();
   const resolved = resolvePlayerPosition(position.x, position.z, 0.5);
@@ -7535,6 +7613,7 @@ function initPlayer(position) {
   playerYaw = playerState.yaw;
   playerPitch = playerState.pitch;
   playerAvatarGroup.position.set(resolved.x, elevationAt(resolved.x, resolved.z), resolved.z);
+  initializeHeroCamera();
 }
 
 function updatePlayerWalk(dt) {
@@ -7570,15 +7649,8 @@ function updatePlayerWalk(dt) {
     speedRatio: moving ? speed / 9 : 0,
     delta: dt,
   });
-  if (activeHeroTile?.camera === 'third-person' && heroCharacter) {
-    const distance = 4.4;
-    const focus = heroCharacter.getCameraFocus();
-    camera.position.set(
-      playerState.x - Math.sin(playerYaw) * distance,
-      focus.y + 1.4,
-      playerState.z - Math.cos(playerYaw) * distance,
-    );
-    camera.lookAt(focus);
+  if (activeHeroTile?.camera === 'third-person' && heroCharacter && heroCameraController) {
+    updateHeroCamera(dt);
   } else {
     camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
     camera.rotation.order = 'YXZ';
@@ -9444,6 +9516,7 @@ function exitInterior() {
   playerYaw = interiorState.yaw;
   playerState.yaw = playerYaw;
   interiorState = null;
+  heroCameraController?.reset();
   updateCityReadout();
   return true;
 }
@@ -9507,12 +9580,14 @@ function setCityMode(mode) {
       }
     }
     cityMode = 'walk';
+    heroCameraController?.reset();
   } else {
     if (driveIndex >= 0 && trafficState?.vehicles[driveIndex]) {
       trafficState.vehicles[driveIndex].manual = false;
       driveIndex = -1;
     }
     cityMode = 'orbit';
+    heroCameraController?.reset();
     controls.enabled = true;
     if (document.pointerLockElement) document.exitPointerLock();
     if (playerState) {
@@ -10649,6 +10724,7 @@ async function buildCity() {
     windowMaterials.length = 0;
     streetLightMaterials.length = 0;
     vehicleHeadlightMaterials.length = 0;
+    disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
     if (cityRoot) {
@@ -10984,6 +11060,7 @@ function start() {
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
+      heroCamera: getHeroCameraDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -11193,6 +11270,7 @@ function start() {
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
+    getHeroCamera: () => getHeroCameraDiagnostics(),
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
