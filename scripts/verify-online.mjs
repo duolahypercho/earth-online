@@ -178,11 +178,11 @@ try {
     }, food.position);
     const after = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     check(
-      'life-sim eating action works',
-      lifeResult.canEat === true
-        && lifeResult.ate === true
-        && after.cash < before.cash
-        && after.needs.hunger < before.needs.hunger,
+      'life-sim eating rejects a context-free driving bypass',
+      lifeResult.canEat === false
+        && lifeResult.ate === false
+        && after.cash === before.cash
+        && after.needs.hunger <= before.needs.hunger + 0.08,
       {
         lifeResult,
         before: { cash: before.cash, hunger: before.needs.hunger },

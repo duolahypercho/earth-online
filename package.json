@@ -57,6 +57,7 @@
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:replay-integrity": "node scripts/verify-replay-consequence-integrity.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
+    "verify:market-context": "node scripts/verify-market-context.mjs",
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",
     "verify:persistence": "node scripts/verify-persistence.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
