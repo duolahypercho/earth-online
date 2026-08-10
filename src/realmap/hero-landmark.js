@@ -11,9 +11,8 @@ export const FERRY_BUILDING_LANDMARK_SOURCE = Object.freeze({
 export const FERRY_SANDSTONE_ALBEDO_URL = '/assets/sf-ferry-sandstone-albedo-v1.png';
 
 export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
-  // Shell + seven instanced passes + the tower roof. Leave enough headroom
-  // for a future authored repair, but keep this hero asset decisively cheap.
-  maxDrawCalls: 12,
+  // The authored facade stays batched by architectural role, never by bay.
+  maxDrawCalls: 15,
   maxTriangles: 12000,
   maxInstances: 240,
 });
@@ -155,15 +154,16 @@ function createMaterials(sandstoneMap) {
     // Ferry Building reads as sun-aged masonry rather than a saturated game
     // prop: the base is warmer, while ledges and the tower catch more light.
     sandstone: new THREE.MeshStandardMaterial({ color: 0xf0dfc8, map: sandstoneMap, roughness: 0.86, metalness: 0.0 }),
-    stoneShadow: new THREE.MeshStandardMaterial({ color: 0x66513d, roughness: 0.9, metalness: 0.0 }),
     trimStone: new THREE.MeshStandardMaterial({ color: 0xc6ab83, roughness: 0.8, metalness: 0.0 }),
+    weatherStone: new THREE.MeshStandardMaterial({ color: 0x8e765c, roughness: 0.94, metalness: 0.0 }),
     towerStone: new THREE.MeshStandardMaterial({ color: 0xe7d3b7, map: sandstoneMap, roughness: 0.82, metalness: 0.0 }),
     // A weathered, low-sheen roof catches broad daylight without reading as
     // chrome. The small metal component is for its seams, not a mirror gloss.
     roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
-    // Opaque recessed glazing gives daylight reflection and interior depth
-    // without the bright, emissive-looking repeated-window grid.
-    glass: new THREE.MeshPhysicalMaterial({ color: 0x16272c, roughness: 0.48, metalness: 0.04, clearcoat: 0.08, transparent: false }),
+    // Separate upper glazing and warmer ground-floor storefronts prevent the
+    // facade from collapsing into one repeated black rectangle grid.
+    glass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.34, metalness: 0.06, clearcoat: 0.12, transparent: false }),
+    storefrontGlass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.42, metalness: 0.03, clearcoat: 0.08, transparent: false, side: THREE.DoubleSide }),
     mullion: new THREE.MeshStandardMaterial({ color: 0x3e362d, roughness: 0.68, metalness: 0.18 }),
     clock: new THREE.MeshStandardMaterial({ color: 0xd8c99f, roughness: 0.68, metalness: 0.02, emissive: 0x000000, emissiveIntensity: 0 }),
     clockHand: new THREE.MeshStandardMaterial({ color: 0x202b2d, roughness: 0.5, metalness: 0.38 }),
@@ -180,11 +180,43 @@ function makeBatch(root, name, geometry, material, capacity) {
   return { mesh, capacity };
 }
 
-function put(batch, matrix) {
+function put(batch, matrix, color = null) {
   if (batch.mesh.count >= batch.capacity) return false;
-  batch.mesh.setMatrixAt(batch.mesh.count, matrix);
+  const index = batch.mesh.count;
+  batch.mesh.setMatrixAt(index, matrix);
+  if (color != null) batch.mesh.setColorAt(index, color instanceof THREE.Color ? color : new THREE.Color(color));
   batch.mesh.count += 1;
   return true;
+}
+
+function createArchPanelGeometry(segments = 10) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.5, -0.5);
+  shape.lineTo(0.5, -0.5);
+  shape.lineTo(0.5, 0);
+  for (let index = 0; index <= segments; index += 1) {
+    const angle = (index / segments) * Math.PI;
+    shape.lineTo(Math.cos(angle) * 0.5, Math.sin(angle) * 0.5);
+  }
+  shape.lineTo(-0.5, -0.5);
+  return new THREE.ShapeGeometry(shape, 1);
+}
+
+function createGableRoofGeometry() {
+  const positions = new Float32Array([
+    -0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 1, 0,
+    0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 1, 0,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex([
+    0, 2, 1, 3, 4, 5,
+    0, 3, 5, 0, 5, 2,
+    1, 2, 5, 1, 5, 4,
+    0, 1, 4, 0, 4, 3,
+  ]);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 function createFootprintShell(points, baseY, height, material) {
@@ -202,6 +234,7 @@ function createFootprintShell(points, baseY, height, material) {
 function finishBatches(batches) {
   for (const batch of batches) {
     batch.mesh.instanceMatrix.needsUpdate = true;
+    if (batch.mesh.instanceColor) batch.mesh.instanceColor.needsUpdate = true;
     batch.mesh.computeBoundingSphere();
   }
 }
@@ -272,69 +305,104 @@ export function createFerryBuildingLandmark(options = {}) {
   ownedGeometries.push(shell.geometry);
 
   const cube = new THREE.BoxGeometry(1, 1, 1);
-  const cylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
+  const archPanel = createArchPanelGeometry();
+  const gableRoof = createGableRoofGeometry();
   const clockDisc = new THREE.CylinderGeometry(0.5, 0.5, 0.08, 20);
   clockDisc.rotateX(Math.PI / 2);
+  const clockRing = new THREE.TorusGeometry(0.5, 0.045, 6, 20);
   const pyramid = new THREE.ConeGeometry(0.5, 1, 4);
-  ownedGeometries.push(cube, cylinder, clockDisc, pyramid);
+  ownedGeometries.push(cube, archPanel, gableRoof, clockDisc, clockRing, pyramid);
   const batches = [
-    makeBatch(root, 'Ferry Building roof masses', cube, materials.roof, 4),
-    makeBatch(root, 'Ferry Building arcade piers', cube, materials.stoneShadow, 72),
-    makeBatch(root, 'Ferry Building deep window bays', cube, materials.glass, 84),
-    makeBatch(root, 'Ferry Building masonry courses and awnings', cube, materials.trimStone, 32),
-    makeBatch(root, 'Ferry Building window mullions', cube, materials.mullion, 72),
+    makeBatch(root, 'Ferry Building gabled terminal roof volumes', gableRoof, materials.roof, 4),
+    makeBatch(root, 'Ferry Building ground-floor arched storefronts', archPanel, materials.storefrontGlass, 56),
+    makeBatch(root, 'Ferry Building recessed upper windows and tower louvers', cube, materials.glass, 68),
+    makeBatch(root, 'Ferry Building projecting arcade piers', cube, materials.trimStone, 56),
+    makeBatch(root, 'Ferry Building masonry courses and cornices', cube, materials.trimStone, 16),
+    makeBatch(root, 'Ferry Building bronze storefront and window divisions', cube, materials.mullion, 60),
+    makeBatch(root, 'Ferry Building weathered plinth and tower shadow courses', cube, materials.weatherStone, 12),
     makeBatch(root, 'Ferry Building clock tower tiers', cube, materials.towerStone, 8),
     makeBatch(root, 'Ferry Building clock faces', clockDisc, materials.clock, 4),
+    makeBatch(root, 'Ferry Building clock face stone bezels', clockRing, materials.trimStone, 4),
     makeBatch(root, 'Ferry Building clock hands', cube, materials.clockHand, 8),
   ];
-  const [roof, pier, windowBay, cornice, mullion, tower, clockFace, clockHands] = batches;
+  const [roof, storefront, upperWindow, pier, cornice, mullion, weathering, tower, clockFace, clockBezel, clockHands] = batches;
   const matrix = new THREE.Matrix4();
 
-  // A stepped roof and continuous cornice break the old monolithic slab into
-  // terminal hall wings while remaining strictly inside the OSM shell bounds.
-  put(roof, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + hallHeight + 0.65, hallLength, 1.3, hallWidth));
-  put(roof, boxMatrix(matrix, frame, hallCenterAlong + hallLength * 0.21, 0, baseY + hallHeight + 1.48, hallLength * 0.46, 0.42, hallWidth * 0.48));
+  // Two pitched terminal wings terminate cleanly at the tower instead of one
+  // flat lid spanning the entire OSM shell.
+  const hallMinAlong = hallCenterAlong - hallLength * 0.5;
+  const hallMaxAlong = hallCenterAlong + hallLength * 0.5;
+  const roofGap = Math.min(15, hallLength * 0.09);
+  const westRoofLength = Math.max(8, towerAlong - roofGap * 0.5 - hallMinAlong);
+  const eastRoofLength = Math.max(8, hallMaxAlong - towerAlong - roofGap * 0.5);
+  put(roof, boxMatrix(matrix, frame, hallMinAlong + westRoofLength * 0.5, 0, baseY + hallHeight, westRoofLength, 3.25, hallWidth * 0.94));
+  put(roof, boxMatrix(matrix, frame, towerAlong + roofGap * 0.5 + eastRoofLength * 0.5, 0, baseY + hallHeight, eastRoofLength, 3.25, hallWidth * 0.94));
   for (const side of [-1, 1]) {
     const facadeAcross = side < 0 ? frame.minAcross : frame.maxAcross;
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.12, baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34));
-    // Long unbroken courses give the facade a believable floor hierarchy;
-    // they replace the former repeated lintel strips at every other bay.
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.15, baseY + hallHeight * 0.67, hallLength * 0.985, 0.18, 0.18));
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.15, baseY + hallHeight * 0.26, hallLength * 0.985, 0.14, 0.18));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.34, baseY + hallHeight - 0.18, hallLength + 0.55, 0.62, 0.52));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.30, baseY + hallHeight * 0.60, hallLength * 0.985, 0.28, 0.38));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.28, baseY + hallHeight * 0.20, hallLength * 0.985, 0.18, 0.32));
+    put(weathering, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.24, baseY + 0.52, hallLength * 0.99, 0.92, 0.28));
   }
-  put(cornice, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + 1.0, hallLength + 0.25, 0.45, hallWidth + 0.2));
 
-  const bayCount = clamp(Math.round(hallLength / 7.2), 18, 28);
+  // Broad historic bays read more clearly at pedestrian distance than the
+  // previous dense grid, and leave room for visible masonry between openings.
+  const bayCount = clamp(Math.round(hallLength / 8.4), 18, 24);
   const baySpacing = hallLength / bayCount;
+  const openingReliefMetres = 0.30;
+  const upperGlassColors = [0x6f858b, 0x536c73, 0x829195, 0x5e747a];
+  const storefrontColors = [0x536d69, 0x715d44, 0x3f6265, 0x806b4b, 0x486069];
   for (const side of [-1, 1]) {
     const facadeAcross = side < 0 ? frame.minAcross : frame.maxAcross;
-    const across = facadeAcross + side * 0.13;
+    const panelAcross = facadeAcross + side * 0.08;
+    const frameAcross = facadeAcross + side * (0.08 + openingReliefMetres);
     for (let index = 0; index < bayCount; index += 1) {
       const along = hallCenterAlong - hallLength * 0.5 + baySpacing * (index + 0.5);
-      put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.64, hallHeight * 0.50, 0.18));
-      put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.42, across + side * 0.16, baseY + hallHeight * 0.48, 0.34, hallHeight * 0.85, 0.36));
-      // One central bronze mullion per bay makes the glazing legible at
-      // street distance without turning it into a luminous tiled facade.
-      put(mullion, boxMatrix(matrix, frame, along, across + side * 0.11, baseY + hallHeight * 0.47, 0.12, hallHeight * 0.49, 0.12));
+      const entranceBay = Math.abs(along - towerAlong) < baySpacing * 1.25;
+      const serviceBay = index % 6 === (side > 0 ? 1 : 4);
+      const upperWidth = baySpacing * (index % 3 === 0 ? 0.48 : index % 3 === 1 ? 0.60 : 0.54);
+      const upperHeight = entranceBay ? 3.35 : serviceBay ? 2.75 : 3.05;
+      const upperY = baseY + (entranceBay ? 11.05 : serviceBay ? 10.25 : 10.55);
+      const upperShift = index % 4 === 0 ? baySpacing * 0.07 : index % 4 === 2 ? -baySpacing * 0.06 : 0;
+      put(upperWindow, boxMatrix(matrix, frame, along + upperShift, panelAcross, upperY, upperWidth, upperHeight, 0.16), upperGlassColors[(index + (side > 0 ? 1 : 0)) % upperGlassColors.length]);
+
+      const storefrontWidth = baySpacing * (entranceBay ? 0.72 : serviceBay ? 0.50 : 0.62);
+      const storefrontHeight = entranceBay ? 5.25 : serviceBay ? 4.25 : 4.75;
+      put(storefront, boxMatrix(matrix, frame, along, panelAcross + side * 0.015, baseY + 3.02, storefrontWidth, storefrontHeight, 1), storefrontColors[(index * 2 + (side > 0 ? 1 : 0)) % storefrontColors.length]);
+
+      // Projecting stone piers and brows sit in front of both glazing layers;
+      // that 30 cm relief is enough to cast readable near-field self-shadow.
+      put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.43, frameAcross, baseY + 6.65, 0.46, 12.25, 0.62), index % 5 === 0 ? 0xd0b891 : 0xbca078);
+      if (index % 3 !== 1) {
+        put(mullion, boxMatrix(matrix, frame, along + upperShift, frameAcross + side * 0.02, upperY, 0.11, upperHeight * 0.96, 0.13));
+      }
+      if (index % 4 === 0 || entranceBay) {
+        put(mullion, boxMatrix(matrix, frame, along, frameAcross + side * 0.025, baseY + 3.12, 0.12, storefrontHeight * 0.82, 0.14));
+      }
+      if (index % 4 === 2) {
+        put(mullion, boxMatrix(matrix, frame, along, frameAcross + side * 0.03, baseY + 4.05, storefrontWidth * 0.88, 0.11, 0.14));
+      }
     }
   }
 
-  // Market Street axis: a heavier arcade and a clocked campanile make the
-  // landmark legible before facade detail resolves.
+  // Market Street axis: the clocked campanile provides the dominant hierarchy.
   const entranceAcross = towerAcross;
-  for (const offset of [-hallWidth * 0.3, 0, hallWidth * 0.3]) {
-    put(windowBay, boxMatrix(matrix, frame, towerAlong - 1.4, offset, baseY + hallHeight * 0.37, 0.12, hallHeight * 0.55, hallWidth * 0.21));
-    put(pier, boxMatrix(matrix, frame, towerAlong - 1.58, offset + hallWidth * 0.12, baseY + hallHeight * 0.46, 0.4, hallHeight * 0.82, 0.4));
-  }
   const towerBase = Math.min(hallWidth * 0.5, 10.5);
   // The historic clock tower is approximately 245 ft tall. Keep that known
   // landmark scale explicit instead of deriving it from the 15 m terminal hall.
   const towerHeight = FERRY_CLOCK_TOWER_HEIGHT_METRES;
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.22, towerBase, towerHeight * 0.44, towerBase));
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.58, towerBase * 0.77, towerHeight * 0.30, towerBase * 0.77));
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.80, towerBase * 0.92, towerHeight * 0.12, towerBase * 0.92));
-  const towerTierTopY = baseY + towerHeight * 0.86;
   const towerRoofHeight = towerBase * 0.54;
+  const towerTierTopY = baseY + towerHeight - towerRoofHeight;
+  const lowerTierHeight = towerHeight * 0.44;
+  const middleTierHeight = towerHeight * 0.29;
+  const clockTierHeight = towerTierTopY - baseY - lowerTierHeight - middleTierHeight;
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + lowerTierHeight * 0.5, towerBase, lowerTierHeight, towerBase));
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + lowerTierHeight + middleTierHeight * 0.5, towerBase * 0.77, middleTierHeight, towerBase * 0.77));
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, towerTierTopY - clockTierHeight * 0.5, towerBase * 0.94, clockTierHeight, towerBase * 0.94));
+  // Shadow courses articulate the otherwise tall shaft and visually seat the
+  // enlarged clock stage without adding a mesh per tower face.
+  put(weathering, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + lowerTierHeight, towerBase * 1.05, 0.42, towerBase * 1.05));
+  put(weathering, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + lowerTierHeight + middleTierHeight, towerBase * 0.87, 0.38, towerBase * 0.87));
   const towerRoof = new THREE.Mesh(pyramid, materials.roof);
   towerRoof.name = 'Ferry Building clock tower pyramidal roof';
   towerRoof.position.copy(localToWorld(frame, towerAlong, entranceAcross, towerTierTopY + towerRoofHeight * 0.5));
@@ -343,21 +411,40 @@ export function createFerryBuildingLandmark(options = {}) {
   towerRoof.castShadow = true;
   root.add(towerRoof);
 
-  const clockY = baseY + towerHeight * 0.73;
+  const louverY = baseY + lowerTierHeight + middleTierHeight * 0.48;
+  const louverHeight = 4.6;
+  for (const side of [-1, 1]) {
+    const faceAcross = entranceAcross + side * (towerBase * 0.385 + 0.05);
+    for (const offset of [-towerBase * 0.17, towerBase * 0.17]) {
+      put(upperWindow, boxMatrix(matrix, frame, towerAlong + offset, faceAcross, louverY, towerBase * 0.20, louverHeight, 0.12), 0x35474a);
+    }
+  }
+  for (const side of [-1, 1]) {
+    const yaw = frame.threeYaw + Math.PI / 2;
+    const faceAlong = towerAlong + side * (towerBase * 0.385 + 0.05);
+    for (const offset of [-towerBase * 0.17, towerBase * 0.17]) {
+      put(upperWindow, boxMatrix(matrix, frame, faceAlong, entranceAcross + offset, louverY, towerBase * 0.20, louverHeight, 0.12, yaw), 0x35474a);
+    }
+  }
+
+  const clockY = towerTierTopY - clockTierHeight * 0.47;
+  const clockDiameter = towerBase * 0.64;
   for (const side of [-1, 1]) {
     const faceAcross = entranceAcross + side * (towerBase * 0.5 + 0.06);
     const handAcross = entranceAcross + side * (towerBase * 0.5 + 0.12);
-    put(clockFace, boxMatrix(matrix, frame, towerAlong, faceAcross, clockY, towerBase * 0.47, towerBase * 0.47, 1));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong + towerBase * 0.07, handAcross, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong - towerBase * 0.06, handAcross, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04));
+    put(clockFace, boxMatrix(matrix, frame, towerAlong, faceAcross, clockY, clockDiameter, clockDiameter, 1));
+    put(clockBezel, boxMatrix(matrix, frame, towerAlong, faceAcross + side * 0.07, clockY, clockDiameter * 1.08, clockDiameter * 1.08, 1));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong + clockDiameter * 0.08, handAcross, clockY + clockDiameter * 0.035, clockDiameter * 0.04, clockDiameter * 0.05, clockDiameter * 0.55));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong - clockDiameter * 0.06, handAcross, clockY - clockDiameter * 0.035, clockDiameter * 0.42, clockDiameter * 0.05, clockDiameter * 0.04));
   }
   for (const side of [-1, 1]) {
     const yaw = frame.threeYaw + Math.PI / 2;
     const faceAlong = towerAlong + side * (towerBase * 0.5 + 0.06);
     const handAlong = towerAlong + side * (towerBase * 0.5 + 0.12);
-    put(clockFace, boxMatrix(matrix, frame, faceAlong, entranceAcross, clockY, towerBase * 0.47, towerBase * 0.47, 1, yaw));
-    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross + towerBase * 0.07, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28, yaw));
-    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross - towerBase * 0.06, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04, yaw));
+    put(clockFace, boxMatrix(matrix, frame, faceAlong, entranceAcross, clockY, clockDiameter, clockDiameter, 1, yaw));
+    put(clockBezel, boxMatrix(matrix, frame, faceAlong + side * 0.07, entranceAcross, clockY, clockDiameter * 1.08, clockDiameter * 1.08, 1, yaw));
+    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross + clockDiameter * 0.08, clockY + clockDiameter * 0.035, clockDiameter * 0.04, clockDiameter * 0.05, clockDiameter * 0.55, yaw));
+    put(clockHands, boxMatrix(matrix, frame, handAlong, entranceAcross - clockDiameter * 0.06, clockY - clockDiameter * 0.035, clockDiameter * 0.42, clockDiameter * 0.05, clockDiameter * 0.04, yaw));
   }
   finishBatches(batches);
 
@@ -369,6 +456,9 @@ export function createFerryBuildingLandmark(options = {}) {
     sourceWay: FERRY_BUILDING_LANDMARK_SOURCE.osmWay,
     footprintPoints: points.length,
     hiddenSourceRender: Boolean(options.sourceMesh?.isObject3D && sourceRenderMatches(options.sourceMesh)),
+    facadeBaysPerSide: bayCount,
+    storefrontVariants: storefrontColors.length,
+    openingReliefMetres,
   });
   if (stats.drawCalls > FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls
     || stats.triangles > FERRY_BUILDING_LANDMARK_BUDGET.maxTriangles
@@ -377,7 +467,7 @@ export function createFerryBuildingLandmark(options = {}) {
     for (const geometry of ownedGeometries) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
     sandstoneMap?.dispose();
-    throw new Error('Ferry Building landmark exceeded its rendering budget.');
+    throw new Error(`Ferry Building landmark exceeded its rendering budget (${stats.drawCalls} draws, ${stats.triangles} triangles, ${stats.instances} instances).`);
   }
 
   const sourceMesh = options.sourceMesh?.isObject3D && sourceRenderMatches(options.sourceMesh) ? options.sourceMesh : null;
