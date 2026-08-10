@@ -1155,11 +1155,20 @@ hud = createHud({
   quality: getRenderQualitySnapshot(),
   onQualityChange: setRenderQuality,
   onInteraction: () => {
+    if (taxiRideState?.active) {
+      hud?.setMessage(`TAXI / EN ROUTE · ${Math.ceil(Math.max(0, TAXI_RIDE_DURATION - taxiRideState.elapsed))}s.`);
+      return;
+    }
     if (traffic.isPlayerDriving?.()) {
       exitPlayerCar();
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
+      if (taxi) {
+        startPlayerTaxiRide(taxi);
+        return;
+      }
       const readyPortal = getInteractionPortal();
       if (readyPortal && readyPortal.distance <= readyPortal.radius) {
         enterNearestInterior();
@@ -1176,12 +1185,18 @@ hud = createHud({
     }
   },
   onTouchMove: (code, pressed) => {
+    if (taxiRideState?.active) {
+      controls.keys.delete(code.toLowerCase());
+      return;
+    }
     if (pressed) controls.keys.add(code.toLowerCase());
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
     controls.combatPointerId = null;
     controls.combatTriggerPointerId = null;
+    traffic.cancelTaxiRide?.();
+    taxiRideState = null;
     combat?.setAiming(false);
     combat?.setTriggerHeld(false);
     traffic.repairPlayerVehicle?.('shift-reset');
@@ -1203,6 +1218,7 @@ let drivingExitPose = null;
 let playerLayerActive = false;
 let engineAudio = null;
 let windAudio = null;
+let taxiRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
@@ -1210,6 +1226,8 @@ const PLAYER_PROGRESS_STORAGE_KEY = 'earth-online-player-progress-v1';
 const PLAYER_PROGRESS_VERSION = 1;
 const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
 const VEHICLE_IMPOUND_RETRIEVAL_FEE = 45;
+const TAXI_RIDE_FARE = 14;
+const TAXI_RIDE_DURATION = 3.2;
 let progressSaveElapsed = 0;
 let lastProgressSave = null;
 let lastPublicWorldState = null;
@@ -1814,6 +1832,114 @@ function retrieveImpoundedVehicleAtFerry() {
   return true;
 }
 
+function getTaxiDestination() {
+  const portal = city?.portals?.find((entry) => (
+    String(entry.label || '').toLowerCase().includes('ferry building market hall')
+  ));
+  if (!portal?.position) return null;
+  return {
+    label: portal.label,
+    x: portal.position.x,
+    z: portal.position.z,
+  };
+}
+
+function getPlayerTaxiRideState() {
+  if (!taxiRideState?.active) return null;
+  return {
+    active: true,
+    vehicleId: taxiRideState.vehicleId,
+    class: taxiRideState.class,
+    identity: taxiRideState.identity,
+    fare: TAXI_RIDE_FARE,
+    duration: TAXI_RIDE_DURATION,
+    elapsed: taxiRideState.elapsed,
+    remaining: Math.max(0, TAXI_RIDE_DURATION - taxiRideState.elapsed),
+    destination: taxiRideState.destination.label,
+  };
+}
+
+function startPlayerTaxiRide(candidate) {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  if (candidate?.index != null && heatState?.pursuitActive) {
+    hud?.setMessage('Taxi unavailable · lose the StreetHeat tail first.');
+    return false;
+  }
+  const available = candidate?.index != null
+    && !taxiRideState?.active
+    && playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !playerMoving()
+    && !beautyMode
+    && !qaCameraPose
+    && combatState?.status === 'running';
+  if (!available) return false;
+  if (!lifeSim?.canAffordTaxiFare?.(TAXI_RIDE_FARE)) {
+    lifeSim?.payTaxiFare?.(TAXI_RIDE_FARE, 'Taxi to Ferry Building');
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    return false;
+  }
+  const destination = getTaxiDestination();
+  if (!destination) {
+    hud?.setMessage('Taxi destination unavailable · no charge.');
+    return false;
+  }
+  const boarded = traffic.beginTaxiRide?.(candidate.index);
+  if (!boarded) return false;
+  controls.keys.clear();
+  combat?.setEnabled(false);
+  taxiRideState = {
+    active: true,
+    elapsed: 0,
+    vehicleId: boarded.vehicleId,
+    class: boarded.class,
+    identity: boarded.identity,
+    destination,
+  };
+  hud?.setMessage(`TAXI / FERRY BUILDING · $${TAXI_RIDE_FARE} due on arrival.`);
+  return true;
+}
+
+function updatePlayerTaxiRide(dt) {
+  if (!taxiRideState?.active || !Number.isFinite(dt) || dt <= 0) return null;
+  taxiRideState.elapsed = Math.min(TAXI_RIDE_DURATION, taxiRideState.elapsed + dt);
+  if (taxiRideState.elapsed < TAXI_RIDE_DURATION) return getPlayerTaxiRideState();
+  const previousLife = lifeSim?.exportState?.();
+  const destination = taxiRideState.destination;
+  const transaction = lifeSim?.payTaxiFare?.(TAXI_RIDE_FARE, 'Taxi to Ferry Building');
+  const completed = transaction ? traffic.completeTaxiRide?.() : null;
+  if (!transaction || !completed) {
+    if (previousLife) lifeSim?.importState?.(previousLife);
+    traffic.cancelTaxiRide?.();
+    taxiRideState = null;
+    combat?.setEnabled(true);
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage('Taxi ride unavailable · no charge.');
+    return null;
+  }
+  const surface = streaming.getSurfaceHeight?.({ x: destination.x, z: destination.z });
+  controls.target.set(
+    destination.x,
+    Number.isFinite(surface) ? surface + QA_ROAM_CLEARANCE : controls.target.y,
+    destination.z,
+  );
+  controls.focus.copy(controls.target);
+  controls.keys.clear();
+  taxiRideState = null;
+  combat?.setEnabled(true);
+  snapCameraToControls();
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`TAXI ARRIVAL / FERRY BUILDING · $${TAXI_RIDE_FARE} paid.`);
+  savePlayerProgress();
+  return {
+    kind: 'taxi-arrival',
+    vehicle: completed,
+    transaction,
+  };
+}
+
 function startPlayerWorkShift() {
   const combatState = combat?.getState?.();
   const available = playerLayerActive
@@ -1894,6 +2020,8 @@ function usePlayerMedkit() {
 }
 
 function updatePlayerLayer(dt, elapsed) {
+  updatePlayerTaxiRide(dt);
+  const taxiRiding = taxiRideState?.active === true;
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
     if (playerAvatar) playerAvatar.visible = false;
@@ -1930,7 +2058,7 @@ function updatePlayerLayer(dt, elapsed) {
     if (playerAvatar && !controls.interiorMode) {
       // Beauty / QA locked cameras must not show the local Traveler nameplate
       // floating in hero road stills (critic pass 9/10 hard blocker).
-      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose);
+      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose) || taxiRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
         const surface = streaming.getSurfaceHeight?.(controls.target);
@@ -1956,7 +2084,7 @@ function updatePlayerLayer(dt, elapsed) {
     moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
     interior: controls.interiorMode,
     downed: combat?.getState?.().status !== 'running',
-    available: playerLayerActive && !beautyMode && !qaCameraPose,
+    available: playerLayerActive && !beautyMode && !qaCameraPose && !taxiRiding,
     position: controls.target,
   });
   if (lifeEvent?.kind === 'work-complete') savePlayerProgress();
@@ -3395,6 +3523,7 @@ function updateCombatShoulderCamera(dt) {
 }
 
 function updateRoamTarget(dt, qaTourActive, drivingActive, axis) {
+  if (taxiRideState?.active) return;
   const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
   if (!qaTourActive && !drivingActive && axis.lengthSq() > 0) {
     // A regular movement input returns the pooled street presentation to its
@@ -3674,6 +3803,13 @@ function onKeyDown(event) {
     event.preventDefault();
     return;
   }
+  if (taxiRideState?.active) {
+    event.preventDefault();
+    if (code === 'KeyE' && !event.repeat) {
+      hud?.setMessage(`TAXI / EN ROUTE · ${Math.ceil(Math.max(0, TAXI_RIDE_DURATION - taxiRideState.elapsed))}s.`);
+    }
+    return;
+  }
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG', 'KeyN'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
     if (ferryImpoundContext()) {
@@ -3716,6 +3852,11 @@ function onKeyDown(event) {
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
+      if (taxi) {
+        startPlayerTaxiRide(taxi);
+        return;
+      }
       const readyPortal = getInteractionPortal();
       if (readyPortal && readyPortal.distance <= readyPortal.radius) {
         enterNearestInterior();
@@ -3842,6 +3983,14 @@ function exitInterior() {
 }
 
 function updateInteraction() {
+  if (taxiRideState?.active) {
+    hud.setInteraction({
+      label: `TAXI / FERRY BUILDING / $${TAXI_RIDE_FARE}`,
+      prompt: `EN ROUTE · ${Math.ceil(Math.max(0, TAXI_RIDE_DURATION - taxiRideState.elapsed))}s`,
+      enabled: false,
+    });
+    return;
+  }
   if (traffic.isPlayerDriving?.()) {
     const drivingState = traffic.getPlayerVehicleState?.();
     const heatState = streetHeat?.getState?.();
@@ -3887,6 +4036,15 @@ function updateInteraction() {
     hud.setInteraction({
       label: `${String(responder?.label || 'TRAFFIC TAIL').toUpperCase()} / TAIL ${onFootHeat.responderDistance.toFixed(1)} M`,
       prompt: 'KEEP MOVING · BREAK CONTACT TO LOSE TAIL',
+      enabled: true,
+    });
+    return;
+  }
+  const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
+  if (taxi) {
+    hud.setInteraction({
+      label: `SF TAXI / ${taxi.distance.toFixed(1)} M / FERRY BUILDING`,
+      prompt: `E / TAP  RIDE · $${TAXI_RIDE_FARE}`,
       enabled: true,
     });
     return;
@@ -4425,6 +4583,12 @@ window.__SF_SIM__ = {
   },
   getImpoundRetrievalFee() {
     return VEHICLE_IMPOUND_RETRIEVAL_FEE;
+  },
+  getTaxiRideState() {
+    return getPlayerTaxiRideState();
+  },
+  getTaxiFare() {
+    return TAXI_RIDE_FARE;
   },
   buyPlayerMedkit() {
     return buyPlayerMedkit();

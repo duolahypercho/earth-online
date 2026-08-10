@@ -1725,6 +1725,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
   let impoundedPlayerVehicle = null;
+  let taxiRide = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -4197,6 +4198,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const pursuitResponderActive = pursuitResponder.active
         && v === vehicles[pursuitResponder.targetIndex]
         && v.pursuitResponder;
+      const taxiPassengerActive = taxiRide?.vehicle === v;
       const curbside = Number.isFinite(v.curbDwellUntil);
       const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
       const activeRoute = v.turn?.route || v.route;
@@ -4221,6 +4223,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         actionKey = 'combat-brake';
         actionLabel = 'Braking after gunfire';
         actionDetail = 'reacting to nearby fire';
+      } else if (taxiPassengerActive) {
+        actionKey = 'taxi-passenger';
+        actionLabel = 'Taxi passenger boarding';
+        actionDetail = 'Ferry Building fare';
       } else if (v.parked) {
         actionKey = 'parked';
         actionLabel = 'Parked at curb';
@@ -4252,6 +4258,8 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let dwellRemaining = null;
       if (v.impounded) {
         stopCue = 'impounded';
+      } else if (taxiPassengerActive) {
+        stopCue = 'taxi-passenger';
       } else if (v.parked) {
         stopCue = 'parked';
         dwellRemaining = Math.max(0, parkedDwellEnd - t);
@@ -4516,6 +4524,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const vehicle = vehicles[index];
       if (vehicle.cls === 'bike') continue;
       if (vehicle.impounded) continue;
+      if (taxiAtServiceStop(vehicle)) continue;
       if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
       if (vehicle.playerControlled || vehicle.remoteControlled) continue;
       if (!vehicle.parked && vehicle.speed > 0.9) continue;
@@ -4528,8 +4537,84 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     return best;
   }
 
+  function taxiAtServiceStop(vehicle) {
+    return Boolean(
+      vehicle
+      && vehicle.identity.category === 'taxi'
+      && vehicle.identity.curbService === 'taxi'
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed,
+    );
+  }
+
+  function getNearestTaxiService(position, maxDistance = 3.8) {
+    if (!position || taxiRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!taxiAtServiceStop(vehicle)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = { index, vehicle, distance };
+      }
+    }
+    return best;
+  }
+
+  function beginTaxiRide(index) {
+    if (taxiRide
+      || playerVehicle
+      || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!taxiAtServiceStop(vehicle)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 4.2);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    taxiRide = {
+      vehicle,
+      vehicleId: index,
+      startedAt: lastElapsed,
+    };
+    return getTaxiRideState();
+  }
+
+  function getTaxiRideState() {
+    if (!taxiRide) return null;
+    const point = taxiRide.vehicle.mesh.root.position;
+    return {
+      active: true,
+      vehicleId: taxiRide.vehicleId,
+      class: taxiRide.vehicle.cls,
+      identity: taxiRide.vehicle.identity.key,
+      position: { x: point.x, y: point.y, z: point.z },
+      elapsed: Math.max(0, lastElapsed - taxiRide.startedAt),
+    };
+  }
+
+  function completeTaxiRide() {
+    const state = getTaxiRideState();
+    if (!state) return null;
+    const vehicle = taxiRide.vehicle;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.6);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    taxiRide = null;
+    return { ...state, active: false };
+  }
+
+  function cancelTaxiRide() {
+    if (!taxiRide) return false;
+    taxiRide = null;
+    return true;
+  }
+
   function enterPlayerVehicle(index) {
-    if (playerVehicle || impoundedPlayerVehicle || !Number.isInteger(index)) return false;
+    if (playerVehicle || impoundedPlayerVehicle || taxiRide || !Number.isInteger(index)) return false;
     const vehicle = vehicles[index];
     if (!vehicle
       || vehicle.playerControlled
@@ -4927,6 +5012,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     setWeather,
     setNightLighting,
     getNearestEnterableVehicle,
+    getNearestTaxiService,
+    beginTaxiRide,
+    getTaxiRideState,
+    completeTaxiRide,
+    cancelTaxiRide,
     enterPlayerVehicle,
     exportPlayerVehicleState,
     importPlayerVehicleState,
