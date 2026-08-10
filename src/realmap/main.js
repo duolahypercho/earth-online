@@ -8757,11 +8757,30 @@ function initializeHeroStreetscape() {
     });
     baseCrosswalks.visible = false;
   }
+  const baseFootways = cityRoot.getObjectByName('Real map road surface sidewalk');
+  if (baseFootways) {
+    heroStreetscapeHiddenBaseLayers.push({
+      object: baseFootways,
+      name: baseFootways.name,
+      visible: baseFootways.visible,
+      reason: 'source-matched hero paving replaces the raised semantic sidewalk surface within the active tile',
+    });
+    baseFootways.visible = false;
+  }
   return heroStreetscape;
 }
 
 function getHeroStreetscapeDiagnostics() {
   const root = heroStreetscape?.root;
+  const sourceSurfaceLayers = [];
+  cityRoot?.traverse((object) => {
+    if (!object?.name || !/(footway|sidewalk|road surface)/i.test(object.name)) return;
+    sourceSurfaceLayers.push({
+      name: object.name,
+      visible: object.visible,
+      vertices: object.geometry?.attributes?.position?.count || 0,
+    });
+  });
   return {
     active: Boolean(heroStreetscape),
     tileId: activeHeroTile?.id || null,
@@ -8773,6 +8792,7 @@ function getHeroStreetscapeDiagnostics() {
       previousVisibility: visible,
       reason,
     })),
+    sourceSurfaceLayers,
     layers: root?.children.map((child) => ({
       name: child.name,
       visible: child.visible,

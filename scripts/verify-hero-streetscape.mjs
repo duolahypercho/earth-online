@@ -92,7 +92,13 @@ if (FERRY_BUILDING_STREETSCAPE_SOURCE.ferryBuildingWay !== 558731934) fail('Ferr
 if (streetscape.stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls) fail('draw-call budget exceeded');
 if (streetscape.stats.instances > FERRY_BUILDING_STREETSCAPE_BUDGET.maxInstances) fail('instance budget exceeded');
 if (streetscape.stats.triangles > FERRY_BUILDING_STREETSCAPE_BUDGET.maxTriangles) fail('triangle budget exceeded');
-if (streetscape.stats.roads.length < 4) fail('expected OSM-aligned road details are absent');
+if (streetscape.stats.roads.length !== FERRY_BUILDING_STREETSCAPE_SOURCE.roadIds.length) {
+  fail('expected OSM-aligned road details are absent');
+}
+if (streetscape.stats.pavingPaths.length !== FERRY_BUILDING_STREETSCAPE_SOURCE.pavingPathIds.length) {
+  fail('expected Market Street OSM paving paths are absent');
+}
+if (streetscape.stats.derivedCrossings !== 2) fail('expected two source-derived Embarcadero crossings');
 if (flatFixture.stats.roads.length !== 4 || flatFixture.stats.roads.some((road) => road.id === 999)) {
   fail('flat OSM points did not retain only matching caller roads');
 }
@@ -103,7 +109,9 @@ if (flatWidths.get(26769726) !== 9.4 || flatWidths.get(88463826) !== 9.75 || fla
 if (nestedFixture.stats.roads.length !== 1 || nestedFixture.stats.roads[0].id !== 26769726) {
   fail('nested point pairs did not retain a valid matching caller road');
 }
-if (fallbackFixture.stats.roads.length !== 4) fail('defaults were not restored when no matching caller road remained');
+if (fallbackFixture.stats.roads.length !== FERRY_BUILDING_STREETSCAPE_SOURCE.roadIds.length) {
+  fail('defaults were not restored when no matching caller road remained');
+}
 
 const cardinalCurb = findMesh(cardinalFixture, 'OSM-aligned curb returns');
 const cardinalMarking = findMesh(cardinalFixture, 'OSM road markings');
@@ -121,20 +129,27 @@ const suppressedSlabs = findMesh(suppressedFixture, 'Ferry Plaza sidewalk slabs'
 const retainedSeams = findMesh(suppressedFixture, 'Sidewalk expansion seams');
 const retainedMarkings = findMesh(suppressedFixture, 'OSM road markings');
 const retainedFurniture = findMesh(suppressedFixture, 'Ferry Plaza bollards');
+const retainedPaving = findMesh(suppressedFixture, 'Market Street OSM paving finish');
 if (suppressedCurbs.count || suppressedSlabs.count) fail('existing surface ownership did not suppress curb/slab instances');
-if (!retainedSeams.count || !retainedMarkings.count || !retainedFurniture.count) {
-  fail('surface suppression removed retained seams, markings, or furniture');
+if (!retainedSeams.count || !retainedMarkings.count || !retainedFurniture.count || !retainedPaving.count) {
+  fail('surface suppression removed retained paving, seams, markings, or furniture');
 }
 if (suppressedFixture.stats.layers.curbs || suppressedFixture.stats.layers.sidewalkSlabs) {
   fail('suppressed layer diagnostics are incorrect');
 }
 
 const baseMarking = findMesh(streetscape, 'OSM road markings');
+const pavingFinish = findMesh(streetscape, 'Market Street OSM paving finish');
 const facadeRelief = findMesh(streetscape, 'Ferry Building facade relief');
 const markingY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(baseMarking)).y;
 const facadeY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(facadeRelief)).y;
 if (Math.abs(markingY - (1.8 + 0.46 + 0.012)) > 1e-6) fail('marking lift is not relative to the road surface');
 if (Math.abs(facadeY - (1.8 + 0.02 + 2.06)) > 1e-6) fail('facade relief incorrectly inherited the road surface lift');
+const firstPavingDirection = new THREE.Vector3(33.4, 0, 33.7).normalize();
+assertMatrixAxis('Market Street paving', pavingFinish, 0, 0, firstPavingDirection);
+const pavingY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(pavingFinish)).y;
+if (Math.abs(pavingY - (1.8 + 0.014)) > 1e-6) fail('pedestrian paving inherited the raised road datum');
+if (!pavingFinish.count) fail('paving hierarchy is absent');
 
 let facade = 0;
 let markings = 0;
@@ -149,6 +164,8 @@ if (!facade || !markings || !curb) fail('expected facade, marking, and curb deta
 
 streetscape.setConditions({ wetness: 0.85 });
 streetscape.update(1 / 30);
+if (pavingFinish.material.roughness > 0.48) fail('drizzle did not lower roughness across the paving finish');
+if (pavingFinish.material.envMapIntensity < 1.05) fail('drizzle did not raise distributed paving reflections');
 streetscape.dispose();
 if (!streetscape.disposed || scene.children.includes(streetscape.root)) fail('dispose did not detach streetscape');
 flatFixture.dispose();
