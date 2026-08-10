@@ -93,7 +93,10 @@ function principalFrame(points, fallbackCentroid) {
     center,
     along,
     across,
-    yaw: Math.atan2(along.y, along.x),
+    // Three's positive Y rotation maps local +X to (cos(yaw), -sin(yaw))
+    // in this X/Z world. Negating the mathematical X/Z heading makes local
+    // +X = `along` and local +Z = `across`, exactly matching this frame.
+    threeYaw: -Math.atan2(along.y, along.x),
     minAlong,
     maxAlong,
     minAcross,
@@ -111,7 +114,7 @@ function localToWorld(frame, along, across, y) {
   );
 }
 
-function boxMatrix(matrix, frame, along, across, y, length, height, width, yaw = frame.yaw) {
+function boxMatrix(matrix, frame, along, across, y, length, height, width, yaw = frame.threeYaw) {
   return matrix.compose(
     localToWorld(frame, along, across, y),
     new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)),
@@ -239,12 +242,12 @@ export function createFerryBuildingLandmark(options = {}) {
 
   // A stepped roof and continuous cornice break the old monolithic slab into
   // terminal hall wings while remaining strictly inside the OSM shell bounds.
-  put(roof, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + hallHeight + 0.65, hallLength, 1.3, hallWidth, frame.yaw));
-  put(roof, boxMatrix(matrix, frame, hallCenterAlong + hallLength * 0.21, 0, baseY + hallHeight + 1.48, hallLength * 0.46, 0.42, hallWidth * 0.48, frame.yaw));
+  put(roof, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + hallHeight + 0.65, hallLength, 1.3, hallWidth));
+  put(roof, boxMatrix(matrix, frame, hallCenterAlong + hallLength * 0.21, 0, baseY + hallHeight + 1.48, hallLength * 0.46, 0.42, hallWidth * 0.48));
   for (const side of [-1, 1]) {
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.12), baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34, frame.yaw));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.12), baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34));
   }
-  put(cornice, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + 1.0, hallLength + 0.25, 0.45, hallWidth + 0.2, frame.yaw));
+  put(cornice, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + 1.0, hallLength + 0.25, 0.45, hallWidth + 0.2));
 
   const bayCount = clamp(Math.round(hallLength / 7.2), 18, 28);
   const baySpacing = hallLength / bayCount;
@@ -252,9 +255,9 @@ export function createFerryBuildingLandmark(options = {}) {
     const across = side * (hallWidth * 0.5 + 0.13);
     for (let index = 0; index < bayCount; index += 1) {
       const along = hallCenterAlong - hallLength * 0.5 + baySpacing * (index + 0.5);
-      put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.66, hallHeight * 0.54, 0.11, frame.yaw));
-      put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.42, across + side * 0.16, baseY + hallHeight * 0.48, 0.34, hallHeight * 0.85, 0.36, frame.yaw));
-      if (index % 2 === 0) put(cornice, boxMatrix(matrix, frame, along, across + side * 0.17, baseY + hallHeight * 0.73, baySpacing * 0.82, 0.17, 0.22, frame.yaw));
+      put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.66, hallHeight * 0.54, 0.11));
+      put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.42, across + side * 0.16, baseY + hallHeight * 0.48, 0.34, hallHeight * 0.85, 0.36));
+      if (index % 2 === 0) put(cornice, boxMatrix(matrix, frame, along, across + side * 0.17, baseY + hallHeight * 0.73, baySpacing * 0.82, 0.17, 0.22));
     }
   }
 
@@ -262,30 +265,30 @@ export function createFerryBuildingLandmark(options = {}) {
   // campanile make the landmark legible well before facade detail resolves.
   const entranceAcross = 0;
   for (const offset of [-hallWidth * 0.3, 0, hallWidth * 0.3]) {
-    put(windowBay, boxMatrix(matrix, frame, towerAlong - 1.4, offset, baseY + hallHeight * 0.37, 0.12, hallHeight * 0.55, hallWidth * 0.21, frame.yaw));
-    put(pier, boxMatrix(matrix, frame, towerAlong - 1.58, offset + hallWidth * 0.12, baseY + hallHeight * 0.46, 0.4, hallHeight * 0.82, 0.4, frame.yaw));
+    put(windowBay, boxMatrix(matrix, frame, towerAlong - 1.4, offset, baseY + hallHeight * 0.37, 0.12, hallHeight * 0.55, hallWidth * 0.21));
+    put(pier, boxMatrix(matrix, frame, towerAlong - 1.58, offset + hallWidth * 0.12, baseY + hallHeight * 0.46, 0.4, hallHeight * 0.82, 0.4));
   }
   const towerBase = Math.min(hallWidth * 0.5, 10.5);
   const towerHeight = Math.max(58, hallHeight * 4.4);
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.22, towerBase, towerHeight * 0.44, towerBase, frame.yaw));
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.58, towerBase * 0.77, towerHeight * 0.30, towerBase * 0.77, frame.yaw));
-  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.80, towerBase * 0.92, towerHeight * 0.12, towerBase * 0.92, frame.yaw));
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.22, towerBase, towerHeight * 0.44, towerBase));
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.58, towerBase * 0.77, towerHeight * 0.30, towerBase * 0.77));
+  put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.80, towerBase * 0.92, towerHeight * 0.12, towerBase * 0.92));
   const towerRoof = new THREE.Mesh(pyramid, materials.roof);
   towerRoof.name = 'Ferry Building clock tower pyramidal roof';
   towerRoof.position.copy(localToWorld(frame, towerAlong, entranceAcross, baseY + towerHeight + towerBase * 0.27));
   towerRoof.scale.set(towerBase * 1.12, towerBase * 0.54, towerBase * 1.12);
-  towerRoof.rotation.y = frame.yaw + Math.PI / 4;
+  towerRoof.rotation.y = frame.threeYaw + Math.PI / 4;
   towerRoof.castShadow = true;
   root.add(towerRoof);
 
   const clockY = baseY + towerHeight * 0.73;
   for (const side of [-1, 1]) {
-    put(clockFace, boxMatrix(matrix, frame, towerAlong, side * (towerBase * 0.5 + 0.06), clockY, towerBase * 0.47, towerBase * 0.47, 1, frame.yaw));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong + towerBase * 0.07, side * (towerBase * 0.5 + 0.12), clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28, frame.yaw));
-    put(clockHands, boxMatrix(matrix, frame, towerAlong - towerBase * 0.06, side * (towerBase * 0.5 + 0.12), clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04, frame.yaw));
+    put(clockFace, boxMatrix(matrix, frame, towerAlong, side * (towerBase * 0.5 + 0.06), clockY, towerBase * 0.47, towerBase * 0.47, 1));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong + towerBase * 0.07, side * (towerBase * 0.5 + 0.12), clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28));
+    put(clockHands, boxMatrix(matrix, frame, towerAlong - towerBase * 0.06, side * (towerBase * 0.5 + 0.12), clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04));
   }
   for (const side of [-1, 1]) {
-    const yaw = frame.yaw + Math.PI / 2;
+    const yaw = frame.threeYaw + Math.PI / 2;
     put(clockFace, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.06), 0, clockY, towerBase * 0.47, towerBase * 0.47, 1, yaw));
     put(clockHands, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.12), towerBase * 0.07, clockY + towerBase * 0.035, towerBase * 0.04, towerBase * 0.05, towerBase * 0.28, yaw));
     put(clockHands, boxMatrix(matrix, frame, towerAlong + side * (towerBase * 0.5 + 0.12), -towerBase * 0.06, clockY - towerBase * 0.035, towerBase * 0.21, towerBase * 0.05, towerBase * 0.04, yaw));
@@ -336,6 +339,11 @@ export function createFerryBuildingLandmark(options = {}) {
       attached: Boolean(root.parent),
       hiddenSourceRender: Boolean(sourceMesh && !sourceMesh.visible),
       proceduralApproximation: true,
+      frame: {
+        along: [frame.along.x, frame.along.y],
+        across: [frame.across.x, frame.across.y],
+        threeYaw: frame.threeYaw,
+      },
       disposed,
       stats,
     };
