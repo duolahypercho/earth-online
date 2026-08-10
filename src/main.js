@@ -2758,22 +2758,35 @@ function updateVehiclePedestrianImpact() {
 
 const combatPedestrianCandidates = [];
 function getCombatPedestrianCandidates(_origin, _maxRange, out = combatPedestrianCandidates) {
-  out.length = 0;
-  const children = pedestrians.group?.children || [];
-  for (let index = 0; index < children.length; index += 1) {
-    const mesh = children[index];
-    // Contact shadows are the first child and do not carry the rig marker.
-    if (!mesh?.visible || !mesh.userData?.rig) continue;
-    out.push({
-      kind: 'pedestrian',
-      id: `pedestrian:${index}`,
-      label: `Resident ${String(index + 1).padStart(2, '0')}`,
-      mesh,
-      radius: 0.72,
-      height: 1.18,
-    });
-  }
-  return out;
+  return pedestrians.getCombatCandidates?.(out) ?? out;
+}
+
+function dispatchCombatWitness({ incidentId, residentId } = {}) {
+  if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
+  const witness = pedestrians.getIncidentWitness?.(residentId, 18) ?? null;
+  const reaction = witness
+    ? pedestrians.registerWitnessReaction?.(witness.id, {
+      originX: witness.victimPosition.x,
+      originZ: witness.victimPosition.z,
+    }) ?? null
+    : null;
+  const report = reaction
+    ? streetHeat?.reportWitness?.({
+      incidentId,
+      witnessId: witness.id,
+      witnessLabel: witness.label,
+      victimId: residentId,
+      incidentLabel: 'gunfire',
+    }) ?? null
+    : null;
+  if (!report?.reported) return null;
+  streetHeat?.reportIncident?.(8, {
+    kind: 'witness-dispatch',
+    source: 'combat',
+    message: `${witness.label} called in the gunfire · heat +8.`,
+  });
+  savePlayerProgress();
+  return { witness, reaction, report };
 }
 
 combat = createCombatLoop({
@@ -2789,8 +2802,11 @@ combat = createCombatLoop({
   onRecoil: (amount) => {
     controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
   },
-  onEvent: ({ kind, message, targetKind }) => {
+  onEvent: ({ kind, message, targetKind, incidentId, residentId }) => {
     combatAudio?.play?.(kind, { targetKind });
+    if (kind === 'impact' && targetKind === 'pedestrian') {
+      if (dispatchCombatWitness({ incidentId, residentId })) return;
+    }
     if (kind === 'shot') return;
     hud?.setMessage(message);
   },

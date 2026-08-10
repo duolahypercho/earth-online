@@ -906,10 +906,14 @@ export function createStreetHeat({
     witnessId = null,
     witnessLabel = 'A resident',
     victimId = null,
+    incidentLabel = 'impact',
   } = {}) {
     const normalizedIncidentId = Number(incidentId);
     const normalizedWitnessId = typeof witnessId === 'string' ? witnessId.slice(0, 96) : '';
     const normalizedVictimId = typeof victimId === 'string' ? victimId.slice(0, 96) : '';
+    const normalizedIncidentLabel = typeof incidentLabel === 'string' && incidentLabel.trim()
+      ? incidentLabel.trim().slice(0, 32)
+      : 'impact';
     if (state.status !== 'running'
       || !Number.isInteger(normalizedIncidentId)
       || normalizedIncidentId <= 0
@@ -932,7 +936,7 @@ export function createStreetHeat({
       witnessId: normalizedWitnessId,
       victimId: normalizedVictimId,
       witnessReports: state.witnessReports,
-      message: `${String(witnessLabel || 'A resident').slice(0, 64)} called in the impact.`,
+      message: `${String(witnessLabel || 'A resident').slice(0, 64)} called in the ${normalizedIncidentLabel}.`,
     };
     onEvent?.({
       ...state.lastWitnessEvent,
@@ -1845,8 +1849,10 @@ export function createCombatLoop({
       `${kind === 'traffic' ? 'Vehicle' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
       {
         hit: true,
+        incidentId: 1_000_000 + state.shots,
         targetId: target.id,
         targetKind: kind,
+        residentId: hit.candidate.residentId ?? target.id,
         defeated: target.defeated,
       },
     );
