@@ -193,32 +193,18 @@ try {
       const sim = window.__SF_SIM__;
       const before = sim.lifeSim.getState();
       const canWork = sim.lifeSim.canWork(position);
-      const started = sim.lifeSim.workShift(position);
-      const afterStart = sim.lifeSim.getState();
-      const completion = sim.lifeSim.update(6, {
-        position,
-        driving: false,
-        moving: false,
-        interior: false,
-        downed: false,
-        available: true,
-      });
+      const started = sim.lifeSim.workShift();
       const after = sim.lifeSim.getState();
-      return { before, canWork, started, afterStart, completion, after };
+      return { before, canWork, started, after };
     }, food.position);
     const beforeWork = worked.before;
     const afterWork = worked.after;
     check(
-      'life-sim bounded work shift earns one transactional wage',
+      'life-sim work rejects a context-free driving bypass',
       worked.canWork === true
-        && worked.started === true
-        && worked.afterStart.cash === beforeWork.cash
-        && worked.completion?.kind === 'work-complete'
-        && afterWork.cash === beforeWork.cash + 26
-        && afterWork.needs.energy === beforeWork.needs.energy - 16
-        && afterWork.needs.hunger === beforeWork.needs.hunger + 9
-        && afterWork.needs.fun === beforeWork.needs.fun - 4
-        && afterWork.lastTransaction?.kind === 'work-wage',
+        && worked.started === false
+        && afterWork.cash === beforeWork.cash
+        && afterWork.lastTransaction?.at === beforeWork.lastTransaction?.at,
       {
         worked,
         before: { cash: beforeWork.cash, needs: beforeWork.needs },
