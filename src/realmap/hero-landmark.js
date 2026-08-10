@@ -8,6 +8,7 @@ export const FERRY_BUILDING_LANDMARK_SOURCE = Object.freeze({
   osmWay: 558731934,
   name: 'San Francisco Ferry Building',
 });
+export const FERRY_SANDSTONE_ALBEDO_URL = '/assets/sf-ferry-sandstone-albedo-v1.png';
 
 export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
   // Shell + seven instanced passes + the tower roof. Leave enough headroom
@@ -137,14 +138,26 @@ function boxMatrix(matrix, frame, along, across, y, length, height, width, yaw =
   );
 }
 
-function createMaterials() {
+function createSandstoneTexture() {
+  if (typeof document === 'undefined') return null;
+  const texture = new THREE.TextureLoader().load(FERRY_SANDSTONE_ALBEDO_URL);
+  texture.name = 'Ferry Building sandstone albedo v1';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1.6, 3.2);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function createMaterials(sandstoneMap) {
   return {
     // Ferry Building reads as sun-aged masonry rather than a saturated game
     // prop: the base is warmer, while ledges and the tower catch more light.
-    sandstone: new THREE.MeshStandardMaterial({ color: 0xa98c67, roughness: 0.86, metalness: 0.0 }),
+    sandstone: new THREE.MeshStandardMaterial({ color: 0xf0dfc8, map: sandstoneMap, roughness: 0.86, metalness: 0.0 }),
     stoneShadow: new THREE.MeshStandardMaterial({ color: 0x66513d, roughness: 0.9, metalness: 0.0 }),
     trimStone: new THREE.MeshStandardMaterial({ color: 0xc6ab83, roughness: 0.8, metalness: 0.0 }),
-    towerStone: new THREE.MeshStandardMaterial({ color: 0xbba17b, roughness: 0.82, metalness: 0.0 }),
+    towerStone: new THREE.MeshStandardMaterial({ color: 0xe7d3b7, map: sandstoneMap, roughness: 0.82, metalness: 0.0 }),
     // A weathered, low-sheen roof catches broad daylight without reading as
     // chrome. The small metal component is for its seams, not a mirror gloss.
     roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
@@ -244,7 +257,8 @@ export function createFerryBuildingLandmark(options = {}) {
   const towerAlong = canonicalTowerOffset.dot(frame.along);
   const towerAcross = canonicalTowerOffset.dot(frame.across);
   const towerAnchor = localToWorld(frame, towerAlong, towerAcross, baseY);
-  const materials = createMaterials();
+  const sandstoneMap = createSandstoneTexture();
+  const materials = createMaterials(sandstoneMap);
   const root = new THREE.Group();
   root.name = 'San Francisco Ferry Building landmark (OSM way 558731934)';
   root.userData.heroLandmark = true;
@@ -281,18 +295,20 @@ export function createFerryBuildingLandmark(options = {}) {
   put(roof, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + hallHeight + 0.65, hallLength, 1.3, hallWidth));
   put(roof, boxMatrix(matrix, frame, hallCenterAlong + hallLength * 0.21, 0, baseY + hallHeight + 1.48, hallLength * 0.46, 0.42, hallWidth * 0.48));
   for (const side of [-1, 1]) {
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.12), baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34));
+    const facadeAcross = side < 0 ? frame.minAcross : frame.maxAcross;
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.12, baseY + hallHeight - 0.35, hallLength + 0.45, 0.48, 0.34));
     // Long unbroken courses give the facade a believable floor hierarchy;
     // they replace the former repeated lintel strips at every other bay.
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.15), baseY + hallHeight * 0.67, hallLength * 0.985, 0.18, 0.18));
-    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, side * (hallWidth * 0.5 + 0.15), baseY + hallHeight * 0.26, hallLength * 0.985, 0.14, 0.18));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.15, baseY + hallHeight * 0.67, hallLength * 0.985, 0.18, 0.18));
+    put(cornice, boxMatrix(matrix, frame, hallCenterAlong, facadeAcross + side * 0.15, baseY + hallHeight * 0.26, hallLength * 0.985, 0.14, 0.18));
   }
   put(cornice, boxMatrix(matrix, frame, hallCenterAlong, 0, baseY + 1.0, hallLength + 0.25, 0.45, hallWidth + 0.2));
 
   const bayCount = clamp(Math.round(hallLength / 7.2), 18, 28);
   const baySpacing = hallLength / bayCount;
   for (const side of [-1, 1]) {
-    const across = side * (hallWidth * 0.5 + 0.13);
+    const facadeAcross = side < 0 ? frame.minAcross : frame.maxAcross;
+    const across = facadeAcross + side * 0.13;
     for (let index = 0; index < bayCount; index += 1) {
       const along = hallCenterAlong - hallLength * 0.5 + baySpacing * (index + 0.5);
       put(windowBay, boxMatrix(matrix, frame, along, across, baseY + hallHeight * 0.47, baySpacing * 0.64, hallHeight * 0.50, 0.18));
@@ -360,6 +376,7 @@ export function createFerryBuildingLandmark(options = {}) {
     root.removeFromParent();
     for (const geometry of ownedGeometries) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
+    sandstoneMap?.dispose();
     throw new Error('Ferry Building landmark exceeded its rendering budget.');
   }
 
@@ -379,6 +396,7 @@ export function createFerryBuildingLandmark(options = {}) {
     root.removeFromParent();
     for (const geometry of ownedGeometries) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
+    sandstoneMap?.dispose();
   }
   function getDiagnostics() {
     return {
