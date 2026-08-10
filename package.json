@@ -34,6 +34,7 @@
     "verify:vehicle-registration": "node scripts/verify-vehicle-registration.mjs",
     "verify:garage": "node scripts/verify-garage.mjs",
     "verify:arrest": "node scripts/verify-arrest.mjs",
+    "verify:arrest-contracts": "node scripts/verify-arrest-contracts.mjs",
     "verify:onfoot-arrest": "node scripts/verify-onfoot-arrest.mjs",
     "verify:pursuit-defeat": "node scripts/verify-pursuit-defeat.mjs",
     "verify:pursuit-interior-gate": "node scripts/verify-pursuit-interior-gate.mjs",
