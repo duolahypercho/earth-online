@@ -11,6 +11,7 @@ const GAMEPLAY_ACTIVITIES = new Set([
   'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
 ]);
 const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
+const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
 const GAMEPLAY_EVENT_KINDS = new Set([
   'arrested', 'critical', 'escaped', 'high-heat', 'near-miss', 'pedestrian-impact',
   'pursuit-start', 'responder-contact', 'traffic-violation', 'vehicle-theft',
@@ -73,6 +74,43 @@ function sanitizeGameplay(gameplay, client) {
   };
 }
 
+function sanitizeMission(mission, client) {
+  if (mission == null) {
+    client.lastMission = null;
+    return null;
+  }
+  if (!mission || typeof mission !== 'object' || Array.isArray(mission)) {
+    return client.lastMission ? { ...client.lastMission } : null;
+  }
+  const revision = Number(mission.revision);
+  const completedSteps = Number(mission.completedSteps);
+  const totalSteps = Number(mission.totalSteps);
+  if (!Number.isInteger(revision)
+    || revision < 1
+    || revision > 1000000000
+    || !MISSION_STATUSES.has(mission.status)
+    || !Number.isInteger(completedSteps)
+    || !Number.isInteger(totalSteps)
+    || totalSteps < 1
+    || totalSteps > 24
+    || completedSteps < 0
+    || completedSteps > totalSteps) {
+    return client.lastMission ? { ...client.lastMission } : null;
+  }
+  if (revision <= client.lastMissionRevision) {
+    return client.lastMission ? { ...client.lastMission } : null;
+  }
+  client.lastMissionRevision = revision;
+  client.lastMission = {
+    revision,
+    status: mission.status,
+    completedSteps,
+    totalSteps,
+    objective: String(mission.objective || '').trim().slice(0, 72),
+  };
+  return { ...client.lastMission };
+}
+
 function sanitizeState(message, client) {
   const mode = message.mode === 'drive' ? 'drive' : 'walk';
   return {
@@ -94,6 +132,7 @@ function sanitizeState(message, client) {
       ? boundedInteger(message.vehicleColor, 0, 0xffffff)
       : null,
     gameplay: sanitizeGameplay(message.gameplay, client),
+    mission: sanitizeMission(message.mission, client),
   };
 }
 
@@ -132,6 +171,8 @@ wss.on('connection', (ws) => {
     lastStateAt: 0,
     lastGameplayEventId: null,
     lastGameplayEventAt: 0,
+    lastMissionRevision: 0,
+    lastMission: null,
   });
 
   safeSend(ws, { type: 'welcome', id, name: clients.get(id).name, peers: roster().filter((peer) => peer.id !== id) });

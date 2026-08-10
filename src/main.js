@@ -1247,6 +1247,8 @@ let lastPublicWorldState = null;
 let lastTrafficCitation = null;
 let networkGameplayEventSequence = 0;
 let latestNetworkGameplayEvent = null;
+let networkMissionRevision = 0;
+let networkMissionSignature = null;
 const NETWORK_GAMEPLAY_EVENT_LIFETIME_MS = 4500;
 
 function publishNetworkGameplayEvent({ kind, message } = {}) {
@@ -1766,6 +1768,24 @@ function getNetworkState() {
       wantedLevel: latestNetworkGameplayEvent.wantedLevel,
     }
     : null;
+  const missionState = cityShift?.getState?.() || null;
+  const missionSignature = missionState
+    ? `${missionState.status}|${missionState.completedSteps}|${missionState.totalSteps}|${missionState.objective}`
+    : null;
+  if (missionSignature !== networkMissionSignature) {
+    networkMissionSignature = missionSignature;
+    networkMissionRevision += 1;
+  }
+  const mission = missionState
+    && !(missionState.status === 'running' && missionState.completedSteps === 0)
+    ? {
+      revision: networkMissionRevision,
+      status: missionState.status,
+      completedSteps: missionState.completedSteps,
+      totalSteps: missionState.totalSteps,
+      objective: missionState.objective,
+    }
+    : null;
   return {
     x: position.x,
     y: position.y,
@@ -1784,6 +1804,7 @@ function getNetworkState() {
       activity,
       event,
     },
+    mission,
   };
 }
 

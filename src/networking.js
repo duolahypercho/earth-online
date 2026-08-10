@@ -16,6 +16,7 @@ const GAMEPLAY_ACTIVITIES = new Set([
   'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
 ]);
 const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
+const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
 const GAMEPLAY_EVENT_KINDS = new Set([
   'arrested',
   'critical',
@@ -69,6 +70,30 @@ function sanitizeGameplayStatus(gameplay) {
     activity,
     eventId,
     event,
+  };
+}
+
+function sanitizeMissionPresence(mission) {
+  if (!mission || typeof mission !== 'object' || Array.isArray(mission)) return null;
+  const revision = Number(mission.revision);
+  const completedSteps = Number(mission.completedSteps);
+  const totalSteps = Number(mission.totalSteps);
+  if (!Number.isInteger(revision)
+    || revision < 1
+    || revision > 1000000000
+    || !MISSION_STATUSES.has(mission.status)
+    || !Number.isInteger(completedSteps)
+    || !Number.isInteger(totalSteps)
+    || totalSteps < 1
+    || totalSteps > 24
+    || completedSteps < 0
+    || completedSteps > totalSteps) return null;
+  return {
+    revision,
+    status: mission.status,
+    completedSteps,
+    totalSteps,
+    objective: String(mission.objective || '').trim().slice(0, 72),
   };
 }
 
@@ -145,6 +170,7 @@ export function createNetworking({
         x: peer.targetPosition?.x ?? null,
         z: peer.targetPosition?.z ?? null,
         gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
+        mission: peer.mission ? { ...peer.mission } : null,
         gameplayEventCount: peer.gameplayEventCount,
         lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
       })),
@@ -160,6 +186,7 @@ export function createNetworking({
       x: peer.targetPosition?.x ?? null,
       z: peer.targetPosition?.z ?? null,
       gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
+      mission: peer.mission ? { ...peer.mission } : null,
     }));
   }
 
@@ -287,6 +314,8 @@ export function createNetworking({
       moving: false,
       talking: false,
       gameplay: null,
+      mission: null,
+      missionRevision: 0,
       gameplayEventCount: 0,
       lastGameplayEvent: null,
       lastGameplayEventId: null,
@@ -369,7 +398,9 @@ export function createNetworking({
     const hadDrive = peer.state?.mode === 'drive';
     const hasDrive = incoming.mode === 'drive';
     const previousGameplay = peer.gameplay;
+    const previousMission = peer.mission;
     const gameplay = sanitizeGameplayStatus(incoming.gameplay);
+    const incomingMission = sanitizeMissionPresence(incoming.mission);
     let receivedGameplayEvent = false;
     if (gameplay?.event && gameplay.event.id !== peer.lastGameplayEventId) {
       peer.lastGameplayEventId = gameplay.event.id;
@@ -391,6 +422,12 @@ export function createNetworking({
       onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     }
     peer.gameplay = gameplay ? { ...gameplay, event: null } : null;
+    if (incoming.mission == null) {
+      peer.mission = null;
+    } else if (incomingMission && incomingMission.revision > peer.missionRevision) {
+      peer.mission = incomingMission;
+      peer.missionRevision = incomingMission.revision;
+    }
     peer.state = {
       mode: incoming.mode || 'walk',
       vehicleId: incoming.vehicleId ?? null,
@@ -437,7 +474,10 @@ export function createNetworking({
       || previousGameplay?.wantedLevel !== peer.gameplay?.wantedLevel
       || previousGameplay?.pursuitActive !== peer.gameplay?.pursuitActive
       || previousGameplay?.healthBand !== peer.gameplay?.healthBand
-      || previousGameplay?.activity !== peer.gameplay?.activity;
+      || previousGameplay?.activity !== peer.gameplay?.activity
+      || previousMission?.revision !== peer.mission?.revision
+      || previousMission?.status !== peer.mission?.status
+      || previousMission?.completedSteps !== peer.mission?.completedSteps;
   }
 
   function attachTrafficCar(peer, incoming) {
@@ -520,6 +560,7 @@ export function createNetworking({
         vehicleClass: local.vehicleClass || null,
         vehicleColor: local.vehicleColor ?? null,
         gameplay: sanitizeGameplayStatus(local.gameplay),
+        mission: sanitizeMissionPresence(local.mission),
       });
     }
 
@@ -890,6 +931,7 @@ export function createNetworking({
       x: peer.targetPosition?.x ?? null,
       z: peer.targetPosition?.z ?? null,
       gameplay: peer.gameplay ? { ...peer.gameplay } : null,
+      mission: peer.mission ? { ...peer.mission } : null,
       gameplayEventCount: peer.gameplayEventCount,
       lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
     })),
