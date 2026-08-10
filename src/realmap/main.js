@@ -36,6 +36,7 @@ import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
 import { createFerryBuildingStreetscape } from './hero-streetscape.js';
+import { createHeroTrafficVisuals } from './hero-traffic-visuals.js';
 import {
   collectHeroRenderStats,
   enableHeroPerformanceMode,
@@ -1273,6 +1274,7 @@ function setupToolbar() {
     if (interiorState) exitInterior();
     disposeHeroAtmosphere();
     disposeHeroStreetscape();
+    disposeHeroTrafficVisuals();
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
@@ -7132,6 +7134,11 @@ let heroAtmosphereWetMaterialBindings = 0;
 let heroStreetscape = null;
 let heroStreetscapeWetness = 0;
 let heroStreetscapeHiddenBaseLayers = [];
+let heroTrafficVisuals = null;
+let heroTrafficVisualStats = null;
+const HERO_TRAFFIC_CAMERA_EXCLUSION_RADIUS = 4.5;
+const HERO_TRAFFIC_CAMERA_FADE_DISTANCE = 1.5;
+const HERO_TRAFFIC_HERO_RADIUS = 14;
 let heroPerformanceMode = null;
 let heroPerformancePriorComposerPixelRatio = null;
 let heroPerformanceMarkedObjects = 0;
@@ -7557,6 +7564,7 @@ function updateHeroCamera(dt) {
   if (!heroCameraController || !heroCharacter || !playerState || !camera) return null;
   const nearbyVehicles = (trafficState?.vehicles || [])
     .filter(({ mesh }) => Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z) <= 12)
+    .filter(({ mesh }) => !heroTrafficVehicleIsFullyExcluded(mesh))
     .map(({ mesh }) => mesh);
   heroCameraLastVehicleCandidates = nearbyVehicles.length;
   const teleported = heroCameraLastPlayerPosition
@@ -7584,6 +7592,7 @@ function getHeroCameraDiagnostics() {
     .some((box) => box.containsPoint(camera.position)));
   const cameraInsideVehicle = Boolean(camera && playerState && (trafficState?.vehicles || [])
     .filter(({ mesh }) => Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z) <= 12)
+    .filter(({ mesh }) => !heroTrafficVehicleIsFullyExcluded(mesh))
     .some(({ mesh }) => new THREE.Box3().setFromObject(mesh).containsPoint(camera.position)));
   return {
     active: Boolean(heroCameraController),
@@ -8730,6 +8739,55 @@ function getHeroStreetscapeDiagnostics() {
       visible: child.visible,
       instances: child.count || 0,
     })) || [],
+  };
+}
+
+function disposeHeroTrafficVisuals() {
+  heroTrafficVisuals?.dispose();
+  heroTrafficVisuals = null;
+  heroTrafficVisualStats = null;
+}
+
+function heroTrafficVehicleIsFullyExcluded(mesh) {
+  if (!heroTrafficVisuals || !mesh || !camera || !playerState) return false;
+  const heroDistance = Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z);
+  if (heroDistance > HERO_TRAFFIC_HERO_RADIUS) return false;
+  const cameraDistance = mesh.position.distanceTo(camera.position);
+  const fadeThreshold = HERO_TRAFFIC_CAMERA_EXCLUSION_RADIUS
+    + HERO_TRAFFIC_CAMERA_FADE_DISTANCE * 0.5;
+  return cameraDistance <= fadeThreshold;
+}
+
+function updateHeroTrafficVisuals() {
+  if (!heroTrafficVisuals || !camera) return null;
+  const hero = heroCharacter?.root || playerAvatarGroup || playerState;
+  heroTrafficVisualStats = heroTrafficVisuals.update({ camera, hero });
+  return heroTrafficVisualStats;
+}
+
+function initializeHeroTrafficVisuals() {
+  disposeHeroTrafficVisuals();
+  if (!activeHeroTile || !cityRoot || !trafficState?.vehicles?.length) return null;
+  heroTrafficVisuals = createHeroTrafficVisuals({
+    scene: cityRoot,
+    maxVehicles: Math.min(36, trafficState.vehicles.length),
+    cameraExclusionRadius: HERO_TRAFFIC_CAMERA_EXCLUSION_RADIUS,
+    cameraFadeDistance: HERO_TRAFFIC_CAMERA_FADE_DISTANCE,
+    heroRadius: HERO_TRAFFIC_HERO_RADIUS,
+    detailDistance: 58,
+  });
+  heroTrafficVisuals.attach(trafficState.vehicles);
+  updateHeroTrafficVisuals();
+  return heroTrafficVisuals;
+}
+
+function getHeroTrafficVisualDiagnostics() {
+  return {
+    active: Boolean(heroTrafficVisuals),
+    tileId: activeHeroTile?.id || null,
+    groupAttached: Boolean(heroTrafficVisuals?.group?.parent),
+    sourceVehicles: trafficState?.vehicles?.length || 0,
+    stats: heroTrafficVisualStats || heroTrafficVisuals?.getStats() || null,
   };
 }
 
@@ -10535,6 +10593,7 @@ function renderLoop() {
       ? { x: playerState.x, z: playerState.z }
       : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
+  updateHeroTrafficVisuals();
   updateRain(dt);
   updateWeatherVisuals(dt);
   heroAtmosphere?.update(dt);
@@ -10805,6 +10864,7 @@ async function buildCity() {
     vehicleHeadlightMaterials.length = 0;
     disposeHeroCamera();
     disposeHeroCharacter();
+    disposeHeroTrafficVisuals();
     disposeHeroPerformanceMode();
     if (cityRoot) {
       disposeHeroAtmosphere();
@@ -11021,6 +11081,7 @@ async function buildCity() {
         x: trafficStart ? trafficStart.x : centroid.x,
         z: trafficStart ? trafficStart.z : centroid.z,
       });
+    initializeHeroTrafficVisuals();
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
     positionSkyDomeAt(centroid, fullCityMode ? regionSpan(regionPoints) : regionSpan(regionPoints));
@@ -11140,6 +11201,7 @@ function start() {
       triangles: renderer?.info?.render?.triangles ?? null,
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
       heroStreetscape: getHeroStreetscapeDiagnostics(),
+      heroTrafficVisuals: getHeroTrafficVisualDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
@@ -11351,6 +11413,7 @@ function start() {
     getHeroTile: () => activeHeroTile,
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
     getHeroStreetscape: () => getHeroStreetscapeDiagnostics(),
+    getHeroTrafficVisuals: () => getHeroTrafficVisualDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
