@@ -44,10 +44,46 @@ const fallbackFixture = createFerryBuildingStreetscape({
     { id: 999, name: 'Ignored unrelated road', points: [2145, 1730, 2150, 1740] },
   ],
 });
+const cardinalFixture = createFerryBuildingStreetscape({
+  scene: new THREE.Scene(),
+  tileBounds,
+  elevationAt: () => 0,
+  isSea: () => false,
+  roads: [{ id: 26769726, name: 'Cardinal test', width: 8, points: [2200, 1800, 2250, 1800] }],
+});
+const diagonalFixture = createFerryBuildingStreetscape({
+  scene: new THREE.Scene(),
+  tileBounds,
+  elevationAt: () => 0,
+  isSea: () => false,
+  roads: [{ id: 26769726, name: 'Diagonal test', width: 8, points: [2200, 1800, 2240, 1840] }],
+});
+const suppressedFixture = createFerryBuildingStreetscape({
+  scene: new THREE.Scene(),
+  tileBounds,
+  elevationAt: () => 0,
+  isSea: () => false,
+  existingSurfaceLayers: { curbs: true, sidewalks: true },
+  roads: [{ id: 26769726, name: 'Suppression test', width: 8, points: [2200, 1800, 2240, 1840] }],
+});
 
 const fail = (message) => {
   console.error(`FAIL: ${message}`);
   process.exitCode = 1;
+};
+
+const findMesh = (fixture, name) => fixture.root.children.find((child) => child.name === name);
+const readInstanceMatrix = (mesh, index = 0) => {
+  const matrix = new THREE.Matrix4();
+  mesh.getMatrixAt(index, matrix);
+  return matrix;
+};
+const assertMatrixAxis = (label, mesh, instanceIndex, column, expected) => {
+  if (!mesh || mesh.count <= instanceIndex) return fail(`${label} instance missing`);
+  const actual = new THREE.Vector3().setFromMatrixColumn(readInstanceMatrix(mesh, instanceIndex), column).normalize();
+  if (actual.distanceTo(expected) > 1e-5) {
+    fail(`${label} axis ${actual.toArray()} did not match ${expected.toArray()}`);
+  }
 };
 
 if (!scene.children.includes(streetscape.root)) fail('streetscape did not attach to provided scene');
@@ -69,6 +105,37 @@ if (nestedFixture.stats.roads.length !== 1 || nestedFixture.stats.roads[0].id !=
 }
 if (fallbackFixture.stats.roads.length !== 4) fail('defaults were not restored when no matching caller road remained');
 
+const cardinalCurb = findMesh(cardinalFixture, 'OSM-aligned curb returns');
+const cardinalMarking = findMesh(cardinalFixture, 'OSM road markings');
+assertMatrixAxis('cardinal curb', cardinalCurb, 0, 0, new THREE.Vector3(1, 0, 0));
+assertMatrixAxis('cardinal crosswalk', cardinalMarking, cardinalMarking.count - 1, 2, new THREE.Vector3(0, 0, 1));
+const diagonalCurb = findMesh(diagonalFixture, 'OSM-aligned curb returns');
+const diagonalMarking = findMesh(diagonalFixture, 'OSM road markings');
+const diagonalDirection = new THREE.Vector3(1, 0, 1).normalize();
+const diagonalNormal = new THREE.Vector3(-1, 0, 1).normalize();
+assertMatrixAxis('diagonal curb', diagonalCurb, 0, 0, diagonalDirection);
+assertMatrixAxis('diagonal crosswalk', diagonalMarking, diagonalMarking.count - 1, 2, diagonalNormal);
+
+const suppressedCurbs = findMesh(suppressedFixture, 'OSM-aligned curb returns');
+const suppressedSlabs = findMesh(suppressedFixture, 'Ferry Plaza sidewalk slabs');
+const retainedSeams = findMesh(suppressedFixture, 'Sidewalk expansion seams');
+const retainedMarkings = findMesh(suppressedFixture, 'OSM road markings');
+const retainedFurniture = findMesh(suppressedFixture, 'Ferry Plaza bollards');
+if (suppressedCurbs.count || suppressedSlabs.count) fail('existing surface ownership did not suppress curb/slab instances');
+if (!retainedSeams.count || !retainedMarkings.count || !retainedFurniture.count) {
+  fail('surface suppression removed retained seams, markings, or furniture');
+}
+if (suppressedFixture.stats.layers.curbs || suppressedFixture.stats.layers.sidewalkSlabs) {
+  fail('suppressed layer diagnostics are incorrect');
+}
+
+const baseMarking = findMesh(streetscape, 'OSM road markings');
+const facadeRelief = findMesh(streetscape, 'Ferry Building facade relief');
+const markingY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(baseMarking)).y;
+const facadeY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(facadeRelief)).y;
+if (Math.abs(markingY - (1.8 + 0.46 + 0.012)) > 1e-6) fail('marking lift is not relative to the road surface');
+if (Math.abs(facadeY - (1.8 + 0.02 + 2.06)) > 1e-6) fail('facade relief incorrectly inherited the road surface lift');
+
 let facade = 0;
 let markings = 0;
 let curb = 0;
@@ -87,6 +154,9 @@ if (!streetscape.disposed || scene.children.includes(streetscape.root)) fail('di
 flatFixture.dispose();
 nestedFixture.dispose();
 fallbackFixture.dispose();
+cardinalFixture.dispose();
+diagonalFixture.dispose();
+suppressedFixture.dispose();
 
 if (!process.exitCode) {
   console.log(JSON.stringify({
@@ -94,6 +164,7 @@ if (!process.exitCode) {
     source: FERRY_BUILDING_STREETSCAPE_SOURCE,
     stats: streetscape.stats,
     flatFixture: flatFixture.stats,
+    suppressedFixture: suppressedFixture.stats,
     budget: FERRY_BUILDING_STREETSCAPE_BUDGET,
     detail: { facade, markings, curb },
   }, null, 2));
