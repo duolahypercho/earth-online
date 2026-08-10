@@ -69,6 +69,19 @@ try {
   assert(Boolean(market), 'market portal unavailable for persistence setup', market);
   await page.keyboard.press('b');
   await page.keyboard.press('b');
+  const combatSetup = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    sim.damagePlayer(35, 'qa-persistence');
+    sim.setCombatAim(true);
+    return {
+      fired: sim.fireCombat(),
+      combat: sim.getCombatState(),
+    };
+  });
+  assert(combatSetup.fired?.fired === true
+    && combatSetup.combat.health === 65
+    && combatSetup.combat.ammo === 11,
+  'persistence setup did not mutate real combat health and ammunition', combatSetup);
   const progressed = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
     const first = sim.cityShift.steps[0];
@@ -81,20 +94,25 @@ try {
   const beforeReload = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
   assert(progressed.advance1 && progressed.advance2
     && beforeReload.life.cash === 84
     && beforeReload.life.inventory.medkit.count === 2
     && beforeReload.mission.completedSteps === 2
-    && beforeReload.save.snapshot?.version === 1,
-  'autosave setup did not capture economy, inventory, and mission progress', { progressed, beforeReload });
+    && beforeReload.combat.health === 65
+    && beforeReload.combat.ammo === 11
+    && beforeReload.save.snapshot?.combat?.health === 65
+    && beforeReload.save.snapshot?.combat?.ammo === 11,
+  'autosave setup did not capture economy, combat kit, and mission progress', { progressed, beforeReload });
 
   await page.reload({ waitUntil: 'load', timeout: 30000 });
   await launch();
   const restored = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
     save: window.__SF_SIM__.getSavedProgress(),
     message: document.querySelector('.hud__message-text')?.textContent || '',
     inventoryHud: document.querySelector('.hud__life-inventory')?.textContent || '',
@@ -105,6 +123,11 @@ try {
     && restored.mission.status === 'running'
     && restored.mission.completedSteps === 2
     && restored.mission.cashReward === 0
+    && restored.combat.health >= beforeReload.combat.health
+    && restored.combat.health < restored.combat.maxHealth
+    && restored.combat.recovering === false
+    && restored.combat.ammo === beforeReload.combat.ammo
+    && restored.combat.reserveAmmo === beforeReload.combat.reserveAmmo
     && restored.message.includes('Progress restored')
     && restored.inventoryHud.includes('MEDKIT / 2 OF 3'),
   'reload did not restore the validated player progress snapshot', { beforeReload, restored });
@@ -148,10 +171,14 @@ try {
   const restoredReplay = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
   }));
   assert(restoredReplay.mission.status === 'running'
     && restoredReplay.mission.completedSteps === 0
-    && restoredReplay.life.cash === completed.life.cash,
+    && restoredReplay.life.cash === completed.life.cash
+    && restoredReplay.combat.health === restoredReplay.combat.maxHealth
+    && restoredReplay.combat.ammo === restoredReplay.combat.magazineSize
+    && restoredReplay.combat.reserveAmmo === 48,
   'replay reset was not saved immediately or corrupted earned cash', restoredReplay);
 
   const storageKey = restored.save.key;
@@ -168,12 +195,16 @@ try {
   const corrupted = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
   assert(corrupted.life.cash === 140
     && corrupted.life.inventory.medkit.count === 0
     && corrupted.mission.status === 'running'
     && corrupted.mission.completedSteps === 0
+    && corrupted.combat.health === corrupted.combat.maxHealth
+    && corrupted.combat.ammo === corrupted.combat.magazineSize
+    && corrupted.combat.reserveAmmo === 48
     && corrupted.save.snapshot === null,
   'malformed save did not fall back to clean validated defaults', corrupted);
 

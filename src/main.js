@@ -1231,12 +1231,13 @@ function readPlayerProgress() {
 }
 
 function savePlayerProgress() {
-  if (!lifeSim?.exportState || !cityShift?.exportState) return false;
+  if (!lifeSim?.exportState || !cityShift?.exportState || !combat?.exportState) return false;
   const snapshot = {
     version: PLAYER_PROGRESS_VERSION,
     savedAt: Date.now(),
     life: lifeSim.exportState(),
     cityShift: cityShift.exportState(),
+    combat: combat.exportState(),
   };
   try {
     window.localStorage?.setItem(PLAYER_PROGRESS_STORAGE_KEY, JSON.stringify(snapshot));
@@ -1253,14 +1254,19 @@ function restorePlayerProgress() {
   if (!snapshot) return false;
   const previousLife = lifeSim?.exportState?.();
   const previousShift = cityShift?.exportState?.();
+  const previousCombat = combat?.exportState?.();
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
-  if (lifeRestored && shiftRestored) {
+  const combatRestored = snapshot.combat
+    ? combat?.importState?.(snapshot.combat) === true
+    : true;
+  if (lifeRestored && shiftRestored && combatRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
   if (previousLife) lifeSim?.importState?.(previousLife);
   if (previousShift) cityShift?.importState?.(previousShift);
+  if (previousCombat) combat?.importState?.(previousCombat);
   return false;
 }
 
@@ -3793,7 +3799,7 @@ function startExperience() {
   const featured = city.getFeaturedPortal?.(controls.target);
   hud.setMessage(
     restoredProgress
-      ? 'Progress restored · economy, inventory, and Waterfront Loop resumed.'
+      ? 'Progress restored · economy, combat kit, and Waterfront Loop resumed.'
       : featured
       ? `Featured interior · ${featured.label}, ${featured.distance.toFixed(0)} m east. Follow the lit PUBLIC LOBBY · ENTER sign.`
       : 'Tip: press R for coastal weather, C for render quality, H for beauty mode.',

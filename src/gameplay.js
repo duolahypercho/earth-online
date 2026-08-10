@@ -1179,6 +1179,37 @@ export function createCombatLoop({
     return state.triggerHeld;
   }
 
+  function exportState() {
+    return {
+      ammo: state.ammo,
+      reserveAmmo: state.reserveAmmo,
+      health: state.health,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const ammo = Number(snapshot.ammo);
+    const reserveAmmo = Number(snapshot.reserveAmmo);
+    const health = Number(snapshot.health);
+    if (!Number.isFinite(ammo) || !Number.isFinite(reserveAmmo) || !Number.isFinite(health)) return false;
+    state.ammo = THREE.MathUtils.clamp(Math.round(ammo), 0, COMBAT_MAGAZINE_SIZE);
+    state.reserveAmmo = THREE.MathUtils.clamp(Math.round(reserveAmmo), 0, 999);
+    state.health = THREE.MathUtils.clamp(health, 1, COMBAT_HEALTH_MAX);
+    state.aiming = false;
+    state.triggerHeld = false;
+    state.reloadTimer = 0;
+    state.cooldown = 0;
+    state.damageFlash = 0;
+    state.downedTimer = 0;
+    state.recoveryDelay = state.health < COMBAT_HEALTH_MAX
+      ? COMBAT_HEALTH_RECOVERY_DELAY
+      : 0;
+    state.recoil = 0;
+    clearEffects();
+    return true;
+  }
+
   function getPlayerOrigin(target, height = 1.38) {
     const source = getPlayerPosition?.();
     if (!combatVectorFrom(source, target, 0)) return false;
@@ -1869,6 +1900,8 @@ export function createCombatLoop({
     aim: setAiming,
     setTriggerHeld,
     setEnabled,
+    exportState,
+    importState,
     getState,
     getTargetState,
     dispose,
