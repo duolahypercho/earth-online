@@ -56,6 +56,7 @@
     "verify:legal-debt": "node scripts/verify-legal-debt.mjs",
     "verify:delivery-job": "node scripts/verify-delivery-job.mjs",
     "verify:online": "node scripts/verify-online.mjs",
+    "verify:online-gameplay": "node scripts/verify-online-gameplay.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
     "qa:visual-critic": "node scripts/qa-visual-critic.mjs",

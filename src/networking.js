@@ -10,7 +10,67 @@ import {
 const DEFAULT_PORT = 8787;
 const STATE_INTERVAL = 1 / 14;
 const PEER_TIMEOUT = 6000;
+const PEER_GAMEPLAY_EVENT_LIFETIME = 6000;
 const REMOTE_CAR_FALLBACK = '__fallback__';
+const GAMEPLAY_ACTIVITIES = new Set([
+  'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
+]);
+const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
+const GAMEPLAY_EVENT_KINDS = new Set([
+  'arrested',
+  'critical',
+  'escaped',
+  'high-heat',
+  'near-miss',
+  'pedestrian-impact',
+  'pursuit-start',
+  'responder-contact',
+  'traffic-violation',
+  'vehicle-theft',
+  'witness-dispatch',
+  'witness-report',
+]);
+
+function boundedInteger(value, min, max, fallback = min) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function sanitizeGameplayEvent(event) {
+  if (!event || typeof event !== 'object') return null;
+  const id = String(event.id || '').trim().slice(0, 48);
+  const kind = String(event.kind || '').trim();
+  if (!id || !GAMEPLAY_EVENT_KINDS.has(kind)) return null;
+  return {
+    id,
+    kind,
+    message: String(event.message || '').trim().slice(0, 96),
+    heat: boundedInteger(event.heat, 0, 100),
+    wantedLevel: boundedInteger(event.wantedLevel, 0, 3),
+  };
+}
+
+function sanitizeGameplayStatus(gameplay) {
+  if (!gameplay || typeof gameplay !== 'object') return null;
+  const activity = GAMEPLAY_ACTIVITIES.has(gameplay.activity) ? gameplay.activity : 'idle';
+  const healthBand = GAMEPLAY_HEALTH_BANDS.has(gameplay.healthBand)
+    ? gameplay.healthBand
+    : 'healthy';
+  const pursuitActive = gameplay.pursuitActive === true;
+  const event = sanitizeGameplayEvent(gameplay.event);
+  const eventId = String(gameplay.eventId || event?.id || '').trim().slice(0, 48) || null;
+  return {
+    heat: boundedInteger(gameplay.heat, 0, 100),
+    wantedLevel: pursuitActive
+      ? Math.max(1, boundedInteger(gameplay.wantedLevel, 0, 3))
+      : 0,
+    pursuitActive,
+    healthBand,
+    activity,
+    eventId,
+    event,
+  };
+}
 
 function endpointFromLocation() {
   const query = new URLSearchParams(window.location.search);
@@ -35,6 +95,8 @@ export function createNetworking({
   audioContext,
   getLocalState,
   onChatMessage,
+  onPeerGameplayEvent,
+  onPeerGameplayEventClear,
   onConnectionChange,
 } = {}) {
   if (typeof WebSocket === 'undefined' || typeof document === 'undefined') return null;
@@ -82,6 +144,9 @@ export function createNetworking({
         connected: peer.connected,
         x: peer.targetPosition?.x ?? null,
         z: peer.targetPosition?.z ?? null,
+        gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
+        gameplayEventCount: peer.gameplayEventCount,
+        lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
       })),
     });
   }
@@ -94,6 +159,7 @@ export function createNetworking({
       driving: peer.state?.mode === 'drive',
       x: peer.targetPosition?.x ?? null,
       z: peer.targetPosition?.z ?? null,
+      gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
     }));
   }
 
@@ -178,7 +244,7 @@ export function createNetworking({
     if (peer.name !== peer.displayName) {
       refreshPeerNameTag(peer);
     }
-    applyPeerState(peer, message);
+    if (applyPeerState(peer, message)) broadcastSnapshot();
     } else if (message?.type === 'chat') {
       onChatMessage?.({
         id: message.from,
@@ -220,6 +286,11 @@ export function createNetworking({
       headingSm: Math.PI,
       moving: false,
       talking: false,
+      gameplay: null,
+      gameplayEventCount: 0,
+      lastGameplayEvent: null,
+      lastGameplayEventId: null,
+      lastGameplayEventAt: 0,
       connected: true,
       lastSeen: performance.now(),
       panner: null,
@@ -262,6 +333,7 @@ export function createNetworking({
       room.remove(peer.car.fallbackMesh);
       disposeAvatar(peer.car.fallbackMesh);
     }
+    onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     peers.delete(id);
   }
 
@@ -277,6 +349,7 @@ export function createNetworking({
         room.remove(peer.car.fallbackMesh);
         disposeAvatar(peer.car.fallbackMesh);
       }
+      onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     }
     peers.clear();
   }
@@ -295,6 +368,29 @@ export function createNetworking({
   function applyPeerState(peer, incoming) {
     const hadDrive = peer.state?.mode === 'drive';
     const hasDrive = incoming.mode === 'drive';
+    const previousGameplay = peer.gameplay;
+    const gameplay = sanitizeGameplayStatus(incoming.gameplay);
+    let receivedGameplayEvent = false;
+    if (gameplay?.event && gameplay.event.id !== peer.lastGameplayEventId) {
+      peer.lastGameplayEventId = gameplay.event.id;
+      peer.lastGameplayEvent = gameplay.event;
+      peer.gameplayEventCount += 1;
+      peer.lastGameplayEventAt = performance.now();
+      receivedGameplayEvent = true;
+      onPeerGameplayEvent?.({
+        peerId: peer.id,
+        peerName: peer.name,
+        event: { ...gameplay.event },
+      });
+    }
+    const clearedGameplayEvent = gameplay?.eventId == null && peer.lastGameplayEvent != null;
+    if (clearedGameplayEvent) {
+      peer.lastGameplayEvent = null;
+      peer.lastGameplayEventAt = 0;
+      peer.gameplayEventCount = 0;
+      onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
+    }
+    peer.gameplay = gameplay ? { ...gameplay, event: null } : null;
     peer.state = {
       mode: incoming.mode || 'walk',
       vehicleId: incoming.vehicleId ?? null,
@@ -336,6 +432,12 @@ export function createNetworking({
         peer.avatar.position.lerp(peer.targetPosition, 1 - Math.exp(-10 * 0.016));
       }
     }
+    return receivedGameplayEvent || clearedGameplayEvent
+      || previousGameplay?.heat !== peer.gameplay?.heat
+      || previousGameplay?.wantedLevel !== peer.gameplay?.wantedLevel
+      || previousGameplay?.pursuitActive !== peer.gameplay?.pursuitActive
+      || previousGameplay?.healthBand !== peer.gameplay?.healthBand
+      || previousGameplay?.activity !== peer.gameplay?.activity;
   }
 
   function attachTrafficCar(peer, incoming) {
@@ -417,6 +519,7 @@ export function createNetworking({
         vehicleId: local.vehicleId ?? null,
         vehicleClass: local.vehicleClass || null,
         vehicleColor: local.vehicleColor ?? null,
+        gameplay: sanitizeGameplayStatus(local.gameplay),
       });
     }
 
@@ -424,12 +527,20 @@ export function createNetworking({
     const lambda = 1 - Math.exp(-12 * dt);
     for (const peer of peers.values()) {
       if (now - peer.lastSeen > PEER_TIMEOUT) {
-        peer.connected = false;
-        if (peer.avatar) peer.avatar.visible = false;
+        removePeer(peer.id);
+        broadcastSnapshot();
         continue;
       }
       if (!peer.connected) {
         peer.connected = true;
+        broadcastSnapshot();
+      }
+      if (peer.lastGameplayEvent
+        && now - peer.lastGameplayEventAt > PEER_GAMEPLAY_EVENT_LIFETIME) {
+        peer.lastGameplayEvent = null;
+        peer.lastGameplayEventAt = 0;
+        peer.gameplayEventCount = 0;
+        onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
         broadcastSnapshot();
       }
       peer.yaw = dampAngle(peer.yaw, peer.targetYaw, 10, dt);
@@ -776,6 +887,11 @@ export function createNetworking({
       name: peer.name,
       talking: peer.talking,
       driving: peer.state?.mode === 'drive',
+      x: peer.targetPosition?.x ?? null,
+      z: peer.targetPosition?.z ?? null,
+      gameplay: peer.gameplay ? { ...peer.gameplay } : null,
+      gameplayEventCount: peer.gameplayEventCount,
+      lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
     })),
     dispose,
   };

@@ -1420,7 +1420,18 @@ export function createHud({
       dot.setAttribute('aria-hidden', 'true');
       dot.dataset.talking = String(peer.talking === true);
       const name = createElement('span', 'hud__player-name', peer.name || 'Player');
-      const mode = createElement('span', 'hud__player-mode', peer.driving ? 'DRIVING' : 'ON FOOT');
+      const gameplay = peer.gameplay || {};
+      const modeLabel = gameplay.pursuitActive
+        ? `PURSUIT · L${gameplay.wantedLevel || 1}`
+        : gameplay.heat > 0
+          ? `HEAT ${gameplay.heat}`
+          : gameplay.healthBand === 'downed'
+            ? 'DOWNED'
+            : peer.driving
+              ? 'DRIVING'
+              : String(gameplay.activity || 'on foot').replace('-', ' ').toUpperCase();
+      const mode = createElement('span', 'hud__player-mode', modeLabel);
+      item.dataset.wanted = String(gameplay.pursuitActive === true || gameplay.heat > 0);
       item.append(dot, name, mode);
       playerList.append(item);
     });
@@ -1451,7 +1462,9 @@ export function createHud({
       }
       node.dataset.driving = String(peer.driving === true);
       node.dataset.talking = String(peer.talking === true);
-      node.textContent = peer.name.slice(0, 2).toUpperCase();
+      node.dataset.wanted = String(peer.gameplay?.pursuitActive === true || peer.gameplay?.heat > 0);
+      const initials = peer.name.slice(0, 2).toUpperCase();
+      node.textContent = node.dataset.wanted === 'true' ? `!${initials.slice(0, 1)}` : initials;
     });
   }
 
@@ -1499,11 +1512,19 @@ export function createHud({
     if (disposed) return;
     const line = createElement('p', 'hud__chat-line');
     if (entry.local) line.dataset.local = 'true';
+    if (entry.peerGameplayEvent) line.dataset.peerGameplayEvent = String(entry.peerGameplayEvent);
+    if (entry.peerGameplayPeer) line.dataset.peerGameplayPeer = String(entry.peerGameplayPeer);
     const name = createElement('strong', 'hud__chat-name', `${entry.name || 'Player'}: `);
     const text = createElement('span', 'hud__chat-text', String(entry.text || ''));
     line.append(name, text);
     chatLog.append(line);
     while (chatLog.childElementCount > 24) chatLog.removeChild(chatLog.firstChild);
+  }
+
+  function clearPeerGameplayEvent(peerId) {
+    chatLog.querySelectorAll('[data-peer-gameplay-event]').forEach((line) => {
+      if (!peerId || line.dataset.peerGameplayPeer === peerId) line.remove();
+    });
   }
 
   voiceToggle.addEventListener('click', () => onlineAction?.());
@@ -1560,6 +1581,7 @@ export function createHud({
     setOnlineState,
     setOnlineAction,
     appendChat,
+    clearPeerGameplayEvent,
     setDriveState,
     setMapRemoteState,
     dispose,
