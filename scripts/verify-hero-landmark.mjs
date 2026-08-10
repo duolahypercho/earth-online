@@ -26,11 +26,28 @@ assert.ok(scene.children.includes(landmark.root), 'landmark should attach to the
 assert.equal(sourceMesh.visible, false, 'only the matching supplied source render should be hidden');
 assert.equal(landmark.getDiagnostics().source.osmWay, 558731934, 'runtime diagnostics must retain source identity');
 assert.equal(landmark.getDiagnostics().hiddenSourceRender, true, 'runtime diagnostics must record suppression');
+const frame = landmark.getDiagnostics().frame;
+const roofMatrix = new THREE.Matrix4();
+landmark.root.getObjectByName('Ferry Building roof masses').getMatrixAt(0, roofMatrix);
+const roofAlong = new THREE.Vector2(roofMatrix.elements[0], roofMatrix.elements[2]).normalize();
+const roofAcross = new THREE.Vector2(roofMatrix.elements[8], roofMatrix.elements[10]).normalize();
+assert.ok(roofAlong.dot(new THREE.Vector2(...frame.along)) > 0.9999, 'local +X must align with the footprint along axis');
+assert.ok(roofAcross.dot(new THREE.Vector2(...frame.across)) > 0.9999, 'local +Z must align with the footprint across axis');
 assert.ok(landmark.stats.drawCalls <= FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls, 'draw-call budget must hold');
 assert.ok(landmark.stats.triangles <= FERRY_BUILDING_LANDMARK_BUDGET.maxTriangles, 'triangle budget must hold');
 assert.ok(landmark.stats.instances <= FERRY_BUILDING_LANDMARK_BUDGET.maxInstances, 'instance budget must hold');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock tower pyramidal roof'), 'clock tower silhouette is required');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock faces').count === 4, 'all four clock faces are required');
+const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
+const clockNormals = [];
+for (let index = 0; index < clockFaces.count; index += 1) {
+  clockFaces.getMatrixAt(index, roofMatrix);
+  clockNormals.push(new THREE.Vector2(roofMatrix.elements[8], roofMatrix.elements[10]).normalize());
+}
+const frameAxes = [new THREE.Vector2(...frame.along), new THREE.Vector2(...frame.across)];
+for (const axis of frameAxes) {
+  assert.ok(clockNormals.some((normal) => Math.abs(normal.dot(axis)) > 0.9999), 'clock faces must remain normal to each footprint frame axis');
+}
 
 const unrelated = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
 unrelated.userData.buildingId = 999;
