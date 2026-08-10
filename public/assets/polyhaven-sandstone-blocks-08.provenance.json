@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "asset": "polyhaven-sandstone-blocks-08-2k",
+  "license": "CC0-1.0",
+  "author": "Rob Tuytel",
+  "assetPage": "https://polyhaven.com/a/sandstone_blocks_08",
+  "physicalWidthMetres": 3,
+  "intent": "presentation-only material for an OSM-aligned Ferry Building approximation; not survey or scan reconstruction",
+  "sources": {
+    "diffuse": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sandstone_blocks_08/sandstone_blocks_08_diff_2k.jpg",
+      "md5": "2bd2a87974f1870fad58e25da35ed706",
+      "downloadedMd5": "2bd2a87974f1870fad58e25da35ed706",
+      "downloadedSha256": "da2f453c7c3683f5b01ca8b365ccf81ebce488afab7661adecd83208fc9aec97"
+    },
+    "normalGl": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sandstone_blocks_08/sandstone_blocks_08_nor_gl_2k.jpg",
+      "md5": "5156759065d1550ef60475c46611b89b",
+      "downloadedMd5": "5156759065d1550ef60475c46611b89b",
+      "downloadedSha256": "735f205de2d44f2e7edddf22d6b7dca5cd2ace000f3f637546302508dd9616c2"
+    },
+    "roughness": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sandstone_blocks_08/sandstone_blocks_08_rough_2k.jpg",
+      "md5": "1f6cd4b874436929d438f8f5ba8818d9",
+      "downloadedMd5": "1f6cd4b874436929d438f8f5ba8818d9",
+      "downloadedSha256": "676d9f00b54f303dc19856123312110be3859066661b224dececc3bc857c8f21"
+    },
+    "ao": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sandstone_blocks_08/sandstone_blocks_08_ao_2k.jpg",
+      "md5": "f56484d9686107d40e6b483b9cae0d13",
+      "downloadedMd5": "f56484d9686107d40e6b483b9cae0d13",
+      "downloadedSha256": "8c77ecef52727a13a3e6afa731390c37c285692de9703da426402fe1e61b611f"
+    }
+  },
+  "outputs": {
+    "diffuse": {
+      "path": "public/assets/polyhaven-sandstone-blocks-08-diffuse-2k.jpg",
+      "sha256": "da2f453c7c3683f5b01ca8b365ccf81ebce488afab7661adecd83208fc9aec97",
+      "encoding": "sRGB base color"
+    },
+    "normalGl": {
+      "path": "public/assets/polyhaven-sandstone-blocks-08-normal-gl-2k.jpg",
+      "sha256": "735f205de2d44f2e7edddf22d6b7dca5cd2ace000f3f637546302508dd9616c2",
+      "encoding": "OpenGL tangent-space normal, linear/no-color"
+    },
+    "orm": {
+      "path": "public/assets/polyhaven-sandstone-blocks-08-orm-2k.png",
+      "sha256": "6563e0a6c8158d6845ae74aee67bd6c10544fdcf6e4cbe16148a6c26e061c191",
+      "encoding": "R Poly Haven AO, G Poly Haven roughness, B metallic=0; linear/no-color"
+    }
+  },
+  "generator": {
+    "path": "scripts/world-assets/generate-ferry-sandstone-pbr.py",
+    "sha256": "d7a84ff9ca2a0daaca2b7dd8cead846f0f7a0473bb8f4ee9411ac9d18e1262ef",
+    "algorithm": "lossless copy of verified 2K diffuse/OpenGL normal; deterministic AO+roughness+metallic-zero ORM pack",
+    "pillow": "11.3.0",
+    "numpy": "2.0.2"
+  }
+}

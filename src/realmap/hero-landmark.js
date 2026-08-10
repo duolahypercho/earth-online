@@ -8,7 +8,9 @@ export const FERRY_BUILDING_LANDMARK_SOURCE = Object.freeze({
   osmWay: 558731934,
   name: 'San Francisco Ferry Building',
 });
-export const FERRY_SANDSTONE_ALBEDO_URL = '/assets/sf-ferry-sandstone-albedo-v1.png';
+export const FERRY_SANDSTONE_ALBEDO_URL = '/assets/polyhaven-sandstone-blocks-08-diffuse-2k.jpg';
+export const FERRY_SANDSTONE_NORMAL_URL = '/assets/polyhaven-sandstone-blocks-08-normal-gl-2k.jpg';
+export const FERRY_SANDSTONE_ORM_URL = '/assets/polyhaven-sandstone-blocks-08-orm-2k.png';
 
 export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
   // The authored facade stays batched by architectural role, never by bay.
@@ -137,26 +139,139 @@ function boxMatrix(matrix, frame, along, across, y, length, height, width, yaw =
   );
 }
 
-function createSandstoneTexture() {
-  if (typeof document === 'undefined') return null;
-  const texture = new THREE.TextureLoader().load(FERRY_SANDSTONE_ALBEDO_URL);
-  texture.name = 'Ferry Building sandstone albedo v1';
-  texture.colorSpace = THREE.SRGBColorSpace;
+function configureSandstoneTexture(texture, { name, colorSpace }) {
+  texture.name = name;
+  texture.colorSpace = colorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1.6, 3.2);
-  texture.anisotropy = 4;
+  // Poly Haven's source is a real 3 m-wide material scan; this repeat keeps
+  // its broad ashlar rhythm at facade scale instead of a tiny tiled decal.
+  texture.repeat.set(1.8, 3.0);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = 8;
+  texture.channel = 0;
+  texture.needsUpdate = true;
   return texture;
 }
 
-function createMaterials(sandstoneMap) {
+function createFallbackSandstoneTexture(data, options) {
+  const texture = new THREE.DataTexture(new Uint8Array(data), 1, 1, THREE.RGBAFormat);
+  return configureSandstoneTexture(texture, options);
+}
+
+function createSandstonePbrTextures() {
+  const fallback = {
+    albedo: createFallbackSandstoneTexture([255, 255, 255, 255], {
+      name: 'Ferry Building sandstone albedo fallback',
+      colorSpace: THREE.SRGBColorSpace,
+    }),
+    normal: createFallbackSandstoneTexture([128, 128, 255, 255], {
+      name: 'Ferry Building sandstone normal fallback',
+      colorSpace: THREE.NoColorSpace,
+    }),
+    orm: createFallbackSandstoneTexture([255, 224, 0, 255], {
+      name: 'Ferry Building sandstone ORM fallback',
+      colorSpace: THREE.NoColorSpace,
+    }),
+  };
+  const textures = new Set(Object.values(fallback));
+  let disposed = false;
+
+  function loadInto(materials, canApply) {
+    if (typeof document === 'undefined' || typeof Image === 'undefined') return false;
+    const targets = Array.isArray(materials) ? materials : [materials];
+    const loads = [
+      {
+        url: FERRY_SANDSTONE_ALBEDO_URL,
+        key: 'albedo',
+        name: 'Ferry Building sandstone albedo v1',
+        colorSpace: THREE.SRGBColorSpace,
+        apply: (material, texture) => { material.map = texture; },
+      },
+      {
+        url: FERRY_SANDSTONE_NORMAL_URL,
+        key: 'normal',
+        name: 'Ferry Building sandstone normal v1',
+        colorSpace: THREE.NoColorSpace,
+        apply: (material, texture) => {
+          material.normalMap = texture;
+          material.normalScale.setScalar(0.18);
+        },
+      },
+      {
+        url: FERRY_SANDSTONE_ORM_URL,
+        key: 'orm',
+        name: 'Ferry Building sandstone ORM v1',
+        colorSpace: THREE.NoColorSpace,
+        apply: (material, texture) => {
+          // Three samples R for AO, G for roughness, and B for metalness.
+          material.aoMap = texture;
+          material.roughnessMap = texture;
+          material.metalnessMap = texture;
+        },
+      },
+    ];
+    for (const load of loads) {
+      try {
+        let pending = null;
+        pending = new THREE.TextureLoader().load(
+          load.url,
+          (texture) => {
+            configureSandstoneTexture(texture, { name: load.name, colorSpace: load.colorSpace });
+            if (disposed || !canApply()) {
+              texture.dispose();
+              return;
+            }
+            textures.add(texture);
+            for (const material of targets) {
+              load.apply(material, texture);
+              material.needsUpdate = true;
+            }
+          },
+          undefined,
+          () => {
+            // Keep the neutral generated fallback. A failed presentation asset
+            // must never make the OSM-aligned landmark disappear.
+            pending?.dispose();
+          },
+        );
+        configureSandstoneTexture(pending, { name: load.name, colorSpace: load.colorSpace });
+      } catch {
+        // TextureLoader is unavailable in deterministic node verification.
+      }
+    }
+    return true;
+  }
+
   return {
+    fallback,
+    loadInto,
+    dispose() {
+      disposed = true;
+      for (const texture of textures) texture.dispose();
+      textures.clear();
+    },
+  };
+}
+
+function createMaterials(sandstonePbr) {
+  const sandstoneOptions = {
+    map: sandstonePbr.albedo,
+    normalMap: sandstonePbr.normal,
+    normalScale: new THREE.Vector2(0.18, 0.18),
+    aoMap: sandstonePbr.orm,
+    roughnessMap: sandstonePbr.orm,
+    metalnessMap: sandstonePbr.orm,
+  };
+  const materials = {
     // Ferry Building reads as sun-aged masonry rather than a saturated game
     // prop: the base is warmer, while ledges and the tower catch more light.
-    sandstone: new THREE.MeshStandardMaterial({ color: 0xf0dfc8, map: sandstoneMap, roughness: 0.86, metalness: 0.0 }),
+    sandstone: new THREE.MeshStandardMaterial({ color: 0xd9e5e7, roughness: 0.86, metalness: 0.0, ...sandstoneOptions }),
     trimStone: new THREE.MeshStandardMaterial({ color: 0xc6ab83, roughness: 0.8, metalness: 0.0 }),
     weatherStone: new THREE.MeshStandardMaterial({ color: 0x8e765c, roughness: 0.94, metalness: 0.0 }),
-    towerStone: new THREE.MeshStandardMaterial({ color: 0xe7d3b7, map: sandstoneMap, roughness: 0.82, metalness: 0.0 }),
+    towerStone: new THREE.MeshStandardMaterial({ color: 0xd4e0e4, roughness: 0.82, metalness: 0.0, ...sandstoneOptions }),
     // A weathered, low-sheen roof catches broad daylight without reading as
     // chrome. The small metal component is for its seams, not a mirror gloss.
     roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
@@ -168,6 +283,7 @@ function createMaterials(sandstoneMap) {
     clock: new THREE.MeshStandardMaterial({ color: 0xd8c99f, roughness: 0.68, metalness: 0.02, emissive: 0x000000, emissiveIntensity: 0 }),
     clockHand: new THREE.MeshStandardMaterial({ color: 0x202b2d, roughness: 0.5, metalness: 0.38 }),
   };
+  return materials;
 }
 
 function makeBatch(root, name, geometry, material, capacity) {
@@ -290,14 +406,19 @@ export function createFerryBuildingLandmark(options = {}) {
   const towerAlong = canonicalTowerOffset.dot(frame.along);
   const towerAcross = canonicalTowerOffset.dot(frame.across);
   const towerAnchor = localToWorld(frame, towerAlong, towerAcross, baseY);
-  const sandstoneMap = createSandstoneTexture();
-  const materials = createMaterials(sandstoneMap);
+  const sandstonePbr = createSandstonePbrTextures();
+  const materials = createMaterials(sandstonePbr.fallback);
+  let landmarkActive = true;
   const root = new THREE.Group();
   root.name = 'San Francisco Ferry Building landmark (OSM way 558731934)';
   root.userData.heroLandmark = true;
   root.userData.source = FERRY_BUILDING_LANDMARK_SOURCE;
   root.userData.proceduralApproximation = true;
   parent.add(root);
+  sandstonePbr.loadInto(
+    [materials.sandstone, materials.towerStone],
+    () => landmarkActive,
+  );
 
   const ownedGeometries = [];
   const shell = createFootprintShell(points, baseY, hallHeight, materials.sandstone);
@@ -466,7 +587,8 @@ export function createFerryBuildingLandmark(options = {}) {
     root.removeFromParent();
     for (const geometry of ownedGeometries) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
-    sandstoneMap?.dispose();
+    landmarkActive = false;
+    sandstonePbr.dispose();
     throw new Error(`Ferry Building landmark exceeded its rendering budget (${stats.drawCalls} draws, ${stats.triangles} triangles, ${stats.instances} instances).`);
   }
 
@@ -482,11 +604,12 @@ export function createFerryBuildingLandmark(options = {}) {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    landmarkActive = false;
     if (sourceMesh) sourceMesh.visible = originalSourceVisibility;
     root.removeFromParent();
     for (const geometry of ownedGeometries) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
-    sandstoneMap?.dispose();
+    sandstonePbr.dispose();
   }
   function getDiagnostics() {
     return {
@@ -509,6 +632,13 @@ export function createFerryBuildingLandmark(options = {}) {
       },
       towerAnchor: [towerAnchor.x, towerAnchor.y, towerAnchor.z],
       towerHeightMetres: towerHeight,
+      pbr: {
+        albedo: FERRY_SANDSTONE_ALBEDO_URL,
+        normal: FERRY_SANDSTONE_NORMAL_URL,
+        orm: FERRY_SANDSTONE_ORM_URL,
+        presentationOnly: true,
+        source: 'Poly Haven sandstone_blocks_08, CC0, Rob Tuytel, 3m source width',
+      },
       disposed,
       stats,
     };

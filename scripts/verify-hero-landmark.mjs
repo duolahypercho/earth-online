@@ -6,6 +6,8 @@ import {
   FERRY_BUILDING_LANDMARK_SOURCE,
   FERRY_CLOCK_TOWER_ANCHOR,
   FERRY_SANDSTONE_ALBEDO_URL,
+  FERRY_SANDSTONE_NORMAL_URL,
+  FERRY_SANDSTONE_ORM_URL,
 } from '../src/realmap/hero-landmark.js';
 
 const building = {
@@ -23,7 +25,9 @@ scene.add(sourceMesh);
 const landmark = createFerryBuildingLandmark({ scene, building, sourceMesh, elevationAt: () => 1.8 });
 
 assert.equal(FERRY_BUILDING_LANDMARK_SOURCE.osmWay, 558731934, 'landmark must retain the exact OSM way');
-assert.equal(FERRY_SANDSTONE_ALBEDO_URL, '/assets/sf-ferry-sandstone-albedo-v1.png', 'landmark must use the project-owned Ferry sandstone asset');
+assert.equal(FERRY_SANDSTONE_ALBEDO_URL, '/assets/polyhaven-sandstone-blocks-08-diffuse-2k.jpg', 'landmark must use the approved Poly Haven CC0 base color');
+assert.equal(FERRY_SANDSTONE_NORMAL_URL, '/assets/polyhaven-sandstone-blocks-08-normal-gl-2k.jpg', 'landmark must use the approved Poly Haven OpenGL normal');
+assert.equal(FERRY_SANDSTONE_ORM_URL, '/assets/polyhaven-sandstone-blocks-08-orm-2k.png', 'landmark must use its locally packed Poly Haven ORM asset');
 assert.equal(landmark.root.userData.source.osmWay, 558731934, 'source diagnostics must expose the exact OSM way');
 assert.ok(scene.children.includes(landmark.root), 'landmark should attach to the caller scene');
 assert.equal(sourceMesh.visible, false, 'only the matching supplied source render should be hidden');
@@ -49,9 +53,23 @@ assert.ok(landmark.root.getObjectByName('Ferry Building clock faces').count === 
 assert.equal(landmark.root.getObjectByName('Ferry Building clock face stone bezels').count, 4, 'clock faces require four stone bezels');
 assert.ok(landmark.root.getObjectByName('Ferry Building bronze storefront and window divisions').count > 0, 'recessed glazing needs a bounded mullion pass');
 const facadeMaterial = landmark.root.getObjectByName('Ferry Building authoritative OSM footprint shell').material;
+const towerMaterial = landmark.root.getObjectByName('Ferry Building clock tower tiers').material;
 const windowMaterial = landmark.root.getObjectByName('Ferry Building recessed upper windows and tower louvers').material;
 const clockMaterial = landmark.root.getObjectByName('Ferry Building clock faces').material;
 assert.ok(facadeMaterial.roughness >= 0.8 && facadeMaterial.metalness === 0, 'facade must retain a matte stone response');
+for (const material of [facadeMaterial, towerMaterial]) {
+  assert.equal(material.map.colorSpace, THREE.SRGBColorSpace, 'sandstone base color must be decoded as sRGB');
+  assert.equal(material.normalMap.colorSpace, THREE.NoColorSpace, 'normal maps must remain linear');
+  assert.equal(material.aoMap.colorSpace, THREE.NoColorSpace, 'packed ORM maps must remain linear');
+  assert.equal(material.roughnessMap, material.aoMap, 'roughness must sample the packed ORM texture');
+  assert.equal(material.metalnessMap, material.aoMap, 'metalness must sample the packed ORM texture');
+  assert.equal(material.normalMap.wrapS, THREE.RepeatWrapping, 'normal maps must repeat at facade edges');
+  assert.equal(material.roughnessMap.wrapT, THREE.RepeatWrapping, 'ORM maps must repeat at facade edges');
+  assert.equal(material.normalMap.minFilter, THREE.LinearMipmapLinearFilter, 'normal maps must minify with mipmaps');
+  assert.ok(material.normalMap.anisotropy >= 8, 'normal maps must retain an anisotropic facade response');
+}
+assert.equal(landmark.getDiagnostics().pbr.presentationOnly, true, 'generated PBR material must never be presented as survey reconstruction');
+assert.match(landmark.getDiagnostics().pbr.source, /Poly Haven.*CC0.*Rob Tuytel/, 'PBR diagnostics must retain Poly Haven CC0 provenance');
 assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed glazing rather than a bright transparent grid');
 assert.equal(clockMaterial.emissiveIntensity, 0, 'clock faces must not use an emissive toy-like treatment');
 const windowBays = landmark.root.getObjectByName('Ferry Building ground-floor arched storefronts');
