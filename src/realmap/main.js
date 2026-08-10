@@ -90,6 +90,14 @@ const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
 const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
 const FERRY_HERO_STAGED_PEDESTRIAN_COUNT = 7;
 const FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M = 1.5;
+const FERRY_STREET_LIFE = Object.freeze({
+  anchor: Object.freeze({ x: 2242.2655, z: 1907.776 }),
+  activationRadiusM: 132,
+  cycleSeconds: 14,
+  approachSeconds: 3,
+  crossingEndsAtSeconds: 8.5,
+  clearEndsAtSeconds: 12,
+});
 // The source 196662077 concrete footway is rendered as a 3.4m Ferry Plaza
 // paving path. These tracks keep a 0.7m edge margin on either side.
 const FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M = 1.0;
@@ -4563,6 +4571,7 @@ function buildTraffic(selectedRoads, signals) {
     vehicles.push({
       mesh,
       path,
+      variant: variants[i % variants.length],
       s: (i / count) * path.length,
       speed: 0,
       targetSpeed: 6.5 + ((i * 7919) % 40) / 10,
@@ -7243,6 +7252,8 @@ let fpsSamples = [];
 let lastFrameTime = performance.now();
 let avgFrameMs = 16.6;
 let frameMsSamples = [];
+let applicationFrameMsSamples = [];
+let ferryStreetLifeVignette = null;
 const moveKeys = new Set();
 let cityMode = 'orbit';
 let cityFlatRegion = [];
@@ -8526,6 +8537,7 @@ function updatePedestrians(dt) {
   const lifeRadius = STREAM.lifeRadius;
   heroCameraExcludedPedestrians = 0;
   for (const person of pedestrianState) {
+    if (person.streetLifeControlled) continue;
     if (focus) {
       const px = person.mesh.position.x;
       const pz = person.mesh.position.z;
@@ -8546,6 +8558,260 @@ function updatePedestrians(dt) {
     person.mesh.userData.left.rotation.x = swing;
     person.mesh.userData.right.rotation.x = -swing;
   }
+}
+
+function releaseFerryStreetLifeVignette() {
+  if (!ferryStreetLifeVignette) return;
+  for (const person of ferryStreetLifeVignette.pedestrians || []) {
+    person.streetLifeControlled = false;
+    delete person.mesh.userData.heroLifeDetailPriority;
+  }
+  for (const vehicle of ferryStreetLifeVignette.vehicles || []) vehicle.streetLifeControlled = false;
+  ferryStreetLifeVignette = null;
+}
+
+function ensureFerryStreetLifeVignette() {
+  if (!isFerryBuildingHeroTile() || pedestrianState.length < 10 || (trafficState?.vehicles?.length || 0) < 8) {
+    releaseFerryStreetLifeVignette();
+    return null;
+  }
+  if (ferryStreetLifeVignette
+    && ferryStreetLifeVignette.pedestrians.every((person) => pedestrianState.includes(person))
+    && ferryStreetLifeVignette.vehicles.every((vehicle) => trafficState.vehicles.includes(vehicle))) {
+    return ferryStreetLifeVignette;
+  }
+  releaseFerryStreetLifeVignette();
+  const pedestrians = [pedestrianState[8], pedestrianState[9]];
+  const vehicles = [trafficState.vehicles[6], trafficState.vehicles[7]];
+  pedestrians.forEach((person) => {
+    person.streetLifeControlled = false;
+    person.mesh.userData.heroLifeDetailPriority = true;
+  });
+  vehicles.forEach((vehicle) => { vehicle.streetLifeControlled = false; });
+  ferryStreetLifeVignette = {
+    pedestrians,
+    vehicles,
+    active: false,
+    elapsed: 0,
+    phase: 'idle',
+    priorPhase: 'idle',
+    cycle: 0,
+    stoppedSeconds: 0,
+    phaseEvents: { queue: 0, cross: 0, clear: 0 },
+    crossings: 0,
+    yields: 0,
+    resumes: 0,
+  };
+  return ferryStreetLifeVignette;
+}
+
+function ferryStreetLifePhase(elapsed) {
+  if (elapsed < FERRY_STREET_LIFE.approachSeconds) return 'queue';
+  if (elapsed < FERRY_STREET_LIFE.crossingEndsAtSeconds) return 'cross';
+  if (elapsed < FERRY_STREET_LIFE.clearEndsAtSeconds) return 'clear';
+  return 'reset';
+}
+
+function updateFerryStreetLifeVignette(dt) {
+  const vignette = ensureFerryStreetLifeVignette();
+  if (!vignette) return;
+  const { anchor } = FERRY_STREET_LIFE;
+  const playerDistance = playerState ? Math.hypot(playerState.x - anchor.x, playerState.z - anchor.z) : Infinity;
+  vignette.active = cityMode === 'walk' && playerDistance <= FERRY_STREET_LIFE.activationRadiusM;
+  vignette.pedestrians.forEach((person) => { person.streetLifeControlled = vignette.active; });
+  vignette.vehicles.forEach((vehicle) => { vehicle.streetLifeControlled = vignette.active; });
+  if (!vignette.active) {
+    vignette.elapsed = 0;
+    vignette.phase = 'idle';
+    vignette.priorPhase = 'idle';
+    vignette.stoppedSeconds = 0;
+    return;
+  }
+  vignette.elapsed += dt;
+  if (vignette.elapsed >= FERRY_STREET_LIFE.cycleSeconds) {
+    vignette.elapsed %= FERRY_STREET_LIFE.cycleSeconds;
+    vignette.cycle += 1;
+  }
+  vignette.phase = ferryStreetLifePhase(vignette.elapsed);
+  if (vignette.phase !== vignette.priorPhase) {
+    if (vignette.phase === 'queue') vignette.phaseEvents.queue += 1;
+    if (vignette.phase === 'cross') {
+      vignette.phaseEvents.cross += 1;
+      vignette.crossings += vignette.pedestrians.length;
+      vignette.yields += vignette.vehicles.length;
+    }
+    if (vignette.phase === 'clear') {
+      vignette.phaseEvents.clear += 1;
+      vignette.resumes += vignette.vehicles.length;
+    }
+    vignette.priorPhase = vignette.phase;
+  }
+
+  const roadUnit = { x: -0.5873, z: 0.8094 };
+  const crossingUnit = { x: 0.7797, z: 0.6262 };
+  const crossingNormal = { x: -crossingUnit.z, z: crossingUnit.x };
+  const queueBase = { x: anchor.x - crossingUnit.x * 7.1, z: anchor.z - crossingUnit.z * 7.1 };
+  const clearBase = { x: anchor.x + crossingUnit.x * 7.1, z: anchor.z + crossingUnit.z * 7.1 };
+  const crossingProgress = vignette.phase === 'cross'
+    ? THREE.MathUtils.smoothstep(
+      vignette.elapsed,
+      FERRY_STREET_LIFE.approachSeconds,
+      FERRY_STREET_LIFE.crossingEndsAtSeconds,
+    )
+    : vignette.phase === 'clear' || vignette.phase === 'reset' ? 1 : 0;
+  vignette.pedestrians.forEach((person, index) => {
+    const laneOffset = (index - 0.5) * 1.45;
+    const queueDepth = index * 0.8;
+    let x = queueBase.x + crossingNormal.x * laneOffset - crossingUnit.x * queueDepth;
+    let z = queueBase.z + crossingNormal.z * laneOffset - crossingUnit.z * queueDepth;
+    if (crossingProgress > 0) {
+      x = THREE.MathUtils.lerp(x, clearBase.x + crossingNormal.x * laneOffset, crossingProgress);
+      z = THREE.MathUtils.lerp(z, clearBase.z + crossingNormal.z * laneOffset, crossingProgress);
+    }
+    person.mesh.position.set(x, elevationAt(x, z), z);
+    person.mesh.rotation.y = Math.atan2(crossingUnit.x, crossingUnit.z);
+    person.mesh.visible = !camera || Math.hypot(x - camera.position.x, z - camera.position.z) >= 2.2;
+    const walking = vignette.phase === 'cross';
+    const swing = walking ? Math.sin(performance.now() * 0.011 + person.phase) * 0.48 : 0;
+    person.mesh.userData.left.rotation.x = swing;
+    person.mesh.userData.right.rotation.x = -swing;
+  });
+
+  const approachProgress = vignette.phase === 'queue'
+    ? THREE.MathUtils.smoothstep(vignette.elapsed, 0, FERRY_STREET_LIFE.approachSeconds)
+    : 1;
+  const resumeProgress = vignette.phase === 'clear'
+    ? THREE.MathUtils.smoothstep(
+      vignette.elapsed,
+      FERRY_STREET_LIFE.crossingEndsAtSeconds,
+      FERRY_STREET_LIFE.clearEndsAtSeconds,
+    )
+    : vignette.phase === 'reset' ? 1 : 0;
+  vignette.stoppedSeconds = vignette.phase === 'cross'
+    ? vignette.stoppedSeconds + dt
+    : vignette.phase === 'queue' ? 0 : vignette.stoppedSeconds;
+  vignette.vehicles.forEach((vehicle, index) => {
+    const direction = index === 0 ? 1 : -1;
+    const approachDistance = 25 + index * 10;
+    const stopDistance = 6.8;
+    const clearedDistance = 15;
+    let along = direction * THREE.MathUtils.lerp(-approachDistance, -stopDistance, approachProgress);
+    let speed = vignette.phase === 'queue' ? 5.4 * (1 - approachProgress) : 0;
+    if (vignette.phase === 'clear' || vignette.phase === 'reset') {
+      along = direction * THREE.MathUtils.lerp(-stopDistance, clearedDistance, resumeProgress);
+      speed = 6.4 * resumeProgress;
+    }
+    const lane = index === 0 ? -1.55 : 1.55;
+    const x = anchor.x + roadUnit.x * along - roadUnit.z * lane;
+    const z = anchor.z + roadUnit.z * along + roadUnit.x * lane;
+    vehicle.speed = speed;
+    vehicle.stopped = vignette.phase === 'cross';
+    vehicle.mesh.position.set(x, elevationAt(x, z) + roadSurfaceLift() + 0.04, z);
+    vehicle.mesh.rotation.y = Math.atan2(roadUnit.z * direction, roadUnit.x * direction);
+    vehicle.mesh.visible = true;
+  });
+}
+
+function getFerryStreetLifeVignetteDiagnostics() {
+  const vignette = ferryStreetLifeVignette;
+  if (!vignette || !renderer || !camera) return { available: false, active: false };
+  camera.updateMatrixWorld();
+  const canvasHeight = renderer.domElement.clientHeight || renderer.domElement.height || 1;
+  const canvasWidth = renderer.domElement.clientWidth || renderer.domElement.width || 1;
+  const segmentBlocked = (start, end) => {
+    const direction = end.clone().sub(start);
+    const distance = direction.length();
+    if (distance <= 0.01) return false;
+    const blockers = detailBuildingMeshes.filter((mesh) => mesh.visible);
+    if (coarseBuildingMesh?.visible) blockers.push(coarseBuildingMesh);
+    if (!blockers.length) return false;
+    const raycaster = new THREE.Raycaster(start, direction.normalize(), 0.05, Math.max(0.05, distance - 0.45));
+    return raycaster.intersectObjects(blockers, false).length > 0;
+  };
+  const projectHeight = (position, height) => {
+    const foot = position.clone().project(camera);
+    const head = position.clone().add(new THREE.Vector3(0, height, 0)).project(camera);
+    const projectedHeightPx = Math.abs(head.y - foot.y) * canvasHeight * 0.5;
+    const screenX = ((foot.x + 1) * 0.5) * canvasWidth;
+    const screenY = ((1 - foot.y) * 0.5) * canvasHeight;
+    const halfWidth = Math.max(2, projectedHeightPx * 0.17);
+    const rect = {
+      left: screenX - halfWidth,
+      right: screenX + halfWidth,
+      top: screenY - projectedHeightPx,
+      bottom: screenY,
+    };
+    return {
+      visible: foot.z >= -1 && foot.z <= 1 && Math.abs(foot.x) <= 1.12 && Math.abs(foot.y) <= 1.12,
+      screenX: Number(screenX.toFixed(1)),
+      screenY: Number(screenY.toFixed(1)),
+      projectedHeightPx: Number(projectedHeightPx.toFixed(1)),
+      rect: Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, Number(value.toFixed(1))])),
+    };
+  };
+  const playerScreen = playerAvatarGroup ? projectHeight(playerAvatarGroup.position, 1.82) : null;
+  const detailedSources = new Set(
+    (heroLifeLighting?.getStats()?.detailAssignments || []).map(({ sourceUuid }) => sourceUuid),
+  );
+  const overlapsPlayer = (screen) => Boolean(playerScreen?.visible && screen.visible
+    && screen.rect.left < playerScreen.rect.right
+    && screen.rect.right > playerScreen.rect.left
+    && screen.rect.top < playerScreen.rect.bottom
+    && screen.rect.bottom > playerScreen.rect.top);
+  return {
+    available: true,
+    active: vignette.active,
+    anchor: { ...FERRY_STREET_LIFE.anchor },
+    playerDistanceM: playerState
+      ? Number(Math.hypot(playerState.x - FERRY_STREET_LIFE.anchor.x, playerState.z - FERRY_STREET_LIFE.anchor.z).toFixed(2))
+      : null,
+    phase: vignette.phase,
+    elapsed: Number(vignette.elapsed.toFixed(2)),
+    cycle: vignette.cycle,
+    phaseEvents: { ...vignette.phaseEvents },
+    crossings: vignette.crossings,
+    yields: vignette.yields,
+    resumes: vignette.resumes,
+    stoppedSeconds: Number(vignette.stoppedSeconds.toFixed(2)),
+    playerScreen,
+    pedestrians: vignette.pedestrians.map((person, index) => {
+      const screen = projectHeight(person.mesh.position, 1.68);
+      const target = person.mesh.position.clone().add(new THREE.Vector3(0, 1.12, 0));
+      return {
+        index,
+        role: person.story?.role || `Pedestrian ${index + 1}`,
+        sourceUuid: person.mesh.uuid,
+        detailed: detailedSources.has(person.mesh.uuid),
+        controlled: Boolean(person.streetLifeControlled),
+        position: {
+          x: Number(person.mesh.position.x.toFixed(2)),
+          y: Number(person.mesh.position.y.toFixed(3)),
+          z: Number(person.mesh.position.z.toFixed(2)),
+        },
+        groundErrorM: Number(Math.abs(person.mesh.position.y - elevationAt(person.mesh.position.x, person.mesh.position.z)).toFixed(4)),
+        occluded: segmentBlocked(camera.position, target),
+        overlapsPlayer: overlapsPlayer(screen),
+        ...screen,
+      };
+    }),
+    vehicles: vignette.vehicles.map((vehicle, index) => ({
+      index,
+      variant: vehicle.variant || 'car',
+      speed: Number(vehicle.speed.toFixed(2)),
+      stopped: Boolean(vehicle.stopped),
+      controlled: Boolean(vehicle.streetLifeControlled),
+      position: {
+        x: Number(vehicle.mesh.position.x.toFixed(2)),
+        y: Number(vehicle.mesh.position.y.toFixed(3)),
+        z: Number(vehicle.mesh.position.z.toFixed(2)),
+      },
+      groundErrorM: Number(Math.abs(
+        vehicle.mesh.position.y
+          - (elevationAt(vehicle.mesh.position.x, vehicle.mesh.position.z) + roadSurfaceLift() + 0.04),
+      ).toFixed(4)),
+      ...projectHeight(vehicle.mesh.position, 1.9),
+    })),
+  };
 }
 
 let treePartGeometries = null;
@@ -9617,9 +9883,17 @@ function initializeHeroLifeLighting() {
   const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
   const stagedPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
   const stagedSet = new Set(stagedPeople);
-  const pedestrians = (stagedPeople.length ? stagedPeople : pedestrianState.slice())
+  // Keep the two authored-crossing sources in the bounded presentation pool.
+  // They remain ordinary simulation records; this only guarantees that the
+  // existing hero renderer can show them when the player reaches the crossing.
+  const streetLifePeople = isFerryBuildingHeroTile() ? pedestrianState.slice(8, 10) : [];
+  const streetLifeSet = new Set(streetLifePeople);
+  const priorityPeople = [...new Set([...stagedPeople, ...streetLifePeople])];
+  const prioritySet = new Set(priorityPeople);
+  const pedestrians = (priorityPeople.length ? [...priorityPeople, ...pedestrianState.filter((person) => !prioritySet.has(person))] : pedestrianState.slice())
     .sort((first, second) => (
       (stagedSet.has(second) ? 1 : 0) - (stagedSet.has(first) ? 1 : 0)
+      || (streetLifeSet.has(second) ? 1 : 0) - (streetLifeSet.has(first) ? 1 : 0)
       || Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
         - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
     ))
@@ -9637,6 +9911,7 @@ function initializeHeroLifeLighting() {
     // each source a player-grade actor so no low-detail silhouette can split
     // the composition; other hero callers retain the four-rig default.
     maxDetailedActors: stagedPeople.length || undefined,
+    pedestrianDetailDistance: isFerryBuildingHeroTile() ? 70 : undefined,
     cameraExclusionRadius: HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS,
     replaceSources: true,
     conditions: heroLifeLightingConditions(),
@@ -11492,6 +11767,7 @@ function updateTraffic(dt, time) {
   const focus = fullCityMode ? lifeFocusPoint() : null;
   const lifeRadius = STREAM.lifeRadius;
   for (const vehicle of trafficState.vehicles) {
+    if (vehicle.streetLifeControlled) continue;
     if (vehicle.manual) continue;
     if (focus) {
       const pos = vehicle.mesh.position;
@@ -11593,6 +11869,7 @@ function renderLoop() {
   updateSignals(time);
   updateTraffic(dt, time);
   updatePedestrians(dt);
+  updateFerryStreetLifeVignette(dt);
   if (cityMode === 'walk') {
     controls.enabled = false;
     updatePlayerWalk(dt);
@@ -11650,6 +11927,8 @@ function renderLoop() {
   updateHeroPerformance(now);
   if (composer) composer.render();
   else renderer.render(scene, camera);
+  applicationFrameMsSamples.push(performance.now() - now);
+  if (applicationFrameMsSamples.length > 600) applicationFrameMsSamples.shift();
   updateReadout3d();
   requestAnimationFrame(renderLoop);
 }
@@ -12239,6 +12518,22 @@ function start() {
     getPerf: () => ({
       fps: fpsSamples.length,
       avgFrameMs: Number(avgFrameMs.toFixed(2)),
+      p99FrameMs: frameMsSamples.length
+        ? Number(frameMsSamples.slice().sort((a, b) => a - b)[Math.min(
+          frameMsSamples.length - 1,
+          Math.floor(frameMsSamples.length * 0.99),
+        )].toFixed(2))
+        : null,
+      maxFrameMs: frameMsSamples.length ? Number(Math.max(...frameMsSamples).toFixed(2)) : null,
+      applicationP99FrameMs: applicationFrameMsSamples.length
+        ? Number(applicationFrameMsSamples.slice().sort((a, b) => a - b)[Math.min(
+          applicationFrameMsSamples.length - 1,
+          Math.floor(applicationFrameMsSamples.length * 0.99),
+        )].toFixed(2))
+        : null,
+      applicationMaxFrameMs: applicationFrameMsSamples.length
+        ? Number(Math.max(...applicationFrameMsSamples).toFixed(2))
+        : null,
       fullCity: fullCityMode,
       cityWideReady,
       cityWideRoads: detailRoadStreamStats.cityWideRoads || cityWideRoadGroup?.children.length || 0,
@@ -12483,6 +12778,7 @@ function start() {
     getHeroTrafficVisuals: () => getHeroTrafficVisualDiagnostics(),
     getHeroLandmark: () => getHeroLandmarkDiagnostics(),
     getHeroPedestrianStaging: () => getHeroPedestrianStagingDiagnostics(),
+    getStreetLifeVignette: () => getFerryStreetLifeVignetteDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
