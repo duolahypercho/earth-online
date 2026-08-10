@@ -1474,6 +1474,8 @@ lifeSim = createLifeSim({
   onMessage: (message) => hud?.setMessage(message),
   getRestContext: () => getPlayerRestContext(),
   getMarketInteractionContext: () => getPlayerMarketInteractionContext(),
+  getAmmoState: () => combat?.getState?.(),
+  addReserveAmmo: (rounds) => combat?.addReserveAmmo?.(rounds),
 });
 
 hud.setOnlineAction((action) => {
@@ -2706,20 +2708,9 @@ function buyPlayerAmmo() {
     hud?.setMessage('Restock ammunition after recovering.');
     return null;
   }
-  const previousLife = lifeSim?.exportState?.();
-  const purchase = lifeSim?.buyAmmoAtMarket?.(
-    controls.target,
-    combatState.reserveAmmo,
-    combatState.reserveCapacity,
-  );
+  const purchase = lifeSim?.buyAmmoAtMarket?.();
   if (!purchase) return null;
-  const stock = combat.addReserveAmmo(purchase.rounds);
-  if (!stock || stock.added !== purchase.rounds) {
-    if (previousLife) lifeSim?.importState?.(previousLife);
-    hud?.setLifeState?.(lifeSim?.getState?.());
-    hud?.setMessage('Ammunition restock unavailable · no charge.');
-    return null;
-  }
+  const stock = purchase.stock;
   hud?.setLifeState?.(lifeSim?.getState?.());
   hud?.setMessage(`Ammunition purchased · +${stock.added} rounds · ${stock.reserveAmmo}/${stock.capacity} reserve.`);
   savePlayerProgress();

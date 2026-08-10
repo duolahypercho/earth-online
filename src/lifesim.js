@@ -62,6 +62,8 @@ export function createLifeSim({
   onMessage = () => {},
   getRestContext = () => null,
   getMarketInteractionContext = () => null,
+  getAmmoState = () => null,
+  addReserveAmmo = () => null,
 } = {}) {
   const state = {
     day: 1,
@@ -979,20 +981,26 @@ export function createLifeSim({
     };
   }
 
-  function buyAmmoAtMarket(position, currentReserve = 0, reserveCapacity = 0) {
-    const label = getNearestPortalLabel(position);
-    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
-      onMessage('Find a market or cafe counter to buy ammunition.');
+  function buyAmmoAtMarket() {
+    if (!marketInteractionAvailable()) {
+      onMessage('Market counter unavailable · be on foot, still, recovered, and clear of pursuit.');
       return null;
     }
-    const current = Math.max(0, Math.round(Number(currentReserve) || 0));
-    const capacity = Math.max(0, Math.round(Number(reserveCapacity) || 0));
+    const ammoState = getAmmoState?.();
+    const current = Math.max(0, Math.round(Number(ammoState?.reserveAmmo) || 0));
+    const capacity = Math.max(0, Math.round(Number(ammoState?.reserveCapacity) || 0));
     if (capacity <= 0 || current + AMMO_BOX_ROUNDS > capacity) {
       onMessage(`Ammunition reserve full · use rounds before buying a ${AMMO_BOX_ROUNDS}-round box.`);
       return null;
     }
     if (!spendCash(AMMO_BOX_COST)) {
       onMessage(`Ammunition costs $${AMMO_BOX_COST}. You need more cash.`);
+      return null;
+    }
+    const stock = addReserveAmmo?.(AMMO_BOX_ROUNDS);
+    if (!stock || stock.added !== AMMO_BOX_ROUNDS) {
+      state.cash += AMMO_BOX_COST;
+      onMessage('Ammunition restock unavailable · no charge.');
       return null;
     }
     state.lastActivity = 'buy:ammunition';
@@ -1008,6 +1016,7 @@ export function createLifeSim({
       rounds: AMMO_BOX_ROUNDS,
       cost: AMMO_BOX_COST,
       cashAfter: Math.round(state.cash),
+      stock,
     };
   }
 

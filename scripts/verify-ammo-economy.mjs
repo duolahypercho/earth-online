@@ -4,12 +4,13 @@ import { chromium } from 'playwright';
 const baseUrl = process.env.SF_QA_URL || 'http://localhost:5173/';
 const systemChrome = process.env.SF_QA_EXECUTABLE
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => undefined);
-const angle = process.env.SF_QA_ANGLE || (process.platform === 'darwin' ? 'metal' : 'swiftshader');
+const executablePath = await access(systemChrome).then(() => systemChrome).catch(() => null);
+if (!executablePath) throw new Error(`System Chrome is required: ${systemChrome}`);
+const angle = process.env.SF_QA_ANGLE || 'metal';
 const browser = await chromium.launch({
   headless: process.env.SF_QA_HEADLESS !== 'false',
   args: ['--disable-dev-shm-usage', `--use-angle=${angle}`, '--enable-gpu', '--ignore-gpu-blocklist'],
-  ...(executablePath ? { executablePath } : {}),
+  executablePath,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const failures = [];
@@ -47,6 +48,17 @@ try {
   await page.goto(baseUrl, { waitUntil: 'load', timeout: 30000 });
   await launch();
   await page.evaluate(() => window.__SF_SIM__.clearSavedProgress());
+
+  const renderer = await page.evaluate(() => {
+    const gl = window.__SF_SIM__.renderer.getContext();
+    const extension = gl.getExtension('WEBGL_debug_renderer_info');
+    return extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : null;
+  });
+  assert(angle === 'metal'
+    && typeof renderer === 'string'
+    && /metal/i.test(renderer)
+    && !/swiftshader|software|llvmpipe/i.test(renderer),
+  'a verified hardware Metal renderer was not active', { angle, renderer });
 
   const outside = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
@@ -110,8 +122,88 @@ try {
   'downed market input charged cash or mutated reserve before stock refusal', { downedBefore, downedRefusal });
   await page.evaluate(() => window.__SF_SIM__.restartCombat());
 
+  await page.evaluate(() => window.__SF_SIM__.streetHeat.reportIncident(36, {
+    source: 'combat',
+    notify: false,
+  }));
+  await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState()?.pursuitActive === true,
+    null, { timeout: 5000, polling: 25 });
+  const pursuitBefore = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+  }));
+  const rawPursuitPurchase = await page.evaluate((position) => {
+    const sim = window.__SF_SIM__;
+    const combat = sim.getCombatState();
+    return sim.lifeSim.buyAmmoAtMarket(position, combat.reserveAmmo, combat.reserveCapacity);
+  }, setup.position);
+  await page.keyboard.press('n');
+  await page.waitForTimeout(80);
+  const pursuitRefusal = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+    message: document.querySelector('.hud__message-text')?.textContent || '',
+  }));
+  assert(rawPursuitPurchase === null
+    && pursuitRefusal.heat.pursuitActive === true
+    && pursuitRefusal.life.cash === pursuitBefore.life.cash
+    && pursuitRefusal.life.activity === pursuitBefore.life.activity
+    && pursuitRefusal.life.lastTransaction?.at === pursuitBefore.life.lastTransaction?.at
+    && pursuitRefusal.combat.reserveAmmo === pursuitBefore.combat.reserveAmmo
+    && pursuitRefusal.save.snapshot?.life?.cash === pursuitBefore.life.cash
+    && pursuitRefusal.save.snapshot?.life?.lastTransaction?.at === pursuitBefore.life.lastTransaction?.at
+    && pursuitRefusal.save.snapshot?.combat?.reserveAmmo === pursuitBefore.combat.reserveAmmo
+    && pursuitRefusal.message.includes('clear of pursuit'),
+  'active pursuit raw/real N restock mutated combat, economy, or persistence', {
+    pursuitBefore,
+    rawPursuitPurchase,
+    pursuitRefusal,
+  });
+  await page.evaluate(() => window.__SF_SIM__.streetHeat.restart());
+
+  const activeWork = await page.evaluate(() => window.__SF_SIM__.lifeSim.workShift());
+  const contractBefore = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+  }));
+  await page.keyboard.press('n');
+  await page.waitForTimeout(60);
+  const contractRefusal = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    message: document.querySelector('.hud__message-text')?.textContent || '',
+  }));
+  assert(activeWork === true
+    && contractRefusal.life.cash === contractBefore.life.cash
+    && contractRefusal.life.lastTransaction?.at === contractBefore.life.lastTransaction?.at
+    && contractRefusal.combat.reserveAmmo === contractBefore.combat.reserveAmmo
+    && contractRefusal.message.includes('Market counter unavailable'),
+  'active contract allowed a real N ammunition purchase', { contractBefore, contractRefusal });
+  await page.evaluate(() => window.__SF_SIM__.lifeSim.cancelWorkShift('QA cleanup'));
+
+  const rawAuthorizedPurchase = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const before = { life: sim.lifeSim.getState(), combat: sim.getCombatState() };
+    const purchase = sim.lifeSim.buyAmmoAtMarket({ x: 99999, z: 99999 }, 0, 999);
+    return {
+      before,
+      purchase,
+      after: { life: sim.lifeSim.getState(), combat: sim.getCombatState() },
+    };
+  });
+  assert(rawAuthorizedPurchase.purchase?.rounds === 24
+    && rawAuthorizedPurchase.purchase?.stock?.added === 24
+    && rawAuthorizedPurchase.after.combat.reserveAmmo === rawAuthorizedPurchase.before.combat.reserveAmmo + 24
+    && rawAuthorizedPurchase.after.life.cash === rawAuthorizedPurchase.before.life.cash - 32
+    && rawAuthorizedPurchase.after.life.lastTransaction?.kind === 'ammo-purchase',
+  'valid raw purchase did not atomically stock authoritative reserve and charge once', rawAuthorizedPurchase);
+
   const purchases = [];
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 2; index += 1) {
     await page.keyboard.press('n');
     purchases.push(await page.evaluate(() => ({
       life: window.__SF_SIM__.lifeSim.getState(),
@@ -121,13 +213,18 @@ try {
     })));
   }
   const stocked = purchases.at(-1);
-  assert(purchases.map((entry) => entry.combat.reserveAmmo).join(',') === '72,96,120'
+  assert(purchases.map((entry) => entry.combat.reserveAmmo).join(',') === '96,120'
     && stocked.life.cash === 44
     && stocked.life.lastTransaction?.kind === 'ammo-purchase'
     && stocked.life.lastTransaction?.amount === -32
     && stocked.message.includes('120/120 reserve'),
   'real market purchases did not charge cash and fill reserve in 24-round boxes', purchases);
 
+  const forgedFullPurchase = await page.evaluate(() => window.__SF_SIM__.lifeSim.buyAmmoAtMarket(
+    { x: 99999, z: 99999 },
+    0,
+    999,
+  ));
   await page.keyboard.press('n');
   const capped = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
@@ -135,7 +232,8 @@ try {
     message: document.querySelector('.hud__message-text')?.textContent || '',
     save: window.__SF_SIM__.getSavedProgress(),
   }));
-  assert(capped.life.cash === stocked.life.cash
+  assert(forgedFullPurchase === null
+    && capped.life.cash === stocked.life.cash
     && capped.combat.reserveAmmo === 120
     && capped.message.includes('reserve full')
     && capped.save.snapshot?.combat?.reserveAmmo === 120,
@@ -166,10 +264,15 @@ try {
     result: failures.length === 0 ? 'ammo economy smoke passed' : 'ammo economy smoke failed',
     baseUrl,
     angle,
+    renderer,
     outside,
     refused,
     downedRefusal,
+    pursuitRefusal,
+    contractRefusal,
+    rawAuthorizedPurchase,
     purchases,
+    forgedFullPurchase,
     capped,
     restored,
     performance,
