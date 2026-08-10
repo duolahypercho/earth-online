@@ -4595,6 +4595,10 @@ function onKeyUp(event) {
 }
 
 function enterNearestInterior() {
+  if (streetHeat?.getState?.().pursuitActive) {
+    hud.setMessage('INTERIOR LOCKED / LOSE THE STREETHEAT TAIL OR SURRENDER.');
+    return false;
+  }
   const nearest = getInteractionPortal();
   if (!nearest) {
     hud.setMessage('Move toward a lit doorway to enter.');
