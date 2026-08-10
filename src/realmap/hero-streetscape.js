@@ -12,13 +12,17 @@ import * as THREE from 'three';
  */
 export const FERRY_BUILDING_STREETSCAPE_BUDGET = Object.freeze({
   maxDrawCalls: 18,
-  maxInstances: 220,
-  maxTriangles: 9200,
+  maxInstances: 360,
+  maxTriangles: 12400,
 });
 
 export const FERRY_BUILDING_STREETSCAPE_SOURCE = Object.freeze({
   dataset: 'OpenStreetMap SF city snapshot',
-  roadIds: Object.freeze([26769726, 88463826, 88463827, 88463831]),
+  roadIds: Object.freeze([26769726, 88463826, 88463827, 88463831, 283512618, 850162147]),
+  pavingPathIds: Object.freeze([
+    779448275, 779448274, 779448273, 151632675, 779448272, 779448271, 1189071403,
+    196662077, 196662081,
+  ]),
   ferryBuildingWay: 558731934,
 });
 
@@ -29,11 +33,28 @@ const DEFAULT_ROADS = Object.freeze([
   { id: 88463826, name: 'The Embarcadero', width: 11.8, points: [[2314.9, 1815.0], [2295.6, 1837.9]] },
   { id: 88463827, name: 'The Embarcadero', width: 11.8, points: [[2357.4, 1738.2], [2389.0, 1702.0]] },
   { id: 88463831, name: 'Mission Street', width: 10.2, points: [[2357.4, 1738.2], [2304.7, 1685.8]] },
+  { id: 283512618, name: 'The Embarcadero', width: 6.5, points: [[2169.7, 1947.1], [2264.2, 1824.2]] },
+  { id: 850162147, name: 'The Embarcadero', width: 9.75, points: [[2258.5, 1885.4], [2224.4, 1932.4]] },
+]);
+const DEFAULT_PAVING_PATHS = Object.freeze([
+  { id: 779448275, name: 'Market Street', surface: 'paving_stones', width: 3.8, points: [[2173, 1831.4], [2206.4, 1865.1]] },
+  { id: 779448274, name: '', surface: 'asphalt', width: 3.2, points: [[2206.4, 1865.1], [2215.9, 1873.6]] },
+  { id: 779448273, name: '', surface: 'paving_stones', width: 3.8, points: [[2215.9, 1873.6], [2229.2, 1897.2]] },
+  { id: 151632675, name: '', surface: 'asphalt', width: 3.2, points: [[2236.1, 1902.4], [2240.8, 1906.6]] },
+  { id: 779448272, name: '', surface: 'paving_stones', width: 3.8, points: [[2240.8, 1906.6], [2248.9, 1913.1]] },
+  { id: 779448271, name: '', surface: 'paving_stones', width: 3.8, points: [[2248.9, 1913.1], [2258.8, 1920.2]] },
+  { id: 1189071403, name: '', surface: 'paving_stones', width: 3.8, points: [[2258.8, 1920.2], [2267.7, 1925.3]] },
+  { id: 196662077, name: '', surface: 'concrete', width: 3.4, points: [[2161.8, 1842.5], [2247.2, 1757.9]] },
+  { id: 196662081, name: '', surface: 'paving_stones', width: 3.8, points: [[2172.5, 1854.1], [2229.2, 1796.8]] },
 ]);
 
 const PALETTE = Object.freeze({
   curb: 0x9da3a1,
-  sidewalk: 0x7c8584,
+  sidewalk: 0x888984,
+  pavingStone: 0x8e8b80,
+  pavingConcrete: 0x999994,
+  pavingBorder: 0x9a9992,
+  pavingAsphalt: 0x4f5555,
   marking: 0xe7dfc2,
   utility: 0x394042,
   iron: 0x202729,
@@ -109,6 +130,49 @@ function normaliseRoads(roads) {
   return DEFAULT_ROADS.map((road) => ({ ...road, points: normalisePoints(road.points) }));
 }
 
+function sourcePavingPathIdMatches(road) {
+  return FERRY_BUILDING_STREETSCAPE_SOURCE.pavingPathIds.some((id) => String(id) === String(road?.id));
+}
+
+function normalisePavingPaths(roads) {
+  const callerPaths = Array.isArray(roads) ? roads.filter(sourcePavingPathIdMatches) : [];
+  const normalised = callerPaths.flatMap((path) => {
+    const points = normalisePoints(path?.points);
+    if (points.length < 2) return [];
+    const surface = String(path.surface || path.tags?.surface || path.properties?.surface || 'paving_stones');
+    const explicitWidth = numberFrom(path.widthM, path.width, path.tags?.width, path.properties?.width);
+    return [{
+      id: path.id,
+      name: path.name || '',
+      surface,
+      width: explicitWidth === null ? (surface === 'asphalt' ? 3.2 : 3.8) : clamp(explicitWidth, 2.4, 6),
+      points,
+    }];
+  });
+  if (normalised.length) return normalised;
+  return DEFAULT_PAVING_PATHS.map((path) => ({ ...path, points: normalisePoints(path.points) }));
+}
+
+function segmentIntersection(first, second) {
+  const rx = first.b[0] - first.a[0];
+  const rz = first.b[1] - first.a[1];
+  const sx = second.b[0] - second.a[0];
+  const sz = second.b[1] - second.a[1];
+  const denominator = rx * sz - rz * sx;
+  if (Math.abs(denominator) < 1e-7) return null;
+  const qx = second.a[0] - first.a[0];
+  const qz = second.a[1] - first.a[1];
+  const firstT = (qx * sz - qz * sx) / denominator;
+  const secondT = (qx * rz - qz * rx) / denominator;
+  if (firstT < 0 || firstT > 1 || secondT < 0 || secondT > 1) return null;
+  return {
+    x: first.a[0] + rx * firstT,
+    z: first.a[1] + rz * firstT,
+    firstT,
+    secondT,
+  };
+}
+
 function forEachSegment(road, visit) {
   for (let index = 1; index < road.points.length; index += 1) {
     const a = road.points[index - 1];
@@ -160,10 +224,55 @@ function cylinderMatrix(target, x, y, z, sx, sy, sz, yaw = 0) {
   return boxMatrix(target, x, y, z, sx, sy, sz, yaw);
 }
 
+function createPavingTexture({ roughness = false } = {}) {
+  const size = 64;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    const course = Math.floor(y / 8);
+    for (let x = 0; x < size; x += 1) {
+      const shiftedX = (x + (course % 2) * 8) % 16;
+      const mortar = y % 8 === 0 || shiftedX === 0;
+      const noise = hash11(x * 73 + y * 131 + course * 17);
+      const value = roughness
+        ? (mortar ? 224 : Math.round(176 + noise * 38))
+        : (mortar ? 138 : Math.round(166 + noise * 24));
+      const offset = (y * size + x) * 4;
+      data[offset] = value;
+      data[offset + 1] = roughness ? value : Math.round(value * 0.98);
+      data[offset + 2] = roughness ? value : Math.round(value * 0.91);
+      data[offset + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(3, 2);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  if (!roughness) texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function makeMaterials() {
+  const pavingMap = createPavingTexture();
+  const pavingRoughnessMap = createPavingTexture({ roughness: true });
   return {
     curb: createStandardMaterial(PALETTE.curb, 0.82),
     sidewalk: createStandardMaterial(PALETTE.sidewalk, 0.9),
+    paving: new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: pavingMap,
+      roughnessMap: pavingRoughnessMap,
+      roughness: 0.92,
+      metalness: 0,
+      envMapIntensity: 0.72,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    }),
+    pavingBorder: createStandardMaterial(PALETTE.pavingBorder, 0.86),
     marking: createStandardMaterial(PALETTE.marking, 0.5),
     utility: createStandardMaterial(PALETTE.utility, 0.42, 0.54),
     iron: createStandardMaterial(PALETTE.iron, 0.34, 0.78),
@@ -179,11 +288,13 @@ function makeBatches(root, materials) {
   const cube = new THREE.BoxGeometry(1, 1, 1);
   const cylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
   const disc = new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
-  return {
+  const batches = {
     curb: makeBatch(root, 'OSM-aligned curb returns', cube, materials.curb, 36),
     sidewalk: makeBatch(root, 'Ferry Plaza sidewalk slabs', cube, materials.sidewalk, 48),
+    paving: makeBatch(root, 'Market Street OSM paving finish', cube, materials.paving, 96),
+    pavingBorder: makeBatch(root, 'Market Street paving edge courses', cube, materials.pavingBorder, 48),
     seams: makeBatch(root, 'Sidewalk expansion seams', cube, materials.facadeShadow, 80),
-    marking: makeBatch(root, 'OSM road markings', cube, materials.marking, 66),
+    marking: makeBatch(root, 'OSM road markings', cube, materials.marking, 96),
     utility: makeBatch(root, 'Drain and access covers', disc, materials.utility, 30),
     bollard: makeBatch(root, 'Ferry Plaza bollards', cylinder, materials.iron, 40),
     benchSeat: makeBatch(root, 'Public benches seats', cube, materials.iron, 10),
@@ -194,8 +305,12 @@ function makeBatches(root, materials) {
     facadeTrim: makeBatch(root, 'Ferry Building facade trim', cube, materials.facadeShadow, 22),
     facadeGlass: makeBatch(root, 'Ferry Building storefront glazing', cube, materials.glass, 24),
     geometries: [cube, cylinder, disc],
+    textures: [materials.paving.map, materials.paving.roughnessMap],
     materials: Object.values(materials),
   };
+  batches.paving.mesh.castShadow = false;
+  batches.pavingBorder.mesh.castShadow = false;
+  return batches;
 }
 
 function setBatchColors(batch, colorAt) {
@@ -206,6 +321,69 @@ function setBatchColors(batch, colorAt) {
 
 function isUsablePoint(x, z, bounds, isSea) {
   return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ && !isSea(x, z);
+}
+
+function addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, matrix) {
+  const stoneColor = new THREE.Color(PALETTE.pavingStone);
+  const concreteColor = new THREE.Color(PALETTE.pavingConcrete);
+  const asphaltColor = new THREE.Color(PALETTE.pavingAsphalt);
+  for (const path of pavingPaths) {
+    forEachSegment(path, ({ a, dx, dz, length, angle }) => {
+      const nx = -dz / length;
+      const nz = dx / length;
+      const chunks = Math.max(1, Math.ceil(length / 4.8));
+      const chunkLength = length / chunks;
+      for (let chunk = 0; chunk < chunks; chunk += 1) {
+        const distance = chunkLength * (chunk + 0.5);
+        const x = a[0] + (dx / length) * distance;
+        const z = a[1] + (dz / length) * distance;
+        if (!isUsablePoint(x, z, bounds, isSea)) continue;
+        const surfaceY = terrainElevation(x, z);
+        const baseColor = path.surface === 'asphalt'
+          ? asphaltColor
+          : path.surface === 'concrete' ? concreteColor : stoneColor;
+        const color = baseColor.clone().offsetHSL(0, 0, (hash11(path.id + chunk * 17) - 0.5) * 0.08);
+        put(batches.paving, boxMatrix(matrix, x, surfaceY + 0.014, z,
+          Math.max(0.4, chunkLength + 0.012), 0.028, path.width, angle), color);
+      }
+
+      for (const side of [-1, 1]) {
+        const x = a[0] + dx * 0.5 + nx * side * (path.width * 0.5 - 0.045);
+        const z = a[1] + dz * 0.5 + nz * side * (path.width * 0.5 - 0.045);
+        if (!isUsablePoint(x, z, bounds, isSea)) continue;
+        put(batches.pavingBorder, boxMatrix(matrix, x, terrainElevation(x, z) + 0.014, z,
+          Math.max(0.4, length + 0.01), 0.028, 0.045, angle));
+      }
+    });
+  }
+}
+
+function addDerivedCrossings(batches, roads, pavingPaths, roadElevation, bounds, isSea, matrix) {
+  const crossingRoadIds = new Set([283512618, 850162147]);
+  const marketApproachPathIds = new Set([779448275, 779448274, 779448273, 151632675, 779448272, 779448271, 1189071403]);
+  let crossingCount = 0;
+  for (const road of roads) {
+    if (!crossingRoadIds.has(Number(road.id))) continue;
+    forEachSegment(road, (roadSegment) => {
+      const ux = roadSegment.dx / roadSegment.length;
+      const uz = roadSegment.dz / roadSegment.length;
+      for (const path of pavingPaths) {
+        if (!marketApproachPathIds.has(Number(path.id))) continue;
+        forEachSegment(path, (pathSegment) => {
+          const intersection = segmentIntersection(roadSegment, pathSegment);
+          if (!intersection || !isUsablePoint(intersection.x, intersection.z, bounds, isSea)) return;
+          for (let stripe = -3; stripe <= 3; stripe += 1) {
+            const x = intersection.x + ux * stripe * 0.76;
+            const z = intersection.z + uz * stripe * 0.76;
+            put(batches.marking, boxMatrix(matrix, x, roadElevation(x, z) + 0.016, z,
+              0.46, 0.024, Math.max(2.8, road.width - 0.7), roadSegment.angle));
+          }
+          crossingCount += 1;
+        });
+      }
+    });
+  }
+  return crossingCount;
 }
 
 function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix) {
@@ -244,6 +422,17 @@ function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds,
         const z = a[1] + dz * progress;
         if (isUsablePoint(x, z, bounds, isSea)) {
           put(batches.marking, boxMatrix(matrix, x, roadElevation(x, z) + 0.012, z, 3.35, 0.018, 0.13, angle));
+        }
+      }
+
+      if (road.id === 283512618 || road.id === 850162147) {
+        for (const side of [-1, 1]) {
+          const edgeX = midpointX + nx * side * road.width * 0.42;
+          const edgeZ = midpointZ + nz * side * road.width * 0.42;
+          if (isUsablePoint(edgeX, edgeZ, bounds, isSea)) {
+            put(batches.marking, boxMatrix(matrix, edgeX, roadElevation(edgeX, edgeZ) + 0.013, edgeZ,
+              length - 0.3, 0.018, 0.1, angle));
+          }
         }
       }
 
@@ -355,6 +544,7 @@ function finishBatches(batches) {
   const meshes = Object.values(batches).filter((item) => item?.mesh).map((item) => item.mesh);
   for (const mesh of meshes) {
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
   }
   return meshes;
@@ -418,6 +608,7 @@ export function createFerryBuildingStreetscape(options = {}) {
     return Number.isFinite(sampled) ? sampled : roadElevation(x, z) + 0.08;
   };
   const roads = normaliseRoads(options.roads);
+  const pavingPaths = normalisePavingPaths(options.roads);
   const root = new THREE.Group();
   root.name = 'Ferry Plaza source-aligned hero streetscape';
   root.userData.heroStreetscape = true;
@@ -427,7 +618,11 @@ export function createFerryBuildingStreetscape(options = {}) {
   const materials = makeMaterials();
   const batches = makeBatches(root, materials);
   const matrix = new THREE.Matrix4();
+  addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, matrix);
   addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix);
+  const derivedCrossings = addDerivedCrossings(
+    batches, roads, pavingPaths, roadElevation, bounds, isSea, matrix,
+  );
   addPlazaFurniture(batches, sidewalkElevation, bounds, isSea, matrix);
   addFerryFacadeRelief(batches, terrainElevation, bounds, isSea, matrix);
   const meshes = finishBatches(batches);
@@ -436,6 +631,8 @@ export function createFerryBuildingStreetscape(options = {}) {
     instances: meshes.reduce((total, mesh) => total + mesh.count, 0),
     triangles: countTriangles(meshes),
     roads: roads.map(({ id, name, width }) => ({ id, name, width })),
+    pavingPaths: pavingPaths.map(({ id, name, surface, width }) => ({ id, name, surface, width })),
+    derivedCrossings,
     layers,
   });
   if (stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls
@@ -443,6 +640,7 @@ export function createFerryBuildingStreetscape(options = {}) {
     || stats.triangles > FERRY_BUILDING_STREETSCAPE_BUDGET.maxTriangles) {
     root.removeFromParent();
     for (const geometry of batches.geometries) geometry.dispose();
+    for (const texture of batches.textures) texture.dispose();
     for (const material of batches.materials) material.dispose();
     throw new Error('Ferry Building streetscape exceeded its static rendering budget.');
   }
@@ -451,6 +649,7 @@ export function createFerryBuildingStreetscape(options = {}) {
   let wetness = clamp(Number(options.wetness) || 0, 0, 1);
   let disposed = false;
   const dryRoughness = new Map(batches.materials.map((material) => [material, material.roughness]));
+  const pavingDryColor = materials.paving.color.clone();
 
   function setConditions(next = {}) {
     if (disposed) return wetness;
@@ -460,6 +659,9 @@ export function createFerryBuildingStreetscape(options = {}) {
       material.roughness = THREE.MathUtils.lerp(dry, Math.min(dry, 0.2), wetness * (material === materials.leaf ? 0.25 : 0.75));
       material.needsUpdate = true;
     }
+    materials.paving.color.copy(pavingDryColor).lerp(new THREE.Color(0x747b7d), wetness * 0.2);
+    materials.paving.envMapIntensity = THREE.MathUtils.lerp(0.72, 1.12, wetness);
+    materials.paving.needsUpdate = true;
     return wetness;
   }
 
@@ -476,6 +678,7 @@ export function createFerryBuildingStreetscape(options = {}) {
     disposed = true;
     root.removeFromParent();
     for (const geometry of batches.geometries) geometry.dispose();
+    for (const texture of batches.textures) texture.dispose();
     for (const material of batches.materials) material.dispose();
   }
 
