@@ -1735,6 +1735,8 @@ export function createTrafficSystem({
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
   let impoundedPlayerVehicle = null;
+  const playerGarageSlots = [null, null];
+  let playerGarageRetrieveCursor = 0;
   let taxiRide = null;
   let playerSignalViolationLatch = null;
   let playerPedestrianImpactProbe = null;
@@ -2016,6 +2018,7 @@ export function createTrafficSystem({
           damageState: 'clear',
           disabled: false,
           impounded: false,
+          garageStored: false,
           damageCooldownUntil: 0,
           lastDamage: null,
           theftReported: false,
@@ -3101,7 +3104,7 @@ export function createTrafficSystem({
       // its forward safety correction can produce a real impact consequence.
       // Remote vehicles remain excluded because their network poses do not
       // own a reliable road-progress value in this simulation.
-      if (v.parked || v.impounded || vehicleIsCurbside(v) || v.remoteControlled) continue;
+      if (v.parked || v.impounded || v.garageStored || vehicleIsCurbside(v) || v.remoteControlled) continue;
       const bucketIndex = v.road * 2 + (v.dir === 1 ? 0 : 1);
       laneBuckets[bucketIndex].push(v);
     }
@@ -3169,7 +3172,7 @@ export function createTrafficSystem({
 
     for (const v of vehicles) {
       let road = roads[v.road];
-      if (v.impounded) {
+      if (v.impounded || v.garageStored) {
         v.speed = 0;
         v.longitudinalAccel = 0;
         v.accelSm = 0;
@@ -4308,7 +4311,11 @@ export function createTrafficSystem({
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (v.impounded) {
+      if (v.garageStored) {
+        actionKey = 'garage-stored';
+        actionLabel = 'Stored at Ferry garage';
+        actionDetail = 'owned roster';
+      } else if (v.impounded) {
         actionKey = 'impounded';
         actionLabel = 'Held at Ferry impound';
         actionDetail = 'retrieval pending';
@@ -4357,7 +4364,9 @@ export function createTrafficSystem({
 
       let stopCue = null;
       let dwellRemaining = null;
-      if (v.impounded) {
+      if (v.garageStored) {
+        stopCue = 'garage-stored';
+      } else if (v.impounded) {
         stopCue = 'impounded';
       } else if (taxiPassengerActive) {
         stopCue = 'taxi-passenger';
@@ -4590,6 +4599,7 @@ export function createTrafficSystem({
   function activatePlayerVehicleRecord(vehicle) {
     if (!vehicle
       || vehicle.impounded
+      || vehicle.garageStored
       || (playerVehicle && playerVehicle !== vehicle)) return false;
     if (lastPlayerParkedVehicle && lastPlayerParkedVehicle !== vehicle) {
       lastPlayerParkedVehicle.dwellUntil = 4;
@@ -4627,6 +4637,7 @@ export function createTrafficSystem({
       const vehicle = vehicles[index];
       if (vehicle.cls === 'bike') continue;
       if (vehicle.impounded) continue;
+      if (vehicle.garageStored) continue;
       if (taxiAtServiceStop(vehicle)) continue;
       if (deliveryAtServiceStop(vehicle)) continue;
       if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
@@ -4778,6 +4789,7 @@ export function createTrafficSystem({
     if (!vehicle
       || vehicle.playerControlled
       || vehicle.remoteControlled
+      || vehicle.garageStored
       || (vehicle.disabled && vehicle !== lastPlayerParkedVehicle)) return false;
     vehicle.hazardUntil = 0;
     vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
@@ -4832,6 +4844,7 @@ export function createTrafficSystem({
       || vehicle.cls !== snapshot.class
       || vehicle.identity.key !== snapshot.identity
       || vehicle.remoteControlled
+      || vehicle.garageStored
       || (snapshot.registeredOwner === true && vehicle.identity.category !== 'private')
       || (playerVehicle && playerVehicle !== vehicle)
       || (mode !== 'driving' && playerVehicle)
@@ -4869,6 +4882,7 @@ export function createTrafficSystem({
     vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
     vehicle.theftReported = snapshot.theftReported;
     vehicle.registeredOwner = snapshot.registeredOwner === true;
+    vehicle.garageStored = false;
     if (wasDisabled !== vehicle.disabled) {
       diagnostics.disabledVehicles += vehicle.disabled ? 1 : -1;
       diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
@@ -4968,6 +4982,197 @@ export function createTrafficSystem({
       || vehicle.registeredOwner) return null;
     vehicle.registeredOwner = true;
     return serializePlayerVehicleState(vehicle, 'parked');
+  }
+
+  function setGarageStoredState(vehicle, stored) {
+    if (!vehicle) return;
+    vehicle.garageStored = stored;
+    vehicle.impounded = false;
+    vehicle.playerControlled = false;
+    vehicle.playerSteer = 0;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    vehicle.mesh.root.visible = !stored;
+  }
+
+  function getPlayerGarageState() {
+    const slots = playerGarageSlots.map((vehicle, slot) => (
+      vehicle ? { slot, ...serializePlayerVehicleState(vehicle, 'garage') } : null
+    ));
+    return {
+      capacity: playerGarageSlots.length,
+      count: slots.filter(Boolean).length,
+      nextRetrieveSlot: playerGarageRetrieveCursor,
+      slots,
+    };
+  }
+
+  function exportPlayerGarageState() {
+    return getPlayerGarageState();
+  }
+
+  function storeParkedPlayerVehicleInGarage() {
+    const vehicle = lastPlayerParkedVehicle;
+    const slot = playerGarageSlots.findIndex((entry) => entry === null);
+    if (!vehicle
+      || slot < 0
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || taxiRide
+      || vehicle.identity.category !== 'private'
+      || vehicle.registeredOwner !== true
+      || vehicle.garageStored) return null;
+    lastPlayerParkedVehicle = null;
+    playerGarageSlots[slot] = vehicle;
+    setGarageStoredState(vehicle, true);
+    return { slot, vehicle: serializePlayerVehicleState(vehicle, 'garage') };
+  }
+
+  function retrievePlayerGarageVehicle(position, heading = 0, requestedSlot = null) {
+    if (playerVehicle || lastPlayerParkedVehicle || impoundedPlayerVehicle || taxiRide) return null;
+    const hasRequestedSlot = Number.isInteger(requestedSlot);
+    let slot = hasRequestedSlot ? requestedSlot : -1;
+    if (hasRequestedSlot && (
+      slot < 0 || slot >= playerGarageSlots.length || !playerGarageSlots[slot]
+    )) return null;
+    if (!hasRequestedSlot) {
+      slot = -1;
+      for (let offset = 0; offset < playerGarageSlots.length; offset += 1) {
+        const candidate = (playerGarageRetrieveCursor + offset) % playerGarageSlots.length;
+        if (playerGarageSlots[candidate]) {
+          slot = candidate;
+          break;
+        }
+      }
+    }
+    if (slot < 0) return null;
+    const vehicle = playerGarageSlots[slot];
+    const projection = projectVehiclePoseToRoad(position, heading, {
+      maxDistance: 96,
+      snapToLane: true,
+    });
+    if (!projection) return null;
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    setGarageStoredState(vehicle, false);
+    playerGarageSlots[slot] = null;
+    playerGarageRetrieveCursor = (slot + 1) % playerGarageSlots.length;
+    lastPlayerParkedVehicle = vehicle;
+    return { slot, vehicle: serializePlayerVehicleState(vehicle, 'parked') };
+  }
+
+  function importPlayerGarageState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || !Array.isArray(snapshot.slots)) return false;
+    if (snapshot.slots.length !== playerGarageSlots.length) return false;
+    const cursor = Number(snapshot.nextRetrieveSlot ?? 0);
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor >= playerGarageSlots.length) return false;
+    const validated = [];
+    const vehicleIds = new Set();
+    for (let slot = 0; slot < snapshot.slots.length; slot += 1) {
+      const entry = snapshot.slots[slot];
+      if (entry === null) {
+        validated.push(null);
+        continue;
+      }
+      const vehicleId = Number(entry.vehicleId);
+      const heading = Number(entry.heading);
+      const health = Number(entry.damage?.health);
+      const maxHealth = Number(entry.damage?.maxHealth);
+      if (entry.mode !== 'garage'
+        || entry.slot !== slot
+        || !Number.isInteger(vehicleId)
+        || vehicleIds.has(vehicleId)
+        || !Number.isFinite(heading)
+        || !Number.isFinite(health)
+        || !Number.isFinite(maxHealth)
+        || typeof entry.class !== 'string'
+        || entry.identity !== 'private'
+        || entry.registeredOwner !== true
+        || typeof entry.theftReported !== 'boolean'
+        || typeof entry.damage?.disabled !== 'boolean') return false;
+      const vehicle = vehicles[vehicleId];
+      if (!vehicle
+        || vehicle.cls !== entry.class
+        || vehicle.identity.key !== entry.identity
+        || vehicle.identity.category !== 'private'
+        || vehicle.remoteControlled
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || maxHealth !== vehicle.maxHealth
+        || health < 0
+        || health > maxHealth
+        || entry.damage.disabled !== (health <= 0)) return false;
+      const projection = projectVehiclePoseToRoad(entry.position, heading);
+      if (!projection) return false;
+      const lastDamage = entry.damage.lastDamage;
+      if (lastDamage !== null && lastDamage !== undefined && (
+        typeof lastDamage !== 'object'
+        || !Number.isFinite(Number(lastDamage.amount))
+        || !Number.isFinite(Number(lastDamage.at))
+        || typeof lastDamage.source !== 'string'
+      )) return false;
+      vehicleIds.add(vehicleId);
+      validated.push({
+        vehicle,
+        projection,
+        health,
+        disabled: entry.damage.disabled,
+        theftReported: entry.theftReported,
+        lastDamage,
+      });
+    }
+
+    for (const vehicle of playerGarageSlots) {
+      if (vehicle && !vehicleIds.has(vehicles.indexOf(vehicle))) setGarageStoredState(vehicle, false);
+    }
+    playerGarageSlots.fill(null);
+    validated.forEach((entry, slot) => {
+      if (!entry) return;
+      const { vehicle, projection, health, disabled, theftReported, lastDamage } = entry;
+      const wasDisabled = vehicle.disabled;
+      vehicle.road = projection.road;
+      vehicle.dir = projection.dir;
+      vehicle.s = projection.s;
+      vehicle.laneOffsetSm = projection.lateral;
+      vehicle.heading = projection.heading;
+      vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+      vehicle.mesh.root.rotation.y = projection.heading;
+      vehicle.health = health;
+      vehicle.disabled = disabled;
+      vehicle.damageState = damageStateFor(vehicle);
+      vehicle.lastDamage = lastDamage ? {
+        amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+        source: lastDamage.source.slice(0, 64),
+        at: Math.max(0, Number(lastDamage.at)),
+      } : null;
+      vehicle.damageCooldownUntil = 0;
+      vehicle.theftReported = theftReported;
+      vehicle.registeredOwner = true;
+      if (wasDisabled !== disabled) {
+        diagnostics.disabledVehicles += disabled ? 1 : -1;
+        diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
+      }
+      syncVehicleDamageMetadata(vehicle);
+      setGarageStoredState(vehicle, true);
+      playerGarageSlots[slot] = vehicle;
+    });
+    playerGarageRetrieveCursor = cursor;
+    return true;
   }
 
   function exitPlayerVehicle() {
@@ -5198,7 +5403,7 @@ export function createTrafficSystem({
 
   function setRemotePose(index, pose = {}) {
     const vehicle = vehicles[index];
-    if (!vehicle || vehicle.playerControlled || vehicle.impounded) return false;
+    if (!vehicle || vehicle.playerControlled || vehicle.impounded || vehicle.garageStored) return false;
     if (!vehicle.remoteControlled) {
       vehicle.remoteControlled = true;
       vehicle.parked = false;
@@ -5286,6 +5491,11 @@ export function createTrafficSystem({
     enterPlayerVehicle,
     exportPlayerVehicleState,
     importPlayerVehicleState,
+    getPlayerGarageState,
+    exportPlayerGarageState,
+    importPlayerGarageState,
+    storeParkedPlayerVehicleInGarage,
+    retrievePlayerGarageVehicle,
     reportPlayerVehicleTheft,
     getPlayerVehicleRegistrationState,
     registerParkedPlayerVehicle,

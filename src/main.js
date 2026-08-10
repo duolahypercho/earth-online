@@ -1275,6 +1275,7 @@ function savePlayerProgress() {
     combat: combat.exportState(),
     streetHeat: streetHeat.exportState(),
     vehicle: traffic.exportPlayerVehicleState?.() ?? null,
+    garage: traffic.exportPlayerGarageState?.() ?? null,
     world: exportPlayerWorldState(),
   };
   try {
@@ -1324,6 +1325,7 @@ function restorePlayerProgress() {
   const previousCombat = combat?.exportState?.();
   const previousStreetHeat = streetHeat?.exportState?.();
   const previousVehicle = traffic.exportPlayerVehicleState?.() ?? null;
+  const previousGarage = traffic.exportPlayerGarageState?.() ?? null;
   const previousWorld = exportPlayerWorldState();
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
@@ -1341,12 +1343,15 @@ function restorePlayerProgress() {
     && combatRestored
     && streetHeatRestored
     && worldRestored;
-  const vehicleRestored = baseRestored && snapshot.vehicle
+  const garageRestored = baseRestored && snapshot.garage
+    ? traffic.importPlayerGarageState?.(snapshot.garage) === true
+    : baseRestored;
+  const vehicleRestored = garageRestored && snapshot.vehicle
     ? traffic.importPlayerVehicleState?.(snapshot.vehicle) === true
       && ((snapshot.vehicle.mode ?? 'driving') !== 'driving'
         || activatePlayerVehiclePresentation({ restored: true }) !== null)
-    : baseRestored;
-  if (baseRestored && vehicleRestored) {
+    : garageRestored;
+  if (baseRestored && garageRestored && vehicleRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
@@ -1355,6 +1360,7 @@ function restorePlayerProgress() {
   if (previousCombat) combat?.importState?.(previousCombat);
   if (previousStreetHeat) streetHeat?.importState?.(previousStreetHeat);
   if (previousWorld) importPlayerWorldState(previousWorld);
+  if (previousGarage) traffic.importPlayerGarageState?.(previousGarage);
   if (previousVehicle && !traffic.isPlayerDriving?.()) {
     traffic.importPlayerVehicleState?.(previousVehicle);
     if ((previousVehicle.mode ?? 'driving') === 'driving') {
@@ -1920,6 +1926,62 @@ function registerParkedVehicleAtFerry() {
   }
   hud?.setLifeState?.(lifeSim?.getState?.());
   hud?.setMessage(`Vehicle registered · $${VEHICLE_REGISTRATION_FEE} paid · future entry is legal.`);
+  savePlayerProgress();
+  return true;
+}
+
+function handleFerryGarageAction() {
+  if (!ferryImpoundContext()) return null;
+  if (traffic.isPlayerDriving?.() || taxiRideState?.active) {
+    hud?.setMessage('Park and enter Ferry Building before using the garage.');
+    return false;
+  }
+  if (traffic.getImpoundedVehicleState?.()) {
+    hud?.setMessage('Resolve the Ferry impound hold before using the garage.');
+    return false;
+  }
+  if (combat?.getState?.().status !== 'running') {
+    hud?.setMessage('Recover before using the Ferry garage.');
+    return false;
+  }
+  if (streetHeat?.getState?.().pursuitActive) {
+    hud?.setMessage('Lose the pursuit before using the Ferry garage.');
+    return false;
+  }
+  const parked = traffic.getPlayerVehicleRegistrationState?.();
+  const garage = traffic.getPlayerGarageState?.();
+  if (parked) {
+    if (!parked.eligible || !parked.registeredOwner) {
+      hud?.setMessage('Register this private vehicle before storing it.');
+      return false;
+    }
+    if ((garage?.count ?? 0) >= (garage?.capacity ?? 2)) {
+      hud?.setMessage('Ferry garage full · retrieve a vehicle before storing another.');
+      return false;
+    }
+    const stored = traffic.storeParkedPlayerVehicleInGarage?.();
+    if (!stored) {
+      hud?.setMessage('Ferry garage storage unavailable.');
+      return false;
+    }
+    hud?.setMessage(`Ferry garage · stored ${(stored.vehicle.class || 'vehicle').toUpperCase()} in slot ${stored.slot + 1}.`);
+    savePlayerProgress();
+    return true;
+  }
+  if (!garage?.count) {
+    hud?.setMessage('Ferry garage empty · bring a registered vehicle to store.');
+    return false;
+  }
+  const pickup = controls.exteriorSnapshot?.target ?? controls.target;
+  const retrieved = traffic.retrievePlayerGarageVehicle?.(
+    pickup,
+    controls.exteriorSnapshot?.yaw ?? controls.yaw,
+  );
+  if (!retrieved) {
+    hud?.setMessage('Ferry garage retrieval unavailable.');
+    return false;
+  }
+  hud?.setMessage(`Ferry garage · slot ${retrieved.slot + 1} ready at curb.`);
   savePlayerProgress();
   return true;
 }
@@ -4244,7 +4306,10 @@ function onKeyDown(event) {
   }
   if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();
   if (code === 'KeyN' && !event.repeat) buyPlayerAmmo();
-  if (code === 'KeyG' && !event.repeat) usePlayerMedkit();
+  if (code === 'KeyG' && !event.repeat) {
+    const garageHandled = handleFerryGarageAction();
+    if (garageHandled === null) usePlayerMedkit();
+  }
   if (code === 'KeyF' && !event.repeat) {
     startPlayerWorkShift();
   }
@@ -4337,10 +4402,15 @@ function enterNearestInterior() {
     const flagship = city.getInteriorState?.().flagship;
     const ferryEntry = String(nearest.label || '').toLowerCase().includes('ferry building');
     const registration = traffic.getPlayerVehicleRegistrationState?.();
+    const garage = traffic.getPlayerGarageState?.();
     if (traffic.getImpoundedVehicleState?.() && ferryEntry) {
       hud.setMessage(`Ferry impound desk · press R to retrieve vehicle · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
     } else if (ferryEntry && registration?.eligible && !registration.registeredOwner) {
       hud.setMessage(`Ferry registration desk · press R to register vehicle · $${VEHICLE_REGISTRATION_FEE}.`);
+    } else if (ferryEntry && (registration?.registeredOwner || garage?.count > 0)) {
+      hud.setMessage(registration?.registeredOwner
+        ? `Ferry garage · press G to store vehicle · ${garage.count}/${garage.capacity} slots used.`
+        : `Ferry garage · press G to retrieve vehicle · ${garage.count}/${garage.capacity} slots used.`);
     } else if (!shiftAdvance) {
       hud.setMessage(
         `Entered ${interior.label} · ${interior.roomLabel}. Press E or ESC to return.`,
@@ -4437,6 +4507,19 @@ function updateInteraction() {
         enabled: true,
       });
       return;
+    }
+    if (ferryImpoundContext()) {
+      const garage = traffic.getPlayerGarageState?.();
+      if (registration?.registeredOwner || garage?.count > 0) {
+        hud.setInteraction({
+          label: `FERRY GARAGE / ${garage?.count ?? 0}/${garage?.capacity ?? 2}`,
+          prompt: registration?.registeredOwner
+            ? 'G  STORE REGISTERED VEHICLE'
+            : 'G  RETRIEVE NEXT VEHICLE',
+          enabled: true,
+        });
+        return;
+      }
     }
     const hotspot = city.getInteriorInteraction?.(controls.target);
     if (hotspot) {
