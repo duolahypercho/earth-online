@@ -50,12 +50,36 @@ async function stageResident() {
     const sim = window.__SF_SIM__;
     sim.streetHeat.restart();
     sim.combat.restart();
-    const victim = sim.pedestrians.getCombatCandidates([])[0];
-    if (!victim) return null;
-    const root = sim.pedestrians.group.children[victim.groupIndex];
-    const victimPosition = { x: root.position.x, y: root.position.y, z: root.position.z };
+    const candidates = sim.pedestrians.getCombatCandidates([]);
+    const angles = Array.from({ length: 24 }, (_entry, index) => index * Math.PI / 12);
+    const findClearStage = (victim) => {
+      const root = sim.pedestrians.group.children[victim.groupIndex];
+      if (!root) return null;
+      const victimPosition = { x: root.position.x, y: root.position.y, z: root.position.z };
+      const target = { x: victimPosition.x, y: victimPosition.y + 1.18, z: victimPosition.z };
+      for (const radius of [6, 8, 10, 12]) {
+        for (const angle of angles) {
+          const origin = {
+            x: target.x + Math.cos(angle) * radius,
+            y: victimPosition.y + 1.6,
+            z: target.z + Math.sin(angle) * radius,
+          };
+          const dx = target.x - origin.x;
+          const dy = target.y - origin.y;
+          const dz = target.z - origin.z;
+          const distance = Math.hypot(dx, dy, dz);
+          const direction = { x: dx / distance, y: dy / distance, z: dz / distance };
+          const blocker = sim.getCombatWorldBlocker(origin, direction, Math.max(0.1, distance - 0.35));
+          if (!blocker) return { victim, victimPosition, target, origin };
+        }
+      }
+      return null;
+    };
+    const clear = candidates.map(findClearStage).find(Boolean);
+    if (!clear) return null;
+    const { victim, victimPosition, target, origin } = clear;
     const person = sim.pedestrians.getNearestPerson(victimPosition, 0.5);
-    const player = { x: victimPosition.x, z: victimPosition.z - 8 };
+    const player = { x: origin.x, z: origin.z };
     sim.setRoamPose(player);
     sim.pedestrians.setQaWitnessAnchor(victim.id, victimPosition);
     sim.pedestrians.update(0.001, performance.now() / 1000);
@@ -64,6 +88,8 @@ async function stageResident() {
       role: person?.role ?? null,
       groupIndex: victim.groupIndex,
       victimPosition,
+      target,
+      cameraOrigin: origin,
       player,
     };
   });
@@ -72,10 +98,10 @@ async function stageResident() {
 async function aimAt(stage) {
   await page.mouse.move(640, 360);
   await page.mouse.down({ button: 'right' });
-  await page.evaluate(({ player, victimPosition }) => {
+  await page.evaluate(({ cameraOrigin, target }) => {
     const sim = window.__SF_SIM__;
-    sim.camera.position.set(player.x, victimPosition.y + 1.6, player.z);
-    sim.camera.lookAt(victimPosition.x, victimPosition.y + 1.18, victimPosition.z);
+    sim.camera.position.set(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z);
+    sim.camera.lookAt(target.x, target.y, target.z);
     sim.camera.updateMatrixWorld(true);
   }, stage);
 }
