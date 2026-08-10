@@ -1232,13 +1232,17 @@ function readPlayerProgress() {
 }
 
 function savePlayerProgress() {
-  if (!lifeSim?.exportState || !cityShift?.exportState || !combat?.exportState) return false;
+  if (!lifeSim?.exportState
+    || !cityShift?.exportState
+    || !combat?.exportState
+    || !streetHeat?.exportState) return false;
   const snapshot = {
     version: PLAYER_PROGRESS_VERSION,
     savedAt: Date.now(),
     life: lifeSim.exportState(),
     cityShift: cityShift.exportState(),
     combat: combat.exportState(),
+    streetHeat: streetHeat.exportState(),
     world: exportPlayerWorldState(),
   };
   try {
@@ -1257,22 +1261,31 @@ function restorePlayerProgress() {
   const previousLife = lifeSim?.exportState?.();
   const previousShift = cityShift?.exportState?.();
   const previousCombat = combat?.exportState?.();
+  const previousStreetHeat = streetHeat?.exportState?.();
   const previousWorld = exportPlayerWorldState();
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
   const combatRestored = snapshot.combat
     ? combat?.importState?.(snapshot.combat) === true
     : true;
+  const streetHeatRestored = snapshot.streetHeat
+    ? streetHeat?.importState?.(snapshot.streetHeat) === true
+    : true;
   const worldRestored = snapshot.world
     ? importPlayerWorldState(snapshot.world)
     : true;
-  if (lifeRestored && shiftRestored && combatRestored && worldRestored) {
+  if (lifeRestored
+    && shiftRestored
+    && combatRestored
+    && streetHeatRestored
+    && worldRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
   if (previousLife) lifeSim?.importState?.(previousLife);
   if (previousShift) cityShift?.importState?.(previousShift);
   if (previousCombat) combat?.importState?.(previousCombat);
+  if (previousStreetHeat) streetHeat?.importState?.(previousStreetHeat);
   if (previousWorld) importPlayerWorldState(previousWorld);
   return false;
 }

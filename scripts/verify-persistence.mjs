@@ -113,14 +113,26 @@ try {
   await page.waitForTimeout(1300);
   const aimedAutosave = await page.evaluate(() => ({
     combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
   await page.keyboard.up('q');
   await page.waitForTimeout(80);
+  const heatSetup = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const heat = sim.streetHeat.reportIncident(36, { source: 'combat', notify: false });
+    const saved = sim.saveProgress();
+    return { heat, saved };
+  });
+  assert(heatSetup.saved === true
+    && heatSetup.heat.pursuitActive === true
+    && heatSetup.heat.heat === 36,
+  'persistence setup did not save a valid StreetHeat pursuit', heatSetup);
   const beforeReload = await page.evaluate(() => ({
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
     roam: window.__SF_SIM__.getRoamState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
@@ -132,6 +144,9 @@ try {
     && beforeReload.combat.ammo === 11
     && beforeReload.save.snapshot?.combat?.health === 65
     && beforeReload.save.snapshot?.combat?.ammo === 11
+    && beforeReload.heat.pursuitActive === true
+    && beforeReload.save.snapshot?.streetHeat?.pursuitActive === true
+    && beforeReload.save.snapshot?.streetHeat?.heat > 0
     && Math.abs(beforeReload.save.snapshot?.world?.x - worldSetup.roam.target.x) < 0.01
     && Math.abs(beforeReload.save.snapshot?.world?.z - worldSetup.roam.target.z) < 0.01
     && Math.abs(beforeReload.save.snapshot?.world?.yaw - 1.234) < 0.001
@@ -143,6 +158,7 @@ try {
     && Math.abs(aimedAutosave.save.snapshot?.world?.distance - 36) < 0.001,
   'autosave setup did not capture economy, combat kit, mission, and outdoor world progress', {
     progressed,
+    heatSetup,
     worldSetup,
     aimedAutosave,
     beforeReload,
@@ -154,6 +170,7 @@ try {
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
     roam: window.__SF_SIM__.getRoamState(),
     save: window.__SF_SIM__.getSavedProgress(),
     message: document.querySelector('.hud__message-text')?.textContent || '',
@@ -170,6 +187,8 @@ try {
     && restored.combat.recovering === false
     && restored.combat.ammo === beforeReload.combat.ammo
     && restored.combat.reserveAmmo === beforeReload.combat.reserveAmmo
+    && restored.heat.pursuitActive === true
+    && restored.heat.heat > 0
     && Math.abs(restored.roam.target.x - beforeReload.save.snapshot.world.x) < 0.05
     && Math.abs(restored.roam.target.z - beforeReload.save.snapshot.world.z) < 0.05
     && Math.abs(restored.combat.camera.yaw - beforeReload.save.snapshot.world.yaw) < 0.001
@@ -219,6 +238,7 @@ try {
     life: window.__SF_SIM__.lifeSim.getState(),
     mission: window.__SF_SIM__.cityShift.getState(),
     combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
     roam: window.__SF_SIM__.getRoamState(),
     save: window.__SF_SIM__.getSavedProgress(),
   }));
@@ -227,7 +247,9 @@ try {
     && restoredReplay.life.cash === completed.life.cash
     && restoredReplay.combat.health === restoredReplay.combat.maxHealth
     && restoredReplay.combat.ammo === restoredReplay.combat.magazineSize
-    && restoredReplay.combat.reserveAmmo === 48,
+    && restoredReplay.combat.reserveAmmo === 48
+    && restoredReplay.heat.pursuitActive === false
+    && restoredReplay.heat.heat === 0,
   'replay reset was not saved immediately or corrupted earned cash', restoredReplay);
 
   const storageKey = restored.save.key;
@@ -337,6 +359,7 @@ try {
     angle,
     market,
     progressed,
+    heatSetup,
     aimedAutosave,
     beforeReload,
     restored,

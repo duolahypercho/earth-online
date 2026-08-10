@@ -843,6 +843,63 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     };
   }
 
+  function exportState() {
+    return {
+      heat: state.heat,
+      pursuitActive: state.pursuitActive,
+      responderContacts: state.responderContacts,
+      nearMisses: state.nearMisses,
+      combatHold: state.combatHold,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const heat = Number(snapshot.heat);
+    const responderContacts = Number(snapshot.responderContacts);
+    const nearMisses = Number(snapshot.nearMisses);
+    const combatHold = Number(snapshot.combatHold);
+    if (!Number.isFinite(heat)
+      || typeof snapshot.pursuitActive !== 'boolean'
+      || !Number.isFinite(responderContacts)
+      || !Number.isFinite(nearMisses)
+      || !Number.isFinite(combatHold)) {
+      return false;
+    }
+    const clampedHeat = THREE.MathUtils.clamp(heat, 0, 100);
+    if ((snapshot.pursuitActive && clampedHeat <= 0)
+      || (!snapshot.pursuitActive && clampedHeat >= STREET_HEAT_PURSUIT_THRESHOLD)) {
+      return false;
+    }
+    state.status = 'running';
+    state.heat = clampedHeat;
+    state.pursuitActive = snapshot.pursuitActive;
+    state.responderContacts = state.pursuitActive
+      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1)
+      : 0;
+    state.nearMisses = Math.max(0, Math.round(nearMisses));
+    state.combatHold = THREE.MathUtils.clamp(
+      combatHold,
+      0,
+      STREET_HEAT_COMBAT_HOLD_SECONDS,
+    );
+    state.level = currentLevel();
+    state.targetId = null;
+    state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
+    state.nearestDistance = null;
+    state.safeElapsed = 0;
+    state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
+    state.nearMissCooldown = 0;
+    state.lastEvent = null;
+    latestPosition = null;
+    latestSpeed = 0;
+    latestDriving = false;
+    marker.visible = false;
+    return true;
+  }
+
   function dispose() {
     marker.removeFromParent();
     markerCoreMaterial.dispose();
@@ -859,6 +916,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     reportIncident: addHeat,
     update,
     getState,
+    exportState,
+    importState,
     dispose,
     get status() {
       return state.status;
