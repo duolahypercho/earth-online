@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-walkable-tile",
+  "id": "sf-local-5-4",
+  "title": "Ferry Building region southwest coverage tile",
+  "status": "planned",
+  "world": {
+    "id": "earth-v1",
+    "wgs84Anchor": [-122.3953962487255, 37.7936275435455, 0],
+    "geodeticKey": "earth-v1:37.793628:-122.395396"
+  },
+  "grid": {
+    "scheme": "sf-local-metric-v1",
+    "tileSizeMeters": 384,
+    "buildBufferMeters": 16,
+    "indexBase": 0,
+    "index": [5, 4],
+    "localBoundsMeters": [1920, 1536, 2304, 1920],
+    "localBuildBoundsMeters": [1904, 1520, 2320, 1936],
+    "localOriginMeters": [2112, 1728, 0],
+    "localFrame": {
+      "name": "sf-atlas-linear-v1",
+      "units": "metres",
+      "axisOrder": ["east", "north", "up"],
+      "anchorWgs84": [-122.4194, 37.778, 0],
+      "metersPerDegree": [87986.24747640654, 110574],
+      "precisionNote": "Preview frame inherited from sf-city.json. Production geometry is rebuilt in EPSG:26910 before publication."
+    },
+    "productionCrs": { "horizontal": "EPSG:26910", "vertical": "NAVD88 metres", "units": "metres" },
+    "wgs84Bounds": [-122.39757840793227, 37.79189114981822, -122.39321408951872, 37.795363937272775],
+    "wgs84BuildBounds": [-122.39776025453284, 37.791746450340945, -122.39303224291817, 37.79550863675005]
+  },
+  "neighbors": { "north": "sf-local-5-5", "east": "sf-local-6-4", "south": "sf-local-5-3", "west": "sf-local-4-4" },
+  "determinism": {
+    "algorithm": "sha256",
+    "identity": "earth-tile-v1|sf-local-metric-v1|sf-local-5-4|384|16|1920|1536",
+    "seed": "045d566d16a58fa0ebe9b626c35fb0add9225e68bfa416fd3f3c9a584aafb29f",
+    "borderOwnership": "Tile with the lexicographically lower id owns a shared border; both builds consume the same 16 m buffered source window.",
+    "crossTileIds": "Portals, source features, procedural instances, and simulation state derive from stable source ids plus this seed; random iteration order is forbidden."
+  },
+  "sources": [
+    { "id": "osm-sf-2026-08-03", "role": ["roads", "access", "crossings", "building-footprints", "poi"], "artifact": "/data/sf/sf-city.json.gz", "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors", "provenance": "public/data/sf/sf-city.json meta.sources[OpenStreetMap San Francisco extract (bbbike)]" },
+    { "id": "datasf-shoreline-2026-08-03", "role": ["shoreline", "land-clip"], "artifact": "/data/sf/sf-shoreline.geojson", "license": "PDDL-1.0", "attribution": "City and County of San Francisco", "provenance": "public/data/sf/sf-city.json meta.sources[SF Shoreline and Islands (DataSF)]" },
+    { "id": "usgs-3dep-pending-lock", "role": ["terrain", "elevation"], "artifact": null, "license": "US-PD", "attribution": "U.S. Geological Survey", "provenance": "Required before this tile can advance beyond planned; see Docs/WORLD_TILE_WORKFLOW.md." }
+  ],
+  "lod": [
+    { "level": 0, "purpose": "walkable hero radius", "visual": null, "collision": null, "geometricErrorMeters": 0.25 },
+    { "level": 1, "purpose": "adjacent-tile continuity", "visual": null, "collision": null, "geometricErrorMeters": 1.5 },
+    { "level": 2, "purpose": "district ring", "visual": null, "collision": null, "geometricErrorMeters": 8 }
+  ],
+  "runtimeLayers": {
+    "terrain": { "required": true, "state": "blocked-by-source-lock" }, "shoreline": { "required": true, "state": "planned" }, "water": { "required": true, "state": "planned" }, "roads": { "required": true, "state": "planned" }, "sidewalks": { "required": true, "state": "planned" }, "buildings": { "required": true, "state": "planned" }, "streetFurniture": { "required": true, "state": "planned" }, "pedestrianGraph": { "required": true, "state": "planned" }, "trafficGraph": { "required": true, "state": "planned" }, "npcs": { "required": true, "state": "planned" }, "vehicles": { "required": true, "state": "planned" }, "lighting": { "required": true, "state": "planned" }, "weather": { "required": true, "state": "planned" }, "audio": { "required": true, "state": "planned" }, "collision": { "required": true, "state": "planned" }
+  },
+  "qaContract": { "requiredChecks": ["provenance-lock", "geometry-and-shoreline", "road-sidewalk-continuity", "portal-handoff", "character-grounding", "npc-and-traffic-safety", "weather-water-lighting", "fixed-camera-visual-review", "performance-budget"], "seamToleranceMeters": 0.01, "maximumEntranceFloatMeters": 0.15, "maximumBuildingPenetrationP99Meters": 0.25, "visualFixturePolicy": "Use rights-cleared reference imagery only; fixed camera comparisons are evidence, not geographic authority.", "publishRule": "All required checks must pass for this manifest version and every direct neighbor must have matching edge signatures before status may change to published." }
+}

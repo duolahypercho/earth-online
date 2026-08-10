@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "kind": "earth-walkable-tile",
   "id": "sf-local-6-5",
-  "title": "Ferry Building hero tile",
+  "title": "Ferry Building region northeast coverage tile",
   "status": "planned",
   "world": {
     "id": "earth-v1",
-    "wgs84Anchor": [-122.393, 37.7955, 0],
-    "geodeticKey": "earth-v1:37.795500:-122.393000"
+    "wgs84Anchor": [-122.39103193031195, 37.79710033100005, 0],
+    "geodeticKey": "earth-v1:37.797100:-122.391032"
   },
   "grid": {
     "scheme": "sf-local-metric-v1",
