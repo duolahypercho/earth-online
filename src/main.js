@@ -2663,6 +2663,10 @@ function updatePlayerTaxiRide(dt) {
 
 function startPlayerWorkShift() {
   const combatState = combat?.getState?.();
+  if (streetHeat?.getState?.().pursuitActive) {
+    hud?.setMessage('Market shift unavailable · lose the StreetHeat tail or surrender.');
+    return false;
+  }
   const available = playerLayerActive
     && !controls.interiorMode
     && !traffic.isPlayerDriving?.()
@@ -2674,7 +2678,7 @@ function startPlayerWorkShift() {
     hud?.setMessage('Market shift unavailable · be on foot, still, and ready to work.');
     return false;
   }
-  return lifeSim?.workShift?.(controls.target) === true;
+  return lifeSim?.workShift?.() === true;
 }
 
 function buyPlayerMedkit() {
@@ -2817,10 +2821,12 @@ function updatePlayerLayer(dt, elapsed) {
     moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
     interior: controls.interiorMode,
     downed: combat?.getState?.().status !== 'running',
+    pursuitActive: streetHeat?.getState?.().pursuitActive === true,
     available: playerLayerActive && !beautyMode && !qaCameraPose && !passengerRiding,
     position: controls.target,
   });
   if (lifeEvent?.kind === 'work-complete'
+    || lifeEvent?.kind === 'work-cancelled'
     || lifeEvent?.kind === 'favor-timeout'
     || lifeEvent?.kind === 'delivery-timeout') {
     savePlayerProgress();

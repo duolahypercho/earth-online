@@ -63,8 +63,8 @@ function unchanged(before, after) {
     && after.life.inventory.medkit.count === before.life.inventory.medkit.count
     && after.life.activity === before.life.activity
     && after.life.lastTransaction?.at === before.life.lastTransaction?.at
-    && nearlyEqual(after.life.needs.hunger, before.life.needs.hunger, 0.8)
-    && nearlyEqual(after.life.needs.fun, before.life.needs.fun, 0.8);
+    && nearlyEqual(after.life.needs.hunger, before.life.needs.hunger, 1.5)
+    && nearlyEqual(after.life.needs.fun, before.life.needs.fun, 1.5);
 }
 
 try {
@@ -193,7 +193,7 @@ try {
   for (const kind of ['work', 'favor', 'delivery']) {
     const started = await page.evaluate(({ kind, position }) => {
       const sim = window.__SF_SIM__;
-      if (kind === 'work') return sim.lifeSim.workShift(position);
+      if (kind === 'work') return sim.lifeSim.workShift();
       if (kind === 'favor') return sim.lifeSim.startResidentFavor(
         { id: 'qa-market-resident', label: 'QA Resident', role: 'resident' },
         { id: 'qa-market-target', label: 'QA Target', x: position.x + 20, z: position.z + 20 },

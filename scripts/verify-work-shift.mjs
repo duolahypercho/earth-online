@@ -22,6 +22,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const failures = [];
 const consoleErrors = [];
 const httpErrors = [];
+let renderer = null;
 const assert = (condition, message, detail = null) => {
   if (!condition) failures.push({ message, ...(detail ? { detail } : {}) });
 };
@@ -74,6 +75,16 @@ try {
   await page.goto(baseUrl, { waitUntil: 'load', timeout: 30000 });
   await page.evaluate(() => window.localStorage.removeItem('earth-online-player-progress-v1'));
   await launch();
+  renderer = await page.evaluate(() => {
+    const gl = window.__SF_SIM__.renderer.getContext();
+    const extension = gl.getExtension('WEBGL_debug_renderer_info');
+    return extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : null;
+  });
+  assert(angle === 'metal'
+    && typeof renderer === 'string'
+    && /metal/i.test(renderer)
+    && !/swiftshader|software|llvmpipe/i.test(renderer),
+  'a verified hardware Metal renderer was not active', { angle, renderer });
 
   const market = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
@@ -170,6 +181,74 @@ try {
     && downedF.life?.lastTransaction?.at === beforeDownedF.life?.lastTransaction?.at,
   'downed real F started work or mutated the economy', { beforeDownedF, downedF });
   await page.evaluate(() => window.__SF_SIM__.restartCombat());
+
+  await page.evaluate((position) => {
+    const sim = window.__SF_SIM__;
+    sim.setRoamPose(position);
+    sim.streetHeat.restart();
+    sim.streetHeat.reportIncident(36, { source: 'combat', notify: false });
+  }, market.position);
+  await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState()?.pursuitActive === true,
+    null, { timeout: 5000, polling: 25 });
+  const beforePursuitRefusal = await getLifeEvidence();
+  const rawPursuitStart = await page.evaluate(() => window.__SF_SIM__.lifeSim.workShift());
+  await page.keyboard.press('f');
+  await page.waitForTimeout(80);
+  const pursuitRefusal = await getLifeEvidence();
+  assert(rawPursuitStart === false
+    && pursuitRefusal.life?.workShift?.active === false
+    && pursuitRefusal.life?.cash === beforePursuitRefusal.life?.cash
+    && nearlyEqual(pursuitRefusal.life?.needs?.energy, beforePursuitRefusal.life?.needs?.energy, 0.05)
+    && nearlyEqual(pursuitRefusal.life?.needs?.hunger, beforePursuitRefusal.life?.needs?.hunger, 0.05)
+    && nearlyEqual(pursuitRefusal.life?.needs?.fun, beforePursuitRefusal.life?.needs?.fun, 0.05)
+    && pursuitRefusal.life?.lastTransaction?.at === beforePursuitRefusal.life?.lastTransaction?.at
+    && pursuitRefusal.message.includes('StreetHeat tail'),
+  'active pursuit real F started work or mutated life/economy state', {
+    beforePursuitRefusal,
+    pursuitRefusal,
+  });
+  await page.evaluate(() => window.__SF_SIM__.streetHeat.restart());
+
+  await page.evaluate((position) => window.__SF_SIM__.setRoamPose(position), market.position);
+  await page.waitForTimeout(80);
+  const beforePursuitCancel = await getLifeEvidence();
+  await page.keyboard.press('f');
+  await page.waitForTimeout(280);
+  const startedBeforePursuit = await getLifeEvidence();
+  await page.evaluate(() => window.__SF_SIM__.streetHeat.reportIncident(36, {
+    source: 'combat',
+    notify: false,
+  }));
+  await page.waitForFunction(() => {
+    const sim = window.__SF_SIM__;
+    return sim.getStreetHeatState()?.pursuitActive === true
+      && sim.lifeSim.getState()?.workShift?.active === false;
+  }, null, { timeout: 5000, polling: 25 });
+  const pursuitCancelled = await getLifeEvidence();
+  assert(startedBeforePursuit.life?.workShift?.active === true
+    && pursuitCancelled.life?.workShift?.active === false
+    && pursuitCancelled.life?.workShift?.cooldownRemaining === 0
+    && pursuitCancelled.life?.cash === beforePursuitCancel.life?.cash
+    && nearlyEqual(pursuitCancelled.life?.needs?.energy, beforePursuitCancel.life?.needs?.energy, 0.05)
+    && nearlyEqual(pursuitCancelled.life?.needs?.hunger, beforePursuitCancel.life?.needs?.hunger, 0.05)
+    && nearlyEqual(pursuitCancelled.life?.needs?.fun, beforePursuitCancel.life?.needs?.fun, 0.05)
+    && pursuitCancelled.life?.lastTransaction?.at === beforePursuitCancel.life?.lastTransaction?.at
+    && pursuitCancelled.saved?.snapshot?.life?.workShift?.cooldownRemaining === 0
+    && pursuitCancelled.message.includes('MARKET SHIFT CANCELLED'),
+  'pursuit did not cancel and save an active shift without payout', {
+    beforePursuitCancel,
+    startedBeforePursuit,
+    pursuitCancelled,
+  });
+  await page.waitForTimeout(5600);
+  const noDelayedPayout = await getLifeEvidence();
+  assert(noDelayedPayout.life?.cash === beforePursuitCancel.life?.cash
+    && noDelayedPayout.life?.lastTransaction?.at === beforePursuitCancel.life?.lastTransaction?.at,
+  'cancelled pursuit shift paid after its former duration', {
+    pursuitCancelled,
+    noDelayedPayout,
+  });
+  await page.evaluate(() => window.__SF_SIM__.streetHeat.restart());
 
   await page.evaluate((position) => window.__SF_SIM__.setRoamPose(position), market.position);
   await page.waitForTimeout(80);
@@ -320,11 +399,15 @@ try {
       : 'work shift smoke failed',
     baseUrl,
     angle,
+    renderer,
     market,
     outOfRange,
     drivingF,
     interiorF,
     downedF,
+    pursuitRefusal,
+    pursuitCancelled,
+    noDelayedPayout,
     cancelled,
     activeBeforeReload,
     interruptedReload,
@@ -342,10 +425,14 @@ try {
 } catch (error) {
   console.error(error);
   console.error(JSON.stringify(await page.evaluate(() => ({
+    bootStatus: document.querySelector('#boot-status')?.textContent || null,
+    launchDisabled: document.querySelector('#launch-button')?.disabled ?? null,
     life: window.__SF_SIM__?.lifeSim?.getState?.(),
     combat: window.__SF_SIM__?.getCombatState?.(),
     driving: window.__SF_SIM__?.isDriving?.(),
     interaction: window.__SF_SIM__?.getInteractionState?.(),
+    consoleErrors,
+    httpErrors,
   })).catch(() => null), null, 2));
   process.exitCode = 1;
 } finally {

@@ -660,9 +660,12 @@ export function createLifeSim({
         || playerState.moving === true
         || playerState.interior === true
         || playerState.downed === true
+        || playerState.pursuitActive === true
         || playerState.available === false
         || !validLocation) {
-        return cancelWorkShift();
+        return cancelWorkShift(playerState.pursuitActive === true
+          ? 'MARKET SHIFT CANCELLED · lose the StreetHeat tail before working.'
+          : undefined);
       }
       state.workShift.elapsed = Math.min(
         MARKET_SHIFT_DURATION,
@@ -1067,10 +1070,18 @@ export function createLifeSim({
     return state.cash >= 9;
   }
 
-  function workShift(position) {
-    const label = getNearestPortalLabel(position);
-    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
-      onMessage('Find the Ferry Building market hall to work a shift.');
+  function workShift() {
+    const context = getMarketInteractionContext?.();
+    const label = getNearestPortalLabel(context?.position);
+    const available = context?.onFoot === true
+      && context?.outdoor === true
+      && context?.stationary === true
+      && context?.recovered === true
+      && context?.clearOfPursuit === true
+      && !context?.activeContract
+      && Boolean(label && (label.includes('ferry') || label.includes('market') || label.includes('cafe')));
+    if (!available) {
+      onMessage('Market shift unavailable · be on foot, still, recovered, and clear of pursuit.');
       return false;
     }
     if (state.needs.energy < 18) {
