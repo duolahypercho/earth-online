@@ -59,6 +59,7 @@
     "verify:delivery-job": "node scripts/verify-delivery-job.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "verify:online-gameplay": "node scripts/verify-online-gameplay.mjs",
+    "verify:online-coop-shift": "node scripts/verify-online-coop-shift.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",
     "qa:side-by-side": "node scripts/qa-critic-side-by-side.mjs",
     "qa:visual-critic": "node scripts/qa-visual-critic.mjs",

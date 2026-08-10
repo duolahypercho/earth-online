@@ -1421,17 +1421,28 @@ export function createHud({
       dot.dataset.talking = String(peer.talking === true);
       const name = createElement('span', 'hud__player-name', peer.name || 'Player');
       const gameplay = peer.gameplay || {};
+      const mission = peer.mission || null;
+      const missionLabel = mission
+        ? mission.status === 'complete'
+          ? 'CO-OP SHIFT · COMPLETE'
+          : mission.status === 'failed'
+            ? 'CO-OP SHIFT · FAILED'
+            : `CO-OP SHIFT · ${mission.completedSteps}/${mission.totalSteps}`
+        : null;
       const modeLabel = gameplay.pursuitActive
         ? `PURSUIT · L${gameplay.wantedLevel || 1}`
         : gameplay.heat > 0
           ? `HEAT ${gameplay.heat}`
           : gameplay.healthBand === 'downed'
             ? 'DOWNED'
-            : peer.driving
-              ? 'DRIVING'
-              : String(gameplay.activity || 'on foot').replace('-', ' ').toUpperCase();
+            : missionLabel
+              || (peer.driving
+                ? 'DRIVING'
+                : String(gameplay.activity || 'on foot').replace('-', ' ').toUpperCase());
       const mode = createElement('span', 'hud__player-mode', modeLabel);
       item.dataset.wanted = String(gameplay.pursuitActive === true || gameplay.heat > 0);
+      item.dataset.coopShift = String(Boolean(mission));
+      if (mission?.objective) item.title = mission.objective;
       item.append(dot, name, mode);
       playerList.append(item);
     });
