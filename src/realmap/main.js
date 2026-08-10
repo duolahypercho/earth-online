@@ -38,6 +38,7 @@ import { createHeroCamera } from './hero-camera.js';
 import { createFerryBuildingStreetscape } from './hero-streetscape.js';
 import { createHeroTrafficVisuals } from './hero-traffic-visuals.js';
 import { createFerryBuildingLandmark } from './hero-landmark.js';
+import { createHeroLifeLighting, HERO_LIFE_LIGHTING_BUDGET } from './hero-life-lighting.js';
 import {
   collectHeroRenderStats,
   enableHeroPerformanceMode,
@@ -71,6 +72,9 @@ const FERRY_HERO_CAMERA_FRAME = Object.freeze({
   lookAhead: 0.38,
   lookHeight: 0.85,
 });
+const FERRY_HERO_ATMOSPHERE_POINT_LIGHTS = 4;
+const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
+const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
 
 function syncStreetDesignIntoCityMeta() {
   if (!cityData?.meta) return;
@@ -1295,6 +1299,7 @@ function setupToolbar() {
     disposeHeroAtmosphere();
     disposeHeroStreetscape();
     disposeHeroTrafficVisuals();
+    disposeHeroLifeLighting();
     disposeHeroLandmark();
     disposeHeroCamera();
     disposeHeroCharacter();
@@ -7157,6 +7162,11 @@ let heroStreetscapeWetness = 0;
 let heroStreetscapeHiddenBaseLayers = [];
 let heroTrafficVisuals = null;
 let heroTrafficVisualStats = null;
+let heroLifeLighting = null;
+let heroLifeLightingStats = null;
+let heroLifeLightingElapsed = 0;
+let heroLifeLightingSources = [];
+let heroLifeLightingLifecycle = null;
 const HERO_TRAFFIC_CAMERA_EXCLUSION_RADIUS = 4.5;
 const HERO_TRAFFIC_CAMERA_FADE_DISTANCE = 1.5;
 const HERO_TRAFFIC_HERO_RADIUS = 14;
@@ -8672,6 +8682,7 @@ function initializeHeroAtmosphere() {
     scene,
     parent: cityRoot,
     conditions: heroAtmosphereConditions(),
+    maxLampLights: FERRY_HERO_ATMOSPHERE_POINT_LIGHTS,
   });
 
   const wetRoots = [
@@ -8822,6 +8833,179 @@ function updateHeroTrafficVisuals() {
   const hero = heroCharacter?.root || playerAvatarGroup || playerState;
   heroTrafficVisualStats = heroTrafficVisuals.update({ camera, hero });
   return heroTrafficVisualStats;
+}
+
+function heroLifeLightingConditions() {
+  return {
+    weather: weatherMode,
+    timeOfDay: timeOfDay === 'night' || timeOfDay === 'dusk' ? timeOfDay : 'day',
+    night: TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0,
+    wetness: weatherMode === 'drizzle' ? 0.9 : weatherMode === 'fog' ? 0.25 : 0,
+  };
+}
+
+function ferryHeroPracticalAnchors() {
+  const landmark = heroLandmark?.getDiagnostics();
+  const building = (cityData?.detailBuildings || [])
+    .find((candidate) => String(candidate?.id) === String(FERRY_BUILDING_OSM_WAY));
+  const center = building?.centroid;
+  const frame = landmark?.frame;
+  const tower = landmark?.towerAnchor;
+  if (!Array.isArray(center) || !Array.isArray(frame?.along) || !Array.isArray(frame?.across)
+    || !Array.isArray(tower)) return [];
+  const [alongX, alongZ] = frame.along;
+  const [acrossX, acrossZ] = frame.across;
+  const towerAlong = (tower[0] - center[0]) * alongX + (tower[2] - center[1]) * alongZ;
+  const focusX = playerState?.x ?? activeHeroTile?.spawn?.x ?? tower[0];
+  const focusZ = playerState?.z ?? activeHeroTile?.spawn?.z ?? tower[2];
+  const focusAcross = (focusX - center[0]) * acrossX + (focusZ - center[1]) * acrossZ;
+  const facadeAcross = Math.abs(focusAcross - frame.bounds.minAcross)
+    < Math.abs(focusAcross - frame.bounds.maxAcross)
+    ? frame.bounds.minAcross
+    : frame.bounds.maxAcross;
+  const outward = facadeAcross === frame.bounds.minAcross ? -1 : 1;
+  return [-9, 9, -24, 24, -39, 39].map((offset, index) => {
+    const x = center[0] + alongX * (towerAlong + offset) + acrossX * (facadeAcross + outward * 0.28);
+    const z = center[1] + alongZ * (towerAlong + offset) + acrossZ * (facadeAcross + outward * 0.28);
+    return {
+      x,
+      y: elevationAt(x, z) + 2.35,
+      z,
+      kind: 'storefront',
+      intensity: index < FERRY_HERO_PRACTICAL_POINT_LIGHTS ? 2 : 0.9,
+      source: 'integrated Ferry Building OSM way 558731934 camera-facing PCA facade',
+      bay: index + 1,
+      alongOffset: offset,
+      facadeAcross,
+    };
+  });
+}
+
+function syncHeroLifeLightingConditions() {
+  if (!heroLifeLighting) return null;
+  return heroLifeLighting.setConditions(heroLifeLightingConditions());
+}
+
+function disposeHeroLifeLighting() {
+  if (!heroLifeLighting) return;
+  const sources = heroLifeLightingSources.slice();
+  heroLifeLighting.dispose();
+  heroLifeLightingLifecycle = {
+    restored: sources.filter(({ source, visible }) => source?.visible === visible).length,
+    expected: sources.length,
+  };
+  heroLifeLighting = null;
+  heroLifeLightingStats = null;
+  heroLifeLightingElapsed = 0;
+  heroLifeLightingSources = [];
+}
+
+function initializeHeroLifeLighting() {
+  disposeHeroLifeLighting();
+  if (!activeHeroTile || !cityRoot || !pedestrianState.length) return null;
+  const focusX = playerState?.x ?? activeHeroTile.spawn.x;
+  const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
+  const pedestrians = pedestrianState.slice()
+    .sort((first, second) => (
+      Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
+      - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
+    ))
+    .slice(0, FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT);
+  heroLifeLightingSources = pedestrians.map(({ mesh }) => ({ source: mesh, visible: mesh.visible }));
+  heroLifeLightingLifecycle = null;
+  heroLifeLighting = createHeroLifeLighting({
+    scene: cityRoot,
+    maxPedestrians: FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT,
+    cameraExclusionRadius: HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS,
+    replaceSources: true,
+    conditions: heroLifeLightingConditions(),
+  });
+  heroLifeLighting.attachPedestrians(pedestrians);
+  heroLifeLighting.setPracticals(ferryHeroPracticalAnchors());
+  const practicalLights = heroLifeLighting.group.children.filter((object) => object.isPointLight);
+  practicalLights.slice(FERRY_HERO_PRACTICAL_POINT_LIGHTS).forEach((light) => light.removeFromParent());
+  syncHeroLifeLightingConditions();
+  return heroLifeLighting;
+}
+
+function updateHeroLifeLighting(dt) {
+  if (!heroLifeLighting) return null;
+  // Pedestrian simulation owns transforms and writes visibility each frame.
+  // Sample those transforms first, then keep only the bounded hero replacement visible.
+  for (const { source } of heroLifeLightingSources) source.visible = false;
+  heroLifeLightingElapsed += Math.min(0.05, Math.max(0, Number(dt) || 0));
+  heroLifeLightingStats = heroLifeLighting.update({
+    camera,
+    hero: heroCharacter?.root || playerAvatarGroup,
+    elapsedSeconds: heroLifeLightingElapsed,
+  });
+  return heroLifeLightingStats;
+}
+
+function getHeroLifeLightingDiagnostics() {
+  const stats = heroLifeLighting?.getStats() || heroLifeLightingStats;
+  const torso = heroLifeLighting?.group.getObjectByName('Hero life pedestrian torsos');
+  const sampleMatrix = new THREE.Matrix4();
+  const samplePosition = new THREE.Vector3();
+  const sampleQuaternion = new THREE.Quaternion();
+  const sampleScale = new THREE.Vector3();
+  const presentationSamples = [];
+  if (torso) {
+    for (let index = 0; index < Math.min(FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT, stats?.pedestriansAttached || 0); index += 1) {
+      torso.getMatrixAt(index, sampleMatrix);
+      sampleMatrix.decompose(samplePosition, sampleQuaternion, sampleScale);
+      const active = Math.max(sampleScale.x, sampleScale.y, sampleScale.z) > 0.01;
+      if (active) heroLifeLighting.group.localToWorld(samplePosition);
+      presentationSamples.push({
+        slot: index,
+        active,
+        position: active ? [samplePosition.x, samplePosition.y, samplePosition.z] : null,
+      });
+    }
+  }
+  let pointLights = 0;
+  let shadowCastingPointLights = 0;
+  heroLifeLighting?.group.traverse((object) => {
+    if (!object.isPointLight) return;
+    pointLights += 1;
+    if (object.castShadow) shadowCastingPointLights += 1;
+  });
+  return {
+    active: Boolean(heroLifeLighting),
+    tileId: activeHeroTile?.id || null,
+    attached: Boolean(heroLifeLighting?.group.parent),
+    stats: stats || null,
+    sourcePedestrians: heroLifeLightingSources.length,
+    hiddenSourcePedestrians: heroLifeLightingSources.filter(({ source }) => !source.visible).length,
+    effectiveThoughtBubbles: heroLifeLightingSources.reduce((total, { source }) => {
+      let visible = 0;
+      if (source.visible) source.traverse((object) => { if (object.isSprite && object.visible) visible += 1; });
+      return total + visible;
+    }, 0),
+    presentationSamples,
+    pointLights,
+    configuredPointLights: FERRY_HERO_PRACTICAL_POINT_LIGHTS,
+    shadowCastingPointLights,
+    lightPool: {
+      atmospherePointLights: heroAtmosphere?.getLightBudget()?.pointLights || 0,
+      lifePointLights: pointLights,
+      totalPointLights: (heroAtmosphere?.getLightBudget()?.pointLights || 0) + pointLights,
+      shadowCastingPointLights: (heroAtmosphere?.getLightBudget()?.shadowCastingLights || 0)
+        + shadowCastingPointLights,
+    },
+    practicalAnchors: ferryHeroPracticalAnchors().map(({
+      x, y, z, kind, source, bay, alongOffset, facadeAcross,
+    }) => ({ x, y, z, kind, source, bay, alongOffset, facadeAcross })),
+    lifecycle: heroLifeLightingLifecycle,
+  };
+}
+
+function rebuildHeroLifeLightingForDiagnostics() {
+  disposeHeroLifeLighting();
+  const disposed = getHeroLifeLightingDiagnostics();
+  initializeHeroLifeLighting();
+  updateHeroLifeLighting(0);
+  return { disposed, rebuilt: getHeroLifeLightingDiagnostics() };
 }
 
 function initializeHeroTrafficVisuals() {
@@ -10391,6 +10575,7 @@ function setWeatherMode(mode) {
   applyWeatherRoadTuning(mode);
   syncHeroAtmosphereConditions();
   syncHeroStreetscapeConditions();
+  syncHeroLifeLightingConditions();
   heroPerformanceMode?.invalidateShadows();
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
@@ -10424,6 +10609,7 @@ function setTimeOfDay(mode) {
   }
   updateNightGlow(config.night);
   syncHeroAtmosphereConditions();
+  syncHeroLifeLightingConditions();
   heroPerformanceMode?.invalidateShadows();
   return timeOfDay;
 }
@@ -10725,6 +10911,7 @@ function renderLoop() {
       : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
   updateHeroTrafficVisuals();
+  updateHeroLifeLighting(dt);
   updateRain(dt);
   updateWeatherVisuals(dt);
   heroAtmosphere?.update(dt);
@@ -10997,6 +11184,7 @@ async function buildCity() {
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroTrafficVisuals();
+    disposeHeroLifeLighting();
     disposeHeroLandmark();
     disposeHeroPerformanceMode();
     if (cityRoot) {
@@ -11216,6 +11404,7 @@ async function buildCity() {
         z: trafficStart ? trafficStart.z : centroid.z,
       });
     initializeHeroTrafficVisuals();
+    initializeHeroLifeLighting();
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
     positionSkyDomeAt(centroid, fullCityMode ? regionSpan(regionPoints) : regionSpan(regionPoints));
@@ -11336,6 +11525,7 @@ function start() {
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
       heroStreetscape: getHeroStreetscapeDiagnostics(),
       heroTrafficVisuals: getHeroTrafficVisualDiagnostics(),
+      heroLifeLighting: getHeroLifeLightingDiagnostics(),
       heroLandmark: getHeroLandmarkDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
@@ -11787,6 +11977,8 @@ function start() {
     getWeather: () => weatherMode,
     setTimeOfDay: (mode) => setTimeOfDay(mode),
     getTimeOfDay: () => timeOfDay,
+    getHeroLifeLighting: () => getHeroLifeLightingDiagnostics(),
+    rebuildHeroLifeLighting: () => rebuildHeroLifeLightingForDiagnostics(),
     ensureAudio: () => ensureSandboxAudio() ? true : false,
     toggleAudio: () => toggleSandboxAudio(),
     getAudioState: () => sandboxAudio ? {
