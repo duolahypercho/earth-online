@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-source-lock",
+  "status": "source-locked-not-built",
+  "id": "sf-ferry-3dep-2023",
+  "title": "Ferry Building 2023 USGS 3DEP terrain source lock",
+  "requestedCoverageWgs84": [
+    -122.3977602545,
+    37.7917464503,
+    -122.3886679245,
+    37.7989814242
+  ],
+  "coverage": {
+    "sourceBoundsWgs84": [
+      -122.43230834799999,
+      37.76535823000006,
+      -122.31794821799997,
+      37.856087298000034
+    ],
+    "sourceContainsRequestedCoverage": true,
+    "sourceResolutionMeters": 1,
+    "sourceDimensionsPixels": [
+      10012,
+      10012
+    ],
+    "surface": "bare-earth DEM"
+  },
+  "source": {
+    "producer": "U.S. Geological Survey",
+    "program": "3D Elevation Program (3DEP)",
+    "productId": "66ce871ad34e98e8a92453cb",
+    "productTitle": "USGS 1 Meter 10 x55y419 CA_SanFrancisco_B23",
+    "sciencebaseJsonUrl": "https://www.sciencebase.gov/catalog/item/66ce871ad34e98e8a92453cb?format=json",
+    "sciencebaseJsonSha256": "cbd6f3311b0b5588c899284a4d439c3396a28a80fdca5283f5af0a75f9207196",
+    "productMetadataUrl": "https://thor-f5.er.usgs.gov/ngtoc/metadata/waf/elevation/1_meter/geotiff/CA_SanFrancisco_B23/USGS_1M_10_x55y419_CA_SanFrancisco_B23.xml",
+    "productMetadataSha256": "55f267f782295ebf3f7250ee3418649e58fb89b4783d69f4d9b7fdb0b9f42301",
+    "acquisitionDate": "2023-04-20",
+    "publicationDate": "2024-08-26",
+    "license": "US public domain",
+    "attribution": "U.S. Geological Survey, 3D Elevation Program (3DEP)"
+  },
+  "raster": {
+    "format": "GeoTIFF",
+    "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanFrancisco_B23/TIFF/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+    "bytes": 86461076,
+    "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+    "etag": "45df67a1a83a61bcc23b1c2a2d0a41d4",
+    "lastModified": "Fri, 13 Feb 2026 02:57:21 GMT",
+    "localRawCache": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+    "localRawCacheGitIgnored": true
+  },
+  "coordinateReference": {
+    "horizontal": {
+      "declaredByProductMetadata": "NAD83 / UTM zone 10N",
+      "expectedEpsg": "EPSG:26910",
+      "units": "metres",
+      "realizationStatus": "The GeoTIFF WKT/GeoKeys and exact NAD83 realization must be validated before a production coordinate transform is selected."
+    },
+    "vertical": {
+      "declaredByProductMetadata": "NAVD88",
+      "units": "metres",
+      "geoidAndEpochStatus": "Not locked by this source-lock. A production terrain build must validate the GeoTIFF vertical CRS/geoid realization and reconcile its water datum."
+    }
+  },
+  "tooling": {
+    "lockScript": "scripts/world-tiles/lock-usgs-3dep-terrain.mjs",
+    "verifier": "scripts/world-tiles/verify-ferry-production-terrain.mjs",
+    "runtime": "node v22.23.1",
+    "downloadMethod": "WHATWG fetch with resumable HTTP Range reads and sequential FileHandle writes while hashing bytes"
+  },
+  "integrationStatus": {
+    "currentFrame": "sf-atlas-linear-v1",
+    "currentFrameStatus": "preview-only",
+    "productionTerrain": "not-built",
+    "tileManifestsChanged": false,
+    "nextRequiredGate": "Validate GeoTIFF CRS realization/geoid and build an authoritative EPSG:26910 terrain artifact before any manifest promotion."
+  }
+}

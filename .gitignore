@@ -30,6 +30,9 @@ public/data/sf/*.json.gz
 public/data/sf/*.geojson
 public/data/sf/*.pbf
 
+# Authoritative source rasters are local build inputs, never public runtime assets.
+Data/raw/usgs-3dep/
+
 # Local QA / session artifacts
 tmp/
 sessions/
