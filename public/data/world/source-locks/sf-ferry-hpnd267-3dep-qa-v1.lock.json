@@ -1,0 +1,282 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-point-sample-qa-control-lock",
+  "status": "qa-only-descriptive-point-sample-not-for-runtime",
+  "id": "sf-ferry-hpnd267-3dep-qa-v1",
+  "title": "Ferry HPND 267 to locked 3DEP descriptive point-sample QA control",
+  "scope": "This lock records one reproducible, descriptive point-sample residual between official CCSF HPND point 267 and the checked-in Ferry 3DEP engineering preview. It is QA evidence only. It does not establish 3DEP accuracy, a datum transformation, an old City Datum pairing or offset, a contour conversion, a terrain correction, a water reference, a survey result, or authority for runtime, manifest, production, navigation, flood, or safety use.",
+  "authorityReceipts": {
+    "retrievedOn": "2026-08-10",
+    "hashAlgorithm": "SHA-256 over the exact retrieved response bytes",
+    "items": [
+      {
+        "id": "ccsf-geodetic-network-page",
+        "title": "CCSF Geodetic Network",
+        "url": "https://sfpublicworks.org/services/ccsf-geodetic-network",
+        "bytes": 56739,
+        "sha256": "51c063253eb00f711972e1de67eb6a0fba5c024f3d166274fa4346465f32e3d6"
+      },
+      {
+        "id": "ccsf-hpnd-coordinate-list",
+        "title": "High Precision Network Densification (HPND) Coordinate List",
+        "url": "https://sfpublicworks.org/sites/default/files/Geodetic%20Network/CCSF%20HPND%20Densification%20Coordinate%20List.docx",
+        "bytes": 67051,
+        "sha256": "c0934ff792f4a54ddd79483db2241fda8ed0f44b1c2979d910357f6b5885bbdc"
+      },
+      {
+        "id": "ccsf-cs13-point-descriptions",
+        "title": "CCSF-CS13 Primary and Densification Point Descriptions",
+        "url": "https://sfpublicworks.org/sites/default/files/Geodetic%20Network/CCSF-CS13%20Primary%20%26%20Densification%20Points%20061716%20JTM.xlsx",
+        "bytes": 1845905,
+        "sha256": "ca800d485e2a5a0376b74f3b93987fe0e8eef1f52b702a4c7f65fc850d007002"
+      },
+      {
+        "id": "ccsf-vd13-benchmark-heights",
+        "title": "CCSF Vertical Datum of 2013 Benchmark List, NAVD88 Datum as Recovered by CCSF in 2013",
+        "url": "https://sfpublicworks.org/sites/default/files/Geodetic%20Network/CCSF-VD13%20Benchmarks-NAVD88%20Heights.docx",
+        "bytes": 91771,
+        "sha256": "2df9fde0a3dffdd650fa018184ffa844ac04f6971c02a1b4e0b1346f22d5d1a5"
+      },
+      {
+        "id": "ccsf-2013-leveling-report",
+        "title": "City and County of San Francisco 2013 NAVD88 Vertical Datum Second Order Leveling Network Survey",
+        "url": "https://sfpublicworks.org/sites/default/files/Geodetic%20Network/Report%202013%20CCSF%20Second%20Order%20Leveling%20Survey%20v2%20(1).docx",
+        "bytes": 3051461,
+        "sha256": "a15c24a9d49c5ff82c0cf072f4e76a3bee1b3eb01f313c245668df712d6165ea"
+      },
+      {
+        "id": "ccsf-datums-reference",
+        "title": "CCSF Datums, Coordinate Systems, Reference Frames and Acronyms",
+        "url": "https://sfpublicworks.org/sites/default/files/Geodetic%20Network/Datum-H-V%20Simplified%20CCSF%20Version%204.3_0.docx",
+        "bytes": 37953,
+        "sha256": "0f2233ac89dba8e6cd378509f4c9175b34457b19af618705492a7c0565f38c48"
+      }
+    ]
+  },
+  "sourceEvidence": {
+    "hpnd267": {
+      "pointId": "267",
+      "status": "SET",
+      "monumentType": "ANCHOR SCREW WITH WASHER STAMPED \"CCSF CONTROL 267\"",
+      "location": "EMBARCADERO BETWEEN MISSION AND MARKET",
+      "description": "Set in the easterly concrete sidewalk of Embarcadero between Mission and Market, 33 feet southerly of the Ferry Building's southerly face, 10 feet easterly of the easterly curb face of Embarcadero, and 5.8 inches southeasterly of a fire hydrant at the northerly side of the Ferry Building driveway.",
+      "setOrRecovered": {
+        "date": "2015-01-23",
+        "crewCodes": [
+          "MM",
+          "NDK",
+          "PNC",
+          "JTM"
+        ]
+      },
+      "formalCoordinate": {
+        "geometricDatum": "NAD83 (2011) Epoch 2010.00",
+        "projectedCoordinateSystem": "CCSF-CS13",
+        "latitudeDms": {
+          "sourceText": "37-47-40.36019",
+          "degrees": 37,
+          "minutes": 47,
+          "seconds": 40.36019,
+          "hemisphere": "N"
+        },
+        "longitudeDms": {
+          "sourceText": "122-23-34.79930",
+          "degrees": 122,
+          "minutes": 23,
+          "seconds": 34.7993,
+          "hemisphere": "W"
+        },
+        "normalizedLonLatDegrees": [
+          -122.39299980555556,
+          37.79454449722222
+        ],
+        "ccsfCs13UsSurveyFeet": {
+          "northing": 94965.87,
+          "easting": 173951.22
+        },
+        "ellipsoidHeightUsSurveyFeet": -96.4
+      },
+      "verticalControl": {
+        "datum": "CCSF 2013 NAVD88 Vertical Datum (CCSF-VD13)",
+        "sourcePublishedHeight": {
+          "usSurveyFeet": 10.348,
+          "metres": 3.154
+        },
+        "heightCode": "L",
+        "heightCodeDefinition": "Based on CCSF 2013 High Precision Leveling Network",
+        "exactConversion": {
+          "usSurveyFootMetresNumerator": 1200,
+          "usSurveyFootMetresDenominator": 3937,
+          "metresPerUsSurveyFoot": 0.3048006096012192,
+          "heightMetres": 3.1540767081534162,
+          "publishedMetreRoundingDelta": 0.00007670815341609338
+        }
+      },
+      "networkAccuracyContext": {
+        "pointSpecificAccuracyClaim": false,
+        "publishedNetworkContext": "The CCSF benchmark list says relative accuracy of undisturbed benchmarks is expected to be 1-2 millimetres; the 2013 leveling report says the recovered datum is within 0.016 metres at 95% confidence. Neither statement is a point-specific present-day uncertainty for HPND 267.",
+        "presentRecoveryOrStability": "No post-setting recovery, current stability, or subsidence assessment for HPND 267 is established by these receipts."
+      }
+    },
+    "approvedVerticalReference": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-vertical-water-reference-v1.lock.json",
+      "sha256": "fc054af8c2117c19b759e1c1b7150046d207c0ebd839975639b786446a2d2165",
+      "bytes": 8740,
+      "productMetadataDeclaration": "NAVD88",
+      "purposeHere": "This dependency supplies the approved product-metadata NAVD88 declaration and its limitations only. No water or tidal-datum content is applied to the point sample."
+    }
+  },
+  "repositoryDependencies": {
+    "sourceLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023.lock.json",
+      "bytes": 5360,
+      "sha256": "3751942da71cf0714827f809803ffb44dc1143430e350f8d0b1bd23da6da651b"
+    },
+    "horizontalLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "bytes": 9611,
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    "verticalReferenceLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-vertical-water-reference-v1.lock.json",
+      "bytes": 8740,
+      "sha256": "fc054af8c2117c19b759e1c1b7150046d207c0ebd839975639b786446a2d2165"
+    },
+    "parentPreviewReceipt": {
+      "path": "public/data/world/preview-artifacts/sf-ferry-3dep-2x2-parent-v1/sf-ferry-3dep-2x2-parent-preview-v1.receipt.json",
+      "bytes": 8611,
+      "sha256": "8d34df70e93f92fb7b5076f3ee0260bd6c8605ca92de14703a2eb39e835419be"
+    },
+    "parentPreviewFloat32": {
+      "path": "public/data/world/preview-artifacts/sf-ferry-3dep-2x2-parent-v1/sf-ferry-3dep-2x2-parent-preview-v1.f32le",
+      "bytes": 2621160,
+      "sha256": "4975b5f6542d0ff87af840d04cfaf25ab08398889da441efb043b0fae4fafcdc"
+    }
+  },
+  "comparison": {
+    "horizontalOperation": {
+      "sourcePointFrame": "NAD83 (2011) Epoch 2010.00",
+      "selectedOperation": "sf-ferry-3dep-2023-horizontal-crs-v1 generic WGS84-to-EPSG:26910 path",
+      "targetCrs": "EPSG:26910",
+      "combinedAccuracyMetres": 4,
+      "projectedEnMetres": [
+        553441.5855150643,
+        4183193.190592759
+      ],
+      "realizationOrEpochMatch": "not established",
+      "subMetreClaim": false
+    },
+    "pixelIsAreaBilinearSample": {
+      "sampleMeaning": "Bilinear interpolation of four native float32 sample-center values from the checked-in engineering-preview buffer",
+      "pixelReference": "PixelIsArea edge affine; subtract 0.5 pixel in both axes to address sample centers",
+      "parentWindowPixelOrigin": [
+        3024,
+        6317
+      ],
+      "parentWindowModelNorthwestEdgeMetres": [
+        553017.9999840065,
+        4183688.9999845778
+      ],
+      "parentSampleColumnRow": [
+        423.0855310577899,
+        495.30939181894064
+      ],
+      "lowerParentSampleIndexColumnRow": [
+        423,
+        495
+      ],
+      "fractionsEastSouth": [
+        0.08553105778992176,
+        0.3093918189406395
+      ],
+      "neighbors": [
+        {
+          "id": "northwest",
+          "parentColumnRow": [
+            423,
+            495
+          ],
+          "sourceColumnRow": [
+            3447,
+            6812
+          ],
+          "valueMetres": 3.1347227096557617
+        },
+        {
+          "id": "northeast",
+          "parentColumnRow": [
+            424,
+            495
+          ],
+          "sourceColumnRow": [
+            3448,
+            6812
+          ],
+          "valueMetres": 3.1431500911712646
+        },
+        {
+          "id": "southwest",
+          "parentColumnRow": [
+            423,
+            496
+          ],
+          "sourceColumnRow": [
+            3447,
+            6813
+          ],
+          "valueMetres": 3.121222496032715
+        },
+        {
+          "id": "southeast",
+          "parentColumnRow": [
+            424,
+            496
+          ],
+          "sourceColumnRow": [
+            3448,
+            6813
+          ],
+          "valueMetres": 3.1295595169067383
+        }
+      ],
+      "interpolated3depMetres": 3.1312642656838863
+    },
+    "controlHeightMetres": 3.1540767081534162,
+    "residual": {
+      "definition": "interpolated 3DEP sample minus HPND 267 CCSF-VD13 control height",
+      "metres": -0.02281244246952996,
+      "interpretation": "A descriptive difference between a bare-earth DEM sample and a physical sidewalk monument height under a generic 4 metre horizontal operation; it is not an accuracy, bias, correction, or datum-transform estimate."
+    },
+    "pointToLockedExtentCenterDistanceMetres": 93.04273189861951,
+    "distanceMethod": "Spherical haversine distance using mean Earth radius 6371008.8 metres"
+  },
+  "limitations": {
+    "parentVerticalDatumUnresolvedMustRemainTrue": true,
+    "descriptivePointSampleQaOnly": true,
+    "threeDepAccuracyClaim": false,
+    "combinedUncertaintyClaim": false,
+    "oldCityDatumPairing": false,
+    "oldCityDatumOffset": false,
+    "contourDatumEquivalence": false,
+    "contourConversion": false,
+    "terrainOffsetOrCorrection": false,
+    "runtimeUse": false,
+    "manifestPromotion": false,
+    "productionTerrainAuthorization": false,
+    "waterOrTidalDatumTransfer": false,
+    "geoidModelClaim": false,
+    "verticalCoordinateEpochClaim": false,
+    "horizontalRealizationOrEpochMatchClaim": false,
+    "surveyOrSafetyUse": false,
+    "surfaceMismatch": "HPND 267 is a physical monument in concrete sidewalk; the 3DEP product is a bare-earth DEM. Their descriptive residual is not a common-surface validation.",
+    "nextRequiredAuthority": "A production use requires producer-authoritative realization/epoch/geoid metadata, a point-specific monument recovery and stability assessment, a defined common-surface reduction, and an uncertainty budget. Any historical contour conversion additionally requires an official dual-datum tie or a new City-approved survey."
+  },
+  "integrationStatus": {
+    "qaArtifactOnly": true,
+    "terrainArtifactChanged": false,
+    "terrainManifestChanged": false,
+    "runtimeChanged": false,
+    "waterChanged": false,
+    "productionClaim": false
+  }
+}
