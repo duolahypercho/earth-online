@@ -54,6 +54,7 @@ const DEFAULT_PAVING_PATHS = Object.freeze([
 const PALETTE = Object.freeze({
   curb: 0x9da3a1,
   sidewalk: 0x888984,
+  tactile: 0xb28c3f,
   pavingStone: 0x8e8b80,
   pavingConcrete: 0x999994,
   pavingBorder: 0x9a9992,
@@ -355,6 +356,7 @@ function makeMaterials() {
   const materials = {
     curb: createStandardMaterial(PALETTE.curb, 0.82),
     sidewalk: createStandardMaterial(PALETTE.sidewalk, 0.9),
+    tactile: createStandardMaterial(PALETTE.tactile, 0.78, 0.04),
     paving: new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: pavingAlbedo.fallback,
@@ -390,9 +392,14 @@ function makeBatches(root, materialState) {
   const batches = {
     curb: makeBatch(root, 'OSM-aligned curb returns', cube, materials.curb, 36),
     sidewalk: makeBatch(root, 'Ferry Plaza sidewalk slabs', cube, materials.sidewalk, 48),
+    tactile: makeBatch(root, 'Source-derived tactile crossing plates', cube, materials.tactile, 8),
+    tactileDots: makeBatch(root, 'Source-derived tactile warning dots', disc, materials.tactile, 16),
+    drain: makeBatch(root, 'Road-edge gutters and curb drains', cube, materials.utility, 24),
     paving: makeBatch(root, 'Market Street OSM paving finish', pavingCube, materials.paving, 96),
     pavingBorder: makeBatch(root, 'Market Street paving edge courses', cube, materials.pavingBorder, 48),
-    seams: makeBatch(root, 'Sidewalk expansion seams', cube, materials.facadeShadow, 80),
+    // The tactile warning field uses eleven released seam instances while
+    // preserving the compact 360-instance near-field budget.
+    seams: makeBatch(root, 'Sidewalk expansion seams', cube, materials.facadeShadow, 69),
     marking: makeBatch(root, 'OSM road markings', cube, materials.marking, 96),
     utility: makeBatch(root, 'Drain and access covers', disc, materials.utility, 30),
     bollard: makeBatch(root, 'Ferry Plaza bollards', cylinder, materials.iron, 40),
@@ -493,32 +500,163 @@ function addDerivedCrossings(batches, roads, pavingPaths, roadElevation, bounds,
   return crossingCount;
 }
 
-function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix) {
+function deriveCurbTransitions(roads, pavingPaths, bounds, isSea) {
+  // These transitions are inferred only where a named source road and a
+  // source pedestrian approach geometrically meet. They are not guessed at
+  // arbitrary junctions, which keeps curb cuts bounded to the OSM evidence.
+  const crossingRoadIds = new Set([283512618, 850162147]);
+  const marketApproachPathIds = new Set([
+    779448275, 779448274, 779448273, 151632675, 779448272, 779448271, 1189071403,
+  ]);
+  const transitions = [];
+  for (const road of roads) {
+    if (!crossingRoadIds.has(Number(road.id))) continue;
+    forEachSegment(road, (roadSegment) => {
+      for (const path of pavingPaths) {
+        if (!marketApproachPathIds.has(Number(path.id))) continue;
+        forEachSegment(path, (pathSegment) => {
+          const intersection = segmentIntersection(roadSegment, pathSegment);
+          if (!intersection || !isUsablePoint(intersection.x, intersection.z, bounds, isSea)) return;
+          transitions.push(Object.freeze({
+            roadId: Number(road.id),
+            segmentIndex: roadSegment.index,
+            distance: roadSegment.length * intersection.firstT,
+            x: intersection.x,
+            z: intersection.z,
+          }));
+        });
+      }
+    });
+  }
+  return transitions;
+}
+
+function addCurbTransitionDetail(
+  batches, transitions, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix,
+) {
+  const tactileColor = new THREE.Color(PALETTE.tactile);
+  let tactilePlates = 0;
+  let tactileDots = 0;
+  let drainBars = 0;
+  let curbRamps = 0;
+  for (const transition of transitions) {
+    const road = roads.find((candidate) => Number(candidate.id) === transition.roadId);
+    if (!road) continue;
+    let segment = null;
+    forEachSegment(road, (candidate) => {
+      if (candidate.index === transition.segmentIndex) segment = candidate;
+    });
+    if (!segment) continue;
+    const nx = -segment.dz / segment.length;
+    const nz = segment.dx / segment.length;
+    const halfRoad = road.width * 0.5;
+    for (const side of [-1, 1]) {
+      const curbX = transition.x + nx * side * (halfRoad + 0.08);
+      const curbZ = transition.z + nz * side * (halfRoad + 0.08);
+      if (!isUsablePoint(curbX, curbZ, bounds, isSea)) continue;
+      const roadY = roadElevation(curbX, curbZ);
+      // A shallow transition replaces the missing raised curb section. It is
+      // emitted only when this module owns curbs; live base curbs remain the
+      // authoritative curb volume and are never double-ribboned here.
+      if (layers.curbs) {
+        put(batches.curb, boxMatrix(matrix, curbX, roadY + 0.028, curbZ,
+          2.55, 0.056, 0.42, segment.angle));
+        curbRamps += 1;
+      }
+      const tactileX = transition.x + nx * side * (halfRoad + 0.47);
+      const tactileZ = transition.z + nz * side * (halfRoad + 0.47);
+      if (isUsablePoint(tactileX, tactileZ, bounds, isSea)) {
+        put(batches.tactile, boxMatrix(matrix, tactileX, sidewalkElevation(tactileX, tactileZ) + 0.012, tactileZ,
+          1.62, 0.024, 0.58, segment.angle), tactileColor);
+        tactilePlates += 1;
+        // Four shallow warning dots form a readable tactile field without
+        // widening the source-derived plate. Their bottom sits on the plate,
+        // so neither clear nor wet presentation can show a floating gap.
+        for (const along of [-0.31, 0.31]) {
+          for (const across of [-0.13, 0.13]) {
+            const dotX = tactileX + (segment.dx / segment.length) * along + nx * side * across;
+            const dotZ = tactileZ + (segment.dz / segment.length) * along + nz * side * across;
+            put(batches.tactileDots, cylinderMatrix(matrix, dotX,
+              sidewalkElevation(dotX, dotZ) + 0.044, dotZ, 0.074, 0.04, 0.074));
+            tactileDots += 1;
+          }
+        }
+      }
+      // Three inset bars give each source-derived drain a readable grate
+      // rhythm without creating a broad road overlay or a new road ribbon.
+      for (const offset of [-0.17, 0, 0.17]) {
+        const drainX = transition.x + segment.dx / segment.length * offset + nx * side * (halfRoad - 0.13);
+        const drainZ = transition.z + segment.dz / segment.length * offset + nz * side * (halfRoad - 0.13);
+        if (!isUsablePoint(drainX, drainZ, bounds, isSea)) continue;
+        put(batches.drain, boxMatrix(matrix, drainX, roadElevation(drainX, drainZ) + 0.014, drainZ,
+          0.055, 0.018, 0.42, segment.angle));
+        drainBars += 1;
+      }
+    }
+  }
+  if (batches.tactile.mesh.instanceColor) batches.tactile.mesh.instanceColor.needsUpdate = true;
+  return Object.freeze({ tactilePlates, tactileDots, drainBars, curbRamps });
+}
+
+function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, transitions, matrix) {
   const curbColor = new THREE.Color();
   const slabColor = new THREE.Color();
   let detailSeed = 1;
   for (const road of roads) {
-    forEachSegment(road, ({ a, b, dx, dz, length, angle }) => {
+    forEachSegment(road, ({ a, b, dx, dz, length, angle, index }) => {
       const nx = -dz / length;
       const nz = dx / length;
       const midpointX = (a[0] + b[0]) * 0.5;
       const midpointZ = (a[1] + b[1]) * 0.5;
       const halfRoad = road.width * 0.5;
       const edgeInset = Math.max(0.18, halfRoad - 0.28);
+      const curbCuts = transitions
+        .filter((transition) => Number(road.id) === transition.roadId && transition.segmentIndex === index)
+        .map((transition) => ({
+          start: clamp(transition.distance - 1.3, 0, length),
+          end: clamp(transition.distance + 1.3, 0, length),
+        }))
+        .sort((first, second) => first.start - second.start);
+      const curbRuns = [];
+      let curbRunStart = 0;
+      for (const cut of curbCuts) {
+        if (cut.start - curbRunStart > 0.22) curbRuns.push([curbRunStart, cut.start]);
+        curbRunStart = Math.max(curbRunStart, cut.end);
+      }
+      if (length - curbRunStart > 0.22) curbRuns.push([curbRunStart, length]);
 
-      // Two shallow curb runs and sidewalk bands follow existing OSM centerlines.
+      // Curb faces and capstones are separate shallow pieces. The split gives
+      // a near camera an actual top highlight and vertical edge, while curb
+      // cuts remove only source-derived crossing spans.
       for (const side of [-1, 1]) {
         const curbX = midpointX + nx * side * (halfRoad + 0.08);
         const curbZ = midpointZ + nz * side * (halfRoad + 0.08);
         if (isUsablePoint(curbX, curbZ, bounds, isSea)) {
           if (layers.curbs) {
-            put(batches.curb, boxMatrix(matrix, curbX, roadElevation(curbX, curbZ) + 0.08, curbZ, length + 0.2, 0.16, 0.24, angle));
+            for (const [start, end] of curbRuns) {
+              const span = end - start;
+              const distance = (start + end) * 0.5;
+              const x = a[0] + dx * (distance / length) + nx * side * (halfRoad + 0.08);
+              const z = a[1] + dz * (distance / length) + nz * side * (halfRoad + 0.08);
+              const y = roadElevation(x, z);
+              put(batches.curb, boxMatrix(matrix, x, y + 0.055, z, span, 0.11, 0.14, angle));
+              put(batches.curb, boxMatrix(matrix, x, y + 0.13, z, span + 0.012, 0.04, 0.27, angle));
+            }
           }
           if (layers.sidewalkSlabs) {
             put(batches.sidewalk, boxMatrix(matrix,
               midpointX + nx * side * (halfRoad + 1.22), roadElevation(curbX, curbZ) + 0.04,
               midpointZ + nz * side * (halfRoad + 1.22), length + 0.14, 0.08, 2.05, angle));
           }
+        }
+        // The narrow gutter is a material-only road-edge variation. It stays
+        // inboard of an authoritative base curb, so it does not recreate or
+        // stack a curb/sidewalk ribbon when the caller owns those layers.
+        const gutterX = midpointX + nx * side * (halfRoad - 0.17);
+        const gutterZ = midpointZ + nz * side * (halfRoad - 0.17);
+        if (isUsablePoint(gutterX, gutterZ, bounds, isSea)) {
+          put(batches.drain, boxMatrix(matrix, gutterX, roadElevation(gutterX, gutterZ) + 0.013, gutterZ,
+            length - 0.16, 0.018, 0.28, angle));
         }
       }
 
@@ -675,8 +813,9 @@ function countTriangles(meshes) {
  * lanes/lane width, then the conservative eight-metre fallback.
  *
  * Pass `existingSurfaceLayers: { curbs: true, sidewalks: true }` when the
- * runtime already rendered those volumes. Their meshes remain empty while
- * seams, utility detail, furniture, and markings stay enabled. Optional
+ * runtime already rendered those volumes. Their curb/sidewalk meshes remain
+ * empty while narrow road-surface details, seams, utility detail, furniture,
+ * and markings stay enabled. Optional
  * `roadSurfaceElevationAt` and `sidewalkSurfaceElevationAt` callbacks return
  * final world-space surface heights and take precedence over lift inference.
  */
@@ -729,7 +868,11 @@ export function createFerryBuildingStreetscape(options = {}) {
   const batches = makeBatches(root, materialState);
   const matrix = new THREE.Matrix4();
   addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, matrix);
-  addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix);
+  const curbTransitions = deriveCurbTransitions(roads, pavingPaths, bounds, isSea);
+  addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, curbTransitions, matrix);
+  const curbTransitionDetail = addCurbTransitionDetail(
+    batches, curbTransitions, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix,
+  );
   const derivedCrossings = addDerivedCrossings(
     batches, roads, pavingPaths, roadElevation, bounds, isSea, matrix,
   );
@@ -743,6 +886,10 @@ export function createFerryBuildingStreetscape(options = {}) {
     roads: roads.map(({ id, name, width }) => ({ id, name, width })),
     pavingPaths: pavingPaths.map(({ id, name, surface, width }) => ({ id, name, surface, width })),
     derivedCrossings,
+    curbTransitions: curbTransitions.map(({ roadId, segmentIndex, distance, x, z }) => ({
+      roadId, segmentIndex, distance, x, z,
+    })),
+    curbTransitionDetail,
     layers,
   });
   if (stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls

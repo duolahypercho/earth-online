@@ -67,6 +67,20 @@ const suppressedFixture = createFerryBuildingStreetscape({
   existingSurfaceLayers: { curbs: true, sidewalks: true },
   roads: [{ id: 26769726, name: 'Suppression test', width: 8, points: [2200, 1800, 2240, 1840] }],
 });
+const suppressedTransitionFixture = createFerryBuildingStreetscape({
+  scene: new THREE.Scene(),
+  tileBounds,
+  elevationAt: () => 1.8,
+  isSea: () => false,
+  roadSurfaceLift: 0.46,
+  existingSurfaceLayers: { curbs: true, sidewalks: true },
+  roads: [{
+    id: 283512618,
+    name: 'The Embarcadero',
+    width: 6.5,
+    points: [[2169.7, 1947.1], [2264.2, 1824.2]],
+  }],
+});
 
 const fail = (message) => {
   console.error(`FAIL: ${message}`);
@@ -91,7 +105,7 @@ if (!scene.children.includes(streetscape.root)) fail('streetscape did not attach
 if (!streetscape.root.userData.heroStreetscape) fail('source-aligned root marker missing');
 if (FERRY_BUILDING_STREETSCAPE_SOURCE.ferryBuildingWay !== 558731934) fail('Ferry Building source way changed');
 if (streetscape.stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls) fail('draw-call budget exceeded');
-if (streetscape.stats.drawCalls > 15) fail('generated plaza albedo added a streetscape draw call');
+if (streetscape.stats.drawCalls !== 18) fail('close-range curb transition pass did not retain its bounded batch budget');
 if (streetscape.stats.instances > FERRY_BUILDING_STREETSCAPE_BUDGET.maxInstances) fail('instance budget exceeded');
 if (streetscape.stats.triangles > FERRY_BUILDING_STREETSCAPE_BUDGET.maxTriangles) fail('triangle budget exceeded');
 if (streetscape.stats.roads.length !== FERRY_BUILDING_STREETSCAPE_SOURCE.roadIds.length) {
@@ -132,17 +146,45 @@ const retainedSeams = findMesh(suppressedFixture, 'Sidewalk expansion seams');
 const retainedMarkings = findMesh(suppressedFixture, 'OSM road markings');
 const retainedFurniture = findMesh(suppressedFixture, 'Ferry Plaza bollards');
 const retainedPaving = findMesh(suppressedFixture, 'Market Street OSM paving finish');
-if (suppressedCurbs.count || suppressedSlabs.count) fail('existing surface ownership did not suppress curb/slab instances');
-if (!retainedSeams.count || !retainedMarkings.count || !retainedFurniture.count || !retainedPaving.count) {
-  fail('surface suppression removed retained paving, seams, markings, or furniture');
+const retainedGutters = findMesh(suppressedFixture, 'Road-edge gutters and curb drains');
+if (suppressedCurbs.count || suppressedSlabs.count) {
+  fail('existing surface ownership did not suppress curb and sidewalk instances');
+}
+if (!retainedSeams.count || !retainedMarkings.count || !retainedFurniture.count || !retainedPaving.count || !retainedGutters.count) {
+  fail('surface suppression removed retained paving, seams, markings, furniture, or non-duplicative gutters');
 }
 if (suppressedFixture.stats.layers.curbs || suppressedFixture.stats.layers.sidewalkSlabs) {
   fail('suppressed layer diagnostics are incorrect');
+}
+const transitionCurbs = findMesh(suppressedTransitionFixture, 'OSM-aligned curb returns');
+const transitionTactile = findMesh(suppressedTransitionFixture, 'Source-derived tactile crossing plates');
+const transitionTactileDots = findMesh(suppressedTransitionFixture, 'Source-derived tactile warning dots');
+const transitionDrainage = findMesh(suppressedTransitionFixture, 'Road-edge gutters and curb drains');
+if (transitionCurbs.count !== 0 || transitionTactile.count !== 2
+  || transitionTactileDots.count !== 8 || transitionDrainage.count !== 8) {
+  fail('existing curb ownership did not retain only non-duplicative source-derived transition detail');
+}
+const suppressedRoadY = 1.8 + 0.46;
+const transitionGutterY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(transitionDrainage, 0)).y;
+const transitionDrainY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(transitionDrainage, 2)).y;
+const transitionTactileY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(transitionTactile)).y;
+const transitionTactileDotY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(transitionTactileDots)).y;
+if (Math.abs(transitionGutterY - (suppressedRoadY + 0.013)) > 1e-6
+  || Math.abs(transitionDrainY - (suppressedRoadY + 0.014)) > 1e-6
+  || Math.abs(transitionTactileY - (suppressedRoadY + 0.092)) > 1e-6
+  || Math.abs(transitionTactileDotY - (suppressedRoadY + 0.124)) > 1e-6) {
+  fail('suppressed curb transition detail is not lifted from its road/sidewalk datum');
+}
+if (Math.abs((transitionTactileDotY - 0.02) - (transitionTactileY + 0.012)) > 1e-6) {
+  fail('tactile warning dots do not sit flush on the tactile plate');
 }
 
 const baseMarking = findMesh(streetscape, 'OSM road markings');
 const pavingFinish = findMesh(streetscape, 'Market Street OSM paving finish');
 const facadeRelief = findMesh(streetscape, 'Ferry Building facade relief');
+const drainageDetails = findMesh(streetscape, 'Road-edge gutters and curb drains');
+const tactilePlates = findMesh(streetscape, 'Source-derived tactile crossing plates');
+const tactileDots = findMesh(streetscape, 'Source-derived tactile warning dots');
 const markingY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(baseMarking)).y;
 const facadeY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(facadeRelief)).y;
 if (Math.abs(markingY - (1.8 + 0.46 + 0.012)) > 1e-6) fail('marking lift is not relative to the road surface');
@@ -174,6 +216,18 @@ if (!paverMix || !Array.from(paverMix.array.slice(0, pavingFinish.count)).includ
 if (pavingFinish.material.customProgramCacheKey?.() !== 'ferry-world-paving-2.500-0.640') {
   fail('paver albedo is not world projected with the 64% 2.5m texture blend');
 }
+if (streetscape.stats.curbTransitions.length !== 2
+  || streetscape.stats.curbTransitionDetail.tactilePlates !== 4
+  || streetscape.stats.curbTransitionDetail.tactileDots !== 16
+  || streetscape.stats.curbTransitionDetail.drainBars !== 12
+  || streetscape.stats.curbTransitionDetail.curbRamps !== 4) {
+  fail('source-derived curb crossing transition detail is incomplete');
+}
+if (drainageDetails.count !== 20 || tactilePlates.count !== 4 || tactileDots.count !== 16) {
+  fail('close-range curb, gutter, tactile, or drain geometry is incomplete');
+}
+const gutterY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(drainageDetails)).y;
+if (Math.abs(gutterY - (1.8 + 0.46 + 0.013)) > 1e-6) fail('gutter seam did not retain a non-z-fighting road-surface lift');
 
 let facade = 0;
 let markings = 0;
@@ -185,11 +239,13 @@ streetscape.root.traverse((object) => {
   if (object.name.includes('curb')) curb += object.count;
 });
 if (!facade || !markings || !curb) fail('expected facade, marking, and curb detail batches');
+if (curb < 28) fail('curb face, capstone, and source-derived ramp detail is incomplete');
 
 streetscape.setConditions({ wetness: 0.85 });
 streetscape.update(1 / 30);
 if (pavingFinish.material.roughness > 0.48) fail('drizzle did not lower roughness across the paving finish');
 if (pavingFinish.material.envMapIntensity < 1.05) fail('drizzle did not raise distributed paving reflections');
+if (drainageDetails.material.roughness > 0.39) fail('drizzle did not lower roughness along the asphalt gutter seam');
 streetscape.dispose();
 if (!streetscape.disposed || scene.children.includes(streetscape.root)) fail('dispose did not detach streetscape');
 flatFixture.dispose();
@@ -198,6 +254,7 @@ fallbackFixture.dispose();
 cardinalFixture.dispose();
 diagonalFixture.dispose();
 suppressedFixture.dispose();
+suppressedTransitionFixture.dispose();
 
 if (!process.exitCode) {
   console.log(JSON.stringify({
@@ -206,6 +263,7 @@ if (!process.exitCode) {
     stats: streetscape.stats,
     flatFixture: flatFixture.stats,
     suppressedFixture: suppressedFixture.stats,
+    suppressedTransitionFixture: suppressedTransitionFixture.stats,
     budget: FERRY_BUILDING_STREETSCAPE_BUDGET,
     detail: { facade, markings, curb },
   }, null, 2));
