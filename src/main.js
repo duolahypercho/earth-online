@@ -2665,6 +2665,7 @@ streetHeat = createStreetHeat({
   // dependency.
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
+  getPursuitResponders: () => traffic.getPursuitResponders?.(),
   onEvent: ({ kind, message, score, heatBefore = 0 }) => {
     if (kind === 'responder-contact') {
       if (traffic.isPlayerDriving?.()) {

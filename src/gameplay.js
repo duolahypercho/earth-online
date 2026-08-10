@@ -427,7 +427,13 @@ function formatHeat(value) {
  * traffic system remains the only owner of vehicle motion and collision
  * safety.
  */
-export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponder, onEvent } = {}) {
+export function createStreetHeat({
+  scene,
+  getTrafficSnapshot,
+  getPursuitResponder,
+  getPursuitResponders,
+  onEvent,
+} = {}) {
   if (!scene?.isScene) {
     throw new TypeError('createStreetHeat requires a THREE.Scene.');
   }
@@ -441,6 +447,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     targetPosition: null,
     responderId: null,
     responderDistance: null,
+    responderIds: [],
+    responderDistances: [],
     responderContacts: 0,
     arrestHold: 0,
     arrests: 0,
@@ -555,6 +563,10 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.responderContacts = 0;
       state.targetId = null;
       state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
       state.safeElapsed = 0;
       state.level = currentLevel();
       emitEvent(
@@ -575,6 +587,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.targetPosition = null;
     state.responderId = null;
     state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
     state.responderContacts = 0;
     state.arrestHold = 0;
     state.arrests = 0;
@@ -688,25 +702,35 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       nearestDistance = sampleTraffic(latestPosition, playerVehicleId);
     }
     if (state.pursuitActive) {
-      const responder = getPursuitResponder?.();
+      const responderList = getPursuitResponders?.();
+      const responders = Array.isArray(responderList) && responderList.length
+        ? responderList.filter((entry) => entry?.active)
+        : [getPursuitResponder?.()].filter((entry) => entry?.active);
+      const responder = responders[0];
       if (responder?.active && Number.isFinite(responder.position?.x)
         && Number.isFinite(responder.position?.z)) {
+        state.responderIds = responders.map((entry) => entry.id);
+        state.responderDistances = responders.map((entry) => (
+          Number.isFinite(entry.distance)
+            ? entry.distance
+            : Math.hypot(
+              entry.position.x - (latestPosition?.x ?? 0),
+              entry.position.z - (latestPosition?.z ?? 0),
+            )
+        ));
         state.responderId = responder.id;
-        state.responderDistance = Number.isFinite(responder.distance)
-          ? responder.distance
-          : Math.hypot(
-            responder.position.x - (latestPosition?.x ?? 0),
-            responder.position.z - (latestPosition?.z ?? 0),
-          );
+        state.responderDistance = state.responderDistances[0];
         state.targetId = responder.id;
         state.targetPosition = {
           x: responder.position.x,
           z: responder.position.z,
         };
-        nearestDistance = state.responderDistance;
+        nearestDistance = Math.min(...state.responderDistances);
       } else {
         state.responderId = null;
         state.responderDistance = null;
+        state.responderIds = [];
+        state.responderDistances = [];
         if (!latestDriving) {
           state.targetId = null;
           state.targetPosition = null;
@@ -715,12 +739,14 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     } else {
       state.responderId = null;
       state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
     }
 
     if (state.pursuitActive
       && state.responderContacts === 0
-      && state.responderDistance !== null
-      && state.responderDistance <= STREET_HEAT_RESPONDER_CONTACT_RADIUS) {
+      && state.responderDistances.length > 0
+      && Math.min(...state.responderDistances) <= STREET_HEAT_RESPONDER_CONTACT_RADIUS) {
       state.responderContacts = 1;
       emitEvent(
         'responder-contact',
@@ -730,9 +756,12 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       );
     }
 
+    const nearestResponderDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
     const arresting = state.pursuitActive
-      && state.responderDistance !== null
-      && state.responderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS
+      && nearestResponderDistance !== null
+      && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS
       && latestDriving
       && surrendering === true
       && latestSpeed <= STREET_HEAT_ARREST_SPEED;
@@ -747,6 +776,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.targetPosition = null;
       state.responderId = null;
       state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
       state.responderContacts = 0;
       state.nearestDistance = null;
       state.safeElapsed = 0;
@@ -805,6 +836,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.targetPosition = null;
       state.responderId = null;
       state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
       state.safeElapsed = 0;
       state.level = currentLevel();
       emitEvent(
@@ -839,6 +872,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.targetPosition = null;
       state.responderId = null;
       state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
       state.responderContacts = 0;
       state.arrestHold = 0;
       state.safeElapsed = 0;
@@ -933,9 +968,14 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       pursuitActive: state.pursuitActive,
       targetId: state.targetId,
       responderId: state.responderId,
+      responderIds: [...state.responderIds],
+      responderCount: state.responderIds.length,
       responderDistance: state.responderDistance === null
         ? null
         : Math.round(state.responderDistance * 10) / 10,
+      responderDistances: state.responderDistances.map(
+        (distance) => Math.round(distance * 10) / 10,
+      ),
       responderContacts: state.responderContacts,
       arrestHold: Math.round(state.arrestHold * 100) / 100,
       arrests: state.arrests,
@@ -1012,6 +1052,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.targetPosition = null;
     state.responderId = null;
     state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
     state.arrestHold = 0;
     state.arrests = 0;
     state.nearestDistance = null;
