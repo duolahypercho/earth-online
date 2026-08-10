@@ -14,6 +14,7 @@ import { createTreeForRole } from './npc-trees.js';
 
 const POOL_SIZE = 48;
 const MAX_PERSISTED_COMBAT_DEFEATS = 8;
+const VEHICLE_IMPACT_DEFEAT_COUNT = 2;
 // Eight camera-facing actors carry the costly face/clothing treatment; the
 // remainder preserve a readable, varied background crowd inside the 48-person
 // fixed pool. This keeps the hero pass bounded on Cinema quality.
@@ -4395,6 +4396,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     if (!records) return false;
     pool.forEach((data) => {
       const userData = data.mesh.userData || (data.mesh.userData = {});
+      userData.vehicleImpactCount = 0;
+      userData.vehicleImpactUntil = 0;
+      userData.vehicleImpactDirectionX = 0;
+      userData.vehicleImpactDirectionZ = 0;
       if (userData.combatDefeated !== true && userData.combatDisabled !== true) return;
       data.mesh.rotation.z = 0;
       userData.combatHitCount = 0;
@@ -4434,11 +4439,22 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     userData.vehicleImpactDirectionX = directionX / directionLength;
     userData.vehicleImpactDirectionZ = directionZ / directionLength;
     userData.vehicleImpactCount = (Number(userData.vehicleImpactCount) || 0) + 1;
+    const defeated = userData.vehicleImpactCount >= VEHICLE_IMPACT_DEFEAT_COUNT;
+    if (defeated) {
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = Math.round(lastUpdateElapsed * 1000) / 1000;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'vehicle-impact';
+      userData.combatReactionStrength = 1;
+    }
     return {
       residentId,
       count: userData.vehicleImpactCount,
-      reaction: 'vehicle-stagger',
+      reaction: defeated ? 'vehicle-defeated' : 'vehicle-stagger',
       remaining: 1.35,
+      defeated,
     };
   }
 
@@ -4452,6 +4468,11 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       active: (Number(userData.vehicleImpactUntil) || 0) > lastUpdateElapsed,
       remaining: Math.max(0, (Number(userData.vehicleImpactUntil) || 0) - lastUpdateElapsed),
       combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
     };
   }
 
