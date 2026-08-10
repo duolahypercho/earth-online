@@ -173,7 +173,12 @@ try {
   'collision did not add exactly one bounded StreetHeat/HUD consequence', collision);
   assert(Math.round(collision.saved?.snapshot?.streetHeat?.heat ?? -1)
       === collision.event?.aftermath?.heatAfter
-    && collision.saved?.snapshot?.vehicle?.damage?.health === collision.player.damage.health,
+    && collision.saved?.snapshot?.vehicle?.damage?.health === collision.player.damage.health
+    && collision.saved?.snapshot?.trafficAftermath?.vehicles?.some((record) => (
+      record.vehicleId === collision.victim.id
+      && record.damage.health === collision.victim.damage.health
+      && record.damage.lastDamage?.source === 'reckless-collision'
+    )),
   'collision aftermath was not saved immediately', collision.saved);
   assert(Number.isFinite(collision.performance?.applicationP99FrameMs)
     && collision.performance.applicationP99FrameMs <= 16.67,
@@ -185,13 +190,104 @@ try {
     player: window.__SF_SIM__.traffic.getPlayerVehicleState(),
     heat: window.__SF_SIM__.getStreetHeatState(),
     diagnostics: window.__SF_SIM__.traffic.getDiagnostics(),
+    victim: window.__SF_SIM__.traffic.getVehicleLifeSnapshot().vehicles.find(
+      (vehicle) => vehicle.id === window.__SF_SIM__.getSavedProgress()
+        .snapshot?.trafficAftermath?.vehicles?.[0]?.vehicleId,
+    ) || null,
   }));
   assert(restored.player?.damage?.health === collision.player?.damage?.health
     && restored.player?.damage?.lastDamage?.source === 'traffic-impact'
     && restored.heat?.heat > 0
     && restored.heat?.heat <= collision.saved?.snapshot?.streetHeat?.heat
+    && restored.victim?.id === collision.victim?.id
+    && restored.victim?.damage?.health === collision.victim?.damage?.health
+    && restored.victim?.damage?.lastDamage?.source === 'reckless-collision'
+    && restored.victim?.indicators?.hazard === false
     && restored.diagnostics?.recklessCollisionEvents === 0,
-  'reload did not preserve player damage/heat or replayed the transient collision', restored);
+  'reload did not preserve both vehicle damage records/heat or replayed the transient collision', restored);
+
+  const validation = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    sim.exitCar();
+    const parkedBefore = sim.traffic.exportPlayerVehicleState();
+    sim.saveProgress();
+    const invalidRestore = structuredClone(sim.getSavedProgress().snapshot);
+    invalidRestore.vehicle.mode = 'driving';
+    invalidRestore.trafficAftermath.vehicles[0].vehicleId = 99999;
+    window.localStorage.setItem(
+      sim.getSavedProgress().key,
+      JSON.stringify(invalidRestore),
+    );
+    const restoreResult = sim.restoreProgress();
+    const parkedAfter = sim.traffic.exportPlayerVehicleState();
+    const before = sim.traffic.exportCollisionAftermathState();
+    const beforePlayer = sim.traffic.exportPlayerVehicleState();
+    const beforeLife = sim.lifeSim.getState();
+    const duplicate = structuredClone(before);
+    duplicate.vehicles.push(structuredClone(duplicate.vehicles[0]));
+    const unknown = structuredClone(before);
+    unknown.vehicles[0].vehicleId = 99999;
+    const mismatch = structuredClone(before);
+    mismatch.vehicles[0].class = 'bike';
+    const overlap = structuredClone(before);
+    overlap.vehicles[0] = {
+      ...overlap.vehicles[0],
+      vehicleId: beforePlayer.vehicleId,
+      class: beforePlayer.class,
+      identity: beforePlayer.identity,
+      damage: {
+        ...overlap.vehicles[0].damage,
+        maxHealth: beforePlayer.damage.maxHealth,
+      },
+    };
+    const rejected = [duplicate, unknown, mismatch, overlap].map(
+      (snapshot) => sim.traffic.importCollisionAftermathState(snapshot),
+    );
+    const afterRejected = sim.traffic.exportCollisionAftermathState();
+    const disabled = structuredClone(before);
+    disabled.vehicles[0].damage.health = 0;
+    disabled.vehicles[0].damage.disabled = true;
+    const disabledImported = sim.traffic.importCollisionAftermathState(disabled);
+    const victimId = disabled.vehicles[0].vehicleId;
+    const victim = sim.traffic.getVehicleLifeSnapshot().vehicles.find(
+      (vehicle) => vehicle.id === victimId,
+    ) || null;
+    const nearest = victim
+      ? sim.traffic.getNearestEnterableVehicle(victim.position, 1.5)
+      : null;
+    return {
+      rejected,
+      restoreResult,
+      parkedBefore,
+      parkedAfter,
+      before,
+      afterRejected,
+      beforePlayer,
+      afterPlayer: sim.traffic.exportPlayerVehicleState(),
+      beforeLife,
+      afterLife: sim.lifeSim.getState(),
+      disabledImported,
+      victim,
+      nearestId: nearest?.index ?? null,
+    };
+  });
+  assert(validation.rejected.every((value) => value === false)
+    && validation.restoreResult === false
+    && validation.parkedBefore?.mode === 'parked'
+    && validation.parkedAfter?.mode === 'parked'
+    && validation.parkedAfter.vehicleId === validation.parkedBefore.vehicleId
+    && JSON.stringify(validation.afterRejected) === JSON.stringify(validation.before)
+    && validation.afterPlayer?.vehicleId === validation.beforePlayer?.vehicleId
+    && validation.afterPlayer?.damage?.health === validation.beforePlayer?.damage?.health
+    && validation.afterLife.cash === validation.beforeLife.cash
+    && validation.afterLife.lastTransaction?.at === validation.beforeLife.lastTransaction?.at,
+  'malformed/duplicate collision aftermath was not rejected atomically', validation);
+  assert(validation.disabledImported === true
+    && validation.victim?.damage?.disabled === true
+    && validation.victim.speed === 0
+    && validation.victim.action?.key === 'vehicle-disabled'
+    && validation.nearestId !== validation.victim?.id,
+  'restored disabled victim remained moving or enterable', validation);
 
   assert(consoleErrors.length === 0, 'console/page errors occurred', consoleErrors);
   assert(httpErrors.length === 0, 'HTTP errors occurred', httpErrors);
@@ -207,7 +303,17 @@ try {
       victimHazards: collision.victim?.indicators?.hazard,
       savedAt: collision.saved?.lastSave?.savedAt,
     },
-    restored: { heat: restored.heat?.heat, damage: restored.player?.damage },
+    restored: {
+      heat: restored.heat?.heat,
+      damage: restored.player?.damage,
+      victimDamage: restored.victim?.damage,
+    },
+    validation: {
+      rejected: validation.rejected,
+      disabledImported: validation.disabledImported,
+      disabledVictimId: validation.victim?.id,
+      nearestId: validation.nearestId,
+    },
     applicationP99FrameMs: collision.performance?.applicationP99FrameMs,
     failures,
     consoleErrors,

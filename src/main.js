@@ -1300,6 +1300,7 @@ function savePlayerProgress() {
     combat: combat.exportState(),
     streetHeat: streetHeat.exportState(),
     vehicle: traffic.exportPlayerVehicleState?.() ?? null,
+    trafficAftermath: traffic.exportCollisionAftermathState?.() ?? null,
     garage: traffic.exportPlayerGarageState?.() ?? null,
     world: exportPlayerWorldState(),
   };
@@ -1371,8 +1372,20 @@ function restorePlayerProgress() {
   const previousCombat = combat?.exportState?.();
   const previousStreetHeat = streetHeat?.exportState?.();
   const previousVehicle = traffic.exportPlayerVehicleState?.() ?? null;
+  const previousTrafficAftermath = traffic.exportCollisionAftermathState?.() ?? null;
   const previousGarage = traffic.exportPlayerGarageState?.() ?? null;
   const previousWorld = exportPlayerWorldState();
+  const trafficAftermathSnapshot = snapshot.trafficAftermath ?? { version: 1, vehicles: [] };
+  const reservedVehicleIds = [
+    snapshot.vehicle?.vehicleId,
+    ...(Array.isArray(snapshot.garage?.slots)
+      ? snapshot.garage.slots.map((slot) => slot?.vehicleId)
+      : []),
+  ].map((id) => Number(id)).filter((id) => Number.isInteger(id));
+  const trafficAftermathValid = traffic.canImportCollisionAftermathState?.(
+    trafficAftermathSnapshot,
+    reservedVehicleIds,
+  ) === true;
   const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
   const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
   const combatRestored = snapshot.combat
@@ -1388,7 +1401,8 @@ function restorePlayerProgress() {
     && shiftRestored
     && combatRestored
     && streetHeatRestored
-    && worldRestored;
+    && worldRestored
+    && trafficAftermathValid;
   const garageRestored = baseRestored && snapshot.garage
     ? traffic.importPlayerGarageState?.(snapshot.garage) === true
     : baseRestored;
@@ -1397,7 +1411,12 @@ function restorePlayerProgress() {
       && ((snapshot.vehicle.mode ?? 'driving') !== 'driving'
         || activatePlayerVehiclePresentation({ restored: true }) !== null)
     : garageRestored;
-  if (baseRestored && garageRestored && vehicleRestored) {
+  const aftermathRestored = vehicleRestored
+    ? traffic.importCollisionAftermathState?.(
+      trafficAftermathSnapshot,
+    ) === true
+    : false;
+  if (baseRestored && garageRestored && vehicleRestored && aftermathRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
@@ -1412,6 +1431,9 @@ function restorePlayerProgress() {
     if ((previousVehicle.mode ?? 'driving') === 'driving') {
       activatePlayerVehiclePresentation({ restored: true });
     }
+  }
+  if (previousTrafficAftermath) {
+    traffic.importCollisionAftermathState?.(previousTrafficAftermath);
   }
   return false;
 }
