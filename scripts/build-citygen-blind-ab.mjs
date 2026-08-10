@@ -44,6 +44,13 @@ const pairs = [
     game: '.qa-citygen-sf.png',
   },
   {
+    id: 'sf-builtin-aerial',
+    label: 'Real SF built-in aerial composition',
+    kind: 'sf',
+    ref: 'public/data/reference-sf.jpg',
+    game: '.qa-citygen-sf-aerial.png',
+  },
+  {
     id: 'schedule1-street',
     label: 'Schedule I street',
     kind: 'schedule1',

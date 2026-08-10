@@ -9,6 +9,7 @@ const pairs = [
   { id: 'sf-street', reference: 'public/data/reference-sf-street.jpg', frame: '.qa-citygen-street.png' },
   { id: 'sf-night', reference: 'public/data/reference-sf-night.jpg', frame: '.qa-citygen-night.png' },
   { id: 'sf-builtin-street', reference: 'public/data/reference-sf-street.jpg', frame: '.qa-citygen-sf.png' },
+  { id: 'sf-builtin-aerial', reference: 'public/data/reference-sf.jpg', frame: '.qa-citygen-sf-aerial.png' },
   { id: 'schedule1-street', reference: 'public/data/reference/schedule1-street.jpg', frame: '.qa-citygen-street.png' },
   { id: 'schedule1-night', reference: 'public/data/reference/schedule1-night.jpg', frame: '.qa-citygen-night.png' },
   { id: 'schedule1-streetlife', reference: 'public/data/reference/schedule1-streetlife.jpg', frame: '.qa-citygen-placed.png' },
