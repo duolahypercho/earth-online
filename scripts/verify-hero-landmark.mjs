@@ -5,6 +5,7 @@ import {
   FERRY_BUILDING_LANDMARK_BUDGET,
   FERRY_BUILDING_LANDMARK_SOURCE,
   FERRY_CLOCK_TOWER_ANCHOR,
+  FERRY_SANDSTONE_ALBEDO_URL,
 } from '../src/realmap/hero-landmark.js';
 
 const building = {
@@ -22,6 +23,7 @@ scene.add(sourceMesh);
 const landmark = createFerryBuildingLandmark({ scene, building, sourceMesh, elevationAt: () => 1.8 });
 
 assert.equal(FERRY_BUILDING_LANDMARK_SOURCE.osmWay, 558731934, 'landmark must retain the exact OSM way');
+assert.equal(FERRY_SANDSTONE_ALBEDO_URL, '/assets/sf-ferry-sandstone-albedo-v1.png', 'landmark must use the project-owned Ferry sandstone asset');
 assert.equal(landmark.root.userData.source.osmWay, 558731934, 'source diagnostics must expose the exact OSM way');
 assert.ok(scene.children.includes(landmark.root), 'landmark should attach to the caller scene');
 assert.equal(sourceMesh.visible, false, 'only the matching supplied source render should be hidden');
@@ -47,6 +49,18 @@ const clockMaterial = landmark.root.getObjectByName('Ferry Building clock faces'
 assert.ok(facadeMaterial.roughness >= 0.8 && facadeMaterial.metalness === 0, 'facade must retain a matte stone response');
 assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed glazing rather than a bright transparent grid');
 assert.equal(clockMaterial.emissiveIntensity, 0, 'clock faces must not use an emissive toy-like treatment');
+const windowBays = landmark.root.getObjectByName('Ferry Building deep window bays');
+const windowAcrossValues = [];
+for (let index = 0; index < windowBays.count; index += 1) {
+  windowBays.getMatrixAt(index, roofMatrix);
+  const relative = new THREE.Vector2(
+    roofMatrix.elements[12] - building.centroid[0],
+    roofMatrix.elements[14] - building.centroid[1],
+  );
+  windowAcrossValues.push(relative.dot(new THREE.Vector2(...frame.across)));
+}
+assert.ok(Math.abs(Math.min(...windowAcrossValues) - frame.bounds.minAcross) < 0.5, 'landside windows must hug the authoritative footprint surface');
+assert.ok(Math.abs(Math.max(...windowAcrossValues) - frame.bounds.maxAcross) < 0.5, 'bayside windows must hug the authoritative footprint surface');
 const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
 const clockNormals = [];
 const clockCenters = [];
