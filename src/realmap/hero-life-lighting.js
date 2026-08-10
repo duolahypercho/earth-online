@@ -1,0 +1,348 @@
+// Bounded human-scale life and practical-light presentation for the Ferry
+// Building hero view. This deliberately reads simulation records; it never
+// writes their positions, rotations, paths, or behaviour state.
+
+import * as THREE from 'three';
+
+export const HERO_LIFE_LIGHTING_BUDGET = Object.freeze({
+  maxPedestrians: 24,
+  maxVehicles: 16,
+  maxPracticals: 6,
+  drawCalls: 10,
+  materials: 8,
+});
+
+const EMPTY_MATRIX = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+const PEDESTRIAN_PALETTE = Object.freeze([
+  0x2f536d, 0x765043, 0x536e59, 0x74546f, 0xa06d3e, 0x426b74,
+]);
+const SKIN_PALETTE = Object.freeze([0xd5aa86, 0xb77d5b, 0xe0ba94, 0x80502f, 0xc4926c]);
+const VEHICLE_PALETTE = Object.freeze([0xc44737, 0x2f6fae, 0xd6ad35, 0xdedfe0, 0x4a856c]);
+const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786, vehicle: 0xffd99a });
+
+function clamp(value, min, max) {
+  return THREE.MathUtils.clamp(Number(value) || 0, min, max);
+}
+
+function rootFor(record) {
+  if (record?.isObject3D) return record;
+  const candidate = record?.mesh?.root || record?.mesh || record?.root || record?.avatar || record?.group || null;
+  return candidate?.isObject3D ? candidate : null;
+}
+
+function colorFor(record, index, palette, fallbackKey) {
+  const candidate = record?.color ?? record?.[fallbackKey] ?? record?.mesh?.userData?.[fallbackKey];
+  return new THREE.Color(typeof candidate === 'number' ? candidate : palette[index % palette.length]);
+}
+
+function conditionState(input = {}) {
+  const timeOfDay = input.timeOfDay === 'night' || input.timeOfDay === 'dusk' ? input.timeOfDay : 'day';
+  const weather = ['drizzle', 'fog', 'overcast'].includes(input.weather) ? input.weather : 'clear';
+  const inferredNight = timeOfDay === 'night' ? 1 : timeOfDay === 'dusk' ? 0.48 : 0;
+  return {
+    timeOfDay,
+    weather,
+    night: clamp(input.night ?? inferredNight, 0, 1),
+    wetness: clamp(input.wetness ?? (weather === 'drizzle' ? 0.9 : weather === 'fog' ? 0.25 : 0), 0, 1),
+  };
+}
+
+function instanced(geometry, material, capacity, name) {
+  const mesh = new THREE.InstancedMesh(geometry, material, capacity);
+  mesh.name = name;
+  mesh.count = capacity;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Creates a non-invasive near-field life presentation layer.
+ *
+ * @param {{scene: THREE.Object3D, maxPedestrians?: number, maxVehicles?: number,
+ *   cameraExclusionRadius?: number, heroExclusionRadius?: number,
+ *   vehicleDetailDistance?: number, replaceSources?: boolean,
+ *   conditions?: object}} options
+ */
+export function createHeroLifeLighting(options = {}) {
+  if (!options.scene?.isObject3D) throw new Error('createHeroLifeLighting requires a Three.js scene or group');
+
+  const maxPedestrians = Math.floor(clamp(options.maxPedestrians ?? HERO_LIFE_LIGHTING_BUDGET.maxPedestrians, 1, HERO_LIFE_LIGHTING_BUDGET.maxPedestrians));
+  const maxVehicles = Math.floor(clamp(options.maxVehicles ?? HERO_LIFE_LIGHTING_BUDGET.maxVehicles, 1, HERO_LIFE_LIGHTING_BUDGET.maxVehicles));
+  const replaceSources = options.replaceSources ?? true;
+  const cameraExclusionRadius = Math.max(0.5, Number(options.cameraExclusionRadius) || 3.25);
+  const heroExclusionRadius = Math.max(0.5, Number(options.heroExclusionRadius) || 2.35);
+  const vehicleDetailDistance = Math.max(6, Number(options.vehicleDetailDistance) || 48);
+  let conditions = conditionState(options.conditions);
+
+  const group = new THREE.Group();
+  group.name = 'Ferry Building hero life and practical lighting';
+  group.userData.heroLifeLighting = true;
+  options.scene.add(group);
+
+  // Ten fixed instanced calls and eight shared materials are the intentional
+  // ceiling. The presentation will not scale draw calls with simulation size.
+  const torsoGeometry = new THREE.CapsuleGeometry(0.24, 0.62, 4, 8);
+  const headGeometry = new THREE.SphereGeometry(0.145, 10, 8);
+  const limbGeometry = new THREE.CapsuleGeometry(0.07, 0.56, 3, 6);
+  const shadowGeometry = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
+  const vehicleBodyGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const vehicleCabinGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const wheelGeometry = new THREE.CylinderGeometry(1, 1, 1, 12);
+  wheelGeometry.rotateZ(Math.PI / 2);
+  const practicalGeometry = new THREE.SphereGeometry(0.11, 8, 6);
+
+  const clothingMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.72, metalness: 0.02 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.82 });
+  const trouserMaterial = new THREE.MeshStandardMaterial({ color: 0x27323a, roughness: 0.88 });
+  const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x081015, transparent: true, opacity: 0.22, depthWrite: false });
+  const vehicleMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.33, metalness: 0.22, clearcoat: 0.35, clearcoatRoughness: 0.15 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: 0x1c2e39, roughness: 0.18, metalness: 0.12, transparent: true, opacity: 0.84 });
+  const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x151719, roughness: 0.93 });
+  const practicalMaterial = new THREE.MeshStandardMaterial({ color: 0xffc07a, emissive: 0xff9f50, emissiveIntensity: 0, roughness: 0.44 });
+
+  const meshes = {
+    torso: instanced(torsoGeometry, clothingMaterial, maxPedestrians, 'Hero life pedestrian torsos'),
+    head: instanced(headGeometry, skinMaterial, maxPedestrians, 'Hero life pedestrian heads'),
+    leg: instanced(limbGeometry, trouserMaterial, maxPedestrians * 2, 'Hero life pedestrian legs'),
+    arm: instanced(limbGeometry, clothingMaterial, maxPedestrians * 2, 'Hero life pedestrian arms'),
+    pedestrianShadow: instanced(shadowGeometry, shadowMaterial, maxPedestrians, 'Hero life pedestrian contact shadows'),
+    vehicleBody: instanced(vehicleBodyGeometry, vehicleMaterial, maxVehicles, 'Hero life vehicle bodies'),
+    vehicleCabin: instanced(vehicleCabinGeometry, glassMaterial, maxVehicles, 'Hero life vehicle cabins'),
+    wheel: instanced(wheelGeometry, tireMaterial, maxVehicles * 4, 'Hero life vehicle wheels'),
+    vehicleShadow: instanced(shadowGeometry, shadowMaterial, maxVehicles, 'Hero life vehicle contact shadows'),
+    practical: instanced(practicalGeometry, practicalMaterial, HERO_LIFE_LIGHTING_BUDGET.maxPracticals, 'Hero life warm practical fixtures'),
+  };
+  Object.values(meshes).forEach((mesh) => group.add(mesh));
+
+  const lights = Array.from({ length: HERO_LIFE_LIGHTING_BUDGET.maxPracticals }, (_, index) => {
+    const light = new THREE.PointLight(0xffbd79, 0, 14, 2);
+    light.castShadow = false;
+    light.name = `Hero life practical ${index + 1}`;
+    group.add(light);
+    return light;
+  });
+  const pedestrians = [];
+  const vehicles = [];
+  const practicals = [];
+  const stats = {
+    pedestriansAttached: 0, pedestriansActive: 0, pedestriansExcluded: 0, pedestriansDropped: 0,
+    vehiclesAttached: 0, vehiclesActive: 0, vehiclesExcluded: 0, vehiclesDetailed: 0, vehiclesDropped: 0,
+    practicals: 0, activePracticals: 0, pointLights: HERO_LIFE_LIGHTING_BUDGET.maxPracticals,
+    drawCalls: HERO_LIFE_LIGHTING_BUDGET.drawCalls, materials: HERO_LIFE_LIGHTING_BUDGET.materials,
+  };
+  const sourcePosition = new THREE.Vector3();
+  const sourceQuaternion = new THREE.Quaternion();
+  const sourceWorld = new THREE.Matrix4();
+  const inverseGroupWorld = new THREE.Matrix4();
+  const presentationWorld = new THREE.Matrix4();
+  const localMatrix = new THREE.Matrix4();
+  const finalMatrix = new THREE.Matrix4();
+  const localPosition = new THREE.Vector3();
+  const localScale = new THREE.Vector3();
+  const identity = new THREE.Quaternion();
+  const warmColor = new THREE.Color();
+
+  function sourceMatrix(source) {
+    source.updateWorldMatrix(true, false);
+    source.getWorldPosition(sourcePosition);
+    source.getWorldQuaternion(sourceQuaternion);
+    sourceWorld.compose(sourcePosition, sourceQuaternion, new THREE.Vector3(1, 1, 1));
+    return presentationWorld.multiplyMatrices(inverseGroupWorld, sourceWorld);
+  }
+
+  function set(mesh, index, world, x, y, z, sx, sy, sz, rotation = identity) {
+    localPosition.set(x, y, z);
+    localScale.set(sx, sy, sz);
+    localMatrix.compose(localPosition, rotation, localScale);
+    finalMatrix.multiplyMatrices(world, localMatrix);
+    mesh.setMatrixAt(index, finalMatrix);
+  }
+
+  function hide(mesh, index) {
+    mesh.setMatrixAt(index, EMPTY_MATRIX);
+  }
+
+  function clearMeshes() {
+    for (const mesh of Object.values(meshes)) {
+      for (let index = 0; index < mesh.count; index += 1) hide(mesh, index);
+    }
+  }
+
+  function attachRecords(target, nextRecords, maximum, palette, fallbackKey, attachedKey, droppedKey) {
+    restoreRecords(target);
+    const valid = Array.from(nextRecords || []).filter((record) => rootFor(record));
+    stats[droppedKey] = Math.max(0, valid.length - maximum);
+    valid.slice(0, maximum).forEach((record, index) => {
+      const source = rootFor(record);
+      target.push({ source, color: colorFor(record, index, palette, fallbackKey), wasVisible: source.visible });
+      if (replaceSources) {
+        source.visible = false;
+        source.userData.heroLifeLightingReplacement = true;
+      }
+    });
+    stats[attachedKey] = target.length;
+  }
+
+  function restoreRecords(records) {
+    for (const entry of records) {
+      if (replaceSources) {
+        entry.source.visible = entry.wasVisible;
+        delete entry.source.userData.heroLifeLightingReplacement;
+      }
+    }
+    records.length = 0;
+  }
+
+  function attachPedestrians(records = []) {
+    attachRecords(pedestrians, records, maxPedestrians, PEDESTRIAN_PALETTE, 'topColor', 'pedestriansAttached', 'pedestriansDropped');
+    return api;
+  }
+
+  function attachVehicles(records = []) {
+    attachRecords(vehicles, records, maxVehicles, VEHICLE_PALETTE, 'vehicleColor', 'vehiclesAttached', 'vehiclesDropped');
+    return api;
+  }
+
+  function setPracticals(anchors = []) {
+    practicals.length = 0;
+    Array.from(anchors || []).slice(0, HERO_LIFE_LIGHTING_BUDGET.maxPracticals).forEach((anchor, index) => {
+      const kind = PRACTICAL_COLORS[anchor?.kind] ? anchor.kind : index < 3 ? 'storefront' : index < 5 ? 'street' : 'vehicle';
+      practicals.push({ anchor, kind, intensity: clamp(anchor?.intensity ?? 1, 0.2, 2) });
+    });
+    stats.practicals = practicals.length;
+    return api;
+  }
+
+  function setConditions(nextConditions = {}) {
+    // Time and weather own their derived values. Do not carry a previous
+    // night/rain override into an explicit day/clear transition.
+    const hasNight = Object.prototype.hasOwnProperty.call(nextConditions, 'night');
+    const hasWetness = Object.prototype.hasOwnProperty.call(nextConditions, 'wetness');
+    const changesTime = Object.prototype.hasOwnProperty.call(nextConditions, 'timeOfDay');
+    const changesWeather = Object.prototype.hasOwnProperty.call(nextConditions, 'weather');
+    conditions = conditionState({
+      ...conditions,
+      ...nextConditions,
+      night: hasNight ? nextConditions.night : changesTime ? undefined : conditions.night,
+      wetness: hasWetness ? nextConditions.wetness : changesWeather ? undefined : conditions.wetness,
+    });
+    return { ...conditions };
+  }
+
+  function excluded(position, cameraPosition, heroPosition) {
+    return Boolean((cameraPosition && position.distanceTo(cameraPosition) < cameraExclusionRadius)
+      || (heroPosition && position.distanceTo(heroPosition) < heroExclusionRadius));
+  }
+
+  function updatePedestrian(slot, entry, cameraPosition, heroPosition, elapsedSeconds) {
+    const world = sourceMatrix(entry.source);
+    if (!entry.source.visible && !entry.source.userData.heroLifeLightingReplacement || excluded(sourcePosition, cameraPosition, heroPosition)) {
+      stats.pedestriansExcluded += 1;
+      return;
+    }
+    const stride = Math.sin(elapsedSeconds * 5.3 + slot * 1.71) * 0.16;
+    set(meshes.torso, slot, world, 0, 1.13, 0, 0.48, 0.98, 0.36);
+    set(meshes.head, slot, world, 0, 1.74, 0.01, 0.29, 0.29, 0.29);
+    set(meshes.pedestrianShadow, slot, world, 0, 0.018, 0, 0.31, 0.47, 1);
+    set(meshes.leg, slot * 2, world, -0.12, 0.48, stride, 0.13, 0.64, 0.13);
+    set(meshes.leg, slot * 2 + 1, world, 0.12, 0.48, -stride, 0.13, 0.64, 0.13);
+    set(meshes.arm, slot * 2, world, -0.31, 1.15, -stride * 0.9, 0.11, 0.61, 0.11);
+    set(meshes.arm, slot * 2 + 1, world, 0.31, 1.15, stride * 0.9, 0.11, 0.61, 0.11);
+    meshes.torso.setColorAt(slot, entry.color);
+    meshes.head.setColorAt(slot, new THREE.Color(SKIN_PALETTE[slot % SKIN_PALETTE.length]));
+    meshes.arm.setColorAt(slot * 2, entry.color);
+    meshes.arm.setColorAt(slot * 2 + 1, entry.color);
+    stats.pedestriansActive += 1;
+  }
+
+  function updateVehicle(slot, entry, cameraPosition, heroPosition) {
+    const world = sourceMatrix(entry.source);
+    if (!entry.source.visible && !entry.source.userData.heroLifeLightingReplacement || excluded(sourcePosition, cameraPosition, heroPosition)) {
+      stats.vehiclesExcluded += 1;
+      return;
+    }
+    const detailed = !cameraPosition || sourcePosition.distanceTo(cameraPosition) <= vehicleDetailDistance;
+    set(meshes.vehicleBody, slot, world, 0, 0.48, 0, 1.88, 0.76, 4.58);
+    set(meshes.vehicleCabin, slot, world, 0, 1.0, -0.14, 1.62, 0.52, 2.3);
+    set(meshes.vehicleShadow, slot, world, 0, 0.02, 0, 1.45, 2.1, 1);
+    meshes.vehicleBody.setColorAt(slot, entry.color);
+    if (detailed) {
+      for (let wheel = 0; wheel < 4; wheel += 1) {
+        const side = wheel % 2 ? 1 : -1;
+        const front = wheel < 2 ? 1 : -1;
+        set(meshes.wheel, slot * 4 + wheel, world, side * 0.92, 0.34, front * 1.48, 0.24, 0.34, 0.34);
+      }
+      stats.vehiclesDetailed += 1;
+    }
+    stats.vehiclesActive += 1;
+  }
+
+  function anchorWorldPosition(anchor, target) {
+    if (anchor?.source?.isObject3D) return anchor.source.getWorldPosition(target);
+    if (anchor?.position?.isVector3) return target.copy(anchor.position);
+    return target.set(Number(anchor?.x) || 0, Number(anchor?.y) || 0, Number(anchor?.z) || 0);
+  }
+
+  function updatePracticals() {
+    const weatherDamping = conditions.weather === 'fog' ? 0.68 : conditions.weather === 'drizzle' ? 0.86 : 1;
+    const intensity = (0.08 + conditions.night * 1.25) * weatherDamping;
+    practicalMaterial.emissiveIntensity = conditions.night * 1.45 + conditions.wetness * 0.2;
+    for (let index = 0; index < HERO_LIFE_LIGHTING_BUDGET.maxPracticals; index += 1) {
+      const practical = practicals[index];
+      const light = lights[index];
+      if (!practical) {
+        light.intensity = 0;
+        hide(meshes.practical, index);
+        continue;
+      }
+      anchorWorldPosition(practical.anchor, sourcePosition);
+      group.worldToLocal(sourcePosition);
+      warmColor.setHex(PRACTICAL_COLORS[practical.kind]);
+      light.color.copy(warmColor);
+      light.position.copy(sourcePosition);
+      light.intensity = intensity * practical.intensity;
+      light.distance = practical.kind === 'vehicle' ? 8 : 15;
+      set(meshes.practical, index, new THREE.Matrix4(), sourcePosition.x, sourcePosition.y, sourcePosition.z, practical.kind === 'storefront' ? 0.28 : 0.16, practical.kind === 'storefront' ? 0.12 : 0.16, 0.16);
+      if (conditions.night > 0.02) stats.activePracticals += 1;
+    }
+  }
+
+  function update({ camera = null, hero = null, elapsedSeconds = 0 } = {}) {
+    const cameraPosition = camera?.isObject3D ? camera.getWorldPosition(new THREE.Vector3()) : camera?.position || camera || null;
+    const heroPosition = hero?.isObject3D ? hero.getWorldPosition(new THREE.Vector3()) : hero?.position || hero || null;
+    group.updateWorldMatrix(true, false);
+    inverseGroupWorld.copy(group.matrixWorld).invert();
+    clearMeshes();
+    stats.pedestriansActive = 0;
+    stats.pedestriansExcluded = 0;
+    stats.vehiclesActive = 0;
+    stats.vehiclesExcluded = 0;
+    stats.vehiclesDetailed = 0;
+    stats.activePracticals = 0;
+    pedestrians.forEach((entry, index) => updatePedestrian(index, entry, cameraPosition, heroPosition, Number(elapsedSeconds) || 0));
+    vehicles.forEach((entry, index) => updateVehicle(index, entry, cameraPosition, heroPosition));
+    updatePracticals();
+    for (const mesh of Object.values(meshes)) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    return getStats();
+  }
+
+  function getStats() {
+    return { ...stats, conditions: { ...conditions }, budget: { ...HERO_LIFE_LIGHTING_BUDGET } };
+  }
+
+  function dispose() {
+    restoreRecords(pedestrians);
+    restoreRecords(vehicles);
+    group.removeFromParent();
+    [torsoGeometry, headGeometry, limbGeometry, shadowGeometry, vehicleBodyGeometry, vehicleCabinGeometry, wheelGeometry, practicalGeometry].forEach((geometry) => geometry.dispose());
+    [clothingMaterial, skinMaterial, trouserMaterial, shadowMaterial, vehicleMaterial, glassMaterial, tireMaterial, practicalMaterial].forEach((material) => material.dispose());
+  }
+
+  const api = Object.freeze({ attachPedestrians, attachVehicles, setPracticals, setConditions, update, getStats, dispose, group });
+  return api;
+}
