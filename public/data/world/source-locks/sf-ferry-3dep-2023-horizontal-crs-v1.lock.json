@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-horizontal-crs-source-lock",
+  "status": "source-locked-generic-operation-only",
+  "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+  "title": "Ferry 3DEP generic WGS 84 to EPSG:26910 horizontal operation lock",
+  "scope": "Only normalized OSM-style [longitude, latitude] degree data to the locked GeoTIFF's EPSG:26910 [easting, northing] metres. EPSG:4326's official CRS axis order remains [latitude, longitude]; this lock's data-order normalization is explicit below. This does not create a terrain artifact and makes no vertical-datum claim.",
+  "sourceEvidence": {
+    "lockedGeoTiff": {
+      "sourceLock": "public/data/world/source-locks/sf-ferry-3dep-2023.lock.json",
+      "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+      "exactGeoKeys": {
+        "ProjectedCSTypeGeoKey": 26910,
+        "ProjLinearUnitsGeoKey": 9001
+      }
+    },
+    "usgsProductXml": {
+      "url": "https://thor-f5.er.usgs.gov/ngtoc/metadata/waf/elevation/1_meter/geotiff/CA_SanFrancisco_B23/USGS_1M_10_x55y419_CA_SanFrancisco_B23.xml",
+      "sha256": "55f267f782295ebf3f7250ee3418649e58fb89b4783d69f4d9b7fdb0b9f42301",
+      "exactHorizontalDeclaration": "NAD83 / UTM zone 10N"
+    },
+    "scienceBase": {
+      "url": "https://www.sciencebase.gov/catalog/item/66ce871ad34e98e8a92453cb?format=json",
+      "sha256": "cbd6f3311b0b5588c899284a4d439c3396a28a80fdca5283f5af0a75f9207196"
+    },
+    "metadataLimits": {
+      "nad83Realization": "not specified by the GeoTIFF GeoKeys, USGS product XML, or ScienceBase item",
+      "coordinateEpoch": "not specified by the GeoTIFF GeoKeys, USGS product XML, or ScienceBase item",
+      "wgs84RealizationOrEpochForOsmCoordinates": "not specified by the repository's WGS84/OSM coordinate inputs"
+    }
+  },
+  "claims": {
+    "input": {
+      "crs": "EPSG:4326",
+      "name": "WGS 84 ensemble",
+      "officialCrsAxisOrder": ["latitude", "longitude"],
+      "normalizedDataOrder": ["longitude", "latitude"],
+      "units": "degree",
+      "realization": "not claimed",
+      "coordinateEpoch": "not claimed"
+    },
+    "target": {
+      "crs": "EPSG:26910",
+      "name": "NAD83 / UTM zone 10N",
+      "baseCrs": "EPSG:4269 NAD83",
+      "officialCrsAxisOrder": ["easting", "northing"],
+      "normalizedDataOrder": ["easting", "northing"],
+      "units": "metre",
+      "areaOfUse": {
+        "name": "North America - 126°W to 120°W and NAD83 by country",
+        "bboxWgs84": [-126, 30.54, -119.99, 81.8]
+      },
+      "nad83Realization": "not claimed; EPSG:26910 is generic NAD83",
+      "coordinateEpoch": "not claimed"
+    },
+    "operation": {
+      "authorityPath": [
+        {
+          "authority": "EPSG",
+          "code": 1188,
+          "name": "NAD83 to WGS 84 (1)",
+          "use": "inverse (WGS 84 to NAD83)",
+          "method": "EPSG:9603 Geocentric translations (geog2D domain)",
+          "parametersMetres": { "x": 0, "y": 0, "z": 0 },
+          "accuracyMetres": 4,
+          "areaOfUse": {
+            "name": "North America - Canada and USA (CONUS, Alaska mainland)",
+            "bboxWgs84": [-172.54, 23.81, -47.74, 86.46]
+          }
+        },
+        {
+          "authority": "EPSG",
+          "code": 16010,
+          "name": "UTM zone 10N",
+          "method": "EPSG:9807 Transverse Mercator",
+          "parameters": {
+            "latitudeOfNaturalOriginDegrees": 0,
+            "longitudeOfNaturalOriginDegrees": -123,
+            "scaleFactor": 0.9996,
+            "falseEastingMetres": 500000,
+            "falseNorthingMetres": 0
+          },
+          "ellipsoidFromEpsg4269": {
+            "semiMajorAxisMetres": 6378137,
+            "inverseFlattening": 298.257222101
+          },
+          "areaOfUse": {
+            "name": "World - N hemisphere - 126°W to 120°W",
+            "bboxWgs84": [-126, 0, -120, 84]
+          }
+        }
+      ],
+      "combinedName": "Inverse of NAD83 to WGS 84 (1) + UTM zone 10N",
+      "combinedAccuracyMetres": 4,
+      "gridDependencies": [],
+      "normalizedLonLatForwardPipeline": "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=utm +zone=10 +ellps=GRS80",
+      "normalizedEnInversePipeline": "+proj=pipeline +step +inv +proj=utm +zone=10 +ellps=GRS80 +step +proj=unitconvert +xy_in=rad +xy_out=deg",
+      "pipelineNote": "The EPSG:1188 inverse has zero translations. These normalized data-order pipelines represent that generic zero-translation path and deliberately elide its no-op step; they are not a literal full EPSG axis-aware pipeline or a sub-millimetre realization claim. They accept [longitude, latitude] data and return [easting, northing] data, rather than using EPSG:4326's official [latitude, longitude] CRS axis order."
+    },
+    "notClaimed": [
+      "NAD83(HARN), NAD83(NSRS2007), NAD83(2011), or any other NAD83 realization",
+      "a coordinate epoch, including NAD83(2011) epoch 2010.00",
+      "sub-metre or survey-grade alignment",
+      "any vertical CRS, geoid, epoch, or height transformation"
+    ],
+    "rejectedCandidate": {
+      "authority": "EPSG",
+      "code": 1739,
+      "name": "NAD83 to WGS 84 (43)",
+      "ngsNadconSourceGridFiles": ["cnhpgn.las", "cnhpgn.los"],
+      "projPackagedGrid": "us_noaa_cnhpgn.tif",
+      "reason": "NGS NADCON distributes the California HPGN shift as cnhpgn.las and cnhpgn.los; PROJ packages the corresponding GeoTIFF grid as us_noaa_cnhpgn.tif. EPSG:1739 assumes NAD83(HARN) is equivalent to WGS 84. The locked USGS metadata does not identify NAD83(HARN), so selecting either grid representation would add an unsupported realization assumption."
+    }
+  },
+  "authorityReceipts": {
+    "retrievedOn": "2026-08-10",
+    "epsg": [
+      {
+        "url": "https://epsg.org/api/v1/Transformation/1188",
+        "sha256": "cf146f2131a178e9234d63079af9eaba1b8aa93d1c312033529bda4e9cc275e9"
+      },
+      {
+        "url": "https://epsg.org/api/v1/ProjectedCoordRefSystem/26910",
+        "sha256": "3f02f0c4cbcbecf78a1dcb478797ff7dc124d026d58e3b9f6f2bffbc91c3e759"
+      },
+      {
+        "url": "https://epsg.org/api/v1/GeodeticCoordRefSystem/4269",
+        "sha256": "557ca47a64a431614be23c954c700e00362a0230491cf75ab934c674383da9cd"
+      },
+      {
+        "url": "https://epsg.org/api/v1/GeodeticCoordRefSystem/4326",
+        "sha256": "60083c9672a8178555cb3d5b7ef3bceb8a521550fbac2b623f17b98440daf407"
+      },
+      {
+        "url": "https://epsg.org/api/v1/Conversion/16010",
+        "sha256": "cdfc2cde615861558316b78538d1a4ebd42bc759b882c6ef25ddb403f3a117a3"
+      },
+      {
+        "url": "https://epsg.org/api/v1/Extent/1325",
+        "sha256": "ed6fe4a4db075a153a4cef2e528edb57460ec6f715ecd2f0719e6fd70dceffae"
+      },
+      {
+        "url": "https://epsg.org/api/v1/Extent/3864",
+        "sha256": "f5c5026f128fb9578b31b59b4432b23900bde8aaf09ac10a8ec2b5849c83e79b"
+      },
+      {
+        "url": "https://epsg.org/api/v1/Extent/1891",
+        "sha256": "d7e5e3714d4bbbce4d6054f5a17b61dd3881ef1b23dda73e7b615126d5a56762"
+      }
+    ],
+    "noaa": {
+      "url": "https://geodesy.noaa.gov/datums/horizontal/north-american-datum-1983.shtml",
+      "relevance": "NOAA identifies NAD83(2011) epoch 2010.00 for current CONUS surveys; that recommendation cannot be retroactively attributed to this generic-NAD83 GeoTIFF."
+    },
+    "usgs": {
+      "url": "https://www.usgs.gov/faqs/what-projection-horizontal-datum-vertical-datum-and-resolution-a-usgs-digital-elevation-model",
+      "relevance": "USGS states that 1-meter DEMs use UTM and NAD83; the locked product XML and GeoTIFF supply the more specific UTM zone and EPSG code."
+    },
+    "proj": {
+      "url": "https://proj.org/en/stable/resource_files.html",
+      "relevance": "PROJ documents proj.db as its local SQLite database of CRS and transformation information; the verifier is dependency-free and locks the selected EPSG operation parameters explicitly."
+    }
+  },
+  "tooling": {
+    "validatedWith": {
+      "PROJ": "9.3.0 (pyproj 3.6.1; local proj.db EPSG v10.094 dated 2023-08-08)",
+      "currentAuthority": "The current EPSG API byte receipts above, retrieved 2026-08-10, are the authority for every locked EPSG code and parameter.",
+      "node": "v22.23.1"
+    },
+    "verifier": "scripts/world-tiles/verify-ferry-3dep-horizontal-crs-v1.mjs",
+    "receipt": "The verifier emits canonical JSON (two-space indentation, LF terminator) containing the exact SHA-256 of this UTF-8 lock file and the checked forward/inverse vectors."
+  },
+  "testVectors": [
+    {
+      "id": "requested-coverage-southwest",
+      "inputLonLatDegrees": [-122.3977602545, 37.7917464503],
+      "forwardEnMetres": [553024.4613202658, 4182880.037427787],
+      "inverseLonLatDegrees": [-122.3977602545, 37.7917464503]
+    },
+    {
+      "id": "requested-coverage-northeast",
+      "inputLonLatDegrees": [-122.3886679245, 37.7989814242],
+      "forwardEnMetres": [553819.7579809689, 4183687.951850287],
+      "inverseLonLatDegrees": [-122.3886679245, 37.7989814242]
+    },
+    {
+      "id": "ferry-grid-anchor",
+      "inputLonLatDegrees": [-122.39103193031195, 37.7936275435455],
+      "forwardEnMetres": [553615.5057389501, 4183092.5814253283],
+      "inverseLonLatDegrees": [-122.39103193031195, 37.7936275435455]
+    }
+  ],
+  "integrationStatus": {
+    "terrainArtifact": "not-built",
+    "terrainManifestChanged": false,
+    "verticalDatumClaim": false,
+    "nextDecisionForSubMetreWork": "Obtain producer authority identifying the source NAD83 realization and coordinate epoch, or explicitly approve a realization-specific transformation and its grid dependencies."
+  }
+}
