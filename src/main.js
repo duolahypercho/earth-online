@@ -2658,6 +2658,24 @@ cityShift = createCityShift({
     savePlayerProgress();
   },
 });
+
+function recoverPlayerAtWelcomeCenter() {
+  const portal = city.portals?.find?.(
+    (candidate) => String(candidate?.label || '').toLowerCase().includes('welcome center'),
+  );
+  const releasePoint = portal?.approachRoute?.[portal.approachRoute.length - 1]
+    || portal?.position;
+  if (!releasePoint) return false;
+  return importPlayerWorldState({
+    mode: 'outdoor',
+    x: releasePoint.x,
+    z: releasePoint.z,
+    yaw: Number.isFinite(portal?.heading) ? portal.heading : Math.PI,
+    pitch: lastPublicWorldState?.pitch ?? 0.62,
+    distance: lastPublicWorldState?.distance ?? 17,
+  });
+}
+
 streetHeat = createStreetHeat({
   scene,
   // Sampling is throttled inside the gameplay layer so the authored traffic
@@ -2666,12 +2684,19 @@ streetHeat = createStreetHeat({
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
   getPursuitResponders: () => traffic.getPursuitResponders?.(),
-  onEvent: ({ kind, message, score, heatBefore = 0 }) => {
+  onEvent: ({ kind, message, score, heatBefore = 0, reason = null }) => {
     if (kind === 'responder-contact') {
       if (traffic.isPlayerDriving?.()) {
         traffic.damagePlayerVehicle?.(22, 'pursuit-contact');
       } else {
-        combat?.damagePlayer?.(18, 'pursuit-contact');
+        const damaged = combat?.damagePlayer?.(18, 'pursuit-contact');
+        if (damaged && combat?.getState?.().status === 'downed') {
+          streetHeat?.resolveArrest?.({
+            wasDriving: false,
+            reason: 'pursuit-defeat',
+          });
+          return;
+        }
       }
     }
     if (kind === 'arrested') {
@@ -2684,6 +2709,13 @@ streetHeat = createStreetHeat({
         exitPlayerCar();
         impounded = traffic.impoundPlayerVehicle?.() ?? null;
       }
+      const pursuitDefeat = reason === 'pursuit-defeat';
+      const recovered = pursuitDefeat
+        ? combat?.recoverFromDowned?.(58, 'pursuit-booking') ?? null
+        : null;
+      const releasedAtWelcomeCenter = pursuitDefeat && recovered
+        ? recoverPlayerAtWelcomeCenter()
+        : false;
       traffic.setPursuitResponder?.({
         active: false,
         position: controls.target,
@@ -2701,6 +2733,8 @@ streetHeat = createStreetHeat({
       const unpaid = transaction?.unpaid ?? 0;
       message = unpaid > 0
         ? `ARRESTED / $${paid} paid · $${unpaid} unpaid.`
+        : releasedAtWelcomeCenter
+          ? `BUSTED / $${paid} paid · released at Welcome Center.`
         : impounded
           ? `ARRESTED / $${paid} paid · vehicle held at Ferry.`
           : `ARRESTED / $${paid} paid · released roadside.`;
@@ -5121,6 +5155,7 @@ function frame(now) {
       && !passengerRideActive()
       && !beautyMode
       && !qaCameraPose,
+    suspendRecovery: Boolean(streetHeatState?.pursuitActive),
   });
   updateCombatOverlay(combatState);
   updatePlayerWeapon(combatState);

@@ -35,6 +35,7 @@
     "verify:garage": "node scripts/verify-garage.mjs",
     "verify:arrest": "node scripts/verify-arrest.mjs",
     "verify:onfoot-arrest": "node scripts/verify-onfoot-arrest.mjs",
+    "verify:pursuit-defeat": "node scripts/verify-pursuit-defeat.mjs",
     "verify:parked-vehicle-persistence": "node scripts/verify-parked-vehicle-persistence.mjs",
     "verify:impound": "node scripts/verify-impound.mjs",
     "verify:work-shift": "node scripts/verify-work-shift.mjs",

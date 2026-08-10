@@ -408,6 +408,7 @@ const STREET_HEAT_THEFT_HOLD_SECONDS = 4;
 const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
+const STREET_HEAT_RESPONDER_REARM_RADIUS = 8.5;
 // A deliberate brake hold acts as surrender within roughly one vehicle length
 // of the live responder. Traffic safety can keep the shells out of overlap;
 // releasing the brake or moving the player still cancels the hold.
@@ -511,6 +512,7 @@ export function createStreetHeat({
   let latestPosition = null;
   let latestSpeed = 0;
   let latestDriving = false;
+  let responderContactLatched = false;
 
   function currentLevel() {
     if (!state.pursuitActive) return 0;
@@ -561,6 +563,7 @@ export function createStreetHeat({
     if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
       state.pursuitActive = true;
       state.responderContacts = 0;
+      responderContactLatched = false;
       state.targetId = null;
       state.targetPosition = null;
       state.responderId = null;
@@ -606,7 +609,43 @@ export function createStreetHeat({
     latestPosition = null;
     latestSpeed = 0;
     latestDriving = false;
+    responderContactLatched = false;
     marker.visible = false;
+  }
+
+  function resolveArrest({
+    wasDriving = latestDriving,
+    reason = 'surrender',
+  } = {}) {
+    if (!state.pursuitActive) return null;
+    const heatBefore = state.heat;
+    state.heat = 0;
+    state.pursuitActive = false;
+    state.level = 0;
+    state.targetId = null;
+    state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
+    state.responderContacts = 0;
+    responderContactLatched = false;
+    state.nearestDistance = null;
+    state.safeElapsed = 0;
+    state.combatHold = 0;
+    state.theftHold = 0;
+    state.arrestHold = 0;
+    state.arrests += 1;
+    marker.visible = false;
+    emitEvent(
+      'arrested',
+      reason === 'pursuit-defeat'
+        ? 'Responder contact ended the pursuit · booking and recovery.'
+        : 'Responder boxed you in · booking and roadside release.',
+      0,
+      { heatBefore: formatHeat(heatBefore), wasDriving, reason },
+    );
+    return getState();
   }
 
   function start() {
@@ -745,17 +784,29 @@ export function createStreetHeat({
       state.responderDistances = [];
     }
 
+    const responderContactDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
     if (state.pursuitActive
-      && state.responderContacts === 0
-      && state.responderDistances.length > 0
-      && Math.min(...state.responderDistances) <= STREET_HEAT_RESPONDER_CONTACT_RADIUS) {
-      state.responderContacts = 1;
+      && responderContactDistance !== null
+      && responderContactDistance <= STREET_HEAT_RESPONDER_CONTACT_RADIUS
+      && !responderContactLatched) {
+      responderContactLatched = true;
+      state.responderContacts += 1;
       emitEvent(
         'responder-contact',
         latestDriving
           ? 'Responder contact · vehicle integrity hit.'
           : 'Responder contact · you took damage.',
+        0,
+        { contactNumber: state.responderContacts },
       );
+    } else if (state.pursuitActive
+      && !latestDriving
+      && responderContactLatched
+      && responderContactDistance !== null
+      && responderContactDistance >= STREET_HEAT_RESPONDER_REARM_RADIUS) {
+      responderContactLatched = false;
     }
 
     const nearestResponderDistance = state.responderDistances.length > 0
@@ -770,32 +821,7 @@ export function createStreetHeat({
       && surrenderEligible;
     state.arrestHold = arresting ? state.arrestHold + delta : 0;
     if (state.pursuitActive && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
-      const heatBefore = state.heat;
-      const wasDriving = latestDriving;
-      state.heat = 0;
-      state.pursuitActive = false;
-      state.level = 0;
-      state.targetId = null;
-      state.targetPosition = null;
-      state.responderId = null;
-      state.responderDistance = null;
-      state.responderIds = [];
-      state.responderDistances = [];
-      state.responderContacts = 0;
-      state.nearestDistance = null;
-      state.safeElapsed = 0;
-      state.combatHold = 0;
-      state.theftHold = 0;
-      state.arrestHold = 0;
-      state.arrests += 1;
-      marker.visible = false;
-      emitEvent(
-        'arrested',
-        'Responder boxed you in · booking and roadside release.',
-        0,
-        { heatBefore: formatHeat(heatBefore), wasDriving },
-      );
-      return getState();
+      return resolveArrest({ wasDriving: latestDriving, reason: 'surrender' });
     }
 
     const speedRisk = latestDriving
@@ -834,6 +860,7 @@ export function createStreetHeat({
     if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
       state.pursuitActive = true;
       state.responderContacts = 0;
+      responderContactLatched = false;
       state.arrestHold = 0;
       state.targetId = null;
       state.targetPosition = null;
@@ -878,6 +905,7 @@ export function createStreetHeat({
       state.responderIds = [];
       state.responderDistances = [];
       state.responderContacts = 0;
+      responderContactLatched = false;
       state.arrestHold = 0;
       state.safeElapsed = 0;
       state.heat = 0;
@@ -1040,8 +1068,9 @@ export function createStreetHeat({
     state.heat = clampedHeat;
     state.pursuitActive = snapshot.pursuitActive;
     state.responderContacts = state.pursuitActive
-      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1)
+      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1000)
       : 0;
+    responderContactLatched = state.responderContacts > 0;
     state.nearMisses = Math.max(0, Math.round(nearMisses));
     state.witnessReports = THREE.MathUtils.clamp(Math.round(witnessReports), 0, 100000);
     state.combatHold = THREE.MathUtils.clamp(
@@ -1092,6 +1121,7 @@ export function createStreetHeat({
     addHeat,
     reportIncident: addHeat,
     reportWitness,
+    resolveArrest,
     update,
     getState,
     exportState,
@@ -1168,6 +1198,7 @@ export function createCombatLoop({
     damageFlash: 0,
     downedTimer: 0,
     recoveryDelay: 0,
+    recoverySuspended: false,
     recoil: 0,
     shots: 0,
     hits: 0,
@@ -1355,6 +1386,7 @@ export function createCombatLoop({
     state.damageFlash = 0;
     state.downedTimer = 0;
     state.recoveryDelay = 0;
+    state.recoverySuspended = false;
     state.recoil = 0;
     state.shots = 0;
     state.hits = 0;
@@ -1463,6 +1495,7 @@ export function createCombatLoop({
     state.recoveryDelay = state.health < COMBAT_HEALTH_MAX
       ? COMBAT_HEALTH_RECOVERY_DELAY
       : 0;
+    state.recoverySuspended = false;
     state.recoil = 0;
     clearEffects();
     return true;
@@ -1911,7 +1944,7 @@ export function createCombatLoop({
       state.aiming = false;
       state.triggerHeld = false;
       state.downedTimer = COMBAT_DOWNED_SECONDS;
-      emitEvent('downed', 'You are down · recovering in the street.');
+      emitEvent('downed', 'You are down · recovering in the street.', { source });
     }
     return true;
   }
@@ -1921,6 +1954,24 @@ export function createCombatLoop({
     if (delta <= 0 || state.status !== 'running') return false;
     state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta);
     return true;
+  }
+
+  function recoverFromDowned(health = 58, source = 'recovery') {
+    if (state.status !== 'downed') return null;
+    state.status = 'running';
+    state.enabled = true;
+    state.health = THREE.MathUtils.clamp(Number(health) || 58, 1, COMBAT_HEALTH_MAX);
+    state.downedTimer = 0;
+    state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
+    state.recoverySuspended = false;
+    emitEvent(
+      'revive',
+      source === 'pursuit-booking'
+        ? 'Booked and released · 58 health.'
+        : 'Back on your feet · stay sharp.',
+      { source },
+    );
+    return getState();
   }
 
   function updateWorldReactions() {
@@ -2030,7 +2081,7 @@ export function createCombatLoop({
     });
   }
 
-  function update(dt = 0, { active = true } = {}) {
+  function update(dt = 0, { active = true, suspendRecovery = false } = {}) {
     const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
     state.clock += delta;
     if (state.status === 'ready') {
@@ -2051,11 +2102,7 @@ export function createCombatLoop({
     if (state.status === 'downed') {
       state.downedTimer = Math.max(0, state.downedTimer - delta);
       if (state.downedTimer <= 0) {
-        state.status = 'running';
-        state.enabled = true;
-        state.health = 58;
-        state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
-        emitEvent('revive', 'Back on your feet · stay sharp.');
+        recoverFromDowned(58, 'street-recovery');
       }
       return getState();
     }
@@ -2069,10 +2116,13 @@ export function createCombatLoop({
         emitEvent('reload-complete', `Reloaded · ${state.ammo}/${COMBAT_MAGAZINE_SIZE}`);
       }
     }
-    if (state.recoveryDelay > 0) {
-      state.recoveryDelay = Math.max(0, state.recoveryDelay - delta);
-    } else if (state.health < COMBAT_HEALTH_MAX) {
-      state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta * COMBAT_HEALTH_RECOVERY_RATE);
+    state.recoverySuspended = suspendRecovery === true && state.health < COMBAT_HEALTH_MAX;
+    if (!state.recoverySuspended) {
+      if (state.recoveryDelay > 0) {
+        state.recoveryDelay = Math.max(0, state.recoveryDelay - delta);
+      } else if (state.health < COMBAT_HEALTH_MAX) {
+        state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta * COMBAT_HEALTH_RECOVERY_RATE);
+      }
     }
     if (state.enabled && state.triggerHeld && state.reloadTimer <= 0 && state.cooldown <= 0) {
       fire();
@@ -2099,7 +2149,10 @@ export function createCombatLoop({
       maxHealth: COMBAT_HEALTH_MAX,
       damageFlash: state.damageFlash,
       downedTimer: state.downedTimer,
-      recovering: state.health < COMBAT_HEALTH_MAX && state.recoveryDelay <= 0,
+      recovering: state.health < COMBAT_HEALTH_MAX
+        && state.recoveryDelay <= 0
+        && !state.recoverySuspended,
+      recoverySuspended: state.recoverySuspended,
       recoil: state.recoil,
       shots: state.shots,
       hits: state.hits,
@@ -2171,6 +2224,7 @@ export function createCombatLoop({
     damage,
     damagePlayer: damage,
     heal,
+    recoverFromDowned,
     setAiming,
     aim: setAiming,
     setTriggerHeld,
