@@ -241,6 +241,49 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     start();
   }
 
+  function exportState() {
+    return {
+      status: state.status,
+      stepIndex: state.stepIndex,
+      score: state.score,
+      elapsed: state.elapsed,
+      lastAdvance: state.lastAdvance,
+      cashReward: state.cashReward,
+      failureReason: state.failureReason,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const allowedStatuses = new Set(['running', 'complete', 'failed']);
+    if (!allowedStatuses.has(snapshot.status)) return false;
+    const stepIndex = Number(snapshot.stepIndex);
+    const score = Number(snapshot.score);
+    const elapsed = Number(snapshot.elapsed);
+    if (!Number.isFinite(stepIndex) || !Number.isFinite(score) || !Number.isFinite(elapsed)) {
+      return false;
+    }
+    state.status = snapshot.status;
+    state.stepIndex = THREE.MathUtils.clamp(Math.round(stepIndex), 0, steps.length);
+    if (state.status === 'complete') state.stepIndex = steps.length;
+    if (state.status === 'running' && elapsed >= SHIFT_TIME_LIMIT_SECONDS) {
+      state.status = 'failed';
+    }
+    state.score = Math.max(0, Math.round(score));
+    state.elapsed = THREE.MathUtils.clamp(elapsed, 0, SHIFT_TIME_LIMIT_SECONDS);
+    state.lastAdvance = typeof snapshot.lastAdvance === 'string'
+      ? snapshot.lastAdvance.slice(0, 64)
+      : null;
+    state.cashReward = state.status === 'complete'
+      ? Math.max(0, Math.round(Number(snapshot.cashReward) || 0))
+      : 0;
+    state.failureReason = state.status === 'failed'
+      ? String(snapshot.failureReason || 'time-limit').slice(0, 64)
+      : null;
+    marker.visible = state.status === 'running';
+    return true;
+  }
+
   function awardBonus(amount = 0) {
     const bonus = Math.max(0, Math.round(Number(amount) || 0));
     state.score += bonus;
@@ -336,6 +379,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     awardBonus,
     update,
     getState,
+    exportState,
+    importState,
     onPortalEntered,
     onHotspotUsed,
     fail,

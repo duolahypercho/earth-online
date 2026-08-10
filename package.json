@@ -30,6 +30,7 @@
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
+    "verify:persistence": "node scripts/verify-persistence.mjs",
     "verify:traffic-rules": "node scripts/verify-traffic-rules.mjs",
     "verify:online": "node scripts/verify-online.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",

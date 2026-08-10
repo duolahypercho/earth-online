@@ -120,6 +120,61 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return true;
   }
 
+  function exportState() {
+    return {
+      day: state.day,
+      clock: state.clock,
+      needs: { ...state.needs },
+      cash: state.cash,
+      inventory: { medkits: state.inventory.medkits },
+      lastActivity: state.lastActivity,
+      lastActivityAt: state.lastActivityAt,
+      lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const day = Number(snapshot.day);
+    const clock = Number(snapshot.clock);
+    const cash = Number(snapshot.cash);
+    if (!Number.isFinite(day) || !Number.isFinite(clock) || !Number.isFinite(cash)) return false;
+    state.day = THREE.MathUtils.clamp(Math.round(day), 1, 9999);
+    state.clock = THREE.MathUtils.clamp(clock, 0, 23.99);
+    state.cash = THREE.MathUtils.clamp(cash, 0, 999999);
+    NEED_KEYS.forEach((key) => {
+      const value = Number(snapshot.needs?.[key]);
+      if (Number.isFinite(value)) state.needs[key] = clampNeed(value);
+    });
+    state.inventory.medkits = THREE.MathUtils.clamp(
+      Math.round(Number(snapshot.inventory?.medkits) || 0),
+      0,
+      MEDKIT_CAPACITY,
+    );
+    state.lastActivity = typeof snapshot.lastActivity === 'string'
+      ? snapshot.lastActivity.slice(0, 80)
+      : null;
+    state.lastActivityAt = Number.isFinite(Number(snapshot.lastActivityAt))
+      ? Math.max(0, Number(snapshot.lastActivityAt))
+      : 0;
+    const transaction = snapshot.lastTransaction;
+    state.lastTransaction = transaction
+      && typeof transaction === 'object'
+      && typeof transaction.kind === 'string'
+      && Number.isFinite(Number(transaction.amount))
+      && Number.isFinite(Number(transaction.cashAfter))
+      ? {
+        kind: transaction.kind.slice(0, 48),
+        label: String(transaction.label || '').slice(0, 80),
+        amount: Math.round(Number(transaction.amount)),
+        cashAfter: Math.round(Number(transaction.cashAfter)),
+        at: Number.isFinite(Number(transaction.at)) ? Math.max(0, Number(transaction.at)) : 0,
+      }
+      : null;
+    hud?.setLifeState?.(getState());
+    return true;
+  }
+
   function update(dt = 0, playerState = {}) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const deltaHours = dt * SIM_HOURS_PER_SECOND;
@@ -345,6 +400,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   return {
     update,
     getState,
+    exportState,
+    importState,
     setClock,
     addCash,
     talkToNearestResident,

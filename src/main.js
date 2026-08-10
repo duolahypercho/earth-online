@@ -1190,6 +1190,7 @@ hud = createHud({
     combat?.restart();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Shift reset · follow the amber beacon to the Welcome Center.');
+    savePlayerProgress();
   },
 });
 
@@ -1205,6 +1206,73 @@ let windAudio = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
+const PLAYER_PROGRESS_STORAGE_KEY = 'earth-online-player-progress-v1';
+const PLAYER_PROGRESS_VERSION = 1;
+const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
+let progressSaveElapsed = 0;
+let lastProgressSave = null;
+
+function readPlayerProgress() {
+  try {
+    const raw = window.localStorage?.getItem(PLAYER_PROGRESS_STORAGE_KEY);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || snapshot.version !== PLAYER_PROGRESS_VERSION) return null;
+    if (!snapshot.life || !snapshot.cityShift) return null;
+    return snapshot;
+  } catch {
+    try {
+      window.localStorage?.removeItem(PLAYER_PROGRESS_STORAGE_KEY);
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+    return null;
+  }
+}
+
+function savePlayerProgress() {
+  if (!lifeSim?.exportState || !cityShift?.exportState) return false;
+  const snapshot = {
+    version: PLAYER_PROGRESS_VERSION,
+    savedAt: Date.now(),
+    life: lifeSim.exportState(),
+    cityShift: cityShift.exportState(),
+  };
+  try {
+    window.localStorage?.setItem(PLAYER_PROGRESS_STORAGE_KEY, JSON.stringify(snapshot));
+    lastProgressSave = { ok: true, savedAt: snapshot.savedAt };
+    return true;
+  } catch {
+    lastProgressSave = { ok: false, savedAt: null };
+    return false;
+  }
+}
+
+function restorePlayerProgress() {
+  const snapshot = readPlayerProgress();
+  if (!snapshot) return false;
+  const previousLife = lifeSim?.exportState?.();
+  const previousShift = cityShift?.exportState?.();
+  const lifeRestored = lifeSim?.importState?.(snapshot.life) === true;
+  const shiftRestored = cityShift?.importState?.(snapshot.cityShift) === true;
+  if (lifeRestored && shiftRestored) {
+    lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
+    return true;
+  }
+  if (previousLife) lifeSim?.importState?.(previousLife);
+  if (previousShift) cityShift?.importState?.(previousShift);
+  return false;
+}
+
+function clearPlayerProgress() {
+  try {
+    window.localStorage?.removeItem(PLAYER_PROGRESS_STORAGE_KEY);
+    lastProgressSave = null;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 lifeSim = createLifeSim({
   hud,
@@ -1681,6 +1749,7 @@ cityShift = createCityShift({
     }
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage(message);
+    savePlayerProgress();
   },
 });
 streetHeat = createStreetHeat({
@@ -3719,10 +3788,13 @@ function startExperience() {
   cityShift?.start();
   streetHeat?.start();
   combat?.start();
+  const restoredProgress = restorePlayerProgress();
   hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
   const featured = city.getFeaturedPortal?.(controls.target);
   hud.setMessage(
-    featured
+    restoredProgress
+      ? 'Progress restored · economy, inventory, and Waterfront Loop resumed.'
+      : featured
       ? `Featured interior · ${featured.label}, ${featured.distance.toFixed(0)} m east. Follow the lit PUBLIC LOBBY · ENTER sign.`
       : 'Tip: press R for coastal weather, C for render quality, H for beauty mode.',
   );
@@ -3802,6 +3874,13 @@ function frame(now) {
   pedestrians.update?.(motionDt, elapsed);
   profileMark('pedestrians');
   const gameState = cityShift?.update?.(motionDt, controls.target, controls.activePortal);
+  if (started) {
+    progressSaveElapsed += frameDelta;
+    if (progressSaveElapsed >= PLAYER_PROGRESS_AUTOSAVE_SECONDS) {
+      progressSaveElapsed = 0;
+      savePlayerProgress();
+    }
+  }
   const drivingState = traffic.isPlayerDriving?.()
     ? traffic.getPlayerVehicleState?.()
     : null;
@@ -4064,6 +4143,19 @@ window.__SF_SIM__ = {
   },
   usePlayerMedkit() {
     return usePlayerMedkit();
+  },
+  saveProgress() {
+    return savePlayerProgress();
+  },
+  clearSavedProgress() {
+    return clearPlayerProgress();
+  },
+  getSavedProgress() {
+    return {
+      key: PLAYER_PROGRESS_STORAGE_KEY,
+      snapshot: readPlayerProgress(),
+      lastSave: lastProgressSave ? { ...lastProgressSave } : null,
+    };
   },
   get renderQuality() {
     return {
