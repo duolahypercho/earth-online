@@ -49,9 +49,11 @@ assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed
 assert.equal(clockMaterial.emissiveIntensity, 0, 'clock faces must not use an emissive toy-like treatment');
 const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
 const clockNormals = [];
+const clockCenters = [];
 for (let index = 0; index < clockFaces.count; index += 1) {
   clockFaces.getMatrixAt(index, roofMatrix);
   clockNormals.push(new THREE.Vector2(roofMatrix.elements[8], roofMatrix.elements[10]).normalize());
+  clockCenters.push(new THREE.Vector2(roofMatrix.elements[12], roofMatrix.elements[14]));
 }
 const frameAxes = [new THREE.Vector2(...frame.along), new THREE.Vector2(...frame.across)];
 for (const axis of frameAxes) {
@@ -61,6 +63,8 @@ const towerMatrix = new THREE.Matrix4();
 const towerTiers = landmark.root.getObjectByName('Ferry Building clock tower tiers');
 towerTiers.getMatrixAt(0, towerMatrix);
 const towerWorld = new THREE.Vector2(towerMatrix.elements[12], towerMatrix.elements[14]);
+const clockCenter = clockCenters.reduce((sum, center) => sum.add(center), new THREE.Vector2()).multiplyScalar(1 / clockCenters.length);
+assert.ok(clockCenter.distanceTo(towerWorld) < 1e-3, 'clock faces must remain centered around the clock tower anchor');
 const marketAxisLandside = new THREE.Vector2(2259.739, 1918.918);
 const marketAxisBayside = new THREE.Vector2(2299.660, 1959.198);
 const marketAxisTarget = marketAxisLandside.clone().add(marketAxisBayside).multiplyScalar(0.5);
