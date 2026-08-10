@@ -30,6 +30,7 @@
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:vehicle-theft": "node scripts/verify-vehicle-theft.mjs",
     "verify:vehicle-persistence": "node scripts/verify-vehicle-persistence.mjs",
+    "verify:vehicle-registration": "node scripts/verify-vehicle-registration.mjs",
     "verify:arrest": "node scripts/verify-arrest.mjs",
     "verify:parked-vehicle-persistence": "node scripts/verify-parked-vehicle-persistence.mjs",
     "verify:impound": "node scripts/verify-impound.mjs",

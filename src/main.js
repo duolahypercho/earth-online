@@ -1234,6 +1234,7 @@ const PLAYER_PROGRESS_STORAGE_KEY = 'earth-online-player-progress-v1';
 const PLAYER_PROGRESS_VERSION = 1;
 const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
 const VEHICLE_IMPOUND_RETRIEVAL_FEE = 45;
+const VEHICLE_REGISTRATION_FEE = 60;
 const TAXI_RIDE_FARE = 14;
 const TAXI_RIDE_DURATION = 3.2;
 const TRAFFIC_CITATION_FINE = 18;
@@ -1724,7 +1725,9 @@ function enterPlayerCar(index) {
   lastVehicleDamageAt = null;
   hud.setMessage(theft?.reported
     ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
-    : 'You got in. W accelerate · S brake · A/D steer · E exit.');
+    : theft?.reason === 'registered-owner'
+      ? 'Registered vehicle · W accelerate · S brake · A/D steer · E exit.'
+      : 'You got in. W accelerate · S brake · A/D steer · E exit.');
   return true;
 }
 
@@ -1868,6 +1871,55 @@ function retrieveImpoundedVehicleAtFerry() {
   }
   hud?.setLifeState?.(lifeSim?.getState?.());
   hud?.setMessage(`Vehicle released at Ferry pickup · $${VEHICLE_IMPOUND_RETRIEVAL_FEE} paid.`);
+  savePlayerProgress();
+  return true;
+}
+
+function registerParkedVehicleAtFerry() {
+  const registration = traffic.getPlayerVehicleRegistrationState?.();
+  if (!registration) return null;
+  if (!ferryImpoundContext()) return null;
+  if (!registration.eligible) {
+    hud?.setMessage('Only private vehicles can be registered at Ferry Building.');
+    return false;
+  }
+  if (registration.registeredOwner) {
+    hud?.setMessage('This vehicle is already registered to you.');
+    return false;
+  }
+  const combatState = combat?.getState?.();
+  if (combatState?.status !== 'running') {
+    hud?.setMessage('Recover before using the Ferry registration desk.');
+    return false;
+  }
+  if (streetHeat?.getState?.().pursuitActive) {
+    hud?.setMessage('Lose the pursuit before registering a vehicle.');
+    return false;
+  }
+  if (!lifeSim?.canAffordVehicleRegistration?.(VEHICLE_REGISTRATION_FEE)) {
+    lifeSim?.payVehicleRegistration?.(
+      VEHICLE_REGISTRATION_FEE,
+      'Ferry vehicle registration',
+    );
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    return false;
+  }
+  const previousLife = lifeSim?.exportState?.();
+  const transaction = lifeSim?.payVehicleRegistration?.(
+    VEHICLE_REGISTRATION_FEE,
+    'Ferry vehicle registration',
+  );
+  const registered = transaction
+    ? traffic.registerParkedPlayerVehicle?.()
+    : null;
+  if (!registered) {
+    if (previousLife) lifeSim?.importState?.(previousLife);
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage('Ferry vehicle registration unavailable · no charge.');
+    return false;
+  }
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`Vehicle registered · $${VEHICLE_REGISTRATION_FEE} paid · future entry is legal.`);
   savePlayerProgress();
   return true;
 }
@@ -4143,6 +4195,8 @@ function onKeyDown(event) {
     if (ferryImpoundContext()) {
       const impoundHandled = retrieveImpoundedVehicleAtFerry();
       if (impoundHandled !== null) return;
+      const registrationHandled = registerParkedVehicleAtFerry();
+      if (registrationHandled !== null) return;
     }
     const drivingState = traffic.getPlayerVehicleState?.();
     if (drivingState?.damage?.disabled) {
@@ -4259,9 +4313,12 @@ function enterNearestInterior() {
     snapCameraToControls();
     const shiftAdvance = cityShift?.onPortalEntered(nearest);
     const flagship = city.getInteriorState?.().flagship;
-    if (traffic.getImpoundedVehicleState?.()
-      && String(nearest.label || '').toLowerCase().includes('ferry building')) {
+    const ferryEntry = String(nearest.label || '').toLowerCase().includes('ferry building');
+    const registration = traffic.getPlayerVehicleRegistrationState?.();
+    if (traffic.getImpoundedVehicleState?.() && ferryEntry) {
       hud.setMessage(`Ferry impound desk · press R to retrieve vehicle · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
+    } else if (ferryEntry && registration?.eligible && !registration.registeredOwner) {
+      hud.setMessage(`Ferry registration desk · press R to register vehicle · $${VEHICLE_REGISTRATION_FEE}.`);
     } else if (!shiftAdvance) {
       hud.setMessage(
         `Entered ${interior.label} · ${interior.roomLabel}. Press E or ESC to return.`,
@@ -4348,6 +4405,17 @@ function updateInteraction() {
     return;
   }
   if (controls.interiorMode) {
+    const registration = ferryImpoundContext()
+      ? traffic.getPlayerVehicleRegistrationState?.()
+      : null;
+    if (registration?.eligible && !registration.registeredOwner) {
+      hud.setInteraction({
+        label: `FERRY REGISTRATION / $${VEHICLE_REGISTRATION_FEE}`,
+        prompt: 'R  REGISTER PARKED VEHICLE',
+        enabled: true,
+      });
+      return;
+    }
     const hotspot = city.getInteriorInteraction?.(controls.target);
     if (hotspot) {
       hud.setInteraction({

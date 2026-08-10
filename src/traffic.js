@@ -2019,6 +2019,7 @@ export function createTrafficSystem({
           damageCooldownUntil: 0,
           lastDamage: null,
           theftReported: false,
+          registeredOwner: false,
         });
         placed = true;
         placedParked = spawnParked;
@@ -4429,6 +4430,7 @@ export function createTrafficSystem({
         theft: {
           eligible: v.identity.category === 'private',
           reported: v.theftReported === true,
+          registeredOwner: v.registeredOwner === true,
         },
         indicators: {
           left: v.blinkSide < 0,
@@ -4795,6 +4797,7 @@ export function createTrafficSystem({
       heading: vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
       damage: vehicleDamageSnapshot(vehicle),
       theftReported: vehicle.theftReported === true,
+      registeredOwner: vehicle.registeredOwner === true,
     };
   }
 
@@ -4821,12 +4824,15 @@ export function createTrafficSystem({
       || typeof snapshot.class !== 'string'
       || typeof snapshot.identity !== 'string'
       || typeof snapshot.theftReported !== 'boolean'
+      || (snapshot.registeredOwner !== undefined
+        && typeof snapshot.registeredOwner !== 'boolean')
       || typeof snapshot.damage?.disabled !== 'boolean') return false;
     const vehicle = vehicles[vehicleId];
     if (!vehicle
       || vehicle.cls !== snapshot.class
       || vehicle.identity.key !== snapshot.identity
       || vehicle.remoteControlled
+      || (snapshot.registeredOwner === true && vehicle.identity.category !== 'private')
       || (playerVehicle && playerVehicle !== vehicle)
       || (mode !== 'driving' && playerVehicle)
       || maxHealth !== vehicle.maxHealth
@@ -4862,6 +4868,7 @@ export function createTrafficSystem({
     vehicle.damageCooldownUntil = 0;
     vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
     vehicle.theftReported = snapshot.theftReported;
+    vehicle.registeredOwner = snapshot.registeredOwner === true;
     if (wasDisabled !== vehicle.disabled) {
       diagnostics.disabledVehicles += vehicle.disabled ? 1 : -1;
       diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
@@ -4918,6 +4925,13 @@ export function createTrafficSystem({
 
   function reportPlayerVehicleTheft() {
     if (!playerVehicle || playerVehicle.identity.category !== 'private') return null;
+    if (playerVehicle.registeredOwner) {
+      return {
+        reported: false,
+        reason: 'registered-owner',
+        vehicleId: vehicles.indexOf(playerVehicle),
+      };
+    }
     if (playerVehicle.theftReported) {
       return {
         reported: false,
@@ -4934,6 +4948,26 @@ export function createTrafficSystem({
       identity: playerVehicle.identity.key,
       label: playerVehicle.identity.label,
     };
+  }
+
+  function getPlayerVehicleRegistrationState() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle || playerVehicle || impoundedPlayerVehicle) return null;
+    return {
+      ...serializePlayerVehicleState(vehicle, 'parked'),
+      eligible: vehicle.identity.category === 'private',
+    };
+  }
+
+  function registerParkedPlayerVehicle() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || vehicle.identity.category !== 'private'
+      || vehicle.registeredOwner) return null;
+    vehicle.registeredOwner = true;
+    return serializePlayerVehicleState(vehicle, 'parked');
   }
 
   function exitPlayerVehicle() {
@@ -5069,6 +5103,7 @@ export function createTrafficSystem({
       theft: {
         eligible: vehicle.identity.category === 'private',
         reported: vehicle.theftReported === true,
+        registeredOwner: vehicle.registeredOwner === true,
       },
     };
   }
@@ -5252,6 +5287,8 @@ export function createTrafficSystem({
     exportPlayerVehicleState,
     importPlayerVehicleState,
     reportPlayerVehicleTheft,
+    getPlayerVehicleRegistrationState,
+    registerParkedPlayerVehicle,
     exitPlayerVehicle,
     impoundPlayerVehicle,
     getImpoundedVehicleState,

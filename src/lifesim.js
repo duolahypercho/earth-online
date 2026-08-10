@@ -763,6 +763,30 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return { ...state.lastTransaction };
   }
 
+  function canAffordVehicleRegistration(amount = 60) {
+    const fee = Math.max(0, Math.round(Number(amount) || 0));
+    return fee > 0 && state.cash >= fee;
+  }
+
+  function payVehicleRegistration(amount = 60, label = 'Ferry vehicle registration') {
+    const fee = Math.max(0, Math.round(Number(amount) || 0));
+    if (!canAffordVehicleRegistration(fee)) {
+      onMessage(`Vehicle registration costs $${fee}. You need more cash.`);
+      return false;
+    }
+    state.cash -= fee;
+    state.lastActivity = 'vehicle:registration';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'vehicle-registration',
+      label: String(label || 'Ferry vehicle registration').slice(0, 80),
+      amount: -fee,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
+  }
+
   function canAffordTaxiFare(amount = TAXI_FARE) {
     const fare = Math.max(0, Math.round(Number(amount) || 0));
     return fare > 0 && state.cash >= fare;
@@ -1035,6 +1059,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     payTrafficCitation,
     canAffordImpoundFee,
     payImpoundFee,
+    canAffordVehicleRegistration,
+    payVehicleRegistration,
     canAffordTaxiFare,
     payTaxiFare,
     creditMissionReward,
