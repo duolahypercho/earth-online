@@ -279,6 +279,30 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return { ...state.lastTransaction };
   }
 
+  function canAffordImpoundFee(amount = 0) {
+    const fee = Math.max(0, Math.round(Number(amount) || 0));
+    return fee > 0 && state.cash >= fee;
+  }
+
+  function payImpoundFee(amount = 0, label = 'Ferry vehicle release') {
+    const fee = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 20, 120);
+    if (!canAffordImpoundFee(fee)) {
+      onMessage(`Vehicle release costs $${fee}. You need more cash.`);
+      return false;
+    }
+    state.cash -= fee;
+    state.lastActivity = 'vehicle:impound-release';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'vehicle-impound',
+      label: String(label || 'Ferry vehicle release').slice(0, 80),
+      amount: -fee,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
+  }
+
   function creditMissionReward(amount = 0, label = 'Waterfront Loop') {
     const reward = Math.max(0, Math.round(Number(amount) || 0));
     if (reward <= 0) return false;
@@ -479,6 +503,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     canAffordVehicleRepair,
     payVehicleRepair,
     payWantedFine,
+    canAffordImpoundFee,
+    payImpoundFee,
     creditMissionReward,
     buyMedkitAtMarket,
     consumeMedkit,

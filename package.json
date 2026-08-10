@@ -32,6 +32,7 @@
     "verify:vehicle-persistence": "node scripts/verify-vehicle-persistence.mjs",
     "verify:arrest": "node scripts/verify-arrest.mjs",
     "verify:parked-vehicle-persistence": "node scripts/verify-parked-vehicle-persistence.mjs",
+    "verify:impound": "node scripts/verify-impound.mjs",
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",

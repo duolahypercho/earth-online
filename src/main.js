@@ -1209,6 +1209,7 @@ const PLAYER_GROUND_OFFSET = 0.17;
 const PLAYER_PROGRESS_STORAGE_KEY = 'earth-online-player-progress-v1';
 const PLAYER_PROGRESS_VERSION = 1;
 const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
+const VEHICLE_IMPOUND_RETRIEVAL_FEE = 45;
 let progressSaveElapsed = 0;
 let lastProgressSave = null;
 let lastPublicWorldState = null;
@@ -1283,7 +1284,7 @@ function restorePlayerProgress() {
     && worldRestored;
   const vehicleRestored = baseRestored && snapshot.vehicle
     ? traffic.importPlayerVehicleState?.(snapshot.vehicle) === true
-      && ((snapshot.vehicle.mode ?? 'driving') === 'parked'
+      && ((snapshot.vehicle.mode ?? 'driving') !== 'driving'
         || activatePlayerVehiclePresentation({ restored: true }) !== null)
     : baseRestored;
   if (baseRestored && vehicleRestored) {
@@ -1646,6 +1647,10 @@ function getNetworkState() {
 
 function enterPlayerCar(index) {
   if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
+  if (traffic.getImpoundedVehicleState?.()) {
+    hud?.setMessage(`Retrieve your held vehicle at Ferry Building before taking another car · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
+    return false;
+  }
   const entered = traffic.enterPlayerVehicle?.(index);
   if (!entered) return false;
   const theft = traffic.reportPlayerVehicleTheft?.();
@@ -1769,6 +1774,44 @@ function repairCurrentPlayerVehicle(source = 'roadside-repair') {
     repair,
     transaction: lifeSim?.getState?.().lastTransaction ?? null,
   };
+}
+
+function ferryImpoundContext() {
+  return controls.interiorMode === true
+    && String(controls.activePortal?.label || '').toLowerCase().includes('ferry building');
+}
+
+function retrieveImpoundedVehicleAtFerry() {
+  const impounded = traffic.getImpoundedVehicleState?.();
+  if (!impounded) return null;
+  if (!ferryImpoundContext()) {
+    hud?.setMessage(`Vehicle held at Ferry Building · enter the market hall, then press R · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
+    return false;
+  }
+  if (!lifeSim?.canAffordImpoundFee?.(VEHICLE_IMPOUND_RETRIEVAL_FEE)) {
+    lifeSim?.payImpoundFee?.(VEHICLE_IMPOUND_RETRIEVAL_FEE, 'Ferry vehicle release');
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    return false;
+  }
+  const previousLife = lifeSim?.exportState?.();
+  const transaction = lifeSim?.payImpoundFee?.(
+    VEHICLE_IMPOUND_RETRIEVAL_FEE,
+    'Ferry vehicle release',
+  );
+  const pickup = controls.exteriorSnapshot?.target ?? controls.target;
+  const retrieved = transaction
+    ? traffic.retrieveImpoundedPlayerVehicle?.(pickup, controls.exteriorSnapshot?.yaw ?? 0)
+    : null;
+  if (!retrieved) {
+    if (previousLife) lifeSim?.importState?.(previousLife);
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage('Ferry vehicle release unavailable · no charge.');
+    return false;
+  }
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`Vehicle released at Ferry pickup · $${VEHICLE_IMPOUND_RETRIEVAL_FEE} paid.`);
+  savePlayerProgress();
+  return true;
 }
 
 function buyPlayerMedkit() {
@@ -1929,7 +1972,11 @@ streetHeat = createStreetHeat({
       }
     }
     if (kind === 'arrested') {
-      if (traffic.isPlayerDriving?.()) exitPlayerCar();
+      let impounded = null;
+      if (traffic.isPlayerDriving?.()) {
+        exitPlayerCar();
+        impounded = traffic.impoundPlayerVehicle?.() ?? null;
+      }
       traffic.setPursuitResponder?.({
         active: false,
         position: controls.target,
@@ -1947,7 +1994,9 @@ streetHeat = createStreetHeat({
       const unpaid = transaction?.unpaid ?? 0;
       message = unpaid > 0
         ? `ARRESTED / $${paid} paid · $${unpaid} unpaid.`
-        : `ARRESTED / $${paid} paid · released roadside.`;
+        : impounded
+          ? `ARRESTED / $${paid} paid · vehicle held at Ferry.`
+          : `ARRESTED / $${paid} paid · released roadside.`;
       savePlayerProgress();
     }
     if (score) cityShift?.awardBonus?.(score);
@@ -3606,6 +3655,10 @@ function onKeyDown(event) {
   }
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG', 'KeyN'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
+    if (ferryImpoundContext()) {
+      const impoundHandled = retrieveImpoundedVehicleAtFerry();
+      if (impoundHandled !== null) return;
+    }
     const drivingState = traffic.getPlayerVehicleState?.();
     if (drivingState?.damage?.disabled) {
       repairCurrentPlayerVehicle('roadside-repair');
@@ -3708,7 +3761,10 @@ function enterNearestInterior() {
     snapCameraToControls();
     const shiftAdvance = cityShift?.onPortalEntered(nearest);
     const flagship = city.getInteriorState?.().flagship;
-    if (!shiftAdvance) {
+    if (traffic.getImpoundedVehicleState?.()
+      && String(nearest.label || '').toLowerCase().includes('ferry building')) {
+      hud.setMessage(`Ferry impound desk · press R to retrieve vehicle · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
+    } else if (!shiftAdvance) {
       hud.setMessage(
         `Entered ${interior.label} · ${interior.roomLabel}. Press E or ESC to return.`,
       );
@@ -4345,6 +4401,9 @@ window.__SF_SIM__ = {
   },
   getPlayerVehicleRepairQuote() {
     return getPlayerVehicleRepairQuote();
+  },
+  getImpoundRetrievalFee() {
+    return VEHICLE_IMPOUND_RETRIEVAL_FEE;
   },
   buyPlayerMedkit() {
     return buyPlayerMedkit();

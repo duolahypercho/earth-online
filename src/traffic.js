@@ -1724,6 +1724,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   };
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
+  let impoundedPlayerVehicle = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -1983,6 +1984,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           health: maxHealth,
           damageState: 'clear',
           disabled: false,
+          impounded: false,
           damageCooldownUntil: 0,
           lastDamage: null,
           theftReported: false,
@@ -3023,7 +3025,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       // its forward safety correction can produce a real impact consequence.
       // Remote vehicles remain excluded because their network poses do not
       // own a reliable road-progress value in this simulation.
-      if (v.parked || vehicleIsCurbside(v) || v.remoteControlled) continue;
+      if (v.parked || v.impounded || vehicleIsCurbside(v) || v.remoteControlled) continue;
       const bucketIndex = v.road * 2 + (v.dir === 1 ? 0 : 1);
       laneBuckets[bucketIndex].push(v);
     }
@@ -3085,6 +3087,14 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
     for (const v of vehicles) {
       let road = roads[v.road];
+      if (v.impounded) {
+        v.speed = 0;
+        v.longitudinalAccel = 0;
+        v.accelSm = 0;
+        v.blinkSide = 0;
+        v.mesh.root.visible = false;
+        continue;
+      }
       const pursuitResponderActive = pursuitResponder.active
         && v === vehicles[pursuitResponder.targetIndex]
         && !v.playerControlled
@@ -4061,6 +4071,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       && current.mesh.root.visible
       && !current.playerControlled
       && !current.remoteControlled
+      && !current.impounded
       && !current.disabled
       && !current.parked
       && current.cls !== 'bike'
@@ -4081,6 +4092,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           || !vehicle.mesh.root.visible
           || vehicle.playerControlled
           || vehicle.remoteControlled
+          || vehicle.impounded
           || vehicle.disabled
           || vehicle.parked
           || vehicle.cls === 'bike'
@@ -4193,7 +4205,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (v.disabled) {
+      if (v.impounded) {
+        actionKey = 'impounded';
+        actionLabel = 'Held at Ferry impound';
+        actionDetail = 'retrieval pending';
+      } else if (v.disabled) {
         actionKey = 'vehicle-disabled';
         actionLabel = 'Vehicle disabled';
         actionDetail = v.lastDamage?.source || 'damage';
@@ -4234,7 +4250,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
       let stopCue = null;
       let dwellRemaining = null;
-      if (v.parked) {
+      if (v.impounded) {
+        stopCue = 'impounded';
+      } else if (v.parked) {
         stopCue = 'parked';
         dwellRemaining = Math.max(0, parkedDwellEnd - t);
       } else if (curbside) {
@@ -4385,7 +4403,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   /* ---- player driving ---- */
 
-  function projectVehiclePoseToRoad(position, heading) {
+  function projectVehiclePoseToRoad(position, heading, {
+    maxDistance = 6.5,
+    snapToLane = false,
+  } = {}) {
     if (!Number.isFinite(position?.x)
       || !Number.isFinite(position?.z)
       || !Number.isFinite(heading)) return null;
@@ -4429,6 +4450,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
             dir,
             s: road.cum[segment] + segmentLength * t,
             lateral: offsetX * rightX + offsetZ * rightZ,
+            centerX,
+            centerZ,
+            rightX,
+            rightZ,
             x: centerX + rightX * (offsetX * rightX + offsetZ * rightZ),
             y: centerY,
             z: centerZ + rightZ * (offsetX * rightX + offsetZ * rightZ),
@@ -4437,19 +4462,31 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         }
       }
     }
-    if (!best || Math.sqrt(best.distanceSquared) > 6.5 || Math.abs(best.lateral) > 6.5) {
+    const safeDistance = Math.max(0, Number(maxDistance) || 0);
+    if (!best || Math.sqrt(best.distanceSquared) > safeDistance) {
+      return null;
+    }
+    if (snapToLane) {
+      const laneOffset = roads[best.road]?.laneOffset ?? LANE_OFFSET;
+      best.lateral = laneOffset;
+      best.x = best.centerX + best.rightX * laneOffset;
+      best.z = best.centerZ + best.rightZ * laneOffset;
+    } else if (Math.abs(best.lateral) > 6.5) {
       return null;
     }
     return best;
   }
 
   function activatePlayerVehicleRecord(vehicle) {
-    if (!vehicle || (playerVehicle && playerVehicle !== vehicle)) return false;
+    if (!vehicle
+      || vehicle.impounded
+      || (playerVehicle && playerVehicle !== vehicle)) return false;
     if (lastPlayerParkedVehicle && lastPlayerParkedVehicle !== vehicle) {
       lastPlayerParkedVehicle.dwellUntil = 4;
       lastPlayerParkedVehicle.curbDwellUntil = Infinity;
     }
     vehicle.playerControlled = true;
+    vehicle.impounded = false;
     vehicle.parked = false;
     vehicle.parkedAt = null;
     vehicle.speed = 0;
@@ -4478,6 +4515,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
       if (vehicle.cls === 'bike') continue;
+      if (vehicle.impounded) continue;
       if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
       if (vehicle.playerControlled || vehicle.remoteControlled) continue;
       if (!vehicle.parked && vehicle.speed > 0.9) continue;
@@ -4491,7 +4529,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
   }
 
   function enterPlayerVehicle(index) {
-    if (playerVehicle || !Number.isInteger(index)) return false;
+    if (playerVehicle || impoundedPlayerVehicle || !Number.isInteger(index)) return false;
     const vehicle = vehicles[index];
     if (!vehicle
       || vehicle.playerControlled
@@ -4502,13 +4540,12 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     return activatePlayerVehicleRecord(vehicle);
   }
 
-  function exportPlayerVehicleState() {
-    const vehicle = playerVehicle || lastPlayerParkedVehicle;
+  function serializePlayerVehicleState(vehicle, mode) {
     if (!vehicle) return null;
     const index = vehicles.indexOf(vehicle);
     const point = vehicle.mesh.root.position;
     return {
-      mode: playerVehicle ? 'driving' : 'parked',
+      mode,
       vehicleId: index,
       class: vehicle.cls,
       identity: vehicle.identity.key,
@@ -4519,6 +4556,14 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     };
   }
 
+  function exportPlayerVehicleState() {
+    if (playerVehicle) return serializePlayerVehicleState(playerVehicle, 'driving');
+    if (impoundedPlayerVehicle) {
+      return serializePlayerVehicleState(impoundedPlayerVehicle, 'impounded');
+    }
+    return serializePlayerVehicleState(lastPlayerParkedVehicle, 'parked');
+  }
+
   function importPlayerVehicleState(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return false;
     const mode = snapshot.mode === undefined ? 'driving' : snapshot.mode;
@@ -4526,7 +4571,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     const heading = Number(snapshot.heading);
     const health = Number(snapshot.damage?.health);
     const maxHealth = Number(snapshot.damage?.maxHealth);
-    if (!['driving', 'parked'].includes(mode)
+    if (!['driving', 'parked', 'impounded'].includes(mode)
       || !Number.isInteger(vehicleId)
       || !Number.isFinite(heading)
       || !Number.isFinite(health)
@@ -4541,7 +4586,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       || vehicle.identity.key !== snapshot.identity
       || vehicle.remoteControlled
       || (playerVehicle && playerVehicle !== vehicle)
-      || (mode === 'parked' && playerVehicle)
+      || (mode !== 'driving' && playerVehicle)
       || maxHealth !== vehicle.maxHealth
       || health < 0
       || health > vehicle.maxHealth
@@ -4581,8 +4626,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     }
     syncVehicleDamageMetadata(vehicle);
     if (mode === 'driving') {
+      if (impoundedPlayerVehicle === vehicle) impoundedPlayerVehicle = null;
       if (!activatePlayerVehicleRecord(vehicle)) return false;
-    } else {
+    } else if (mode === 'parked') {
       if (lastPlayerParkedVehicle && lastPlayerParkedVehicle !== vehicle) {
         lastPlayerParkedVehicle.dwellUntil = 4;
         lastPlayerParkedVehicle.curbDwellUntil = Infinity;
@@ -4596,10 +4642,29 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       vehicle.turn = null;
       vehicle.leader = null;
       vehicle.parked = true;
+      vehicle.impounded = false;
       vehicle.parkedAt = null;
       vehicle.dwellUntil = Infinity;
       vehicle.curbDwellUntil = Infinity;
       lastPlayerParkedVehicle = vehicle;
+      if (impoundedPlayerVehicle === vehicle) impoundedPlayerVehicle = null;
+    } else {
+      if (lastPlayerParkedVehicle === vehicle) lastPlayerParkedVehicle = null;
+      vehicle.playerControlled = false;
+      vehicle.playerSteer = 0;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.accelSm = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.leader = null;
+      vehicle.parked = true;
+      vehicle.impounded = true;
+      vehicle.parkedAt = null;
+      vehicle.dwellUntil = Infinity;
+      vehicle.curbDwellUntil = Infinity;
+      vehicle.mesh.root.visible = false;
+      impoundedPlayerVehicle = vehicle;
     }
     if (mode === 'driving' && vehicle.disabled) {
       playerInput.throttle = 0;
@@ -4672,6 +4737,65 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     return exit;
   }
 
+  function impoundPlayerVehicle() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle || playerVehicle || impoundedPlayerVehicle) return null;
+    lastPlayerParkedVehicle = null;
+    impoundedPlayerVehicle = vehicle;
+    vehicle.impounded = true;
+    vehicle.playerControlled = false;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.mesh.root.visible = false;
+    return exportPlayerVehicleState();
+  }
+
+  function getImpoundedVehicleState() {
+    return serializePlayerVehicleState(impoundedPlayerVehicle, 'impounded');
+  }
+
+  function retrieveImpoundedPlayerVehicle(position, heading = 0) {
+    const vehicle = impoundedPlayerVehicle;
+    if (!vehicle || playerVehicle || lastPlayerParkedVehicle) return null;
+    const projection = projectVehiclePoseToRoad(position, heading, {
+      maxDistance: 96,
+      snapToLane: true,
+    });
+    if (!projection) return null;
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    vehicle.impounded = false;
+    vehicle.playerControlled = false;
+    vehicle.playerSteer = 0;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    impoundedPlayerVehicle = null;
+    lastPlayerParkedVehicle = vehicle;
+    return exportPlayerVehicleState();
+  }
+
   function setPlayerInput(input = {}) {
     if (playerVehicle?.disabled) {
       playerInput.throttle = 0;
@@ -4725,7 +4849,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   function setRemotePose(index, pose = {}) {
     const vehicle = vehicles[index];
-    if (!vehicle || vehicle.playerControlled) return false;
+    if (!vehicle || vehicle.playerControlled || vehicle.impounded) return false;
     if (!vehicle.remoteControlled) {
       vehicle.remoteControlled = true;
       vehicle.parked = false;
@@ -4808,6 +4932,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     importPlayerVehicleState,
     reportPlayerVehicleTheft,
     exitPlayerVehicle,
+    impoundPlayerVehicle,
+    getImpoundedVehicleState,
+    retrieveImpoundedPlayerVehicle,
     setPlayerInput,
     getPlayerVehicleState,
     damagePlayerVehicle,

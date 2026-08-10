@@ -175,8 +175,8 @@ try {
     && arrested.responder?.active === false
     && arrested.driving === false,
   'arrest did not atomically clear pursuit/responder/driving state', arrested);
-  assert(arrested.vehicle?.action?.key === 'parked',
-    'arrest did not release the player vehicle as parked', arrested.vehicle);
+  assert(arrested.vehicle?.action?.key === 'impounded',
+    'arrest did not transfer the player vehicle to Ferry impound', arrested.vehicle);
   assert(transaction?.kind === 'wanted-fine'
     && transaction.due >= 20
     && transaction.due <= 120
@@ -186,7 +186,7 @@ try {
   'arrest fine was not an atomic bounded cash transaction', { transaction, life: arrested.life });
   assert(arrested.message.includes('ARRESTED / $')
     && arrested.saved?.snapshot?.streetHeat?.heat === 0
-    && arrested.saved?.snapshot?.vehicle?.mode === 'parked'
+    && arrested.saved?.snapshot?.vehicle?.mode === 'impounded'
     && arrested.saved?.snapshot?.vehicle?.vehicleId === candidates[1].id,
   'arrest feedback or immediate cleared-state save was missing', arrested);
 
@@ -199,7 +199,16 @@ try {
     && oneShot.transaction?.at === transaction?.at,
   'arrest event or fine repeated after pursuit cleared', oneShot);
 
-  const sameVehicle = await enterCandidate({ position: arrested.vehicle.position });
+  const qaRelease = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const impounded = sim.traffic.getImpoundedVehicleState();
+    return impounded
+      ? sim.traffic.retrieveImpoundedPlayerVehicle(impounded.position, impounded.heading)
+      : null;
+  });
+  assert(qaRelease?.mode === 'parked',
+    'arrest regression setup could not release the impounded test vehicle', qaRelease);
+  const sameVehicle = await enterCandidate({ position: qaRelease?.position });
   assert(sameVehicle.driving === true
     && sameVehicle.heat?.heat === 0
     && sameVehicle.thefts === 2,
