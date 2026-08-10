@@ -419,7 +419,12 @@ export function createHeroLifeLighting(options = {}) {
       if (distance > pedestrianDetailDistance || excluded(detailWorldPosition, cameraPosition, heroPosition)) continue;
       detailCandidates.push({ entry, slot, distance });
     }
-    detailCandidates.sort((first, second) => first.distance - second.distance || first.slot - second.slot);
+    detailCandidates.sort((first, second) => (
+      Number(Boolean(second.entry.source.userData.heroLifeDetailPriority))
+        - Number(Boolean(first.entry.source.userData.heroLifeDetailPriority))
+      || first.distance - second.distance
+      || first.slot - second.slot
+    ));
     const selected = detailCandidates.slice(0, maxDetailedActors);
     const selectedSources = new Set(selected.map(({ entry }) => entry.source));
     // Keep an actor on its source whenever it remains selected. This prevents

@@ -14,6 +14,7 @@
     "build:sf-atlas": "node scripts/build-sf-atlas.mjs",
     "build:sf-elevation": "node scripts/build-sf-elevation.mjs",
     "verify:realmap-topology": "node scripts/verify-realmap-topology.mjs",
+    "verify:street-life-vignette": "node scripts/verify-street-life-vignette.mjs",
     "qa:realmap": "node scripts/qa-realmap.mjs",
     "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
     "qa:realmap-blind-ab": "node scripts/build-realmap-blind-ab.mjs",
