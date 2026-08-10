@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -133,6 +134,10 @@ const lock = {
   title: 'Ferry Building 2023 USGS 3DEP terrain source lock',
   requestedCoverageWgs84: requestedBoundsWgs84,
   coverage: {
+    scienceBaseMetadataEnvelope: {
+      wgs84Bounds: PRODUCT_BOUNDS_WGS84,
+      authority: 'ScienceBase product metadata coverage, not the embedded raster affine',
+    },
     sourceBoundsWgs84: PRODUCT_BOUNDS_WGS84,
     sourceContainsRequestedCoverage: true,
     sourceResolutionMeters: 1,
@@ -160,6 +165,32 @@ const lock = {
     sha256: raster.sha256,
     etag: raster.etag,
     lastModified: raster.lastModified,
+    gridEnvelope: {
+      authority: 'Exact tags embedded in the byte-locked GeoTIFF; this is separate from the ScienceBase WGS84 metadata envelope.',
+      tiffEncoding: 'classic little-endian TIFF',
+      dimensionsPixels: [10012, 10012],
+      sampleLayout: {
+        samplesPerPixel: 1,
+        bitsPerSample: 32,
+        sampleFormat: 'IEEE floating point (3)',
+        compression: 'LZW (5)',
+        predictor: 'floating point (3)',
+        nodata: -999999,
+      },
+      tileLayout: { tilePixels: [512, 512], tileCount: 400, overviewIfdCount: 5, overviewsPresent: true },
+      horizontalEpsg: 26910,
+      linearUnitEpsg: 9001,
+      rasterType: 'PixelIsArea',
+      pixelScaleModelSpace: [1, 1, 0],
+      modelTiepoint: [0, 0, 0, 549993.9999840065, 4190005.9999845778, 0],
+      modelTransformationTagPresent: false,
+      pixelToModelAffine: {
+        columnRowFormula: 'X = 549993.9999840065 + column; Y = 4190005.9999845778 - row',
+        coefficients: [1, 0, 549993.9999840065, 0, -1, 4190005.9999845778],
+      },
+      modelBoundsAtPixelIsAreaEdges: [549993.9999840065, 4179993.9999845778, 560005.9999840065, 4190005.9999845778],
+      verticalGeoKeysPresent: false,
+    },
     localRawCache: 'Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif',
     localRawCacheGitIgnored: true,
   },
@@ -173,12 +204,14 @@ const lock = {
     vertical: {
       declaredByProductMetadata: 'NAVD88',
       units: 'metres',
-      geoidAndEpochStatus: 'Not locked by this source-lock. A production terrain build must validate the GeoTIFF vertical CRS/geoid realization and reconcile its water datum.',
+      embeddedTiffGeoKeys: 'absent; no vertical CRS or geoid may be inferred from this TIFF alone',
+      geoidAndEpochStatus: 'NAVD88 is declared by the product XML, but a geoid model and epoch are not locked by this source-lock. A production terrain build must establish them and reconcile its water datum.',
     },
   },
   tooling: {
     lockScript: 'scripts/world-tiles/lock-usgs-3dep-terrain.mjs',
     verifier: 'scripts/world-tiles/verify-ferry-production-terrain.mjs',
+    geoTiffMetadataVerifier: 'scripts/world-tiles/verify-ferry-3dep-geotiff-metadata.mjs',
     runtime: `node ${process.version}`,
     downloadMethod: 'WHATWG fetch with resumable HTTP Range reads and sequential FileHandle writes while hashing bytes',
   },
@@ -191,11 +224,17 @@ const lock = {
   },
 };
 await writeFile(LOCK_PATH, `${JSON.stringify(lock, null, 2)}\n`);
+const metadataCheck = spawnSync(process.execPath, [
+  path.join(ROOT, 'scripts/world-tiles/verify-ferry-3dep-geotiff-metadata.mjs'),
+  '--verify-raw',
+], { cwd: ROOT, encoding: 'utf8' });
+assert.equal(metadataCheck.status, 0, `Downloaded GeoTIFF failed metadata validation:\n${metadataCheck.stderr || metadataCheck.stdout}`);
 console.log(JSON.stringify({
   result: 'USGS 3DEP source lock written',
   lock: path.relative(ROOT, LOCK_PATH),
   rawRaster: path.relative(ROOT, rasterPath),
   requestedCoverageWgs84: requestedBoundsWgs84,
   raster: { bytes: raster.bytes, sha256: raster.sha256 },
+  geoTiffMetadata: JSON.parse(metadataCheck.stdout),
   metadata: { sciencebaseJsonSha256: lock.source.sciencebaseJsonSha256, productMetadataSha256: lock.source.productMetadataSha256 },
 }, null, 2));

@@ -11,6 +11,15 @@
     37.7989814242
   ],
   "coverage": {
+    "scienceBaseMetadataEnvelope": {
+      "wgs84Bounds": [
+        -122.43230834799999,
+        37.76535823000006,
+        -122.31794821799997,
+        37.856087298000034
+      ],
+      "authority": "ScienceBase product metadata coverage, not the embedded raster affine"
+    },
     "sourceBoundsWgs84": [
       -122.43230834799999,
       37.76535823000006,
@@ -46,6 +55,66 @@
     "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
     "etag": "45df67a1a83a61bcc23b1c2a2d0a41d4",
     "lastModified": "Fri, 13 Feb 2026 02:57:21 GMT",
+    "gridEnvelope": {
+      "authority": "Exact tags embedded in the byte-locked GeoTIFF; this is separate from the ScienceBase WGS84 metadata envelope.",
+      "tiffEncoding": "classic little-endian TIFF",
+      "dimensionsPixels": [
+        10012,
+        10012
+      ],
+      "sampleLayout": {
+        "samplesPerPixel": 1,
+        "bitsPerSample": 32,
+        "sampleFormat": "IEEE floating point (3)",
+        "compression": "LZW (5)",
+        "predictor": "floating point (3)",
+        "nodata": -999999
+      },
+      "tileLayout": {
+        "tilePixels": [
+          512,
+          512
+        ],
+        "tileCount": 400,
+        "overviewIfdCount": 5,
+        "overviewsPresent": true
+      },
+      "horizontalEpsg": 26910,
+      "linearUnitEpsg": 9001,
+      "rasterType": "PixelIsArea",
+      "pixelScaleModelSpace": [
+        1,
+        1,
+        0
+      ],
+      "modelTiepoint": [
+        0,
+        0,
+        0,
+        549993.9999840065,
+        4190005.9999845778,
+        0
+      ],
+      "modelTransformationTagPresent": false,
+      "pixelToModelAffine": {
+        "columnRowFormula": "X = 549993.9999840065 + column; Y = 4190005.9999845778 - row",
+        "coefficients": [
+          1,
+          0,
+          549993.9999840065,
+          0,
+          -1,
+          4190005.9999845778
+        ]
+      },
+      "modelBoundsAtPixelIsAreaEdges": [
+        549993.9999840065,
+        4179993.9999845778,
+        560005.9999840065,
+        4190005.9999845778
+      ],
+      "verticalGeoKeysPresent": false
+    },
     "localRawCache": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
     "localRawCacheGitIgnored": true
   },
@@ -59,7 +128,8 @@
     "vertical": {
       "declaredByProductMetadata": "NAVD88",
       "units": "metres",
-      "geoidAndEpochStatus": "Not locked by this source-lock. A production terrain build must validate the GeoTIFF vertical CRS/geoid realization and reconcile its water datum."
+      "embeddedTiffGeoKeys": "absent; no vertical CRS or geoid may be inferred from this TIFF alone",
+      "geoidAndEpochStatus": "NAVD88 is declared by the product XML, but a geoid model and epoch are not locked by this source-lock. A production terrain build must establish them and reconcile its water datum."
     }
   },
   "tooling": {
