@@ -37,6 +37,7 @@ import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
 import { createFerryBuildingStreetscape } from './hero-streetscape.js';
 import { createHeroTrafficVisuals } from './hero-traffic-visuals.js';
+import { createFerryBuildingLandmark } from './hero-landmark.js';
 import {
   collectHeroRenderStats,
   enableHeroPerformanceMode,
@@ -51,6 +52,25 @@ let streetDesign = createStreetDesign();
 const urlStreetSearch = typeof window !== 'undefined' ? window.location.search : '';
 const heroLaunch = typeof window !== 'undefined' ? heroTileFromSearch(window.location.search) : null;
 let activeHeroTile = heroLaunch?.tile || null;
+const FERRY_BUILDING_OSM_WAY = 558731934;
+const FERRY_HERO_PLAZA_LAUNCH = Object.freeze({
+  x: 2173,
+  z: 1831.4,
+  yaw: 0.8008,
+  source: 'OSM Market Street footway 779448275 endpoint facing the Ferry clock tower',
+  towerTarget: Object.freeze({ x: 2281.5306, z: 1936.6459 }),
+  towerDistanceM: 151.18,
+  nearestVehicularRoadClearanceM: 16.39,
+  cameraNearestVehicularRoadClearanceM: 11.37,
+  buildingClearanceM: 29.73,
+});
+const FERRY_HERO_CAMERA_FRAME = Object.freeze({
+  distance: 9,
+  shoulderOffset: 0.7,
+  verticalOffset: -0.2,
+  lookAhead: 0.38,
+  lookHeight: 0.85,
+});
 
 function syncStreetDesignIntoCityMeta() {
   if (!cityData?.meta) return;
@@ -1275,6 +1295,7 @@ function setupToolbar() {
     disposeHeroAtmosphere();
     disposeHeroStreetscape();
     disposeHeroTrafficVisuals();
+    disposeHeroLandmark();
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
@@ -7139,6 +7160,11 @@ let heroTrafficVisualStats = null;
 const HERO_TRAFFIC_CAMERA_EXCLUSION_RADIUS = 4.5;
 const HERO_TRAFFIC_CAMERA_FADE_DISTANCE = 1.5;
 const HERO_TRAFFIC_HERO_RADIUS = 14;
+const HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS = 4.5;
+let heroCameraExcludedPedestrians = 0;
+let heroLandmark = null;
+let heroLandmarkLifecycle = null;
+let heroLaunchPose = null;
 let heroPerformanceMode = null;
 let heroPerformancePriorComposerPixelRatio = null;
 let heroPerformanceMarkedObjects = 0;
@@ -7582,6 +7608,9 @@ function updateHeroCamera(dt) {
     collisionBoxes: collisionBoxesNear(playerState.x, playerState.z, 8),
     raycastCandidates: nearbyVehicles,
     dt,
+    options: String(activeHeroTile?.source?.landmarkOsmWay) === String(FERRY_BUILDING_OSM_WAY)
+      ? FERRY_HERO_CAMERA_FRAME
+      : null,
     teleport: teleported,
   });
 }
@@ -7607,6 +7636,10 @@ function getHeroCameraDiagnostics() {
     armDistance: diagnostics?.armDistance ?? null,
     collisionBoxesTested: diagnostics?.collisionBoxesTested ?? 0,
     raycastCandidatesTested: diagnostics?.raycastCandidatesTested ?? 0,
+    frameOptions: String(activeHeroTile?.source?.landmarkOsmWay) === String(FERRY_BUILDING_OSM_WAY)
+      ? { ...FERRY_HERO_CAMERA_FRAME }
+      : null,
+    nearbyPedestriansExcluded: heroCameraExcludedPedestrians,
     forcedCloseCamera: diagnostics?.forcedCloseCamera ?? false,
     teleportReset: diagnostics?.teleportReset ?? false,
     cameraInsideBuilding,
@@ -7851,6 +7884,7 @@ function createPedestrianSystem(roads) {
 function updatePedestrians(dt) {
   const focus = fullCityMode ? lifeFocusPoint() : null;
   const lifeRadius = STREAM.lifeRadius;
+  heroCameraExcludedPedestrians = 0;
   for (const person of pedestrianState) {
     if (focus) {
       const px = person.mesh.position.x;
@@ -7863,6 +7897,11 @@ function updatePedestrians(dt) {
     const pose = pointAlongPath(person.path.points, person.s);
     person.mesh.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     person.mesh.rotation.y = pose.heading;
+    const cameraExcluded = Boolean(activeHeroTile && cityMode === 'walk' && camera
+      && Math.hypot(pose.x - camera.position.x, pose.z - camera.position.z)
+        < HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS);
+    person.mesh.visible = !cameraExcluded;
+    if (cameraExcluded) heroCameraExcludedPedestrians += 1;
     const swing = Math.sin(performance.now() * 0.008 + person.phase) * 0.4;
     person.mesh.userData.left.rotation.x = swing;
     person.mesh.userData.right.rotation.x = -swing;
@@ -8788,6 +8827,78 @@ function getHeroTrafficVisualDiagnostics() {
     groupAttached: Boolean(heroTrafficVisuals?.group?.parent),
     sourceVehicles: trafficState?.vehicles?.length || 0,
     stats: heroTrafficVisualStats || heroTrafficVisuals?.getStats() || null,
+  };
+}
+
+function disposeHeroLandmark() {
+  const sourceMesh = heroLandmarkLifecycle?.sourceMesh || null;
+  const previousVisibility = heroLandmarkLifecycle?.sourceVisibility;
+  heroLandmark?.dispose();
+  if (heroLandmarkLifecycle) {
+    heroLandmarkLifecycle.sourceVisibilityRestored = sourceMesh
+      ? sourceMesh.visible === previousVisibility
+      : null;
+    delete heroLandmarkLifecycle.sourceMesh;
+  }
+  heroLandmark = null;
+}
+
+function initializeHeroLandmark() {
+  disposeHeroLandmark();
+  heroLandmarkLifecycle = null;
+  if (!activeHeroTile || !cityRoot || !cityData) return null;
+  const sourceBuilding = (cityData.detailBuildings || [])
+    .find((building) => String(building?.id) === String(FERRY_BUILDING_OSM_WAY));
+  const sourceMesh = detailBuildingMeshes
+    .find((mesh) => String(mesh?.userData?.building?.id) === String(FERRY_BUILDING_OSM_WAY));
+  heroLandmarkLifecycle = {
+    sourceBuildingFound: Boolean(sourceBuilding),
+    sourceMeshFound: Boolean(sourceMesh),
+    sourceVisibility: sourceMesh?.visible ?? null,
+    sourceVisibilityRestored: null,
+    sourceMesh,
+    error: null,
+  };
+  if (!sourceBuilding) {
+    heroLandmarkLifecycle.error = `Missing exact OSM Ferry Building way ${FERRY_BUILDING_OSM_WAY}`;
+    return null;
+  }
+  try {
+    heroLandmark = createFerryBuildingLandmark({
+      scene,
+      parent: cityRoot,
+      building: sourceBuilding,
+      sourceMesh,
+      elevationAt,
+    });
+  } catch (error) {
+    heroLandmarkLifecycle.error = error?.message || String(error);
+    heroLandmark = null;
+  }
+  return heroLandmark;
+}
+
+function resolveHeroLaunchPose() {
+  if (!activeHeroTile) return null;
+  heroLaunchPose = String(activeHeroTile.source?.landmarkOsmWay) === String(FERRY_BUILDING_OSM_WAY)
+    ? { ...FERRY_HERO_PLAZA_LAUNCH }
+    : { ...activeHeroTile.spawn };
+  return heroLaunchPose;
+}
+
+function getHeroLandmarkDiagnostics() {
+  const lifecycle = heroLandmarkLifecycle || {};
+  return {
+    active: Boolean(heroLandmark),
+    tileId: activeHeroTile?.id || null,
+    sourceWay: FERRY_BUILDING_OSM_WAY,
+    sourceBuildingFound: lifecycle.sourceBuildingFound ?? false,
+    sourceMeshFound: lifecycle.sourceMeshFound ?? false,
+    sourceMeshHidden: Boolean(lifecycle.sourceMesh && !lifecycle.sourceMesh.visible),
+    sourceVisibilityRestored: lifecycle.sourceVisibilityRestored ?? null,
+    error: lifecycle.error || null,
+    launchPose: heroLaunchPose ? { ...heroLaunchPose } : null,
+    landmark: heroLandmark?.getDiagnostics() || null,
   };
 }
 
@@ -10598,6 +10709,7 @@ function renderLoop() {
   updateWeatherVisuals(dt);
   heroAtmosphere?.update(dt);
   heroStreetscape?.update(dt);
+  heroLandmark?.update(dt);
   updateHeroPerformance(now);
   if (composer) composer.render();
   else renderer.render(scene, camera);
@@ -10865,6 +10977,7 @@ async function buildCity() {
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroTrafficVisuals();
+    disposeHeroLandmark();
     disposeHeroPerformanceMode();
     if (cityRoot) {
       disposeHeroAtmosphere();
@@ -11046,6 +11159,7 @@ async function buildCity() {
       createStreetFurniture(activeRoads);
       createWetWeatherVisuals(activeRoads);
     }
+    initializeHeroLandmark();
     initializeHeroStreetscape();
     initializeHeroAtmosphere();
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
@@ -11076,7 +11190,7 @@ async function buildCity() {
     }
     const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
     initPlayer(activeHeroTile && !fullCityMode
-      ? activeHeroTile.spawn
+      ? resolveHeroLaunchPose()
       : {
         x: trafficStart ? trafficStart.x : centroid.x,
         z: trafficStart ? trafficStart.z : centroid.z,
@@ -11202,6 +11316,7 @@ function start() {
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
       heroStreetscape: getHeroStreetscapeDiagnostics(),
       heroTrafficVisuals: getHeroTrafficVisualDiagnostics(),
+      heroLandmark: getHeroLandmarkDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
@@ -11414,6 +11529,7 @@ function start() {
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
     getHeroStreetscape: () => getHeroStreetscapeDiagnostics(),
     getHeroTrafficVisuals: () => getHeroTrafficVisualDiagnostics(),
+    getHeroLandmark: () => getHeroLandmarkDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
