@@ -28,6 +28,9 @@ export const FERRY_BUILDING_STREETSCAPE_SOURCE = Object.freeze({
 
 const DEFAULT_BOUNDS = Object.freeze({ minX: 2144, minZ: 1728, maxX: 2528, maxZ: 2112 });
 const MAX_DELTA_SECONDS = 0.05;
+const FERRY_PLAZA_PAVER_ALBEDO_PATH = '/assets/sf-ferry-plaza-pavers-albedo-v1.png';
+const FERRY_PLAZA_PAVER_REPEAT_METERS = 2.5;
+const FERRY_PLAZA_PAVER_TEXTURE_MIX = 0.64;
 const DEFAULT_ROADS = Object.freeze([
   { id: 26769726, name: 'Ferry Plaza', width: 7.1, points: [[2320.3, 1820.6], [2372.5, 1871.6]] },
   { id: 88463826, name: 'The Embarcadero', width: 11.8, points: [[2314.9, 1815.0], [2295.6, 1837.9]] },
@@ -199,11 +202,13 @@ function makeBatch(root, name, geometry, material, maxCount) {
   return { mesh, capacity: maxCount };
 }
 
-function put(batch, matrix, color) {
+function put(batch, matrix, color, pavingAlbedoMix) {
   const index = batch.mesh.count;
   if (index >= batch.capacity) return false;
   batch.mesh.setMatrixAt(index, matrix);
   if (color) batch.mesh.setColorAt(index, color);
+  const albedoMix = batch.mesh.geometry.getAttribute('pavingAlbedoMix');
+  if (albedoMix) albedoMix.setX(index, Number(pavingAlbedoMix) || 0);
   batch.mesh.count += 1;
   return true;
 }
@@ -255,15 +260,104 @@ function createPavingTexture({ roughness = false } = {}) {
   return texture;
 }
 
-function makeMaterials() {
-  const pavingMap = createPavingTexture();
-  const pavingRoughnessMap = createPavingTexture({ roughness: true });
+function configurePavingAlbedoTexture(texture) {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1, 1);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = 8;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.userData.physicalRepeatMeters = FERRY_PLAZA_PAVER_REPEAT_METERS;
+  texture.userData.source = FERRY_PLAZA_PAVER_ALBEDO_PATH;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createPavingAlbedo() {
+  const fallback = configurePavingAlbedoTexture(createPavingTexture());
+  fallback.userData.physicalRepeatMeters = FERRY_PLAZA_PAVER_REPEAT_METERS;
+  fallback.userData.source = 'procedural-fallback';
+  const textures = new Set([fallback]);
+  let generated = null;
+
+  function loadInto(material, canApply) {
+    // The deterministic node verifier has no DOM image loader. Keep its small
+    // procedural fallback rather than importing a browser-only loader there.
+    if (typeof document === 'undefined' || typeof Image === 'undefined') return false;
+    try {
+      generated = new THREE.TextureLoader().load(
+        FERRY_PLAZA_PAVER_ALBEDO_PATH,
+        (texture) => {
+          configurePavingAlbedoTexture(texture);
+          if (!canApply()) {
+            texture.dispose();
+            return;
+          }
+          material.map = texture;
+          material.needsUpdate = true;
+        },
+        undefined,
+        () => {
+          // Network or asset-server failures intentionally retain the fallback.
+          generated?.dispose();
+          generated = null;
+        },
+      );
+      configurePavingAlbedoTexture(generated);
+      textures.add(generated);
+      return true;
+    } catch {
+      generated?.dispose();
+      generated = null;
+      return false;
+    }
+  }
+
   return {
+    fallback,
+    get textures() { return [...textures]; },
+    loadInto,
+  };
+}
+
+function addWorldProjectedPavingShader(material) {
+  const repeat = FERRY_PLAZA_PAVER_REPEAT_METERS.toFixed(3);
+  const textureMix = FERRY_PLAZA_PAVER_TEXTURE_MIX.toFixed(3);
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute float pavingAlbedoMix;
+varying vec3 vFerryPavingWorldPosition;
+varying float vFerryPavingAlbedoMix;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+vec4 ferryPavingWorldPosition = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+vFerryPavingWorldPosition = ferryPavingWorldPosition.xyz;
+vFerryPavingAlbedoMix = pavingAlbedoMix;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vFerryPavingWorldPosition;
+varying float vFerryPavingAlbedoMix;`)
+      .replace('#include <map_fragment>', `#ifdef USE_MAP
+  vec2 ferryPavingUv = vFerryPavingWorldPosition.xz / ${repeat};
+  vec4 ferryPavingSample = texture2D(map, ferryPavingUv);
+  ferryPavingSample.rgb *= vec3(0.94, 0.91, 0.85);
+  diffuseColor *= mix(vec4(1.0), ferryPavingSample, vFerryPavingAlbedoMix * ${textureMix});
+#endif`);
+  };
+  material.customProgramCacheKey = () => `ferry-world-paving-${repeat}-${textureMix}`;
+}
+
+function makeMaterials() {
+  const pavingAlbedo = createPavingAlbedo();
+  const pavingRoughnessMap = createPavingTexture({ roughness: true });
+  const materials = {
     curb: createStandardMaterial(PALETTE.curb, 0.82),
     sidewalk: createStandardMaterial(PALETTE.sidewalk, 0.9),
     paving: new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      map: pavingMap,
+      map: pavingAlbedo.fallback,
       roughnessMap: pavingRoughnessMap,
       roughness: 0.92,
       metalness: 0,
@@ -282,16 +376,21 @@ function makeMaterials() {
     facadeShadow: createStandardMaterial(PALETTE.facadeShadow, 0.82),
     glass: createStandardMaterial(PALETTE.glass, 0.26, 0.38),
   };
+  addWorldProjectedPavingShader(materials.paving);
+  return { materials, pavingAlbedo, pavingRoughnessMap };
 }
 
-function makeBatches(root, materials) {
+function makeBatches(root, materialState) {
+  const { materials, pavingAlbedo, pavingRoughnessMap } = materialState;
   const cube = new THREE.BoxGeometry(1, 1, 1);
+  const pavingCube = cube.clone();
+  pavingCube.setAttribute('pavingAlbedoMix', new THREE.InstancedBufferAttribute(new Float32Array(96), 1));
   const cylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
   const disc = new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
   const batches = {
     curb: makeBatch(root, 'OSM-aligned curb returns', cube, materials.curb, 36),
     sidewalk: makeBatch(root, 'Ferry Plaza sidewalk slabs', cube, materials.sidewalk, 48),
-    paving: makeBatch(root, 'Market Street OSM paving finish', cube, materials.paving, 96),
+    paving: makeBatch(root, 'Market Street OSM paving finish', pavingCube, materials.paving, 96),
     pavingBorder: makeBatch(root, 'Market Street paving edge courses', cube, materials.pavingBorder, 48),
     seams: makeBatch(root, 'Sidewalk expansion seams', cube, materials.facadeShadow, 80),
     marking: makeBatch(root, 'OSM road markings', cube, materials.marking, 96),
@@ -304,8 +403,8 @@ function makeBatches(root, materials) {
     facade: makeBatch(root, 'Ferry Building facade relief', cube, materials.facade, 12),
     facadeTrim: makeBatch(root, 'Ferry Building facade trim', cube, materials.facadeShadow, 22),
     facadeGlass: makeBatch(root, 'Ferry Building storefront glazing', cube, materials.glass, 24),
-    geometries: [cube, cylinder, disc],
-    textures: [materials.paving.map, materials.paving.roughnessMap],
+    geometries: [cube, pavingCube, cylinder, disc],
+    textures: [...pavingAlbedo.textures, pavingRoughnessMap],
     materials: Object.values(materials),
   };
   batches.paving.mesh.castShadow = false;
@@ -339,12 +438,20 @@ function addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, 
         const z = a[1] + (dz / length) * distance;
         if (!isUsablePoint(x, z, bounds, isSea)) continue;
         const surfaceY = terrainElevation(x, z);
+        const isPavingStone = path.surface === 'paving_stones';
         const baseColor = path.surface === 'asphalt'
           ? asphaltColor
           : path.surface === 'concrete' ? concreteColor : stoneColor;
-        const color = baseColor.clone().offsetHSL(0, 0, (hash11(path.id + chunk * 17) - 0.5) * 0.08);
+        // The source-derived paving tone remains the base. The image is mixed
+        // in the shader, rather than multiplied at full strength, to keep the
+        // route continuous with its warm-gray surrounding surfaces.
+        const color = (isPavingStone
+          ? stoneColor.clone().lerp(new THREE.Color(0xffffff), 0.28)
+          : baseColor.clone())
+          .offsetHSL(0, 0, (hash11(path.id + chunk * 17) - 0.5) * (isPavingStone ? 0.018 : 0.08));
         put(batches.paving, boxMatrix(matrix, x, surfaceY + 0.014, z,
-          Math.max(0.4, chunkLength + 0.012), 0.028, path.width, angle), color);
+          Math.max(0.4, chunkLength + 0.012), 0.028, path.width, angle), color,
+        isPavingStone ? 1 : 0);
       }
 
       for (const side of [-1, 1]) {
@@ -545,6 +652,8 @@ function finishBatches(batches) {
   for (const mesh of meshes) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    const albedoMix = mesh.geometry.getAttribute('pavingAlbedoMix');
+    if (albedoMix) albedoMix.needsUpdate = true;
     mesh.computeBoundingSphere();
   }
   return meshes;
@@ -615,8 +724,9 @@ export function createFerryBuildingStreetscape(options = {}) {
   root.userData.source = FERRY_BUILDING_STREETSCAPE_SOURCE;
   parent.add(root);
 
-  const materials = makeMaterials();
-  const batches = makeBatches(root, materials);
+  const materialState = makeMaterials();
+  const { materials, pavingAlbedo } = materialState;
+  const batches = makeBatches(root, materialState);
   const matrix = new THREE.Matrix4();
   addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, matrix);
   addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix);
@@ -640,7 +750,7 @@ export function createFerryBuildingStreetscape(options = {}) {
     || stats.triangles > FERRY_BUILDING_STREETSCAPE_BUDGET.maxTriangles) {
     root.removeFromParent();
     for (const geometry of batches.geometries) geometry.dispose();
-    for (const texture of batches.textures) texture.dispose();
+    for (const texture of [...new Set([...batches.textures, ...pavingAlbedo.textures])]) texture.dispose();
     for (const material of batches.materials) material.dispose();
     throw new Error('Ferry Building streetscape exceeded its static rendering budget.');
   }
@@ -648,6 +758,7 @@ export function createFerryBuildingStreetscape(options = {}) {
   let elapsed = 0;
   let wetness = clamp(Number(options.wetness) || 0, 0, 1);
   let disposed = false;
+  const generatedAlbedoRequested = pavingAlbedo.loadInto(materials.paving, () => !disposed);
   const dryRoughness = new Map(batches.materials.map((material) => [material, material.roughness]));
   const pavingDryColor = materials.paving.color.clone();
 
@@ -678,14 +789,21 @@ export function createFerryBuildingStreetscape(options = {}) {
     disposed = true;
     root.removeFromParent();
     for (const geometry of batches.geometries) geometry.dispose();
-    for (const texture of batches.textures) texture.dispose();
+    for (const texture of [...new Set([...batches.textures, ...pavingAlbedo.textures])]) texture.dispose();
     for (const material of batches.materials) material.dispose();
   }
 
   setConditions({ wetness });
   return Object.freeze({
     root,
-    stats,
+    stats: Object.freeze({
+      ...stats,
+      pavingAlbedo: Object.freeze({
+        source: generatedAlbedoRequested ? FERRY_PLAZA_PAVER_ALBEDO_PATH : 'procedural-fallback',
+        physicalRepeatMeters: FERRY_PLAZA_PAVER_REPEAT_METERS,
+        generatedAlbedoRequested,
+      }),
+    }),
     update,
     setConditions,
     dispose,

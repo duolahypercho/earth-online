@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { existsSync } from 'node:fs';
 import {
   createFerryBuildingStreetscape,
   FERRY_BUILDING_STREETSCAPE_BUDGET,
@@ -90,6 +91,7 @@ if (!scene.children.includes(streetscape.root)) fail('streetscape did not attach
 if (!streetscape.root.userData.heroStreetscape) fail('source-aligned root marker missing');
 if (FERRY_BUILDING_STREETSCAPE_SOURCE.ferryBuildingWay !== 558731934) fail('Ferry Building source way changed');
 if (streetscape.stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls) fail('draw-call budget exceeded');
+if (streetscape.stats.drawCalls > 15) fail('generated plaza albedo added a streetscape draw call');
 if (streetscape.stats.instances > FERRY_BUILDING_STREETSCAPE_BUDGET.maxInstances) fail('instance budget exceeded');
 if (streetscape.stats.triangles > FERRY_BUILDING_STREETSCAPE_BUDGET.maxTriangles) fail('triangle budget exceeded');
 if (streetscape.stats.roads.length !== FERRY_BUILDING_STREETSCAPE_SOURCE.roadIds.length) {
@@ -150,6 +152,28 @@ assertMatrixAxis('Market Street paving', pavingFinish, 0, 0, firstPavingDirectio
 const pavingY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(pavingFinish)).y;
 if (Math.abs(pavingY - (1.8 + 0.014)) > 1e-6) fail('pedestrian paving inherited the raised road datum');
 if (!pavingFinish.count) fail('paving hierarchy is absent');
+if (!existsSync(new URL('../public/assets/sf-ferry-plaza-pavers-albedo-v1.png', import.meta.url))) {
+  fail('generated Ferry plaza paver albedo is absent');
+}
+if (pavingFinish.material.map.colorSpace !== THREE.SRGBColorSpace
+  || pavingFinish.material.map.wrapS !== THREE.RepeatWrapping
+  || pavingFinish.material.map.wrapT !== THREE.RepeatWrapping
+  || pavingFinish.material.map.anisotropy !== 8
+  || pavingFinish.material.map.userData.physicalRepeatMeters !== 2.5) {
+  fail('paver albedo fallback is not color-managed and world-repeat configured');
+}
+if (streetscape.stats.pavingAlbedo.generatedAlbedoRequested
+  || streetscape.stats.pavingAlbedo.source !== 'procedural-fallback') {
+  fail('node verifier did not gracefully retain the procedural paver fallback');
+}
+const paverMix = pavingFinish.geometry.getAttribute('pavingAlbedoMix');
+if (!paverMix || !Array.from(paverMix.array.slice(0, pavingFinish.count)).includes(1)
+  || !Array.from(paverMix.array.slice(0, pavingFinish.count)).includes(0)) {
+  fail('generated plaza pavers were not restricted to paving_stones instances');
+}
+if (pavingFinish.material.customProgramCacheKey?.() !== 'ferry-world-paving-2.500-0.640') {
+  fail('paver albedo is not world projected with the 64% 2.5m texture blend');
+}
 
 let facade = 0;
 let markings = 0;
