@@ -135,6 +135,7 @@
   "tooling": {
     "lockScript": "scripts/world-tiles/lock-usgs-3dep-terrain.mjs",
     "verifier": "scripts/world-tiles/verify-ferry-production-terrain.mjs",
+    "geoTiffMetadataVerifier": "scripts/world-tiles/verify-ferry-3dep-geotiff-metadata.mjs",
     "runtime": "node v22.23.1",
     "downloadMethod": "WHATWG fetch with resumable HTTP Range reads and sequential FileHandle writes while hashing bytes"
   },
