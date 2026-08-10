@@ -159,6 +159,103 @@ function makeCloudMaterial() {
   });
 }
 
+function makeHazeMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {
+      time: { value: 0 },
+      cloudiness: { value: 0.18 },
+      wetness: { value: 0 },
+      night: { value: 0 },
+      color: { value: DAY_COLOR.clone() },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float time;
+      uniform float cloudiness;
+      uniform float wetness;
+      uniform float night;
+      uniform vec3 color;
+      varying vec2 vUv;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(83.1, 177.7))) * 43758.5); }
+      float noise(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1., 0.)), f.x), mix(hash(i + vec2(0., 1.)), hash(i + vec2(1., 1.)), f.x), f.y);
+      }
+      void main() {
+        float horizon = smoothstep(0.0, 0.24, vUv.y) * smoothstep(1.0, 0.48, vUv.y);
+        float drifting = noise(vUv * vec2(5.2, 2.2) + vec2(time * 0.006, time * 0.002));
+        float patches = smoothstep(0.36, 0.74, drifting);
+        float drizzle = wetness * (0.035 + patches * 0.075);
+        float alpha = horizon * (0.022 + cloudiness * 0.032 + drizzle) * (1.0 - night * 0.18);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+  });
+}
+
+function makeDrizzleMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    uniforms: {
+      rainColor: { value: new THREE.Color(0x9aaeb6) },
+      rainOpacity: { value: 0.18 },
+      nearDistance: { value: 10 },
+      farDistance: { value: 185 },
+    },
+    vertexShader: `
+      attribute float rainFade;
+      uniform float nearDistance;
+      uniform float farDistance;
+      varying float vRainFade;
+      varying float vDepthFade;
+      void main() {
+        vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+        float distanceToCamera = max(0.0, -viewPosition.z);
+        vRainFade = rainFade;
+        vDepthFade = 1.0 - smoothstep(nearDistance, farDistance, distanceToCamera);
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 rainColor;
+      uniform float rainOpacity;
+      varying float vRainFade;
+      varying float vDepthFade;
+      void main() {
+        gl_FragColor = vec4(rainColor, rainOpacity * vRainFade * vDepthFade);
+      }
+    `,
+  });
+}
+
+function originalDrawRange(geometry) {
+  const count = geometry?.drawRange?.count;
+  return Number.isFinite(count) ? count : Infinity;
+}
+
+function rainFadeAttribute(positionCount) {
+  const values = new Float32Array(positionCount);
+  for (let index = 0; index < positionCount; index += 2) {
+    // Both vertices in a line segment share opacity. The deterministic spread
+    // avoids the artificial all-white curtain without adding per-frame work.
+    const fade = 0.22 + hash11(index * 0.5 + 41) * 0.78;
+    values[index] = fade;
+    if (index + 1 < positionCount) values[index + 1] = fade;
+  }
+  return new THREE.BufferAttribute(values, 1);
+}
+
 function createReflectionMaterial() {
   return new THREE.ShaderMaterial({
     transparent: true,
@@ -304,14 +401,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
   cloudDeck.renderOrder = -7;
   root.add(cloudDeck);
 
-  const hazeMaterial = new THREE.MeshBasicMaterial({
-    color: DAY_COLOR.clone(),
-    transparent: true,
-    opacity: 0.035,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    fog: false,
-  });
+  const hazeMaterial = makeHazeMaterial();
   const haze = new THREE.Mesh(new THREE.PlaneGeometry(520, 76), hazeMaterial);
   haze.position.set(2475, 31, 1850);
   haze.rotation.y = -Math.PI / 2;
@@ -323,6 +413,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
   root.add(lampAssembly.group);
 
   const wetMaterials = new Map();
+  let rainPresentation = null;
   let conditions = normaliseConditions(options.conditions);
   let elapsed = 0;
   let disposed = false;
@@ -330,17 +421,66 @@ export function createFerryBuildingAtmosphere(options = {}) {
   function refreshWetMaterials() {
     for (const [material, record] of wetMaterials) {
       const wet = conditions.wetness * record.factor;
-      if ('roughness' in material) material.roughness = THREE.MathUtils.lerp(record.roughness, Math.min(record.roughness, 0.2), wet);
-      if ('metalness' in material) material.metalness = THREE.MathUtils.lerp(record.metalness, Math.max(record.metalness, 0.18), wet * 0.72);
-      if (material.color?.isColor) material.color.copy(record.color).lerp(WET_TINT, wet * 0.08);
+      const wetRoughness = Math.min(record.roughness, THREE.MathUtils.lerp(0.24, 0.14, record.factor));
+      if ('roughness' in material) material.roughness = THREE.MathUtils.lerp(record.roughness, wetRoughness, wet);
+      if ('metalness' in material) material.metalness = THREE.MathUtils.lerp(record.metalness, Math.max(record.metalness, 0.2), wet * 0.76);
+      if (material.color?.isColor) material.color.copy(record.color).lerp(WET_TINT, wet * 0.11);
       material.needsUpdate = true;
     }
   }
 
+  function restoreRainPresentation() {
+    if (!rainPresentation) return;
+    const { mesh, material, drawRangeCount } = rainPresentation;
+    if (mesh?.material === rainPresentation.replacement) mesh.material = material;
+    if (mesh?.geometry) mesh.geometry.setDrawRange(0, drawRangeCount);
+    rainPresentation.replacement.dispose();
+    rainPresentation = null;
+  }
+
+  function refreshRainPresentation() {
+    const rain = scene.getObjectByName('Pacific drizzle rain');
+    const wantsDrizzle = conditions.weather === 'drizzle' && conditions.wetness > 0.05;
+    if (!wantsDrizzle || !rain?.isLineSegments || !rain.geometry?.attributes?.position) {
+      restoreRainPresentation();
+      return;
+    }
+    if (rainPresentation?.mesh !== rain) restoreRainPresentation();
+    if (rainPresentation) return;
+
+    const positionCount = rain.geometry.attributes.position.count;
+    const replacement = makeDrizzleMaterial();
+    rain.geometry.setAttribute('rainFade', rainFadeAttribute(positionCount));
+    // A Bay drizzle should read as intermittent nearby drops, not as a solid
+    // screen-space curtain. Retain a deterministic subset of the shared rain.
+    const renderedVertices = Math.max(2, Math.floor(positionCount * 0.46 / 2) * 2);
+    rainPresentation = {
+      mesh: rain,
+      material: rain.material,
+      drawRangeCount: originalDrawRange(rain.geometry),
+      replacement,
+      renderedVertices,
+    };
+    rain.geometry.setDrawRange(0, renderedVertices);
+    rain.material = replacement;
+  }
+
   function setConditions(nextConditions = {}) {
     if (disposed) return { ...conditions };
-    conditions = normaliseConditions({ ...conditions, ...nextConditions });
+    const weatherChanged = Object.prototype.hasOwnProperty.call(nextConditions, 'weather')
+      && nextConditions.weather !== conditions.weather;
+    const merged = { ...conditions, ...nextConditions };
+    // Weather-derived values must return to their clear defaults when the
+    // runtime switches modes; otherwise a prior drizzle would leave dry
+    // materials glossy even though the rain layer has been removed.
+    if (weatherChanged) {
+      for (const key of ['wetness', 'cloudiness', 'windSpeed']) {
+        if (!Object.prototype.hasOwnProperty.call(nextConditions, key)) delete merged[key];
+      }
+    }
+    conditions = normaliseConditions(merged);
     refreshWetMaterials();
+    refreshRainPresentation();
     return { ...conditions };
   }
 
@@ -382,8 +522,12 @@ export function createFerryBuildingAtmosphere(options = {}) {
     cloudMaterial.uniforms.time.value = elapsed;
     cloudMaterial.uniforms.cloudiness.value = conditions.cloudiness;
     cloudMaterial.uniforms.night.value = conditions.night;
-    hazeMaterial.color.copy(DAY_COLOR).lerp(NIGHT_COLOR, conditions.night);
-    hazeMaterial.opacity = 0.028 + conditions.cloudiness * 0.1 + conditions.night * 0.018;
+    hazeMaterial.uniforms.time.value = elapsed;
+    hazeMaterial.uniforms.cloudiness.value = conditions.cloudiness;
+    hazeMaterial.uniforms.wetness.value = conditions.wetness;
+    hazeMaterial.uniforms.night.value = conditions.night;
+    hazeMaterial.uniforms.color.value.copy(DAY_COLOR).lerp(NIGHT_COLOR, conditions.night);
+    refreshRainPresentation();
     for (const { lens, light } of lampAssembly.lamps) {
       const active = conditions.night * 0.9 + conditions.wetness * 0.12;
       light.intensity = active * 2.1;
@@ -408,6 +552,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
       material.needsUpdate = true;
     }
     wetMaterials.clear();
+    restoreRainPresentation();
     root.removeFromParent();
     disposeOwnedObject(root);
   }
