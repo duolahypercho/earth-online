@@ -3089,6 +3089,33 @@ function getCombatPedestrianCandidates(_origin, _maxRange, out = combatPedestria
   return pedestrians.getCombatCandidates?.(out) ?? out;
 }
 
+function getNearestCombatWorldBlocker(origin, direction, maxDistance) {
+  const distanceLimit = Number(maxDistance);
+  if (!origin || !direction || !Number.isFinite(distanceLimit) || distanceLimit <= 0) return null;
+  const candidates = [
+    city.getNearestRayBlocker?.(origin, direction, distanceLimit),
+    streaming.getNearestRayBlocker?.(origin, direction, distanceLimit),
+  ].filter((blocker) => (
+    blocker
+    && Number.isFinite(blocker.distance)
+    && blocker.distance >= 0
+    && blocker.distance <= distanceLimit
+    && Number.isFinite(blocker.point?.x)
+    && Number.isFinite(blocker.point?.y)
+    && Number.isFinite(blocker.point?.z)
+  ));
+  candidates.sort((left, right) => (
+    left.distance - right.distance
+      || String(left.source || '').localeCompare(String(right.source || ''))
+  ));
+  const nearest = candidates[0];
+  if (!nearest) return null;
+  return {
+    ...nearest,
+    point: { x: nearest.point.x, y: nearest.point.y, z: nearest.point.z },
+  };
+}
+
 function dispatchCombatWitness({ incidentId, residentId } = {}) {
   if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
   const witness = pedestrians.getIncidentWitness?.(residentId, 18) ?? null;
@@ -3126,6 +3153,7 @@ combat = createCombatLoop({
   getPedestrianCandidates: getCombatPedestrianCandidates,
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getTrafficRoot: (index) => traffic.group?.children?.[index] || null,
+  getNearestWorldBlocker: getNearestCombatWorldBlocker,
   streetHeat,
   onRecoil: (amount) => {
     controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
@@ -5830,6 +5858,9 @@ window.__SF_SIM__ = {
   },
   getCombatTargetState(id) {
     return combat?.getTargetState?.(id) ?? null;
+  },
+  getCombatWorldBlocker(origin, direction, maxDistance = 160) {
+    return getNearestCombatWorldBlocker(origin, direction, maxDistance);
   },
   setCombatAim(aiming) {
     return combat?.setAiming?.(aiming) ?? false;

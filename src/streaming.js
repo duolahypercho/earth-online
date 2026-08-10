@@ -6163,6 +6163,61 @@ export function createSanFranciscoStreaming({
       const runtime = runtimeSectors.get(key);
       return runtime ? getRuntimeBuildingVolumes(runtime) : [];
     },
+    getNearestRayBlocker(origin, direction, maxDistance = 160) {
+      if (!origin || !direction
+        || !Number.isFinite(origin.x)
+        || !Number.isFinite(origin.y)
+        || !Number.isFinite(origin.z)
+        || !Number.isFinite(direction.x)
+        || !Number.isFinite(direction.y)
+        || !Number.isFinite(direction.z)) return null;
+      const distanceLimit = Number(maxDistance);
+      const directionLength = Math.hypot(direction.x, direction.y, direction.z);
+      if (!Number.isFinite(distanceLimit) || distanceLimit <= 0 || directionLength < 1e-8) {
+        return null;
+      }
+      const normalizedDirection = {
+        x: direction.x / directionLength,
+        y: direction.y / directionLength,
+        z: direction.z / directionLength,
+      };
+      let nearest = null;
+      let nearestKey = '';
+      runtimeSectors.forEach((runtime) => {
+        const volumes = getRuntimeBuildingVolumes(runtime);
+        volumes.forEach((volume) => {
+          const distance = segmentBuildingIntersectionDistance(
+            origin,
+            normalizedDirection,
+            distanceLimit,
+            volume,
+          );
+          const candidateKey = `${runtime.descriptor?.key ?? ''}:${volume.id ?? ''}`;
+          if (!Number.isFinite(distance)
+            || distance < 0
+            || distance > distanceLimit
+            || (nearest && (
+              distance > nearest.distance + 1e-8
+              || (Math.abs(distance - nearest.distance) <= 1e-8 && candidateKey >= nearestKey)
+            ))) return;
+          nearest = {
+            distance,
+            point: {
+              x: origin.x + normalizedDirection.x * distance,
+              y: origin.y + normalizedDirection.y * distance,
+              z: origin.z + normalizedDirection.z * distance,
+            },
+            source: 'streamed',
+            collisionKind: 'building-volume',
+            sectorKey: runtime.descriptor?.key ?? null,
+            quality: runtime.quality ?? null,
+            buildingId: volume.id ?? null,
+          };
+          nearestKey = candidateKey;
+        });
+      });
+      return nearest;
+    },
     getNearestEnterablePortal,
     getPublicRealmPoint,
     validateDetailedView,

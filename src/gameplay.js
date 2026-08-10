@@ -1407,6 +1407,7 @@ export function createCombatLoop({
   getTrafficRoot,
   getTargets,
   getMuzzleOrigin,
+  getNearestWorldBlocker,
   streetHeat = null,
   onEvent,
   onRecoil,
@@ -1457,6 +1458,7 @@ export function createCombatLoop({
   const forwardAxis = new THREE.Vector3(0, 0, 1);
   const effectQuaternion = new THREE.Quaternion();
   const targetCandidates = [];
+  const nearMissCandidates = [];
   const targetStates = new Map();
   const reactionMeshes = new Set();
 
@@ -1812,11 +1814,36 @@ export function createCombatLoop({
     return true;
   }
 
-  function findHit() {
+  function findWorldBlocker() {
+    if (typeof getNearestWorldBlocker !== 'function') return null;
+    const blocker = getNearestWorldBlocker(rayOrigin, aimDirection, COMBAT_MAX_RANGE);
+    const distance = Number(blocker?.distance);
+    if (!Number.isFinite(distance) || distance < 0 || distance > COMBAT_MAX_RANGE
+      || !combatVectorFrom(blocker?.point, closestPoint)) return null;
+    return {
+      distance,
+      point: closestPoint.clone(),
+      source: typeof blocker.source === 'string' ? blocker.source : 'world',
+      sectorKey: typeof blocker.sectorKey === 'string' ? blocker.sectorKey : null,
+      buildingId: blocker.buildingId ?? null,
+      objectName: typeof blocker.objectName === 'string' ? blocker.objectName : null,
+    };
+  }
+
+  function targetTieKey(candidate) {
+    const kind = candidate?.kind === 'traffic' || candidate?.vehicle ? 'traffic' : 'pedestrian';
+    return `${kind}:${String(candidate?.id ?? '')}`;
+  }
+
+  function findHit(blockerDistance = COMBAT_MAX_RANGE) {
     if (!getAimRay()) return null;
     const candidates = collectTargets();
     let best = null;
     let bestDistance = Infinity;
+    let bestKey = '';
+    const maximumDistance = Number.isFinite(blockerDistance)
+      ? Math.max(0, Math.min(COMBAT_MAX_RANGE, blockerDistance - 0.05))
+      : COMBAT_MAX_RANGE;
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
       if (!candidate
@@ -1825,21 +1852,31 @@ export function createCombatLoop({
         || candidate.mesh?.userData?.combatDisabled === true) continue;
       if (!candidateCenter(candidate, candidatePoint)) continue;
       linePoint.copy(candidatePoint).sub(rayOrigin);
-      const distance = linePoint.dot(aimDirection);
-      if (distance < 0 || distance > COMBAT_MAX_RANGE || distance >= bestDistance) continue;
-      closestPoint.copy(aimDirection).multiplyScalar(distance).add(rayOrigin);
+      const centerDistance = linePoint.dot(aimDirection);
+      if (centerDistance < 0 || centerDistance > COMBAT_MAX_RANGE) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(centerDistance).add(rayOrigin);
       const radius = Number.isFinite(candidate.radius)
         ? candidate.radius
         : candidate.kind === 'traffic' ? 1.2 : 0.72;
-      if (closestPoint.distanceToSquared(candidatePoint) > radius * radius) continue;
+      const perpendicularSquared = closestPoint.distanceToSquared(candidatePoint);
+      if (perpendicularSquared > radius * radius) continue;
+      const entryDistance = Math.max(
+        0,
+        centerDistance - Math.sqrt(Math.max(0, radius * radius - perpendicularSquared)),
+      );
+      if (entryDistance >= maximumDistance) continue;
+      const tieKey = targetTieKey(candidate);
+      if (entryDistance > bestDistance + 1e-6
+        || (Math.abs(entryDistance - bestDistance) <= 1e-6 && tieKey >= bestKey)) continue;
       best = candidate;
-      bestDistance = distance;
+      bestDistance = entryDistance;
+      bestKey = tieKey;
     }
     if (!best) return null;
     return {
       candidate: best,
       distance: bestDistance,
-      point: closestPoint.clone(),
+      point: rayOrigin.clone().addScaledVector(aimDirection, bestDistance),
     };
   }
 
@@ -1870,8 +1907,11 @@ export function createCombatLoop({
     return true;
   }
 
-  function markNearMisses() {
-    let reactionCount = 0;
+  function markNearMisses(blockerDistance = COMBAT_MAX_RANGE) {
+    nearMissCandidates.length = 0;
+    const maximumDistance = Number.isFinite(blockerDistance)
+      ? Math.max(0, Math.min(COMBAT_MAX_RANGE, blockerDistance - 0.05))
+      : COMBAT_MAX_RANGE;
     for (let index = 0; index < targetCandidates.length; index += 1) {
       const candidate = targetCandidates[index];
       if (!candidate
@@ -1885,10 +1925,16 @@ export function createCombatLoop({
         : COMBAT_PED_NEAR_MISS_RADIUS;
       if (!candidateCenter(candidate, candidatePoint)) continue;
       linePoint.copy(candidatePoint).sub(rayOrigin);
-      const distance = linePoint.dot(aimDirection);
-      if (distance < 0 || distance > COMBAT_MAX_RANGE || distance > 32) continue;
-      closestPoint.copy(aimDirection).multiplyScalar(distance).add(rayOrigin);
-      if (closestPoint.distanceToSquared(candidatePoint) > maxRadius * maxRadius) continue;
+      const centerDistance = linePoint.dot(aimDirection);
+      if (centerDistance < 0 || centerDistance > COMBAT_MAX_RANGE || centerDistance > 32) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(centerDistance).add(rayOrigin);
+      const perpendicularSquared = closestPoint.distanceToSquared(candidatePoint);
+      if (perpendicularSquared > maxRadius * maxRadius) continue;
+      const entryDistance = Math.max(
+        0,
+        centerDistance - Math.sqrt(Math.max(0, maxRadius * maxRadius - perpendicularSquared)),
+      );
+      if (entryDistance >= maximumDistance) continue;
       const userData = candidate.mesh.userData || (candidate.mesh.userData = {});
       if (Number(userData.combatReactionUntil) > state.clock
         && userData.combatReactionSource === 'combat') continue;
@@ -1898,6 +1944,21 @@ export function createCombatLoop({
         directionX = -aimDirection.z;
         directionZ = aimDirection.x;
       }
+      nearMissCandidates.push({
+        candidate,
+        kind,
+        directionX,
+        directionZ,
+        distance: entryDistance,
+        tieKey: targetTieKey(candidate),
+      });
+    }
+    nearMissCandidates.sort((left, right) => (
+      left.distance - right.distance || left.tieKey.localeCompare(right.tieKey)
+    ));
+    let reactionCount = 0;
+    for (let index = 0; index < Math.min(3, nearMissCandidates.length); index += 1) {
+      const { candidate, kind, directionX, directionZ } = nearMissCandidates[index];
       if (setWorldReaction(
         candidate,
         kind === 'traffic' ? 'brake' : 'flee',
@@ -1906,7 +1967,6 @@ export function createCombatLoop({
         directionZ,
         'near-miss',
       )) reactionCount += 1;
-      if (reactionCount >= 3) break;
     }
     return reactionCount;
   }
@@ -2081,10 +2141,64 @@ export function createCombatLoop({
       const playerMuzzle = getPlayerOrigin(playerPosition, 1.22);
       if (playerMuzzle) muzzleOrigin.copy(playerPosition).addScaledVector(aimDirection, 0.48);
     }
-    const hit = findHit();
+    const blocker = findWorldBlocker();
+    const hit = findHit(blocker?.distance ?? COMBAT_MAX_RANGE);
     linePoint.copy(rayOrigin).addScaledVector(aimDirection, hit?.distance ?? COMBAT_MAX_RANGE);
-    spawnTracer(muzzleOrigin, hit?.point || linePoint);
+    spawnTracer(muzzleOrigin, hit?.point || blocker?.point || linePoint);
     spawnMuzzle(muzzleOrigin, aimDirection);
+    if (!hit && blocker) {
+      state.misses += 1;
+      state.hitStreak = 0;
+      state.lockedTargetId = null;
+      // The shell terminates the ray, but actors between the muzzle and that
+      // shell can still react. The blocker-aware selector excludes every
+      // candidate whose near-miss sphere begins behind the solid surface.
+      const nearReactions = markNearMisses(blocker.distance);
+      reportHeat('street', false);
+      const blockerPoint = {
+        x: Math.round(blocker.point.x * 1000) / 1000,
+        y: Math.round(blocker.point.y * 1000) / 1000,
+        z: Math.round(blocker.point.z * 1000) / 1000,
+      };
+      const blockerRay = {
+        origin: { x: rayOrigin.x, y: rayOrigin.y, z: rayOrigin.z },
+        direction: { x: aimDirection.x, y: aimDirection.y, z: aimDirection.z },
+      };
+      emitEvent('shot', 'Shot blocked by the city fabric · watch the street heat.', {
+        hit: false,
+        blocked: true,
+        targetId: null,
+        nearReactions,
+        source: blocker.source,
+        distance: Math.round(blocker.distance * 1000) / 1000,
+        point: blockerPoint,
+        ray: blockerRay,
+        blocker: {
+          source: blocker.source,
+          distance: Math.round(blocker.distance * 1000) / 1000,
+          point: blockerPoint,
+          sectorKey: blocker.sectorKey,
+          buildingId: blocker.buildingId,
+          objectName: blocker.objectName,
+        },
+      });
+      return {
+        fired: true,
+        hit: false,
+        blocked: true,
+        blocker: {
+          source: blocker.source,
+          distance: blocker.distance,
+          point: blockerPoint,
+          sectorKey: blocker.sectorKey,
+          buildingId: blocker.buildingId,
+          objectName: blocker.objectName,
+        },
+        ray: blockerRay,
+        nearReactions,
+        ammo: state.ammo,
+      };
+    }
     if (!hit) {
       state.misses += 1;
       state.hitStreak = 0;
@@ -2093,10 +2207,17 @@ export function createCombatLoop({
       reportHeat('street', false);
       emitEvent('shot', 'Shot fired · watch the street heat.', {
         hit: false,
+        blocked: false,
         targetId: null,
         nearReactions,
       });
-      return { fired: true, hit: false, nearReactions, ammo: state.ammo };
+      return {
+        fired: true,
+        hit: false,
+        blocked: false,
+        nearReactions,
+        ammo: state.ammo,
+      };
     }
 
     const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle ? 'traffic' : 'pedestrian';
@@ -2118,6 +2239,7 @@ export function createCombatLoop({
     reportHeat(kind, true);
     emitEvent('shot', 'Shot fired · impact registered.', {
       hit: true,
+      blocked: false,
       targetId: target.id,
       targetKind: kind,
     });
@@ -2152,6 +2274,7 @@ export function createCombatLoop({
     return {
       fired: true,
       hit: true,
+      blocked: false,
       targetId: target.id,
       targetKind: kind,
       defeated: target.defeated,

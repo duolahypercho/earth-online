@@ -6225,6 +6225,35 @@ export function createCity({ scene, renderer }) {
     };
   };
   const cameraRaycaster = new THREE.Raycaster();
+  const blockerRayDirection = new THREE.Vector3();
+  const getNearestRayBlocker = (origin, direction, maxDistance = 160) => {
+    if (!origin || !direction
+      || !Number.isFinite(origin.x)
+      || !Number.isFinite(origin.y)
+      || !Number.isFinite(origin.z)
+      || !Number.isFinite(direction.x)
+      || !Number.isFinite(direction.y)
+      || !Number.isFinite(direction.z)) return null;
+    const distanceLimit = Number(maxDistance);
+    if (!Number.isFinite(distanceLimit) || distanceLimit <= 0) return null;
+    blockerRayDirection.set(direction.x, direction.y, direction.z);
+    if (blockerRayDirection.lengthSq() < 1e-10) return null;
+    blockerRayDirection.normalize();
+    cameraRaycaster.set(origin, blockerRayDirection);
+    cameraRaycaster.near = 0;
+    cameraRaycaster.far = distanceLimit;
+    const hit = cameraRaycaster.intersectObjects(collisionMeshes, false)[0];
+    if (!hit || !Number.isFinite(hit.distance) || hit.distance < 0 || hit.distance > distanceLimit) {
+      return null;
+    }
+    return {
+      distance: hit.distance,
+      point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+      source: 'core',
+      collisionKind: 'collision-mesh',
+      objectName: hit.object?.name || null,
+    };
+  };
   const resolveCameraPosition = (target, desired) => {
     if (!target || !desired) return desired;
     if (interiorRoot.visible && activePortal?.room) {
@@ -6966,6 +6995,7 @@ export function createCity({ scene, renderer }) {
     get weather() {
       return weatherMode;
     },
+    getNearestRayBlocker,
     resolveCameraPosition,
     update,
     stats: {
