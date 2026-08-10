@@ -1,0 +1,1667 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-child-view-engineering-preview",
+  "status": "preview-artifact-not-for-runtime-or-manifest-promotion",
+  "id": "sf-ferry-3dep-2x2-child-preview-artifacts-v1",
+  "previewOnly": true,
+  "relationship": {
+    "sourceRegionId": "sf-ferry-building-hero",
+    "quadrantViews": "existing parent-native quadrant views only; not sf-local tiles, 384m cores, 16m buffered source windows, canonical tile IDs, or sf-atlas placement",
+    "runtimePlacement": "none",
+    "manifestPromotion": "prohibited"
+  },
+  "sourceChain": {
+    "parentPreview": {
+      "receipt": "public/data/world/preview-artifacts/sf-ferry-3dep-2x2-parent-v1/sf-ferry-3dep-2x2-parent-preview-v1.receipt.json",
+      "receiptSha256": "8d34df70e93f92fb7b5076f3ee0260bd6c8605ca92de14703a2eb39e835419be",
+      "artifact": "public/data/world/preview-artifacts/sf-ferry-3dep-2x2-parent-v1/sf-ferry-3dep-2x2-parent-preview-v1.f32le",
+      "artifactSha256": "4975b5f6542d0ff87af840d04cfaf25ab08398889da441efb043b0fae4fafcdc"
+    },
+    "lockedRawGeoTiff": {
+      "path": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+      "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+      "bytes": 86461076
+    },
+    "sourceLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023.lock.json",
+      "sha256": "3751942da71cf0714827f809803ffb44dc1143430e350f8d0b1bd23da6da651b"
+    },
+    "horizontalLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    "verticalReferenceLock": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-vertical-water-reference-v1.lock.json",
+      "sha256": "fc054af8c2117c19b759e1c1b7150046d207c0ebd839975639b786446a2d2165",
+      "role": "contextual limitation evidence only; no vertical or tidal transformation is applied"
+    }
+  },
+  "horizontalReference": {
+    "targetCrs": "EPSG:26910",
+    "operation": "Inverse of NAD83 to WGS 84 (1) + UTM zone 10N",
+    "accuracyMetres": 4,
+    "realization": "not claimed",
+    "coordinateEpoch": "not claimed",
+    "subMetreClaim": false
+  },
+  "verticalReference": {
+    "values": "unconverted source-native elevation samples, declared NAVD88 metres by the locked USGS product metadata",
+    "parentVerticalDatumUnresolved": true,
+    "unresolvedMeaning": "the parent has no embedded vertical CRS, geoid, epoch, or local reconciliation; this does not negate the source product metadata NAVD88 declaration",
+    "localTidalTransfer": "not established and prohibited",
+    "waterLevel": "not represented",
+    "geoidOrVerticalCrs": "not resolved beyond the source declaration",
+    "contextualLockUse": "the NOAA station reference lock supplies limitations only and applies no transformation to these samples"
+  },
+  "nodataSemantics": {
+    "sentinel": -999999,
+    "encoding": "float32-le",
+    "sourceMeaning": "locked parent raster nodata sentinel",
+    "preservation": "the exact float32 sentinel bytes are copied unchanged at every LOD; no NaN, Infinity, substitution, averaging, or interpolation is permitted"
+  },
+  "materialization": {
+    "method": "exact float32-le source-byte copies selected from the checked-in parent artifact",
+    "interpolation": "none",
+    "hostEndianIndependent": true,
+    "childArtifactsPerLod": 4,
+    "lodDescriptors": [
+      {
+        "id": "lod0-native",
+        "sourceSampleStride": 1,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "direct native parent samples"
+      },
+      {
+        "id": "lod1-decimate-2",
+        "sourceSampleStride": 2,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      {
+        "id": "lod2-decimate-4",
+        "sourceSampleStride": 4,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "northwest-lod0-native",
+      "childId": "northwest",
+      "lod": {
+        "id": "lod0-native",
+        "sourceSampleStride": 1,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "direct native parent samples"
+      },
+      "file": "sf-ferry-3dep-2x2-northwest-lod0-native-preview-v1.f32le",
+      "representation": {
+        "kind": "native-PixelIsArea-raster-view",
+        "regularCoverageRaster": true,
+        "consumerRule": "offline preview inspection only; runtime and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4183283.9999845778,
+          553422.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          405,
+          405
+        ],
+        "sampleCount": 164025,
+        "byteLength": 656100,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "1cbe54b3fb0514749b9457e03f6c7222a3048ae052411867ad651a126208dc85",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 164025,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 8.22260856628418
+      }
+    },
+    {
+      "id": "northwest-lod1-decimate-2",
+      "childId": "northwest",
+      "lod": {
+        "id": "lod1-decimate-2",
+        "sourceSampleStride": 2,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-northwest-lod1-decimate-2-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4183283.9999845778,
+          553422.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          203,
+          203
+        ],
+        "sampleCount": 41209,
+        "byteLength": 164836,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "5e600a2f8153b2f78f65f50d665db262ccdf2356784bbb65d2f31c38ff739a72",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 41209,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 8.22260856628418
+      }
+    },
+    {
+      "id": "northwest-lod2-decimate-4",
+      "childId": "northwest",
+      "lod": {
+        "id": "lod2-decimate-4",
+        "sourceSampleStride": 4,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-northwest-lod2-decimate-4-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4183283.9999845778,
+          553422.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          102,
+          102
+        ],
+        "sampleCount": 10404,
+        "byteLength": 41616,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "565a7c6d363ab1044705774b7ebec58818d4a1a029a4aeb9a2fc1971c5172d2d",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 10404,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 8.22260856628418
+      }
+    },
+    {
+      "id": "northeast-lod0-native",
+      "childId": "northeast",
+      "lod": {
+        "id": "lod0-native",
+        "sourceSampleStride": 1,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "direct native parent samples"
+      },
+      "file": "sf-ferry-3dep-2x2-northeast-lod0-native-preview-v1.f32le",
+      "representation": {
+        "kind": "native-PixelIsArea-raster-view",
+        "regularCoverageRaster": true,
+        "consumerRule": "offline preview inspection only; runtime and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4183283.9999845778,
+          553826.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          405,
+          405
+        ],
+        "sampleCount": 164025,
+        "byteLength": 656100,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "d1435ca1849273e7d9548d1ffa242b48ce2169eaa3b165a88b0c0ca57c584767",
+      "statistics": {
+        "nodataCount": 5577,
+        "validSampleCount": 158448,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 4.709307670593262
+      }
+    },
+    {
+      "id": "northeast-lod1-decimate-2",
+      "childId": "northeast",
+      "lod": {
+        "id": "lod1-decimate-2",
+        "sourceSampleStride": 2,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-northeast-lod1-decimate-2-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4183283.9999845778,
+          553826.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          203,
+          203
+        ],
+        "sampleCount": 41209,
+        "byteLength": 164836,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "23fc39e0ed14ca693075d29c321143ec2f24dac65f01fb4fa4df58fc0df8da23",
+      "statistics": {
+        "nodataCount": 1421,
+        "validSampleCount": 39788,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 4.649547100067139
+      }
+    },
+    {
+      "id": "northeast-lod2-decimate-4",
+      "childId": "northeast",
+      "lod": {
+        "id": "lod2-decimate-4",
+        "sourceSampleStride": 4,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-northeast-lod2-decimate-4-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 0,
+          "width": 405,
+          "height": 405
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6317,
+          "width": 405,
+          "height": 405
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4183283.9999845778,
+          553826.9999840065,
+          4183688.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          102,
+          102
+        ],
+        "sampleCount": 10404,
+        "byteLength": 41616,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 6317,
+          "sourcePixelEndIndexInclusive": 6721,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "31f26be53e14237ff51708373ee416e929916c70173202a43274b50cf7024e53",
+      "statistics": {
+        "nodataCount": 369,
+        "validSampleCount": 10035,
+        "minMetres": -1.0700000524520874,
+        "maxMetres": 4.649547100067139
+      }
+    },
+    {
+      "id": "southwest-lod0-native",
+      "childId": "southwest",
+      "lod": {
+        "id": "lod0-native",
+        "sourceSampleStride": 1,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "direct native parent samples"
+      },
+      "file": "sf-ferry-3dep-2x2-southwest-lod0-native-preview-v1.f32le",
+      "representation": {
+        "kind": "native-PixelIsArea-raster-view",
+        "regularCoverageRaster": true,
+        "consumerRule": "offline preview inspection only; runtime and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4182878.9999845778,
+          553422.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          405,
+          406
+        ],
+        "sampleCount": 164430,
+        "byteLength": 657720,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 406,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "218665bdd839954eaf6ebed08ec6c65ee720ab0e498a4d0535b11f66edc7aaf3",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 164430,
+        "minMetres": -0.8319851160049438,
+        "maxMetres": 5.081435203552246
+      }
+    },
+    {
+      "id": "southwest-lod1-decimate-2",
+      "childId": "southwest",
+      "lod": {
+        "id": "lod1-decimate-2",
+        "sourceSampleStride": 2,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-southwest-lod1-decimate-2-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4182878.9999845778,
+          553422.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          203,
+          204
+        ],
+        "sampleCount": 41412,
+        "byteLength": 165648,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 204,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": false
+        }
+      },
+      "sha256": "2796cf0b276940c9b9a13bbbbdbd9184576660a52a22ccce4844d0e4e604c2f5",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 41412,
+        "minMetres": -0.7945712804794312,
+        "maxMetres": 5.055540084838867
+      }
+    },
+    {
+      "id": "southwest-lod2-decimate-4",
+      "childId": "southwest",
+      "lod": {
+        "id": "lod2-decimate-4",
+        "sourceSampleStride": 4,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-southwest-lod2-decimate-4-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 0,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3024,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553017.9999840065,
+          4182878.9999845778,
+          553422.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          102,
+          103
+        ],
+        "sampleCount": 10506,
+        "byteLength": 42024,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 0,
+          "parentEndIndexInclusive": 404,
+          "sourcePixelStartIndex": 3024,
+          "sourcePixelEndIndexInclusive": 3428,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 103,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": false
+        }
+      },
+      "sha256": "9658d03bafe89f979996a4d2b1ac3a26d287795e32bad9abf21e9a3fd88b26e3",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 10506,
+        "minMetres": -0.36387160420417786,
+        "maxMetres": 5.055540084838867
+      }
+    },
+    {
+      "id": "southeast-lod0-native",
+      "childId": "southeast",
+      "lod": {
+        "id": "lod0-native",
+        "sourceSampleStride": 1,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "direct native parent samples"
+      },
+      "file": "sf-ferry-3dep-2x2-southeast-lod0-native-preview-v1.f32le",
+      "representation": {
+        "kind": "native-PixelIsArea-raster-view",
+        "regularCoverageRaster": true,
+        "consumerRule": "offline preview inspection only; runtime and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4182878.9999845778,
+          553826.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          405,
+          406
+        ],
+        "sampleCount": 164430,
+        "byteLength": 657720,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 405,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 1,
+          "selectedSampleCount": 406,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": true
+        }
+      },
+      "sha256": "63103c1065b6478696fe29472fc14ae320f1fb6a7b6d4f6a48a6ada60297742a",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 164430,
+        "minMetres": -2.4253437519073486,
+        "maxMetres": 5.071836471557617
+      }
+    },
+    {
+      "id": "southeast-lod1-decimate-2",
+      "childId": "southeast",
+      "lod": {
+        "id": "lod1-decimate-2",
+        "sourceSampleStride": 2,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-southeast-lod1-decimate-2-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4182878.9999845778,
+          553826.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          203,
+          204
+        ],
+        "sampleCount": 41412,
+        "byteLength": 165648,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 203,
+          "finalSourceStepSamples": 2,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 2,
+          "selectedSampleCount": 204,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": false
+        }
+      },
+      "sha256": "4194a92f0afcab690ead5482cb96cffcb10d45efb4dbe30cece0798cac4c6ff0",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 41412,
+        "minMetres": -2.387131690979004,
+        "maxMetres": 5.071836471557617
+      }
+    },
+    {
+      "id": "southeast-lod2-decimate-4",
+      "childId": "southeast",
+      "lod": {
+        "id": "lod2-decimate-4",
+        "sourceSampleStride": 4,
+        "parentPhase": [
+          0,
+          0
+        ],
+        "method": "globally phase-aligned direct parent samples; no interpolation"
+      },
+      "file": "sf-ferry-3dep-2x2-southeast-lod2-decimate-4-preview-v1.f32le",
+      "representation": {
+        "kind": "phase-locked-selected-sample-lattice-view",
+        "regularCoverageRaster": false,
+        "consumerRule": "not a regular coverage raster: rendering, interpolation, resampling, runtime, and manifest consumers are prohibited"
+      },
+      "sourceFrame": {
+        "modelCrs": "EPSG:26910",
+        "coordinateOrder": "easting, northing",
+        "sourceRasterType": "PixelIsArea",
+        "parentNativePixelWindow": {
+          "column": 3024,
+          "row": 6317,
+          "width": 809,
+          "height": 810
+        },
+        "parentSampleWindow": {
+          "column": 404,
+          "row": 404,
+          "width": 405,
+          "height": 406
+        },
+        "sourcePixelWindow": {
+          "column": 3428,
+          "row": 6721,
+          "width": 405,
+          "height": 406
+        },
+        "sourceAreaEdgeBoundsMetres": [
+          553421.9999840065,
+          4182878.9999845778,
+          553826.9999840065,
+          4183284.9999845778
+        ],
+        "parentAffine": {
+          "coefficients": [
+            1,
+            0,
+            549993.9999840065,
+            0,
+            -1,
+            4190005.9999845778
+          ],
+          "eastingIncreasesWithSourceColumn": true,
+          "northingDecreasesWithSourceRow": true,
+          "sourcePixelCenterFormula": "easting = tiepointX + (sourceColumn + 0.5) * scaleX; northing = tiepointY + (sourceRow + 0.5) * scaleY",
+          "sourceAreaEdgeFormula": "easting = tiepointX + sourceColumn * scaleX; northing = tiepointY + sourceRow * scaleY"
+        },
+        "geometryRule": "bounds are inherited source PixelIsArea edges; source samples represent native pixel centers",
+        "nativeSourceSampleSpacingMetres": [
+          1,
+          -1
+        ]
+      },
+      "sampleLayout": {
+        "encoding": "float32-le",
+        "dimensionsPixels": [
+          102,
+          103
+        ],
+        "sampleCount": 10506,
+        "byteLength": 42024,
+        "sourceNativeSampleSpacingMetres": [
+          1,
+          1
+        ],
+        "parentPhase": [
+          0,
+          0
+        ],
+        "phaseAlignment": {
+          "parentColumnStartModuloStride": 0,
+          "parentRowStartModuloStride": 0,
+          "required": "both starts and shared child seam indices are phase 0 modulo the LOD stride"
+        },
+        "columns": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 808,
+          "sourcePixelStartIndex": 3428,
+          "sourcePixelEndIndexInclusive": 3832,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 102,
+          "finalSourceStepSamples": 4,
+          "uniformSourceStride": true
+        },
+        "rows": {
+          "rule": "start + n * stride, including the final source index when the stride does not land on it",
+          "parentStartIndex": 404,
+          "parentEndIndexInclusive": 809,
+          "sourcePixelStartIndex": 6721,
+          "sourcePixelEndIndexInclusive": 7126,
+          "sourceSampleStride": 4,
+          "selectedSampleCount": 103,
+          "finalSourceStepSamples": 1,
+          "uniformSourceStride": false
+        }
+      },
+      "sha256": "1fb092d56460dc87d8dd6a5350f36b768873088b3978f84856b483673e7fafa3",
+      "statistics": {
+        "nodataCount": 0,
+        "validSampleCount": 10506,
+        "minMetres": -2.387131690979004,
+        "maxMetres": 5.008761405944824
+      }
+    }
+  ],
+  "sharedEdgeProof": [
+    {
+      "id": "lod0-native-north-west-east",
+      "lodId": "lod0-native",
+      "childArtifacts": [
+        "northwest-lod0-native",
+        "northeast-lod0-native"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "23b5576a41b1345768d12c2db17c60cf3e304b146b72250026a1e38bf3f13e59",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod0-native-south-west-east",
+      "lodId": "lod0-native",
+      "childArtifacts": [
+        "southwest-lod0-native",
+        "southeast-lod0-native"
+      ],
+      "sampleCount": 406,
+      "byteCount": 1624,
+      "sha256": "fe5af6d35c71a2b7656ac39ba0889c5ad4db4e64a20e2c20e757f45e4f58a65f",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod0-native-west-north-south",
+      "lodId": "lod0-native",
+      "childArtifacts": [
+        "northwest-lod0-native",
+        "southwest-lod0-native"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "20b565314fc21bfd55be5576d2f931183dfc2ed94a51dc43afdd504793a30b28",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod0-native-east-north-south",
+      "lodId": "lod0-native",
+      "childArtifacts": [
+        "northeast-lod0-native",
+        "southeast-lod0-native"
+      ],
+      "sampleCount": 405,
+      "byteCount": 1620,
+      "sha256": "23531d6b20bf1880206c68724e5d1cfa4ad938929df386e01d01c47a59654706",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod1-decimate-2-north-west-east",
+      "lodId": "lod1-decimate-2",
+      "childArtifacts": [
+        "northwest-lod1-decimate-2",
+        "northeast-lod1-decimate-2"
+      ],
+      "sampleCount": 203,
+      "byteCount": 812,
+      "sha256": "58fcf8992d604759e68d498d1514e0c4daea1f413231025ca73fb89fa0f34224",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod1-decimate-2-south-west-east",
+      "lodId": "lod1-decimate-2",
+      "childArtifacts": [
+        "southwest-lod1-decimate-2",
+        "southeast-lod1-decimate-2"
+      ],
+      "sampleCount": 204,
+      "byteCount": 816,
+      "sha256": "b020495a9dc8412bce3f0039dbcb8c4124b67257f56dfca5a5739b0c2d57f270",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod1-decimate-2-west-north-south",
+      "lodId": "lod1-decimate-2",
+      "childArtifacts": [
+        "northwest-lod1-decimate-2",
+        "southwest-lod1-decimate-2"
+      ],
+      "sampleCount": 203,
+      "byteCount": 812,
+      "sha256": "8fee63caa2f349f06466a6efc4e2b47decea468c76cc8bbd9331da0f70f617d4",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod1-decimate-2-east-north-south",
+      "lodId": "lod1-decimate-2",
+      "childArtifacts": [
+        "northeast-lod1-decimate-2",
+        "southeast-lod1-decimate-2"
+      ],
+      "sampleCount": 203,
+      "byteCount": 812,
+      "sha256": "0c2b66953cc6e560607f32fe7f0d7549c0830a1b91d59c0751a9f856b504f57e",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod2-decimate-4-north-west-east",
+      "lodId": "lod2-decimate-4",
+      "childArtifacts": [
+        "northwest-lod2-decimate-4",
+        "northeast-lod2-decimate-4"
+      ],
+      "sampleCount": 102,
+      "byteCount": 408,
+      "sha256": "ed88d8dbbe921e8df9827f1a723721af9f16b7ebed002d56f6f2f5a3803743f7",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod2-decimate-4-south-west-east",
+      "lodId": "lod2-decimate-4",
+      "childArtifacts": [
+        "southwest-lod2-decimate-4",
+        "southeast-lod2-decimate-4"
+      ],
+      "sampleCount": 103,
+      "byteCount": 412,
+      "sha256": "e6e282e7c6437426983a1dc68bfb07cd5d5c09ac97e0a3770336622d3024f2a0",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod2-decimate-4-west-north-south",
+      "lodId": "lod2-decimate-4",
+      "childArtifacts": [
+        "northwest-lod2-decimate-4",
+        "southwest-lod2-decimate-4"
+      ],
+      "sampleCount": 102,
+      "byteCount": 408,
+      "sha256": "7989a95d8e36ca198d4a628de8255c0e4dfcc0b05a0868dc40b334f362cd093f",
+      "byteIdentical": true
+    },
+    {
+      "id": "lod2-decimate-4-east-north-south",
+      "lodId": "lod2-decimate-4",
+      "childArtifacts": [
+        "northeast-lod2-decimate-4",
+        "southeast-lod2-decimate-4"
+      ],
+      "sampleCount": 102,
+      "byteCount": 408,
+      "sha256": "681982c625335356ec9a8883d9f3f4f758bc9f8b2a72c6f4c937601c03ee8244",
+      "byteIdentical": true
+    }
+  ],
+  "limitations": [
+    "Offline engineering-preview views only; these are existing parent-native quadrants, not sf-local tiles, 384m cores, 16m buffered source windows, canonical tile IDs, or sf-atlas placement. No runtime code, terrain manifest, collision, navmesh, or water representation consumes these files.",
+    "The horizontal reference is the generic locked operation to EPSG:26910 with 4 m accuracy; no realization, coordinate epoch, or sub-metre claim is made.",
+    "Values remain unconverted source-native samples declared NAVD88 metres by the product metadata. The contextual NOAA station reference lock performs no transformation and does not establish a local Ferry tidal datum or water level.",
+    "LOD1 and LOD2 are phase-locked selected sample lattices, not regular PixelIsArea coverage rasters. They must not be rendered, interpolated, resampled, or consumed by runtime or manifests."
+  ]
+}
