@@ -14,9 +14,9 @@ export const FERRY_SANDSTONE_ORM_URL = '/assets/polyhaven-sandstone-blocks-08-or
 
 export const FERRY_BUILDING_LANDMARK_BUDGET = Object.freeze({
   // The authored facade stays batched by architectural role, never by bay.
-  maxDrawCalls: 15,
-  maxTriangles: 12000,
-  maxInstances: 240,
+  maxDrawCalls: 14,
+  maxTriangles: 18000,
+  maxInstances: 300,
 });
 
 const EPSILON = 0.08;
@@ -318,6 +318,49 @@ function createArchPanelGeometry(segments = 10) {
   return new THREE.ShapeGeometry(shape, 1);
 }
 
+function createFacadeSurroundGeometry({ arched = false, segments = 12 } = {}) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.5, -0.5);
+  shape.lineTo(0.5, -0.5);
+  shape.lineTo(0.5, 0.5);
+  shape.lineTo(-0.5, 0.5);
+  shape.closePath();
+
+  const opening = new THREE.Path();
+  if (arched) {
+    const radius = 0.36;
+    const bottom = -0.43;
+    const spring = 0.05;
+    opening.moveTo(-radius, bottom);
+    opening.lineTo(-radius, spring);
+    for (let index = 0; index <= segments; index += 1) {
+      const angle = Math.PI - (index / segments) * Math.PI;
+      opening.lineTo(Math.cos(angle) * radius, spring + Math.sin(angle) * radius);
+    }
+    opening.lineTo(radius, bottom);
+    opening.closePath();
+  } else {
+    opening.moveTo(-0.34, -0.28);
+    opening.lineTo(-0.34, 0.29);
+    opening.lineTo(0.34, 0.29);
+    opening.lineTo(0.34, -0.28);
+    opening.closePath();
+  }
+  shape.holes.push(opening);
+
+  // Extruding the aperture creates real jamb, header/arch, and sill returns.
+  // Center local Z so the same PCA frame transform works on both facade sides.
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: 1,
+    bevelEnabled: false,
+    curveSegments: 1,
+    steps: 1,
+  });
+  geometry.translate(0, 0, -0.5);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function createGableRoofGeometry() {
   const positions = new Float32Array([
     -0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 1, 0,
@@ -427,18 +470,21 @@ export function createFerryBuildingLandmark(options = {}) {
 
   const cube = new THREE.BoxGeometry(1, 1, 1);
   const archPanel = createArchPanelGeometry();
+  const groundSurround = createFacadeSurroundGeometry({ arched: true });
+  const upperSurroundGeometry = createFacadeSurroundGeometry();
   const gableRoof = createGableRoofGeometry();
   const clockDisc = new THREE.CylinderGeometry(0.5, 0.5, 0.08, 20);
   clockDisc.rotateX(Math.PI / 2);
   const clockRing = new THREE.TorusGeometry(0.5, 0.045, 6, 20);
   const pyramid = new THREE.ConeGeometry(0.5, 1, 4);
-  ownedGeometries.push(cube, archPanel, gableRoof, clockDisc, clockRing, pyramid);
+  ownedGeometries.push(cube, archPanel, groundSurround, upperSurroundGeometry, gableRoof, clockDisc, clockRing, pyramid);
   const batches = [
     makeBatch(root, 'Ferry Building gabled terminal roof volumes', gableRoof, materials.roof, 4),
     makeBatch(root, 'Ferry Building ground-floor arched storefronts', archPanel, materials.storefrontGlass, 56),
     makeBatch(root, 'Ferry Building recessed upper windows and tower louvers', cube, materials.glass, 68),
-    makeBatch(root, 'Ferry Building projecting arcade piers', cube, materials.trimStone, 56),
-    makeBatch(root, 'Ferry Building masonry courses and cornices', cube, materials.trimStone, 16),
+    makeBatch(root, 'Ferry Building segmented ground arcade masonry', groundSurround, materials.sandstone, 56),
+    makeBatch(root, 'Ferry Building segmented upper facade masonry', upperSurroundGeometry, materials.sandstone, 56),
+    makeBatch(root, 'Ferry Building masonry courses cornices and canopies', cube, materials.trimStone, 32),
     makeBatch(root, 'Ferry Building bronze storefront and window divisions', cube, materials.mullion, 60),
     makeBatch(root, 'Ferry Building weathered plinth and tower shadow courses', cube, materials.weatherStone, 12),
     makeBatch(root, 'Ferry Building clock tower tiers', cube, materials.towerStone, 8),
@@ -446,7 +492,7 @@ export function createFerryBuildingLandmark(options = {}) {
     makeBatch(root, 'Ferry Building clock face stone bezels', clockRing, materials.trimStone, 4),
     makeBatch(root, 'Ferry Building clock hands', cube, materials.clockHand, 8),
   ];
-  const [roof, storefront, upperWindow, pier, cornice, mullion, weathering, tower, clockFace, clockBezel, clockHands] = batches;
+  const [roof, storefront, upperWindow, groundArcade, upperFacade, cornice, mullion, weathering, tower, clockFace, clockBezel, clockHands] = batches;
   const matrix = new THREE.Matrix4();
 
   // Two pitched terminal wings terminate cleanly at the tower instead of one
@@ -470,38 +516,54 @@ export function createFerryBuildingLandmark(options = {}) {
   // previous dense grid, and leave room for visible masonry between openings.
   const bayCount = clamp(Math.round(hallLength / 8.4), 18, 24);
   const baySpacing = hallLength / bayCount;
-  const openingReliefMetres = 0.30;
+  const facadeCavityDepthMetres = 0.70;
+  const surroundDepthMetres = 0.64;
+  const groundBandHeight = 7.15;
+  const upperBandHeight = hallHeight - groundBandHeight - 0.22;
   const upperGlassColors = [0x6f858b, 0x536c73, 0x829195, 0x5e747a];
   const storefrontColors = [0x536d69, 0x715d44, 0x3f6265, 0x806b4b, 0x486069];
   for (const side of [-1, 1]) {
     const facadeAcross = side < 0 ? frame.minAcross : frame.maxAcross;
-    const panelAcross = facadeAcross + side * 0.08;
-    const frameAcross = facadeAcross + side * (0.08 + openingReliefMetres);
+    // Keep the whole surround outside the footprint shell. The rear return is
+    // 12 cm proud of the source skin and the glazing is 6 cm proud, so the
+    // authoritative backing cannot occlude the recessed pane.
+    const surroundAcross = facadeAcross + side * 0.44;
+    const glazingAcross = facadeAcross + side * 0.06;
+    const divisionAcross = facadeAcross + side * 0.08;
     for (let index = 0; index < bayCount; index += 1) {
       const along = hallCenterAlong - hallLength * 0.5 + baySpacing * (index + 0.5);
       const entranceBay = Math.abs(along - towerAlong) < baySpacing * 1.25;
       const serviceBay = index % 6 === (side > 0 ? 1 : 4);
-      const upperWidth = baySpacing * (index % 3 === 0 ? 0.48 : index % 3 === 1 ? 0.60 : 0.54);
-      const upperHeight = entranceBay ? 3.35 : serviceBay ? 2.75 : 3.05;
-      const upperY = baseY + (entranceBay ? 11.05 : serviceBay ? 10.25 : 10.55);
-      const upperShift = index % 4 === 0 ? baySpacing * 0.07 : index % 4 === 2 ? -baySpacing * 0.06 : 0;
-      put(upperWindow, boxMatrix(matrix, frame, along + upperShift, panelAcross, upperY, upperWidth, upperHeight, 0.16), upperGlassColors[(index + (side > 0 ? 1 : 0)) % upperGlassColors.length]);
+      const upperWidth = baySpacing * 0.68;
+      const upperHeight = upperBandHeight * 0.57;
+      const upperY = baseY + groundBandHeight + upperBandHeight * 0.505;
+      const storefrontWidth = baySpacing * 0.72;
+      const storefrontHeight = groundBandHeight * 0.86;
 
-      const storefrontWidth = baySpacing * (entranceBay ? 0.72 : serviceBay ? 0.50 : 0.62);
-      const storefrontHeight = entranceBay ? 5.25 : serviceBay ? 4.25 : 4.75;
-      put(storefront, boxMatrix(matrix, frame, along, panelAcross + side * 0.015, baseY + 3.02, storefrontWidth, storefrontHeight, 1), storefrontColors[(index * 2 + (side > 0 ? 1 : 0)) % storefrontColors.length]);
+      // Each masonry instance is an extruded wall segment with a true hole.
+      // Its interior perimeter supplies the visible jamb/header/sill returns;
+      // glazing closes the shallow cavity well behind the outer stone face.
+      put(groundArcade, boxMatrix(matrix, frame, along, surroundAcross, baseY + groundBandHeight * 0.5, baySpacing + 0.035, groundBandHeight, surroundDepthMetres));
+      put(upperFacade, boxMatrix(matrix, frame, along, surroundAcross, baseY + groundBandHeight + upperBandHeight * 0.5, baySpacing + 0.035, upperBandHeight, surroundDepthMetres));
+      put(upperWindow, boxMatrix(matrix, frame, along, glazingAcross, upperY, upperWidth, upperHeight, 0.12), upperGlassColors[(index + (side > 0 ? 1 : 0)) % upperGlassColors.length]);
+      put(storefront, boxMatrix(matrix, frame, along, glazingAcross, baseY + groundBandHeight * 0.46, storefrontWidth, storefrontHeight, 1), storefrontColors[(index * 2 + (side > 0 ? 1 : 0)) % storefrontColors.length]);
 
-      // Projecting stone piers and brows sit in front of both glazing layers;
-      // that 30 cm relief is enough to cast readable near-field self-shadow.
-      put(pier, boxMatrix(matrix, frame, along - baySpacing * 0.43, frameAcross, baseY + 6.65, 0.46, 12.25, 0.62), index % 5 === 0 ? 0xd0b891 : 0xbca078);
-      if (index % 3 !== 1) {
-        put(mullion, boxMatrix(matrix, frame, along + upperShift, frameAcross + side * 0.02, upperY, 0.11, upperHeight * 0.96, 0.13));
+      // Divisions sit inside the cavity, rather than on the outer wall plane.
+      // Door/transom patterns vary in a bounded six-bay rhythm.
+      if (!serviceBay || entranceBay) {
+        put(mullion, boxMatrix(matrix, frame, along, divisionAcross, upperY, 0.085, upperHeight * 0.94, 0.10));
+      }
+      if (index % 3 === 0) {
+        put(mullion, boxMatrix(matrix, frame, along, divisionAcross, upperY + upperHeight * 0.05, upperWidth * 0.88, 0.075, 0.10));
       }
       if (index % 4 === 0 || entranceBay) {
-        put(mullion, boxMatrix(matrix, frame, along, frameAcross + side * 0.025, baseY + 3.12, 0.12, storefrontHeight * 0.82, 0.14));
+        put(mullion, boxMatrix(matrix, frame, along, divisionAcross, baseY + 3.1, 0.11, storefrontHeight * 0.76, 0.12));
       }
-      if (index % 4 === 2) {
-        put(mullion, boxMatrix(matrix, frame, along, frameAcross + side * 0.03, baseY + 4.05, storefrontWidth * 0.88, 0.11, 0.14));
+      if (index % 4 === 2 || serviceBay) {
+        put(mullion, boxMatrix(matrix, frame, along, divisionAcross, baseY + 4.25, storefrontWidth * 0.88, 0.10, 0.12));
+      }
+      if (entranceBay || index % 6 === (side > 0 ? 4 : 1)) {
+        put(cornice, boxMatrix(matrix, frame, along, facadeAcross + side * 0.68, baseY + 6.35, baySpacing * 0.78, 0.17, 1.28));
       }
     }
   }
@@ -579,7 +641,10 @@ export function createFerryBuildingLandmark(options = {}) {
     hiddenSourceRender: Boolean(options.sourceMesh?.isObject3D && sourceRenderMatches(options.sourceMesh)),
     facadeBaysPerSide: bayCount,
     storefrontVariants: storefrontColors.length,
-    openingReliefMetres,
+    segmentedFacadeOpenings: bayCount * 4,
+    facadeCavityDepthMetres,
+    facadeReturnDepthMetres: surroundDepthMetres,
+    facadeBackingClosed: true,
   });
   if (stats.drawCalls > FERRY_BUILDING_LANDMARK_BUDGET.maxDrawCalls
     || stats.triangles > FERRY_BUILDING_LANDMARK_BUDGET.maxTriangles
