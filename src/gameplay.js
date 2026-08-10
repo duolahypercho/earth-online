@@ -836,6 +836,8 @@ export function createCombatLoop({
     lastEvent: null,
     lastReaction: null,
     reactionCount: 0,
+    defeats: 0,
+    lastDefeat: null,
     clock: 0,
   };
 
@@ -1021,6 +1023,8 @@ export function createCombatLoop({
     state.lastEvent = null;
     state.lastReaction = null;
     state.reactionCount = 0;
+    state.defeats = 0;
+    state.lastDefeat = null;
     state.clock = 0;
     tracerCursor = 0;
     muzzleCursor = 0;
@@ -1036,6 +1040,9 @@ export function createCombatLoop({
       userData.combatReactionDirectionZ = 0;
       userData.combatReactionStrength = 0;
       userData.combatBrakeUntil = 0;
+      userData.combatDisabled = false;
+      userData.combatDefeated = false;
+      userData.combatDefeatedAt = null;
     });
     reactionMeshes.clear();
     targetStates.forEach((target) => {
@@ -1171,7 +1178,10 @@ export function createCombatLoop({
     let bestDistance = Infinity;
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
-      if (!candidate || candidate.visible === false || candidate.mesh?.visible === false) continue;
+      if (!candidate
+        || candidate.visible === false
+        || candidate.mesh?.visible === false
+        || candidate.mesh?.userData?.combatDisabled === true) continue;
       if (!candidateCenter(candidate, candidatePoint)) continue;
       linePoint.copy(candidatePoint).sub(rayOrigin);
       const distance = linePoint.dot(aimDirection);
@@ -1223,7 +1233,11 @@ export function createCombatLoop({
     let reactionCount = 0;
     for (let index = 0; index < targetCandidates.length; index += 1) {
       const candidate = targetCandidates[index];
-      if (!candidate || !candidate.mesh || candidate.visible === false || candidate.mesh.visible === false) continue;
+      if (!candidate
+        || !candidate.mesh
+        || candidate.visible === false
+        || candidate.mesh.visible === false
+        || candidate.mesh.userData?.combatDisabled === true) continue;
       const kind = candidate.kind === 'traffic' || candidate.vehicle ? 'traffic' : 'pedestrian';
       const maxRadius = kind === 'traffic'
         ? COMBAT_TRAFFIC_NEAR_MISS_RADIUS
@@ -1313,6 +1327,7 @@ export function createCombatLoop({
         hits: 0,
         reactionUntil: 0,
         defeated: false,
+        consequence: null,
         mesh: candidate.mesh || null,
       };
       targetStates.set(id, target);
@@ -1329,14 +1344,30 @@ export function createCombatLoop({
       userData.combatHitCount = target.hits;
       userData.combatHitUntil = target.reactionUntil;
     }
+    const reaction = kind === 'traffic'
+      ? target.defeated ? 'staggered' : 'brake'
+      : target.defeated ? 'staggered' : 'hit-react';
     setWorldReaction(
       candidate,
-      kind === 'traffic' ? 'brake' : target.defeated ? 'staggered' : 'hit-react',
+      reaction,
       kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
       0,
       0,
       'hit',
     );
+    if (target.defeated) {
+      target.consequence = kind === 'traffic' ? 'vehicle-disabled' : 'actor-downed';
+    }
+    if (target.defeated && target.mesh) {
+      const userData = target.mesh.userData || (target.mesh.userData = {});
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = Math.round(state.clock * 1000) / 1000;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'defeat';
+      if (kind === 'traffic') userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+    }
     return target;
   }
 
@@ -1424,6 +1455,11 @@ export function createCombatLoop({
     state.hitConfirmTimer = 1.15;
     spawnImpact(hit.point, kind, target.mesh, hit.candidate.height);
     reportHeat(kind, true);
+    emitEvent('shot', 'Shot fired · impact registered.', {
+      hit: true,
+      targetId: target.id,
+      targetKind: kind,
+    });
     emitEvent(
       'impact',
       `${kind === 'traffic' ? 'Vehicle' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
@@ -1434,12 +1470,28 @@ export function createCombatLoop({
         defeated: target.defeated,
       },
     );
+    if (target.defeated) {
+      state.defeats += 1;
+      state.lastDefeat = {
+        targetId: target.id,
+        targetKind: kind,
+        label: target.label,
+        consequence: target.consequence,
+        at: Math.round(state.clock * 1000) / 1000,
+      };
+      emitEvent(
+        'defeat',
+        `${target.label} disabled · no longer an active target.`,
+        { ...state.lastDefeat },
+      );
+    }
     return {
       fired: true,
       hit: true,
       targetId: target.id,
       targetKind: kind,
       defeated: target.defeated,
+      consequence: target.consequence,
       ammo: state.ammo,
     };
   }
@@ -1485,6 +1537,7 @@ export function createCombatLoop({
   function updateWorldReactions() {
     reactionMeshes.forEach((mesh) => {
       const userData = mesh?.userData;
+      if (userData?.combatDisabled === true) return;
       if (!userData || Number(userData.combatReactionUntil) > state.clock) return;
       userData.combatReaction = 'settled';
       userData.combatReactionUntil = 0;
@@ -1502,6 +1555,19 @@ export function createCombatLoop({
       const mesh = target.mesh;
       if (!mesh) return;
       const userData = mesh.userData || (mesh.userData = {});
+      if (target.defeated) {
+        mesh.rotation.z = THREE.MathUtils.damp(
+          mesh.rotation.z,
+          target.kind === 'traffic' ? 0 : -1.05,
+          7,
+          1 / 60,
+        );
+        userData.combatReaction = 'staggered';
+        userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+        userData.combatReactionSource = 'defeat';
+        if (target.kind === 'traffic') userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+        return;
+      }
       const remaining = target.reactionUntil - state.clock;
       if (remaining > 0) {
         const duration = target.kind === 'traffic'
@@ -1656,6 +1722,8 @@ export function createCombatLoop({
       hitLabel: state.lastHit?.label || null,
       lastReaction: state.lastReaction ? { ...state.lastReaction } : null,
       reactionCount: state.reactionCount,
+      defeats: state.defeats,
+      lastDefeat: state.lastDefeat ? { ...state.lastDefeat } : null,
       activeWorldReactions: reactionMeshes.size,
       lastEvent: state.lastEvent ? { ...state.lastEvent } : null,
     };
@@ -1671,7 +1739,11 @@ export function createCombatLoop({
       health: target.health,
       hits: target.hits,
       defeated: target.defeated,
-      reaction: target.reactionUntil > state.clock ? 'staggered' : 'settled',
+      consequence: target.consequence,
+      targetable: !target.defeated,
+      reaction: target.defeated
+        ? 'disabled'
+        : target.reactionUntil > state.clock ? 'staggered' : 'settled',
     };
   }
 

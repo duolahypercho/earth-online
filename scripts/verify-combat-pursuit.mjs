@@ -54,11 +54,15 @@ try {
   await page.waitForFunction(
     () => document.querySelector('#launch-button')
       && !document.querySelector('#launch-button').disabled,
-    { timeout: 30000 },
+    // Shader compilation on the full streamed city can exceed 30 seconds on
+    // headless Metal even though the application remains healthy.
+    null,
+    { timeout: 60000 },
   );
   await page.locator('#launch-button').click();
   await page.waitForFunction(
     () => document.querySelector('#boot-overlay')?.classList.contains('is-dismissed'),
+    null,
     { timeout: 15000 },
   );
   await page.waitForTimeout(1200);
@@ -67,6 +71,7 @@ try {
     const sim = window.__SF_SIM__;
     return {
       combat: sim.getCombatState(),
+      combatAudio: sim.getCombatAudioState?.(),
       heat: sim.getStreetHeatState(),
       driving: sim.isDriving?.() === true,
       simReady: Boolean(sim.traffic && sim.combat && sim.streetHeat),
@@ -133,6 +138,14 @@ try {
         fire,
         combat: sim.getCombatState(),
         heat: sim.getStreetHeatState(),
+        combatAudio: sim.getCombatAudioState?.(),
+        targetState: fire.targetId ? sim.getCombatTargetState?.(fire.targetId) : null,
+        targetConsequence: {
+          disabled: root.userData?.combatDisabled === true,
+          defeated: root.userData?.combatDefeated === true,
+          reaction: root.userData?.combatReaction || null,
+          brakeUntil: root.userData?.combatBrakeUntil ?? null,
+        },
       };
     }, setup);
     shotResults.push(shot);
@@ -143,12 +156,58 @@ try {
   assert(shotResults.some((shot) => shot.fire?.hit === true), 'no combat hit registered', shotResults);
   assert(afterShots.combat?.shots > 0, 'combat state reports zero shots', afterShots.combat);
   assert(afterShots.combat?.hits > 0, 'combat state reports zero hits', afterShots.combat);
+  assert(afterShots.combat?.defeats === 1, 'combat state did not record exactly one defeat', afterShots.combat);
+  assert(afterShots.combat?.lastDefeat?.consequence === 'vehicle-disabled',
+    'combat state did not expose the vehicle-disabled consequence', afterShots.combat);
+  assert(afterShots.targetState?.defeated === true && afterShots.targetState?.targetable === false,
+    'defeated target remained targetable', afterShots.targetState);
+  assert(afterShots.targetState?.consequence === 'vehicle-disabled',
+    'target state did not retain its consequence', afterShots.targetState);
+  assert(afterShots.targetConsequence?.disabled === true
+    && afterShots.targetConsequence?.defeated === true,
+  'traffic root did not receive persistent combat disable flags', afterShots.targetConsequence);
+  assert(afterShots.targetConsequence?.reaction === 'staggered'
+    && Number(afterShots.targetConsequence?.brakeUntil) > 1e9,
+  'disabled traffic did not retain its stopped reaction', afterShots.targetConsequence);
   assert(afterShots.heat?.heat > initial.heat.heat, 'combat shots did not increase numeric StreetHeat', {
     before: initial.heat,
     after: afterShots.heat,
   });
   assert(afterShots.heat?.pursuitActive === true, 'real hits did not escalate StreetHeat into pursuit', afterShots.heat);
   assert(shotResults[0].heat?.pursuitActive === false, 'StreetHeat was already active before shot sequence', shotResults[0].heat);
+  assert((afterShots.combatAudio?.cueCounts?.shot ?? 0) >= 4,
+    'combat audio hook did not receive every shot', afterShots.combatAudio);
+  assert((afterShots.combatAudio?.cueCounts?.impact ?? 0) >= 4,
+    'combat audio hook did not receive every impact', afterShots.combatAudio);
+  assert((afterShots.combatAudio?.cueCounts?.defeat ?? 0) === 1,
+    'combat audio hook did not receive exactly one defeat', afterShots.combatAudio);
+
+  await page.waitForTimeout(240);
+  const disabledProbe = await page.evaluate((pose) => {
+    const sim = window.__SF_SIM__;
+    const root = sim.traffic.group.children[pose.id];
+    sim.camera.position.set(pose.player.x, root.position.y + 1.6, pose.player.z);
+    sim.camera.lookAt(root.position.x, root.position.y + 0.82, root.position.z);
+    sim.camera.updateMatrixWorld(true);
+    const fire = sim.fireCombat();
+    return {
+      fire,
+      targetState: sim.getCombatTargetState?.(`traffic:${pose.id}`),
+      world: {
+        disabled: root.userData?.combatDisabled === true,
+        reaction: root.userData?.combatReaction || null,
+        reactionSource: root.userData?.combatReactionSource || null,
+      },
+    };
+  }, setup);
+  assert(disabledProbe.fire?.fired === true && disabledProbe.fire?.hit === false,
+    'disabled target still absorbed a follow-up shot', disabledProbe);
+  assert(disabledProbe.fire?.nearReactions === 0,
+    'disabled target still emitted a near-miss reaction', disabledProbe);
+  assert(disabledProbe.targetState?.targetable === false
+    && disabledProbe.world?.disabled === true
+    && disabledProbe.world?.reactionSource === 'defeat',
+  'follow-up shot cleared the persistent defeat consequence', disabledProbe);
 
   await page.waitForFunction(
     () => {
@@ -160,6 +219,7 @@ try {
         && Number.isFinite(responder.distance)
         && Number.isInteger(responder.id);
     },
+    null,
     { timeout: 5000, polling: 100 },
   );
   const pursuit = await page.evaluate(() => {
@@ -193,6 +253,49 @@ try {
   assert(pursuit.life?.action?.key === 'pursuit-responder', 'responder action is not exposed', pursuit.life);
   assert(pursuit.life?.indicators?.hazard === true, 'responder hazard indicator is not active', pursuit.life);
 
+  const reload = await page.evaluate(async () => {
+    const sim = window.__SF_SIM__;
+    const started = sim.reloadCombat();
+    const during = sim.getCombatState();
+    await new Promise((resolve) => window.setTimeout(resolve, 1450));
+    return {
+      started,
+      during,
+      after: sim.getCombatState(),
+      audio: sim.getCombatAudioState?.(),
+    };
+  });
+  assert(reload.started === true, 'manual reload did not start', reload);
+  assert(reload.during?.reloading === true && reload.during?.ammo === 7,
+    'reload state did not preserve the partially spent magazine', reload.during);
+  assert(reload.after?.reloading === false && reload.after?.ammo === 12 && reload.after?.reserveAmmo === 43,
+    'reload did not refill the magazine from reserve', reload.after);
+  assert((reload.audio?.cueCounts?.['reload-start'] ?? 0) === 1
+    && (reload.audio?.cueCounts?.['reload-complete'] ?? 0) === 1,
+  'combat audio reload hooks did not complete', reload.audio);
+
+  const recovery = await page.evaluate(async () => {
+    const sim = window.__SF_SIM__;
+    const damaged = sim.damagePlayer(100, 'combat-smoke');
+    const downed = sim.getCombatState();
+    await new Promise((resolve) => window.setTimeout(resolve, 2750));
+    return {
+      damaged,
+      downed,
+      revived: sim.getCombatState(),
+      audio: sim.getCombatAudioState?.(),
+    };
+  });
+  assert(recovery.damaged === true, 'player damage hook rejected lethal damage', recovery);
+  assert(recovery.downed?.status === 'downed' && recovery.downed?.health === 0,
+    'lethal damage did not enter the downed state', recovery.downed);
+  assert(recovery.revived?.status === 'running' && recovery.revived?.health === 58,
+    'downed player did not revive through the real update loop', recovery.revived);
+  assert((recovery.audio?.cueCounts?.damage ?? 0) === 1
+    && (recovery.audio?.cueCounts?.downed ?? 0) === 1
+    && (recovery.audio?.cueCounts?.revive ?? 0) === 1,
+  'combat audio recovery hooks did not cover damage/downed/revive', recovery.audio);
+
   // Break contact by moving the on-foot player far outside the responder's
   // nearby radius. Real RAF frames then drive StreetHeat's normal hold/cool/
   // escape window; no test-only heat mutation or traffic teleport is used.
@@ -213,6 +316,7 @@ try {
         && responder?.id === null
         && responder?.distance === null;
     },
+    null,
     { timeout: 10000, polling: 100 },
   );
   await page.waitForTimeout(500);
@@ -262,6 +366,13 @@ try {
       hits: afterShots.combat?.hits ?? null,
       results: shotResults.map((shot) => shot.fire),
     },
+    consequence: {
+      targetState: afterShots.targetState,
+      world: afterShots.targetConsequence,
+      disabledProbe,
+    },
+    reload,
+    recovery,
     pursuit,
     escaped,
     performance: {
@@ -281,6 +392,7 @@ try {
   console.error(JSON.stringify({
     result: 'combat pursuit smoke failed',
     error: error.message,
+    stack: error.stack,
     consoleErrors,
     httpErrors,
     failures,

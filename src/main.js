@@ -20,7 +20,7 @@ import { createHud } from './ui.js';
 import { createPlayerAvatar, animatePlayerAvatar, setAvatarLook } from './player.js';
 import { createLifeSim } from './lifesim.js';
 import { createNetworking } from './networking.js';
-import { createEngineAudio, createWindAudio } from './audio.js';
+import { createCombatAudio, createEngineAudio, createWindAudio } from './audio.js';
 
 const app = document.querySelector('#app');
 const canvas = document.querySelector('#scene-canvas');
@@ -186,7 +186,9 @@ function updateCombatOverlay(combatState) {
     : 'translate(-50%, -4px) scale(0.94)';
   combatHitLabel.textContent = combatState.hitConfirm ? 'HIT CONFIRMED' : '';
   combatHitTarget.textContent = combatState.hitConfirm
-    ? `${String(combatState.hitLabel || combatState.lastHit?.kind || 'TARGET').toUpperCase()} / REACTING`
+    ? `${String(combatState.hitLabel || combatState.lastHit?.kind || 'TARGET').toUpperCase()} / ${
+      combatState.lastHit?.defeated ? 'DISABLED' : 'REACTING'
+    }`
     : '';
 }
 
@@ -1199,6 +1201,7 @@ let drivingExitPose = null;
 let playerLayerActive = false;
 let engineAudio = null;
 let windAudio = null;
+const combatAudio = createCombatAudio();
 const PLAYER_GROUND_OFFSET = 0.17;
 
 lifeSim = createLifeSim({
@@ -1642,7 +1645,8 @@ combat = createCombatLoop({
   onRecoil: (amount) => {
     controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
   },
-  onEvent: ({ kind, message }) => {
+  onEvent: ({ kind, message, targetKind }) => {
+    combatAudio?.play?.(kind, { targetKind });
     if (kind === 'shot') return;
     hud?.setMessage(message);
   },
@@ -3926,6 +3930,12 @@ window.__SF_SIM__ = {
         muzzleOffset: COMBAT_WEAPON_MUZZLE_OFFSET,
       },
     };
+  },
+  getCombatAudioState() {
+    return combatAudio?.getState?.() ?? null;
+  },
+  getCombatTargetState(id) {
+    return combat?.getTargetState?.(id) ?? null;
   },
   setCombatAim(aiming) {
     return combat?.setAiming?.(aiming) ?? false;
