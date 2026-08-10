@@ -1184,7 +1184,7 @@ hud = createHud({
         const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
         if (nearestCar) {
           enterPlayerCar(nearestCar.index);
-        } else if (startResidentFavorFromNearby()) {
+        } else if (talkToNearbyResident()) {
           return;
         } else {
           enterNearestInterior();
@@ -2072,6 +2072,30 @@ function residentFavorInputAvailable() {
     && combatState?.status === 'running'
     && combatState?.active === true
     && heatState?.pursuitActive !== true;
+}
+
+function talkToNearbyResident() {
+  const resident = pedestrians?.getNearestPerson?.(
+    controls.target,
+    4.6,
+    { includeDefeated: true },
+  );
+  if (!resident?.id) {
+    hud?.setMessage('No one is close enough to talk to.');
+    return false;
+  }
+  if (resident.combatDefeated) {
+    hud?.setMessage('Resident unavailable · incapacitated after the street fight.');
+    return true;
+  }
+  if (!residentFavorInputAvailable()) {
+    hud?.setMessage('Resident chat unavailable · be on foot, recovered, and clear of pursuit.');
+    return true;
+  }
+  const talked = lifeSim?.talkToNearestResident?.(controls.target, resident.id);
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  if (talked) savePlayerProgress();
+  return true;
 }
 
 function completeResidentFavorAtPortal() {
@@ -4113,7 +4137,8 @@ function onKeyDown(event) {
     networking?.enableVoice?.();
   }
   if (code === 'KeyT' && !event.repeat) {
-    lifeSim?.eatAtMarket?.(controls.target);
+    if (lifeSim?.canEat?.(controls.target)) lifeSim?.eatAtMarket?.(controls.target);
+    else talkToNearbyResident();
   }
   if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();
   if (code === 'KeyN' && !event.repeat) buyPlayerAmmo();
@@ -4400,7 +4425,7 @@ function updateInteraction() {
       label: `${residentLabel.toUpperCase()} / ${nearbyResident.distance.toFixed(1)} M`,
       prompt: activeFavor?.active
         ? `FAVOR ACTIVE · ${activeFavor.target.label}`
-        : 'E / TAP  FAVOR',
+        : 'T / TAP  TALK · E FAVOR',
       enabled: true,
     });
     return;

@@ -23,6 +23,7 @@ const RESIDENT_FAVOR_DURATION = 45;
 const RESIDENT_FAVOR_REWARD = 24;
 const RESIDENT_FAVOR_SOCIAL = 14;
 const RESIDENT_FAVOR_FUN = 9;
+const RESIDENT_TALK_COOLDOWN = 4;
 const DELIVERY_RUN_DURATION = 60;
 const DELIVERY_RUN_COOLDOWN = 8;
 const DELIVERY_RUN_REWARD = 32;
@@ -76,6 +77,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       locationLabel: null,
     },
     residentFavor: null,
+    residentTalkCooldownRemaining: 0,
     deliveryRun: null,
     deliveryCooldownRemaining: 0,
   };
@@ -166,6 +168,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           reward: RESIDENT_FAVOR_REWARD,
         }
         : null,
+      residentTalkCooldownRemaining: state.residentTalkCooldownRemaining,
       deliveryRun: state.deliveryRun
         ? {
           active: true,
@@ -214,6 +217,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           elapsed: state.residentFavor.elapsed,
         }
         : null,
+      residentTalkCooldownRemaining: state.residentTalkCooldownRemaining,
       deliveryRun: state.deliveryRun
         ? {
           service: { ...state.deliveryRun.service },
@@ -306,6 +310,11 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         elapsed: THREE.MathUtils.clamp(favorElapsed, 0, RESIDENT_FAVOR_DURATION),
       }
       : null;
+    state.residentTalkCooldownRemaining = THREE.MathUtils.clamp(
+      Number(snapshot.residentTalkCooldownRemaining) || 0,
+      0,
+      RESIDENT_TALK_COOLDOWN,
+    );
     state.deliveryCooldownRemaining = THREE.MathUtils.clamp(
       Number(snapshot.deliveryCooldownRemaining) || 0,
       0,
@@ -563,6 +572,10 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     state.workShift.cooldownRemaining = Math.max(
       0,
       state.workShift.cooldownRemaining - dt,
+    );
+    state.residentTalkCooldownRemaining = Math.max(
+      0,
+      state.residentTalkCooldownRemaining - dt,
     );
     state.deliveryCooldownRemaining = Math.max(0, state.deliveryCooldownRemaining - dt);
     if (state.deliveryRun) {
@@ -864,20 +877,42 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     };
   }
 
-  function talkToNearestResident(position) {
-    const person = pedestrians?.getNearestPerson?.(position, 4.6);
-    if (!person?.mesh) {
-      onMessage('No one is close enough to talk to.');
-      return false;
+  function talkToNearestResident(position, expectedResidentId = null) {
+    if (state.workShift.active || state.residentFavor || state.deliveryRun) {
+      onMessage('Finish the active job before stopping to chat.');
+      return null;
     }
+    if (state.residentTalkCooldownRemaining > 0) {
+      onMessage(`Resident chat cooldown · ${Math.ceil(state.residentTalkCooldownRemaining)}s.`);
+      return null;
+    }
+    const person = pedestrians?.getNearestPerson?.(position, 4.6);
+    if (!person?.mesh || (expectedResidentId && person.id !== expectedResidentId)) {
+      onMessage('No one is close enough to talk to.');
+      return null;
+    }
+    const before = { ...state.needs };
     state.needs.social = clampNeed(state.needs.social + 20);
     state.needs.fun = clampNeed(state.needs.fun + 7);
     state.needs.energy = clampNeed(state.needs.energy - 2);
     const jobLabel = person.job?.label || 'resident';
-    state.lastActivity = `talk:${jobLabel}`;
+    state.residentTalkCooldownRemaining = RESIDENT_TALK_COOLDOWN;
+    state.lastActivity = `talk:${person.id}`;
     state.lastActivityAt = performance.now();
-    onMessage(`You chatted with a ${jobLabel} about the fog and the ferry line.`);
-    return true;
+    const message = `You chatted with a ${jobLabel} about the fog and the ferry line.`;
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'resident-talk',
+      residentId: person.id,
+      residentLabel: person.label || jobLabel,
+      message,
+      deltas: {
+        social: state.needs.social - before.social,
+        fun: state.needs.fun - before.fun,
+        energy: state.needs.energy - before.energy,
+      },
+    };
   }
 
   function eatAtMarket(position) {
