@@ -19,6 +19,7 @@ const MARKET_SHIFT_DURATION = 5.5;
 const MARKET_SHIFT_COOLDOWN = 8;
 const MARKET_SHIFT_WAGE = 26;
 const TAXI_FARE = 14;
+const MUNI_FARE = 3;
 const RESIDENT_FAVOR_DURATION = 45;
 const RESIDENT_FAVOR_REWARD = 24;
 const RESIDENT_FAVOR_SOCIAL = 14;
@@ -138,6 +139,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         },
         taxi: {
           fare: TAXI_FARE,
+        },
+        muni: {
+          fare: MUNI_FARE,
         },
       },
       lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
@@ -811,6 +815,30 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return { ...state.lastTransaction };
   }
 
+  function canAffordMuniFare(amount = MUNI_FARE) {
+    const fare = Math.max(0, Math.round(Number(amount) || 0));
+    return fare > 0 && state.cash >= fare;
+  }
+
+  function payMuniFare(amount = MUNI_FARE, label = 'Muni one-stop ride') {
+    const fare = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 1, 12);
+    if (!canAffordMuniFare(fare)) {
+      onMessage(`Muni fare is $${fare}. You need more cash.`);
+      return false;
+    }
+    state.cash -= fare;
+    state.lastActivity = 'travel:muni';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'muni-fare',
+      label: String(label || 'Muni ride').slice(0, 80),
+      amount: -fare,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
+  }
+
   function creditMissionReward(amount = 0, label = 'Waterfront Loop') {
     const reward = Math.max(0, Math.round(Number(amount) || 0));
     if (reward <= 0) return false;
@@ -1063,6 +1091,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     payVehicleRegistration,
     canAffordTaxiFare,
     payTaxiFare,
+    canAffordMuniFare,
+    payMuniFare,
     creditMissionReward,
     buyMedkitAtMarket,
     consumeMedkit,
