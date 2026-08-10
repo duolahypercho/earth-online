@@ -409,6 +409,11 @@ const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
 const STREET_HEAT_RESPONDER_REARM_RADIUS = 8.5;
+const STREET_HEAT_PRESSURE_MIN_RADIUS = 10;
+const STREET_HEAT_PRESSURE_MAX_RADIUS = 28;
+const STREET_HEAT_PRESSURE_LOCK_SECONDS = 0.75;
+const STREET_HEAT_PRESSURE_LEVEL_TWO_COOLDOWN = 2.4;
+const STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN = 1.7;
 // A deliberate brake hold acts as surrender within roughly one vehicle length
 // of the live responder. Traffic safety can keep the shells out of overlap;
 // releasing the brake or moving the player still cancels the hold.
@@ -451,6 +456,11 @@ export function createStreetHeat({
     responderIds: [],
     responderDistances: [],
     responderContacts: 0,
+    pressurePhase: 'idle',
+    pressureLock: 0,
+    pressureCooldown: 0,
+    pressureCount: 0,
+    pressureResponderId: null,
     arrestHold: 0,
     arrests: 0,
     nearestDistance: null,
@@ -564,6 +574,11 @@ export function createStreetHeat({
       state.pursuitActive = true;
       state.responderContacts = 0;
       responderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
       state.targetId = null;
       state.targetPosition = null;
       state.responderId = null;
@@ -593,6 +608,11 @@ export function createStreetHeat({
     state.responderIds = [];
     state.responderDistances = [];
     state.responderContacts = 0;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
     state.arrestHold = 0;
     state.arrests = 0;
     state.nearestDistance = null;
@@ -630,6 +650,11 @@ export function createStreetHeat({
     state.responderDistances = [];
     state.responderContacts = 0;
     responderContactLatched = false;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
     state.nearestDistance = null;
     state.safeElapsed = 0;
     state.combatHold = 0;
@@ -712,6 +737,7 @@ export function createStreetHeat({
     surrendering = false,
     onFootSurrendering = false,
     onFootMoving = false,
+    onFootPressureEligible = false,
   } = {}) {
     const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
     markerTime += delta;
@@ -735,6 +761,7 @@ export function createStreetHeat({
     state.nearMissCooldown = Math.max(0, state.nearMissCooldown - delta);
     state.combatHold = Math.max(0, state.combatHold - delta);
     state.theftHold = Math.max(0, state.theftHold - delta);
+    state.pressureCooldown = Math.max(0, state.pressureCooldown - delta);
     state.sampleElapsed += delta;
 
     let nearestDistance = state.nearestDistance ?? Infinity;
@@ -808,6 +835,79 @@ export function createStreetHeat({
       responderContactLatched = false;
     }
 
+    const pressureLevel = currentLevel();
+    const pressureDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
+    const pressureIndex = pressureDistance === null
+      ? -1
+      : state.responderDistances.indexOf(pressureDistance);
+    const pressureResponderId = pressureIndex >= 0
+      ? state.responderIds[pressureIndex] ?? null
+      : null;
+    const pressureEligible = state.pursuitActive
+      && !latestDriving
+      && onFootPressureEligible === true
+      && pressureLevel >= 2
+      && pressureDistance !== null
+      && pressureDistance > STREET_HEAT_PRESSURE_MIN_RADIUS
+      && pressureDistance <= STREET_HEAT_PRESSURE_MAX_RADIUS;
+    const pressureContextAvailable = state.pursuitActive
+      && !latestDriving
+      && onFootPressureEligible === true;
+    if (!pressureContextAvailable) {
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureResponderId = null;
+    } else if (state.pressureCooldown > 0) {
+      state.pressurePhase = 'cooldown';
+      state.pressureLock = 0;
+      state.pressureResponderId = null;
+    } else if (pressureEligible) {
+      if (state.pressureResponderId !== pressureResponderId) {
+        state.pressureLock = 0;
+        state.pressureResponderId = pressureResponderId;
+      }
+      if (state.pressureLock <= 0) {
+        state.pressurePhase = 'locking';
+        emitEvent(
+          'responder-pressure-lock',
+          'Responder pressure · move beyond 28 m or close to surrender range.',
+          0,
+          { responderId: pressureResponderId, level: pressureLevel, distance: pressureDistance },
+        );
+      }
+      state.pressureLock += delta;
+      if (state.pressureLock >= STREET_HEAT_PRESSURE_LOCK_SECONDS) {
+        const damage = pressureLevel >= 3 ? 10 : 8;
+        const cooldown = pressureLevel >= 3
+          ? STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN
+          : STREET_HEAT_PRESSURE_LEVEL_TWO_COOLDOWN;
+        state.pressureCount += 1;
+        state.pressurePhase = 'cooldown';
+        state.pressureLock = 0;
+        state.pressureCooldown = cooldown;
+        state.pressureResponderId = null;
+        emitEvent(
+          'responder-pressure',
+          `Responder pressure hit · ${damage} health.`,
+          0,
+          {
+            responderId: pressureResponderId,
+            level: pressureLevel,
+            distance: pressureDistance,
+            damage,
+            pressureNumber: state.pressureCount,
+          },
+        );
+      }
+    } else {
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureResponderId = null;
+    }
+
     const nearestResponderDistance = state.responderDistances.length > 0
       ? Math.min(...state.responderDistances)
       : null;
@@ -860,6 +960,11 @@ export function createStreetHeat({
       state.pursuitActive = true;
       state.responderContacts = 0;
       responderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
       state.arrestHold = 0;
       state.targetId = null;
       state.targetPosition = null;
@@ -905,6 +1010,11 @@ export function createStreetHeat({
       state.responderDistances = [];
       state.responderContacts = 0;
       responderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
       state.arrestHold = 0;
       state.safeElapsed = 0;
       state.heat = 0;
@@ -1011,6 +1121,13 @@ export function createStreetHeat({
         (distance) => Math.round(distance * 10) / 10,
       ),
       responderContacts: state.responderContacts,
+      pressure: {
+        phase: state.pressurePhase,
+        lock: Math.round(state.pressureLock * 100) / 100,
+        cooldown: Math.round(state.pressureCooldown * 100) / 100,
+        count: state.pressureCount,
+        responderId: state.pressureResponderId,
+      },
       arrestHold: Math.round(state.arrestHold * 100) / 100,
       arrests: state.arrests,
       nearestDistance: state.nearestDistance,
@@ -1080,6 +1197,11 @@ export function createStreetHeat({
     state.pursuitActive = snapshot.pursuitActive;
     state.responderContacts = normalizedResponderContacts;
     responderContactLatched = importedResponderContactLatched;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
     state.nearMisses = Math.max(0, Math.round(nearMisses));
     state.witnessReports = THREE.MathUtils.clamp(Math.round(witnessReports), 0, 100000);
     state.combatHold = THREE.MathUtils.clamp(

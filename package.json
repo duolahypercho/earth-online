@@ -29,6 +29,7 @@
     "verify:combat-pursuit": "node scripts/verify-combat-pursuit.mjs",
     "verify:traffic-combat-aftermath": "node scripts/verify-traffic-combat-aftermath.mjs",
     "verify:pursuit-escalation": "node scripts/verify-pursuit-escalation.mjs",
+    "verify:pursuit-pressure": "node scripts/verify-pursuit-pressure.mjs",
     "verify:pursuit-vehicle-recontact": "node scripts/verify-pursuit-vehicle-recontact.mjs",
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:pursuit-repair-gate": "node scripts/verify-pursuit-repair-gate.mjs",
