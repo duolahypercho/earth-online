@@ -1894,6 +1894,24 @@ function retrieveImpoundedVehicleAtFerry() {
   return true;
 }
 
+function settleLegalDebtAtFerry() {
+  if (!ferryImpoundContext()) return null;
+  const debt = Math.max(0, Math.round(Number(lifeSim?.getState?.().legalDebt) || 0));
+  if (debt <= 0) return null;
+  if (!lifeSim?.canAffordLegalDebt?.()) {
+    lifeSim?.payLegalDebt?.('Ferry legal debt settlement');
+    hud?.setLifeState?.(lifeSim?.getState?.());
+    hud?.setMessage(`LEGAL DEBT / $${debt} due · earn cash before settlement.`);
+    return false;
+  }
+  const transaction = lifeSim?.payLegalDebt?.('Ferry legal debt settlement');
+  if (!transaction) return false;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  hud?.setMessage(`LEGAL DEBT CLEARED / $${transaction.debtBefore} paid.`);
+  savePlayerProgress();
+  return true;
+}
+
 function registerParkedVehicleAtFerry() {
   const registration = traffic.getPlayerVehicleRegistrationState?.();
   if (!registration) return null;
@@ -4498,6 +4516,8 @@ function onKeyDown(event) {
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyR', 'KeyC', 'KeyM', 'KeyV', 'KeyT', 'KeyF', 'KeyX', 'KeyQ', 'KeyY', 'KeyB', 'KeyG', 'KeyN'].includes(code)) event.preventDefault();
   if (code === 'KeyR' && !event.repeat) {
     if (ferryImpoundContext()) {
+      const legalDebtHandled = settleLegalDebtAtFerry();
+      if (legalDebtHandled !== null) return;
       const impoundHandled = retrieveImpoundedVehicleAtFerry();
       if (impoundHandled !== null) return;
       const registrationHandled = registerParkedVehicleAtFerry();
@@ -4741,6 +4761,19 @@ function updateInteraction() {
     return;
   }
   if (controls.interiorMode) {
+    const legalDebt = ferryImpoundContext()
+      ? Math.max(0, Math.round(Number(lifeSim?.getState?.().legalDebt) || 0))
+      : 0;
+    if (legalDebt > 0) {
+      hud.setInteraction({
+        label: `FERRY LEGAL DESK / $${legalDebt} DUE`,
+        prompt: lifeSim?.canAffordLegalDebt?.()
+          ? 'R  SETTLE LEGAL DEBT'
+          : 'EARN CASH TO SETTLE',
+        enabled: true,
+      });
+      return;
+    }
     const registration = ferryImpoundContext()
       ? traffic.getPlayerVehicleRegistrationState?.()
       : null;

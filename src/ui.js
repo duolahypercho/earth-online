@@ -758,9 +758,11 @@ export function createHud({
     'aria-label',
     'Medkits: 0 of 3. Press B to buy for 28 dollars at a market. Press G to use. Press N to buy ammunition for 32 dollars.',
   );
+  const lifeDebt = createElement('span', 'hud__life-inventory hud__life-debt', 'LEGAL DEBT / $0');
+  lifeDebt.setAttribute('aria-label', 'Legal debt: 0 dollars.');
   const lifeFavor = createElement('span', 'hud__life-favor');
   lifeFavor.hidden = true;
-  lifePanel.append(lifeHeader, lifeBars, lifeInventory, lifeFavor);
+  lifePanel.append(lifeHeader, lifeBars, lifeInventory, lifeDebt, lifeFavor);
 
   const drivePanel = createElement('section', 'hud__drive');
   drivePanel.setAttribute('aria-label', 'Driving telemetry');
@@ -1301,6 +1303,10 @@ export function createHud({
     lifeTitle.textContent = `LIFE / DAY ${String(day).padStart(2, '0')}`;
     lifeClock.textContent = `${String(lifeState.clockLabel || '07:00')} ${String(lifeState.phase || 'MORNING')}`;
     lifeCash.textContent = `$${Math.max(0, Math.round(Number(lifeState.cash) || 0))}`;
+    const legalDebt = Math.max(0, Math.round(Number(lifeState.legalDebt) || 0));
+    lifeDebt.textContent = `LEGAL DEBT / $${legalDebt}`;
+    lifeDebt.dataset.outstanding = legalDebt > 0 ? 'true' : 'false';
+    lifeDebt.setAttribute('aria-label', `Legal debt: ${legalDebt} dollars.`);
     lifeMood.textContent = String(lifeState.mood || 'GOOD').toUpperCase();
     lifeMood.dataset.mood = String(lifeState.mood || 'good');
     const medkit = lifeState.inventory?.medkit || {};

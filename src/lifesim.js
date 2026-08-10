@@ -65,6 +65,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       fun: 52,
     },
     cash: 140,
+    legalDebt: 0,
     inventory: {
       medkits: 0,
     },
@@ -126,6 +127,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       needs: { ...state.needs },
       needLabels: { ...NEED_LABELS },
       cash: Math.round(state.cash),
+      legalDebt: Math.round(state.legalDebt),
       inventory: {
         medkit: {
           count: state.inventory.medkits,
@@ -205,6 +207,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       clock: state.clock,
       needs: { ...state.needs },
       cash: state.cash,
+      legalDebt: state.legalDebt,
       inventory: { medkits: state.inventory.medkits },
       lastActivity: state.lastActivity,
       lastActivityAt: state.lastActivityAt,
@@ -238,10 +241,16 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     const day = Number(snapshot.day);
     const clock = Number(snapshot.clock);
     const cash = Number(snapshot.cash);
-    if (!Number.isFinite(day) || !Number.isFinite(clock) || !Number.isFinite(cash)) return false;
+    const legalDebt = snapshot.legalDebt === undefined ? 0 : Number(snapshot.legalDebt);
+    if (!Number.isFinite(day)
+      || !Number.isFinite(clock)
+      || !Number.isFinite(cash)
+      || !Number.isFinite(legalDebt)
+      || legalDebt < 0) return false;
     state.day = THREE.MathUtils.clamp(Math.round(day), 1, 9999);
     state.clock = THREE.MathUtils.clamp(clock, 0, 23.99);
     state.cash = THREE.MathUtils.clamp(cash, 0, 999999);
+    state.legalDebt = THREE.MathUtils.clamp(Math.round(legalDebt), 0, 999999);
     NEED_KEYS.forEach((key) => {
       const value = Number(snapshot.needs?.[key]);
       if (Number.isFinite(value)) state.needs[key] = clampNeed(value);
@@ -277,6 +286,12 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           : {}),
         ...(Number.isFinite(Number(transaction.unpaid))
           ? { unpaid: Math.max(0, Math.round(Number(transaction.unpaid))) }
+          : {}),
+        ...(Number.isFinite(Number(transaction.debtBefore))
+          ? { debtBefore: Math.max(0, Math.round(Number(transaction.debtBefore))) }
+          : {}),
+        ...(Number.isFinite(Number(transaction.debtAfter))
+          ? { debtAfter: Math.max(0, Math.round(Number(transaction.debtAfter))) }
           : {}),
       }
       : null;
@@ -708,7 +723,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   function payWantedFine(amount = 0, label = 'StreetHeat booking') {
     const due = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 20, 120);
     const charged = Math.min(due, Math.max(0, Math.floor(state.cash)));
+    const unpaid = due - charged;
     state.cash = Math.max(0, state.cash - charged);
+    state.legalDebt = THREE.MathUtils.clamp(state.legalDebt + unpaid, 0, 999999);
     state.lastActivity = 'wanted:booking';
     state.lastActivityAt = performance.now();
     state.lastTransaction = {
@@ -718,7 +735,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       cashAfter: Math.round(state.cash),
       due,
       charged,
-      unpaid: due - charged,
+      unpaid,
+      debtAfter: Math.round(state.legalDebt),
       at: state.lastActivityAt,
     };
     return { ...state.lastTransaction };
@@ -727,7 +745,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   function payTrafficCitation(amount = 18, label = 'Red-light citation') {
     const due = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 12, 60);
     const charged = Math.min(due, Math.max(0, Math.floor(state.cash)));
+    const unpaid = due - charged;
     state.cash = Math.max(0, state.cash - charged);
+    state.legalDebt = THREE.MathUtils.clamp(state.legalDebt + unpaid, 0, 999999);
     state.lastActivity = 'traffic:red-light';
     state.lastActivityAt = performance.now();
     state.lastTransaction = {
@@ -737,7 +757,39 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       cashAfter: Math.round(state.cash),
       due,
       charged,
-      unpaid: due - charged,
+      unpaid,
+      debtAfter: Math.round(state.legalDebt),
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
+  }
+
+  function canAffordLegalDebt() {
+    const debt = Math.max(0, Math.round(state.legalDebt));
+    return debt > 0 && state.cash >= debt;
+  }
+
+  function payLegalDebt(label = 'Ferry legal debt settlement') {
+    const debt = Math.max(0, Math.round(state.legalDebt));
+    if (debt <= 0) {
+      onMessage('No legal debt outstanding.');
+      return null;
+    }
+    if (!canAffordLegalDebt()) {
+      onMessage(`Legal debt is $${debt}. You need more cash.`);
+      return false;
+    }
+    state.cash -= debt;
+    state.legalDebt = 0;
+    state.lastActivity = 'legal:debt-payment';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'legal-debt-payment',
+      label: String(label || 'Ferry legal debt settlement').slice(0, 80),
+      amount: -debt,
+      cashAfter: Math.round(state.cash),
+      debtBefore: debt,
+      debtAfter: 0,
       at: state.lastActivityAt,
     };
     return { ...state.lastTransaction };
@@ -1085,6 +1137,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     payVehicleRepair,
     payWantedFine,
     payTrafficCitation,
+    canAffordLegalDebt,
+    payLegalDebt,
     canAffordImpoundFee,
     payImpoundFee,
     canAffordVehicleRegistration,
