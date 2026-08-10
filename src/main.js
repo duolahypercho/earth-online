@@ -1473,6 +1473,7 @@ lifeSim = createLifeSim({
   pedestrians,
   onMessage: (message) => hud?.setMessage(message),
   getRestContext: () => getPlayerRestContext(),
+  getMarketInteractionContext: () => getPlayerMarketInteractionContext(),
 });
 
 hud.setOnlineAction((action) => {
@@ -2679,7 +2680,15 @@ function startPlayerWorkShift() {
 function buyPlayerMedkit() {
   const purchased = lifeSim?.buyMedkitAtMarket?.(controls.target) === true;
   hud?.setLifeState?.(lifeSim?.getState?.());
+  if (purchased) savePlayerProgress();
   return purchased;
+}
+
+function eatPlayerAtMarket() {
+  const ate = lifeSim?.eatAtMarket?.(controls.target) === true;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  if (ate) savePlayerProgress();
+  return ate;
 }
 
 function buyPlayerAmmo() {
@@ -4584,6 +4593,29 @@ function getPlayerRestContext() {
   };
 }
 
+function getPlayerMarketInteractionContext() {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  const lifeState = lifeSim?.getState?.();
+  return {
+    onFoot: traffic.isPlayerDriving?.() !== true && !passengerRideActive(),
+    outdoor: playerLayerActive && !controls.interiorMode && !beautyMode && !qaCameraPose,
+    stationary: !playerMoving(),
+    recovered: combatState?.status === 'running' && combatState?.active === true,
+    clearOfPursuit: heatState?.pursuitActive !== true,
+    activeContract: Boolean(
+      lifeState?.workShift?.active
+      || lifeState?.residentFavor?.active
+      || lifeState?.deliveryRun?.active,
+    ),
+    position: {
+      x: controls.target.x,
+      y: controls.target.y,
+      z: controls.target.z,
+    },
+  };
+}
+
 function restPlayerAtBench() {
   const combatState = combat?.getState?.();
   const heatState = streetHeat?.getState?.();
@@ -4829,7 +4861,7 @@ function onKeyDown(event) {
     networking?.enableVoice?.();
   }
   if (code === 'KeyT' && !event.repeat) {
-    if (lifeSim?.canEat?.(controls.target)) lifeSim?.eatAtMarket?.(controls.target);
+    if (lifeSim?.isAtMarket?.(controls.target)) eatPlayerAtMarket();
     else talkToNearbyResident();
   }
   if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();

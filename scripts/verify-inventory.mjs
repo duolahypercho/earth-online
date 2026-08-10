@@ -94,13 +94,16 @@ try {
     && emptyUse.message.includes('No medkits'),
   'empty medkit input mutated health or inventory', emptyUse);
 
-  const outsideMarket = await page.evaluate((cash) => {
+  const outsideMarket = await page.evaluate(({ cash, market }) => {
     const sim = window.__SF_SIM__;
     sim.lifeSim.addCash(cash);
+    sim.setRoamPose({ x: market.x + 80, z: market.z + 80 });
     const before = sim.lifeSim.getState();
-    const purchased = sim.lifeSim.buyMedkitAtMarket({ x: 99999, z: 99999 });
-    return { before, purchased, after: sim.lifeSim.getState() };
-  }, setup.before.cash);
+    const purchased = sim.lifeSim.buyMedkitAtMarket(market);
+    const after = sim.lifeSim.getState();
+    sim.setRoamPose(market);
+    return { before, purchased, after };
+  }, { cash: setup.before.cash, market: setup.position });
   assert(outsideMarket.purchased === false
     && outsideMarket.after.cash === outsideMarket.before.cash
     && outsideMarket.after.inventory.medkit.count === outsideMarket.before.inventory.medkit.count,

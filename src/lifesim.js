@@ -61,6 +61,7 @@ export function createLifeSim({
   pedestrians,
   onMessage = () => {},
   getRestContext = () => null,
+  getMarketInteractionContext = () => null,
 } = {}) {
   const state = {
     day: 1,
@@ -97,9 +98,29 @@ export function createLifeSim({
     return portal?.label ? String(portal.label).toLowerCase() : null;
   }
 
-  function canEat(position) {
+  function isAtMarket(position) {
     const label = getNearestPortalLabel(position);
     return Boolean(label && (label.includes('ferry') || label.includes('market') || label.includes('cafe')));
+  }
+
+  function marketInteractionAvailable() {
+    const context = getMarketInteractionContext?.();
+    return Boolean(
+      context?.onFoot
+      && context?.outdoor
+      && context?.stationary
+      && context?.recovered
+      && context?.clearOfPursuit
+      && !context?.activeContract
+      && isAtMarket(context?.position)
+      && !state.workShift.active
+      && !state.residentFavor
+      && !state.deliveryRun,
+    );
+  }
+
+  function canEat() {
+    return marketInteractionAvailable();
   }
 
   function canWork(position) {
@@ -914,10 +935,9 @@ export function createLifeSim({
     return true;
   }
 
-  function buyMedkitAtMarket(position) {
-    const label = getNearestPortalLabel(position);
-    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
-      onMessage('Find a market or cafe counter to buy a medkit.');
+  function buyMedkitAtMarket() {
+    if (!marketInteractionAvailable()) {
+      onMessage('Market counter unavailable · be on foot, still, recovered, and clear of pursuit.');
       return false;
     }
     if (state.inventory.medkits >= MEDKIT_CAPACITY) {
@@ -1026,10 +1046,9 @@ export function createLifeSim({
     };
   }
 
-  function eatAtMarket(position) {
-    const label = getNearestPortalLabel(position);
-    if (!label || !(label.includes('ferry') || label.includes('market') || label.includes('cafe'))) {
-      onMessage('Find the Ferry Building market hall to grab a bite.');
+  function eatAtMarket() {
+    if (!marketInteractionAvailable()) {
+      onMessage('Market counter unavailable · be on foot, still, recovered, and clear of pursuit.');
       return false;
     }
     if (!spendCash(9)) {
@@ -1150,6 +1169,7 @@ export function createLifeSim({
     cancelDeliveryRun,
     eatAtMarket,
     canEat,
+    isAtMarket,
     canAffordMeal,
     canWork,
     workShift,
