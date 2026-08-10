@@ -1472,6 +1472,7 @@ lifeSim = createLifeSim({
   traffic,
   pedestrians,
   onMessage: (message) => hud?.setMessage(message),
+  getRestContext: () => getPlayerRestContext(),
 });
 
 hud.setOnlineAction((action) => {
@@ -4522,6 +4523,112 @@ function onFootPursuitActive() {
   );
 }
 
+const REST_ANCHOR_RADIUS = 4.6;
+const restAnchorMatrix = new THREE.Matrix4();
+const restAnchorPosition = new THREE.Vector3();
+
+function getNearestRestAnchor(position = controls.target, radius = REST_ANCHOR_RADIUS) {
+  let nearest = null;
+  scene.updateMatrixWorld(true);
+  scene.traverseVisible((object) => {
+    if (!/bench/i.test(String(object.name || ''))) return;
+    const consider = (anchorPosition, instanceId = null) => {
+      const distance = Math.hypot(
+        anchorPosition.x - position.x,
+        anchorPosition.z - position.z,
+      );
+      if (distance > radius || (nearest && distance >= nearest.distance)) return;
+      nearest = {
+        label: object.name,
+        distance,
+        instanceId,
+        position: {
+          x: anchorPosition.x,
+          y: anchorPosition.y,
+          z: anchorPosition.z,
+        },
+      };
+    };
+    if (object.isInstancedMesh) {
+      for (let index = 0; index < object.count; index += 1) {
+        object.getMatrixAt(index, restAnchorMatrix);
+        restAnchorPosition.setFromMatrixPosition(restAnchorMatrix).applyMatrix4(object.matrixWorld);
+        consider(restAnchorPosition, index);
+      }
+      return;
+    }
+    object.getWorldPosition(restAnchorPosition);
+    consider(restAnchorPosition);
+  });
+  return nearest;
+}
+
+function getPlayerRestContext() {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  const lifeState = lifeSim?.getState?.();
+  const anchor = getNearestRestAnchor();
+  return {
+    onFoot: traffic.isPlayerDriving?.() !== true && !passengerRideActive(),
+    outdoor: playerLayerActive && !controls.interiorMode && !beautyMode && !qaCameraPose,
+    stationary: !playerMoving(),
+    recovered: combatState?.status === 'running' && combatState?.active === true,
+    clearOfPursuit: heatState?.pursuitActive !== true,
+    atRestAnchor: Boolean(anchor),
+    activeContract: Boolean(
+      lifeState?.workShift?.active
+      || lifeState?.residentFavor?.active
+      || lifeState?.deliveryRun?.active,
+    ),
+    anchor,
+  };
+}
+
+function restPlayerAtBench() {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  const lifeState = lifeSim?.getState?.();
+  if (traffic.isPlayerDriving?.()) {
+    hud?.setMessage('Exit the vehicle before resting.');
+    return false;
+  }
+  if (!playerLayerActive
+    || controls.interiorMode
+    || passengerRideActive()
+    || beautyMode
+    || qaCameraPose) {
+    hud?.setMessage('Rest is available on foot at a public bench.');
+    return false;
+  }
+  if (playerMoving()) {
+    hud?.setMessage('Stop moving before resting.');
+    return false;
+  }
+  if (combatState?.status !== 'running' || combatState?.active !== true) {
+    hud?.setMessage('Recover before resting.');
+    return false;
+  }
+  if (heatState?.pursuitActive) {
+    hud?.setMessage('Lose the StreetHeat tail before resting.');
+    return false;
+  }
+  if (lifeState?.workShift?.active
+    || lifeState?.residentFavor?.active
+    || lifeState?.deliveryRun?.active) {
+    hud?.setMessage('Finish the active job before resting.');
+    return false;
+  }
+  const anchor = getNearestRestAnchor();
+  if (!anchor) {
+    hud?.setMessage('Find a public bench before resting.');
+    return false;
+  }
+  const rested = lifeSim?.rest?.() === true;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  if (rested) savePlayerProgress();
+  return rested;
+}
+
 // Pointer Events only emit `pointerdown` for the first mouse button in a
 // multi-button chord. A separate mousedown bridge keeps LMB fire reliable
 // while RMB is held for aim (the normal pointer path still handles a solo
@@ -4740,7 +4847,7 @@ function onKeyDown(event) {
     } else if (onFootPursuitActive()) {
       hud?.setMessage('SURRENDER UNAVAILABLE / RECOVER AND RETURN OUTSIDE.');
     } else {
-      lifeSim?.rest?.();
+      restPlayerAtBench();
     }
   }
   if (code === 'KeyE' && !event.repeat) {

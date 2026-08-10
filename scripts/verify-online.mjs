@@ -226,16 +226,13 @@ try {
       },
     );
     const beforeRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
-    const rested = await page1.evaluate(() => {
-      const ok = window.__SF_SIM__.lifeSim.rest();
-      return ok;
-    });
+    const rested = await page1.evaluate(() => window.__SF_SIM__.lifeSim.rest());
     const afterRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     check(
-      'life-sim rest recovers energy and spends time',
-      rested === true
-        && afterRest.needs.energy > beforeRest.needs.energy
-        && afterRest.clock > beforeRest.clock,
+      'life-sim rest rejects a context-free driving bypass',
+      rested === false
+        && afterRest.needs.energy === beforeRest.needs.energy
+        && afterRest.clock === beforeRest.clock,
       {
         rested,
         before: { energy: beforeRest.needs.energy, clock: beforeRest.clock },
