@@ -55,6 +55,8 @@ const TURN_SPAN = 8.2;        // lane path either side of an intersection (m)
 const BRAKE_LIGHT_DECEL = -0.65;
 const SIGNAL_REACTION = 0.32; // perception/actuation allowance for stop planning
 const STOP_SIGN_HOLD = 0.45;  // full stop dwell before release at stop control
+const PLAYER_PEDESTRIAN_IMPACT_MIN_SPEED = 4;
+const PLAYER_PEDESTRIAN_IMPACT_RADIUS = 0.42;
 const CURB_LANE_LIMIT = 5.2;  // moving vehicles hug the marked right lane (m)
 const CURB_LANE_OFFSET = 4.9; // parking-lane centerline (m)
 const BIKE_LANE_OFFSET = 3.95; // between travel lane and parking / curb
@@ -1728,12 +1730,15 @@ export function createTrafficSystem({
     vehicleRepairs: 0,
     vehicleThefts: 0,
     playerRedLightViolations: 0,
+    pedestrianImpactEvents: 0,
   };
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
   let impoundedPlayerVehicle = null;
   let taxiRide = null;
   let playerSignalViolationLatch = null;
+  let playerPedestrianImpactProbe = null;
+  let playerPedestrianImpactLatch = new Set();
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -1756,6 +1761,23 @@ export function createTrafficSystem({
     if (ratio <= 0.28) return 'critical';
     if (ratio <= 0.68) return 'damaged';
     return 'clear';
+  }
+
+  function distanceSquaredToSegment(point, start, end) {
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const lengthSquared = dx * dx + dz * dz;
+    if (lengthSquared <= 1e-8) {
+      return (point.x - start.x) ** 2 + (point.z - start.z) ** 2;
+    }
+    const along = THREE.MathUtils.clamp(
+      ((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSquared,
+      0,
+      1,
+    );
+    const closestX = start.x + dx * along;
+    const closestZ = start.z + dz * along;
+    return (point.x - closestX) ** 2 + (point.z - closestZ) ** 2;
   }
 
   function vehicleDamageSnapshot(vehicle) {
@@ -3129,6 +3151,12 @@ export function createTrafficSystem({
     dt = Math.min(dt, MAX_DT);
     lastElapsed = Number.isFinite(elapsed) ? elapsed : lastElapsed + dt;
     const t = lastElapsed;
+    const playerImpactStart = playerVehicle
+      ? {
+        x: playerVehicle.mesh.root.position.x,
+        z: playerVehicle.mesh.root.position.z,
+      }
+      : null;
     rebuildLaneLeaders();
 
     let speedSum = 0;
@@ -4072,6 +4100,19 @@ export function createTrafficSystem({
     diagnosticDuration += dt;
     speedIntegral += (speedSum / vehicles.length) * dt;
     diagnostics.meanSpeed = speedIntegral / diagnosticDuration;
+    if (playerVehicle && playerImpactStart) {
+      const point = playerVehicle.mesh.root.position;
+      playerPedestrianImpactProbe = {
+        vehicleId: vehicles.indexOf(playerVehicle),
+        start: playerImpactStart,
+        end: { x: point.x, z: point.z },
+        speed: playerVehicle.speed,
+        halfWidth: playerVehicle.spec.wid * 0.5,
+      };
+    } else {
+      playerPedestrianImpactProbe = null;
+      playerPedestrianImpactLatch.clear();
+    }
   }
 
   function getStats() {
@@ -5032,6 +5073,77 @@ export function createTrafficSystem({
     };
   }
 
+  function getPlayerPedestrianImpactProbe() {
+    if (!playerPedestrianImpactProbe || !playerVehicle) return null;
+    return {
+      vehicleId: playerPedestrianImpactProbe.vehicleId,
+      start: { ...playerPedestrianImpactProbe.start },
+      end: { ...playerPedestrianImpactProbe.end },
+      speed: playerPedestrianImpactProbe.speed,
+      halfWidth: playerPedestrianImpactProbe.halfWidth,
+    };
+  }
+
+  function resolvePlayerPedestrianImpact(candidates = []) {
+    const probe = playerPedestrianImpactProbe;
+    if (!playerVehicle || !probe || !Array.isArray(candidates)) {
+      playerPedestrianImpactLatch.clear();
+      return null;
+    }
+    const currentOverlaps = new Set();
+    let contact = null;
+    let contactDistanceSquared = Infinity;
+    for (const candidate of candidates) {
+      if (!candidate?.id
+        || candidate.combatDefeated === true
+        || !Number.isFinite(candidate.position?.x)
+        || !Number.isFinite(candidate.position?.z)) continue;
+      const radius = probe.halfWidth
+        + Math.max(PLAYER_PEDESTRIAN_IMPACT_RADIUS, Number(candidate.radius) || 0);
+      const distanceSquared = distanceSquaredToSegment(
+        candidate.position,
+        probe.start,
+        probe.end,
+      );
+      if (distanceSquared > radius * radius) continue;
+      const wasLatched = playerPedestrianImpactLatch.has(candidate.id);
+      if (wasLatched) currentOverlaps.add(candidate.id);
+      if (probe.speed < PLAYER_PEDESTRIAN_IMPACT_MIN_SPEED || wasLatched || contact) continue;
+      currentOverlaps.add(candidate.id);
+      contact = candidate;
+      contactDistanceSquared = distanceSquared;
+    }
+    playerPedestrianImpactLatch = currentOverlaps;
+    if (!contact) return null;
+
+    const travelX = probe.end.x - probe.start.x;
+    const travelZ = probe.end.z - probe.start.z;
+    const travelLength = Math.hypot(travelX, travelZ);
+    const directionX = travelLength > 1e-4
+      ? travelX / travelLength
+      : Math.sin(playerVehicle.heading || 0);
+    const directionZ = travelLength > 1e-4
+      ? travelZ / travelLength
+      : Math.cos(playerVehicle.heading || 0);
+    const impactSpeed = probe.speed;
+    const damageAmount = THREE.MathUtils.clamp(4 + impactSpeed * 0.9, 7, 14);
+    const damage = applyVehicleDamage(playerVehicle, damageAmount, 'pedestrian-impact');
+    playerVehicle.speed *= 0.72;
+    playerVehicle.longitudinalAccel = Math.min(0, playerVehicle.longitudinalAccel);
+    playerVehicle.hazardUntil = Math.max(playerVehicle.hazardUntil, lastElapsed + 1.8);
+    diagnostics.pedestrianImpactEvents += 1;
+    return {
+      kind: 'pedestrian-impact',
+      residentId: contact.id,
+      residentLabel: contact.label || 'Resident',
+      speed: Math.round(impactSpeed * 10) / 10,
+      distance: Math.round(Math.sqrt(contactDistanceSquared) * 100) / 100,
+      directionX,
+      directionZ,
+      damage,
+    };
+  }
+
   function damagePlayerVehicle(amount = 0, source = 'impact') {
     if (!playerVehicle) return null;
     return applyVehicleDamage(playerVehicle, amount, source);
@@ -5146,6 +5258,8 @@ export function createTrafficSystem({
     retrieveImpoundedPlayerVehicle,
     setPlayerInput,
     getPlayerVehicleState,
+    getPlayerPedestrianImpactProbe,
+    resolvePlayerPedestrianImpact,
     damagePlayerVehicle,
     repairPlayerVehicle,
     repairVehicle,

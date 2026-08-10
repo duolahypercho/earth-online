@@ -2161,6 +2161,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   const conversationForward = new THREE.Vector3();
   const conversationSide = new THREE.Vector3();
   let beautyRouteCursor = 0;
+  let lastUpdateElapsed = 0;
   const system = {};
 
   function dayNightFactor() {
@@ -3678,9 +3679,36 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     userData.rig.position.x += Math.sin(elapsed * 22 + data.phase) * 0.012 * stagger;
   }
 
+  function applyVehicleImpactPose(data, elapsed) {
+    const userData = data.mesh.userData;
+    const until = Number(userData?.vehicleImpactUntil) || 0;
+    if (!userData || until <= elapsed) {
+      if (userData && until > 0) {
+        userData.vehicleImpactUntil = 0;
+        userData.vehicleImpactDirectionX = 0;
+        userData.vehicleImpactDirectionZ = 0;
+      }
+      return;
+    }
+    const remaining = THREE.MathUtils.clamp((until - elapsed) / 1.35, 0, 1);
+    const pulse = 0.68 + Math.sin(elapsed * 25 + data.phase) * 0.32;
+    const side = THREE.MathUtils.clamp(
+      Number(userData.vehicleImpactDirectionX) || 0,
+      -1,
+      1,
+    );
+    userData.body.rotation.x += 0.24 * remaining;
+    userData.body.rotation.z += (0.14 + Math.abs(side) * 0.12) * Math.sign(side || 1) * remaining;
+    userData.headPivot.rotation.z -= Math.sign(side || 1) * 0.22 * pulse * remaining;
+    userData.leftArm.rotation.z += 0.28 * pulse * remaining;
+    userData.rightArm.rotation.z -= 0.28 * pulse * remaining;
+    userData.rig.position.y -= 0.08 * remaining;
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
+    lastUpdateElapsed = Number.isFinite(elapsed) ? elapsed : lastUpdateElapsed + delta;
     for (const data of pool) {
       if (!data.path) continue;
       if (keepOutOfCableCarAperture(data)) continue;
@@ -3760,6 +3788,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       const combatReactionActive = applyCombatReactionMovement(data, delta);
       animate(data, elapsed, delta);
       applyCombatReactionPose(data, elapsed, combatReactionActive);
+      applyVehicleImpactPose(data, elapsed);
 
       const soloMesh = qaSoloGroupIndex != null ? group.children[qaSoloGroupIndex] : null;
       const visible = soloMesh
@@ -4179,6 +4208,70 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     return nearest;
   }
 
+  function getVehicleImpactCandidates(probe, out = []) {
+    out.length = 0;
+    if (!probe?.start || !probe?.end) return out;
+    const padding = Math.max(0.8, Number(probe.halfWidth) || 0) + 0.7;
+    const minX = Math.min(probe.start.x, probe.end.x) - padding;
+    const maxX = Math.max(probe.start.x, probe.end.x) + padding;
+    const minZ = Math.min(probe.start.z, probe.end.z) - padding;
+    const maxZ = Math.max(probe.start.z, probe.end.z) + padding;
+    for (const data of pool) {
+      if (!data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      const combatDefeated = userData.combatDefeated === true
+        || userData.combatDisabled === true;
+      if (combatDefeated) continue;
+      const { x, y, z } = data.mesh.position;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      const identity = residentIdentityFor(data);
+      out.push({
+        id: identity.id,
+        label: identity.label,
+        position: { x, y, z },
+        heading: data.heading,
+        radius: 0.42,
+        combatDefeated: false,
+        activity: data.state === STATE_CROSS
+          ? `crossing:${data.crossing?.phase || 'approach'}`
+          : data.state === STATE_WORK ? 'working'
+            : data.state === STATE_IDLE ? 'paused' : 'walking',
+      });
+    }
+    return out;
+  }
+
+  function registerVehicleImpact(residentId, { directionX = 0, directionZ = 0 } = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data?.mesh?.visible) return null;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (userData.combatDefeated === true || userData.combatDisabled === true) return null;
+    const directionLength = Math.hypot(directionX, directionZ) || 1;
+    userData.vehicleImpactUntil = lastUpdateElapsed + 1.35;
+    userData.vehicleImpactDirectionX = directionX / directionLength;
+    userData.vehicleImpactDirectionZ = directionZ / directionLength;
+    userData.vehicleImpactCount = (Number(userData.vehicleImpactCount) || 0) + 1;
+    return {
+      residentId,
+      count: userData.vehicleImpactCount,
+      reaction: 'vehicle-stagger',
+      remaining: 1.35,
+    };
+  }
+
+  function getVehicleImpactState(residentId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data) return null;
+    const userData = data.mesh.userData || {};
+    return {
+      residentId,
+      count: Number(userData.vehicleImpactCount) || 0,
+      active: (Number(userData.vehicleImpactUntil) || 0) > lastUpdateElapsed,
+      remaining: Math.max(0, (Number(userData.vehicleImpactUntil) || 0) - lastUpdateElapsed),
+      combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+    };
+  }
+
   setWeather('clear');
   return Object.assign(system, {
     group,
@@ -4188,6 +4281,9 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     getStats,
     getFeaturedResidentSnapshots,
     getNearestPerson,
+    getVehicleImpactCandidates,
+    registerVehicleImpact,
+    getVehicleImpactState,
     setWeather,
     setDayHour,
     getDayHour,

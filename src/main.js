@@ -2456,6 +2456,32 @@ streetHeat = createStreetHeat({
   },
 });
 
+const vehiclePedestrianImpactCandidates = [];
+function updateVehiclePedestrianImpact() {
+  const probe = traffic.getPlayerPedestrianImpactProbe?.();
+  if (!probe) {
+    traffic.resolvePlayerPedestrianImpact?.(vehiclePedestrianImpactCandidates);
+    vehiclePedestrianImpactCandidates.length = 0;
+    return null;
+  }
+  pedestrians.getVehicleImpactCandidates?.(probe, vehiclePedestrianImpactCandidates);
+  const impact = traffic.resolvePlayerPedestrianImpact?.(vehiclePedestrianImpactCandidates);
+  if (!impact) return null;
+  const reaction = pedestrians.registerVehicleImpact?.(impact.residentId, {
+    directionX: impact.directionX,
+    directionZ: impact.directionZ,
+  });
+  if (!reaction) return null;
+  combatAudio?.play?.('impact', { targetKind: 'pedestrian' });
+  streetHeat?.reportIncident?.(14, {
+    kind: 'pedestrian-impact',
+    source: 'combat',
+    message: `Pedestrian impact · ${impact.residentLabel} staggered · heat +14.`,
+  });
+  savePlayerProgress();
+  return { ...impact, reaction };
+}
+
 const combatPedestrianCandidates = [];
 function getCombatPedestrianCandidates(_origin, _maxRange, out = combatPedestrianCandidates) {
   out.length = 0;
@@ -4658,6 +4684,7 @@ function frame(now) {
     level: pursuitHeatState?.level ?? 1,
   });
   traffic.update?.(motionDt, elapsed);
+  updateVehiclePedestrianImpact();
   profileMark('traffic');
   pedestrians.update?.(motionDt, elapsed);
   profileMark('pedestrians');
