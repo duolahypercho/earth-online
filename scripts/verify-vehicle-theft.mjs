@@ -127,6 +127,18 @@ try {
   assert(firstDrive?.speed > 0.5, 'stolen vehicle did not preserve normal driving', firstDrive);
   await page.keyboard.press('e');
 
+  const freshSecond = await page.evaluate((firstId) => window.__SF_SIM__.traffic
+    .getVehicleLifeSnapshot().vehicles.find((vehicle) => (
+      vehicle.id !== firstId
+      && vehicle.identity?.category === 'private'
+      && vehicle.class !== 'bike'
+      && vehicle.action?.key === 'parked'
+      && vehicle.theft?.eligible === true
+      && vehicle.theft?.reported === false
+    )) || null, candidates[0].id);
+  assert(freshSecond?.id >= 0, 'a fresh second parked theft candidate was not available', freshSecond);
+  if (freshSecond) candidates[1] = freshSecond;
+
   const secondEntry = await enterCandidate(candidates[1]);
   assert(secondEntry.driving === true
     && secondEntry.vehicle?.index === candidates[1].id
@@ -135,11 +147,13 @@ try {
     && secondEntry.heat?.pursuitActive === true
     && secondEntry.diagnostics?.vehicleThefts === 2,
   'second distinct theft did not reach exact 36 heat and start pursuit', secondEntry);
-  await page.waitForFunction(() => {
-    const sim = window.__SF_SIM__;
-    return sim.getStreetHeatState()?.pursuitActive === true
-      && sim.traffic.getPursuitResponder()?.active === true;
-  }, null, { timeout: 10000 });
+  if (secondEntry.heat?.pursuitActive) {
+    await page.waitForFunction(() => {
+      const sim = window.__SF_SIM__;
+      return sim.getStreetHeatState()?.pursuitActive === true
+        && sim.traffic.getPursuitResponder()?.active === true;
+    }, null, { timeout: 10000 });
+  }
   const pursuit = await page.evaluate(() => ({
     heat: window.__SF_SIM__.getStreetHeatState(),
     responder: window.__SF_SIM__.traffic.getPursuitResponder(),

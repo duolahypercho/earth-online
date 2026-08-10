@@ -186,7 +186,8 @@ try {
   'arrest fine was not an atomic bounded cash transaction', { transaction, life: arrested.life });
   assert(arrested.message.includes('ARRESTED / $')
     && arrested.saved?.snapshot?.streetHeat?.heat === 0
-    && arrested.saved?.snapshot?.vehicle === null,
+    && arrested.saved?.snapshot?.vehicle?.mode === 'parked'
+    && arrested.saved?.snapshot?.vehicle?.vehicleId === candidates[1].id,
   'arrest feedback or immediate cleared-state save was missing', arrested);
 
   await page.waitForTimeout(600);

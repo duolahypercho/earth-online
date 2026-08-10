@@ -1283,7 +1283,8 @@ function restorePlayerProgress() {
     && worldRestored;
   const vehicleRestored = baseRestored && snapshot.vehicle
     ? traffic.importPlayerVehicleState?.(snapshot.vehicle) === true
-      && activatePlayerVehiclePresentation({ restored: true }) !== null
+      && ((snapshot.vehicle.mode ?? 'driving') === 'parked'
+        || activatePlayerVehiclePresentation({ restored: true }) !== null)
     : baseRestored;
   if (baseRestored && vehicleRestored) {
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
@@ -1296,7 +1297,9 @@ function restorePlayerProgress() {
   if (previousWorld) importPlayerWorldState(previousWorld);
   if (previousVehicle && !traffic.isPlayerDriving?.()) {
     traffic.importPlayerVehicleState?.(previousVehicle);
-    activatePlayerVehiclePresentation({ restored: true });
+    if ((previousVehicle.mode ?? 'driving') === 'driving') {
+      activatePlayerVehiclePresentation({ restored: true });
+    }
   }
   return false;
 }
@@ -1679,8 +1682,6 @@ function activatePlayerVehiclePresentation({ restored = false } = {}) {
     }
   }
   drivingExitPose = {
-    x: controls.target.x,
-    z: controls.target.z,
     yaw: controls.yaw,
     pitch: controls.pitch,
     distance: controls.distance,
@@ -1706,16 +1707,22 @@ function exitPlayerCar() {
     windAudio.stop();
     windAudio = null;
   }
+  const sideX = Math.cos(exit.heading) * 1.6;
+  const sideZ = -Math.sin(exit.heading) * 1.6;
+  const exitX = exit.x + sideX;
+  const exitZ = exit.z + sideZ;
+  const surface = streaming.getSurfaceHeight?.({ x: exitX, z: exitZ });
+  controls.target.set(
+    exitX,
+    Number.isFinite(surface) ? surface : exit.y,
+    exitZ,
+  );
   if (drivingExitPose) {
-    controls.target.set(drivingExitPose.x, controls.target.y, drivingExitPose.z);
     controls.yaw = drivingExitPose.yaw;
     controls.pitch = drivingExitPose.pitch;
     controls.distance = drivingExitPose.distance;
     drivingExitPose = null;
   } else {
-    const sideX = Math.cos(exit.heading) * 1.6;
-    const sideZ = -Math.sin(exit.heading) * 1.6;
-    controls.target.set(exit.x + sideX, controls.target.y, exit.z + sideZ);
     controls.yaw = exit.heading;
     controls.pitch = 0.62;
     controls.distance = 17;
@@ -1723,6 +1730,7 @@ function exitPlayerCar() {
   snapCameraToControls();
   combat?.setEnabled(true);
   hud.setMessage('You stepped back onto the avenue.');
+  savePlayerProgress();
   return true;
 }
 
