@@ -35,6 +35,7 @@ import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
+import { createFerryBuildingStreetscape } from './hero-streetscape.js';
 import {
   collectHeroRenderStats,
   enableHeroPerformanceMode,
@@ -1271,6 +1272,7 @@ function setupToolbar() {
   document.querySelector('[data-action="back"]').addEventListener('click', () => {
     if (interiorState) exitInterior();
     disposeHeroAtmosphere();
+    disposeHeroStreetscape();
     disposeHeroCamera();
     disposeHeroCharacter();
     disposeHeroPerformanceMode();
@@ -7127,6 +7129,9 @@ let wetWeatherGroup = null;
 let heroAtmosphere = null;
 let heroAtmosphereWetRoots = [];
 let heroAtmosphereWetMaterialBindings = 0;
+let heroStreetscape = null;
+let heroStreetscapeWetness = 0;
+let heroStreetscapeHiddenBaseLayers = [];
 let heroPerformanceMode = null;
 let heroPerformancePriorComposerPixelRatio = null;
 let heroPerformanceMarkedObjects = 0;
@@ -8656,6 +8661,78 @@ function getHeroAtmosphereDiagnostics() {
   };
 }
 
+function heroStreetscapeWetnessForWeather() {
+  return weatherMode === 'drizzle' ? 0.9 : weatherMode === 'fog' ? 0.32 : 0;
+}
+
+function syncHeroStreetscapeConditions() {
+  if (!heroStreetscape) return null;
+  heroStreetscapeWetness = heroStreetscapeWetnessForWeather();
+  return heroStreetscape.setConditions({ wetness: heroStreetscapeWetness });
+}
+
+function disposeHeroStreetscape() {
+  heroStreetscapeHiddenBaseLayers.forEach(({ object, visible }) => {
+    if (object) object.visible = visible;
+  });
+  heroStreetscape?.dispose();
+  heroStreetscape = null;
+  heroStreetscapeWetness = 0;
+  heroStreetscapeHiddenBaseLayers = [];
+}
+
+function initializeHeroStreetscape() {
+  disposeHeroStreetscape();
+  if (!activeHeroTile || !cityRoot || !cityData) return null;
+  heroStreetscapeWetness = heroStreetscapeWetnessForWeather();
+  heroStreetscape = createFerryBuildingStreetscape({
+    scene,
+    parent: cityRoot,
+    tileBounds: activeHeroTile.bounds,
+    elevationAt,
+    roads: cityData.roads,
+    seaLevel: SEA_LEVEL_Y,
+    roadSurfaceLift: roadSurfaceLift(),
+    wetness: heroStreetscapeWetness,
+    existingSurfaceLayers: {
+      curbs: true,
+      sidewalks: true,
+    },
+  });
+  const baseCrosswalks = cityRoot.getObjectByName('Real map zebra crossings');
+  if (baseCrosswalks) {
+    heroStreetscapeHiddenBaseLayers.push({
+      object: baseCrosswalks,
+      name: baseCrosswalks.name,
+      visible: baseCrosswalks.visible,
+      reason: 'hero markings replace the base crossing batch within the active tile',
+    });
+    baseCrosswalks.visible = false;
+  }
+  return heroStreetscape;
+}
+
+function getHeroStreetscapeDiagnostics() {
+  const root = heroStreetscape?.root;
+  return {
+    active: Boolean(heroStreetscape),
+    tileId: activeHeroTile?.id || null,
+    attached: Boolean(root?.parent),
+    wetness: heroStreetscapeWetness,
+    stats: heroStreetscape?.stats || null,
+    hiddenBaseLayers: heroStreetscapeHiddenBaseLayers.map(({ name, visible, reason }) => ({
+      name,
+      previousVisibility: visible,
+      reason,
+    })),
+    layers: root?.children.map((child) => ({
+      name: child.name,
+      visible: child.visible,
+      instances: child.count || 0,
+    })) || [],
+  };
+}
+
 function disposeHeroPerformanceMode() {
   if (composer && heroPerformancePriorComposerPixelRatio != null) {
     composer.setPixelRatio(heroPerformancePriorComposerPixelRatio);
@@ -10124,6 +10201,7 @@ function setWeatherMode(mode) {
   }
   applyWeatherRoadTuning(mode);
   syncHeroAtmosphereConditions();
+  syncHeroStreetscapeConditions();
   heroPerformanceMode?.invalidateShadows();
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
@@ -10460,6 +10538,7 @@ function renderLoop() {
   updateRain(dt);
   updateWeatherVisuals(dt);
   heroAtmosphere?.update(dt);
+  heroStreetscape?.update(dt);
   updateHeroPerformance(now);
   if (composer) composer.render();
   else renderer.render(scene, camera);
@@ -10729,6 +10808,7 @@ async function buildCity() {
     disposeHeroPerformanceMode();
     if (cityRoot) {
       disposeHeroAtmosphere();
+      disposeHeroStreetscape();
       scene.remove(cityRoot);
       disposeRoot(cityRoot);
     }
@@ -10906,6 +10986,7 @@ async function buildCity() {
       createStreetFurniture(activeRoads);
       createWetWeatherVisuals(activeRoads);
     }
+    initializeHeroStreetscape();
     initializeHeroAtmosphere();
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
     sceneTriangleCount = fullCityMode ? 0 : countSceneTriangles(cityRoot);
@@ -11058,6 +11139,7 @@ function start() {
       drawCalls: renderer?.info?.render?.calls ?? null,
       triangles: renderer?.info?.render?.triangles ?? null,
       heroAtmosphere: getHeroAtmosphereDiagnostics(),
+      heroStreetscape: getHeroStreetscapeDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
@@ -11268,6 +11350,7 @@ function start() {
     setCityMode: (mode) => setCityMode(mode),
     getHeroTile: () => activeHeroTile,
     getHeroAtmosphere: () => getHeroAtmosphereDiagnostics(),
+    getHeroStreetscape: () => getHeroStreetscapeDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),
     getHeroCamera: () => getHeroCameraDiagnostics(),
