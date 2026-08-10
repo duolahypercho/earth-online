@@ -36,6 +36,13 @@ import {
   createHeroTileHandoffController,
   heroTileHandoffConfigFromRuntimeTile,
 } from './hero-tile-handoff.js';
+import {
+  createFerryWestPreviewNeighbor,
+  FERRY_WEST_PREVIEW_NEIGHBOR_ID,
+  loadFerryWestPreviewNeighbor,
+  previewWestBounds,
+  sharedWestEdgeAgreement,
+} from './hero-preview-neighbor.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
@@ -7120,6 +7127,9 @@ let heroCameraLastPlayerPosition = null;
 let heroCameraLastVehicleCandidates = 0;
 let heroTileHandoff = null;
 let heroTileHandoffLastMovement = null;
+let heroPreviewNeighbor = null;
+let heroPreviewMountPromise = null;
+let heroPreviewMountRevision = 0;
 let playerYaw = 0;
 let playerPitch = -0.12;
 let pointerLockActive = false;
@@ -7458,21 +7468,76 @@ function nearestRegionPoint(x, z) {
   return best;
 }
 
-function disposeHeroTileHandoff() {
+function disposeHeroTileHandoff({ preservePreview = false } = {}) {
   heroTileHandoff?.dispose();
   heroTileHandoff = null;
   heroTileHandoffLastMovement = null;
+  if (!preservePreview) heroPreviewMountRevision += 1;
+  if (!preservePreview) heroPreviewMountPromise = null;
+  if (!preservePreview && heroPreviewNeighbor) {
+    cityRoot?.remove(heroPreviewNeighbor.root);
+    heroPreviewNeighbor.dispose();
+    heroPreviewNeighbor = null;
+  }
 }
 
-function initializeHeroTileHandoff() {
-  disposeHeroTileHandoff();
+function residentElevationAt(x, z) {
+  const bounds = heroPreviewNeighbor ? previewWestBounds(heroPreviewNeighbor.artifact) : null;
+  if (bounds && x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ) {
+    return heroPreviewNeighbor.getElevationAt(x, z);
+  }
+  return elevationAt(x, z);
+}
+
+async function mountFerryWestPreviewNeighbor() {
+  if (!activeHeroTile || heroPreviewNeighbor) return heroPreviewNeighbor;
+  if (heroPreviewMountPromise) return heroPreviewMountPromise;
+  const revision = heroPreviewMountRevision;
+  heroPreviewMountPromise = loadFerryWestPreviewNeighbor()
+    .then((artifact) => {
+      if (revision !== heroPreviewMountRevision || !cityRoot || !activeHeroTile) return null;
+      const agreement = sharedWestEdgeAgreement(artifact, elevationAt);
+      if (!agreement.withinOneCentimeter) throw new Error(`West preview edge mismatch ${agreement.maxDifferenceMeters.toFixed(3)}m.`);
+      const neighbor = createFerryWestPreviewNeighbor(artifact);
+      cityRoot.add(neighbor.root);
+      heroPreviewNeighbor = neighbor;
+      const previous = heroTileHandoffLastMovement?.position || playerState;
+      initializeHeroTileHandoff(previous);
+      return neighbor;
+    })
+    .catch((error) => {
+      console.error('Ferry west preview neighbor mount failed', error);
+      return null;
+    })
+    .finally(() => { heroPreviewMountPromise = null; });
+  return heroPreviewMountPromise;
+}
+
+function initializeHeroTileHandoff(previousPosition = null) {
+  disposeHeroTileHandoff({ preservePreview: true });
   if (!activeHeroTile) return null;
-  // The live hero region spans a planned 2x2 tile set, but none of those
-  // production artifacts is published. Cardinal exits therefore remain
-  // unresolved requests until a real neighbor loader is connected.
+  const preview = heroPreviewNeighbor;
+  const bufferedBounds = preview
+    ? { ...activeHeroTile.bufferedBounds, minX: previewWestBounds(preview.artifact).minX }
+    : activeHeroTile.bufferedBounds;
   heroTileHandoff = createHeroTileHandoffController(
-    heroTileHandoffConfigFromRuntimeTile(activeHeroTile),
+    {
+      ...heroTileHandoffConfigFromRuntimeTile({ ...activeHeroTile, bufferedBounds }, {
+        neighbors: { west: FERRY_WEST_PREVIEW_NEIGHBOR_ID },
+      }),
+      onNeighborRequested: (event) => {
+        if (event.edges.includes('west') && !heroPreviewNeighbor) mountFerryWestPreviewNeighbor();
+      },
+    },
   );
+  if (preview) heroTileHandoff.setNeighborReady(FERRY_WEST_PREVIEW_NEIGHBOR_ID, true);
+  if (previousPosition) {
+    heroTileHandoffLastMovement = heroTileHandoff.resolveMovement({
+      previousPosition,
+      candidatePosition: previousPosition,
+      elevationAt: residentElevationAt,
+    });
+  }
   return heroTileHandoff;
 }
 
@@ -7480,7 +7545,7 @@ function getHeroTileHandoffDiagnostics() {
   const diagnostics = heroTileHandoff?.getDiagnostics() || null;
   const last = heroTileHandoffLastMovement || diagnostics?.lastResult || null;
   const outboundEvents = diagnostics?.events || [];
-  const terrainY = playerState ? elevationAt(playerState.x, playerState.z) : null;
+  const terrainY = playerState ? residentElevationAt(playerState.x, playerState.z) : null;
   const avatarGroundError = playerAvatarGroup && terrainY != null
     ? playerAvatarGroup.position.y - terrainY
     : null;
@@ -7501,7 +7566,16 @@ function getHeroTileHandoffDiagnostics() {
     insideBuffer: Boolean(last?.insideBuffer),
     insideCore: last?.insideCore ?? null,
     neighborRequested: outboundEvents.length > 0 || Boolean(last?.neighborRequested),
-    neighborReady: false,
+    neighborReady: Boolean(heroPreviewNeighbor),
+    previewNeighbor: heroPreviewNeighbor ? {
+      ...heroPreviewNeighbor.getDiagnostics(),
+      edge: sharedWestEdgeAgreement(heroPreviewNeighbor.artifact, elevationAt),
+    } : {
+      id: FERRY_WEST_PREVIEW_NEIGHBOR_ID,
+      status: heroPreviewMountPromise ? 'loading-preview' : 'not-mounted-preview',
+      previewOnly: true,
+      productionBlockers: ['Source-lock and NAVD88 reconciliation still block canonical publication.'],
+    },
     clampedToBuffer: Boolean(last?.clampedToBuffer),
     reenteredCore: Boolean(last?.reenteredCore),
     terrainY: heroTileHandoffLastMovement?.terrainY ?? null,
@@ -7541,11 +7615,16 @@ function resolvePlayerPosition(x, z, radius = 0.5, previousPosition = null) {
       }
     }
   }
+  if (heroPreviewNeighbor) {
+    const previewResolved = heroPreviewNeighbor.resolvePlayerCollision({ x: resolvedX, z: resolvedZ, radius });
+    resolvedX = previewResolved.x;
+    resolvedZ = previewResolved.z;
+  }
   if (heroTileHandoff) {
     heroTileHandoffLastMovement = heroTileHandoff.resolveMovement({
       previousPosition,
       candidatePosition: { x: resolvedX, z: resolvedZ },
-      elevationAt,
+      elevationAt: residentElevationAt,
     });
     return {
       x: heroTileHandoffLastMovement.position.x,
@@ -7709,7 +7788,7 @@ function updateHeroCamera(dt) {
     focus: heroCharacter.getCameraFocus(),
     yaw: playerYaw,
     collisionBoxes: collisionBoxesNear(playerState.x, playerState.z, 8),
-    raycastCandidates: nearbyVehicles,
+    raycastCandidates: [...nearbyVehicles, ...(heroPreviewNeighbor?.raycastCandidates || [])],
     dt,
     options: String(activeHeroTile?.source?.landmarkOsmWay) === String(FERRY_BUILDING_OSM_WAY)
       ? FERRY_HERO_CAMERA_FRAME
@@ -7720,8 +7799,9 @@ function updateHeroCamera(dt) {
 
 function getHeroCameraDiagnostics() {
   const diagnostics = heroCameraController?.diagnostics;
-  const cameraInsideBuilding = Boolean(camera && collisionBoxesNear(camera.position.x, camera.position.z, 0.1)
-    .some((box) => box.containsPoint(camera.position)));
+  const cameraInsideBuilding = Boolean(camera && (collisionBoxesNear(camera.position.x, camera.position.z, 0.1)
+    .some((box) => box.containsPoint(camera.position))
+    || heroPreviewNeighbor?.containsBuilding(camera.position.x, camera.position.z)));
   const cameraInsideVehicle = Boolean(camera && playerState && (trafficState?.vehicles || [])
     .filter(({ mesh }) => Math.hypot(mesh.position.x - playerState.x, mesh.position.z - playerState.z) <= 12)
     .filter(({ mesh }) => !heroTrafficVehicleIsFullyExcluded(mesh))
@@ -7800,7 +7880,7 @@ function updatePlayerWalk(dt) {
     legs.children[0].rotation.x = swing;
     legs.children[1].rotation.x = -swing;
   }
-  const playerGroundY = heroTileHandoffLastMovement?.terrainY ?? elevationAt(playerState.x, playerState.z);
+  const playerGroundY = heroTileHandoffLastMovement?.terrainY ?? residentElevationAt(playerState.x, playerState.z);
   playerAvatarGroup.position.set(playerState.x, playerGroundY, playerState.z);
   playerAvatarGroup.rotation.y = playerYaw;
   heroCharacter?.update({
@@ -7811,7 +7891,7 @@ function updatePlayerWalk(dt) {
   if (activeHeroTile?.camera === 'third-person' && heroCharacter && heroCameraController) {
     updateHeroCamera(dt);
   } else {
-    camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
+    camera.position.set(playerState.x, residentElevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.set(playerPitch, playerYaw, 0);
   }
