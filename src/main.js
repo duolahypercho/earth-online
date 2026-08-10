@@ -498,6 +498,7 @@ const coreSignalPlans = city.roadNetwork.intersections.map((position, index) => 
 const traffic = createTrafficSystem({
   scene,
   onPlayerTrafficViolation: (event) => handlePlayerTrafficViolation(event),
+  onPlayerVehicleCollision: (event) => handlePlayerVehicleCollision(event),
   roadNetwork: {
     ...city.roadNetwork,
     roads: [...city.roadNetwork.roads, ...expansion.roadNetwork.roads],
@@ -1241,6 +1242,7 @@ const TAXI_RIDE_DURATION = 3.2;
 const MUNI_RIDE_FARE = 3;
 const TRAFFIC_CITATION_FINE = 18;
 const TRAFFIC_CITATION_HEAT = 12;
+const RECKLESS_COLLISION_HEAT = 10;
 let progressSaveElapsed = 0;
 let lastProgressSave = null;
 let lastPublicWorldState = null;
@@ -1337,6 +1339,27 @@ function handlePlayerTrafficViolation(event) {
     : `RED LIGHT / $${transaction.charged} citation paid · heat ${Math.round(heat?.heat ?? 0)}.`);
   savePlayerProgress();
   return true;
+}
+
+function handlePlayerVehicleCollision(event) {
+  if (event?.kind !== 'reckless-collision' || !event.playerDamage || !event.victimDamage) {
+    return false;
+  }
+  const heatBefore = streetHeat?.getState?.().heat ?? 0;
+  const message = `RECKLESS COLLISION / ${event.victimLabel || 'vehicle'} struck · heat +${RECKLESS_COLLISION_HEAT}.`;
+  const heat = streetHeat?.reportIncident?.(RECKLESS_COLLISION_HEAT, {
+    kind: 'reckless-collision',
+    message,
+    source: 'reckless-collision',
+  });
+  lastVehicleDamageAt = event.playerDamage?.lastDamage?.at ?? lastVehicleDamageAt;
+  hud?.setMessage(`${message} Integrity ${Math.round((event.playerDamage.ratio ?? 0) * 100)}%.`);
+  savePlayerProgress();
+  return {
+    heatBefore,
+    heatAfter: heat?.heat ?? heatBefore,
+    heatAdded: RECKLESS_COLLISION_HEAT,
+  };
 }
 
 function restorePlayerProgress() {

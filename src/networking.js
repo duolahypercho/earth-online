@@ -30,6 +30,7 @@ const GAMEPLAY_EVENT_KINDS = new Set([
   'vehicle-theft',
   'witness-dispatch',
   'witness-report',
+  'reckless-collision',
 ]);
 
 function boundedInteger(value, min, max, fallback = min) {

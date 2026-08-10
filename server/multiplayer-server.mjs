@@ -15,7 +15,7 @@ const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
 const GAMEPLAY_EVENT_KINDS = new Set([
   'arrested', 'critical', 'escaped', 'high-heat', 'near-miss', 'pedestrian-impact',
   'pursuit-start', 'responder-contact', 'traffic-violation', 'vehicle-theft',
-  'witness-dispatch', 'witness-report',
+  'witness-dispatch', 'witness-report', 'reckless-collision',
 ]);
 
 function boundedNumber(value, min, max, fallback = 0) {

@@ -1671,6 +1671,7 @@ export function createTrafficSystem({
   roadNetwork,
   fleetSize,
   onPlayerTrafficViolation,
+  onPlayerVehicleCollision,
 } = {}) {
   const group = new THREE.Group();
   group.name = 'traffic';
@@ -1726,6 +1727,8 @@ export function createTrafficSystem({
     deliveryStops: 0,
     vehicleDamageEvents: 0,
     collisionDamageEvents: 0,
+    recklessCollisionEvents: 0,
+    lastPlayerCollision: null,
     disabledVehicles: 0,
     vehicleRepairs: 0,
     vehicleThefts: 0,
@@ -3696,7 +3699,35 @@ export function createTrafficSystem({
                 6,
                 42,
               );
-              applyVehicleDamage(v, damage, 'traffic-impact');
+              const playerDamage = applyVehicleDamage(v, damage, 'traffic-impact');
+              if (!v.leader.disabled) {
+                const victimDamageAmount = THREE.MathUtils.clamp(damage * 0.55, 4, 24);
+                const victimDamage = applyVehicleDamage(
+                  v.leader,
+                  victimDamageAmount,
+                  'reckless-collision',
+                );
+                v.leader.speed *= 0.72;
+                v.leader.longitudinalAccel = Math.min(0, v.leader.longitudinalAccel);
+                v.leader.hazardUntil = Math.max(v.leader.hazardUntil, t + 2.4);
+                diagnostics.recklessCollisionEvents += 1;
+                const collisionEvent = {
+                  kind: 'reckless-collision',
+                  sequence: diagnostics.recklessCollisionEvents,
+                  playerVehicleId: vehicles.indexOf(v),
+                  victimVehicleId: vehicles.indexOf(v.leader),
+                  victimClass: v.leader.cls,
+                  victimLabel: v.leader.identity?.label || v.leader.cls,
+                  relativeSpeed: Math.round(relativeImpactSpeed * 10) / 10,
+                  playerDamage,
+                  victimDamage,
+                };
+                const aftermath = onPlayerVehicleCollision?.(collisionEvent) ?? null;
+                if (aftermath && typeof aftermath === 'object') {
+                  collisionEvent.aftermath = { ...aftermath };
+                }
+                diagnostics.lastPlayerCollision = collisionEvent;
+              }
               v.damageCooldownUntil = t + VEHICLE_DAMAGE_COOLDOWN;
             }
             nextS = v.leadS - v.dir * (v.leadHalf + v.half + emergencyGap);
@@ -4507,6 +4538,7 @@ export function createTrafficSystem({
           hazard: hazardOn,
         },
         speed: Math.round(v.speed * 10) / 10,
+        heading: v.heading ?? v.mesh.root.rotation.y ?? 0,
         road: v.road,
         s: Math.round(v.s * 10) / 10,
         position: {
