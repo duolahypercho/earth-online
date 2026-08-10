@@ -31,6 +31,7 @@ import {
   lookupStreetOverride,
   normalizeStreetName,
 } from './street-design.js';
+import { heroTileFromSearch, heroTilePolygon } from './hero-tile.js';
 import './styles.css';
 
 // ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
@@ -38,6 +39,8 @@ import './styles.css';
 //   Per-street: setStreet('Market St', { asphaltWidth: 16, sidewalkWidth: 3.5 })
 let streetDesign = createStreetDesign();
 const urlStreetSearch = typeof window !== 'undefined' ? window.location.search : '';
+const heroLaunch = typeof window !== 'undefined' ? heroTileFromSearch(window.location.search) : null;
+let activeHeroTile = heroLaunch?.tile || null;
 
 function syncStreetDesignIntoCityMeta() {
   if (!cityData?.meta) return;
@@ -908,6 +911,18 @@ async function playPrebuiltCity() {
 
 async function applyBootQuery() {
   const params = new URLSearchParams(window.location.search);
+  if (heroLaunch) {
+    setRegion(heroTilePolygon(heroLaunch.tile));
+    bootOverlay.classList.add('is-dismissed');
+    hud.inert = false;
+    scheduleMapDraw();
+    ensureSandboxAudio();
+    modeLabel.textContent = `Loading ${heroLaunch.tile.label}`;
+    hint.textContent = 'Loading the real Ferry Building block from the local OSM snapshot…';
+    await buildCity().catch((error) => console.error('Hero tile launch failed', error));
+    setCityMode(heroLaunch.mode);
+    return;
+  }
   const preset = params.get('preset');
   const playPrebuilt = params.get('play') === '1' || params.get('prebuilt') === '1';
   const shouldBuild = params.get('build') === '1' || params.get('autobuild') === '1';
@@ -955,7 +970,7 @@ async function loadCity() {
   };
   setStatus('boot', `Ready · ${cityData.meta.counts.detailRoads} detailed streets · ${cityData.meta.counts.signals} signals`, 1);
   launchButton.disabled = false;
-  launchButton.textContent = 'Enter Map Lab';
+  launchButton.textContent = heroLaunch ? `Walk ${heroLaunch.tile.label}` : 'Enter Map Lab';
   await applyBootQuery();
 }
 
@@ -1154,6 +1169,7 @@ function applyPreset(name) {
     const flat = cityData.boundary[0];
     setRegion(Array.from({ length: flat.length / 2 }, (_, i) => [flat[i * 2], flat[i * 2 + 1]]));
   } else if (PRESETS[name]) {
+    activeHeroTile = null;
     setRegion(PRESETS[name]);
   }
 }
@@ -7440,7 +7456,7 @@ function initPlayer(position) {
   playerState = {
     x: resolved.x,
     z: resolved.z,
-    yaw: Math.atan2(0 - position.x, 0 - position.z),
+    yaw: Number.isFinite(position.yaw) ? position.yaw : Math.atan2(0 - position.x, 0 - position.z),
     pitch: -0.12,
     walking: 0,
   };
@@ -7477,9 +7493,20 @@ function updatePlayerWalk(dt) {
   }
   playerAvatarGroup.position.set(playerState.x, elevationAt(playerState.x, playerState.z), playerState.z);
   playerAvatarGroup.rotation.y = playerYaw;
-  camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
-  camera.rotation.order = 'YXZ';
-  camera.rotation.set(playerPitch, playerYaw, 0);
+  if (activeHeroTile?.camera === 'third-person') {
+    const distance = 4.4;
+    const eyeY = elevationAt(playerState.x, playerState.z) + 2.45;
+    camera.position.set(
+      playerState.x - Math.sin(playerYaw) * distance,
+      eyeY,
+      playerState.z - Math.cos(playerYaw) * distance,
+    );
+    camera.lookAt(playerState.x, elevationAt(playerState.x, playerState.z) + 1.05, playerState.z);
+  } else {
+    camera.position.set(playerState.x, elevationAt(playerState.x, playerState.z) + 1.68, playerState.z);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.set(playerPitch, playerYaw, 0);
+  }
 }
 
 function createPedestrianAvatar(palette) {
@@ -9253,7 +9280,7 @@ function setCityMode(mode) {
     // Face along the nearest OSM road so street beauty frames see a canyon,
     // not empty water or the back of a block.
     const paths = trafficState?.paths || [];
-    if (playerState && paths.length) {
+    if (playerState && paths.length && !activeHeroTile) {
       let best = null;
       let bestDist = Infinity;
       for (const path of paths) {
@@ -10626,10 +10653,12 @@ async function buildCity() {
       createMistSystem();
     }
     const trafficStart = trafficState?.vehicles[0]?.mesh?.position;
-    initPlayer({
-      x: trafficStart ? trafficStart.x : centroid.x,
-      z: trafficStart ? trafficStart.z : centroid.z,
-    });
+    initPlayer(activeHeroTile && !fullCityMode
+      ? activeHeroTile.spawn
+      : {
+        x: trafficStart ? trafficStart.x : centroid.x,
+        z: trafficStart ? trafficStart.z : centroid.z,
+      });
     controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
     camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
     positionSkyDomeAt(centroid, fullCityMode ? regionSpan(regionPoints) : regionSpan(regionPoints));
@@ -10949,6 +10978,7 @@ function start() {
       };
     },
     setCityMode: (mode) => setCityMode(mode),
+    getHeroTile: () => activeHeroTile,
     getDriveIndex: () => driveIndex,
     enterNearestBuilding: () => enterNearestBuilding(),
     exitInterior: () => exitInterior(),
