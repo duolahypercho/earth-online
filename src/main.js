@@ -1536,6 +1536,43 @@ function exitPlayerCar() {
   return true;
 }
 
+function getPlayerVehicleRepairQuote() {
+  const state = traffic.getPlayerVehicleState?.();
+  const damage = state?.damage;
+  if (!state || !damage) return null;
+  const missing = Math.max(0, Number(damage.maxHealth) - Number(damage.health));
+  const cost = missing > 0
+    ? THREE.MathUtils.clamp(Math.ceil(8 + missing * 0.12), 12, 48)
+    : 0;
+  return {
+    vehicleClass: state.class,
+    missing: Math.round(missing * 10) / 10,
+    cost,
+    affordable: cost > 0 && lifeSim?.canAffordVehicleRepair?.(cost) === true,
+  };
+}
+
+function repairCurrentPlayerVehicle(source = 'roadside-repair') {
+  const quote = getPlayerVehicleRepairQuote();
+  if (!quote || quote.cost <= 0) return { ok: false, reason: 'not-needed', quote };
+  if (!quote.affordable) {
+    lifeSim?.payVehicleRepair?.(quote.cost, quote.vehicleClass);
+    return { ok: false, reason: 'insufficient-funds', quote };
+  }
+  const repair = traffic.repairPlayerVehicle?.(source) ?? null;
+  if (!repair) return { ok: false, reason: 'unavailable', quote };
+  if (!lifeSim?.payVehicleRepair?.(quote.cost, quote.vehicleClass)) {
+    return { ok: false, reason: 'payment-failed', quote, repair };
+  }
+  hud?.setMessage(`Roadside repair complete · $${quote.cost} paid.`);
+  return {
+    ok: true,
+    quote,
+    repair,
+    transaction: lifeSim?.getState?.().lastTransaction ?? null,
+  };
+}
+
 function updatePlayerLayer(dt, elapsed) {
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
@@ -1557,12 +1594,13 @@ function updatePlayerLayer(dt, elapsed) {
       heading: drivingState.heading,
       weather: weatherMode,
       damage: drivingState.damage,
+      repairCost: getPlayerVehicleRepairQuote()?.cost ?? 0,
     });
     const damageAt = drivingState.damage?.lastDamage?.at ?? null;
     if (damageAt !== null && damageAt !== lastVehicleDamageAt) {
       lastVehicleDamageAt = damageAt;
       hud?.setMessage(drivingState.damage?.disabled
-        ? 'Vehicle disabled · exit or repair before driving.'
+        ? `Vehicle disabled · R roadside repair $${getPlayerVehicleRepairQuote()?.cost ?? 0} / E exit.`
         : `Vehicle impact · integrity ${Math.round((drivingState.damage?.ratio ?? 0) * 100)}%.`);
     }
     lifeSim?.noteDriving?.(dt);
@@ -3263,8 +3301,7 @@ function onKeyDown(event) {
   if (code === 'KeyR' && !event.repeat) {
     const drivingState = traffic.getPlayerVehicleState?.();
     if (drivingState?.damage?.disabled) {
-      const repair = traffic.repairPlayerVehicle?.('roadside-repair');
-      if (repair) hud?.setMessage('Roadside repair complete · systems nominal.');
+      repairCurrentPlayerVehicle('roadside-repair');
     } else {
       const combatState = combat?.getState?.();
       if (!(combatInputAvailable() && combatState?.ammo < combatState?.magazineSize && combat.reload())) {
@@ -3974,15 +4011,16 @@ window.__SF_SIM__ = {
     const damage = traffic.damagePlayerVehicle?.(amount, source) ?? null;
     if (damage) {
       hud?.setMessage(damage.disabled
-        ? 'Vehicle disabled · exit or repair before driving.'
+        ? `Vehicle disabled · R roadside repair $${getPlayerVehicleRepairQuote()?.cost ?? 0} / E exit.`
         : `Vehicle integrity ${Math.round(damage.ratio * 100)}%.`);
     }
     return damage;
   },
   repairPlayerVehicle(source) {
-    const repair = traffic.repairPlayerVehicle?.(source) ?? null;
-    if (repair) hud?.setMessage('Vehicle repaired · systems nominal.');
-    return repair;
+    return repairCurrentPlayerVehicle(source);
+  },
+  getPlayerVehicleRepairQuote() {
+    return getPlayerVehicleRepairQuote();
   },
   get renderQuality() {
     return {

@@ -1429,13 +1429,14 @@ export function createHud({
       Math.max(0, Math.min(1, Number(driveState.damage?.ratio) || 0)) * 100,
     );
     const disabled = driveState.damage?.disabled === true;
+    const repairCost = Math.max(0, Math.round(Number(driveState.repairCost) || 0));
     drivePanel.dataset.damage = String(driveState.damage?.state || 'clear');
     driveMode.textContent = disabled
-      ? 'VEHICLE / DISABLED'
+      ? `VEHICLE / DISABLED · R $${repairCost}`
       : `DRIVE / ${String(driveState.weather || 'CLEAR').toUpperCase()} · ${integrity}%`;
     drivePanel.setAttribute(
       'aria-label',
-      `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}. Vehicle integrity ${integrity} percent${disabled ? ', disabled' : ''}.`,
+      `Driving. Speed ${speed} kilometers per hour. Heading ${headingLabels[cardinal]}. Vehicle integrity ${integrity} percent${disabled ? `, disabled, roadside repair ${repairCost} dollars` : ''}.`,
     );
   }
 

@@ -49,6 +49,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     cash: 140,
     lastActivity: null,
     lastActivityAt: 0,
+    lastTransaction: null,
   };
   let lastHudAt = -Infinity;
 
@@ -90,6 +91,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       needs: { ...state.needs },
       needLabels: { ...NEED_LABELS },
       cash: Math.round(state.cash),
+      lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
       activity: state.lastActivity,
       mood: getMood(),
       lowNeeds: summary ? summary.labels.split(', ').filter(Boolean) : [],
@@ -147,6 +149,30 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
   function spendCash(amount) {
     if (state.cash < amount) return false;
     state.cash -= amount;
+    return true;
+  }
+
+  function canAffordVehicleRepair(cost = 0) {
+    const amount = Math.max(0, Math.round(Number(cost) || 0));
+    return amount > 0 && state.cash >= amount;
+  }
+
+  function payVehicleRepair(cost = 0, vehicleClass = 'vehicle') {
+    const amount = Math.max(0, Math.round(Number(cost) || 0));
+    if (amount <= 0) return false;
+    if (!spendCash(amount)) {
+      onMessage(`Roadside repair costs $${amount}. You need more cash.`);
+      return false;
+    }
+    state.lastActivity = `repair:${String(vehicleClass || 'vehicle')}`;
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'vehicle-repair',
+      label: 'Roadside repair',
+      amount: -amount,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
     return true;
   }
 
@@ -255,6 +281,8 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     canAffordMeal,
     canWork,
     workShift,
+    canAffordVehicleRepair,
+    payVehicleRepair,
     rest,
     noteDriving,
     needsSummary,

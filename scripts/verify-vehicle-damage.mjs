@@ -158,6 +158,8 @@ try {
       life,
       hud: document.querySelector('.hud__drive-mode')?.textContent || '',
       diagnostics: sim.traffic.getDiagnostics(),
+      cash: sim.lifeSim.getState().cash,
+      quote: sim.getPlayerVehicleRepairQuote(),
     };
   });
   assert(disabled.result?.disabled === true && disabled.result?.health === 0,
@@ -168,16 +170,41 @@ try {
     && disabled.life?.indicators?.hazard === true,
   'fleet snapshot did not expose disabled hazards/action', disabled.life);
   assert(disabled.hud.includes('DISABLED'), 'drive HUD did not expose disabled state', disabled.hud);
+  assert(disabled.quote?.cost > 0 && disabled.hud.includes(`$${disabled.quote.cost}`),
+    'disabled HUD did not expose a repair quote', disabled);
   assert(disabled.diagnostics?.vehicleDamageEvents >= 3
     && disabled.diagnostics?.collisionDamageEvents >= 1
     && disabled.diagnostics?.disabledVehicles === 1,
   'damage diagnostics did not count damage/disable transitions', disabled.diagnostics);
+
+  const unaffordableBefore = await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    const before = sim.lifeSim.getState();
+    sim.lifeSim.addCash(-before.cash);
+    return { before, after: sim.lifeSim.getState() };
+  });
+  await page.keyboard.press('r');
+  await page.waitForTimeout(120);
+  const unaffordable = await page.evaluate(() => ({
+    damage: window.__SF_SIM__.traffic.getPlayerVehicleState()?.damage || null,
+    life: window.__SF_SIM__.lifeSim.getState(),
+    diagnostics: window.__SF_SIM__.traffic.getDiagnostics(),
+    message: document.querySelector('.hud__message-text')?.textContent || '',
+  }));
+  assert(unaffordable.damage?.disabled === true
+    && unaffordable.life.cash === 0
+    && unaffordable.diagnostics?.vehicleRepairs === 0
+    && unaffordable.message.includes(`costs $${disabled.quote.cost}`),
+  'repair key did not refuse an unaffordable transaction', unaffordable);
+
+  await page.evaluate((cash) => window.__SF_SIM__.lifeSim.addCash(cash), disabled.cash);
 
   await page.keyboard.press('r');
   await page.waitForTimeout(120);
   const repaired = await page.evaluate(() => ({
     result: window.__SF_SIM__.traffic.getPlayerVehicleState()?.damage || null,
     diagnostics: window.__SF_SIM__.traffic.getDiagnostics(),
+    life: window.__SF_SIM__.lifeSim.getState(),
     message: document.querySelector('.hud__message-text')?.textContent || '',
   }));
   await page.keyboard.down('w');
@@ -197,8 +224,12 @@ try {
   });
   assert(repaired.result?.state === 'clear' && repaired.result?.ratio === 1,
     'repair did not restore full integrity', repaired.result);
-  assert(repaired.message.includes('Roadside repair complete'),
+  assert(repaired.message.includes(`$${disabled.quote.cost} paid`),
     'repair key did not expose recovery feedback', repaired.message);
+  assert(repaired.life.cash === disabled.cash - disabled.quote.cost
+    && repaired.life.lastTransaction?.kind === 'vehicle-repair'
+    && repaired.life.lastTransaction?.amount === -disabled.quote.cost,
+  'roadside repair did not record the quoted cash transaction', repaired.life);
   assert(repairedMotion.state?.speed > 0.5 && repairedMotion.state?.damage?.disabled === false,
     'repaired vehicle did not return to driving', repairedMotion.state);
   assert(repairedMotion.diagnostics?.disabledVehicles === 0
@@ -223,6 +254,7 @@ try {
     collision,
     damaged: { ...damaged, hud: damagedHud },
     disabled,
+    unaffordable: { ...unaffordable, setup: unaffordableBefore },
     repaired: { ...repaired, motion: repairedMotion },
     performance,
     consoleErrors,
