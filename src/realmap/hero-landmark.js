@@ -317,10 +317,12 @@ export function createFerryBuildingLandmark(options = {}) {
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.22, towerBase, towerHeight * 0.44, towerBase));
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.58, towerBase * 0.77, towerHeight * 0.30, towerBase * 0.77));
   put(tower, boxMatrix(matrix, frame, towerAlong, entranceAcross, baseY + towerHeight * 0.80, towerBase * 0.92, towerHeight * 0.12, towerBase * 0.92));
+  const towerTierTopY = baseY + towerHeight * 0.86;
+  const towerRoofHeight = towerBase * 0.54;
   const towerRoof = new THREE.Mesh(pyramid, materials.roof);
   towerRoof.name = 'Ferry Building clock tower pyramidal roof';
-  towerRoof.position.copy(localToWorld(frame, towerAlong, entranceAcross, baseY + towerHeight + towerBase * 0.27));
-  towerRoof.scale.set(towerBase * 1.12, towerBase * 0.54, towerBase * 1.12);
+  towerRoof.position.copy(localToWorld(frame, towerAlong, entranceAcross, towerTierTopY + towerRoofHeight * 0.5));
+  towerRoof.scale.set(towerBase * 1.12, towerRoofHeight, towerBase * 1.12);
   towerRoof.rotation.y = frame.threeYaw + Math.PI / 4;
   towerRoof.castShadow = true;
   root.add(towerRoof);

@@ -58,7 +58,8 @@ for (const axis of frameAxes) {
   assert.ok(clockNormals.some((normal) => Math.abs(normal.dot(axis)) > 0.9999), 'clock faces must remain normal to each footprint frame axis');
 }
 const towerMatrix = new THREE.Matrix4();
-landmark.root.getObjectByName('Ferry Building clock tower tiers').getMatrixAt(0, towerMatrix);
+const towerTiers = landmark.root.getObjectByName('Ferry Building clock tower tiers');
+towerTiers.getMatrixAt(0, towerMatrix);
 const towerWorld = new THREE.Vector2(towerMatrix.elements[12], towerMatrix.elements[14]);
 const marketAxisLandside = new THREE.Vector2(2259.739, 1918.918);
 const marketAxisBayside = new THREE.Vector2(2299.660, 1959.198);
@@ -76,6 +77,16 @@ assert.ok(towerAlong >= frame.bounds.minAlong && towerAlong <= frame.bounds.maxA
 assert.ok(towerAcross >= frame.bounds.minAcross && towerAcross <= frame.bounds.maxAcross, 'clock tower must remain within authoritative across bounds');
 assert.ok(towerWorld.distanceTo(new THREE.Vector2(landmark.getDiagnostics().towerAnchor[0], landmark.getDiagnostics().towerAnchor[2])) < 5e-4, 'tower diagnostics must report its true world anchor');
 assert.equal(landmark.getDiagnostics().towerHeightMetres, 74, 'clock tower must retain its documented approximately 245 ft scale');
+const finalTierMatrix = new THREE.Matrix4();
+towerTiers.getMatrixAt(2, finalTierMatrix);
+const finalTierScale = new THREE.Vector3();
+finalTierMatrix.decompose(new THREE.Vector3(), new THREE.Quaternion(), finalTierScale);
+const finalTierTop = finalTierMatrix.elements[13] + finalTierScale.y * 0.5;
+const towerRoof = landmark.root.getObjectByName('Ferry Building clock tower pyramidal roof');
+towerRoof.geometry.computeBoundingBox();
+towerRoof.updateMatrixWorld(true);
+const towerRoofBounds = towerRoof.geometry.boundingBox.clone().applyMatrix4(towerRoof.matrixWorld);
+assert.ok(Math.abs(towerRoofBounds.min.y - finalTierTop) < 1e-5, 'pyramidal roof must sit directly on the final tower tier');
 const documentedAnchor = landmark.getDiagnostics().towerAnchor;
 assert.ok(Math.abs(documentedAnchor[0] - FERRY_CLOCK_TOWER_ANCHOR[0]) < 1e-4, 'tower X anchor must remain fixed to the Ferry Building OSM-world location');
 assert.ok(Math.abs(documentedAnchor[1] - FERRY_CLOCK_TOWER_ANCHOR[1]) < 1e-4, 'tower Y anchor must remain fixed to sampled ground plus base lift');
