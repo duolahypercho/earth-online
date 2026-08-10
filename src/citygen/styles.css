@@ -807,7 +807,7 @@ body {
 .brand {
   top: 18px;
   left: 18px;
-  width: 210px;
+  width: 230px;
   min-height: 54px;
   gap: 11px;
   padding: 8px 12px 8px 10px;
@@ -857,11 +857,11 @@ body {
 }
 
 .brand p {
-  max-width: 130px;
+  max-width: 154px;
   overflow: hidden;
   color: var(--accent);
   font-size: 10px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
@@ -1013,9 +1013,10 @@ body {
   padding: 8px 12px;
   border-radius: 10px;
   font-family: var(--display);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.045em;
   text-transform: uppercase;
+  color: #c3cec8;
 }
 
 .readout span:first-child {
@@ -1028,8 +1029,9 @@ body {
   max-width: 290px;
   border-radius: 10px;
   font-family: var(--display);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.035em;
+  color: #c3cec8;
 }
 
 .minimap {
@@ -1037,7 +1039,7 @@ body {
   left: 18px;
   width: 158px;
   height: 181px;
-  padding: 27px 4px 4px;
+  padding: 29px 4px 4px;
   border-radius: 12px;
 }
 
@@ -1046,8 +1048,9 @@ body {
   top: 9px;
   left: 10px;
   color: var(--accent);
-  font: 700 8px var(--display);
-  letter-spacing: 0.14em;
+  color: #c5e39b;
+  font: 700 9px var(--display);
+  letter-spacing: 0.1em;
   content: "LIVE CARTOGRAPHY";
 }
 
@@ -1218,6 +1221,11 @@ body {
 .inspector-empty {
   padding: 18px 12px;
   background: rgba(255, 255, 255, 0.025);
+  color: #c6d1cb;
+}
+
+.inspector dt {
+  color: #c0cbc5;
 }
 
 .loading-hud {
