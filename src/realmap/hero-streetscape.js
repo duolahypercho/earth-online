@@ -145,9 +145,12 @@ function put(batch, matrix, color) {
 }
 
 function boxMatrix(target, x, y, z, sx, sy, sz, yaw = 0) {
+  // Three.js positive Y rotation sends local +X toward world -Z. Segment
+  // headings use atan2(dz, dx), so negate the heading to make a box's local
+  // +X axis follow the source segment's world-space +X/+Z direction.
   target.compose(
     new THREE.Vector3(x, y, z),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -yaw, 0)),
     new THREE.Vector3(sx, sy, sz),
   );
   return target;
@@ -205,7 +208,7 @@ function isUsablePoint(x, z, bounds, isSea) {
   return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ && !isSea(x, z);
 }
 
-function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
+function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix) {
   const curbColor = new THREE.Color();
   const slabColor = new THREE.Color();
   let detailSeed = 1;
@@ -223,10 +226,14 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
         const curbX = midpointX + nx * side * (halfRoad + 0.08);
         const curbZ = midpointZ + nz * side * (halfRoad + 0.08);
         if (isUsablePoint(curbX, curbZ, bounds, isSea)) {
-          put(batches.curb, boxMatrix(matrix, curbX, elevation(curbX, curbZ) + 0.12, curbZ, length + 0.2, 0.18, 0.24, angle));
-          put(batches.sidewalk, boxMatrix(matrix,
-            midpointX + nx * side * (halfRoad + 1.22), elevation(curbX, curbZ) + 0.045,
-            midpointZ + nz * side * (halfRoad + 1.22), length + 0.14, 0.09, 2.05, angle));
+          if (layers.curbs) {
+            put(batches.curb, boxMatrix(matrix, curbX, roadElevation(curbX, curbZ) + 0.08, curbZ, length + 0.2, 0.16, 0.24, angle));
+          }
+          if (layers.sidewalkSlabs) {
+            put(batches.sidewalk, boxMatrix(matrix,
+              midpointX + nx * side * (halfRoad + 1.22), roadElevation(curbX, curbZ) + 0.04,
+              midpointZ + nz * side * (halfRoad + 1.22), length + 0.14, 0.08, 2.05, angle));
+          }
         }
       }
 
@@ -236,7 +243,7 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
         const x = a[0] + dx * progress;
         const z = a[1] + dz * progress;
         if (isUsablePoint(x, z, bounds, isSea)) {
-          put(batches.marking, boxMatrix(matrix, x, elevation(x, z) + 0.045, z, 3.35, 0.025, 0.13, angle));
+          put(batches.marking, boxMatrix(matrix, x, roadElevation(x, z) + 0.012, z, 3.35, 0.018, 0.13, angle));
         }
       }
 
@@ -247,7 +254,7 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
           const x = a[0] + dx * progress + nx * side * (halfRoad + 1.22);
           const z = a[1] + dz * progress + nz * side * (halfRoad + 1.22);
           if (isUsablePoint(x, z, bounds, isSea)) {
-            put(batches.seams, boxMatrix(matrix, x, elevation(x, z) + 0.094, z, 0.034, 0.012, 1.97, angle));
+            put(batches.seams, boxMatrix(matrix, x, sidewalkElevation(x, z) + 0.004, z, 0.034, 0.008, 1.97, angle));
           }
         }
       }
@@ -261,7 +268,7 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
           const x = a[0] + dx * progress;
           const z = a[1] + dz * progress;
           if (isUsablePoint(x, z, bounds, isSea)) {
-            put(batches.marking, boxMatrix(matrix, x, elevation(x, z) + 0.052, z, 0.58, 0.028, Math.max(2.8, road.width - 0.95), angle));
+            put(batches.marking, boxMatrix(matrix, x, roadElevation(x, z) + 0.013, z, 0.58, 0.02, Math.max(2.8, road.width - 0.95), angle));
           }
         }
       }
@@ -275,7 +282,7 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
         const z = a[1] + dz * progress + nz * side * edgeInset;
         if (isUsablePoint(x, z, bounds, isSea)) {
           const size = detailSeed % 3 === 0 ? 0.78 : 0.46;
-          put(batches.utility, cylinderMatrix(matrix, x, elevation(x, z) + 0.054, z, size, 0.025, size, angle + Math.PI / 4));
+          put(batches.utility, cylinderMatrix(matrix, x, roadElevation(x, z) + 0.01, z, size, 0.02, size, angle + Math.PI / 4));
         }
         detailSeed += 1;
       }
@@ -285,14 +292,14 @@ function addRoadDetail(batches, roads, elevation, bounds, isSea, matrix) {
   setBatchColors(batches.sidewalk, (index) => slabColor.setHex(PALETTE.sidewalk).offsetHSL(0, 0, (hash11(index + 19) - 0.5) * 0.11));
 }
 
-function addPlazaFurniture(batches, elevation, bounds, isSea, matrix) {
+function addPlazaFurniture(batches, sidewalkElevation, bounds, isSea, matrix) {
   const fixtures = [
     [2317.2, 1833.8, 0.78], [2299.6, 1821.9, 0.78], [2339.5, 1851.6, 0.78],
     [2350.1, 1862.3, 0.78], [2311.5, 1832.3, 0.78], [2287.1, 1793.9, 0.78],
   ];
   fixtures.forEach(([x, z, scale], index) => {
     if (!isUsablePoint(x, z, bounds, isSea)) return;
-    const y = elevation(x, z);
+    const y = sidewalkElevation(x, z);
     put(batches.bollard, cylinderMatrix(matrix, x, y + 0.48, z, 0.16 * scale, 0.92, 0.16 * scale));
     if (index % 2 === 0) {
       put(batches.planter, cylinderMatrix(matrix, x + 1.35, y + 0.28, z - 0.7, 0.72, 0.5, 0.72));
@@ -303,7 +310,7 @@ function addPlazaFurniture(batches, elevation, bounds, isSea, matrix) {
   const benches = [[2326.2, 1842.2, 0.78], [2343.8, 1859.6, 0.78], [2306.9, 1828.1, 0.78]];
   for (const [x, z, yaw] of benches) {
     if (!isUsablePoint(x, z, bounds, isSea)) continue;
-    const y = elevation(x, z);
+    const y = sidewalkElevation(x, z);
     put(batches.benchSeat, boxMatrix(matrix, x, y + 0.47, z, 1.65, 0.11, 0.45, yaw));
     for (const side of [-1, 1]) {
       const lx = x + Math.cos(yaw) * side * 0.57;
@@ -313,7 +320,7 @@ function addPlazaFurniture(batches, elevation, bounds, isSea, matrix) {
   }
 }
 
-function addFerryFacadeRelief(batches, elevation, bounds, isSea, matrix) {
+function addFerryFacadeRelief(batches, terrainElevation, bounds, isSea, matrix) {
   // This is a shallow overlay on the named OSM Ferry Building footprint edge,
   // not an alternative landmark volume. It reads as storefront depth at street
   // distance while letting the existing footprint / height remain authoritative.
@@ -328,7 +335,9 @@ function addFerryFacadeRelief(batches, elevation, bounds, isSea, matrix) {
   const midX = (a[0] + b[0]) * 0.5 + nx * 0.08;
   const midZ = (a[1] + b[1]) * 0.5 + nz * 0.08;
   if (!isUsablePoint(midX, midZ, bounds, isSea)) return;
-  const base = elevation(midX, midZ);
+  // Building relief follows terrain/building datum, never the raised road
+  // surface. Applying roadSurfaceLift here detached the storefront vertically.
+  const base = terrainElevation(midX, midZ) + 0.02;
   put(batches.facade, boxMatrix(matrix, midX, base + 2.06, midZ, length, 4.1, 0.18, angle));
   put(batches.facadeTrim, boxMatrix(matrix, midX, base + 0.38, midZ + nz * 0.12, length + 0.26, 0.18, 0.3, angle));
   put(batches.facadeTrim, boxMatrix(matrix, midX, base + 4.05, midZ + nz * 0.12, length + 0.42, 0.22, 0.34, angle));
@@ -365,6 +374,12 @@ function countTriangles(meshes) {
  * source IDs are consumed; defaults are used when none of those caller roads
  * contain a valid line. Width resolves from explicit source width fields, then
  * lanes/lane width, then the conservative eight-metre fallback.
+ *
+ * Pass `existingSurfaceLayers: { curbs: true, sidewalks: true }` when the
+ * runtime already rendered those volumes. Their meshes remain empty while
+ * seams, utility detail, furniture, and markings stay enabled. Optional
+ * `roadSurfaceElevationAt` and `sidewalkSurfaceElevationAt` callbacks return
+ * final world-space surface heights and take precedence over lift inference.
  */
 export function createFerryBuildingStreetscape(options = {}) {
   const scene = options.scene;
@@ -375,13 +390,32 @@ export function createFerryBuildingStreetscape(options = {}) {
     ? options.elevationAt
     : typeof options.getElevation === 'function' ? options.getElevation : () => 0;
   const roadSurfaceLift = Number.isFinite(options.roadSurfaceLift) ? options.roadSurfaceLift : 0.04;
+  const existingSurfaceLayers = options.existingSurfaceLayers || {};
+  const layers = Object.freeze({
+    curbs: options.includeCurbs !== false && !existingSurfaceLayers.curbs,
+    sidewalkSlabs: options.includeSidewalkSlabs !== false && !existingSurfaceLayers.sidewalks,
+  });
   const seaLevel = Number.isFinite(options.seaLevel) ? options.seaLevel : -Infinity;
   const isSea = typeof options.isSea === 'function'
     ? options.isSea
     : (x, z) => elevationAt(x, z) <= seaLevel;
-  const elevation = (x, z) => {
+  const terrainElevation = (x, z) => {
     const result = Number(elevationAt(x, z));
-    return (Number.isFinite(result) ? result : 0) + roadSurfaceLift;
+    return Number.isFinite(result) ? result : 0;
+  };
+  const roadSurfaceElevationAt = typeof options.roadSurfaceElevationAt === 'function'
+    ? options.roadSurfaceElevationAt
+    : null;
+  const sidewalkSurfaceElevationAt = typeof options.sidewalkSurfaceElevationAt === 'function'
+    ? options.sidewalkSurfaceElevationAt
+    : null;
+  const roadElevation = (x, z) => {
+    const sampled = roadSurfaceElevationAt ? Number(roadSurfaceElevationAt(x, z)) : NaN;
+    return Number.isFinite(sampled) ? sampled : terrainElevation(x, z) + roadSurfaceLift;
+  };
+  const sidewalkElevation = (x, z) => {
+    const sampled = sidewalkSurfaceElevationAt ? Number(sidewalkSurfaceElevationAt(x, z)) : NaN;
+    return Number.isFinite(sampled) ? sampled : roadElevation(x, z) + 0.08;
   };
   const roads = normaliseRoads(options.roads);
   const root = new THREE.Group();
@@ -393,15 +427,16 @@ export function createFerryBuildingStreetscape(options = {}) {
   const materials = makeMaterials();
   const batches = makeBatches(root, materials);
   const matrix = new THREE.Matrix4();
-  addRoadDetail(batches, roads, elevation, bounds, isSea, matrix);
-  addPlazaFurniture(batches, elevation, bounds, isSea, matrix);
-  addFerryFacadeRelief(batches, elevation, bounds, isSea, matrix);
+  addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix);
+  addPlazaFurniture(batches, sidewalkElevation, bounds, isSea, matrix);
+  addFerryFacadeRelief(batches, terrainElevation, bounds, isSea, matrix);
   const meshes = finishBatches(batches);
   const stats = Object.freeze({
     drawCalls: meshes.filter((mesh) => mesh.count > 0).length,
     instances: meshes.reduce((total, mesh) => total + mesh.count, 0),
     triangles: countTriangles(meshes),
     roads: roads.map(({ id, name, width }) => ({ id, name, width })),
+    layers,
   });
   if (stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls
     || stats.instances > FERRY_BUILDING_STREETSCAPE_BUDGET.maxInstances
