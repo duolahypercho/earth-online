@@ -4143,23 +4143,36 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     system.weather = WEATHER_MODES.has(mode) ? mode : 'clear';
   }
 
-  function getNearestPerson(position, maxDistance = 4) {
+  function getNearestPerson(position, maxDistance = 4, { includeDefeated = false } = {}) {
     if (!position) return null;
     let nearest = null;
     let nearestDistance = Infinity;
     for (const data of pool) {
       if (!data.mesh.visible) continue;
+      const combatDefeated = data.mesh.userData?.combatDefeated === true
+        || data.mesh.userData?.combatDisabled === true;
+      if (combatDefeated && !includeDefeated) continue;
       const distance = Math.hypot(
         data.mesh.position.x - position.x,
         data.mesh.position.z - position.z,
       );
       if (distance <= maxDistance && distance < nearestDistance) {
+        const identity = residentIdentityFor(data);
         nearestDistance = distance;
         nearest = {
+          id: identity.id,
+          label: identity.label,
+          role: data.job.id,
           mesh: data.mesh,
           job: data.job,
           distance,
           heading: data.heading,
+          position: {
+            x: data.mesh.position.x,
+            y: data.mesh.position.y,
+            z: data.mesh.position.z,
+          },
+          combatDefeated,
         };
       }
     }

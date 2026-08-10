@@ -35,6 +35,7 @@
     "verify:impound": "node scripts/verify-impound.mjs",
     "verify:work-shift": "node scripts/verify-work-shift.mjs",
     "verify:taxi-ride": "node scripts/verify-taxi-ride.mjs",
+    "verify:resident-favor": "node scripts/verify-resident-favor.mjs",
     "verify:city-shift": "node scripts/verify-city-shift.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:ammo-economy": "node scripts/verify-ammo-economy.mjs",

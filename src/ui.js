@@ -758,7 +758,9 @@ export function createHud({
     'aria-label',
     'Medkits: 0 of 3. Press B to buy for 28 dollars at a market. Press G to use. Press N to buy ammunition for 32 dollars.',
   );
-  lifePanel.append(lifeHeader, lifeBars, lifeInventory);
+  const lifeFavor = createElement('span', 'hud__life-favor');
+  lifeFavor.hidden = true;
+  lifePanel.append(lifeHeader, lifeBars, lifeInventory, lifeFavor);
 
   const drivePanel = createElement('section', 'hud__drive');
   drivePanel.setAttribute('aria-label', 'Driving telemetry');
@@ -1312,6 +1314,19 @@ export function createHud({
       'aria-label',
       `Medkits: ${medkitCount} of ${medkitCapacity}. Press B to buy for ${medkitCost} dollars at a market. Press G to use. Press N to buy ammunition for ${ammoCost} dollars.`,
     );
+    const favor = lifeState.residentFavor;
+    lifeFavor.hidden = favor?.active !== true;
+    if (favor?.active) {
+      const remaining = Math.max(0, Math.ceil(Number(favor.remaining) || 0));
+      lifeFavor.textContent = `FAVOR / ${favor.residentLabel} → ${favor.target?.label} · ${remaining}S · $${favor.reward}`;
+      lifeFavor.setAttribute(
+        'aria-label',
+        `Resident favor for ${favor.residentLabel}. Deliver to ${favor.target?.label} within ${remaining} seconds for ${favor.reward} dollars.`,
+      );
+    } else {
+      lifeFavor.textContent = '';
+      lifeFavor.removeAttribute('aria-label');
+    }
     const needs = lifeState.needs || {};
     const lowCrossings = [];
     for (const [key, node] of lifeBarNodes) {

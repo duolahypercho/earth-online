@@ -19,6 +19,10 @@ const MARKET_SHIFT_DURATION = 5.5;
 const MARKET_SHIFT_COOLDOWN = 8;
 const MARKET_SHIFT_WAGE = 26;
 const TAXI_FARE = 14;
+const RESIDENT_FAVOR_DURATION = 45;
+const RESIDENT_FAVOR_REWARD = 24;
+const RESIDENT_FAVOR_SOCIAL = 14;
+const RESIDENT_FAVOR_FUN = 9;
 
 function clampNeed(value) {
   return THREE.MathUtils.clamp(value, 0, 100);
@@ -68,6 +72,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       cooldownRemaining: 0,
       locationLabel: null,
     },
+    residentFavor: null,
   };
   let lastHudAt = -Infinity;
 
@@ -89,6 +94,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       && state.needs.energy >= 18
       && !state.workShift.active
       && state.workShift.cooldownRemaining <= 0
+      && !state.residentFavor
     );
   }
 
@@ -141,6 +147,19 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         wage: MARKET_SHIFT_WAGE,
         locationLabel: state.workShift.locationLabel,
       },
+      residentFavor: state.residentFavor
+        ? {
+          active: true,
+          residentId: state.residentFavor.residentId,
+          residentLabel: state.residentFavor.residentLabel,
+          residentRole: state.residentFavor.residentRole,
+          target: { ...state.residentFavor.target },
+          duration: RESIDENT_FAVOR_DURATION,
+          elapsed: state.residentFavor.elapsed,
+          remaining: Math.max(0, RESIDENT_FAVOR_DURATION - state.residentFavor.elapsed),
+          reward: RESIDENT_FAVOR_REWARD,
+        }
+        : null,
       activity: state.lastActivity,
       mood: getMood(),
       lowNeeds: summary ? summary.labels.split(', ').filter(Boolean) : [],
@@ -168,6 +187,15 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       workShift: {
         cooldownRemaining: state.workShift.cooldownRemaining,
       },
+      residentFavor: state.residentFavor
+        ? {
+          residentId: state.residentFavor.residentId,
+          residentLabel: state.residentFavor.residentLabel,
+          residentRole: state.residentFavor.residentRole,
+          target: { ...state.residentFavor.target },
+          elapsed: state.residentFavor.elapsed,
+        }
+        : null,
     };
   }
 
@@ -226,8 +254,114 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       300,
     );
     state.workShift.locationLabel = null;
+    const favor = snapshot.residentFavor;
+    const favorTarget = favor?.target;
+    const favorElapsed = Number(favor?.elapsed);
+    state.residentFavor = favor
+      && typeof favor === 'object'
+      && typeof favor.residentId === 'string'
+      && typeof favorTarget?.id === 'string'
+      && typeof favorTarget?.label === 'string'
+      && Number.isFinite(Number(favorTarget.x))
+      && Number.isFinite(Number(favorTarget.z))
+      && Number.isFinite(favorElapsed)
+      && favorElapsed >= 0
+      && favorElapsed < RESIDENT_FAVOR_DURATION
+      ? {
+        residentId: favor.residentId.slice(0, 64),
+        residentLabel: String(favor.residentLabel || 'Resident').slice(0, 80),
+        residentRole: String(favor.residentRole || 'resident').slice(0, 48),
+        target: {
+          id: favorTarget.id.slice(0, 96),
+          label: favorTarget.label.slice(0, 96),
+          x: Number(favorTarget.x),
+          z: Number(favorTarget.z),
+        },
+        elapsed: THREE.MathUtils.clamp(favorElapsed, 0, RESIDENT_FAVOR_DURATION),
+      }
+      : null;
     hud?.setLifeState?.(getState());
     return true;
+  }
+
+  function startResidentFavor(resident, target) {
+    if (state.residentFavor) {
+      onMessage(`FAVOR ACTIVE · deliver to ${state.residentFavor.target.label}.`);
+      return false;
+    }
+    if (state.workShift.active) {
+      onMessage('Finish the market shift before taking a resident favor.');
+      return false;
+    }
+    if (typeof resident?.id !== 'string'
+      || typeof target?.id !== 'string'
+      || typeof target?.label !== 'string'
+      || !Number.isFinite(Number(target.x))
+      || !Number.isFinite(Number(target.z))) return false;
+    state.residentFavor = {
+      residentId: resident.id.slice(0, 64),
+      residentLabel: String(resident.label || 'Resident').slice(0, 80),
+      residentRole: String(resident.role || resident.job?.id || 'resident').slice(0, 48),
+      target: {
+        id: target.id.slice(0, 96),
+        label: target.label.slice(0, 96),
+        x: Number(target.x),
+        z: Number(target.z),
+      },
+      elapsed: 0,
+    };
+    state.lastActivity = `favor:${state.residentFavor.residentId}:active`;
+    state.lastActivityAt = performance.now();
+    onMessage(
+      `${state.residentFavor.residentLabel} needs a delivery at ${state.residentFavor.target.label} · $${RESIDENT_FAVOR_REWARD}.`,
+    );
+    hud?.setLifeState?.(getState());
+    return getState().residentFavor;
+  }
+
+  function completeResidentFavor(targetId) {
+    if (!state.residentFavor || String(targetId || '') !== state.residentFavor.target.id) return null;
+    const completed = state.residentFavor;
+    state.residentFavor = null;
+    state.cash += RESIDENT_FAVOR_REWARD;
+    state.needs.social = clampNeed(state.needs.social + RESIDENT_FAVOR_SOCIAL);
+    state.needs.fun = clampNeed(state.needs.fun + RESIDENT_FAVOR_FUN);
+    state.lastActivity = `favor:${completed.residentId}:complete`;
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'resident-favor',
+      label: `${completed.residentLabel} / ${completed.target.label}`.slice(0, 80),
+      amount: RESIDENT_FAVOR_REWARD,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    const message = `FAVOR COMPLETE · ${completed.residentLabel} paid $${RESIDENT_FAVOR_REWARD}.`;
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'favor-complete',
+      message,
+      reward: RESIDENT_FAVOR_REWARD,
+      residentId: completed.residentId,
+      targetId: completed.target.id,
+      transaction: { ...state.lastTransaction },
+    };
+  }
+
+  function cancelResidentFavor(message = 'FAVOR EXPIRED · the resident found another courier.') {
+    if (!state.residentFavor) return null;
+    const expired = state.residentFavor;
+    state.residentFavor = null;
+    state.lastActivity = `favor:${expired.residentId}:expired`;
+    state.lastActivityAt = performance.now();
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'favor-timeout',
+      message,
+      residentId: expired.residentId,
+      targetId: expired.target.id,
+    };
   }
 
   function cancelWorkShift(message = 'Market shift cancelled · stay near the counter and keep still.') {
@@ -281,6 +415,20 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       0,
       state.workShift.cooldownRemaining - dt,
     );
+    if (state.residentFavor) {
+      state.residentFavor.elapsed = Math.min(
+        RESIDENT_FAVOR_DURATION,
+        state.residentFavor.elapsed + dt,
+      );
+      if (state.residentFavor.elapsed >= RESIDENT_FAVOR_DURATION) {
+        return cancelResidentFavor();
+      }
+      const now = performance.now() / 1000;
+      if (now - lastHudAt >= 0.45) {
+        lastHudAt = now;
+        hud?.setLifeState?.(getState());
+      }
+    }
     if (state.workShift.active) {
       const label = getNearestPortalLabel(playerState.position);
       const validLocation = Boolean(
@@ -583,6 +731,10 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       onMessage('You are too tired to work. Rest for a moment first.');
       return false;
     }
+    if (state.residentFavor) {
+      onMessage(`Finish the favor at ${state.residentFavor.target.label} before starting a shift.`);
+      return false;
+    }
     if (state.workShift.active) {
       onMessage('MARKET SHIFT already in progress · stay near the counter.');
       return false;
@@ -645,6 +797,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     setClock,
     addCash,
     talkToNearestResident,
+    startResidentFavor,
+    completeResidentFavor,
+    cancelResidentFavor,
     eatAtMarket,
     canEat,
     canAffordMeal,

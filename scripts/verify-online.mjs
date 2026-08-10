@@ -189,9 +189,9 @@ try {
         after: { cash: after.cash, hunger: after.needs.hunger },
       },
     );
-    const beforeWork = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     const worked = await page1.evaluate((position) => {
       const sim = window.__SF_SIM__;
+      const before = sim.lifeSim.getState();
       const canWork = sim.lifeSim.canWork(position);
       const started = sim.lifeSim.workShift(position);
       const afterStart = sim.lifeSim.getState();
@@ -204,8 +204,9 @@ try {
         available: true,
       });
       const after = sim.lifeSim.getState();
-      return { canWork, started, afterStart, completion, after };
+      return { before, canWork, started, afterStart, completion, after };
     }, food.position);
+    const beforeWork = worked.before;
     const afterWork = worked.after;
     check(
       'life-sim bounded work shift earns one transactional wage',

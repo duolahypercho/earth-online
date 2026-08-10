@@ -1164,6 +1164,7 @@ hud = createHud({
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      if (completeResidentFavorAtPortal()) return;
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
       if (taxi) {
         startPlayerTaxiRide(taxi);
@@ -1176,7 +1177,7 @@ hud = createHud({
         const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
         if (nearestCar) {
           enterPlayerCar(nearestCar.index);
-        } else if (lifeSim?.talkToNearestResident?.(controls.target)) {
+        } else if (startResidentFavorFromNearby()) {
           return;
         } else {
           enterNearestInterior();
@@ -1844,6 +1845,99 @@ function getTaxiDestination() {
   };
 }
 
+function getResidentFavorTarget(resident) {
+  const portals = (city?.portals || [])
+    .filter((portal) => (
+      typeof portal?.id === 'string'
+      && typeof portal?.label === 'string'
+      && Number.isFinite(portal.position?.x)
+      && Number.isFinite(portal.position?.z)
+    ))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (!portals.length) return null;
+  const origin = resident?.position;
+  const travelPortals = origin
+    ? portals.filter((portal) => {
+      const distance = Math.hypot(
+        portal.position.x - origin.x,
+        portal.position.z - origin.z,
+      );
+      return distance >= 35 && distance <= 520;
+    })
+    : portals;
+  const candidates = travelPortals.length ? travelPortals : portals;
+  let hash = 2166136261;
+  for (const character of String(resident?.id || 'resident')) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  const portal = candidates[hash % candidates.length];
+  return {
+    id: portal.id,
+    label: portal.label,
+    x: portal.position.x,
+    z: portal.position.z,
+  };
+}
+
+function residentFavorInputAvailable() {
+  const combatState = combat?.getState?.();
+  const heatState = streetHeat?.getState?.();
+  return playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !taxiRideState?.active
+    && !beautyMode
+    && !qaCameraPose
+    && combatState?.status === 'running'
+    && combatState?.active === true
+    && heatState?.pursuitActive !== true;
+}
+
+function completeResidentFavorAtPortal() {
+  const favor = lifeSim?.getState?.().residentFavor;
+  if (!favor?.active) return false;
+  const portal = getInteractionPortal();
+  if (!portal
+    || portal.id !== favor.target.id
+    || portal.distance > portal.radius) return false;
+  if (!residentFavorInputAvailable()) {
+    hud?.setMessage('Resident favor unavailable · recover and lose any StreetHeat tail first.');
+    return true;
+  }
+  const completed = lifeSim?.completeResidentFavor?.(portal.id);
+  if (!completed) return true;
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  savePlayerProgress();
+  return true;
+}
+
+function startResidentFavorFromNearby() {
+  const resident = pedestrians?.getNearestPerson?.(
+    controls.target,
+    4.6,
+    { includeDefeated: true },
+  );
+  if (!resident?.id) return false;
+  if (resident.combatDefeated) {
+    hud?.setMessage('Resident unavailable · incapacitated after the street fight.');
+    return true;
+  }
+  if (!residentFavorInputAvailable()) {
+    hud?.setMessage('Resident favor unavailable · be on foot, recovered, and clear of pursuit.');
+    return true;
+  }
+  const target = getResidentFavorTarget(resident);
+  if (!target) {
+    hud?.setMessage('Resident favor unavailable · no delivery destination found.');
+    return true;
+  }
+  const started = lifeSim?.startResidentFavor?.(resident, target);
+  hud?.setLifeState?.(lifeSim?.getState?.());
+  if (started) savePlayerProgress();
+  return true;
+}
+
 function getPlayerTaxiRideState() {
   if (!taxiRideState?.active) return null;
   return {
@@ -2087,7 +2181,9 @@ function updatePlayerLayer(dt, elapsed) {
     available: playerLayerActive && !beautyMode && !qaCameraPose && !taxiRiding,
     position: controls.target,
   });
-  if (lifeEvent?.kind === 'work-complete') savePlayerProgress();
+  if (lifeEvent?.kind === 'work-complete' || lifeEvent?.kind === 'favor-timeout') {
+    savePlayerProgress();
+  }
 }
 
 const PORTAL_NEARBY_RADIUS = 22;
@@ -3852,6 +3948,7 @@ function onKeyDown(event) {
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      if (completeResidentFavorAtPortal()) return;
       const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
       if (taxi) {
         startPlayerTaxiRide(taxi);
@@ -3864,7 +3961,7 @@ function onKeyDown(event) {
         const nearestCar = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
         if (nearestCar) {
           enterPlayerCar(nearestCar.index);
-        } else if (lifeSim?.talkToNearestResident?.(controls.target)) {
+        } else if (startResidentFavorFromNearby()) {
           return;
         } else {
           enterNearestInterior();
@@ -4040,6 +4137,18 @@ function updateInteraction() {
     });
     return;
   }
+  const activeFavor = lifeSim?.getState?.().residentFavor;
+  const favorPortal = activeFavor?.active ? getInteractionPortal() : null;
+  if (activeFavor?.active
+    && favorPortal?.id === activeFavor.target.id
+    && favorPortal.distance <= favorPortal.radius) {
+    hud.setInteraction({
+      label: `FAVOR DELIVERY / ${activeFavor.target.label}`,
+      prompt: `E / TAP  DELIVER · $${activeFavor.reward}`,
+      enabled: true,
+    });
+    return;
+  }
   const taxi = traffic.getNearestTaxiService?.(controls.target, 3.8);
   if (taxi) {
     hud.setInteraction({
@@ -4075,10 +4184,12 @@ function updateInteraction() {
   }
   const nearbyResident = pedestrians.getNearestPerson?.(controls.target, 4.4);
   if (nearbyResident) {
-    const residentLabel = nearbyResident.job?.id || 'resident';
+    const residentLabel = nearbyResident.label || nearbyResident.job?.id || 'resident';
     hud.setInteraction({
       label: `${residentLabel.toUpperCase()} / ${nearbyResident.distance.toFixed(1)} M`,
-      prompt: 'E / TAP  TALK',
+      prompt: activeFavor?.active
+        ? `FAVOR ACTIVE · ${activeFavor.target.label}`
+        : 'E / TAP  FAVOR',
       enabled: true,
     });
     return;

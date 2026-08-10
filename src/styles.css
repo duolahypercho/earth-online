@@ -2515,6 +2515,16 @@ noscript {
   text-transform: uppercase;
 }
 
+.hud__life-favor {
+  color: var(--hud-gold);
+  font-family: var(--hud-mono);
+  font-size: 0.48rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .hud__life-bar {
   display: grid;
   grid-template-columns: 4.4rem 1fr;
