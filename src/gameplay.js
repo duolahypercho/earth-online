@@ -408,6 +408,12 @@ const STREET_HEAT_THEFT_HOLD_SECONDS = 4;
 const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
+// A deliberate brake hold acts as surrender within roughly one vehicle length
+// of the live responder. Traffic safety can keep the shells out of overlap;
+// releasing the brake or moving the player still cancels the hold.
+const STREET_HEAT_ARREST_CONTINUATION_RADIUS = 10;
+const STREET_HEAT_ARREST_SPEED = 1.2;
+const STREET_HEAT_ARREST_HOLD_SECONDS = 1.2;
 
 function formatHeat(value) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
@@ -436,6 +442,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     responderId: null,
     responderDistance: null,
     responderContacts: 0,
+    arrestHold: 0,
+    arrests: 0,
     nearestDistance: null,
     nearMisses: 0,
     safeElapsed: 0,
@@ -499,12 +507,13 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     return 1;
   }
 
-  function emitEvent(kind, message, score = 0) {
-    state.lastEvent = { kind, message, score };
+  function emitEvent(kind, message, score = 0, details = null) {
+    state.lastEvent = { kind, message, score, ...(details || {}) };
     onEvent?.({
       kind,
       message,
       score,
+      ...(details || {}),
       state: getState(),
     });
   }
@@ -563,6 +572,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.responderId = null;
     state.responderDistance = null;
     state.responderContacts = 0;
+    state.arrestHold = 0;
+    state.arrests = 0;
     state.nearestDistance = null;
     state.nearMisses = 0;
     state.safeElapsed = 0;
@@ -638,6 +649,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     speed = 0,
     position = null,
     playerVehicleId = null,
+    surrendering = false,
   } = {}) {
     const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
     markerTime += delta;
@@ -711,6 +723,40 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       );
     }
 
+    const arresting = state.pursuitActive
+      && state.responderDistance !== null
+      && state.responderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS
+      && latestDriving
+      && surrendering === true
+      && latestSpeed <= STREET_HEAT_ARREST_SPEED;
+    state.arrestHold = arresting ? state.arrestHold + delta : 0;
+    if (state.pursuitActive && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
+      const heatBefore = state.heat;
+      const wasDriving = latestDriving;
+      state.heat = 0;
+      state.pursuitActive = false;
+      state.level = 0;
+      state.targetId = null;
+      state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderContacts = 0;
+      state.nearestDistance = null;
+      state.safeElapsed = 0;
+      state.combatHold = 0;
+      state.theftHold = 0;
+      state.arrestHold = 0;
+      state.arrests += 1;
+      marker.visible = false;
+      emitEvent(
+        'arrested',
+        'Responder boxed you in · booking and roadside release.',
+        0,
+        { heatBefore: formatHeat(heatBefore), wasDriving },
+      );
+      return getState();
+    }
+
     const speedRisk = latestDriving
       ? THREE.MathUtils.clamp(
         (latestSpeed - STREET_HEAT_SPEED_THRESHOLD) / 4.8,
@@ -747,6 +793,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
       state.pursuitActive = true;
       state.responderContacts = 0;
+      state.arrestHold = 0;
       state.targetId = null;
       state.targetPosition = null;
       state.responderId = null;
@@ -786,6 +833,7 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
       state.responderId = null;
       state.responderDistance = null;
       state.responderContacts = 0;
+      state.arrestHold = 0;
       state.safeElapsed = 0;
       state.heat = 0;
       emitEvent('escaped', 'Tail lost · clean getaway +420', 420);
@@ -838,6 +886,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
         ? null
         : Math.round(state.responderDistance * 10) / 10,
       responderContacts: state.responderContacts,
+      arrestHold: Math.round(state.arrestHold * 100) / 100,
+      arrests: state.arrests,
       nearestDistance: state.nearestDistance,
       nearMisses: state.nearMisses,
       combatHold: Math.round(state.combatHold * 10) / 10,
@@ -903,6 +953,8 @@ export function createStreetHeat({ scene, getTrafficSnapshot, getPursuitResponde
     state.targetPosition = null;
     state.responderId = null;
     state.responderDistance = null;
+    state.arrestHold = 0;
+    state.arrests = 0;
     state.nearestDistance = null;
     state.safeElapsed = 0;
     state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;

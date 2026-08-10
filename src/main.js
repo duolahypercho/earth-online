@@ -1912,13 +1912,35 @@ streetHeat = createStreetHeat({
   // dependency.
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
-  onEvent: ({ kind, message, score }) => {
+  onEvent: ({ kind, message, score, heatBefore = 0 }) => {
     if (kind === 'responder-contact') {
       if (traffic.isPlayerDriving?.()) {
         traffic.damagePlayerVehicle?.(22, 'pursuit-contact');
       } else {
         combat?.damagePlayer?.(18, 'pursuit-contact');
       }
+    }
+    if (kind === 'arrested') {
+      if (traffic.isPlayerDriving?.()) exitPlayerCar();
+      traffic.setPursuitResponder?.({
+        active: false,
+        position: controls.target,
+        playerVehicleId: null,
+        level: 0,
+      });
+      const wantedFine = THREE.MathUtils.clamp(
+        Math.ceil(20 + Math.max(0, Number(heatBefore) || 0) * 1.5),
+        20,
+        120,
+      );
+      const transaction = lifeSim?.payWantedFine?.(wantedFine, 'StreetHeat booking');
+      hud?.setLifeState?.(lifeSim?.getState?.());
+      const paid = transaction?.charged ?? 0;
+      const unpaid = transaction?.unpaid ?? 0;
+      message = unpaid > 0
+        ? `ARRESTED / $${paid} paid · $${unpaid} unpaid.`
+        : `ARRESTED / $${paid} paid · released roadside.`;
+      savePlayerProgress();
     }
     if (score) cityShift?.awardBonus?.(score);
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
@@ -4065,6 +4087,8 @@ function frame(now) {
     speed: drivingState?.speed ?? 0,
     position: drivingState?.position ?? controls.target,
     playerVehicleId: drivingState?.index ?? null,
+    surrendering: Boolean(drivingState)
+      && (controls.keys.has('keys') || controls.keys.has('arrowdown')),
   });
   traffic.setPursuitResponder?.({
     active: Boolean(streetHeatState?.pursuitActive),

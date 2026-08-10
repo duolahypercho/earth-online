@@ -175,6 +175,15 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         amount: Math.round(Number(transaction.amount)),
         cashAfter: Math.round(Number(transaction.cashAfter)),
         at: Number.isFinite(Number(transaction.at)) ? Math.max(0, Number(transaction.at)) : 0,
+        ...(Number.isFinite(Number(transaction.due))
+          ? { due: Math.max(0, Math.round(Number(transaction.due))) }
+          : {}),
+        ...(Number.isFinite(Number(transaction.charged))
+          ? { charged: Math.max(0, Math.round(Number(transaction.charged))) }
+          : {}),
+        ...(Number.isFinite(Number(transaction.unpaid))
+          ? { unpaid: Math.max(0, Math.round(Number(transaction.unpaid))) }
+          : {}),
       }
       : null;
     hud?.setLifeState?.(getState());
@@ -249,6 +258,25 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       at: state.lastActivityAt,
     };
     return true;
+  }
+
+  function payWantedFine(amount = 0, label = 'StreetHeat booking') {
+    const due = THREE.MathUtils.clamp(Math.round(Number(amount) || 0), 20, 120);
+    const charged = Math.min(due, Math.max(0, Math.floor(state.cash)));
+    state.cash = Math.max(0, state.cash - charged);
+    state.lastActivity = 'wanted:booking';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'wanted-fine',
+      label: String(label || 'StreetHeat booking').slice(0, 80),
+      amount: -charged,
+      cashAfter: Math.round(state.cash),
+      due,
+      charged,
+      unpaid: due - charged,
+      at: state.lastActivityAt,
+    };
+    return { ...state.lastTransaction };
   }
 
   function creditMissionReward(amount = 0, label = 'Waterfront Loop') {
@@ -450,6 +478,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     workShift,
     canAffordVehicleRepair,
     payVehicleRepair,
+    payWantedFine,
     creditMissionReward,
     buyMedkitAtMarket,
     consumeMedkit,
