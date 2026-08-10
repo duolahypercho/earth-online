@@ -1,0 +1,724 @@
+{
+  "schemaVersion": "ferry-market-arcade-cc0-foundation-v2",
+  "reviewedAt": "2026-08-10",
+  "status": "foundation-approved",
+  "scope": {
+    "description": "Cafe plus generic-fixtures foundation only.",
+    "completeFiveProgramArcade": false,
+    "approved": {
+      "cafe": [
+        "cafe-seating.glb",
+        "cafe-counter.glb",
+        "cafe-tableware.glb"
+      ],
+      "genericFixtures": [
+        "grocer-shelves.glb",
+        "newsstand-rack.glb"
+      ]
+    },
+    "exclusions": [
+      "No grocer-specific produce/crates",
+      "No visitor or ticket-program assets",
+      "No florist-program assets",
+      "No publication stock",
+      "No humans"
+    ]
+  },
+  "license": {
+    "id": "CC0-1.0",
+    "name": "Creative Commons Zero v1.0 Universal",
+    "sourceUrl": "https://polyhaven.com/license",
+    "statement": "Poly Haven states that all site assets, including 3D models, are licensed CC0."
+  },
+  "toolchain": {
+    "blender": {
+      "version": "4.5.3 LTS",
+      "platform": "macOS arm64",
+      "portableDmgUrl": "https://download.blender.org/release/Blender4.5/blender-4.5.3-macos-arm64.dmg",
+      "portableDmgSha256": "73ea841053b55404bb3a71a9a22366f1f8821787fe5c899f8b55a7fff929d01b"
+    },
+    "python": {
+      "version": "3.9.6"
+    },
+    "pillow": {
+      "version": "11.3.0"
+    }
+  },
+  "sourcePolicy": {
+    "authority": "Poly Haven public API and official download CDN only",
+    "rejected": [
+      "Project Lighthouse tagged assets",
+      "human assets",
+      "cameras, lights, emissive/baked-light exports",
+      "external GLB URIs"
+    ],
+    "noGeospatialAuthority": true
+  },
+  "coordinateSystem": {
+    "upAxis": "+Y",
+    "forwardAxis": "-Z",
+    "unit": "meters",
+    "groundingToleranceMeters": 0.0005,
+    "grounding": "Verifier measures transformed POSITION vertices in each emitted GLB; absolute local minY must be <= 0.5 mm."
+  },
+  "budgets": {
+    "maxSourceCompressedBytes": 20000000,
+    "maxLod0Triangles": 40000,
+    "maxMaterialsAfterConsolidation": 12,
+    "sourceCompressedBytes": 7428960,
+    "exportedBytes": 4878668,
+    "lod0Triangles": 16987,
+    "materialsAfterConsolidation": 5
+  },
+  "assets": [
+    {
+      "id": "outdoor_table_chair_set_01",
+      "file": "cafe-seating.glb",
+      "classification": "cafe",
+      "role": "cafe seating",
+      "targetTriangles": 5000,
+      "closeCard": "Cafe seating",
+      "source": {
+        "assetPage": "https://polyhaven.com/a/outdoor_table_chair_set_01",
+        "metadataUrl": "https://api.polyhaven.com/info/outdoor_table_chair_set_01",
+        "filesUrl": "https://api.polyhaven.com/files/outdoor_table_chair_set_01",
+        "resolution": "1k",
+        "metadata": {
+          "name": "Outdoor Table Chair Set 01",
+          "authors": {
+            "James Ray Cock": "All"
+          },
+          "datePublishedUnix": 1634083200,
+          "filesHash": "6e1e83970732c6c4e9f2056f37cec189cc80adc5",
+          "dimensionsMillimeters": [
+            776.0046124458313,
+            1831.0473561286926,
+            858.5816156119108
+          ],
+          "sourcePolycount": 9828,
+          "tags": [
+            "outdoor",
+            "foldable",
+            "folding",
+            "seating",
+            "coffee",
+            "diner",
+            "street",
+            "urban",
+            "deli",
+            "wood",
+            "city",
+            "cafe"
+          ],
+          "categories": [
+            "furniture",
+            "seating"
+          ]
+        },
+        "files": [
+          {
+            "relativePath": "outdoor_table_chair_set_01_1k.gltf",
+            "bytes": 6826,
+            "md5": "e5f81fc86b52135f5a5897a51b859b07",
+            "sha256": "1b718deb56a9f07b260a5f95926fb7caa5fd27918cacca283414c840e46415f2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_1k.gltf"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_table_nor_gl_1k.jpg",
+            "bytes": 43095,
+            "md5": "d284647b39e4ecda93b3ea85f40dc2d7",
+            "sha256": "e30e3f639bea22013149e73bcbaeb95805bf831c7b93b80ab83a33e42672b044",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_table_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_chair_arm_1k.jpg",
+            "bytes": 179920,
+            "md5": "52352847c3ce824803a9d500eec5614d",
+            "sha256": "71ac20bb124af45c3ff2fc5eee11d7c9d277ac245ac14ee4ba87291bb768937d",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_chair_arm_1k.jpg"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_table_arm_1k.jpg",
+            "bytes": 201642,
+            "md5": "cf5aa95ce8b83991eaf5048eacea0611",
+            "sha256": "fecbe0e42db83d6f0ee8186afece1fd5c3a5834ff07926c00ac18468757d4377",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_table_arm_1k.jpg"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_table_diff_1k.jpg",
+            "bytes": 151897,
+            "md5": "afd8871dffcad88170a27b5fce6e3c7d",
+            "sha256": "7743a55a3a646ebdd9969e72594cb8b94e318d38956f2172a5e6934609a68bf4",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_table_diff_1k.jpg"
+          },
+          {
+            "relativePath": "outdoor_table_chair_set_01.bin",
+            "bytes": 456856,
+            "md5": "8596ca40855bc417ac5248a54bd85990",
+            "sha256": "d62458c79c6c902d1195bff875e42bf7579c6b309c6b96f9cd7543af43170220",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/outdoor_table_chair_set_01/outdoor_table_chair_set_01.bin"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_chair_nor_gl_1k.jpg",
+            "bytes": 46772,
+            "md5": "ac08f5c3335c94e1dca986383265c23a",
+            "sha256": "9b57cd67775146b0865f3e5409b54661080625789042846569f7f65ab37258b3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_chair_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/outdoor_table_chair_set_01_chair_diff_1k.jpg",
+            "bytes": 155372,
+            "md5": "cb6d4004ad957a6b89aabe4c8dddd6fd",
+            "sha256": "60ed02a2c36098069235ad82937b2602e8940346f1d6a75c6386e78e03dbacb3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/outdoor_table_chair_set_01/outdoor_table_chair_set_01_chair_diff_1k.jpg"
+          }
+        ],
+        "compressedBytes": 1242380
+      },
+      "processing": {
+        "trianglesBeforeDecimation": 9828,
+        "decimationRatio": 0.5087505087505088,
+        "sourceScaleCorrection": 1,
+        "representativeSourceMaterial": "outdoor_table_chair_set_01_consolidated_pbr"
+      },
+      "export": {
+        "path": "public/assets/hero/ferry-market-arcade-cc0/cafe-seating.glb",
+        "bytes": 710880,
+        "sha256": "63f6aae976d4d0993c3d9fcb6101a1478037eb55a0801c6df4ba464817257062",
+        "triangles": 4998,
+        "materials": 1,
+        "meshInstances": 3,
+        "externalUris": [],
+        "cameras": 0,
+        "lights": 0,
+        "emissiveMaterials": 0,
+        "boundsMeters": {
+          "min": [
+            -0.4255073368549347,
+            0,
+            -0.8113447375395023
+          ],
+          "max": [
+            0.3165322160497926,
+            0.8586145280860364,
+            0.906501086360376
+          ]
+        },
+        "minYMeters": 0,
+        "groundingToleranceMeters": 0.0005
+      },
+      "qa": {
+        "shipping": false,
+        "cardPath": ".qa-ferry-market-arcade-cc0/cards/outdoor_table_chair_set_01.png"
+      }
+    },
+    {
+      "id": "CoffeeCart_01",
+      "file": "cafe-counter.glb",
+      "classification": "cafe",
+      "role": "cafe counter",
+      "targetTriangles": 5500,
+      "closeCard": "Cafe counter",
+      "source": {
+        "assetPage": "https://polyhaven.com/a/CoffeeCart_01",
+        "metadataUrl": "https://api.polyhaven.com/info/CoffeeCart_01",
+        "filesUrl": "https://api.polyhaven.com/files/CoffeeCart_01",
+        "resolution": "1k",
+        "metadata": {
+          "name": "Coffee Cart 01",
+          "authors": {
+            "Joe Seabuhr": "All"
+          },
+          "datePublishedUnix": 1585605600,
+          "filesHash": "9a4acb5ef57be1f96cd1af66af66d2a798139a24",
+          "dimensionsMillimeters": [
+            2167.636811733246,
+            1073.2900500297546,
+            1717.6724136807024
+          ],
+          "sourcePolycount": 27659,
+          "tags": [
+            "table",
+            "metal",
+            "shelf",
+            "plastic",
+            "cart",
+            "coffee",
+            "portable",
+            "wheels",
+            "tea",
+            "coffee maker",
+            "mobile",
+            "catering"
+          ],
+          "categories": [
+            "appliances",
+            "props",
+            "furniture",
+            "office"
+          ]
+        },
+        "files": [
+          {
+            "relativePath": "CoffeeCart_01_1k.gltf",
+            "bytes": 6637,
+            "md5": "29a775b98a898b38dc8a34b53e2a65e9",
+            "sha256": "3f4e7e79e751662a767c22b21c34dfb6f7d414d56dda60a236ad7d621d211934",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/CoffeeCart_01/CoffeeCart_01_1k.gltf"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_cart_arm_1k.jpg",
+            "bytes": 159358,
+            "md5": "83254d27de5af53360d06f774d94baa9",
+            "sha256": "7481660c7b4b0c676c9143a9ae497dfa6da2c509a0e1db8080c0dfb498279175",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_cart_arm_1k.jpg"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_props_arm_1k.jpg",
+            "bytes": 198809,
+            "md5": "b4b2e1aa668e757e67666cdf092ddd54",
+            "sha256": "8bc6a844a23d1ccb441d40e912adf8c38c6a3f7daf468598ae990a90d73733e8",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_props_arm_1k.jpg"
+          },
+          {
+            "relativePath": "CoffeeCart_01.bin",
+            "bytes": 865700,
+            "md5": "ef3a282d8fbf3ab6c5d91219be61e69a",
+            "sha256": "0c0f9ed417ba85208c7f42b674ee3ce99a7e6fb63e67c7ea8d312304c470db50",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/CoffeeCart_01/CoffeeCart_01.bin"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_props_nor_gl_1k.jpg",
+            "bytes": 156633,
+            "md5": "119787e463389d7877b4bfa96cc569ca",
+            "sha256": "8546f2ba3cfb14e9aef8e24e695a30117b03076071f11d877c15007793b3ca9e",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_props_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_cart_nor_gl_1k.jpg",
+            "bytes": 171213,
+            "md5": "52e3125e23024b146ffe195488283641",
+            "sha256": "160121cfeb3e9a6a029fd6b7be0e282c1f99abeb1b34d197dbc99d9fcaeea1f7",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_cart_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_cart_diff_1k.jpg",
+            "bytes": 118396,
+            "md5": "d8fbad3535234e02aa278ec6dc74d15e",
+            "sha256": "654ead6c2e651e6aa3a9166e9b94333f41b33e31fcd9c75b4058e40744108bcb",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_cart_diff_1k.jpg"
+          },
+          {
+            "relativePath": "textures/CoffeeCart_01_props_diff_1k.jpg",
+            "bytes": 158758,
+            "md5": "022cf4bfd25543f932efd1786d2961e7",
+            "sha256": "2583de82b450923b75eb62b9e24fca9c252969fd249e91e7bbbbf3cfbad5e703",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/CoffeeCart_01/CoffeeCart_01_props_diff_1k.jpg"
+          }
+        ],
+        "compressedBytes": 1835504
+      },
+      "processing": {
+        "trianglesBeforeDecimation": 27659,
+        "decimationRatio": 0.1988502838135869,
+        "sourceScaleCorrection": 1,
+        "representativeSourceMaterial": "CoffeeCart_01_consolidated_pbr"
+      },
+      "export": {
+        "path": "public/assets/hero/ferry-market-arcade-cc0/cafe-counter.glb",
+        "bytes": 778052,
+        "sha256": "6b3af7a1583e2238e2c53d5b3b09f48c6e56ca65beddd5be1f719a0c7ea2f388",
+        "triangles": 5498,
+        "materials": 1,
+        "meshInstances": 3,
+        "externalUris": [],
+        "cameras": 0,
+        "lights": 0,
+        "emissiveMaterials": 0,
+        "boundsMeters": {
+          "min": [
+            -1.3966964483261108,
+            0,
+            -0.5575034618377686
+          ],
+          "max": [
+            0.7708863019943237,
+            1.7189776906743646,
+            0.5150502324104309
+          ]
+        },
+        "minYMeters": 0,
+        "groundingToleranceMeters": 0.0005
+      },
+      "qa": {
+        "shipping": false,
+        "cardPath": ".qa-ferry-market-arcade-cc0/cards/CoffeeCart_01.png"
+      }
+    },
+    {
+      "id": "tea_set_01",
+      "file": "cafe-tableware.glb",
+      "classification": "cafe",
+      "role": "cafe tableware",
+      "targetTriangles": 2000,
+      "closeCard": "Cafe tableware",
+      "source": {
+        "assetPage": "https://polyhaven.com/a/tea_set_01",
+        "metadataUrl": "https://api.polyhaven.com/info/tea_set_01",
+        "filesUrl": "https://api.polyhaven.com/files/tea_set_01",
+        "resolution": "1k",
+        "metadata": {
+          "name": "Tea Set 01",
+          "authors": {
+            "James Ray Cock": "texturing",
+            "Rico Cilliers": "modeling",
+            "Jurita Burger": "graphic design"
+          },
+          "datePublishedUnix": 1636070400,
+          "filesHash": "56e8ed17e683a9335871e8e8ad9a444ba44e6c1c",
+          "dimensionsMillimeters": [
+            918.4822738170624,
+            483.876571059227,
+            164.99304870376363
+          ],
+          "sourcePolycount": 40296,
+          "tags": [
+            "antique",
+            "tea",
+            "cup",
+            "english",
+            "ornate",
+            "vintage",
+            "floral",
+            "decorative",
+            "ceramic",
+            "food",
+            "coffee",
+            "victorian"
+          ],
+          "categories": [
+            "props",
+            "dishes"
+          ]
+        },
+        "files": [
+          {
+            "relativePath": "tea_set_01_1k.gltf",
+            "bytes": 15836,
+            "md5": "157b3a5ace1f2dfd4419789ff4180c59",
+            "sha256": "479b93c5e5f121994a5582b329132c70c2076b2990673f9169721541e5c389a2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/tea_set_01/tea_set_01_1k.gltf"
+          },
+          {
+            "relativePath": "tea_set_01.bin",
+            "bytes": 941776,
+            "md5": "9f26672d452e5d155da484951b6277ae",
+            "sha256": "5ddd90f031a71832842f9030c2f7f0aa07b2c96f3d3cc4aa5cfaa5dbb14aa7b0",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/tea_set_01/tea_set_01.bin"
+          },
+          {
+            "relativePath": "textures/tea_set_01_nor_gl_1k.jpg",
+            "bytes": 255598,
+            "md5": "5618e35b021585a23b2e2f04faa92f9b",
+            "sha256": "0b3d5998d1d60a46a9807ccdbc8245464de4ba479bbca3eda6257575dc25b342",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/tea_set_01/tea_set_01_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/tea_set_01_diff_1k.jpg",
+            "bytes": 509631,
+            "md5": "e6a77ef283da8541a67cddc2ff698830",
+            "sha256": "110eb0aa11b6f532792e8b161cbe8e7a9a2b94694f217b4d9745fe32f3945ed8",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/tea_set_01/tea_set_01_diff_1k.jpg"
+          },
+          {
+            "relativePath": "textures/tea_set_01_arm_1k.jpg",
+            "bytes": 559750,
+            "md5": "119115b0c556d85ec257f480b0dc58a6",
+            "sha256": "160661eccada2ab02a78d4957ca804921d31633489433517f20f34f0db7ef502",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/tea_set_01/tea_set_01_arm_1k.jpg"
+          }
+        ],
+        "compressedBytes": 2282591
+      },
+      "processing": {
+        "trianglesBeforeDecimation": 40296,
+        "decimationRatio": 0.049632717887631524,
+        "sourceScaleCorrection": 1,
+        "representativeSourceMaterial": "tea_set_01_consolidated_pbr"
+      },
+      "export": {
+        "path": "public/assets/hero/ferry-market-arcade-cc0/cafe-tableware.glb",
+        "bytes": 1396436,
+        "sha256": "caeeea584b9b9acbd8beda2f4775b5fcf54011edfb0f32b34f0b84bfa7e7bfae",
+        "triangles": 1993,
+        "materials": 1,
+        "meshInstances": 10,
+        "externalUris": [],
+        "cameras": 0,
+        "lights": 0,
+        "emissiveMaterials": 0,
+        "boundsMeters": {
+          "min": [
+            -0.44041480869054794,
+            0,
+            -0.2835773527622223
+          ],
+          "max": [
+            0.4779241904616356,
+            0.1652335594408214,
+            0.20005936920642853
+          ]
+        },
+        "minYMeters": 0,
+        "groundingToleranceMeters": 0.0005
+      },
+      "qa": {
+        "shipping": false,
+        "cardPath": ".qa-ferry-market-arcade-cc0/cards/tea_set_01.png"
+      }
+    },
+    {
+      "id": "steel_frame_shelves_01",
+      "file": "grocer-shelves.glb",
+      "classification": "generic-fixture",
+      "role": "generic steel display shelves",
+      "targetTriangles": 2300,
+      "closeCard": "Generic steel shelves",
+      "source": {
+        "assetPage": "https://polyhaven.com/a/steel_frame_shelves_01",
+        "metadataUrl": "https://api.polyhaven.com/info/steel_frame_shelves_01",
+        "filesUrl": "https://api.polyhaven.com/files/steel_frame_shelves_01",
+        "resolution": "1k",
+        "metadata": {
+          "name": "Steel Frame Shelves 01",
+          "authors": {
+            "James Ray Cock": "All"
+          },
+          "datePublishedUnix": 1623767642,
+          "filesHash": "07b34991c01f75c3bfe85923ba649bc40de1dd17",
+          "dimensionsMillimeters": [
+            1097.4148511886597,
+            502.1176338195801,
+            2140.5010361922905
+          ],
+          "sourcePolycount": 4348,
+          "tags": [
+            "commercial",
+            "modern",
+            "shelf",
+            "bookshelf",
+            "metal",
+            "wood"
+          ],
+          "categories": [
+            "furniture",
+            "shelves",
+            "industrial",
+            "collection: the_shed"
+          ]
+        },
+        "files": [
+          {
+            "relativePath": "steel_frame_shelves_01_1k.gltf",
+            "bytes": 2766,
+            "md5": "36c93aa3e2757523e3f6336d628033ff",
+            "sha256": "4eff8994825d654e337f8dc425e959ed6add7f4773188c87ba64402d9edd9842",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/steel_frame_shelves_01/steel_frame_shelves_01_1k.gltf"
+          },
+          {
+            "relativePath": "textures/steel_frame_shelves_01_diff_1k.jpg",
+            "bytes": 477882,
+            "md5": "65520a03f0caf855bcb74a7842a0f937",
+            "sha256": "85e205b334e15e05bec9b02be1258da6ab949ae908aa57e0bee6b94ba45b4415",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/steel_frame_shelves_01/steel_frame_shelves_01_diff_1k.jpg"
+          },
+          {
+            "relativePath": "textures/steel_frame_shelves_01_nor_gl_1k.jpg",
+            "bytes": 318836,
+            "md5": "a87fd3930fc88524d1f43c23e2725fc0",
+            "sha256": "2a67ed7dd4f53c3e225396e6381992b768fe58b5261be703d540678e366e46ed",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/steel_frame_shelves_01/steel_frame_shelves_01_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "textures/steel_frame_shelves_01_arm_1k.jpg",
+            "bytes": 655560,
+            "md5": "2adddc4cd4dc2be76c171791bb5338cd",
+            "sha256": "858629eeaa8f68ddb4fc1a813afe6ed988ded3d6d49184ec45a14611760f0bb3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/steel_frame_shelves_01/steel_frame_shelves_01_arm_1k.jpg"
+          },
+          {
+            "relativePath": "steel_frame_shelves_01.bin",
+            "bytes": 142312,
+            "md5": "5728ceb7ff0d9b0b5ba5e7ef970aced9",
+            "sha256": "306d7e72d12a5d3047b8a189f8d0add51075eaf7f51f935286fda4e1c16dd066",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/steel_frame_shelves_01/steel_frame_shelves_01.bin"
+          }
+        ],
+        "compressedBytes": 1597356
+      },
+      "processing": {
+        "trianglesBeforeDecimation": 4348,
+        "decimationRatio": 0.5289788408463661,
+        "sourceScaleCorrection": 0.1,
+        "representativeSourceMaterial": "steel_frame_shelves_01_consolidated_pbr"
+      },
+      "export": {
+        "path": "public/assets/hero/ferry-market-arcade-cc0/grocer-shelves.glb",
+        "bytes": 1543908,
+        "sha256": "5dc0d65d63335326c19ad02c2244f6e9965d766b9c29f3af6d9b237e6ed35317",
+        "triangles": 2300,
+        "materials": 1,
+        "meshInstances": 1,
+        "externalUris": [],
+        "cameras": 0,
+        "lights": 0,
+        "emissiveMaterials": 0,
+        "boundsMeters": {
+          "min": [
+            -0.5486632905701292,
+            -3.945316989772962e-11,
+            -0.2510587729671414
+          ],
+          "max": [
+            0.5487050615058102,
+            2.1405180963742794,
+            0.2510587729671414
+          ]
+        },
+        "minYMeters": -3.945316989772962e-11,
+        "groundingToleranceMeters": 0.0005
+      },
+      "qa": {
+        "shipping": false,
+        "cardPath": ".qa-ferry-market-arcade-cc0/cards/steel_frame_shelves_01.png"
+      }
+    },
+    {
+      "id": "wooden_display_shelves_01",
+      "file": "newsstand-rack.glb",
+      "classification": "generic-fixture",
+      "role": "generic wooden display rack",
+      "targetTriangles": 2200,
+      "closeCard": "Generic wooden rack",
+      "source": {
+        "assetPage": "https://polyhaven.com/a/wooden_display_shelves_01",
+        "metadataUrl": "https://api.polyhaven.com/info/wooden_display_shelves_01",
+        "filesUrl": "https://api.polyhaven.com/files/wooden_display_shelves_01",
+        "resolution": "1k",
+        "metadata": {
+          "name": "Wooden Display Shelves 01",
+          "authors": {
+            "James Ray Cock": "All"
+          },
+          "datePublishedUnix": 1623767647,
+          "filesHash": "34b10f61944642400bd3d5686ea27350da9cbb66",
+          "dimensionsMillimeters": [
+            1077.760934829712,
+            371.50970101356506,
+            1556.1838150024414
+          ],
+          "sourcePolycount": 3174,
+          "tags": [
+            "modern",
+            "wood",
+            "pine",
+            "square",
+            "display",
+            "shelf",
+            "bookshelf"
+          ],
+          "categories": [
+            "furniture",
+            "shelves"
+          ]
+        },
+        "files": [
+          {
+            "relativePath": "wooden_display_shelves_01_1k.gltf",
+            "bytes": 6795,
+            "md5": "e807901382c7223238c5c3fd5bad5d8e",
+            "sha256": "3784953c451b088d24ac1b0e6946c7f7bd589115f51e6549fdb8fe9f7c10600e",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/wooden_display_shelves_01/wooden_display_shelves_01_1k.gltf"
+          },
+          {
+            "relativePath": "textures/wooden_display_shelves_01_arm_1k.jpg",
+            "bytes": 164353,
+            "md5": "526dc6c49a7ce366b61f04ab794107ee",
+            "sha256": "33d6b769eafab3b1d8605b202cd41b0994b8c43df02dca5bdd86e942e390ff6a",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/wooden_display_shelves_01/wooden_display_shelves_01_arm_1k.jpg"
+          },
+          {
+            "relativePath": "textures/wooden_display_shelves_01_nor_gl_1k.jpg",
+            "bytes": 54739,
+            "md5": "696f1c48d08ffcc4bfc90e4aabc91286",
+            "sha256": "04191c25bfb8e76314863b624233807792df64fa1a638c75d20788becb4cbb8c",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/wooden_display_shelves_01/wooden_display_shelves_01_nor_gl_1k.jpg"
+          },
+          {
+            "relativePath": "wooden_display_shelves_01.bin",
+            "bytes": 105988,
+            "md5": "d26e27c0c3a7c6b247b220a49379298f",
+            "sha256": "e6c000a780626e618c1f1c0c1ec2ec29e1452e7824055ba53b40963d857edfbe",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/wooden_display_shelves_01/wooden_display_shelves_01.bin"
+          },
+          {
+            "relativePath": "textures/wooden_display_shelves_01_diff_1k.jpg",
+            "bytes": 139254,
+            "md5": "b3f7519052957a3f0199e5fcd742a0b6",
+            "sha256": "cb57e90d9588ce81e58ff7300e89956a6a3c45119165b858d921a5a2439cbeaf",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/wooden_display_shelves_01/wooden_display_shelves_01_diff_1k.jpg"
+          }
+        ],
+        "compressedBytes": 471129
+      },
+      "processing": {
+        "trianglesBeforeDecimation": 3174,
+        "decimationRatio": 0.6931316950220542,
+        "sourceScaleCorrection": 1,
+        "representativeSourceMaterial": "wooden_display_shelves_01_consolidated_pbr"
+      },
+      "export": {
+        "path": "public/assets/hero/ferry-market-arcade-cc0/newsstand-rack.glb",
+        "bytes": 449392,
+        "sha256": "8630f45ac8037c96ad6efdf7ee310d6144a6a2c2697aff74ad4565eaa2fe0e6c",
+        "triangles": 2198,
+        "materials": 1,
+        "meshInstances": 4,
+        "externalUris": [],
+        "cameras": 0,
+        "lights": 0,
+        "emissiveMaterials": 0,
+        "boundsMeters": {
+          "min": [
+            -0.18575482070446014,
+            0,
+            -0.538880467414856
+          ],
+          "max": [
+            0.18575482070446014,
+            1.5561838150024414,
+            0.538880467414856
+          ]
+        },
+        "minYMeters": 0,
+        "groundingToleranceMeters": 0.0005
+      },
+      "qa": {
+        "shipping": false,
+        "cardPath": ".qa-ferry-market-arcade-cc0/cards/wooden_display_shelves_01.png"
+      }
+    }
+  ],
+  "qa": {
+    "shipping": false,
+    "directory": ".qa-ferry-market-arcade-cc0/",
+    "contactSheet": ".qa-ferry-market-arcade-cc0/contact-sheet.png"
+  },
+  "review": {
+    "legal": "passed independent provenance/license review",
+    "visual": "passed independent review for the cafe plus generic-fixtures foundation subset only",
+    "code": "passed independent review of GLB verifier/tooling and clean-checkout behavior",
+    "integration": "not integrated; runtime scene untouched",
+    "claimBoundary": "No five-program completeness or GTA parity claim."
+  }
+}
