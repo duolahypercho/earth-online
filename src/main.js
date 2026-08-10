@@ -1814,6 +1814,22 @@ function retrieveImpoundedVehicleAtFerry() {
   return true;
 }
 
+function startPlayerWorkShift() {
+  const combatState = combat?.getState?.();
+  const available = playerLayerActive
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !playerMoving()
+    && !beautyMode
+    && !qaCameraPose
+    && combatState?.status === 'running';
+  if (!available) {
+    hud?.setMessage('Market shift unavailable · be on foot, still, and ready to work.');
+    return false;
+  }
+  return lifeSim?.workShift?.(controls.target) === true;
+}
+
 function buyPlayerMedkit() {
   const purchased = lifeSim?.buyMedkitAtMarket?.(controls.target) === true;
   hud?.setLifeState?.(lifeSim?.getState?.());
@@ -1935,10 +1951,15 @@ function updatePlayerLayer(dt, elapsed) {
   }
   networking?.update(dt, elapsed);
   pedestrians.setDayHour?.(lifeSim?.getState?.().clock ?? 7);
-  lifeSim?.update(dt, {
+  const lifeEvent = lifeSim?.update(dt, {
     driving: Boolean(drivingState),
     moving: drivingState ? drivingState.speed > 0.5 : playerMoving(),
+    interior: controls.interiorMode,
+    downed: combat?.getState?.().status !== 'running',
+    available: playerLayerActive && !beautyMode && !qaCameraPose,
+    position: controls.target,
   });
+  if (lifeEvent?.kind === 'work-complete') savePlayerProgress();
 }
 
 const PORTAL_NEARBY_RADIUS = 22;
@@ -3684,7 +3705,7 @@ function onKeyDown(event) {
   if (code === 'KeyN' && !event.repeat) buyPlayerAmmo();
   if (code === 'KeyG' && !event.repeat) usePlayerMedkit();
   if (code === 'KeyF' && !event.repeat) {
-    lifeSim?.workShift?.(controls.target);
+    startPlayerWorkShift();
   }
   if (code === 'KeyX' && !event.repeat) {
     lifeSim?.rest?.();

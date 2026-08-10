@@ -15,6 +15,9 @@ const MEDKIT_CAPACITY = 3;
 const MEDKIT_HEAL = 45;
 const AMMO_BOX_COST = 32;
 const AMMO_BOX_ROUNDS = 24;
+const MARKET_SHIFT_DURATION = 5.5;
+const MARKET_SHIFT_COOLDOWN = 8;
+const MARKET_SHIFT_WAGE = 26;
 
 function clampNeed(value) {
   return THREE.MathUtils.clamp(value, 0, 100);
@@ -58,6 +61,12 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     lastActivity: null,
     lastActivityAt: 0,
     lastTransaction: null,
+    workShift: {
+      active: false,
+      elapsed: 0,
+      cooldownRemaining: 0,
+      locationLabel: null,
+    },
   };
   let lastHudAt = -Infinity;
 
@@ -76,7 +85,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     return Boolean(
       label
       && (label.includes('ferry') || label.includes('market') || label.includes('cafe'))
-      && state.needs.energy >= 18,
+      && state.needs.energy >= 18
+      && !state.workShift.active
+      && state.workShift.cooldownRemaining <= 0
     );
   }
 
@@ -112,6 +123,20 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
         },
       },
       lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
+      workShift: {
+        active: state.workShift.active,
+        status: state.workShift.active
+          ? 'working'
+          : state.workShift.cooldownRemaining > 0 ? 'cooldown' : 'ready',
+        duration: MARKET_SHIFT_DURATION,
+        elapsed: state.workShift.elapsed,
+        remaining: state.workShift.active
+          ? Math.max(0, MARKET_SHIFT_DURATION - state.workShift.elapsed)
+          : 0,
+        cooldownRemaining: state.workShift.cooldownRemaining,
+        wage: MARKET_SHIFT_WAGE,
+        locationLabel: state.workShift.locationLabel,
+      },
       activity: state.lastActivity,
       mood: getMood(),
       lowNeeds: summary ? summary.labels.split(', ').filter(Boolean) : [],
@@ -136,6 +161,9 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       lastActivity: state.lastActivity,
       lastActivityAt: state.lastActivityAt,
       lastTransaction: state.lastTransaction ? { ...state.lastTransaction } : null,
+      workShift: {
+        cooldownRemaining: state.workShift.cooldownRemaining,
+      },
     };
   }
 
@@ -186,12 +214,97 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
           : {}),
       }
       : null;
+    state.workShift.active = false;
+    state.workShift.elapsed = 0;
+    state.workShift.cooldownRemaining = THREE.MathUtils.clamp(
+      Number(snapshot.workShift?.cooldownRemaining) || 0,
+      0,
+      300,
+    );
+    state.workShift.locationLabel = null;
     hud?.setLifeState?.(getState());
     return true;
   }
 
+  function cancelWorkShift(message = 'Market shift cancelled · stay near the counter and keep still.') {
+    if (!state.workShift.active) return false;
+    state.workShift.active = false;
+    state.workShift.elapsed = 0;
+    state.workShift.locationLabel = null;
+    state.lastActivity = 'work:market-cancelled';
+    state.lastActivityAt = performance.now();
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'work-cancelled',
+      message,
+    };
+  }
+
+  function completeWorkShift() {
+    if (!state.workShift.active) return null;
+    state.workShift.active = false;
+    state.workShift.elapsed = 0;
+    state.workShift.cooldownRemaining = MARKET_SHIFT_COOLDOWN;
+    state.workShift.locationLabel = null;
+    state.cash += MARKET_SHIFT_WAGE;
+    state.needs.energy = clampNeed(state.needs.energy - 16);
+    state.needs.hunger = clampNeed(state.needs.hunger + 9);
+    state.needs.fun = clampNeed(state.needs.fun - 4);
+    state.lastActivity = 'work:market-complete';
+    state.lastActivityAt = performance.now();
+    state.lastTransaction = {
+      kind: 'work-wage',
+      label: 'Market work shift',
+      amount: MARKET_SHIFT_WAGE,
+      cashAfter: Math.round(state.cash),
+      at: state.lastActivityAt,
+    };
+    const message = `MARKET SHIFT COMPLETE · $${MARKET_SHIFT_WAGE} earned.`;
+    onMessage(message);
+    hud?.setLifeState?.(getState());
+    return {
+      kind: 'work-complete',
+      message,
+      wage: MARKET_SHIFT_WAGE,
+      transaction: { ...state.lastTransaction },
+    };
+  }
+
   function update(dt = 0, playerState = {}) {
-    if (!Number.isFinite(dt) || dt <= 0) return;
+    if (!Number.isFinite(dt) || dt <= 0) return null;
+    state.workShift.cooldownRemaining = Math.max(
+      0,
+      state.workShift.cooldownRemaining - dt,
+    );
+    if (state.workShift.active) {
+      const label = getNearestPortalLabel(playerState.position);
+      const validLocation = Boolean(
+        label && (label.includes('ferry') || label.includes('market') || label.includes('cafe')),
+      );
+      if (playerState.driving === true
+        || playerState.moving === true
+        || playerState.interior === true
+        || playerState.downed === true
+        || playerState.available === false
+        || !validLocation) {
+        return cancelWorkShift();
+      }
+      state.workShift.elapsed = Math.min(
+        MARKET_SHIFT_DURATION,
+        state.workShift.elapsed + dt,
+      );
+      if (state.workShift.elapsed >= MARKET_SHIFT_DURATION) return completeWorkShift();
+      const now = performance.now() / 1000;
+      if (now - lastHudAt >= 0.45) {
+        lastHudAt = now;
+        hud?.setLifeState?.(getState());
+      }
+      return {
+        kind: 'work-progress',
+        remaining: MARKET_SHIFT_DURATION - state.workShift.elapsed,
+      };
+    }
     const deltaHours = dt * SIM_HOURS_PER_SECOND;
     state.clock += deltaHours;
     if (state.clock >= 24) {
@@ -224,6 +337,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       lastHudAt = now;
       hud?.setLifeState?.(getState());
     }
+    return null;
   }
 
   function addCash(amount) {
@@ -441,13 +555,21 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
       onMessage('You are too tired to work. Rest for a moment first.');
       return false;
     }
-    state.cash += 26;
-    state.needs.energy = clampNeed(state.needs.energy - 16);
-    state.needs.hunger = clampNeed(state.needs.hunger + 9);
-    state.needs.fun = clampNeed(state.needs.fun - 4);
-    state.lastActivity = 'work:market';
+    if (state.workShift.active) {
+      onMessage('MARKET SHIFT already in progress · stay near the counter.');
+      return false;
+    }
+    if (state.workShift.cooldownRemaining > 0) {
+      onMessage(`Market shift cooldown · ${Math.ceil(state.workShift.cooldownRemaining)}s remaining.`);
+      return false;
+    }
+    state.workShift.active = true;
+    state.workShift.elapsed = 0;
+    state.workShift.locationLabel = label;
+    state.lastActivity = 'work:market-active';
     state.lastActivityAt = performance.now();
-    onMessage('You worked a short market shift. Cash is up and energy is down.');
+    onMessage(`MARKET SHIFT · stay near the counter for ${MARKET_SHIFT_DURATION.toFixed(1)}s.`);
+    hud?.setLifeState?.(getState());
     return true;
   }
 
@@ -500,6 +622,7 @@ export function createLifeSim({ hud, city, traffic, pedestrians, onMessage = () 
     canAffordMeal,
     canWork,
     workShift,
+    cancelWorkShift,
     canAffordVehicleRepair,
     payVehicleRepair,
     payWantedFine,

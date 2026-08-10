@@ -193,20 +193,34 @@ try {
     const worked = await page1.evaluate((position) => {
       const sim = window.__SF_SIM__;
       const canWork = sim.lifeSim.canWork(position);
-      const workedShift = sim.lifeSim.workShift(position);
-      return { canWork, workedShift };
+      const started = sim.lifeSim.workShift(position);
+      const afterStart = sim.lifeSim.getState();
+      const completion = sim.lifeSim.update(6, {
+        position,
+        driving: false,
+        moving: false,
+        interior: false,
+        downed: false,
+        available: true,
+      });
+      return { canWork, started, afterStart, completion };
     }, food.position);
     const afterWork = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     check(
-      'life-sim work shift earns cash',
+      'life-sim bounded work shift earns one transactional wage',
       worked.canWork === true
-        && worked.workedShift === true
-        && afterWork.cash > beforeWork.cash
-        && afterWork.needs.energy < beforeWork.needs.energy,
+        && worked.started === true
+        && worked.afterStart.cash === beforeWork.cash
+        && worked.completion?.kind === 'work-complete'
+        && afterWork.cash === beforeWork.cash + 26
+        && afterWork.needs.energy === beforeWork.needs.energy - 16
+        && afterWork.needs.hunger === beforeWork.needs.hunger + 9
+        && afterWork.needs.fun === beforeWork.needs.fun - 4
+        && afterWork.lastTransaction?.kind === 'work-wage',
       {
         worked,
-        before: { cash: beforeWork.cash, energy: beforeWork.needs.energy },
-        after: { cash: afterWork.cash, energy: afterWork.needs.energy },
+        before: { cash: beforeWork.cash, needs: beforeWork.needs },
+        after: { cash: afterWork.cash, needs: afterWork.needs },
       },
     );
     const beforeRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
