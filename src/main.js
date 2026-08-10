@@ -1210,20 +1210,9 @@ hud = createHud({
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
-    controls.combatPointerId = null;
-    controls.combatTriggerPointerId = null;
-    traffic.cancelTaxiRide?.();
-    taxiRideState = null;
-    traffic.cancelMuniRide?.();
-    muniRideState = null;
-    combat?.setAiming(false);
-    combat?.setTriggerHeld(false);
-    traffic.repairPlayerVehicle?.('shift-reset');
     cityShift?.restart();
-    streetHeat?.restart();
-    combat?.restart();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
-    hud?.setMessage('Shift reset · follow the amber beacon to the Welcome Center.');
+    hud?.setMessage('Waterfront Loop replayed · follow the amber beacon to the Welcome Center.');
     savePlayerProgress();
   },
 });

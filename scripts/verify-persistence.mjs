@@ -230,8 +230,50 @@ try {
     && restoredComplete.life.lastTransaction?.at === completed.life.lastTransaction?.at,
   'restoring a completed mission duplicated or lost its payout', { completed, restoredComplete });
 
+  const beforeReplay = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    roam: window.__SF_SIM__.getRoamState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+  }));
   await page.locator('.hud__mission-restart').click();
   await page.waitForTimeout(80);
+  const replayed = await page.evaluate(() => ({
+    life: window.__SF_SIM__.lifeSim.getState(),
+    mission: window.__SF_SIM__.cityShift.getState(),
+    combat: window.__SF_SIM__.getCombatState(),
+    heat: window.__SF_SIM__.getStreetHeatState(),
+    roam: window.__SF_SIM__.getRoamState(),
+    save: window.__SF_SIM__.getSavedProgress(),
+  }));
+  assert(replayed.mission.status === 'running'
+    && replayed.mission.completedSteps === 0
+    && replayed.life.cash === beforeReplay.life.cash
+    && replayed.life.legalDebt === beforeReplay.life.legalDebt
+    && replayed.life.inventory.medkit.count === beforeReplay.life.inventory.medkit.count
+    && replayed.life.lastTransaction?.kind === beforeReplay.life.lastTransaction?.kind
+    && replayed.life.lastTransaction?.at === beforeReplay.life.lastTransaction?.at
+    && replayed.combat.health === beforeReplay.combat.health
+    && replayed.combat.ammo === beforeReplay.combat.ammo
+    && replayed.combat.reserveAmmo === beforeReplay.combat.reserveAmmo
+    && replayed.heat.pursuitActive === beforeReplay.heat.pursuitActive
+    && replayed.heat.heat > 0
+    && replayed.heat.heat <= beforeReplay.heat.heat
+    && replayed.heat.heat >= beforeReplay.heat.heat - 2
+    && Math.hypot(
+      replayed.roam.target.x - beforeReplay.roam.target.x,
+      replayed.roam.target.z - beforeReplay.roam.target.z,
+    ) < 0.05
+    && replayed.save.snapshot?.combat?.health === replayed.combat.health
+    && replayed.save.snapshot?.combat?.ammo === replayed.combat.ammo
+    && replayed.save.snapshot?.streetHeat?.pursuitActive === replayed.heat.pursuitActive
+    && replayed.save.snapshot?.streetHeat?.heat > 0,
+  'Replay changed consequences outside the City Shift or failed to save immediately', {
+    beforeReplay,
+    replayed,
+  });
   await page.reload({ waitUntil: 'load', timeout: 30000 });
   await launch();
   const restoredReplay = await page.evaluate(() => ({
@@ -244,13 +286,24 @@ try {
   }));
   assert(restoredReplay.mission.status === 'running'
     && restoredReplay.mission.completedSteps === 0
-    && restoredReplay.life.cash === completed.life.cash
-    && restoredReplay.combat.health === restoredReplay.combat.maxHealth
-    && restoredReplay.combat.ammo === restoredReplay.combat.magazineSize
-    && restoredReplay.combat.reserveAmmo === 48
-    && restoredReplay.heat.pursuitActive === false
-    && restoredReplay.heat.heat === 0,
-  'replay reset was not saved immediately or corrupted earned cash', restoredReplay);
+    && restoredReplay.life.cash === replayed.life.cash
+    && restoredReplay.life.legalDebt === replayed.life.legalDebt
+    && restoredReplay.life.inventory.medkit.count === replayed.life.inventory.medkit.count
+    && restoredReplay.life.lastTransaction?.at === replayed.life.lastTransaction?.at
+    && restoredReplay.combat.health >= replayed.combat.health
+    && restoredReplay.combat.health < restoredReplay.combat.maxHealth
+    && restoredReplay.combat.ammo === replayed.combat.ammo
+    && restoredReplay.combat.reserveAmmo === replayed.combat.reserveAmmo
+    && restoredReplay.heat.pursuitActive === replayed.heat.pursuitActive
+    && restoredReplay.heat.heat > 0
+    && Math.hypot(
+      restoredReplay.roam.target.x - replayed.roam.target.x,
+      restoredReplay.roam.target.z - replayed.roam.target.z,
+    ) < 0.05,
+  'Replay did not persist mission-only restart semantics across reload', {
+    replayed,
+    restoredReplay,
+  });
 
   const storageKey = restored.save.key;
   const legacySnapshot = await page.evaluate(({ key }) => {
@@ -271,7 +324,10 @@ try {
   assert(restoredLegacy.life.cash === restoredReplay.life.cash
     && restoredLegacy.mission.status === 'running'
     && restoredLegacy.mission.completedSteps === 0
-    && restoredLegacy.combat.health === restoredLegacy.combat.maxHealth
+    && restoredLegacy.combat.health >= restoredReplay.combat.health
+    && restoredLegacy.combat.health < restoredLegacy.combat.maxHealth
+    && restoredLegacy.combat.ammo === restoredReplay.combat.ammo
+    && restoredLegacy.combat.reserveAmmo === restoredReplay.combat.reserveAmmo
     && restoredLegacy.save.snapshot?.world === undefined
     && Math.hypot(
       restoredLegacy.roam.target.x - beforeReload.save.snapshot.world.x,
