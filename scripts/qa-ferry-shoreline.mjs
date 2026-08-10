@@ -80,6 +80,21 @@ function assertWaterfrontState(id, state) {
   assert.equal(state.shoreline.transition.landInsetM, 0.9, `${id}: shoreline transition width drifted`);
   assert.equal(state.shoreline.transition.gridUnderlapM, 6, `${id}: shoreline grid underlap drifted`);
   assert.equal(state.atmosphere.waterVisible, true, `${id}: water surface is not visible`);
+  assert.equal(state.atmosphere.waterSurfaces.city, 1, `${id}: runtime does not have exactly one Bay water surface`);
+  assert.equal(state.atmosphere.waterSurfaces.shared, 1, `${id}: runtime Bay surface is not the shared surface`);
+  assert.equal(state.atmosphere.waterSurfaces.atmosphereRoot, 0, `${id}: atmosphere reintroduced a local water mesh`);
+  assert.equal(state.atmosphere.water.adopted, true, `${id}: shared Bay surface was not adopted`);
+  assert.equal(state.atmosphere.water.ownsSurface, false, `${id}: atmosphere claimed ownership of Bay resources`);
+  assert.equal(state.atmosphere.water.meshIdentity, true, `${id}: shared Bay mesh identity changed`);
+  assert.equal(state.atmosphere.water.geometryIdentity, true, `${id}: shared Bay geometry identity changed`);
+  assert.equal(state.atmosphere.water.materialIdentity, true, `${id}: shared Bay material identity changed`);
+  assert.equal(state.atmosphere.water.mapIdentity, true, `${id}: shared Bay map identity changed`);
+  assert.equal(state.atmosphere.water.materialType, 'MeshStandardMaterial', `${id}: shared Bay lost stock PBR material`);
+  assert.equal(state.atmosphere.water.shaderCompatible, true, `${id}: shared Bay shader contract failed closed in-browser`);
+  const expectedNight = id.includes('dusk') ? 0.42 : 0;
+  const expectedWetness = id.includes('drizzle') ? 0.9 : 0;
+  assert.equal(state.atmosphere.water.uniforms.night, expectedNight, `${id}: Bay night uniform drifted`);
+  assert.equal(state.atmosphere.water.uniforms.wetness, expectedWetness, `${id}: Bay wetness uniform drifted`);
 }
 
 async function probePerformance() {
@@ -163,9 +178,15 @@ try {
     }
     const path = join(outDir, `${condition.id}.png`);
     await page.screenshot({ path });
+    const cropPath = join(outDir, `${condition.id}-water-crop.png`);
+    await page.screenshot({
+      path: cropPath,
+      clip: { x: 520, y: 320, width: 850, height: 420 },
+    });
     captures.push({
       id: condition.id,
       path,
+      cropPath,
       condition,
       player: state.player,
       camera: state.camera,

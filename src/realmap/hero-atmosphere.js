@@ -57,66 +57,193 @@ function disposeOwnedObject(root) {
   });
 }
 
-function makeWaterMaterial() {
-  return new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    uniforms: {
-      time: { value: 0 },
-      wind: { value: new THREE.Vector2(0.78, 0.35) },
-      night: { value: 0 },
-      wetness: { value: 0 },
-      opacity: { value: 0.84 },
-    },
-    vertexShader: `
-      uniform float time;
-      uniform vec2 wind;
-      varying vec2 vUv;
-      varying vec3 vWorldPosition;
-      void main() {
-        vUv = uv;
-        vec3 displaced = position;
-        float waveA = sin((position.x + position.z * 0.42) * 0.19 + time * 0.72) * 0.10;
-        float waveB = sin((position.z - position.x * 0.31) * 0.31 + time * 1.18) * 0.045;
-        displaced.y += waveA + waveB;
-        vec4 worldPosition = modelMatrix * vec4(displaced, 1.0);
-        vWorldPosition = worldPosition.xyz;
-        gl_Position = projectionMatrix * viewMatrix * worldPosition;
-      }
-    `,
-    fragmentShader: `
-      uniform float time;
-      uniform vec2 wind;
-      uniform float night;
-      uniform float wetness;
-      uniform float opacity;
-      varying vec2 vUv;
-      varying vec3 vWorldPosition;
-      float hash(vec2 p) {
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-      }
-      float noise(vec2 p) {
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        f = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0)), f.x), f.y);
-      }
-      void main() {
-        vec2 flow = vWorldPosition.xz * 0.045 + wind * time * 0.11;
-        float ripples = noise(flow) * 0.72 + noise(flow * 2.6 - wind * time * 0.18) * 0.28;
-        float bands = sin((vWorldPosition.x * 0.23 + vWorldPosition.z * 0.11) + time * 1.1) * 0.5 + 0.5;
-        vec3 bayDeep = vec3(0.025, 0.135, 0.19);
-        vec3 bayLight = vec3(0.13, 0.38, 0.48);
-        vec3 color = mix(bayDeep, bayLight, ripples * 0.72 + bands * 0.11);
-        float distantGlint = pow(max(0.0, ripples + bands * 0.45), 8.0);
-        color += vec3(0.42, 0.64, 0.70) * distantGlint * (0.18 + wetness * 0.18);
-        color = mix(color, vec3(0.012, 0.035, 0.075), night * 0.45);
-        color += vec3(0.14, 0.23, 0.30) * night * distantGlint * 0.55;
-        gl_FragColor = vec4(color, opacity);
-      }
-    `,
+const BAY_WATER_PROGRAM_KEY = 'ferry-bay-shared-water-v1';
+const BAY_WATER_MATERIAL_ADOPTIONS = new WeakMap();
+
+function adoptSharedBayWater(mesh) {
+  if (!mesh?.isMesh || Array.isArray(mesh.material) || !mesh.material?.isMeshStandardMaterial) return null;
+  if (!mesh.geometry?.isBufferGeometry || !mesh.material.map?.isTexture) return null;
+  if (mesh.userData?.type !== 'water'
+    || mesh.userData.sharedBaySurface !== true
+    || mesh.userData.heroAtmosphereEligible !== true) return null;
+
+  const material = mesh.material;
+  if (typeof material.onBeforeCompile !== 'function'
+    || typeof material.customProgramCacheKey !== 'function') return null;
+  if (BAY_WATER_MATERIAL_ADOPTIONS.has(material)) return null;
+  const identity = Object.freeze({
+    mesh,
+    geometry: mesh.geometry,
+    material,
+    map: material.map,
   });
+  const original = {
+    onBeforeCompile: material.onBeforeCompile,
+    customProgramCacheKey: material.customProgramCacheKey,
+    ownsOnBeforeCompile: Object.prototype.hasOwnProperty.call(material, 'onBeforeCompile'),
+    ownsCustomProgramCacheKey: Object.prototype.hasOwnProperty.call(material, 'customProgramCacheKey'),
+    programCacheKey: material.customProgramCacheKey.call(material),
+  };
+  const uniforms = {
+    heroBayTime: { value: 0 },
+    heroBayNight: { value: 0 },
+    heroBayWetness: { value: 0 },
+    heroBayWind: { value: 0.2 },
+  };
+  let shaderCompatible = null;
+  let disposed = false;
+  const adoptionToken = {};
+
+  const vertexHeader = `
+varying vec2 vHeroBaySurface;
+`;
+  const fragmentHeader = `
+uniform float heroBayTime;
+uniform float heroBayNight;
+uniform float heroBayWetness;
+uniform float heroBayWind;
+varying vec2 vHeroBaySurface;
+
+float heroBayHash(vec2 point) {
+  vec3 point3 = fract(vec3(point.xyx) * 0.1031);
+  point3 += dot(point3, point3.yzx + 33.33);
+  return fract((point3.x + point3.y) * point3.z);
+}
+
+float heroBayNoise(vec2 point) {
+  vec2 cell = floor(point);
+  vec2 local = fract(point);
+  local = local * local * (3.0 - 2.0 * local);
+  return mix(
+    mix(heroBayHash(cell), heroBayHash(cell + vec2(1.0, 0.0)), local.x),
+    mix(heroBayHash(cell + vec2(0.0, 1.0)), heroBayHash(cell + vec2(1.0, 1.0)), local.x),
+    local.y
+  );
+}
+
+mat3 heroBayTangentFrame(vec3 eyePosition, vec3 surfaceNormal, vec2 surfacePoint) {
+  vec3 eyeDx = dFdx(eyePosition);
+  vec3 eyeDy = dFdy(eyePosition);
+  vec2 surfaceDx = dFdx(surfacePoint);
+  vec2 surfaceDy = dFdy(surfacePoint);
+  vec3 tangent = cross(eyeDy, surfaceNormal) * surfaceDx.x
+    + cross(surfaceNormal, eyeDx) * surfaceDy.x;
+  vec3 bitangent = cross(eyeDy, surfaceNormal) * surfaceDx.y
+    + cross(surfaceNormal, eyeDx) * surfaceDy.y;
+  float determinant = max(dot(tangent, tangent), dot(bitangent, bitangent));
+  float scale = determinant == 0.0 ? 0.0 : inversesqrt(determinant);
+  return mat3(tangent * scale, bitangent * scale, surfaceNormal);
+}
+`;
+  const waterResponse = `
+    vec2 heroBayFlow = vec2(0.71, 0.29) * heroBayTime * (0.012 + heroBayWind * 0.018);
+    vec2 heroBayPoint = vHeroBaySurface * 0.018 + heroBayFlow;
+    float heroBayLow = heroBayNoise(heroBayPoint);
+    float heroBayFine = heroBayNoise(heroBayPoint * 2.73 - heroBayFlow * 1.61);
+    float heroBayHeight = mix(heroBayLow, heroBayFine, 0.34);
+    float heroBayOffsetX = mix(
+      heroBayNoise(heroBayPoint + vec2(0.035, 0.0)),
+      heroBayNoise((heroBayPoint + vec2(0.035, 0.0)) * 2.73 - heroBayFlow * 1.61),
+      0.34
+    );
+    float heroBayOffsetY = mix(
+      heroBayNoise(heroBayPoint + vec2(0.0, 0.035)),
+      heroBayNoise((heroBayPoint + vec2(0.0, 0.035)) * 2.73 - heroBayFlow * 1.61),
+      0.34
+    );
+    vec2 heroBaySlope = vec2(heroBayOffsetX, heroBayOffsetY) - heroBayHeight;
+    float heroBayResponse = 0.038 + heroBayWetness * 0.035 + heroBayWind * 0.016;
+    mat3 heroBayFrame = heroBayTangentFrame(-vViewPosition, normal, vHeroBaySurface);
+    normal = normalize(heroBayFrame * vec3(heroBaySlope * heroBayResponse, 1.0));
+    // Three's stock geometryViewDir is normalize(vViewPosition); the negated
+    // value above is only the eye-space surface position used for derivatives.
+    float heroBayFresnel = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
+    roughnessFactor = clamp(
+      roughnessFactor + (heroBayHeight - 0.5) * 0.045 + heroBayWetness * 0.055,
+      0.18,
+      0.52
+    );
+    vec3 heroBayBody = mix(vec3(0.018, 0.105, 0.15), vec3(0.052, 0.19, 0.235), heroBayHeight);
+    heroBayBody = mix(heroBayBody, vec3(0.038, 0.12, 0.145), heroBayWetness * 0.32);
+    heroBayBody = mix(heroBayBody, vec3(0.012, 0.045, 0.075), heroBayNight * 0.58);
+    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayBody, 0.28 + heroBayWetness * 0.08);
+    vec3 heroBayHorizon = mix(vec3(0.055, 0.17, 0.22), vec3(0.025, 0.075, 0.12), heroBayNight);
+    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayHorizon, heroBayFresnel * (0.12 + heroBayWetness * 0.045));
+`;
+
+  const wrapper = function onBeforeCompile(shader, renderer) {
+    original.onBeforeCompile.call(material, shader, renderer);
+    const compatible = shader.vertexShader.includes('#include <begin_vertex>')
+      && shader.fragmentShader.includes('#include <common>')
+      && shader.fragmentShader.includes('#include <normal_fragment_maps>');
+    shaderCompatible = compatible;
+    if (!compatible) return;
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = `${vertexHeader}\n${shader.vertexShader}`.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n\tvHeroBaySurface = transformed.xz;',
+    );
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>${fragmentHeader}`);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `#include <normal_fragment_maps>${waterResponse}`,
+    );
+  };
+  const cacheKey = function customProgramCacheKey() {
+    return `${original.programCacheKey}|${BAY_WATER_PROGRAM_KEY}`;
+  };
+
+  material.onBeforeCompile = wrapper;
+  material.customProgramCacheKey = cacheKey;
+  BAY_WATER_MATERIAL_ADOPTIONS.set(material, adoptionToken);
+  material.needsUpdate = true;
+
+  function update(elapsed, conditions) {
+    if (disposed) return;
+    uniforms.heroBayTime.value = elapsed;
+    uniforms.heroBayNight.value = conditions.night;
+    uniforms.heroBayWetness.value = conditions.wetness;
+    uniforms.heroBayWind.value = conditions.windSpeed;
+  }
+
+  function getDiagnostics() {
+    return {
+      adopted: !disposed,
+      sharedSurface: true,
+      ownsSurface: false,
+      meshIdentity: mesh === identity.mesh,
+      geometryIdentity: mesh.geometry === identity.geometry,
+      materialIdentity: mesh.material === identity.material,
+      mapIdentity: material.map === identity.map,
+      materialType: material.type,
+      shaderCompatible,
+      uniforms: {
+        time: uniforms.heroBayTime.value,
+        night: uniforms.heroBayNight.value,
+        wetness: uniforms.heroBayWetness.value,
+        wind: uniforms.heroBayWind.value,
+      },
+    };
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (material.onBeforeCompile === wrapper) {
+      if (original.ownsOnBeforeCompile) material.onBeforeCompile = original.onBeforeCompile;
+      else delete material.onBeforeCompile;
+    }
+    if (material.customProgramCacheKey === cacheKey) {
+      if (original.ownsCustomProgramCacheKey) material.customProgramCacheKey = original.customProgramCacheKey;
+      else delete material.customProgramCacheKey;
+    }
+    if (BAY_WATER_MATERIAL_ADOPTIONS.get(material) === adoptionToken) {
+      BAY_WATER_MATERIAL_ADOPTIONS.delete(material);
+    }
+    material.needsUpdate = true;
+  }
+
+  return Object.freeze({ identity, uniforms, update, getDiagnostics, dispose });
 }
 
 function makeCloudMaterial() {
@@ -357,8 +484,8 @@ function normaliseConditions(input = {}) {
 /**
  * Creates local Bay atmosphere without assuming the application's scene graph.
  * `parent` can be a streamed hero-tile group; otherwise the effect is added to
- * `scene`. `waterBounds` should be supplied by a more exact shoreline mask when
- * one becomes available.
+ * `scene`. The optional `water` must be the existing shared Bay surface; the
+ * atmosphere never owns or duplicates that mesh.
  */
 export function createFerryBuildingAtmosphere(options = {}) {
   const scene = options.scene;
@@ -366,8 +493,6 @@ export function createFerryBuildingAtmosphere(options = {}) {
     throw new Error('createFerryBuildingAtmosphere requires a Three.js scene or parent group.');
   }
   const parent = options.parent?.isObject3D ? options.parent : scene;
-  const waterBounds = { ...FERRY_BUILDING_HERO_ATMOSPHERE.waterBounds, ...(options.waterBounds || {}) };
-  const seaLevel = Number.isFinite(options.seaLevel) ? options.seaLevel : FERRY_BUILDING_HERO_ATMOSPHERE.seaLevel;
   const lightBudget = THREE.MathUtils.clamp(
     Math.floor(options.maxLampLights ?? FERRY_BUILDING_HERO_ATMOSPHERE.maxLampLights),
     0,
@@ -378,20 +503,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
   root.userData.heroAtmosphere = true;
   parent.add(root);
 
-  const waterMaterial = makeWaterMaterial();
-  const waterGeometry = new THREE.PlaneGeometry(
-    waterBounds.maxX - waterBounds.minX,
-    waterBounds.maxZ - waterBounds.minZ,
-    56,
-    96,
-  );
-  waterGeometry.rotateX(-Math.PI / 2);
-  const water = new THREE.Mesh(waterGeometry, waterMaterial);
-  water.position.set((waterBounds.minX + waterBounds.maxX) * 0.5, seaLevel + 0.055, (waterBounds.minZ + waterBounds.maxZ) * 0.5);
-  water.name = 'Ferry Building local Bay water';
-  water.renderOrder = 1;
-  water.receiveShadow = true;
-  root.add(water);
+  const sharedWater = adoptSharedBayWater(options.water);
 
   const cloudMaterial = makeCloudMaterial();
   const cloudDeck = new THREE.Mesh(new THREE.PlaneGeometry(780, 440), cloudMaterial);
@@ -469,6 +581,8 @@ export function createFerryBuildingAtmosphere(options = {}) {
     if (disposed) return { ...conditions };
     const weatherChanged = Object.prototype.hasOwnProperty.call(nextConditions, 'weather')
       && nextConditions.weather !== conditions.weather;
+    const timeChanged = Object.prototype.hasOwnProperty.call(nextConditions, 'timeOfDay')
+      && nextConditions.timeOfDay !== conditions.timeOfDay;
     const merged = { ...conditions, ...nextConditions };
     // Weather-derived values must return to their clear defaults when the
     // runtime switches modes; otherwise a prior drizzle would leave dry
@@ -478,6 +592,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
         if (!Object.prototype.hasOwnProperty.call(nextConditions, key)) delete merged[key];
       }
     }
+    if (timeChanged && !Object.prototype.hasOwnProperty.call(nextConditions, 'night')) delete merged.night;
     conditions = normaliseConditions(merged);
     refreshWetMaterials();
     refreshRainPresentation();
@@ -514,11 +629,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
   function update(deltaSeconds = 0) {
     if (disposed) return;
     elapsed += Math.min(Math.max(Number(deltaSeconds) || 0, 0), MAX_DELTA_SECONDS);
-    waterMaterial.uniforms.time.value = elapsed;
-    waterMaterial.uniforms.wind.value.set(0.58 + conditions.windSpeed * 0.58, 0.2 + conditions.windSpeed * 0.24);
-    waterMaterial.uniforms.night.value = conditions.night;
-    waterMaterial.uniforms.wetness.value = conditions.wetness;
-    waterMaterial.uniforms.opacity.value = 0.77 + conditions.wetness * 0.12;
+    sharedWater?.update(elapsed, conditions);
     cloudMaterial.uniforms.time.value = elapsed;
     cloudMaterial.uniforms.cloudiness.value = conditions.cloudiness;
     cloudMaterial.uniforms.night.value = conditions.night;
@@ -553,6 +664,7 @@ export function createFerryBuildingAtmosphere(options = {}) {
     }
     wetMaterials.clear();
     restoreRainPresentation();
+    sharedWater?.dispose();
     root.removeFromParent();
     disposeOwnedObject(root);
   }
@@ -561,7 +673,13 @@ export function createFerryBuildingAtmosphere(options = {}) {
   update(0);
   return Object.freeze({
     root,
-    water,
+    water: sharedWater?.identity.mesh || null,
+    getWaterDiagnostics: () => sharedWater?.getDiagnostics() || {
+      adopted: false,
+      sharedSurface: false,
+      ownsSurface: false,
+      shaderCompatible: null,
+    },
     setConditions,
     registerWetMaterial,
     registerWetRoot,

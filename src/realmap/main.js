@@ -3426,7 +3426,8 @@ function createWaterPlane(regionPoints) {
     SEA_LEVEL_Y,
     (bounds.minZ + bounds.maxZ) / 2,
   );
-  water.userData = { type: 'water' };
+  water.name = 'SF Bay shared water surface';
+  water.userData = { type: 'water', sharedBaySurface: true, heroAtmosphereEligible: false };
   return water;
 }
 
@@ -9303,13 +9304,16 @@ function disposeHeroAtmosphere() {
   heroAtmosphereWetMaterialBindings = 0;
 }
 
-function initializeHeroAtmosphere() {
+function initializeHeroAtmosphere(sharedBayWater) {
   disposeHeroAtmosphere();
   if (!activeHeroTile || !cityRoot || !scene) return null;
 
   heroAtmosphere = createFerryBuildingAtmosphere({
     scene,
     parent: cityRoot,
+    water: !fullCityMode && isFerryBuildingHeroTile() && sharedBayWater?.userData?.heroAtmosphereEligible
+      ? sharedBayWater
+      : null,
     conditions: heroAtmosphereConditions(),
     maxLampLights: FERRY_HERO_ATMOSPHERE_POINT_LIGHTS,
   });
@@ -9332,12 +9336,29 @@ function initializeHeroAtmosphere() {
 
 function getHeroAtmosphereDiagnostics() {
   const root = heroAtmosphere?.root;
+  let atmosphereWaterMeshes = 0;
+  root?.traverse((object) => {
+    if (object?.isMesh && object.userData?.type === 'water') atmosphereWaterMeshes += 1;
+  });
+  let cityWaterMeshes = 0;
+  let sharedWaterMeshes = 0;
+  cityRoot?.traverse((object) => {
+    if (!object?.isMesh || object.userData?.type !== 'water') return;
+    cityWaterMeshes += 1;
+    if (object.userData.sharedBaySurface) sharedWaterMeshes += 1;
+  });
   return {
     active: Boolean(heroAtmosphere),
     tileId: activeHeroTile?.id || null,
     attached: Boolean(root?.parent),
     objects: root ? root.children.length : 0,
     waterVisible: Boolean(heroAtmosphere?.water?.visible),
+    water: heroAtmosphere?.getWaterDiagnostics?.() || null,
+    waterSurfaces: {
+      city: cityWaterMeshes,
+      shared: sharedWaterMeshes,
+      atmosphereRoot: atmosphereWaterMeshes,
+    },
     wetRoots: heroAtmosphereWetRoots.map((record) => ({ ...record })),
     wetMaterialBindings: heroAtmosphereWetMaterialBindings,
     lightBudget: heroAtmosphere?.getLightBudget() || {
@@ -11925,7 +11946,9 @@ async function buildCity() {
       ? 'Laying the SF peninsula land pad…'
       : 'Laying the land slab and bay water…', 0.4);
     await tick();
-    cityRoot.add(createWaterPlane(terrainPoints));
+    const sharedBayWater = createWaterPlane(terrainPoints);
+    sharedBayWater.userData.heroAtmosphereEligible = Boolean(activeHeroTile && !fullCityMode && isFerryBuildingHeroTile());
+    cityRoot.add(sharedBayWater);
     if (fullCityMode) cityRoot.add(createBayReflections());
     cityRoot.add(createGround(terrainPoints, { isLand: heroShorelineMask?.isLand }));
     const heroShorelineTransition = createHeroShorelineTransition(heroShorelineMask);
@@ -12084,7 +12107,7 @@ async function buildCity() {
     }
     initializeHeroLandmark();
     initializeHeroStreetscape();
-    initializeHeroAtmosphere();
+    initializeHeroAtmosphere(sharedBayWater);
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
     sceneTriangleCount = fullCityMode ? 0 : countSceneTriangles(cityRoot);
 
