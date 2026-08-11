@@ -10,7 +10,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import './styles.css';
 import { createCity } from './world.js';
 import { createTrafficSystem, createTrafficRulesHarness } from './traffic.js';
-import { createPedestrianSystem } from './pedestrians.js';
+import { createPedestrianSystem, createSfpdOfficerResponse } from './pedestrians.js';
 import { createSanFranciscoStreaming } from './streaming.js';
 import { createStreamedAgentSystem } from './streamed-agents.js';
 import { createSanFranciscoExpansion } from './sf-expansion.js';
@@ -524,6 +524,11 @@ const traffic = createTrafficSystem({
   },
 });
 const pedestrians = createPedestrianSystem({ scene, sidewalkNetwork: city.sidewalkNetwork });
+const sfpdOfficers = createSfpdOfficerResponse({
+  scene,
+  getNearestWorldBlocker: getNearestCombatWorldBlocker,
+  getSurfaceHeight: getTraversalSurfaceHeight,
+});
 const streamedAgents = createStreamedAgentSystem({ scene, streaming });
 streaming.setStreamedAgentStatsProvider?.(() => streamedAgents.getStats());
 
@@ -938,6 +943,51 @@ let hud;
 let cityShift;
 let streetHeat;
 let combat;
+let sfpdOfficerQaScenario = null;
+let sfpdOfficerQaPressureDelay = 0;
+const sfpdResponderDeploymentHolds = new Set();
+
+function getSfpdPursuitResponders() {
+  return sfpdOfficerQaScenario?.responders || traffic.getPursuitResponders?.() || [];
+}
+
+function clearSfpdResponderDeploymentHolds() {
+  sfpdResponderDeploymentHolds.clear();
+  traffic.setPursuitDeploymentHolds?.([]);
+}
+
+function updateSfpdResponderDeploymentHolds({ heatState, driving = false } = {}) {
+  const responders = traffic.getPursuitResponders?.() || [];
+  const eligible = heatState?.pursuitActive === true
+    && heatState.level >= 2
+    && !driving
+    && playerLayerActive
+    && !controls.interiorMode
+    && !passengerRideActive()
+    && !beautyMode
+    && !sfpdOfficerQaScenario;
+  if (!eligible) {
+    clearSfpdResponderDeploymentHolds();
+    return;
+  }
+  const responderIds = new Set(responders.map((responder) => responder.id));
+  const officersByResponder = new Map(
+    (sfpdOfficers.getState?.().officers || []).map((officer) => [officer.responderId, officer]),
+  );
+  for (const id of sfpdResponderDeploymentHolds) {
+    const officer = officersByResponder.get(id);
+    if (!responderIds.has(id) || officer?.live === false) {
+      sfpdResponderDeploymentHolds.delete(id);
+    }
+  }
+  for (const responder of responders) {
+    if (!responder?.active || !Number.isFinite(responder.distance) || responder.distance > 24) continue;
+    const officer = officersByResponder.get(responder.id);
+    if (officer?.live === false) continue;
+    sfpdResponderDeploymentHolds.add(responder.id);
+  }
+  traffic.setPursuitDeploymentHolds?.([...sfpdResponderDeploymentHolds]);
+}
 
 function getRenderQualitySnapshot() {
   const profile = renderProfiles[renderQuality.mode];
@@ -3566,8 +3616,22 @@ streetHeat = createStreetHeat({
   // dependency.
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
   getPursuitResponder: () => traffic.getPursuitResponder?.(),
-  getPursuitResponders: () => traffic.getPursuitResponders?.(),
-  onEvent: ({ kind, message, score, heatBefore = 0, reason = null, damage = 0 }) => {
+  getPursuitResponders: getSfpdPursuitResponders,
+  getResponderPressureAuthority: ({ responderId }) => (
+    sfpdOfficers.getPressureAuthority?.({ responderId })
+  ),
+  onEvent: ({
+    kind,
+    message,
+    score,
+    heatBefore = 0,
+    reason = null,
+    damage = 0,
+    responderId = null,
+    officerId = null,
+    los = false,
+    blocked = false,
+  }) => {
     if (kind === 'responder-contact') {
       if (!traffic.isPlayerDriving?.()) {
         const damaged = combat?.damagePlayer?.(18, 'pursuit-contact');
@@ -3581,7 +3645,21 @@ streetHeat = createStreetHeat({
       }
     }
     if (kind === 'responder-pressure') {
-      const damaged = combat?.damagePlayer?.(damage, 'pursuit-pressure');
+      const fired = sfpdOfficers.registerPressureShot?.(
+        responderId,
+        getCombatGroundPosition(),
+      ) === true;
+      const damaged = fired && officerId
+        ? combat?.damagePlayer?.(damage, `sfpd:${officerId}`)
+        : false;
+      if (damaged) {
+        sfpdOfficers.recordDamage?.({
+          targetId: 'player',
+          source: 'officer',
+          los,
+          blocked,
+        });
+      }
       if (damaged && combat?.getState?.().status === 'downed') {
         streetHeat?.resolveArrest?.({
           wasDriving: false,
@@ -3592,6 +3670,10 @@ streetHeat = createStreetHeat({
       if (damaged) savePlayerProgress();
     }
     if (kind === 'arrested') {
+      sfpdOfficerQaScenario = null;
+      clearSfpdResponderDeploymentHolds();
+      sfpdOfficers.recordBooking?.();
+      sfpdOfficers.clear?.({ resetDefeats: true });
       playerBookingPoseUntil = performance.now() + 5000;
       combat?.setTriggerHeld?.(false);
       combat?.setAiming?.(false);
@@ -3646,6 +3728,11 @@ streetHeat = createStreetHeat({
         message += ` ${voidedContracts.join(' + ')} VOIDED.`;
       }
       savePlayerProgress();
+    }
+    if (kind === 'escaped') {
+      sfpdOfficerQaScenario = null;
+      clearSfpdResponderDeploymentHolds();
+      sfpdOfficers.clear?.({ resetDefeats: true });
     }
     if (score) cityShift?.awardBonus?.(score);
     publishNetworkGameplayEvent({ kind, message });
@@ -3709,7 +3796,9 @@ function updateVehiclePedestrianImpact() {
 
 const combatPedestrianCandidates = [];
 function getCombatPedestrianCandidates(_origin, _maxRange, out = combatPedestrianCandidates) {
-  return pedestrians.getCombatCandidates?.(out) ?? out;
+  pedestrians.getCombatCandidates?.(out);
+  sfpdOfficers.getCombatCandidates?.(out);
+  return out;
 }
 
 function getNearestCombatWorldBlocker(origin, direction, maxDistance) {
@@ -3738,6 +3827,196 @@ function getNearestCombatWorldBlocker(origin, direction, maxDistance) {
     point: { x: nearest.point.x, y: nearest.point.y, z: nearest.point.z },
   };
 }
+
+function findSfpdQaResponderPosition({ blocked = false, distance = 17 } = {}) {
+  const player = getCombatGroundPosition(new THREE.Vector3());
+  const source = new THREE.Vector3();
+  const target = new THREE.Vector3(player.x, player.y + 1.34, player.z);
+  const ray = new THREE.Vector3();
+  if (blocked) {
+    source.set(player.x, player.y + 1.34, player.z);
+    for (let index = 0; index < 72; index += 1) {
+      const angle = (index / 72) * Math.PI * 2;
+      ray.set(Math.sin(angle), 0, Math.cos(angle));
+      const blocker = getNearestCombatWorldBlocker(source, ray, 24);
+      if (!blocker || blocker.distance < 4 || blocker.distance > 20) continue;
+      return {
+        x: player.x + ray.x * 27,
+        y: player.y,
+        z: player.z + ray.z * 27,
+      };
+    }
+  }
+  let fallback = null;
+  for (let index = 0; index < 24; index += 1) {
+    const angle = (index / 24) * Math.PI * 2;
+    source.set(
+      player.x + Math.sin(angle) * distance,
+      player.y + 1.36,
+      player.z + Math.cos(angle) * distance,
+    );
+    ray.subVectors(target, source);
+    const rayDistance = ray.length();
+    ray.multiplyScalar(1 / Math.max(0.001, rayDistance));
+    const blocker = getNearestCombatWorldBlocker(source, ray, rayDistance - 0.08);
+    const matches = blocked ? Boolean(blocker) : !blocker;
+    fallback = fallback || { x: source.x, y: player.y, z: source.z };
+    if (matches) return { x: source.x, y: player.y, z: source.z };
+  }
+  return fallback || { x: player.x, y: player.y, z: player.z + distance };
+}
+
+function stageSfpdOfficerQa(scenario = {}) {
+  const request = typeof scenario === 'string' ? { kind: scenario } : scenario;
+  const kind = String(request?.kind || 'heat');
+  if (!['heat', 'los', 'blocked', 'downed', 'surrender', 'escape', 'cycle'].includes(kind)) {
+    return false;
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  // The unstaged verifier owns the non-flat grade proof. Deterministic visual
+  // scenarios return to the authored core avenue so captures contain the
+  // actual road, curb, and live responder car rather than a sparse streamed
+  // proxy seam; the verifier then frames from its own surface sample.
+  setQaRoamPose({ x: 28, z: 42 });
+  clearSfpdResponderDeploymentHolds();
+  sfpdOfficers.clear?.({ resetDefeats: true });
+  sfpdOfficers.resetEvents?.();
+  sfpdOfficerQaPressureDelay = 0.8;
+  combat?.start?.();
+  const requestedLevel = request?.level === 3 ? 3 : 2;
+  const level = kind === 'cycle' ? 3 : requestedLevel;
+  const heat = level === 3 ? 94 : 78;
+  streetHeat?.importState?.({
+    heat,
+    pursuitActive: true,
+    responderContacts: 0,
+    responderContactLatched: false,
+    nearMisses: 0,
+    witnessReports: 0,
+    combatHold: 2.8,
+    theftHold: 0,
+  });
+  traffic.setPursuitResponder?.({
+    active: true,
+    position: controls.target,
+    playerVehicleId: null,
+    level,
+  });
+  const naturalResponders = (traffic.getPursuitResponders?.() || [])
+    .slice()
+    .sort((left, right) => left.id - right.id);
+  const qaPlayerGround = getCombatGroundPosition(new THREE.Vector3());
+  const usesDeterministicHandoff = true;
+  if (usesDeterministicHandoff) {
+    const desiredCount = level;
+    const blocked = kind === 'blocked';
+    const distance = kind === 'surrender'
+      ? 8
+        : kind === 'escape' ? 64
+        : kind === 'blocked' ? 27
+          : kind === 'heat' || kind === 'cycle' ? 12 : 17;
+    const base = findSfpdQaResponderPosition({ blocked, distance });
+    const angle = Math.atan2(base.x - controls.target.x, base.z - controls.target.z);
+    const lateralX = Math.cos(angle);
+    const lateralZ = -Math.sin(angle);
+    const responders = [];
+    for (let index = 0; index < desiredCount; index += 1) {
+      const centeredDowned = kind === 'downed';
+      const offset = blocked || centeredDowned
+        ? 0
+        : (index - (desiredCount - 1) * 0.5) * 1.5;
+      const natural = naturalResponders[index];
+      responders.push({
+        active: true,
+        id: natural?.id ?? 900 + index,
+        slot: index,
+        label: natural?.label || 'SFPD patrol unit',
+        identity: natural?.identity || `sfpd-qa-${index + 1}`,
+        position: {
+          x: base.x + lateralX * offset,
+          y: qaPlayerGround.y,
+          z: base.z + lateralZ * offset,
+        },
+        heading: angle + Math.PI,
+        dir: blocked ? -1 : centeredDowned ? 1 : index % 2 === 0 ? 1 : -1,
+        speed: 0,
+        distance: Math.hypot(
+          base.x + lateralX * offset - qaPlayerGround.x,
+          base.z + lateralZ * offset - qaPlayerGround.z,
+        ),
+        level,
+        closing: false,
+        qaSynthetic: true,
+        qaHoldPosition: blocked || kind === 'los' || kind === 'downed',
+      });
+    }
+    sfpdOfficerQaScenario = { kind, level, responders };
+    // QA setup may place an already-settled patrol handoff; run only the
+    // staged door-exit interpolation. No aim, shot, damage, or booking event
+    // can be emitted during these pressure-free setup passes.
+    for (let step = 0; step < 6; step += 1) {
+      sfpdOfficers.update?.(0.1, step * 0.1, {
+        active: true,
+        level,
+        responders,
+        playerPosition: qaPlayerGround,
+        outdoor: true,
+        pressure: null,
+      });
+    }
+  } else {
+    sfpdOfficerQaScenario = { kind, level, responders: null };
+  }
+  return {
+    ready: true,
+    syntheticEvents: 0,
+    kind,
+    level,
+  };
+}
+
+function snapshotSfpdOfficerQa() {
+  const officerState = sfpdOfficers.getState?.() || {};
+  const heat = streetHeat?.getState?.() || {};
+  const responders = getSfpdPursuitResponders();
+  return {
+    heat: {
+      level: heat.level ?? 0,
+      responderCount: responders.length,
+      pursuitActive: heat.pursuitActive === true,
+    },
+    officers: officerState.officers || [],
+    vehicles: responders.map((responder) => ({
+      id: responder.id,
+      pursuit: responder.active === true,
+      lightsOn: responder.active === true,
+      speed: Math.round((Number(responder.speed) || 0) * 10) / 10,
+      distanceToPlayer: Math.round((Number(responder.distance) || 0) * 10) / 10,
+      deploymentHold: {
+        requested: responder.deploymentHold?.requested === true,
+        holding: responder.deploymentHold?.holding === true,
+      },
+    })),
+    events: officerState.events || {
+      aims: 0, shots: 0, damage: [], officerFires: [], bookings: 0,
+    },
+    blocker: officerState.blocker || { solid: false, cycles: 0 },
+    resources: officerState.resources || {
+      officerActors: 0, activeTimers: 0, activeListeners: 0, activeProjectiles: 0,
+    },
+    cleanup: {
+      officers: officerState.resources?.officerActors ?? 0,
+      stuckKits: heat.pursuitActive === true ? 0 : responders.length,
+    },
+    cleared: officerState.cleared === true,
+  };
+}
+
+const sfpdOfficerQa = Object.freeze({
+  stage: stageSfpdOfficerQa,
+  snapshot: snapshotSfpdOfficerQa,
+});
 
 function dispatchCombatWitness({ incidentId, residentId } = {}) {
   if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
@@ -3818,6 +4097,8 @@ combat = createCombatLoop({
       savePlayerProgress();
     } else if (kind === 'restart') {
       pedestrians.clearCombatAftermathState?.();
+      clearSfpdResponderDeploymentHolds();
+      sfpdOfficers.clear?.({ resetDefeats: true });
       savePlayerProgress();
     }
     hud?.setMessage(message);
@@ -5463,7 +5744,7 @@ function combatInputAvailable() {
       && !controls.interiorMode
       && !passengerRideActive()
       && !beautyMode
-      && !qaCameraPose,
+      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
   );
 }
 
@@ -5477,7 +5758,7 @@ function onFootSurrenderInputAvailable() {
       && combat?.getState?.().status === 'running'
       && heatState?.pursuitActive
       && !beautyMode
-      && !qaCameraPose,
+      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
   );
 }
 
@@ -5774,6 +6055,21 @@ function onWheel(event) {
 function onKeyDown(event) {
   const rawCode = event.code || event.key || '';
   const code = rawCode.length === 1 ? `Key${rawCode.toUpperCase()}` : rawCode;
+  if (code === 'Escape' && sfpdOfficerQaScenario) {
+    event.preventDefault();
+    sfpdOfficerQaScenario = null;
+    qaCameraPose = null;
+    streetHeat?.restart?.();
+    traffic.setPursuitResponder?.({
+      active: false,
+      position: controls.target,
+      playerVehicleId: null,
+      level: 0,
+    });
+    clearSfpdResponderDeploymentHolds();
+    sfpdOfficers.clear?.({ resetDefeats: true });
+    return;
+  }
   // Escape is also an emergency exit from a player car.
   if (code === 'Escape' && traffic.isPlayerDriving?.()) {
     event.preventDefault();
@@ -5848,6 +6144,10 @@ function onKeyDown(event) {
     startPlayerWorkShift();
   }
   if (code === 'KeyX' && !event.repeat) {
+    if (sfpdOfficerQaScenario?.kind === 'surrender') {
+      streetHeat?.resolveArrest?.({ wasDriving: false, reason: 'surrender' });
+      return;
+    }
     if (onFootSurrenderInputAvailable()) {
       hud?.setMessage('SURRENDER / HOLD X NEAR A RESPONDER · STAY STILL.');
     } else if (onFootPursuitActive()) {
@@ -6452,10 +6752,26 @@ function frame(now) {
     playerVehicleId: pursuitVehicleState?.index ?? null,
     level: pursuitHeatState?.level ?? 1,
   });
+  updateSfpdResponderDeploymentHolds({
+    heatState: pursuitHeatState,
+    driving: Boolean(pursuitVehicleState),
+  });
   traffic.update?.(motionDt, elapsed);
   updateVehiclePedestrianImpact();
   profileMark('traffic');
   pedestrians.update?.(motionDt, elapsed);
+  sfpdOfficers.update?.(motionDt, elapsed, {
+    active: Boolean(pursuitHeatState?.pursuitActive),
+    level: pursuitHeatState?.level ?? 0,
+    responders: getSfpdPursuitResponders(),
+    playerPosition: getCombatGroundPosition(),
+    outdoor: playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !passengerRideActive()
+      && !beautyMode,
+    pressure: pursuitHeatState?.pressure ?? null,
+  });
   profileMark('pedestrians');
   const gameState = cityShift?.update?.(motionDt, controls.target, controls.activePortal);
   if (started) {
@@ -6470,6 +6786,17 @@ function frame(now) {
     : null;
   const drivingSurrendering = Boolean(drivingState)
     && (controls.keys.has('keys') || controls.keys.has('arrowdown'));
+  sfpdOfficerQaPressureDelay = Math.max(0, sfpdOfficerQaPressureDelay - motionDt);
+  const sfpdResponseBeforeHeat = sfpdOfficers.getState?.();
+  const expectedOnFootOfficers = !drivingState && pursuitHeatState?.level >= 2
+    ? Math.min(
+      pursuitHeatState.level,
+      getSfpdPursuitResponders().filter((responder) => responder?.active).length,
+    )
+    : 0;
+  const deployedOnFootOfficers = sfpdResponseBeforeHeat?.officers?.filter((officer) => (
+    officer.visible && officer.live && officer.deploy?.state === 'deployed'
+  )).length ?? 0;
   const streetHeatState = streetHeat?.update?.(motionDt, {
     driving: Boolean(drivingState),
     speed: drivingState?.speed ?? 0,
@@ -6480,14 +6807,36 @@ function frame(now) {
       && onFootSurrenderInputAvailable()
       && controls.keys.has('keyx'),
     onFootMoving: !drivingState && playerMoving(),
+    onFootResponsePending: expectedOnFootOfficers > 0
+      && deployedOnFootOfficers < expectedOnFootOfficers,
     onFootPressureEligible: !drivingState
       && playerLayerActive
       && !controls.interiorMode
       && !passengerRideActive()
       && !beautyMode
-      && !qaCameraPose
+      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario))
+      && sfpdOfficerQaPressureDelay <= 0
       && combat?.getState?.().status === 'running'
       && combat?.getState?.().active === true,
+  });
+  if (sfpdOfficerQaScenario && streetHeatState?.pursuitActive !== true) {
+    sfpdOfficerQaScenario = null;
+    qaCameraPose = null;
+  }
+  // Pressure state changes inside Street Heat. A zero-delta presentation pass
+  // makes the >=0.4 s telegraph begin on the same frame as the lock without
+  // advancing officer movement or any projectile lifetime twice.
+  sfpdOfficers.update?.(0, elapsed, {
+    active: Boolean(streetHeatState?.pursuitActive),
+    level: streetHeatState?.level ?? 0,
+    responders: getSfpdPursuitResponders(),
+    playerPosition: getCombatGroundPosition(),
+    outdoor: playerLayerActive
+      && !controls.interiorMode
+      && !traffic.isPlayerDriving?.()
+      && !passengerRideActive()
+      && !beautyMode,
+    pressure: streetHeatState?.pressure ?? null,
   });
   traffic.setPursuitResponder?.({
     active: Boolean(streetHeatState?.pursuitActive),
@@ -6495,12 +6844,16 @@ function frame(now) {
     playerVehicleId: drivingState?.index ?? null,
     level: streetHeatState?.level ?? 1,
   });
+  updateSfpdResponderDeploymentHolds({
+    heatState: streetHeatState,
+    driving: Boolean(drivingState),
+  });
   const combatState = combat?.update?.(motionDt, {
     active: playerLayerActive
       && !controls.interiorMode
       && !passengerRideActive()
       && !beautyMode
-      && !qaCameraPose,
+      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
     suspendRecovery: Boolean(streetHeatState?.pursuitActive),
   });
   updateCombatOverlay(combatState);
@@ -6621,6 +6974,7 @@ window.__SF_SIM__ = {
   city,
   traffic,
   pedestrians,
+  sfpdOfficers,
   streamedAgents,
   streaming,
   expansion,
@@ -6717,6 +7071,10 @@ window.__SF_SIM__ = {
   getStreetHeatState() {
     return streetHeat?.getState?.() ?? null;
   },
+  getSfpdOfficerQa() {
+    return sfpdOfficerQa;
+  },
+  sfpdOfficerQa,
   getLastTrafficCitation() {
     return lastTrafficCitation ? structuredClone(lastTrafficCitation) : null;
   },

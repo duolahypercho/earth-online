@@ -15,6 +15,10 @@ import { createTreeForRole } from './npc-trees.js';
 const POOL_SIZE = 48;
 const MAX_PERSISTED_COMBAT_DEFEATS = 8;
 const VEHICLE_IMPACT_DEFEAT_COUNT = 2;
+const SFPD_OFFICER_POOL_SIZE = 3;
+const SFPD_OFFICER_SPEED = 3.25;
+const SFPD_OFFICER_STANDOFF = [11.5, 13, 14.5];
+const SFPD_OFFICER_TRACER_SECONDS = 0.18;
 // Eight camera-facing actors carry the costly face/clothing treatment; the
 // remainder preserve a readable, varied background crowd inside the 48-person
 // fixed pool. This keeps the hero pass bounded on Cinema quality.
@@ -302,6 +306,642 @@ export function getStreamedPedestrianVisualProfile() {
     topColors: [...TOPS],
     bottomColors: [...BOTTOMS],
     shoeColors: [...SHOES],
+  };
+}
+
+/**
+ * Three small, persistent SFPD rigs paired one-to-one with live traffic
+ * responders. The actors are transient pursuit presentation: they never enter
+ * resident identity, witness, favor, impact, or persistence ledgers.
+ */
+export function createSfpdOfficerResponse({
+  scene,
+  getNearestWorldBlocker,
+  getSurfaceHeight,
+} = {}) {
+  if (!scene?.isScene) {
+    throw new TypeError('createSfpdOfficerResponse requires a THREE.Scene.');
+  }
+
+  const group = new THREE.Group();
+  group.name = 'SFPD on-foot response';
+  scene.add(group);
+  const officers = [];
+  const origin = new THREE.Vector3();
+  const destination = new THREE.Vector3();
+  const direction = new THREE.Vector3();
+  const playerHead = new THREE.Vector3();
+  const muzzlePoint = new THREE.Vector3();
+  const aimQuaternion = new THREE.Quaternion();
+  const forwardAxis = new THREE.Vector3(0, 0, 1);
+  const officerBounds = new THREE.Box3();
+  const events = {
+    aims: 0,
+    shots: 0,
+    damage: [],
+    officerFires: [],
+    bookings: 0,
+  };
+  let blockerCycles = 0;
+  let blockedCycleElapsed = 0;
+  let lastBlocked = null;
+  let lastLevel = 0;
+
+  function material(color, options = {}) {
+    return new THREE.MeshStandardMaterial({
+      color,
+      roughness: options.roughness ?? 0.72,
+      metalness: options.metalness ?? 0.04,
+      emissive: options.emissive ?? 0x000000,
+      emissiveIntensity: options.emissiveIntensity ?? 0,
+      transparent: options.transparent ?? false,
+      opacity: options.opacity ?? 1,
+      depthWrite: options.depthWrite ?? true,
+    });
+  }
+
+  function addPart(parent, geometry, partMaterial, position, name) {
+    const mesh = new THREE.Mesh(geometry, partMaterial);
+    mesh.name = name;
+    mesh.position.set(position[0], position[1], position[2]);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function makeOfficer(slot) {
+    const root = new THREE.Group();
+    root.name = `SFPD officer ${slot + 1}`;
+    root.visible = false;
+    root.userData.sfpdOfficer = true;
+    root.userData.combatDisabled = false;
+    root.userData.combatDefeated = false;
+    const navy = material(slot === 1 ? 0x172d48 : 0x122640);
+    const darkNavy = material(0x091522);
+    const skin = material([0xbd805b, 0xd1a07c, 0x8d5c42][slot]);
+    const metal = material(0xc8d2d8, { roughness: 0.3, metalness: 0.72 });
+    const weaponMaterial = material(0x15191d, { roughness: 0.34, metalness: 0.52 });
+    const telegraphMaterial = new THREE.LineBasicMaterial({
+      color: 0xff5d4d,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const tracerMaterial = new THREE.LineBasicMaterial({
+      color: 0xffc05a,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const torso = addPart(root, new THREE.BoxGeometry(0.62, 0.72, 0.34), navy, [0, 1.14, 0], 'SFPD uniform torso');
+    const belt = addPart(root, new THREE.BoxGeometry(0.68, 0.11, 0.39), darkNavy, [0, 0.79, 0], 'SFPD duty belt');
+    const badge = addPart(root, new THREE.OctahedronGeometry(0.075, 0), metal, [-0.18, 1.31, 0.185], 'SFPD badge');
+    const head = addPart(root, new THREE.SphereGeometry(0.22, 8, 6), skin, [0, 1.73, 0], 'SFPD officer head');
+    const cap = addPart(root, new THREE.CylinderGeometry(0.22, 0.24, 0.1, 8), darkNavy, [0, 1.94, 0], 'SFPD patrol cap');
+    const capBill = addPart(root, new THREE.BoxGeometry(0.28, 0.035, 0.2), darkNavy, [0, 1.91, 0.16], 'SFPD cap bill');
+    const leftLeg = addPart(root, new THREE.BoxGeometry(0.23, 0.72, 0.25), navy, [-0.17, 0.36, 0], 'SFPD left leg');
+    const rightLeg = addPart(root, new THREE.BoxGeometry(0.23, 0.72, 0.25), navy, [0.17, 0.36, 0], 'SFPD right leg');
+    const leftArm = addPart(root, new THREE.BoxGeometry(0.18, 0.62, 0.2), navy, [-0.38, 1.13, 0.02], 'SFPD support arm');
+    const rightArm = addPart(root, new THREE.BoxGeometry(0.18, 0.62, 0.2), navy, [0.38, 1.13, 0.02], 'SFPD weapon arm');
+    const weapon = addPart(root, new THREE.BoxGeometry(0.14, 0.16, 0.48), weaponMaterial, [0.17, 1.34, 0.38], 'SFPD visible sidearm');
+    weapon.rotation.x = -0.08;
+
+    const telegraphGeometry = new THREE.BufferGeometry();
+    telegraphGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const telegraph = new THREE.Line(telegraphGeometry, telegraphMaterial);
+    telegraph.name = 'SFPD aim telegraph';
+    telegraph.visible = false;
+    telegraph.frustumCulled = false;
+    scene.add(telegraph);
+
+    const tracerGeometry = new THREE.BufferGeometry();
+    tracerGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const tracer = new THREE.Line(tracerGeometry, tracerMaterial);
+    tracer.name = 'SFPD pressure tracer';
+    tracer.visible = false;
+    tracer.frustumCulled = false;
+    scene.add(tracer);
+
+    group.add(root);
+    const officer = {
+      slot,
+      id: null,
+      responderId: null,
+      root,
+      torso,
+      belt,
+      badge,
+      head,
+      cap,
+      capBill,
+      leftLeg,
+      rightLeg,
+      leftArm,
+      rightArm,
+      weapon,
+      telegraph,
+      telegraphMaterial,
+      tracer,
+      tracerMaterial,
+      tracerLife: 0,
+      state: 'cleared',
+      grounded: true,
+      hasLineOfSight: false,
+      blocker: null,
+      distance: null,
+      phase: slot * 1.7,
+      deployState: 'cleared',
+      deployElapsed: 0,
+      deployStart: new THREE.Vector3(),
+      deployEnd: new THREE.Vector3(),
+      parentVehicleSpeed: null,
+      parentVehicleDistance: null,
+      parentVehicleHoldRequested: false,
+      parentVehicleHolding: false,
+      exitClearance: 0,
+      bodyVehicleOverlap: false,
+      groundResidual: 0,
+      surfaceY: null,
+      footY: null,
+      targetable: false,
+      aimStartedAt: null,
+      holdPosition: false,
+      materials: [navy, darkNavy, skin, metal, weaponMaterial, telegraphMaterial, tracerMaterial],
+    };
+    officers.push(officer);
+    return officer;
+  }
+
+  for (let index = 0; index < SFPD_OFFICER_POOL_SIZE; index += 1) makeOfficer(index);
+
+  function setLine(line, start, end) {
+    const attribute = line.geometry.getAttribute('position');
+    attribute.setXYZ(0, start.x, start.y, start.z);
+    attribute.setXYZ(1, end.x, end.y, end.z);
+    attribute.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
+  }
+
+  function deactivate(officer, { resetDefeat = false } = {}) {
+    officer.root.visible = false;
+    officer.telegraph.visible = false;
+    officer.telegraphMaterial.opacity = 0;
+    officer.tracer.visible = false;
+    officer.tracerMaterial.opacity = 0;
+    officer.tracerLife = 0;
+    officer.state = 'cleared';
+    officer.hasLineOfSight = false;
+    officer.blocker = null;
+    officer.distance = null;
+    officer.deployState = 'cleared';
+    officer.deployElapsed = 0;
+    officer.parentVehicleSpeed = null;
+    officer.parentVehicleDistance = null;
+    officer.parentVehicleHoldRequested = false;
+    officer.parentVehicleHolding = false;
+    officer.exitClearance = 0;
+    officer.bodyVehicleOverlap = false;
+    officer.groundResidual = 0;
+    officer.surfaceY = null;
+    officer.footY = null;
+    officer.targetable = false;
+    officer.aimStartedAt = null;
+    officer.holdPosition = false;
+    officer.id = null;
+    officer.responderId = null;
+    delete officer.root.userData.sfpdOfficerId;
+    delete officer.root.userData.sfpdResponderId;
+    if (resetDefeat) {
+      officer.root.rotation.z = 0;
+      officer.root.userData.combatDisabled = false;
+      officer.root.userData.combatDefeated = false;
+      officer.root.userData.combatReaction = 'settled';
+      officer.root.userData.combatReactionUntil = 0;
+    }
+  }
+
+  function clear({ resetDefeats = true } = {}) {
+    officers.forEach((officer) => deactivate(officer, { resetDefeat: resetDefeats }));
+    lastLevel = 0;
+    lastBlocked = null;
+  }
+
+  function updateLos(officer, playerPosition) {
+    muzzlePoint.copy(officer.root.position);
+    muzzlePoint.y += 1.36;
+    playerHead.set(playerPosition.x, (Number(playerPosition.y) || 0) + 1.34, playerPosition.z);
+    direction.subVectors(playerHead, muzzlePoint);
+    const targetDistance = direction.length();
+    if (targetDistance <= 0.01) {
+      officer.hasLineOfSight = true;
+      officer.blocker = null;
+      return;
+    }
+    direction.multiplyScalar(1 / targetDistance);
+    const blocker = getNearestWorldBlocker?.(muzzlePoint, direction, targetDistance - 0.08) ?? null;
+    officer.blocker = blocker && Number.isFinite(blocker.distance) ? blocker : null;
+    officer.hasLineOfSight = !officer.blocker;
+  }
+
+  function groundOfficer(officer, fallbackY = 0) {
+    const sampled = getSurfaceHeight?.({
+      x: officer.root.position.x,
+      z: officer.root.position.z,
+    });
+    const surfaceY = Number.isFinite(sampled) ? sampled : Number(fallbackY) || 0;
+    officer.root.position.y = surfaceY;
+    officer.root.updateWorldMatrix(true, true);
+    officerBounds.setFromObject(officer.root, true);
+    if (Number.isFinite(officerBounds.min.y)) {
+      officer.root.position.y += surfaceY - officerBounds.min.y;
+      officer.root.updateWorldMatrix(true, true);
+      officerBounds.setFromObject(officer.root, true);
+    }
+    officer.footY = Number.isFinite(officerBounds.min.y) ? officerBounds.min.y : surfaceY;
+    officer.groundResidual = Math.abs(officer.footY - surfaceY);
+    officer.grounded = officer.groundResidual <= 0.03;
+    officer.surfaceY = surfaceY;
+  }
+
+  function update(dt = 0, elapsed = 0, {
+    active = false,
+    level = 0,
+    responders = [],
+    playerPosition = null,
+    outdoor = true,
+    pressure = null,
+  } = {}) {
+    const delta = THREE.MathUtils.clamp(Number(dt) || 0, 0, 0.1);
+    const desired = active && outdoor && playerPosition && level >= 2
+      ? Math.min(SFPD_OFFICER_POOL_SIZE, Math.floor(level), responders.length)
+      : 0;
+    let anyBlocked = false;
+    for (let index = 0; index < officers.length; index += 1) {
+      const officer = officers[index];
+      const responder = responders[index];
+      if (index >= desired || !responder?.active || !responder.position) {
+        deactivate(officer);
+        continue;
+      }
+      const nextId = `sfpd-officer-${responder.id}`;
+      const newlyAssigned = officer.id !== nextId;
+      officer.id = nextId;
+      officer.responderId = responder.id;
+      officer.root.name = `SFPD officer ${nextId}`;
+      officer.root.userData.sfpdOfficerId = nextId;
+      officer.root.userData.sfpdResponderId = responder.id;
+      officer.parentVehicleSpeed = Math.max(0, Number(responder.speed) || 0);
+      officer.parentVehicleHoldRequested = responder.deploymentHold?.requested === true;
+      officer.parentVehicleHolding = responder.deploymentHold?.holding === true;
+      officer.holdPosition = responder.qaHoldPosition === true;
+      officer.parentVehicleDistance = Number.isFinite(responder.distance)
+        ? responder.distance
+        : Math.hypot(
+          responder.position.x - playerPosition.x,
+          responder.position.z - playerPosition.z,
+        );
+      if (newlyAssigned) {
+        const heading = Number(responder.heading) || 0;
+        const curbSide = responder.dir === -1 ? -1 : 1;
+        const groundY = Number(responder.position.y) || Number(playerPosition.y) || 0;
+        officer.deployStart.set(
+          responder.position.x + Math.cos(heading) * 0.72 * curbSide,
+          groundY,
+          responder.position.z - Math.sin(heading) * 0.72 * curbSide,
+        );
+        officer.deployEnd.set(
+          responder.position.x + Math.cos(heading) * 1.72 * curbSide,
+          groundY,
+          responder.position.z - Math.sin(heading) * 1.72 * curbSide,
+        );
+        officer.root.position.copy(officer.deployStart);
+        officer.deployState = 'waiting-for-stop';
+        officer.deployElapsed = 0;
+        officer.root.visible = false;
+        officer.targetable = false;
+        officer.root.rotation.z = 0;
+        officer.root.userData.combatDisabled = false;
+        officer.root.userData.combatDefeated = false;
+      }
+      if (officer.deployState === 'waiting-for-stop') {
+        officer.root.visible = false;
+        officer.targetable = false;
+        if (officer.parentVehicleSpeed <= 2) {
+          officer.deployState = 'exiting';
+          officer.deployElapsed = 0;
+          officer.root.visible = true;
+        } else {
+          continue;
+        }
+      }
+      if (officer.deployState === 'exiting') {
+        officer.deployElapsed += delta;
+        const exitProgress = THREE.MathUtils.smoothstep(
+          THREE.MathUtils.clamp(officer.deployElapsed / 0.5, 0, 1),
+          0,
+          1,
+        );
+        officer.root.position.lerpVectors(officer.deployStart, officer.deployEnd, exitProgress);
+        officer.exitClearance = officer.root.position.distanceTo(officer.deployStart);
+        officer.bodyVehicleOverlap = officer.exitClearance < 0.34;
+        officer.targetable = exitProgress >= 0.55;
+        officer.state = 'exiting';
+        groundOfficer(officer, playerPosition.y);
+        if (exitProgress < 1) continue;
+        officer.deployState = 'deployed';
+        officer.bodyVehicleOverlap = false;
+        officer.targetable = true;
+      }
+      const downed = officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true;
+      officer.distance = Math.hypot(
+        playerPosition.x - officer.root.position.x,
+        playerPosition.z - officer.root.position.z,
+      );
+      if (downed) {
+        officer.state = 'downed';
+        officer.hasLineOfSight = false;
+        officer.telegraph.visible = false;
+        officer.telegraphMaterial.opacity = 0;
+        officer.root.rotation.z = THREE.MathUtils.damp(officer.root.rotation.z, -1.12, 8, delta);
+        groundOfficer(officer, playerPosition.y);
+      } else {
+        const standoff = SFPD_OFFICER_STANDOFF[index];
+        direction.set(
+          playerPosition.x - officer.root.position.x,
+          0,
+          playerPosition.z - officer.root.position.z,
+        );
+        const planarDistance = direction.length();
+        if (planarDistance > 0.001) direction.multiplyScalar(1 / planarDistance);
+        if (officer.holdPosition) {
+          officer.state = 'holding';
+        } else if (planarDistance > standoff + 0.8) {
+          officer.root.position.addScaledVector(direction, Math.min(planarDistance - standoff, SFPD_OFFICER_SPEED * delta));
+          officer.state = 'advancing';
+        } else if (planarDistance < standoff - 1.8) {
+          officer.root.position.addScaledVector(direction, -Math.min(standoff - planarDistance, SFPD_OFFICER_SPEED * 0.72 * delta));
+          officer.state = 'repositioning';
+        } else {
+          officer.state = 'aiming';
+        }
+        officer.root.rotation.y = Math.atan2(direction.x, direction.z);
+        const gait = officer.state === 'advancing' || officer.state === 'repositioning'
+          ? Math.sin(elapsed * 9 + officer.phase) * 0.48
+          : 0;
+        officer.leftLeg.rotation.x = gait;
+        officer.rightLeg.rotation.x = -gait;
+        officer.leftArm.rotation.x = officer.state === 'aiming' ? -0.86 : -gait * 0.58;
+        officer.rightArm.rotation.x = officer.state === 'aiming' ? -0.98 : gait * 0.58;
+        groundOfficer(officer, playerPosition.y);
+        updateLos(officer, playerPosition);
+        anyBlocked ||= !officer.hasLineOfSight;
+        const locking = pressure?.phase === 'locking'
+          && pressure?.responderId === officer.responderId
+          && officer.hasLineOfSight;
+        if (locking && !officer.telegraph.visible) {
+          officer.aimStartedAt = elapsed;
+          events.aims += 1;
+        }
+        officer.telegraph.visible = locking;
+        officer.telegraphMaterial.opacity = locking
+          ? 0.34 + Math.min(0.58, (Number(pressure.lock) || 0) * 0.7)
+          : 0;
+        if (locking) {
+          setLine(officer.telegraph, muzzlePoint, playerHead);
+          if (officer.state !== 'aiming') officer.state = 'aiming';
+        } else {
+          officer.aimStartedAt = null;
+        }
+      }
+      if (officer.tracerLife > 0) {
+        officer.tracerLife = Math.max(0, officer.tracerLife - delta);
+        officer.tracer.visible = officer.tracerLife > 0;
+        officer.tracerMaterial.opacity = officer.tracerLife / SFPD_OFFICER_TRACER_SECONDS;
+      } else {
+        officer.tracer.visible = false;
+        officer.tracerMaterial.opacity = 0;
+      }
+    }
+    if (desired > 0 && anyBlocked) {
+      blockedCycleElapsed += delta;
+      while (blockedCycleElapsed >= 0.85) {
+        blockedCycleElapsed -= 0.85;
+        blockerCycles += 1;
+      }
+    } else {
+      blockedCycleElapsed = 0;
+    }
+    if (desired > 0 && lastBlocked !== null && anyBlocked !== lastBlocked) blockerCycles += 1;
+    if (desired > 0) lastBlocked = anyBlocked;
+    lastLevel = desired > 0 ? Math.floor(level) : 0;
+    return getState();
+  }
+
+  function getPressureAuthority({ responderId = null } = {}) {
+    const officer = officers.find((entry) => (
+      entry.root.visible && entry.targetable && entry.responderId === responderId
+    ));
+    const live = Boolean(officer
+      && officer.root.userData.combatDisabled !== true
+      && officer.root.userData.combatDefeated !== true);
+    return {
+      authorized: Boolean(live && officer.hasLineOfSight),
+      officerId: officer?.id ?? null,
+      responderId,
+      live,
+      los: Boolean(officer?.hasLineOfSight),
+      blocked: Boolean(officer?.blocker),
+      blocker: officer?.blocker ? {
+        source: officer.blocker.source || 'world',
+        distance: Math.round(officer.blocker.distance * 1000) / 1000,
+      } : null,
+    };
+  }
+
+  function registerPressureShot(responderId, playerPosition) {
+    const officer = officers.find((entry) => (
+      entry.root.visible && entry.targetable && entry.responderId === responderId
+    ));
+    if (!officer || officer.root.userData.combatDisabled === true
+      || officer.root.userData.combatDefeated === true || !officer.hasLineOfSight) return false;
+    muzzlePoint.copy(officer.root.position);
+    muzzlePoint.y += 1.36;
+    playerHead.set(playerPosition.x, (Number(playerPosition.y) || 0) + 1.34, playerPosition.z);
+    setLine(officer.tracer, muzzlePoint, playerHead);
+    direction.subVectors(playerHead, muzzlePoint).normalize();
+    aimQuaternion.setFromUnitVectors(forwardAxis, direction);
+    officer.weapon.quaternion.copy(aimQuaternion);
+    officer.tracerLife = SFPD_OFFICER_TRACER_SECONDS;
+    officer.tracer.visible = true;
+    officer.tracerMaterial.opacity = 1;
+    events.shots += 1;
+    events.officerFires.push({ officerId: officer.id });
+    if (events.officerFires.length > 24) events.officerFires.shift();
+    return true;
+  }
+
+  function recordAim() {
+    events.aims += 1;
+  }
+
+  function recordDamage({ targetId = 'player', source = 'pursuit-pressure', los = false, blocked = false } = {}) {
+    events.damage.push({ targetId, source, los: los === true, blocked: blocked === true });
+    if (events.damage.length > 24) events.damage.shift();
+  }
+
+  function recordBooking() {
+    events.bookings += 1;
+  }
+
+  function resetEvents() {
+    events.aims = 0;
+    events.shots = 0;
+    events.damage.length = 0;
+    events.officerFires.length = 0;
+    events.bookings = 0;
+    blockerCycles = 0;
+    blockedCycleElapsed = 0;
+  }
+
+  function getCombatCandidates(out = []) {
+    for (const officer of officers) {
+      if (!officer.root.visible || !officer.targetable
+        || officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true) continue;
+      out.push({
+        kind: 'officer',
+        id: officer.id,
+        officerId: officer.id,
+        responderId: officer.responderId,
+        label: 'SFPD officer',
+        mesh: officer.root,
+        radius: 0.78,
+        height: 1.08,
+      });
+    }
+    return out;
+  }
+
+  function getState() {
+    const snapshots = officers.filter((officer) => officer.id !== null).map((officer) => {
+      const downed = officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true;
+      return {
+        id: officer.id,
+        responderId: officer.responderId,
+        visible: officer.root.visible,
+        live: !downed,
+        state: downed ? 'downed' : officer.state,
+        parentVehicleId: officer.responderId,
+        distance: officer.distance === null ? null : Math.round(officer.distance * 10) / 10,
+        los: !downed && officer.hasLineOfSight,
+        blocked: !downed && Boolean(officer.blocker),
+        surfaceDelta: Math.round(officer.groundResidual * 1000) / 1000,
+        surfaceY: Number.isFinite(officer.surfaceY)
+          ? Math.round(officer.surfaceY * 1000) / 1000
+          : null,
+        footY: Number.isFinite(officer.footY)
+          ? Math.round(officer.footY * 1000) / 1000
+          : null,
+        targetable: officer.targetable && !downed,
+        defeated: downed,
+        deploy: {
+          state: officer.deployState,
+          vehicleSpeed: officer.parentVehicleSpeed === null
+            ? null
+            : Math.round(officer.parentVehicleSpeed * 10) / 10,
+          holdRequested: officer.parentVehicleHoldRequested,
+          holding: officer.parentVehicleHolding,
+          distance: officer.parentVehicleDistance === null
+            ? null
+            : Math.round(officer.parentVehicleDistance * 10) / 10,
+          exitClearance: Math.round(officer.exitClearance * 1000) / 1000,
+          bodyVehicleOverlap: officer.bodyVehicleOverlap,
+        },
+        aim: {
+          telegraphActive: officer.telegraph.visible,
+          startedAt: officer.aimStartedAt,
+          weaponMuzzle: true,
+          muzzlePosition: {
+            x: Math.round((officer.root.position.x) * 1000) / 1000,
+            y: Math.round((officer.root.position.y + 1.36) * 1000) / 1000,
+            z: Math.round((officer.root.position.z) * 1000) / 1000,
+          },
+        },
+        position: {
+          x: Math.round(officer.root.position.x * 1000) / 1000,
+          y: Math.round(officer.root.position.y * 1000) / 1000,
+          z: Math.round(officer.root.position.z * 1000) / 1000,
+        },
+        morphology: {
+          human: Boolean(officer.head && officer.torso && officer.leftLeg && officer.rightLeg),
+          uniform: Boolean(officer.badge && officer.cap && officer.belt),
+          badge: Boolean(officer.badge),
+          belt: Boolean(officer.belt),
+          weapon: Boolean(officer.weapon?.visible),
+          grounded: officer.grounded,
+        },
+      };
+    });
+    const activeTimers = officers.reduce((count, officer) => (
+      count + (officer.tracerLife > 0 ? 1 : 0) + (officer.telegraph.visible ? 1 : 0)
+    ), 0);
+    const activeProjectiles = officers.filter((officer) => officer.tracer.visible).length;
+    return {
+      level: lastLevel,
+      officers: snapshots,
+      events: {
+        aims: events.aims,
+        shots: events.shots,
+        damage: events.damage.map((entry) => ({ ...entry })),
+        officerFires: events.officerFires.map((entry) => ({ ...entry })),
+        bookings: events.bookings,
+      },
+      blocker: {
+        solid: snapshots.some((officer) => officer.blocked),
+        cycles: blockerCycles,
+      },
+      resources: {
+        officerActors: snapshots.length,
+        activeTimers,
+        activeListeners: 0,
+        activeProjectiles,
+      },
+      cleared: snapshots.length === 0 && activeTimers === 0 && activeProjectiles === 0,
+    };
+  }
+
+  function dispose() {
+    clear();
+    officers.forEach((officer) => {
+      officer.root.traverse((object) => object.geometry?.dispose?.());
+      officer.telegraph.geometry.dispose();
+      officer.tracer.geometry.dispose();
+      officer.materials.forEach((entry) => entry.dispose());
+      officer.telegraph.removeFromParent();
+      officer.tracer.removeFromParent();
+    });
+    group.removeFromParent();
+  }
+
+  return {
+    group,
+    update,
+    clear,
+    getState,
+    getCombatCandidates,
+    getPressureAuthority,
+    registerPressureShot,
+    recordAim,
+    recordDamage,
+    recordBooking,
+    resetEvents,
+    dispose,
   };
 }
 
