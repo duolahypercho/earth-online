@@ -1237,6 +1237,20 @@ let muniRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
+const WALK_CAMERA_DISTANCE = 8.8;
+const WALK_CAMERA_DISTANCE_MIN = 8;
+const WALK_CAMERA_DISTANCE_MAX = 11;
+const WALK_CAMERA_PITCH = 1.36;
+const WALK_CAMERA_PITCH_MIN = 1.18;
+const WALK_CAMERA_PITCH_MAX = 1.48;
+const DRIVE_CAMERA_DISTANCE = 10.5;
+const DRIVE_CAMERA_DISTANCE_MIN = 8.5;
+const DRIVE_CAMERA_DISTANCE_MAX = 12;
+const DRIVE_CAMERA_PITCH = 1.3;
+const DRIVE_CAMERA_PITCH_MIN = 1.08;
+const DRIVE_CAMERA_PITCH_MAX = 1.45;
+const WALK_CAMERA_FOCUS_HEIGHT = 1.3;
+const TRAVERSAL_CAMERA_TRANSITION_SECONDS = 0.42;
 const PLAYER_PROGRESS_STORAGE_KEY = 'earth-online-player-progress-v1';
 const PLAYER_PROGRESS_VERSION = 1;
 const PLAYER_PROGRESS_AUTOSAVE_SECONDS = 1;
@@ -1493,13 +1507,13 @@ hud.setOnlineAction((action) => {
 const controls = {
   target: new THREE.Vector3(28, 4, 38),
   focus: new THREE.Vector3(28, 4, 38),
-  spherical: new THREE.Spherical(68, 1.55, Math.PI),
-  yaw: Math.PI,
-  pitch: 1.55,
-  distance: 68,
-  cameraYaw: Math.PI,
-  cameraPitch: 1.55,
-  cameraDistance: 68,
+  spherical: new THREE.Spherical(WALK_CAMERA_DISTANCE, WALK_CAMERA_PITCH, 0),
+  yaw: 0,
+  pitch: WALK_CAMERA_PITCH,
+  distance: WALK_CAMERA_DISTANCE,
+  cameraYaw: 0,
+  cameraPitch: WALK_CAMERA_PITCH,
+  cameraDistance: WALK_CAMERA_DISTANCE,
   pointerId: null,
   lastX: 0,
   lastY: 0,
@@ -1512,6 +1526,8 @@ const controls = {
   activePortal: null,
   exteriorSnapshot: null,
 };
+let traversalCameraMode = 'walk';
+let traversalCameraTransitionRemaining = 0;
 
 function exportPlayerWorldState() {
   const outdoor = playerLayerActive
@@ -1567,8 +1583,16 @@ function importPlayerWorldState(snapshot) {
   controls.target.copy(collisionSafeTarget);
   controls.focus.copy(collisionSafeTarget);
   controls.yaw = THREE.MathUtils.euclideanModulo(snapshot.yaw + Math.PI, Math.PI * 2) - Math.PI;
-  controls.pitch = THREE.MathUtils.clamp(snapshot.pitch, 0.28, 2.45);
-  controls.distance = THREE.MathUtils.clamp(snapshot.distance, 12, 180);
+  controls.pitch = THREE.MathUtils.clamp(
+    snapshot.pitch,
+    WALK_CAMERA_PITCH_MIN,
+    WALK_CAMERA_PITCH_MAX,
+  );
+  controls.distance = THREE.MathUtils.clamp(
+    snapshot.distance,
+    WALK_CAMERA_DISTANCE_MIN,
+    WALK_CAMERA_DISTANCE_MAX,
+  );
   lastPublicWorldState = {
     mode: 'outdoor',
     x: controls.target.x,
@@ -1583,10 +1607,10 @@ function importPlayerWorldState(snapshot) {
 
 const combatCameraState = {
   active: false,
-  savedPitch: 0.62,
-  savedDistance: 17,
-  savedCameraPitch: 0.62,
-  savedCameraDistance: 17,
+  savedPitch: WALK_CAMERA_PITCH,
+  savedDistance: WALK_CAMERA_DISTANCE,
+  savedCameraPitch: WALK_CAMERA_PITCH,
+  savedCameraDistance: WALK_CAMERA_DISTANCE,
 };
 const combatAimAnchor = new THREE.Vector3();
 const combatAimPosition = new THREE.Vector3();
@@ -1752,8 +1776,10 @@ function startPlayerLayer() {
   }
   if (!playerWeapon) playerWeapon = createPlayerWeapon();
   playerLayerActive = true;
-  controls.distance = 17;
-  controls.pitch = 0.62;
+  traversalCameraMode = 'walk';
+  traversalCameraTransitionRemaining = 0;
+  controls.distance = WALK_CAMERA_DISTANCE;
+  controls.pitch = WALK_CAMERA_PITCH;
   snapCameraToControls();
 
   try {
@@ -1968,15 +1994,20 @@ function activatePlayerVehiclePresentation({ restored = false } = {}) {
     }
   }
   drivingExitPose = {
-    yaw: controls.yaw,
     pitch: controls.pitch,
     distance: controls.distance,
   };
   controls.target.set(state.position.x, state.position.y + 1.6, state.position.z);
   controls.yaw = state.heading + Math.PI;
-  controls.pitch = 0.52;
-  controls.distance = 10.5;
-  snapCameraToControls();
+  controls.pitch = DRIVE_CAMERA_PITCH;
+  controls.distance = DRIVE_CAMERA_DISTANCE;
+  if (restored) {
+    traversalCameraMode = 'drive';
+    traversalCameraTransitionRemaining = 0;
+    snapCameraToControls();
+  } else {
+    beginTraversalCameraTransition('drive');
+  }
   if (restored) hud?.setDriveState?.({ active: true, damage: state.damage });
   return state;
 }
@@ -2003,17 +2034,19 @@ function exitPlayerCar() {
     Number.isFinite(surface) ? surface : exit.y,
     exitZ,
   );
-  if (drivingExitPose) {
-    controls.yaw = drivingExitPose.yaw;
-    controls.pitch = drivingExitPose.pitch;
-    controls.distance = drivingExitPose.distance;
-    drivingExitPose = null;
-  } else {
-    controls.yaw = exit.heading;
-    controls.pitch = 0.62;
-    controls.distance = 17;
-  }
-  snapCameraToControls();
+  controls.yaw = exit.heading + Math.PI;
+  controls.pitch = THREE.MathUtils.clamp(
+    drivingExitPose?.pitch ?? WALK_CAMERA_PITCH,
+    WALK_CAMERA_PITCH_MIN,
+    WALK_CAMERA_PITCH_MAX,
+  );
+  controls.distance = THREE.MathUtils.clamp(
+    drivingExitPose?.distance ?? WALK_CAMERA_DISTANCE,
+    WALK_CAMERA_DISTANCE_MIN,
+    WALK_CAMERA_DISTANCE_MAX,
+  );
+  drivingExitPose = null;
+  beginTraversalCameraTransition('walk');
   combat?.setEnabled(true);
   hud.setMessage('You stepped back onto the avenue.');
   savePlayerProgress();
@@ -2800,8 +2833,16 @@ function updatePlayerLayer(dt, elapsed) {
     if (playerAvatar) playerAvatar.visible = false;
     controls.target.set(drivingState.position.x, drivingState.position.y + 1.6, drivingState.position.z);
     controls.yaw = drivingState.heading + Math.PI;
-    controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.36, 0.8);
-    controls.distance = THREE.MathUtils.clamp(controls.distance, 8.5, 16);
+    controls.pitch = THREE.MathUtils.clamp(
+      controls.pitch,
+      DRIVE_CAMERA_PITCH_MIN,
+      DRIVE_CAMERA_PITCH_MAX,
+    );
+    controls.distance = THREE.MathUtils.clamp(
+      controls.distance,
+      DRIVE_CAMERA_DISTANCE_MIN,
+      DRIVE_CAMERA_DISTANCE_MAX,
+    );
     traffic.setPlayerInput?.({
       throttle: controls.keys.has('keyw') ? 1 : 0,
       brake: controls.keys.has('keys') ? 1 : 0,
@@ -2931,8 +2972,8 @@ function recoverPlayerAtWelcomeCenter() {
     x: releasePoint.x,
     z: releasePoint.z,
     yaw: Number.isFinite(portal?.heading) ? portal.heading : Math.PI,
-    pitch: lastPublicWorldState?.pitch ?? 0.62,
-    distance: lastPublicWorldState?.distance ?? 17,
+    pitch: lastPublicWorldState?.pitch ?? WALK_CAMERA_PITCH,
+    distance: lastPublicWorldState?.distance ?? WALK_CAMERA_DISTANCE,
   });
 }
 
@@ -3908,6 +3949,8 @@ const previousCameraTarget = new THREE.Vector3().copy(controls.target);
 const cameraVelocity = new THREE.Vector3();
 const targetDelta = new THREE.Vector3();
 const cameraLookAhead = new THREE.Vector3();
+const traversalCameraRay = new THREE.Vector3();
+const traversalCameraFocusTarget = new THREE.Vector3();
 
 function dampAngle(current, target, lambda, dt) {
   const difference = THREE.MathUtils.euclideanModulo(target - current + Math.PI, Math.PI * 2) - Math.PI;
@@ -3919,6 +3962,13 @@ function setInteriorPresentationTarget(active, room = null) {
   if (room?.position) {
     interiorTransitionFill.position.copy(room.position).add(new THREE.Vector3(0, 3.15, 0.4));
   }
+}
+
+function beginTraversalCameraTransition(mode) {
+  traversalCameraMode = mode === 'drive' ? 'drive' : 'walk';
+  traversalCameraTransitionRemaining = TRAVERSAL_CAMERA_TRANSITION_SECONDS;
+  previousCameraTarget.copy(controls.target);
+  cameraVelocity.set(0, 0, 0);
 }
 
 function snapCameraToControls() {
@@ -3936,6 +3986,57 @@ function snapCameraToControls() {
   lookTarget.copy(controls.target);
   camera.lookAt(lookTarget);
   camera.updateMatrixWorld(true);
+}
+
+function readTraversalCameraState() {
+  const driving = traffic.isPlayerDriving?.() === true;
+  const actualDistance = camera.position.distanceTo(controls.focus);
+  traversalCameraRay.copy(camera.position).sub(controls.focus);
+  const rayLength = traversalCameraRay.length();
+  const blocker = rayLength > 1e-5
+    ? getNearestCombatWorldBlocker(
+      controls.focus,
+      traversalCameraRay.multiplyScalar(1 / rayLength),
+      rayLength + 4,
+    )
+    : null;
+  const avatarSurface = playerAvatar?.visible
+    ? streaming.getSurfaceHeight?.(playerAvatar.position)
+    : null;
+  return {
+    mode: controls.interiorMode
+      ? 'interior'
+      : combatCameraState.active
+        ? 'aim'
+        : driving ? 'drive' : 'walk',
+    requestedDistance: controls.distance,
+    actualDistance,
+    pitch: controls.pitch,
+    yaw: controls.yaw,
+    camera: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    focus: { x: controls.focus.x, y: controls.focus.y, z: controls.focus.z },
+    blocker: blocker ? {
+      source: blocker.source,
+      distance: blocker.distance,
+      clearance: blocker.distance - actualDistance,
+    } : null,
+    transition: {
+      mode: traversalCameraMode,
+      active: traversalCameraTransitionRemaining > 0,
+      remaining: traversalCameraTransitionRemaining,
+    },
+    avatar: playerAvatar ? {
+      visible: playerAvatar.visible,
+      position: {
+        x: playerAvatar.position.x,
+        y: playerAvatar.position.y,
+        z: playerAvatar.position.z,
+      },
+      groundResidual: Number.isFinite(avatarSurface)
+        ? Math.abs(playerAvatar.position.y - (avatarSurface + PLAYER_GROUND_OFFSET))
+        : null,
+    } : null,
+  };
 }
 
 function getQaRoamState() {
@@ -4561,6 +4662,10 @@ function updateCamera(dt) {
   }
   const qaTourActive = updateQaStreamingTour(dt);
   const drivingActive = traffic.isPlayerDriving?.() === true;
+  traversalCameraTransitionRemaining = Math.max(
+    0,
+    traversalCameraTransitionRemaining - Math.max(0, dt),
+  );
   const axis = cameraAxis.set(
     (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
     0,
@@ -4591,14 +4696,43 @@ function updateCamera(dt) {
   }
   previousCameraTarget.copy(controls.target);
 
-  controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.28, controls.interiorMode ? 2.2 : 2.45);
-  const exteriorMinDistance = drivingActive ? 8.5 : 12;
-  controls.distance = THREE.MathUtils.clamp(
-    controls.distance,
-    controls.interiorMode ? 3.1 : exteriorMinDistance,
-    controls.interiorMode ? 8.5 : 180,
-  );
-  controls.focus.lerp(controls.target, 1 - Math.exp(-13 * dt));
+  if (controls.interiorMode) {
+    controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.28, 2.2);
+    controls.distance = THREE.MathUtils.clamp(controls.distance, 3.1, 8.5);
+  } else if (qaTourActive) {
+    controls.pitch = THREE.MathUtils.clamp(controls.pitch, 0.28, 2.45);
+    controls.distance = THREE.MathUtils.clamp(controls.distance, 12, 180);
+  } else if (drivingActive) {
+    controls.pitch = THREE.MathUtils.clamp(
+      controls.pitch,
+      DRIVE_CAMERA_PITCH_MIN,
+      DRIVE_CAMERA_PITCH_MAX,
+    );
+    controls.distance = THREE.MathUtils.clamp(
+      controls.distance,
+      DRIVE_CAMERA_DISTANCE_MIN,
+      DRIVE_CAMERA_DISTANCE_MAX,
+    );
+  } else {
+    controls.pitch = THREE.MathUtils.clamp(
+      controls.pitch,
+      WALK_CAMERA_PITCH_MIN,
+      WALK_CAMERA_PITCH_MAX,
+    );
+    controls.distance = THREE.MathUtils.clamp(
+      controls.distance,
+      WALK_CAMERA_DISTANCE_MIN,
+      WALK_CAMERA_DISTANCE_MAX,
+    );
+  }
+  traversalCameraFocusTarget.copy(controls.target);
+  if (!controls.interiorMode && !qaTourActive && !drivingActive) {
+    const surface = streaming.getSurfaceHeight?.(controls.target);
+    if (Number.isFinite(surface)) {
+      traversalCameraFocusTarget.y = surface + WALK_CAMERA_FOCUS_HEIGHT;
+    }
+  }
+  controls.focus.lerp(traversalCameraFocusTarget, 1 - Math.exp(-13 * dt));
   controls.cameraYaw = dampAngle(controls.cameraYaw, controls.yaw, 18, dt);
   controls.cameraPitch = THREE.MathUtils.damp(controls.cameraPitch, controls.pitch, 18, dt);
   controls.cameraDistance = THREE.MathUtils.damp(controls.cameraDistance, controls.distance, 14, dt);
@@ -4606,7 +4740,11 @@ function updateCamera(dt) {
   desiredCamera.copy(controls.focus).add(controlOffset.setFromSpherical(controls.spherical));
   const citySafeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
   const safeCamera = streaming.resolveCameraPosition?.(controls.focus, citySafeCamera) || citySafeCamera;
-  const cameraFollowLambda = controls.interiorMode ? 18 : qaTourActive ? 14 : 12;
+  const cameraFollowLambda = controls.interiorMode
+    ? 18
+    : qaTourActive
+      ? 14
+      : traversalCameraTransitionRemaining > 0 ? 8 : 12;
   camera.position.lerp(safeCamera, 1 - Math.exp(-cameraFollowLambda * dt));
   const lookAheadFactor = controls.interiorMode ? 0.025 : qaTourActive ? 0.06 : 0.11;
   cameraLookAhead.copy(cameraVelocity).multiplyScalar(lookAheadFactor);
@@ -5821,6 +5959,9 @@ window.__SF_SIM__ = {
   },
   getRoamState() {
     return getQaRoamState();
+  },
+  getTraversalCameraState() {
+    return readTraversalCameraState();
   },
   launch() {
     startExperience();
