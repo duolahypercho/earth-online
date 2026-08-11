@@ -35,6 +35,7 @@
     "verify:locomotion-facing": "node scripts/verify-locomotion-facing.mjs",
     "verify:contextual-hud": "node scripts/verify-contextual-hud.mjs",
     "verify:grounded-camera": "node scripts/verify-grounded-camera.mjs",
+    "verify:core-facades": "node scripts/verify-core-facades.mjs",
     "verify:traffic-combat-aftermath": "node scripts/verify-traffic-combat-aftermath.mjs",
     "verify:pursuit-escalation": "node scripts/verify-pursuit-escalation.mjs",
     "verify:pursuit-pressure": "node scripts/verify-pursuit-pressure.mjs",
