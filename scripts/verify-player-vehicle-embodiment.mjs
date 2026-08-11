@@ -633,7 +633,6 @@ try {
     && ingress100?.events?.theftIngressCount === (approach?.events?.theftIngressCount || 0) + 1,
   'duplicate E was not input-locked to exactly one theft ingress', ingress100);
   await capture(captures.ingress100);
-  await page.waitForTimeout(180);
   const ingressMid = await snapshot();
   assert(phase(ingressMid) === 'ingress', 'ingress ended before its required mid-transition capture', ingressMid);
   const ingressMidGeometry = await renderedEmbodimentGeometry();

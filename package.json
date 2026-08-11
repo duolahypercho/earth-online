@@ -86,6 +86,7 @@
     "verify:legal-debt": "node scripts/verify-legal-debt.mjs",
     "verify:delivery-job": "node scripts/verify-delivery-job.mjs",
     "verify:online": "node scripts/verify-online.mjs",
+    "verify:online-vehicle-ownership": "node scripts/verify-online-vehicle-ownership.mjs",
     "verify:online-gameplay": "node scripts/verify-online-gameplay.mjs",
     "verify:online-coop-shift": "node scripts/verify-online-coop-shift.mjs",
     "qa:visual-probe": "node scripts/qa-visual-probe.mjs",

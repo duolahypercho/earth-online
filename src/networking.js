@@ -3,15 +3,12 @@ import {
   createPlayerAvatar,
   animatePlayerAvatar,
   createNameTagSprite,
-  createRemoteCar,
-  updateRemoteCar,
 } from './player.js';
 
 const DEFAULT_PORT = 8787;
 const STATE_INTERVAL = 1 / 14;
 const PEER_TIMEOUT = 6000;
 const PEER_GAMEPLAY_EVENT_LIFETIME = 6000;
-const REMOTE_CAR_FALLBACK = '__fallback__';
 const GAMEPLAY_ACTIVITIES = new Set([
   'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
 ]);
@@ -184,6 +181,9 @@ export function createNetworking({
   onPeerGameplayEventClear,
   onConnectionChange,
   onCoopSessionChange,
+  onVehicleLeaseGranted,
+  onVehicleLeaseDenied,
+  onVehicleLeaseRevoked,
 } = {}) {
   if (typeof WebSocket === 'undefined' || typeof document === 'undefined') return null;
 
@@ -210,6 +210,17 @@ export function createNetworking({
   let voiceTimeData = new Uint8Array(0);
   let coopSession = null;
   let coopRequestSequence = 0;
+  let vehicleLeaseRequestSequence = 0;
+  let pendingVehicleClaim = null;
+  let localVehicleLease = null;
+  const remoteVehicleLeases = new Map();
+  const vehicleLeaseDiagnostics = {
+    claims: 0,
+    grants: 0,
+    denials: 0,
+    releases: 0,
+    revocations: 0,
+  };
   const coopRevisionBySession = new Map();
 
   const room = new THREE.Group();
@@ -256,6 +267,94 @@ export function createNetworking({
 
   function send(payload) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  }
+
+  function requestVehicleLease(vehicleId) {
+    if (!state.connected || !Number.isInteger(vehicleId) || pendingVehicleClaim) return false;
+    vehicleLeaseRequestSequence += 1;
+    const requestId = `${state.id || 'pending'}:vehicle:${vehicleLeaseRequestSequence}`;
+    pendingVehicleClaim = { requestId, vehicleId, requestedAt: performance.now() };
+    vehicleLeaseDiagnostics.claims += 1;
+    send({ type: 'vehicle:claim', requestId, vehicleId });
+    return true;
+  }
+
+  function releaseVehicleLease(vehicleId = localVehicleLease?.vehicleId, reason = 'released') {
+    const lease = localVehicleLease;
+    if (!lease || lease.vehicleId !== vehicleId) return false;
+    send({
+      type: 'vehicle:release',
+      requestId: `${state.id || 'pending'}:release:${lease.revision}`,
+      vehicleId: lease.vehicleId,
+      revision: lease.revision,
+      token: lease.token,
+      reason,
+    });
+    localVehicleLease = null;
+    vehicleLeaseDiagnostics.releases += 1;
+    return true;
+  }
+
+  function clearLocalVehicleLease(reason, notify = true) {
+    const previous = localVehicleLease;
+    localVehicleLease = null;
+    pendingVehicleClaim = null;
+    if (previous && notify) {
+      vehicleLeaseDiagnostics.revocations += 1;
+      onVehicleLeaseRevoked?.({ ...previous, reason });
+    }
+  }
+
+  function handleVehicleLease(message) {
+    const vehicleId = Number(message.vehicleId);
+    const revision = Number(message.revision);
+    if (!Number.isInteger(vehicleId) || !Number.isInteger(revision)) return;
+    if (message.status === 'granted') {
+      const ownerId = String(message.ownerId || '');
+      const prior = remoteVehicleLeases.get(vehicleId);
+      if (!prior || revision >= prior.revision) {
+        remoteVehicleLeases.set(vehicleId, { vehicleId, ownerId, revision });
+      }
+      if (message.token
+        && pendingVehicleClaim?.requestId === message.requestId
+        && pendingVehicleClaim.vehicleId === vehicleId
+        && ownerId === state.id) {
+        localVehicleLease = { vehicleId, revision, token: message.token };
+        pendingVehicleClaim = null;
+        vehicleLeaseDiagnostics.grants += 1;
+        onVehicleLeaseGranted?.({ ...localVehicleLease });
+      }
+      return;
+    }
+    if (message.status === 'denied') {
+      if (pendingVehicleClaim?.requestId !== message.requestId) return;
+      const denied = pendingVehicleClaim;
+      pendingVehicleClaim = null;
+      vehicleLeaseDiagnostics.denials += 1;
+      onVehicleLeaseDenied?.({
+        vehicleId: denied.vehicleId,
+        reason: String(message.reason || 'denied'),
+        revision,
+      });
+      return;
+    }
+    if (message.status !== 'released') return;
+    const previousRevision = Number(message.previousRevision);
+    const known = remoteVehicleLeases.get(vehicleId);
+    if (known && Number.isInteger(previousRevision) && known.revision <= previousRevision) {
+      remoteVehicleLeases.delete(vehicleId);
+    }
+    for (const peer of peers.values()) {
+      if (peer.id !== message.ownerId || peer.state?.vehicleId !== vehicleId) continue;
+      clearRemoteCar(peer);
+      if (peer.state) peer.state.mode = 'walk';
+      if (peer.avatar) peer.avatar.visible = true;
+    }
+    if (localVehicleLease?.vehicleId === vehicleId
+      && Number.isInteger(previousRevision)
+      && localVehicleLease.revision <= previousRevision) {
+      clearLocalVehicleLease(message.reason || 'released', message.reason !== 'released');
+    }
   }
 
   function submitCoopStep({ stepIndex, stepId, context } = {}) {
@@ -305,7 +404,6 @@ export function createNetworking({
     }
     ws.addEventListener('open', () => {
       state.error = null;
-      state.connected = true;
       send({
         type: 'join',
         name: state.name,
@@ -327,8 +425,11 @@ export function createNetworking({
       state.voiceOn = false;
       state.talking = false;
       cleanupAllPeers();
+      remoteVehicleLeases.clear();
+      clearLocalVehicleLease('disconnected');
       clearLocalCoopSession();
       broadcastSnapshot();
+      onConnectionChange?.(false);
       scheduleReconnect();
     });
     ws.addEventListener('error', () => {
@@ -340,14 +441,20 @@ export function createNetworking({
   function handleMessage(message) {
     if (message?.type === 'welcome') {
       state.id = message.id;
+      const wasConnected = state.connected;
+      state.connected = true;
       // The boot flow already owns the local alias. The server welcome only
       // carries its default, so never let it overwrite a chosen name.
       if (!state.name || state.name === 'Traveler') {
         state.name = message.name || state.name;
       }
+      for (const lease of message.vehicleLeases || []) {
+        handleVehicleLease(lease);
+      }
       for (const peer of message.peers || []) {
         addPeer(peer);
       }
+      if (!wasConnected) onConnectionChange?.(true);
       broadcastSnapshot();
     } else if (message?.type === 'peer:join') {
       addPeer(message.peer);
@@ -364,6 +471,8 @@ export function createNetworking({
       refreshPeerNameTag(peer);
     }
     if (applyPeerState(peer, message)) broadcastSnapshot();
+    } else if (message?.type === 'vehicle:lease') {
+      handleVehicleLease(message);
     } else if (message?.type === 'chat') {
       onChatMessage?.({
         id: message.from,
@@ -477,10 +586,6 @@ export function createNetworking({
       room.remove(peer.avatar);
       disposeAvatar(peer.avatar);
     }
-    if (peer.car?.fallbackMesh) {
-      room.remove(peer.car.fallbackMesh);
-      disposeAvatar(peer.car.fallbackMesh);
-    }
     onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     peers.delete(id);
   }
@@ -492,10 +597,6 @@ export function createNetworking({
       if (peer.avatar) {
         room.remove(peer.avatar);
         disposeAvatar(peer.avatar);
-      }
-      if (peer.car?.fallbackMesh) {
-        room.remove(peer.car.fallbackMesh);
-        disposeAvatar(peer.car.fallbackMesh);
       }
       onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     }
@@ -515,7 +616,10 @@ export function createNetworking({
 
   function applyPeerState(peer, incoming) {
     const hadDrive = peer.state?.mode === 'drive';
-    const hasDrive = incoming.mode === 'drive';
+    const incomingLease = remoteVehicleLeases.get(incoming.vehicleId);
+    const hasDrive = incoming.mode === 'drive'
+      && incomingLease?.ownerId === peer.id
+      && incomingLease.revision === Number(incoming.vehicleLeaseRevision);
     const previousGameplay = peer.gameplay;
     const previousMission = peer.mission;
     const gameplay = sanitizeGameplayStatus(incoming.gameplay);
@@ -548,7 +652,7 @@ export function createNetworking({
       peer.missionRevision = incomingMission.revision;
     }
     peer.state = {
-      mode: incoming.mode || 'walk',
+      mode: hasDrive ? 'drive' : incoming.mode === 'interior' ? 'interior' : 'walk',
       vehicleId: incoming.vehicleId ?? null,
       vehicleClass: incoming.vehicleClass || 'sedan',
       vehicleColor: incoming.vehicleColor ?? 0x3f6f8f,
@@ -565,7 +669,7 @@ export function createNetworking({
     if (hasDrive && !hadDrive) {
       clearRemoteCar(peer);
       const car = attachTrafficCar(peer, incoming);
-      if (!car) attachFallbackCar(peer, incoming);
+      if (!car) peer.car = { type: 'pending', id: incoming.vehicleId };
     } else if (!hasDrive && hadDrive) {
       clearRemoteCar(peer);
     } else if (hasDrive) {
@@ -576,9 +680,12 @@ export function createNetworking({
         yaw: peer.targetYaw,
       };
       const ok = traffic?.setRemotePose?.(incoming.vehicleId, pose);
-      if (!ok && !peer.car?.fallbackMesh) {
+      if (ok && peer.car?.type !== 'traffic') {
+        peer.car = { type: 'traffic', id: incoming.vehicleId };
+        peer.carOwner = true;
+      } else if (!ok && peer.car?.type !== 'pending') {
         clearRemoteCar(peer);
-        attachFallbackCar(peer, incoming);
+        peer.car = { type: 'pending', id: incoming.vehicleId };
       }
     }
 
@@ -613,25 +720,9 @@ export function createNetworking({
     return peer.car;
   }
 
-  function attachFallbackCar(peer, incoming) {
-    const mesh = createRemoteCar({
-      className: incoming.vehicleClass || 'sedan',
-      color: incoming.vehicleColor ?? 0x3f6f8f,
-      taxi: incoming.vehicleClass === 'taxi',
-    });
-    mesh.position.copy(peer.targetPosition);
-    mesh.rotation.y = peer.targetYaw;
-    room.add(mesh);
-    peer.car = { type: 'fallback', id: REMOTE_CAR_FALLBACK, fallbackMesh: mesh };
-  }
-
   function clearRemoteCar(peer) {
     if (peer.car?.type === 'traffic' && peer.carOwner) {
       traffic?.clearRemotePose?.(peer.car.id);
-    }
-    if (peer.car?.fallbackMesh) {
-      room.remove(peer.car.fallbackMesh);
-      disposeAvatar(peer.car.fallbackMesh);
     }
     peer.car = null;
     peer.carOwner = false;
@@ -676,6 +767,12 @@ export function createNetworking({
         moving: Boolean(local.moving),
         talking: state.talking,
         vehicleId: local.vehicleId ?? null,
+        vehicleLeaseToken: localVehicleLease?.vehicleId === local.vehicleId
+          ? localVehicleLease.token
+          : null,
+        vehicleLeaseRevision: localVehicleLease?.vehicleId === local.vehicleId
+          ? localVehicleLease.revision
+          : null,
         vehicleClass: local.vehicleClass || null,
         vehicleColor: local.vehicleColor ?? null,
         coopMotion: local.coopMotion && typeof local.coopMotion === 'object'
@@ -716,13 +813,13 @@ export function createNetworking({
             z: peer.targetPosition.z,
             yaw: peer.targetYaw,
           });
-        } else if (peer.car?.fallbackMesh) {
-          peer.car.fallbackMesh.position.lerp(peer.targetPosition, lambda);
-          peer.car.fallbackMesh.rotation.y = peer.yaw;
-          updateRemoteCar(peer.car.fallbackMesh, {
-            speed: peer.moving ? 11 : 0,
-            delta: dt,
+        } else if (peer.car?.type === 'pending') {
+          const attached = attachTrafficCar(peer, {
+            vehicleId: peer.car.id,
+            vehicleClass: peer.state.vehicleClass,
+            vehicleColor: peer.state.vehicleColor,
           });
+          if (!attached) peer.car = { type: 'pending', id: peer.state.vehicleId };
         }
       } else if (peer.avatar) {
         peer.avatar.position.lerp(peer.targetPosition, lambda);
@@ -1022,6 +1119,7 @@ export function createNetworking({
   function dispose() {
     disposed = true;
     if (reconnectTimer) window.clearTimeout(reconnectTimer);
+    releaseVehicleLease(localVehicleLease?.vehicleId, 'disposed');
     disableVoice();
     cleanupAllPeers();
     clearLocalCoopSession();
@@ -1045,6 +1143,15 @@ export function createNetworking({
     setTalking,
     getVoiceDebug,
     sendChat,
+    requestVehicleLease,
+    releaseVehicleLease,
+    hasVehicleLease: (vehicleId) => localVehicleLease?.vehicleId === vehicleId,
+    getVehicleLeaseDiagnostics: () => ({
+      local: localVehicleLease ? { ...localVehicleLease, token: '[held]' } : null,
+      pending: pendingVehicleClaim ? { ...pendingVehicleClaim } : null,
+      remote: [...remoteVehicleLeases.values()].map((lease) => ({ ...lease })),
+      counters: { ...vehicleLeaseDiagnostics },
+    }),
     submitCoopStep,
     leaveCoopSession,
     getCoopSession: () => coopSession

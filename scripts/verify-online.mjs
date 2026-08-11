@@ -141,6 +141,11 @@ try {
   }
   check('player entered a parked car', entered === true, entered);
   if (entered) {
+    await page1.waitForFunction(() => {
+      const embodiment = window.__SF_SIM__.getPlayerVehicleEmbodimentState?.();
+      return window.__SF_SIM__.isDriving()
+        && (embodiment?.phase === 'seated' || embodiment?.phase === 'drive-by');
+    }, null, { timeout: 5000 });
     await page1.keyboard.down('w');
     await page1.waitForTimeout(1400);
     await page1.keyboard.up('w');
@@ -211,9 +216,13 @@ try {
         after: { cash: afterWork.cash, needs: afterWork.needs },
       },
     );
-    const beforeRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
-    const rested = await page1.evaluate(() => window.__SF_SIM__.lifeSim.rest());
-    const afterRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
+    const restAttempt = await page1.evaluate(() => {
+      const before = window.__SF_SIM__.lifeSim.getState();
+      const rested = window.__SF_SIM__.lifeSim.rest();
+      const after = window.__SF_SIM__.lifeSim.getState();
+      return { before, rested, after };
+    });
+    const { before: beforeRest, rested, after: afterRest } = restAttempt;
     check(
       'life-sim rest rejects a context-free driving bypass',
       rested === false
