@@ -1390,6 +1390,18 @@ function handlePlayerTrafficViolation(event) {
 }
 
 function handlePlayerVehicleCollision(event) {
+  if (event?.kind === 'pursuit-contact' && event.playerDamage) {
+    const contact = streetHeat?.reportVehicleResponderContact?.({
+      responderId: event.responderId,
+    });
+    if (!contact) return false;
+    lastVehicleDamageAt = event.playerDamage?.lastDamage?.at ?? lastVehicleDamageAt;
+    savePlayerProgress();
+    return {
+      responderContact: true,
+      contactNumber: contact.responderContacts,
+    };
+  }
   if (event?.kind !== 'reckless-collision' || !event.playerDamage || !event.victimDamage) {
     return false;
   }
@@ -3543,9 +3555,7 @@ streetHeat = createStreetHeat({
   getPursuitResponders: () => traffic.getPursuitResponders?.(),
   onEvent: ({ kind, message, score, heatBefore = 0, reason = null, damage = 0 }) => {
     if (kind === 'responder-contact') {
-      if (traffic.isPlayerDriving?.()) {
-        traffic.damagePlayerVehicle?.(22, 'pursuit-contact');
-      } else {
+      if (!traffic.isPlayerDriving?.()) {
         const damaged = combat?.damagePlayer?.(18, 'pursuit-contact');
         if (damaged && combat?.getState?.().status === 'downed') {
           streetHeat?.resolveArrest?.({
