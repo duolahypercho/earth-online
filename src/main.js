@@ -515,6 +515,7 @@ const traffic = createTrafficSystem({
   scene,
   onPlayerTrafficViolation: (event) => handlePlayerTrafficViolation(event),
   onPlayerVehicleCollision: (event) => handlePlayerVehicleCollision(event),
+  onPlayerOnFootVehicleContact: (event) => handlePlayerOnFootVehicleContact(event),
   canRepairPlayerVehicle: () => streetHeat?.getState?.().pursuitActive !== true,
   roadNetwork: {
     ...city.roadNetwork,
@@ -945,6 +946,7 @@ let streetHeat;
 let combat;
 let sfpdOfficerQaScenario = null;
 let sfpdOfficerQaPressureDelay = 0;
+let onFootVehicleImpactQaScenario = null;
 const sfpdResponderDeploymentHolds = new Set();
 
 function getSfpdPursuitResponders() {
@@ -1320,6 +1322,7 @@ let muniRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
+const ON_FOOT_PLAYER_BODY_RADIUS = 1.05;
 const PLAYER_FACING_DAMPING = 18;
 const WALK_CAMERA_DISTANCE = 8.8;
 const WALK_CAMERA_DISTANCE_MIN = 8;
@@ -1476,6 +1479,53 @@ function handlePlayerVehicleCollision(event) {
     heatBefore,
     heatAfter: heat?.heat ?? heatBefore,
     heatAdded: RECKLESS_COLLISION_HEAT,
+  };
+}
+
+function handlePlayerOnFootVehicleContact(event) {
+  if (event?.kind !== 'on-foot-vehicle-contact'
+    || !Number.isFinite(event.correctedPosition?.x)
+    || !Number.isFinite(event.correctedPosition?.z)) return null;
+  controls.target.x = event.correctedPosition.x;
+  controls.target.z = event.correctedPosition.z;
+  const collisionSafeTarget = streaming.resolveRoamPosition?.(controls.target);
+  if (collisionSafeTarget && collisionSafeTarget !== controls.target) {
+    controls.target.copy(collisionSafeTarget);
+  }
+  const surface = getTraversalSurfaceHeight(controls.target);
+  if (Number.isFinite(surface)) controls.target.y = surface + QA_ROAM_CLEARANCE;
+  let avatarSynchronized = false;
+  if (playerAvatar?.visible
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !passengerRideActive()) {
+    const avatarSurface = getTraversalSurfaceHeight(controls.target);
+    const avatarGroundY = Number.isFinite(avatarSurface) ? avatarSurface : 0;
+    playerAvatarNextPosition.set(
+      controls.target.x,
+      avatarGroundY + PLAYER_GROUND_OFFSET,
+      controls.target.z,
+    );
+    playerAvatar.position.copy(playerAvatarNextPosition);
+    playerAvatarPreviousPosition.copy(playerAvatarNextPosition);
+    playerAvatar.updateMatrixWorld(true);
+    avatarSynchronized = true;
+  }
+  const damaged = event.damaging === true
+    && combat?.damagePlayer?.(event.damage, 'vehicle-impact') === true;
+  if (damaged) {
+    hud?.setMessage(
+      `VEHICLE IMPACT / ${event.vehicleLabel || event.vehicleClass || 'traffic'} · -${Math.round(event.damage)} health.`,
+    );
+    savePlayerProgress();
+  }
+  return {
+    blocked: true,
+    damaged,
+    avatarSynchronized,
+    correctedPosition: { x: controls.target.x, z: controls.target.z },
+    source: damaged ? 'vehicle-impact' : null,
+    status: combat?.getState?.().status ?? null,
   };
 }
 
@@ -4018,6 +4068,163 @@ const sfpdOfficerQa = Object.freeze({
   snapshot: snapshotSfpdOfficerQa,
 });
 
+function resetOnFootVehicleImpactQaReaction() {
+  const reaction = playerAvatar?.userData?.hitReaction;
+  if (reaction) {
+    reaction.pending = false;
+    reaction.startElapsed = null;
+    reaction.lastPhase = 1;
+    reaction.lastWeight = 0;
+    reaction.lastApplied = false;
+  }
+  const downed = playerAvatar?.userData?.hitReactionDowned;
+  if (downed) downed.value = 0;
+}
+
+function stageOnFootVehicleImpactQa(scenario = {}) {
+  const kind = String(scenario?.kind || 'high-speed');
+  const allowed = new Set([
+    'high-speed', 'low-speed', 'disabled', 'parallel', 'hidden', 'garage',
+    'impounded', 'remote', 'downed', 'pursuit-responder',
+  ]);
+  if (!allowed.has(kind)) {
+    traffic.stageOnFootVehicleImpactQa?.({ kind, referencePosition: controls.target });
+    onFootVehicleImpactQaScenario = null;
+    return { ready: false, syntheticEvents: 0, kind };
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  sfpdOfficerQaScenario = null;
+  clearSfpdResponderDeploymentHolds();
+  combat?.restart?.();
+  resetOnFootVehicleImpactQaReaction();
+  if (kind === 'pursuit-responder') {
+    streetHeat?.importState?.({
+      heat: 78,
+      pursuitActive: true,
+      responderContacts: 0,
+      responderContactLatched: false,
+      nearMisses: 0,
+      witnessReports: 0,
+      combatHold: 2.8,
+      theftHold: 0,
+    });
+    traffic.setPursuitResponder?.({
+      active: true,
+      position: controls.target,
+      playerVehicleId: null,
+      level: 2,
+    });
+  } else {
+    streetHeat?.restart?.();
+    traffic.setPursuitResponder?.({
+      active: false,
+      position: controls.target,
+      playerVehicleId: null,
+      level: 0,
+    });
+  }
+  const before = traffic.getOnFootVehicleContactDiagnostics?.().contacts ?? 0;
+  const staged = traffic.stageOnFootVehicleImpactQa?.({
+    kind,
+    referencePosition: controls.target,
+  });
+  if (!staged?.playerPose) return { ready: false, syntheticEvents: 0, kind };
+  onFootVehicleImpactQaScenario = { kind, vehicleId: staged.vehicleId };
+  setQaRoamPose({
+    ...staged.playerPose,
+    pitch: 1.05,
+    distance: 8.8,
+  });
+  if (kind === 'downed') combat?.damagePlayer?.(100, 'qa-on-foot-vehicle-impact-downed');
+  const after = traffic.getOnFootVehicleContactDiagnostics?.().contacts ?? 0;
+  return {
+    ready: true,
+    syntheticEvents: after - before,
+    kind,
+    vehicleId: staged.vehicleId,
+  };
+}
+
+function getPlayerRenderedBodyBounds() {
+  if (!playerAvatar?.visible) return null;
+  const body = playerAvatar.getObjectByName?.('Shared skinned adult body');
+  if (!body) return null;
+  playerAvatar.updateWorldMatrix(true, true);
+  body.skeleton?.update?.();
+  const bounds = new THREE.Box3().setFromObject(body, true);
+  if (bounds.isEmpty()) return null;
+  const min = { x: bounds.min.x, y: bounds.min.y, z: bounds.min.z };
+  const max = { x: bounds.max.x, y: bounds.max.y, z: bounds.max.z };
+  const extentX = Math.max(
+    Math.abs(min.x - playerAvatar.position.x),
+    Math.abs(max.x - playerAvatar.position.x),
+  );
+  const extentZ = Math.max(
+    Math.abs(min.z - playerAvatar.position.z),
+    Math.abs(max.z - playerAvatar.position.z),
+  );
+  return {
+    source: body.name,
+    bounds: { min, max },
+    width: max.x - min.x,
+    depth: max.z - min.z,
+    horizontalRadius: Math.hypot(extentX, extentZ),
+    collisionRadius: ON_FOOT_PLAYER_BODY_RADIUS,
+  };
+}
+
+function snapshotOnFootVehicleImpactQa() {
+  const diagnostics = traffic.getOnFootVehicleContactDiagnostics?.() || {};
+  const renderedBody = getPlayerRenderedBodyBounds();
+  const vehicle = traffic.getOnFootVehicleImpactQaState?.({
+    position: controls.target,
+    renderedBounds: renderedBody?.bounds,
+  }) || null;
+  const combatState = combat?.getState?.() || {};
+  const kind = onFootVehicleImpactQaScenario?.kind ?? null;
+  return {
+    scenario: kind,
+    player: {
+      onFoot: !traffic.isPlayerDriving?.()
+        && !controls.interiorMode
+        && !passengerRideActive(),
+      health: combatState.health ?? 0,
+      status: combatState.status ?? null,
+      position: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      feedback: getPlayerHitReactionTelemetry(playerAvatar),
+      renderedBody,
+      context: {
+        interior: controls.interiorMode === true,
+        passenger: passengerRideActive(),
+        downed: combatState.status === 'downed',
+      },
+    },
+    vehicle,
+    thresholds: { damageSpeed: 4, radius: ON_FOOT_PLAYER_BODY_RADIUS, rearmGap: 0.75 },
+    impact: {
+      events: diagnostics.contacts ?? 0,
+      damageEvents: diagnostics.damageContacts ?? 0,
+      corrections: diagnostics.corrections ?? 0,
+      latched: (diagnostics.latchCount ?? 0) > 0,
+      finalOverlap: vehicle?.finalOverlap === true,
+      lastContact: diagnostics.lastContact ?? null,
+      lastCorrection: diagnostics.lastCorrection ?? null,
+    },
+    resources: {
+      vehicleActors: vehicle?.actorCount ?? 0,
+      activeTimers: 0,
+      activeListeners: 0,
+      activeProjectiles: 0,
+    },
+  };
+}
+
+const onFootVehicleImpactQa = Object.freeze({
+  stage: stageOnFootVehicleImpactQa,
+  snapshot: snapshotOnFootVehicleImpactQa,
+});
+
 function dispatchCombatWitness({ incidentId, residentId } = {}) {
   if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
   const witness = pedestrians.getIncidentWitness?.(residentId, 18) ?? null;
@@ -4837,6 +5044,7 @@ const targetDelta = new THREE.Vector3();
 const cameraLookAhead = new THREE.Vector3();
 const traversalCameraRay = new THREE.Vector3();
 const traversalCameraFocusTarget = new THREE.Vector3();
+const onFootVehicleSweepStart = new THREE.Vector3();
 
 function dampAngle(current, target, lambda, dt) {
   const difference = THREE.MathUtils.euclideanModulo(target - current + Math.PI, Math.PI * 2) - Math.PI;
@@ -6705,6 +6913,7 @@ function frame(now) {
   const motionDt = reducedMotionQuery?.matches ? 0 : dt;
   elapsed += motionDt;
   playerCameraImpulse.prepare(camera);
+  onFootVehicleSweepStart.copy(controls.target);
   updateCamera(dt);
   applyPlayerDamageCameraImpulse(dt);
   updatePlayerLayer(motionDt, elapsed);
@@ -6755,6 +6964,24 @@ function frame(now) {
   updateSfpdResponderDeploymentHolds({
     heatState: pursuitHeatState,
     driving: Boolean(pursuitVehicleState),
+  });
+  const onFootSweepDistance = Math.hypot(
+    controls.target.x - onFootVehicleSweepStart.x,
+    controls.target.z - onFootVehicleSweepStart.z,
+  );
+  traffic.setOnFootPlayerCollisionProbe?.({
+    active: playerLayerActive
+      && !pursuitVehicleState
+      && !controls.interiorMode
+      && !passengerRideActive()
+      && !beautyMode
+      && !qaCameraPose
+      && !qaStreamingTour
+      && !sfpdOfficerQaScenario
+      && combat?.getState?.().status === 'running',
+    start: onFootSweepDistance <= 1.25 ? onFootVehicleSweepStart : controls.target,
+    end: controls.target,
+    radius: ON_FOOT_PLAYER_BODY_RADIUS,
   });
   traffic.update?.(motionDt, elapsed);
   updateVehiclePedestrianImpact();
@@ -7075,6 +7302,9 @@ window.__SF_SIM__ = {
     return sfpdOfficerQa;
   },
   sfpdOfficerQa,
+  getOnFootVehicleImpactQa() {
+    return onFootVehicleImpactQa;
+  },
   getLastTrafficCitation() {
     return lastTrafficCitation ? structuredClone(lastTrafficCitation) : null;
   },
