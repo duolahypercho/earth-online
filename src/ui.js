@@ -11,6 +11,7 @@ const CALLOUT_DURATION_MS = 3400;
 const COMPLETE_CALLOUT_DURATION_MS = 5400;
 const LOW_NEED_WARNING_INTERVAL_MS = 6000;
 const PULSE_DURATION_MS = 820;
+const MESSAGE_DURATION_MS = 1400;
 
 function createElement(tagName, className, text) {
   const element = document.createElement(tagName);
@@ -355,9 +356,14 @@ export function createHud({
     throw new Error('createHud requires a document body.');
   }
 
-  const root = createElement('aside', 'hud hud--cinematic');
+  const root = createElement(
+    'aside',
+    'hud hud--cinematic hud--readable hud--context-walk',
+  );
   root.setAttribute(HUD_DATA_ATTRIBUTE, 'san-francisco');
   root.dataset.telemetry = 'compact';
+  root.dataset.contextMode = 'walk';
+  root.dataset.readable = 'true';
   root.setAttribute('aria-label', 'San Francisco traffic simulation HUD');
 
   const header = createElement('header', 'hud__header');
@@ -806,6 +812,8 @@ export function createHud({
 
   let disposed = false;
   let telemetryMode = 'compact';
+  let contextMode = 'walk';
+  let readableMode = true;
   let qualityControlsOpen = false;
   let rollingFps = null;
   let fpsWindowAge = 0;
@@ -828,6 +836,7 @@ export function createHud({
   let lastCompletedSteps = null;
   let lastMissionStatus = null;
   let calloutTimer = null;
+  let messageTimer = null;
   let lastLowNeedAt = 0;
   const previousNeeds = new Map();
   let uiAudio = null;
@@ -889,6 +898,52 @@ export function createHud({
       expanded ? 'Show compact telemetry' : 'Show full telemetry details',
     );
     telemetryToggleState.textContent = expanded ? 'Full' : 'Compact';
+  }
+
+  const contextAliases = {
+    traversal: 'walk',
+    roam: 'walk',
+    walking: 'walk',
+    driving: 'drive',
+    vehicle: 'drive',
+    aiming: 'combat',
+    shoulder: 'combat',
+    room: 'interior',
+  };
+  const contextModes = ['walk', 'drive', 'combat', 'interior', 'map', 'menu', 'pause'];
+
+  function setReadable(readable = true) {
+    if (disposed) return readableMode;
+
+    readableMode = readable !== false;
+    root.classList.toggle('hud--readable', readableMode);
+    root.dataset.readable = String(readableMode);
+    return readableMode;
+  }
+
+  function setContextMode(mode = 'walk', options = {}) {
+    if (disposed) return contextMode;
+
+    let nextMode = mode;
+    let nextReadable = options?.readable;
+    if (mode && typeof mode === 'object') {
+      nextMode = mode.mode;
+      nextReadable = mode.readable;
+    }
+    const requested = String(nextMode || 'walk').trim().toLowerCase();
+    const normalized = contextAliases[requested] || requested;
+    const resolvedMode = contextModes.includes(normalized) ? normalized : 'walk';
+    if (resolvedMode !== contextMode) {
+      contextMode = resolvedMode;
+      contextModes.forEach((name) => {
+        root.classList.toggle(`hud--context-${name}`, name === contextMode);
+      });
+      root.dataset.contextMode = contextMode;
+    }
+    if (nextReadable !== undefined && (nextReadable !== false) !== readableMode) {
+      setReadable(nextReadable);
+    }
+    return contextMode;
   }
 
   function setQualityControlsOpen(open) {
@@ -1206,10 +1261,20 @@ export function createHud({
   function setMessage(text) {
     if (disposed) return;
 
+    window.clearTimeout(messageTimer);
+    messageTimer = null;
     const nextMessage = text === null || text === undefined ? '' : String(text).trim();
     messageText.textContent = nextMessage;
     message.hidden = !nextMessage;
     root.dataset.message = nextMessage ? 'visible' : 'hidden';
+    if (nextMessage) {
+      messageTimer = window.setTimeout(() => {
+        messageText.textContent = '';
+        message.hidden = true;
+        root.dataset.message = 'hidden';
+        messageTimer = null;
+      }, MESSAGE_DURATION_MS);
+    }
   }
 
   function setInteraction(value) {
@@ -1568,6 +1633,7 @@ export function createHud({
 
     disposed = true;
     window.clearTimeout(calloutTimer);
+    window.clearTimeout(messageTimer);
     if (uiAudio && typeof window !== 'undefined') {
       uiAudioEventNames.forEach((eventName) => {
         window.removeEventListener(eventName, primeUiAudio, { capture: true });
@@ -1589,6 +1655,8 @@ export function createHud({
     setMapState,
     setMapOpen,
     toggleMap,
+    setContextMode,
+    setReadable,
     setCameraState,
     setAtmosphere,
     setLifeState,

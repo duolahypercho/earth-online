@@ -156,7 +156,12 @@ function updateCombatOverlay(combatState) {
     && !traffic.isPlayerDriving?.()
     && !beautyMode
     && !qaCameraPose;
-  const visible = combatIsOnFoot && (combatState.active || combatState.status === 'downed');
+  const visible = combatIsOnFoot && (
+    combatState.aiming
+    || combatState.reloading
+    || combatState.hitConfirm
+    || combatState.status === 'downed'
+  );
   combatOverlay.hidden = !visible;
   combatOverlay.style.opacity = visible ? '1' : '0';
   combatReticle.style.opacity = combatState.status === 'downed' ? '0.3' : '1';
@@ -1551,7 +1556,11 @@ function exportPlayerWorldState() {
       z: controls.target.z,
       yaw: THREE.MathUtils.euclideanModulo(controls.yaw + Math.PI, Math.PI * 2) - Math.PI,
       pitch: THREE.MathUtils.clamp(orbitPitch, 0.28, 2.45),
-      distance: THREE.MathUtils.clamp(orbitDistance, 12, 180),
+      distance: THREE.MathUtils.clamp(
+        orbitDistance,
+        WALK_CAMERA_DISTANCE_MIN,
+        WALK_CAMERA_DISTANCE_MAX,
+      ),
     };
   }
   return lastPublicWorldState ? { ...lastPublicWorldState } : null;
@@ -5658,15 +5667,11 @@ function startExperience() {
   combat?.start();
   const restoredProgress = restorePlayerProgress();
   hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
-  const featured = city.getFeaturedPortal?.(controls.target);
-  hud.setMessage(
-    restoredProgress
-      ? 'Progress restored · location, economy, combat kit, and Waterfront Loop resumed.'
-      : featured
-      ? `Featured interior · ${featured.label}, ${featured.distance.toFixed(0)} m east. Follow the lit PUBLIC LOBBY · ENTER sign.`
-      : 'Tip: press R for coastal weather, C for render quality, H for beauty mode.',
-  );
-  window.setTimeout(() => hud.setMessage(null), featured ? 8200 : 5600);
+  // The world and current objective establish the opening context. Avoid a
+  // long-lived center toast that obscures the player and first street view.
+  hud?.setMessage(restoredProgress
+    ? 'Progress restored · location, economy, combat kit, and Waterfront Loop resumed.'
+    : null);
 }
 
 launchButton?.addEventListener('click', startExperience);
@@ -5791,6 +5796,21 @@ function frame(now) {
   });
   updateCombatOverlay(combatState);
   updatePlayerWeapon(combatState);
+  const combatHudActive = Boolean(
+    combatState?.aiming
+      || combatState?.reloading
+      || combatState?.hitConfirm
+      || combatState?.status === 'downed',
+  );
+  hud?.setContextMode?.(
+    controls.interiorMode
+      ? 'interior'
+      : drivingState
+        ? 'driving'
+        : combatHudActive
+          ? 'combat'
+          : 'traversal',
+  );
   const displayedGameState = gameState && streetHeatState
     && (streetHeatState.pursuitActive || streetHeatState.heat > 0)
     ? { ...gameState, hint: streetHeatState.hint }
