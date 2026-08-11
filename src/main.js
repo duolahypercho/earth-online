@@ -525,7 +525,11 @@ const traffic = createTrafficSystem({
     signalPlans: [...coreSignalPlans, ...expansion.roadNetwork.signalPlans],
   },
 });
-const pedestrians = createPedestrianSystem({ scene, sidewalkNetwork: city.sidewalkNetwork });
+const pedestrians = createPedestrianSystem({
+  scene,
+  sidewalkNetwork: city.sidewalkNetwork,
+  onPlayerCrowdContact: (event) => handlePlayerOnFootPedestrianContact(event),
+});
 const sfpdOfficers = createSfpdOfficerResponse({
   scene,
   getNearestWorldBlocker: getNearestCombatWorldBlocker,
@@ -948,6 +952,7 @@ let combat;
 let sfpdOfficerQaScenario = null;
 let sfpdOfficerQaPressureDelay = 0;
 let onFootVehicleImpactQaScenario = null;
+let onFootPedestrianSpaceQaScenario = null;
 const sfpdResponderDeploymentHolds = new Set();
 
 function getSfpdPursuitResponders() {
@@ -1332,6 +1337,7 @@ let lastVehicleDamageAt = null;
 // the legacy primitive-avatar offset.
 const PLAYER_GROUND_OFFSET = 0;
 const ON_FOOT_PLAYER_BODY_RADIUS = 1.05;
+const ON_FOOT_PLAYER_CROWD_RADIUS = 0.72;
 const PLAYER_FACING_DAMPING = 18;
 const WALK_CAMERA_DISTANCE = 8.8;
 const WALK_CAMERA_DISTANCE_MIN = 8;
@@ -1535,6 +1541,42 @@ function handlePlayerOnFootVehicleContact(event) {
     correctedPosition: { x: controls.target.x, z: controls.target.z },
     source: damaged ? 'vehicle-impact' : null,
     status: combat?.getState?.().status ?? null,
+  };
+}
+
+function handlePlayerOnFootPedestrianContact(event) {
+  if (event?.kind !== 'on-foot-pedestrian-contact'
+    || !Number.isFinite(event.correctedPosition?.x)
+    || !Number.isFinite(event.correctedPosition?.z)) return null;
+  controls.target.x = event.correctedPosition.x;
+  controls.target.z = event.correctedPosition.z;
+  const collisionSafeTarget = streaming.resolveRoamPosition?.(controls.target);
+  if (collisionSafeTarget && collisionSafeTarget !== controls.target) {
+    controls.target.copy(collisionSafeTarget);
+  }
+  const surface = getTraversalSurfaceHeight(controls.target);
+  if (Number.isFinite(surface)) controls.target.y = surface + QA_ROAM_CLEARANCE;
+  let avatarSynchronized = false;
+  if (playerAvatar?.visible
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !passengerRideActive()) {
+    const avatarSurface = getTraversalSurfaceHeight(controls.target);
+    const avatarGroundY = Number.isFinite(avatarSurface) ? avatarSurface : 0;
+    playerAvatarNextPosition.set(
+      controls.target.x,
+      avatarGroundY + PLAYER_GROUND_OFFSET,
+      controls.target.z,
+    );
+    playerAvatar.position.copy(playerAvatarNextPosition);
+    playerAvatarPreviousPosition.copy(playerAvatarNextPosition);
+    playerAvatar.updateMatrixWorld(true);
+    avatarSynchronized = true;
+  }
+  return {
+    blocked: true,
+    avatarSynchronized,
+    correctedPosition: { x: controls.target.x, z: controls.target.z },
   };
 }
 
@@ -3944,7 +3986,9 @@ function updatePlayerLayer(dt, elapsed) {
     if (playerAvatar && !controls.interiorMode) {
       // Beauty / QA locked cameras must not show the local Traveler nameplate
       // floating in hero road stills (critic pass 9/10 hard blocker).
-      const hideAvatarForShot = beautyMode || Boolean(qaCameraPose) || passengerRiding;
+      const hideAvatarForShot = beautyMode
+        || (Boolean(qaCameraPose) && onFootPedestrianSpaceQaScenario?.captureFraming !== true)
+        || passengerRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
         const surface = getTraversalSurfaceHeight(controls.target);
@@ -4913,6 +4957,138 @@ function snapshotOnFootVehicleImpactQa() {
 const onFootVehicleImpactQa = Object.freeze({
   stage: stageOnFootVehicleImpactQa,
   snapshot: snapshotOnFootVehicleImpactQa,
+});
+
+function stageOnFootPedestrianSpaceQa({ kind = 'contact' } = {}) {
+  const allowed = new Set(['contact', 'diagonal', 'empty', 'downed']);
+  if (!allowed.has(kind)
+    || traffic.isPlayerDriving?.()
+    || passengerRideActive()
+    || controls.interiorMode
+    || vehicleEmbodimentTransitionActive()) {
+    return { ready: false, syntheticEvents: 0, kind };
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  beautyMode = false;
+  app?.classList.remove('is-beauty');
+  sfpdOfficerQaScenario = null;
+  onFootVehicleImpactQaScenario = null;
+  controls.keys.clear();
+  combat?.restart?.();
+  const stagedKind = kind === 'downed' ? 'contact' : kind;
+  const staged = pedestrians.stageOnFootPlayerContactQa?.({ kind: stagedKind });
+  if (!staged?.ready || staged.syntheticEvents !== 0 || !staged.playerPose?.position) {
+    onFootPedestrianSpaceQaScenario = null;
+    return { ready: false, syntheticEvents: staged?.syntheticEvents ?? 0, kind };
+  }
+  setQaRoamPose({
+    ...staged.playerPose.position,
+    yaw: staged.playerPose.yaw,
+    pitch: 1.12,
+    distance: 9.2,
+  });
+  const baseline = pedestrians.getOnFootPlayerContactDiagnostics?.() || {};
+  onFootPedestrianSpaceQaScenario = {
+    kind,
+    stagedKind,
+    start: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+    baselineContacts: Number(baseline.contacts) || 0,
+    tConsumed: false,
+  };
+  if (kind === 'downed') combat?.damagePlayer?.(100, 'qa-on-foot-pedestrian-space');
+  return {
+    ready: true,
+    syntheticEvents: 0,
+    kind,
+    residentId: staged.residentId,
+    residentIndex: staged.residentIndex,
+  };
+}
+
+function snapshotOnFootPedestrianSpaceQa() {
+  const qa = pedestrians.getOnFootPlayerContactQaState?.() || {};
+  const diagnostics = pedestrians.getOnFootPlayerContactDiagnostics?.() || {};
+  const resident = qa.resident || null;
+  const thresholds = diagnostics.thresholds || {};
+  const combinedRadius = (Number(thresholds.defaultPlayerRadius) || ON_FOOT_PLAYER_CROWD_RADIUS)
+    + (Number(thresholds.pedestrianRadius) || 0.46);
+  const centerDistance = resident?.position
+    ? Math.hypot(
+      controls.target.x - resident.position.x,
+      controls.target.z - resident.position.z,
+    )
+    : null;
+  const finalClearance = Number.isFinite(centerDistance)
+    ? centerDistance - combinedRadius
+    : null;
+  const scenario = onFootPedestrianSpaceQaScenario;
+  const traveled = scenario
+    ? Math.hypot(
+      controls.target.x - scenario.start.x,
+      controls.target.z - scenario.start.z,
+    )
+    : 0;
+  const surface = getTraversalSurfaceHeight(controls.target);
+  const combatState = combat?.getState?.() || {};
+  return {
+    scenario: scenario?.kind ?? null,
+    player: {
+      onFoot: !traffic.isPlayerDriving?.()
+        && !controls.interiorMode
+        && !passengerRideActive(),
+      position: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      roadGrounded: Number.isFinite(surface)
+        && Math.abs(controls.target.y - (surface + QA_ROAM_CLEARANCE)) <= 0.08,
+      renderedBody: getPlayerRenderedBodyBounds(),
+      context: {
+        downed: combatState.status === 'downed',
+        interior: controls.interiorMode === true,
+        driving: traffic.isPlayerDriving?.() === true,
+        passenger: passengerRideActive(),
+      },
+    },
+    pedestrian: resident,
+    collision: {
+      active: Boolean(onFootPlayerCollisionProbeForQa()),
+      events: Number(diagnostics.contacts) || 0,
+      corrections: Number(diagnostics.corrections) || 0,
+      rearmed: Number(diagnostics.rearmed) || 0,
+      yields: Number(diagnostics.yields) || 0,
+      latched: (Number(diagnostics.activeLatchCount) || 0) > 0,
+      finalClearance,
+      finalOverlap: Number.isFinite(finalClearance) ? finalClearance < -1e-4 : false,
+      lastContact: diagnostics.lastContact ?? null,
+      lastCorrection: diagnostics.lastCorrection ?? null,
+      diagonalPassed: scenario?.kind === 'diagonal'
+        && traveled >= 1
+        && (Number(diagnostics.contacts) || 0) <= scenario.baselineContacts + 1,
+      emptyPathClear: scenario?.kind === 'empty'
+        && traveled >= 1
+        && (Number(diagnostics.contacts) || 0) === scenario.baselineContacts,
+    },
+    interaction: { tConsumed: scenario?.tConsumed === true },
+    resources: {
+      pedestrianActors: Number(pedestrians.getStats?.().active) || 0,
+      activeTimers: 0,
+      activeListeners: 0,
+      activeProjectiles: 0,
+    },
+  };
+}
+
+function onFootPlayerCollisionProbeForQa() {
+  const diagnostics = pedestrians.getOnFootPlayerContactDiagnostics?.();
+  return diagnostics?.lastProbe && onFootPedestrianSpaceQaScenario
+    && combat?.getState?.().status === 'running'
+    && !controls.interiorMode
+    && !traffic.isPlayerDriving?.()
+    && !passengerRideActive();
+}
+
+const onFootPedestrianSpaceQa = Object.freeze({
+  stage: stageOnFootPedestrianSpaceQa,
+  snapshot: snapshotOnFootPedestrianSpaceQa,
 });
 
 function dispatchCombatWitness({ incidentId, residentId } = {}) {
@@ -6466,7 +6642,10 @@ function updateCombatShoulderCamera(dt) {
 function updateRoamTarget(dt, qaTourActive, drivingActive, axis) {
   if (passengerRideActive()) return;
   const moveSpeed = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 9.5 : 5.6;
-  if (!qaTourActive && !drivingActive && axis.lengthSq() > 0) {
+  if (!qaTourActive
+    && !drivingActive
+    && combat?.getState?.().status === 'running'
+    && axis.lengthSq() > 0) {
     // A regular movement input returns the pooled street presentation to its
     // ordinary layout. The broad avenue is intentionally an opt-in QA view.
     streaming.setQaPublicCorridorActive?.(false);
@@ -7033,8 +7212,12 @@ function onKeyDown(event) {
     networking?.enableVoice?.();
   }
   if (code === 'KeyT' && !event.repeat) {
-    if (lifeSim?.isAtMarket?.(controls.target)) eatPlayerAtMarket();
-    else talkToNearbyResident();
+    const handled = lifeSim?.isAtMarket?.(controls.target)
+      ? eatPlayerAtMarket()
+      : talkToNearbyResident();
+    if (onFootPedestrianSpaceQaScenario) {
+      onFootPedestrianSpaceQaScenario.tConsumed = handled === true;
+    }
   }
   if (code === 'KeyB' && !event.repeat) buyPlayerMedkit();
   if (code === 'KeyN' && !event.repeat) buyPlayerAmmo();
@@ -7705,6 +7888,26 @@ function frame(now) {
     traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null,
   );
   profileMark('traffic');
+  const onFootCrowdSweepDistance = Math.hypot(
+    controls.target.x - onFootVehicleSweepStart.x,
+    controls.target.z - onFootVehicleSweepStart.z,
+  );
+  pedestrians.setOnFootPlayerCollisionProbe?.({
+    active: playerLayerActive
+      && !traffic.isPlayerDriving?.()
+      && !vehicleEmbodimentTransitionActive()
+      && !controls.interiorMode
+      && !passengerRideActive()
+      && !beautyMode
+      && !qaCameraPose
+      && !qaStreamingTour
+      && !sfpdOfficerQaScenario
+      && !onFootVehicleImpactQaScenario
+      && combat?.getState?.().status === 'running',
+    start: onFootCrowdSweepDistance <= 1.25 ? onFootVehicleSweepStart : controls.target,
+    end: controls.target,
+    radius: ON_FOOT_PLAYER_CROWD_RADIUS,
+  });
   pedestrians.update?.(motionDt, elapsed);
   sfpdOfficers.update?.(motionDt, elapsed, {
     active: Boolean(pursuitHeatState?.pursuitActive),
@@ -7974,6 +8177,9 @@ window.__SF_SIM__ = {
         lookAt: new THREE.Vector3(lookAt.x, lookAt.y, lookAt.z),
       }
       : null;
+    if (onFootPedestrianSpaceQaScenario) {
+      onFootPedestrianSpaceQaScenario.captureFraming = Boolean(qaCameraPose);
+    }
   },
   setRoamPose(position) {
     return setQaRoamPose(position);
@@ -8048,6 +8254,9 @@ window.__SF_SIM__ = {
   sfpdOfficerQa,
   getOnFootVehicleImpactQa() {
     return onFootVehicleImpactQa;
+  },
+  getOnFootPedestrianSpaceQa() {
+    return onFootPedestrianSpaceQa;
   },
   getPlayerVehicleEmbodimentState() {
     return getPlayerVehicleEmbodimentState();

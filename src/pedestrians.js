@@ -68,6 +68,11 @@ const LATERAL_DRIFT = 1.35;
 const CROWD_CELL_SIZE = PERSONAL_SPACE;
 const CROWD_CELL_STRIDE = 4096;
 const MAX_PATH_ATTACH_DISTANCE = 2.2;
+const ON_FOOT_PLAYER_RADIUS = 0.72;
+const ON_FOOT_PEDESTRIAN_RADIUS = 0.46;
+const ON_FOOT_CONTACT_MARGIN = 0.025;
+const ON_FOOT_CONTACT_REARM_GAP = 0.18;
+const ON_FOOT_PLAYER_YIELD_SHIFT = 0.28;
 
 const SKIN = [0xd5aa86, 0xc4926c, 0xb77d5b, 0x9d6549, 0x80502f, 0xe0ba94, 0x6d402b];
 const HAIR = [0x171719, 0x2b201d, 0x4e3324, 0x704b2e, 0x9a6d3d, 0x7d7d76, 0xc2a274];
@@ -2718,7 +2723,11 @@ function createData(mesh, job, index, rng, hero = false) {
   };
 }
 
-export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
+export function createPedestrianSystem({
+  scene,
+  sidewalkNetwork,
+  onPlayerCrowdContact,
+} = {}) {
   if (!scene?.isScene) throw new TypeError('createPedestrianSystem requires a THREE.Scene.');
 
   const group = new THREE.Group();
@@ -2764,6 +2773,20 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   let qaForceWalkIndex = null;
   let qaWitnessResidentId = null;
   let qaWitnessPosition = null;
+  let onFootPlayerCollisionProbe = null;
+  let onFootPlayerCollisionLatch = new Set();
+  let qaPlayerContactStage = null;
+  const onFootPlayerContactDiagnostics = {
+    probes: 0,
+    contactTests: 0,
+    corrections: 0,
+    contacts: 0,
+    rearmed: 0,
+    yields: 0,
+    lastProbe: null,
+    lastCorrection: null,
+    lastContact: null,
+  };
 
   // Enrich each crosswalk with the traffic-signal context it needs to time
   // pedestrian phases realistically. A crossing over the east-west roadway
@@ -4412,6 +4435,230 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     return true;
   }
 
+  function setOnFootPlayerCollisionProbe(probe = null) {
+    if (!probe?.active
+      || !Number.isFinite(probe.start?.x)
+      || !Number.isFinite(probe.start?.z)
+      || !Number.isFinite(probe.end?.x)
+      || !Number.isFinite(probe.end?.z)) {
+      onFootPlayerCollisionProbe = null;
+      onFootPlayerCollisionLatch.clear();
+      return false;
+    }
+    onFootPlayerCollisionProbe = {
+      start: { x: probe.start.x, z: probe.start.z },
+      end: { x: probe.end.x, z: probe.end.z },
+      radius: THREE.MathUtils.clamp(
+        Number(probe.radius) || ON_FOOT_PLAYER_RADIUS,
+        0.3,
+        0.8,
+      ),
+    };
+    return true;
+  }
+
+  function livingPlayerContactResident(data) {
+    if (!data?.mesh?.visible) return false;
+    const userData = data.mesh.userData || {};
+    return userData.combatDefeated !== true
+      && userData.combatDisabled !== true;
+  }
+
+  function sweptPlayerResidentContact(probe, data) {
+    const radius = probe.radius + ON_FOOT_PEDESTRIAN_RADIUS;
+    const startX = probe.start.x - data.mesh.position.x;
+    const startZ = probe.start.z - data.mesh.position.z;
+    const moveX = probe.end.x - probe.start.x;
+    const moveZ = probe.end.z - probe.start.z;
+    const moveLengthSq = moveX * moveX + moveZ * moveZ;
+    const radiusSq = radius * radius;
+    const startDistanceSq = startX * startX + startZ * startZ;
+    let amount = null;
+    if (startDistanceSq <= radiusSq) {
+      amount = 0;
+    } else if (moveLengthSq > 1e-8) {
+      const along = startX * moveX + startZ * moveZ;
+      const discriminant = along * along - moveLengthSq * (startDistanceSq - radiusSq);
+      if (discriminant >= 0) {
+        const candidate = (-along - Math.sqrt(discriminant)) / moveLengthSq;
+        if (candidate >= 0 && candidate <= 1) amount = candidate;
+      }
+    }
+    onFootPlayerContactDiagnostics.contactTests += 1;
+    if (amount === null) return null;
+
+    const contactX = probe.start.x + moveX * amount;
+    const contactZ = probe.start.z + moveZ * amount;
+    let normalX = contactX - data.mesh.position.x;
+    let normalZ = contactZ - data.mesh.position.z;
+    let normalLength = Math.hypot(normalX, normalZ);
+    if (normalLength < 1e-5) {
+      normalX = -moveX;
+      normalZ = -moveZ;
+      normalLength = Math.hypot(normalX, normalZ);
+    }
+    if (normalLength < 1e-5) {
+      normalX = Math.cos(data.heading + (data.index % 2 ? Math.PI : 0));
+      normalZ = -Math.sin(data.heading + (data.index % 2 ? Math.PI : 0));
+      normalLength = 1;
+    }
+    normalX /= normalLength;
+    normalZ /= normalLength;
+    const moveLength = Math.sqrt(moveLengthSq);
+    const safeAmount = moveLength > 1e-5
+      ? Math.max(0, amount - ON_FOOT_CONTACT_MARGIN / moveLength)
+      : 0;
+    return {
+      amount,
+      safeAmount,
+      radius,
+      normalX,
+      normalZ,
+      contactX,
+      contactZ,
+    };
+  }
+
+  function applyPlayerContactYield(data, contact) {
+    const rightX = Math.cos(data.heading);
+    const rightZ = -Math.sin(data.heading);
+    const awayX = data.mesh.position.x - contact.contactX;
+    const awayZ = data.mesh.position.z - contact.contactZ;
+    const sideDot = awayX * rightX + awayZ * rightZ;
+    const side = Math.abs(sideDot) > 0.02
+      ? Math.sign(sideDot)
+      : (data.index % 2 === 0 ? 1 : -1);
+    const laneShift = side * ON_FOOT_PLAYER_YIELD_SHIFT;
+    data.laneOffset = THREE.MathUtils.clamp(
+      data.laneOffset + laneShift,
+      -LATERAL_DRIFT,
+      LATERAL_DRIFT,
+    );
+    if (!data.transfer && data.state !== STATE_CROSS) {
+      data.transfer = {
+        target: data.mesh.position.clone().add(new THREE.Vector3(
+          rightX * laneShift,
+          0,
+          rightZ * laneShift,
+        )),
+        playerYield: true,
+      };
+    }
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    userData.playerYieldUntil = lastUpdateElapsed + 0.55;
+    userData.playerYieldSide = side;
+    userData.playerYieldCount = (Number(userData.playerYieldCount) || 0) + 1;
+    onFootPlayerContactDiagnostics.yields += 1;
+    return { side, distance: ON_FOOT_PLAYER_YIELD_SHIFT };
+  }
+
+  function resolveOnFootPlayerContact() {
+    const probe = onFootPlayerCollisionProbe;
+    onFootPlayerCollisionProbe = null;
+    if (!probe) {
+      onFootPlayerCollisionLatch.clear();
+      return null;
+    }
+    onFootPlayerContactDiagnostics.probes += 1;
+    onFootPlayerContactDiagnostics.lastProbe = {
+      start: { ...probe.start },
+      end: { ...probe.end },
+      radius: probe.radius,
+    };
+    const nextLatch = new Set();
+    let best = null;
+    for (const data of pool) {
+      if (!livingPlayerContactResident(data)) continue;
+      const identity = residentIdentityFor(data);
+      const endDistance = Math.hypot(
+        probe.end.x - data.mesh.position.x,
+        probe.end.z - data.mesh.position.z,
+      );
+      const combinedRadius = probe.radius + ON_FOOT_PEDESTRIAN_RADIUS;
+      if (onFootPlayerCollisionLatch.has(identity.id)) {
+        const awayProgress = (probe.end.x - probe.start.x)
+          * (probe.start.x - data.mesh.position.x)
+          + (probe.end.z - probe.start.z)
+          * (probe.start.z - data.mesh.position.z);
+        const deliberatelySeparated = endDistance - combinedRadius > ON_FOOT_CONTACT_REARM_GAP
+          && awayProgress > 1e-4;
+        if (!deliberatelySeparated) {
+          nextLatch.add(identity.id);
+        } else {
+          onFootPlayerContactDiagnostics.rearmed += 1;
+        }
+      }
+      const contact = sweptPlayerResidentContact(probe, data);
+      if (!contact) continue;
+      const candidate = { data, identity, contact };
+      if (!best
+        || contact.amount < best.contact.amount - 1e-7
+        || (Math.abs(contact.amount - best.contact.amount) <= 1e-7
+          && identity.id.localeCompare(best.identity.id) < 0)) {
+        best = candidate;
+      }
+    }
+    onFootPlayerCollisionLatch = nextLatch;
+    if (!best) return null;
+
+    const { data, identity, contact } = best;
+    const wasLatched = onFootPlayerCollisionLatch.has(identity.id);
+    onFootPlayerCollisionLatch.add(identity.id);
+    const newContact = !wasLatched;
+    const correctedPosition = contact.amount === 0
+      ? {
+        x: data.mesh.position.x + contact.normalX * (contact.radius + ON_FOOT_CONTACT_MARGIN),
+        z: data.mesh.position.z + contact.normalZ * (contact.radius + ON_FOOT_CONTACT_MARGIN),
+      }
+      : {
+        x: THREE.MathUtils.lerp(probe.start.x, probe.end.x, contact.safeAmount),
+        z: THREE.MathUtils.lerp(probe.start.z, probe.end.z, contact.safeAmount),
+      };
+    const yieldState = newContact ? applyPlayerContactYield(data, contact) : null;
+    const event = {
+      kind: 'on-foot-pedestrian-contact',
+      residentId: identity.id,
+      residentIndex: data.index,
+      residentObjectUuid: data.mesh.uuid,
+      residentLabel: identity.label,
+      role: data.job.id,
+      newContact,
+      latched: !newContact,
+      contactAmount: Math.round(contact.amount * 1000) / 1000,
+      safeAmount: Math.round(contact.safeAmount * 1000) / 1000,
+      playerRadius: probe.radius,
+      pedestrianRadius: ON_FOOT_PEDESTRIAN_RADIUS,
+      separation: probe.radius + ON_FOOT_PEDESTRIAN_RADIUS + ON_FOOT_CONTACT_MARGIN,
+      residentPosition: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+      contactPoint: { x: contact.contactX, z: contact.contactZ },
+      normal: { x: contact.normalX, z: contact.normalZ },
+      correctedPosition,
+      yield: yieldState,
+    };
+    onFootPlayerContactDiagnostics.corrections += 1;
+    if (newContact) onFootPlayerContactDiagnostics.contacts += 1;
+    const consequence = onPlayerCrowdContact?.(event) ?? null;
+    const appliedPosition = Number.isFinite(consequence?.correctedPosition?.x)
+      && Number.isFinite(consequence?.correctedPosition?.z)
+      ? { ...consequence.correctedPosition }
+      : { ...correctedPosition };
+    const resolvedEvent = consequence && typeof consequence === 'object'
+      ? { ...event, correctedPosition: appliedPosition, consequence: { ...consequence } }
+      : { ...event, correctedPosition: appliedPosition };
+    resolvedEvent.finalClearance = Math.hypot(
+      appliedPosition.x - data.mesh.position.x,
+      appliedPosition.z - data.mesh.position.z,
+    ) - contact.radius;
+    resolvedEvent.finalOverlap = resolvedEvent.finalClearance < -1e-4;
+    onFootPlayerContactDiagnostics.lastCorrection = resolvedEvent;
+    if (newContact) onFootPlayerContactDiagnostics.lastContact = resolvedEvent;
+    return resolvedEvent;
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
@@ -4627,6 +4874,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       );
     }
 
+    resolveOnFootPlayerContact();
     contactShadows.instanceMatrix.needsUpdate = true;
   }
 
@@ -4635,6 +4883,281 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     if (featured?.actorIndex === data.index) return featured;
     const serial = String(data.index + 1).padStart(2, '0');
     return { id: `resident-${serial}`, label: `Resident ${serial}` };
+  }
+
+  function clonePlayerContactEvent(event) {
+    if (!event) return null;
+    return {
+      ...event,
+      correctedPosition: event.correctedPosition ? { ...event.correctedPosition } : null,
+      residentPosition: event.residentPosition ? { ...event.residentPosition } : null,
+      contactPoint: event.contactPoint ? { ...event.contactPoint } : null,
+      normal: event.normal ? { ...event.normal } : null,
+      yield: event.yield ? { ...event.yield } : null,
+      consequence: event.consequence ? { ...event.consequence } : undefined,
+    };
+  }
+
+  function getOnFootPlayerContactDiagnostics() {
+    return {
+      probes: onFootPlayerContactDiagnostics.probes,
+      contactTests: onFootPlayerContactDiagnostics.contactTests,
+      corrections: onFootPlayerContactDiagnostics.corrections,
+      contacts: onFootPlayerContactDiagnostics.contacts,
+      rearmed: onFootPlayerContactDiagnostics.rearmed,
+      yields: onFootPlayerContactDiagnostics.yields,
+      activeLatchCount: onFootPlayerCollisionLatch.size,
+      latchedResidentIds: [...onFootPlayerCollisionLatch].sort(),
+      lastProbe: onFootPlayerContactDiagnostics.lastProbe
+        ? {
+          start: { ...onFootPlayerContactDiagnostics.lastProbe.start },
+          end: { ...onFootPlayerContactDiagnostics.lastProbe.end },
+          radius: onFootPlayerContactDiagnostics.lastProbe.radius,
+        }
+        : null,
+      lastCorrection: clonePlayerContactEvent(onFootPlayerContactDiagnostics.lastCorrection),
+      lastContact: clonePlayerContactEvent(onFootPlayerContactDiagnostics.lastContact),
+      thresholds: {
+        defaultPlayerRadius: ON_FOOT_PLAYER_RADIUS,
+        pedestrianRadius: ON_FOOT_PEDESTRIAN_RADIUS,
+        margin: ON_FOOT_CONTACT_MARGIN,
+        rearmGap: ON_FOOT_CONTACT_REARM_GAP,
+        yieldShift: ON_FOOT_PLAYER_YIELD_SHIFT,
+      },
+    };
+  }
+
+  function resetOnFootPlayerContactDiagnostics() {
+    onFootPlayerCollisionProbe = null;
+    onFootPlayerCollisionLatch.clear();
+    onFootPlayerContactDiagnostics.probes = 0;
+    onFootPlayerContactDiagnostics.contactTests = 0;
+    onFootPlayerContactDiagnostics.corrections = 0;
+    onFootPlayerContactDiagnostics.contacts = 0;
+    onFootPlayerContactDiagnostics.rearmed = 0;
+    onFootPlayerContactDiagnostics.yields = 0;
+    onFootPlayerContactDiagnostics.lastProbe = null;
+    onFootPlayerContactDiagnostics.lastCorrection = null;
+    onFootPlayerContactDiagnostics.lastContact = null;
+  }
+
+  function clearOnFootPlayerContactQaStage() {
+    const staged = qaPlayerContactStage;
+    if (!staged) return false;
+    const { data, restore } = staged;
+    data.mesh.position.copy(restore.position);
+    data.mesh.rotation.y = restore.rotationY;
+    data.mesh.visible = restore.visible;
+    data.state = restore.state;
+    data.path = restore.path;
+    data.segment = restore.segment;
+    data.direction = restore.direction;
+    data.t = restore.t;
+    data.beautyRoute = restore.beautyRoute;
+    data.timer = restore.timer;
+    data.vignette = restore.vignette;
+    data.interaction = restore.interaction;
+    data.stationAnchor = restore.stationAnchor?.clone?.() ?? restore.stationAnchor;
+    data.crossing = restore.crossing;
+    data.transfer = restore.transfer;
+    data.heading = restore.heading;
+    data.groundY = restore.groundY;
+    data.laneOffset = restore.laneOffset;
+    data.laneOffsetHome = restore.laneOffsetHome;
+    data.destination = restore.destination?.clone?.() ?? restore.destination;
+    data.destinationKind = restore.destinationKind;
+    data.destinationReached = restore.destinationReached;
+    data.walkPace = restore.walkPace;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    userData.playerYieldUntil = restore.playerYieldUntil;
+    userData.playerYieldSide = restore.playerYieldSide;
+    userData.playerYieldCount = restore.playerYieldCount;
+    qaSoloGroupIndex = restore.qaSoloGroupIndex;
+    qaForceWalkIndex = restore.qaForceWalkIndex;
+    qaPlayerContactStage = null;
+    resetOnFootPlayerContactDiagnostics();
+    return true;
+  }
+
+  function stageOnFootPlayerContactQa({ kind = 'contact' } = {}) {
+    if (!['contact', 'diagonal', 'empty'].includes(kind)) return null;
+    clearOnFootPlayerContactQaStage();
+    const data = pool.find((entry) => (
+      entry.hero === true
+      && entry.job.id === 'phone'
+      && entry.path
+      && livingPlayerContactResident(entry)
+      && !occupiesCableCarAperture(entry)
+    )) || pool.find((entry) => entry.path && livingPlayerContactResident(entry));
+    if (!data) return null;
+    const identity = residentIdentityFor(data);
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    const restore = {
+      position: data.mesh.position.clone(),
+      rotationY: data.mesh.rotation.y,
+      visible: data.mesh.visible,
+      state: data.state,
+      path: data.path,
+      segment: data.segment,
+      direction: data.direction,
+      t: data.t,
+      beautyRoute: data.beautyRoute,
+      timer: data.timer,
+      vignette: data.vignette,
+      interaction: data.interaction,
+      stationAnchor: data.stationAnchor?.clone?.() ?? data.stationAnchor,
+      crossing: data.crossing,
+      transfer: data.transfer,
+      heading: data.heading,
+      groundY: data.groundY,
+      laneOffset: data.laneOffset,
+      laneOffsetHome: data.laneOffsetHome,
+      destination: data.destination?.clone?.() ?? data.destination,
+      destinationKind: data.destinationKind,
+      destinationReached: data.destinationReached,
+      walkPace: data.walkPace,
+      playerYieldUntil: userData.playerYieldUntil,
+      playerYieldSide: userData.playerYieldSide,
+      playerYieldCount: userData.playerYieldCount,
+      qaSoloGroupIndex,
+      qaForceWalkIndex,
+    };
+    const groupIndex = group.children.indexOf(data.mesh);
+    qaSoloGroupIndex = groupIndex;
+    qaForceWalkIndex = null;
+
+    // Use an actual waypoint on the broad north sidewalk of the eastern core
+    // block. This keeps the hero's feet on authoritative sidewalk elevation
+    // while leaving road-side camera room; the former phone-hero position sat
+    // in a narrow facade pocket whose raised parcel hid the contact at eye level.
+    let openWaypoint = null;
+    const openTargetX = 56;
+    const openTargetZ = 55.15;
+    for (const path of paths) {
+      const pathPoints = pointsForPath(path);
+      for (let pointIndex = 0; pointIndex < pathPoints.length - 1; pointIndex += 1) {
+        const candidate = pathPoints[pointIndex];
+        const distanceSq = (candidate.x - openTargetX) ** 2
+          + (candidate.z - openTargetZ) ** 2;
+        if (!openWaypoint || distanceSq < openWaypoint.distanceSq) {
+          openWaypoint = { path, pointIndex, distanceSq };
+        }
+      }
+    }
+    if (openWaypoint) {
+      const pathPoints = pointsForPath(openWaypoint.path);
+      data.path = openWaypoint.path;
+      data.beautyRoute = false;
+      data.direction = 1;
+      data.segment = Math.min(openWaypoint.pointIndex, pathPoints.length - 2);
+      data.t = openWaypoint.pointIndex >= pathPoints.length - 1 ? 1 : 0;
+      data.laneOffset = 0;
+      data.laneOffsetHome = 0;
+      setDestinationFor(data);
+      if (sample(data, position)) {
+        data.mesh.position.copy(position);
+        data.groundY = position.y;
+        data.heading = Math.atan2(direction.x, direction.z);
+        data.mesh.rotation.y = data.heading;
+      }
+    }
+    setBehaviorState(data, STATE_IDLE, 30, 'qa:player-contact');
+    data.crossing = null;
+    data.transfer = null;
+    data.mesh.visible = true;
+    data.groundY = data.mesh.position.y;
+    const forwardX = Math.sin(data.heading);
+    const forwardZ = Math.cos(data.heading);
+    const rightX = Math.cos(data.heading);
+    const rightZ = -Math.sin(data.heading);
+    const lateral = kind === 'diagonal'
+      ? 0.62
+      : kind === 'empty'
+        ? ON_FOOT_PLAYER_RADIUS + ON_FOOT_PEDESTRIAN_RADIUS + 0.56
+        : 0;
+    const start = {
+      x: data.mesh.position.x + forwardX * 1.7 + rightX * lateral,
+      y: data.mesh.position.y,
+      z: data.mesh.position.z + forwardZ * 1.7 + rightZ * lateral,
+    };
+    const yaw = kind === 'empty'
+      ? Math.atan2(-forwardX, -forwardZ)
+      : Math.atan2(
+        data.mesh.position.x - start.x,
+        data.mesh.position.z - start.z,
+      ) + Math.PI;
+    qaPlayerContactStage = { kind, data, identity, restore, start, yaw };
+    resetOnFootPlayerContactDiagnostics();
+    return {
+      ready: true,
+      syntheticEvents: 0,
+      kind,
+      residentId: identity.id,
+      residentIndex: data.index,
+      residentGroupIndex: groupIndex,
+      residentObjectUuid: data.mesh.uuid,
+      playerPose: {
+        position: { ...start },
+        yaw,
+      },
+    };
+  }
+
+  function getOnFootPlayerContactQaState() {
+    const staged = qaPlayerContactStage;
+    const diagnostics = getOnFootPlayerContactDiagnostics();
+    const data = staged?.data
+      || (diagnostics.lastCorrection
+        ? pool.find((entry) => residentIdentityFor(entry).id
+          === diagnostics.lastCorrection.residentId)
+        : null);
+    const identity = data ? residentIdentityFor(data) : null;
+    const userData = data?.mesh?.userData || {};
+    const corrected = diagnostics.lastCorrection?.correctedPosition;
+    const combinedRadius = (diagnostics.lastCorrection?.playerRadius ?? ON_FOOT_PLAYER_RADIUS)
+      + ON_FOOT_PEDESTRIAN_RADIUS;
+    const clearance = data && corrected
+      ? Math.hypot(
+        corrected.x - data.mesh.position.x,
+        corrected.z - data.mesh.position.z,
+      ) - combinedRadius
+      : null;
+    return {
+      active: Boolean(staged),
+      kind: staged?.kind ?? null,
+      syntheticEvents: 0,
+      resident: data && identity ? {
+        id: identity.id,
+        index: data.index,
+        objectUuid: data.mesh.uuid,
+        visible: data.mesh.visible === true,
+        live: userData.combatDefeated !== true && userData.combatDisabled !== true,
+        defeated: userData.combatDefeated === true || userData.combatDisabled === true,
+        position: {
+          x: data.mesh.position.x,
+          y: data.mesh.position.y,
+          z: data.mesh.position.z,
+        },
+        groundY: data.groundY,
+        yield: {
+          active: (Number(userData.playerYieldUntil) || 0) > lastUpdateElapsed,
+          side: Number(userData.playerYieldSide) || 0,
+          count: Number(userData.playerYieldCount) || 0,
+          remaining: Math.max(
+            0,
+            (Number(userData.playerYieldUntil) || 0) - lastUpdateElapsed,
+          ),
+        },
+      } : null,
+      collision: {
+        finalClearance: clearance,
+        finalOverlap: Number.isFinite(clearance) ? clearance < -1e-4 : false,
+        latchedResidentIds: diagnostics.latchedResidentIds,
+        lastCorrection: diagnostics.lastCorrection,
+        lastContact: diagnostics.lastContact,
+      },
+      diagnostics,
+    };
   }
 
   function residentDestinationFor(data) {
@@ -5232,6 +5755,11 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     getStats,
     getFeaturedResidentSnapshots,
     getNearestPerson,
+    setOnFootPlayerCollisionProbe,
+    getOnFootPlayerContactDiagnostics,
+    stageOnFootPlayerContactQa,
+    clearOnFootPlayerContactQaStage,
+    getOnFootPlayerContactQaState,
     getCombatCandidates,
     exportCombatAftermathState,
     canImportCombatAftermathState,
