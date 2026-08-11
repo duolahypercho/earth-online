@@ -23,6 +23,10 @@ import {
   setAvatarCombatPose,
   setAvatarSurrenderPose,
   setAvatarLook,
+  registerPlayerHitReaction,
+  applyPlayerHitReaction,
+  getPlayerHitReactionTelemetry,
+  createPlayerCameraImpulse,
 } from './player.js';
 import { createLifeSim } from './lifesim.js';
 import { createNetworking } from './networking.js';
@@ -1235,6 +1239,9 @@ hud = createHud({
 
 let playerAvatar = null;
 let playerBookingPoseUntil = 0;
+// Inbound damage feedback v1: bounded camera kick + avatar hit-react driven
+// by the authoritative combat loop; telemetry is read-only for QA gates.
+const playerCameraImpulse = createPlayerCameraImpulse();
 const playerAvatarPreviousPosition = new THREE.Vector3();
 const playerAvatarFrameDisplacement = new THREE.Vector3();
 const playerAvatarNextPosition = new THREE.Vector3();
@@ -1895,6 +1902,17 @@ function getCombatMuzzleOrigin(target, direction) {
   return true;
 }
 
+function alignPlayerWeaponToCamera() {
+  if (!playerWeapon?.visible) return;
+  playerAvatar?.updateMatrixWorld?.(true);
+  camera.getWorldDirection(combatWeaponDirection).normalize();
+  combatWeaponQuaternion.setFromUnitVectors(combatWeaponUp, combatWeaponDirection);
+  playerWeapon.parent?.getWorldQuaternion(combatWeaponParentQuaternion);
+  combatWeaponParentQuaternion.invert();
+  playerWeapon.quaternion.copy(combatWeaponParentQuaternion).multiply(combatWeaponQuaternion);
+  playerWeapon.updateMatrixWorld(true);
+}
+
 function updatePlayerWeapon(combatState) {
   if (!playerWeapon) return;
   const visible = Boolean(
@@ -1906,7 +1924,9 @@ function updatePlayerWeapon(combatState) {
       && !qaCameraPose,
   );
   playerWeapon.visible = visible;
-  if (playerAvatar?.userData?.nameTag) playerAvatar.userData.nameTag.visible = !visible;
+  if (playerAvatar?.userData?.nameTag) {
+    playerAvatar.userData.nameTag.visible = !visible && combatState?.status !== 'downed';
+  }
   if (!visible) return;
   // Keep the low-poly avatar's torso facing the same heading as the sidearm
   // while aiming, even when the player is standing still.
@@ -1917,14 +1937,8 @@ function updatePlayerWeapon(combatState) {
       aiming: true,
       pitch: (combatCameraState.savedPitch - controls.pitch) * 0.6,
     });
-    playerAvatar.updateMatrixWorld(true);
   }
-  camera.getWorldDirection(combatWeaponDirection).normalize();
-  combatWeaponQuaternion.setFromUnitVectors(combatWeaponUp, combatWeaponDirection);
-  playerWeapon.parent?.getWorldQuaternion(combatWeaponParentQuaternion);
-  combatWeaponParentQuaternion.invert();
-  playerWeapon.quaternion.copy(combatWeaponParentQuaternion).multiply(combatWeaponQuaternion);
-  playerWeapon.updateMatrixWorld(true);
+  alignPlayerWeaponToCamera();
 }
 
 function projectCombatPoint(point, width, height) {
@@ -3780,8 +3794,18 @@ combat = createCombatLoop({
       controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
     }
   },
-  onEvent: ({ kind, message, targetKind, incidentId, residentId, vehicleId }) => {
+  onEvent: ({ kind, message, targetKind, incidentId, residentId, vehicleId, source, amount }) => {
     combatAudio?.play?.(kind, { targetKind });
+    if (kind === 'damage') {
+      // Authoritative combat damage edge: queue the additive hit-react pose
+      // and the bounded camera impulse. No health/economy mutation here.
+      registerPlayerHitReaction(playerAvatar, { source, amount, downed: false });
+      playerCameraImpulse.trigger({ source, amount, downed: false });
+    }
+    if (kind === 'downed') {
+      registerPlayerHitReaction(playerAvatar, { source, amount: 0, downed: true });
+      playerCameraImpulse.trigger({ source, amount: 0, downed: true });
+    }
     if (kind === 'impact' && targetKind === 'traffic') {
       const result = traffic.damageTrafficVehicleFromCombat?.(vehicleId) ?? null;
       if (result?.damage) savePlayerProgress();
@@ -5412,6 +5436,26 @@ function updateCamera(dt) {
   });
 }
 
+// Bounded inbound-damage camera kick, applied after the normal camera solve
+// and re-clamped by the existing collision-safe resolver. Suppressed entirely
+// under explicit QA camera poses, interiors, driving, and beauty shots; it
+// never mutates controls.target or any persisted world/camera state.
+function applyPlayerDamageCameraImpulse(dt) {
+  const suppressed = Boolean(
+    qaCameraPose
+      || beautyMode
+      || controls.interiorMode
+      || traffic.isPlayerDriving?.() === true,
+  );
+  return playerCameraImpulse.apply(camera, dt, {
+    suppressed,
+    focus: controls.focus,
+    resolveFrame: suppressed || controls.interiorMode
+      ? null
+      : resolveTraversalCameraFrame,
+  });
+}
+
 function combatInputAvailable() {
   return Boolean(
     combat
@@ -6360,7 +6404,9 @@ function frame(now) {
   const dt = Math.min(clock.getDelta(), 0.05);
   const motionDt = reducedMotionQuery?.matches ? 0 : dt;
   elapsed += motionDt;
+  playerCameraImpulse.prepare(camera);
   updateCamera(dt);
+  applyPlayerDamageCameraImpulse(dt);
   updatePlayerLayer(motionDt, elapsed);
   exportPlayerWorldState();
   // The sky dome is intentionally compact so its shader remains cheap, but
@@ -6459,6 +6505,20 @@ function frame(now) {
   });
   updateCombatOverlay(combatState);
   updatePlayerWeapon(combatState);
+  // Apply the inbound-damage overlay after locomotion and weapon posing.
+  // Aiming uses a stronger arm kick; the sidearm is re-aligned below without
+  // erasing that readable silhouette change.
+  applyPlayerHitReaction(playerAvatar, {
+    elapsed,
+    delta: motionDt,
+    downed: combatState?.status === 'downed',
+    preserveAim: combatState?.aiming === true,
+    enabled: Boolean(playerAvatar?.visible),
+  });
+  // The hit overlay deliberately moves the aiming arm. Re-solve only the
+  // weapon's local quaternion so it remains hand-mounted and converged on the
+  // reticle without erasing the visible arm recoil.
+  if (combatState?.aiming) alignPlayerWeaponToCamera();
   updateDriveByRig(combatState, drivingState);
   const combatHudActive = Boolean(
     combatState?.aiming
@@ -6680,6 +6740,10 @@ window.__SF_SIM__ = {
       },
       embodiment: getCombatEmbodimentState(),
       driveBy: getDriveByState(),
+      damageFeedback: {
+        reaction: getPlayerHitReactionTelemetry(playerAvatar),
+        cameraImpulse: playerCameraImpulse.getTelemetry(),
+      },
     };
   },
   getCombatAudioState() {

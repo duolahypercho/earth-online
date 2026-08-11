@@ -436,6 +436,239 @@ export function setAvatarSurrenderPose(avatar) {
   return true;
 }
 
+// ── Inbound damage feedback v1 ─────────────────────────────────────────
+// Additive, deterministic hit-react and downed-collapse overlays plus a
+// bounded camera impulse. The overlays run AFTER animatePlayerAvatar /
+// setAvatarCombatPose each frame: legs and root grounding are never
+// touched, the authored aim chain keeps its grip, and the combat loop
+// remains the only authority for health/economy. Telemetry snapshots are
+// read-only plain objects for QA gates.
+const HIT_REACTION_DURATION = 0.42;
+const HIT_REACTION_DOWNED_ATTACK = 0.24;
+const HIT_REACTION_DOWNED_RELEASE = 0.5;
+const DOWNED_RIG_TILT = 1.15;
+
+export function registerPlayerHitReaction(avatar, { source = 'combat', amount = 0, downed = false } = {}) {
+  const ud = avatar?.userData;
+  if (!ud) return null;
+  const reaction = ud.hitReaction ?? (ud.hitReaction = {});
+  reaction.pending = true;
+  reaction.startElapsed = null;
+  reaction.source = String(source || 'combat');
+  reaction.amount = Number.isFinite(amount) ? amount : 0;
+  reaction.downed = downed === true;
+  reaction.lastPhase = 1;
+  reaction.lastWeight = 0;
+  reaction.lastApplied = false;
+  return reaction;
+}
+
+export function applyPlayerHitReaction(avatar, {
+  elapsed = 0,
+  delta = 0.016,
+  downed = false,
+  enabled = true,
+  preserveAim = false,
+} = {}) {
+  const ud = avatar?.userData;
+  if (!ud) return getPlayerHitReactionTelemetry(avatar);
+  const reaction = ud.hitReaction ?? (ud.hitReaction = { pending: false, startElapsed: null });
+  if (reaction.pending) {
+    reaction.pending = false;
+    reaction.startElapsed = elapsed;
+  }
+  const downState = ud.hitReactionDowned ?? (ud.hitReactionDowned = { value: 0 });
+  const downRate = downed
+    ? 1 / HIT_REACTION_DOWNED_ATTACK
+    : -1 / HIT_REACTION_DOWNED_RELEASE;
+  downState.value = THREE.MathUtils.clamp(
+    downState.value + downRate * Math.max(0, Number(delta) || 0),
+    0,
+    1,
+  );
+
+  let phase = 1;
+  if (Number.isFinite(reaction.startElapsed)) {
+    phase = THREE.MathUtils.clamp((elapsed - reaction.startElapsed) / HIT_REACTION_DURATION, 0, 1);
+  }
+  const active = phase < 1;
+  const w = active ? Math.sin(Math.PI * phase) : 0;
+  const d = downState.value;
+  const applied = enabled === true && (w > 0.0005 || d > 0.0005);
+  if (applied) {
+    // Nonlethal flinch: head + torso + right arm recoil additively. Legs,
+    // hips, and the root stay untouched so grounding and locomotion are
+    // preserved; the weapon hand keeps its authored grip.
+    if (ud.body?.rotation) {
+      ud.body.rotation.x += 0.24 * w;
+      ud.body.rotation.z += 0.18 * w;
+    }
+    if (ud.headPivot?.rotation) {
+      ud.headPivot.rotation.x -= 0.34 * w;
+      ud.headPivot.rotation.z -= 0.26 * w;
+    }
+    if (ud.rightArm?.rotation) {
+      ud.rightArm.rotation.x += (preserveAim ? 0.2 : 0.12) * w;
+      ud.rightArm.rotation.z -= (preserveAim ? 0.28 : 0.1) * w;
+    }
+    if (ud.rightForearm?.rotation) {
+      ud.rightForearm.rotation.x -= (preserveAim ? 0.2 : 0.12) * w;
+    }
+    if (ud.leftArm?.rotation) ud.leftArm.rotation.z += 0.1 * w;
+    // Downed collapse: a distinct full-rig tilt + drop with both arms
+    // released, driven by the authoritative combat status.
+    if (d > 0.0005) {
+      if (ud.rig?.rotation) {
+        ud.rig.rotation.z += DOWNED_RIG_TILT * d;
+        ud.rig.rotation.x -= 0.18 * d;
+      }
+      // Pivot the rig down around its grounded origin; only a small vertical
+      // settle is needed. A larger translation buries the legs in pavement.
+      if (ud.rig?.position) ud.rig.position.y -= 0.02 * d;
+      if (ud.headPivot?.rotation) ud.headPivot.rotation.x -= 0.3 * d;
+      if (ud.leftArm?.rotation) ud.leftArm.rotation.z -= 1.9 * d;
+      if (ud.rightArm?.rotation) ud.rightArm.rotation.z += 1.9 * d;
+      if (ud.leftForearm?.rotation) ud.leftForearm.rotation.x -= 0.24 * d;
+      if (ud.rightForearm?.rotation) ud.rightForearm.rotation.x -= 0.24 * d;
+    }
+  }
+  reaction.lastPhase = phase;
+  reaction.lastWeight = w;
+  reaction.lastApplied = applied;
+  reaction.lastPreserveAim = preserveAim === true;
+  return getPlayerHitReactionTelemetry(avatar);
+}
+
+export function getPlayerHitReactionTelemetry(avatar) {
+  const reaction = avatar?.userData?.hitReaction;
+  const downState = avatar?.userData?.hitReactionDowned;
+  const flinchActive = Boolean(
+    reaction && Number.isFinite(reaction.startElapsed) && reaction.lastPhase < 1,
+  );
+  const downedActive = (downState?.value ?? 0) > 0.0005;
+  const bonesMoved = [];
+  if ((reaction?.lastWeight ?? 0) > 0.0005) {
+    bonesMoved.push('head', 'torso', 'rightArm');
+  }
+  if (downedActive) bonesMoved.push('rig', 'torso', 'head', 'leftArm', 'rightArm');
+  return Object.freeze({
+    active: flinchActive || downedActive,
+    kind: downedActive ? 'downed' : flinchActive ? 'hit-react' : null,
+    phase: Math.round((reaction?.lastPhase ?? 1) * 1000) / 1000,
+    durationSeconds: HIT_REACTION_DURATION,
+    flinchWeight: Math.round((reaction?.lastWeight ?? 0) * 1000) / 1000,
+    downedEnvelope: Math.round((downState?.value ?? 0) * 1000) / 1000,
+    downedRigTiltRadians: DOWNED_RIG_TILT,
+    source: reaction?.source ?? null,
+    amount: reaction?.amount ?? 0,
+    appliedLastFrame: reaction?.lastApplied === true,
+    bonesMoved: Object.freeze([...new Set(bonesMoved)]),
+  });
+}
+
+export function createPlayerCameraImpulse({
+  peakMeters = 0.09,
+  maxYawRadians = 0.014,
+  maxPitchRadians = 0.016,
+  durationSeconds = 0.34,
+} = {}) {
+  const scratchRight = new THREE.Vector3();
+  const scratchUp = new THREE.Vector3();
+  const scratchBefore = new THREE.Vector3();
+  const lastApplied = new THREE.Vector3();
+  const state = {
+    remaining: 0,
+    duration: 0,
+    peak: 0,
+    source: null,
+    suppressed: false,
+    lastOffset: 0,
+    lastYaw: 0,
+    lastPitch: 0,
+  };
+  function trigger({ source = 'combat', amount = 0, downed = false } = {}) {
+    const severity = THREE.MathUtils.clamp((Number(amount) || 0) / 26, 0, 1);
+    state.duration = durationSeconds;
+    state.remaining = durationSeconds;
+    state.peak = THREE.MathUtils.clamp(
+      peakMeters * (0.62 + severity * 0.38) + (downed ? 0.06 : 0),
+      0.03,
+      0.35,
+    );
+    state.source = String(source || 'combat');
+  }
+  function envelope() {
+    if (state.remaining <= 0 || state.duration <= 0) return 0;
+    return Math.sin(Math.PI * (1 - state.remaining / state.duration));
+  }
+  function prepare(camera) {
+    if (!camera || lastApplied.lengthSq() <= 1e-12) return;
+    // Remove only the presentation delta applied on the previous frame before
+    // the authoritative follow camera performs its next damped solve. Without
+    // this, the follow lerp would integrate the same kick repeatedly.
+    camera.position.sub(lastApplied);
+    lastApplied.set(0, 0, 0);
+  }
+  function apply(camera, dt, { suppressed = false, focus = null, resolveFrame = null } = {}) {
+    if (suppressed) {
+      state.remaining = 0;
+      state.suppressed = true;
+      state.lastOffset = 0;
+      state.lastYaw = 0;
+      state.lastPitch = 0;
+      return getTelemetry();
+    }
+    state.suppressed = false;
+    if (state.remaining > 0) {
+      state.remaining = Math.max(0, state.remaining - Math.max(0, Number(dt) || 0));
+    }
+    const w = envelope();
+    if (!camera || w <= 0) {
+      state.lastOffset = 0;
+      state.lastYaw = 0;
+      state.lastPitch = 0;
+      return getTelemetry();
+    }
+    // Additive offset applied after the normal camera solve: bounded kick
+    // along the current camera basis, then the existing collision-safe
+    // resolver clamps the result against the world. Nothing persistent
+    // (controls, saved state, world) is mutated.
+    const offset = state.peak * w;
+    scratchBefore.copy(camera.position);
+    camera.updateMatrixWorld(true);
+    scratchRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    scratchUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    camera.position.addScaledVector(scratchRight, offset * 0.82);
+    camera.position.addScaledVector(scratchUp, offset * 0.45);
+    const yaw = maxYawRadians * w;
+    const pitch = maxPitchRadians * w;
+    camera.rotation.y += yaw;
+    camera.rotation.x -= pitch;
+    if (typeof resolveFrame === 'function') resolveFrame(focus, camera.position);
+    lastApplied.copy(camera.position).sub(scratchBefore);
+    state.lastOffset = lastApplied.length();
+    state.lastYaw = yaw;
+    state.lastPitch = pitch;
+    return getTelemetry();
+  }
+  function getTelemetry() {
+    return Object.freeze({
+      active: state.remaining > 0,
+      remainingSeconds: Math.round(state.remaining * 1000) / 1000,
+      durationSeconds: state.duration,
+      peakMeters: Math.round(state.peak * 1000) / 1000,
+      currentOffsetMeters: Math.round(state.lastOffset * 1000) / 1000,
+      yawRadians: Math.round(state.lastYaw * 10000) / 10000,
+      pitchRadians: Math.round(state.lastPitch * 10000) / 10000,
+      maxYawRadians,
+      maxPitchRadians,
+      source: state.source,
+      suppressed: state.suppressed,
+    });
+  }
+  return Object.freeze({ trigger, prepare, apply, getTelemetry });
+}
+
 export function createNameTagSprite(name = 'Traveler') {
   if (typeof document === 'undefined') return new THREE.Sprite();
   const canvas = document.createElement('canvas');
