@@ -1460,6 +1460,11 @@ const COMBAT_PED_NEAR_MISS_RADIUS = 3.25;
 const COMBAT_TRAFFIC_NEAR_MISS_RADIUS = 4.4;
 const COMBAT_PED_REACTION_SECONDS = 2.35;
 const COMBAT_TRAFFIC_REACTION_SECONDS = 2.05;
+const MELEE_DURATION = 0.62;
+const MELEE_CONTACT_TIME = 0.22;
+const MELEE_MIN_RANGE = 0.72;
+const MELEE_MAX_RANGE = 1.5;
+const MELEE_FRONT_DOT = 0.65;
 
 function combatVectorFrom(value, target, fallbackY = 0) {
   if (value?.isVector3) {
@@ -1523,6 +1528,22 @@ export function createCombatLoop({
     reactionCount: 0,
     defeats: 0,
     lastDefeat: null,
+    melee: {
+      active: false,
+      elapsed: 0,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      attempts: 0,
+      contacts: 0,
+      misses: 0,
+      lastTargetId: null,
+      lastReason: null,
+      lastContact: null,
+      target: null,
+      heading: 0,
+      contacted: false,
+      startedAt: null,
+    },
     clock: 0,
   };
 
@@ -1712,6 +1733,18 @@ export function createCombatLoop({
     state.reactionCount = 0;
     state.defeats = 0;
     state.lastDefeat = null;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.attempts = 0;
+    state.melee.contacts = 0;
+    state.melee.misses = 0;
+    state.melee.lastTargetId = null;
+    state.melee.lastReason = null;
+    state.melee.lastContact = null;
+    state.melee.target = null;
+    state.melee.heading = 0;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
     state.clock = 0;
     tracerCursor = 0;
     muzzleCursor = 0;
@@ -1726,6 +1759,11 @@ export function createCombatLoop({
       userData.combatReactionDirectionX = 0;
       userData.combatReactionDirectionZ = 0;
       userData.combatReactionStrength = 0;
+      userData.meleeRecoilPending = false;
+      userData.meleeRecoilDirectionX = 0;
+      userData.meleeRecoilDirectionZ = 0;
+      userData.meleeRecoilApplied = 0;
+      userData.meleeRecoilResynced = false;
       userData.combatBrakeUntil = 0;
       userData.combatDisabled = false;
       userData.combatDefeated = false;
@@ -1763,6 +1801,7 @@ export function createCombatLoop({
     if (!state.enabled) {
       state.aiming = false;
       state.triggerHeld = false;
+      cancelMelee('disabled');
     }
     return state.enabled;
   }
@@ -1773,6 +1812,7 @@ export function createCombatLoop({
       return false;
     }
     state.aiming = Boolean(aiming);
+    if (state.aiming) cancelMelee('aiming');
     return state.aiming;
   }
 
@@ -1809,6 +1849,13 @@ export function createCombatLoop({
       : 0;
     state.recoverySuspended = false;
     state.recoil = 0;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.lastReason = 'state-imported';
+    state.melee.lastContact = null;
+    state.melee.target = null;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
     clearEffects();
     return true;
   }
@@ -1917,6 +1964,64 @@ export function createCombatLoop({
     return `${kind}:${String(candidate?.id ?? '')}`;
   }
 
+  function meleeKindFor(candidate) {
+    if (!candidate || candidate.kind === 'traffic' || candidate.vehicle) return null;
+    return candidate.kind === 'officer' ? 'officer' : 'pedestrian';
+  }
+
+  function inspectMeleeCandidate(candidate, heading = 0) {
+    const kind = meleeKindFor(candidate);
+    if ((kind !== 'pedestrian' && kind !== 'officer')
+      || !candidate
+      || candidate.visible === false
+      || candidate.mesh?.visible === false
+      || candidate.mesh?.userData?.combatDisabled === true
+      || !combatVectorFrom(getPlayerPosition?.(), playerPosition, 0)
+      || !candidateCenter(candidate, candidatePoint)) return null;
+    const dx = candidatePoint.x - playerPosition.x;
+    const dz = candidatePoint.z - playerPosition.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < MELEE_MIN_RANGE || distance > MELEE_MAX_RANGE) return null;
+    const safeHeading = Number.isFinite(heading) ? heading : 0;
+    const forwardX = Math.sin(safeHeading);
+    const forwardZ = Math.cos(safeHeading);
+    const dot = (dx * forwardX + dz * forwardZ) / Math.max(distance, 1e-6);
+    if (dot < MELEE_FRONT_DOT) return null;
+    rayOrigin.copy(playerPosition);
+    rayOrigin.y += 1.05;
+    closestPoint.copy(candidatePoint).sub(rayOrigin);
+    const rayDistance = closestPoint.length();
+    if (rayDistance <= 0.001) return null;
+    closestPoint.multiplyScalar(1 / rayDistance);
+    const blocker = typeof getNearestWorldBlocker === 'function'
+      ? getNearestWorldBlocker(rayOrigin, closestPoint, rayDistance)
+      : null;
+    if (Number.isFinite(blocker?.distance) && blocker.distance < rayDistance - 0.06) return null;
+    return {
+      candidate,
+      kind,
+      distance,
+      dot,
+      point: candidatePoint.clone(),
+    };
+  }
+
+  function findMeleeCandidate(heading) {
+    const candidates = collectTargets();
+    let best = null;
+    let bestKey = '';
+    for (const candidate of candidates) {
+      const inspected = inspectMeleeCandidate(candidate, heading);
+      if (!inspected) continue;
+      const key = targetTieKey(candidate);
+      if (best && (inspected.distance > best.distance + 1e-6
+        || (Math.abs(inspected.distance - best.distance) <= 1e-6 && key >= bestKey))) continue;
+      best = inspected;
+      bestKey = key;
+    }
+    return best;
+  }
+
   function findHit(blockerDistance = COMBAT_MAX_RANGE) {
     if (!getAimRay()) return null;
     const candidates = collectTargets();
@@ -1976,6 +2081,13 @@ export function createCombatLoop({
     userData.combatReactionDirectionX = normalizedX;
     userData.combatReactionDirectionZ = normalizedZ;
     userData.combatReactionStrength = 1;
+    if (source === 'melee') {
+      userData.meleeRecoilPending = true;
+      userData.meleeRecoilDirectionX = normalizedX;
+      userData.meleeRecoilDirectionZ = normalizedZ;
+      userData.meleeRecoilApplied = 0;
+      userData.meleeRecoilResynced = false;
+    }
     userData.combatBrakeUntil = reaction === 'brake' ? until : 0;
     reactionMeshes.add(mesh);
     state.reactionCount += 1;
@@ -2102,7 +2214,7 @@ export function createCombatLoop({
     });
   }
 
-  function markReaction(candidate, kind) {
+  function markReaction(candidate, kind, source = 'hit', directionX = 0, directionZ = 0) {
     const id = String(candidate.id ?? `${kind}:unknown`);
     let target = targetStates.get(id);
     if (!target) {
@@ -2149,9 +2261,9 @@ export function createCombatLoop({
       candidate,
       reaction,
       kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
-      0,
-      0,
-      'hit',
+      directionX,
+      directionZ,
+      source,
     );
     if (target.defeated) {
       target.consequence = kind === 'traffic'
@@ -2171,24 +2283,208 @@ export function createCombatLoop({
     return target;
   }
 
-  function reportHeat(kind, hit) {
+  function beginMelee() {
+    if (state.status !== 'running' || !state.enabled) return { started: false, reason: 'inactive' };
+    if (state.aiming) return { started: false, reason: 'aiming' };
+    if (state.reloadTimer > 0) return { started: false, reason: 'reloading' };
+    if (state.melee.active) return { started: false, reason: 'busy' };
+    const heading = Number(getPlayerHeading?.());
+    const safeHeading = Number.isFinite(heading) ? heading : 0;
+    const target = findMeleeCandidate(safeHeading);
+    state.melee.active = true;
+    state.melee.elapsed = 0;
+    state.melee.attempts += 1;
+    state.melee.lastTargetId = target?.candidate?.id ? String(target.candidate.id) : null;
+    state.melee.lastReason = target ? 'windup' : 'no-target';
+    state.melee.lastContact = null;
+    state.melee.target = target?.candidate ?? null;
+    state.melee.heading = safeHeading;
+    state.melee.contacted = false;
+    state.melee.startedAt = state.clock;
+    return {
+      started: true,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      targetId: state.melee.lastTargetId,
+    };
+  }
+
+  function cancelMelee(reason = 'cancelled') {
+    if (!state.melee.active && !state.melee.target) return false;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.target = null;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
+    state.melee.lastReason = reason;
+    return true;
+  }
+
+  function resolveMeleeContact() {
+    const target = state.melee.target;
+    const inspected = target ? inspectMeleeCandidate(target, state.melee.heading) : null;
+    state.melee.contacted = true;
+    if (!inspected) {
+      state.melee.misses += 1;
+      state.melee.lastReason = target ? 'invalid-contact' : 'no-target';
+      return null;
+    }
+    const directionX = inspected.point.x - playerPosition.x;
+    const directionZ = inspected.point.z - playerPosition.z;
+    const reaction = markReaction(
+      inspected.candidate,
+      inspected.kind,
+      'melee',
+      directionX,
+      directionZ,
+    );
+    if (!reaction) {
+      state.melee.misses += 1;
+      state.melee.lastReason = 'reaction-refused';
+      return null;
+    }
+    state.hits += 1;
+    state.hitStreak += 1;
+    state.lockedTargetId = reaction.id;
+    state.lastHit = {
+      targetId: reaction.id,
+      kind: inspected.kind,
+      label: reaction.label,
+      distance: Math.round(inspected.distance * 100) / 100,
+      hits: reaction.hits,
+      defeated: reaction.defeated,
+      source: 'melee',
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    state.hitConfirmTimer = 1.15;
+    aimDirection.set(Math.sin(state.melee.heading), 0, Math.cos(state.melee.heading));
+    spawnImpact(inspected.point, inspected.kind, reaction.mesh, inspected.candidate.height);
+    reportHeat(inspected.kind, true, 'melee');
+    const incidentId = 2_000_000 + state.melee.attempts;
+    const residentId = inspected.kind === 'pedestrian'
+      ? inspected.candidate.residentId ?? reaction.id
+      : null;
+    state.melee.contacts += 1;
+    state.melee.lastReason = 'contact';
+    state.melee.lastContact = {
+      targetId: reaction.id,
+      targetKind: inspected.kind,
+      distance: Math.round(inspected.distance * 100) / 100,
+      dot: Math.round(inspected.dot * 1000) / 1000,
+      incidentId,
+      defeated: reaction.defeated,
+    };
+    emitEvent(
+      'impact',
+      `${inspected.kind === 'officer' ? 'Officer' : 'Pedestrian'} staggered · ${reaction.defeated ? 'reaction complete' : 'hit confirmed'}`,
+      {
+        hit: true,
+        source: 'melee',
+        incidentId,
+        targetId: reaction.id,
+        targetKind: inspected.kind,
+        residentId,
+        officerId: inspected.kind === 'officer' ? inspected.candidate.officerId ?? reaction.id : null,
+        vehicleId: null,
+        defeated: reaction.defeated,
+      },
+    );
+    if (reaction.defeated) {
+      state.defeats += 1;
+      state.lastDefeat = {
+        targetId: reaction.id,
+        targetKind: inspected.kind,
+        label: reaction.label,
+        consequence: reaction.consequence,
+        source: 'melee',
+        at: Math.round(state.clock * 1000) / 1000,
+      };
+      emitEvent(
+        'defeat',
+        `${reaction.label} disabled · no longer an active target.`,
+        { ...state.lastDefeat },
+      );
+    }
+    return state.melee.lastContact;
+  }
+
+  function updateMelee(delta) {
+    if (!state.melee.active) return;
+    state.melee.elapsed = Math.min(MELEE_DURATION, state.melee.elapsed + delta);
+    if (!state.melee.contacted && state.melee.elapsed >= MELEE_CONTACT_TIME) {
+      resolveMeleeContact();
+    }
+    if (state.melee.elapsed >= MELEE_DURATION) {
+      state.melee.active = false;
+      state.melee.target = null;
+    }
+  }
+
+  function getMeleeState() {
+    const melee = state.melee;
+    const targetId = melee.target?.id ? String(melee.target.id) : melee.lastTargetId;
+    const lastContact = melee.lastContact ? Object.freeze({ ...melee.lastContact }) : null;
+    const progress = melee.active
+      ? THREE.MathUtils.clamp(melee.elapsed / MELEE_DURATION, 0, 1)
+      : 1;
+    const phase = !melee.active
+      ? 'idle'
+      : melee.elapsed < MELEE_CONTACT_TIME
+        ? 'windup'
+        : melee.elapsed < MELEE_DURATION * 0.68
+          ? 'contact'
+          : 'recovery';
+    return Object.freeze({
+      active: melee.active === true,
+      phase,
+      progress: Math.round(progress * 1000) / 1000,
+      elapsed: Math.round(melee.elapsed * 1000) / 1000,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      startedAt: Number.isFinite(melee.startedAt) ? Math.round(melee.startedAt * 1000) / 1000 : null,
+      attempts: melee.attempts,
+      contacts: melee.contacts,
+      misses: melee.misses,
+      targetId,
+      lastReason: melee.lastReason,
+      lastContact,
+      ammoCost: 0,
+      range: Object.freeze({ min: MELEE_MIN_RANGE, max: MELEE_MAX_RANGE }),
+      frontDotMinimum: MELEE_FRONT_DOT,
+      strike: Object.freeze({
+        startedAtMs: Number.isFinite(melee.startedAt) ? Math.round(melee.startedAt * 1000) : null,
+        windupMs: Math.round(MELEE_CONTACT_TIME * 1000),
+        contactAtMs: Number.isFinite(melee.startedAt)
+          ? Math.round((melee.startedAt + MELEE_CONTACT_TIME) * 1000)
+          : null,
+        contactMs: Math.round(MELEE_CONTACT_TIME * 1000),
+        totalMs: Math.round(MELEE_DURATION * 1000),
+        recoveredAtMs: Number.isFinite(melee.startedAt)
+          ? Math.round((melee.startedAt + MELEE_DURATION) * 1000)
+          : null,
+      }),
+    });
+  }
+
+  function reportHeat(kind, hit, source = 'combat') {
     if (!streetHeat?.addHeat) return null;
     const amount = hit
       ? kind === 'pedestrian' ? 14 : kind === 'officer' ? 12 : 9
       : 2.5;
     const message = hit
-      ? `${kind === 'pedestrian' ? 'Civilian' : kind === 'officer' ? 'Officer' : 'Traffic'} impact · street heat +${amount}`
+      ? `${kind === 'pedestrian' ? 'Civilian' : kind === 'officer' ? 'Officer' : 'Traffic'} ${source === 'melee' ? 'assault' : 'impact'} · street heat +${amount}`
       : `Unsafe fire · street heat +${amount}`;
     return streetHeat.addHeat(amount, {
       kind: hit ? 'combat-impact' : 'combat-fire',
       message,
       notify: false,
-      source: 'combat',
+      source,
     });
   }
 
   function reload() {
     if (state.status !== 'running' || !state.enabled) return false;
+    if (state.melee.active) return false;
     if (state.reloadTimer > 0 || state.ammo >= COMBAT_MAGAZINE_SIZE || state.reserveAmmo <= 0) return false;
     state.reloadTimer = COMBAT_RELOAD_SECONDS;
     state.triggerHeld = false;
@@ -2403,6 +2699,7 @@ export function createCombatLoop({
       state.enabled = false;
       state.aiming = false;
       state.triggerHeld = false;
+      cancelMelee('downed');
       state.downedTimer = COMBAT_DOWNED_SECONDS;
       emitEvent('downed', 'You are down · recovering in the street.', { source });
     }
@@ -2576,6 +2873,7 @@ export function createCombatLoop({
         emitEvent('reload-complete', `Reloaded · ${state.ammo}/${COMBAT_MAGAZINE_SIZE}`);
       }
     }
+    updateMelee(delta);
     state.recoverySuspended = suspendRecovery === true && state.health < COMBAT_HEALTH_MAX;
     if (!state.recoverySuspended) {
       if (state.recoveryDelay > 0) {
@@ -2628,6 +2926,7 @@ export function createCombatLoop({
       defeats: state.defeats,
       lastDefeat: state.lastDefeat ? { ...state.lastDefeat } : null,
       activeWorldReactions: reactionMeshes.size,
+      melee: getMeleeState(),
       lastEvent: state.lastEvent ? { ...state.lastEvent } : null,
     };
   }
@@ -2679,6 +2978,8 @@ export function createCombatLoop({
     stop,
     update,
     fire,
+    beginMelee,
+    getMeleeState,
     reload,
     addReserveAmmo,
     damage,

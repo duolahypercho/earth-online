@@ -406,6 +406,79 @@ export function setAvatarCombatPose(avatar, { aiming = false, pitch = 0 } = {}) 
   return true;
 }
 
+// A single grounded strike layered over the same authored Traveler rig used by
+// locomotion and aim. `animatePlayerAvatar()` restores the neutral pose before
+// this runs, so the attack cannot accumulate offsets or detach the feet from
+// the traversal surface.
+export function setAvatarMeleePose(avatar, { active = false, progress = 1 } = {}) {
+  const ud = avatar?.userData;
+  if (!ud) return false;
+  if (active !== true) {
+    if (ud.rightArm?.position && ud.meleeRightArmBase) {
+      ud.rightArm.position.set(
+        ud.meleeRightArmBase.x,
+        ud.meleeRightArmBase.y,
+        ud.meleeRightArmBase.z,
+      );
+    }
+    if (ud.rightForearm?.position && ud.meleeRightForearmBaseY != null) {
+      ud.rightForearm.position.y = ud.meleeRightForearmBaseY;
+    }
+    return false;
+  }
+  const t = THREE.MathUtils.clamp(Number(progress) || 0, 0, 1);
+  const windup = THREE.MathUtils.smoothstep(t, 0, 0.3);
+  const contact = THREE.MathUtils.smoothstep(t, 0.08, 0.22)
+    * (1 - THREE.MathUtils.smoothstep(t, 0.52, 0.8));
+  const recovery = THREE.MathUtils.smoothstep(t, 0.62, 1);
+  const strike = contact * (1 - recovery * 0.72);
+
+  // Torso/head/arms only: the root, hips, legs, and feet remain under the
+  // ordinary grounded locomotion layer throughout the windup and recovery.
+  if (ud.body?.rotation) {
+    ud.body.rotation.x += -0.12 * windup + 0.22 * strike;
+    ud.body.rotation.z += -0.12 * windup + 0.16 * strike;
+  }
+  if (ud.headPivot?.rotation) {
+    ud.headPivot.rotation.x += -0.05 * windup + 0.1 * strike;
+    ud.headPivot.rotation.z += -0.06 * windup + 0.08 * strike;
+  }
+  if (ud.rightArm?.rotation) {
+    // Lead with the shoulder, then fold the elbow back toward the target.
+    // The two segments deliberately diverge at contact, keeping the fist
+    // readable in the rear-quarter camera instead of reading as a gun barrel.
+    ud.rightArm.rotation.x += 0.25 * windup - 1.94 * strike;
+    ud.rightArm.rotation.y += 0.16 * windup - 0.16 * strike;
+    ud.rightArm.rotation.z += 0.48 * windup - 0.58 * strike;
+    if (!ud.meleeRightArmBase) ud.meleeRightArmBase = ud.rightArm.position.clone();
+    ud.rightArm.position.z = ud.meleeRightArmBase.z + 0.38 * strike;
+    ud.rightArm.position.y = ud.meleeRightArmBase.y;
+  }
+  if (ud.rightForearm?.rotation) {
+    if (ud.meleeRightForearmBaseY == null) {
+      ud.meleeRightForearmBaseY = ud.rightForearm.position.y;
+    }
+    ud.rightForearm.position.y = ud.meleeRightForearmBaseY - 0.1 * strike;
+    ud.rightForearm.rotation.x += -0.16 * windup + 0.96 * strike;
+    ud.rightForearm.rotation.y += 0.12 * strike;
+    ud.rightForearm.rotation.z += -0.12 * windup - 0.34 * strike;
+  }
+  if (ud.rightHand?.rotation) {
+    // A compact wrist turn presents the existing hand mesh as a fist without
+    // adding a weapon or a second gameplay-only prop.
+    ud.rightHand.rotation.x += 0.28 * strike;
+    ud.rightHand.rotation.z += -0.18 * strike;
+  }
+  if (ud.leftArm?.rotation) {
+    ud.leftArm.rotation.x += -0.22 * windup - 0.38 * strike;
+    ud.leftArm.rotation.z += -0.34 * windup + 0.28 * strike;
+  }
+  if (ud.leftForearm?.rotation) {
+    ud.leftForearm.rotation.x += -0.16 * windup - 0.24 * strike;
+  }
+  return true;
+}
+
 export function setAvatarVehiclePose(avatar, {
   seatedBlend = 0,
   transitionBlend = 0,

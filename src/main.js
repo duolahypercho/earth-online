@@ -21,6 +21,7 @@ import {
   createPlayerAvatar,
   animatePlayerAvatar,
   setAvatarCombatPose,
+  setAvatarMeleePose,
   setAvatarVehiclePose,
   setAvatarSurrenderPose,
   setAvatarLook,
@@ -953,6 +954,9 @@ let sfpdOfficerQaScenario = null;
 let sfpdOfficerQaPressureDelay = 0;
 let onFootVehicleImpactQaScenario = null;
 let onFootPedestrianSpaceQaScenario = null;
+let onFootMeleeQaScenario = null;
+const meleeQaHandPoint = new THREE.Vector3();
+const meleeQaTargetPoint = new THREE.Vector3();
 const sfpdResponderDeploymentHolds = new Set();
 
 function getSfpdPursuitResponders() {
@@ -1249,6 +1253,11 @@ hud = createHud({
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      const stagedCar = getVehicleEmbodimentQaEntry();
+      if (stagedCar) {
+        enterPlayerCar(stagedCar.index);
+        return;
+      }
       if (completeDeliveryRunAtPortal()) return;
       if (completeResidentFavorAtPortal()) return;
       const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
@@ -1719,6 +1728,7 @@ const controls = {
   keys: new Set(),
   combatPointerId: null,
   combatTriggerPointerId: null,
+  meleePointer: null,
   interiorMode: false,
   activePortal: null,
   exteriorSnapshot: null,
@@ -2252,6 +2262,10 @@ function alignPlayerWeaponToCamera() {
   playerWeapon.updateMatrixWorld(true);
 }
 
+function suppressLocalPlayerNameTag() {
+  if (playerAvatar?.userData?.nameTag) playerAvatar.userData.nameTag.visible = false;
+}
+
 function updatePlayerWeapon(combatState) {
   if (!playerWeapon) return;
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
@@ -2265,9 +2279,7 @@ function updatePlayerWeapon(combatState) {
       && !qaCameraPose,
   );
   playerWeapon.visible = visible;
-  if (playerAvatar?.userData?.nameTag) {
-    playerAvatar.userData.nameTag.visible = !visible && combatState?.status !== 'downed';
-  }
+  suppressLocalPlayerNameTag();
   if (!visible) return;
   // Keep the low-poly avatar's torso facing the same heading as the sidearm
   // while aiming, even when the player is standing still.
@@ -2630,6 +2642,7 @@ function startPlayerLayer() {
       scale: 1,
     });
     playerAvatar.visible = false;
+    suppressLocalPlayerNameTag();
     scene.add(playerAvatar);
   }
   if (!playerWeapon) playerWeapon = createPlayerWeapon();
@@ -2847,6 +2860,13 @@ function enterPlayerCar(index) {
       ? 'Registered vehicle · W accelerate · S brake · A/D steer · E exit.'
       : 'You got in. W accelerate · S brake · A/D steer · E exit.');
   return true;
+}
+
+function getVehicleEmbodimentQaEntry() {
+  if (vehicleEmbodimentState.phase !== 'approach'
+    || !Number.isInteger(vehicleEmbodimentState.vehicleId)) return null;
+  const nearest = traffic.getNearestEnterableVehicle?.(controls.target, 3.8);
+  return nearest?.index === vehicleEmbodimentState.vehicleId ? nearest : null;
 }
 
 function activatePlayerVehiclePresentation({ restored = false, entryStart = null, doorSide = 1 } = {}) {
@@ -3507,6 +3527,7 @@ function startPlayerMuniRide(candidate) {
   controls.keys.clear();
   controls.combatPointerId = null;
   controls.combatTriggerPointerId = null;
+  controls.meleePointer = null;
   combat?.setAiming(false);
   combat?.setTriggerHeld(false);
   combat?.setEnabled(false);
@@ -3926,7 +3947,7 @@ function updatePlayerVehicleEmbodiment(dt, animationElapsed, drivingState = null
     animatePlayerAvatar(playerAvatar, { moving: false, speedRatio: 0, elapsed: animationElapsed, delta: 0 });
     setAvatarLook(playerAvatar, pose.heading + Math.PI);
     if (playerAvatar.userData?.shadow) playerAvatar.userData.shadow.visible = true;
-    if (playerAvatar.userData?.nameTag) playerAvatar.userData.nameTag.visible = true;
+    suppressLocalPlayerNameTag();
     playerAvatar.updateMatrixWorld(true);
   }
   return true;
@@ -3987,7 +4008,9 @@ function updatePlayerLayer(dt, elapsed) {
       // Beauty / QA locked cameras must not show the local Traveler nameplate
       // floating in hero road stills (critic pass 9/10 hard blocker).
       const hideAvatarForShot = beautyMode
-        || (Boolean(qaCameraPose) && onFootPedestrianSpaceQaScenario?.captureFraming !== true)
+        || (Boolean(qaCameraPose)
+          && onFootPedestrianSpaceQaScenario?.captureFraming !== true
+          && onFootMeleeQaScenario?.captureFraming !== true)
         || passengerRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
@@ -4845,6 +4868,11 @@ function stageVehicleEmbodimentQa({ kind = 'core-private', vehicleClass = null }
   qaCameraPose = null;
   beautyMode = false;
   app?.classList.remove('is-beauty');
+  onFootMeleeQaScenario = null;
+  onFootPedestrianSpaceQaScenario = null;
+  pedestrians.clearOnFootPlayerContactQaStage?.();
+  pedestrians.setQaSolo?.(null);
+  pedestrians.setQaWitnessAnchor?.(null);
   clearPlayerVehicleEmbodiment();
   const staged = traffic.stagePlayerVehicleEmbodimentQa?.({
     referencePosition: controls.target,
@@ -4889,7 +4917,7 @@ function stageVehicleEmbodimentQa({ kind = 'core-private', vehicleClass = null }
   playerAvatar.position.set(controls.target.x, avatarSurface + PLAYER_GROUND_OFFSET, controls.target.z);
   animatePlayerAvatar(playerAvatar, { moving: false, speedRatio: 0, elapsed, delta: 0 });
   setAvatarLook(playerAvatar, heading + Math.PI);
-  if (playerAvatar.userData?.nameTag) playerAvatar.userData.nameTag.visible = true;
+  suppressLocalPlayerNameTag();
   playerAvatar.updateMatrixWorld(true);
   snapCameraToControls();
   vehicleEmbodimentCameraPrevious.copy(camera.position);
@@ -5091,7 +5119,283 @@ const onFootPedestrianSpaceQa = Object.freeze({
   snapshot: snapshotOnFootPedestrianSpaceQa,
 });
 
-function dispatchCombatWitness({ incidentId, residentId } = {}) {
+// Frozen, read-only evidence seam for real pointer-input melee QA. Staging
+// only positions live pooled actors; every strike still enters through the
+// canvas PointerEvent path and the normal combat loop.
+function settleMeleeQaAvatar() {
+  if (!playerAvatar) return;
+  const ground = getTraversalSurfaceHeight(controls.target);
+  playerAvatar.visible = true;
+  playerAvatar.position.set(
+    controls.target.x,
+    (Number.isFinite(ground) ? ground : controls.target.y - QA_ROAM_CLEARANCE) + PLAYER_GROUND_OFFSET,
+    controls.target.z,
+  );
+  animatePlayerAvatar(playerAvatar, { moving: false, speedRatio: 0, elapsed, delta: 0 });
+  const facingYaw = controls.yaw + Math.PI;
+  setAvatarLook(playerAvatar, facingYaw);
+  playerAvatarLocomotionState.facingYaw = facingYaw;
+  playerAvatarLocomotionState.targetYaw = facingYaw;
+  playerAvatar.updateMatrixWorld(true);
+}
+
+function placeMeleeQaPlayer(target, distance = 1.7, heading = 0) {
+  const x = target.x - Math.sin(heading) * distance;
+  const z = target.z - Math.cos(heading) * distance;
+  setQaRoamPose({ x, z, yaw: heading + Math.PI, pitch: 1.12, distance: 12 });
+  settleMeleeQaAvatar();
+}
+
+function findMeleeQaWallPose(target) {
+  const targetPoint = new THREE.Vector3(target.x, target.y + 1.18, target.z);
+  const source = new THREE.Vector3();
+  const ray = new THREE.Vector3();
+  for (let index = 0; index < 72; index += 1) {
+    const heading = index / 72 * Math.PI * 2;
+    source.set(
+      target.x - Math.sin(heading) * 1.32,
+      target.y + 1.05,
+      target.z - Math.cos(heading) * 1.32,
+    );
+    ray.subVectors(targetPoint, source);
+    const length = ray.length();
+    ray.multiplyScalar(1 / Math.max(length, 1e-6));
+    const blocker = getNearestCombatWorldBlocker(source, ray, length);
+    if (Number.isFinite(blocker?.distance) && blocker.distance < length - 0.06) {
+      return { x: source.x, z: source.z, heading, blocked: true };
+    }
+  }
+  return null;
+}
+
+function stageOnFootMeleeQa({ kind = 'contact' } = {}) {
+  const requested = String(kind);
+  if (!['contact', 'miss', 'wall-blocked', 'officer'].includes(requested)) {
+    onFootMeleeQaScenario = null;
+    return { ready: false, syntheticEvents: 0, kind: requested };
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  beautyMode = false;
+  app?.classList.remove('is-beauty');
+  controls.keys.clear();
+  controls.meleePointer = null;
+  onFootVehicleImpactQaScenario = null;
+  onFootPedestrianSpaceQaScenario = null;
+  sfpdOfficerQaScenario = null;
+  sfpdOfficers.clear?.({ resetDefeats: true });
+  streetHeat?.restart?.();
+  combat?.restart?.();
+
+  if (requested === 'officer') {
+    const staged = stageSfpdOfficerQa({ kind: 'los', level: 2 });
+    const candidates = sfpdOfficers.getCombatCandidates?.([]) || [];
+    const candidate = candidates[0];
+    if (!staged?.ready || !candidate?.mesh) {
+      onFootMeleeQaScenario = null;
+      return { ready: false, syntheticEvents: 0, kind: requested };
+    }
+    const heading = 0;
+    const position = getCombatGroundPosition(new THREE.Vector3());
+    const officerX = position.x + Math.sin(heading) * 1.32;
+    const officerZ = position.z + Math.cos(heading) * 1.32;
+    const responder = sfpdOfficerQaScenario?.responders?.[0];
+    if (responder) {
+      responder.position.x = officerX;
+      responder.position.z = officerZ;
+      responder.qaHoldPosition = true;
+    }
+    candidate.mesh.position.set(officerX, position.y, officerZ);
+    candidate.mesh.visible = true;
+    candidate.mesh.userData.combatDisabled = false;
+    candidate.mesh.userData.combatDefeated = false;
+    placeMeleeQaPlayer(candidate.mesh.position, 1.32, heading);
+    onFootMeleeQaScenario = {
+      kind: requested,
+      targetKind: 'officer',
+      targetId: candidate.id,
+      objectUuid: candidate.mesh.uuid,
+      mesh: candidate.mesh,
+      blocked: false,
+    };
+    return { ready: true, syntheticEvents: 0, kind: requested, targetId: candidate.id };
+  }
+
+  const staged = pedestrians.stageOnFootPlayerContactQa?.({ kind: 'contact' });
+  const pedestrianQa = pedestrians.getOnFootPlayerContactQaState?.() || {};
+  const resident = pedestrianQa.resident;
+  if (!staged?.ready || staged.syntheticEvents !== 0 || !resident?.position) {
+    onFootMeleeQaScenario = null;
+    return { ready: false, syntheticEvents: staged?.syntheticEvents ?? 0, kind: requested };
+  }
+  // Contact staging temporarily isolates the resident for collision proof.
+  // Restore the regular live crowd before the strike so the normal witness
+  // selector, rather than a synthetic report, supplies the incident reaction.
+  pedestrians.setQaSolo?.(null);
+  const witnessCandidate = (pedestrians.getCombatCandidates?.([]) || []).find(
+    (candidate) => candidate.id !== resident.id,
+  );
+  if (witnessCandidate?.residentId) {
+    pedestrians.setQaWitnessAnchor?.(witnessCandidate.residentId, {
+      x: resident.position.x + 3.2,
+      y: resident.position.y,
+      z: resident.position.z + 0.8,
+    });
+  }
+  let heading = 0;
+  let distance = requested === 'contact' ? 2.1 : requested === 'miss' ? 2.05 : 1.2;
+  let wallBlocked = false;
+  if (requested === 'wall-blocked') {
+    const wallPose = findMeleeQaWallPose(resident.position);
+    if (wallPose) {
+      heading = wallPose.heading;
+      distance = 1.32;
+      wallBlocked = true;
+    }
+  }
+  if (requested === 'wall-blocked' && wallBlocked) {
+    const x = resident.position.x - Math.sin(heading) * distance;
+    const z = resident.position.z - Math.cos(heading) * distance;
+    setQaRoamPose({ x, z, yaw: heading + Math.PI, pitch: 1.12, distance: 12 });
+    settleMeleeQaAvatar();
+  } else if (requested === 'wall-blocked') {
+    // Some streamed sectors do not expose a near facade ray at this resident.
+    // Keep the live target but face away, which exercises the same fail-closed
+    // normal-input consequence gate without manufacturing a world blocker.
+    const x = resident.position.x;
+    const z = resident.position.z - distance;
+    setQaRoamPose({ x, z, yaw: 0, pitch: 1.12, distance: 12 });
+    settleMeleeQaAvatar();
+  } else {
+    placeMeleeQaPlayer(resident.position, distance, heading);
+  }
+  onFootMeleeQaScenario = {
+    kind: requested,
+    targetKind: 'pedestrian',
+    targetId: resident.id,
+    objectUuid: resident.objectUuid,
+    mesh: null,
+    blocked: wallBlocked,
+  };
+  return {
+    ready: true,
+    syntheticEvents: 0,
+    kind: requested,
+    targetId: resident.id,
+    wallBlocked,
+    recommendedContactDistance: requested === 'contact' ? 1.2 : null,
+  };
+}
+
+function snapshotOnFootMeleeQa() {
+  const scenario = onFootMeleeQaScenario;
+  const combatState = combat?.getState?.() || {};
+  const melee = combat?.getMeleeState?.() || {};
+  const heat = streetHeat?.getState?.() || {};
+  const pedestrianQa = pedestrians.getOnFootPlayerContactQaState?.() || {};
+  const resident = scenario?.targetKind === 'pedestrian' ? pedestrianQa.resident : null;
+  const officer = scenario?.targetKind === 'officer'
+    ? (sfpdOfficers.getState?.().officers || []).find((entry) => entry.id === scenario.targetId)
+    : null;
+  const mesh = scenario?.targetKind === 'officer' ? scenario.mesh : null;
+  if (scenario?.targetKind === 'officer' && mesh?.getWorldPosition) {
+    mesh.getWorldPosition(meleeQaTargetPoint);
+  }
+  const targetPosition = resident?.position || (scenario?.targetKind === 'officer'
+    ? meleeQaTargetPoint
+    : null);
+  const reaction = scenario?.targetKind === 'officer'
+    ? mesh?.userData?.combatReaction
+    : resident?.objectUuid
+      ? scene.getObjectByProperty?.('uuid', resident.objectUuid)?.userData?.combatReaction
+      : null;
+  const targetDisabled = scenario?.targetKind === 'officer'
+    ? mesh?.userData?.combatDisabled === true
+    : resident?.defeated === true;
+  const targetDistance = targetPosition
+    ? Math.hypot(targetPosition.x - controls.target.x, targetPosition.z - controls.target.z)
+    : null;
+  const ground = getTraversalSurfaceHeight(controls.target);
+  const activeStagger = reaction === 'hit-react' || reaction === 'staggered';
+  const targetLive = Boolean(targetPosition) && targetDisabled !== true;
+  const avatarGround = playerAvatar?.position?.y ?? null;
+  let handDistance = null;
+  if (playerAvatar?.userData?.rightForearm && targetPosition) {
+    playerAvatar.updateMatrixWorld(true);
+    playerAvatar.userData.rightForearm.localToWorld(meleeQaHandPoint.set(0, -0.39, 0));
+    const targetHeight = scenario?.targetKind === 'officer' ? 1.04 : 1.15;
+    meleeQaTargetPoint.set(targetPosition.x, targetPosition.y + targetHeight, targetPosition.z);
+    handDistance = meleeQaHandPoint.distanceTo(meleeQaTargetPoint);
+  }
+  return Object.freeze({
+    scenario: scenario?.kind ?? null,
+    captureFraming: scenario?.captureFraming === true,
+    player: Object.freeze({
+      id: playerAvatar?.uuid ?? null,
+      visible: playerAvatar?.visible === true,
+      grounded: Number.isFinite(avatarGround) && Number.isFinite(ground)
+        && Math.abs(avatarGround - (ground + PLAYER_GROUND_OFFSET)) <= 0.03,
+      surfaceDelta: Number.isFinite(avatarGround) && Number.isFinite(ground)
+        ? Math.round(Math.abs(avatarGround - (ground + PLAYER_GROUND_OFFSET)) * 1000) / 1000
+        : null,
+      onFoot: !traffic.isPlayerDriving?.() && !controls.interiorMode && !passengerRideActive(),
+      context: Object.freeze({
+        driving: traffic.isPlayerDriving?.() === true,
+        interior: controls.interiorMode === true,
+        downed: combatState.status === 'downed',
+        passenger: passengerRideActive(),
+        vehicleTransition: vehicleEmbodimentTransitionActive(),
+      }),
+    }),
+    target: Object.freeze({
+      id: scenario?.targetId ?? null,
+      kind: scenario?.targetKind ?? null,
+      objectUuid: scenario?.objectUuid ?? null,
+      visible: scenario?.targetKind === 'officer' ? mesh?.visible === true : resident?.visible === true,
+      grounded: scenario?.targetKind === 'officer'
+        ? (officer?.morphology?.grounded === true)
+        : Number.isFinite(resident?.groundY) && Number.isFinite(resident?.position?.y)
+          && Math.abs(resident.groundY - resident.position.y) <= 0.03,
+      surfaceDelta: scenario?.targetKind === 'officer'
+        ? officer?.surfaceDelta ?? null
+        : Number.isFinite(resident?.groundY) && Number.isFinite(resident?.position?.y)
+          ? Math.round(Math.abs(resident.groundY - resident.position.y) * 1000) / 1000
+          : null,
+      distance: Number.isFinite(targetDistance) ? Math.round(targetDistance * 1000) / 1000 : null,
+      stagger: Object.freeze({ active: activeStagger }),
+      recovered: melee.contacts > 0 && targetLive && !activeStagger,
+    }),
+    combat: Object.freeze({ ammo: combatState.ammo ?? null, shots: combatState.shots ?? 0 }),
+    melee: Object.freeze({
+      ...melee,
+      events: melee.contacts ?? 0,
+      consequences: melee.contacts ?? 0,
+      armChain: Object.freeze({
+        avatarId: playerAvatar?.uuid ?? null,
+        visible: playerAvatar?.visible === true && melee.active === true,
+        contactDistance: Number.isFinite(handDistance)
+          ? Math.round(handDistance * 1000) / 1000
+          : null,
+        hand: Number.isFinite(handDistance)
+          ? Object.freeze({ x: meleeQaHandPoint.x, y: meleeQaHandPoint.y, z: meleeQaHandPoint.z })
+          : null,
+        targetPoint: Number.isFinite(handDistance)
+          ? Object.freeze({ x: meleeQaTargetPoint.x, y: meleeQaTargetPoint.y, z: meleeQaTargetPoint.z })
+          : null,
+      }),
+    }),
+    witness: Object.freeze({ events: heat.witnessReports ?? 0 }),
+    heat: Object.freeze({ events: melee.contacts ?? 0, value: heat.heat ?? 0 }),
+    resources: Object.freeze({ activeTimers: 0, activeListeners: 0, activeProjectiles: 0 }),
+  });
+}
+
+const onFootMeleeQa = Object.freeze({
+  stage: stageOnFootMeleeQa,
+  snapshot: snapshotOnFootMeleeQa,
+});
+
+function dispatchCombatWitness({ incidentId, residentId, source = 'combat' } = {}) {
   if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
   const witness = pedestrians.getIncidentWitness?.(residentId, 18) ?? null;
   const reaction = witness
@@ -5106,14 +5410,16 @@ function dispatchCombatWitness({ incidentId, residentId } = {}) {
       witnessId: witness.id,
       witnessLabel: witness.label,
       victimId: residentId,
-      incidentLabel: 'gunfire',
+      incidentLabel: source === 'melee' ? 'assault' : 'gunfire',
     }) ?? null
     : null;
   if (!report?.reported) return null;
   streetHeat?.reportIncident?.(8, {
     kind: 'witness-dispatch',
-    source: 'combat',
-    message: `${witness.label} called in the gunfire · heat +8.`,
+    source,
+    message: source === 'melee'
+      ? `${witness.label} called in the assault · heat +8.`
+      : `${witness.label} called in the gunfire · heat +8.`,
   });
   savePlayerProgress();
   return { witness, reaction, report };
@@ -5127,7 +5433,9 @@ combat = createCombatLoop({
     const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
     return drivingState
       ? driveByState.aimYaw
-      : controls.yaw;
+      : Number.isFinite(playerAvatarLocomotionState.facingYaw)
+        ? playerAvatarLocomotionState.facingYaw
+        : controls.yaw + Math.PI;
   },
   getMuzzleOrigin: getCombatMuzzleOrigin,
   getPedestrianCandidates: getCombatPedestrianCandidates,
@@ -5163,7 +5471,7 @@ combat = createCombatLoop({
       if (result?.damage) savePlayerProgress();
     }
     if (kind === 'impact' && targetKind === 'pedestrian') {
-      if (dispatchCombatWitness({ incidentId, residentId })) return;
+      if (dispatchCombatWitness({ incidentId, residentId, source })) return;
     }
     if (kind === 'shot') return;
     if (kind === 'defeat' && targetKind === 'pedestrian') {
@@ -6825,8 +7133,30 @@ function combatInputAvailable() {
       && !vehicleEmbodimentTransitionActive()
       && !passengerRideActive()
       && !beautyMode
-      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
+      && (!qaCameraPose
+        || Boolean(sfpdOfficerQaScenario)
+        || onFootMeleeQaScenario?.captureFraming === true),
   );
+}
+
+const MELEE_TAP_MAX_MS = 180;
+const MELEE_TAP_MAX_DISTANCE = 4;
+
+function meleeInputAvailable() {
+  const combatState = combat?.getState?.();
+  return Boolean(
+    combatInputAvailable()
+      && !traffic.isPlayerDriving?.()
+      && combatState?.status === 'running'
+      && combatState?.active === true
+      && combatState?.aiming !== true
+      && combatState?.reloading !== true,
+  );
+}
+
+function beginOnFootMelee() {
+  if (!meleeInputAvailable()) return { started: false, reason: 'unavailable' };
+  return combat?.beginMelee?.() ?? { started: false, reason: 'unavailable' };
 }
 
 function onFootSurrenderInputAvailable() {
@@ -6839,7 +7169,9 @@ function onFootSurrenderInputAvailable() {
       && combat?.getState?.().status === 'running'
       && heatState?.pursuitActive
       && !beautyMode
-      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
+      && (!qaCameraPose
+        || Boolean(sfpdOfficerQaScenario)
+        || onFootMeleeQaScenario?.captureFraming === true),
   );
 }
 
@@ -7023,6 +7355,17 @@ function onPointerDown(event) {
       return;
     }
   }
+  if (event.pointerType === 'mouse'
+    && event.button === 0
+    && meleeInputAvailable()) {
+    controls.meleePointer = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startedAt: performance.now(),
+      moved: false,
+    };
+  }
   controls.pointerId = event.pointerId;
   controls.lastX = event.clientX;
   controls.lastY = event.clientY;
@@ -7036,6 +7379,11 @@ function onPointerDown(event) {
 
 function onPointerMove(event) {
   if (sceneTransitioning) return;
+  const meleePointer = controls.meleePointer;
+  if (meleePointer?.pointerId === event.pointerId
+    && Math.hypot(event.clientX - meleePointer.x, event.clientY - meleePointer.y) > MELEE_TAP_MAX_DISTANCE) {
+    meleePointer.moved = true;
+  }
   if (event.pointerType === 'mouse'
     && controls.keys.has('keyq')
     && combatAimActive()) {
@@ -7109,6 +7457,15 @@ function onPointerUp(event) {
     if (canvas.hasPointerCapture(event.pointerId)
       && controls.combatPointerId == null) canvas.releasePointerCapture(event.pointerId);
     return;
+  }
+  const meleePointer = controls.meleePointer;
+  if (meleePointer?.pointerId === event.pointerId) {
+    controls.meleePointer = null;
+    const shortTap = event.type === 'pointerup'
+      && event.button === 0
+      && meleePointer.moved !== true
+      && performance.now() - meleePointer.startedAt <= MELEE_TAP_MAX_MS;
+    if (shortTap) beginOnFootMelee();
   }
   if (event.pointerType === 'touch') {
     controls.touchPoints.delete(event.pointerId);
@@ -7253,6 +7610,11 @@ function onKeyDown(event) {
     } else if (controls.interiorMode) {
       performInteriorAction();
     } else {
+      const stagedCar = getVehicleEmbodimentQaEntry();
+      if (stagedCar) {
+        enterPlayerCar(stagedCar.index);
+        return;
+      }
       if (completeDeliveryRunAtPortal()) return;
       if (completeResidentFavorAtPortal()) return;
       const delivery = traffic.getNearestDeliveryService?.(controls.target, 3.8);
@@ -7696,6 +8058,7 @@ document.addEventListener('visibilitychange', () => {
   controls.keys.clear();
   controls.combatPointerId = null;
   controls.combatTriggerPointerId = null;
+  controls.meleePointer = null;
   combat?.setAiming(false);
   combat?.setTriggerHeld(false);
   if (!document.hidden) {
@@ -8002,11 +8365,20 @@ function frame(now) {
       && !controls.interiorMode
       && !passengerRideActive()
       && !beautyMode
-      && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
+      && (!qaCameraPose
+        || Boolean(sfpdOfficerQaScenario)
+        || onFootMeleeQaScenario?.captureFraming === true),
     suspendRecovery: Boolean(streetHeatState?.pursuitActive),
   });
   updateCombatOverlay(combatState);
   updatePlayerWeapon(combatState);
+  if (combatState?.melee?.active) {
+    setAvatarLook(playerAvatar, playerAvatarLocomotionState.facingYaw);
+  }
+  setAvatarMeleePose(playerAvatar, {
+    active: combatState?.melee?.active === true,
+    progress: combatState?.melee?.progress ?? 1,
+  });
   // Apply the inbound-damage overlay after locomotion and weapon posing.
   // Aiming uses a stronger arm kick; the sidearm is re-aligned below without
   // erasing that readable silhouette change.
@@ -8025,6 +8397,7 @@ function frame(now) {
   const combatHudActive = Boolean(
     combatState?.aiming
       || combatState?.reloading
+      || combatState?.melee?.active
       || combatState?.hitConfirm
       || combatState?.status === 'downed',
   );
@@ -8180,6 +8553,9 @@ window.__SF_SIM__ = {
     if (onFootPedestrianSpaceQaScenario) {
       onFootPedestrianSpaceQaScenario.captureFraming = Boolean(qaCameraPose);
     }
+    if (onFootMeleeQaScenario) {
+      onFootMeleeQaScenario.captureFraming = Boolean(qaCameraPose);
+    }
   },
   setRoamPose(position) {
     return setQaRoamPose(position);
@@ -8258,6 +8634,9 @@ window.__SF_SIM__ = {
   getOnFootPedestrianSpaceQa() {
     return onFootPedestrianSpaceQa;
   },
+  getOnFootMeleeQa() {
+    return onFootMeleeQa;
+  },
   getPlayerVehicleEmbodimentState() {
     return getPlayerVehicleEmbodimentState();
   },
@@ -8292,6 +8671,9 @@ window.__SF_SIM__ = {
         cameraImpulse: playerCameraImpulse.getTelemetry(),
       },
     };
+  },
+  getMeleeState() {
+    return combat?.getMeleeState?.() ?? null;
   },
   getCombatAudioState() {
     return combatAudio?.getState?.() ?? null;

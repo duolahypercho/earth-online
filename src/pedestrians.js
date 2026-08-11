@@ -675,6 +675,19 @@ export function createSfpdOfficerResponse({
         officer.root.rotation.z = THREE.MathUtils.damp(officer.root.rotation.z, -1.12, 8, delta);
         groundOfficer(officer, playerPosition.y);
       } else {
+        const meleeReaction = officer.root.userData.combatReactionSource === 'melee'
+          && officer.root.userData.combatReaction === 'hit-react';
+        if (meleeReaction && officer.root.userData.meleeRecoilPending === true) {
+          const recoilX = Number(officer.root.userData.meleeRecoilDirectionX) || 0;
+          const recoilZ = Number(officer.root.userData.meleeRecoilDirectionZ) || 0;
+          const length = Math.hypot(recoilX, recoilZ) || 1;
+          const applied = Math.max(0, Number(officer.root.userData.meleeRecoilApplied) || 0);
+          const next = Math.min(0.34, applied + delta * 1.15);
+          officer.root.position.x += recoilX / length * (next - applied);
+          officer.root.position.z += recoilZ / length * (next - applied);
+          officer.root.userData.meleeRecoilApplied = next;
+          if (next >= 0.34 - 1e-5) officer.root.userData.meleeRecoilPending = false;
+        }
         const standoff = SFPD_OFFICER_STANDOFF[index];
         direction.set(
           playerPosition.x - officer.root.position.x,
@@ -683,7 +696,9 @@ export function createSfpdOfficerResponse({
         );
         const planarDistance = direction.length();
         if (planarDistance > 0.001) direction.multiplyScalar(1 / planarDistance);
-        if (officer.holdPosition) {
+        if (meleeReaction) {
+          officer.state = 'staggered';
+        } else if (officer.holdPosition) {
           officer.state = 'holding';
         } else if (planarDistance > standoff + 0.8) {
           officer.root.position.addScaledVector(direction, Math.min(planarDistance - standoff, SFPD_OFFICER_SPEED * delta));
@@ -702,6 +717,20 @@ export function createSfpdOfficerResponse({
         officer.rightLeg.rotation.x = -gait;
         officer.leftArm.rotation.x = officer.state === 'aiming' ? -0.86 : -gait * 0.58;
         officer.rightArm.rotation.x = officer.state === 'aiming' ? -0.98 : gait * 0.58;
+        if (meleeReaction) {
+          const pulse = 0.72 + Math.sin(elapsed * 26 + officer.phase) * 0.28;
+          officer.torso.rotation.x = 0.13;
+          officer.torso.rotation.z = 0.1 * pulse;
+          officer.head.rotation.z = 0.15 * pulse;
+          officer.leftArm.rotation.z = 0.2 * pulse;
+          officer.rightArm.rotation.z = -0.2 * pulse;
+        } else {
+          officer.torso.rotation.x = THREE.MathUtils.damp(officer.torso.rotation.x, 0, 16, delta);
+          officer.torso.rotation.z = THREE.MathUtils.damp(officer.torso.rotation.z, 0, 16, delta);
+          officer.head.rotation.z = THREE.MathUtils.damp(officer.head.rotation.z, 0, 16, delta);
+          officer.leftArm.rotation.z = THREE.MathUtils.damp(officer.leftArm.rotation.z, 0, 16, delta);
+          officer.rightArm.rotation.z = THREE.MathUtils.damp(officer.rightArm.rotation.z, 0, 16, delta);
+        }
         groundOfficer(officer, playerPosition.y);
         updateLos(officer, playerPosition);
         anyBlocked ||= !officer.hasLineOfSight;
@@ -4309,6 +4338,53 @@ export function createPedestrianSystem({
     const userData = data.mesh.userData;
     const reaction = userData?.combatReaction;
     if (!userData || !reaction || reaction === 'settled') return false;
+    if (userData.meleeRecoilPending === true) {
+      let directionX = Number(userData.meleeRecoilDirectionX) || 0;
+      let directionZ = Number(userData.meleeRecoilDirectionZ) || 0;
+      const directionLength = Math.hypot(directionX, directionZ) || 1;
+      directionX /= directionLength;
+      directionZ /= directionLength;
+      const applied = Math.max(0, Number(userData.meleeRecoilApplied) || 0);
+      const targetDistance = 0.34;
+      const next = Math.min(targetDistance, applied + Math.max(0, delta) * 1.15);
+      const step = next - applied;
+      // This is deliberately a short, time-integrated root recoil rather than
+      // a hit-frame teleport. Hold the existing path briefly, then let its
+      // normal route sampling take ownership again from the displaced pose.
+      if (step > 0) {
+        data.mesh.position.x += directionX * step;
+        data.mesh.position.z += directionZ * step;
+        data.groundY = data.mesh.position.y;
+        userData.meleeRecoilApplied = next;
+      }
+      if (next >= targetDistance - 1e-5 && userData.meleeRecoilResynced !== true) {
+        // Preserve the recoil when normal path sampling resumes: fold its
+        // lateral component into the existing lane offset, then reattach the
+        // longitudinal path coordinate to the displaced root. Lane recovery
+        // already damps back toward home, so this settles without a snap.
+        const forwardX = Math.sin(data.heading);
+        const forwardZ = Math.cos(data.heading);
+        const rightX = forwardZ;
+        const rightZ = -forwardX;
+        const lateral = directionX * rightX + directionZ * rightZ;
+        data.laneOffset = THREE.MathUtils.clamp(
+          (Number(data.laneOffset) || 0) + lateral * targetDistance,
+          -LATERAL_DRIFT,
+          LATERAL_DRIFT,
+        );
+        const location = data.path ? locateOnPath(data.path, data.mesh.position) : null;
+        if (location) {
+          data.segment = location.segment;
+          data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+          setDestinationFor(data);
+        }
+        userData.meleeRecoilResynced = true;
+        userData.meleeRecoilPending = false;
+      }
+      if (data.state !== STATE_IDLE) setBehaviorState(data, STATE_IDLE, 0.72, 'combat:melee-recoil');
+      else data.timer = Math.max(data.timer, 0.72);
+      return true;
+    }
     if (reaction !== 'flee') return reaction === 'hit-react' || reaction === 'staggered';
 
     let directionX = Number(userData.combatReactionDirectionX) || 0;
@@ -4338,8 +4414,32 @@ export function createPedestrianSystem({
     const userData = data.mesh.userData;
     const reaction = userData?.combatReaction;
     if (reaction !== 'hit-react' && reaction !== 'staggered') return;
+    const melee = userData.combatReactionSource === 'melee';
     const pulse = 0.72 + Math.sin(elapsed * 26 + data.phase) * 0.28;
     const stagger = reaction === 'staggered' ? 1.18 : 1;
+    if (melee) {
+      // The root recoil is owned by applyCombatReactionMovement(). This is a
+      // paired upper-body response only: a readable chest check, head snap,
+      // and raised guard arm on the same live actor, with no route/foot edit.
+      const directionX = Number(userData.combatReactionDirectionX) || 0;
+      const directionZ = Number(userData.combatReactionDirectionZ) || 0;
+      const side = Math.sign(
+        directionX * Math.cos(data.heading) - directionZ * Math.sin(data.heading),
+      ) || 1;
+      userData.body.rotation.x += 0.34 * stagger;
+      userData.body.rotation.z += side * 0.32 * stagger;
+      userData.headPivot.rotation.x -= 0.22 * pulse;
+      userData.headPivot.rotation.z -= side * 0.34 * pulse;
+      userData.leftArm.rotation.x -= 0.82 * pulse;
+      userData.leftArm.rotation.z += side * 0.58 * pulse;
+      // Counter-rotate the forearm into a guard so it reads as an elbowed
+      // reaction, not a single rigid arm bar.
+      userData.leftForearm.rotation.x += 0.62 * pulse;
+      userData.rightArm.rotation.x += 0.32 * pulse;
+      userData.rightArm.rotation.z -= side * 0.32 * pulse;
+      userData.rig.position.x += side * 0.018 * pulse;
+      return;
+    }
     userData.body.rotation.x += 0.11 * stagger;
     userData.body.rotation.z += Math.sin(elapsed * 24 + data.phase) * 0.11 * stagger;
     userData.headPivot.rotation.z += Math.sin(elapsed * 18 + data.phase) * 0.16 * pulse;
