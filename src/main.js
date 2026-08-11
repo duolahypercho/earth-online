@@ -17,7 +17,12 @@ import { createSanFranciscoExpansion } from './sf-expansion.js';
 import { SIGNAL_PERIOD } from './signals.js';
 import { createCityShift, createStreetHeat, createCombatLoop } from './gameplay.js';
 import { createHud } from './ui.js';
-import { createPlayerAvatar, animatePlayerAvatar, setAvatarLook } from './player.js';
+import {
+  createPlayerAvatar,
+  animatePlayerAvatar,
+  setAvatarCombatPose,
+  setAvatarLook,
+} from './player.js';
 import { createLifeSim } from './lifesim.js';
 import { createNetworking } from './networking.js';
 import { createCombatAudio, createEngineAudio, createWindAudio } from './audio.js';
@@ -1629,8 +1634,13 @@ const combatForward = new THREE.Vector3();
 const combatRight = new THREE.Vector3();
 const combatWeaponDirection = new THREE.Vector3();
 const combatWeaponQuaternion = new THREE.Quaternion();
+const combatWeaponParentQuaternion = new THREE.Quaternion();
 const combatWeaponUp = new THREE.Vector3(0, 0, 1);
 const combatWeaponMuzzleLocal = new THREE.Vector3(0, 0, 0.51);
+const combatEmbodimentWorldA = new THREE.Vector3();
+const combatEmbodimentWorldB = new THREE.Vector3();
+const combatEmbodimentNdc = new THREE.Vector3();
+const combatEmbodimentRay = new THREE.Vector3();
 let playerWeapon = null;
 
 function playerMoving() {
@@ -1641,34 +1651,32 @@ function playerMoving() {
 }
 
 const COMBAT_WEAPON_MUZZLE_OFFSET = 0.51;
-const COMBAT_WEAPON_SHOULDER_OFFSET = -1.25;
+const COMBAT_WEAPON_SHOULDER_OFFSET = 0.36;
 const COMBAT_WEAPON_HEIGHT = 1.55;
-const COMBAT_SHOULDER_CAMERA_BACK = 6.6;
-const COMBAT_SHOULDER_CAMERA_HEIGHT = 3.1;
+const COMBAT_SHOULDER_CAMERA_BACK = 6.2;
+const COMBAT_SHOULDER_CAMERA_SIDE = -1.2;
+const COMBAT_SHOULDER_LOOK_SIDE = 0;
+const COMBAT_SHOULDER_CAMERA_HEIGHT = 2.62;
 const COMBAT_SHOULDER_LOOK_HEIGHT = 1.35;
 const COMBAT_SHOULDER_LOOK_DISTANCE = 24;
 const COMBAT_SHOULDER_PITCH_SCALE = 4.6;
 
 function createPlayerWeapon() {
+  const handSocket = playerAvatar?.userData?.rightHand;
+  if (!handSocket) return null;
   const root = new THREE.Group();
-  root.name = 'Traveler low-poly sidearm';
+  root.name = 'Traveler hand-mounted low-poly sidearm';
   root.visible = false;
   root.frustumCulled = false;
-  root.renderOrder = 12;
-  const sleeveMaterial = new THREE.MeshStandardMaterial({
-    color: 0x45538d,
-    roughness: 0.78,
-    metalness: 0.03,
-  });
-  const skinMaterial = new THREE.MeshStandardMaterial({
-    color: 0xe0aa7e,
-    roughness: 0.72,
-    metalness: 0.01,
-  });
   const gunMaterial = new THREE.MeshStandardMaterial({
-    color: 0x667680,
+    color: 0xb8c5ca,
     roughness: 0.42,
     metalness: 0.78,
+  });
+  const gripMaterial = new THREE.MeshStandardMaterial({
+    color: 0x222a2e,
+    roughness: 0.58,
+    metalness: 0.36,
   });
   const accentMaterial = new THREE.MeshStandardMaterial({
     color: 0xffc86b,
@@ -1677,41 +1685,32 @@ function createPlayerWeapon() {
     roughness: 0.34,
     metalness: 0.18,
   });
-  // The arm silhouette is intentionally offset toward the camera's lower
-  // right while the barrel remains on the true muzzle anchor below.
-  const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.38, 0.42), sleeveMaterial);
-  shoulder.position.set(-0.22, -0.2, -0.24);
-  shoulder.rotation.z = -0.16;
-  const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.27, 0.68), sleeveMaterial);
-  sleeve.position.set(-0.14, -0.12, -0.16);
-  sleeve.rotation.z = -0.1;
-  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 4), skinMaterial);
-  hand.position.set(-0.05, -0.06, 0.08);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.42), gunMaterial);
-  body.position.set(0, 0, 0.21);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.3, 6), gunMaterial);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.19, 0.52), gunMaterial);
+  body.position.set(0, 0.015, 0.26);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.062, 0.34, 6), gripMaterial);
   barrel.rotation.x = Math.PI * 0.5;
   // Local tip is 0.51m from the root, matching COMBAT_WEAPON_MUZZLE_OFFSET.
-  barrel.position.set(0, 0, 0.36);
-  const barrelBand = new THREE.Mesh(new THREE.CylinderGeometry(0.073, 0.073, 0.06, 6), accentMaterial);
+  barrel.position.set(0, 0.005, 0.4);
+  const barrelBand = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.06, 6), accentMaterial);
   barrelBand.rotation.x = Math.PI * 0.5;
   barrelBand.position.set(0, 0, 0.48);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.12), accentMaterial);
-  sight.position.set(0, 0.15, 0.3);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.34, 0.18), gunMaterial);
-  grip.position.set(0, -0.18, 0.16);
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.06, 0.14), accentMaterial);
+  sight.position.set(0, 0.145, 0.34);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.29, 0.16), gripMaterial);
+  grip.position.set(0, -0.145, 0.14);
   grip.rotation.x = -0.16;
-  root.add(shoulder, sleeve, hand, body, barrel, barrelBand, sight, grip);
+  root.add(body, barrel, barrelBand, sight, grip);
   root.traverse((child) => {
     if (!child.isMesh) return;
-    // This camera-facing shoulder rig is presentation geometry. Render its
-    // actual child meshes after the street depth pass; setting renderOrder on
-    // the parent Group alone does not affect them.
-    child.renderOrder = 12;
-    child.material.depthTest = false;
-    child.material.depthWrite = false;
+    child.castShadow = false;
+    child.receiveShadow = true;
+    child.material.depthTest = true;
+    child.material.depthWrite = true;
   });
-  scene.add(root);
+  root.position.set(0, 0, 0.018);
+  root.userData.handSocket = handSocket;
+  root.userData.gripLocal = new THREE.Vector3(0, 0, 0);
+  handSocket.add(root);
   return root;
 }
 
@@ -1751,20 +1750,152 @@ function updatePlayerWeapon(combatState) {
       && !qaCameraPose,
   );
   playerWeapon.visible = visible;
+  if (playerAvatar?.userData?.nameTag) playerAvatar.userData.nameTag.visible = !visible;
   if (!visible) return;
   // Keep the low-poly avatar's torso facing the same heading as the sidearm
   // while aiming, even when the player is standing still.
-  if (playerAvatar) setAvatarLook(playerAvatar, controls.yaw);
-  getCombatGroundPosition(combatGroundPosition);
-  combatForward.set(Math.sin(controls.yaw), 0, Math.cos(controls.yaw));
-  combatRight.set(combatForward.z, 0, -combatForward.x);
-  combatAimAnchor.copy(combatGroundPosition)
-    .addScaledVector(combatRight, COMBAT_WEAPON_SHOULDER_OFFSET);
-  combatAimAnchor.y += COMBAT_WEAPON_HEIGHT;
+  if (playerAvatar) {
+    setAvatarLook(playerAvatar, controls.yaw);
+    setAvatarCombatPose(playerAvatar, {
+      aiming: true,
+      pitch: (combatCameraState.savedPitch - controls.pitch) * 0.6,
+    });
+    playerAvatar.updateMatrixWorld(true);
+  }
   camera.getWorldDirection(combatWeaponDirection).normalize();
   combatWeaponQuaternion.setFromUnitVectors(combatWeaponUp, combatWeaponDirection);
-  playerWeapon.position.copy(combatAimAnchor);
-  playerWeapon.quaternion.copy(combatWeaponQuaternion);
+  playerWeapon.parent?.getWorldQuaternion(combatWeaponParentQuaternion);
+  combatWeaponParentQuaternion.invert();
+  playerWeapon.quaternion.copy(combatWeaponParentQuaternion).multiply(combatWeaponQuaternion);
+  playerWeapon.updateMatrixWorld(true);
+}
+
+function projectCombatPoint(point, width, height) {
+  combatEmbodimentNdc.copy(point).project(camera);
+  return {
+    x: (combatEmbodimentNdc.x * 0.5 + 0.5) * width,
+    y: (-combatEmbodimentNdc.y * 0.5 + 0.5) * height,
+    depth: combatEmbodimentNdc.z,
+    visible: combatEmbodimentNdc.z >= -1 && combatEmbodimentNdc.z <= 1
+      && combatEmbodimentNdc.x >= -1 && combatEmbodimentNdc.x <= 1
+      && combatEmbodimentNdc.y >= -1 && combatEmbodimentNdc.y <= 1,
+  };
+}
+
+function getCombatEmbodimentState() {
+  const width = renderer.domElement.clientWidth || window.innerWidth || 1;
+  const height = renderer.domElement.clientHeight || window.innerHeight || 1;
+  const ud = playerAvatar?.userData;
+  playerAvatar?.updateMatrixWorld?.(true);
+  playerWeapon?.updateMatrixWorld?.(true);
+
+  const partPoints = {};
+  for (const [key, object] of Object.entries({
+    head: ud?.head,
+    torso: ud?.body,
+    rightArm: ud?.rightArm,
+    rightHand: ud?.rightHand,
+  })) {
+    if (!object?.getWorldPosition) continue;
+    object.getWorldPosition(combatEmbodimentWorldA);
+    partPoints[key] = projectCombatPoint(combatEmbodimentWorldA, width, height);
+  }
+
+  const silhouetteSamples = [];
+  for (const object of [ud?.head, ud?.leftArm, ud?.rightArm, ud?.leftFoot, ud?.rightFoot]) {
+    if (!object?.getWorldPosition) continue;
+    object.getWorldPosition(combatEmbodimentWorldA);
+    if (object === ud?.head) combatEmbodimentWorldA.y += 0.24;
+    if (object === ud?.leftFoot || object === ud?.rightFoot) combatEmbodimentWorldA.y -= 0.1;
+    silhouetteSamples.push(projectCombatPoint(combatEmbodimentWorldA, width, height));
+  }
+  const finiteSamples = silhouetteSamples.filter((sample) => (
+    Number.isFinite(sample.x) && Number.isFinite(sample.y)
+  ));
+  const xs = finiteSamples.map((sample) => sample.x);
+  const ys = finiteSamples.map((sample) => sample.y);
+  const left = xs.length ? Math.min(...xs) : NaN;
+  const right = xs.length ? Math.max(...xs) : NaN;
+  const top = ys.length ? Math.min(...ys) : NaN;
+  const bottom = ys.length ? Math.max(...ys) : NaN;
+
+  const socket = ud?.rightHand;
+  socket?.getWorldPosition?.(combatEmbodimentWorldA);
+  playerWeapon?.getWorldPosition?.(combatEmbodimentWorldB);
+  const gripSocketDistance = socket && playerWeapon
+    ? combatEmbodimentWorldA.distanceTo(combatEmbodimentWorldB)
+    : null;
+
+  camera.getWorldDirection(combatEmbodimentRay).normalize();
+  camera.getWorldPosition(combatEmbodimentWorldA);
+  const convergence = {};
+  for (const [key, distance] of [['near', 10], ['far', 30]]) {
+    combatEmbodimentWorldB.copy(combatEmbodimentWorldA)
+      .addScaledVector(combatEmbodimentRay, distance);
+    const projected = projectCombatPoint(combatEmbodimentWorldB, width, height);
+    convergence[key] = {
+      distance,
+      errorPx: Math.hypot(projected.x - width * 0.5, projected.y - height * 0.5),
+    };
+  }
+
+  getCombatGroundPosition(combatGroundPosition);
+  combatAimAnchor.set(
+    combatGroundPosition.x,
+    combatGroundPosition.y + 1.48,
+    combatGroundPosition.z,
+  );
+  combatEmbodimentRay.copy(camera.position).sub(combatAimAnchor);
+  const cameraDistance = combatEmbodimentRay.length();
+  const blocker = cameraDistance > 1e-4
+    ? getNearestCombatWorldBlocker(
+      combatAimAnchor,
+      combatEmbodimentRay.multiplyScalar(1 / cameraDistance),
+      cameraDistance + 0.05,
+    )
+    : null;
+  const insideVehicle = combatCameraVehicleClearance(camera.position) < 0.05;
+  const parts = {
+    head: partPoints.head?.visible === true,
+    torso: partPoints.torso?.visible === true,
+    rightArm: partPoints.rightArm?.visible === true,
+    rightHand: partPoints.rightHand?.visible === true,
+  };
+  const visiblePartCount = Object.values(parts).filter(Boolean).length;
+  const weaponConnected = Boolean(socket && playerWeapon && playerWeapon.parent === socket);
+
+  return {
+    connected: Boolean(playerAvatar?.visible && weaponConnected && playerWeapon?.visible),
+    avatar: {
+      visible: Boolean(playerAvatar?.visible),
+      screen: {
+        left,
+        right,
+        top,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+        heightPx: bottom - top,
+        centerX: (left + right) * 0.5,
+        centerY: (top + bottom) * 0.5,
+      },
+      parts,
+      visibilityRatio: visiblePartCount / 4,
+    },
+    weapon: {
+      visible: Boolean(playerWeapon?.visible),
+      connected: weaponConnected,
+      gripSocketDistance,
+    },
+    reticle: { x: width * 0.5, y: height * 0.5 },
+    convergence,
+    camera: {
+      collisionSafe: !blocker || blocker.distance >= cameraDistance - 0.08,
+      insideBuilding: Boolean(blocker && blocker.distance < 0.2),
+      insideVehicle,
+      distance: cameraDistance,
+    },
+  };
 }
 
 function startPlayerLayer() {
@@ -4579,6 +4710,30 @@ function syncCombatCameraMode() {
   return aiming;
 }
 
+function combatCameraVehicleClearance(position) {
+  let clearance = Infinity;
+  for (const vehicle of traffic.getVehicleLifeSnapshot?.()?.vehicles || []) {
+    if (vehicle?.visible === false || !vehicle?.position) continue;
+    const dx = position.x - vehicle.position.x;
+    const dz = position.z - vehicle.position.z;
+    const heading = Number(vehicle.heading) || 0;
+    const localX = dx * Math.cos(heading) - dz * Math.sin(heading);
+    const localZ = dx * Math.sin(heading) + dz * Math.cos(heading);
+    const halfWidth = vehicle.class === 'bus' || vehicle.class === 'truck' ? 1.55 : 1.15;
+    const halfLength = vehicle.class === 'bus' ? 5.2
+      : vehicle.class === 'truck' ? 3.5
+        : vehicle.class === 'van' || vehicle.class === 'suv' ? 2.7 : 2.45;
+    const outsideX = Math.max(0, Math.abs(localX) - halfWidth);
+    const outsideZ = Math.max(0, Math.abs(localZ) - halfLength);
+    const horizontal = Math.hypot(outsideX, outsideZ);
+    const roof = (vehicle.position.y ?? 0) + (vehicle.class === 'bus' ? 3.1 : 1.9);
+    const vertical = position.y > roof ? position.y - roof : 0;
+    const candidate = Math.hypot(horizontal, vertical);
+    if (candidate < clearance) clearance = candidate;
+  }
+  return clearance;
+}
+
 function updateCombatShoulderCamera(dt) {
   // The shoulder camera keeps a bounded pitch so vertical RMB/Q aim changes
   // the same center-screen ray used by combat without allowing a flip.
@@ -4592,10 +4747,11 @@ function updateCombatShoulderCamera(dt) {
     combatGroundPosition.z,
   );
   combatAimPosition.copy(combatAimAnchor)
-    .addScaledVector(combatRight, 1.2)
+    .addScaledVector(combatRight, COMBAT_SHOULDER_CAMERA_SIDE)
     .addScaledVector(combatForward, -COMBAT_SHOULDER_CAMERA_BACK);
   combatAimPosition.y = combatGroundPosition.y + COMBAT_SHOULDER_CAMERA_HEIGHT;
   combatAimLookTarget.copy(combatAimAnchor)
+    .addScaledVector(combatRight, COMBAT_SHOULDER_LOOK_SIDE)
     .addScaledVector(combatForward, COMBAT_SHOULDER_LOOK_DISTANCE);
   combatAimLookTarget.y = THREE.MathUtils.clamp(
     combatGroundPosition.y + COMBAT_SHOULDER_LOOK_HEIGHT
@@ -4605,8 +4761,21 @@ function updateCombatShoulderCamera(dt) {
   );
   const citySafeCamera = city.resolveCameraPosition?.(combatAimAnchor, combatAimPosition)
     || combatAimPosition;
-  const safeCamera = streaming.resolveCameraPosition?.(combatAimAnchor, citySafeCamera)
+  let safeCamera = streaming.resolveCameraPosition?.(combatAimAnchor, citySafeCamera)
     || citySafeCamera;
+  if (combatCameraVehicleClearance(safeCamera) < 0.45) {
+    combatAimPosition.copy(combatAimAnchor)
+      .addScaledVector(combatRight, -COMBAT_SHOULDER_CAMERA_SIDE)
+      .addScaledVector(combatForward, -COMBAT_SHOULDER_CAMERA_BACK);
+    combatAimPosition.y = combatGroundPosition.y + COMBAT_SHOULDER_CAMERA_HEIGHT;
+    const oppositeCitySafe = city.resolveCameraPosition?.(combatAimAnchor, combatAimPosition)
+      || combatAimPosition;
+    const oppositeSafe = streaming.resolveCameraPosition?.(combatAimAnchor, oppositeCitySafe)
+      || oppositeCitySafe;
+    if (combatCameraVehicleClearance(oppositeSafe) > combatCameraVehicleClearance(safeCamera)) {
+      safeCamera = oppositeSafe;
+    }
+  }
   camera.position.lerp(safeCamera, 1 - Math.exp(-18 * dt));
   camera.lookAt(combatAimLookTarget);
   camera.updateMatrixWorld(true);
@@ -6012,6 +6181,7 @@ window.__SF_SIM__ = {
         name: playerWeapon?.name || 'Traveler low-poly sidearm',
         muzzleOffset: COMBAT_WEAPON_MUZZLE_OFFSET,
       },
+      embodiment: getCombatEmbodimentState(),
     };
   },
   getCombatAudioState() {
