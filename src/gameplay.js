@@ -517,6 +517,7 @@ const STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN = 1.7;
 // of the live responder. Traffic safety can keep the shells out of overlap;
 // releasing the brake or moving the player still cancels the hold.
 const STREET_HEAT_ARREST_CONTINUATION_RADIUS = 10;
+const STREET_HEAT_ARREST_LATCH_MAX_SEPARATION = 48;
 const STREET_HEAT_ARREST_SPEED = 1.2;
 const STREET_HEAT_ARREST_HOLD_SECONDS = 1.2;
 
@@ -622,6 +623,7 @@ export function createStreetHeat({
   let latestSpeed = 0;
   let latestDriving = false;
   let responderContactLatched = false;
+  let surrenderContactLatched = false;
 
   function currentLevel() {
     if (!state.pursuitActive) return 0;
@@ -673,6 +675,7 @@ export function createStreetHeat({
       state.pursuitActive = true;
       state.responderContacts = 0;
       responderContactLatched = false;
+      surrenderContactLatched = false;
       state.pressurePhase = 'idle';
       state.pressureLock = 0;
       state.pressureCooldown = 0;
@@ -729,6 +732,7 @@ export function createStreetHeat({
     latestSpeed = 0;
     latestDriving = false;
     responderContactLatched = false;
+    surrenderContactLatched = false;
     marker.visible = false;
   }
 
@@ -749,6 +753,7 @@ export function createStreetHeat({
     state.responderDistances = [];
     state.responderContacts = 0;
     responderContactLatched = false;
+    surrenderContactLatched = false;
     state.pressurePhase = 'idle';
     state.pressureLock = 0;
     state.pressureCooldown = 0;
@@ -1010,15 +1015,40 @@ export function createStreetHeat({
     const nearestResponderDistance = state.responderDistances.length > 0
       ? Math.min(...state.responderDistances)
       : null;
+    if (!state.pursuitActive
+      || !latestDriving
+      || surrendering !== true
+      || nearestResponderDistance === null
+      || nearestResponderDistance > STREET_HEAT_ARREST_LATCH_MAX_SEPARATION) {
+      surrenderContactLatched = false;
+    } else if (nearestResponderDistance !== null
+      && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS) {
+      // Contact starts a deliberate booking attempt. Preserve that transient
+      // intent while S remains held so a road-bound oncoming responder can
+      // pass naturally as the player finishes braking to a full stop.
+      surrenderContactLatched = true;
+    }
     const surrenderEligible = latestDriving
-      ? surrendering === true && latestSpeed <= STREET_HEAT_ARREST_SPEED
+      ? surrendering === true
+        && surrenderContactLatched
+        && latestSpeed <= STREET_HEAT_ARREST_SPEED
       : onFootSurrendering === true && onFootMoving !== true;
-    const arresting = state.pursuitActive
-      && nearestResponderDistance !== null
-      && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS
-      && surrenderEligible;
-    state.arrestHold = arresting ? state.arrestHold + delta : 0;
-    if (state.pursuitActive && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
+    const responderWithinArrestRange = latestDriving
+      ? surrenderContactLatched
+      : nearestResponderDistance !== null
+        && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS;
+    const surrenderIntent = state.pursuitActive
+      && responderWithinArrestRange
+      && (latestDriving ? surrendering === true : surrenderEligible);
+    // A driver is already visibly complying while braking. Count that real-S
+    // dwell from responder contact instead of waiting until the car reaches
+    // 1.2 m/s, which otherwise lets an oncoming road-bound responder travel a
+    // full block before the booking timer even starts. Resolution still
+    // requires the vehicle to be stopped.
+    state.arrestHold = surrenderIntent ? state.arrestHold + delta : 0;
+    if (state.pursuitActive
+      && surrenderEligible
+      && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
       return resolveArrest({ wasDriving: latestDriving, reason: 'surrender' });
     }
 
@@ -1059,6 +1089,7 @@ export function createStreetHeat({
       state.pursuitActive = true;
       state.responderContacts = 0;
       responderContactLatched = false;
+      surrenderContactLatched = false;
       state.pressurePhase = 'idle';
       state.pressureLock = 0;
       state.pressureCooldown = 0;
@@ -1092,7 +1123,8 @@ export function createStreetHeat({
 
     const safeToEscape = state.pursuitActive
       && latestSpeed < 4.2
-      && nearestDistance > STREET_HEAT_NEARBY_RADIUS;
+      && nearestDistance > STREET_HEAT_NEARBY_RADIUS
+      && !(latestDriving && surrendering === true && surrenderContactLatched);
     state.safeElapsed = safeToEscape ? state.safeElapsed + delta : 0;
     if (
       state.pursuitActive
@@ -1109,6 +1141,7 @@ export function createStreetHeat({
       state.responderDistances = [];
       state.responderContacts = 0;
       responderContactLatched = false;
+      surrenderContactLatched = false;
       state.pressurePhase = 'idle';
       state.pressureLock = 0;
       state.pressureCooldown = 0;
@@ -1296,6 +1329,7 @@ export function createStreetHeat({
     state.pursuitActive = snapshot.pursuitActive;
     state.responderContacts = normalizedResponderContacts;
     responderContactLatched = importedResponderContactLatched;
+    surrenderContactLatched = false;
     state.pressurePhase = 'idle';
     state.pressureLock = 0;
     state.pressureCooldown = 0;

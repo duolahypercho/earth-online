@@ -21,6 +21,7 @@ import {
   createPlayerAvatar,
   animatePlayerAvatar,
   setAvatarCombatPose,
+  setAvatarSurrenderPose,
   setAvatarLook,
 } from './player.js';
 import { createLifeSim } from './lifesim.js';
@@ -1233,6 +1234,7 @@ hud = createHud({
 });
 
 let playerAvatar = null;
+let playerBookingPoseUntil = 0;
 const playerAvatarPreviousPosition = new THREE.Vector3();
 const playerAvatarFrameDisplacement = new THREE.Vector3();
 const playerAvatarNextPosition = new THREE.Vector3();
@@ -3390,7 +3392,7 @@ function updatePlayerLayer(dt, elapsed) {
     );
     traffic.setPlayerInput?.({
       throttle: controls.keys.has('keyw') ? 1 : 0,
-      brake: controls.keys.has('keys') ? 1 : 0,
+      brake: controls.keys.has('keys') || controls.keys.has('arrowdown') ? 1 : 0,
       steer: (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
     });
     engineAudio?.update(drivingState.speed, controls.keys.has('keyw') ? 1 : 0);
@@ -3437,6 +3439,9 @@ function updatePlayerLayer(dt, elapsed) {
         // Locomotion animation resets the authored root pose each frame; apply
         // world-facing after that layer so travel direction remains visible.
         updatePlayerLocomotionFacing(dt, nextAvatarPosition);
+        if (performance.now() < playerBookingPoseUntil) {
+          setAvatarSurrenderPose(playerAvatar);
+        }
       } else {
         resetPlayerLocomotionFacing();
       }
@@ -3563,6 +3568,7 @@ streetHeat = createStreetHeat({
       if (damaged) savePlayerProgress();
     }
     if (kind === 'arrested') {
+      playerBookingPoseUntil = performance.now() + 5000;
       combat?.setTriggerHeld?.(false);
       combat?.setAiming?.(false);
       controls.combatPointerId = null;
@@ -3594,6 +3600,7 @@ streetHeat = createStreetHeat({
         position: controls.target,
         playerVehicleId: null,
         level: 0,
+        presentation: 'booking',
       });
       const wantedFine = THREE.MathUtils.clamp(
         Math.ceil(20 + Math.max(0, Number(heatBefore) || 0) * 1.5),
@@ -6405,13 +6412,14 @@ function frame(now) {
   const drivingState = traffic.isPlayerDriving?.()
     ? traffic.getPlayerVehicleState?.()
     : null;
+  const drivingSurrendering = Boolean(drivingState)
+    && (controls.keys.has('keys') || controls.keys.has('arrowdown'));
   const streetHeatState = streetHeat?.update?.(motionDt, {
     driving: Boolean(drivingState),
     speed: drivingState?.speed ?? 0,
     position: drivingState?.position ?? controls.target,
     playerVehicleId: drivingState?.index ?? null,
-    surrendering: Boolean(drivingState)
-      && (controls.keys.has('keys') || controls.keys.has('arrowdown')),
+    surrendering: drivingSurrendering,
     onFootSurrendering: !drivingState
       && onFootSurrenderInputAvailable()
       && controls.keys.has('keyx'),
