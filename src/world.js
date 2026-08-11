@@ -6283,6 +6283,16 @@ export function createCity({ scene, renderer }) {
     return target.clone().addScaledVector(direction, Math.min(distance, safeDistance));
   };
 
+  const getSurfaceHeight = (positionOrX, optionalZ) => {
+    const x = typeof positionOrX === 'number' ? positionOrX : positionOrX?.x;
+    const z = typeof positionOrX === 'number' ? optionalZ : positionOrX?.z;
+    if (!Number.isFinite(x)
+      || !Number.isFinite(z)
+      || Math.abs(x) > CITY_HALF_X
+      || Math.abs(z) > CITY_HALF_Z) return null;
+    return streetHeight(x, z);
+  };
+
   const signalHeads = [];
   const createSignalMaterial = (color) => new THREE.MeshStandardMaterial({
     color: new THREE.Color(color).multiplyScalar(0.2),
@@ -6996,6 +7006,7 @@ export function createCity({ scene, renderer }) {
       return weatherMode;
     },
     getNearestRayBlocker,
+    getSurfaceHeight,
     resolveCameraPosition,
     update,
     stats: {
