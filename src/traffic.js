@@ -1055,10 +1055,27 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   // submitting every glass pane, wheel hub, indicator, and trim mesh once the
   // vehicle is beyond the near street-view pocket. Simulation and collision
   // state remain unchanged; the full assembly returns inside the pocket.
+  const proxyProfile = cls === 'bike'
+    ? { width: 0.42, height: 0.16, length: 0.82, y: 0.34 }
+    : cls === 'sedan' || cls === 'taxi'
+      ? { width: 1.58, height: 0.46, length: 1.78, y: 0.34 }
+      : cls === 'suv'
+        ? { width: 0.98, height: 0.62, length: 0.98, y: 0.4 }
+        : cls === 'pickup'
+          ? { width: 0.98, height: 0.5, length: 0.98, y: 0.35 }
+          : cls === 'van'
+            ? { width: 0.98, height: 0.62, length: 0.98, y: 0.42 }
+            : cls === 'truck'
+              ? { width: 0.98, height: 0.36, length: 0.98, y: 0.3 }
+              : { width: 0.985, height: 0.68, length: 0.985, y: 0.46 };
   const proxyBody = new THREE.Mesh(shared.roundedBox, paint);
   proxyBody.name = 'Traffic distance silhouette';
-  proxyBody.position.y = hgt * 0.46;
-  proxyBody.scale.set(wid * 0.98, hgt * 0.72, len * 0.98);
+  proxyBody.position.y = hgt * proxyProfile.y;
+  proxyBody.scale.set(
+    wid * proxyProfile.width,
+    hgt * proxyProfile.height,
+    len * proxyProfile.length,
+  );
   proxyBody.castShadow = false;
   proxyBody.receiveShadow = true;
   proxyBody.visible = false;
@@ -1073,14 +1090,14 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // gets a convincing arch and the body never appears to clip through a
     // floating wheel at close range.
     const well = new THREE.Mesh(shared.wheelWell, shared.wheelWellMat);
-    well.scale.set(r * 1.16, r * 1.16, 1);
-    well.position.set(Math.sign(x) * wid * 0.488, r * 1.03, z);
+    well.scale.set(r * 1.1, r * 1.1, 1);
+    well.position.set(Math.sign(x) * wid * 0.452, r * 1.03, z);
     well.rotation.y = Math.PI * 0.5;
     bodyG.add(well);
     const w = new THREE.Mesh(shared.unitWheel, shared.tireMat);
     const tireWidth = Math.min(0.3, Math.max(0.2, wid * 0.125));
     w.scale.set(tireWidth, r, r);
-    w.position.set(Math.sign(x) * wid * 0.49, r, z);
+    w.position.set(Math.sign(x) * wid * 0.447, r, z);
     w.castShadow = false;
     w.receiveShadow = true;
     const hub = new THREE.Mesh(shared.unitWheel, shared.hubMat);
@@ -1131,6 +1148,25 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     }
   };
 
+  if (['sedan', 'taxi', 'suv', 'pickup', 'van'].includes(cls)) {
+    const rockerWidth = cls === 'pickup' ? wid * 0.08 : wid * 0.1;
+    const rockerOffset = cls === 'pickup' ? wid * 0.4 : wid * 0.455;
+    for (const side of [-1, 1]) {
+      const rocker = roundedBox(
+        shared,
+        paint,
+        rockerWidth,
+        wheelR * 0.5,
+        len * 0.72,
+        side * rockerOffset,
+        wheelR * 1.14,
+        0,
+        bodyG,
+      );
+      rocker.name = `${cls} connected rocker and fender bridge`;
+    }
+  }
+
   if (cls === 'bike') {
     // Low-poly city bike: diamond frame, disc wheels, flat bars, seat.
     const frameMat = shared.bodyMat(readableBodyColor(color, cls));
@@ -1145,7 +1181,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // Narrow the contact patch for a bike footprint.
     contactShadow.scale.set(wid * 0.9, len * 0.55, 1);
   } else if (cls === 'sedan' || cls === 'taxi') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.46, len * 0.98, 0, hgt * 0.38, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.98, hgt * 0.5, len * 0.98, 0, hgt * 0.34, 0, bodyG);
     // Hood and trunk decks sit lower than the roof so the side profile reads
     // as a three-box sedan rather than one extruded slab.
     roundedBox(shared, paint, wid * 0.94, hgt * 0.15, len * 0.28,
@@ -1155,9 +1191,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addCabin({
       geometry: shared.sedanCabin,
       width: wid * 0.86,
-      height: hgt * 0.4,
+      height: hgt * 0.28,
       length: len * 0.48,
-      y: hgt * 0.82,
+      y: hgt * 0.62,
       z: -len * 0.02,
       roofLength: 0.36,
     });
@@ -1173,7 +1209,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addWheel(-wid * 0.47, -len * 0.32, wheelR);
     addWheel(wid * 0.47, -len * 0.32, wheelR);
   } else if (cls === 'suv') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.5, len * 0.98, 0, hgt * 0.36, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.98, hgt * 0.54, len * 0.98, 0, hgt * 0.33, 0, bodyG);
     roundedBox(shared, paint, wid * 0.93, hgt * 0.2, len * 0.22,
       0, hgt * 0.56, len * 0.36, bodyG);
     roundedBox(shared, paint, wid * 0.94, hgt * 0.18, len * 0.16,
@@ -1181,9 +1217,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addCabin({
       geometry: shared.suvCabin,
       width: wid * 0.88,
-      height: hgt * 0.42,
+      height: hgt * 0.46,
       length: len * 0.56,
-      y: hgt * 0.78,
+      y: hgt * 0.84,
       z: -len * 0.04,
       roofLength: 0.42,
     });
@@ -1191,43 +1227,43 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
       box(shared, shared.rubberTrimMat, 0.055, 0.075, len * 0.72,
         side * wid * 0.505, hgt * 0.2, 0, bodyG);
       box(shared, shared.roofEquipmentMat, 0.055, 0.055, len * 0.58,
-        side * wid * 0.34, hgt * 1.055, -len * 0.03, bodyG);
+        side * wid * 0.34, hgt * 1.15, -len * 0.03, bodyG);
     }
     addWheel(-wid * 0.47, len * 0.33, wheelR, true);
     addWheel(wid * 0.47, len * 0.33, wheelR, true);
     addWheel(-wid * 0.47, -len * 0.32, wheelR);
     addWheel(wid * 0.47, -len * 0.32, wheelR);
   } else if (cls === 'pickup') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.43, len * 0.98, 0, hgt * 0.34, 0, bodyG);
-    roundedBox(shared, paint, wid * 0.94, hgt * 0.46, len * 0.37,
-      0, hgt * 0.66, len * 0.17, bodyG);
+    roundedBox(shared, paint, wid * 0.9, hgt * 0.47, len * 0.98, 0, hgt * 0.32, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.86, hgt * 0.38, len * 0.37,
+      0, hgt * 0.57, len * 0.17, bodyG);
     addCabin({
       geometry: shared.utilityCabin,
-      width: wid * 0.87,
-      height: hgt * 0.34,
+      width: wid * 0.8,
+      height: hgt * 0.28,
       length: len * 0.28,
-      y: hgt * 0.78,
+      y: hgt * 0.68,
       z: len * 0.18,
       roofLength: 0.42,
     });
-    box(shared, shared.underbodyMat, wid * 0.78, 0.08, len * 0.28,
+    box(shared, shared.underbodyMat, wid * 0.72, 0.08, len * 0.28,
       0, hgt * 0.42, -len * 0.29, bodyG);
     for (const side of [-1, 1]) {
       box(shared, paint, 0.13, hgt * 0.35, len * 0.34,
-        side * wid * 0.45, hgt * 0.57, -len * 0.28, bodyG);
+        side * wid * 0.4, hgt * 0.57, -len * 0.28, bodyG);
       box(shared, shared.rubberTrimMat, 0.045, 0.055, len * 0.34,
-        side * wid * 0.515, hgt * 0.76, -len * 0.28, bodyG);
+        side * wid * 0.45, hgt * 0.76, -len * 0.28, bodyG);
     }
-    box(shared, paint, wid * 0.91, hgt * 0.34, 0.12,
+    box(shared, paint, wid * 0.84, hgt * 0.34, 0.12,
       0, hgt * 0.56, -len * 0.46, bodyG);
-    box(shared, shared.rubberTrimMat, wid * 0.76, 0.055, 0.05,
+    box(shared, shared.rubberTrimMat, wid * 0.7, 0.055, 0.05,
       0, hgt * 0.76, -len * 0.46, bodyG);
     addWheel(-wid * 0.47, len * 0.34, wheelR, true);
     addWheel(wid * 0.47, len * 0.34, wheelR, true);
     addWheel(-wid * 0.47, -len * 0.33, wheelR);
     addWheel(wid * 0.47, -len * 0.33, wheelR);
   } else if (cls === 'van') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.72, len * 0.98, 0, hgt * 0.5, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.98, hgt * 0.76, len * 0.98, 0, hgt * 0.47, 0, bodyG);
     addCabin({
       geometry: shared.utilityCabin,
       width: wid * 0.9,
@@ -1554,7 +1590,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // Roof antenna fin seated on each class's actual cabin roof, plus a
     // single exhaust tip: the small manufactured cues that keep the light
     // vehicles reading as automobiles rather than painted blocks at range.
-    const roofAnchor = cls === 'pickup' ? [hgt * 0.96, len * 0.13]
+    const roofAnchor = cls === 'pickup' ? [hgt * 0.79, len * 0.13]
       : cls === 'van' ? [hgt * 0.96, len * 0.18]
         : cls === 'suv' ? [hgt, -len * 0.14]
           : [hgt, -len * 0.16];
@@ -1609,8 +1645,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
           lampX, hgt * 0.95, len * 0.5 - 0.24, bodyG);
       }
     }
-    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, -wid * 0.56, hgt * 0.72, len * 0.23, bodyG);
-    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, wid * 0.56, hgt * 0.72, len * 0.23, bodyG);
+    const utilityMirrorOffset = cls === 'pickup' ? wid * 0.47 : wid * 0.56;
+    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, -utilityMirrorOffset, hgt * 0.72, len * 0.23, bodyG);
+    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, utilityMirrorOffset, hgt * 0.72, len * 0.23, bodyG);
   } else {
     box(shared, shared.trimMat, wid * 0.84, 0.09, 0.1, 0, hgt * 0.18, -len * 0.5 - 0.04, bodyG);
     box(shared, shared.trimMat, wid * 0.84, 0.09, 0.1, 0, hgt * 0.2, len * 0.5 + 0.04, bodyG);
@@ -1739,36 +1776,67 @@ function addProxyClassCue(shared, root, cls, spec, paint) {
   const proxyCueG = new THREE.Group();
   proxyCueG.name = 'Traffic distance class cue';
   proxyCueG.visible = false;
-  const { wid, hgt, len } = spec;
+  const { wid, hgt, len, wheelR } = spec;
+  if (cls !== 'bike') {
+    const proxyWheelRadius = wheelR;
+    const frontZ = len * (cls === 'bus' ? 0.36 : cls === 'truck' ? 0.35 : 0.32);
+    const rearZ = -len * (cls === 'bus' ? 0.32 : cls === 'truck' ? 0.26 : 0.32);
+    for (const z of [frontZ, rearZ]) {
+      for (const side of [-1, 1]) {
+        const wheel = new THREE.Mesh(shared.unitWheel, shared.tireMat);
+        wheel.name = 'Connected proxy wheel';
+        wheel.scale.set(Math.min(0.3, Math.max(0.2, wid * 0.125)), proxyWheelRadius, proxyWheelRadius);
+        wheel.position.set(side * wid * 0.447, proxyWheelRadius, z);
+        wheel.castShadow = false;
+        wheel.receiveShadow = true;
+        proxyCueG.add(wheel);
+      }
+    }
+  }
   if (cls === 'bike') {
     box(shared, paint, wid * 0.35, hgt * 0.08, len * 0.72,
       0, hgt * 0.48, 0, proxyCueG);
   } else if (cls === 'bus') {
+    roundedBox(shared, shared.windowMat, wid * 0.86, hgt * 0.26, len * 0.84,
+      0, hgt * 0.76, 0, proxyCueG);
     roundedBox(shared, shared.bodyMat(BUS_STRIPE), wid * 0.92, hgt * 0.1, len * 0.94,
       0, hgt * 0.58, 0, proxyCueG);
     frontBadge(shared, shared.busRouteMat, wid * 0.34, hgt * 0.12, 0, hgt * 0.66, len * 0.47, proxyCueG,
       'Pooled Muni route board');
   } else if (cls === 'taxi') {
+    taperedBox(shared, shared.sedanCabin, shared.windowMat,
+      wid * 0.9, hgt * 0.28, len * 0.52, 0, hgt * 0.66, -len * 0.02, proxyCueG);
     box(shared, shared.signMat, wid * 0.42, hgt * 0.12, len * 0.22,
       0, hgt * 0.92, -len * 0.04, proxyCueG);
     for (const side of [-1, 1]) {
       box(shared, shared.taxiTrimMat, 0.03, hgt * 0.08, len * 0.72,
         side * wid * 0.5, hgt * 0.48, 0, proxyCueG);
     }
-  } else if (cls === 'truck' || cls === 'van') {
-    box(shared, paint, wid * 0.82, hgt * 0.08, len * 0.42,
-      0, hgt * 0.72, -len * 0.08, proxyCueG);
-    box(shared, shared.trimMat, wid * 0.18, hgt * 0.08, len * 0.08,
-      0, hgt * 0.72, len * 0.38, proxyCueG);
+  } else if (cls === 'truck') {
+    roundedBox(shared, shared.bodyMat(0xf0ede6), wid * 0.94, hgt * 0.66, len * 0.64,
+      0, hgt * 0.58, -len * 0.13, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.82, hgt * 0.25, len * 0.2, 0, hgt * 0.7, len * 0.33, proxyCueG);
+  } else if (cls === 'van') {
+    roundedBox(shared, paint, wid * 0.92, hgt * 0.42, len * 0.88,
+      0, hgt * 0.68, -len * 0.02, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.84, hgt * 0.25, len * 0.28, 0, hgt * 0.78, len * 0.28, proxyCueG);
   } else if (cls === 'pickup') {
-    box(shared, paint, wid * 0.76, hgt * 0.28, len * 0.34,
-      0, hgt * 0.58, -len * 0.24, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.82, hgt * 0.28, len * 0.3, 0, hgt * 0.68, len * 0.18, proxyCueG);
+    for (const side of [-1, 1]) {
+      box(shared, paint, 0.12, hgt * 0.28, len * 0.34,
+        side * wid * 0.42, hgt * 0.54, -len * 0.28, proxyCueG);
+    }
   } else if (cls === 'suv') {
+    taperedBox(shared, shared.suvCabin, shared.windowMat,
+      wid * 0.84, hgt * 0.46, len * 0.56, 0, hgt * 0.8, -len * 0.04, proxyCueG);
     box(shared, shared.roofEquipmentMat, wid * 0.42, hgt * 0.05, len * 0.52,
-      0, hgt * 0.92, -len * 0.03, proxyCueG);
+      0, hgt * 1.06, -len * 0.03, proxyCueG);
   } else {
-    taperedBox(shared, shared.sedanCabin, paint, wid * 0.72, hgt * 0.16, len * 0.34,
-      0, hgt * 0.78, -len * 0.02, proxyCueG);
+    taperedBox(shared, shared.sedanCabin, shared.windowMat,
+      wid * 0.9, hgt * 0.28, len * 0.52, 0, hgt * 0.66, -len * 0.02, proxyCueG);
   }
   root.add(proxyCueG);
   return proxyCueG;
