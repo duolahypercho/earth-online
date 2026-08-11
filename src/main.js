@@ -530,6 +530,42 @@ const pedestrians = createPedestrianSystem({
   scene,
   sidewalkNetwork: city.sidewalkNetwork,
   onPlayerCrowdContact: (event) => handlePlayerOnFootPedestrianContact(event),
+  getCivilianCounterContext: () => ({
+    position: {
+      x: controls.target.x,
+      y: controls.target.y - QA_ROAM_CLEARANCE,
+      z: controls.target.z,
+    },
+    torsoPosition: (() => {
+      const torso = playerAvatar?.userData?.body;
+      if (!torso?.getWorldPosition) return null;
+      playerAvatar.updateMatrixWorld(true);
+      torso.getWorldPosition(civilianCounterPlayerTorso);
+      return {
+        x: civilianCounterPlayerTorso.x,
+        y: civilianCounterPlayerTorso.y,
+        z: civilianCounterPlayerTorso.z,
+      };
+    })(),
+    running: combat?.getState?.().status === 'running',
+    onFoot: traffic.isPlayerDriving?.() !== true,
+    outdoor: playerLayerActive && controls.interiorMode !== true && beautyMode !== true,
+    passenger: passengerRideActive(),
+    transition: vehicleEmbodimentTransitionActive(),
+  }),
+  hasCivilianCounterLineOfSight: (origin, target) => {
+    if (!origin || !target) return false;
+    civilianCounterLosDirection.subVectors(target, origin);
+    const distance = civilianCounterLosDirection.length();
+    if (distance <= 0.001) return false;
+    civilianCounterLosDirection.multiplyScalar(1 / distance);
+    const blocker = getNearestCombatWorldBlocker(origin, civilianCounterLosDirection, distance);
+    return !(Number.isFinite(blocker?.distance) && blocker.distance < distance - 0.06);
+  },
+  onCivilianMeleeCounter: (event) => {
+    if (event?.kind !== 'civilian-melee-counter' || event.hit !== true) return false;
+    return combat?.damagePlayer?.(10, `civilian-melee:${event.residentId}`) === true;
+  },
 });
 const sfpdOfficers = createSfpdOfficerResponse({
   scene,
@@ -955,8 +991,11 @@ let sfpdOfficerQaPressureDelay = 0;
 let onFootVehicleImpactQaScenario = null;
 let onFootPedestrianSpaceQaScenario = null;
 let onFootMeleeQaScenario = null;
+let pedestrianMeleeResponseQaScenario = null;
 const meleeQaHandPoint = new THREE.Vector3();
 const meleeQaTargetPoint = new THREE.Vector3();
+const civilianCounterLosDirection = new THREE.Vector3();
+const civilianCounterPlayerTorso = new THREE.Vector3();
 const sfpdResponderDeploymentHolds = new Set();
 
 function getSfpdPursuitResponders() {
@@ -1303,6 +1342,7 @@ hud = createHud({
     coopWaterfrontSession = null;
     networking?.leaveCoopSession?.();
     cityShift?.restart();
+    pedestrians.resetCivilianMeleeCounters?.();
     hud?.setGameState(cityShift?.getState(controls.target, controls.activePortal));
     hud?.setMessage('Waterfront Loop replayed · follow the amber beacon to the Welcome Center.');
     savePlayerProgress();
@@ -1592,6 +1632,10 @@ function handlePlayerOnFootPedestrianContact(event) {
 function restorePlayerProgress() {
   const snapshot = readPlayerProgress();
   if (!snapshot) return false;
+  // A progress import restores combat bookkeeping independently of pooled
+  // meshes. Reset/consume their counter markers before any imported state can
+  // become active, preventing a pre-restore windup from replaying.
+  pedestrians.resetCivilianMeleeCounters?.();
   const previousLife = lifeSim?.exportState?.();
   const previousShift = cityShift?.exportState?.();
   const previousCombat = combat?.exportState?.();
@@ -1656,6 +1700,7 @@ function restorePlayerProgress() {
     && vehicleRestored
     && aftermathRestored
     && pedestrianAftermathRestored) {
+    pedestrians.resetCivilianMeleeCounters?.();
     lastProgressSave = { ok: true, savedAt: snapshot.savedAt || null, restored: true };
     return true;
   }
@@ -1677,6 +1722,7 @@ function restorePlayerProgress() {
   if (previousPedestrianAftermath) {
     pedestrians.importCombatAftermathState?.(previousPedestrianAftermath);
   }
+  pedestrians.resetCivilianMeleeCounters?.();
   return false;
 }
 
@@ -4010,7 +4056,8 @@ function updatePlayerLayer(dt, elapsed) {
       const hideAvatarForShot = beautyMode
         || (Boolean(qaCameraPose)
           && onFootPedestrianSpaceQaScenario?.captureFraming !== true
-          && onFootMeleeQaScenario?.captureFraming !== true)
+          && onFootMeleeQaScenario?.captureFraming !== true
+          && pedestrianMeleeResponseQaScenario?.captureFraming !== true)
         || passengerRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
@@ -4874,8 +4921,12 @@ function stageVehicleEmbodimentQa({ kind = 'core-private', vehicleClass = null }
   pedestrians.setQaSolo?.(null);
   pedestrians.setQaWitnessAnchor?.(null);
   clearPlayerVehicleEmbodiment();
+  // Keep this QA-only selection independent of an earlier melee/interior
+  // scenario's roam target. This core-road reference consistently chooses the
+  // same collision-safe private sedan near the authored roadway.
+  const qaVehicleReference = { x: 50, z: -4 };
   const staged = traffic.stagePlayerVehicleEmbodimentQa?.({
-    referencePosition: controls.target,
+    referencePosition: qaVehicleReference,
     preferredClass: vehicleClass,
   });
   if (!staged || staged.syntheticEvents !== 0) {
@@ -5395,6 +5446,173 @@ const onFootMeleeQa = Object.freeze({
   snapshot: snapshotOnFootMeleeQa,
 });
 
+// Live-resident counter QA. Staging changes only the normal pooled actor and
+// player pose; it never manufactures a combat contact or counter event.
+function stagePedestrianMeleeResponseQa({ kind = 'positive' } = {}) {
+  const requested = String(kind);
+  if (!['positive', 'evade', 'blocked', 'defeated'].includes(requested)) {
+    pedestrianMeleeResponseQaScenario = null;
+    return { ready: false, syntheticEvents: 0, kind: requested };
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  beautyMode = false;
+  app?.classList.remove('is-beauty');
+  controls.keys.clear();
+  controls.meleePointer = null;
+  onFootMeleeQaScenario = null;
+  pedestrianMeleeResponseQaScenario = null;
+  combat?.restart?.();
+  pedestrians.clearCombatAftermathState?.();
+  pedestrians.resetCivilianMeleeCounters?.();
+  const blockedResidentSurface = requested === 'blocked'
+    ? getTraversalSurfaceHeight(-42.35, 25.48)
+    : null;
+  const blockedPlayerSurface = requested === 'blocked'
+    ? getTraversalSurfaceHeight(-41.37, 24.5)
+    : null;
+  if (requested === 'blocked'
+    && (!Number.isFinite(blockedResidentSurface) || !Number.isFinite(blockedPlayerSurface))) {
+    return { ready: false, syntheticEvents: 0, kind: requested, reason: 'blocked-surface-unavailable' };
+  }
+  const staged = pedestrians.stageOnFootPlayerContactQa?.({
+    kind: 'contact',
+    placement: requested === 'blocked' ? {
+      residentPosition: { x: -42.35, y: blockedResidentSurface, z: 25.48 },
+    } : null,
+  });
+  const resident = pedestrians.getOnFootPlayerContactQaState?.().resident;
+  if (!staged?.ready || staged.syntheticEvents !== 0 || !resident?.position) {
+    return { ready: false, syntheticEvents: staged?.syntheticEvents ?? 0, kind: requested };
+  }
+  pedestrians.setQaSolo?.(null);
+  const target = new THREE.Vector3(resident.position.x, resident.position.y, resident.position.z);
+  const residentMesh = scene.getObjectByProperty?.('uuid', resident.objectUuid) || null;
+  let wallBlocked = false;
+  if (requested === 'blocked') {
+    setQaRoamPose({ x: -41.37, z: 24.5, yaw: -0.785, pitch: 1.12, distance: 12 });
+    settleMeleeQaAvatar();
+    playerAvatar?.updateMatrixWorld?.(true);
+    const torso = playerAvatar?.userData?.body;
+    if (!torso?.getWorldPosition) {
+      pedestrians.clearOnFootPlayerContactQaStage?.();
+      return {
+        ready: false,
+        syntheticEvents: 0,
+        kind: requested,
+        residentId: resident.id,
+        residentObjectUuid: resident.objectUuid,
+        reason: 'blocked-player-torso-unavailable',
+      };
+    }
+    torso.getWorldPosition(meleeQaHandPoint);
+    const residentTorso = residentMesh?.userData?.body;
+    if (residentTorso?.getWorldPosition) {
+      residentMesh.updateMatrixWorld(true);
+      residentTorso.getWorldPosition(meleeQaTargetPoint);
+    } else {
+      meleeQaTargetPoint.set(target.x, target.y + 1.246, target.z);
+    }
+    meleeQaTargetPoint.sub(meleeQaHandPoint);
+    const blockerDistance = meleeQaTargetPoint.length();
+    if (blockerDistance > 0.001) meleeQaTargetPoint.multiplyScalar(1 / blockerDistance);
+    const blocker = blockerDistance > 0.001
+      ? getNearestCombatWorldBlocker(meleeQaHandPoint, meleeQaTargetPoint, blockerDistance)
+      : null;
+    wallBlocked = Number.isFinite(blocker?.distance) && blocker.distance < blockerDistance - 0.06;
+    if (!wallBlocked) {
+      pedestrians.clearOnFootPlayerContactQaStage?.();
+      return {
+        ready: false,
+        syntheticEvents: 0,
+        kind: requested,
+        residentId: resident.id,
+        residentObjectUuid: resident.objectUuid,
+        reason: 'authored-blocker-missing',
+      };
+    }
+  } else {
+    // Positive begins outside player melee reach so real W movement owns the
+    // approach. The 0.34 m authored recoil leaves a normal ~1.20 m strike
+    // inside the counter's bounded 1.60 m contact band; evade starts farther.
+    placeMeleeQaPlayer(target, requested === 'evade' ? 1.2 : requested === 'positive' ? 2.1 : 0.94, 0);
+  }
+  const mesh = residentMesh;
+  if (requested === 'defeated' && mesh?.userData) {
+    mesh.userData.combatDisabled = true;
+    mesh.userData.combatDefeated = true;
+    mesh.userData.combatReaction = 'staggered';
+    mesh.userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+    mesh.userData.combatReactionSource = 'qa-defeated';
+  }
+  pedestrianMeleeResponseQaScenario = {
+    kind: requested,
+    residentId: resident.id,
+    residentObjectUuid: resident.objectUuid,
+    wallBlocked,
+  };
+  return {
+    ready: true,
+    syntheticEvents: 0,
+    kind: requested,
+    residentId: resident.id,
+    residentObjectUuid: resident.objectUuid,
+    wallBlocked,
+    context: snapshotPedestrianMeleeResponseQa().player.context,
+  };
+}
+
+function snapshotPedestrianMeleeResponseQa() {
+  const scenario = pedestrianMeleeResponseQaScenario;
+  const pedestrianState = pedestrians.getOnFootPlayerContactQaState?.() || {};
+  const resident = pedestrianState.resident;
+  const counter = scenario?.residentId
+    ? pedestrians.getCivilianMeleeCounterState?.(scenario.residentId)
+    : null;
+  const combatState = combat?.getState?.() || {};
+  const playerContext = Object.freeze({
+    driving: traffic.isPlayerDriving?.() === true,
+    interior: controls.interiorMode === true,
+    passenger: passengerRideActive(),
+    transition: vehicleEmbodimentTransitionActive(),
+    running: combatState.status === 'running',
+    outdoor: playerLayerActive && controls.interiorMode !== true && beautyMode !== true,
+  });
+  return Object.freeze({
+    scenario: scenario?.kind ?? null,
+    captureFraming: scenario?.captureFraming === true,
+    syntheticEvents: 0,
+    player: Object.freeze({
+      onFoot: playerContext.driving !== true,
+      context: playerContext,
+      position: Object.freeze({ x: controls.target.x, y: controls.target.y, z: controls.target.z }),
+    }),
+    resident: resident ? Object.freeze({
+      id: resident.id,
+      objectUuid: resident.objectUuid,
+      visible: resident.visible === true,
+      live: resident.live === true,
+      defeated: resident.defeated === true,
+      position: Object.freeze({ ...resident.position }),
+    }) : null,
+    counter: counter ? Object.freeze({
+      phase: counter.phase,
+      hand: counter.hand,
+      timing: counter.timing ? Object.freeze({ ...counter.timing }) : null,
+      cooldownRemaining: counter.cooldownRemaining,
+      closingDistance: counter.closingDistance,
+      lastEvent: counter.lastEvent ?? null,
+      armChain: counter.armChain ?? null,
+    }) : null,
+    staged: Object.freeze({ wallBlocked: scenario?.wallBlocked === true }),
+  });
+}
+
+const pedestrianMeleeResponseQa = Object.freeze({
+  stage: stagePedestrianMeleeResponseQa,
+  snapshot: snapshotPedestrianMeleeResponseQa,
+});
+
 function dispatchCombatWitness({ incidentId, residentId, source = 'combat' } = {}) {
   if (!Number.isInteger(incidentId) || typeof residentId !== 'string') return null;
   const witness = pedestrians.getIncidentWitness?.(residentId, 18) ?? null;
@@ -5459,7 +5677,14 @@ combat = createCombatLoop({
     if (kind === 'damage') {
       // Authoritative combat damage edge: queue the additive hit-react pose
       // and the bounded camera impulse. No health/economy mutation here.
-      registerPlayerHitReaction(playerAvatar, { source, amount, downed: false });
+      const hitReaction = registerPlayerHitReaction(playerAvatar, { source, amount, downed: false });
+      if (typeof source === 'string' && source.startsWith('civilian-melee:') && hitReaction) {
+        // The counter's contact capture is taken in this same frame. Start its
+        // normal combat-owned flinch partway through the envelope so head,
+        // torso, and arms visibly react with the actual damage edge.
+        hitReaction.pending = false;
+        hitReaction.startElapsed = elapsed - 0.11;
+      }
       playerCameraImpulse.trigger({ source, amount, downed: false });
     }
     if (kind === 'downed') {
@@ -5479,6 +5704,7 @@ combat = createCombatLoop({
     } else if (kind === 'restart') {
       clearPlayerVehicleEmbodiment();
       pedestrians.clearCombatAftermathState?.();
+      pedestrians.resetCivilianMeleeCounters?.();
       clearSfpdResponderDeploymentHolds();
       sfpdOfficers.clear?.({ resetDefeats: true });
       savePlayerProgress();
@@ -7135,7 +7361,8 @@ function combatInputAvailable() {
       && !beautyMode
       && (!qaCameraPose
         || Boolean(sfpdOfficerQaScenario)
-        || onFootMeleeQaScenario?.captureFraming === true),
+        || onFootMeleeQaScenario?.captureFraming === true
+        || pedestrianMeleeResponseQaScenario?.captureFraming === true),
   );
 }
 
@@ -7171,7 +7398,8 @@ function onFootSurrenderInputAvailable() {
       && !beautyMode
       && (!qaCameraPose
         || Boolean(sfpdOfficerQaScenario)
-        || onFootMeleeQaScenario?.captureFraming === true),
+        || onFootMeleeQaScenario?.captureFraming === true
+        || pedestrianMeleeResponseQaScenario?.captureFraming === true),
   );
 }
 
@@ -8367,7 +8595,8 @@ function frame(now) {
       && !beautyMode
       && (!qaCameraPose
         || Boolean(sfpdOfficerQaScenario)
-        || onFootMeleeQaScenario?.captureFraming === true),
+        || onFootMeleeQaScenario?.captureFraming === true
+        || pedestrianMeleeResponseQaScenario?.captureFraming === true),
     suspendRecovery: Boolean(streetHeatState?.pursuitActive),
   });
   updateCombatOverlay(combatState);
@@ -8556,6 +8785,9 @@ window.__SF_SIM__ = {
     if (onFootMeleeQaScenario) {
       onFootMeleeQaScenario.captureFraming = Boolean(qaCameraPose);
     }
+    if (pedestrianMeleeResponseQaScenario) {
+      pedestrianMeleeResponseQaScenario.captureFraming = Boolean(qaCameraPose);
+    }
   },
   setRoamPose(position) {
     return setQaRoamPose(position);
@@ -8637,6 +8869,9 @@ window.__SF_SIM__ = {
   getOnFootMeleeQa() {
     return onFootMeleeQa;
   },
+  getPedestrianMeleeResponseQa() {
+    return pedestrianMeleeResponseQa;
+  },
   getPlayerVehicleEmbodimentState() {
     return getPlayerVehicleEmbodimentState();
   },
@@ -8691,7 +8926,9 @@ window.__SF_SIM__ = {
     return combat?.fire?.() ?? { fired: false, reason: 'unavailable' };
   },
   restartCombat() {
-    return combat?.restart?.() ?? null;
+    const state = combat?.restart?.() ?? null;
+    pedestrians.resetCivilianMeleeCounters?.();
+    return state;
   },
   reloadCombat() {
     return combat?.reload?.() ?? false;

@@ -2756,6 +2756,9 @@ export function createPedestrianSystem({
   scene,
   sidewalkNetwork,
   onPlayerCrowdContact,
+  getCivilianCounterContext,
+  hasCivilianCounterLineOfSight,
+  onCivilianMeleeCounter,
 } = {}) {
   if (!scene?.isScene) throw new TypeError('createPedestrianSystem requires a THREE.Scene.');
 
@@ -2816,6 +2819,30 @@ export function createPedestrianSystem({
     lastCorrection: null,
     lastContact: null,
   };
+
+  // Civilian retaliation intentionally lives beside the pooled resident state:
+  // combat only marks a melee reaction, while this system owns route-safe
+  // recovery, the upper-body animation, and the one-shot consequence edge.
+  const CIVILIAN_COUNTER_WINDUP_MIN = 0.14;
+  const CIVILIAN_COUNTER_RECOVERY = 0.42;
+  const CIVILIAN_COUNTER_COOLDOWN = 1.05;
+  const CIVILIAN_COUNTER_MIN_RANGE = 0.85;
+  const CIVILIAN_COUNTER_MAX_RANGE = 1.6;
+  const CIVILIAN_COUNTER_EVADE_RANGE = 1.75;
+  const CIVILIAN_COUNTER_CLOSING_DISTANCE = 0.36;
+  const CIVILIAN_COUNTER_CLOSING_SPEED = 0.8;
+  const CIVILIAN_COUNTER_MIN_SEPARATION = ON_FOOT_PLAYER_RADIUS
+    + ON_FOOT_PEDESTRIAN_RADIUS + ON_FOOT_CONTACT_MARGIN;
+  const counterHandPoint = new THREE.Vector3();
+  const counterHandCenter = new THREE.Vector3();
+  const counterShoulderPoint = new THREE.Vector3();
+  const counterElbowPoint = new THREE.Vector3();
+  const counterFistDirection = new THREE.Vector3();
+  const counterDownAxis = new THREE.Vector3(0, -1, 0);
+  const counterLocalDirection = new THREE.Vector3();
+  const counterParentQuaternion = new THREE.Quaternion();
+  const counterTargetPoint = new THREE.Vector3();
+  const counterLosOrigin = new THREE.Vector3();
 
   // Enrich each crosswalk with the traffic-signal context it needs to time
   // pedestrian phases realistically. A crossing over the east-west roadway
@@ -4448,6 +4475,423 @@ export function createPedestrianSystem({
     userData.rig.position.x += Math.sin(elapsed * 22 + data.phase) * 0.012 * stagger;
   }
 
+  function counterStateFor(data) {
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (!userData.civilianMeleeCounter) {
+      userData.civilianMeleeCounter = {
+        phase: 'idle',
+        reactionToken: null,
+        attempt: 0,
+        hand: data.index % 2 === 0 ? 'right' : 'left',
+        recoveryReadyAt: 0,
+        windupStartedAt: 0,
+        contactAt: 0,
+        recoveryUntil: 0,
+        cooldownUntil: 0,
+        closingApplied: 0,
+        closingResynced: false,
+        closingEvaded: false,
+        closingLastDistance: null,
+        emitted: false,
+        lastEvent: null,
+      };
+    }
+    return userData.civilianMeleeCounter;
+  }
+
+  function resetCivilianMeleeCounter(data) {
+    const userData = data?.mesh?.userData;
+    if (!userData) return;
+    // Restore/restart may replace combat state without rewriting a pooled
+    // mesh's old reaction marker. Remember that marker as consumed so a reset
+    // cannot replay a pre-reset melee hit on the next pedestrian tick.
+    const reactionUntil = Number(userData.combatReactionUntil) || 0;
+    const reactionToken = userData.combatReactionSource === 'melee'
+      ? `${reactionUntil.toFixed(3)}:${userData.combatReaction || ''}`
+      : null;
+    userData.civilianMeleeCounter = {
+      phase: 'idle',
+      reactionToken,
+      attempt: 0,
+      hand: data.index % 2 === 0 ? 'right' : 'left',
+      recoveryReadyAt: 0,
+      windupStartedAt: 0,
+      contactAt: 0,
+      recoveryUntil: 0,
+      cooldownUntil: 0,
+      closingApplied: 0,
+      closingResynced: false,
+      closingEvaded: false,
+      closingLastDistance: null,
+      emitted: false,
+      lastEvent: null,
+    };
+  }
+
+  function civilianCounterHoldsRoute(data) {
+    const userData = data?.mesh?.userData;
+    if (userData?.combatDefeated === true || userData?.combatDisabled === true) return false;
+    const phase = userData?.civilianMeleeCounter?.phase;
+    return phase === 'delay' || phase === 'windup' || phase === 'contact' || phase === 'recovery';
+  }
+
+  function counterEligible(data) {
+    const userData = data.mesh.userData || {};
+    return data.mesh.visible === true
+      && userData.combatDefeated !== true
+      && userData.combatDisabled !== true;
+  }
+
+  function startCivilianCounterAfterRecovery(data, elapsed) {
+    const state = counterStateFor(data);
+    state.attempt += 1;
+    // These offsets are stable per resident/attempt, so a capture is
+    // repeatable without synchronizing random timers across systems.
+    const recoveryDelay = 0.25 + ((data.index * 97 + state.attempt * 53) % 651) / 1000;
+    const contactDelay = 0.18 + ((data.index * 71 + state.attempt * 31) % 241) / 1000;
+    state.phase = 'delay';
+    state.recoveryReadyAt = elapsed + recoveryDelay;
+    state.windupStartedAt = 0;
+    state.contactAt = 0;
+    state.recoveryUntil = 0;
+    state.closingApplied = 0;
+    state.closingResynced = false;
+    state.closingEvaded = false;
+    state.closingLastDistance = null;
+    state.emitted = false;
+    state.timing = {
+      recoveryDelayMs: Math.round(recoveryDelay * 1000),
+      windupMs: Math.max(Math.round(CIVILIAN_COUNTER_WINDUP_MIN * 1000), Math.round(contactDelay * 1000)),
+      contactMs: Math.round(contactDelay * 1000),
+    };
+  }
+
+  function resyncCivilianCounterRoute(data, state) {
+    if (state.closingResynced || state.closingApplied <= 1e-5) return;
+    const location = data.path ? locateOnPath(data.path, data.mesh.position) : null;
+    if (location) {
+      data.segment = location.segment;
+      data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+      setDestinationFor(data);
+    }
+    data.groundY = data.mesh.position.y;
+    state.closingResynced = true;
+  }
+
+  function applyCivilianCounterClosingStep(data, delta) {
+    const state = counterStateFor(data);
+    if ((state.phase !== 'delay' && state.phase !== 'windup')
+      || state.closingApplied >= CIVILIAN_COUNTER_CLOSING_DISTANCE
+      || !counterEligible(data)) return;
+    const context = getCivilianCounterContext?.() || null;
+    const playerPosition = context?.position;
+    const contextValid = context?.running === true
+      && context?.onFoot === true
+      && context?.outdoor === true
+      && context?.passenger !== true
+      && context?.transition !== true;
+    if (!contextValid || !Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return;
+    const deltaX = playerPosition.x - data.mesh.position.x;
+    const deltaZ = playerPosition.z - data.mesh.position.z;
+    const distance = Math.hypot(deltaX, deltaZ);
+    if (Number.isFinite(state.closingLastDistance)
+      && distance > state.closingLastDistance + 0.06) state.closingEvaded = true;
+    state.closingLastDistance = distance;
+    if (state.closingEvaded) return;
+    if (distance <= CIVILIAN_COUNTER_MIN_SEPARATION + 1e-5) return;
+    counterLosOrigin.set(data.mesh.position.x, data.mesh.position.y + 1.04, data.mesh.position.z);
+    const torsoPosition = context?.torsoPosition;
+    counterTargetPoint.set(
+      Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
+      Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04,
+      Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
+    );
+    if (typeof hasCivilianCounterLineOfSight !== 'function'
+      || hasCivilianCounterLineOfSight(counterLosOrigin, counterTargetPoint) !== true) return;
+    const step = Math.min(
+      0.04,
+      CIVILIAN_COUNTER_CLOSING_SPEED * Math.max(0, delta),
+      CIVILIAN_COUNTER_CLOSING_DISTANCE - state.closingApplied,
+      distance - CIVILIAN_COUNTER_MIN_SEPARATION,
+    );
+    if (step <= 1e-5) return;
+    data.mesh.position.x += deltaX / distance * step;
+    data.mesh.position.z += deltaZ / distance * step;
+    state.closingApplied += step;
+    data.groundY = data.mesh.position.y;
+  }
+
+  function updateCivilianMeleeCounter(data, elapsed) {
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    const state = counterStateFor(data);
+    const reactionUntil = Number(userData.combatReactionUntil) || 0;
+    const meleeReaction = userData.combatReactionSource === 'melee';
+    const token = meleeReaction ? `${reactionUntil.toFixed(3)}:${userData.combatReaction || ''}` : null;
+
+    if (userData.combatDefeated === true || userData.combatDisabled === true) {
+      // Defeat takes authority immediately: cancel all pending/visible stages,
+      // consume any live melee marker, and leave no counter pose or event to
+      // resolve on the same frame.
+      state.reactionToken = token ?? state.reactionToken;
+      state.emitted = true;
+      resyncCivilianCounterRoute(data, state);
+      state.phase = 'idle';
+      state.cooldownUntil = 0;
+      return state;
+    }
+
+    if (token && token !== state.reactionToken) {
+      state.reactionToken = token;
+      // A fresh melee marker supersedes an unstarted response; an already
+      // visible counter is allowed to finish its readable whiff/contact.
+      if (state.phase === 'idle' || state.phase === 'cooldown' || state.phase === 'awaiting-recovery' || state.phase === 'delay') {
+        state.phase = 'awaiting-recovery';
+        state.emitted = false;
+      }
+    }
+
+    if (state.phase === 'awaiting-recovery') {
+      const recovered = userData.combatReactionSource !== 'melee'
+        && userData.meleeRecoilPending !== true
+        && reactionUntil <= elapsed;
+      if (recovered) {
+        if (counterEligible(data) && elapsed >= state.cooldownUntil) {
+          startCivilianCounterAfterRecovery(data, elapsed);
+        } else {
+          state.phase = 'cooldown';
+          state.cooldownUntil = Math.max(state.cooldownUntil, elapsed + CIVILIAN_COUNTER_COOLDOWN);
+        }
+      }
+      return state;
+    }
+
+    if (state.phase === 'delay' && elapsed >= state.recoveryReadyAt) {
+      state.phase = 'windup';
+      state.windupStartedAt = elapsed;
+      state.contactAt = elapsed + (state.timing.contactMs / 1000);
+    } else if (state.phase === 'windup' && elapsed >= state.contactAt) {
+      state.phase = 'contact';
+    } else if (state.phase === 'recovery' && elapsed >= state.recoveryUntil) {
+      resyncCivilianCounterRoute(data, state);
+      state.phase = 'cooldown';
+      state.cooldownUntil = elapsed + CIVILIAN_COUNTER_COOLDOWN;
+    } else if (state.phase === 'cooldown' && elapsed >= state.cooldownUntil) {
+      state.phase = 'idle';
+    }
+    return state;
+  }
+
+  function applyCivilianCounterPose(data, elapsed) {
+    const state = counterStateFor(data);
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    if (!['windup', 'contact', 'recovery'].includes(state.phase)) {
+      if (Number.isFinite(state.armScaleY)) arm.scale.y = state.armScaleY;
+      if (Number.isFinite(state.forearmScaleY)) forearm.scale.y = state.forearmScaleY;
+      return;
+    }
+    const windupDuration = Math.max(CIVILIAN_COUNTER_WINDUP_MIN, (state.timing?.contactMs || 180) / 1000);
+    const windup = state.phase === 'windup'
+      ? THREE.MathUtils.clamp((elapsed - state.windupStartedAt) / windupDuration, 0, 1)
+      : 1;
+    const recovery = state.phase === 'recovery'
+      ? THREE.MathUtils.clamp((state.recoveryUntil - elapsed) / CIVILIAN_COUNTER_RECOVERY, 0, 1)
+      : 1;
+    const power = windup * recovery;
+    const shoulderSide = state.hand === 'left' ? -1 : 1;
+    const extension = state.phase === 'windup' ? windup : 1;
+    if (!Number.isFinite(state.armScaleY)) state.armScaleY = arm.scale.y;
+    if (!Number.isFinite(state.forearmScaleY)) state.forearmScaleY = forearm.scale.y;
+    // `animate()` owns legs and locomotion. This additive layer touches only
+    // the torso/shoulder/elbow/forearm/hand chain, preserving grounded feet
+    // and the route's root position through the complete counter.
+    userData.body.rotation.x -= 0.22 * power;
+    userData.body.rotation.z += shoulderSide * 0.18 * power;
+    // Windup visibly folds the fist back toward the chest; contact opens the
+    // same shoulder → elbow → forearm chain into a long, readable reach.
+    arm.rotation.x += THREE.MathUtils.lerp(-0.48, -1.38, extension) * power;
+    arm.rotation.z += shoulderSide * THREE.MathUtils.lerp(0.24, 0.38, extension) * power;
+    forearm.rotation.x += THREE.MathUtils.lerp(1.28, 0.18, extension) * power;
+    forearm.rotation.z += shoulderSide * 0.16 * power;
+    // Share the reach across upper and lower arm so the contact silhouette
+    // stays proportionate rather than reading as a telescoping forearm.
+    arm.scale.y = state.armScaleY * (1 + 0.45 * extension * power);
+    forearm.scale.y = state.forearmScaleY * (1 + 0.16 * extension * power);
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (hand) hand.rotation.x -= 0.34 * power;
+  }
+
+  function orientCivilianCounterTowardPlayer(data, delta) {
+    if (!civilianCounterHoldsRoute(data)) return;
+    const playerPosition = getCivilianCounterContext?.()?.position;
+    if (!Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return;
+    const desired = Math.atan2(
+      playerPosition.x - data.mesh.position.x,
+      playerPosition.z - data.mesh.position.z,
+    );
+    const offset = Math.atan2(
+      Math.sin(desired - data.heading),
+      Math.cos(desired - data.heading),
+    );
+    // A 22/s damp reaches the contact-facing target within 12° during the
+    // shortest permitted 180 ms windup, without moving the rooted feet.
+    data.heading += offset * (1 - Math.exp(-22 * Math.max(0, delta)));
+    data.mesh.rotation.y = data.heading;
+    data.turnRate = 0;
+  }
+
+  function aimCivilianCounterArmAtTarget(data, state, targetPoint) {
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    if (!arm?.parent || !forearm?.parent || !targetPoint) return false;
+    data.mesh.updateMatrixWorld(true);
+    arm.getWorldPosition(counterShoulderPoint);
+    counterFistDirection.subVectors(targetPoint, counterShoulderPoint);
+    if (counterFistDirection.lengthSq() <= 1e-6) return false;
+    counterFistDirection.normalize();
+    arm.parent.getWorldQuaternion(counterParentQuaternion).invert();
+    counterLocalDirection.copy(counterFistDirection).applyQuaternion(counterParentQuaternion).normalize();
+    arm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
+    data.mesh.updateMatrixWorld(true);
+    forearm.getWorldPosition(counterElbowPoint);
+    counterFistDirection.subVectors(targetPoint, counterElbowPoint);
+    if (counterFistDirection.lengthSq() <= 1e-6) return false;
+    counterFistDirection.normalize();
+    forearm.parent.getWorldQuaternion(counterParentQuaternion).invert();
+    counterLocalDirection.copy(counterFistDirection).applyQuaternion(counterParentQuaternion).normalize();
+    forearm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
+    return true;
+  }
+
+  function readCivilianCounterArmChain(data, state, targetPoint, { align = false } = {}) {
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (!hand?.getWorldPosition) return null;
+    if (align) aimCivilianCounterArmAtTarget(data, state, targetPoint);
+    const baseScale = Number.isFinite(state.forearmScaleY) ? state.forearmScaleY : forearm.scale.y;
+    let bestScale = forearm.scale.y;
+    let bestGap = Infinity;
+    const samples = align && targetPoint ? 25 : 1;
+    for (let index = 0; index < samples; index += 1) {
+      // The player/pedestrian collision shells retain ~1.2 m root clearance.
+      // Extend the existing forearm segment along its solved axis rather than
+      // moving a root or detaching the fist; this preserves a continuous rig.
+      if (samples > 1) forearm.scale.y = baseScale * (0.72 + index * (1.43 / (samples - 1)));
+      data.mesh.updateMatrixWorld(true);
+      hand.getWorldPosition(counterHandCenter);
+      const gap = targetPoint ? counterHandCenter.distanceToSquared(targetPoint) : 0;
+      if (gap < bestGap) {
+        bestGap = gap;
+        bestScale = forearm.scale.y;
+      }
+    }
+    forearm.scale.y = bestScale;
+    data.mesh.updateMatrixWorld(true);
+    arm.getWorldPosition(counterShoulderPoint);
+    forearm.getWorldPosition(counterElbowPoint);
+    hand.getWorldPosition(counterHandCenter);
+    const handDistance = targetPoint ? counterHandCenter.distanceTo(targetPoint) : Infinity;
+    const fistRadius = 0.12;
+    if (targetPoint && handDistance > 1e-5) {
+      counterFistDirection.subVectors(targetPoint, counterHandCenter).multiplyScalar(1 / handDistance);
+      counterHandPoint.copy(counterHandCenter).addScaledVector(
+        counterFistDirection,
+        Math.min(fistRadius, handDistance),
+      );
+    } else {
+      counterHandPoint.copy(counterHandCenter);
+    }
+    return {
+      shoulder: { x: counterShoulderPoint.x, y: counterShoulderPoint.y, z: counterShoulderPoint.z },
+      elbow: { x: counterElbowPoint.x, y: counterElbowPoint.y, z: counterElbowPoint.z },
+      handCenter: { x: counterHandCenter.x, y: counterHandCenter.y, z: counterHandCenter.z },
+      fist: { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z },
+      contactGap: Math.max(0, handDistance - fistRadius),
+    };
+  }
+
+  function resolveCivilianCounter(data, elapsed) {
+    const state = counterStateFor(data);
+    if (state.phase !== 'contact' || state.emitted) return;
+    state.emitted = true;
+    const identity = residentIdentityFor(data);
+    const context = getCivilianCounterContext?.() || null;
+    const playerPosition = context?.position;
+    const torsoPosition = context?.torsoPosition;
+    if (playerPosition && Number.isFinite(playerPosition.x) && Number.isFinite(playerPosition.z)) {
+      counterTargetPoint.set(
+        Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
+        Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04,
+        Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
+      );
+    } else {
+      counterTargetPoint.set(data.mesh.position.x, data.mesh.position.y + 1.06, data.mesh.position.z);
+    }
+    const armChain = readCivilianCounterArmChain(data, state, counterTargetPoint, { align: true });
+    if (!armChain) counterHandPoint.copy(counterTargetPoint);
+    counterLosOrigin.set(data.mesh.position.x, data.mesh.position.y + 1.04, data.mesh.position.z);
+    const distance = playerPosition
+      ? Math.hypot(data.mesh.position.x - playerPosition.x, data.mesh.position.z - playerPosition.z)
+      : Infinity;
+    const contextValid = context?.running === true
+      && context?.onFoot === true
+      && context?.outdoor === true
+      && context?.passenger !== true
+      && context?.transition !== true;
+    const inRange = distance >= CIVILIAN_COUNTER_MIN_RANGE && distance <= CIVILIAN_COUNTER_MAX_RANGE;
+    const clearLos = contextValid && inRange && counterEligible(data)
+      && typeof hasCivilianCounterLineOfSight === 'function'
+      && hasCivilianCounterLineOfSight(counterLosOrigin, counterTargetPoint) === true;
+    const handGap = armChain?.contactGap ?? Infinity;
+    const hit = contextValid && counterEligible(data) && inRange && clearLos && handGap <= 0.1;
+    const phase = hit ? 'contact' : 'whiff';
+    const event = Object.freeze({
+      kind: 'civilian-melee-counter',
+      residentId: identity.id,
+      residentObjectUuid: data.mesh.uuid,
+      phase,
+      timing: Object.freeze({
+        ...state.timing,
+        startedAtMs: Math.round(state.windupStartedAt * 1000),
+        resolvedAtMs: Math.round(elapsed * 1000),
+        closingDistance: Math.round(state.closingApplied * 1000) / 1000,
+      }),
+      hand: Object.freeze({
+        side: state.hand,
+        x: counterHandPoint.x,
+        y: counterHandPoint.y,
+        z: counterHandPoint.z,
+      }),
+      target: Object.freeze({ x: counterTargetPoint.x, y: counterTargetPoint.y, z: counterTargetPoint.z }),
+      armChain: Object.freeze({
+        shoulder: Object.freeze(armChain?.shoulder ?? { x: null, y: null, z: null }),
+        elbow: Object.freeze(armChain?.elbow ?? { x: null, y: null, z: null }),
+        handCenter: Object.freeze(armChain?.handCenter ?? { x: null, y: null, z: null }),
+        fist: Object.freeze(armChain?.fist ?? { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z }),
+        contactGap: Number.isFinite(handGap) ? Math.round(handGap * 1000) / 1000 : null,
+      }),
+      hit,
+      distance: Number.isFinite(distance) ? Math.round(distance * 1000) / 1000 : null,
+      reason: hit
+        ? null
+        : !counterEligible(data) ? 'resident-unavailable'
+          : !contextValid ? 'player-context'
+            : distance > CIVILIAN_COUNTER_EVADE_RANGE ? 'evaded'
+              : !inRange ? 'out-of-range'
+                : !clearLos ? 'blocked'
+                  : handGap > 0.1 ? 'hand-gap'
+                  : 'whiff',
+    });
+    state.lastEvent = event;
+    onCivilianMeleeCounter?.(event);
+    state.phase = 'recovery';
+    state.recoveryUntil = elapsed + CIVILIAN_COUNTER_RECOVERY;
+  }
+
   function applyVehicleImpactPose(data, elapsed) {
     const userData = data.mesh.userData;
     const until = Number(userData?.vehicleImpactUntil) || 0;
@@ -4785,8 +5229,12 @@ export function createPedestrianSystem({
         data.walkPace = Math.max(data.walkPace || 1, 1);
       }
 
+      // The counter takes temporary ownership only once it is visible. Keep
+      // the current path coordinate and root transform intact, then normal
+      // sampling resumes from that exact point after recovery.
+      const counterHoldsRoute = civilianCounterHoldsRoute(data);
       let transferStep = false;
-      if (data.transfer) {
+      if (!counterHoldsRoute && data.transfer) {
         const transfer = data.transfer;
         transferStep = true;
         if (moveTo(data, transfer.target, delta, moveSpeedFor(data) * 1.25, { ignorePush: true })) {
@@ -4794,9 +5242,9 @@ export function createPedestrianSystem({
           data.groundY = transfer.target.y;
           data.transfer = null;
         }
-      } else if (data.state === STATE_CROSS) {
+      } else if (!counterHoldsRoute && data.state === STATE_CROSS) {
         updateCrossing(data, delta, elapsed);
-      } else if (data.state === STATE_IDLE || data.state === STATE_WORK) {
+      } else if (!counterHoldsRoute && (data.state === STATE_IDLE || data.state === STATE_WORK)) {
         data.timer -= delta;
         if (data.timer <= 0) {
           setBehaviorState(data, STATE_WALK);
@@ -4806,19 +5254,19 @@ export function createPedestrianSystem({
           data.t += (moveSpeedFor(data) * delta)
             / Math.max(0.1, points[data.segment].distanceTo(points[data.segment + 1]));
         }
-      } else {
+      } else if (!counterHoldsRoute) {
         data.grade = pathGradeFor(data);
         data.t += (moveSpeedFor(data) * delta)
           / Math.max(0.1, points[data.segment].distanceTo(points[data.segment + 1]));
       }
 
-      if (data.transfer) transferStep = true;
-      if (!transferStep && data.state === STATE_WALK && data.t >= 1) {
+      if (!counterHoldsRoute && data.transfer) transferStep = true;
+      if (!counterHoldsRoute && !transferStep && data.state === STATE_WALK && data.t >= 1) {
         data.t = 1;
         advance(data);
         if (data.transfer) transferStep = true;
       }
-      if (!transferStep
+      if (!counterHoldsRoute && !transferStep
         && data.state !== STATE_CROSS && data.state !== STATE_IDLE && data.state !== STATE_WORK) {
         if (sample(data, position)) {
           data.mesh.position.copy(position);
@@ -4831,7 +5279,10 @@ export function createPedestrianSystem({
         }
       }
       // QA harness: keep force-walk flags hot; BT skipped while forced.
-      if (qaForceWalkIndex != null && (
+      if (counterHoldsRoute) {
+        data.pushX = 0;
+        data.pushZ = 0;
+      } else if (qaForceWalkIndex != null && (
         data.index === qaForceWalkIndex
         || group.children.indexOf(data.mesh) === qaForceWalkIndex
       )) {
@@ -4859,6 +5310,12 @@ export function createPedestrianSystem({
           || (data.mesh.position.x - focusX) ** 2
             + (data.mesh.position.z - focusZ) ** 2 <= focusRadiusSquared;
       data.mesh.visible = visible;
+
+      updateCivilianMeleeCounter(data, elapsed);
+      applyCivilianCounterClosingStep(data, delta);
+      orientCivilianCounterTowardPlayer(data, delta);
+      applyCivilianCounterPose(data, elapsed);
+      resolveCivilianCounter(data, elapsed);
 
       shadowPosition.set(data.mesh.position.x, data.mesh.position.y + 0.012, data.mesh.position.z);
       const strideShadow = 1 + Math.abs(Math.sin(elapsed * 5.7 * data.cadence + data.phase)) * data.gaitBlend * 0.08;
@@ -4902,6 +5359,7 @@ export function createPedestrianSystem({
       data.pushX = 0;
       data.pushZ = 0;
       if (!data.mesh.visible) continue;
+      if (civilianCounterHoldsRoute(data)) continue;
       const moving = data.state === STATE_WALK
         || (data.state === STATE_CROSS && data.crossing?.phase === 'cross');
       // A passing neighbor should create a temporary sidestep, not permanently
@@ -5079,7 +5537,7 @@ export function createPedestrianSystem({
     return true;
   }
 
-  function stageOnFootPlayerContactQa({ kind = 'contact' } = {}) {
+  function stageOnFootPlayerContactQa({ kind = 'contact', placement = null } = {}) {
     if (!['contact', 'diagonal', 'empty'].includes(kind)) return null;
     clearOnFootPlayerContactQaStage();
     const data = pool.find((entry) => (
@@ -5092,6 +5550,7 @@ export function createPedestrianSystem({
     if (!data) return null;
     const identity = residentIdentityFor(data);
     const userData = data.mesh.userData || (data.mesh.userData = {});
+    resetCivilianMeleeCounter(data);
     const restore = {
       position: data.mesh.position.clone(),
       rotationY: data.mesh.rotation.y,
@@ -5164,6 +5623,20 @@ export function createPedestrianSystem({
     setBehaviorState(data, STATE_IDLE, 30, 'qa:player-contact');
     data.crossing = null;
     data.transfer = null;
+    if (Number.isFinite(placement?.residentPosition?.x)
+      && Number.isFinite(placement?.residentPosition?.z)
+      && Number.isFinite(placement?.residentPosition?.y)) {
+      data.mesh.position.set(
+        placement.residentPosition.x,
+        placement.residentPosition.y,
+        placement.residentPosition.z,
+      );
+      data.groundY = placement.residentPosition.y;
+      const location = locateOnPath(data.path, data.mesh.position);
+      data.segment = location.segment;
+      data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+      setDestinationFor(data);
+    }
     data.mesh.visible = true;
     data.groundY = data.mesh.position.y;
     const forwardX = Math.sin(data.heading);
@@ -5659,6 +6132,7 @@ export function createPedestrianSystem({
     if (!records) return false;
     pool.forEach((data) => {
       const userData = data.mesh.userData || (data.mesh.userData = {});
+      resetCivilianMeleeCounter(data);
       userData.vehicleImpactCount = 0;
       userData.vehicleImpactUntil = 0;
       userData.vehicleImpactDirectionX = 0;
@@ -5690,6 +6164,10 @@ export function createPedestrianSystem({
 
   function clearCombatAftermathState() {
     return importCombatAftermathState({ version: 1, residents: [] });
+  }
+
+  function resetCivilianMeleeCounters() {
+    pool.forEach(resetCivilianMeleeCounter);
   }
 
   function registerVehicleImpact(residentId, { directionX = 0, directionZ = 0 } = {}) {
@@ -5731,6 +6209,30 @@ export function createPedestrianSystem({
       active: (Number(userData.vehicleImpactUntil) || 0) > lastUpdateElapsed,
       remaining: Math.max(0, (Number(userData.vehicleImpactUntil) || 0) - lastUpdateElapsed),
       combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+    };
+  }
+
+  function getCivilianMeleeCounterState(residentId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data) return null;
+    const state = data.mesh.userData?.civilianMeleeCounter;
+    const identity = residentIdentityFor(data);
+    return {
+      residentId: identity.id,
+      residentObjectUuid: data.mesh.uuid,
+      live: counterEligible(data),
+      phase: state?.phase ?? 'idle',
+      hand: state?.hand ?? null,
+      timing: state?.timing ? { ...state.timing } : null,
+      cooldownRemaining: Math.max(0, (Number(state?.cooldownUntil) || 0) - lastUpdateElapsed),
+      closingDistance: Math.round((Number(state?.closingApplied) || 0) * 1000) / 1000,
+      lastEvent: state?.lastEvent ?? null,
+      armChain: state?.lastEvent?.armChain ?? null,
       position: {
         x: data.mesh.position.x,
         y: data.mesh.position.y,
@@ -5865,9 +6367,11 @@ export function createPedestrianSystem({
     canImportCombatAftermathState,
     importCombatAftermathState,
     clearCombatAftermathState,
+    resetCivilianMeleeCounters,
     getVehicleImpactCandidates,
     registerVehicleImpact,
     getVehicleImpactState,
+    getCivilianMeleeCounterState,
     getVehicleImpactWitness,
     registerVehicleWitnessReaction,
     getVehicleWitnessState,

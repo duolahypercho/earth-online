@@ -70,6 +70,7 @@
     "verify:onfoot-vehicle-impact": "node scripts/verify-onfoot-vehicle-impact.mjs",
     "verify:onfoot-pedestrian-space": "node scripts/verify-onfoot-pedestrian-space.mjs",
     "verify:onfoot-melee": "node scripts/verify-onfoot-melee.mjs",
+    "verify:pedestrian-melee-response": "node scripts/verify-pedestrian-melee-response.mjs",
     "verify:player-vehicle-embodiment": "node scripts/verify-player-vehicle-embodiment.mjs",
     "verify:witness-reaction": "node scripts/verify-witness-reaction.mjs",
     "verify:gunfire-witness": "node scripts/verify-gunfire-witness.mjs",
