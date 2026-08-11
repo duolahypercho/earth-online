@@ -32,6 +32,7 @@
     "verify:third-person-combat": "node scripts/verify-third-person-combat.mjs",
     "verify:combat-transition-camera": "node scripts/verify-combat-transition-camera.mjs",
     "verify:drive-by-combat": "node scripts/verify-drive-by-combat.mjs",
+    "verify:locomotion-facing": "node scripts/verify-locomotion-facing.mjs",
     "verify:contextual-hud": "node scripts/verify-contextual-hud.mjs",
     "verify:grounded-camera": "node scripts/verify-grounded-camera.mjs",
     "verify:traffic-combat-aftermath": "node scripts/verify-traffic-combat-aftermath.mjs",

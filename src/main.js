@@ -1233,6 +1233,19 @@ hud = createHud({
 });
 
 let playerAvatar = null;
+const playerAvatarPreviousPosition = new THREE.Vector3();
+const playerAvatarFrameDisplacement = new THREE.Vector3();
+const playerAvatarNextPosition = new THREE.Vector3();
+let playerAvatarPositionReady = false;
+const playerAvatarLocomotionState = {
+  moving: false,
+  facingYaw: 0,
+  targetYaw: null,
+  facingErrorRadians: null,
+  displacementX: 0,
+  displacementZ: 0,
+  displacement: 0,
+};
 let lifeSim = null;
 let networking = null;
 let coopWaterfrontSession = null;
@@ -1248,6 +1261,7 @@ let muniRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
 const PLAYER_GROUND_OFFSET = 0.17;
+const PLAYER_FACING_DAMPING = 18;
 const WALK_CAMERA_DISTANCE = 8.8;
 const WALK_CAMERA_DISTANCE_MIN = 8;
 const WALK_CAMERA_DISTANCE_MAX = 11;
@@ -1884,6 +1898,7 @@ function updatePlayerWeapon(combatState) {
   // while aiming, even when the player is standing still.
   if (playerAvatar) {
     setAvatarLook(playerAvatar, controls.yaw);
+    playerAvatarLocomotionState.facingYaw = controls.yaw;
     setAvatarCombatPose(playerAvatar, {
       aiming: true,
       pitch: (combatCameraState.savedPitch - controls.pitch) * 0.6,
@@ -3305,6 +3320,54 @@ function usePlayerMedkit() {
   return { ok: true, before, after, consumed };
 }
 
+function resetPlayerLocomotionFacing(position = null) {
+  playerAvatarPositionReady = Boolean(position);
+  if (position) playerAvatarPreviousPosition.copy(position);
+  playerAvatarFrameDisplacement.set(0, 0, 0);
+  playerAvatarLocomotionState.moving = false;
+  playerAvatarLocomotionState.targetYaw = null;
+  playerAvatarLocomotionState.facingErrorRadians = null;
+  playerAvatarLocomotionState.displacementX = 0;
+  playerAvatarLocomotionState.displacementZ = 0;
+  playerAvatarLocomotionState.displacement = 0;
+}
+
+function updatePlayerLocomotionFacing(dt, position) {
+  if (!playerAvatar || !position) return;
+  if (!playerAvatarPositionReady) {
+    resetPlayerLocomotionFacing(position);
+    playerAvatarLocomotionState.facingYaw = playerAvatar.userData?.rig?.rotation?.y || 0;
+    return;
+  }
+  playerAvatarFrameDisplacement.copy(position).sub(playerAvatarPreviousPosition);
+  playerAvatarFrameDisplacement.y = 0;
+  playerAvatarPreviousPosition.copy(position);
+  const displacement = playerAvatarFrameDisplacement.length();
+  const validMovement = displacement > 0.0005 && displacement < 1.2;
+  playerAvatarLocomotionState.moving = validMovement;
+  playerAvatarLocomotionState.displacementX = playerAvatarFrameDisplacement.x;
+  playerAvatarLocomotionState.displacementZ = playerAvatarFrameDisplacement.z;
+  playerAvatarLocomotionState.displacement = displacement;
+  if (!validMovement) {
+    playerAvatarLocomotionState.targetYaw = null;
+    playerAvatarLocomotionState.facingErrorRadians = null;
+    setAvatarLook(playerAvatar, playerAvatarLocomotionState.facingYaw);
+    return;
+  }
+  const targetYaw = Math.atan2(
+    playerAvatarFrameDisplacement.x,
+    playerAvatarFrameDisplacement.z,
+  );
+  const currentYaw = playerAvatarLocomotionState.facingYaw;
+  const facingYaw = dampAngle(currentYaw, targetYaw, PLAYER_FACING_DAMPING, dt);
+  setAvatarLook(playerAvatar, facingYaw);
+  playerAvatarLocomotionState.targetYaw = targetYaw;
+  playerAvatarLocomotionState.facingYaw = facingYaw;
+  playerAvatarLocomotionState.facingErrorRadians = Math.abs(
+    THREE.MathUtils.euclideanModulo(targetYaw - facingYaw + Math.PI, Math.PI * 2) - Math.PI,
+  );
+}
+
 function updatePlayerLayer(dt, elapsed) {
   updatePlayerMuniRide();
   updatePlayerTaxiRide(dt);
@@ -3312,6 +3375,7 @@ function updatePlayerLayer(dt, elapsed) {
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
     if (playerAvatar) playerAvatar.visible = false;
+    resetPlayerLocomotionFacing();
     controls.target.set(drivingState.position.x, drivingState.position.y + 1.6, drivingState.position.z);
     controls.yaw = drivingState.heading + Math.PI;
     controls.pitch = THREE.MathUtils.clamp(
@@ -3361,18 +3425,24 @@ function updatePlayerLayer(dt, elapsed) {
       if (!hideAvatarForShot) {
         const surface = getTraversalSurfaceHeight(controls.target);
         const groundY = Number.isFinite(surface) ? surface : 0;
-        playerAvatar.position.set(controls.target.x, groundY + PLAYER_GROUND_OFFSET, controls.target.z);
+        const nextAvatarPosition = playerAvatarNextPosition.set(
+          controls.target.x,
+          groundY + PLAYER_GROUND_OFFSET,
+          controls.target.z,
+        );
+        playerAvatar.position.copy(nextAvatarPosition);
         const moving = playerMoving();
         const speedRatio = controls.keys.has('shiftleft') || controls.keys.has('shiftright') ? 1 : 0.58;
-        if (moving) {
-          const forwardX = Math.sin(controls.yaw);
-          const forwardZ = Math.cos(controls.yaw);
-          setAvatarLook(playerAvatar, Math.atan2(forwardX, forwardZ));
-        }
         animatePlayerAvatar(playerAvatar, { moving, speedRatio, elapsed, delta: dt });
+        // Locomotion animation resets the authored root pose each frame; apply
+        // world-facing after that layer so travel direction remains visible.
+        updatePlayerLocomotionFacing(dt, nextAvatarPosition);
+      } else {
+        resetPlayerLocomotionFacing();
       }
     } else if (playerAvatar) {
       playerAvatar.visible = false;
+      resetPlayerLocomotionFacing();
     }
   }
   networking?.update(dt, elapsed);
@@ -4535,6 +4605,18 @@ function readTraversalCameraState() {
       groundResidual: Number.isFinite(avatarSurface)
         ? Math.abs(playerAvatar.position.y - (avatarSurface + PLAYER_GROUND_OFFSET))
         : null,
+      locomotion: {
+        moving: playerAvatarLocomotionState.moving,
+        facingYaw: playerAvatar.userData?.rig?.rotation?.y
+          ?? playerAvatarLocomotionState.facingYaw,
+        targetYaw: playerAvatarLocomotionState.targetYaw,
+        facingErrorRadians: playerAvatarLocomotionState.facingErrorRadians,
+        displacement: {
+          x: playerAvatarLocomotionState.displacementX,
+          z: playerAvatarLocomotionState.displacementZ,
+          length: playerAvatarLocomotionState.displacement,
+        },
+      },
     } : null,
   };
 }
