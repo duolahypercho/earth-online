@@ -91,6 +91,7 @@ const TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED = 26 * 26;
 const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
 const VEHICLE_DAMAGE_COOLDOWN = 0.85;
+const PURSUIT_RESPONDER_REARM_DISTANCE = 8.5;
 const MAX_PERSISTED_COLLISION_AFTERMATH = 8;
 const PERSISTED_COLLISION_DAMAGE_SOURCES = new Set([
   'reckless-collision',
@@ -1869,6 +1870,10 @@ export function createTrafficSystem({
     vehicleThefts: 0,
     playerRedLightViolations: 0,
     pedestrianImpactEvents: 0,
+    sweptVehicleCollisionTests: 0,
+    sweptVehicleCollisionEvents: 0,
+    sweptVehicleNearMisses: 0,
+    lastSweptVehicleCollision: null,
     pursuitRouteDecisions: 0,
     pursuitRouteFallbacks: 0,
     lastPursuitRouteDecision: null,
@@ -1883,6 +1888,7 @@ export function createTrafficSystem({
   let playerSignalViolationLatch = null;
   let playerPedestrianImpactProbe = null;
   let playerPedestrianImpactLatch = new Set();
+  let playerVehicleCollisionLatch = new Set();
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -1927,6 +1933,264 @@ export function createTrafficSystem({
     const closestX = start.x + dx * along;
     const closestZ = start.z + dz * along;
     return (point.x - closestX) ** 2 + (point.z - closestZ) ** 2;
+  }
+
+  function footprintAxes(heading = 0) {
+    const forward = { x: Math.sin(heading), z: Math.cos(heading) };
+    return {
+      forward,
+      right: { x: forward.z, z: -forward.x },
+    };
+  }
+
+  function footprintsOverlap(left, right, margin = 0.04) {
+    const leftAxes = footprintAxes(left.heading);
+    const rightAxes = footprintAxes(right.heading);
+    const dx = right.x - left.x;
+    const dz = right.z - left.z;
+    const axes = [leftAxes.forward, leftAxes.right, rightAxes.forward, rightAxes.right];
+    for (const axis of axes) {
+      const centerDistance = Math.abs(dx * axis.x + dz * axis.z);
+      const leftRadius = left.halfLength * Math.abs(
+        leftAxes.forward.x * axis.x + leftAxes.forward.z * axis.z,
+      ) + left.halfWidth * Math.abs(
+        leftAxes.right.x * axis.x + leftAxes.right.z * axis.z,
+      );
+      const rightRadius = right.halfLength * Math.abs(
+        rightAxes.forward.x * axis.x + rightAxes.forward.z * axis.z,
+      ) + right.halfWidth * Math.abs(
+        rightAxes.right.x * axis.x + rightAxes.right.z * axis.z,
+      );
+      if (centerDistance > leftRadius + rightRadius + margin) return false;
+    }
+    return true;
+  }
+
+  function interpolateHeading(start, end, amount) {
+    const delta = Math.atan2(Math.sin(end - start), Math.cos(end - start));
+    return start + delta * amount;
+  }
+
+  function vehicleFootprint(vehicle, pose) {
+    return {
+      x: pose.x,
+      z: pose.z,
+      heading: Number.isFinite(pose.heading) ? pose.heading : 0,
+      halfLength: vehicle.spec.len * 0.5,
+      halfWidth: vehicle.spec.wid * 0.5,
+    };
+  }
+
+  function sweptFootprintContact(player, playerStart, other, otherStart) {
+    const playerEnd = player.mesh.root.position;
+    const otherEnd = other.mesh.root.position;
+    const playerHeading = Number.isFinite(player.heading) ? player.heading : playerStart.heading;
+    const otherHeading = Number.isFinite(other.heading) ? other.heading : otherStart.heading;
+    const playerTravel = Math.hypot(playerEnd.x - playerStart.x, playerEnd.z - playerStart.z);
+    const otherTravel = Math.hypot(otherEnd.x - otherStart.x, otherEnd.z - otherStart.z);
+    const broadRadius = Math.hypot(player.spec.len, player.spec.wid) * 0.5
+      + Math.hypot(other.spec.len, other.spec.wid) * 0.5
+      + 0.2;
+    const relativeStart = {
+      x: playerStart.x - otherStart.x,
+      z: playerStart.z - otherStart.z,
+    };
+    const relativeEnd = {
+      x: playerEnd.x - otherEnd.x,
+      z: playerEnd.z - otherEnd.z,
+    };
+    if (distanceSquaredToSegment({ x: 0, z: 0 }, relativeStart, relativeEnd)
+      > broadRadius * broadRadius) return null;
+
+    const steps = Math.max(3, Math.min(12, Math.ceil((playerTravel + otherTravel) / 0.25)));
+    for (let step = 0; step <= steps; step += 1) {
+      const amount = step / steps;
+      const playerPose = {
+        x: THREE.MathUtils.lerp(playerStart.x, playerEnd.x, amount),
+        z: THREE.MathUtils.lerp(playerStart.z, playerEnd.z, amount),
+        heading: interpolateHeading(playerStart.heading, playerHeading, amount),
+      };
+      const otherPose = {
+        x: THREE.MathUtils.lerp(otherStart.x, otherEnd.x, amount),
+        z: THREE.MathUtils.lerp(otherStart.z, otherEnd.z, amount),
+        heading: interpolateHeading(otherStart.heading, otherHeading, amount),
+      };
+      diagnostics.sweptVehicleCollisionTests += 1;
+      if (footprintsOverlap(
+        vehicleFootprint(player, playerPose),
+        vehicleFootprint(other, otherPose),
+      )) {
+        return {
+          amount,
+          safeAmount: Math.max(0, (step - 1) / steps),
+          playerPose,
+          otherPose,
+        };
+      }
+    }
+    return null;
+  }
+
+  function resolvePlayerVehicleFootprintCollisions(motionStarts, elapsed) {
+    if (!playerVehicle || !motionStarts?.has(playerVehicle) || playerVehicle.disabled) {
+      playerVehicleCollisionLatch.clear();
+      return;
+    }
+    const playerStart = motionStarts.get(playerVehicle);
+    const currentOverlaps = new Set();
+    let emitted = false;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const other = vehicles[index];
+      if (other === playerVehicle
+        || !motionStarts.has(other)
+        || other.impounded
+        || other.garageStored
+        || other.remoteControlled
+        || other === impoundedPlayerVehicle) continue;
+      const otherStart = motionStarts.get(other);
+      const centerDistance = Math.hypot(
+        playerVehicle.mesh.root.position.x - other.mesh.root.position.x,
+        playerVehicle.mesh.root.position.z - other.mesh.root.position.z,
+      );
+      const responderVehicle = pursuitResponder.active
+        && pursuitResponder.targetIndexes.includes(index);
+      if (responderVehicle
+        && playerVehicleCollisionLatch.has(index)
+        && centerDistance < PURSUIT_RESPONDER_REARM_DISTANCE) {
+        currentOverlaps.add(index);
+      }
+      const currentOverlap = footprintsOverlap(
+        vehicleFootprint(playerVehicle, {
+          x: playerVehicle.mesh.root.position.x,
+          z: playerVehicle.mesh.root.position.z,
+          heading: playerVehicle.heading,
+        }),
+        vehicleFootprint(other, {
+          x: other.mesh.root.position.x,
+          z: other.mesh.root.position.z,
+          heading: other.heading,
+        }),
+      );
+      if (currentOverlap) currentOverlaps.add(index);
+      const contact = sweptFootprintContact(playerVehicle, playerStart, other, otherStart);
+      if (!contact) {
+        if (centerDistance <= 5.5) diagnostics.sweptVehicleNearMisses += 1;
+        continue;
+      }
+      currentOverlaps.add(index);
+      if (emitted
+        || playerVehicleCollisionLatch.has(index)
+        || elapsed < playerVehicle.damageCooldownUntil
+        || other.disabled) continue;
+
+      const playerHeading = Number.isFinite(playerVehicle.heading) ? playerVehicle.heading : 0;
+      const otherHeading = Number.isFinite(other.heading) ? other.heading : 0;
+      const playerVelocity = {
+        x: Math.sin(playerHeading) * playerVehicle.speed,
+        z: Math.cos(playerHeading) * playerVehicle.speed,
+      };
+      const otherVelocity = {
+        x: Math.sin(otherHeading) * other.speed,
+        z: Math.cos(otherHeading) * other.speed,
+      };
+      const relativeSpeed = Math.hypot(
+        playerVelocity.x - otherVelocity.x,
+        playerVelocity.z - otherVelocity.z,
+      );
+      if (relativeSpeed <= 1.5) continue;
+
+      const responderContact = responderVehicle;
+      const damage = responderContact
+        ? 22
+        : THREE.MathUtils.clamp(relativeSpeed * 5.8, 6, 42);
+      const playerDamage = applyVehicleDamage(
+        playerVehicle,
+        damage,
+        responderContact ? 'pursuit-contact' : 'traffic-impact',
+      );
+      const victimDamage = applyVehicleDamage(
+        other,
+        THREE.MathUtils.clamp(damage * (responderContact ? 0.32 : 0.55), 4, 24),
+        responderContact ? 'pursuit-response-impact' : 'reckless-collision',
+      );
+      playerVehicle.speed *= responderContact ? 0.48 : 0.58;
+      playerVehicle.longitudinalAccel = Math.min(0, playerVehicle.longitudinalAccel);
+      other.speed *= 0.68;
+      other.longitudinalAccel = Math.min(0, other.longitudinalAccel);
+      other.hazardUntil = Math.max(other.hazardUntil, elapsed + 2.4);
+
+      // Rewind the player's path to just before the first sampled overlap.
+      // This keeps the visible bodies separated and keeps the authoritative
+      // straight or turn path parameter coherent with the rendered pose.
+      const safeAmount = contact.safeAmount;
+      const playerPath = playerVehicle.turn ? 'turn' : 'road';
+      const turnDistanceBeforeRewind = playerVehicle.turn?.distance ?? null;
+      if (playerVehicle.turn) {
+        const turnStartDistance = playerStart.turn === playerVehicle.turn
+          && Number.isFinite(playerStart.turnDistance)
+          ? playerStart.turnDistance
+          : 0;
+        playerVehicle.turn.distance = THREE.MathUtils.lerp(
+          turnStartDistance,
+          playerVehicle.turn.distance,
+          safeAmount,
+        );
+      } else if (playerStart.road === playerVehicle.road
+        && Number.isFinite(playerStart.s)
+        && Number.isFinite(playerVehicle.s)) {
+        playerVehicle.s = THREE.MathUtils.lerp(playerStart.s, playerVehicle.s, safeAmount);
+      }
+      playerVehicle.mesh.root.position.x = THREE.MathUtils.lerp(
+        playerStart.x,
+        playerVehicle.mesh.root.position.x,
+        safeAmount,
+      );
+      playerVehicle.mesh.root.position.z = THREE.MathUtils.lerp(
+        playerStart.z,
+        playerVehicle.mesh.root.position.z,
+        safeAmount,
+      );
+      const postContactOverlap = footprintsOverlap(
+        vehicleFootprint(playerVehicle, {
+          x: playerVehicle.mesh.root.position.x,
+          z: playerVehicle.mesh.root.position.z,
+          heading: interpolateHeading(playerStart.heading, playerVehicle.heading, safeAmount),
+        }),
+        vehicleFootprint(other, {
+          x: other.mesh.root.position.x,
+          z: other.mesh.root.position.z,
+          heading: other.heading,
+        }),
+      );
+
+      diagnostics.sweptVehicleCollisionEvents += 1;
+      if (!responderContact) diagnostics.recklessCollisionEvents += 1;
+      const collisionEvent = {
+        kind: responderContact ? 'pursuit-contact' : 'reckless-collision',
+        sequence: diagnostics.sweptVehicleCollisionEvents,
+        playerVehicleId: vehicles.indexOf(playerVehicle),
+        victimVehicleId: index,
+        victimClass: other.cls,
+        victimLabel: other.identity?.label || other.cls,
+        responderId: responderContact ? index : null,
+        responderContact,
+        relativeSpeed: Math.round(relativeSpeed * 10) / 10,
+        sweepAmount: Math.round(contact.amount * 1000) / 1000,
+        postContactOverlap,
+        playerPath,
+        turnDistanceBeforeRewind,
+        turnDistanceAfterRewind: playerVehicle.turn?.distance ?? null,
+        playerDamage,
+        victimDamage,
+      };
+      const aftermath = onPlayerVehicleCollision?.(collisionEvent) ?? null;
+      if (aftermath && typeof aftermath === 'object') collisionEvent.aftermath = { ...aftermath };
+      diagnostics.lastPlayerCollision = collisionEvent;
+      diagnostics.lastSweptVehicleCollision = collisionEvent;
+      playerVehicle.damageCooldownUntil = elapsed + VEHICLE_DAMAGE_COOLDOWN;
+      emitted = true;
+    }
+    playerVehicleCollisionLatch = currentOverlaps;
   }
 
   function vehicleDamageSnapshot(vehicle) {
@@ -3420,6 +3684,15 @@ export function createTrafficSystem({
         z: playerVehicle.mesh.root.position.z,
       }
       : null;
+    const vehicleMotionStarts = new Map(vehicles.map((vehicle) => [vehicle, {
+      x: vehicle.mesh.root.position.x,
+      z: vehicle.mesh.root.position.z,
+      heading: Number.isFinite(vehicle.heading) ? vehicle.heading : vehicle.mesh.root.rotation.y,
+      road: vehicle.road,
+      s: vehicle.s,
+      turn: vehicle.turn,
+      turnDistance: vehicle.turn?.distance ?? null,
+    }]));
     rebuildLaneLeaders();
 
     let speedSum = 0;
@@ -3934,6 +4207,9 @@ export function createTrafficSystem({
         let positionClamped = false;
         let nextS = v.s + v.dir * v.speed * dt;
         if (v.leader) {
+          const leaderIndex = vehicles.indexOf(v.leader);
+          const responderContact = pursuitResponder.active
+            && pursuitResponder.targetIndexes.includes(leaderIndex);
           const gapAfter = (v.leadS - nextS) * v.dir - v.leadHalf - v.half;
           const emergencyGap = v.playerControlled
             ? 0.12
@@ -3949,32 +4225,49 @@ export function createTrafficSystem({
             if (v.playerControlled
               && !v.disabled
               && t >= v.damageCooldownUntil
+              && (!responderContact || !playerVehicleCollisionLatch.has(leaderIndex))
               && relativeImpactSpeed > 1.5) {
-              const damage = THREE.MathUtils.clamp(
-                relativeImpactSpeed * 7.5 + correction * 4,
-                6,
-                42,
+              const damage = responderContact
+                ? 22
+                : THREE.MathUtils.clamp(
+                  relativeImpactSpeed * 7.5 + correction * 4,
+                  6,
+                  42,
+                );
+              const playerDamage = applyVehicleDamage(
+                v,
+                damage,
+                responderContact ? 'pursuit-contact' : 'traffic-impact',
               );
-              const playerDamage = applyVehicleDamage(v, damage, 'traffic-impact');
               if (!v.leader.disabled) {
-                const victimDamageAmount = THREE.MathUtils.clamp(damage * 0.55, 4, 24);
+                const victimDamageAmount = THREE.MathUtils.clamp(
+                  damage * (responderContact ? 0.32 : 0.55),
+                  4,
+                  24,
+                );
                 const victimDamage = applyVehicleDamage(
                   v.leader,
                   victimDamageAmount,
-                  'reckless-collision',
+                  responderContact ? 'pursuit-response-impact' : 'reckless-collision',
                 );
                 v.leader.speed *= 0.72;
                 v.leader.longitudinalAccel = Math.min(0, v.leader.longitudinalAccel);
                 v.leader.hazardUntil = Math.max(v.leader.hazardUntil, t + 2.4);
-                diagnostics.recklessCollisionEvents += 1;
+                if (responderContact) diagnostics.sweptVehicleCollisionEvents += 1;
+                else diagnostics.recklessCollisionEvents += 1;
                 const collisionEvent = {
-                  kind: 'reckless-collision',
-                  sequence: diagnostics.recklessCollisionEvents,
+                  kind: responderContact ? 'pursuit-contact' : 'reckless-collision',
+                  sequence: responderContact
+                    ? diagnostics.sweptVehicleCollisionEvents
+                    : diagnostics.recklessCollisionEvents,
                   playerVehicleId: vehicles.indexOf(v),
-                  victimVehicleId: vehicles.indexOf(v.leader),
+                  victimVehicleId: leaderIndex,
                   victimClass: v.leader.cls,
                   victimLabel: v.leader.identity?.label || v.leader.cls,
+                  responderId: responderContact ? leaderIndex : null,
+                  responderContact,
                   relativeSpeed: Math.round(relativeImpactSpeed * 10) / 10,
+                  playerPath: 'road',
                   playerDamage,
                   victimDamage,
                 };
@@ -3983,6 +4276,10 @@ export function createTrafficSystem({
                   collisionEvent.aftermath = { ...aftermath };
                 }
                 diagnostics.lastPlayerCollision = collisionEvent;
+                if (responderContact) {
+                  diagnostics.lastSweptVehicleCollision = collisionEvent;
+                  playerVehicleCollisionLatch.add(leaderIndex);
+                }
               }
               v.damageCooldownUntil = t + VEHICLE_DAMAGE_COOLDOWN;
             }
@@ -4394,6 +4691,8 @@ export function createTrafficSystem({
       if (v.speed < 0.35 && (v.leader || v.waitingForGreen)) queuedCount += 1;
       if (v.waitingForGreen) signalQueuedCount += 1;
     }
+
+    resolvePlayerVehicleFootprintCollisions(vehicleMotionStarts, t);
 
     stats.active = vehicles.length;
     stats.visible = visibleCount;
@@ -5132,6 +5431,7 @@ export function createTrafficSystem({
     vehicle.pullOutBlockedSince = null;
     vehicle.playerSteer = 0;
     playerSignalViolationLatch = null;
+    playerVehicleCollisionLatch.clear();
     lastPlayerParkedVehicle = null;
     playerVehicle = vehicle;
     return true;
@@ -5604,6 +5904,7 @@ export function createTrafficSystem({
     )) return false;
 
     const wasDisabled = vehicle.disabled;
+    playerVehicleCollisionLatch.clear();
     vehicle.road = projection.road;
     vehicle.dir = projection.dir;
     vehicle.s = projection.s;
@@ -5961,6 +6262,7 @@ export function createTrafficSystem({
     vehicle.curbDwellUntil = Infinity;
     lastPlayerParkedVehicle = vehicle;
     playerVehicle = null;
+    playerVehicleCollisionLatch.clear();
     return exit;
   }
 

@@ -44,6 +44,7 @@
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:pursuit-repair-gate": "node scripts/verify-pursuit-repair-gate.mjs",
     "verify:vehicle-collision-consequence": "node scripts/verify-vehicle-collision-consequence.mjs",
+    "verify:swept-vehicle-collision": "node scripts/verify-swept-vehicle-collision.mjs",
     "verify:vehicle-theft": "node scripts/verify-vehicle-theft.mjs",
     "verify:vehicle-persistence": "node scripts/verify-vehicle-persistence.mjs",
     "verify:vehicle-registration": "node scripts/verify-vehicle-registration.mjs",

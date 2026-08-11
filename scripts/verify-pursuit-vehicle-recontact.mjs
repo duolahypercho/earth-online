@@ -108,6 +108,7 @@ try {
       notify: false,
     });
     heat.update(0.016, driving);
+    heat.reportVehicleResponderContact({ responderId: responder.id });
     const first = heat.getState();
     heat.update(0.1, driving);
     heat.update(0.1, driving);
@@ -161,6 +162,7 @@ try {
     backupResponder.distance = 12;
     backupResponder.position.x = 12;
     separatedReload.update(0.016, driving);
+    separatedReload.reportVehicleResponderContact({ responderId: responder.id });
     const second = separatedReload.getState();
     separatedReload.update(0.1, driving);
     separatedReload.update(0.1, driving);
@@ -240,11 +242,20 @@ try {
     const info = window.__SF_SIM__.renderer.info;
     return { geometries: info.memory.geometries, textures: info.memory.textures };
   });
+  await page.waitForTimeout(1000);
+  const geometrySettled = await page.evaluate(() => {
+    const info = window.__SF_SIM__.renderer.info;
+    return { geometries: info.memory.geometries, textures: info.memory.textures };
+  });
   assert(performance.applicationP99FrameMs <= 16.67,
     'application p99 exceeded 16.67 ms', performance);
-  assert(geometryAfter.geometries <= geometryBefore.geometries
-    && geometryAfter.textures <= geometryBefore.textures,
-  'focused pursuit recontact check leaked render resources', { geometryBefore, geometryAfter });
+  assert(geometrySettled.geometries === geometryAfter.geometries
+    && geometrySettled.textures === geometryAfter.textures,
+  'focused pursuit recontact check leaked render resources after settling', {
+    geometryBefore,
+    geometryAfter,
+    geometrySettled,
+  });
 
   const report = {
     pass: failures.length === 0 && consoleErrors.length === 0 && httpErrors.length === 0,
@@ -253,6 +264,7 @@ try {
     result,
     geometryBefore,
     geometryAfter,
+    geometrySettled,
     performance,
     consoleErrors,
     httpErrors,

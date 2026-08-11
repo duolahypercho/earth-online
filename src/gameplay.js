@@ -777,6 +777,26 @@ export function createStreetHeat({
     return getState();
   }
 
+  function reportVehicleResponderContact({ responderId = null } = {}) {
+    if (!state.pursuitActive || !latestDriving || responderContactLatched) return null;
+    if (Number.isInteger(responderId)
+      && state.responderIds.length > 0
+      && !state.responderIds.includes(responderId)) return null;
+    responderContactLatched = true;
+    state.responderContacts += 1;
+    emitEvent(
+      'responder-contact',
+      'Responder contact · vehicle integrity hit.',
+      0,
+      {
+        contactNumber: state.responderContacts,
+        responderId,
+        physicalContact: true,
+      },
+    );
+    return getState();
+  }
+
   function start() {
     reset();
   }
@@ -919,6 +939,7 @@ export function createStreetHeat({
       ? Math.min(...state.responderDistances)
       : null;
     if (state.pursuitActive
+      && !latestDriving
       && responderContactDistance !== null
       && responderContactDistance <= STREET_HEAT_RESPONDER_CONTACT_RADIUS
       && !responderContactLatched) {
@@ -926,9 +947,7 @@ export function createStreetHeat({
       state.responderContacts += 1;
       emitEvent(
         'responder-contact',
-        latestDriving
-          ? 'Responder contact · vehicle integrity hit.'
-          : 'Responder contact · you took damage.',
+        'Responder contact · you took damage.',
         0,
         { contactNumber: state.responderContacts },
       );
@@ -1386,6 +1405,7 @@ export function createStreetHeat({
     reportIncident: addHeat,
     reportWitness,
     resolveArrest,
+    reportVehicleResponderContact,
     update,
     getState,
     exportState,
