@@ -39,6 +39,7 @@
     "verify:pursuit-escalation": "node scripts/verify-pursuit-escalation.mjs",
     "verify:pursuit-pressure": "node scripts/verify-pursuit-pressure.mjs",
     "verify:pursuit-vehicle-recontact": "node scripts/verify-pursuit-vehicle-recontact.mjs",
+    "verify:pursuit-chase": "node scripts/verify-pursuit-chase.mjs",
     "verify:vehicle-damage": "node scripts/verify-vehicle-damage.mjs",
     "verify:pursuit-repair-gate": "node scripts/verify-pursuit-repair-gate.mjs",
     "verify:vehicle-collision-consequence": "node scripts/verify-vehicle-collision-consequence.mjs",

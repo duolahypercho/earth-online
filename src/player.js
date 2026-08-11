@@ -406,6 +406,36 @@ export function setAvatarCombatPose(avatar, { aiming = false, pitch = 0 } = {}) 
   return true;
 }
 
+export function setAvatarSurrenderPose(avatar) {
+  const ud = avatar?.userData;
+  if (!ud) return false;
+  // Raise both authored arm chains beside the head after locomotion has been
+  // evaluated. This is a presentation-only booking tableau; gameplay state,
+  // movement authority and collision remain owned by the normal controllers.
+  if (ud.leftArm?.rotation) {
+    ud.leftArm.rotation.x = -0.12;
+    ud.leftArm.rotation.y = 0;
+    ud.leftArm.rotation.z = -2.34;
+  }
+  if (ud.rightArm?.rotation) {
+    ud.rightArm.rotation.x = -0.12;
+    ud.rightArm.rotation.y = 0;
+    ud.rightArm.rotation.z = 2.34;
+  }
+  if (ud.leftForearm?.rotation) {
+    ud.leftForearm.rotation.x = -0.18;
+    ud.leftForearm.rotation.y = 0;
+    ud.leftForearm.rotation.z = -0.22;
+  }
+  if (ud.rightForearm?.rotation) {
+    ud.rightForearm.rotation.x = -0.18;
+    ud.rightForearm.rotation.y = 0;
+    ud.rightForearm.rotation.z = 0.22;
+  }
+  if (ud.headPivot?.rotation) ud.headPivot.rotation.x = -0.08;
+  return true;
+}
+
 export function createNameTagSprite(name = 'Traveler') {
   if (typeof document === 'undefined') return new THREE.Sprite();
   const canvas = document.createElement('canvas');

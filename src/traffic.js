@@ -875,6 +875,13 @@ function buildShared() {
       title: 'BAY PARCEL',
       subtitle: 'LOCAL DELIVERY',
     }),
+    pursuitBadgeMat: fleetLabelMat({
+      background: '#112535',
+      accent: '#4aa3ff',
+      ink: '#f7fbff',
+      title: 'SFPD',
+      subtitle: 'STREET RESPONSE',
+    }),
     taxiTrimMat: new THREE.MeshStandardMaterial({ color: 0x24211b, roughness: 0.58, metalness: 0.2 }),
     beaconOffMat: new THREE.MeshStandardMaterial({
       color: 0x5b3408,
@@ -887,6 +894,30 @@ function buildShared() {
       emissive: 0xff8a16,
       emissiveIntensity: 3.4,
       roughness: 0.3,
+    }),
+    pursuitRedOffMat: new THREE.MeshStandardMaterial({
+      color: 0x4b1015,
+      emissive: 0x8f101c,
+      emissiveIntensity: 0.18,
+      roughness: 0.3,
+    }),
+    pursuitRedOnMat: new THREE.MeshStandardMaterial({
+      color: 0xff2638,
+      emissive: 0xff1329,
+      emissiveIntensity: 4.4,
+      roughness: 0.22,
+    }),
+    pursuitBlueOffMat: new THREE.MeshStandardMaterial({
+      color: 0x102c56,
+      emissive: 0x123f8e,
+      emissiveIntensity: 0.18,
+      roughness: 0.3,
+    }),
+    pursuitBlueOnMat: new THREE.MeshStandardMaterial({
+      color: 0x247bff,
+      emissive: 0x176dff,
+      emissiveIntensity: 4.4,
+      roughness: 0.22,
     }),
     contactMat: new THREE.MeshBasicMaterial({
       color: 0x111516,
@@ -1410,6 +1441,102 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     ));
   }
 
+  // Any eligible fleet car can be recruited as a live law responder. Keep
+  // the kit dormant during ordinary traffic duty, then reveal a shared SFPD
+  // placard and alternating emergency lamps while the vehicle is assigned.
+  // The group lives on the root so its authority cue remains visible when the
+  // detailed body swaps to the distance silhouette.
+  let pursuitKit = null;
+  const pursuitLights = { red: [], blue: [] };
+  if (!['bike', 'bus', 'truck', 'taxi'].includes(cls)) {
+    pursuitKit = new THREE.Group();
+    pursuitKit.name = 'SFPD pursuit response kit';
+    pursuitKit.visible = false;
+    const roofY = hgt * (cls === 'pickup' || cls === 'van' ? 1.06 : 1.08);
+    const roofZ = cls === 'pickup' ? len * 0.15 : len * 0.04;
+    box(shared, shared.lightHousingMat, Math.min(1.08, wid * 0.62), 0.055, 0.22,
+      0, roofY, roofZ, pursuitKit);
+    pursuitLights.red.push(box(
+      shared,
+      shared.pursuitRedOffMat,
+      Math.min(0.42, wid * 0.23),
+      0.13,
+      0.18,
+      -Math.min(0.27, wid * 0.17),
+      roofY + 0.055,
+      roofZ,
+      pursuitKit,
+    ));
+    pursuitLights.blue.push(box(
+      shared,
+      shared.pursuitBlueOffMat,
+      Math.min(0.42, wid * 0.23),
+      0.13,
+      0.18,
+      Math.min(0.27, wid * 0.17),
+      roofY + 0.055,
+      roofZ,
+      pursuitKit,
+    ));
+    const grilleY = Math.max(0.42, hgt * 0.48);
+    pursuitLights.red.push(box(
+      shared,
+      shared.pursuitRedOffMat,
+      0.16,
+      0.09,
+      0.055,
+      -wid * 0.18,
+      grilleY,
+      len * 0.5 + 0.08,
+      pursuitKit,
+    ));
+    pursuitLights.blue.push(box(
+      shared,
+      shared.pursuitBlueOffMat,
+      0.16,
+      0.09,
+      0.055,
+      wid * 0.18,
+      grilleY,
+      len * 0.5 + 0.08,
+      pursuitKit,
+    ));
+    const pursuitBadgeWidth = identity.key === 'sfmta-service' ? 1.68 : 1.12;
+    const pursuitBadgeHeight = identity.key === 'sfmta-service' ? 0.52 : 0.4;
+    for (const side of [-1, 1]) {
+      sideBadge(
+        shared,
+        shared.pursuitBadgeMat,
+        pursuitBadgeWidth,
+        pursuitBadgeHeight,
+        side * wid * 0.526,
+        identity.key === 'sfmta-service' ? hgt * 0.57 : hgt * 0.58,
+        identity.key === 'sfmta-service' ? -len * 0.1 : 0,
+        pursuitKit,
+        'SFPD pursuit side mark',
+      );
+    }
+    frontBadge(
+      shared,
+      shared.pursuitBadgeMat,
+      Math.min(0.96, wid * 0.58),
+      0.28,
+      0,
+      hgt * 0.64,
+      len * 0.5 + 0.09,
+      pursuitKit,
+      'SFPD pursuit front mark',
+    );
+    pursuitKit.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = child.userData.noReceiveShadow !== true;
+      child.updateMatrix();
+      child.matrixAutoUpdate = false;
+    });
+    root.add(pursuitKit);
+  }
+
   // Small manufactured details give the pooled traffic a shared automotive
   // language with the authored hero car: bumpers, mirrors, window breaks and
   // a low belt line are visible even when a vehicle is several car lengths
@@ -1565,6 +1692,8 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     wheels,
     frontWheels,
     beaconLights,
+    pursuitKit,
+    pursuitLights,
     tailLights,
     rearIndicatorLeft,
     rearIndicatorRight,
@@ -1740,6 +1869,9 @@ export function createTrafficSystem({
     vehicleThefts: 0,
     playerRedLightViolations: 0,
     pedestrianImpactEvents: 0,
+    pursuitRouteDecisions: 0,
+    pursuitRouteFallbacks: 0,
+    lastPursuitRouteDecision: null,
   };
   let playerVehicle = null;
   let lastPlayerParkedVehicle = null;
@@ -1766,6 +1898,10 @@ export function createTrafficSystem({
     playerZ: 0,
     level: 1,
     distance: null,
+  };
+  const pursuitBookingVisual = {
+    vehicleIndex: -1,
+    until: 0,
   };
 
   function damageStateFor(vehicle) {
@@ -2049,6 +2185,10 @@ export function createTrafficSystem({
           mergeSignalUntil: 0,
           pursuitResponder: false,
           pursuitLevel: 0,
+          pursuitRouteRevision: 0,
+          pursuitRouteScore: null,
+          pursuitRouteTargetDistance: null,
+          pursuitRoutePlannedAt: null,
           maxHealth,
           health: maxHealth,
           damageState: 'clear',
@@ -2634,10 +2774,15 @@ export function createTrafficSystem({
         dir,
         side,
         weight,
+        outX,
+        outZ,
       });
     }
 
     if (!choices.length) {
+      if (v.pursuitResponder && pursuitResponder.active) {
+        diagnostics.pursuitRouteFallbacks += 1;
+      }
       if (!isDirectionLegal(road, -v.dir) || !isTurnAllowed({ side: 1, uTurn: true, rule: turnRule })) {
         diagnostics.oneWayRejects += 1;
         v.route = null;
@@ -2648,13 +2793,63 @@ export function createTrafficSystem({
       return;
     }
 
-    let pick = rng() * totalWeight;
     let route = choices[choices.length - 1];
-    for (const choice of choices) {
-      pick -= choice.weight;
-      if (pick <= 0) {
-        route = choice;
-        break;
+    if (v.pursuitResponder && pursuitResponder.active) {
+      const targetX = pursuitResponder.playerX;
+      const targetZ = pursuitResponder.playerZ;
+      const targetDistanceFromNode = Math.hypot(targetX - node.x, targetZ - node.z);
+      let bestScore = Infinity;
+      for (const choice of choices) {
+        const nextRoad = roads[choice.road];
+        const lookAhead = Math.min(
+          Math.max(0, nextRoad.len - TURN_SPAN),
+          THREE.MathUtils.clamp(targetDistanceFromNode, 18, 64),
+        );
+        const lookAheadS = choice.dir === 1
+          ? lookAhead
+          : nextRoad.len - lookAhead;
+        sampleRoad(nextRoad, lookAheadS);
+        const distance = Math.hypot(targetX - samp.x, targetZ - samp.z);
+        const targetLength = Math.max(0.1, targetDistanceFromNode);
+        const targetDirectionX = (targetX - node.x) / targetLength;
+        const targetDirectionZ = (targetZ - node.z) / targetLength;
+        const alignment = choice.outX * targetDirectionX + choice.outZ * targetDirectionZ;
+        const turnCost = choice.side === 0 ? 0 : choice.side > 0 ? 0.3 : 0.5;
+        const score = distance
+          - alignment * Math.min(18, targetDistanceFromNode * 0.18)
+          + turnCost;
+        if (score < bestScore - 1e-6
+          || (Math.abs(score - bestScore) <= 1e-6 && choice.road < route.road)) {
+          bestScore = score;
+          route = choice;
+        }
+      }
+      v.pursuitRouteRevision = (v.pursuitRouteRevision || 0) + 1;
+      v.pursuitRouteScore = Math.round(bestScore * 1000) / 1000;
+      v.pursuitRouteTargetDistance = Math.round(targetDistanceFromNode * 1000) / 1000;
+      v.pursuitRoutePlannedAt = Math.round(lastElapsed * 1000) / 1000;
+      diagnostics.pursuitRouteDecisions += 1;
+      diagnostics.lastPursuitRouteDecision = {
+        vehicleId: vehicles.indexOf(v),
+        revision: v.pursuitRouteRevision,
+        fromRoad: v.road,
+        toRoad: route.road,
+        dir: route.dir,
+        side: route.side,
+        score: v.pursuitRouteScore,
+        targetDistance: v.pursuitRouteTargetDistance,
+        targetX: Math.round(targetX * 1000) / 1000,
+        targetZ: Math.round(targetZ * 1000) / 1000,
+        at: v.pursuitRoutePlannedAt,
+      };
+    } else {
+      let pick = rng() * totalWeight;
+      for (const choice of choices) {
+        pick -= choice.weight;
+        if (pick <= 0) {
+          route = choice;
+          break;
+        }
       }
     }
     v.route = route;
@@ -3213,6 +3408,12 @@ export function createTrafficSystem({
     dt = Math.min(dt, MAX_DT);
     lastElapsed = Number.isFinite(elapsed) ? elapsed : lastElapsed + dt;
     const t = lastElapsed;
+    if (pursuitBookingVisual.vehicleIndex >= 0 && t >= pursuitBookingVisual.until) {
+      const bookingVehicle = vehicles[pursuitBookingVisual.vehicleIndex];
+      if (bookingVehicle) bookingVehicle.mesh.root.userData.pursuitBooking = false;
+      pursuitBookingVisual.vehicleIndex = -1;
+      pursuitBookingVisual.until = 0;
+    }
     const playerImpactStart = playerVehicle
       ? {
         x: playerVehicle.mesh.root.position.x,
@@ -3243,6 +3444,11 @@ export function createTrafficSystem({
         && pursuitResponder.targetIndexes.includes(vehicleIndex)
         && !v.playerControlled
         && !v.remoteControlled;
+      const pursuitBookingActive = !pursuitResponder.active
+        && pursuitBookingVisual.vehicleIndex === vehicleIndex
+        && t < pursuitBookingVisual.until
+        && !v.playerControlled
+        && !v.remoteControlled;
       if (pursuitResponderActive) {
         v.pursuitResponder = true;
         v.pursuitLevel = pursuitResponder.level;
@@ -3250,6 +3456,21 @@ export function createTrafficSystem({
         userData.pursuitResponder = true;
         userData.pursuitLevel = pursuitResponder.level;
         v.hazardUntil = Math.max(v.hazardUntil, t + 0.42);
+      }
+      if (v.mesh.pursuitKit) {
+        const pursuitVisualActive = pursuitResponderActive || pursuitBookingActive;
+        v.mesh.pursuitKit.visible = pursuitVisualActive;
+        const redOn = pursuitVisualActive
+          && (t * 5.4 + vehicleIndex * 0.17) % 1 < 0.46;
+        const blueOn = pursuitVisualActive && !redOn;
+        const redMaterial = redOn ? shared.pursuitRedOnMat : shared.pursuitRedOffMat;
+        const blueMaterial = blueOn ? shared.pursuitBlueOnMat : shared.pursuitBlueOffMat;
+        for (const light of v.mesh.pursuitLights.red) {
+          if (light.material !== redMaterial) light.material = redMaterial;
+        }
+        for (const light of v.mesh.pursuitLights.blue) {
+          if (light.material !== blueMaterial) light.material = blueMaterial;
+        }
       }
       const combatData = v.mesh.root.userData || {};
       const combatBrakeUntil = Number(combatData.combatBrakeUntil);
@@ -3333,6 +3554,10 @@ export function createTrafficSystem({
 
       if (v.parked) {
         desired = 0;
+      }
+      if (pursuitBookingActive) {
+        desired = 0;
+        v.hazardUntil = Math.max(v.hazardUntil, pursuitBookingVisual.until);
       }
 
       if (!v.playerControlled) {
@@ -3825,6 +4050,7 @@ export function createTrafficSystem({
         lastElapsed < HERO_GATE_SECONDS
         &&
         !v.turn
+        && !pursuitResponderActive
         && (v.cls === 'truck' || v.cls === 'bus')
         && heroCrossRoadSet.has(v.road)
       ) {
@@ -3834,6 +4060,7 @@ export function createTrafficSystem({
       }
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.road === heroRoadIndex
         && (
           v.s < heroCameraCutoff
@@ -3858,6 +4085,7 @@ export function createTrafficSystem({
       // cable-car hero band. Rehome them to the surrounding grid continuously.
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.cls === 'bus'
         && heroNorthRoadIndex >= 0
         && v.road === heroNorthRoadIndex
@@ -3878,6 +4106,7 @@ export function createTrafficSystem({
       // cable-car hero band during QA captures. Keep them north of the lens.
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.cls === 'taxi'
         && heroNorthRoadIndex >= 0
         && v.road === heroNorthRoadIndex
@@ -3902,6 +4131,7 @@ export function createTrafficSystem({
         lastElapsed < HERO_GATE_SECONDS
         &&
         !v.turn
+        && !pursuitResponderActive
         && !(v.cls === 'truck' || v.cls === 'bus')
         && heroCrossRoadSet.has(v.road)
       ) {
@@ -4149,9 +4379,9 @@ export function createTrafficSystem({
       }
 
       if (Array.isArray(v.mesh.beaconLights) && v.mesh.beaconLights.length) {
-        const beaconActive = curbApproach > 0.05
+        const beaconActive = !pursuitResponderActive && (curbApproach > 0.05
           || vehicleIsCurbside(v)
-          || v.mergeSignalUntil > t;
+          || v.mergeSignalUntil > t);
         const beaconOn = beaconActive && (t * 2.8 + v.servicePhase) % 1 < 0.42;
         const beaconMaterial = beaconOn ? shared.beaconOnMat : shared.beaconOffMat;
         for (const light of v.mesh.beaconLights) {
@@ -4238,6 +4468,7 @@ export function createTrafficSystem({
       userData.pursuitResponder = false;
       userData.pursuitLevel = 0;
       userData.pursuitSlot = null;
+      if (vehicle.mesh.pursuitKit) vehicle.mesh.pursuitKit.visible = false;
     }
     pursuitResponder.active = false;
     pursuitResponder.targetIndex = -1;
@@ -4251,10 +4482,43 @@ export function createTrafficSystem({
     position = null,
     playerVehicleId = null,
     level = 1,
+    presentation = null,
   } = {}) {
     if (!active || !Number.isFinite(position?.x) || !Number.isFinite(position?.z)) {
+      if (presentation === 'booking' && pursuitResponder.targetIndexes.length > 0) {
+        let nearestIndex = pursuitResponder.targetIndexes[0];
+        let nearestDistance = Infinity;
+        for (const index of pursuitResponder.targetIndexes) {
+          const vehicle = vehicles[index];
+          if (!vehicle) continue;
+          const distance = Math.hypot(
+            vehicle.mesh.root.position.x - pursuitResponder.playerX,
+            vehicle.mesh.root.position.z - pursuitResponder.playerZ,
+          );
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = index;
+          }
+        }
+        const bookingVehicle = vehicles[nearestIndex];
+        pursuitBookingVisual.vehicleIndex = nearestIndex;
+        pursuitBookingVisual.until = lastElapsed + 5;
+        if (bookingVehicle) {
+          bookingVehicle.speed = 0;
+          bookingVehicle.longitudinalAccel = 0;
+          bookingVehicle.accelSm = 0;
+          bookingVehicle.hazardUntil = pursuitBookingVisual.until;
+          bookingVehicle.mesh.root.userData.pursuitBooking = true;
+        }
+      }
       clearPursuitResponder();
       return getPursuitResponder();
+    }
+    if (pursuitBookingVisual.vehicleIndex >= 0) {
+      const bookingVehicle = vehicles[pursuitBookingVisual.vehicleIndex];
+      if (bookingVehicle) bookingVehicle.mesh.root.userData.pursuitBooking = false;
+      pursuitBookingVisual.vehicleIndex = -1;
+      pursuitBookingVisual.until = 0;
     }
     pursuitResponder.active = true;
     pursuitResponder.playerVehicleId = Number.isInteger(playerVehicleId) ? playerVehicleId : null;
@@ -4313,6 +4577,7 @@ export function createTrafficSystem({
       vehicle.mesh.root.userData.pursuitResponder = false;
       vehicle.mesh.root.userData.pursuitLevel = 0;
       vehicle.mesh.root.userData.pursuitSlot = null;
+      if (vehicle.mesh.pursuitKit) vehicle.mesh.pursuitKit.visible = false;
     }
     pursuitResponder.targetIndexes = retained;
     pursuitResponder.targetIndex = retained[0] ?? -1;
@@ -4323,8 +4588,16 @@ export function createTrafficSystem({
     }
     retained.forEach((index, slot) => {
       const target = vehicles[index];
+      const newlyAssigned = !target.pursuitResponder;
       target.pursuitResponder = true;
       target.pursuitLevel = pursuitResponder.level;
+      // Ambient traffic can already have a random junction choice queued when
+      // it is recruited. Re-plan that unopened choice against the live player
+      // target so the first visible responder turn belongs to the chase.
+      if (newlyAssigned && !target.turn) {
+        target.route = null;
+        target.blinkSide = 0;
+      }
       const userData = target.mesh.root.userData || (target.mesh.root.userData = {});
       userData.pursuitResponder = true;
       userData.pursuitLevel = pursuitResponder.level;
@@ -4336,6 +4609,112 @@ export function createTrafficSystem({
       primary.mesh.root.position.z - pursuitResponder.playerZ,
     );
     return getPursuitResponder();
+  }
+
+  function pursuitRouteIsLegal(vehicle, route) {
+    if (!vehicle || !route) return true;
+    const sourceRoad = roads[vehicle.road];
+    if (!sourceRoad) return false;
+    if (route.uTurn) {
+      return route.road === vehicle.road
+        && route.dir === -vehicle.dir
+        && isDirectionLegal(sourceRoad, route.dir);
+    }
+    const nextRoad = roads[route.road];
+    if (!nextRoad || !isDirectionLegal(nextRoad, route.dir)) return false;
+    const end = vehicle.dir === 1 ? 1 : 0;
+    const nodeIndex = sourceRoad.endNode[end];
+    const node = nodes[nodeIndex];
+    if (!node?.ends?.some((edge) => (
+      edge.road === route.road
+      && (edge.end === 0 ? 1 : -1) === route.dir
+    ))) return false;
+    const approachPoint = {
+      x: sourceRoad.px[end === 1 ? 0 : sourceRoad.px.length - 1],
+      z: sourceRoad.pz[end === 1 ? 0 : sourceRoad.pz.length - 1],
+    };
+    return isTurnAllowed({
+      side: route.side,
+      rule: findTurnRule(node, approachPoint, turnRules),
+    });
+  }
+
+  function pursuitRouteSnapshot(vehicle) {
+    const route = vehicle?.turn?.route || vehicle?.route;
+    if (!route) return null;
+    if (route.uTurn) {
+      return {
+        road: Number.isInteger(route.road) ? route.road : vehicle.road,
+        dir: Number.isInteger(route.dir) ? route.dir : -vehicle.dir,
+        side: route.side ?? 1,
+        uTurn: true,
+      };
+    }
+    return {
+      road: route.road,
+      dir: route.dir,
+      side: route.side ?? 0,
+      uTurn: Boolean(route.uTurn),
+    };
+  }
+
+  function getPursuitChaseDiagnostics() {
+    return {
+      active: pursuitResponder.active,
+      level: pursuitResponder.active ? pursuitResponder.level : 0,
+      target: pursuitResponder.active
+        ? {
+          x: Math.round(pursuitResponder.playerX * 1000) / 1000,
+          z: Math.round(pursuitResponder.playerZ * 1000) / 1000,
+        }
+        : null,
+      routeDecisions: diagnostics.pursuitRouteDecisions,
+      routeFallbacks: diagnostics.pursuitRouteFallbacks,
+      lastDecision: diagnostics.lastPursuitRouteDecision
+        ? { ...diagnostics.lastPursuitRouteDecision }
+        : null,
+      bookingVisual: pursuitBookingVisual.vehicleIndex >= 0
+        && lastElapsed < pursuitBookingVisual.until
+        ? {
+          vehicleId: pursuitBookingVisual.vehicleIndex,
+          remaining: Math.round((pursuitBookingVisual.until - lastElapsed) * 1000) / 1000,
+        }
+        : null,
+      responders: pursuitResponder.targetIndexes.map((index) => {
+        const vehicle = vehicles[index];
+        if (!vehicle) return null;
+        const route = pursuitRouteSnapshot(vehicle);
+        return {
+          id: index,
+          road: vehicle.road,
+          dir: vehicle.dir,
+          s: Math.round(vehicle.s * 1000) / 1000,
+          speed: Math.round(vehicle.speed * 1000) / 1000,
+          heading: Math.round((vehicle.heading ?? vehicle.mesh.root.rotation.y) * 1000) / 1000,
+          position: {
+            x: Math.round(vehicle.mesh.root.position.x * 1000) / 1000,
+            y: Math.round(vehicle.mesh.root.position.y * 1000) / 1000,
+            z: Math.round(vehicle.mesh.root.position.z * 1000) / 1000,
+          },
+          routeRevision: vehicle.pursuitRouteRevision || 0,
+          route,
+          routeLegal: pursuitRouteIsLegal(vehicle, route),
+          routeScore: Number.isFinite(vehicle.pursuitRouteScore)
+            ? vehicle.pursuitRouteScore
+            : null,
+          plannedTargetDistance: Number.isFinite(vehicle.pursuitRouteTargetDistance)
+            ? vehicle.pursuitRouteTargetDistance
+            : null,
+          plannedAt: Number.isFinite(vehicle.pursuitRoutePlannedAt)
+            ? vehicle.pursuitRoutePlannedAt
+            : null,
+          targetDistance: Math.round(Math.hypot(
+            vehicle.mesh.root.position.x - pursuitResponder.playerX,
+            vehicle.mesh.root.position.z - pursuitResponder.playerZ,
+          ) * 1000) / 1000,
+        };
+      }).filter(Boolean),
+    };
   }
 
   function getPursuitResponders() {
@@ -4361,6 +4740,10 @@ export function createTrafficSystem({
         speed: Math.round(target.speed * 10) / 10,
         level: pursuitResponder.level,
         closing: target.speed > 0,
+        road: target.road,
+        dir: target.dir,
+        routeRevision: target.pursuitRouteRevision || 0,
+        route: pursuitRouteSnapshot(target),
       };
     }).filter(Boolean);
   }
@@ -5854,6 +6237,7 @@ export function createTrafficSystem({
     setPursuitResponder,
     getPursuitResponder,
     getPursuitResponders,
+    getPursuitChaseDiagnostics,
     getRuleProbeSample,
     setWeather,
     setNightLighting,
