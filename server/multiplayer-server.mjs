@@ -5,8 +5,12 @@ const HOST = process.env.HOST || '0.0.0.0';
 const wss = new WebSocketServer({ port: PORT, host: HOST });
 const clients = new Map();
 let nextId = 1;
+const vehicleLeases = new Map();
+let nextVehicleLeaseRevision = 1;
 const STATE_MIN_INTERVAL_MS = 35;
 const GAMEPLAY_EVENT_MIN_INTERVAL_MS = 400;
+const VEHICLE_LEASE_CLAIM_GRACE_MS = 3000;
+const VEHICLE_LEASE_ACTIVE_TTL_MS = 2500;
 const GAMEPLAY_ACTIVITIES = new Set([
   'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
 ]);
@@ -132,9 +136,24 @@ function sanitizeMission(mission, client) {
 }
 
 function sanitizeState(message, client) {
-  const mode = message.mode === 'drive'
+  const vehicleId = Number.isInteger(message.vehicleId)
+    ? boundedInteger(message.vehicleId, 0, 100000)
+    : null;
+  const requestedMode = message.mode === 'drive'
     ? 'drive'
     : message.mode === 'interior' ? 'interior' : 'walk';
+  const lease = client.vehicleLease;
+  const validDriveLease = requestedMode === 'drive'
+    && vehicleId !== null
+    && lease?.vehicleId === vehicleId
+    && message.vehicleLeaseToken === lease.token
+    && Number(message.vehicleLeaseRevision) === lease.revision
+    && vehicleLeases.get(vehicleId) === lease;
+  if (validDriveLease) {
+    lease.active = true;
+    lease.lastHeartbeatAt = Date.now();
+  }
+  const mode = requestedMode === 'drive' && !validDriveLease ? 'walk' : requestedMode;
   return {
     type: 'state',
     name: client.name,
@@ -146,9 +165,8 @@ function sanitizeState(message, client) {
     mode,
     moving: message.moving === true,
     talking: message.talking === true,
-    vehicleId: Number.isInteger(message.vehicleId)
-      ? boundedInteger(message.vehicleId, 0, 100000)
-      : null,
+    vehicleId: mode === 'drive' ? vehicleId : null,
+    vehicleLeaseRevision: mode === 'drive' ? lease.revision : null,
     vehicleClass: String(message.vehicleClass || '').trim().slice(0, 24) || null,
     vehicleColor: Number.isFinite(message.vehicleColor)
       ? boundedInteger(message.vehicleColor, 0, 0xffffff)
@@ -156,6 +174,103 @@ function sanitizeState(message, client) {
     gameplay: sanitizeGameplay(message.gameplay, client),
     mission: sanitizeMission(message.mission, client),
   };
+}
+
+function vehicleLeaseMessage(lease, status = 'granted', extra = {}) {
+  return {
+    type: 'vehicle:lease',
+    status,
+    vehicleId: lease.vehicleId,
+    ownerId: lease.ownerId,
+    revision: lease.revision,
+    ...extra,
+  };
+}
+
+function denyVehicleLease(client, message, reason, revision = null) {
+  safeSend(client.ws, {
+    type: 'vehicle:lease',
+    status: 'denied',
+    requestId: String(message.requestId || '').trim().slice(0, 64),
+    vehicleId: Number.isInteger(message.vehicleId) ? message.vehicleId : null,
+    revision,
+    reason,
+  });
+}
+
+function claimVehicleLease(id, client, message) {
+  const requestId = String(message.requestId || '').trim().slice(0, 64);
+  const vehicleId = Number(message.vehicleId);
+  if (!requestId || !Number.isInteger(vehicleId) || vehicleId < 0 || vehicleId > 100000) {
+    denyVehicleLease(client, message, 'invalid-claim');
+    return;
+  }
+  if (client.vehicleLease) {
+    if (client.vehicleLease.vehicleId !== vehicleId) {
+      denyVehicleLease(client, message, 'already-owning', client.vehicleLease.revision);
+      return;
+    }
+    safeSend(client.ws, vehicleLeaseMessage(client.vehicleLease, 'granted', {
+      requestId,
+      token: client.vehicleLease.token,
+    }));
+    return;
+  }
+  const occupied = vehicleLeases.get(vehicleId);
+  if (occupied) {
+    denyVehicleLease(client, message, 'occupied', occupied.revision);
+    return;
+  }
+  const revision = nextVehicleLeaseRevision;
+  nextVehicleLeaseRevision += 1;
+  const lease = {
+    vehicleId,
+    ownerId: id,
+    revision,
+    token: `${id}:${vehicleId}:${revision}`,
+    active: false,
+    grantedAt: Date.now(),
+    lastHeartbeatAt: null,
+  };
+  vehicleLeases.set(vehicleId, lease);
+  client.vehicleLease = lease;
+  broadcast(vehicleLeaseMessage(lease));
+  safeSend(client.ws, vehicleLeaseMessage(lease, 'granted', {
+    requestId,
+    token: lease.token,
+  }));
+}
+
+function releaseVehicleLease(id, client, message = null, reason = 'released') {
+  if (!client) return false;
+  const lease = client.vehicleLease;
+  if (!lease) {
+    if (message) denyVehicleLease(client, message, 'not-owner');
+    return false;
+  }
+  if (message && (
+    Number(message.vehicleId) !== lease.vehicleId
+    || message.token !== lease.token
+    || Number(message.revision) !== lease.revision
+  )) {
+    denyVehicleLease(client, message, 'stale-release', lease.revision);
+    return false;
+  }
+  if (vehicleLeases.get(lease.vehicleId) !== lease || lease.ownerId !== id) {
+    client.vehicleLease = null;
+    if (message) denyVehicleLease(client, message, 'not-owner');
+    return false;
+  }
+  vehicleLeases.delete(lease.vehicleId);
+  client.vehicleLease = null;
+  const revision = nextVehicleLeaseRevision;
+  nextVehicleLeaseRevision += 1;
+  broadcast(vehicleLeaseMessage(lease, 'released', {
+    revision,
+    previousRevision: lease.revision,
+    reason,
+  }));
+  return true;
 }
 
 function safeSend(ws, payload) {
@@ -375,11 +490,18 @@ wss.on('connection', (ws) => {
     lastMission: null,
     lastState: null,
     lastCoopRequestId: null,
+    vehicleLease: null,
     coopState: { x: 28, z: 38, mode: 'walk', at: Date.now() },
     coopExit: null,
   });
 
-  safeSend(ws, { type: 'welcome', id, name: clients.get(id).name, peers: roster().filter((peer) => peer.id !== id) });
+  safeSend(ws, {
+    type: 'welcome',
+    id,
+    name: clients.get(id).name,
+    peers: roster().filter((peer) => peer.id !== id),
+    vehicleLeases: [...vehicleLeases.values()].map((lease) => vehicleLeaseMessage(lease)),
+  });
   broadcast({ type: 'peer:join', peer: { id, name: clients.get(id).name, color: clients.get(id).color } }, id);
   broadcast({ type: 'roster', peers: roster() }, id);
 
@@ -409,6 +531,19 @@ wss.on('connection', (ws) => {
       broadcast({ ...sanitized, from: id }, id);
       return;
     }
+    if (message.type === 'vehicle:claim') {
+      claimVehicleLease(id, client, message);
+      return;
+    }
+    if (message.type === 'vehicle:release') {
+      releaseVehicleLease(
+        id,
+        client,
+        message,
+        String(message.reason || 'released').trim().slice(0, 32) || 'released',
+      );
+      return;
+    }
     if (message.type === 'coop:advance') {
       handleCoopAdvance(id, client, message);
       return;
@@ -433,11 +568,13 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (activeCoopSession?.members.includes(id)) endCoopSession('disconnected');
+    releaseVehicleLease(id, clients.get(id), null, 'disconnected');
     clients.delete(id);
     broadcast({ type: 'peer:leave', id });
   });
   ws.on('error', () => {
     if (activeCoopSession?.members.includes(id)) endCoopSession('disconnected');
+    releaseVehicleLease(id, clients.get(id), null, 'disconnected');
     clients.delete(id);
     broadcast({ type: 'peer:leave', id });
   });
@@ -450,5 +587,16 @@ const coopExpiryTimer = setInterval(() => {
   }
 }, Math.min(1000, Math.max(100, COOP_SESSION_TTL_MS / 4)));
 coopExpiryTimer.unref?.();
+
+const vehicleLeaseExpiryTimer = setInterval(() => {
+  const now = Date.now();
+  for (const lease of vehicleLeases.values()) {
+    const baseline = lease.active ? lease.lastHeartbeatAt : lease.grantedAt;
+    const ttl = lease.active ? VEHICLE_LEASE_ACTIVE_TTL_MS : VEHICLE_LEASE_CLAIM_GRACE_MS;
+    if (!Number.isFinite(baseline) || now - baseline <= ttl) continue;
+    releaseVehicleLease(lease.ownerId, clients.get(lease.ownerId), null, 'expired');
+  }
+}, 500);
+vehicleLeaseExpiryTimer.unref?.();
 
 console.log(`San Francisco multiplayer relay listening on ws://${HOST}:${PORT}`);

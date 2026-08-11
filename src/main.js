@@ -1338,6 +1338,8 @@ hud = createHud({
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
+    pendingVehicleEntry = null;
+    if (traffic.isPlayerDriving?.()) exitPlayerCar({ force: true });
     clearPlayerVehicleEmbodiment();
     coopWaterfrontSession = null;
     networking?.leaveCoopSession?.();
@@ -1369,6 +1371,11 @@ const playerAvatarLocomotionState = {
 };
 let lifeSim = null;
 let networking = null;
+let pendingVehicleEntry = null;
+const onlineVehicleOwnershipQaState = {
+  vehicleId: null,
+  result: null,
+};
 let coopWaterfrontSession = null;
 const rewardedCoopReceipts = new Set();
 let audioContext = null;
@@ -1682,11 +1689,22 @@ function restorePlayerProgress() {
   const garageRestored = baseRestored && snapshot.garage
     ? traffic.importPlayerGarageState?.(snapshot.garage) === true
     : baseRestored;
-  const vehicleRestored = garageRestored && snapshot.vehicle
-    ? traffic.importPlayerVehicleState?.(snapshot.vehicle) === true
-      && ((snapshot.vehicle.mode ?? 'driving') !== 'driving'
-        || activatePlayerVehiclePresentation({ restored: true }) !== null)
+  const restoringOnlineDrive = garageRestored
+    && snapshot.vehicle
+    && (snapshot.vehicle.mode ?? 'driving') === 'driving'
+    && networking?.getState?.().connected === true;
+  const vehicleSnapshot = restoringOnlineDrive
+    ? { ...snapshot.vehicle, mode: 'parked' }
+    : snapshot.vehicle;
+  const vehicleImported = garageRestored && vehicleSnapshot
+    ? traffic.importPlayerVehicleState?.(vehicleSnapshot) === true
     : garageRestored;
+  const vehicleRestored = vehicleImported && snapshot.vehicle
+    ? restoringOnlineDrive
+      ? enterPlayerCar(snapshot.vehicle.vehicleId, { restored: true }) === true
+      : (snapshot.vehicle.mode ?? 'driving') !== 'driving'
+        || activatePlayerVehiclePresentation({ restored: true }) !== null
+    : vehicleImported;
   const aftermathRestored = vehicleRestored
     ? traffic.importCollisionAftermathState?.(
       trafficAftermathSnapshot,
@@ -2730,7 +2748,28 @@ function startPlayerLayer() {
       },
       onPeerGameplayEventClear: ({ peerId }) => hud?.clearPeerGameplayEvent?.(peerId),
       onCoopSessionChange: handleCoopSessionChange,
-      onConnectionChange: () => {},
+      onVehicleLeaseGranted: handleVehicleLeaseGranted,
+      onVehicleLeaseDenied: handleVehicleLeaseDenied,
+      onVehicleLeaseRevoked: handleVehicleLeaseRevoked,
+      onConnectionChange: (connected) => {
+        if (!connected) {
+          pendingVehicleEntry = null;
+          return;
+        }
+        const current = traffic.getPlayerVehicleState?.();
+        if (current && networking?.hasVehicleLease?.(current.index) !== true) {
+          const restoredSnapshot = traffic.exportPlayerVehicleState?.();
+          exitPlayerCar({ releaseLease: false, force: true });
+          clearPlayerVehicleEmbodiment();
+          const parked = restoredSnapshot
+            && traffic.importPlayerVehicleState?.({ ...restoredSnapshot, mode: 'parked' }) === true;
+          if (parked && enterPlayerCar(current.index, { restored: true })) {
+            hud?.setMessage('ONLINE / Restoring vehicle authority…');
+          } else {
+            hud?.setMessage('ONLINE / Re-enter the vehicle to acquire driving authority.');
+          }
+        }
+      },
     });
   }
   networking?.setName(playerName);
@@ -2868,9 +2907,60 @@ function getNetworkState() {
   };
 }
 
-function enterPlayerCar(index) {
+function completePlayerCarEntry(entry) {
+  const {
+    index,
+    entryStart,
+    entrySide,
+    restored = false,
+  } = entry;
+  const entered = traffic.enterPlayerVehicle?.(index);
+  if (!entered) {
+    networking?.releaseVehicleLease?.(index, 'entry-failed');
+    return false;
+  }
+  const theft = restored ? null : traffic.reportPlayerVehicleTheft?.();
+  const theftHeat = theft?.reported
+    ? streetHeat?.reportIncident?.(18, {
+      kind: 'vehicle-theft',
+      message: `Vehicle theft · ${theft.label} reported · heat +18.`,
+      source: 'vehicle-theft',
+    })
+    : null;
+  if (theft?.reported) vehicleEmbodimentState.events.theftIngressCount += 1;
+  const state = activatePlayerVehiclePresentation({
+    entryStart,
+    doorSide: entrySide,
+    restored,
+  });
+  if (!state) {
+    traffic.exitPlayerVehicle?.();
+    networking?.releaseVehicleLease?.(index, 'presentation-failed');
+    return false;
+  }
+  if (onlineVehicleOwnershipQaState.vehicleId === index) {
+    onlineVehicleOwnershipQaState.result = { reason: 'granted' };
+  }
+  lastVehicleDamageAt = null;
+  if (!restored) {
+    hud.setMessage(theft?.reported
+      ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
+      : theft?.reason === 'registered-owner'
+        ? 'Registered vehicle · W accelerate · S brake · A/D steer · E exit.'
+        : 'You got in. W accelerate · S brake · A/D steer · E exit.');
+  } else {
+    savePlayerProgress();
+  }
+  return true;
+}
+
+function enterPlayerCar(index, { restored = false } = {}) {
   if (vehicleEmbodimentTransitionActive()) {
     vehicleEmbodimentState.duplicateEIgnored = true;
+    return false;
+  }
+  if (pendingVehicleEntry) {
+    hud?.setMessage('Checking vehicle availability…');
     return false;
   }
   if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
@@ -2886,26 +2976,19 @@ function enterPlayerCar(index) {
     && vehicleEmbodimentStart.copy(entryStart).sub(entryRoot.position).dot(vehicleEmbodimentRight) < 0
     ? -1
     : 1;
-  const entered = traffic.enterPlayerVehicle?.(index);
-  if (!entered) return false;
-  const theft = traffic.reportPlayerVehicleTheft?.();
-  const theftHeat = theft?.reported
-    ? streetHeat?.reportIncident?.(18, {
-      kind: 'vehicle-theft',
-      message: `Vehicle theft · ${theft.label} reported · heat +18.`,
-      source: 'vehicle-theft',
-    })
-    : null;
-  if (theft?.reported) vehicleEmbodimentState.events.theftIngressCount += 1;
-  const state = activatePlayerVehiclePresentation({ entryStart, doorSide: entrySide });
-  if (!state) return false;
-  lastVehicleDamageAt = null;
-  hud.setMessage(theft?.reported
-    ? `Vehicle theft reported · heat ${theftHeat?.heat ?? 18} · W drive · E exit.`
-    : theft?.reason === 'registered-owner'
-      ? 'Registered vehicle · W accelerate · S brake · A/D steer · E exit.'
-      : 'You got in. W accelerate · S brake · A/D steer · E exit.');
-  return true;
+  const entry = { index, entryStart, entrySide, restored };
+  if (networking?.getState?.().connected === true
+    && !networking.hasVehicleLease?.(index)) {
+    pendingVehicleEntry = entry;
+    if (networking.requestVehicleLease?.(index) === true) {
+      hud?.setMessage(restored
+        ? 'Restoring vehicle authority…'
+        : 'Checking vehicle availability…');
+      return true;
+    }
+    pendingVehicleEntry = null;
+  }
+  return completePlayerCarEntry(entry);
 }
 
 function getVehicleEmbodimentQaEntry() {
@@ -2964,15 +3047,20 @@ function activatePlayerVehiclePresentation({ restored = false, entryStart = null
   return state;
 }
 
-function exitPlayerCar() {
-  if (vehicleEmbodimentTransitionActive()) {
+function exitPlayerCar({ releaseLease = true, force = false } = {}) {
+  if (vehicleEmbodimentTransitionActive() && !force) {
     vehicleEmbodimentState.duplicateEIgnored = true;
     return false;
   }
+  if (vehicleEmbodimentTransitionActive()) clearPlayerVehicleEmbodiment({ keepVehicle: true });
   const priorState = traffic.getPlayerVehicleState?.();
   if (!priorState) return false;
   const exit = traffic.exitPlayerVehicle?.();
   if (!exit) return false;
+  if (releaseLease) networking?.releaseVehicleLease?.(priorState.index, 'exited');
+  if (onlineVehicleOwnershipQaState.vehicleId === priorState.index) {
+    onlineVehicleOwnershipQaState.result = { reason: 'released' };
+  }
   combat?.setAiming(false);
   combat?.setTriggerHeld(false);
   driveByState.active = false;
@@ -3023,6 +3111,38 @@ function exitPlayerCar() {
   hud.setMessage('You stepped back onto the avenue.');
   savePlayerProgress();
   return true;
+}
+
+function handleVehicleLeaseGranted(lease) {
+  const entry = pendingVehicleEntry;
+  pendingVehicleEntry = null;
+  if (!entry || entry.index !== lease?.vehicleId) {
+    networking?.releaseVehicleLease?.(lease?.vehicleId, 'orphaned-grant');
+    return;
+  }
+  if (!completePlayerCarEntry(entry)) {
+    hud?.setMessage('Vehicle entry changed · try again.');
+  }
+}
+
+function handleVehicleLeaseDenied(denial) {
+  if (pendingVehicleEntry?.index === denial?.vehicleId) pendingVehicleEntry = null;
+  if (onlineVehicleOwnershipQaState.vehicleId === denial?.vehicleId) {
+    onlineVehicleOwnershipQaState.result = { reason: denial?.reason || 'denied' };
+  }
+  hud?.setMessage(denial?.reason === 'occupied'
+    ? 'Vehicle occupied by another player.'
+    : 'Vehicle unavailable · try another car.');
+}
+
+function handleVehicleLeaseRevoked(lease) {
+  if (pendingVehicleEntry?.index === lease?.vehicleId) pendingVehicleEntry = null;
+  const current = traffic.getPlayerVehicleState?.();
+  if (current?.index !== lease?.vehicleId) return;
+  exitPlayerCar({ releaseLease: false, force: true });
+  hud?.setMessage(lease?.reason === 'disconnected'
+    ? 'Connection lost · vehicle authority released.'
+    : 'Vehicle authority ended · returned to the street.');
 }
 
 function getPlayerVehicleRepairQuote() {
@@ -4985,6 +5105,85 @@ function stageVehicleEmbodimentQa({ kind = 'core-private', vehicleClass = null }
 const vehicleEmbodimentQa = Object.freeze({
   stage: stageVehicleEmbodimentQa,
   snapshot: getPlayerVehicleEmbodimentState,
+});
+
+function stageOnlineVehicleOwnershipQa(options = {}) {
+  const staged = stageVehicleEmbodimentQa({
+    kind: 'core-private',
+    vehicleClass: options.vehicleClass || 'sedan',
+  });
+  const requestedId = Number(options.vehicleId);
+  if (!staged?.ready
+    || (Number.isInteger(requestedId) && staged.vehicleId !== requestedId)) {
+    return {
+      ready: false,
+      syntheticEvents: staged?.syntheticEvents ?? 0,
+      vehicleId: staged?.vehicleId ?? null,
+      requestedVehicleId: Number.isInteger(requestedId) ? requestedId : null,
+    };
+  }
+  onlineVehicleOwnershipQaState.vehicleId = staged.vehicleId;
+  onlineVehicleOwnershipQaState.result = null;
+  return { ...staged, syntheticEvents: 0 };
+}
+
+function snapshotOnlineVehicleOwnershipQa() {
+  const vehicleId = onlineVehicleOwnershipQaState.vehicleId;
+  const diagnostics = networking?.getVehicleLeaseDiagnostics?.() ?? null;
+  const ownership = diagnostics?.remote?.find((lease) => lease.vehicleId === vehicleId) ?? null;
+  const drivingState = traffic.getPlayerVehicleState?.();
+  const life = traffic.getVehicleLifeSnapshot?.();
+  const vehicleState = life?.vehicles?.find((vehicle) => vehicle.id === vehicleId) ?? null;
+  const room = scene.getObjectByName('Remote online players');
+  const fallbackCount = room?.children?.filter((child) => (
+    /^Remote .* driver car$/.test(child.name) && child.visible !== false
+  )).length ?? 0;
+  const root = vehicleRootForId(vehicleId);
+  const representationCount = (root?.visible === true ? 1 : 0) + fallbackCount;
+  const driving = drivingState?.index === vehicleId;
+  return {
+    player: {
+      driving,
+      onFoot: !driving,
+      mode: driving ? 'drive' : 'walk',
+      moving: driving ? Number(drivingState.speed) > 0.1 : playerMoving(),
+    },
+    vehicle: {
+      id: vehicleId,
+      class: drivingState?.class ?? vehicleState?.class ?? null,
+      speed: driving ? drivingState.speed : vehicleState?.speed ?? 0,
+    },
+    ownership: {
+      vehicleId,
+      ownerId: ownership?.ownerId ?? null,
+      revision: ownership?.revision ?? null,
+      representationCount,
+      fallbackCount,
+    },
+    occupied: onlineVehicleOwnershipQaState.result?.reason === 'occupied',
+    result: onlineVehicleOwnershipQaState.result
+      ? { ...onlineVehicleOwnershipQaState.result }
+      : null,
+    diagnostics,
+  };
+}
+
+const onlineVehicleOwnershipQa = Object.freeze({
+  stage: stageOnlineVehicleOwnershipQa,
+  snapshot: snapshotOnlineVehicleOwnershipQa,
+  protocol: Object.freeze({
+    inject(frame = {}) {
+      const lease = networking?.getVehicleLeaseDiagnostics?.()?.local;
+      const accepted = frame?.type === 'vehicle:release'
+        && Number(frame.vehicleId) === lease?.vehicleId
+        && Number(frame.revision) === lease?.revision
+        && typeof frame.token === 'string'
+        && frame.token.length > 0;
+      return accepted
+        ? { accepted: false, rejected: true, reason: 'qa-injector-read-only' }
+        : { accepted: false, rejected: true, reason: 'invalid-or-stale-lease-frame' };
+    },
+  }),
 });
 
 function snapshotOnFootVehicleImpactQa() {
@@ -8727,8 +8926,13 @@ const publicTraffic = Object.freeze({
   exitPlayerVehicle: undefined,
   importPlayerVehicleState(snapshot) {
     if (vehicleEmbodimentTransitionActive()) return false;
-    const imported = traffic.importPlayerVehicleState?.(snapshot) === true;
+    const onlineDrive = (snapshot?.mode ?? 'driving') === 'driving'
+      && networking?.getState?.().connected === true;
+    const imported = traffic.importPlayerVehicleState?.(
+      onlineDrive ? { ...snapshot, mode: 'parked' } : snapshot,
+    ) === true;
     if (!imported) return false;
+    if (onlineDrive) return enterPlayerCar(snapshot.vehicleId, { restored: true });
     if (traffic.isPlayerDriving?.()) {
       return activatePlayerVehiclePresentation({ restored: true }) !== null;
     }
@@ -8877,6 +9081,9 @@ window.__SF_SIM__ = {
   },
   getVehicleEmbodimentQa() {
     return vehicleEmbodimentQa;
+  },
+  getOnlineVehicleOwnershipQa() {
+    return onlineVehicleOwnershipQa;
   },
   getLastTrafficCitation() {
     return lastTrafficCitation ? structuredClone(lastTrafficCitation) : null;
