@@ -156,12 +156,11 @@ app?.append(combatOverlay);
 
 function updateCombatOverlay(combatState) {
   if (!combatState) return;
-  const combatIsOnFoot = playerLayerActive
+  const combatPresentationAvailable = playerLayerActive
     && !controls.interiorMode
-    && !traffic.isPlayerDriving?.()
     && !beautyMode
     && !qaCameraPose;
-  const visible = combatIsOnFoot && (
+  const visible = combatPresentationAvailable && (
     combatState.aiming
     || combatState.reloading
     || combatState.hitConfirm
@@ -183,7 +182,9 @@ function updateCombatOverlay(combatState) {
     : 'translate(-50%, -50%) scale(1)';
   combatModeLabel.textContent = combatState.status === 'downed'
     ? 'DOWN / RECOVERING'
-    : combatState.aiming ? 'AIM / READY' : 'ON FOOT / READY';
+    : combatState.aiming && traffic.isPlayerDriving?.()
+      ? `DRIVE-BY / ${Math.round(traffic.getPlayerVehicleState?.()?.speed || 0)} KM/H`
+      : combatState.aiming ? 'AIM / READY' : 'ON FOOT / READY';
   combatAmmoLabel.textContent = combatState.reloading
     ? `RELOAD / ${Math.ceil((1 - combatState.reloadProgress) * 1.18 * 10) / 10}s`
     : `AMMO / ${combatState.ammo} + ${combatState.reserveAmmo}`;
@@ -1643,6 +1644,24 @@ const combatEmbodimentWorldB = new THREE.Vector3();
 const combatEmbodimentNdc = new THREE.Vector3();
 const combatEmbodimentRay = new THREE.Vector3();
 let playerWeapon = null;
+let driveByRig = null;
+const driveByState = {
+  active: false,
+  justActivated: false,
+  aimYaw: 0,
+  aimPitch: 0,
+};
+const driveByVehicleRight = new THREE.Vector3();
+const driveByAimForward = new THREE.Vector3();
+const driveByVisualWeaponDirection = new THREE.Vector3();
+const driveByAimAnchor = new THREE.Vector3();
+const driveByCameraPosition = new THREE.Vector3();
+const driveByLookTarget = new THREE.Vector3();
+const driveByMuzzleLocal = new THREE.Vector3(0, 0, 0.76);
+const driveByWorldQuaternion = new THREE.Quaternion();
+const driveByParentQuaternion = new THREE.Quaternion();
+const driveByBox = new THREE.Box3();
+const driveByScreenPoint = new THREE.Vector3();
 
 function playerMoving() {
   return controls.keys.has('keyw')
@@ -1715,6 +1734,82 @@ function createPlayerWeapon() {
   return root;
 }
 
+function createDriveByRig() {
+  const root = new THREE.Group();
+  root.name = 'Traveler vehicle-window drive-by rig';
+  root.visible = false;
+  const sleeveMaterial = new THREE.MeshStandardMaterial({
+    color: 0x5967a1,
+    roughness: 0.78,
+    metalness: 0.02,
+  });
+  const skinMaterial = new THREE.MeshStandardMaterial({
+    color: 0xe0aa7e,
+    roughness: 0.72,
+    metalness: 0.01,
+  });
+  const gunMaterial = new THREE.MeshStandardMaterial({
+    color: 0xb8c5ca,
+    roughness: 0.42,
+    metalness: 0.78,
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x222a2e,
+    roughness: 0.58,
+    metalness: 0.36,
+  });
+  const accentMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffc86b,
+    emissive: 0xd0672b,
+    emissiveIntensity: 0.85,
+    roughness: 0.34,
+    metalness: 0.18,
+  });
+  const upperArm = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.24, 0.24), sleeveMaterial);
+  upperArm.name = 'Drive-by upper arm';
+  upperArm.position.set(-0.78, 1.18, 0.18);
+  const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.2, 0.2), sleeveMaterial);
+  forearm.name = 'Drive-by forearm';
+  forearm.position.set(-1.38, 1.2, 0.26);
+  forearm.rotation.z = -0.12;
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.11, 7, 5), skinMaterial);
+  hand.name = 'Drive-by hand socket';
+  hand.position.set(-1.72, 1.2, 0.31);
+  const weapon = new THREE.Group();
+  weapon.name = 'Drive-by low-poly sidearm';
+  weapon.position.copy(hand.position).add(new THREE.Vector3(0, 0.055, 0.035));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, 0.76), gunMaterial);
+  body.position.set(0, 0.02, 0.38);
+  const slideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.09, 0.54), accentMaterial);
+  slideStripe.position.set(0, 0.185, 0.39);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.46, 6), darkMaterial);
+  barrel.rotation.x = Math.PI * 0.5;
+  barrel.position.set(0, 0.005, 0.57);
+  const barrelBand = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.08, 6), accentMaterial);
+  barrelBand.rotation.x = Math.PI * 0.5;
+  barrelBand.position.set(0, 0, 0.72);
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.24), accentMaterial);
+  sight.position.set(0, 0.17, 0.46);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.4, 0.22), darkMaterial);
+  grip.position.set(0, -0.22, 0.16);
+  grip.rotation.x = -0.16;
+  weapon.add(body, slideStripe, barrel, barrelBand, sight, grip);
+  root.add(upperArm, forearm, hand, weapon);
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = false;
+    child.receiveShadow = true;
+    child.frustumCulled = false;
+  });
+  root.userData.forearm = forearm;
+  root.userData.upperArm = upperArm;
+  root.userData.hand = hand;
+  root.userData.weapon = weapon;
+  root.userData.muzzleLocal = driveByMuzzleLocal;
+  scene.add(root);
+  return root;
+}
+
 function getTraversalSurfaceHeight(positionOrX, optionalZ) {
   const citySurface = city.getSurfaceHeight?.(positionOrX, optionalZ);
   if (Number.isFinite(citySurface)) return citySurface;
@@ -1738,6 +1833,11 @@ function resolveTraversalCameraFrame(focus, position, clearance = 0.42) {
 }
 
 function getCombatGroundPosition(target = combatGroundPosition) {
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  if (drivingState?.position) {
+    target.set(drivingState.position.x, drivingState.position.y, drivingState.position.z);
+    return target;
+  }
   const surface = getTraversalSurfaceHeight(controls.target);
   const groundY = Number.isFinite(surface)
     ? surface
@@ -1747,6 +1847,11 @@ function getCombatGroundPosition(target = combatGroundPosition) {
 }
 
 function getCombatMuzzleOrigin(target, direction) {
+  if (driveByRig?.visible && driveByRig.userData.weapon) {
+    target.copy(driveByMuzzleLocal);
+    driveByRig.userData.weapon.localToWorld(target);
+    return true;
+  }
   if (playerWeapon?.visible) {
     target.copy(combatWeaponMuzzleLocal);
     playerWeapon.localToWorld(target);
@@ -1930,6 +2035,198 @@ function getCombatEmbodimentState() {
   };
 }
 
+function vehiclePresentationDimensions(vehicleClass) {
+  return {
+    halfWidth: vehicleClass === 'bus' || vehicleClass === 'truck' ? 1.55 : 1.15,
+    halfLength: vehicleClass === 'bus' ? 5.2
+      : vehicleClass === 'truck' ? 3.5
+        : vehicleClass === 'van' || vehicleClass === 'suv' ? 2.7 : 2.45,
+    roof: vehicleClass === 'bus' ? 3.1 : vehicleClass === 'truck' ? 2.5 : 1.9,
+  };
+}
+
+function pointOutsideVehicleBody(point, drivingState, margin = 0) {
+  if (!point || !drivingState?.position) return false;
+  const heading = Number(drivingState.heading) || 0;
+  const dx = point.x - drivingState.position.x;
+  const dz = point.z - drivingState.position.z;
+  const localX = dx * Math.cos(heading) - dz * Math.sin(heading);
+  const localZ = dx * Math.sin(heading) + dz * Math.cos(heading);
+  const localY = point.y - drivingState.position.y;
+  const dimensions = vehiclePresentationDimensions(drivingState.class);
+  return Math.abs(localX) >= dimensions.halfWidth + margin
+    || Math.abs(localZ) >= dimensions.halfLength + margin
+    || localY >= dimensions.roof + margin;
+}
+
+function updateDriveByRig(combatState, drivingState) {
+  if (!driveByRig) return;
+  const visible = Boolean(
+    drivingState
+      && combatState?.aiming
+      && combatState?.status === 'running'
+      && playerLayerActive
+      && !controls.interiorMode
+      && !beautyMode
+      && !qaCameraPose,
+  );
+  driveByRig.visible = visible;
+  driveByState.active = visible;
+  if (!visible) return;
+  driveByRig.position.set(
+    drivingState.position.x,
+    drivingState.position.y,
+    drivingState.position.z,
+  );
+  driveByRig.rotation.set(0, drivingState.heading, 0);
+  driveByRig.updateMatrixWorld(true);
+  camera.getWorldDirection(combatWeaponDirection).normalize();
+  driveByVehicleRight.set(Math.cos(drivingState.heading), 0, -Math.sin(drivingState.heading));
+  const windowSide = combatWeaponDirection.dot(driveByVehicleRight) >= 0 ? 1 : -1;
+  driveByRig.userData.upperArm.position.x = 0.78 * windowSide;
+  driveByRig.userData.forearm.position.x = 1.38 * windowSide;
+  driveByRig.userData.forearm.rotation.z = 0.12 * windowSide;
+  driveByRig.userData.hand.position.x = 1.72 * windowSide;
+  driveByRig.userData.weapon.position.x = driveByRig.userData.hand.position.x;
+  driveByVisualWeaponDirection.copy(combatWeaponDirection)
+    .addScaledVector(driveByVehicleRight, windowSide * 0.28)
+    .normalize();
+  driveByWorldQuaternion.setFromUnitVectors(combatWeaponUp, driveByVisualWeaponDirection);
+  driveByRig.getWorldQuaternion(driveByParentQuaternion).invert();
+  driveByRig.userData.weapon.quaternion
+    .copy(driveByParentQuaternion)
+    .multiply(driveByWorldQuaternion);
+  driveByRig.updateMatrixWorld(true);
+}
+
+function updateDriveByCamera(dt, drivingState) {
+  driveByAimForward.set(Math.sin(driveByState.aimYaw), 0, Math.cos(driveByState.aimYaw));
+  driveByAimAnchor.set(
+    drivingState.position.x,
+    drivingState.position.y + 1.25,
+    drivingState.position.z,
+  );
+  driveByCameraPosition.copy(driveByAimAnchor)
+    .addScaledVector(driveByAimForward, -10.7);
+  driveByVehicleRight.set(Math.cos(drivingState.heading), 0, -Math.sin(drivingState.heading));
+  const windowSide = driveByAimForward.dot(driveByVehicleRight) >= 0 ? 1 : -1;
+  driveByCameraPosition.addScaledVector(driveByVehicleRight, windowSide * 1.3);
+  driveByCameraPosition.y = drivingState.position.y + 5.2;
+  driveByLookTarget.copy(driveByAimAnchor)
+    .addScaledVector(driveByAimForward, 24);
+  driveByLookTarget.y += 0.4 + driveByState.aimPitch * 12;
+  const citySafe = city.resolveCameraPosition?.(driveByAimAnchor, driveByCameraPosition)
+    || driveByCameraPosition;
+  const safeCamera = streaming.resolveCameraPosition?.(driveByAimAnchor, citySafe)
+    || citySafe;
+  if (driveByState.justActivated) camera.position.copy(safeCamera);
+  else camera.position.lerp(safeCamera, 1 - Math.exp(-16 * dt));
+  if (!pointOutsideVehicleBody(camera.position, drivingState, 0.35)) {
+    camera.position.copy(safeCamera);
+  }
+  resolveTraversalCameraFrame(driveByAimAnchor, camera.position);
+  camera.lookAt(driveByLookTarget);
+  camera.updateMatrixWorld(true);
+  controls.cameraDistance = camera.position.distanceTo(driveByAimAnchor);
+  driveByState.justActivated = false;
+  hud?.setCameraState({ mode: 'drive-by / shoulder', distance: controls.cameraDistance });
+}
+
+function getDriveByState() {
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  const width = renderer.domElement.clientWidth || window.innerWidth || 1;
+  const height = renderer.domElement.clientHeight || window.innerHeight || 1;
+  const hand = driveByRig?.userData?.hand;
+  const weapon = driveByRig?.userData?.weapon;
+  hand?.getWorldPosition?.(combatEmbodimentWorldA);
+  weapon?.getWorldPosition?.(combatEmbodimentWorldB);
+  const gripSocketDistance = hand && weapon
+    ? combatEmbodimentWorldA.distanceTo(combatEmbodimentWorldB)
+    : null;
+  let muzzle = null;
+  if (weapon) {
+    combatEmbodimentWorldA.copy(driveByMuzzleLocal);
+    weapon.localToWorld(combatEmbodimentWorldA);
+    muzzle = {
+      x: combatEmbodimentWorldA.x,
+      y: combatEmbodimentWorldA.y,
+      z: combatEmbodimentWorldA.z,
+    };
+  }
+  const vehicleRoot = drivingState ? traffic.group?.children?.[drivingState.index] : null;
+  let vehicleScreen = null;
+  if (vehicleRoot?.visible) {
+    driveByBox.setFromObject(vehicleRoot);
+    const points = [];
+    for (const x of [driveByBox.min.x, driveByBox.max.x]) {
+      for (const y of [driveByBox.min.y, driveByBox.max.y]) {
+        for (const z of [driveByBox.min.z, driveByBox.max.z]) {
+          driveByScreenPoint.set(x, y, z).project(camera);
+          points.push({
+            x: (driveByScreenPoint.x * 0.5 + 0.5) * width,
+            y: (-driveByScreenPoint.y * 0.5 + 0.5) * height,
+          });
+        }
+      }
+    }
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    vehicleScreen = {
+      left: Math.min(...xs),
+      right: Math.max(...xs),
+      top: Math.min(...ys),
+      bottom: Math.max(...ys),
+    };
+    vehicleScreen.width = vehicleScreen.right - vehicleScreen.left;
+    vehicleScreen.height = vehicleScreen.bottom - vehicleScreen.top;
+    vehicleScreen.fullFrame = vehicleScreen.left >= 8
+      && vehicleScreen.right <= width - 8
+      && vehicleScreen.top >= 8
+      && vehicleScreen.bottom <= height - 8;
+  }
+  const surface = getTraversalSurfaceHeight(camera.position);
+  driveByAimAnchor.set(
+    drivingState?.position?.x ?? controls.target.x,
+    (drivingState?.position?.y ?? 0) + 1.25,
+    drivingState?.position?.z ?? controls.target.z,
+  );
+  combatEmbodimentRay.copy(camera.position).sub(driveByAimAnchor);
+  const cameraDistance = combatEmbodimentRay.length();
+  const blocker = cameraDistance > 1e-4
+    ? getNearestCombatWorldBlocker(
+      driveByAimAnchor,
+      combatEmbodimentRay.multiplyScalar(1 / cameraDistance),
+      cameraDistance + 0.05,
+    )
+    : null;
+  const surfaceClearance = Number.isFinite(surface) ? camera.position.y - surface : null;
+  const insideVehicle = drivingState ? !pointOutsideVehicleBody(camera.position, drivingState) : false;
+  return {
+    active: driveByState.active,
+    aiming: Boolean(combat?.getState?.().aiming && drivingState),
+    driverForearmVisible: Boolean(driveByRig?.visible && driveByRig.userData.forearm?.visible),
+    weapon: {
+      visible: Boolean(driveByRig?.visible && weapon?.visible),
+      connected: Boolean(weapon && weapon.parent === driveByRig),
+      gripSocketDistance,
+    },
+    muzzle: muzzle ? {
+      ...muzzle,
+      outsideVehicle: Boolean(drivingState && pointOutsideVehicleBody(muzzle, drivingState)),
+    } : null,
+    reticle: { x: width * 0.5, y: height * 0.5 },
+    vehicleScreen,
+    camera: {
+      collisionSafe: (!blocker || blocker.distance >= cameraDistance - 0.08)
+        && (!Number.isFinite(surfaceClearance) || surfaceClearance >= 0.4)
+        && !insideVehicle,
+      insideWorld: Boolean(blocker && blocker.distance < 0.2),
+      insideVehicle,
+      surfaceClearance,
+    },
+  };
+}
+
 function startPlayerLayer() {
   const nameInput = document.querySelector('#player-name');
   playerName = nameInput?.value?.trim()?.slice(0, 18) || 'Traveler';
@@ -1947,6 +2244,7 @@ function startPlayerLayer() {
     scene.add(playerAvatar);
   }
   if (!playerWeapon) playerWeapon = createPlayerWeapon();
+  if (!driveByRig) driveByRig = createDriveByRig();
   playerLayerActive = true;
   traversalCameraMode = 'walk';
   traversalCameraTransitionRemaining = 0;
@@ -2152,7 +2450,13 @@ function enterPlayerCar(index) {
 function activatePlayerVehiclePresentation({ restored = false } = {}) {
   const state = traffic.getPlayerVehicleState?.();
   if (!state) return null;
-  combat?.setEnabled(false);
+  combat?.setAiming(false);
+  combat?.setTriggerHeld(false);
+  combat?.setEnabled(true);
+  driveByState.active = false;
+  driveByState.justActivated = false;
+  driveByState.aimYaw = state.heading;
+  driveByState.aimPitch = 0;
   lastVehicleDamageAt = state.damage?.lastDamage?.at ?? null;
   if (audioContext && !engineAudio) {
     try {
@@ -2187,6 +2491,11 @@ function activatePlayerVehiclePresentation({ restored = false } = {}) {
 function exitPlayerCar() {
   const exit = traffic.exitPlayerVehicle?.();
   if (!exit) return false;
+  combat?.setAiming(false);
+  combat?.setTriggerHeld(false);
+  driveByState.active = false;
+  driveByState.justActivated = false;
+  if (driveByRig) driveByRig.visible = false;
   lastVehicleDamageAt = null;
   if (engineAudio) {
     engineAudio.stop();
@@ -2951,7 +3260,7 @@ function eatPlayerAtMarket() {
 }
 
 function buyPlayerAmmo() {
-  if (!combatInputAvailable()) {
+  if (!combatInputAvailable() || traffic.isPlayerDriving?.()) {
     hud?.setMessage('Buy ammunition on foot in the public realm.');
     return null;
   }
@@ -2976,7 +3285,7 @@ function usePlayerMedkit() {
     lifeSim?.consumeMedkit?.();
     return { ok: false, reason: 'empty' };
   }
-  if (!combatInputAvailable()) {
+  if (!combatInputAvailable() || traffic.isPlayerDriving?.()) {
     hud?.setMessage('Use medkits on foot in the public realm.');
     return { ok: false, reason: 'unavailable' };
   }
@@ -3023,7 +3332,7 @@ function updatePlayerLayer(dt, elapsed) {
     engineAudio?.update(drivingState.speed, controls.keys.has('keyw') ? 1 : 0);
     windAudio?.update(Math.min(1, drivingState.speed / 13));
     hud?.setDriveState?.({
-      active: true,
+      active: combat?.getState?.().aiming !== true,
       speed: drivingState.speed,
       heading: drivingState.heading,
       weather: weatherMode,
@@ -3361,7 +3670,12 @@ combat = createCombatLoop({
   scene,
   camera,
   getPlayerPosition: getCombatGroundPosition,
-  getPlayerHeading: () => controls.yaw,
+  getPlayerHeading: () => {
+    const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+    return drivingState
+      ? driveByState.aimYaw
+      : controls.yaw;
+  },
   getMuzzleOrigin: getCombatMuzzleOrigin,
   getPedestrianCandidates: getCombatPedestrianCandidates,
   getTrafficSnapshot: () => traffic.getVehicleLifeSnapshot?.(),
@@ -3369,7 +3683,15 @@ combat = createCombatLoop({
   getNearestWorldBlocker: getNearestCombatWorldBlocker,
   streetHeat,
   onRecoil: (amount) => {
-    controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
+    if (traffic.isPlayerDriving?.()) {
+      driveByState.aimPitch = THREE.MathUtils.clamp(
+        driveByState.aimPitch + amount * 0.18,
+        -0.36,
+        0.25,
+      );
+    } else {
+      controls.pitch = THREE.MathUtils.clamp(controls.pitch - amount, 0.28, 2.45);
+    }
   },
   onEvent: ({ kind, message, targetKind, incidentId, residentId, vehicleId }) => {
     combatAudio?.play?.(kind, { targetKind });
@@ -4717,7 +5039,6 @@ function combatAimActive() {
     combat?.getState?.().aiming
       && playerLayerActive
       && !controls.interiorMode
-      && !traffic.isPlayerDriving?.()
       && !beautyMode
       && !qaCameraPose,
   );
@@ -4727,7 +5048,13 @@ function syncCombatCameraMode() {
   const aiming = combatAimActive();
   if (aiming && !combatCameraState.active) {
     combatCameraState.active = true;
-    combatCameraState.justActivated = true;
+    const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+    combatCameraState.justActivated = !drivingState;
+    driveByState.justActivated = Boolean(drivingState);
+    if (drivingState) {
+      driveByState.aimYaw = drivingState.heading;
+      driveByState.aimPitch = 0;
+    }
     combatCameraState.savedPitch = lastPublicWorldState?.pitch ?? controls.pitch;
     combatCameraState.savedDistance = lastPublicWorldState?.distance ?? controls.distance;
     combatCameraState.savedCameraPitch = controls.cameraPitch;
@@ -4735,6 +5062,9 @@ function syncCombatCameraMode() {
   } else if (!aiming && combatCameraState.active) {
     combatCameraState.active = false;
     combatCameraState.justActivated = false;
+    driveByState.active = false;
+    driveByState.justActivated = false;
+    if (driveByRig) driveByRig.visible = false;
     // Keep the heading acquired during aim. Only the ordinary orbit pitch and
     // distance are restored; the next orbit frame eases back from the current
     // shoulder view without snapping the player to the pre-aim yaw.
@@ -4896,7 +5226,9 @@ function updateCamera(dt) {
   // aiming changes framing, not locomotion.
   updateRoamTarget(dt, qaTourActive, drivingActive, axis);
   if (aiming) {
-    updateCombatShoulderCamera(dt);
+    const drivingState = drivingActive ? traffic.getPlayerVehicleState?.() : null;
+    if (drivingState) updateDriveByCamera(dt, drivingState);
+    else updateCombatShoulderCamera(dt);
     return;
   }
 
@@ -4986,7 +5318,6 @@ function combatInputAvailable() {
     combat
       && playerLayerActive
       && !controls.interiorMode
-      && !traffic.isPlayerDriving?.()
       && !passengerRideActive()
       && !beautyMode
       && !qaCameraPose,
@@ -5203,8 +5534,17 @@ function onPointerMove(event) {
   if (event.pointerType === 'mouse'
     && controls.keys.has('keyq')
     && combatAimActive()) {
-    controls.yaw -= event.movementX * 0.0038;
-    controls.pitch += event.movementY * 0.0038 * 0.72;
+    if (traffic.isPlayerDriving?.()) {
+      driveByState.aimYaw -= event.movementX * 0.0038;
+      driveByState.aimPitch = THREE.MathUtils.clamp(
+        driveByState.aimPitch - event.movementY * 0.0038 * 0.72,
+        -0.36,
+        0.25,
+      );
+    } else {
+      controls.yaw -= event.movementX * 0.0038;
+      controls.pitch += event.movementY * 0.0038 * 0.72;
+    }
     return;
   }
   if (controls.combatPointerId === event.pointerId) {
@@ -5212,8 +5552,17 @@ function onPointerMove(event) {
     const dy = event.clientY - controls.lastY;
     controls.lastX = event.clientX;
     controls.lastY = event.clientY;
-    controls.yaw -= dx * 0.0038;
-    controls.pitch += dy * 0.0038 * 0.72;
+    if (traffic.isPlayerDriving?.()) {
+      driveByState.aimYaw -= dx * 0.0038;
+      driveByState.aimPitch = THREE.MathUtils.clamp(
+        driveByState.aimPitch - dy * 0.0038 * 0.72,
+        -0.36,
+        0.25,
+      );
+    } else {
+      controls.yaw -= dx * 0.0038;
+      controls.pitch += dy * 0.0038 * 0.72;
+    }
     return;
   }
   if (controls.combatPointerId === event.pointerId
@@ -5565,8 +5914,8 @@ function updateInteraction() {
     hud.setInteraction({
       label: `DRIVING / ${(drivingState?.class || 'CAR').toUpperCase()} / ${Math.round(drivingState?.speed || 0)} KM/H${heatLabel}`,
       prompt: heatState?.pursuitActive
-        ? 'E / TAP EXIT · WASD DRIVE · BRAKE TO LOSE TAIL'
-        : 'E / TAP  EXIT · WASD DRIVE',
+        ? 'E EXIT · WASD DRIVE · RMB AIM / LMB FIRE · BRAKE TO LOSE TAIL'
+        : 'E EXIT · WASD DRIVE · RMB AIM / LMB FIRE',
       enabled: true,
     });
     return;
@@ -6002,7 +6351,6 @@ function frame(now) {
   });
   const combatState = combat?.update?.(motionDt, {
     active: playerLayerActive
-      && !drivingState
       && !controls.interiorMode
       && !passengerRideActive()
       && !beautyMode
@@ -6011,6 +6359,7 @@ function frame(now) {
   });
   updateCombatOverlay(combatState);
   updatePlayerWeapon(combatState);
+  updateDriveByRig(combatState, drivingState);
   const combatHudActive = Boolean(
     combatState?.aiming
       || combatState?.reloading
@@ -6020,10 +6369,10 @@ function frame(now) {
   hud?.setContextMode?.(
     controls.interiorMode
       ? 'interior'
-      : drivingState
-        ? 'driving'
-        : combatHudActive
+      : combatHudActive
           ? 'combat'
+          : drivingState
+            ? 'driving'
           : 'traversal',
   );
   const displayedGameState = gameState && streetHeatState
@@ -6217,10 +6566,12 @@ window.__SF_SIM__ = {
     return {
       ...state,
       camera: {
-        mode: combatCameraState.active ? 'shoulder-aim' : 'orbit',
+        mode: driveByState.active
+          ? 'drive-by-aim'
+          : combatCameraState.active ? 'shoulder-aim' : 'orbit',
         distance: combatCameraState.active ? controls.cameraDistance : controls.distance,
-        yaw: controls.yaw,
-        pitch: controls.pitch,
+        yaw: driveByState.active ? driveByState.aimYaw : controls.yaw,
+        pitch: driveByState.active ? driveByState.aimPitch : controls.pitch,
       },
       weapon: {
         visible: Boolean(playerWeapon?.visible),
@@ -6228,6 +6579,7 @@ window.__SF_SIM__ = {
         muzzleOffset: COMBAT_WEAPON_MUZZLE_OFFSET,
       },
       embodiment: getCombatEmbodimentState(),
+      driveBy: getDriveByState(),
     };
   },
   getCombatAudioState() {
