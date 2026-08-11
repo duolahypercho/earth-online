@@ -1583,7 +1583,7 @@ function importPlayerWorldState(snapshot) {
     || traffic.isPlayerDriving?.() === true) {
     return false;
   }
-  const surfaceHeight = streaming.getSurfaceHeight?.({ x: snapshot.x, z: snapshot.z });
+  const surfaceHeight = getTraversalSurfaceHeight({ x: snapshot.x, z: snapshot.z });
   if (!Number.isFinite(surfaceHeight)) return false;
   const target = new THREE.Vector3(
     snapshot.x,
@@ -1591,7 +1591,7 @@ function importPlayerWorldState(snapshot) {
     snapshot.z,
   );
   const collisionSafeTarget = streaming.resolveRoamPosition?.(target) || target;
-  const resolvedSurface = streaming.getSurfaceHeight?.(collisionSafeTarget);
+  const resolvedSurface = getTraversalSurfaceHeight(collisionSafeTarget);
   if (!Number.isFinite(resolvedSurface)) return false;
   collisionSafeTarget.y = resolvedSurface + QA_ROAM_CLEARANCE;
   controls.target.copy(collisionSafeTarget);
@@ -1621,6 +1621,7 @@ function importPlayerWorldState(snapshot) {
 
 const combatCameraState = {
   active: false,
+  justActivated: false,
   savedPitch: WALK_CAMERA_PITCH,
   savedDistance: WALK_CAMERA_DISTANCE,
   savedCameraPitch: WALK_CAMERA_PITCH,
@@ -1714,8 +1715,30 @@ function createPlayerWeapon() {
   return root;
 }
 
+function getTraversalSurfaceHeight(positionOrX, optionalZ) {
+  const citySurface = city.getSurfaceHeight?.(positionOrX, optionalZ);
+  if (Number.isFinite(citySurface)) return citySurface;
+  const streamedSurface = streaming.getSurfaceHeight?.(positionOrX, optionalZ);
+  return Number.isFinite(streamedSurface) ? streamedSurface : null;
+}
+
+function keepTraversalCameraAboveSurface(position, clearance = 0.42) {
+  const surface = getTraversalSurfaceHeight(position);
+  if (Number.isFinite(surface)) position.y = Math.max(position.y, surface + clearance);
+  return position;
+}
+
+function resolveTraversalCameraFrame(focus, position, clearance = 0.42) {
+  keepTraversalCameraAboveSurface(position, clearance);
+  const citySafe = city.resolveCameraPosition?.(focus, position) || position;
+  const streamedSafe = streaming.resolveCameraPosition?.(focus, citySafe) || citySafe;
+  position.copy(streamedSafe);
+  keepTraversalCameraAboveSurface(position, clearance);
+  return position;
+}
+
 function getCombatGroundPosition(target = combatGroundPosition) {
-  const surface = streaming.getSurfaceHeight?.(controls.target);
+  const surface = getTraversalSurfaceHeight(controls.target);
   const groundY = Number.isFinite(surface)
     ? surface
     : controls.target.y - QA_ROAM_CLEARANCE;
@@ -1855,6 +1878,10 @@ function getCombatEmbodimentState() {
     )
     : null;
   const insideVehicle = combatCameraVehicleClearance(camera.position) < 0.05;
+  const cameraSurface = getTraversalSurfaceHeight(camera.position);
+  const surfaceClearance = Number.isFinite(cameraSurface)
+    ? camera.position.y - cameraSurface
+    : null;
   const parts = {
     head: partPoints.head?.visible === true,
     torso: partPoints.torso?.visible === true,
@@ -1890,9 +1917,14 @@ function getCombatEmbodimentState() {
     reticle: { x: width * 0.5, y: height * 0.5 },
     convergence,
     camera: {
-      collisionSafe: !blocker || blocker.distance >= cameraDistance - 0.08,
+      collisionSafe: (!blocker || blocker.distance >= cameraDistance - 0.08)
+        && (!Number.isFinite(surfaceClearance) || surfaceClearance >= 0.4)
+        && !insideVehicle,
       insideBuilding: Boolean(blocker && blocker.distance < 0.2),
       insideVehicle,
+      belowSurface: Number.isFinite(surfaceClearance) && surfaceClearance < 0.4,
+      surface: cameraSurface,
+      surfaceClearance,
       distance: cameraDistance,
     },
   };
@@ -1989,7 +2021,7 @@ function handleCoopSessionChange(nextSession, previousSession = coopWaterfrontSe
 
 function getNetworkState() {
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
-  const surface = streaming.getSurfaceHeight?.(controls.target);
+  const surface = getTraversalSurfaceHeight(controls.target);
   const groundY = Number.isFinite(surface) ? surface : 0;
   const position = drivingState
     ? drivingState.position
@@ -2168,7 +2200,7 @@ function exitPlayerCar() {
   const sideZ = -Math.sin(exit.heading) * 1.6;
   const exitX = exit.x + sideX;
   const exitZ = exit.z + sideZ;
-  const surface = streaming.getSurfaceHeight?.({ x: exitX, z: exitZ });
+  const surface = getTraversalSurfaceHeight({ x: exitX, z: exitZ });
   controls.target.set(
     exitX,
     Number.isFinite(surface) ? surface : exit.y,
@@ -2782,7 +2814,7 @@ function updatePlayerMuniRide() {
   const heading = Number(completed.heading) || 0;
   const exitX = completed.position.x + Math.cos(heading) * 3.1;
   const exitZ = completed.position.z - Math.sin(heading) * 3.1;
-  const surface = streaming.getSurfaceHeight?.({ x: exitX, z: exitZ });
+  const surface = getTraversalSurfaceHeight({ x: exitX, z: exitZ });
   controls.target.set(
     exitX,
     Number.isFinite(surface) ? surface + QA_ROAM_CLEARANCE : controls.target.y,
@@ -2863,7 +2895,7 @@ function updatePlayerTaxiRide(dt) {
     hud?.setMessage('Taxi ride unavailable · no charge.');
     return null;
   }
-  const surface = streaming.getSurfaceHeight?.({ x: destination.x, z: destination.z });
+  const surface = getTraversalSurfaceHeight({ x: destination.x, z: destination.z });
   controls.target.set(
     destination.x,
     Number.isFinite(surface) ? surface + QA_ROAM_CLEARANCE : controls.target.y,
@@ -3018,7 +3050,7 @@ function updatePlayerLayer(dt, elapsed) {
       const hideAvatarForShot = beautyMode || Boolean(qaCameraPose) || passengerRiding;
       playerAvatar.visible = !hideAvatarForShot;
       if (!hideAvatarForShot) {
-        const surface = streaming.getSurfaceHeight?.(controls.target);
+        const surface = getTraversalSurfaceHeight(controls.target);
         const groundY = Number.isFinite(surface) ? surface : 0;
         playerAvatar.position.set(controls.target.x, groundY + PLAYER_GROUND_OFFSET, controls.target.z);
         const moving = playerMoving();
@@ -4123,6 +4155,7 @@ function snapCameraToControls() {
   const citySafeCamera = city.resolveCameraPosition?.(controls.focus, desiredCamera) || desiredCamera;
   const safeCamera = streaming.resolveCameraPosition?.(controls.focus, citySafeCamera) || citySafeCamera;
   camera.position.copy(safeCamera);
+  if (!controls.interiorMode) resolveTraversalCameraFrame(controls.focus, camera.position);
   lookTarget.copy(controls.target);
   camera.lookAt(lookTarget);
   camera.updateMatrixWorld(true);
@@ -4141,8 +4174,9 @@ function readTraversalCameraState() {
     )
     : null;
   const avatarSurface = playerAvatar?.visible
-    ? streaming.getSurfaceHeight?.(playerAvatar.position)
+    ? getTraversalSurfaceHeight(playerAvatar.position)
     : null;
+  const cameraSurface = getTraversalSurfaceHeight(camera.position);
   return {
     mode: controls.interiorMode
       ? 'interior'
@@ -4154,6 +4188,10 @@ function readTraversalCameraState() {
     pitch: controls.pitch,
     yaw: controls.yaw,
     camera: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    cameraSurface,
+    cameraSurfaceClearance: Number.isFinite(cameraSurface)
+      ? camera.position.y - cameraSurface
+      : null,
     focus: { x: controls.focus.x, y: controls.focus.y, z: controls.focus.z },
     blocker: blocker ? {
       source: blocker.source,
@@ -4338,7 +4376,7 @@ function resolveQaRoamPose(position) {
   if (!Number.isFinite(x) || !Number.isFinite(z)) {
     throw new TypeError('setRoamPose requires finite numeric x and z coordinates.');
   }
-  const surfaceHeight = streaming.getSurfaceHeight?.({ x, z });
+  const surfaceHeight = getTraversalSurfaceHeight({ x, z });
   if (!Number.isFinite(surfaceHeight)) {
     throw new RangeError('Roam pose must remain inside the streaming footprint.');
   }
@@ -4689,12 +4727,14 @@ function syncCombatCameraMode() {
   const aiming = combatAimActive();
   if (aiming && !combatCameraState.active) {
     combatCameraState.active = true;
+    combatCameraState.justActivated = true;
     combatCameraState.savedPitch = lastPublicWorldState?.pitch ?? controls.pitch;
     combatCameraState.savedDistance = lastPublicWorldState?.distance ?? controls.distance;
     combatCameraState.savedCameraPitch = controls.cameraPitch;
     combatCameraState.savedCameraDistance = controls.cameraDistance;
   } else if (!aiming && combatCameraState.active) {
     combatCameraState.active = false;
+    combatCameraState.justActivated = false;
     // Keep the heading acquired during aim. Only the ordinary orbit pitch and
     // distance are restored; the next orbit frame eases back from the current
     // shoulder view without snapping the player to the pre-aim yaw.
@@ -4776,7 +4816,11 @@ function updateCombatShoulderCamera(dt) {
       safeCamera = oppositeSafe;
     }
   }
-  camera.position.lerp(safeCamera, 1 - Math.exp(-18 * dt));
+  if (combatCameraState.justActivated) camera.position.copy(safeCamera);
+  else camera.position.lerp(safeCamera, 1 - Math.exp(-18 * dt));
+  if (combatCameraVehicleClearance(camera.position) < 0.35) camera.position.copy(safeCamera);
+  resolveTraversalCameraFrame(combatAimAnchor, camera.position);
+  combatCameraState.justActivated = false;
   camera.lookAt(combatAimLookTarget);
   camera.updateMatrixWorld(true);
   controls.cameraYaw = controls.yaw;
@@ -4809,11 +4853,10 @@ function updateRoamTarget(dt, qaTourActive, drivingActive, axis) {
   }
 
   if (!controls.interiorMode) {
-    const streamedSurface = streaming.getSurfaceHeight?.(controls.target);
+    const streamedSurface = getTraversalSurfaceHeight(controls.target);
     if (Number.isFinite(streamedSurface)) {
-      // Sector 0:0 resolves to Y=0, retaining the authored target at Y=4.
-      // Outside it, the same clearance follows a smooth, query-only terrain
-      // datum without loading any additional sector geometry.
+      // The core follows the same authored street grade as its asphalt meshes;
+      // streamed sectors fall back to their continuous terrain datum.
       controls.target.y = THREE.MathUtils.damp(
         controls.target.y,
         streamedSurface + QA_ROAM_CLEARANCE,
@@ -4905,7 +4948,7 @@ function updateCamera(dt) {
   }
   traversalCameraFocusTarget.copy(controls.target);
   if (!controls.interiorMode && !qaTourActive && !drivingActive) {
-    const surface = streaming.getSurfaceHeight?.(controls.target);
+    const surface = getTraversalSurfaceHeight(controls.target);
     if (Number.isFinite(surface)) {
       traversalCameraFocusTarget.y = surface + WALK_CAMERA_FOCUS_HEIGHT;
     }
@@ -4924,6 +4967,9 @@ function updateCamera(dt) {
       ? 14
       : traversalCameraTransitionRemaining > 0 ? 8 : 12;
   camera.position.lerp(safeCamera, 1 - Math.exp(-cameraFollowLambda * dt));
+  if (!controls.interiorMode && !qaTourActive) {
+    resolveTraversalCameraFrame(controls.focus, camera.position);
+  }
   const lookAheadFactor = controls.interiorMode ? 0.025 : qaTourActive ? 0.06 : 0.11;
   cameraLookAhead.copy(cameraVelocity).multiplyScalar(lookAheadFactor);
   if (cameraLookAhead.lengthSq() > 7.84) cameraLookAhead.setLength(2.8);
