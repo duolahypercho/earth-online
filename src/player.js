@@ -86,6 +86,13 @@ export function createPlayerAvatar({ name = 'Traveler', paletteIndex = 0, scale 
   root.userData.phase = 0;
   root.userData.gaitBlend = 0;
   root.userData.smoothedSpeedRatio = 0;
+  // The skinned geometry's bind-pose bounds do not include every authored
+  // combat bone pose. Keep the single local hero eligible for rendering so a
+  // raised arm cannot make the whole avatar disappear at shoulder-camera
+  // angles; streamed crowd actors retain their ordinary culling path.
+  root.traverse((object) => {
+    if (object.isSkinnedMesh || object.isMesh) object.frustumCulled = false;
+  });
   return root;
 }
 
@@ -366,6 +373,37 @@ export function setAvatarLook(avatar, yaw, pitch = 0) {
   if (!ud) return;
   ud.rig.rotation.y = yaw;
   ud.headPivot.rotation.y += pitch * 0.4;
+}
+
+export function setAvatarCombatPose(avatar, { aiming = false, pitch = 0 } = {}) {
+  const ud = avatar?.userData;
+  if (!ud || !aiming) return false;
+  const verticalAim = THREE.MathUtils.clamp(Number(pitch) || 0, -0.34, 0.34);
+  // Locomotion is evaluated first; this compact additive pass then turns the
+  // authored arm chain into a readable third-person firing silhouette without
+  // replacing the hero with a camera-space prop.
+  if (ud.rightArm?.rotation) {
+    ud.rightArm.rotation.x = -1.34 + verticalAim * 0.38;
+    ud.rightArm.rotation.y = 0.08;
+    ud.rightArm.rotation.z = -0.82;
+  }
+  if (ud.rightForearm?.rotation) {
+    ud.rightForearm.rotation.x = -0.22 + verticalAim * 0.18;
+    ud.rightForearm.rotation.y = 0.02;
+    ud.rightForearm.rotation.z = -0.16;
+  }
+  if (ud.leftArm?.rotation) {
+    ud.leftArm.rotation.x = -0.72 + verticalAim * 0.18;
+    ud.leftArm.rotation.y = -0.18;
+    ud.leftArm.rotation.z = 0.18;
+  }
+  if (ud.leftForearm?.rotation) {
+    ud.leftForearm.rotation.x = -0.5;
+    ud.leftForearm.rotation.y = 0.08;
+  }
+  if (ud.body?.rotation) ud.body.rotation.x = verticalAim * 0.08;
+  if (ud.headPivot?.rotation) ud.headPivot.rotation.x = verticalAim * 0.2;
+  return true;
 }
 
 export function createNameTagSprite(name = 'Traveler') {
