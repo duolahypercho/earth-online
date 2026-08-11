@@ -300,6 +300,7 @@ async function measureComposition() {
 
     return {
       state,
+      embodiment: sim.getPlayerVehicleEmbodimentState?.() ?? null,
       viewport: { width, height },
       playerBounds,
       vehicle: vehicle ? {
@@ -542,6 +543,9 @@ try {
   await page.keyboard.press('e');
   await page.waitForFunction(() => window.__SF_SIM__?.isDriving?.() === true,
     null, { timeout: 3000, polling: 20 });
+  await page.waitForFunction(() => (
+    window.__SF_SIM__?.getPlayerVehicleEmbodimentState?.()?.phase === 'seated'
+  ), null, { timeout: 3000, polling: 20 });
   await waitForSettledCamera('drive');
   const enterSamples = await stopCameraRecorder();
   const enterTransition = summarizeTransition(enterSamples);
@@ -587,8 +591,15 @@ try {
     && drive.state.requestedDistance >= 8.5 && drive.state.requestedDistance <= 12
     && drive.state.actualDistance >= 8.5 && drive.state.actualDistance <= 12,
   'driving camera left the 8.5-12m distance contract', drive.state);
-  assert(drive.state?.avatar?.visible === false,
-    'on-foot avatar remained visible through the player vehicle', drive.state?.avatar);
+  assert(drive.state?.avatar?.visible === true
+    && drive.embodiment?.phase === 'seated'
+    && drive.embodiment?.avatar?.visible === true
+    && drive.embodiment?.vehicle?.id === drive.vehicle?.index,
+  'the continuous Traveler body was not seated in the driven vehicle', {
+    avatar: drive.state?.avatar,
+    embodiment: drive.embodiment,
+    vehicle: drive.vehicle,
+  });
   assert(drive.vehicleBounds?.margin >= 16
     && drive.vehicleBounds?.height >= 55,
   'player car was clipped, off-screen, or unreadably small', drive.vehicleBounds);

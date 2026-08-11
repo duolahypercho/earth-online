@@ -798,15 +798,17 @@ function buildShared() {
     unitBox, unitPlane, roundedBox, unitWheel, contactDisc, wheelWell,
     sedanCabin, suvCabin, utilityCabin, bodyMat,
     windowMat: new THREE.MeshPhysicalMaterial({
-      color: 0x1c333e,
+      color: 0x315461,
       roughness: 0.12,
       metalness: 0.16,
       clearcoat: 0.22,
       clearcoatRoughness: 0.1,
       envMapIntensity: 1.16,
       transparent: true,
-      opacity: 0.82,
-      depthWrite: true,
+      // Keep the real seated Traveler readable without turning the fleet into
+      // clear plastic. The cabin furniture and dark aperture retain depth.
+      opacity: 0.38,
+      depthWrite: false,
     }),
     busWindowMat: new THREE.MeshPhysicalMaterial({
       color: 0x315461,
@@ -1135,10 +1137,14 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // catches the environment, while the dash and two seat rows create actual
     // depth instead of a single opaque blue slab.
     taperedBox(shared, geometry, shared.windowMat, width, height, length, 0, y, z, bodyG);
-    box(shared, shared.interiorMat, width * 0.72, 0.055, length * 0.66,
+    const cabinFloor = box(shared, shared.interiorMat, width * 0.72, 0.055, length * 0.66,
       0, y - height * 0.31, z - length * 0.02, bodyG);
-    box(shared, shared.interiorMat, width * 0.72, height * 0.12, length * 0.13,
+    cabinFloor.name = `${cls} cabin floor`;
+    cabinFloor.userData.embodimentCabin = true;
+    const dashboard = box(shared, shared.interiorMat, width * 0.72, height * 0.12, length * 0.13,
       0, y - height * 0.1, z + length * 0.29, bodyG);
+    dashboard.name = `${cls} dashboard`;
+    dashboard.userData.embodimentCabin = true;
     for (const seatZ of [-0.13, -0.28]) {
       for (const side of [-1, 1]) {
         roundedBox(shared, shared.seatMat, width * 0.22, height * 0.3, length * 0.17,
@@ -1192,7 +1198,37 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // Narrow the contact patch for a bike footprint.
     contactShadow.scale.set(wid * 0.9, len * 0.55, 1);
   } else if (cls === 'sedan' || cls === 'taxi') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.5, len * 0.98, 0, hgt * 0.34, 0, bodyG);
+    // Build the sedan lower body around a real occupant cavity. A single
+    // full-width solid slab made the authored driver intersect painted metal
+    // even when the visible seated pose was correct. The floor, side sills,
+    // engine bay and trunk retain the same exterior silhouette while leaving
+    // the central footwell/cabin volume physically empty.
+    const floor = roundedBox(
+      shared, shared.underbodyMat,
+      wid * 0.72, hgt * 0.07, len * 0.58,
+      0, hgt * 0.13, -len * 0.015, bodyG,
+    );
+    floor.name = `${cls} occupant cabin floor pan`;
+    for (const side of [-1, 1]) {
+      const sill = roundedBox(
+        shared, paint,
+        wid * 0.105, hgt * 0.5, len * 0.98,
+        side * wid * 0.438, hgt * 0.34, 0, bodyG,
+      );
+      sill.name = `${cls} exterior side sill`;
+    }
+    const engineBay = roundedBox(
+      shared, paint,
+      wid * 0.88, hgt * 0.46, len * 0.27,
+      0, hgt * 0.33, len * 0.355, bodyG,
+    );
+    engineBay.name = `${cls} front engine body`;
+    const trunkBody = roundedBox(
+      shared, paint,
+      wid * 0.9, hgt * 0.44, len * 0.22,
+      0, hgt * 0.32, -len * 0.39, bodyG,
+    );
+    trunkBody.name = `${cls} rear trunk body`;
     // Hood and trunk decks sit lower than the roof so the side profile reads
     // as a three-box sedan rather than one extruded slab.
     roundedBox(shared, paint, wid * 0.94, hgt * 0.15, len * 0.28,
@@ -1596,7 +1632,18 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   const indicatorLeft = [];
   const indicatorRight = [];
   if (cls !== 'bike') {
-  box(shared, shared.underbodyMat, wid * 0.78, 0.13, len * 0.76, 0, wheelR * 0.72, 0, bodyG);
+  if (cls === 'sedan' || cls === 'taxi') {
+    for (const side of [-1, 1]) {
+      const chassisRail = box(
+        shared, shared.underbodyMat,
+        wid * 0.07, 0.13, len * 0.76,
+        side * wid * 0.44, wheelR * 0.72, 0, bodyG,
+      );
+      chassisRail.name = `${cls} underbody side rail`;
+    }
+  } else {
+    box(shared, shared.underbodyMat, wid * 0.78, 0.13, len * 0.76, 0, wheelR * 0.72, 0, bodyG);
+  }
   if (cls !== 'bus' && cls !== 'truck') {
     // Roof antenna fin seated on each class's actual cabin roof, plus a
     // single exhaust tip: the small manufactured cues that keep the light
@@ -1722,6 +1769,79 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   indicatorRight.push(box(shared, shared.indicatorOffMat, 0.065, 0.1, 0.15, wid / 2 + 0.01, ly, len * 0.32, bodyG));
   } // end non-bike automotive fascia / lighting
 
+  // Continuous local-player embodiment sockets. They are authored on the
+  // ordinary traffic root, so the seat and door follow the exact settled car
+  // transform without creating a second vehicle authority. AI leaves both
+  // pivots at zero/closed; main animates only the active player's selected
+  // side during its bounded ingress/egress presentation.
+  let embodiment = null;
+  if (identity.category === 'private' && ['sedan', 'suv', 'pickup', 'van'].includes(cls)) {
+    const seatY = cls === 'sedan' ? 0.23 : cls === 'suv' ? 0.46 : cls === 'pickup' ? 0.52 : 0.66;
+    const seatZ = cls === 'pickup' || cls === 'van' ? len * 0.17 : len * 0.035;
+    const doorHeight = Math.min(1.14, hgt * 0.62);
+    const doorLength = Math.min(1.35, len * 0.3);
+    const doors = {};
+    const seats = {};
+    for (const side of [-1, 1]) {
+      const sideKey = side < 0 ? 'left' : 'right';
+      const seat = new THREE.Object3D();
+      seat.name = `Traveler ${sideKey} driver seat socket`;
+      seat.position.set(0, seatY, seatZ);
+      bodyG.add(seat);
+
+      const pivot = new THREE.Group();
+      pivot.name = `Traveler ${sideKey} driver door pivot`;
+      pivot.userData.vehicleEmbodimentDoor = true;
+      pivot.userData.apertureAngle = 0;
+      pivot.userData.traversal = 0;
+      pivot.position.set(side * wid * 0.505, hgt * 0.5, seatZ + doorLength * 0.5);
+      const aperture = box(
+        shared,
+        shared.interiorMat,
+        0.035,
+        doorHeight * 0.92,
+        doorLength * 0.92,
+        side * wid * 0.499,
+        hgt * 0.5,
+        seatZ,
+        bodyG,
+      );
+      aperture.name = `Traveler ${sideKey} driver door dark aperture`;
+      aperture.visible = false;
+      aperture.userData.vehicleEmbodimentAperture = true;
+      const panel = roundedBox(
+        shared,
+        paint,
+        0.055,
+        doorHeight,
+        doorLength,
+        0,
+        0,
+        -doorLength * 0.5,
+        pivot,
+      );
+      panel.name = `Traveler ${sideKey} driver door panel`;
+      panel.userData.vehicleEmbodimentDoorPanel = true;
+      bodyG.add(pivot);
+      seats[sideKey] = seat;
+      doors[sideKey] = { pivot, panel, aperture, side, angle: 0 };
+    }
+    embodiment = {
+      class: cls,
+      halfWidth: wid * 0.5,
+      halfLength: len * 0.5,
+      cabin: {
+        centerY: hgt * (cls === 'van' ? 0.7 : 0.62),
+        halfWidth: wid * 0.43,
+        halfHeight: hgt * (cls === 'van' ? 0.3 : 0.22),
+        halfLength: len * (cls === 'pickup' ? 0.17 : cls === 'van' ? 0.2 : 0.25),
+      },
+      seats,
+      doors,
+    };
+    root.userData.vehicleEmbodiment = embodiment;
+  }
+
   bodyG.traverse((child) => {
     if (!child.isMesh) return;
     // Bikes are cheap enough to cast; the car fleet keeps contact discs so
@@ -1753,6 +1873,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     indicatorOffMat: shared.indicatorOffMat,
     indicatorOnMat: shared.indicatorOnMat,
     wiperPivot,
+    embodiment,
     // Keep the former material keys wired during Vite hot reloads so an
     // already-running update closure cannot dereference a missing material.
     tailMat: shared.tailOffMat,
@@ -5401,6 +5522,83 @@ export function createTrafficSystem({
     };
   }
 
+  function stagePlayerVehicleEmbodimentQa({ referencePosition = null, preferredClass = null } = {}) {
+    if (playerVehicle || impoundedPlayerVehicle || taxiRide || muniRide) return null;
+    const reference = Number.isFinite(referencePosition?.x) && Number.isFinite(referencePosition?.z)
+      ? referencePosition
+      : { x: focusX, z: focusZ };
+    const candidates = vehicles.map((vehicle, index) => ({ vehicle, index })).filter(({ vehicle }) => (
+      vehicle
+      && (vehicle.identity.category === 'private' || Boolean(preferredClass))
+      && vehicle.mesh.root.userData?.vehicleEmbodiment
+      && (!preferredClass || vehicle.cls === preferredClass)
+      && !vehicle.remoteControlled
+      && !vehicle.garageStored
+      && !vehicle.impounded
+      && !vehicle.disabled
+      && (preferredClass || (
+        Math.abs(vehicle.mesh.root.position.x) <= 220
+        && Math.abs(vehicle.mesh.root.position.z) <= 220
+      ))
+    ));
+    candidates.sort((left, right) => (
+      (left.vehicle.identity.category === 'private' ? 0 : 1)
+      - (right.vehicle.identity.category === 'private' ? 0 : 1)
+      || Math.hypot(
+        left.vehicle.mesh.root.position.x - reference.x,
+        left.vehicle.mesh.root.position.z - reference.z,
+      ) - Math.hypot(
+        right.vehicle.mesh.root.position.x - reference.x,
+        right.vehicle.mesh.root.position.z - reference.z,
+      ) || left.index - right.index
+    ));
+    const selected = candidates[0];
+    if (!selected) return null;
+    const vehicle = selected.vehicle;
+    if (!vehicle.mesh.root.visible) {
+      const stagedProjection = projectVehiclePoseToRoad(
+        reference,
+        vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
+      );
+      if (!stagedProjection) return null;
+      vehicle.road = stagedProjection.road;
+      vehicle.dir = stagedProjection.dir;
+      vehicle.s = stagedProjection.s;
+      vehicle.laneOffsetSm = stagedProjection.lateral;
+      vehicle.heading = stagedProjection.heading;
+      vehicle.mesh.root.position.set(
+        stagedProjection.x,
+        stagedProjection.y,
+        stagedProjection.z,
+      );
+      vehicle.mesh.root.rotation.y = stagedProjection.heading;
+    }
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.playerSteer = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = lastElapsed;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.mesh.root.visible = true;
+    return {
+      kind: 'core-private',
+      vehicleId: selected.index,
+      class: vehicle.cls,
+      position: {
+        x: vehicle.mesh.root.position.x,
+        y: vehicle.mesh.root.position.y,
+        z: vehicle.mesh.root.position.z,
+      },
+      heading: Number(vehicle.heading ?? vehicle.mesh.root.rotation.y) || 0,
+      syntheticEvents: 0,
+    };
+  }
+
   function getOnFootVehicleImpactQaState(playerProbe = null) {
     const stage = onFootVehicleImpactQaStage;
     const vehicle = stage?.vehicle;
@@ -7295,6 +7493,7 @@ export function createTrafficSystem({
     setPursuitDeploymentHolds,
     setOnFootPlayerCollisionProbe,
     stageOnFootVehicleImpactQa,
+    stagePlayerVehicleEmbodimentQa,
     getPursuitResponder,
     getPursuitResponders,
     getPursuitChaseDiagnostics,

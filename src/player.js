@@ -406,6 +406,119 @@ export function setAvatarCombatPose(avatar, { aiming = false, pitch = 0 } = {}) 
   return true;
 }
 
+export function setAvatarVehiclePose(avatar, {
+  seatedBlend = 0,
+  transitionBlend = 0,
+  steering = 0,
+  aiming = false,
+  windowSide = 1,
+  aimPitch = 0,
+} = {}) {
+  const ud = avatar?.userData;
+  if (!ud?.rig) return false;
+  const seated = THREE.MathUtils.clamp(Number(seatedBlend) || 0, 0, 1);
+  const transition = THREE.MathUtils.clamp(Number(transitionBlend) || 0, 0, 1);
+  const steer = THREE.MathUtils.clamp(Number(steering) || 0, -1, 1);
+  const side = Number(windowSide) < 0 ? -1 : 1;
+  const pitch = THREE.MathUtils.clamp(Number(aimPitch) || 0, -0.36, 0.3);
+
+  // This is an additive presentation pass, evaluated after locomotion. The
+  // same authored Traveler bones fold into the cabin; no substitute driver
+  // mesh or camera-space arms are introduced.
+  const seatedUpperBodyDrop = 1.02;
+  const seatedLegCounterShift = 0.7 * seated;
+  if (ud.vehicleBodyBaseX == null && ud.body?.position) {
+    ud.vehicleBodyBaseX = ud.body.position.x;
+  }
+  if (ud.vehicleHeadBaseX == null && ud.headPivot?.position) {
+    ud.vehicleHeadBaseX = ud.headPivot.position.x;
+  }
+  if (ud.vehicleRightArmBaseX == null && ud.rightArm?.position) {
+    ud.vehicleRightArmBaseX = ud.rightArm.position.x;
+  }
+  if (ud.vehicleLeftArmBaseX == null && ud.leftArm?.position) {
+    ud.vehicleLeftArmBaseX = ud.leftArm.position.x;
+  }
+  const windowLean = aiming ? side * 0.42 : 0;
+  if (ud.body?.position && ud.vehicleBodyBaseX != null) {
+    ud.body.position.x = ud.vehicleBodyBaseX + windowLean;
+  }
+  if (ud.headPivot?.position && ud.vehicleHeadBaseX != null) {
+    ud.headPivot.position.x = ud.vehicleHeadBaseX + windowLean * 0.78;
+  }
+  if (ud.rightArm?.position && ud.vehicleRightArmBaseX != null) {
+    ud.rightArm.position.x = ud.vehicleRightArmBaseX + windowLean;
+  }
+  if (ud.leftArm?.position && ud.vehicleLeftArmBaseX != null) {
+    ud.leftArm.position.x = ud.vehicleLeftArmBaseX + windowLean * 0.62;
+  }
+  ud.rig.position.y -= (seatedUpperBodyDrop * seated + 0.08 * transition);
+  ud.rig.rotation.x += 0.08 * seated + 0.12 * transition;
+  if (ud.body?.rotation) ud.body.rotation.x = THREE.MathUtils.lerp(
+    ud.body.rotation.x,
+    -1.12,
+    seated,
+  );
+  // Counter part of the cabin drop at the hip so the tightly folded legs stay
+  // in the footwell instead of following the torso toward the road. Locomotion
+  // restores these pivots before this single additive pass every rendered frame.
+  if (ud.leftLeg?.position) ud.leftLeg.position.y += seatedLegCounterShift;
+  if (ud.rightLeg?.position) ud.rightLeg.position.y += seatedLegCounterShift;
+  if (ud.leftLeg?.rotation) ud.leftLeg.rotation.x = THREE.MathUtils.lerp(
+    ud.leftLeg.rotation.x,
+    -1.4,
+    seated,
+  );
+  if (ud.rightLeg?.rotation) ud.rightLeg.rotation.x = THREE.MathUtils.lerp(
+    ud.rightLeg.rotation.x,
+    -1.4,
+    seated,
+  );
+  if (ud.leftShin?.rotation) ud.leftShin.rotation.x = THREE.MathUtils.lerp(
+    ud.leftShin.rotation.x,
+    2.2,
+    seated,
+  );
+  if (ud.rightShin?.rotation) ud.rightShin.rotation.x = THREE.MathUtils.lerp(
+    ud.rightShin.rotation.x,
+    2.2,
+    seated,
+  );
+
+  if (aiming) {
+    // The weapon stays parented to the real right-hand socket. Turn the upper
+    // body toward the selected window and extend that same arm chain outside.
+    ud.rig.rotation.y += side * 0.28;
+    if (ud.body?.rotation) ud.body.rotation.z = -side * 0.35;
+    if (ud.rightArm?.rotation) {
+      ud.rightArm.rotation.x = -1.22 + pitch * 0.34;
+      ud.rightArm.rotation.y = -side * 0.42;
+      ud.rightArm.rotation.z = side * 1.28;
+    }
+    if (ud.rightForearm?.rotation) {
+      ud.rightForearm.rotation.x = -0.2 + pitch * 0.16;
+      ud.rightForearm.rotation.y = side * 0.08;
+      ud.rightForearm.rotation.z = -side * 0.18;
+    }
+    if (ud.leftArm?.rotation) {
+      ud.leftArm.rotation.x = -0.58;
+      ud.leftArm.rotation.z = side * 0.22;
+    }
+  } else {
+    const handTurn = steer * 0.2;
+    if (ud.leftArm?.rotation) {
+      ud.leftArm.rotation.x = THREE.MathUtils.lerp(ud.leftArm.rotation.x, -0.72, seated);
+      ud.leftArm.rotation.z = THREE.MathUtils.lerp(ud.leftArm.rotation.z, 0.38 + handTurn, seated);
+    }
+    if (ud.rightArm?.rotation) {
+      ud.rightArm.rotation.x = THREE.MathUtils.lerp(ud.rightArm.rotation.x, -0.72, seated);
+      ud.rightArm.rotation.z = THREE.MathUtils.lerp(ud.rightArm.rotation.z, -0.38 + handTurn, seated);
+    }
+  }
+  if (ud.shadow) ud.shadow.visible = seated < 0.12;
+  return true;
+}
+
 export function setAvatarSurrenderPose(avatar) {
   const ud = avatar?.userData;
   if (!ud) return false;

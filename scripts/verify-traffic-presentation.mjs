@@ -387,33 +387,18 @@ async function measureForegroundOcclusion(page, vehicleId) {
 async function stagePlayerVehicle(page) {
   const candidate = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
-    const vehicles = sim.traffic.getVehicleLifeSnapshot().vehicles;
-    const enterable = (entry) => (
-      entry.visible !== false
-      && entry.class !== 'bike'
-      && entry.damage?.disabled !== true
-      && (entry.action?.key === 'parked' || entry.speed <= 0.9)
-    );
-    const vehicle = vehicles.find((entry) => (
-      entry.class === 'sedan'
-      && entry.identity?.category === 'private'
-      && entry.damage?.disabled !== true
-    )) ?? vehicles.find((entry) => (
-      enterable(entry) && entry.identity?.category === 'private'
-    )) ?? vehicles.find(enterable);
-    if (!vehicle?.position) return null;
-    sim.setRoamPose(vehicle.position);
-    return vehicle;
+    const staged = sim.getVehicleEmbodimentQa?.().stage?.({ kind: 'core-private', vehicleClass: 'sedan' });
+    if (staged?.ready !== true) return null;
+    return sim.traffic.getVehicleLifeSnapshot().vehicles.find((entry) => entry.id === staged.vehicleId) ?? null;
   });
   if (!candidate) return null;
   await page.waitForTimeout(650);
   await page.locator('#scene-canvas').focus();
-  const entered = await page.evaluate((id) => (
-    window.__SF_SIM__.traffic.enterPlayerVehicle?.(id) === true
-  ), candidate.id);
+  const entered = await page.evaluate(() => window.__SF_SIM__?.enterCar?.() === true);
   if (!entered) return { candidate, entered: false };
   await page.waitForFunction(() => window.__SF_SIM__?.isDriving?.() === true,
     null, { timeout: 4000, polling: 20 });
+  await page.waitForTimeout(850);
   const staged = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
     const snapshot = sim.traffic.exportPlayerVehicleState?.();
@@ -439,32 +424,53 @@ async function selectClassVehicles(page) {
         && entry.damage?.disabled !== true
       ));
       if (!candidate) continue;
-      selected.push({ id: candidate.id, class: cls });
+      selected.push({ id: candidate.id, class: cls, position: candidate.position });
     }
     return selected;
   });
 }
 
 async function stageClassAtCore(page, vehicle) {
+  await page.evaluate(() => {
+    const sim = window.__SF_SIM__;
+    if (sim.isDriving?.()) sim.exitCar?.();
+  });
+  await page.waitForFunction(() => {
+    const sim = window.__SF_SIM__;
+    const phase = sim?.getPlayerVehicleEmbodimentState?.()?.phase;
+    return sim?.isDriving?.() === false && (phase === 'grounded' || phase === 'approach');
+  }, null, { timeout: 4000, polling: 20 });
   const staged = await page.evaluate((target) => {
     const sim = window.__SF_SIM__;
-    if (sim.isDriving?.()) sim.traffic.exitPlayerVehicle?.();
-    const entered = sim.traffic.enterPlayerVehicle?.(target.id) === true;
-    const snapshot = entered ? sim.traffic.exportPlayerVehicleState?.() : null;
-    if (!snapshot || snapshot.mode !== 'driving') return { ...target, entered, imported: false };
+    const result = sim.getVehicleEmbodimentQa?.().stage?.({
+      kind: 'core-private',
+      vehicleClass: target.class,
+    });
+    return {
+      ...target,
+      id: Number.isInteger(result?.vehicleId) ? result.vehicleId : target.id,
+      staged: result,
+    };
+  }, vehicle);
+  await page.evaluate(() => window.__SF_SIM__?.enterCar?.());
+  await page.waitForTimeout(850);
+  const imported = await page.evaluate((target) => {
+    const sim = window.__SF_SIM__;
+    const snapshot = sim.traffic.exportPlayerVehicleState?.();
+    if (!snapshot || snapshot.mode !== 'driving') return false;
     snapshot.position = { x: 28, z: 38 };
     snapshot.heading = 0;
-    const imported = sim.traffic.importPlayerVehicleState?.(snapshot) === true;
+    const ok = sim.traffic.importPlayerVehicleState?.(snapshot) === true;
     sim.setRoamPose({ x: 28, z: 38 });
-    return { ...target, entered, imported };
+    return ok;
   }, vehicle);
   await page.waitForTimeout(850);
   const state = await page.evaluate(() => window.__SF_SIM__?.traffic?.getPlayerVehicleState?.() ?? null);
-  return { ...staged, position: state?.position ?? null, state };
+  return { ...staged, entered: state != null, imported, position: state?.position ?? null, state };
 }
 
 async function parkStagedClass(page) {
-  return page.evaluate(() => window.__SF_SIM__?.traffic?.exitPlayerVehicle?.() ?? null);
+  return page.evaluate(() => window.__SF_SIM__?.exitCar?.() ?? null);
 }
 
 async function stagePursuitResponder(page) {

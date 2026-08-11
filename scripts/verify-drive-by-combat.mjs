@@ -176,6 +176,7 @@ async function beginQaPracticeDrive() {
   if (!entered) return { ...prepared, entered: false };
   await page.waitForFunction(() => window.__SF_SIM__?.isDriving?.() === true,
     null, { timeout: 3000, polling: 20 });
+  await page.waitForTimeout(850);
   const roadStage = await page.evaluate(() => {
     const sim = window.__SF_SIM__;
     const snapshot = sim.traffic.exportPlayerVehicleState?.();
@@ -702,6 +703,10 @@ try {
         Math.cos(state.heading - origin.heading),
       )) >= 0.18;
   }, measuredStart, { timeout: 16000, polling: 20 });
+  // The turn itself is complete. Keep real throttle held so the shot remains a
+  // moving drive-by, but stop adding steering while the mouse aligns the live
+  // target ahead of the practiced road leg.
+  await page.keyboard.up('a');
   preAimClearance = await readPlayerVehicleClearance();
   assert(preAimClearance?.minimum >= 0.35,
     'the measured player vehicle overlapped another live traffic body before aiming',
@@ -735,6 +740,11 @@ try {
     const driveBy = combat?.driveBy ?? window.__SF_SIM__?.getDriveByCombatState?.();
     return combat?.aiming === true && driveBy?.active === true && driveBy?.aiming === true;
   }, null, { timeout: 5000, polling: 20 });
+  // Exercise simultaneous steering and aim without continuing the full chord
+  // long enough to orbit past the fixed live target.
+  await page.keyboard.down('a');
+  await page.waitForTimeout(140);
+  await page.keyboard.up('a');
   const projection = await aimAtVictim(scenario.victim, canvas);
   assert(projection?.visible === true
     && Math.abs(projection.x - viewport.width / 2) <= 5

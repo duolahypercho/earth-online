@@ -503,7 +503,10 @@ const STREET_HEAT_NEAR_MISS_COOLDOWN = 2.2;
 const STREET_HEAT_ESCAPE_WINDOW = 3.4;
 const STREET_HEAT_PURSUIT_COOL_RATE = 6.2;
 const STREET_HEAT_COMBAT_HOLD_SECONDS = 2.8;
-const STREET_HEAT_THEFT_HOLD_SECONDS = 4;
+// A real vehicle entry now includes a bounded door/seat handoff before the
+// player receives throttle authority. Preserve the original getaway window
+// after that presentation instead of spending most of it during ingress.
+const STREET_HEAT_THEFT_HOLD_SECONDS = 8;
 const STREET_HEAT_COMBAT_DECAY = 2.4;
 const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
 const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
