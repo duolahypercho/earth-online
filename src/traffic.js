@@ -2100,6 +2100,7 @@ export function createTrafficSystem({
   let onFootPlayerCollisionProbe = null;
   let onFootVehicleCollisionLatch = new Set();
   let onFootVehicleImpactQaStage = null;
+  let vehicleEmbodimentQaHold = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
@@ -4236,6 +4237,8 @@ export function createTrafficSystem({
 
     for (let vehicleIndex = 0; vehicleIndex < vehicles.length; vehicleIndex += 1) {
       const v = vehicles[vehicleIndex];
+      const embodimentQaHeld = vehicleEmbodimentQaHold?.vehicle === v
+        && !v.playerControlled;
       let road = roads[v.road];
       if (v.impounded || v.garageStored) {
         v.speed = 0;
@@ -4339,7 +4342,7 @@ export function createTrafficSystem({
         v.blinkSide = v.route?.side ?? 0;
       }
 
-      if (!v.turn && !v.route && distanceToEnd(v, road) < ROUTE_LOOKAHEAD) {
+      if (!embodimentQaHeld && !v.turn && !v.route && distanceToEnd(v, road) < ROUTE_LOOKAHEAD) {
         if (v.playerControlled) planPlayerRoute(v);
         else planRoute(v);
       }
@@ -5061,7 +5064,9 @@ export function createTrafficSystem({
             : curbBlend > 0 ? 1.55
               : v.mergeSignalUntil > t ? 1.65
                 : 2.2;
-          if (v === lastPlayerParkedVehicle && v.parked) {
+          if (embodimentQaHeld) {
+            v.laneOffsetSm = vehicleEmbodimentQaHold.laneOffset;
+          } else if (v === lastPlayerParkedVehicle && v.parked) {
             v.laneOffsetSm = v.laneOffsetSm === undefined ? targetOffset : v.laneOffsetSm;
           } else {
             v.laneOffsetSm = v.laneOffsetSm === undefined
@@ -5102,7 +5107,7 @@ export function createTrafficSystem({
       const distanceSquared = (px - focusX) ** 2 + (pz - focusZ) ** 2;
       const visible = !focusActive || distanceSquared <= focusRadiusSquared;
       const nearDetail = !focusActive || distanceSquared <= TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED;
-      v.mesh.root.visible = visible && v.qaOnFootImpactHidden !== true;
+      v.mesh.root.visible = (embodimentQaHeld || visible) && v.qaOnFootImpactHidden !== true;
       if (v.mesh.root.visible) visibleCount += 1;
 
       const speedRatio = Math.min(1, v.speed / v.spec.vMax);
@@ -5522,8 +5527,40 @@ export function createTrafficSystem({
     };
   }
 
+  function clearVehicleEmbodimentQaHold({ restore = true } = {}) {
+    const held = vehicleEmbodimentQaHold;
+    if (!held?.vehicle) return;
+    const { vehicle, saved } = held;
+    if (restore && saved) {
+      vehicle.road = saved.road;
+      vehicle.dir = saved.dir;
+      vehicle.s = saved.s;
+      vehicle.laneOffsetSm = saved.laneOffsetSm;
+      vehicle.heading = saved.heading;
+      vehicle.speed = saved.speed;
+      vehicle.longitudinalAccel = saved.longitudinalAccel;
+      vehicle.accelSm = saved.accelSm;
+      vehicle.playerSteer = saved.playerSteer;
+      vehicle.route = saved.route;
+      vehicle.turn = saved.turn;
+      vehicle.leader = saved.leader;
+      vehicle.parked = saved.parked;
+      vehicle.parkedAt = saved.parkedAt;
+      vehicle.dwellUntil = saved.dwellUntil;
+      vehicle.curbDwellUntil = saved.curbDwellUntil;
+      vehicle.blinkSide = saved.blinkSide;
+      vehicle.pullOutBlockedSince = saved.pullOutBlockedSince;
+      vehicle.mesh.root.position.copy(saved.position);
+      vehicle.mesh.root.rotation.copy(saved.rotation);
+      vehicle.mesh.root.visible = saved.visible;
+    }
+    if (vehicle.mesh.root.userData) delete vehicle.mesh.root.userData.vehicleEmbodimentQaHeld;
+    vehicleEmbodimentQaHold = null;
+  }
+
   function stagePlayerVehicleEmbodimentQa({ referencePosition = null, preferredClass = null } = {}) {
     if (playerVehicle || impoundedPlayerVehicle || taxiRide || muniRide) return null;
+    clearVehicleEmbodimentQaHold();
     const reference = Number.isFinite(referencePosition?.x) && Number.isFinite(referencePosition?.z)
       ? referencePosition
       : { x: focusX, z: focusZ };
@@ -5555,6 +5592,29 @@ export function createTrafficSystem({
     const selected = candidates[0];
     if (!selected) return null;
     const vehicle = selected.vehicle;
+    const saved = {
+      road: vehicle.road,
+      dir: vehicle.dir,
+      s: vehicle.s,
+      laneOffsetSm: vehicle.laneOffsetSm,
+      heading: vehicle.heading,
+      speed: vehicle.speed,
+      longitudinalAccel: vehicle.longitudinalAccel,
+      accelSm: vehicle.accelSm,
+      playerSteer: vehicle.playerSteer,
+      route: vehicle.route,
+      turn: vehicle.turn,
+      leader: vehicle.leader,
+      parked: vehicle.parked,
+      parkedAt: vehicle.parkedAt,
+      dwellUntil: vehicle.dwellUntil,
+      curbDwellUntil: vehicle.curbDwellUntil,
+      blinkSide: vehicle.blinkSide,
+      pullOutBlockedSince: vehicle.pullOutBlockedSince,
+      position: vehicle.mesh.root.position.clone(),
+      rotation: vehicle.mesh.root.rotation.clone(),
+      visible: vehicle.mesh.root.visible,
+    };
     if (!vehicle.mesh.root.visible) {
       const stagedProjection = projectVehiclePoseToRoad(
         reference,
@@ -5585,6 +5645,15 @@ export function createTrafficSystem({
     vehicle.dwellUntil = Infinity;
     vehicle.curbDwellUntil = Infinity;
     vehicle.mesh.root.visible = true;
+    vehicleEmbodimentQaHold = {
+      vehicle,
+      index: selected.index,
+      saved,
+      laneOffset: Number.isFinite(vehicle.laneOffsetSm)
+        ? vehicle.laneOffsetSm
+        : roads[vehicle.road]?.laneOffset ?? LANE_OFFSET,
+    };
+    vehicle.mesh.root.userData.vehicleEmbodimentQaHeld = true;
     return {
       kind: 'core-private',
       vehicleId: selected.index,
@@ -6390,6 +6459,29 @@ export function createTrafficSystem({
 
   function getNearestEnterableVehicle(position, maxDistance = 3.6) {
     if (!position) return null;
+    const held = vehicleEmbodimentQaHold;
+    if (held?.vehicle) {
+      const vehicle = held.vehicle;
+      const eligible = vehicle.cls !== 'bike'
+        && !vehicle.impounded
+        && !vehicle.garageStored
+        && !taxiAtServiceStop(vehicle)
+        && !transitAtStop(vehicle)
+        && !deliveryAtServiceStop(vehicle)
+        && !vehicle.disabled
+        && !vehicle.playerControlled
+        && !vehicle.remoteControlled
+        && vehicle.parked
+        && vehicle.mesh.root.visible;
+      const distance = Math.hypot(
+        vehicle.mesh.root.position.x - position.x,
+        vehicle.mesh.root.position.z - position.z,
+      );
+      if (eligible && distance <= maxDistance) {
+        return { index: held.index, vehicle, distance };
+      }
+      clearVehicleEmbodimentQaHold();
+    }
     let best = null;
     for (let index = 0; index < vehicles.length; index += 1) {
       const vehicle = vehicles[index];
@@ -6658,7 +6750,11 @@ export function createTrafficSystem({
       || (vehicle.disabled && vehicle !== lastPlayerParkedVehicle)) return false;
     vehicle.hazardUntil = 0;
     vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
-    return activatePlayerVehicleRecord(vehicle);
+    const entered = activatePlayerVehicleRecord(vehicle);
+    if (entered && vehicleEmbodimentQaHold?.vehicle === vehicle) {
+      clearVehicleEmbodimentQaHold({ restore: false });
+    }
+    return entered;
   }
 
   function serializePlayerVehicleState(vehicle, mode) {
