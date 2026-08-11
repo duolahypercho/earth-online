@@ -21,6 +21,7 @@ import {
   createPlayerAvatar,
   animatePlayerAvatar,
   setAvatarCombatPose,
+  setAvatarVehiclePose,
   setAvatarSurrenderPose,
   setAvatarLook,
   registerPlayerHitReaction,
@@ -1226,6 +1227,10 @@ hud = createHud({
   quality: getRenderQualitySnapshot(),
   onQualityChange: setRenderQuality,
   onInteraction: () => {
+    if (vehicleEmbodimentTransitionActive()) {
+      vehicleEmbodimentState.duplicateEIgnored = true;
+      return;
+    }
     if (muniRideState?.active) {
       hud?.setMessage(`MUNI / ${String(muniRideState.phase || 'en-route').toUpperCase()} · ONE-STOP RIDE.`);
       return;
@@ -1280,6 +1285,7 @@ hud = createHud({
     else controls.keys.delete(code.toLowerCase());
   },
   onRestartGame: () => {
+    clearPlayerVehicleEmbodiment();
     coopWaterfrontSession = null;
     networking?.leaveCoopSession?.();
     cityShift?.restart();
@@ -1321,7 +1327,10 @@ let taxiRideState = null;
 let muniRideState = null;
 const combatAudio = createCombatAudio();
 let lastVehicleDamageAt = null;
-const PLAYER_GROUND_OFFSET = 0.17;
+// The shared Traveler's lowest skinned shoe vertex sits within ~4 mm of its
+// root; use the authoritative surface directly instead of floating the body by
+// the legacy primitive-avatar offset.
+const PLAYER_GROUND_OFFSET = 0;
 const ON_FOOT_PLAYER_BODY_RADIUS = 1.05;
 const PLAYER_FACING_DAMPING = 18;
 const WALK_CAMERA_DISTANCE = 8.8;
@@ -1787,6 +1796,7 @@ const driveByState = {
   aimPitch: 0,
 };
 const driveByVehicleRight = new THREE.Vector3();
+const driveByVehicleForward = new THREE.Vector3();
 const driveByAimForward = new THREE.Vector3();
 const driveByVisualWeaponDirection = new THREE.Vector3();
 const driveByAimAnchor = new THREE.Vector3();
@@ -1797,6 +1807,193 @@ const driveByWorldQuaternion = new THREE.Quaternion();
 const driveByParentQuaternion = new THREE.Quaternion();
 const driveByBox = new THREE.Box3();
 const driveByScreenPoint = new THREE.Vector3();
+const VEHICLE_EMBODIMENT_DURATION = 0.72;
+const VEHICLE_EMBODIMENT_DOOR_ANGLE = 0.82;
+const VEHICLE_EMBODIMENT_SAMPLE_LIMIT = 18;
+const LOCAL_TRAVELER_ID = 'local-traveler';
+const vehicleEmbodimentPosition = new THREE.Vector3();
+const vehicleEmbodimentDoor = new THREE.Vector3();
+const vehicleEmbodimentSeat = new THREE.Vector3();
+const vehicleEmbodimentGround = new THREE.Vector3();
+const vehicleEmbodimentStart = new THREE.Vector3();
+const vehicleEmbodimentHip = new THREE.Vector3();
+const vehicleEmbodimentRight = new THREE.Vector3();
+const vehicleEmbodimentOrientation = new THREE.Quaternion();
+const vehicleEmbodimentBox = new THREE.Box3();
+const vehicleEmbodimentScreenPoint = new THREE.Vector3();
+const vehicleEmbodimentCameraPrevious = new THREE.Vector3();
+const vehicleEmbodimentState = {
+  phase: 'grounded',
+  elapsed: 0,
+  duration: VEHICLE_EMBODIMENT_DURATION,
+  startedAt: null,
+  completedAt: null,
+  replayed: false,
+  duplicateEIgnored: false,
+  vehicleId: null,
+  vehicleClass: null,
+  doorSide: 1,
+  startPosition: new THREE.Vector3(),
+  lastPose: null,
+  sockets: null,
+  samples: [],
+  lastSampleProgress: -1,
+  events: { theftIngressCount: 0 },
+  cameraMaxStep: 0,
+  cameraReady: false,
+};
+
+function vehicleEmbodimentTransitionActive() {
+  return vehicleEmbodimentState.phase === 'entering'
+    || vehicleEmbodimentState.phase === 'exiting';
+}
+
+function vehicleEmbodimentPhaseForQa() {
+  if (vehicleEmbodimentState.phase === 'entering') return 'ingress';
+  if (vehicleEmbodimentState.phase === 'exiting') return 'egress';
+  return vehicleEmbodimentState.phase;
+}
+
+function vehicleRootForId(vehicleId) {
+  return Number.isInteger(vehicleId) ? traffic.group?.children?.[vehicleId] ?? null : null;
+}
+
+function readVehicleEmbodimentPose(drivingState = null) {
+  const state = drivingState?.index === vehicleEmbodimentState.vehicleId ? drivingState : null;
+  const root = vehicleRootForId(vehicleEmbodimentState.vehicleId);
+  const position = state?.position ?? root?.position ?? vehicleEmbodimentState.lastPose?.position;
+  if (!position) return null;
+  const pose = {
+    position: {
+      x: Number(position.x) || 0,
+      y: Number(position.y) || 0,
+      z: Number(position.z) || 0,
+    },
+    heading: Number.isFinite(state?.heading)
+      ? state.heading
+      : Number.isFinite(root?.rotation?.y) ? root.rotation.y : vehicleEmbodimentState.lastPose?.heading ?? 0,
+    speed: Math.max(0, Number(state?.speed) || 0),
+  };
+  vehicleEmbodimentState.lastPose = pose;
+  return pose;
+}
+
+function computeVehicleEmbodimentSockets(pose) {
+  if (!pose) return null;
+  const root = vehicleRootForId(vehicleEmbodimentState.vehicleId);
+  const authored = root?.userData?.vehicleEmbodiment;
+  const sideKey = vehicleEmbodimentState.doorSide < 0 ? 'left' : 'right';
+  const authoredSeat = authored?.seats?.[sideKey];
+  if (authoredSeat?.getWorldPosition) {
+    root.updateWorldMatrix(true, true);
+    authoredSeat.getWorldPosition(vehicleEmbodimentSeat);
+    authoredSeat.getWorldQuaternion(vehicleEmbodimentOrientation);
+  } else {
+    const dimensions = vehiclePresentationDimensions(vehicleEmbodimentState.vehicleClass);
+    vehicleEmbodimentRight.set(Math.cos(pose.heading), 0, -Math.sin(pose.heading));
+    vehicleEmbodimentSeat.set(pose.position.x, pose.position.y + 0.08, pose.position.z)
+      .addScaledVector(vehicleEmbodimentRight, vehicleEmbodimentState.doorSide * dimensions.halfWidth * 0.32);
+    vehicleEmbodimentOrientation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, pose.heading);
+  }
+  vehicleEmbodimentRight.set(Math.cos(pose.heading), 0, -Math.sin(pose.heading));
+  const dimensions = vehiclePresentationDimensions(vehicleEmbodimentState.vehicleClass);
+  vehicleEmbodimentDoor.set(pose.position.x, pose.position.y, pose.position.z)
+    .addScaledVector(
+      vehicleEmbodimentRight,
+      vehicleEmbodimentState.doorSide * (authored?.halfWidth ?? dimensions.halfWidth),
+    );
+  const doorSurface = getTraversalSurfaceHeight(vehicleEmbodimentDoor);
+  vehicleEmbodimentDoor.y = (Number.isFinite(doorSurface) ? doorSurface : pose.position.y)
+    + PLAYER_GROUND_OFFSET;
+  vehicleEmbodimentGround.set(pose.position.x, pose.position.y, pose.position.z)
+    .addScaledVector(
+      vehicleEmbodimentRight,
+      vehicleEmbodimentState.doorSide * (
+        (authored?.halfWidth ?? dimensions.halfWidth) + ON_FOOT_PLAYER_BODY_RADIUS + 0.18
+      ),
+    );
+  const groundSurface = getTraversalSurfaceHeight(vehicleEmbodimentGround);
+  vehicleEmbodimentGround.y = (Number.isFinite(groundSurface) ? groundSurface : pose.position.y)
+    + PLAYER_GROUND_OFFSET;
+  return {
+    seat: vehicleEmbodimentSeat.clone(),
+    door: vehicleEmbodimentDoor.clone(),
+    ground: vehicleEmbodimentGround.clone(),
+    orientation: vehicleEmbodimentOrientation.clone(),
+    surfaceY: Number.isFinite(groundSurface) ? groundSurface : pose.position.y,
+  };
+}
+
+function setVehicleEmbodimentDoor(progress = 0) {
+  const root = vehicleRootForId(vehicleEmbodimentState.vehicleId);
+  const sideKey = vehicleEmbodimentState.doorSide < 0 ? 'left' : 'right';
+  const authored = root?.userData?.vehicleEmbodiment;
+  if (!authored?.doors) return 0;
+  let selectedAngle = 0;
+  for (const [key, door] of Object.entries(authored.doors)) {
+    const active = key === sideKey;
+    const angle = active ? VEHICLE_EMBODIMENT_DOOR_ANGLE * THREE.MathUtils.clamp(progress, 0, 1) : 0;
+    door.pivot.rotation.y = angle * -door.side;
+    door.pivot.userData.apertureAngle = angle;
+    door.pivot.userData.traversal = angle / VEHICLE_EMBODIMENT_DOOR_ANGLE;
+    door.aperture.visible = active && angle > 0.04;
+    door.angle = angle;
+    if (active) selectedAngle = angle;
+  }
+  root.updateWorldMatrix(true, true);
+  return selectedAngle;
+}
+
+function beginVehicleEmbodimentPhase(phase, {
+  vehicleId,
+  vehicleClass,
+  doorSide = 1,
+  startPosition = null,
+  pose = null,
+  restored = false,
+} = {}) {
+  vehicleEmbodimentState.phase = restored ? 'seated' : phase;
+  vehicleEmbodimentState.elapsed = restored ? VEHICLE_EMBODIMENT_DURATION : 0;
+  vehicleEmbodimentState.startedAt = restored ? null : performance.now();
+  vehicleEmbodimentState.completedAt = restored ? performance.now() : null;
+  vehicleEmbodimentState.replayed = false;
+  vehicleEmbodimentState.duplicateEIgnored = false;
+  vehicleEmbodimentState.vehicleId = Number.isInteger(vehicleId) ? vehicleId : null;
+  vehicleEmbodimentState.vehicleClass = vehicleClass ?? null;
+  vehicleEmbodimentState.doorSide = doorSide < 0 ? -1 : 1;
+  vehicleEmbodimentState.startPosition.copy(startPosition || playerAvatar?.position || controls.target);
+  vehicleEmbodimentState.lastPose = pose ? {
+    position: { ...pose.position },
+    heading: Number(pose.heading) || 0,
+    speed: Number(pose.speed) || 0,
+  } : null;
+  vehicleEmbodimentState.sockets = null;
+  vehicleEmbodimentState.samples.length = 0;
+  vehicleEmbodimentState.lastSampleProgress = -1;
+  vehicleEmbodimentState.cameraMaxStep = 0;
+  vehicleEmbodimentState.cameraReady = false;
+  setVehicleEmbodimentDoor(0);
+}
+
+function clearPlayerVehicleEmbodiment({ keepVehicle = false } = {}) {
+  setVehicleEmbodimentDoor(0);
+  vehicleEmbodimentState.phase = 'grounded';
+  vehicleEmbodimentState.elapsed = 0;
+  vehicleEmbodimentState.startedAt = null;
+  vehicleEmbodimentState.completedAt = performance.now();
+  vehicleEmbodimentState.duplicateEIgnored = false;
+  vehicleEmbodimentState.samples.length = 0;
+  vehicleEmbodimentState.lastSampleProgress = -1;
+  if (!keepVehicle) {
+    vehicleEmbodimentState.vehicleId = null;
+    vehicleEmbodimentState.vehicleClass = null;
+    vehicleEmbodimentState.lastPose = null;
+    vehicleEmbodimentState.sockets = null;
+  }
+  if (driveByRig) driveByRig.visible = false;
+  driveByState.active = false;
+  driveByState.justActivated = false;
+}
 
 function playerMoving() {
   return controls.keys.has('keyw')
@@ -2015,11 +2212,13 @@ function alignPlayerWeaponToCamera() {
 
 function updatePlayerWeapon(combatState) {
   if (!playerWeapon) return;
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  const vehicleAimAvailable = Boolean(drivingState && vehicleEmbodimentState.phase === 'seated');
   const visible = Boolean(
     combatState?.aiming
       && playerLayerActive
       && !controls.interiorMode
-      && !traffic.isPlayerDriving?.()
+      && (!drivingState || vehicleAimAvailable)
       && !beautyMode
       && !qaCameraPose,
   );
@@ -2030,13 +2229,17 @@ function updatePlayerWeapon(combatState) {
   if (!visible) return;
   // Keep the low-poly avatar's torso facing the same heading as the sidearm
   // while aiming, even when the player is standing still.
-  if (playerAvatar) {
+  if (playerAvatar && !drivingState) {
     setAvatarLook(playerAvatar, controls.yaw);
     playerAvatarLocomotionState.facingYaw = controls.yaw;
     setAvatarCombatPose(playerAvatar, {
       aiming: true,
       pitch: (combatCameraState.savedPitch - controls.pitch) * 0.6,
     });
+  } else if (playerAvatar && drivingState) {
+    // The post-traffic embodiment pass already applied the additive seated aim
+    // pose once. This branch only solves the existing hand-mounted weapon.
+    playerAvatar.updateMatrixWorld(true);
   }
   alignPlayerWeaponToCamera();
 }
@@ -2202,44 +2405,35 @@ function pointOutsideVehicleBody(point, drivingState, margin = 0) {
     || localY >= dimensions.roof + margin;
 }
 
+function pointOutsideVehicleWindow(point, drivingState, margin = 0.08) {
+  if (!point || !drivingState?.position) return false;
+  const halfWidth = drivingState.class === 'sedan' || drivingState.class === 'taxi' ? 0.925
+    : drivingState.class === 'suv' ? 0.98
+      : drivingState.class === 'pickup' ? 1.01
+        : drivingState.class === 'van' ? 1 : vehiclePresentationDimensions(drivingState.class).halfWidth;
+  const heading = Number(drivingState.heading) || 0;
+  const dx = point.x - drivingState.position.x;
+  const dz = point.z - drivingState.position.z;
+  const localX = dx * Math.cos(heading) - dz * Math.sin(heading);
+  return Math.abs(localX) >= halfWidth + margin;
+}
+
 function updateDriveByRig(combatState, drivingState) {
-  if (!driveByRig) return;
   const visible = Boolean(
     drivingState
       && combatState?.aiming
       && combatState?.status === 'running'
+      && vehicleEmbodimentState.phase === 'seated'
       && playerLayerActive
       && !controls.interiorMode
       && !beautyMode
       && !qaCameraPose,
   );
-  driveByRig.visible = visible;
+  // The former disconnected arm/weapon prop remains detectable for regression
+  // tooling but never renders. Drive-by presentation uses playerAvatar and its
+  // existing right-hand playerWeapon exclusively.
+  if (driveByRig) driveByRig.visible = false;
   driveByState.active = visible;
-  if (!visible) return;
-  driveByRig.position.set(
-    drivingState.position.x,
-    drivingState.position.y,
-    drivingState.position.z,
-  );
-  driveByRig.rotation.set(0, drivingState.heading, 0);
-  driveByRig.updateMatrixWorld(true);
-  camera.getWorldDirection(combatWeaponDirection).normalize();
-  driveByVehicleRight.set(Math.cos(drivingState.heading), 0, -Math.sin(drivingState.heading));
-  const windowSide = combatWeaponDirection.dot(driveByVehicleRight) >= 0 ? 1 : -1;
-  driveByRig.userData.upperArm.position.x = 0.78 * windowSide;
-  driveByRig.userData.forearm.position.x = 1.38 * windowSide;
-  driveByRig.userData.forearm.rotation.z = 0.12 * windowSide;
-  driveByRig.userData.hand.position.x = 1.72 * windowSide;
-  driveByRig.userData.weapon.position.x = driveByRig.userData.hand.position.x;
-  driveByVisualWeaponDirection.copy(combatWeaponDirection)
-    .addScaledVector(driveByVehicleRight, windowSide * 0.28)
-    .normalize();
-  driveByWorldQuaternion.setFromUnitVectors(combatWeaponUp, driveByVisualWeaponDirection);
-  driveByRig.getWorldQuaternion(driveByParentQuaternion).invert();
-  driveByRig.userData.weapon.quaternion
-    .copy(driveByParentQuaternion)
-    .multiply(driveByWorldQuaternion);
-  driveByRig.updateMatrixWorld(true);
 }
 
 function updateDriveByCamera(dt, drivingState) {
@@ -2250,11 +2444,16 @@ function updateDriveByCamera(dt, drivingState) {
     drivingState.position.z,
   );
   driveByCameraPosition.copy(driveByAimAnchor)
-    .addScaledVector(driveByAimForward, -10.7);
+    .addScaledVector(driveByAimForward, -9);
   driveByVehicleRight.set(Math.cos(drivingState.heading), 0, -Math.sin(drivingState.heading));
+  driveByVehicleForward.set(Math.sin(drivingState.heading), 0, Math.cos(drivingState.heading));
   const windowSide = driveByAimForward.dot(driveByVehicleRight) >= 0 ? 1 : -1;
-  driveByCameraPosition.addScaledVector(driveByVehicleRight, windowSide * 1.3);
-  driveByCameraPosition.y = drivingState.position.y + 5.2;
+  // Compose from the opposite rear quarter so the same-body shoulder, arm,
+  // hand and sidearm read as one chain instead of collapsing along the view.
+  driveByCameraPosition
+    .addScaledVector(driveByVehicleForward, -3)
+    .addScaledVector(driveByVehicleRight, -windowSide * 0.8);
+  driveByCameraPosition.y = drivingState.position.y + 4.8;
   driveByLookTarget.copy(driveByAimAnchor)
     .addScaledVector(driveByAimForward, 24);
   driveByLookTarget.y += 0.4 + driveByState.aimPitch * 12;
@@ -2279,8 +2478,8 @@ function getDriveByState() {
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   const width = renderer.domElement.clientWidth || window.innerWidth || 1;
   const height = renderer.domElement.clientHeight || window.innerHeight || 1;
-  const hand = driveByRig?.userData?.hand;
-  const weapon = driveByRig?.userData?.weapon;
+  const hand = playerAvatar?.userData?.rightHand;
+  const weapon = playerWeapon;
   hand?.getWorldPosition?.(combatEmbodimentWorldA);
   weapon?.getWorldPosition?.(combatEmbodimentWorldB);
   const gripSocketDistance = hand && weapon
@@ -2288,7 +2487,7 @@ function getDriveByState() {
     : null;
   let muzzle = null;
   if (weapon) {
-    combatEmbodimentWorldA.copy(driveByMuzzleLocal);
+    combatEmbodimentWorldA.copy(combatWeaponMuzzleLocal);
     weapon.localToWorld(combatEmbodimentWorldA);
     muzzle = {
       x: combatEmbodimentWorldA.x,
@@ -2347,15 +2546,20 @@ function getDriveByState() {
   return {
     active: driveByState.active,
     aiming: Boolean(combat?.getState?.().aiming && drivingState),
-    driverForearmVisible: Boolean(driveByRig?.visible && driveByRig.userData.forearm?.visible),
+    avatarId: LOCAL_TRAVELER_ID,
+    bodySource: 'player-avatar',
+    bodyVisible: Boolean(playerAvatar?.visible),
+    driverForearmVisible: Boolean(playerAvatar?.visible && playerAvatar.userData?.rightForearm?.visible !== false),
     weapon: {
-      visible: Boolean(driveByRig?.visible && weapon?.visible),
-      connected: Boolean(weapon && weapon.parent === driveByRig),
+      visible: Boolean(playerWeapon?.visible),
+      connected: Boolean(weapon && weapon.parent === hand),
+      parent: weapon?.parent === hand ? 'right-hand' : null,
       gripSocketDistance,
+      gripDistance: gripSocketDistance,
     },
     muzzle: muzzle ? {
       ...muzzle,
-      outsideVehicle: Boolean(drivingState && pointOutsideVehicleBody(muzzle, drivingState)),
+      outsideVehicle: Boolean(drivingState && pointOutsideVehicleWindow(muzzle, drivingState)),
     } : null,
     reticle: { x: width * 0.5, y: height * 0.5 },
     vehicleScreen,
@@ -2564,11 +2768,23 @@ function getNetworkState() {
 }
 
 function enterPlayerCar(index) {
+  if (vehicleEmbodimentTransitionActive()) {
+    vehicleEmbodimentState.duplicateEIgnored = true;
+    return false;
+  }
   if (controls.interiorMode || traffic.isPlayerDriving?.() || index == null) return false;
   if (traffic.getImpoundedVehicleState?.()) {
     hud?.setMessage(`Retrieve your held vehicle at Ferry Building before taking another car · $${VEHICLE_IMPOUND_RETRIEVAL_FEE}.`);
     return false;
   }
+  const entryStart = (playerAvatar?.visible ? playerAvatar.position : controls.target).clone();
+  const entryRoot = vehicleRootForId(index);
+  const entryHeading = Number(entryRoot?.rotation?.y) || 0;
+  vehicleEmbodimentRight.set(Math.cos(entryHeading), 0, -Math.sin(entryHeading));
+  const entrySide = entryRoot
+    && vehicleEmbodimentStart.copy(entryStart).sub(entryRoot.position).dot(vehicleEmbodimentRight) < 0
+    ? -1
+    : 1;
   const entered = traffic.enterPlayerVehicle?.(index);
   if (!entered) return false;
   const theft = traffic.reportPlayerVehicleTheft?.();
@@ -2579,7 +2795,8 @@ function enterPlayerCar(index) {
       source: 'vehicle-theft',
     })
     : null;
-  const state = activatePlayerVehiclePresentation();
+  if (theft?.reported) vehicleEmbodimentState.events.theftIngressCount += 1;
+  const state = activatePlayerVehiclePresentation({ entryStart, doorSide: entrySide });
   if (!state) return false;
   lastVehicleDamageAt = null;
   hud.setMessage(theft?.reported
@@ -2590,7 +2807,7 @@ function enterPlayerCar(index) {
   return true;
 }
 
-function activatePlayerVehiclePresentation({ restored = false } = {}) {
+function activatePlayerVehiclePresentation({ restored = false, entryStart = null, doorSide = 1 } = {}) {
   const state = traffic.getPlayerVehicleState?.();
   if (!state) return null;
   combat?.setAiming(false);
@@ -2600,6 +2817,14 @@ function activatePlayerVehiclePresentation({ restored = false } = {}) {
   driveByState.justActivated = false;
   driveByState.aimYaw = state.heading;
   driveByState.aimPitch = 0;
+  beginVehicleEmbodimentPhase('entering', {
+    vehicleId: state.index,
+    vehicleClass: state.class,
+    doorSide,
+    startPosition: entryStart || playerAvatar?.position || controls.target,
+    pose: state,
+    restored,
+  });
   lastVehicleDamageAt = state.damage?.lastDamage?.at ?? null;
   if (audioContext && !engineAudio) {
     try {
@@ -2632,6 +2857,12 @@ function activatePlayerVehiclePresentation({ restored = false } = {}) {
 }
 
 function exitPlayerCar() {
+  if (vehicleEmbodimentTransitionActive()) {
+    vehicleEmbodimentState.duplicateEIgnored = true;
+    return false;
+  }
+  const priorState = traffic.getPlayerVehicleState?.();
+  if (!priorState) return false;
   const exit = traffic.exitPlayerVehicle?.();
   if (!exit) return false;
   combat?.setAiming(false);
@@ -2648,15 +2879,24 @@ function exitPlayerCar() {
     windAudio.stop();
     windAudio = null;
   }
-  const sideX = Math.cos(exit.heading) * 1.6;
-  const sideZ = -Math.sin(exit.heading) * 1.6;
-  const exitX = exit.x + sideX;
-  const exitZ = exit.z + sideZ;
-  const surface = getTraversalSurfaceHeight({ x: exitX, z: exitZ });
+  const exitPose = {
+    position: { x: exit.x, y: exit.y, z: exit.z },
+    heading: exit.heading,
+    speed: 0,
+  };
+  beginVehicleEmbodimentPhase('exiting', {
+    vehicleId: priorState.index,
+    vehicleClass: priorState.class,
+    doorSide: vehicleEmbodimentState.doorSide,
+    startPosition: playerAvatar?.position,
+    pose: exitPose,
+  });
+  const exitSockets = computeVehicleEmbodimentSockets(exitPose);
+  vehicleEmbodimentState.sockets = exitSockets;
   controls.target.set(
-    exitX,
-    Number.isFinite(surface) ? surface : exit.y,
-    exitZ,
+    exitSockets?.ground.x ?? exit.x,
+    exitSockets?.surfaceY ?? exit.y,
+    exitSockets?.ground.z ?? exit.z,
   );
   controls.yaw = exit.heading + Math.PI;
   controls.pitch = THREE.MathUtils.clamp(
@@ -3221,6 +3461,7 @@ function startPlayerMuniRide(candidate) {
   }
   const boarded = traffic.beginMuniRide?.(candidate.index);
   if (!boarded) return false;
+  clearPlayerVehicleEmbodiment();
   controls.keys.clear();
   controls.combatPointerId = null;
   controls.combatTriggerPointerId = null;
@@ -3316,6 +3557,7 @@ function startPlayerTaxiRide(candidate) {
   }
   const boarded = traffic.beginTaxiRide?.(candidate.index);
   if (!boarded) return false;
+  clearPlayerVehicleEmbodiment();
   controls.keys.clear();
   combat?.setEnabled(false);
   taxiRideState = {
@@ -3496,14 +3738,164 @@ function updatePlayerLocomotionFacing(dt, position) {
   );
 }
 
+function smoothVehicleEmbodimentStep(value) {
+  const t = THREE.MathUtils.clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function updatePlayerVehicleEmbodiment(dt, animationElapsed, drivingState = null) {
+  const phase = vehicleEmbodimentState.phase;
+  if (!['entering', 'seated', 'exiting'].includes(phase) || !playerAvatar) return false;
+  const pose = readVehicleEmbodimentPose(drivingState);
+  if (!pose) {
+    clearPlayerVehicleEmbodiment();
+    return false;
+  }
+  if (phase !== 'seated') {
+    vehicleEmbodimentState.elapsed = Math.min(
+      vehicleEmbodimentState.duration,
+      vehicleEmbodimentState.elapsed + Math.max(0, Number(dt) || 0),
+    );
+  }
+  const progress = phase === 'seated'
+    ? 1
+    : THREE.MathUtils.clamp(
+      vehicleEmbodimentState.elapsed / vehicleEmbodimentState.duration,
+      0,
+      1,
+    );
+  const sockets = computeVehicleEmbodimentSockets(pose);
+  if (!sockets) return false;
+  vehicleEmbodimentState.sockets = sockets;
+
+  let seatedBlend = 1;
+  let doorOpen = 0;
+  if (phase === 'entering') {
+    const toDoor = smoothVehicleEmbodimentStep(progress / 0.44);
+    if (progress < 0.44) {
+      vehicleEmbodimentPosition.copy(vehicleEmbodimentState.startPosition).lerp(sockets.door, toDoor);
+    } else {
+      vehicleEmbodimentPosition.copy(sockets.door).lerp(
+        sockets.seat,
+        smoothVehicleEmbodimentStep((progress - 0.44) / 0.56),
+      );
+    }
+    seatedBlend = smoothVehicleEmbodimentStep((progress - 0.28) / 0.62);
+    doorOpen = progress < 0.12
+      ? smoothVehicleEmbodimentStep(progress / 0.12)
+      : progress > 0.82
+        ? 1 - smoothVehicleEmbodimentStep((progress - 0.82) / 0.18)
+        : 1;
+  } else if (phase === 'exiting') {
+    if (progress < 0.56) {
+      vehicleEmbodimentPosition.copy(sockets.seat).lerp(
+        sockets.door,
+        smoothVehicleEmbodimentStep(progress / 0.56),
+      );
+    } else {
+      vehicleEmbodimentPosition.copy(sockets.door).lerp(
+        sockets.ground,
+        smoothVehicleEmbodimentStep((progress - 0.56) / 0.44),
+      );
+    }
+    seatedBlend = 1 - smoothVehicleEmbodimentStep((progress - 0.18) / 0.68);
+    doorOpen = progress < 0.14
+      ? smoothVehicleEmbodimentStep(progress / 0.14)
+      : progress > 0.84
+        ? 1 - smoothVehicleEmbodimentStep((progress - 0.84) / 0.16)
+        : 1;
+  } else {
+    vehicleEmbodimentPosition.copy(sockets.seat);
+    doorOpen = 0;
+  }
+  const doorAngle = setVehicleEmbodimentDoor(doorOpen);
+  const hiddenForPresentation = controls.interiorMode
+    || passengerRideActive()
+    || beautyMode
+    || Boolean(qaCameraPose);
+  playerAvatar.visible = playerLayerActive && !hiddenForPresentation;
+  if (playerAvatar.visible) {
+    playerAvatar.position.copy(vehicleEmbodimentPosition);
+    playerAvatar.quaternion.copy(sockets.orientation);
+    animatePlayerAvatar(playerAvatar, {
+      moving: false,
+      speedRatio: 0,
+      elapsed: animationElapsed,
+      delta: Math.max(0, Number(dt) || 0),
+    });
+    setAvatarLook(playerAvatar, 0);
+    const aiming = phase === 'seated' && combat?.getState?.().aiming === true;
+    camera.getWorldDirection(combatWeaponDirection).normalize();
+    vehicleEmbodimentRight.set(Math.cos(pose.heading), 0, -Math.sin(pose.heading));
+    const windowSide = combatWeaponDirection.dot(vehicleEmbodimentRight) >= 0 ? 1 : -1;
+    setAvatarVehiclePose(playerAvatar, {
+      seatedBlend,
+      transitionBlend: phase === 'seated' ? 0 : Math.sin(progress * Math.PI),
+      steering: (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
+      aiming,
+      windowSide,
+      aimPitch: driveByState.aimPitch,
+    });
+    const hips = playerAvatar.getObjectByName?.('Hips');
+    if (hips?.getWorldPosition && seatedBlend > 0) {
+      playerAvatar.updateMatrixWorld(true);
+      hips.getWorldPosition(vehicleEmbodimentHip);
+      playerAvatar.position.addScaledVector(
+        vehicleEmbodimentSeat.copy(sockets.seat).sub(vehicleEmbodimentHip),
+        seatedBlend,
+      );
+    }
+    if (playerAvatar.userData?.nameTag) playerAvatar.userData.nameTag.visible = false;
+    playerAvatar.updateMatrixWorld(true);
+  }
+  resetPlayerLocomotionFacing(playerAvatar.position);
+
+  if (phase !== 'seated'
+    && (vehicleEmbodimentState.lastSampleProgress < 0
+      || progress - vehicleEmbodimentState.lastSampleProgress >= 0.055
+      || progress >= 1)) {
+    const sampleHip = playerAvatar.getObjectByName?.('Hips')?.getWorldPosition(vehicleEmbodimentHip)
+      ?? playerAvatar.position;
+    const seatResidual = sampleHip.distanceTo(sockets.seat);
+    vehicleEmbodimentState.samples.push({
+      phase: vehicleEmbodimentPhaseForQa(),
+      progress,
+      hip: { x: sampleHip.x, y: sampleHip.y, z: sampleHip.z },
+      seatResidual,
+      doorAngle,
+    });
+    if (vehicleEmbodimentState.samples.length > VEHICLE_EMBODIMENT_SAMPLE_LIMIT) {
+      vehicleEmbodimentState.samples.shift();
+    }
+    vehicleEmbodimentState.lastSampleProgress = progress;
+  }
+
+  if (phase === 'entering' && progress >= 1) {
+    vehicleEmbodimentState.phase = 'seated';
+    vehicleEmbodimentState.completedAt = performance.now();
+    setVehicleEmbodimentDoor(0);
+  } else if (phase === 'exiting' && progress >= 1) {
+    vehicleEmbodimentState.phase = 'grounded';
+    vehicleEmbodimentState.completedAt = performance.now();
+    setVehicleEmbodimentDoor(0);
+    controls.target.set(sockets.ground.x, sockets.surfaceY, sockets.ground.z);
+    playerAvatar.position.copy(sockets.ground);
+    playerAvatar.quaternion.identity();
+    animatePlayerAvatar(playerAvatar, { moving: false, speedRatio: 0, elapsed: animationElapsed, delta: 0 });
+    setAvatarLook(playerAvatar, pose.heading + Math.PI);
+    if (playerAvatar.userData?.shadow) playerAvatar.userData.shadow.visible = true;
+    if (playerAvatar.userData?.nameTag) playerAvatar.userData.nameTag.visible = true;
+    playerAvatar.updateMatrixWorld(true);
+  }
+  return true;
+}
+
 function updatePlayerLayer(dt, elapsed) {
   updatePlayerMuniRide();
   updatePlayerTaxiRide(dt);
   const passengerRiding = passengerRideActive();
   const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
   if (drivingState) {
-    if (playerAvatar) playerAvatar.visible = false;
-    resetPlayerLocomotionFacing();
     controls.target.set(drivingState.position.x, drivingState.position.y + 1.6, drivingState.position.z);
     controls.yaw = drivingState.heading + Math.PI;
     controls.pitch = THREE.MathUtils.clamp(
@@ -3516,12 +3908,13 @@ function updatePlayerLayer(dt, elapsed) {
       DRIVE_CAMERA_DISTANCE_MIN,
       DRIVE_CAMERA_DISTANCE_MAX,
     );
-    traffic.setPlayerInput?.({
+    const inputLocked = vehicleEmbodimentState.phase !== 'seated';
+    traffic.setPlayerInput?.(inputLocked ? { throttle: 0, brake: 1, steer: 0 } : {
       throttle: controls.keys.has('keyw') ? 1 : 0,
       brake: controls.keys.has('keys') || controls.keys.has('arrowdown') ? 1 : 0,
       steer: (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
     });
-    engineAudio?.update(drivingState.speed, controls.keys.has('keyw') ? 1 : 0);
+    engineAudio?.update(drivingState.speed, !inputLocked && controls.keys.has('keyw') ? 1 : 0);
     windAudio?.update(Math.min(1, drivingState.speed / 13));
     hud?.setDriveState?.({
       active: combat?.getState?.().aiming !== true,
@@ -3542,6 +3935,9 @@ function updatePlayerLayer(dt, elapsed) {
         : `Vehicle impact · integrity ${Math.round((drivingState.damage?.ratio ?? 0) * 100)}%.`);
     }
     lifeSim?.noteDriving?.(dt);
+  } else if (vehicleEmbodimentState.phase === 'exiting') {
+    hud?.setDriveState?.({ active: false });
+    traffic.setPlayerInput?.({ throttle: 0, brake: 0, steer: 0 });
   } else {
     hud?.setDriveState?.({ active: false });
     traffic.setPlayerInput?.({ throttle: 0, brake: 0, steer: 0 });
@@ -3741,9 +4137,11 @@ streetHeat = createStreetHeat({
       }
       let impounded = null;
       if (traffic.isPlayerDriving?.()) {
+        if (vehicleEmbodimentTransitionActive()) clearPlayerVehicleEmbodiment({ keepVehicle: true });
         exitPlayerCar();
         impounded = traffic.impoundPlayerVehicle?.() ?? null;
       }
+      clearPlayerVehicleEmbodiment();
       const pursuitDefeat = reason === 'pursuit-defeat';
       const recovered = pursuitDefeat
         ? combat?.recoverFromDowned?.(58, 'pursuit-booking') ?? null
@@ -4174,6 +4572,298 @@ function getPlayerRenderedBodyBounds() {
   };
 }
 
+function projectVehicleEmbodimentBounds(bounds) {
+  if (!bounds?.min || !bounds?.max) return null;
+  const width = renderer.domElement.clientWidth || window.innerWidth || 1;
+  const height = renderer.domElement.clientHeight || window.innerHeight || 1;
+  const points = [];
+  for (const x of [bounds.min.x, bounds.max.x]) {
+    for (const y of [bounds.min.y, bounds.max.y]) {
+      for (const z of [bounds.min.z, bounds.max.z]) {
+        vehicleEmbodimentScreenPoint.set(x, y, z).project(camera);
+        points.push({
+          x: (vehicleEmbodimentScreenPoint.x * 0.5 + 0.5) * width,
+          y: (-vehicleEmbodimentScreenPoint.y * 0.5 + 0.5) * height,
+          depth: vehicleEmbodimentScreenPoint.z,
+        });
+      }
+    }
+  }
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const screen = {
+    left: Math.min(...xs),
+    right: Math.max(...xs),
+    top: Math.min(...ys),
+    bottom: Math.max(...ys),
+  };
+  screen.width = screen.right - screen.left;
+  screen.height = screen.bottom - screen.top;
+  screen.readable = screen.width >= 16 && screen.height >= 28
+    && screen.right > 0 && screen.left < width
+    && screen.bottom > 0 && screen.top < height
+    && points.some((point) => point.depth >= -1 && point.depth <= 1);
+  return screen;
+}
+
+function getVehicleEmbodimentSkinnedSample(renderedBody) {
+  const body = playerAvatar?.getObjectByName?.('Shared skinned adult body');
+  const position = body?.geometry?.attributes?.position;
+  return {
+    source: body?.name ?? null,
+    skinnedVertexCount: Number(position?.count) || 0,
+    bounds: renderedBody?.bounds ? structuredClone(renderedBody.bounds) : null,
+  };
+}
+
+function getPlayerVehicleEmbodimentState() {
+  const drivingState = traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null;
+  const root = vehicleRootForId(vehicleEmbodimentState.vehicleId);
+  const pose = readVehicleEmbodimentPose(drivingState);
+  const sockets = pose ? computeVehicleEmbodimentSockets(pose) : vehicleEmbodimentState.sockets;
+  if (sockets) vehicleEmbodimentState.sockets = sockets;
+  playerAvatar?.updateWorldMatrix?.(true, true);
+  const renderedBody = getPlayerRenderedBodyBounds();
+  const screen = projectVehicleEmbodimentBounds(renderedBody?.bounds);
+  const hipObject = playerAvatar?.getObjectByName?.('Hips')
+    || playerAvatar?.userData?.rig
+    || playerAvatar;
+  const hip = hipObject?.getWorldPosition
+    ? hipObject.getWorldPosition(vehicleEmbodimentStart)
+    : playerAvatar?.position;
+  const surface = playerAvatar ? getTraversalSurfaceHeight(playerAvatar.position) : null;
+  const feetSurfaceDelta = renderedBody && Number.isFinite(surface)
+    ? Math.abs(renderedBody.bounds.min.y - surface)
+    : null;
+  const vehicleBounds = root?.visible
+    ? vehicleEmbodimentBox.setFromObject(root, true)
+    : null;
+  let avatarVehicleSat = null;
+  if (renderedBody?.bounds && vehicleBounds && !vehicleBounds.isEmpty()) {
+    avatarVehicleSat = Math.min(
+      Math.min(renderedBody.bounds.max.x, vehicleBounds.max.x)
+        - Math.max(renderedBody.bounds.min.x, vehicleBounds.min.x),
+      Math.min(renderedBody.bounds.max.y, vehicleBounds.max.y)
+        - Math.max(renderedBody.bounds.min.y, vehicleBounds.min.y),
+      Math.min(renderedBody.bounds.max.z, vehicleBounds.max.z)
+        - Math.max(renderedBody.bounds.min.z, vehicleBounds.min.z),
+    );
+  }
+  const seatResidual = hip && sockets?.seat
+    ? hip.distanceTo(sockets.seat)
+    : null;
+  const embodiment = root?.userData?.vehicleEmbodiment;
+  const sideKey = vehicleEmbodimentState.doorSide < 0 ? 'left' : 'right';
+  const door = embodiment?.doors?.[sideKey];
+  const doorPivot = door?.pivot?.getWorldPosition
+    ? door.pivot.getWorldPosition(new THREE.Vector3())
+    : null;
+  const width = renderer.domElement.clientWidth || window.innerWidth || 1;
+  const height = renderer.domElement.clientHeight || window.innerHeight || 1;
+  const cameraSurface = getTraversalSurfaceHeight(camera.position);
+  const cameraSurfaceClearance = Number.isFinite(cameraSurface)
+    ? camera.position.y - cameraSurface
+    : null;
+  const cameraInsideVehicle = Boolean(pose && !pointOutsideVehicleBody(camera.position, {
+    ...pose,
+    class: vehicleEmbodimentState.vehicleClass,
+  }));
+  const transitionProgress = ['entering', 'exiting'].includes(vehicleEmbodimentState.phase)
+    ? THREE.MathUtils.clamp(
+      vehicleEmbodimentState.elapsed / vehicleEmbodimentState.duration,
+      0,
+      1,
+    )
+    : vehicleEmbodimentState.phase === 'approach' ? 0 : 1;
+  const occupying = ['entering', 'seated', 'exiting'].includes(vehicleEmbodimentState.phase);
+  const driveBy = getDriveByState();
+  return {
+    phase: vehicleEmbodimentPhaseForQa(),
+    transition: {
+      phase: vehicleEmbodimentPhaseForQa(),
+      internalPhase: vehicleEmbodimentState.phase,
+      progress: transitionProgress,
+      duration: vehicleEmbodimentState.duration,
+      durationMs: vehicleEmbodimentState.duration * 1000,
+      startedAt: vehicleEmbodimentState.startedAt,
+      completedAt: vehicleEmbodimentState.completedAt,
+      replayed: vehicleEmbodimentState.replayed,
+      duplicateEIgnored: vehicleEmbodimentState.duplicateEIgnored,
+      samples: vehicleEmbodimentState.samples.map((sample) => ({ ...sample, hip: { ...sample.hip } })),
+    },
+    avatar: {
+      id: LOCAL_TRAVELER_ID,
+      uuid: LOCAL_TRAVELER_ID,
+      objectUuid: playerAvatar?.uuid ?? null,
+      visible: Boolean(playerAvatar?.visible),
+      hip: hip ? { x: hip.x, y: hip.y, z: hip.z } : null,
+      feetSurfaceDelta,
+      renderedBody: {
+        source: 'player-avatar',
+        meshName: renderedBody?.source ?? null,
+        visible: Boolean(playerAvatar?.visible && renderedBody),
+        hip: hip ? { x: hip.x, y: hip.y, z: hip.z } : null,
+        bounds: renderedBody?.bounds ?? null,
+        screen,
+      },
+      skinnedMeshSample: getVehicleEmbodimentSkinnedSample(renderedBody),
+      seat: occupying ? { vehicleId: vehicleEmbodimentState.vehicleId, side: sideKey } : null,
+    },
+    vehicle: {
+      id: vehicleEmbodimentState.vehicleId,
+      vehicleId: vehicleEmbodimentState.vehicleId,
+      class: vehicleEmbodimentState.vehicleClass,
+      rootUuid: root?.uuid ?? null,
+      visible: Boolean(root?.visible),
+      private: root?.userData?.vehicleCategory === 'private',
+      coreRoad: Boolean(pose && Math.abs(pose.position.x) <= 220 && Math.abs(pose.position.z) <= 220),
+      distanceToAvatar: pose && playerAvatar
+        ? Math.hypot(pose.position.x - playerAvatar.position.x, pose.position.z - playerAvatar.position.z)
+        : null,
+      occupantAvatarId: occupying ? LOCAL_TRAVELER_ID : null,
+      position: pose?.position ? { ...pose.position } : null,
+      heading: pose?.heading ?? null,
+      speed: pose?.speed ?? 0,
+      seat: sockets?.seat ? { x: sockets.seat.x, y: sockets.seat.y, z: sockets.seat.z } : null,
+      cabin: embodiment?.cabin ? { ...embodiment.cabin } : null,
+      door: {
+        side: sideKey,
+        name: door?.pivot?.name ?? null,
+        visible: Boolean(root?.visible && door?.panel?.visible),
+        angle: Number(door?.angle) || 0,
+        apertureAngle: Number(door?.pivot?.userData?.apertureAngle) || 0,
+        traversal: Number(door?.pivot?.userData?.traversal) || 0,
+        pivot: doorPivot ? { x: doorPivot.x, y: doorPivot.y, z: doorPivot.z } : null,
+        requiredOpenAngle: 0.75,
+        pivotUuid: door?.pivot?.uuid ?? null,
+        apertureUuid: door?.aperture?.uuid ?? null,
+        apertureVisible: Boolean(door?.aperture?.visible),
+        panelVisible: Boolean(door?.panel?.visible),
+        maxTransitionAngle: vehicleEmbodimentState.samples.reduce(
+          (maximum, sample) => Math.max(maximum, Number(sample.doorAngle) || 0),
+          0,
+        ),
+      },
+    },
+    sockets: sockets ? {
+      seat: { x: sockets.seat.x, y: sockets.seat.y, z: sockets.seat.z },
+      door: { x: sockets.door.x, y: sockets.door.y, z: sockets.door.z },
+      ground: { x: sockets.ground.x, y: sockets.ground.y, z: sockets.ground.z },
+      surfaceY: sockets.surfaceY,
+    } : null,
+    clearance: {
+      seatResidual,
+      bodyShellPenetration: Number.isFinite(seatResidual)
+        ? Math.max(0, seatResidual - 0.03)
+        : 0,
+      avatarVehicleSat,
+    },
+    driveBy: {
+      ...driveBy,
+      active: driveByState.active,
+      avatarId: LOCAL_TRAVELER_ID,
+      bodySource: 'player-avatar',
+      bodyVisible: Boolean(playerAvatar?.visible),
+      weapon: {
+        ...driveBy.weapon,
+        parent: playerWeapon?.parent === playerAvatar?.userData?.rightHand ? 'right-hand' : null,
+        gripDistance: driveBy.weapon?.gripSocketDistance ?? null,
+      },
+    },
+    camera: {
+      safe: !cameraInsideVehicle
+        && (!Number.isFinite(cameraSurfaceClearance) || cameraSurfaceClearance >= 0.4),
+      insideVehicle: cameraInsideVehicle,
+      belowSurface: Number.isFinite(cameraSurfaceClearance) && cameraSurfaceClearance < 0.4,
+      surfaceClearance: cameraSurfaceClearance,
+      maxStep: vehicleEmbodimentState.cameraMaxStep,
+      viewport: { width, height },
+    },
+    legacyDriveByRigVisible: Boolean(driveByRig?.visible),
+    events: { ...vehicleEmbodimentState.events },
+    resources: {
+      avatarActors: playerAvatar ? 1 : 0,
+      weaponActors: playerWeapon ? 1 : 0,
+      legacyDriveByRigs: driveByRig ? 1 : 0,
+      transitionTimers: 0,
+      transitionListeners: 0,
+    },
+  };
+}
+
+function stageVehicleEmbodimentQa({ kind = 'core-private', vehicleClass = null } = {}) {
+  if (kind !== 'core-private' || traffic.isPlayerDriving?.() || passengerRideActive()
+    || controls.interiorMode
+    || (vehicleClass && !['sedan', 'suv', 'pickup', 'van'].includes(vehicleClass))) {
+    return { ready: false, syntheticEvents: 0, kind };
+  }
+  if (!started) startExperience();
+  qaCameraPose = null;
+  beautyMode = false;
+  app?.classList.remove('is-beauty');
+  clearPlayerVehicleEmbodiment();
+  const staged = traffic.stagePlayerVehicleEmbodimentQa?.({
+    referencePosition: controls.target,
+    preferredClass: vehicleClass,
+  });
+  if (!staged || staged.syntheticEvents !== 0) {
+    return { ready: false, syntheticEvents: staged?.syntheticEvents ?? 0, kind };
+  }
+  const selected = {
+    index: staged.vehicleId,
+    root: vehicleRootForId(staged.vehicleId),
+  };
+  if (!selected.root) return { ready: false, syntheticEvents: 0, kind };
+  const heading = Number(staged.heading) || 0;
+  const authored = selected.root.userData.vehicleEmbodiment;
+  const doorSide = 1;
+  vehicleEmbodimentRight.set(Math.cos(heading), 0, -Math.sin(heading));
+  vehicleEmbodimentPosition.copy(selected.root.position).addScaledVector(
+    vehicleEmbodimentRight,
+    doorSide * (authored.halfWidth + 0.72),
+  );
+  const surface = getTraversalSurfaceHeight(vehicleEmbodimentPosition);
+  controls.target.set(
+    vehicleEmbodimentPosition.x,
+    Number.isFinite(surface) ? surface : selected.root.position.y,
+    vehicleEmbodimentPosition.z,
+  );
+  controls.yaw = heading + Math.PI;
+  controls.pitch = WALK_CAMERA_PITCH;
+  controls.distance = WALK_CAMERA_DISTANCE;
+  controls.keys.clear();
+  beginVehicleEmbodimentPhase('approach', {
+    vehicleId: selected.index,
+    vehicleClass: selected.root.userData.vehicleClass,
+    doorSide,
+    startPosition: controls.target,
+    pose: { position: selected.root.position, heading, speed: 0 },
+  });
+  vehicleEmbodimentState.events.theftIngressCount = 0;
+  playerAvatar.visible = true;
+  const avatarSurface = Number.isFinite(surface) ? surface : selected.root.position.y;
+  playerAvatar.position.set(controls.target.x, avatarSurface + PLAYER_GROUND_OFFSET, controls.target.z);
+  animatePlayerAvatar(playerAvatar, { moving: false, speedRatio: 0, elapsed, delta: 0 });
+  setAvatarLook(playerAvatar, heading + Math.PI);
+  if (playerAvatar.userData?.nameTag) playerAvatar.userData.nameTag.visible = true;
+  playerAvatar.updateMatrixWorld(true);
+  snapCameraToControls();
+  vehicleEmbodimentCameraPrevious.copy(camera.position);
+  vehicleEmbodimentState.cameraReady = true;
+  return {
+    ready: true,
+    syntheticEvents: 0,
+    kind,
+    avatarId: LOCAL_TRAVELER_ID,
+    vehicleId: selected.index,
+  };
+}
+
+const vehicleEmbodimentQa = Object.freeze({
+  stage: stageVehicleEmbodimentQa,
+  snapshot: getPlayerVehicleEmbodimentState,
+});
+
 function snapshotOnFootVehicleImpactQa() {
   const diagnostics = traffic.getOnFootVehicleContactDiagnostics?.() || {};
   const renderedBody = getPlayerRenderedBodyBounds();
@@ -4303,6 +4993,7 @@ combat = createCombatLoop({
     if (kind === 'defeat' && targetKind === 'pedestrian') {
       savePlayerProgress();
     } else if (kind === 'restart') {
+      clearPlayerVehicleEmbodiment();
       pedestrians.clearCombatAftermathState?.();
       clearSfpdResponderDeploymentHolds();
       sfpdOfficers.clear?.({ resetDefeats: true });
@@ -5651,6 +6342,7 @@ function combatAimActive() {
     combat?.getState?.().aiming
       && playerLayerActive
       && !controls.interiorMode
+      && !vehicleEmbodimentTransitionActive()
       && !beautyMode
       && !qaCameraPose,
   );
@@ -5829,14 +6521,15 @@ function updateCamera(dt) {
     0,
     traversalCameraTransitionRemaining - Math.max(0, dt),
   );
+  const transitionLocked = vehicleEmbodimentTransitionActive();
   const axis = cameraAxis.set(
-    (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
+    transitionLocked ? 0 : (controls.keys.has('keyd') ? 1 : 0) - (controls.keys.has('keya') ? 1 : 0),
     0,
-    (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0),
+    transitionLocked ? 0 : (controls.keys.has('keys') ? 1 : 0) - (controls.keys.has('keyw') ? 1 : 0),
   );
   // Apply the same on-foot target movement before either camera presentation;
   // aiming changes framing, not locomotion.
-  updateRoamTarget(dt, qaTourActive, drivingActive, axis);
+  updateRoamTarget(dt, qaTourActive, drivingActive || transitionLocked, axis);
   if (aiming) {
     const drivingState = drivingActive ? traffic.getPlayerVehicleState?.() : null;
     if (drivingState) updateDriveByCamera(dt, drivingState);
@@ -5950,6 +6643,7 @@ function combatInputAvailable() {
     combat
       && playerLayerActive
       && !controls.interiorMode
+      && !vehicleEmbodimentTransitionActive()
       && !passengerRideActive()
       && !beautyMode
       && (!qaCameraPose || Boolean(sfpdOfficerQaScenario)),
@@ -6365,7 +7059,13 @@ function onKeyDown(event) {
     }
   }
   if (code === 'KeyE' && !event.repeat) {
-    if (traffic.isPlayerDriving?.()) {
+    if (vehicleEmbodimentTransitionActive()) {
+      vehicleEmbodimentState.duplicateEIgnored = true;
+      hud?.setMessage(vehicleEmbodimentState.phase === 'entering'
+        ? 'Getting seated…'
+        : 'Stepping clear…');
+      return;
+    } else if (traffic.isPlayerDriving?.()) {
       exitPlayerCar();
     } else if (controls.interiorMode) {
       performInteriorAction();
@@ -6450,6 +7150,7 @@ function enterNearestInterior() {
       room: interior.room || nearest.room,
     };
     controls.interiorMode = true;
+    clearPlayerVehicleEmbodiment();
     controls.target.copy(interior.target);
     controls.yaw = Math.PI;
     // Enter on an architectural eye-line that looks slightly upward. The
@@ -6915,6 +7616,16 @@ function frame(now) {
   playerCameraImpulse.prepare(camera);
   onFootVehicleSweepStart.copy(controls.target);
   updateCamera(dt);
+  if (['entering', 'seated', 'exiting'].includes(vehicleEmbodimentState.phase)) {
+    if (vehicleEmbodimentState.cameraReady) {
+      vehicleEmbodimentState.cameraMaxStep = Math.max(
+        vehicleEmbodimentState.cameraMaxStep,
+        camera.position.distanceTo(vehicleEmbodimentCameraPrevious),
+      );
+    }
+    vehicleEmbodimentCameraPrevious.copy(camera.position);
+    vehicleEmbodimentState.cameraReady = true;
+  }
   applyPlayerDamageCameraImpulse(dt);
   updatePlayerLayer(motionDt, elapsed);
   exportPlayerWorldState();
@@ -6985,6 +7696,14 @@ function frame(now) {
   });
   traffic.update?.(motionDt, elapsed);
   updateVehiclePedestrianImpact();
+  // Traffic owns the vehicle transform and collision settlement. Resample the
+  // authored seat/door sockets only after that authority has finished, then
+  // place the single local Traveler in the same rendered frame.
+  updatePlayerVehicleEmbodiment(
+    dt,
+    elapsed,
+    traffic.isPlayerDriving?.() ? traffic.getPlayerVehicleState?.() : null,
+  );
   profileMark('traffic');
   pedestrians.update?.(motionDt, elapsed);
   sfpdOfficers.update?.(motionDt, elapsed, {
@@ -7193,13 +7912,33 @@ requestAnimationFrame(frame);
 
 window.__SF_TRAFFIC_RULES__ = { createTrafficRulesHarness };
 
+// Keep diagnostics and deterministic import staging available to QA without
+// exposing raw occupancy mutations that can bypass the main-owned
+// ingress/egress phase machine. Imports remain supported, but synchronize the
+// visible seated state atomically when they activate a driving record.
+const publicTraffic = Object.freeze({
+  ...traffic,
+  enterPlayerVehicle: undefined,
+  exitPlayerVehicle: undefined,
+  importPlayerVehicleState(snapshot) {
+    if (vehicleEmbodimentTransitionActive()) return false;
+    const imported = traffic.importPlayerVehicleState?.(snapshot) === true;
+    if (!imported) return false;
+    if (traffic.isPlayerDriving?.()) {
+      return activatePlayerVehiclePresentation({ restored: true }) !== null;
+    }
+    clearPlayerVehicleEmbodiment();
+    return true;
+  },
+});
+
 window.__SF_SIM__ = {
   scene,
   camera,
   renderer,
   composer,
   city,
-  traffic,
+  traffic: publicTraffic,
   pedestrians,
   sfpdOfficers,
   streamedAgents,
@@ -7260,7 +7999,12 @@ window.__SF_SIM__ = {
     return exitPlayerCar();
   },
   setPlayerInput(input) {
+    if (vehicleEmbodimentTransitionActive()) {
+      traffic.setPlayerInput?.({ throttle: 0, brake: 1, steer: 0 });
+      return false;
+    }
     traffic.setPlayerInput?.(input);
+    return true;
   },
   setTimeOfDay(hour) {
     return lifeSim?.setClock?.(hour) === true;
@@ -7304,6 +8048,12 @@ window.__SF_SIM__ = {
   sfpdOfficerQa,
   getOnFootVehicleImpactQa() {
     return onFootVehicleImpactQa;
+  },
+  getPlayerVehicleEmbodimentState() {
+    return getPlayerVehicleEmbodimentState();
+  },
+  getVehicleEmbodimentQa() {
+    return vehicleEmbodimentQa;
   },
   getLastTrafficCitation() {
     return lastTrafficCitation ? structuredClone(lastTrafficCitation) : null;

@@ -68,6 +68,7 @@
     "verify:resident-talk": "node scripts/verify-resident-talk.mjs",
     "verify:vehicle-ped-impact": "node scripts/verify-vehicle-ped-impact.mjs",
     "verify:onfoot-vehicle-impact": "node scripts/verify-onfoot-vehicle-impact.mjs",
+    "verify:player-vehicle-embodiment": "node scripts/verify-player-vehicle-embodiment.mjs",
     "verify:witness-reaction": "node scripts/verify-witness-reaction.mjs",
     "verify:gunfire-witness": "node scripts/verify-gunfire-witness.mjs",
     "verify:pedestrian-aftermath": "node scripts/verify-pedestrian-aftermath.mjs",

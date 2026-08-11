@@ -96,6 +96,9 @@ try {
     await page.evaluate((position) => window.__SF_SIM__.setRoamPose(position), candidate.position);
     await page.waitForTimeout(35);
     await page.keyboard.press('e');
+    await page.waitForFunction(() => (
+      window.__SF_SIM__?.getPlayerVehicleEmbodimentState?.()?.phase === 'seated'
+    ), null, { timeout: 4000, polling: 20 });
     return page.evaluate(() => ({
       driving: window.__SF_SIM__.isDriving(),
       vehicle: window.__SF_SIM__.traffic.getPlayerVehicleState(),
@@ -126,6 +129,9 @@ try {
   const firstDrive = await page.evaluate(() => window.__SF_SIM__.traffic.getPlayerVehicleState());
   assert(firstDrive?.speed > 0.5, 'stolen vehicle did not preserve normal driving', firstDrive);
   await page.keyboard.press('e');
+  await page.waitForFunction(() => (
+    window.__SF_SIM__?.getPlayerVehicleEmbodimentState?.()?.phase === 'grounded'
+  ), null, { timeout: 4000, polling: 20 });
 
   const freshSecond = await page.evaluate((firstId) => window.__SF_SIM__.traffic
     .getVehicleLifeSnapshot().vehicles.find((vehicle) => (
@@ -164,8 +170,12 @@ try {
   'second theft did not activate a live pursuit responder', pursuit);
 
   await page.keyboard.press('e');
+  await page.waitForFunction(() => (
+    window.__SF_SIM__?.getPlayerVehicleEmbodimentState?.()?.phase === 'grounded'
+  ), null, { timeout: 4000, polling: 20 });
   await page.keyboard.press('e');
-  await page.waitForTimeout(50);
+  await page.waitForFunction(() => window.__SF_SIM__?.isDriving?.() === true,
+    null, { timeout: 4000, polling: 20 });
   const duplicate = await page.evaluate(() => ({
     driving: window.__SF_SIM__.isDriving(),
     vehicle: window.__SF_SIM__.traffic.getPlayerVehicleState(),
