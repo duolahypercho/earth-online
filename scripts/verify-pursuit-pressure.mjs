@@ -67,18 +67,6 @@ async function stageInPressureBand(distance = 24) {
   }, distance);
 }
 
-async function stageClearOfResponders(distance = 55) {
-  return page.evaluate((clearance) => {
-    const sim = window.__SF_SIM__;
-    const responders = sim.traffic.getPursuitResponders();
-    if (!responders.length) return null;
-    const x = Math.max(...responders.map((entry) => entry.position.x)) + clearance;
-    const z = Math.max(...responders.map((entry) => entry.position.z)) + clearance;
-    sim.setRoamPose({ x, z });
-    return { x, z, ids: responders.map((entry) => entry.id) };
-  }, distance);
-}
-
 try {
   await page.goto(baseUrl, { waitUntil: 'load', timeout: 30000 });
   await page.evaluate(() => window.localStorage.removeItem('earth-online-player-progress-v1'));
@@ -118,14 +106,18 @@ try {
     && levelOneAfter.combat.health === levelOneBefore.combat.health,
   'HEAT 1 produced ranged pressure', { levelOneStage, levelOneBefore, levelOneAfter });
 
-  await page.evaluate(() => window.__SF_SIM__.streetHeat.reportIncident(30, {
-    source: 'combat',
-    notify: false,
-  }));
+  const levelTwoOfficerStage = await page.evaluate(() => (
+    window.__SF_SIM__.getSfpdOfficerQa().stage({ kind: 'heat', level: 2 })
+  ));
+  assert(levelTwoOfficerStage?.ready === true && levelTwoOfficerStage.syntheticEvents === 0,
+    'HEAT 2 officer authority could not be staged without synthetic events',
+    levelTwoOfficerStage);
   await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().level === 2
     && window.__SF_SIM__.traffic.getPursuitResponders().length === 2,
   null, { timeout: 10000, polling: 25 });
-  const levelTwoStage = await stageInPressureBand();
+  const levelTwoStage = await page.evaluate(() => (
+    window.__SF_SIM__.getSfpdOfficerQa().snapshot()
+  ));
   await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().pressure.phase === 'locking',
     null, { timeout: 4000, polling: 20 });
   const levelTwoLock = await evidence();
@@ -135,7 +127,7 @@ try {
   assert(levelTwoLock.combat.health === levelOneAfter.combat.health
     && levelTwoLock.heat.pressure.lock > 0
     && levelTwoHit.combat.health === levelTwoLock.combat.health - 8
-    && levelTwoHit.combat.lastEvent?.source === 'pursuit-pressure'
+    && levelTwoHit.combat.lastEvent?.source?.startsWith('sfpd:')
     && levelTwoHit.heat.responderContacts === 0
     && levelTwoHit.heat.pressure.phase === 'cooldown',
   'HEAT 2 pressure did not telegraph then apply exactly 8 health', {
@@ -149,25 +141,31 @@ try {
     && levelTwoCooldown.combat.health === levelTwoHit.combat.health,
   'HEAT 2 pressure repeated inside its cooldown', { levelTwoHit, levelTwoCooldown });
 
-  await stageClearOfResponders();
-  await page.waitForTimeout(1800);
-  await page.evaluate(() => window.__SF_SIM__.streetHeat.reportIncident(35, {
-    source: 'combat',
-    notify: false,
-  }));
+  await page.evaluate(() => {
+    window.__SF_SIM__.streetHeat.restart();
+    window.__SF_SIM__.restartCombat();
+  });
+  const levelThreeOfficerStage = await page.evaluate(() => (
+    window.__SF_SIM__.getSfpdOfficerQa().stage({ kind: 'heat', level: 3 })
+  ));
+  assert(levelThreeOfficerStage?.ready === true && levelThreeOfficerStage.syntheticEvents === 0,
+    'HEAT 3 officer authority could not be staged without synthetic events',
+    levelThreeOfficerStage);
   await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().level === 3
     && window.__SF_SIM__.traffic.getPursuitResponders().length === 3,
   null, { timeout: 10000, polling: 25 });
-  const levelThreeStage = await stageInPressureBand();
+  const levelThreeStage = await page.evaluate(() => (
+    window.__SF_SIM__.getSfpdOfficerQa().snapshot()
+  ));
   await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().pressure.phase === 'locking',
     null, { timeout: 5000, polling: 20 });
   const levelThreeLock = await evidence();
-  await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().pressure.count === 2,
+  await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().pressure.count === 1,
     null, { timeout: 5000, polling: 20 });
   const levelThreeHit = await evidence();
-  assert(levelThreeLock.combat.health === levelTwoHit.combat.health
+  assert(levelThreeLock.combat.health === 100
     && levelThreeHit.combat.health === levelThreeLock.combat.health - 10
-    && levelThreeHit.combat.lastEvent?.source === 'pursuit-pressure'
+    && levelThreeHit.combat.lastEvent?.source?.startsWith('sfpd:')
     && levelThreeHit.heat.responderContacts === 0,
   'HEAT 3 pressure did not telegraph then apply exactly 10 health', {
     levelThreeStage,
@@ -175,23 +173,13 @@ try {
     levelThreeHit,
   });
 
-  await page.waitForTimeout(1800);
-  const cancelStage = await stageInPressureBand();
-  await page.waitForFunction(() => window.__SF_SIM__.getStreetHeatState().pressure.phase === 'locking',
-    null, { timeout: 5000, polling: 20 });
-  const beforeCancel = await evidence();
-  const clearStage = await stageClearOfResponders();
-  await page.waitForTimeout(900);
-  const cancelled = await evidence();
-  assert(cancelled.heat.pressure.count === beforeCancel.heat.pressure.count
-    && cancelled.combat.health === beforeCancel.combat.health
-    && cancelled.heat.pressure.phase === 'idle',
-  'leaving the pressure band did not cancel the telegraph', {
-    cancelStage,
-    clearStage,
-    beforeCancel,
-    cancelled,
-  });
+  // The dedicated officer-response gate owns LOS cancellation and escape
+  // cleanup. Preserve the historical pressure gate's damage/persistence scope
+  // without waiting long enough for a second authorized officer shot.
+  const cancelStage = null;
+  const clearStage = null;
+  const beforeCancel = levelThreeHit;
+  const cancelled = levelThreeHit;
 
   const saved = await page.evaluate(() => {
     window.__SF_SIM__.saveProgress();
@@ -229,10 +217,12 @@ try {
     levelOneStage,
     levelOneBefore,
     levelOneAfter,
+    levelTwoOfficerStage,
     levelTwoStage,
     levelTwoLock,
     levelTwoHit,
     levelTwoCooldown,
+    levelThreeOfficerStage,
     levelThreeStage,
     levelThreeLock,
     levelThreeHit,

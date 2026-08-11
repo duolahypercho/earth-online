@@ -510,7 +510,7 @@ const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
 const STREET_HEAT_RESPONDER_REARM_RADIUS = 8.5;
 const STREET_HEAT_PRESSURE_MIN_RADIUS = 10;
 const STREET_HEAT_PRESSURE_MAX_RADIUS = 28;
-const STREET_HEAT_PRESSURE_LOCK_SECONDS = 0.75;
+const STREET_HEAT_PRESSURE_LOCK_SECONDS = 1.05;
 const STREET_HEAT_PRESSURE_LEVEL_TWO_COOLDOWN = 2.4;
 const STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN = 1.7;
 // A deliberate brake hold acts as surrender within roughly one vehicle length
@@ -538,6 +538,7 @@ export function createStreetHeat({
   getTrafficSnapshot,
   getPursuitResponder,
   getPursuitResponders,
+  getResponderPressureAuthority,
   onEvent,
 } = {}) {
   if (!scene?.isScene) {
@@ -862,6 +863,7 @@ export function createStreetHeat({
     onFootSurrendering = false,
     onFootMoving = false,
     onFootPressureEligible = false,
+    onFootResponsePending = false,
   } = {}) {
     const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
     markerTime += delta;
@@ -968,13 +970,24 @@ export function createStreetHeat({
     const pressureResponderId = pressureIndex >= 0
       ? state.responderIds[pressureIndex] ?? null
       : null;
+    const pressureAuthority = pressureResponderId === null
+      ? null
+      : getResponderPressureAuthority?.({
+        responderId: pressureResponderId,
+        level: pressureLevel,
+        distance: pressureDistance,
+        position: latestPosition,
+      }) ?? null;
     const pressureEligible = state.pursuitActive
       && !latestDriving
       && onFootPressureEligible === true
       && pressureLevel >= 2
       && pressureDistance !== null
       && pressureDistance > STREET_HEAT_PRESSURE_MIN_RADIUS
-      && pressureDistance <= STREET_HEAT_PRESSURE_MAX_RADIUS;
+      && pressureDistance <= STREET_HEAT_PRESSURE_MAX_RADIUS
+      && pressureAuthority?.authorized === true
+      && pressureAuthority?.live === true
+      && pressureAuthority?.los === true;
     const pressureContextAvailable = state.pursuitActive
       && !latestDriving
       && onFootPressureEligible === true;
@@ -998,7 +1011,14 @@ export function createStreetHeat({
           'responder-pressure-lock',
           'Responder pressure · move beyond 28 m or close to surrender range.',
           0,
-          { responderId: pressureResponderId, level: pressureLevel, distance: pressureDistance },
+          {
+            responderId: pressureResponderId,
+            officerId: pressureAuthority.officerId,
+            level: pressureLevel,
+            distance: pressureDistance,
+            los: true,
+            blocked: false,
+          },
         );
       }
       state.pressureLock += delta;
@@ -1018,10 +1038,13 @@ export function createStreetHeat({
           0,
           {
             responderId: pressureResponderId,
+            officerId: pressureAuthority.officerId,
             level: pressureLevel,
             distance: pressureDistance,
             damage,
             pressureNumber: state.pressureCount,
+            los: true,
+            blocked: false,
           },
         );
       }
@@ -1086,7 +1109,7 @@ export function createStreetHeat({
       state.heat += delta * drivingRisk;
     } else if (latestDriving && state.theftHold <= 0) {
       state.heat -= delta * (state.pursuitActive ? STREET_HEAT_PURSUIT_COOL_RATE : 12);
-    } else if (!latestDriving && state.theftHold <= 0) {
+    } else if (!latestDriving && state.theftHold <= 0 && onFootResponsePending !== true) {
       const combatDecay = state.combatHold > 0
         ? (state.pursuitActive ? STREET_HEAT_COMBAT_PURSUIT_DECAY : STREET_HEAT_COMBAT_DECAY)
         : (state.pursuitActive ? 10.5 : 17);
@@ -1885,7 +1908,9 @@ export function createCombatLoop({
   }
 
   function targetTieKey(candidate) {
-    const kind = candidate?.kind === 'traffic' || candidate?.vehicle ? 'traffic' : 'pedestrian';
+    const kind = candidate?.kind === 'traffic' || candidate?.vehicle
+      ? 'traffic'
+      : candidate?.kind === 'officer' ? 'officer' : 'pedestrian';
     return `${kind}:${String(candidate?.id ?? '')}`;
   }
 
@@ -1953,7 +1978,9 @@ export function createCombatLoop({
     state.reactionCount += 1;
     state.lastReaction = {
       targetId: String(candidate.id ?? `${candidate.kind || 'actor'}:unknown`),
-      kind: candidate.kind === 'traffic' || candidate.vehicle ? 'traffic' : 'pedestrian',
+      kind: candidate.kind === 'traffic' || candidate.vehicle
+        ? 'traffic'
+        : candidate.kind === 'officer' ? 'officer' : 'pedestrian',
       reaction,
       source,
       at: Math.round(state.clock * 1000) / 1000,
@@ -1973,7 +2000,9 @@ export function createCombatLoop({
         || candidate.visible === false
         || candidate.mesh.visible === false
         || candidate.mesh.userData?.combatDisabled === true) continue;
-      const kind = candidate.kind === 'traffic' || candidate.vehicle ? 'traffic' : 'pedestrian';
+      const kind = candidate.kind === 'traffic' || candidate.vehicle
+        ? 'traffic'
+        : candidate.kind === 'officer' ? 'officer' : 'pedestrian';
       const maxRadius = kind === 'traffic'
         ? COMBAT_TRAFFIC_NEAR_MISS_RADIUS
         : COMBAT_PED_NEAR_MISS_RADIUS;
@@ -2077,8 +2106,12 @@ export function createCombatLoop({
       target = {
         id,
         kind,
-        label: String(candidate.label || (kind === 'traffic' ? 'Traffic' : 'Pedestrian')),
-        health: kind === 'traffic'
+        label: String(candidate.label || (kind === 'traffic'
+          ? 'Traffic'
+          : kind === 'officer' ? 'SFPD officer' : 'Pedestrian')),
+        health: kind === 'officer'
+          ? 1
+          : kind === 'traffic'
           ? Math.max(1, Math.ceil(
             // Traffic snapshots round health to one decimal. Remove that
             // maximum rounding error before deriving remaining quarter-hits.
@@ -2118,7 +2151,9 @@ export function createCombatLoop({
       'hit',
     );
     if (target.defeated) {
-      target.consequence = kind === 'traffic' ? 'vehicle-disabled' : 'actor-downed';
+      target.consequence = kind === 'traffic'
+        ? 'vehicle-disabled'
+        : kind === 'officer' ? 'officer-downed' : 'actor-downed';
     }
     if (target.defeated && target.mesh) {
       const userData = target.mesh.userData || (target.mesh.userData = {});
@@ -2136,10 +2171,10 @@ export function createCombatLoop({
   function reportHeat(kind, hit) {
     if (!streetHeat?.addHeat) return null;
     const amount = hit
-      ? kind === 'pedestrian' ? 14 : 9
+      ? kind === 'pedestrian' ? 14 : kind === 'officer' ? 12 : 9
       : 2.5;
     const message = hit
-      ? `${kind === 'pedestrian' ? 'Civilian' : 'Traffic'} impact · street heat +${amount}`
+      ? `${kind === 'pedestrian' ? 'Civilian' : kind === 'officer' ? 'Officer' : 'Traffic'} impact · street heat +${amount}`
       : `Unsafe fire · street heat +${amount}`;
     return streetHeat.addHeat(amount, {
       kind: hit ? 'combat-impact' : 'combat-fire',
@@ -2274,7 +2309,9 @@ export function createCombatLoop({
       };
     }
 
-    const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle ? 'traffic' : 'pedestrian';
+    const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle
+      ? 'traffic'
+      : hit.candidate.kind === 'officer' ? 'officer' : 'pedestrian';
     const target = markReaction(hit.candidate, kind);
     state.hits += 1;
     state.hitStreak += 1;
@@ -2299,13 +2336,14 @@ export function createCombatLoop({
     });
     emitEvent(
       'impact',
-      `${kind === 'traffic' ? 'Vehicle' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
+      `${kind === 'traffic' ? 'Vehicle' : kind === 'officer' ? 'Officer' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
       {
         hit: true,
         incidentId: 1_000_000 + state.shots,
         targetId: target.id,
         targetKind: kind,
-        residentId: hit.candidate.residentId ?? target.id,
+        residentId: kind === 'pedestrian' ? hit.candidate.residentId ?? target.id : null,
+        officerId: kind === 'officer' ? hit.candidate.officerId ?? target.id : null,
         vehicleId: kind === 'traffic' ? Number(hit.candidate.vehicle?.id) : null,
         defeated: target.defeated,
       },

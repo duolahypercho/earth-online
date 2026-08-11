@@ -1977,6 +1977,8 @@ export function createTrafficSystem({
     vehicleIndex: -1,
     until: 0,
   };
+  const pursuitDeploymentHoldIds = new Set();
+  const pursuitDeploymentHoldingIds = new Set();
 
   function damageStateFor(vehicle) {
     if (vehicle.disabled || vehicle.health <= 0) return 'disabled';
@@ -3785,6 +3787,8 @@ export function createTrafficSystem({
         && pursuitResponder.targetIndexes.includes(vehicleIndex)
         && !v.playerControlled
         && !v.remoteControlled;
+      const pursuitDeploymentHoldRequested = pursuitResponderActive
+        && pursuitDeploymentHoldIds.has(vehicleIndex);
       const pursuitBookingActive = !pursuitResponder.active
         && pursuitBookingVisual.vehicleIndex === vehicleIndex
         && t < pursuitBookingVisual.until
@@ -4197,6 +4201,29 @@ export function createTrafficSystem({
         desired = 0;
         v.playerSteer = 0;
         v.longitudinalAccel = Math.min(0, v.longitudinalAccel);
+      }
+
+      // On-foot responders make a real curbside handoff instead of driving
+      // through their paired officer. The normal deceleration envelope owns
+      // the approach; once the car is below deployment speed, pin its exact
+      // road/turn coordinate until the caller releases the bounded hold.
+      if (pursuitDeploymentHoldRequested) {
+        desired = 0;
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.42);
+        if (v.speed <= 2) {
+          v.speed = 0;
+          v.longitudinalAccel = 0;
+          v.accelSm = 0;
+          pursuitDeploymentHoldingIds.add(vehicleIndex);
+        } else {
+          pursuitDeploymentHoldingIds.delete(vehicleIndex);
+        }
+      } else {
+        pursuitDeploymentHoldingIds.delete(vehicleIndex);
+      }
+      if (v.mesh.root.userData) {
+        v.mesh.root.userData.pursuitDeploymentHoldRequested = pursuitDeploymentHoldRequested;
+        v.mesh.root.userData.pursuitDeploymentHolding = pursuitDeploymentHoldingIds.has(vehicleIndex);
       }
 
       // Servicing a curb hold: stay stopped in the parking lane until the
@@ -4842,6 +4869,35 @@ export function createTrafficSystem({
     pursuitResponder.targetIndexes.length = 0;
     pursuitResponder.playerVehicleId = null;
     pursuitResponder.distance = null;
+    pursuitDeploymentHoldIds.clear();
+    pursuitDeploymentHoldingIds.clear();
+  }
+
+  function setPursuitDeploymentHolds(responderIds = []) {
+    const next = new Set();
+    for (const id of responderIds) {
+      if (!Number.isInteger(id) || next.size >= 3) continue;
+      if (!pursuitResponder.targetIndexes.includes(id)) continue;
+      next.add(id);
+    }
+    for (const id of pursuitDeploymentHoldIds) {
+      if (next.has(id)) continue;
+      pursuitDeploymentHoldingIds.delete(id);
+      const root = vehicles[id]?.mesh?.root;
+      if (root?.userData) {
+        root.userData.pursuitDeploymentHoldRequested = false;
+        root.userData.pursuitDeploymentHolding = false;
+      }
+    }
+    pursuitDeploymentHoldIds.clear();
+    for (const id of next) pursuitDeploymentHoldIds.add(id);
+    for (const id of next) {
+      const root = vehicles[id]?.mesh?.root;
+      if (!root?.userData) continue;
+      root.userData.pursuitDeploymentHoldRequested = true;
+      root.userData.pursuitDeploymentHolding = pursuitDeploymentHoldingIds.has(id);
+    }
+    return pursuitDeploymentHoldIds.size;
   }
 
   function setPursuitResponder({
@@ -5107,6 +5163,12 @@ export function createTrafficSystem({
         speed: Math.round(target.speed * 10) / 10,
         level: pursuitResponder.level,
         closing: target.speed > 0,
+        deploymentHold: {
+          requested: pursuitDeploymentHoldIds.has(index),
+          holding: pursuitDeploymentHoldingIds.has(index),
+        },
+        deploymentHoldRequested: pursuitDeploymentHoldIds.has(index),
+        deploymentHolding: pursuitDeploymentHoldingIds.has(index),
         road: target.road,
         dir: target.dir,
         routeRevision: target.pursuitRouteRevision || 0,
@@ -6605,6 +6667,7 @@ export function createTrafficSystem({
     getDiagnostics,
     getVehicleLifeSnapshot,
     setPursuitResponder,
+    setPursuitDeploymentHolds,
     getPursuitResponder,
     getPursuitResponders,
     getPursuitChaseDiagnostics,

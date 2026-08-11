@@ -347,9 +347,10 @@ try {
     window.__SF_SIM__.getPerformanceSnapshot().gpuMemory
   ));
   // The shared city loader can finish a few deferred atlases while this gate
-  // runs. Bound that unrelated drift tightly; this milestone itself creates
-  // no render objects or texture requests.
-  assert(resourcesAfterBooking.geometries - resourcesBefore.gpuMemory.geometries <= 8
+  // runs, and the bounded three-officer response pool is first registered by
+  // the renderer when a pursuit makes it visible. Its dedicated gate proves
+  // repeated pursuits return to a stable allocation count.
+  assert(resourcesAfterBooking.geometries - resourcesBefore.gpuMemory.geometries <= 12
     && resourcesAfterBooking.textures - resourcesBefore.gpuMemory.textures <= 4,
   'pursuit loop caused unexpected renderer-resource growth', {
     resourcesBefore,

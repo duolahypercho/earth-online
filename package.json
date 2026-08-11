@@ -55,6 +55,7 @@
     "verify:arrest-contracts": "node scripts/verify-arrest-contracts.mjs",
     "verify:onfoot-arrest": "node scripts/verify-onfoot-arrest.mjs",
     "verify:pursuit-defeat": "node scripts/verify-pursuit-defeat.mjs",
+    "verify:sfpd-officer-response": "node scripts/verify-sfpd-officer-response.mjs",
     "verify:pursuit-interior-gate": "node scripts/verify-pursuit-interior-gate.mjs",
     "verify:downed-interaction-gate": "node scripts/verify-downed-interaction-gate.mjs",
     "verify:parked-vehicle-persistence": "node scripts/verify-parked-vehicle-persistence.mjs",
