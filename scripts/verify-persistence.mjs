@@ -99,8 +99,8 @@ try {
       x: target.x,
       z: target.z,
       yaw: 1.234,
-      pitch: 1.08,
-      distance: 36,
+      pitch: 1.24,
+      distance: 12,
     });
     return {
       roam: sim.getRoamState(),
@@ -150,12 +150,12 @@ try {
     && Math.abs(beforeReload.save.snapshot?.world?.x - worldSetup.roam.target.x) < 0.01
     && Math.abs(beforeReload.save.snapshot?.world?.z - worldSetup.roam.target.z) < 0.01
     && Math.abs(beforeReload.save.snapshot?.world?.yaw - 1.234) < 0.001
-    && Math.abs(beforeReload.save.snapshot?.world?.pitch - 1.08) < 0.001
-    && Math.abs(beforeReload.save.snapshot?.world?.distance - 36) < 0.001
+    && Math.abs(beforeReload.save.snapshot?.world?.pitch - 1.24) < 0.001
+    && Math.abs(beforeReload.save.snapshot?.world?.distance - 11) < 0.001
     && aimedAutosave.combat.camera.mode === 'shoulder-aim'
-    && Math.abs(aimedAutosave.combat.camera.pitch - 1.08) > 0.04
-    && Math.abs(aimedAutosave.save.snapshot?.world?.pitch - 1.08) < 0.001
-    && Math.abs(aimedAutosave.save.snapshot?.world?.distance - 36) < 0.001,
+    && Math.abs(aimedAutosave.combat.camera.pitch - 1.24) > 0.04
+    && Math.abs(aimedAutosave.save.snapshot?.world?.pitch - 1.24) < 0.001
+    && Math.abs(aimedAutosave.save.snapshot?.world?.distance - 11) < 0.001,
   'autosave setup did not capture economy, combat kit, mission, and outdoor world progress', {
     progressed,
     heatSetup,
