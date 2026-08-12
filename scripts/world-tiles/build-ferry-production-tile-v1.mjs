@@ -192,16 +192,17 @@ function assembleDirectedCoastline(features) {
   assert.equal(remaining.size, 0, `Tile ${TILE.id} has disconnected OSM coastline chains; refuse to guess water ownership`);
   const points = [];
   for (const way of ordered) for (const point of way.en) if (!points.length || !samePlanPoint(points.at(-1), point)) points.push(point);
-  const clipped = [];
+  const fragments = []; let clipped = [];
   for (let index = 0; index < points.length - 1; index += 1) {
     const segment = clipSegment(points[index], points[index + 1]);
-    if (!segment) continue;
-    if (clipped.length && !samePlanPoint(clipped.at(-1), segment[0])) assert(false, `Tile ${TILE.id} coastline leaves and re-enters the core; explicit multipolygon handling is required`);
+    if (!segment) { if (clipped.length >= 2) fragments.push(clipped); clipped = []; continue; }
+    if (clipped.length && !samePlanPoint(clipped.at(-1), segment[0])) { if (clipped.length >= 2) fragments.push(clipped); clipped = []; }
     if (!clipped.length || !samePlanPoint(clipped.at(-1), segment[0])) clipped.push(segment[0]);
     if (!samePlanPoint(clipped.at(-1), segment[1])) clipped.push(segment[1]);
   }
-  if (clipped.length < 2) return null;
-  return { points: clipped, ways: ordered };
+  if (clipped.length >= 2) fragments.push(clipped);
+  if (!fragments.length) return null;
+  return { fragments, ways: ordered };
 }
 
 function clockwiseBoundaryParameter([e, n]) {
@@ -213,26 +214,76 @@ function clockwiseBoundaryParameter([e, n]) {
   assert.fail(`Coastline endpoint ${e},${n} is not on tile boundary`);
 }
 
-function waterRingFromDirectedCoastline(coastline) {
-  const ring = [...coastline.points];
-  const start = coastline.points[0]; const end = coastline.points.at(-1);
-  const startParameter = clockwiseBoundaryParameter(start); const endParameter = clockwiseBoundaryParameter(end);
-  const corners = [
-    [TILE.minE, TILE.minN], [TILE.minE, TILE.minN + TILE.size],
-    [TILE.minE + TILE.size, TILE.minN + TILE.size], [TILE.minE + TILE.size, TILE.minN],
-  ];
-  const target = startParameter <= endParameter ? startParameter + TILE.size * 4 : startParameter;
-  for (let corner = 1; corner <= 4; corner += 1) {
-    const parameter = Math.floor(endParameter / TILE.size + corner) * TILE.size;
-    if (parameter >= target - 1e-7) break;
-    ring.push(corners[(parameter / TILE.size) % 4]);
-  }
-  ring.push(start);
-  return ring;
-}
-
 function toTicks([e, n]) { return [Math.round((e - TILE.minE) * SURFACE_TICKS_PER_METRE), Math.round((n - TILE.minN) * SURFACE_TICKS_PER_METRE)]; }
 function fromTicks([x, z]) { return [TILE.minE + x / SURFACE_TICKS_PER_METRE, TILE.minN + z / SURFACE_TICKS_PER_METRE]; }
+
+function signedArea2(ring) {
+  let area = 0;
+  for (let index = 0; index < ring.length; index += 1) {
+    const a = ring[index]; const b = ring[(index + 1) % ring.length]; area += a[0] * b[1] - b[0] * a[1];
+  }
+  return area;
+}
+
+function boundaryParameterTicks([x, z]) {
+  const size = TILE.size * SURFACE_TICKS_PER_METRE;
+  if (x === 0) return z;
+  if (z === size) return size + x;
+  if (x === size) return size * 3 - z;
+  if (z === 0) return size * 4 - x;
+  assert.fail(`Coastline endpoint ${x},${z} is not on the integer tile boundary`);
+}
+
+function waterSurfaceFromDirectedCoastline(coastline) {
+  const size = TILE.size * SURFACE_TICKS_PER_METRE;
+  const vertices = new Map(); const adjacency = new Map(); const edges = new Map();
+  const key = ([x, z]) => `${x},${z}`;
+  const addVertex = (point) => { const id = key(point); if (!vertices.has(id)) vertices.set(id, point); if (!adjacency.has(id)) adjacency.set(id, new Set()); return id; };
+  const addEdge = (a, b, metadata) => {
+    const ak = addVertex(a); const bk = addVertex(b); if (ak === bk) return;
+    const edgeKey = [ak, bk].sort().join('|'); const existing = edges.get(edgeKey);
+    if (existing) { assert.equal(existing.kind, metadata.kind, `Conflicting coastline/boundary edge ${edgeKey}`); return; }
+    edges.set(edgeKey, { ...metadata, forward: [ak, bk] }); adjacency.get(ak).add(bk); adjacency.get(bk).add(ak);
+  };
+  const boundaryPoints = [[0, 0], [0, size], [size, size], [size, 0]];
+  for (const fragment of coastline.fragments) {
+    const points = fragment.map(toTicks);
+    boundaryParameterTicks(points[0]); boundaryParameterTicks(points.at(-1));
+    boundaryPoints.push(points[0], points.at(-1));
+    for (let index = 0; index < points.length - 1; index += 1) addEdge(points[index], points[index + 1], { kind: 'coastline' });
+  }
+  const orderedBoundary = [...new Map(boundaryPoints.map((point) => [key(point), point])).values()].sort((a, b) => boundaryParameterTicks(a) - boundaryParameterTicks(b));
+  for (let index = 0; index < orderedBoundary.length; index += 1) addEdge(orderedBoundary[index], orderedBoundary[(index + 1) % orderedBoundary.length], { kind: 'boundary' });
+  const sortedNeighbors = new Map([...adjacency].map(([id, neighbors]) => {
+    const origin = vertices.get(id); return [id, [...neighbors].sort((a, b) => {
+      const pa = vertices.get(a); const pb = vertices.get(b); return Math.atan2(pa[1] - origin[1], pa[0] - origin[0]) - Math.atan2(pb[1] - origin[1], pb[0] - origin[0]);
+    })];
+  }));
+  const visited = new Set(); const waterFaces = []; const landFaces = [];
+  for (const [edgeKey] of edges) for (const start of [edgeKey.split('|'), edgeKey.split('|').reverse()]) {
+    const startKey = `${start[0]}>${start[1]}`; if (visited.has(startKey)) continue;
+    const ringKeys = []; let from = start[0]; let to = start[1];
+    while (!visited.has(`${from}>${to}`)) {
+      visited.add(`${from}>${to}`); ringKeys.push(from);
+      const neighbors = sortedNeighbors.get(to); const reverseIndex = neighbors.indexOf(from); assert(reverseIndex >= 0, 'Planar coastline graph lost its reverse edge');
+      const next = neighbors[(reverseIndex - 1 + neighbors.length) % neighbors.length]; from = to; to = next;
+    }
+    assert.equal(`${from}>${to}`, startKey, 'Planar coastline face did not close on its starting half-edge');
+    const ring = ringKeys.map((id) => vertices.get(id)); if (signedArea2(ring) <= 0) continue;
+    const classifications = new Set();
+    for (let index = 0; index < ringKeys.length; index += 1) {
+      const a = ringKeys[index]; const b = ringKeys[(index + 1) % ringKeys.length]; const edge = edges.get([a, b].sort().join('|'));
+      if (edge.kind !== 'coastline') continue;
+      classifications.add(edge.forward[0] === a && edge.forward[1] === b ? 'land' : 'water');
+    }
+    assert.equal(classifications.size, 1, `Tile ${TILE.id} coastline face has contradictory OSM direction ownership`);
+    (classifications.has('water') ? waterFaces : landFaces).push({ outer: ring });
+  }
+  assert(waterFaces.length && landFaces.length, `Tile ${TILE.id} coastline graph must resolve at least one land and one water face`);
+  const partitionArea = [...waterFaces, ...landFaces].reduce((sum, { outer }) => sum + Math.abs(signedArea2(outer)) / 2, 0);
+  assert(Math.abs(partitionArea - size ** 2) <= 1, `Tile ${TILE.id} coastline faces do not partition the integer tile`);
+  return { waterFaces, landFaces };
+}
 
 function pointInRing(point, ring) {
   let result = false;
@@ -273,9 +324,9 @@ function emitCoastEdge(target, coastline, sample) {
 function bakeGeometry(features, sample) {
   const terrain = category(); const water = category(); const coastline = category(); const roads = category(); const buildings = category();
   const directedCoastline = assembleDirectedCoastline(features);
-  const waterRing = directedCoastline ? waterRingFromDirectedCoastline(directedCoastline).map(toTicks) : null;
-  const waterSurface = waterRing ? { outers: [waterRing] } : null;
-  const coastSegments = waterRing ? directedCoastline.points.slice(0, -1).map((point, index) => [toTicks(point), toTicks(directedCoastline.points[index + 1])]) : [];
+  const classified = directedCoastline ? waterSurfaceFromDirectedCoastline(directedCoastline) : null;
+  const waterSurface = classified ? { outers: classified.waterFaces.map(({ outer }) => outer) } : null;
+  const coastSegments = directedCoastline ? directedCoastline.fragments.flatMap((points) => points.slice(0, -1).map((point, index) => [toTicks(point), toTicks(points[index + 1])])) : [];
   const terrainCache = new Map(); const waterCache = new Map();
   const side = TILE.size / TERRAIN_STEP + 1;
   for (let z = 0; z < side - 1; z += 1) for (let x = 0; x < side - 1; x += 1) {
@@ -283,7 +334,7 @@ function bakeGeometry(features, sample) {
     const cell = { outers: [[[minX, minZ], [maxX, minZ], [maxX, maxZ], [minX, maxZ]]] };
     const touchesCoast = coastSegments.some(([a, b]) => Math.max(a[0], b[0]) >= minX && Math.min(a[0], b[0]) <= maxX && Math.max(a[1], b[1]) >= minZ && Math.min(a[1], b[1]) <= maxZ);
     if (!waterSurface || !touchesCoast) {
-      const target = waterSurface && pointInRing([(minX + maxX) / 2, (minZ + maxZ) / 2], waterRing) ? water : terrain;
+      const target = classified?.waterFaces.some(({ outer }) => pointInRing([(minX + maxX) / 2, (minZ + maxZ) / 2], outer)) ? water : terrain;
       emitSurfacePolygon(target, { outer: cell.outers[0] }, sample, target === water ? waterCache : terrainCache, `${TILE.id} ${target === water ? 'water' : 'land'} cell ${x},${z}`);
       continue;
     }
@@ -294,7 +345,7 @@ function bakeGeometry(features, sample) {
   }
   if (directedCoastline) {
     for (const way of directedCoastline.ways) { water.sourceIds.add(way.id); coastline.sourceIds.add(way.id); }
-    emitCoastEdge(coastline, directedCoastline, sample);
+    for (const points of directedCoastline.fragments) emitCoastEdge(coastline, { points }, sample);
   }
   const roadSurfaces = [];
   for (const way of features.filter((item) => item.tags.highway)) {
