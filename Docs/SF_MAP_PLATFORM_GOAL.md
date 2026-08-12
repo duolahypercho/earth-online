@@ -5,9 +5,21 @@ Status: active project direction (2026-08-12)
 ## Goal
 
 Build a visually exceptional, explorable, low-poly 3D model of the entire city
-of San Francisco. Use real San Francisco as the geographic authority, Watch
-Dogs 2 as the city-specific reference, and recent AAA open-world cities as references for
-density, atmosphere, streaming, and visual coherence.
+of San Francisco at 1:1 metric scale. Use real San Francisco as the geographic
+authority, an AAA open-world city game as the city-specific reference, recent AAA open-world cities as
+references for density and coherence, and
+[`StarKnightt/night-street`](https://github.com/StarKnightt/night-street) as a
+reference for procedural Three.js street construction, materials, atmosphere,
+and measurement-led visual verification.
+
+One Three.js world unit equals one real metre in every production artifact.
+Stylization may simplify topology, materials, facade detail, and prop density;
+it may not rescale, flatten, widen, straighten, relocate, or vertically
+exaggerate authoritative geography. “1:1” means metric scale and fidelity to
+the documented source accuracy. It is not a survey-grade accuracy claim. Scale,
+absolute source/transform accuracy, and generated-mesh deviation are recorded
+as separate quantities; a sub-metre mesh tolerance never upgrades a source or
+coordinate operation whose documented absolute accuracy is several metres.
 
 Keep the original ambition of a convincing living open world, but focus the
 work on the city platform:
@@ -45,11 +57,16 @@ as the real-time presentation layer and compose specialized systems around it:
    - Offline projection, validation, simplification, mesh generation, and LOD
      baking. Browser code must not ingest or mesh the full raw city at runtime.
 
-2. **City streaming**
-   - MapLibre GL JS and PMTiles are the preferred broad-city vector and terrain
-     foundation.
-   - Three.js custom layers render project-owned materials, landmark meshes,
-     street furniture, weather, vehicles, pedestrians, and close-range detail.
+2. **City streaming and visual construction**
+   - The production view remains a native Three.js scene. MapLibre GL JS and
+     PMTiles may support preprocessing, QA, overview data, or debugging, but
+     must not introduce a second runtime coordinate or camera authority.
+   - An offline tile baker converts locked real-world geometry into compact,
+     merged visual meshes. It applies procedural materials and reusable
+     construction rules inspired by `night-street` without repeating that
+     project's single-street runtime generation cost for every SF block.
+   - Three.js renders project-owned terrain, buildings, landmark meshes,
+     streets, furniture, weather, vehicles, pedestrians, and atmosphere.
    - Use `3d-tiles-renderer` only where arbitrary tiled 3D meshes materially
      outperform vector extrusion; do not create a second city-wide coordinate
      or streaming authority.
@@ -109,7 +126,7 @@ composition, and atmosphere; real-world data remains the geographic authority.
 ## First milestones
 
 1. Freeze the city coordinate system, source snapshot, attribution manifest,
-   tile schema, and LOD budgets.
+   tile schema, LOD budgets, and machine-checked 1:1 scale contract.
 2. Produce one end-to-end PMTiles/terrain prototype for the whole peninsula
    plus one hero street tile using the same stable feature IDs.
 3. Generate and validate the SF lane graph with SUMO, then render a nearby
