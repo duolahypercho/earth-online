@@ -19,7 +19,7 @@
       "datum": "NAVD88",
       "quantity": "orthometric-height",
       "unit": "metre",
-      "missingDatumPolicy": "reject-source"
+      "missingDatumPolicy": "realized-navd88-or-provisional-source-declared-elevation-or-reject-source"
     },
     "runtimeFrame": "production-utm-navd88"
   },
@@ -52,7 +52,7 @@
   },
   "featureIntegrity": {
     "sourceFeaturePositions": "unchanged-after-crs-transform",
-    "allowedOperations": ["documented-crs-transform", "documented-vertical-datum-transform", "documented-topology-repair"],
+    "allowedOperations": ["documented-crs-transform", "documented-vertical-datum-transform", "documented-provisional-terrain-sampling", "documented-topology-repair"],
     "prohibitedOperations": ["preview-frame-placement", "art-directed-global-offset", "global-scale", "vertical-exaggeration"],
     "topologyRepair": {
       "requiresSourceFeatureId": true,
@@ -62,7 +62,7 @@
     }
   },
   "lod": {
-    "permittedChange": "topology-only-within-error-budget",
+    "permittedChange": "topology-only-within-error-budget; package may declare any contiguous available LOD range beginning at LOD0",
     "mustPreserve": ["feature-position", "shared-grid-alignment", "runtime-scale"],
     "maxHorizontalDeviationMetres": 0.5,
     "maxVerticalDeviationMetres": 0.25,
@@ -82,7 +82,7 @@
   "provenance": {
     "sourceLockDescriptor": ["id", "path", "sha256", "purpose"],
     "sourceLockDirectory": "public/data/world/source-locks",
-    "requiredPurposes": ["geometry", "horizontal-coordinate-operation", "vertical-datum-transform"],
+    "requiredPurposes": ["geometry", "horizontal-coordinate-operation", "vertical-datum-transform", "terrain-elevation"],
     "requiredForEverySourceFeature": [
       "sourceId",
       "sourceFeatureId",
@@ -93,13 +93,17 @@
       "nativeVerticalDatum",
       "sourceLockId",
       "horizontalTransformLockId",
+      "verticalMode",
       "verticalTransformLockId",
+      "elevationSourceLockId",
+      "elevationSampleEvidence",
       "sourceGeometryHash",
-      "nativePosition",
-      "transformedPositionEpsg26910Navd88Metres",
+      "nativeHorizontalPosition",
+      "transformedPositionEpsg26910VerticalMetres",
       "runtimePositionMetres"
     ],
-    "rejectWhenVerticalDatumMissing": true,
+    "rejectWhenVerticalDatumMissing": false,
+    "twoDimensionalGeometryPolicy": "A source without a native vertical datum is valid only in terrain-sampled-source-declared-navd88-unrealized mode with a byte-locked provisional terrain elevation source and per-feature source-window computation evidence. It cannot certify a vertically production-ready or fully production 1:1 tile until a realized NAVD88 source is separately locked.",
     "repairRecordRequiredWhenRepaired": true
   }
 }

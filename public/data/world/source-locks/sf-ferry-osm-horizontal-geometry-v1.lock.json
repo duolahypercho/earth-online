@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-horizontal-geometry-source-lock",
+  "status": "production-horizontal-geometry-authorized",
+  "scope": "production-horizontal-geometry-authorized",
+  "id": "sf-ferry-osm-horizontal-geometry-v1",
+  "title": "Ferry first 1:1 tile OpenStreetMap horizontal geometry source lock",
+  "sourceId": "bbbike-sanfrancisco-osm-pbf",
+  "nativeHorizontalCrs": "EPSG:4326",
+  "nativeVerticalDatum": "not-provided-by-2d-source",
+  "source": {
+    "publisher": "OpenStreetMap contributors; BBBike extract service",
+    "url": "https://download.bbbike.org/osm/bbbike/SanFrancisco/SanFrancisco.osm.pbf",
+    "format": "OpenStreetMap Protocolbuffer Binary Format",
+    "license": "ODbL-1.0",
+    "attribution": "© OpenStreetMap contributors",
+    "snapshot": {
+      "identity": "checked-in raw San Francisco OSM PBF bytes",
+      "localPath": "public/data/sf/SanFrancisco.osm.pbf",
+      "bytes": 32742133,
+      "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae",
+      "retrievedAt": "2026-08-02",
+      "upstreamSnapshotTimestamp": "not supplied by the PBF; byte identity above is authoritative"
+    },
+    "coordinateReference": {
+      "horizontal": "WGS 84 longitude/latitude coordinates carried by the OSM PBF (EPSG:4326)",
+      "coordinateOrder": ["longitude", "latitude"],
+      "vertical": "No elevation coordinate or vertical datum is supplied by this 2D geometry source."
+    }
+  },
+  "approvedScope": {
+    "place": "Ferry Building first SF 1:1 tile source window",
+    "coverageWgs84": [-122.3977602545, 37.7917464503, -122.3886679245, 37.7989814242],
+    "geometry": ["OpenStreetMap nodes, ways, and relations used as horizontal geometry"],
+    "permitted": ["horizontal CRS transformation through sf-ferry-3dep-2023-horizontal-crs-v1", "terrain-sampled NAVD88 placement when independently evidenced by an authorized terrain source"],
+    "prohibited": ["claiming OSM geometry has a native NAVD88 height", "preview-frame placement", "runtime or manifest promotion without a separately validated production package", "survey-grade, sub-metre, or exact positional claims"]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-elevation-source-authorization",
+  "status": "source-declared-navd88-unrealized-elevation-sampling-authorized",
+  "scope": "provisional-elevation-sampling-only-vertical-production-prohibited",
+  "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+  "title": "Ferry first 1:1 tile USGS 3DEP terrain elevation source authorization",
+  "targetVerticalDatum": "source-declared-navd88-unrealized",
+  "nativeVerticalDatum": "source-declared-navd88-unrealized",
+  "sourceLock": {
+    "id": "sf-ferry-3dep-2023",
+    "path": "public/data/world/source-locks/sf-ferry-3dep-2023.lock.json",
+    "sha256": "3751942da71cf0714827f809803ffb44dc1143430e350f8d0b1bd23da6da651b"
+  },
+  "sourceRaster": {
+    "format": "GeoTIFF",
+    "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+    "units": "metres",
+    "surface": "bare-earth DEM",
+    "sampleMethod": "A provisional package must record the exact source-raster SHA-256, integer native pixel window, compressed source tile indices and bytes read, deterministic sample computation, serialized sample-window SHA-256, and per-feature evidence SHA-256."
+  },
+  "approvedScope": {
+    "coverageWgs84": [-122.3977602545, 37.7917464503, -122.3886679245, 37.7989814242],
+    "permitted": ["sample bare-earth terrain elevations for otherwise 2D geometry as source-declared-navd88-unrealized values", "create a provisional elevation artifact with reproducible source-window evidence"],
+    "prohibited": ["claiming that the geometry source itself is natively NAVD88", "claiming sampled elevations are realized NAVD88 or vertically production-certified", "vertical datum/geoid/epoch conversion", "water-level or tidal transfer", "claiming a built terrain artifact, runtime integration, manifest promotion, or a fully production 1:1 tile"]
+  },
+  "evidence": {
+    "productMetadataVerticalDeclaration": "NAVD88 (product-metadata declaration only)",
+    "sourceLockStatus": "source-locked-not-built",
+    "limitation": "The dependent raw lock records no vertical GeoKeys and states that geoid and epoch are not locked. This authorization therefore preserves only the source product metadata declaration as source-declared-navd88-unrealized. It does not establish a NAVD88 realization, geoid, coordinate epoch, production terrain artifact, vertical-production certification, or fully production 1:1 tile."
+  }
+}
