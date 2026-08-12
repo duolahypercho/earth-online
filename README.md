@@ -1,6 +1,12 @@
 # Earth Online
 
-A living open world you can walk, drive, and share.
+A living 3D map of San Francisco, built to grow beyond one city.
+
+> **Current direction:** develop the entire SF map platform, not new gameplay.
+> The active scope is real geography, streamed city detail, road-rule traffic,
+> and believable pedestrian life. Existing missions, combat, driving, and
+> multiplayer remain useful prototype surfaces but are not being expanded.
+> See [`Docs/SF_MAP_PLATFORM_GOAL.md`](./Docs/SF_MAP_PLATFORM_GOAL.md).
 
 We start in **San Francisco**, then grow outward:
 
@@ -13,14 +19,15 @@ Everyone is welcome to add their own towns.
 
 ## Vision
 
-Earth Online is a low-poly, real-time city world built from deterministic geometry,
-procedural materials, and real map data. The first playable district is San
-Francisco — traffic, pedestrians, interiors, weather, streamed sectors, a
-player avatar, drivable cars, local multiplayer, and voice chat.
+Earth Online is a low-poly, real-time city world built from deterministic
+geometry, procedural materials, and real map data. The current objective is a
+coherent model of the full city of San Francisco: terrain, streets, districts,
+buildings, transit, weather, streamed sectors, rule-correct traffic, and
+pedestrians with believable appearances and daily routines.
 
 The long road is simple:
 
-1. **San Francisco** — live now
+1. **San Francisco** — build and validate the complete city map
 2. **California** — coast and inland cities in one continuous map
 3. **United States** — towns and highways authored by many contributors
 4. **North America** — one shared continent to explore
