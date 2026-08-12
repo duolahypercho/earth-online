@@ -44,6 +44,29 @@ is explicitly changed later. Existing gameplay code may remain as a legacy
 visual and integration test surface, but it is not an active product goal and
 must not drive map architecture.
 
+## Execution hints
+
+- **Map first.** Spend current milestones only on geographic sources, tile
+  generation, streaming, rendering, and validation. Do not expand gameplay.
+- **Style may be invented; geography may not.** A low-poly or Roblox-like
+  result is welcome, but authoritative dimensions and placement stay fixed.
+- **One unit is one metre.** Horizontal and vertical production scale remain
+  1:1 through every transform and LOD.
+- **Keep claims honest.** Distinguish metric scale, source accuracy,
+  coordinate-operation accuracy, and generated-mesh deviation.
+- **Build offline, stream online.** The browser loads compact baked tiles; it
+  does not parse or manufacture the complete city from raw GIS data at launch.
+- **Use one runtime authority.** Native Three.js owns the production camera,
+  coordinates, lighting, and presentation. GIS viewers remain build/QA tools.
+- **Use `night-street` as technique, not topology.** Reuse appropriate MIT
+  procedural-material, merged-geometry, atmosphere, and measurement patterns;
+  never inherit its fictional street layout or single-scene loading model.
+- **Certify one tile before scaling.** A source-locked production tile and its
+  direct neighbor seam must pass before district-wide or city-wide baking.
+- **Do not confuse metadata with a map.** A contract pass proves only the
+  contract. A tile is 1:1 only after its real generated artifacts pass the
+  coordinate, elevation, provenance, LOD, seam, visual, and runtime gates.
+
 ## Architecture direction
 
 No single maintained Three.js package provides the whole stack. Keep Three.js
