@@ -34,6 +34,19 @@
         "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
         "sha256": "sha256:685be73c5f53178cb53ed696ad3fa3cab947557cc617cbf0da30448f761943c9"
       }
+    },
+    {
+      "id": "epsg26910-1441-10894",
+      "gridIndex": [1441, 10894],
+      "originEpsg26910VerticalMetres": [553344, 4183296, 0],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10894/epsg26910-1441-10894.lod0.glb",
+        "sha256": "sha256:9cf09906082ab5b1b509c457f997b41c25b63aa5081d50b6d7523ba23f3e19d9"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10894/epsg26910-1441-10894.receipt.json",
+        "sha256": "sha256:ec0d28106e89f9eeb67753c7bbd8a7af1a4bd7328947f8de101f2e8b53791774"
+      }
     }
   ]
 }

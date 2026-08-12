@@ -19,7 +19,8 @@ const METRIC_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-m
 const MANIFEST_PATH = path.join(METRIC_ROOT, 'sf-metric-tiles-v1.manifest.json');
 const WEST_ID = 'epsg26910-1440-10893';
 const FERRY_ID = 'epsg26910-1441-10893';
-const REQUIRED_PAIR = Object.freeze([WEST_ID, FERRY_ID]);
+const NORTH_ID = 'epsg26910-1441-10894';
+const REQUIRED_TILES = Object.freeze([WEST_ID, FERRY_ID, NORTH_ID]);
 const TILE_SIZE = 384;
 const TERRAIN_EDGE = TILE_SIZE + 1;
 const PROVISIONAL_FRAME = 'provisional-utm-source-declared-navd88-unrealized';
@@ -353,11 +354,12 @@ function verifyPair(westOrSouth, eastOrNorth) {
   const owner = [westOrSouth.identity, eastOrNorth.identity].sort()[0];
   const leftEdge = eastingSeam ? surfaceEdgeSamples(westOrSouth, 'east') : surfaceEdgeSamples(westOrSouth, 'north');
   const rightEdge = eastingSeam ? surfaceEdgeSamples(eastOrNorth, 'west') : surfaceEdgeSamples(eastOrNorth, 'south');
-  assert.equal(leftEdge.length, TERRAIN_EDGE, `${label} left closed surface edge is incomplete`);
-  assert.equal(rightEdge.length, TERRAIN_EDGE, `${label} right closed surface edge is incomplete`);
+  assert(leftEdge.length >= TERRAIN_EDGE, `${label} left closed surface edge is incomplete`);
+  assert(rightEdge.length >= TERRAIN_EDGE, `${label} right closed surface edge is incomplete`);
+  assert.equal(leftEdge.length, rightEdge.length, `${label} shared surface edge has mismatched coastline split vertices`);
   let heightMismatches = 0;
   let positionMismatches = 0;
-  for (let index = 0; index < TERRAIN_EDGE; index += 1) {
+  for (let index = 0; index < leftEdge.length; index += 1) {
     const left = leftEdge[index];
     const right = rightEdge[index];
     if (left.worldE !== right.worldE || left.worldN !== right.worldN) positionMismatches += 1;
@@ -413,7 +415,7 @@ function verifyPair(westOrSouth, eastOrNorth) {
     owner,
     axis,
     seamValue,
-    sharedSurfaceSamples: TERRAIN_EDGE,
+    sharedSurfaceSamples: leftEdge.length,
     sharedSourceFeatures: sharedIds.length,
     terrainByteAgreement: true,
     interiorLeaks: leaks,
@@ -431,15 +433,17 @@ assert.equal(manifest.tiling?.tileSizeMetres, TILE_SIZE, 'Manifest tile size dri
 forbidCertifiedVertical('metric tile-set manifest', manifest);
 assert(Array.isArray(manifest.tiles), 'Metric tile-set manifest is missing tiles');
 const manifestIds = manifest.tiles.map((tile) => tile.id);
-assert.deepEqual(manifestIds, REQUIRED_PAIR, `Seam manifest must be exactly west↔Ferry ${REQUIRED_PAIR.join(', ')}; stale north tile ${manifestIds.includes('epsg26910-1441-10894') ? 'is still listed' : 'set drifted'}`);
+assert.deepEqual(manifestIds, REQUIRED_TILES, `Seam manifest must contain the verified west, Ferry, and north tiles in stable order: ${REQUIRED_TILES.join(', ')}`);
 const manifestById = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
 
 const tiles = [];
-for (const identity of REQUIRED_PAIR) tiles.push(await loadTile(identity, manifestById.get(identity)));
+for (const identity of REQUIRED_TILES) tiles.push(await loadTile(identity, manifestById.get(identity)));
 const pairs = adjacentPairs(tiles);
-assert.equal(pairs.length, 1, `West↔Ferry must form exactly one 4-adjacent pair, got ${pairs.length}`);
+assert.equal(pairs.length, 2, `West↔Ferry↔north must form exactly two 4-adjacent pairs, got ${pairs.length}`);
 assert.equal(pairs[0][0].identity, WEST_ID, 'West tile is not the western member of the seam pair');
 assert.equal(pairs[0][1].identity, FERRY_ID, 'Ferry tile is not the eastern member of the seam pair');
+assert.equal(pairs[1][0].identity, FERRY_ID, 'Ferry tile is not the southern member of the north seam pair');
+assert.equal(pairs[1][1].identity, NORTH_ID, 'North tile is not the northern member of the north seam pair');
 
 const seamReports = pairs.map(([left, right]) => verifyPair(left, right));
 
@@ -472,7 +476,6 @@ process.stdout.write(`${JSON.stringify({
   })),
   seams: seamReports,
   rebuilds,
-  pair: REQUIRED_PAIR,
-  ignored: 'epsg26910-1441-10894 is stale after the water freeze and is rejected if listed in the seam manifest',
+  tileIds: REQUIRED_TILES,
   water: 'OSM-classified water is accepted only as a hydrologic partition; shared-edge heights must still match the neighboring surface exactly',
 }, null, 2)}\n`);

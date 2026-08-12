@@ -85,9 +85,24 @@ const views = {
   plan: { position: [192, 570, 192.01], target: [192, 0, 192] },
 };
 
+function fitOverviewViews(descriptors) {
+  if (!descriptors.length) return;
+  const minX = Math.min(...descriptors.map(({ offset }) => offset.x));
+  const minZ = Math.min(...descriptors.map(({ offset }) => offset.z));
+  const maxX = Math.max(...descriptors.map(({ offset, size }) => offset.x + size));
+  const maxZ = Math.max(...descriptors.map(({ offset, size }) => offset.z + size));
+  const centerX = (minX + maxX) / 2; const centerZ = (minZ + maxZ) / 2;
+  const width = maxX - minX; const depth = maxZ - minZ; const span = Math.max(width, depth);
+  const verticalFov = THREE.MathUtils.degToRad(camera.fov); const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+  const planHeight = Math.max(depth / (2 * Math.tan(verticalFov / 2)), width / (2 * Math.tan(horizontalFov / 2))) * 1.12;
+  views.plan = { position: [centerX, planHeight, centerZ + 0.01], target: [centerX, 0, centerZ] };
+  views.district = { position: [centerX - span * 0.72, span * 0.62, centerZ + span * 0.58], target: [centerX, 8, centerZ] };
+}
+
 function setView(name, immediate = false) {
   const view = views[name];
   if (!view) return;
+  scene.fog.density = name === 'plan' ? 0.00018 : name === 'district' ? 0.00055 : 0.00145;
   document.querySelectorAll('[data-view]').forEach((button) => button.classList.toggle('is-active', button.dataset.view === name));
   const destination = new THREE.Vector3(...view.position);
   const target = new THREE.Vector3(...view.target);
@@ -275,6 +290,7 @@ async function initialiseStream() {
     ...tile,
     offset: new THREE.Vector3(tile.origin[0] - anchorOrigin[0], tile.origin[2] - anchorOrigin[2], tile.origin[1] - anchorOrigin[1]),
   }));
+  fitOverviewViews(tileDescriptors);
   for (const descriptor of tileDescriptors) tileStates.set(descriptor.id, { descriptor, scene: null, loading: false, receipt: null, error: null });
   tileAnchor.textContent = anchor.gridIndex ? anchor.gridIndex.join(' / ') : `${anchorOrigin[0]}E / ${anchorOrigin[1]}N`;
   tileExtent.textContent = `${anchor.size} × ${anchor.size} m`;

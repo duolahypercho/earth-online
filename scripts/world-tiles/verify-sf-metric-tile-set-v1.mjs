@@ -10,7 +10,7 @@ const manifestPath = path.join(ROOT, 'public/data/world/production-artifacts/sf-
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.equal(manifest.kind, 'sf-metric-tile-set'); assert.equal(manifest.status, 'provisional-vertical-unrealized'); assert.equal(manifest.coordinateReference.horizontal.crs, 'EPSG:26910'); assert.equal(manifest.tiling.tileSizeMetres, 384);
-assert.deepEqual(manifest.tiles.map(({ id }) => id), ['epsg26910-1440-10893', 'epsg26910-1441-10893']);
+assert.deepEqual(manifest.tiles.map(({ id }) => id), ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1441-10894']);
 for (const tile of manifest.tiles) {
   assert.deepEqual(tile.originEpsg26910VerticalMetres, [tile.gridIndex[0] * 384, tile.gridIndex[1] * 384, 0]);
   const [glb, receiptBytes] = await Promise.all([readFile(path.join(ROOT, tile.lod0.path)), readFile(path.join(ROOT, tile.receipt.path))]);
@@ -19,4 +19,6 @@ for (const tile of manifest.tiles) {
 }
 assert.equal(manifest.tiles[1].originEpsg26910VerticalMetres[0] - manifest.tiles[0].originEpsg26910VerticalMetres[0], 384, 'Tiles must share one exact east/west edge');
 assert.equal(manifest.tiles[1].originEpsg26910VerticalMetres[1], manifest.tiles[0].originEpsg26910VerticalMetres[1], 'Tiles must occupy the same northing row');
+assert.equal(manifest.tiles[2].originEpsg26910VerticalMetres[1] - manifest.tiles[1].originEpsg26910VerticalMetres[1], 384, 'North tile must share one exact north/south edge with Ferry');
+assert.equal(manifest.tiles[2].originEpsg26910VerticalMetres[0], manifest.tiles[1].originEpsg26910VerticalMetres[0], 'North tile must occupy the Ferry easting column');
 console.log(JSON.stringify({ result: 'SF metric tile set passed', manifest: path.relative(ROOT, manifestPath), tileIds: manifest.tiles.map(({ id }) => id) }, null, 2));
