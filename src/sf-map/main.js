@@ -3,12 +3,41 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import './styles.css';
 
-const TILE_PATH = `${import.meta.env.BASE_URL}data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb`;
-const RECEIPT_PATH = `${import.meta.env.BASE_URL}data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json`;
+const BASE_URL = import.meta.env.BASE_URL;
+const FALLBACK_TILE = {
+  id: 'epsg26910-1441-10893',
+  gridIndex: [1441, 10893],
+  origin: [553344, 4182912, 0],
+  size: 384,
+  glb: 'data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb',
+  receipt: 'data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json',
+  source: 'verified Ferry fallback',
+};
+
+// This is deliberately a small, public runtime index. Each committed entry needs:
+// { id, originEpsg26910VerticalMetres, lod0: { path }, receipt?: { path } }.
+// Origins stay in EPSG:26910; this viewer subtracts the anchor origin exactly once.
+const MANIFEST_PATHS = [
+  'data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json',
+  'data/world/production-artifacts/sf-metric-tiles.manifest.json',
+  'data/world/production-artifacts/metric-tiles.manifest.json',
+];
+const STREAM_RADIUS_METRES = 880;
+const RETAIN_RADIUS_METRES = 1040;
 const FERRY = new THREE.Vector3(98.056, 3.467, 336.015);
 
-const canvas = document.querySelector('#map-canvas');
-const landmark = document.querySelector('.landmark');
+const element = (selector) => document.querySelector(selector);
+const canvas = element('#map-canvas');
+const landmark = element('.landmark');
+const loadState = element('#load-state');
+const loadedCount = element('#loaded-count');
+const loadedTiles = element('#loaded-tiles');
+const loading = element('#loading');
+const loadProgress = element('#load-progress');
+const streamSource = element('#stream-source');
+const tileAnchor = element('#tile-anchor');
+const tileExtent = element('#tile-extent');
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -22,13 +51,13 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07100f);
 scene.fog = new THREE.FogExp2(0x07100f, 0.00145);
 
-const camera = new THREE.PerspectiveCamera(43, window.innerWidth / window.innerHeight, 0.5, 1800);
+const camera = new THREE.PerspectiveCamera(43, window.innerWidth / window.innerHeight, 0.5, 2400);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.075;
 controls.screenSpacePanning = true;
 controls.minDistance = 24;
-controls.maxDistance = 760;
+controls.maxDistance = 1200;
 controls.maxPolarAngle = Math.PI * 0.485;
 
 scene.add(new THREE.HemisphereLight(0xc8dfd1, 0x101715, 1.55));
@@ -44,10 +73,10 @@ sun.shadow.bias = -0.00008;
 scene.add(sun);
 
 const perimeter = new THREE.LineSegments(
-  new THREE.EdgesGeometry(new THREE.BoxGeometry(384, 0.05, 384)),
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(FALLBACK_TILE.size, 0.05, FALLBACK_TILE.size)),
   new THREE.LineBasicMaterial({ color: 0xd7ff48, transparent: true, opacity: 0.34 }),
 );
-perimeter.position.set(192, -2.7, 192);
+perimeter.position.set(FALLBACK_TILE.size / 2, -2.7, FALLBACK_TILE.size / 2);
 scene.add(perimeter);
 
 const views = {
@@ -71,13 +100,12 @@ function setView(name, immediate = false) {
   const startPosition = camera.position.clone();
   const startTarget = controls.target.clone();
   const started = performance.now();
-  const duration = 720;
   const move = (now) => {
-    const linear = Math.min(1, (now - started) / duration);
-    const eased = 1 - (1 - linear) ** 3;
+    const fraction = Math.min(1, (now - started) / 720);
+    const eased = 1 - (1 - fraction) ** 3;
     camera.position.lerpVectors(startPosition, destination, eased);
     controls.target.lerpVectors(startTarget, target, eased);
-    if (linear < 1) requestAnimationFrame(move);
+    if (fraction < 1) requestAnimationFrame(move);
   };
   requestAnimationFrame(move);
 }
@@ -85,51 +113,194 @@ function setView(name, immediate = false) {
 setView('ferry', true);
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
 
-const receiptPromise = fetch(RECEIPT_PATH).then((response) => {
-  if (!response.ok) throw new Error(`Receipt HTTP ${response.status}`);
-  return response.json();
-});
+function publicPath(path) {
+  if (!path) return null;
+  return path.replace(/^public\//, '').replace(/^\//, '');
+}
 
-const loader = new GLTFLoader();
-loader.load(
-  TILE_PATH,
-  async (gltf) => {
+function firstPath(value) {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return null;
+  return value.path || value.url || value.visual || value.asset || null;
+}
+
+function manifestTile(raw, index) {
+  const origin = raw.originEpsg26910VerticalMetres || raw.tileOriginEpsg26910VerticalMetres || raw.origin;
+  const lod0 = raw.lod0 || raw.lods?.find((lod) => lod.level === 0) || raw.artifacts?.lod0;
+  const glb = firstPath(raw.glb) || firstPath(raw.visual) || firstPath(raw.asset) || firstPath(lod0);
+  const receipt = firstPath(raw.receipt) || firstPath(raw.buildReceipt);
+  if (!Array.isArray(origin) || origin.length < 2 || !glb) return null;
+  if (![origin[0], origin[1], origin[2] ?? 0].every(Number.isFinite)) return null;
+  return {
+    id: raw.id || raw.identity || `metric-tile-${index + 1}`,
+    gridIndex: raw.gridIndex || raw.grid?.index || null,
+    origin: [origin[0], origin[1], origin[2] ?? 0],
+    size: raw.tileSizeMetres || raw.tiling?.tileSizeMetres || raw.grid?.tileSizeMeters || 384,
+    glb: publicPath(glb),
+    receipt: publicPath(receipt),
+    source: 'runtime metric manifest',
+  };
+}
+
+async function discoverTiles() {
+  for (const path of MANIFEST_PATHS) {
+    try {
+      const response = await fetch(`${BASE_URL}${path}`, { cache: 'no-cache' });
+      if (!response.ok) continue;
+      const manifest = await response.json();
+      const records = manifest.tiles || manifest.entries || manifest.tileSet?.tiles || [];
+      const tiles = records.map(manifestTile).filter(Boolean);
+      if (tiles.length) return { tiles, source: `${path} (${tiles.length} committed)` };
+    } catch {
+      // A missing manifest is normal until adjacent metric packages are committed.
+    }
+  }
+  return { tiles: [FALLBACK_TILE], source: 'verified Ferry fallback (manifest not committed)' };
+}
+
+function disposeObject(root) {
+  root.traverse((node) => {
+    if (!node.isMesh) return;
+    node.geometry?.dispose();
+    for (const material of Array.isArray(node.material) ? node.material : [node.material]) material?.dispose();
+  });
+}
+
+function cameraDistanceToTile(tile) {
+  const half = tile.size / 2;
+  const centerX = tile.offset.x + half;
+  const centerZ = tile.offset.z + half;
+  return Math.hypot(camera.position.x - centerX, camera.position.z - centerZ);
+}
+
+const gltfLoader = new GLTFLoader();
+const tileStates = new Map();
+let tileDescriptors = [];
+let anchorOrigin = FALLBACK_TILE.origin;
+let streamingStarted = false;
+
+function updateStats() {
+  const states = [...tileStates.values()];
+  const resident = states.filter((state) => state.scene).map((state) => state.descriptor.id);
+  const pending = states.filter((state) => state.loading).length;
+  loadedCount.textContent = `${resident.length} / ${tileDescriptors.length}`;
+  loadedTiles.textContent = resident.length ? resident.join(' · ') : pending ? 'Loading nearby tiles…' : 'No tile in stream radius';
+  loadState.textContent = pending ? `Streaming ${pending} tile${pending === 1 ? '' : 's'}…` : `${resident.length} metric tile${resident.length === 1 ? '' : 's'} resident`;
+}
+
+function updateReceipt(state, receipt) {
+  if (!receipt) return;
+  state.receipt = receipt;
+  const loaded = [...tileStates.values()].filter((entry) => entry.scene && entry.receipt);
+  element('#road-count').textContent = loaded.reduce((sum, entry) => sum + (entry.receipt.counts?.emittedRoadWays || 0), 0) || '—';
+  element('#building-count').textContent = loaded.reduce((sum, entry) => sum + (entry.receipt.counts?.emittedBuildingWays || 0), 0) || '—';
+  const terrainStep = receipt.deterministicInputs?.terrainGridStepMetres;
+  element('#terrain-resolution').textContent = terrainStep ? `${terrainStep} m grid` : 'source-declared';
+}
+
+async function loadTile(state) {
+  const { descriptor } = state;
+  state.loading = true;
+  updateStats();
+  try {
+    const gltf = await gltfLoader.loadAsync(`${BASE_URL}${descriptor.glb}`);
     const tile = gltf.scene;
-    tile.name = 'Ferry metric tile LOD0';
+    tile.name = `${descriptor.id} metric tile LOD0`;
+    tile.position.copy(descriptor.offset);
+    tile.scale.setScalar(1);
     tile.traverse((node) => {
       if (!node.isMesh) return;
       node.receiveShadow = true;
       node.castShadow = node.material?.name === 'buildings-night';
       if (node.material?.name === 'terrain-night') node.material.color.setHex(0x18382f);
-      if (node.material?.name === 'roads-night') node.material.color.setHex(0xa8b89d);
+      if (node.material?.name === 'roads-night') {
+        node.material.color.setHex(0xa8b89d);
+        node.material.polygonOffset = true;
+        node.material.polygonOffsetFactor = -2;
+        node.material.polygonOffsetUnits = -2;
+        node.renderOrder = 2;
+      }
       if (node.material?.name === 'buildings-night') node.material.color.setHex(0xb87842);
+      if (node.material?.name === 'water-osm-coastline-night') {
+        node.material.color.setHex(0x0a5870);
+        node.material.roughness = 0.22;
+        node.material.metalness = 0.18;
+      }
+      if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x35a8b7);
     });
+    state.scene = tile;
     scene.add(tile);
+    if (descriptor.receipt) {
+      fetch(`${BASE_URL}${descriptor.receipt}`).then((response) => response.ok ? response.json() : null).then((receipt) => updateReceipt(state, receipt)).catch(() => {});
+    }
+  } catch (error) {
+    state.error = error;
+    console.error(`Unable to stream ${descriptor.id}`, error);
+  } finally {
+    state.loading = false;
+    updateStats();
+    if (!streamingStarted) {
+      streamingStarted = true;
+      loadProgress.style.width = '100%';
+      window.setTimeout(() => loading.classList.add('is-done'), 280);
+    }
+  }
+}
 
-    const receipt = await receiptPromise;
-    document.querySelector('#road-count').textContent = receipt.counts.emittedRoadWays;
-    document.querySelector('#building-count').textContent = receipt.counts.emittedBuildingWays;
-    document.querySelector('#terrain-resolution').textContent = `${receipt.deterministicInputs.terrainGridStepMetres} m grid`;
-    document.querySelector('#load-state').textContent = 'Verified tile loaded';
-    document.querySelector('#load-progress').style.width = '100%';
-    window.setTimeout(() => document.querySelector('#loading').classList.add('is-done'), 280);
-    window.__SF_MAP_VIEWER__ = Object.freeze({ tile, receipt, ferryPosition: FERRY.clone(), setView });
-  },
-  (event) => {
-    if (!event.total) return;
-    document.querySelector('#load-progress').style.width = `${Math.round((event.loaded / event.total) * 100)}%`;
-  },
-  (error) => {
-    document.querySelector('#load-state').textContent = 'Tile load failed';
-    document.querySelector('.loading p').textContent = error.message;
-    console.error(error);
-  },
-);
+function unloadTile(state) {
+  if (!state.scene) return;
+  scene.remove(state.scene);
+  disposeObject(state.scene);
+  state.scene = null;
+  state.receipt = null;
+  const residentWithReceipts = [...tileStates.values()].filter((entry) => entry.scene && entry.receipt);
+  element('#road-count').textContent = residentWithReceipts.reduce((sum, entry) => sum + (entry.receipt.counts?.emittedRoadWays || 0), 0) || '—';
+  element('#building-count').textContent = residentWithReceipts.reduce((sum, entry) => sum + (entry.receipt.counts?.emittedBuildingWays || 0), 0) || '—';
+  updateStats();
+}
+
+function streamTiles() {
+  for (const state of tileStates.values()) {
+    const distance = cameraDistanceToTile(state.descriptor);
+    if (distance <= STREAM_RADIUS_METRES && !state.scene && !state.loading && !state.error) loadTile(state);
+    if (distance > RETAIN_RADIUS_METRES && state.scene) unloadTile(state);
+  }
+}
+
+async function initialiseStream() {
+  const { tiles, source } = await discoverTiles();
+  const anchor = tiles.find((tile) => tile.id === FALLBACK_TILE.id) || tiles[0];
+  anchorOrigin = anchor.origin;
+  tileDescriptors = tiles.map((tile) => ({
+    ...tile,
+    offset: new THREE.Vector3(tile.origin[0] - anchorOrigin[0], tile.origin[2] - anchorOrigin[2], tile.origin[1] - anchorOrigin[1]),
+  }));
+  for (const descriptor of tileDescriptors) tileStates.set(descriptor.id, { descriptor, scene: null, loading: false, receipt: null, error: null });
+  tileAnchor.textContent = anchor.gridIndex ? anchor.gridIndex.join(' / ') : `${anchorOrigin[0]}E / ${anchorOrigin[1]}N`;
+  tileExtent.textContent = `${anchor.size} × ${anchor.size} m`;
+  streamSource.textContent = source.toUpperCase();
+  updateStats();
+  streamTiles();
+  window.__SF_MAP_VIEWER__ = Object.freeze({
+    get anchorOriginEpsg26910() { return [...anchorOrigin]; },
+    get tileDescriptors() { return tileDescriptors.map(({ offset, ...tile }) => ({ ...tile, offset: offset.toArray() })); },
+    get residentTileIds() { return [...tileStates.values()].filter((state) => state.scene).map((state) => state.descriptor.id); },
+    ferryPosition: FERRY.clone(),
+    setView,
+  });
+}
+
+initialiseStream();
 
 const clock = new THREE.Clock();
-function animate() {
+let lastStreamCheck = 0;
+function animate(now = 0) {
   requestAnimationFrame(animate);
   controls.update(clock.getDelta());
+  if (now - lastStreamCheck > 350) {
+    streamTiles();
+    lastStreamCheck = now;
+  }
   const marker = FERRY.clone().project(camera);
   const markerVisible = marker.z > -1 && marker.z < 1 && Math.abs(marker.x) < 0.92 && Math.abs(marker.y) < 0.88;
   landmark.classList.toggle('is-visible', markerVisible);
