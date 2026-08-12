@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07100f" />
+    <meta name="description" content="Metric low-poly San Francisco map tile viewer." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>SF / Metric Map</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="map-canvas" aria-label="Three-dimensional Ferry and Embarcadero map tile"></canvas>
+
+      <header class="masthead">
+        <div class="identity">
+          <span class="index">01</span>
+          <div>
+            <p>San Francisco / metric reconstruction</p>
+            <h1>FERRY TILE</h1>
+          </div>
+        </div>
+        <div class="datum">
+          <span>EPSG:26910</span>
+          <strong>1 UNIT = 1 METRE</strong>
+        </div>
+      </header>
+
+      <aside class="specimen" aria-label="Tile metadata">
+        <p class="eyebrow">LIVE SOURCE ARTIFACT</p>
+        <div class="rule"></div>
+        <dl>
+          <div><dt>Tile</dt><dd>1441 / 10893</dd></div>
+          <div><dt>Extent</dt><dd>384 × 384 m</dd></div>
+          <div><dt>Road ways</dt><dd id="road-count">—</dd></div>
+          <div><dt>Buildings</dt><dd id="building-count">—</dd></div>
+          <div><dt>Terrain</dt><dd id="terrain-resolution">—</dd></div>
+        </dl>
+        <p class="vertical-note"><i></i> Elevation is source-declared NAVD88, realization unresolved.</p>
+      </aside>
+
+      <section class="landmark" aria-label="Ferry Building marker">
+        <span class="pin"></span>
+        <p>OSM WAY 558731934</p>
+        <strong>FERRY BUILDING</strong>
+      </section>
+
+      <footer class="controls">
+        <p><b>DRAG</b> orbit &nbsp; <b>SHIFT + DRAG</b> pan &nbsp; <b>SCROLL</b> zoom</p>
+        <div class="view-actions" aria-label="Camera views">
+          <button type="button" data-view="ferry">Ferry</button>
+          <button type="button" data-view="district">District</button>
+          <button type="button" data-view="plan">Plan</button>
+        </div>
+        <p id="load-state" role="status">Reading verified GLB…</p>
+      </footer>
+
+      <div class="loading" id="loading">
+        <span>SF</span>
+        <div><i id="load-progress"></i></div>
+        <p>Loading the first 1:1 tile</p>
+      </div>
+    </main>
+    <script type="module" src="/src/sf-map/main.js"></script>
+  </body>
+</html>
