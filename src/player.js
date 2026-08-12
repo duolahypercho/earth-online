@@ -360,6 +360,12 @@ export function animatePlayerAvatar(avatar, { moving = false, speedRatio = 0, el
     stride: 1,
     armSwing: 1,
   });
+  // The shared gait includes a downward pelvis bob that is appropriate for
+  // routed NPC roots, but the local Traveler root already sits exactly on its
+  // authoritative support surface. Clamp only the visual rig's vertical
+  // offset so locomotion cannot pull the skinned soles below that surface;
+  // leg articulation, navigation/root authority, and motion speed are intact.
+  if (ud.rig?.position) ud.rig.position.y = Math.max(0, ud.rig.position.y);
   if (gait < 0.22) {
     applyIdleLayer(ud, elapsed + phase, 1 - gait);
   }
@@ -413,19 +419,7 @@ export function setAvatarCombatPose(avatar, { aiming = false, pitch = 0 } = {}) 
 export function setAvatarMeleePose(avatar, { active = false, progress = 1 } = {}) {
   const ud = avatar?.userData;
   if (!ud) return false;
-  if (active !== true) {
-    if (ud.rightArm?.position && ud.meleeRightArmBase) {
-      ud.rightArm.position.set(
-        ud.meleeRightArmBase.x,
-        ud.meleeRightArmBase.y,
-        ud.meleeRightArmBase.z,
-      );
-    }
-    if (ud.rightForearm?.position && ud.meleeRightForearmBaseY != null) {
-      ud.rightForearm.position.y = ud.meleeRightForearmBaseY;
-    }
-    return false;
-  }
+  if (active !== true) return false;
   const t = THREE.MathUtils.clamp(Number(progress) || 0, 0, 1);
   const windup = THREE.MathUtils.smoothstep(t, 0, 0.3);
   const contact = THREE.MathUtils.smoothstep(t, 0.08, 0.22)
@@ -450,15 +444,8 @@ export function setAvatarMeleePose(avatar, { active = false, progress = 1 } = {}
     ud.rightArm.rotation.x += 0.25 * windup - 1.94 * strike;
     ud.rightArm.rotation.y += 0.16 * windup - 0.16 * strike;
     ud.rightArm.rotation.z += 0.48 * windup - 0.58 * strike;
-    if (!ud.meleeRightArmBase) ud.meleeRightArmBase = ud.rightArm.position.clone();
-    ud.rightArm.position.z = ud.meleeRightArmBase.z + 0.38 * strike;
-    ud.rightArm.position.y = ud.meleeRightArmBase.y;
   }
   if (ud.rightForearm?.rotation) {
-    if (ud.meleeRightForearmBaseY == null) {
-      ud.meleeRightForearmBaseY = ud.rightForearm.position.y;
-    }
-    ud.rightForearm.position.y = ud.meleeRightForearmBaseY - 0.1 * strike;
     ud.rightForearm.rotation.x += -0.16 * windup + 0.96 * strike;
     ud.rightForearm.rotation.y += 0.12 * strike;
     ud.rightForearm.rotation.z += -0.12 * windup - 0.34 * strike;
@@ -678,7 +665,13 @@ export function applyPlayerHitReaction(avatar, {
     phase = THREE.MathUtils.clamp((elapsed - reaction.startElapsed) / HIT_REACTION_DURATION, 0, 1);
   }
   const active = phase < 1;
-  const w = active ? Math.sin(Math.PI * phase) : 0;
+  const meleeCounter = typeof reaction.source === 'string'
+    && reaction.source.startsWith('civilian-melee:');
+  const w = active
+    ? meleeCounter
+      ? 1 - THREE.MathUtils.smoothstep(phase, 0.65, 1)
+      : Math.sin(Math.PI * phase)
+    : 0;
   const d = downState.value;
   const applied = enabled === true && (w > 0.0005 || d > 0.0005);
   if (applied) {
@@ -686,21 +679,32 @@ export function applyPlayerHitReaction(avatar, {
     // hips, and the root stay untouched so grounding and locomotion are
     // preserved; the weapon hand keeps its authored grip.
     if (ud.body?.rotation) {
-      ud.body.rotation.x += 0.24 * w;
-      ud.body.rotation.z += 0.18 * w;
+      ud.body.rotation.x += (meleeCounter ? -0.22 : 0.24) * w;
+      ud.body.rotation.z += (meleeCounter ? 0.32 : 0.18) * w;
     }
     if (ud.headPivot?.rotation) {
       ud.headPivot.rotation.x -= 0.34 * w;
-      ud.headPivot.rotation.z -= 0.26 * w;
+      ud.headPivot.rotation.z -= (meleeCounter ? 0.34 : 0.26) * w;
     }
     if (ud.rightArm?.rotation) {
-      ud.rightArm.rotation.x += (preserveAim ? 0.2 : 0.12) * w;
-      ud.rightArm.rotation.z -= (preserveAim ? 0.28 : 0.1) * w;
+      ud.rightArm.rotation.x += (meleeCounter ? -0.34 : preserveAim ? 0.2 : 0.12) * w;
+      ud.rightArm.rotation.z += (meleeCounter ? 1.34 : preserveAim ? -0.28 : -0.1) * w;
     }
     if (ud.rightForearm?.rotation) {
-      ud.rightForearm.rotation.x -= (preserveAim ? 0.2 : 0.12) * w;
+      ud.rightForearm.rotation.x += (meleeCounter ? 1.18 : preserveAim ? -0.2 : -0.12) * w;
     }
-    if (ud.leftArm?.rotation) ud.leftArm.rotation.z += 0.1 * w;
+    if (ud.leftArm?.rotation) {
+      // A civilian's close strike produces a reciprocal near-side guard:
+      // the Traveler shields the jaw while the opposite shoulder flinches.
+      // This is presentation-only and is driven by the existing authoritative
+      // damage event above; it never decides whether damage occurred.
+      ud.leftArm.rotation.x += (meleeCounter ? 0.22 : 0) * w;
+      ud.leftArm.rotation.z += (meleeCounter ? -0.24 : 0.1) * w;
+    }
+    if (meleeCounter && ud.leftForearm?.rotation) {
+      ud.leftForearm.rotation.x += 0.24 * w;
+      ud.leftForearm.rotation.z -= 0.08 * w;
+    }
     // Downed collapse: a distinct full-rig tilt + drop with both arms
     // released, driven by the authoritative combat status.
     if (d > 0.0005) {
@@ -735,6 +739,9 @@ export function getPlayerHitReactionTelemetry(avatar) {
   const bonesMoved = [];
   if ((reaction?.lastWeight ?? 0) > 0.0005) {
     bonesMoved.push('head', 'torso', 'rightArm');
+    if (typeof reaction?.source === 'string' && reaction.source.startsWith('civilian-melee:')) {
+      bonesMoved.push('leftArm', 'leftForearm');
+    }
   }
   if (downedActive) bonesMoved.push('rig', 'torso', 'head', 'leftArm', 'rightArm');
   return Object.freeze({

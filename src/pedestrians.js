@@ -1836,7 +1836,12 @@ function createHeroSkeleton() {
 function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex, visualVariant = null) {
   const root = new THREE.Group();
   root.name = `NPC hero rig / ${job.id}`;
-  root.scale.copy(legacyRoot.scale);
+  // Bone segments must retain their authored world lengths throughout close
+  // acting. A non-uniform actor-root scale changes a rotated bone's measured
+  // world length even when the bone and its local scale never change, so hero
+  // rigs use their authored height as one uniform adult-size scalar. Shape
+  // variation remains in the skinned silhouette and wardrobe geometry.
+  root.scale.setScalar(legacyRoot.scale.y);
 
   const materialSet = [
     materials.skin,
@@ -2831,6 +2836,8 @@ export function createPedestrianSystem({
   const CIVILIAN_COUNTER_EVADE_RANGE = 1.75;
   const CIVILIAN_COUNTER_CLOSING_DISTANCE = 0.36;
   const CIVILIAN_COUNTER_CLOSING_SPEED = 0.8;
+  const CIVILIAN_COUNTER_TORSO_SURFACE = 0.18;
+  const CIVILIAN_COUNTER_UPPER_CHEST_OFFSET = 0.45;
   const CIVILIAN_COUNTER_MIN_SEPARATION = ON_FOOT_PLAYER_RADIUS
     + ON_FOOT_PEDESTRIAN_RADIUS + ON_FOOT_CONTACT_MARGIN;
   const counterHandPoint = new THREE.Vector3();
@@ -2840,7 +2847,14 @@ export function createPedestrianSystem({
   const counterFistDirection = new THREE.Vector3();
   const counterDownAxis = new THREE.Vector3(0, -1, 0);
   const counterLocalDirection = new THREE.Vector3();
+  const counterPoleDirection = new THREE.Vector3();
+  const counterSolvedElbow = new THREE.Vector3();
+  const counterSolvedHand = new THREE.Vector3();
   const counterParentQuaternion = new THREE.Quaternion();
+  const counterArmBaseQuaternion = new THREE.Quaternion();
+  const counterForearmBaseQuaternion = new THREE.Quaternion();
+  const counterArmTargetQuaternion = new THREE.Quaternion();
+  const counterForearmTargetQuaternion = new THREE.Quaternion();
   const counterTargetPoint = new THREE.Vector3();
   const counterLosOrigin = new THREE.Vector3();
 
@@ -4492,6 +4506,7 @@ export function createPedestrianSystem({
         closingResynced: false,
         closingEvaded: false,
         closingLastDistance: null,
+        neutralArmTelemetry: null,
         emitted: false,
         lastEvent: null,
       };
@@ -4523,6 +4538,7 @@ export function createPedestrianSystem({
       closingResynced: false,
       closingEvaded: false,
       closingLastDistance: null,
+      neutralArmTelemetry: null,
       emitted: false,
       lastEvent: null,
     };
@@ -4542,6 +4558,30 @@ export function createPedestrianSystem({
       && userData.combatDisabled !== true;
   }
 
+  function setCivilianCounterTarget(data, context) {
+    const playerPosition = context?.position;
+    const torsoPosition = context?.torsoPosition;
+    if (!Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return false;
+    counterTargetPoint.set(
+      Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
+      (Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04)
+        + CIVILIAN_COUNTER_UPPER_CHEST_OFFSET,
+      Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
+    );
+    // Aim at the near surface of the Traveler's upper chest, not the center
+    // of their collision shell. Gameplay range still uses the unchanged root
+    // distance; this offset only gives the fixed hand chain a physical contact
+    // point on the visible body.
+    const surfaceX = data.mesh.position.x - counterTargetPoint.x;
+    const surfaceZ = data.mesh.position.z - counterTargetPoint.z;
+    const surfaceLength = Math.hypot(surfaceX, surfaceZ);
+    if (surfaceLength > 1e-5) {
+      counterTargetPoint.x += surfaceX / surfaceLength * CIVILIAN_COUNTER_TORSO_SURFACE;
+      counterTargetPoint.z += surfaceZ / surfaceLength * CIVILIAN_COUNTER_TORSO_SURFACE;
+    }
+    return true;
+  }
+
   function startCivilianCounterAfterRecovery(data, elapsed) {
     const state = counterStateFor(data);
     state.attempt += 1;
@@ -4558,6 +4598,11 @@ export function createPedestrianSystem({
     state.closingResynced = false;
     state.closingEvaded = false;
     state.closingLastDistance = null;
+    const neutralChain = readCivilianCounterArmChain(data, state, null);
+    state.neutralArmTelemetry = neutralChain ? Object.freeze({
+      lengths: neutralChain.lengths,
+      scales: neutralChain.scales,
+    }) : null;
     state.emitted = false;
     state.timing = {
       recoveryDelayMs: Math.round(recoveryDelay * 1000),
@@ -4600,12 +4645,7 @@ export function createPedestrianSystem({
     if (state.closingEvaded) return;
     if (distance <= CIVILIAN_COUNTER_MIN_SEPARATION + 1e-5) return;
     counterLosOrigin.set(data.mesh.position.x, data.mesh.position.y + 1.04, data.mesh.position.z);
-    const torsoPosition = context?.torsoPosition;
-    counterTargetPoint.set(
-      Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
-      Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04,
-      Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
-    );
+    setCivilianCounterTarget(data, context);
     if (typeof hasCivilianCounterLineOfSight !== 'function'
       || hasCivilianCounterLineOfSight(counterLosOrigin, counterTargetPoint) !== true) return;
     const step = Math.min(
@@ -4686,40 +4726,98 @@ export function createPedestrianSystem({
     const userData = data.mesh.userData;
     const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
     const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
-    if (!['windup', 'contact', 'recovery'].includes(state.phase)) {
-      if (Number.isFinite(state.armScaleY)) arm.scale.y = state.armScaleY;
-      if (Number.isFinite(state.forearmScaleY)) forearm.scale.y = state.forearmScaleY;
-      return;
-    }
+    if (!['windup', 'contact', 'recovery'].includes(state.phase)) return;
     const windupDuration = Math.max(CIVILIAN_COUNTER_WINDUP_MIN, (state.timing?.contactMs || 180) / 1000);
     const windup = state.phase === 'windup'
       ? THREE.MathUtils.clamp((elapsed - state.windupStartedAt) / windupDuration, 0, 1)
       : 1;
+    const recoveryProgress = state.phase === 'recovery'
+      ? THREE.MathUtils.clamp(
+        (elapsed - (state.recoveryUntil - CIVILIAN_COUNTER_RECOVERY)) / CIVILIAN_COUNTER_RECOVERY,
+        0,
+        1,
+      )
+      : 0;
     const recovery = state.phase === 'recovery'
-      ? THREE.MathUtils.clamp((state.recoveryUntil - elapsed) / CIVILIAN_COUNTER_RECOVERY, 0, 1)
+      ? 1 - THREE.MathUtils.smoothstep(recoveryProgress, 0.58, 1)
       : 1;
     const power = windup * recovery;
     const shoulderSide = state.hand === 'left' ? -1 : 1;
-    const extension = state.phase === 'windup' ? windup : 1;
-    if (!Number.isFinite(state.armScaleY)) state.armScaleY = arm.scale.y;
-    if (!Number.isFinite(state.forearmScaleY)) state.forearmScaleY = forearm.scale.y;
     // `animate()` owns legs and locomotion. This additive layer touches only
     // the torso/shoulder/elbow/forearm/hand chain, preserving grounded feet
     // and the route's root position through the complete counter.
-    userData.body.rotation.x -= 0.22 * power;
-    userData.body.rotation.z += shoulderSide * 0.18 * power;
-    // Windup visibly folds the fist back toward the chest; contact opens the
-    // same shoulder → elbow → forearm chain into a long, readable reach.
-    arm.rotation.x += THREE.MathUtils.lerp(-0.48, -1.38, extension) * power;
-    arm.rotation.z += shoulderSide * THREE.MathUtils.lerp(0.24, 0.38, extension) * power;
-    forearm.rotation.x += THREE.MathUtils.lerp(1.28, 0.18, extension) * power;
-    forearm.rotation.z += shoulderSide * 0.16 * power;
-    // Share the reach across upper and lower arm so the contact silhouette
-    // stays proportionate rather than reading as a telescoping forearm.
-    arm.scale.y = state.armScaleY * (1 + 0.45 * extension * power);
-    forearm.scale.y = state.forearmScaleY * (1 + 0.16 * extension * power);
+    const whiff = state.phase === 'recovery' && state.lastEvent?.hit === false;
+    if (state.phase === 'windup') {
+      // Pull the striking shoulder away and fold the elbow across the ribs.
+      // This anticipation is deliberately compact and opposite the contact
+      // line so even the shortest windup reads before the fixed-chain solve.
+      userData.body.rotation.x -= 0.2 * power;
+      userData.body.rotation.z += shoulderSide * 0.2 * power;
+      arm.rotation.x += 0.18 * power;
+      arm.rotation.y -= shoulderSide * 0.16 * power;
+      arm.rotation.z += shoulderSide * 1.22 * power;
+      forearm.rotation.x += 2.08 * power;
+      forearm.rotation.z -= shoulderSide * 0.34 * power;
+    } else if (whiff) {
+      // A miss carries past the target instead of recoiling along the contact
+      // line. The feet remain planted while the torso and bent elbow sell the
+      // lost momentum during the ordinary recovery window.
+      userData.body.rotation.x += 0.2 * power;
+      userData.body.rotation.z -= shoulderSide * 0.34 * power;
+      arm.rotation.x -= 1.18 * power;
+      arm.rotation.y += shoulderSide * 0.34 * power;
+      arm.rotation.z -= shoulderSide * 0.42 * power;
+      forearm.rotation.x += 0.46 * power;
+      forearm.rotation.z += shoulderSide * 0.28 * power;
+    } else {
+      // Rotate the chest into contact, then solve the unscaled shoulder/elbow
+      // chain toward the live torso. Recovery smoothly releases this solve;
+      // neither bone position nor scale changes at runtime.
+      userData.body.rotation.x += 0.35 * power;
+      userData.body.rotation.y -= shoulderSide * 1.25 * power;
+      userData.body.rotation.z -= shoulderSide * 0.08 * power;
+      const context = getCivilianCounterContext?.() || null;
+      const heldTarget = state.phase === 'recovery'
+        && state.lastEvent?.hit === true
+        && recoveryProgress <= 0.58
+        && Number.isFinite(state.lastEvent.target?.x)
+        && Number.isFinite(state.lastEvent.target?.y)
+        && Number.isFinite(state.lastEvent.target?.z);
+      let hasTarget = false;
+      if (heldTarget) {
+        counterTargetPoint.set(
+          state.lastEvent.target.x,
+          state.lastEvent.target.y,
+          state.lastEvent.target.z,
+        );
+        hasTarget = true;
+      } else {
+        hasTarget = setCivilianCounterTarget(data, context);
+      }
+      if (hasTarget) {
+        counterArmBaseQuaternion.copy(arm.quaternion);
+        counterForearmBaseQuaternion.copy(forearm.quaternion);
+        if (aimCivilianCounterArmAtTarget(data, state, counterTargetPoint)) {
+          counterArmTargetQuaternion.copy(arm.quaternion);
+          counterForearmTargetQuaternion.copy(forearm.quaternion);
+          arm.quaternion.slerpQuaternions(
+            counterArmBaseQuaternion,
+            counterArmTargetQuaternion,
+            power,
+          );
+          forearm.quaternion.slerpQuaternions(
+            counterForearmBaseQuaternion,
+            counterForearmTargetQuaternion,
+            power,
+          );
+        }
+      }
+    }
     const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
-    if (hand) hand.rotation.x -= 0.34 * power;
+    if (hand) {
+      hand.rotation.x += (whiff ? 0.18 : -0.34) * power;
+      hand.rotation.z -= shoulderSide * (whiff ? 0.24 : 0.08) * power;
+    }
   }
 
   function orientCivilianCounterTowardPlayer(data, delta) {
@@ -4746,21 +4844,59 @@ export function createPedestrianSystem({
     const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
     const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
     if (!arm?.parent || !forearm?.parent || !targetPoint) return false;
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (!hand?.parent) return false;
     data.mesh.updateMatrixWorld(true);
     arm.getWorldPosition(counterShoulderPoint);
+    forearm.getWorldPosition(counterElbowPoint);
+    hand.getWorldPosition(counterHandCenter);
+    const upperLength = counterShoulderPoint.distanceTo(counterElbowPoint);
+    const forearmLength = counterElbowPoint.distanceTo(counterHandCenter);
+    if (upperLength <= 1e-5 || forearmLength <= 1e-5) return false;
     counterFistDirection.subVectors(targetPoint, counterShoulderPoint);
-    if (counterFistDirection.lengthSq() <= 1e-6) return false;
-    counterFistDirection.normalize();
+    const targetDistance = counterFistDirection.length();
+    if (targetDistance <= 1e-5) return false;
+    counterFistDirection.multiplyScalar(1 / targetDistance);
+
+    // Analytic two-bone IK with a stable outward/upward elbow pole. Clamp
+    // unreachable targets to the authored chain length; the grounded closing
+    // step and torso rotation supply the remaining reach without telescoping.
+    const solvedDistance = THREE.MathUtils.clamp(
+      targetDistance,
+      Math.abs(upperLength - forearmLength) + 1e-4,
+      upperLength + forearmLength - 0.004,
+    );
+    const along = (
+      upperLength * upperLength - forearmLength * forearmLength
+      + solvedDistance * solvedDistance
+    ) / (2 * solvedDistance);
+    const bend = Math.sqrt(Math.max(0, upperLength * upperLength - along * along));
+    const shoulderSide = state.hand === 'left' ? -1 : 1;
+    counterPoleDirection.set(
+      shoulderSide * Math.cos(data.heading),
+      0.9,
+      -shoulderSide * Math.sin(data.heading),
+    );
+    counterPoleDirection.addScaledVector(
+      counterFistDirection,
+      -counterPoleDirection.dot(counterFistDirection),
+    );
+    if (counterPoleDirection.lengthSq() <= 1e-6) counterPoleDirection.set(0, 1, 0);
+    counterPoleDirection.normalize();
+    counterSolvedElbow.copy(counterShoulderPoint)
+      .addScaledVector(counterFistDirection, along)
+      .addScaledVector(counterPoleDirection, bend);
+    counterSolvedHand.copy(counterShoulderPoint).addScaledVector(counterFistDirection, solvedDistance);
+
+    counterLocalDirection.subVectors(counterSolvedElbow, counterShoulderPoint).normalize();
     arm.parent.getWorldQuaternion(counterParentQuaternion).invert();
-    counterLocalDirection.copy(counterFistDirection).applyQuaternion(counterParentQuaternion).normalize();
+    counterLocalDirection.applyQuaternion(counterParentQuaternion).normalize();
     arm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
     data.mesh.updateMatrixWorld(true);
     forearm.getWorldPosition(counterElbowPoint);
-    counterFistDirection.subVectors(targetPoint, counterElbowPoint);
-    if (counterFistDirection.lengthSq() <= 1e-6) return false;
-    counterFistDirection.normalize();
+    counterLocalDirection.subVectors(counterSolvedHand, counterElbowPoint).normalize();
     forearm.parent.getWorldQuaternion(counterParentQuaternion).invert();
-    counterLocalDirection.copy(counterFistDirection).applyQuaternion(counterParentQuaternion).normalize();
+    counterLocalDirection.applyQuaternion(counterParentQuaternion).normalize();
     forearm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
     return true;
   }
@@ -4772,24 +4908,6 @@ export function createPedestrianSystem({
     const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
     if (!hand?.getWorldPosition) return null;
     if (align) aimCivilianCounterArmAtTarget(data, state, targetPoint);
-    const baseScale = Number.isFinite(state.forearmScaleY) ? state.forearmScaleY : forearm.scale.y;
-    let bestScale = forearm.scale.y;
-    let bestGap = Infinity;
-    const samples = align && targetPoint ? 25 : 1;
-    for (let index = 0; index < samples; index += 1) {
-      // The player/pedestrian collision shells retain ~1.2 m root clearance.
-      // Extend the existing forearm segment along its solved axis rather than
-      // moving a root or detaching the fist; this preserves a continuous rig.
-      if (samples > 1) forearm.scale.y = baseScale * (0.72 + index * (1.43 / (samples - 1)));
-      data.mesh.updateMatrixWorld(true);
-      hand.getWorldPosition(counterHandCenter);
-      const gap = targetPoint ? counterHandCenter.distanceToSquared(targetPoint) : 0;
-      if (gap < bestGap) {
-        bestGap = gap;
-        bestScale = forearm.scale.y;
-      }
-    }
-    forearm.scale.y = bestScale;
     data.mesh.updateMatrixWorld(true);
     arm.getWorldPosition(counterShoulderPoint);
     forearm.getWorldPosition(counterElbowPoint);
@@ -4810,6 +4928,14 @@ export function createPedestrianSystem({
       elbow: { x: counterElbowPoint.x, y: counterElbowPoint.y, z: counterElbowPoint.z },
       handCenter: { x: counterHandCenter.x, y: counterHandCenter.y, z: counterHandCenter.z },
       fist: { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z },
+      lengths: Object.freeze({
+        upperArm: Math.round(counterShoulderPoint.distanceTo(counterElbowPoint) * 10000) / 10000,
+        forearm: Math.round(counterElbowPoint.distanceTo(counterHandCenter) * 10000) / 10000,
+      }),
+      scales: Object.freeze({
+        upperArm: Object.freeze({ x: arm.scale.x, y: arm.scale.y, z: arm.scale.z }),
+        forearm: Object.freeze({ x: forearm.scale.x, y: forearm.scale.y, z: forearm.scale.z }),
+      }),
       contactGap: Math.max(0, handDistance - fistRadius),
     };
   }
@@ -4821,14 +4947,7 @@ export function createPedestrianSystem({
     const identity = residentIdentityFor(data);
     const context = getCivilianCounterContext?.() || null;
     const playerPosition = context?.position;
-    const torsoPosition = context?.torsoPosition;
-    if (playerPosition && Number.isFinite(playerPosition.x) && Number.isFinite(playerPosition.z)) {
-      counterTargetPoint.set(
-        Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
-        Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04,
-        Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
-      );
-    } else {
+    if (!setCivilianCounterTarget(data, context)) {
       counterTargetPoint.set(data.mesh.position.x, data.mesh.position.y + 1.06, data.mesh.position.z);
     }
     const armChain = readCivilianCounterArmChain(data, state, counterTargetPoint, { align: true });
@@ -4872,6 +4991,9 @@ export function createPedestrianSystem({
         elbow: Object.freeze(armChain?.elbow ?? { x: null, y: null, z: null }),
         handCenter: Object.freeze(armChain?.handCenter ?? { x: null, y: null, z: null }),
         fist: Object.freeze(armChain?.fist ?? { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z }),
+        neutral: state.neutralArmTelemetry,
+        lengths: armChain?.lengths ?? null,
+        scales: armChain?.scales ?? null,
         contactGap: Number.isFinite(handGap) ? Math.round(handGap * 1000) / 1000 : null,
       }),
       hit,
@@ -5290,7 +5412,9 @@ export function createPedestrianSystem({
       } else {
         tickNpcBehavior(data, delta);
       }
-      if (qaWitnessResidentId === residentIdentityFor(data).id && qaWitnessPosition) {
+      if (!counterHoldsRoute
+        && qaWitnessResidentId === residentIdentityFor(data).id
+        && qaWitnessPosition) {
         data.mesh.position.set(
           qaWitnessPosition.x,
           qaWitnessPosition.y,
