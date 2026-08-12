@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-metric-tile-set",
+  "status": "provisional-vertical-unrealized",
+  "coordinateReference": {
+    "horizontal": { "crs": "EPSG:26910", "unit": "metre" },
+    "vertical": { "datum": "source-declared-navd88-unrealized", "unit": "metre" },
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized"
+  },
+  "tiling": { "scheme": "rectilinear-utm", "tileSizeMetres": 384 },
+  "tiles": [
+    {
+      "id": "epsg26910-1440-10893",
+      "gridIndex": [1440, 10893],
+      "originEpsg26910VerticalMetres": [552960, 4182912, 0],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.lod0.glb",
+        "sha256": "sha256:342bbb03ee5c2fa4730cfc6159b40a3881ca9db7ac6db8cd1af561adc2f0b506"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.receipt.json",
+        "sha256": "sha256:b0cf00bcfa822e9a5c826584b6e607b65d65c94c253dda13fe9d83a707f125e2"
+      }
+    },
+    {
+      "id": "epsg26910-1441-10893",
+      "gridIndex": [1441, 10893],
+      "originEpsg26910VerticalMetres": [553344, 4182912, 0],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+        "sha256": "sha256:2322e2d8257ae3fe8c0ed25c6173dd929b9340ea9cd121a946836f7e1d3cdf12"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
+        "sha256": "sha256:685be73c5f53178cb53ed696ad3fa3cab947557cc617cbf0da30448f761943c9"
+      }
+    }
+  ]
+}

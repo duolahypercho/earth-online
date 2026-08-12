@@ -75,6 +75,9 @@ button { font: inherit; }
 .specimen dl div { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid rgba(231,242,224,.1); font-size: 9px; }
 .specimen dt { color: rgba(233,238,230,.5); }
 .specimen dd { margin: 0; }
+.tile-list { margin: 0 0 16px; padding: 9px 0; border-top: 1px solid rgba(231,242,224,.1); border-bottom: 1px solid rgba(231,242,224,.1); }
+.tile-list span { display: block; margin-bottom: 6px; color: rgba(233,238,230,.5); font-size: 8px; letter-spacing: .11em; text-transform: uppercase; }
+.tile-list p { max-height: 54px; margin: 0; overflow: auto; color: var(--acid); font-size: 8px; line-height: 1.6; scrollbar-color: rgba(215,255,72,.55) transparent; }
 .vertical-note { margin: 0; font-size: 8px; line-height: 1.6; color: rgba(233,238,230,.55); }
 .vertical-note i { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #ffb23e; }
 

@@ -10,14 +10,14 @@
   </head>
   <body>
     <main id="app">
-      <canvas id="map-canvas" aria-label="Three-dimensional Ferry and Embarcadero map tile"></canvas>
+      <canvas id="map-canvas" aria-label="Three-dimensional metric San Francisco tile viewer"></canvas>
 
       <header class="masthead">
         <div class="identity">
-          <span class="index">01</span>
+          <span class="index" id="tile-index">01</span>
           <div>
-            <p>San Francisco / metric reconstruction</p>
-            <h1>FERRY TILE</h1>
+            <p>San Francisco / metric tile stream</p>
+            <h1>TILE ARRAY</h1>
           </div>
         </div>
         <div class="datum">
@@ -27,15 +27,20 @@
       </header>
 
       <aside class="specimen" aria-label="Tile metadata">
-        <p class="eyebrow">LIVE SOURCE ARTIFACT</p>
+        <p class="eyebrow" id="stream-source">DISCOVERING TILE MANIFEST</p>
         <div class="rule"></div>
         <dl>
-          <div><dt>Tile</dt><dd>1441 / 10893</dd></div>
-          <div><dt>Extent</dt><dd>384 × 384 m</dd></div>
+          <div><dt>Anchor</dt><dd id="tile-anchor">1441 / 10893</dd></div>
+          <div><dt>Loaded</dt><dd id="loaded-count">0 / 0</dd></div>
+          <div><dt>Extent</dt><dd id="tile-extent">384 × 384 m</dd></div>
           <div><dt>Road ways</dt><dd id="road-count">—</dd></div>
           <div><dt>Buildings</dt><dd id="building-count">—</dd></div>
           <div><dt>Terrain</dt><dd id="terrain-resolution">—</dd></div>
         </dl>
+        <div class="tile-list" aria-live="polite">
+          <span>Resident tiles</span>
+          <p id="loaded-tiles">Awaiting manifest…</p>
+        </div>
         <p class="vertical-note"><i></i> Elevation is source-declared NAVD88, realization unresolved.</p>
       </aside>
 
@@ -52,13 +57,13 @@
           <button type="button" data-view="district">District</button>
           <button type="button" data-view="plan">Plan</button>
         </div>
-        <p id="load-state" role="status">Reading verified GLB…</p>
+        <p id="load-state" role="status">Discovering metric manifest…</p>
       </footer>
 
       <div class="loading" id="loading">
         <span>SF</span>
         <div><i id="load-progress"></i></div>
-        <p>Loading the first 1:1 tile</p>
+        <p>Preparing the metric tile stream</p>
       </div>
     </main>
     <script type="module" src="/src/sf-map/main.js"></script>
