@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-horizontal-geometry-source-lock",
+  "status": "production-horizontal-geometry-authorized",
+  "scope": "citywide-horizontal-coverage-planning-authorized",
+  "id": "sf-datasf-shoreline-horizontal-geometry-v1",
+  "title": "San Francisco Shoreline and Islands horizontal geometry source lock",
+  "sourceId": "datasf-shoreline-and-islands",
+  "nativeHorizontalCrs": "EPSG:4326",
+  "nativeVerticalDatum": "not-provided-by-2d-source",
+  "source": {
+    "publisher": "City and County of San Francisco",
+    "url": "https://data.sfgov.org/api/geospatial/txuc-3kzm?method=export&format=GeoJSON",
+    "format": "GeoJSON FeatureCollection",
+    "license": "PDDL-1.0",
+    "attribution": "City and County of San Francisco",
+    "snapshot": {
+      "identity": "checked-in DataSF Shoreline and Islands GeoJSON bytes",
+      "localPath": "public/data/sf/sf-shoreline.geojson",
+      "bytes": 1510466,
+      "sha256": "a3023288edff7a91f84f20ca54fc55693b2f6a4fa4fb396807378f31be80f01d",
+      "retrievedAt": "2026-08-02",
+      "upstreamSnapshotTimestamp": "not supplied by the downloaded GeoJSON; byte identity above is authoritative"
+    },
+    "coordinateReference": {
+      "horizontal": "WGS 84 longitude/latitude coordinates serialized in GeoJSON order (EPSG:4326)",
+      "coordinateOrder": ["longitude", "latitude"],
+      "vertical": "No elevation coordinate or vertical datum is supplied by this 2D geometry source."
+    }
+  },
+  "approvedScope": {
+    "place": "All polygons present in the locked DataSF Shoreline and Islands feature, including mainland, bay islands, and remote San Francisco islands",
+    "coverageWgs84": [-123.1085819912249, 37.693248766299995, -122.32768100228465, 37.92974708991389],
+    "geometry": ["Feature 0 MultiPolygon outer and inner rings used to select metric map tiles"],
+    "permitted": [
+      "horizontal CRS transformation through sf-ferry-3dep-2023-horizontal-crs-v1",
+      "deterministic 384 metre tile coverage planning",
+      "one-tile coastal context halo around land-intersecting tiles"
+    ],
+    "prohibited": [
+      "claiming this source supplies terrain height or a native vertical datum",
+      "using the coverage plan as proof that terrain or rendered tile artifacts exist",
+      "preview-frame placement, coordinate rescaling, or vertical exaggeration",
+      "survey-grade, sub-metre, or exact positional claims"
+    ]
+  }
+}

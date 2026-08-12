@@ -18,6 +18,8 @@
     "build:sf-metric-tile": "node scripts/world-tiles/build-sf-metric-tile-v1.mjs",
     "verify:sf-metric-tile": "node scripts/world-tiles/verify-sf-metric-tile-v1.mjs",
     "verify:sf-metric-tile-set": "node scripts/world-tiles/verify-sf-metric-tile-set-v1.mjs",
+    "plan:sf-metric-tile-coverage": "node scripts/world-tiles/plan-sf-metric-tile-coverage-v1.mjs",
+    "verify:sf-metric-tile-coverage": "node scripts/world-tiles/verify-sf-metric-tile-coverage-v1.mjs",
     "verify:street-life-vignette": "node scripts/verify-street-life-vignette.mjs",
     "qa:realmap": "node scripts/qa-realmap.mjs",
     "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
