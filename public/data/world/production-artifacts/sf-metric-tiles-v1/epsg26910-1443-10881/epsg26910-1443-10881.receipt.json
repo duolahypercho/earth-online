@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-metric-tile-build-receipt",
+  "id": "epsg26910-1443-10881",
+  "status": "provisional-vertical-unrealized",
+  "tile": {
+    "identity": "epsg26910-1443-10881",
+    "gridIndex": [
+      1443,
+      10881
+    ],
+    "boundsEpsg26910Metres": [
+      554112,
+      4178304,
+      554496,
+      4178688
+    ],
+    "originEpsg26910VerticalMetres": [
+      554112,
+      4178304,
+      0
+    ],
+    "originTupleOrder": [
+      "easting",
+      "northing",
+      "vertical"
+    ],
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+    "vertexAxes": {
+      "x": "eastMinusOriginEasting",
+      "y": "verticalMinusOriginVertical",
+      "z": "northMinusOriginNorthing"
+    },
+    "scale": 1
+  },
+  "source": {
+    "osmPbf": {
+      "path": "public/data/sf/SanFrancisco.osm.pbf",
+      "bytes": 32742133,
+      "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae",
+      "queryBoundsWgs84": {
+        "west": -122.38721258714364,
+        "east": -122.37990001979638,
+        "south": 37.74929399623374,
+        "north": 37.755024163800805
+      }
+    },
+    "geoTiffs": [
+      {
+        "path": "Data/raw/usgs-3dep/ca-sanfrancisco-b23-x55y418/USGS_1M_10_x55y418_CA_SanFrancisco_B23.tif",
+        "bytes": 147948547,
+        "sha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+        "ownershipCell": "55,417",
+        "verticalCertification": "source-declared-navd88-unrealized",
+        "reader": "geotiff-window-reader-v1",
+        "window": {
+          "column": 4100,
+          "row": 1300,
+          "width": 422,
+          "height": 422
+        }
+      }
+    ]
+  },
+  "counts": {
+    "osmCandidateWays": 208,
+    "emittedCoastlineWays": 1,
+    "emittedRoadWays": 61,
+    "emittedBuildingWays": 12,
+    "packageSourceFeatures": 74,
+    "terrainVertices": 138254,
+    "waterVertices": 10496,
+    "coastlineVertices": 52,
+    "roadVertices": 1117,
+    "buildingVertices": 150
+  },
+  "surfaceClassification": {
+    "authority": "OpenStreetMap natural=coastline ways in the byte-locked PBF",
+    "coastlineDirectionRule": "OSM coastline direction: land on left, water on right",
+    "sourceOsmWayIds": [
+      153269399
+    ],
+    "landAreaSquareMetres": 137349.800973,
+    "waterAreaSquareMetres": 10106.199027,
+    "partitionAreaSquareMetres": 147456,
+    "waterVerticalMode": "terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level",
+    "terrainWaterOverlapAreaSquareMetres": 0
+  },
+  "ferryBuilding": null,
+  "lods": [
+    {
+      "level": 0,
+      "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "translationMetres": [
+        0,
+        0,
+        0
+      ],
+      "maxHorizontalDeviationMetres": 0.000002,
+      "maxVerticalDeviationMetres": 0.000002,
+      "artifactHash": "sha256:8f635b9f053eec5b1bacb64463fbd9af9665516db58927f6cc1d3e32e521e29d",
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1443-10881/epsg26910-1443-10881.lod0.glb",
+      "bytes": 3594972,
+      "boundsLocalMetres": {
+        "min": [
+          0,
+          -1.07,
+          0
+        ],
+        "max": [
+          384,
+          14.731939,
+          384
+        ]
+      },
+      "meshStats": {
+        "terrain": {
+          "vertices": 138886,
+          "indices": 824838,
+          "triangles": 274946,
+          "sourceOsmWayCount": 0,
+          "primitiveChunks": 3
+        },
+        "water": {
+          "vertices": 10496,
+          "indices": 61458,
+          "triangles": 20486,
+          "sourceOsmWayCount": 1,
+          "primitiveChunks": 1
+        },
+        "coastline": {
+          "vertices": 52,
+          "indices": 78,
+          "triangles": 26,
+          "sourceOsmWayCount": 1,
+          "primitiveChunks": 1
+        },
+        "roads": {
+          "vertices": 1117,
+          "indices": 3453,
+          "triangles": 1151,
+          "sourceOsmWayCount": 61,
+          "primitiveChunks": 1
+        },
+        "buildings": {
+          "vertices": 150,
+          "indices": 603,
+          "triangles": 201,
+          "sourceOsmWayCount": 12,
+          "primitiveChunks": 1
+        }
+      }
+    }
+  ],
+  "relationCoverage": {
+    "implemented": false,
+    "statement": "Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage."
+  },
+  "deterministicInputs": {
+    "availableLods": [
+      0
+    ],
+    "terrainGridStepMetres": 1,
+    "terrainSampling": "canonical-10km-cell-owned-direct-native-pixel-float32-le",
+    "terrainCellOwnership": "half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon",
+    "surfaceGridMetres": 0.001,
+    "lod0Construction": "1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings",
+    "lod0DeviationMetres": 0,
+    "geometryQuantizationDecimalPlaces": 6,
+    "buildingHeightPolicy": "OSM height, else building:levels*3.2m, else 9.6m",
+    "roadWidthPolicy": "OSM width, else deterministic highway-class/lanes table"
+  }
+}
