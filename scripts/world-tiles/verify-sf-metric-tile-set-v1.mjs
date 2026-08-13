@@ -14,7 +14,7 @@ assert(manifest.tiles.length >= 3, 'Runtime set must retain at least the three v
 const tileIds = manifest.tiles.map(({ id }) => id);
 assert.equal(new Set(tileIds).size, tileIds.length, 'Runtime manifest tile IDs must be unique');
 assert.deepEqual([...manifest.tiles].sort((a, b) => a.gridIndex[1] - b.gridIndex[1] || a.gridIndex[0] - b.gridIndex[0]).map(({ id }) => id), tileIds, 'Runtime tiles must use stable south-to-north, west-to-east ordering');
-for (const required of ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1441-10894']) assert(tileIds.includes(required), `Runtime set lost required tile ${required}`);
+for (const required of ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1440-10894']) assert(tileIds.includes(required), `Runtime set lost required source-ready tile ${required}`);
 for (const tile of manifest.tiles) {
   assert.deepEqual(tile.originEpsg26910VerticalMetres, [tile.gridIndex[0] * 384, tile.gridIndex[1] * 384, 0]);
   const [glb, receiptBytes] = await Promise.all([readFile(path.join(ROOT, tile.lod0.path)), readFile(path.join(ROOT, tile.receipt.path))]);

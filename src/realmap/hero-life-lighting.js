@@ -150,8 +150,21 @@ export function createHeroLifeLighting(options = {}) {
 
   // Ten fixed instanced calls and eight shared materials are the intentional
   // ceiling. The presentation will not scale draw calls with simulation size.
-  const torsoGeometry = new THREE.CapsuleGeometry(0.24, 0.62, 4, 8);
-  const headGeometry = new THREE.SphereGeometry(0.145, 10, 8);
+  // The distant pool still has to read as people in the Ferry establishing
+  // shot.  Keep its five instanced calls, but give the shared forms a real
+  // shoulder line, jacket hem, face direction, and rounded limb ends instead
+  // of the old featureless capsule-and-stick construction.
+  const torsoCore = new THREE.CapsuleGeometry(0.24, 0.57, 4, 8);
+  const shoulders = new THREE.SphereGeometry(0.25, 10, 6).scale(1.12, 0.48, 0.78).translate(0, 0.37, 0);
+  const jacketHem = new THREE.CylinderGeometry(0.235, 0.27, 0.16, 10).translate(0, -0.35, 0);
+  const torsoGeometry = mergeGeometries([torsoCore, shoulders, jacketHem]);
+  [torsoCore, shoulders, jacketHem].forEach((geometry) => geometry.dispose());
+  if (!torsoGeometry) throw new Error('Ferry hero pedestrian torso geometry merge is unavailable');
+  const cranium = new THREE.SphereGeometry(0.145, 10, 8);
+  const nose = new THREE.SphereGeometry(0.035, 6, 4).scale(0.68, 0.82, 1).translate(0, -0.012, 0.142);
+  const headGeometry = mergeGeometries([cranium, nose]);
+  [cranium, nose].forEach((geometry) => geometry.dispose());
+  if (!headGeometry) throw new Error('Ferry hero pedestrian head geometry merge is unavailable');
   const limbGeometry = new THREE.CapsuleGeometry(0.07, 0.56, 3, 6);
   const shadowGeometry = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
   const vehicleBodyGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -162,7 +175,7 @@ export function createHeroLifeLighting(options = {}) {
 
   const clothingMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.72, metalness: 0.02 });
   const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.82 });
-  const trouserMaterial = new THREE.MeshStandardMaterial({ color: 0x27323a, roughness: 0.88 });
+  const trouserMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.88 });
   const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x081015, transparent: true, opacity: 0.22, depthWrite: false });
   const vehicleMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.33, metalness: 0.22, clearcoat: 0.35, clearcoatRoughness: 0.15 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: 0x1c2e39, roughness: 0.18, metalness: 0.12, transparent: true, opacity: 0.84 });
@@ -269,6 +282,12 @@ export function createHeroLifeLighting(options = {}) {
   const detailWorldQuaternion = new THREE.Quaternion();
   const detailLocalQuaternion = new THREE.Quaternion();
   const detailInverseGroupQuaternion = new THREE.Quaternion();
+  const limbSwing = new THREE.Quaternion();
+  const counterSwing = new THREE.Quaternion();
+  const torsoSway = new THREE.Quaternion();
+  const fallbackTrouser = new THREE.Color();
+  const axisX = new THREE.Vector3(1, 0, 0);
+  const axisZ = new THREE.Vector3(0, 0, 1);
 
   function sourceMatrix(source) {
     source.updateWorldMatrix(true, false);
@@ -496,18 +515,32 @@ export function createHeroLifeLighting(options = {}) {
       return;
     }
     if (detailSourceSet.has(entry.source)) return;
-    const stride = Math.sin(elapsedSeconds * 5.3 + slot * 1.71) * 0.16;
-    set(meshes.torso, slot, world, 0, 1.13, 0, 0.48, 0.98, 0.36);
-    set(meshes.head, slot, world, 0, 1.74, 0.01, 0.29, 0.29, 0.29);
-    set(meshes.pedestrianShadow, slot, world, 0, 0.018, 0, 0.31, 0.47, 1);
-    set(meshes.leg, slot * 2, world, -0.12, 0.48, stride, 0.13, 0.64, 0.13);
-    set(meshes.leg, slot * 2 + 1, world, 0.12, 0.48, -stride, 0.13, 0.64, 0.13);
-    set(meshes.arm, slot * 2, world, -0.31, 1.15, -stride * 0.9, 0.11, 0.61, 0.11);
-    set(meshes.arm, slot * 2 + 1, world, 0.31, 1.15, stride * 0.9, 0.11, 0.61, 0.11);
+    const cadence = 4.75 + (slot % 4) * 0.22;
+    const stride = Math.sin(elapsedSeconds * cadence + slot * 1.71) * 0.16;
+    const step = Math.sin(elapsedSeconds * cadence + slot * 1.71);
+    const adultScale = 0.94 + (slot % 5) * 0.025;
+    // The source owns heading and ground position. These rotations are local
+    // presentation-only motion, so they cannot alter path following or the
+    // authored Ferry crossing timings.
+    torsoSway.setFromAxisAngle(axisZ, step * 0.018);
+    limbSwing.setFromAxisAngle(axisX, step * 0.34);
+    counterSwing.setFromAxisAngle(axisX, -step * 0.34);
+    set(meshes.torso, slot, world, 0, 1.13, 0, 0.51 * adultScale, 0.98 * adultScale, 0.4 * adultScale, torsoSway);
+    set(meshes.head, slot, world, 0, 1.77 * adultScale, 0.012, 0.3 * adultScale, 0.3 * adultScale, 0.3 * adultScale);
+    set(meshes.pedestrianShadow, slot, world, 0, 0.018, 0, 0.33 * adultScale, 0.5 * adultScale, 1);
+    set(meshes.leg, slot * 2, world, -0.12, 0.48 * adultScale, stride, 0.13 * adultScale, 0.64 * adultScale, 0.13 * adultScale, limbSwing);
+    set(meshes.leg, slot * 2 + 1, world, 0.12, 0.48 * adultScale, -stride, 0.13 * adultScale, 0.64 * adultScale, 0.13 * adultScale, counterSwing);
+    set(meshes.arm, slot * 2, world, -0.31, 1.17 * adultScale, -stride * 0.9, 0.11 * adultScale, 0.61 * adultScale, 0.11 * adultScale, counterSwing);
+    set(meshes.arm, slot * 2 + 1, world, 0.31, 1.17 * adultScale, stride * 0.9, 0.11 * adultScale, 0.61 * adultScale, 0.11 * adultScale, limbSwing);
     meshes.torso.setColorAt(slot, entry.color);
     meshes.head.setColorAt(slot, new THREE.Color(SKIN_PALETTE[slot % SKIN_PALETTE.length]));
     meshes.arm.setColorAt(slot * 2, entry.color);
     meshes.arm.setColorAt(slot * 2 + 1, entry.color);
+    // Carry a muted version of each jacket palette into the trousers. This
+    // adds individual wardrobe reads without spending another material/draw.
+    fallbackTrouser.copy(entry.color).multiplyScalar(0.38 + (slot % 3) * 0.035);
+    meshes.leg.setColorAt(slot * 2, fallbackTrouser);
+    meshes.leg.setColorAt(slot * 2 + 1, fallbackTrouser);
     stats.pedestriansActive += 1;
     stats.fallbackActors += 1;
   }

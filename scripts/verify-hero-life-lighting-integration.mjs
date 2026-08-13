@@ -84,8 +84,10 @@ try {
   if (lifecycle.disposed.active
     || lifecycle.disposed.lifecycle?.restored !== lifecycle.disposed.lifecycle?.expected
     || lifecycle.disposed.lifecycle?.expected !== after.stats.pedestriansAttached
+    || lifecycle.disposed.lifecycle?.sourceRestored !== lifecycle.disposed.lifecycle?.sourceExpected
+    || lifecycle.disposed.lifecycle?.sourceExpected !== after.sourcePedestrians
     || !lifecycle.rebuilt.active
-    || lifecycle.rebuilt.hiddenSourcePedestrians !== after.stats.pedestriansAttached) {
+    || lifecycle.rebuilt.hiddenSourcePedestrians !== after.sourcePedestrians) {
     fail('life layer did not restore and rebuild exact source visibility', lifecycle);
   }
 
