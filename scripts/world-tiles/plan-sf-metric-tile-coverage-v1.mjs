@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SHORELINE_PATH = path.join(ROOT, 'public/data/sf/sf-shoreline.geojson');
@@ -130,11 +131,29 @@ export async function buildSfMetricTileCoveragePlan() {
   }
   const rasterBounds = terrainLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
   const terrainRasterBounds = [rasterBounds[0], rasterBounds[1], rasterBounds[2], rasterBounds[3]];
-  const tiles = [...planned.values()].sort((a, b) => a.gridNorthing - b.gridNorthing || a.gridEasting - b.gridEasting).map((tile) => {
+  const reader = await openGeoTiffWindowReader(path.join(ROOT, terrainLock.raster.localRawCache));
+  const orderedTiles = [...planned.values()].sort((a, b) => a.gridNorthing - b.gridNorthing || a.gridEasting - b.gridEasting);
+  const readiness = new Map();
+  for (const tile of orderedTiles) {
     const minE = tile.gridEasting * TILE_SIZE; const minN = tile.gridNorthing * TILE_SIZE;
     const sourceBounds = [minE - SOURCE_BUFFER, minN - SOURCE_BUFFER, minE + TILE_SIZE + SOURCE_BUFFER, minN + TILE_SIZE + SOURCE_BUFFER];
-    const terrainAvailable = sourceBounds[0] >= terrainRasterBounds[0] && sourceBounds[1] >= terrainRasterBounds[1]
+    const insideRaster = sourceBounds[0] >= terrainRasterBounds[0] && sourceBounds[1] >= terrainRasterBounds[1]
       && sourceBounds[2] <= terrainRasterBounds[2] && sourceBounds[3] <= terrainRasterBounds[3];
+    let terrainAvailable = false;
+    let terrainReason = 'missing-authorized-1m-terrain-source';
+    if (insideRaster) {
+      const topLeft = reader.modelToPixel(sourceBounds[0], sourceBounds[3]); const bottomRight = reader.modelToPixel(sourceBounds[2], sourceBounds[1]);
+      const column = Math.floor(topLeft.column); const row = Math.floor(topLeft.row); const right = Math.ceil(bottomRight.column) + 1; const bottom = Math.ceil(bottomRight.row) + 1;
+      const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
+      terrainAvailable = window.values.every((value) => value !== window.nodata && Number.isFinite(value));
+      terrainReason = terrainAvailable ? 'available-from-byte-locked-3dep-x55y419' : 'byte-locked-3dep-x55y419-contains-nodata';
+    }
+    readiness.set(tileKey(tile.gridEasting, tile.gridNorthing), { terrainAvailable, terrainReason });
+  }
+  await reader.close();
+  const tiles = orderedTiles.map((tile) => {
+    const minE = tile.gridEasting * TILE_SIZE; const minN = tile.gridNorthing * TILE_SIZE;
+    const { terrainAvailable, terrainReason } = readiness.get(tileKey(tile.gridEasting, tile.gridNorthing));
     return {
       id: tileId(tile.gridEasting, tile.gridNorthing),
       gridIndex: [tile.gridEasting, tile.gridNorthing],
@@ -143,7 +162,7 @@ export async function buildSfMetricTileCoveragePlan() {
       landPolygonIndices: [...tile.landPolygonIndices].sort((a, b) => a - b),
       sourceReadiness: {
         horizontalGeometry: 'available-from-byte-locked-datasf-and-osm',
-        terrainElevation: terrainAvailable ? 'available-from-byte-locked-3dep-x55y419' : 'missing-authorized-1m-terrain-source',
+        terrainElevation: terrainReason,
         buildReady: terrainAvailable,
       },
     };

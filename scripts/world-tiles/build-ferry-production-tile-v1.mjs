@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import parse from 'osm-pbf-parser';
 import through from 'through2';
 import { ShapeUtils, Vector2 } from 'three';
+import { triangulate as triangulateClipper } from 'clipper2-ts';
 import { booleanDifference, booleanUnion, triangulatePolygon } from './ferry-surface-boolean-v1.mjs';
 import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
 
@@ -310,6 +311,28 @@ function emitSurfacePolygon(target, polygon, sample, cache, label, lift = 0) {
   for (const face of result.triangles) triangle(target, indices[face[0]], indices[face[2]], indices[face[1]]);
 }
 
+function emitRoadPolygon(target, polygon, sample, cache, label) {
+  try {
+    emitSurfacePolygon(target, polygon, sample, cache, label, ROAD_LIFT);
+    return;
+  } catch (error) {
+    assert(error instanceof assert.AssertionError, `${label} Earcut failed unexpectedly: ${error.message}`);
+  }
+  const paths = [polygon.outer, ...(polygon.holes ?? [])].map((ring) => ring.map(([x, y]) => ({ x, y })));
+  const result = triangulateClipper(paths, false);
+  assert.equal(result.result, 0, `${label} Clipper triangulation failed`);
+  assert(result.solution.length, `${label} Clipper triangulation returned no triangles`);
+  for (const [triangleIndex, face] of result.solution.entries()) {
+    assert.equal(face.length, 3, `${label} triangle ${triangleIndex} is not triangular`);
+    const indices = face.map(({ x, y }) => {
+      const key = `${x},${y}`;
+      if (!cache.has(key)) { const [e, n] = fromTicks([x, y]); cache.set(key, vertex(target, e, sample(e, n) + ROAD_LIFT, n)); }
+      return cache.get(key);
+    });
+    triangle(target, indices[0], indices[2], indices[1]);
+  }
+}
+
 function emitCoastEdge(target, coastline, sample) {
   for (let index = 0; index < coastline.points.length - 1; index += 1) {
     const a = coastline.points[index]; const b = coastline.points[index + 1];
@@ -360,7 +383,7 @@ function bakeGeometry(features, sample) {
   }
   if (roadSurfaces.length) {
     const roadCache = new Map(); const roadNetwork = booleanUnion(roadSurfaces, `${TILE.id} road network`);
-    for (const [index, polygon] of roadNetwork.entries()) emitSurfacePolygon(roads, polygon, sample, roadCache, `${TILE.id} road network/${index}`, ROAD_LIFT);
+    for (const [index, polygon] of roadNetwork.entries()) emitRoadPolygon(roads, polygon, sample, roadCache, `${TILE.id} road network/${index}`);
   }
   for (const way of features.filter((item) => item.tags.building && item.refs[0] === item.refs.at(-1))) {
     const ring = clipPolygon(way.en.slice(0, -1)); if (ring.length < 3) continue; const faces = ShapeUtils.triangulateShape(ring.map(([e, n]) => new Vector2(e, n)), []); if (!faces.length) continue;
