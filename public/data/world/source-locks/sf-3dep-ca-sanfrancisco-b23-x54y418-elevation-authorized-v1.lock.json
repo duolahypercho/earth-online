@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-elevation-source-authorization",
+  "status": "source-declared-navd88-unrealized-elevation-sampling-authorized",
+  "scope": "provisional-elevation-sampling-only-vertical-production-prohibited",
+  "id": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+  "title": "San Francisco x54y418 provisional terrain elevation authorization",
+  "targetVerticalDatum": "source-declared-navd88-unrealized",
+  "nativeVerticalDatum": "source-declared-navd88-unrealized",
+  "sourceLock": { "id": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1", "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json", "sha256": "bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739" },
+  "sourceRaster": { "format": "GeoTIFF", "sha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f", "units": "metres", "surface": "bare-earth DEM", "sampleMethod": "Every package must bind the raster SHA-256 and replay exact native-pixel source-window evidence; any no-data value rejects the affected buffered tile." },
+  "approvedScope": { "coverageEpsg26910Metres": [539993.999977164, 4169994.0000295797, 550005.999977164, 4180006.0000295797], "permitted": ["sample valid bare-earth pixels as source-declared-navd88-unrealized values", "build deterministic provisional metric tiles with exact source-window evidence"], "prohibited": ["claiming realized NAVD88", "using no-data pixels as elevation", "vertical exaggeration", "claiming a fully vertically certified 1:1 artifact"] },
+  "evidence": { "projectMetadataVerticalDeclaration": "NAVD88 (Geoid18), project-level metadata", "sourceLockStatus": "source-locked-not-built", "limitation": "The raster has no vertical GeoKeys. This authorization remains provisional and source-qualified even though the project metadata names NAVD88 (Geoid18)." }
+}
