@@ -9,9 +9,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const MANIFEST_PATH = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json');
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const stableJson = (value) => `${JSON.stringify(value, null, 2)}\n`;
+const additions = process.argv.slice(2).flatMap((argument, index, args) => argument === '--add' ? [args[index + 1]] : []).filter(Boolean).map((value) => {
+  const [gridEasting, gridNorthing, ...extra] = value.split(',').map(Number);
+  assert(Number.isInteger(gridEasting) && Number.isInteger(gridNorthing) && !extra.length, `Invalid --add grid index ${value}`);
+  return { id: `epsg26910-${gridEasting}-${gridNorthing}`, gridIndex: [gridEasting, gridNorthing] };
+});
 
 const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'));
 assert.equal(manifest.kind, 'sf-metric-tile-set');
+const existingIds = new Set(manifest.tiles.map(({ id }) => id));
+for (const addition of additions) if (!existingIds.has(addition.id)) {
+  manifest.tiles.push({ ...addition, receipt: { path: `public/data/world/production-artifacts/sf-metric-tiles-v1/${addition.id}/${addition.id}.receipt.json` } });
+  existingIds.add(addition.id);
+}
 const tiles = [];
 for (const tile of manifest.tiles) {
   const receiptBytes = await readFile(path.join(ROOT, tile.receipt.path));
