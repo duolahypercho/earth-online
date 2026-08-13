@@ -84,6 +84,7 @@ const views = {
   district: { position: [-42, 240, 505], target: [185, 9, 190] },
   plan: { position: [192, 570, 192.01], target: [192, 0, 192] },
 };
+const viewFogDensity = { ferry: 0.00145, district: 0.00055, plan: 0.00018 };
 let activeView = 'ferry';
 
 function fitOverviewViews(descriptors) {
@@ -98,7 +99,10 @@ function fitOverviewViews(descriptors) {
   const planHeight = Math.max(depth / (2 * Math.tan(verticalFov / 2)), width / (2 * Math.tan(horizontalFov / 2))) * 1.12;
   views.plan = { position: [centerX, planHeight, centerZ + 0.01], target: [centerX, 0, centerZ] };
   views.district = { position: [centerX - span * 0.72, span * 0.62, centerZ + span * 0.58], target: [centerX, 8, centerZ] };
-  camera.far = Math.max(2400, planHeight * 1.5);
+  const districtDistance = span * Math.hypot(0.72, 0.62, 0.58);
+  viewFogDensity.plan = Math.min(0.00018, 0.28 / planHeight);
+  viewFogDensity.district = Math.min(0.00055, 0.45 / districtDistance);
+  camera.far = Math.max(2400, planHeight * 1.5, span * 2.5);
   camera.updateProjectionMatrix();
   controls.maxDistance = Math.max(1200, span * 1.4);
 }
@@ -107,7 +111,7 @@ function setView(name, immediate = false) {
   const view = views[name];
   if (!view) return;
   activeView = name;
-  scene.fog.density = name === 'plan' ? 0.00018 : name === 'district' ? 0.00055 : 0.00145;
+  scene.fog.density = viewFogDensity[name] ?? viewFogDensity.ferry;
   document.querySelectorAll('[data-view]').forEach((button) => button.classList.toggle('is-active', button.dataset.view === name));
   const destination = new THREE.Vector3(...view.position);
   const target = new THREE.Vector3(...view.target);
