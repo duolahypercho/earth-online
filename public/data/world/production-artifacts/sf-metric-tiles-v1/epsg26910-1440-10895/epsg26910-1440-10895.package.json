@@ -263,6 +263,53 @@
     },
     {
       "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/25489458",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+        "nativePixelWindow": {
+          "column": 2997,
+          "row": 5964,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          225
+        ],
+        "compressedTileBytesRead": 603227,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 3.731654405593872,
+        "sampleWindowSha256": "sha256:695c015d64bdf772684aef57da926b6c5c88bddd58a1b847021eff1ade2ab21d",
+        "evidenceSha256": "sha256:b8c41d7acab3d153ba6fd3073569abb41312702063b3470f2ecfd62d36cec869"
+      },
+      "sourceGeometryHash": "sha256:77a0284451819c7191147a37d835b09212171f7cd350a8c9cbe6d2386b203192",
+      "nativeHorizontalPosition": [
+        -122.398046,
+        37.802214,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        552991.858413,
+        4184041.219393,
+        3.731654405593872
+      ],
+      "runtimePositionMetres": [
+        31.858413,
+        3.731654,
+        361.219393
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
       "sourceFeatureId": "way/32016321",
       "publisher": "OpenStreetMap contributors; BBBike extract service",
       "license": "ODbL-1.0",
@@ -3709,7 +3756,7 @@
       ],
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
-      "artifactHash": "sha256:aa50cc05027d5b77045f1ade087571c640a331e8048222cd176722229f5a85e5"
+      "artifactHash": "sha256:236db7197f14c1bbe8ee47f5044669853c7e77dc97dbc45fa65e19487d4811b2"
     }
   ]
 }
