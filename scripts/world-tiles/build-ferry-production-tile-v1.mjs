@@ -23,10 +23,14 @@ import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
-const TERRAIN_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json');
 const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json');
 const GEOMETRY_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json');
-const ELEVATION_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json');
+const TERRAIN_SOURCES = [
+  ['public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
+  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
+  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'],
+  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'],
+].map(([sourceLockPath, elevationLockPath]) => ({ sourceLockPath: path.join(ROOT, sourceLockPath), elevationLockPath: path.join(ROOT, elevationLockPath) }));
 const FERRY_OUTPUT_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
 const METRIC_TILE_OUTPUT_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1');
 // OSM ways are node-referenced. A building or long road segment can cross the
@@ -44,7 +48,6 @@ const ROAD_LIFT = 0.12;
 const COAST_EDGE_HALF_HEIGHT = 0.06;
 const SURFACE_TICKS_PER_METRE = 1000;
 const PBF_SHA256 = 'dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae';
-const RASTER_SHA256 = '9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424';
 
 function tileFromGrid(gridEasting, gridNorthing) {
   assert(Number.isInteger(gridEasting) && Number.isInteger(gridNorthing), 'Tile grid coordinates must be integers');
@@ -132,7 +135,7 @@ async function readOsmFeatures(horizontalLock) {
   return { bounds, features };
 }
 
-async function openTerrain(sourceLock) {
+async function openTerrain(sourceLock, rasterSha256) {
   const rawPath = path.join(ROOT, sourceLock.raster.localRawCache); const raw = await sha256File(rawPath);
   assert.equal(raw.sha256, sourceLock.raster.sha256, 'GeoTIFF hash does not match lock'); assert.equal((await stat(rawPath)).size, sourceLock.raster.bytes);
   const reader = await openGeoTiffWindowReader(rawPath); const a = reader.modelToPixel(TILE.minE - TILE.sourceBuffer - 2, TILE.minN + TILE.size + TILE.sourceBuffer + 2); const b = reader.modelToPixel(TILE.minE + TILE.size + TILE.sourceBuffer + 2, TILE.minN - TILE.sourceBuffer - 2);
@@ -140,8 +143,22 @@ async function openTerrain(sourceLock) {
   const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
   const pixelWindow = (e, n) => { const pixel = reader.modelToPixel(e, n); return { column: Math.floor(pixel.column), row: Math.floor(pixel.row), width: 1, height: 1 }; };
   const sample = (e, n) => { const pixel = pixelWindow(e, n); const x = pixel.column - window.column; const y = pixel.row - window.row; assert(x >= 0 && y >= 0 && x < window.width && y < window.height, 'Terrain sample outside buffered window'); const value = window.values[y * window.width + x]; assert(value !== window.nodata && Number.isFinite(value), 'Invalid terrain sample'); return value; };
-  const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256: RASTER_SHA256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
+  const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
   return { reader, window, sample, evidence, raw };
+}
+
+async function selectTerrainSource() {
+  const sourceBounds = [TILE.minE - TILE.sourceBuffer - 2, TILE.minN - TILE.sourceBuffer - 2, TILE.minE + TILE.size + TILE.sourceBuffer + 2, TILE.minN + TILE.size + TILE.sourceBuffer + 2];
+  for (const descriptor of TERRAIN_SOURCES) {
+    const [sourceLockBytes, elevationLockBytes] = await Promise.all([readFile(descriptor.sourceLockPath), readFile(descriptor.elevationLockPath)]);
+    const sourceLock = JSON.parse(sourceLockBytes); const elevationLock = JSON.parse(elevationLockBytes); const bounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
+    if (!(sourceBounds[0] >= bounds[0] && sourceBounds[1] >= bounds[1] && sourceBounds[2] <= bounds[2] && sourceBounds[3] <= bounds[3])) continue;
+    assert.equal(elevationLock.sourceLock.id, sourceLock.id, 'Terrain elevation authorization source id drifted');
+    assert.equal(elevationLock.sourceLock.sha256, sha256(sourceLockBytes), 'Terrain elevation authorization source hash drifted');
+    assert.equal(elevationLock.sourceRaster.sha256, sourceLock.raster.sha256, 'Terrain elevation authorization raster hash drifted');
+    return { ...descriptor, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock };
+  }
+  assert.fail(`No byte-locked terrain source contains the buffered tile ${TILE.id}`);
 }
 
 function category() { return { positions: [], indices: [], sourceIds: new Set() }; }
@@ -457,9 +474,9 @@ export async function buildSfMetricTile({ tile: requestedTile, outputDir, write 
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   outputDir ??= defaultOutputDir(TILE);
   const stem = artifactStem(TILE);
-  const [pbfHash, terrainLockBytes, horizontalLockBytes, geometryAuthBytes, elevationAuthBytes] = await Promise.all([sha256File(PBF_PATH), readFile(TERRAIN_LOCK_PATH), readFile(HORIZONTAL_LOCK_PATH), readFile(GEOMETRY_AUTH_PATH), readFile(ELEVATION_AUTH_PATH)]);
-  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch'); const terrainLock = JSON.parse(terrainLockBytes); const horizontalLock = JSON.parse(horizontalLockBytes);
-  const { bounds, features } = await readOsmFeatures(horizontalLock); const terrainSource = await openTerrain(terrainLock);
+  const [pbfHash, horizontalLockBytes, geometryAuthBytes, selectedTerrain] = await Promise.all([sha256File(PBF_PATH), readFile(HORIZONTAL_LOCK_PATH), readFile(GEOMETRY_AUTH_PATH), selectTerrainSource()]);
+  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch'); const horizontalLock = JSON.parse(horizontalLockBytes); const { sourceLock: terrainLock, elevationLock, elevationLockBytes } = selectedTerrain;
+  const { bounds, features } = await readOsmFeatures(horizontalLock); const terrainSource = await openTerrain(terrainLock, terrainLock.raster.sha256);
   try {
     const baseGeometry = bakeGeometry(features, terrainSource.sample); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
@@ -467,10 +484,10 @@ export async function buildSfMetricTile({ tile: requestedTile, outputDir, write 
     const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: level < 2 ? 0.000002 : 0, maxVerticalDeviationMetres: level < 2 ? 0.000002 : 0, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: Object.fromEntries(Object.entries(geometry).map(([categoryName, data]) => [categoryName, { vertices: data.positions.length / 3, indices: data.indices.length, triangles: data.indices.length / 3, sourceOsmWayCount: data.sourceIds.size }])) }));
     const sourceFeatures = [];
     for (const feature of included) { const en = representativeEn(feature); const native = inverse(en[0], en[1], horizontalLock); const evidencePayload = await terrainSource.evidence(en[0], en[1]); const elevationSampleEvidence = { ...evidencePayload, evidenceSha256: `sha256:${sha256(stableBytes(evidencePayload))}` }; const height = elevationSampleEvidence.sampledSourceDeclaredNavd88UnrealizedMetres;
-      sourceFeatures.push({ sourceId: 'bbbike-sanfrancisco-osm-pbf', sourceFeatureId: `way/${feature.id}`, publisher: 'OpenStreetMap contributors; BBBike extract service', license: 'ODbL-1.0', retrievedAt: RETRIEVED_AT, nativeHorizontalCrs: 'EPSG:4326', nativeVerticalDatum: 'not-provided-by-2d-source', sourceLockId: 'sf-ferry-osm-horizontal-geometry-v1', horizontalTransformLockId: 'sf-ferry-3dep-2023-horizontal-crs-v1', verticalMode: 'terrain-sampled-source-declared-navd88-unrealized', verticalTransformLockId: 'terrain-sample-source-declared-navd88-unrealized', elevationSourceLockId: 'sf-ferry-3dep-terrain-elevation-authorized-v1', elevationSampleEvidence, sourceGeometryHash: `sha256:${sha256(stableBytes({ type: 'way', id: feature.id, tags: feature.tags, nodeIds: feature.refs, coordinatesLonLat: feature.lonLat.map(([lon, lat]) => [q(lon), q(lat)]) }))}`, nativeHorizontalPosition: [q(native[0]), q(native[1]), 0], transformedPositionEpsg26910VerticalMetres: [q(en[0]), q(en[1]), height], runtimePositionMetres: [q(en[0] - TILE.minE), q(height - TILE.originH), q(en[1] - TILE.minN)] });
+      sourceFeatures.push({ sourceId: 'bbbike-sanfrancisco-osm-pbf', sourceFeatureId: `way/${feature.id}`, publisher: 'OpenStreetMap contributors; BBBike extract service', license: 'ODbL-1.0', retrievedAt: RETRIEVED_AT, nativeHorizontalCrs: 'EPSG:4326', nativeVerticalDatum: 'not-provided-by-2d-source', sourceLockId: 'sf-ferry-osm-horizontal-geometry-v1', horizontalTransformLockId: 'sf-ferry-3dep-2023-horizontal-crs-v1', verticalMode: 'terrain-sampled-source-declared-navd88-unrealized', verticalTransformLockId: 'terrain-sample-source-declared-navd88-unrealized', elevationSourceLockId: elevationLock.id, elevationSampleEvidence, sourceGeometryHash: `sha256:${sha256(stableBytes({ type: 'way', id: feature.id, tags: feature.tags, nodeIds: feature.refs, coordinatesLonLat: feature.lonLat.map(([lon, lat]) => [q(lon), q(lat)]) }))}`, nativeHorizontalPosition: [q(native[0]), q(native[1]), 0], transformedPositionEpsg26910VerticalMetres: [q(en[0]), q(en[1]), height], runtimePositionMetres: [q(en[0] - TILE.minE), q(height - TILE.originH), q(en[1] - TILE.minN)] });
     }
     const packageDescriptor = { schemaVersion: 1, kind: 'sf-one-to-one-map-package', status: 'provisional-vertical-unrealized', contractId: 'sf-one-to-one-reality-v1', coordinateReference: { horizontal: { crs: 'EPSG:26910', unit: 'metre' }, vertical: { datum: 'source-declared-navd88-unrealized', unit: 'metre' }, runtimeFrame: PROVISIONAL_FRAME }, verticalCertification: 'source-declared-navd88-unrealized', runtimeAxes: { x: 'east', y: 'up', z: 'north' }, scale: { runtimeUnitsPerMetre: 1, horizontalScale: 1, verticalScale: 1, verticalExaggeration: 0 }, tiling: { scheme: 'rectilinear-utm', tileSizeMetres: 384, sourceBufferMetres: 16 }, tileOriginEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], authorizedHorizontalTransform: { id: 'sf-ferry-3dep-2023-horizontal-crs-v1', path: ['EPSG:1188-inverse', 'EPSG:26910-projection'], absoluteHorizontalAccuracyFloorMetres: 4, nad83Realization: 'not-claimed', coordinateEpoch: 'not-claimed' }, accuracyQualification: { absoluteHorizontalAccuracyFloorMetres: 4, nad83Realization: 'not-claimed', coordinateEpoch: 'not-claimed', lodErrorIsRelativeToTransformedSource: true }, sourceLocks: [
-      { id: 'sf-ferry-osm-horizontal-geometry-v1', path: relative(GEOMETRY_AUTH_PATH), sha256: sha256(geometryAuthBytes), purpose: 'geometry' }, { id: 'sf-ferry-3dep-2023-horizontal-crs-v1', path: relative(HORIZONTAL_LOCK_PATH), sha256: sha256(horizontalLockBytes), purpose: 'horizontal-coordinate-operation' }, { id: 'sf-ferry-3dep-terrain-elevation-authorized-v1', path: relative(ELEVATION_AUTH_PATH), sha256: sha256(elevationAuthBytes), purpose: 'terrain-elevation' },
+      { id: 'sf-ferry-osm-horizontal-geometry-v1', path: relative(GEOMETRY_AUTH_PATH), sha256: sha256(geometryAuthBytes), purpose: 'geometry' }, { id: 'sf-ferry-3dep-2023-horizontal-crs-v1', path: relative(HORIZONTAL_LOCK_PATH), sha256: sha256(horizontalLockBytes), purpose: 'horizontal-coordinate-operation' }, { id: elevationLock.id, path: relative(selectedTerrain.elevationLockPath), sha256: sha256(elevationLockBytes), purpose: 'terrain-elevation' },
     ], sourceFeatures, lods: lods.map(({ path: _path, bytes: _bytes, boundsLocalMetres: _bounds, meshStats: _stats, ...lod }) => lod) };
     const landAreaSquareMetres = planAreaSquareMetres(categories.terrain); const waterAreaSquareMetres = planAreaSquareMetres(categories.water);
     assert(Math.abs(landAreaSquareMetres + waterAreaSquareMetres - TILE.size ** 2) <= 0.001, 'Land and OSM-classified water must partition the tile without gaps or overlap');
