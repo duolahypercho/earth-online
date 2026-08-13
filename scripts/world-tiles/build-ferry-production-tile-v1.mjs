@@ -259,6 +259,10 @@ function assembleDirectedCoastline(features) {
   assert.equal(remaining.size, 0, `Tile ${TILE.id} has disconnected OSM coastline chains; refuse to guess water ownership`);
   const points = [];
   for (const way of ordered) for (const point of way.en) if (!points.length || !samePlanPoint(points.at(-1), point)) points.push(point);
+  const contributingWayIds = new Set(ordered.filter((way) => way.en.slice(0, -1).some((point, index) => {
+    const segment = clipSegment(point, way.en[index + 1]);
+    return segment && !samePlanPoint(segment[0], segment[1]);
+  })).map(({ id }) => id));
   const fragments = []; let clipped = [];
   for (let index = 0; index < points.length - 1; index += 1) {
     const segment = clipSegment(points[index], points[index + 1]);
@@ -269,7 +273,7 @@ function assembleDirectedCoastline(features) {
   }
   if (clipped.length >= 2) fragments.push(clipped);
   if (!fragments.length) return null;
-  return { fragments, ways: ordered };
+  return { fragments, ways: ordered.filter(({ id }) => contributingWayIds.has(id)) };
 }
 
 function clockwiseBoundaryParameter([e, n]) {
