@@ -28,6 +28,7 @@
     "verify:street-life-vignette": "node scripts/verify-street-life-vignette.mjs",
     "verify:ambient-pedestrian-determinism": "node scripts/verify-ambient-pedestrian-determinism.mjs",
     "verify:hero-card-pedestrian-presentation": "node scripts/verify-hero-card-pedestrian-presentation.mjs",
+    "verify:hero-card-traffic-presentation": "node scripts/verify-hero-card-traffic-presentation.mjs",
     "verify:hero-lighting-composition": "node scripts/verify-hero-lighting-composition.mjs",
     "qa:realmap": "node scripts/qa-realmap.mjs",
     "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
