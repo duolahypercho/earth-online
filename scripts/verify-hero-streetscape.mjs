@@ -226,6 +226,16 @@ if (streetscape.stats.curbTransitions.length !== 2
 if (drainageDetails.count !== 20 || tactilePlates.count !== 4 || tactileDots.count !== 16) {
   fail('close-range curb, gutter, tactile, or drain geometry is incomplete');
 }
+if (streetscape.stats.roadEdgeGutters !== 8 || !drainageDetails.material.vertexColors) {
+  fail('road-edge gutter hierarchy did not retain its bounded per-instance material finish');
+}
+const gutterColor = new THREE.Color();
+const drainBarColor = new THREE.Color();
+drainageDetails.getColorAt(0, gutterColor);
+drainageDetails.getColorAt(streetscape.stats.roadEdgeGutters, drainBarColor);
+if (gutterColor.getHex() === drainBarColor.getHex() || gutterColor.getHSL({}).l <= drainBarColor.getHSL({}).l) {
+  fail('road-edge gutter highlight does not separate from the source-derived drain bars');
+}
 const gutterY = new THREE.Vector3().setFromMatrixPosition(readInstanceMatrix(drainageDetails)).y;
 if (Math.abs(gutterY - (1.8 + 0.46 + 0.013)) > 1e-6) fail('gutter seam did not retain a non-z-fighting road-surface lift');
 
@@ -243,9 +253,9 @@ if (curb < 28) fail('curb face, capstone, and source-derived ramp detail is inco
 
 streetscape.setConditions({ wetness: 0.85 });
 streetscape.update(1 / 30);
-if (pavingFinish.material.roughness > 0.48) fail('drizzle did not lower roughness across the paving finish');
-if (pavingFinish.material.envMapIntensity < 1.05) fail('drizzle did not raise distributed paving reflections');
-if (drainageDetails.material.roughness > 0.39) fail('drizzle did not lower roughness along the asphalt gutter seam');
+if (pavingFinish.material.roughness > 0.33) fail('drizzle did not create a materially smooth paving response');
+if (pavingFinish.material.envMapIntensity < 1.2) fail('drizzle did not create a visible distributed paving reflection response');
+if (drainageDetails.material.roughness > 0.22) fail('drizzle did not create a materially smooth curb-edge gutter response');
 streetscape.dispose();
 if (!streetscape.disposed || scene.children.includes(streetscape.root)) fail('dispose did not detach streetscape');
 flatFixture.dispose();

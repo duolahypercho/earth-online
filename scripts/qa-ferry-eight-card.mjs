@@ -43,7 +43,21 @@ async function configure(page, { x, z, yaw, weather = 'clear', time = 'day' }) {
 async function capture(page, id) {
   const path = join(outDir, `${id}.png`);
   await page.screenshot({ path });
-  captures.push({ id, path });
+  const diagnostics = await page.evaluate(() => {
+    const perf = window.__SF_REALMAP__.getPerf();
+    return {
+      weather: perf.weather,
+      timeOfDay: perf.timeOfDay,
+      heroLighting: perf.heroLighting,
+      heroAtmosphere: perf.heroAtmosphere,
+      heroStreetscape: perf.heroStreetscape,
+      heroPedestrianStaging: perf.heroPedestrianStaging,
+      heroLifeLighting: perf.heroLifeLighting,
+      heroTrafficVisuals: perf.heroTrafficVisuals,
+      heroCamera: perf.heroCamera,
+    };
+  });
+  captures.push({ id, path, diagnostics });
 }
 
 try {

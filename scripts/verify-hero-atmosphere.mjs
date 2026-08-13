@@ -178,6 +178,8 @@ try {
   assert(compiledWaterShader.fragmentShader.includes('heroBayNoise'), 'Non-periodic Bay surface response is missing');
   assert(!compiledWaterShader.fragmentShader.includes('sin('), 'Broad periodic sine bands regressed into shared water');
   assert(compiledWaterShader.fragmentShader.includes('dot(normalize(vViewPosition), normal)'), 'Bay Fresnel diverged from Three geometryViewDir semantics');
+  assert(compiledWaterShader.fragmentShader.includes('heroBayWetness * 0.15'), 'Drizzle did not reduce Bay roughness for a visible sheen');
+  assert(compiledWaterShader.fragmentShader.includes('heroBayWetness * 0.12'), 'Drizzle did not strengthen Bay Fresnel depth response');
   assert(waterMaterial.customProgramCacheKey().endsWith('|ferry-bay-shared-water-v1'), 'Water shader cache key is not deterministic');
 
   assert.equal(atmosphere.getLightBudget().pointLights, 6, 'Hero atmosphere light budget changed unexpectedly');
