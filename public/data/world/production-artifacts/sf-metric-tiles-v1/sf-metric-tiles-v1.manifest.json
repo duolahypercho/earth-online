@@ -19,6 +19,606 @@
   },
   "tiles": [
     {
+      "id": "epsg26910-1415-10882",
+      "gridIndex": [
+        1415,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        543360,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1415-10882/epsg26910-1415-10882.lod0.glb",
+        "sha256": "sha256:fc0399b7b3f265d7fcf74673f19516aa8e8795aa9dc060a32c388999a54653b5"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1415-10882/epsg26910-1415-10882.receipt.json",
+        "sha256": "sha256:55984fb74276b3ab62ab6aba78793505d4155e86930e5221f86d7fb05646cee6"
+      }
+    },
+    {
+      "id": "epsg26910-1416-10882",
+      "gridIndex": [
+        1416,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        543744,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1416-10882/epsg26910-1416-10882.lod0.glb",
+        "sha256": "sha256:348603f93e97c0576a5787520cc0436a964ecc68ce3adb993f03fe2b226c27b4"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1416-10882/epsg26910-1416-10882.receipt.json",
+        "sha256": "sha256:9cd72993e756f8967de327541b1958a7dc87ff055fee0634999b0e72f23caa20"
+      }
+    },
+    {
+      "id": "epsg26910-1417-10882",
+      "gridIndex": [
+        1417,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        544128,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1417-10882/epsg26910-1417-10882.lod0.glb",
+        "sha256": "sha256:ac515d145efd0d6a2b3c524f524d9fb9a7b3c1e595aaac3046a2899187c906ea"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1417-10882/epsg26910-1417-10882.receipt.json",
+        "sha256": "sha256:dfc45430f068b6ecc0094fb5607dd59ae4e6f76ac71f295072421695c7fbe600"
+      }
+    },
+    {
+      "id": "epsg26910-1418-10882",
+      "gridIndex": [
+        1418,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        544512,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1418-10882/epsg26910-1418-10882.lod0.glb",
+        "sha256": "sha256:00de5ccb9745a0898716c8e738d21dd5494242369c8696335467da318b806f00"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1418-10882/epsg26910-1418-10882.receipt.json",
+        "sha256": "sha256:11d35e7ea1da459f8069f7c551e6cb3f5243ef4d9d767d8c00f203cea8daa0c5"
+      }
+    },
+    {
+      "id": "epsg26910-1419-10882",
+      "gridIndex": [
+        1419,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        544896,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1419-10882/epsg26910-1419-10882.lod0.glb",
+        "sha256": "sha256:b0fa1f1c1886a67f8aec879234a07b9c31f947243b0e20dfd44236f2edca861f"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1419-10882/epsg26910-1419-10882.receipt.json",
+        "sha256": "sha256:3d1c83e4e271a442b65d31b036ffdec1081922a2cc9b705c84909886b91437eb"
+      }
+    },
+    {
+      "id": "epsg26910-1420-10882",
+      "gridIndex": [
+        1420,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        545280,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1420-10882/epsg26910-1420-10882.lod0.glb",
+        "sha256": "sha256:eafd9087412c102654da04127b64203b8eb789b0e08af9481f2fe7f733763d50"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1420-10882/epsg26910-1420-10882.receipt.json",
+        "sha256": "sha256:b712b9797128202bf34b9728d36022aec20091072d4b89c0d409a4e3d7b81db7"
+      }
+    },
+    {
+      "id": "epsg26910-1421-10882",
+      "gridIndex": [
+        1421,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        545664,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1421-10882/epsg26910-1421-10882.lod0.glb",
+        "sha256": "sha256:72c516dfea1b2de4c4e1b8e3a104d3cd2c4dc98bcced678260b01a0fe8b479eb"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1421-10882/epsg26910-1421-10882.receipt.json",
+        "sha256": "sha256:336d2798c723f0b915b84a3f178b2670b3747a567b2cffe755604159e83ff9a5"
+      }
+    },
+    {
+      "id": "epsg26910-1422-10882",
+      "gridIndex": [
+        1422,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        546048,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1422-10882/epsg26910-1422-10882.lod0.glb",
+        "sha256": "sha256:56ad0c79d264c6648362ff1c39530f1045af21a462ee5b9ea93f0f31c449e1a5"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1422-10882/epsg26910-1422-10882.receipt.json",
+        "sha256": "sha256:ba02d8fa893eb18adcdafee8a663802070c81a9d4bf1abd7e139b18fbe9bbcb3"
+      }
+    },
+    {
+      "id": "epsg26910-1423-10882",
+      "gridIndex": [
+        1423,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        546432,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1423-10882/epsg26910-1423-10882.lod0.glb",
+        "sha256": "sha256:a478afe5bc8f72c08f1f0114b5fdf27d55dd7503948e7bc0b75ed9c21d235f9a"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1423-10882/epsg26910-1423-10882.receipt.json",
+        "sha256": "sha256:c33dea38d75a1584a48daf8e0cb653427766647efa6bd1fa607b4a2d5406da57"
+      }
+    },
+    {
+      "id": "epsg26910-1424-10882",
+      "gridIndex": [
+        1424,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        546816,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1424-10882/epsg26910-1424-10882.lod0.glb",
+        "sha256": "sha256:d5dda26af01b293694ad8ec28bb43b9efbeabbe9da39e9d60198d8ffcab6f2c4"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1424-10882/epsg26910-1424-10882.receipt.json",
+        "sha256": "sha256:1c4d21fdccbb89c75c0c4bb44340948b42369fac3dd291e1729441ee130a6f66"
+      }
+    },
+    {
+      "id": "epsg26910-1425-10882",
+      "gridIndex": [
+        1425,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        547200,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1425-10882/epsg26910-1425-10882.lod0.glb",
+        "sha256": "sha256:f1d6aa8e509cf2b6adc0052615943332b63b1c962dbb53e015044872d1abde1d"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1425-10882/epsg26910-1425-10882.receipt.json",
+        "sha256": "sha256:16e73733a9eb5adf2b03359878be94c2a2c9fd3a56073dd95d7cb5f632d28095"
+      }
+    },
+    {
+      "id": "epsg26910-1426-10882",
+      "gridIndex": [
+        1426,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        547584,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1426-10882/epsg26910-1426-10882.lod0.glb",
+        "sha256": "sha256:951da389eb8867b23841acb2fda2b7a4351713204b0ccda3372cf67cc66a54c5"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1426-10882/epsg26910-1426-10882.receipt.json",
+        "sha256": "sha256:a1e0b1a68d2ce5489483f354d791323aece688889495e3d7e1bcc278a386f7c7"
+      }
+    },
+    {
+      "id": "epsg26910-1427-10882",
+      "gridIndex": [
+        1427,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        547968,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1427-10882/epsg26910-1427-10882.lod0.glb",
+        "sha256": "sha256:5414c327c02c525aa10083e3647b7f9c9fe1b1c388bef4f3a4bd0a79fdd59465"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1427-10882/epsg26910-1427-10882.receipt.json",
+        "sha256": "sha256:0e6703513fc3d36e0f023212238bf481fbd018416f6baed209af31d1cf96f0ea"
+      }
+    },
+    {
+      "id": "epsg26910-1428-10882",
+      "gridIndex": [
+        1428,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        548352,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1428-10882/epsg26910-1428-10882.lod0.glb",
+        "sha256": "sha256:e32cbc88d87ab6777e331d917e266612b4c4429344a70d8e4189e8b6050277f1"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1428-10882/epsg26910-1428-10882.receipt.json",
+        "sha256": "sha256:e78b7910ef5fb82dab506da5b99c5b861c39a96f010b0a29ee5efaaa2d1cbd3f"
+      }
+    },
+    {
+      "id": "epsg26910-1429-10882",
+      "gridIndex": [
+        1429,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        548736,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1429-10882/epsg26910-1429-10882.lod0.glb",
+        "sha256": "sha256:8b527a999e7b1c2896ff8759a17fc689072de161704b18ecddf9db6b5d67a602"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1429-10882/epsg26910-1429-10882.receipt.json",
+        "sha256": "sha256:245c8c1fe7a4f1bc3a1f1fc9003d4fede3ee7774c838111cd813d65499483f1d"
+      }
+    },
+    {
+      "id": "epsg26910-1430-10882",
+      "gridIndex": [
+        1430,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        549120,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1430-10882/epsg26910-1430-10882.lod0.glb",
+        "sha256": "sha256:2f41f579bf49bc76891c8b9c6b5d19c7ec49e446155f5136b8c3dd6c8b19054e"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1430-10882/epsg26910-1430-10882.receipt.json",
+        "sha256": "sha256:4135d6d79e682a01390a4d68396f8f3dc99d165d7a13f0db1dc17e288541f86b"
+      }
+    },
+    {
+      "id": "epsg26910-1431-10882",
+      "gridIndex": [
+        1431,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        549504,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1431-10882/epsg26910-1431-10882.lod0.glb",
+        "sha256": "sha256:d3dce2f6bbed0e1144362f017d152d19911c07c7dae326d7aae2a2f52854bc36"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1431-10882/epsg26910-1431-10882.receipt.json",
+        "sha256": "sha256:dea396289dca2d3f39f7b4efaf4b2ec06a8e807ee49e308f953fcdd17c9cd67b"
+      }
+    },
+    {
+      "id": "epsg26910-1432-10882",
+      "gridIndex": [
+        1432,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        549888,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1432-10882/epsg26910-1432-10882.lod0.glb",
+        "sha256": "sha256:c48a67590ad4832be45136d2cf9ed24178f63a0046e9fdfda0980d541f117eab"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1432-10882/epsg26910-1432-10882.receipt.json",
+        "sha256": "sha256:6e9899833e383e6782d48afad268817b7a778b6466a32e8ecc4a9f4a4071138b"
+      }
+    },
+    {
+      "id": "epsg26910-1433-10882",
+      "gridIndex": [
+        1433,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        550272,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1433-10882/epsg26910-1433-10882.lod0.glb",
+        "sha256": "sha256:6427696f35202fe93ac95c8e7ef79951d64b93637425fecbe14e0fa03a6abf60"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1433-10882/epsg26910-1433-10882.receipt.json",
+        "sha256": "sha256:5d41c53160f1cd31cd9c0faa5768d68026c17ded60a729eaa2aa10be49e7ac71"
+      }
+    },
+    {
+      "id": "epsg26910-1434-10882",
+      "gridIndex": [
+        1434,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        550656,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1434-10882/epsg26910-1434-10882.lod0.glb",
+        "sha256": "sha256:7617b52080db9c508a36690b0be0d897e0b1618d39e0d07130e491d57f5bb330"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1434-10882/epsg26910-1434-10882.receipt.json",
+        "sha256": "sha256:6894cafbb5f379e06bdcb108f50f27494e895ff370fb0ccc75b3091b548b2b47"
+      }
+    },
+    {
+      "id": "epsg26910-1435-10882",
+      "gridIndex": [
+        1435,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        551040,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1435-10882/epsg26910-1435-10882.lod0.glb",
+        "sha256": "sha256:3f08948fa7cfcc34159bdb926e468cf763774155977e9a572edd306ec2a0eb14"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1435-10882/epsg26910-1435-10882.receipt.json",
+        "sha256": "sha256:97fb6edc37cff09d901389bb47421706deca921faf2430979a094efc42d69c82"
+      }
+    },
+    {
+      "id": "epsg26910-1436-10882",
+      "gridIndex": [
+        1436,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        551424,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1436-10882/epsg26910-1436-10882.lod0.glb",
+        "sha256": "sha256:3a917e9a29f83dbf8e0f5b1b2a46bc88a23035f4b5f24b8d0c218b8730946775"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1436-10882/epsg26910-1436-10882.receipt.json",
+        "sha256": "sha256:d54009610234dd769919e0f2ae59ef01cd244ccc73dbe1b3ea7a841f0ff09ed7"
+      }
+    },
+    {
+      "id": "epsg26910-1437-10882",
+      "gridIndex": [
+        1437,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        551808,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1437-10882/epsg26910-1437-10882.lod0.glb",
+        "sha256": "sha256:e247080316a39e5c5416575ac636e2603ff1e95bddda9d98904ba02619436756"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1437-10882/epsg26910-1437-10882.receipt.json",
+        "sha256": "sha256:cf93c65fd69afcbc1b71a5fdd4ea5b159d706de475b6035ae02d675dcf56d32f"
+      }
+    },
+    {
+      "id": "epsg26910-1438-10882",
+      "gridIndex": [
+        1438,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        552192,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1438-10882/epsg26910-1438-10882.lod0.glb",
+        "sha256": "sha256:bb2024d43ddf4b2fb097766c18751b3c6e30ec84be3c3a3505d466f4be56c559"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1438-10882/epsg26910-1438-10882.receipt.json",
+        "sha256": "sha256:4cd9acd07295c67c24b5dc427aac0d15440cff07600dc40fe1d83f6ab90c4034"
+      }
+    },
+    {
+      "id": "epsg26910-1439-10882",
+      "gridIndex": [
+        1439,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        552576,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10882/epsg26910-1439-10882.lod0.glb",
+        "sha256": "sha256:bf12187f44c8cab581586fe73bfee1713fbb7ff5b76ec68ada8d181d5556be36"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10882/epsg26910-1439-10882.receipt.json",
+        "sha256": "sha256:ad5ea2941415609740173fa97b078b9a0738bdb9b8366334af584a751d52944f"
+      }
+    },
+    {
+      "id": "epsg26910-1440-10882",
+      "gridIndex": [
+        1440,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        552960,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10882/epsg26910-1440-10882.lod0.glb",
+        "sha256": "sha256:9661b3fecea6b2eb4e5fbcd7bdf6b9e9a82fbc74ba5f44d8b218b17cf8ffa35c"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10882/epsg26910-1440-10882.receipt.json",
+        "sha256": "sha256:ee4dc76845dd5d0affaf9db12ffaca1b043610fde95a65fb525ab0816fc0633f"
+      }
+    },
+    {
+      "id": "epsg26910-1441-10882",
+      "gridIndex": [
+        1441,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        553344,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10882/epsg26910-1441-10882.lod0.glb",
+        "sha256": "sha256:45886fa0f1a00eda11c38d45fb6dbb75a8b3edbf6207600bd1988b4146b0ce60"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10882/epsg26910-1441-10882.receipt.json",
+        "sha256": "sha256:7e7192015dd2c753ceb4c0365d2550ba377b9dee1994ee0cda61606180df68d8"
+      }
+    },
+    {
+      "id": "epsg26910-1442-10882",
+      "gridIndex": [
+        1442,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        553728,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1442-10882/epsg26910-1442-10882.lod0.glb",
+        "sha256": "sha256:a5036930248d29bbb2b2bc8683eb9942a11d9dace3769ca39a9cd0bbf847eda5"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1442-10882/epsg26910-1442-10882.receipt.json",
+        "sha256": "sha256:26340dfa4092b46aa1f12331e613b7407788a138dbf09b8aaf56bb05f0bf2b3a"
+      }
+    },
+    {
+      "id": "epsg26910-1443-10882",
+      "gridIndex": [
+        1443,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        554112,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1443-10882/epsg26910-1443-10882.lod0.glb",
+        "sha256": "sha256:64c0a8fd218d135e798216797cdc5d372312d839e884dc005c8b1d7d68669a13"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1443-10882/epsg26910-1443-10882.receipt.json",
+        "sha256": "sha256:1e8441c7d3a3fd6cda67d561e869dd6552b7cbcba8b836e437f2321d1aa734d7"
+      }
+    },
+    {
+      "id": "epsg26910-1444-10882",
+      "gridIndex": [
+        1444,
+        10882
+      ],
+      "originEpsg26910VerticalMetres": [
+        554496,
+        4178688,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1444-10882/epsg26910-1444-10882.lod0.glb",
+        "sha256": "sha256:3349db1874ffb2dff6803b3af836e108a990c512fc8a1cffbe63302b71dc678c"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1444-10882/epsg26910-1444-10882.receipt.json",
+        "sha256": "sha256:bd46118e31c6ad1d5a58c2afcdaa260a60bd70b76619251efd9b6f80982ba3c9"
+      }
+    },
+    {
       "id": "epsg26910-1414-10883",
       "gridIndex": [
         1414,
