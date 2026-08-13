@@ -45,19 +45,23 @@
         "north": 37.8000838120176
       }
     },
-    "geoTiff": {
-      "path": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
-      "bytes": 86461076,
-      "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
-      "verticalCertification": "source-declared-navd88-unrealized",
-      "reader": "geotiff-window-reader-v1",
-      "window": {
-        "column": 2948,
-        "row": 6307,
-        "width": 422,
-        "height": 422
+    "geoTiffs": [
+      {
+        "path": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+        "bytes": 86461076,
+        "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+        "elevationSourceLockId": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+        "ownershipCell": "55,418",
+        "verticalCertification": "source-declared-navd88-unrealized",
+        "reader": "geotiff-window-reader-v1",
+        "window": {
+          "column": 2948,
+          "row": 6307,
+          "width": 422,
+          "height": 422
+        }
       }
-    }
+    ]
   },
   "counts": {
     "osmCandidateWays": 707,
@@ -158,7 +162,8 @@
       0
     ],
     "terrainGridStepMetres": 1,
-    "terrainSampling": "direct-native-pixel-float32-le",
+    "terrainSampling": "canonical-10km-cell-owned-direct-native-pixel-float32-le",
+    "terrainCellOwnership": "half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon",
     "surfaceGridMetres": 0.001,
     "lod0Construction": "1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings",
     "lod0DeviationMetres": 0,
