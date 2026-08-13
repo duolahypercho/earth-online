@@ -16,6 +16,7 @@
     "verify:realmap-topology": "node scripts/verify-realmap-topology.mjs",
     "verify:sf-one-to-one-map-contract": "node scripts/world-tiles/verify-sf-one-to-one-map-contract.mjs",
     "build:sf-metric-tile": "node scripts/world-tiles/build-sf-metric-tile-v1.mjs",
+    "build:sf-metric-tile-batch": "node scripts/world-tiles/build-sf-metric-tile-batch-v1.mjs",
     "verify:sf-metric-tile": "node scripts/world-tiles/verify-sf-metric-tile-v1.mjs",
     "verify:sf-metric-tile-set": "node scripts/world-tiles/verify-sf-metric-tile-set-v1.mjs",
     "update:sf-metric-tile-set": "node scripts/world-tiles/update-sf-metric-tile-set-v1.mjs",

@@ -117,9 +117,13 @@ function inverse(easting, northing, lock) {
   return [lon * 180 / Math.PI, lat * 180 / Math.PI];
 }
 
-async function readOsmFeatures(horizontalLock) {
+async function readOsmFeatures(horizontalLock, featureCache = null) {
   const corners = [[TILE.minE - FEATURE_DISCOVERY_BUFFER_METRES, TILE.minN - FEATURE_DISCOVERY_BUFFER_METRES], [TILE.minE + TILE.size + FEATURE_DISCOVERY_BUFFER_METRES, TILE.minN + TILE.size + FEATURE_DISCOVERY_BUFFER_METRES]].map(([e, n]) => inverse(e, n, horizontalLock));
   const bounds = { west: Math.min(...corners.map((v) => v[0])), east: Math.max(...corners.map((v) => v[0])), south: Math.min(...corners.map((v) => v[1])), north: Math.max(...corners.map((v) => v[1])) };
+  if (featureCache) {
+    const features = featureCache.filter(({ lonLat }) => lonLat.some(([lon, lat]) => lon >= bounds.west && lon <= bounds.east && lat >= bounds.south && lat <= bounds.north));
+    return { bounds, features };
+  }
   const nearbyNodeIds = new Set();
   await scanPbf((items) => { for (const item of items) if (item.type === 'node' && item.lon >= bounds.west && item.lon <= bounds.east && item.lat >= bounds.south && item.lat <= bounds.north) nearbyNodeIds.add(item.id); });
   const ways = new Map(); const requiredNodeIds = new Set();
@@ -133,6 +137,23 @@ async function readOsmFeatures(horizontalLock) {
   const features = [...ways.values()].map((way) => ({ ...way, en: way.refs.map((id) => forward(nodes.get(id).lon, nodes.get(id).lat, horizontalLock)), lonLat: way.refs.map((id) => [nodes.get(id).lon, nodes.get(id).lat]) }))
     .sort((a, b) => a.id - b.id);
   return { bounds, features };
+}
+
+export async function loadSfMetricSharedInputs() {
+  const [pbfHash, horizontalLockBytes, geometryAuthBytes] = await Promise.all([sha256File(PBF_PATH), readFile(HORIZONTAL_LOCK_PATH), readFile(GEOMETRY_AUTH_PATH)]);
+  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
+  const horizontalLock = JSON.parse(horizontalLockBytes);
+  const ways = new Map(); const requiredNodeIds = new Set();
+  await scanPbf((items) => { for (const item of items) {
+    if (item.type !== 'way' || (!item.tags?.highway && !item.tags?.building && item.tags?.natural !== 'coastline')) continue;
+    ways.set(item.id, { id: item.id, tags: sortedTags(item.tags), refs: [...item.refs] });
+    for (const id of item.refs) requiredNodeIds.add(id);
+  } });
+  const nodes = new Map();
+  await scanPbf((items) => { for (const item of items) if (item.type === 'node' && requiredNodeIds.has(item.id)) nodes.set(item.id, { lon: item.lon, lat: item.lat }); });
+  assert.equal(nodes.size, requiredNodeIds.size, 'Cached eligible OSM way has an unresolved node');
+  const osmFeatureCache = [...ways.values()].map((way) => ({ ...way, en: way.refs.map((id) => forward(nodes.get(id).lon, nodes.get(id).lat, horizontalLock)), lonLat: way.refs.map((id) => [nodes.get(id).lon, nodes.get(id).lat]) })).sort((a, b) => a.id - b.id);
+  return Object.freeze({ pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache });
 }
 
 async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor) {
@@ -537,13 +558,14 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-export async function buildSfMetricTile({ tile: requestedTile, outputDir, write = true } = {}) {
+export async function buildSfMetricTile({ tile: requestedTile, outputDir, write = true, sharedInputs = null } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   outputDir ??= defaultOutputDir(TILE);
   const stem = artifactStem(TILE);
-  const [pbfHash, horizontalLockBytes, geometryAuthBytes, terrainDescriptors] = await Promise.all([sha256File(PBF_PATH), readFile(HORIZONTAL_LOCK_PATH), readFile(GEOMETRY_AUTH_PATH), loadTerrainDescriptors()]);
-  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch'); const horizontalLock = JSON.parse(horizontalLockBytes);
-  const { bounds, features } = await readOsmFeatures(horizontalLock); const terrainSource = await openTerrainMosaic(terrainDescriptors);
+  const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors()]);
+  const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
+  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
+  const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); const terrainSource = await openTerrainMosaic(terrainDescriptors);
   try {
     const baseGeometry = bakeGeometry(features, terrainSource.sample); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
