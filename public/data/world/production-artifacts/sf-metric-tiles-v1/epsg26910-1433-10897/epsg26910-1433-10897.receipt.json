@@ -105,7 +105,7 @@
       ],
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
-      "artifactHash": "sha256:977cc85399bc97bdfd3f936905f735353038c97e8e4603b7aaa498c20f814c23",
+      "artifactHash": "sha256:f5dee6342dba4f098f86af76d8858fd6cff6096218f659224394dd8cef4174eb",
       "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1433-10897/epsg26910-1433-10897.lod0.glb",
       "bytes": 3647476,
       "boundsLocalMetres": {
