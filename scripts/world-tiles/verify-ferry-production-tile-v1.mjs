@@ -22,12 +22,20 @@ function parseGlb(bytes) {
 
 function inspectPrimitive(gltf, bin, primitive) {
   const positionAccessor = gltf.accessors[primitive.attributes.POSITION]; const positionView = gltf.bufferViews[positionAccessor.bufferView]; const indexAccessor = gltf.accessors[primitive.indices]; const indexView = gltf.bufferViews[indexAccessor.bufferView];
-  assert.equal(positionAccessor.componentType, 5126); assert.equal(positionAccessor.type, 'VEC3'); assert.equal(indexAccessor.componentType, 5125); assert.equal(indexAccessor.type, 'SCALAR'); assert.equal(indexAccessor.count % 3, 0);
+  assert.equal(positionAccessor.componentType, 5126); assert.equal(positionAccessor.type, 'VEC3'); assert([5123, 5125].includes(indexAccessor.componentType)); assert.equal(indexAccessor.type, 'SCALAR'); assert.equal(indexAccessor.count % 3, 0);
   const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
   for (let index = 0; index < positionAccessor.count; index += 1) for (let axis = 0; axis < 3; axis += 1) { const value = bin.readFloatLE((positionView.byteOffset ?? 0) + (index * 3 + axis) * 4); min[axis] = Math.min(min[axis], value); max[axis] = Math.max(max[axis], value); }
   for (let axis = 0; axis < 3; axis += 1) { assert(Math.abs(min[axis] - positionAccessor.min[axis]) <= 2e-5, `${primitive.extras.category} accessor min mismatch`); assert(Math.abs(max[axis] - positionAccessor.max[axis]) <= 2e-5, `${primitive.extras.category} accessor max mismatch`); }
-  for (let index = 0; index < indexAccessor.count; index += 1) assert(bin.readUInt32LE((indexView.byteOffset ?? 0) + index * 4) < positionAccessor.count, `${primitive.extras.category} index out of range`);
-  return { vertices: positionAccessor.count, indices: indexAccessor.count, triangles: indexAccessor.count / 3, sourceOsmWayCount: primitive.extras.sourceOsmWayIds.length, min: positionAccessor.min, max: positionAccessor.max };
+  const indexBytes = indexAccessor.componentType === 5123 ? 2 : 4; const readIndex = indexAccessor.componentType === 5123 ? (at) => bin.readUInt16LE(at) : (at) => bin.readUInt32LE(at);
+  for (let index = 0; index < indexAccessor.count; index += 1) assert(readIndex((indexView.byteOffset ?? 0) + index * indexBytes) < positionAccessor.count, `${primitive.extras.category} index out of range`);
+  return { category: primitive.extras.category, vertices: positionAccessor.count, indices: indexAccessor.count, triangles: indexAccessor.count / 3, sourceOsmWayIds: primitive.extras.sourceOsmWayIds, min: positionAccessor.min, max: positionAccessor.max };
+}
+
+function aggregatePrimitives(primitives) {
+  return Object.fromEntries([...new Set(primitives.map(({ category }) => category))].map((category) => {
+    const chunks = primitives.filter((primitive) => primitive.category === category);
+    return [category, { vertices: chunks.reduce((sum, chunk) => sum + chunk.vertices, 0), indices: chunks.reduce((sum, chunk) => sum + chunk.indices, 0), triangles: chunks.reduce((sum, chunk) => sum + chunk.triangles, 0), sourceOsmWayCount: new Set(chunks.flatMap(({ sourceOsmWayIds }) => sourceOsmWayIds)).size, primitiveChunks: chunks.length, min: [0, 1, 2].map((axis) => Math.min(...chunks.map(({ min }) => min[axis]))), max: [0, 1, 2].map((axis) => Math.max(...chunks.map(({ max }) => max[axis]))) }];
+  }));
 }
 
 const [receipt, mapPackage] = await Promise.all([readJson(RECEIPT_PATH), readJson(PACKAGE_PATH)]);
@@ -43,10 +51,10 @@ for (const lod of receipt.lods) {
   assert(lod.path.startsWith('public/data/world/production-artifacts/ferry-production-tile-v1/')); assert(!lod.path.includes('..')); const artifactPath = path.resolve(ROOT, lod.path); const bytes = await readFile(artifactPath);
   assert.equal(bytes.length, lod.bytes, 'LOD byte count mismatch'); assert.equal(`sha256:${sha256(bytes)}`, lod.artifactHash, 'LOD disk hash mismatch'); assert.equal(mapPackage.lods[lod.level].artifactHash, lod.artifactHash, 'Package/receipt LOD hash mismatch');
   const { gltf, bin } = parseGlb(bytes); assert.equal(gltf.extras.tileId, receipt.tile.identity); assert.equal(gltf.extras.lod, lod.level); assert.equal(gltf.extras.runtimeFrame, receipt.tile.runtimeFrame); assert.deepEqual(gltf.extras.tileOriginEpsg26910VerticalMetres, receipt.tile.originEpsg26910VerticalMetres); assert.deepEqual(gltf.extras.originTupleOrder, receipt.tile.originTupleOrder); assert.deepEqual(gltf.extras.vertexAxes, receipt.tile.vertexAxes);
-  assert.equal(gltf.meshes.length, 1); assert.deepEqual(gltf.meshes[0].primitives.map(({ extras }) => extras.category), ['terrain', 'water', 'coastline', 'roads', 'buildings']); const stats = Object.fromEntries(gltf.meshes[0].primitives.map((primitive) => [primitive.extras.category, inspectPrimitive(gltf, bin, primitive)]));
+  assert.equal(gltf.meshes.length, 1); assert.deepEqual([...new Set(gltf.meshes[0].primitives.map(({ extras }) => extras.category))], ['terrain', 'water', 'coastline', 'roads', 'buildings']); const stats = aggregatePrimitives(gltf.meshes[0].primitives.map((primitive) => inspectPrimitive(gltf, bin, primitive)));
   for (const category of ['terrain', 'water', 'coastline', 'roads', 'buildings']) { const { min: _min, max: _max, ...actual } = stats[category]; assert.deepEqual(actual, lod.meshStats[category], `${category} mesh stats mismatch`); }
   const min = [0, 1, 2].map((axis) => Math.min(...Object.values(stats).map((stat) => stat.min[axis]))); const max = [0, 1, 2].map((axis) => Math.max(...Object.values(stats).map((stat) => stat.max[axis]))); assert.deepEqual({ min, max }, lod.boundsLocalMetres, 'LOD local bounds mismatch'); assert(min[0] >= 0 && min[2] >= 0 && max[0] <= 384 && max[2] <= 384, 'Geometry escapes 384 m tile');
-  const building = gltf.meshes[0].primitives.find(({ extras }) => extras.category === 'buildings'); assert(building.extras.sourceOsmWayIds.includes(558731934), 'Ferry Building OSM id missing from GLB');
+  const buildings = gltf.meshes[0].primitives.filter(({ extras }) => extras.category === 'buildings'); assert(buildings.some(({ extras }) => extras.sourceOsmWayIds.includes(558731934)), 'Ferry Building OSM id missing from GLB');
 }
 
 const rebuilt = await buildFerryProductionTile({ write: false, finalizeDescriptor: true });

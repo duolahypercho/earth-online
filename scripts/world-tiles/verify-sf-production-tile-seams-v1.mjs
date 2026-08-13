@@ -72,7 +72,7 @@ function inspectPrimitive(gltf, bin, primitive) {
   const { positions, heightBits, count, min, max } = readPositions(gltf, bin, primitive);
   const indexAccessor = gltf.accessors[primitive.indices];
   const indexView = gltf.bufferViews[indexAccessor.bufferView];
-  assert.equal(indexAccessor.componentType, 5125, `${primitive.extras.category} indices must be uint32`);
+  assert([5123, 5125].includes(indexAccessor.componentType), `${primitive.extras.category} indices must be uint16 or uint32`);
   assert.equal(indexAccessor.type, 'SCALAR', `${primitive.extras.category} indices must be SCALAR`);
   assert.equal(indexAccessor.count % 3, 0, `${primitive.extras.category} index count is not triangular`);
   const actualMin = [Infinity, Infinity, Infinity];
@@ -88,9 +88,9 @@ function inspectPrimitive(gltf, bin, primitive) {
     assert(almost(actualMin[axis], min[axis], 2e-5), `${primitive.extras.category} accessor min mismatch`);
     assert(almost(actualMax[axis], max[axis], 2e-5), `${primitive.extras.category} accessor max mismatch`);
   }
-  for (let index = 0; index < indexAccessor.count; index += 1) {
-    assert(bin.readUInt32LE((indexView.byteOffset ?? 0) + index * 4) < count, `${primitive.extras.category} index out of range`);
-  }
+  const indexBytes = indexAccessor.componentType === 5123 ? 2 : 4;
+  const readIndex = indexAccessor.componentType === 5123 ? (at) => bin.readUInt16LE(at) : (at) => bin.readUInt32LE(at);
+  for (let index = 0; index < indexAccessor.count; index += 1) assert(readIndex((indexView.byteOffset ?? 0) + index * indexBytes) < count, `${primitive.extras.category} index out of range`);
   return {
     category: primitive.extras.category,
     positions,
@@ -101,6 +101,31 @@ function inspectPrimitive(gltf, bin, primitive) {
     sourceOsmWayIds: [...(primitive.extras.sourceOsmWayIds ?? [])],
     min,
     max,
+  };
+}
+
+function mergePrimitives(category, chunks) {
+  const vertices = chunks.reduce((sum, chunk) => sum + chunk.vertices, 0);
+  const indices = chunks.reduce((sum, chunk) => sum + chunk.indices, 0);
+  const positions = new Float32Array(vertices * 3);
+  const heightBits = new Uint32Array(vertices);
+  let vertexOffset = 0;
+  for (const chunk of chunks) {
+    positions.set(chunk.positions, vertexOffset * 3);
+    heightBits.set(chunk.heightBits, vertexOffset);
+    vertexOffset += chunk.vertices;
+  }
+  return {
+    category,
+    positions,
+    heightBits,
+    vertices,
+    indices,
+    triangles: indices / 3,
+    sourceOsmWayIds: [...new Set(chunks.flatMap(({ sourceOsmWayIds }) => sourceOsmWayIds))].sort((a, b) => a - b),
+    min: [0, 1, 2].map((axis) => Math.min(...chunks.map(({ min }) => min[axis]))),
+    max: [0, 1, 2].map((axis) => Math.max(...chunks.map(({ max }) => max[axis]))),
+    primitiveChunks: chunks.length,
   };
 }
 
@@ -208,10 +233,8 @@ async function loadTile(identity, manifestEntry) {
   assert.equal(gltf.nodes?.[0]?.scale, undefined, `${identity} GLB node scale is not allowed`);
   forbidCertifiedVertical(`${identity} GLB extras`, gltf.extras);
 
-  const primitives = Object.fromEntries(gltf.meshes[0].primitives.map((primitive) => {
-    const inspected = inspectPrimitive(gltf, bin, primitive);
-    return [inspected.category, inspected];
-  }));
+  const inspectedChunks = gltf.meshes[0].primitives.map((primitive) => inspectPrimitive(gltf, bin, primitive));
+  const primitives = Object.fromEntries([...new Set(inspectedChunks.map(({ category }) => category))].map((category) => [category, mergePrimitives(category, inspectedChunks.filter((chunk) => chunk.category === category))]));
   assert(primitives.terrain, `${identity} is missing a terrain primitive`);
   for (const category of Object.keys(primitives)) {
     const mesh = primitives[category];
@@ -225,6 +248,7 @@ async function loadTile(identity, manifestEntry) {
       assert.equal(mesh.indices, expectedStats.indices, `${identity} ${category} index count drifted`);
       assert.equal(mesh.triangles, expectedStats.triangles, `${identity} ${category} triangle count drifted`);
       assert.equal(mesh.sourceOsmWayIds.length, expectedStats.sourceOsmWayCount, `${identity} ${category} source way count drifted`);
+      assert.equal(mesh.primitiveChunks, expectedStats.primitiveChunks, `${identity} ${category} primitive chunk count drifted`);
     }
   }
 

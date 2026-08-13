@@ -108,9 +108,9 @@
       ],
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
-      "artifactHash": "sha256:2322e2d8257ae3fe8c0ed25c6173dd929b9340ea9cd121a946836f7e1d3cdf12",
+      "artifactHash": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310",
       "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
-      "bytes": 5435564,
+      "bytes": 3643944,
       "boundsLocalMetres": {
         "min": [
           0,
@@ -125,34 +125,39 @@
       },
       "meshStats": {
         "terrain": {
-          "vertices": 74922,
+          "vertices": 75053,
           "indices": 444948,
           "triangles": 148316,
-          "sourceOsmWayCount": 0
+          "sourceOsmWayCount": 0,
+          "primitiveChunks": 2
         },
         "water": {
-          "vertices": 74798,
+          "vertices": 75131,
           "indices": 444258,
           "triangles": 148086,
-          "sourceOsmWayCount": 2
+          "sourceOsmWayCount": 2,
+          "primitiveChunks": 2
         },
         "coastline": {
           "vertices": 48,
           "indices": 72,
           "triangles": 24,
-          "sourceOsmWayCount": 2
+          "sourceOsmWayCount": 2,
+          "primitiveChunks": 1
         },
         "roads": {
           "vertices": 2432,
           "indices": 7734,
           "triangles": 2578,
-          "sourceOsmWayCount": 221
+          "sourceOsmWayCount": 221,
+          "primitiveChunks": 1
         },
         "buildings": {
           "vertices": 514,
           "indices": 2163,
           "triangles": 721,
-          "sourceOsmWayCount": 24
+          "sourceOsmWayCount": 24,
+          "primitiveChunks": 1
         }
       }
     }
