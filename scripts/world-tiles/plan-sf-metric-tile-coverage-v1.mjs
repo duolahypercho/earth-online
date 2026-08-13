@@ -21,6 +21,16 @@ const TERRAIN_SOURCES = [
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'),
   },
+  {
+    label: 'x54y418',
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'),
+  },
+  {
+    label: 'x55y418',
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'),
+  },
 ];
 const OUTPUT_PATH = path.join(ROOT, 'public/data/world/plans/sf-metric-tile-coverage-v1.json');
 const TILE_SIZE = 384;

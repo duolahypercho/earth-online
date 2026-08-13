@@ -15,7 +15,7 @@ assert.equal(checked.kind, 'sf-metric-tile-coverage-plan');
 assert.equal(checked.status, 'horizontal-complete-terrain-sources-incomplete', 'Plan must honestly report missing citywide terrain sources');
 assert.equal(checked.sources.shoreline.artifactSha256, 'sha256:a3023288edff7a91f84f20ca54fc55693b2f6a4fa4fb396807378f31be80f01d');
 assert.equal(checked.sources.horizontalTransform.absoluteHorizontalAccuracyFloorMetres, 4);
-assert.equal(checked.sources.availableTerrain.length, 2, 'Both byte-locked northern mainland 3DEP cells must be planned');
+assert.equal(checked.sources.availableTerrain.length, 4, 'All four byte-locked mainland 3DEP cells must be planned');
 assert.equal(checked.counts.shorelinePolygons, 38, 'All locked DataSF shoreline/island polygons must be represented');
 assert(checked.counts.buildReadyTiles > 3, 'Current terrain source should admit a meaningful eastern-SF batch');
 assert(checked.counts.missingTerrainTiles > 0, 'Plan must expose the missing western/remote terrain source gap');
