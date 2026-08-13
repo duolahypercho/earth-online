@@ -35,6 +35,8 @@ const TERRAIN_SOURCES = [
 const OUTPUT_PATH = path.join(ROOT, 'public/data/world/plans/sf-metric-tile-coverage-v1.json');
 const TILE_SIZE = 384;
 const SOURCE_BUFFER = 16;
+const TERRAIN_SAMPLE_MARGIN = 2;
+const TERRAIN_CELL_SIZE = 10_000;
 const COASTAL_HALO_TILES = 1;
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const relative = (filePath) => path.relative(ROOT, filePath).split(path.sep).join('/');
@@ -113,6 +115,22 @@ function polygonIntersectsTile(polygon, bounds) {
 
 function tileKey(easting, northing) { return `${easting},${northing}`; }
 function tileId(easting, northing) { return `epsg26910-${easting}-${northing}`; }
+function terrainCellKey(easting, northing) {
+  return `${Math.floor((easting - 1e-7) / TERRAIN_CELL_SIZE)},${Math.floor((northing - 1e-7) / TERRAIN_CELL_SIZE)}`;
+}
+
+async function sourceRegionIsValid(source, bounds) {
+  if (bounds[0] < source.bounds[0] || bounds[1] < source.bounds[1] || bounds[2] > source.bounds[2] || bounds[3] > source.bounds[3]) return false;
+  const topLeft = source.reader.modelToPixel(bounds[0], bounds[3]);
+  const bottomRight = source.reader.modelToPixel(bounds[2], bounds[1]);
+  const column = Math.max(0, Math.floor(topLeft.column));
+  const row = Math.max(0, Math.floor(topLeft.row));
+  const right = Math.min(source.reader.metadata.width, Math.ceil(bottomRight.column) + 1);
+  const bottom = Math.min(source.reader.metadata.height, Math.ceil(bottomRight.row) + 1);
+  if (right <= column || bottom <= row) return false;
+  const window = await source.reader.readWindow({ column, row, width: right - column, height: bottom - row });
+  return window.values.every((value) => value !== window.nodata && Number.isFinite(value));
+}
 
 export async function buildSfMetricTileCoveragePlan() {
   const [shorelineBytes, shorelineLockBytes, horizontalLockBytes, terrainSourceRecords] = await Promise.all([
@@ -125,7 +143,8 @@ export async function buildSfMetricTileCoveragePlan() {
       assert.equal(elevationLock.sourceRaster.sha256, sourceLock.raster.sha256, `${source.label} elevation authorization raster hash drifted`);
       const bounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
       const reader = await openGeoTiffWindowReader(path.join(ROOT, sourceLock.raster.localRawCache));
-      return { ...source, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock, bounds, reader };
+      const cellKey = terrainCellKey((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2);
+      return { ...source, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock, bounds, cellKey, reader };
     })),
   ]);
   const shorelineLock = JSON.parse(shorelineLockBytes);
@@ -162,22 +181,36 @@ export async function buildSfMetricTileCoveragePlan() {
   const readiness = new Map();
   for (const tile of orderedTiles) {
     const minE = tile.gridEasting * TILE_SIZE; const minN = tile.gridNorthing * TILE_SIZE;
-    const sourceBounds = [minE - SOURCE_BUFFER, minN - SOURCE_BUFFER, minE + TILE_SIZE + SOURCE_BUFFER, minN + TILE_SIZE + SOURCE_BUFFER];
+    const sampleMargin = SOURCE_BUFFER + TERRAIN_SAMPLE_MARGIN;
+    const sourceBounds = [minE - sampleMargin, minN - sampleMargin, minE + TILE_SIZE + sampleMargin, minN + TILE_SIZE + sampleMargin];
     let terrainAvailable = false;
     let terrainReason = 'missing-authorized-1m-terrain-source';
-    const containingSources = terrainSourceRecords.filter(({ bounds }) => sourceBounds[0] >= bounds[0] && sourceBounds[1] >= bounds[1] && sourceBounds[2] <= bounds[2] && sourceBounds[3] <= bounds[3]);
-    for (const source of containingSources) {
-      const topLeft = source.reader.modelToPixel(sourceBounds[0], sourceBounds[3]); const bottomRight = source.reader.modelToPixel(sourceBounds[2], sourceBounds[1]);
-      const column = Math.floor(topLeft.column); const row = Math.floor(topLeft.row); const right = Math.ceil(bottomRight.column) + 1; const bottom = Math.ceil(bottomRight.row) + 1;
-      const window = await source.reader.readWindow({ column, row, width: right - column, height: bottom - row });
-      if (window.values.every((value) => value !== window.nodata && Number.isFinite(value))) {
-        terrainAvailable = true;
-        terrainReason = `available-from-byte-locked-3dep-${source.label}`;
-        break;
-      }
+    const minCellE = Math.floor((sourceBounds[0] - 1e-7) / TERRAIN_CELL_SIZE);
+    const maxCellE = Math.floor((sourceBounds[2] - 1e-7) / TERRAIN_CELL_SIZE);
+    const minCellN = Math.floor((sourceBounds[1] - 1e-7) / TERRAIN_CELL_SIZE);
+    const maxCellN = Math.floor((sourceBounds[3] - 1e-7) / TERRAIN_CELL_SIZE);
+    const requiredRegions = [];
+    for (let cellN = minCellN; cellN <= maxCellN; cellN += 1) for (let cellE = minCellE; cellE <= maxCellE; cellE += 1) {
+      const bounds = [
+        Math.max(sourceBounds[0], cellE * TERRAIN_CELL_SIZE),
+        Math.max(sourceBounds[1], cellN * TERRAIN_CELL_SIZE),
+        Math.min(sourceBounds[2], (cellE + 1) * TERRAIN_CELL_SIZE),
+        Math.min(sourceBounds[3], (cellN + 1) * TERRAIN_CELL_SIZE),
+      ];
+      if (bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) continue;
+      requiredRegions.push({ cellKey: `${cellE},${cellN}`, bounds });
     }
-    if (!terrainAvailable && containingSources.length) {
-      terrainReason = `byte-locked-3dep-${containingSources.map(({ label }) => label).join('-or-')}-contains-nodata`;
+    const sourcesByCell = new Map(terrainSourceRecords.map((source) => [source.cellKey, source]));
+    const selectedSources = requiredRegions.map(({ cellKey }) => sourcesByCell.get(cellKey));
+    if (selectedSources.every(Boolean)) {
+      const validity = await Promise.all(requiredRegions.map(({ bounds }, index) => sourceRegionIsValid(selectedSources[index], bounds)));
+      const labels = [...new Set(selectedSources.map(({ label }) => label))].sort();
+      if (validity.every(Boolean)) {
+        terrainAvailable = true;
+        terrainReason = `available-from-byte-locked-3dep-${labels.join('-and-')}`;
+      } else {
+        terrainReason = `byte-locked-3dep-${labels.join('-and-')}-contains-nodata`;
+      }
     }
     readiness.set(tileKey(tile.gridEasting, tile.gridNorthing), { terrainAvailable, terrainReason });
   }
