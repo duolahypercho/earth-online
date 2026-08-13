@@ -6739,6 +6739,26 @@
       }
     },
     {
+      "id": "epsg26910-1424-10885",
+      "gridIndex": [
+        1424,
+        10885
+      ],
+      "originEpsg26910VerticalMetres": [
+        546816,
+        4179840,
+        0
+      ],
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1424-10885/epsg26910-1424-10885.lod0.glb",
+        "sha256": "sha256:bbc8d41f4921c06d3765a75c331aaaeee54457b111c1d675e6d04e21ef9c70e1"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1424-10885/epsg26910-1424-10885.receipt.json",
+        "sha256": "sha256:90141377fcc638f07dd00bb4b9483be507f39234990704d1113685c396517a4a"
+      }
+    },
+    {
       "id": "epsg26910-1425-10885",
       "gridIndex": [
         1425,
