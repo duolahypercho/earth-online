@@ -44,38 +44,54 @@ try {
     captures.push({ id: card.id, screenshot, ...diagnostics });
   }
 
-  const card02 = captures[1];
-  const staging = card02.traffic.staging;
+  const stagedByCard = Object.fromEntries(captures.map((capture) => [
+    capture.id,
+    capture.traffic.staging.records.filter((record) => record.cardId === capture.id),
+  ]));
   const movement = await page.evaluate(async () => {
-    const initial = window.__SF_REALMAP__.getPerf().heroTrafficVisuals.staging;
+    const initial = window.__SF_REALMAP__.getPerf().heroTrafficVisuals.staging.records;
     await new Promise((resolve) => setTimeout(resolve, 1200));
-    const current = window.__SF_REALMAP__.getPerf().heroTrafficVisuals.staging;
-    return {
-      sourceRoadId: current.sourceRoadId,
-      pathId: current.pathId,
-      movedM: Math.hypot(current.position.x - initial.position.x, current.position.z - initial.position.z),
-      initial,
-      current,
-    };
+    const current = window.__SF_REALMAP__.getPerf().heroTrafficVisuals.staging.records;
+    return current.map((record) => {
+      const before = initial.find((candidate) => candidate.cardId === record.cardId);
+      return {
+        cardId: record.cardId,
+        vehicleIndex: record.vehicleIndex,
+        sourceRoadId: record.sourceRoadId,
+        pathId: record.pathId,
+        movedM: Math.hypot(record.position.x - before.position.x, record.position.z - before.position.z),
+        initial: before,
+        current: record,
+      };
+    });
   });
-  assert.equal(staging.cardId, cards[1].id, 'staging must explicitly target the locked card 02 frame');
-  assert.equal(staging.sourceRoadId, 283512618, 'staging must retain the existing OSM Embarcadero road id');
-  assert.equal(staging.sourceHighway, 'primary', 'staging must retain the existing vehicular highway class');
-  assert.ok(staging.readable, 'the staged source vehicle must be wholly readable in locked card 02');
-  assert.ok(staging.distanceToCameraM > 8, 'the staged vehicle must not occupy the near camera exclusion zone');
-  assert.ok(staging.distanceToPlayerM > 10, 'the staged vehicle must remain a non-occluding midground object');
-  assert.equal(movement.sourceRoadId, staging.sourceRoadId, 'the moving vehicle must retain its OSM source road');
-  assert.equal(movement.pathId, staging.pathId, 'the moving vehicle must retain its normal traffic path');
-  assert.ok(movement.movedM > 0.3, 'the staged vehicle must continue its normal path update');
-  assert.equal(card02.traffic.stats.drawCalls, 8, 'traffic presentation must retain its fixed draw-call budget');
-  assert.equal(card02.traffic.stats.active, card02.traffic.sourceVehicles,
-    'all source traffic records must remain represented by the presentation layer');
-  assert.equal(card02.paths.oneWayViolations, 0, 'traffic staging must not alter one-way topology');
-  assert.equal(card02.paths.twoWayViolations, 0, 'traffic staging must not alter two-way topology');
-  assert.equal(card02.signal.legal, true, 'traffic staging must preserve signal legality');
+  assert.equal(captures[0].traffic.staging.count, 3, 'locked cards require two Card01 and one Card02 source records');
+  for (const capture of captures) {
+    const staged = stagedByCard[capture.id];
+    assert.equal(staged.length, capture.id.startsWith('01-') ? 2 : 1, `${capture.id}: source staging count drifted`);
+    for (const staging of staged) {
+      const moved = movement.find((record) => record.cardId === capture.id
+        && record.vehicleIndex === staging.vehicleIndex);
+      assert.ok(moved, `${capture.id}: movement sample missing for staged vehicle ${staging.vehicleIndex}`);
+      assert.equal(staging.sourceRoadId, 283512618, `${capture.id}: OSM Embarcadero road id drifted`);
+      assert.equal(staging.sourceHighway, 'primary', `${capture.id}: vehicular highway class drifted`);
+      assert.ok(staging.readable, `${capture.id}: staged source vehicle is not wholly readable`);
+      assert.ok(staging.distanceToCameraM > 8, `${capture.id}: vehicle occupies the near camera exclusion zone`);
+      assert.ok(staging.distanceToPlayerM > 10, `${capture.id}: vehicle is not a midground object`);
+      assert.equal(moved.sourceRoadId, staging.sourceRoadId, `${capture.id}: moving vehicle lost its OSM road`);
+      assert.equal(moved.pathId, staging.pathId, `${capture.id}: moving vehicle left its traffic path`);
+      assert.ok(moved.movedM > 0.3, `${capture.id}: staged vehicle did not continue its normal update`);
+    }
+    assert.equal(capture.traffic.stats.drawCalls, 8, `${capture.id}: traffic draw-call budget drifted`);
+    assert.equal(capture.traffic.stats.active, capture.traffic.sourceVehicles,
+      `${capture.id}: source traffic records are not all represented`);
+    assert.equal(capture.paths.oneWayViolations, 0, `${capture.id}: one-way topology changed`);
+    assert.equal(capture.paths.twoWayViolations, 0, `${capture.id}: two-way topology changed`);
+    assert.equal(capture.signal.legal, true, `${capture.id}: signal legality changed`);
+  }
   assert.deepEqual(errors, [], `browser errors: ${errors.join('; ')}`);
   console.log(JSON.stringify({
-    result: 'locked Ferry card 02 has a readable source-path traffic vehicle', url, captures, movement, errors,
+    result: 'locked Ferry cards 01 and 02 have readable source-path traffic vehicles', url, captures, movement, errors,
   }, null, 2));
 } finally {
   await browser.close();

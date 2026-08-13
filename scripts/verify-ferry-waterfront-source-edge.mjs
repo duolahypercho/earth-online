@@ -9,6 +9,8 @@ assert.match(source, /mask\.isLand/, 'waterfront must derive its land side from 
 assert.match(source, /presentationOnly: true/, 'waterfront dimensions must be explicitly presentation-only');
 assert.match(source, /affectsCollision: false/, 'waterfront must not change collision');
 assert.match(source, /sourceAligned: true/, 'waterfront must report source alignment');
+assert.match(source, /waterSideBandDepthM: 1\.6/, 'water-side readability band must remain bounded');
+assert.match(source, /not bathymetry/, 'water-side band must disclaim physical depth claims');
 assert.doesNotMatch(source, /BoxGeometry|CylinderGeometry|Rail/, 'waterfront must not invent pier, bollard, or rail topology');
 
 console.log(JSON.stringify({

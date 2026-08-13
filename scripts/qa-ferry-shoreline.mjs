@@ -85,6 +85,7 @@ function assertWaterfrontState(id, state) {
   assert.equal(state.waterfront?.presentationOnly, true, `${id}: waterfront edge is no longer presentation-only`);
   assert.equal(state.waterfront?.affectsCollision, false, `${id}: waterfront edge changed collision behavior`);
   assert.equal(state.waterfront?.segments, state.shoreline.transition.segments, `${id}: waterfront edge no longer matches source shoreline segments`);
+  assert.equal(state.waterfront?.waterSideBandDepthM, 1.6, `${id}: waterfront readability band width drifted`);
   assert.equal(state.atmosphere.waterVisible, true, `${id}: water surface is not visible`);
   assert.equal(state.atmosphere.waterSurfaces.city, 1, `${id}: runtime does not have exactly one Bay water surface`);
   assert.equal(state.atmosphere.waterSurfaces.shared, 1, `${id}: runtime Bay surface is not the shared surface`);
