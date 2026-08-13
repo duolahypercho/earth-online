@@ -102,9 +102,9 @@
       ],
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
-      "artifactHash": "sha256:f479af8c641a2668596e3847109843740cef60a6f3123bfdd8af70da7119af5a",
+      "artifactHash": "sha256:f3b190e0279691406000e784c7f3145f5ba3ac07a27a56a8f5ba4f0fecbb1f08",
       "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1438-10893/epsg26910-1438-10893.lod0.glb",
-      "bytes": 5466200,
+      "bytes": 3667748,
       "boundsLocalMetres": {
         "min": [
           0,
@@ -119,34 +119,39 @@
       },
       "meshStats": {
         "terrain": {
-          "vertices": 148225,
+          "vertices": 148997,
           "indices": 884736,
           "triangles": 294912,
-          "sourceOsmWayCount": 0
+          "sourceOsmWayCount": 0,
+          "primitiveChunks": 3
         },
         "water": {
           "vertices": 0,
           "indices": 0,
           "triangles": 0,
-          "sourceOsmWayCount": 0
+          "sourceOsmWayCount": 0,
+          "primitiveChunks": 0
         },
         "coastline": {
           "vertices": 0,
           "indices": 0,
           "triangles": 0,
-          "sourceOsmWayCount": 0
+          "sourceOsmWayCount": 0,
+          "primitiveChunks": 0
         },
         "roads": {
           "vertices": 1920,
           "indices": 6450,
           "triangles": 2150,
-          "sourceOsmWayCount": 259
+          "sourceOsmWayCount": 259,
+          "primitiveChunks": 1
         },
         "buildings": {
           "vertices": 3248,
           "indices": 13206,
           "triangles": 4402,
-          "sourceOsmWayCount": 234
+          "sourceOsmWayCount": 234,
+          "primitiveChunks": 1
         }
       }
     }

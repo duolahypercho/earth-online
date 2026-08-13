@@ -457,16 +457,58 @@ function planAreaSquareMetres(data) {
   return q(area);
 }
 
+function partitionIndexedCategory(data, maxVertices = 65_535) {
+  const chunks = [];
+  let positions = [];
+  let indices = [];
+  let remap = new Map();
+  const flush = () => {
+    if (indices.length) chunks.push({ positions, indices });
+    positions = [];
+    indices = [];
+    remap = new Map();
+  };
+  for (let index = 0; index < data.indices.length; index += 3) {
+    const triangleIndices = data.indices.slice(index, index + 3);
+    const additionalVertices = triangleIndices.filter((sourceIndex) => !remap.has(sourceIndex)).length;
+    if (remap.size + additionalVertices > maxVertices) flush();
+    for (const sourceIndex of triangleIndices) {
+      if (!remap.has(sourceIndex)) {
+        remap.set(sourceIndex, remap.size);
+        positions.push(...data.positions.slice(sourceIndex * 3, sourceIndex * 3 + 3));
+      }
+      indices.push(remap.get(sourceIndex));
+    }
+  }
+  flush();
+  return chunks;
+}
+
+function serializedMeshStats(categories) {
+  return Object.fromEntries(Object.entries(categories).map(([name, data]) => {
+    const partitions = partitionIndexedCategory(data);
+    return [name, {
+      vertices: partitions.reduce((sum, partition) => sum + partition.positions.length / 3, 0),
+      indices: data.indices.length,
+      triangles: data.indices.length / 3,
+      sourceOsmWayCount: data.sourceIds.size,
+      primitiveChunks: partitions.length,
+    }];
+  }));
+}
+
 function makeGlb(categories, level) {
   const allNames = ['terrain', 'water', 'coastline', 'roads', 'buildings']; const names = allNames.filter((name) => categories[name].positions.length); const chunks = []; const bufferViews = []; const accessors = []; const primitives = [];
   let offset = 0; const pad = () => { const count = (4 - offset % 4) % 4; if (count) { chunks.push(Buffer.alloc(count)); offset += count; } };
   const addView = (bytes, target) => { pad(); const index = bufferViews.length; bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: bytes.length, target }); chunks.push(bytes); offset += bytes.length; return index; };
-  for (const name of names) { const material = allNames.indexOf(name); const data = categories[name]; const positions = Buffer.alloc(data.positions.length * 4); data.positions.forEach((v, i) => positions.writeFloatLE(v, i * 4)); const indices = Buffer.alloc(data.indices.length * 4); data.indices.forEach((v, i) => indices.writeUInt32LE(v, i * 4));
+  for (const name of names) { const material = allNames.indexOf(name); const data = categories[name]; const partitions = partitionIndexedCategory(data);
+    for (const [chunkIndex, partition] of partitions.entries()) { const positions = Buffer.alloc(partition.positions.length * 4); partition.positions.forEach((v, i) => positions.writeFloatLE(v, i * 4)); const indices = Buffer.alloc(partition.indices.length * 2); partition.indices.forEach((v, i) => indices.writeUInt16LE(v, i * 2));
     const positionView = addView(positions, 34962); const indexView = addView(indices, 34963); const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
-    for (let index = 0; index < data.positions.length; index += 3) for (let axis = 0; axis < 3; axis += 1) { min[axis] = Math.min(min[axis], data.positions[index + axis]); max[axis] = Math.max(max[axis], data.positions[index + axis]); }
-    const positionAccessor = accessors.length; accessors.push({ bufferView: positionView, componentType: 5126, count: data.positions.length / 3, type: 'VEC3', min, max });
-    const indexAccessor = accessors.length; accessors.push({ bufferView: indexView, componentType: 5125, count: data.indices.length, type: 'SCALAR', min: [0], max: [data.positions.length / 3 - 1] });
-    primitives.push({ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: 4, extras: { category: name, sourceOsmWayIds: [...data.sourceIds].sort((a, b) => a - b) } });
+    for (let index = 0; index < partition.positions.length; index += 3) for (let axis = 0; axis < 3; axis += 1) { min[axis] = Math.min(min[axis], partition.positions[index + axis]); max[axis] = Math.max(max[axis], partition.positions[index + axis]); }
+    const positionAccessor = accessors.length; accessors.push({ bufferView: positionView, componentType: 5126, count: partition.positions.length / 3, type: 'VEC3', min, max });
+    const indexAccessor = accessors.length; accessors.push({ bufferView: indexView, componentType: 5123, count: partition.indices.length, type: 'SCALAR', min: [0], max: [partition.positions.length / 3 - 1] });
+    primitives.push({ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: 4, extras: { category: name, chunkIndex, chunkCount: partitions.length, sourceOsmWayIds: [...data.sourceIds].sort((a, b) => a - b) } });
+    }
   }
   pad(); const bin = Buffer.concat(chunks); const gltf = { asset: { version: '2.0', generator: 'build-sf-metric-tile-v1' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: `${TILE.id}-lod${level}` }], meshes: [{ name: `${TILE.id}-lod${level}`, primitives }], materials: [
     { name: 'terrain-night', pbrMetallicRoughness: { baseColorFactor: [0.055, 0.075, 0.085, 1], metallicFactor: 0, roughnessFactor: 1 } },
@@ -506,7 +548,7 @@ export async function buildSfMetricTile({ tile: requestedTile, outputDir, write 
     const baseGeometry = bakeGeometry(features, terrainSource.sample); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, level) => ({ level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }));
-    const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: level < 2 ? 0.000002 : 0, maxVerticalDeviationMetres: level < 2 ? 0.000002 : 0, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: Object.fromEntries(Object.entries(geometry).map(([categoryName, data]) => [categoryName, { vertices: data.positions.length / 3, indices: data.indices.length, triangles: data.indices.length / 3, sourceOsmWayCount: data.sourceIds.size }])) }));
+    const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: level < 2 ? 0.000002 : 0, maxVerticalDeviationMetres: level < 2 ? 0.000002 : 0, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
     const sourceFeatures = [];
     for (const feature of included) { const en = representativeEn(feature); const native = inverse(en[0], en[1], horizontalLock); const terrainEvidence = await terrainSource.evidence(en[0], en[1]); const evidencePayload = terrainEvidence.payload; const elevationSampleEvidence = { ...evidencePayload, evidenceSha256: `sha256:${sha256(stableBytes(evidencePayload))}` }; const height = elevationSampleEvidence.sampledSourceDeclaredNavd88UnrealizedMetres;
       const transformedPosition = [q(en[0]), q(en[1]), height];
