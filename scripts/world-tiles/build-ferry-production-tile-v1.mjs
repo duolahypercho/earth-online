@@ -17,8 +17,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import parse from 'osm-pbf-parser';
 import through from 'through2';
 import { ShapeUtils, Vector2 } from 'three';
-import { triangulate as triangulateClipper } from 'clipper2-ts';
-import { booleanDifference, booleanUnion, triangulatePolygon } from './ferry-surface-boolean-v1.mjs';
+import { FillRule, triangulate as triangulateClipper, trimCollinear, union as unionClipper } from 'clipper2-ts';
+import { booleanDifference, booleanUnion, classifyBooleanPaths, triangulatePolygon } from './ferry-surface-boolean-v1.mjs';
 import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -365,6 +365,170 @@ function pointInRing(point, ring) {
   return result;
 }
 
+function roadPathBounds(pathPoints) {
+  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const { x, y } of pathPoints) {
+    bounds[0] = Math.min(bounds[0], x); bounds[1] = Math.min(bounds[1], y);
+    bounds[2] = Math.max(bounds[2], x); bounds[3] = Math.max(bounds[3], y);
+  }
+  return bounds;
+}
+
+function compareRoadClipperPaths(left, right) {
+  const a = roadPathBounds(left); const b = roadPathBounds(right);
+  for (let axis = 0; axis < a.length; axis += 1) if (a[axis] !== b[axis]) return a[axis] - b[axis];
+  const leftKey = JSON.stringify(left); const rightKey = JSON.stringify(right);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+function isRoadUnionSelfIntersection(error, label) {
+  return error instanceof assert.AssertionError
+    && String(error.message).startsWith(`${label} ring `)
+    && String(error.message).endsWith(' self-intersects');
+}
+
+function roadOrient(a, b, c) {
+  return BigInt(b.x - a.x) * BigInt(c.y - a.y) - BigInt(b.y - a.y) * BigInt(c.x - a.x);
+}
+
+function roadPointOnSegment(a, b, point) {
+  return roadOrient(a, b, point) === 0n
+    && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x)
+    && point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
+}
+
+function sameRoadPoint(a, b) { return a.x === b.x && a.y === b.y; }
+
+function roadSegmentsIntersect(a, b, c, d) {
+  const abC = roadOrient(a, b, c); const abD = roadOrient(a, b, d);
+  const cdA = roadOrient(c, d, a); const cdB = roadOrient(c, d, b);
+  const crosses = (left, right) => left < 0n && right > 0n || left > 0n && right < 0n;
+  return crosses(abC, abD) && crosses(cdA, cdB)
+    || abC === 0n && roadPointOnSegment(a, b, c)
+    || abD === 0n && roadPointOnSegment(a, b, d)
+    || cdA === 0n && roadPointOnSegment(c, d, a)
+    || cdB === 0n && roadPointOnSegment(c, d, b);
+}
+
+function splitRoadRingAtTouch(pathPoints, label, repairState) {
+  for (let first = 0; first < pathPoints.length; first += 1) for (let second = first + 1; second < pathPoints.length; second += 1) {
+    if ((first + 1) % pathPoints.length === second || (second + 1) % pathPoints.length === first) continue;
+    const a = pathPoints[first]; const b = pathPoints[(first + 1) % pathPoints.length];
+    const c = pathPoints[second]; const d = pathPoints[(second + 1) % pathPoints.length];
+    if (!roadSegmentsIntersect(a, b, c, d)) continue;
+    let endpointTouch = [a, b].find((point) => !sameRoadPoint(point, c) && !sameRoadPoint(point, d) && roadPointOnSegment(c, d, point))
+      ?? [c, d].find((point) => !sameRoadPoint(point, a) && !sameRoadPoint(point, b) && roadPointOnSegment(a, b, point));
+    if (!endpointTouch) {
+      const rx = b.x - a.x; const ry = b.y - a.y; const sx = d.x - c.x; const sy = d.y - c.y;
+      const denominator = rx * sy - ry * sx;
+      assert(denominator, `${label} has an unresolved collinear overlap`);
+      const numerator = (c.x - a.x) * sy - (c.y - a.y) * sx;
+      const exactX = a.x + rx * numerator / denominator; const exactY = a.y + ry * numerator / denominator;
+      endpointTouch = { x: Math.round(exactX), y: Math.round(exactY) };
+      const repair = Math.hypot(endpointTouch.x - exactX, endpointTouch.y - exactY);
+      assert(repair <= Math.SQRT1_2 + Number.EPSILON, `${label} crossing repair exceeded one millimetre grid quantization`);
+      repairState.crossings += 1; repairState.maxCoordinateRepairTicks = Math.max(repairState.maxCoordinateRepairTicks, repair);
+      const firstRing = [endpointTouch, ...pathPoints.slice(first + 1, second + 1)];
+      const secondRing = [endpointTouch, ...pathPoints.slice(second + 1), ...pathPoints.slice(0, first + 1)];
+      const rings = [firstRing, secondRing].filter((ring) => new Set(ring.map(({ x, y }) => `${x},${y}`)).size >= 3);
+      assert(rings.length, `${label} crossing decomposition collapsed every ring`);
+      return rings.flatMap((ring, index) => splitRoadRingAtTouch(ring, `${label}/${index}`, repairState));
+    }
+    const expanded = [];
+    for (let index = 0; index < pathPoints.length; index += 1) {
+      const start = pathPoints[index]; const end = pathPoints[(index + 1) % pathPoints.length];
+      expanded.push(start);
+      if (!sameRoadPoint(endpointTouch, start) && !sameRoadPoint(endpointTouch, end) && roadPointOnSegment(start, end, endpointTouch)) expanded.push(endpointTouch);
+    }
+    const occurrences = expanded.flatMap((point, index) => sameRoadPoint(point, endpointTouch) ? [index] : []);
+    assert.equal(occurrences.length, 2, `${label} touch decomposition must create exactly two occurrences`);
+    const [left, right] = occurrences;
+    const firstRing = expanded.slice(left, right + 1).slice(0, -1);
+    const secondRing = expanded.slice(right).concat(expanded.slice(0, left + 1)).slice(0, -1);
+    const rings = [firstRing, secondRing].filter((ring) => new Set(ring.map(({ x, y }) => `${x},${y}`)).size >= 3);
+    assert(rings.length, `${label} touch decomposition collapsed every ring`);
+    return rings.flatMap((ring, index) => splitRoadRingAtTouch(ring, `${label}/${index}`, repairState));
+  }
+  return [pathPoints];
+}
+
+function batchedRoadUnion(roadSurfaces, label) {
+  const sourcePaths = roadSurfaces.flatMap(({ outers, holes = [] }) => [...outers, ...holes])
+    .map((ring) => ring.map(([x, y]) => ({ x, y })))
+    .sort(compareRoadClipperPaths);
+  let lastError = null;
+  for (const batchSize of [64, 32, 16, 8, 4, 2]) {
+    try {
+      const batches = [];
+      for (let offset = 0; offset < sourcePaths.length; offset += batchSize) {
+        batches.push(...unionClipper(sourcePaths.slice(offset, offset + batchSize), FillRule.NonZero));
+      }
+      const exactUnion = unionClipper(batches, FillRule.NonZero).map((ring) => trimCollinear(ring));
+      try {
+        return { polygons: classifyBooleanPaths(exactUnion, `${label} batched-${batchSize}`), triangles: null };
+      } catch (error) {
+        if (!(error instanceof assert.AssertionError) || !String(error.message).includes(' self-intersects')) throw error;
+        const area2 = (ring) => ring.reduce((sum, point, index) => {
+          const next = ring[(index + 1) % ring.length];
+          return sum + BigInt(point.x) * BigInt(next.y) - BigInt(next.x) * BigInt(point.y);
+        }, 0n);
+        const unionArea2 = exactUnion.reduce((sum, ring) => sum + area2(ring), 0n);
+        const repairState = { crossings: 0, maxCoordinateRepairTicks: 0 };
+        const decomposedUnion = exactUnion.flatMap((ring, index) => splitRoadRingAtTouch(ring, `${label} ring ${index}`, repairState));
+        const decomposedArea2 = decomposedUnion.reduce((sum, ring) => sum + area2(ring), 0n);
+        const areaDelta2 = decomposedArea2 > unionArea2 ? decomposedArea2 - unionArea2 : unionArea2 - decomposedArea2;
+        assert(areaDelta2 <= BigInt(repairState.crossings) * 1_000_000n, `${label} crossing decomposition changed more than 0.5 square metres per repaired crossing`);
+        try {
+          return { polygons: classifyBooleanPaths(decomposedUnion, `${label} batched-${batchSize}-decomposed`), triangles: null };
+        } catch (decomposedError) {
+          if (!(decomposedError instanceof assert.AssertionError) || !String(decomposedError.message).includes(' self-intersects')) throw decomposedError;
+        }
+        const resolvedUnion = unionClipper(exactUnion, FillRule.EvenOdd).map((ring) => trimCollinear(ring));
+        const resolvedArea2 = resolvedUnion.reduce((sum, ring) => sum + area2(ring), 0n);
+        if ((resolvedArea2 < 0n ? -resolvedArea2 : resolvedArea2) === (unionArea2 < 0n ? -unionArea2 : unionArea2)) {
+          try {
+            return { polygons: classifyBooleanPaths(resolvedUnion, `${label} batched-${batchSize}-resolved`), triangles: null };
+          } catch (resolvedError) {
+            if (!(resolvedError instanceof assert.AssertionError) || !String(resolvedError.message).includes(' self-intersects')) throw resolvedError;
+          }
+        }
+        const triangulated = triangulateClipper(resolvedUnion, false);
+        if (triangulated.result !== 0 || !triangulated.solution.length) throw error;
+        const triangleArea2 = triangulated.solution.reduce((sum, triangle) => sum + (area2(triangle) < 0n ? -area2(triangle) : area2(triangle)), 0n);
+        assert.equal(triangleArea2, unionArea2 < 0n ? -unionArea2 : unionArea2, `${label} fallback triangulation changed filled area`);
+        return { polygons: null, triangles: triangulated.solution };
+      }
+    } catch (error) {
+      if (!(error instanceof assert.AssertionError) || !String(error.message).includes(' self-intersects')) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function unionRoadSurfaces(roadSurfaces, label) {
+  try {
+    return { polygons: booleanUnion(roadSurfaces, label), triangles: null };
+  } catch (error) {
+    if (!isRoadUnionSelfIntersection(error, label)) throw error;
+    return batchedRoadUnion(roadSurfaces, label);
+  }
+}
+
+function emitRoadTriangles(target, triangles, sample, cache, label) {
+  for (const [triangleIndex, face] of triangles.entries()) {
+    assert.equal(face.length, 3, `${label} triangle ${triangleIndex} is not triangular`);
+    const indices = face.map(({ x, y }) => {
+      const point = canonicalSurfaceBoundaryPoint([x, y]);
+      const key = `${point[0]},${point[1]}`;
+      if (!cache.has(key)) { const [e, n] = fromTicks(point); cache.set(key, vertex(target, e, sample(e, n) + ROAD_LIFT, n)); }
+      return cache.get(key);
+    });
+    assert(indices[0] !== indices[1] && indices[1] !== indices[2] && indices[2] !== indices[0], `${label} triangle ${triangleIndex} collapsed after boundary canonicalization`);
+    triangle(target, indices[0], indices[2], indices[1]);
+  }
+}
+
 function booleanIntersection(subject, clip, label) {
   const outside = booleanDifference(subject, [clip], `${label} outside`);
   const outsideSurfaces = outside.map(({ outer, holes = [] }) => ({ outers: [outer], holes }));
@@ -467,8 +631,9 @@ function bakeGeometry(features, sample) {
     } if (emitted) roads.sourceIds.add(way.id);
   }
   if (roadSurfaces.length) {
-    const roadCache = new Map(); const roadNetwork = booleanUnion(roadSurfaces, `${TILE.id} road network`);
-    for (const [index, polygon] of roadNetwork.entries()) emitRoadPolygon(roads, polygon, sample, roadCache, `${TILE.id} road network/${index}`);
+    const roadCache = new Map(); const roadNetwork = unionRoadSurfaces(roadSurfaces, `${TILE.id} road network`);
+    if (roadNetwork.polygons) for (const [index, polygon] of roadNetwork.polygons.entries()) emitRoadPolygon(roads, polygon, sample, roadCache, `${TILE.id} road network/${index}`);
+    else emitRoadTriangles(roads, roadNetwork.triangles, sample, roadCache, `${TILE.id} road network fallback`);
   }
   for (const way of features.filter((item) => item.tags.building && item.refs[0] === item.refs.at(-1))) {
     const ring = clipPolygon(way.en.slice(0, -1)); if (ring.length < 3) continue; const faces = ShapeUtils.triangulateShape(ring.map(([e, n]) => new Vector2(e, n)), []); if (!faces.length) continue;
