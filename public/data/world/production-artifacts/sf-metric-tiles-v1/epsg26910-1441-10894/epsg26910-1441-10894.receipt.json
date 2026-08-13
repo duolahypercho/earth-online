@@ -39,10 +39,10 @@
       "bytes": 32742133,
       "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae",
       "queryBoundsWgs84": {
-        "west": -122.39428347823456,
-        "east": -122.38952780830078,
-        "south": 37.79533352492755,
-        "north": 37.799058420944846
+        "west": -122.39556376931979,
+        "east": -122.38824735402956,
+        "south": 37.79433063440569,
+        "north": 37.800061243656344
       }
     },
     "geoTiff": {
@@ -60,7 +60,7 @@
     }
   },
   "counts": {
-    "osmCandidateWays": 85,
+    "osmCandidateWays": 303,
     "emittedCoastlineWays": 1,
     "emittedRoadWays": 61,
     "emittedBuildingWays": 7,

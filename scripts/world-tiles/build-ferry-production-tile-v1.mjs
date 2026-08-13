@@ -29,6 +29,10 @@ const GEOMETRY_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-fe
 const ELEVATION_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json');
 const FERRY_OUTPUT_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
 const METRIC_TILE_OUTPUT_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1');
+// OSM ways are node-referenced. A building or long road segment can cross the
+// 16 m production buffer while every authored node remains farther away. Use a
+// wider discovery envelope, then let the exact tile clippers decide ownership.
+const FEATURE_DISCOVERY_BUFFER_METRES = 128;
 const FERRY_TILE = Object.freeze({ id: 'epsg26910-1441-10893', minE: 553344, minN: 4182912, size: 384, originH: 0, sourceBuffer: 16 });
 let TILE = FERRY_TILE;
 const TERRAIN_STEP = 1;
@@ -111,7 +115,7 @@ function inverse(easting, northing, lock) {
 }
 
 async function readOsmFeatures(horizontalLock) {
-  const corners = [[TILE.minE - TILE.sourceBuffer, TILE.minN - TILE.sourceBuffer], [TILE.minE + TILE.size + TILE.sourceBuffer, TILE.minN + TILE.size + TILE.sourceBuffer]].map(([e, n]) => inverse(e, n, horizontalLock));
+  const corners = [[TILE.minE - FEATURE_DISCOVERY_BUFFER_METRES, TILE.minN - FEATURE_DISCOVERY_BUFFER_METRES], [TILE.minE + TILE.size + FEATURE_DISCOVERY_BUFFER_METRES, TILE.minN + TILE.size + FEATURE_DISCOVERY_BUFFER_METRES]].map(([e, n]) => inverse(e, n, horizontalLock));
   const bounds = { west: Math.min(...corners.map((v) => v[0])), east: Math.max(...corners.map((v) => v[0])), south: Math.min(...corners.map((v) => v[1])), north: Math.max(...corners.map((v) => v[1])) };
   const nearbyNodeIds = new Set();
   await scanPbf((items) => { for (const item of items) if (item.type === 'node' && item.lon >= bounds.west && item.lon <= bounds.east && item.lat >= bounds.south && item.lat <= bounds.north) nearbyNodeIds.add(item.id); });
@@ -124,7 +128,6 @@ async function readOsmFeatures(horizontalLock) {
   await scanPbf((items) => { for (const item of items) if (item.type === 'node' && requiredNodeIds.has(item.id)) nodes.set(item.id, { lon: item.lon, lat: item.lat }); });
   assert.equal(nodes.size, requiredNodeIds.size, 'Selected OSM way has an unresolved node');
   const features = [...ways.values()].map((way) => ({ ...way, en: way.refs.map((id) => forward(nodes.get(id).lon, nodes.get(id).lat, horizontalLock)), lonLat: way.refs.map((id) => [nodes.get(id).lon, nodes.get(id).lat]) }))
-    .filter((way) => way.en.some(([e, n]) => e >= TILE.minE - TILE.sourceBuffer && e <= TILE.minE + TILE.size + TILE.sourceBuffer && n >= TILE.minN - TILE.sourceBuffer && n <= TILE.minN + TILE.size + TILE.sourceBuffer))
     .sort((a, b) => a.id - b.id);
   return { bounds, features };
 }

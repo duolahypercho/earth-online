@@ -39,10 +39,10 @@
       "bytes": 32742133,
       "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae",
       "queryBoundsWgs84": {
-        "west": -122.39861679526474,
-        "east": -122.39386111484512,
-        "south": 37.79881674960085,
-        "north": 37.80254181830428
+        "west": -122.39989708915884,
+        "east": -122.39258065773645,
+        "south": 37.797813812590405,
+        "north": 37.803544687512016
       }
     },
     "geoTiff": {
@@ -60,16 +60,16 @@
     }
   },
   "counts": {
-    "osmCandidateWays": 86,
+    "osmCandidateWays": 216,
     "emittedCoastlineWays": 1,
     "emittedRoadWays": 69,
-    "emittedBuildingWays": 7,
-    "packageSourceFeatures": 77,
+    "emittedBuildingWays": 8,
+    "packageSourceFeatures": 78,
     "terrainVertices": 26124,
     "waterVertices": 124223,
     "coastlineVertices": 156,
     "roadVertices": 717,
-    "buildingVertices": 124
+    "buildingVertices": 132
   },
   "surfaceClassification": {
     "authority": "OpenStreetMap natural=coastline ways in the byte-locked PBF",
@@ -100,9 +100,9 @@
       ],
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
-      "artifactHash": "sha256:aa50cc05027d5b77045f1ade087571c640a331e8048222cd176722229f5a85e5",
+      "artifactHash": "sha256:236db7197f14c1bbe8ee47f5044669853c7e77dc97dbc45fa65e19487d4811b2",
       "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10895/epsg26910-1440-10895.lod0.glb",
-      "bytes": 5396904,
+      "bytes": 5397128,
       "boundsLocalMetres": {
         "min": [
           0,
@@ -141,10 +141,10 @@
           "sourceOsmWayCount": 69
         },
         "buildings": {
-          "vertices": 124,
-          "indices": 510,
-          "triangles": 170,
-          "sourceOsmWayCount": 7
+          "vertices": 132,
+          "indices": 540,
+          "triangles": 180,
+          "sourceOsmWayCount": 8
         }
       }
     }
