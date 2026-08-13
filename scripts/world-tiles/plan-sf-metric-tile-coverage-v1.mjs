@@ -10,8 +10,18 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const SHORELINE_PATH = path.join(ROOT, 'public/data/sf/sf-shoreline.geojson');
 const SHORELINE_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-datasf-shoreline-horizontal-geometry-v1.lock.json');
 const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json');
-const TERRAIN_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json');
-const ELEVATION_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json');
+const TERRAIN_SOURCES = [
+  {
+    label: 'x55y419',
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'),
+  },
+  {
+    label: 'x54y419',
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'),
+  },
+];
 const OUTPUT_PATH = path.join(ROOT, 'public/data/world/plans/sf-metric-tile-coverage-v1.json');
 const TILE_SIZE = 384;
 const SOURCE_BUFFER = 16;
@@ -95,12 +105,21 @@ function tileKey(easting, northing) { return `${easting},${northing}`; }
 function tileId(easting, northing) { return `epsg26910-${easting}-${northing}`; }
 
 export async function buildSfMetricTileCoveragePlan() {
-  const [shorelineBytes, shorelineLockBytes, horizontalLockBytes, terrainLockBytes, elevationLockBytes] = await Promise.all([
-    readFile(SHORELINE_PATH), readFile(SHORELINE_LOCK_PATH), readFile(HORIZONTAL_LOCK_PATH), readFile(TERRAIN_LOCK_PATH), readFile(ELEVATION_LOCK_PATH),
+  const [shorelineBytes, shorelineLockBytes, horizontalLockBytes, terrainSourceRecords] = await Promise.all([
+    readFile(SHORELINE_PATH), readFile(SHORELINE_LOCK_PATH), readFile(HORIZONTAL_LOCK_PATH), Promise.all(TERRAIN_SOURCES.map(async (source) => {
+      const [sourceLockBytes, elevationLockBytes] = await Promise.all([readFile(source.sourceLockPath), readFile(source.elevationLockPath)]);
+      const sourceLock = JSON.parse(sourceLockBytes);
+      const elevationLock = JSON.parse(elevationLockBytes);
+      assert.equal(elevationLock.sourceLock.id, sourceLock.id, `${source.label} elevation authorization source id drifted`);
+      assert.equal(elevationLock.sourceLock.sha256, sha256(sourceLockBytes), `${source.label} elevation authorization source hash drifted`);
+      assert.equal(elevationLock.sourceRaster.sha256, sourceLock.raster.sha256, `${source.label} elevation authorization raster hash drifted`);
+      const bounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
+      const reader = await openGeoTiffWindowReader(path.join(ROOT, sourceLock.raster.localRawCache));
+      return { ...source, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock, bounds, reader };
+    })),
   ]);
   const shorelineLock = JSON.parse(shorelineLockBytes);
   const horizontalLock = JSON.parse(horizontalLockBytes);
-  const terrainLock = JSON.parse(terrainLockBytes);
   const shoreline = JSON.parse(shorelineBytes);
   assert.equal(sha256(shorelineBytes), shorelineLock.source.snapshot.sha256, 'DataSF shoreline bytes do not match their source lock');
   assert.equal(shorelineBytes.length, shorelineLock.source.snapshot.bytes, 'DataSF shoreline byte count does not match its source lock');
@@ -129,28 +148,30 @@ export async function buildSfMetricTileCoveragePlan() {
     const gridE = tile.gridEasting + dx; const gridN = tile.gridNorthing + dy; const key = tileKey(gridE, gridN);
     if (!planned.has(key)) planned.set(key, { gridEasting: gridE, gridNorthing: gridN, landPolygonIndices: [] });
   }
-  const rasterBounds = terrainLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
-  const terrainRasterBounds = [rasterBounds[0], rasterBounds[1], rasterBounds[2], rasterBounds[3]];
-  const reader = await openGeoTiffWindowReader(path.join(ROOT, terrainLock.raster.localRawCache));
   const orderedTiles = [...planned.values()].sort((a, b) => a.gridNorthing - b.gridNorthing || a.gridEasting - b.gridEasting);
   const readiness = new Map();
   for (const tile of orderedTiles) {
     const minE = tile.gridEasting * TILE_SIZE; const minN = tile.gridNorthing * TILE_SIZE;
     const sourceBounds = [minE - SOURCE_BUFFER, minN - SOURCE_BUFFER, minE + TILE_SIZE + SOURCE_BUFFER, minN + TILE_SIZE + SOURCE_BUFFER];
-    const insideRaster = sourceBounds[0] >= terrainRasterBounds[0] && sourceBounds[1] >= terrainRasterBounds[1]
-      && sourceBounds[2] <= terrainRasterBounds[2] && sourceBounds[3] <= terrainRasterBounds[3];
     let terrainAvailable = false;
     let terrainReason = 'missing-authorized-1m-terrain-source';
-    if (insideRaster) {
-      const topLeft = reader.modelToPixel(sourceBounds[0], sourceBounds[3]); const bottomRight = reader.modelToPixel(sourceBounds[2], sourceBounds[1]);
+    const containingSources = terrainSourceRecords.filter(({ bounds }) => sourceBounds[0] >= bounds[0] && sourceBounds[1] >= bounds[1] && sourceBounds[2] <= bounds[2] && sourceBounds[3] <= bounds[3]);
+    for (const source of containingSources) {
+      const topLeft = source.reader.modelToPixel(sourceBounds[0], sourceBounds[3]); const bottomRight = source.reader.modelToPixel(sourceBounds[2], sourceBounds[1]);
       const column = Math.floor(topLeft.column); const row = Math.floor(topLeft.row); const right = Math.ceil(bottomRight.column) + 1; const bottom = Math.ceil(bottomRight.row) + 1;
-      const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
-      terrainAvailable = window.values.every((value) => value !== window.nodata && Number.isFinite(value));
-      terrainReason = terrainAvailable ? 'available-from-byte-locked-3dep-x55y419' : 'byte-locked-3dep-x55y419-contains-nodata';
+      const window = await source.reader.readWindow({ column, row, width: right - column, height: bottom - row });
+      if (window.values.every((value) => value !== window.nodata && Number.isFinite(value))) {
+        terrainAvailable = true;
+        terrainReason = `available-from-byte-locked-3dep-${source.label}`;
+        break;
+      }
+    }
+    if (!terrainAvailable && containingSources.length) {
+      terrainReason = `byte-locked-3dep-${containingSources.map(({ label }) => label).join('-or-')}-contains-nodata`;
     }
     readiness.set(tileKey(tile.gridEasting, tile.gridNorthing), { terrainAvailable, terrainReason });
   }
-  await reader.close();
+  await Promise.all(terrainSourceRecords.map(({ reader }) => reader.close()));
   const tiles = orderedTiles.map((tile) => {
     const minE = tile.gridEasting * TILE_SIZE; const minN = tile.gridNorthing * TILE_SIZE;
     const { terrainAvailable, terrainReason } = readiness.get(tileKey(tile.gridEasting, tile.gridNorthing));
@@ -187,7 +208,7 @@ export async function buildSfMetricTileCoveragePlan() {
     sources: {
       shoreline: { id: shorelineLock.id, path: relative(SHORELINE_LOCK_PATH), lockSha256: `sha256:${sha256(shorelineLockBytes)}`, artifactPath: relative(SHORELINE_PATH), artifactBytes: shorelineBytes.length, artifactSha256: `sha256:${sha256(shorelineBytes)}` },
       horizontalTransform: { id: horizontalLock.id, path: relative(HORIZONTAL_LOCK_PATH), lockSha256: `sha256:${sha256(horizontalLockBytes)}`, absoluteHorizontalAccuracyFloorMetres: 4 },
-      availableTerrain: [{ id: JSON.parse(elevationLockBytes).id, path: relative(ELEVATION_LOCK_PATH), lockSha256: `sha256:${sha256(elevationLockBytes)}`, sourceLockPath: relative(TERRAIN_LOCK_PATH), sourceLockSha256: `sha256:${sha256(terrainLockBytes)}`, rasterBoundsEpsg26910Metres: terrainRasterBounds }],
+      availableTerrain: terrainSourceRecords.map(({ elevationLock, elevationLockBytes, elevationLockPath, sourceLockBytes, sourceLockPath, bounds }) => ({ id: elevationLock.id, path: relative(elevationLockPath), lockSha256: `sha256:${sha256(elevationLockBytes)}`, sourceLockPath: relative(sourceLockPath), sourceLockSha256: `sha256:${sha256(sourceLockBytes)}`, rasterBoundsEpsg26910Metres: bounds })),
     },
     landBoundsEpsg26910Metres: [Math.min(...projectedPoints.map(([e]) => e)), Math.min(...projectedPoints.map(([, n]) => n)), Math.max(...projectedPoints.map(([e]) => e)), Math.max(...projectedPoints.map(([, n]) => n))],
     counts,
