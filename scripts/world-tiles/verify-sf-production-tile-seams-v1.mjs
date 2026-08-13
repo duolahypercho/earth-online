@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSfMetricTile } from './build-ferry-production-tile-v1.mjs';
+import { buildSfMetricTile, loadSfMetricSharedInputs } from './build-ferry-production-tile-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const FERRY_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
@@ -350,6 +350,14 @@ function featureEdgeKeys(tile, category, axis, worldValue) {
     const worldN = mesh.positions[index * 3 + 2] + tile.expected.origin[1];
     const axisValue = axis === 'easting' ? worldE : worldN;
     if (!almost(axisValue, worldValue, 2e-6)) continue;
+    // At a four-tile junction, a building can legitimately occupy only one
+    // side of the orthogonal seam. Its exterior wall then contributes a lone
+    // corner vertex to one tile. Terrain verifies those corner positions and
+    // heights; compare building geometry only on the open shared edge.
+    const along = axis === 'easting' ? worldN : worldE;
+    const alongMin = axis === 'easting' ? tile.expected.bounds[1] : tile.expected.bounds[0];
+    const alongMax = axis === 'easting' ? tile.expected.bounds[3] : tile.expected.bounds[2];
+    if (almost(along, alongMin, 2e-6) || almost(along, alongMax, 2e-6)) continue;
     keys.add(`${worldE.toFixed(6)}|${worldH.toFixed(6)}|${worldN.toFixed(6)}`);
   }
   return keys;
@@ -473,10 +481,12 @@ assert.equal(connectedIds.size, tiles.length, 'Runtime district must form one co
 
 const seamReports = pairs.map(([left, right]) => verifyPair(left, right));
 
+const sharedInputs = await loadSfMetricSharedInputs();
 const rebuilds = [];
 for (const tile of tiles) {
   const rebuilt = await buildSfMetricTile({
     tile: { gridEasting: tile.expected.gridEasting, gridNorthing: tile.expected.gridNorthing },
+    sharedInputs,
     write: false,
   });
   assert.equal(digest(rebuilt.glbs[0].bytes), tile.lodDigest, `${tile.identity} deterministic rebuild hash drifted`);
