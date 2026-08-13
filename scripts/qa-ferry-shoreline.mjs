@@ -61,6 +61,7 @@ async function configure(page, condition) {
     player: window.__SF_REALMAP__.getPlayerPosition(),
     camera: window.__SF_REALMAP__.getHeroCamera(),
     shoreline: window.__SF_REALMAP__.getPerf().heroShoreline,
+    waterfront: window.__SF_REALMAP__.getPerf().heroWaterfront,
     atmosphere: window.__SF_REALMAP__.getHeroAtmosphere(),
     performance: window.__SF_REALMAP__.getPerf(),
   }));
@@ -79,6 +80,11 @@ function assertWaterfrontState(id, state) {
   assert.equal(state.shoreline.transition.sourceAligned, true, `${id}: shoreline transition is not source aligned`);
   assert.equal(state.shoreline.transition.landInsetM, 0.9, `${id}: shoreline transition width drifted`);
   assert.equal(state.shoreline.transition.gridUnderlapM, 6, `${id}: shoreline grid underlap drifted`);
+  assert.equal(state.waterfront?.active, true, `${id}: DataSF waterfront edge is not active`);
+  assert.equal(state.waterfront?.sourceAligned, true, `${id}: waterfront edge lost source alignment`);
+  assert.equal(state.waterfront?.presentationOnly, true, `${id}: waterfront edge is no longer presentation-only`);
+  assert.equal(state.waterfront?.affectsCollision, false, `${id}: waterfront edge changed collision behavior`);
+  assert.equal(state.waterfront?.segments, state.shoreline.transition.segments, `${id}: waterfront edge no longer matches source shoreline segments`);
   assert.equal(state.atmosphere.waterVisible, true, `${id}: water surface is not visible`);
   assert.equal(state.atmosphere.waterSurfaces.city, 1, `${id}: runtime does not have exactly one Bay water surface`);
   assert.equal(state.atmosphere.waterSurfaces.shared, 1, `${id}: runtime Bay surface is not the shared surface`);

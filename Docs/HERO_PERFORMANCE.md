@@ -32,7 +32,12 @@ node scripts/qa-hero-performance.mjs
 ```
 
 It opens the real Ferry Building URL at 1280×720 DPR 2, counts real WebGL draw
-submissions and triangles across a three-second sample, reports local OSM
-entity counts, and writes a screenshot to `/tmp/ferry-hero-performance.png`.
+submissions and triangles across 180 frames after a 1.8-second no-input
+warmup, reports local OSM entity counts, and writes a screenshot to
+`/tmp/ferry-hero-performance.png`. The performance gate uses raw consecutive
+`requestAnimationFrame` deltas while the hero pose, lighting, and input remain
+unchanged: p99 must be at most 33 ms and no sampled frame may reach 100 ms.
+The app's lifetime telemetry is retained as diagnostic context, rather than
+treated as this gate, because it legitimately includes boot and capture work.
 It is a workload smoke test, not a visual-quality certificate: inspect the
 saved frame before accepting AAA-grade presentation or city correctness.

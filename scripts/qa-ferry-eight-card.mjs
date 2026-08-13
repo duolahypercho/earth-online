@@ -6,6 +6,10 @@ import { chromium } from 'playwright';
 const baseUrl = process.env.SF_QA_URL || 'http://127.0.0.1:5174';
 const outDir = process.env.SF_HERO_EIGHT_CARD_DIR || '.qa-ferry-eight-card';
 const traversalSeconds = Number(process.env.SF_HERO_TRAVERSAL_SECONDS || 30);
+const performanceWarmupMs = Number(process.env.SF_HERO_WARMUP_MS || 1800);
+const performanceSampleFrames = Number(process.env.SF_HERO_SAMPLE_FRAMES || 180);
+const steadyP99LimitMs = 33;
+const steadyHitchLimitMs = 100;
 const url = `${baseUrl}/realmap.html?place=ferry-building&mode=walk`;
 const viewport = { width: 1440, height: 810 };
 const buildHash = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -60,6 +64,93 @@ async function capture(page, id) {
   captures.push({ id, path, diagnostics });
 }
 
+async function sampleRafDeltas(page, count) {
+  return page.evaluate(async (sampleCount) => {
+    let previous = await new Promise((resolve) => requestAnimationFrame(resolve));
+    const samples = [];
+    while (samples.length < sampleCount) {
+      const now = await new Promise((resolve) => requestAnimationFrame(resolve));
+      samples.push(now - previous);
+      previous = now;
+    }
+    return samples;
+  }, count);
+}
+
+async function sampleRafDuration(page, durationMs) {
+  return page.evaluate(async (requestedDurationMs) => {
+    let previous = await new Promise((resolve) => requestAnimationFrame(resolve));
+    const samples = [];
+    let elapsed = 0;
+    while (elapsed < requestedDurationMs) {
+      const now = await new Promise((resolve) => requestAnimationFrame(resolve));
+      const delta = now - previous;
+      samples.push(delta);
+      elapsed += delta;
+      previous = now;
+    }
+    return samples;
+  }, durationMs);
+}
+
+function summarizeFrameDeltas(samples) {
+  const ordered = samples.slice().sort((a, b) => a - b);
+  const p99Index = Math.max(0, Math.ceil(ordered.length * 0.99) - 1);
+  return {
+    samples: samples.length,
+    meanMs: Number((samples.reduce((sum, value) => sum + value, 0) / samples.length).toFixed(2)),
+    p99Ms: Number(ordered[p99Index].toFixed(2)),
+    maxMs: Number(Math.max(...samples).toFixed(2)),
+  };
+}
+
+async function captureSteadyStatePerformance(browser) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  try {
+    await ready(page);
+    const transitionStarted = await page.evaluate(() => performance.now());
+    await page.evaluate(() => {
+      // Deliberately record this transition separately. The measured window
+      // below does not change pose, weather, time, input, or capture state.
+      window.__SF_REALMAP__.setWeather('clear');
+      window.__SF_REALMAP__.setTimeOfDay('day');
+      window.__SF_REALMAP__.setPlayerPose({ x: 2173, z: 1831.4, yaw: 0.8008 });
+    });
+    const transitionDeltas = await sampleRafDeltas(page, 60);
+    const transitionEnded = await page.evaluate(() => performance.now());
+    const warmupDeltas = await sampleRafDuration(page, performanceWarmupMs);
+    const steadyDeltas = await sampleRafDeltas(page, performanceSampleFrames);
+    const appTelemetry = await page.evaluate(() => window.__SF_REALMAP__.getPerf());
+    return {
+      definition: 'Fixed Ferry walk pose with clear/day lighting; no input, scene mutation, screenshot, or diagnostic render during warmup or sample.',
+      transition: {
+        definition: 'Pose/weather/time setup followed by the next 60 raw rAF deltas; excluded from steady-state gate.',
+        setupWallMs: Number((transitionEnded - transitionStarted).toFixed(2)),
+        rAF: summarizeFrameDeltas(transitionDeltas),
+      },
+      warmup: {
+        requestedDurationMs: performanceWarmupMs,
+        measuredDurationMs: Number(warmupDeltas.reduce((sum, value) => sum + value, 0).toFixed(2)),
+        rAF: summarizeFrameDeltas(warmupDeltas),
+      },
+      steadyState: {
+        frames: performanceSampleFrames,
+        rAF: summarizeFrameDeltas(steadyDeltas),
+        p99LimitMs: steadyP99LimitMs,
+        hitchLimitMs: steadyHitchLimitMs,
+        passed: summarizeFrameDeltas(steadyDeltas).p99Ms <= steadyP99LimitMs
+          && summarizeFrameDeltas(steadyDeltas).maxMs < steadyHitchLimitMs,
+      },
+      // Intentionally preserved, never reset: it includes boot/configuration
+      // work and is diagnostic context rather than the steady-state gate.
+      appTelemetry,
+    };
+  } finally {
+    await context.close();
+  }
+}
+
 try {
   const context = await browser.newContext({ viewport, deviceScaleFactor: 2 });
   const page = await context.newPage();
@@ -103,6 +194,8 @@ try {
   }));
   await context.close();
 
+  const performance = await captureSteadyStatePerformance(browser);
+
   const traversalContext = await browser.newContext({
     viewport,
     deviceScaleFactor: 1,
@@ -138,7 +231,7 @@ try {
     Math.abs(traversalEnd.z - 2112),
   ) <= 0.25;
   const manifest = {
-    result: errors.length ? 'failed' : 'captured',
+    result: errors.length || !performance.steadyState.passed ? 'failed' : 'captured',
     buildHash,
     url,
     viewport,
@@ -154,12 +247,13 @@ try {
     },
     launchPose: hero,
     diagnostics,
+    performance,
     errors,
-    note: 'Evidence capture only. Human blind review determines the visual gate.',
+    note: 'Evidence capture only. Human blind review determines the visual gate. Performance reports transition/capture-sensitive app telemetry separately from the fixed-pose warmed rAF gate.',
   };
   await writeFile(join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(JSON.stringify(manifest, null, 2));
-  if (errors.length || !crossedHeroBoundary) process.exitCode = 1;
+  if (errors.length || !crossedHeroBoundary || !performance.steadyState.passed) process.exitCode = 1;
 } finally {
   await browser.close();
 }

@@ -44,6 +44,7 @@ import {
   sharedWestEdgeAgreement,
 } from './hero-preview-neighbor.js';
 import { createFerryHeroShorelineMask } from './hero-shoreline.js';
+import { createFerryWaterfrontEdge } from './hero-waterfront.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
@@ -119,6 +120,17 @@ const FERRY_HERO_CARD_COHORT_TARGETS = Object.freeze([
   Object.freeze({ x: 2251.5, z: 1840 }),
   Object.freeze({ x: 2246, z: 1842.5 }),
 ]);
+// Card 02 looks northeast across the existing Embarcadero primary path. Seed
+// one ordinary traffic record at this source location so the locked frame has
+// a readable moving midground vehicle, without introducing a route or a
+// presentation-only vehicle.
+const FERRY_HERO_TRAFFIC_CARD_TARGET = Object.freeze({
+  cardId: '02-intersection-crosswalk',
+  x: 2251.7,
+  z: 1840.5,
+  sourceRoadId: 283512618,
+  sourceHighway: 'primary',
+});
 const FERRY_HERO_REGION_REFERENCE = Object.freeze({
   id: 'sf-ferry-building-hero',
   url: '/data/world/regions/sf-ferry-building-hero.region.json',
@@ -4601,6 +4613,35 @@ function buildTraffic(selectedRoads, signals) {
   return { vehicles, paths };
 }
 
+function stageFerryHeroTraffic(paths, vehicles) {
+  heroTrafficStaging = null;
+  if (!isFerryBuildingHeroTile() || !paths.length || !vehicles.length) return null;
+  const target = FERRY_HERO_TRAFFIC_CARD_TARGET;
+  const path = paths.find((candidate) => (
+    String(candidate.road?.id) === String(target.sourceRoadId)
+    && candidate.road?.highway === target.sourceHighway
+  ));
+  if (!path) return null;
+  const closest = closestProgressOnPoints(path.points, target);
+  const vehicle = vehicles[0];
+  vehicle.path = path;
+  vehicle.s = THREE.MathUtils.clamp(closest.s, 0.5, path.length - 0.5);
+  const pose = pathPosition(path, vehicle.s);
+  vehicle.mesh.position.copy(pose.position);
+  vehicle.mesh.rotation.set(0, pose.heading, 0);
+  heroTrafficStaging = {
+    cardId: target.cardId,
+    vehicleIndex: 0,
+    pathId: path.id,
+    sourceRoadId: path.road?.id ?? null,
+    sourceHighway: path.road?.highway ?? null,
+    s: Number(vehicle.s.toFixed(2)),
+    sourcePathDistanceM: Number(closest.distance.toFixed(2)),
+    initialPosition: { x: Number(pose.position.x.toFixed(2)), z: Number(pose.position.z.toFixed(2)) },
+  };
+  return heroTrafficStaging;
+}
+
 function createRoadMeshes(compilation, options = {}) {
   const cheap = Boolean(options.cheap || fullCityMode);
   // Cheap/near Full City: drop corridor dashes. Unresolved or overlapping portals
@@ -7179,6 +7220,7 @@ function reseedFullCityLife(focus) {
   }
   driveIndex = -1;
   trafficState = buildTraffic(roads, signals);
+  stageFerryHeroTraffic(trafficState.paths, trafficState.vehicles);
   const focalTrafficPaths = trafficState.paths
     .map((path) => ({ path, ...closestProgressOnPoints(path.points, focus) }))
     .sort((a, b) => a.distance - b.distance);
@@ -7289,6 +7331,7 @@ let heroCameraLastVehicleCandidates = 0;
 let heroTileHandoff = null;
 let heroTileHandoffLastMovement = null;
 let heroShorelineMask = null;
+let heroWaterfrontEdge = null;
 let heroPreviewNeighbor = null;
 let heroPreviewMountPromise = null;
 let heroPreviewMountRevision = 0;
@@ -7360,6 +7403,7 @@ let heroPlazaLighting = null;
 let heroPlazaLightingError = null;
 let heroTrafficVisuals = null;
 let heroTrafficVisualStats = null;
+let heroTrafficStaging = null;
 let heroLifeLighting = null;
 let heroLifeLightingStats = null;
 let heroLifeLightingElapsed = 0;
@@ -9841,6 +9885,23 @@ function getHeroShorelineDiagnostics() {
   };
 }
 
+function getHeroWaterfrontDiagnostics() {
+  if (!heroWaterfrontEdge) return null;
+  const { userData } = heroWaterfrontEdge;
+  return {
+    active: Boolean(heroWaterfrontEdge.parent),
+    sourceAligned: userData.sourceAligned === true,
+    source: userData.source,
+    presentationOnly: userData.presentationOnly === true,
+    affectsCollision: userData.affectsCollision,
+    segments: userData.segments,
+    vertices: userData.vertices,
+    landSideCapDepthM: userData.landSideCapDepthM,
+    faceDepthM: userData.faceDepthM,
+    topLiftM: userData.topLiftM,
+  };
+}
+
 function heroStreetscapeWetnessForWeather() {
   return weatherMode === 'drizzle' ? 0.9 : weatherMode === 'fog' ? 0.32 : 0;
 }
@@ -10192,7 +10253,46 @@ function getHeroTrafficVisualDiagnostics() {
     tileId: activeHeroTile?.id || null,
     groupAttached: Boolean(heroTrafficVisuals?.group?.parent),
     sourceVehicles: trafficState?.vehicles?.length || 0,
+    staging: getHeroTrafficStagingDiagnostics(),
     stats: heroTrafficVisualStats || heroTrafficVisuals?.getStats() || null,
+  };
+}
+
+function getHeroTrafficStagingDiagnostics() {
+  if (!heroTrafficStaging || !camera || !trafficState?.vehicles?.[heroTrafficStaging.vehicleIndex]) {
+    return heroTrafficStaging;
+  }
+  const vehicle = trafficState.vehicles[heroTrafficStaging.vehicleIndex];
+  const box = new THREE.Box3().setFromObject(vehicle.mesh);
+  const corners = [
+    [box.min.x, box.min.y, box.min.z], [box.min.x, box.min.y, box.max.z],
+    [box.min.x, box.max.y, box.min.z], [box.min.x, box.max.y, box.max.z],
+    [box.max.x, box.min.y, box.min.z], [box.max.x, box.min.y, box.max.z],
+    [box.max.x, box.max.y, box.min.z], [box.max.x, box.max.y, box.max.z],
+  ].map(([x, y, z]) => new THREE.Vector3(x, y, z).project(camera));
+  const minX = Math.min(...corners.map((point) => point.x));
+  const maxX = Math.max(...corners.map((point) => point.x));
+  const minY = Math.min(...corners.map((point) => point.y));
+  const maxY = Math.max(...corners.map((point) => point.y));
+  const distanceToCamera = vehicle.mesh.position.distanceTo(camera.position);
+  const distanceToPlayer = playerState
+    ? Math.hypot(vehicle.mesh.position.x - playerState.x, vehicle.mesh.position.z - playerState.z)
+    : null;
+  const fullyInsideFrame = minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1;
+  return {
+    ...heroTrafficStaging,
+    position: {
+      x: Number(vehicle.mesh.position.x.toFixed(2)),
+      z: Number(vehicle.mesh.position.z.toFixed(2)),
+    },
+    distanceToCameraM: Number(distanceToCamera.toFixed(2)),
+    distanceToPlayerM: distanceToPlayer == null ? null : Number(distanceToPlayer.toFixed(2)),
+    screenNdc: {
+      minX: Number(minX.toFixed(3)), maxX: Number(maxX.toFixed(3)),
+      minY: Number(minY.toFixed(3)), maxY: Number(maxY.toFixed(3)),
+    },
+    fullyInsideFrame,
+    readable: fullyInsideFrame && maxX - minX >= 0.025 && maxY - minY >= 0.012,
   };
 }
 
@@ -12645,6 +12745,7 @@ async function buildCity() {
     heroShorelineMask = activeHeroTile
       ? createFerryHeroShorelineMask(cityData, activeHeroTile.bufferedBounds)
       : null;
+    heroWaterfrontEdge = null;
     setBuildProgress('TERRAIN', fullCityMode
       ? 'Laying the SF peninsula land pad…'
       : 'Laying the land slab and bay water…', 0.4);
@@ -12656,6 +12757,14 @@ async function buildCity() {
     cityRoot.add(createGround(terrainPoints, { isLand: heroShorelineMask?.isLand }));
     const heroShorelineTransition = createHeroShorelineTransition(heroShorelineMask);
     if (heroShorelineTransition) cityRoot.add(heroShorelineTransition);
+    heroWaterfrontEdge = !fullCityMode && isFerryBuildingHeroTile()
+      ? createFerryWaterfrontEdge({
+        mask: heroShorelineMask,
+        elevationAt,
+        seaLevelY: SEA_LEVEL_Y,
+      })
+      : null;
+    if (heroWaterfrontEdge) cityRoot.add(heroWaterfrontEdge);
     const shorelineSupport = createShorelineSupport(terrainPoints);
     if (shorelineSupport) cityRoot.add(shorelineSupport);
 
@@ -12795,6 +12904,7 @@ async function buildCity() {
     await tick();
     if (!fullCityMode) cityRoot.add(createOneWayArrows(activeRoads));
     trafficState = buildTraffic(activeRoads, activeSignals);
+    stageFerryHeroTraffic(trafficState.paths, trafficState.vehicles);
     for (const vehicle of trafficState.vehicles) {
       if (fullCityMode) {
         vehicle.mesh.castShadow = false;
@@ -12994,6 +13104,7 @@ function start() {
       heroCamera: getHeroCameraDiagnostics(),
       heroTileHandoff: getHeroTileHandoffDiagnostics(),
       heroShoreline: getHeroShorelineDiagnostics(),
+      heroWaterfront: getHeroWaterfrontDiagnostics(),
     }),
     getCoverage: () => ({
       cityWideReady,
