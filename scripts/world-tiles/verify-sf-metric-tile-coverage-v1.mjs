@@ -34,4 +34,5 @@ for (const tile of manifest.tiles) assert(plannedIds.has(tile.id), `Resident run
 const mainland = checked.tiles.filter(({ landPolygonIndices }) => landPolygonIndices.includes(0));
 assert(mainland.length > 100, 'Mainland SF coverage is implausibly small');
 assert(checked.tiles.some(({ landPolygonIndices }) => landPolygonIndices.includes(9)), 'Remote San Francisco island polygon coverage is missing');
+assert.equal(checked.tiles.find(({ id }) => id === 'epsg26910-1441-10895')?.sourceReadiness.terrainElevation, 'byte-locked-3dep-x55y419-contains-nodata', 'Known bay no-data tile must fail closed');
 console.log(JSON.stringify({ result: 'SF metric tile coverage plan passed', path: path.relative(ROOT, PLAN_PATH), status: checked.status, counts: checked.counts, residentTiles: manifest.tiles.map(({ id }) => id) }, null, 2));

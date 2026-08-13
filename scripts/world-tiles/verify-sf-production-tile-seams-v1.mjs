@@ -17,10 +17,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const FERRY_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
 const METRIC_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1');
 const MANIFEST_PATH = path.join(METRIC_ROOT, 'sf-metric-tiles-v1.manifest.json');
-const WEST_ID = 'epsg26910-1440-10893';
-const FERRY_ID = 'epsg26910-1441-10893';
-const NORTH_ID = 'epsg26910-1441-10894';
-const REQUIRED_TILES = Object.freeze([WEST_ID, FERRY_ID, NORTH_ID]);
 const TILE_SIZE = 384;
 const TERRAIN_EDGE = TILE_SIZE + 1;
 const PROVISIONAL_FRAME = 'provisional-utm-source-declared-navd88-unrealized';
@@ -329,7 +325,7 @@ function featureEdgeKeys(tile, category, axis, worldValue) {
     const worldH = mesh.positions[index * 3 + 1] + tile.expected.origin[2];
     const worldN = mesh.positions[index * 3 + 2] + tile.expected.origin[1];
     const axisValue = axis === 'easting' ? worldE : worldN;
-    if (!almost(axisValue, worldValue, 1e-4)) continue;
+    if (!almost(axisValue, worldValue, 2e-6)) continue;
     keys.add(`${worldE.toFixed(6)}|${worldH.toFixed(6)}|${worldN.toFixed(6)}`);
   }
   return keys;
@@ -423,7 +419,7 @@ function verifyPair(westOrSouth, eastOrNorth) {
   };
 }
 
-assert(await pathExists(MANIFEST_PATH), `Missing 2-tile seam manifest: ${relative(MANIFEST_PATH)}`);
+assert(await pathExists(MANIFEST_PATH), `Missing metric tile seam manifest: ${relative(MANIFEST_PATH)}`);
 const manifest = await readJson(MANIFEST_PATH);
 assert.equal(manifest.kind, 'sf-metric-tile-set', 'Metric tile-set manifest kind drifted');
 assert.equal(manifest.status, PROVISIONAL_STATUS, 'Metric tile-set manifest is not honestly provisional');
@@ -433,17 +429,23 @@ assert.equal(manifest.tiling?.tileSizeMetres, TILE_SIZE, 'Manifest tile size dri
 forbidCertifiedVertical('metric tile-set manifest', manifest);
 assert(Array.isArray(manifest.tiles), 'Metric tile-set manifest is missing tiles');
 const manifestIds = manifest.tiles.map((tile) => tile.id);
-assert.deepEqual(manifestIds, REQUIRED_TILES, `Seam manifest must contain the verified west, Ferry, and north tiles in stable order: ${REQUIRED_TILES.join(', ')}`);
+assert(manifestIds.length >= 3, 'Seam manifest must retain at least the verified three-tile waterfront district');
+assert.equal(new Set(manifestIds).size, manifestIds.length, 'Seam manifest tile IDs must be unique');
+assert.deepEqual([...manifest.tiles].sort((a, b) => a.gridIndex[1] - b.gridIndex[1] || a.gridIndex[0] - b.gridIndex[0]).map(({ id }) => id), manifestIds, 'Seam manifest order must be stable south-to-north, west-to-east');
+for (const required of ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1441-10894']) assert(manifestIds.includes(required), `Seam manifest lost required waterfront tile ${required}`);
 const manifestById = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
 
 const tiles = [];
-for (const identity of REQUIRED_TILES) tiles.push(await loadTile(identity, manifestById.get(identity)));
+for (const identity of manifestIds) tiles.push(await loadTile(identity, manifestById.get(identity)));
 const pairs = adjacentPairs(tiles);
-assert.equal(pairs.length, 2, `West↔Ferry↔north must form exactly two 4-adjacent pairs, got ${pairs.length}`);
-assert.equal(pairs[0][0].identity, WEST_ID, 'West tile is not the western member of the seam pair');
-assert.equal(pairs[0][1].identity, FERRY_ID, 'Ferry tile is not the eastern member of the seam pair');
-assert.equal(pairs[1][0].identity, FERRY_ID, 'Ferry tile is not the southern member of the north seam pair');
-assert.equal(pairs[1][1].identity, NORTH_ID, 'North tile is not the northern member of the north seam pair');
+assert(pairs.length >= tiles.length - 1, 'Runtime district does not have enough 4-adjacent seams to be connected');
+const connectedIds = new Set([tiles[0].identity]);
+while (true) {
+  const previousSize = connectedIds.size;
+  for (const [a, b] of pairs) if (connectedIds.has(a.identity) || connectedIds.has(b.identity)) { connectedIds.add(a.identity); connectedIds.add(b.identity); }
+  if (connectedIds.size === previousSize) break;
+}
+assert.equal(connectedIds.size, tiles.length, 'Runtime district must form one connected seam graph');
 
 const seamReports = pairs.map(([left, right]) => verifyPair(left, right));
 
@@ -476,6 +478,6 @@ process.stdout.write(`${JSON.stringify({
   })),
   seams: seamReports,
   rebuilds,
-  tileIds: REQUIRED_TILES,
+  tileIds: manifestIds,
   water: 'OSM-classified water is accepted only as a hydrologic partition; shared-edge heights must still match the neighboring surface exactly',
 }, null, 2)}\n`);
