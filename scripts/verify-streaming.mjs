@@ -244,6 +244,27 @@ for (const key of ['0:0', '1:0', '-1:1']) {
 
 const origin = catalog.get(0, 0);
 assert(origin.elevation === 0, 'Authored core does not resolve to local Y=0.');
+const halfSector = catalog.sectorSize * 0.5;
+assert(
+  JSON.stringify(catalog.sectorAt(new THREE.Vector3(halfSector, 0, halfSector)))
+    === JSON.stringify({ x: 0, z: 0 }),
+  'An exact east/north metric boundary is not owned by its west/south sector.',
+);
+assert(
+  JSON.stringify(catalog.sectorAt(new THREE.Vector3(halfSector + 1, 0, halfSector + 1)))
+    === JSON.stringify({ x: 1, z: 1 }),
+  'A one-metre east/north crossing did not select the adjacent metric sector.',
+);
+assert(
+  JSON.stringify(catalog.sectorAt(new THREE.Vector3(-halfSector, 0, -halfSector)))
+    === JSON.stringify({ x: -1, z: -1 }),
+  'An exact west/south metric boundary is ambiguously assigned to the origin sector.',
+);
+assert(
+  JSON.stringify(catalog.sectorAt(new THREE.Vector3(-halfSector + 1, 0, -halfSector + 1)))
+    === JSON.stringify({ x: 0, z: 0 }),
+  'A one-metre east/north move from a negative boundary did not select the origin sector.',
+);
 assert(
   streaming.getSurfaceHeight(new THREE.Vector3(28, 4, 38)) === 0,
   'Hero camera target was not preserved on the authored core datum.',

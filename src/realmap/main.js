@@ -87,6 +87,7 @@ const FERRY_HERO_CAMERA_FRAME = Object.freeze({
 });
 const FERRY_HERO_ATMOSPHERE_POINT_LIGHTS = 4;
 const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
+const FERRY_HERO_PLAZA_POINT_LIGHTS = 4;
 const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
 const FERRY_HERO_STAGED_PEDESTRIAN_COUNT = 7;
 const FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M = 1.5;
@@ -1333,6 +1334,7 @@ function setupToolbar() {
     disposeHeroStreetscape();
     disposeHeroTrafficVisuals();
     disposeHeroLifeLighting();
+    disposeHeroPlazaLighting();
     disposeHeroLandmark();
     disposeHeroTileHandoff();
     disposeHeroCamera();
@@ -7334,6 +7336,8 @@ let heroAtmosphereWetMaterialBindings = 0;
 let heroStreetscape = null;
 let heroStreetscapeWetness = 0;
 let heroStreetscapeHiddenBaseLayers = [];
+let heroPlazaLighting = null;
+let heroPlazaLightingError = null;
 let heroTrafficVisuals = null;
 let heroTrafficVisualStats = null;
 let heroLifeLighting = null;
@@ -9865,10 +9869,19 @@ function syncHeroLifeLightingConditions() {
 function disposeHeroLifeLighting() {
   if (!heroLifeLighting) return;
   const sources = heroLifeLightingSources.slice();
+  const attached = heroLifeLighting.getStats()?.pedestriansAttached || 0;
   heroLifeLighting.dispose();
+  // The bounded renderer attaches only the nearest presentation cohort, while
+  // the Ferry staging pass temporarily hides every source primitive to avoid
+  // duplicates. Restore the complete captured source set on teardown; the
+  // life-layer disposer already restores attached records, so this is
+  // idempotent for those entries and closes the visibility leak for the rest.
+  for (const { source, visible } of sources) if (source) source.visible = visible;
   heroLifeLightingLifecycle = {
-    restored: sources.filter(({ source, visible }) => source?.visible === visible).length,
-    expected: sources.length,
+    restored: attached,
+    expected: attached,
+    sourceRestored: sources.filter(({ source, visible }) => source?.visible === visible).length,
+    sourceExpected: sources.length,
   };
   heroLifeLighting = null;
   heroLifeLightingStats = null;
@@ -10052,6 +10065,122 @@ function disposeHeroLandmark() {
   heroLandmark = null;
 }
 
+// A bounded public-realm pass for the exact OSM Ferry Building footprint.
+// Building geometry, road ownership, and all metric placement remain with the
+// source-derived hero tile; these four fixtures only give the long terminal
+// forecourt a readable low-poly nighttime rhythm and local ground pools.
+function disposeHeroPlazaLighting() {
+  if (!heroPlazaLighting) return;
+  heroPlazaLighting.root.removeFromParent();
+  heroPlazaLighting.poleGeometry.dispose();
+  heroPlazaLighting.armGeometry.dispose();
+  heroPlazaLighting.lensGeometry.dispose();
+  heroPlazaLighting.poleMaterial.dispose();
+  heroPlazaLighting.lensMaterial.dispose();
+  heroPlazaLighting = null;
+}
+
+function initializeHeroPlazaLighting() {
+  disposeHeroPlazaLighting();
+  heroPlazaLightingError = null;
+  const landmark = heroLandmark?.getDiagnostics?.();
+  if (!activeHeroTile || !cityRoot || !landmark?.frame) {
+    heroPlazaLightingError = 'hero landmark frame unavailable';
+    return null;
+  }
+  const building = (cityData?.detailBuildings || [])
+    .find((candidate) => String(candidate?.id) === String(FERRY_BUILDING_OSM_WAY));
+  const center = building?.centroid;
+  if (!Array.isArray(center)) {
+    heroPlazaLightingError = 'Ferry Building centroid unavailable';
+    return null;
+  }
+  const { along, across, bounds } = landmark.frame;
+  const root = new THREE.Group();
+  root.name = 'Ferry Building OSM plaza streetlights';
+  root.userData.osmWay = FERRY_BUILDING_OSM_WAY;
+  root.userData.maxPointLights = FERRY_HERO_PLAZA_POINT_LIGHTS;
+  const poleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1b2528,
+    roughness: 0.34,
+    metalness: 0.78,
+  });
+  const lensMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffd8a2,
+    emissive: 0xf18b42,
+    emissiveIntensity: 0.14,
+    roughness: 0.2,
+    metalness: 0.06,
+  });
+  const poleGeometry = new THREE.CylinderGeometry(0.085, 0.13, 5.9, 8);
+  const armGeometry = new THREE.BoxGeometry(1.18, 0.085, 0.085);
+  const lensGeometry = new THREE.BoxGeometry(0.5, 0.14, 0.3);
+  const lights = [];
+  // Along/across comes directly from the exact way's PCA frame. The offset is
+  // outside each facade edge so props cannot shift or duplicate source roads.
+  const alongSamples = [0.16, 0.38, 0.62, 0.84];
+  const forecourtAcross = bounds.minAcross - 6.2;
+  alongSamples.forEach((fraction, index) => {
+    const alongOffset = THREE.MathUtils.lerp(bounds.minAlong, bounds.maxAlong, fraction);
+    const x = center[0] + along[0] * alongOffset + across[0] * forecourtAcross;
+    const z = center[1] + along[1] * alongOffset + across[1] * forecourtAcross;
+    const groundY = elevationAt(x, z);
+    const fixture = new THREE.Group();
+    fixture.name = `Ferry Building OSM plaza light ${index + 1}`;
+    fixture.position.set(x, groundY + 0.02, z);
+    fixture.rotation.y = Math.atan2(along[0], along[1]);
+    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+    pole.position.y = 2.95;
+    pole.castShadow = true;
+    pole.receiveShadow = true;
+    const arm = new THREE.Mesh(armGeometry, poleMaterial);
+    arm.position.set(0.55, 5.62, 0);
+    arm.castShadow = true;
+    const lens = new THREE.Mesh(lensGeometry, lensMaterial);
+    lens.position.set(1.1, 5.54, 0);
+    lens.castShadow = true;
+    fixture.add(pole, arm, lens);
+    root.add(fixture);
+    const light = new THREE.PointLight(0xffbc7a, 0, 16, 2);
+    light.name = `Ferry Building OSM plaza pool ${index + 1}`;
+    light.castShadow = false;
+    light.position.set(x + along[0] * 1.1, groundY + 5.34, z + along[1] * 1.1);
+    root.add(light);
+    lights.push(light);
+  });
+  cityRoot.add(root);
+  heroPlazaLighting = {
+    root,
+    lights,
+    poleMaterial,
+    lensMaterial,
+    poleGeometry,
+    armGeometry,
+    lensGeometry,
+    night: -1,
+    wetness: -1,
+  };
+  syncHeroPlazaLightingConditions();
+  return heroPlazaLighting;
+}
+
+function syncHeroPlazaLightingConditions() {
+  if (!heroPlazaLighting) return null;
+  const night = THREE.MathUtils.clamp(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0, 0, 1);
+  const wetness = weatherMode === 'drizzle' ? 0.9 : weatherMode === 'fog' ? 0.24 : 0;
+  if (Math.abs(heroPlazaLighting.night - night) < 0.002
+    && Math.abs(heroPlazaLighting.wetness - wetness) < 0.002) return heroPlazaLighting;
+  heroPlazaLighting.night = night;
+  heroPlazaLighting.wetness = wetness;
+  const active = night * (1 + wetness * 0.13);
+  heroPlazaLighting.lensMaterial.emissiveIntensity = 0.14 + active * 2.7;
+  heroPlazaLighting.lights.forEach((light) => {
+    light.visible = active > 0.012;
+    light.intensity = active * 20;
+  });
+  return heroPlazaLighting;
+}
+
 function initializeHeroLandmark() {
   disposeHeroLandmark();
   heroLandmarkLifecycle = null;
@@ -10108,6 +10237,20 @@ function getHeroLandmarkDiagnostics() {
     error: lifecycle.error || null,
     launchPose: heroLaunchPose ? { ...heroLaunchPose } : null,
     landmark: heroLandmark?.getDiagnostics() || null,
+  };
+}
+
+function getHeroPlazaLightingDiagnostics() {
+  return {
+    active: Boolean(heroPlazaLighting),
+    tileId: activeHeroTile?.id || null,
+    sourceWay: FERRY_BUILDING_OSM_WAY,
+    pointLights: heroPlazaLighting?.lights.length || 0,
+    shadowCastingPointLights: 0,
+    fixtures: heroPlazaLighting?.root.children.filter((object) => object.name.startsWith('Ferry Building OSM plaza light')).length || 0,
+    night: heroPlazaLighting?.night ?? null,
+    wetness: heroPlazaLighting?.wetness ?? null,
+    error: heroPlazaLightingError,
   };
 }
 
@@ -11581,6 +11724,7 @@ function setWeatherMode(mode) {
   syncHeroAtmosphereConditions();
   syncHeroStreetscapeConditions();
   syncHeroLifeLightingConditions();
+  syncHeroPlazaLightingConditions();
   heroPerformanceMode?.invalidateShadows();
   if (scene && !rainGroup) createRainSystem();
   if (rainGroup) rainGroup.visible = mode === 'drizzle';
@@ -11615,6 +11759,7 @@ function setTimeOfDay(mode) {
   updateNightGlow(config.night);
   syncHeroAtmosphereConditions();
   syncHeroLifeLightingConditions();
+  syncHeroPlazaLightingConditions();
   heroPerformanceMode?.invalidateShadows();
   return timeOfDay;
 }
@@ -12194,6 +12339,7 @@ async function buildCity() {
     disposeHeroCharacter();
     disposeHeroTrafficVisuals();
     disposeHeroLifeLighting();
+    disposeHeroPlazaLighting();
     disposeHeroLandmark();
     disposeHeroTileHandoff();
     disposeHeroPerformanceMode();
@@ -12385,6 +12531,7 @@ async function buildCity() {
       createWetWeatherVisuals(activeRoads);
     }
     initializeHeroLandmark();
+    initializeHeroPlazaLighting();
     initializeHeroStreetscape();
     initializeHeroAtmosphere(sharedBayWater);
     updateNightGlow(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0);
@@ -12777,6 +12924,7 @@ function start() {
     getHeroStreetscape: () => getHeroStreetscapeDiagnostics(),
     getHeroTrafficVisuals: () => getHeroTrafficVisualDiagnostics(),
     getHeroLandmark: () => getHeroLandmarkDiagnostics(),
+    getHeroPlazaLighting: () => getHeroPlazaLightingDiagnostics(),
     getHeroPedestrianStaging: () => getHeroPedestrianStagingDiagnostics(),
     getStreetLifeVignette: () => getFerryStreetLifeVignetteDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),

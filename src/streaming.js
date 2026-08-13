@@ -265,6 +265,31 @@ const STREETSCAPE_PROFILES = Object.freeze({
     pavingTint: 0xddd6ca,
   }),
 });
+// Ordinary living-block evidence uses the existing pooled public-realm draw,
+// but these four curb anchors keep two grounded trees in the near/mid camera
+// band even when the seeded block cadence lands outside the frame.  The C3
+// waterfront presentation remains authored and is intentionally not part of
+// the facade identity contrast below.
+const LIVING_BLOCK_STREET_SECTORS = new Set(['2:0', '3:0', '4:0']);
+const LIVING_BLOCK_FACADE_SECTORS = new Set(['2:0', '4:0']);
+const LIVING_BLOCK_TREE_ANCHORS = Object.freeze([
+  Object.freeze({ x: 8.4, z: 32, yaw: 0.08, size: 1.08 }),
+  Object.freeze({ x: -8.4, z: -32, yaw: Math.PI + 0.14, size: 1.03 }),
+  Object.freeze({ x: 32, z: 8.4, yaw: Math.PI * 0.5 - 0.08, size: 1.05 }),
+  Object.freeze({ x: -32, z: -8.4, yaw: -Math.PI * 0.5 + 0.12, size: 1.01 }),
+]);
+const LIVING_BLOCK_SEAM_TREE_ANCHORS = Object.freeze([
+  Object.freeze({ x: 119.6, z: -32, yaw: Math.PI + 0.08, size: 1.05 }),
+  Object.freeze({ x: 136.4, z: -32, yaw: Math.PI + 0.18, size: 1.01 }),
+  Object.freeze({ x: 119.6, z: 32, yaw: 0.12, size: 1.03 }),
+  Object.freeze({ x: 136.4, z: 32, yaw: 0.04, size: 1.07 }),
+]);
+const LIVING_BLOCK_FINANCIAL_TREE_ANCHORS = Object.freeze([
+  Object.freeze({ x: 55.6, z: -32, yaw: Math.PI + 0.1, size: 1.04 }),
+  Object.freeze({ x: 72.4, z: -32, yaw: Math.PI + 0.2, size: 1.01 }),
+  Object.freeze({ x: 55.6, z: 32, yaw: 0.14, size: 1.02 }),
+  Object.freeze({ x: 72.4, z: 32, yaw: 0.06, size: 1.06 }),
+]);
 const CABLE_ROUTE_DISTRICTS = new Set([
   'Civic Center',
   'Pacific Heights',
@@ -366,6 +391,42 @@ const HERO_SIDE_BAY_GRID_COLUMNS = Object.freeze([
     width: 6.7,
     uvScaleX: 0.41,
     uvOffsetX: 0.55,
+  }),
+]);
+// The 2:0→3:0 seam beauty view passes close to the southeast corner of the
+// generated setback at index 15. Its ordinary east-face atlas planes leave a
+// large slice of the underlying shell visible at that angle. A full atlas
+// backing plus three bounded crops cover that camera-facing side without
+// changing the source shell, collision volume, portal, or facade draw count.
+const LIVING_SEAM_FACADE_TARGET = Object.freeze({
+  sectorKey: '2:0',
+  buildingIndex: 15,
+  faces: Object.freeze(['left']),
+});
+const LIVING_SEAM_FACADE_PANEL_DEFS = Object.freeze([
+  Object.freeze({
+    alongFaceFraction: -0.33,
+    widthFraction: 0.34,
+    surfaceOffset: 0.16,
+    depthLayer: 1,
+    uvScaleX: 0.30,
+    uvOffsetX: 0.02,
+  }),
+  Object.freeze({
+    alongFaceFraction: 0,
+    widthFraction: 0.34,
+    surfaceOffset: 0.28,
+    depthLayer: 2,
+    uvScaleX: 0.30,
+    uvOffsetX: 0.35,
+  }),
+  Object.freeze({
+    alongFaceFraction: 0.33,
+    widthFraction: 0.34,
+    surfaceOffset: 0.40,
+    depthLayer: 3,
+    uvScaleX: 0.30,
+    uvOffsetX: 0.68,
   }),
 ]);
 const STREAMING_FACADE_ATLAS_URL = new URL(
@@ -728,9 +789,21 @@ function smoothstep(edge0, edge1, value) {
   return normalized * normalized * (3 - 2 * normalized);
 }
 
+// Sectors are centred on their integer grid coordinate.  Make the west/south
+// side own an exact shared boundary, matching the metric-tile half-open
+// convention instead of relying on Math.round's asymmetric negative tie.
+// That leaves no coordinate that can resolve to either neighbor: at 1 unit
+// per metre, x = 192 belongs to sector 0 and x = -192 belongs to sector -1.
+function sectorCoordinateForPosition(coordinate, sectorSize) {
+  if (!Number.isFinite(coordinate)) return null;
+  const index = Math.ceil((coordinate - sectorSize * 0.5) / sectorSize);
+  return Object.is(index, -0) ? 0 : index;
+}
+
 function authoredGradeAtPosition(x, z, sectorSize) {
-  const sectorX = Math.round(x / sectorSize);
-  const sectorZ = Math.round(z / sectorSize);
+  const sectorX = sectorCoordinateForPosition(x, sectorSize);
+  const sectorZ = sectorCoordinateForPosition(z, sectorSize);
+  if (sectorX == null || sectorZ == null) return 0;
   const profile = getDistrictProfile({ key: `${sectorX}:${sectorZ}` });
   const grade = Number(profile.grade);
   if (!Number.isFinite(grade) || grade === 0) return 0;
@@ -895,9 +968,11 @@ export function createSanFranciscoSectorCatalog({
     },
     isValid,
     sectorAt(position) {
+      const x = sectorCoordinateForPosition(position?.x, sectorSize);
+      const z = sectorCoordinateForPosition(position?.z, sectorSize);
       return {
-        x: Math.round(position.x / sectorSize),
-        z: Math.round(position.z / sectorSize),
+        x,
+        z,
       };
     },
     get loadedDescriptorCount() {
@@ -3460,18 +3535,38 @@ function getFacadeAtlasCell(building, district = '') {
   return cells[(building.paletteIndex + styleOffset + districtOffset) % cells.length];
 }
 
-function getFacadeTone(building, district, face, layer) {
+function getFacadeTone(building, district, face, layer, sectorKey = '') {
   const faceOffset = FACADE_FACES.indexOf(face) * 13 + layer * 7;
   const districtOffset = DISTRICT_FACADE_CELL_OFFSETS[district] ?? 0;
+  if (LIVING_BLOCK_FACADE_SECTORS.has(sectorKey)) {
+    // Keep the existing two physical facade bands, but give the lower
+    // storefront/entrance rhythm a warmer lift than the mid-rise band.  This
+    // is scoped to the ordinary corridor so C3's authored atlas treatment is
+    // byte-for-byte unaffected.
+    const bandBase = layer === 0 ? 0.5 : 0.35;
+    return bandBase + seededValue(
+      Math.round(building.x * 17 + building.z * 31) + districtOffset * 97,
+      faceOffset,
+    ) * 0.3;
+  }
   return 0.42 + seededValue(
     Math.round(building.x * 17 + building.z * 31) + districtOffset * 97,
     faceOffset,
   ) * 0.44;
 }
 
-function getFacadeVariant(building, district, face, layer) {
+function getFacadeVariant(building, district, face, layer, sectorKey = '') {
   const faceOffset = FACADE_FACES.indexOf(face) * 19 + layer * 11;
   const districtOffset = DISTRICT_FACADE_CELL_OFFSETS[district] ?? 0;
+  if (LIVING_BLOCK_FACADE_SECTORS.has(sectorKey)) {
+    // Alternate a restrained trim variant on each face/floor band so the
+    // near/mid frontage reads as one authored family instead of a repeated
+    // blank slab.  The atlas cell and pooled plane count remain unchanged.
+    return Math.floor(seededValue(
+      Math.round(building.x * 29 + building.z * 23) + districtOffset * 131,
+      faceOffset + 17,
+    ) * 4);
+  }
   return Math.floor(seededValue(
     Math.round(building.x * 29 + building.z * 23) + districtOffset * 131,
     faceOffset,
@@ -3685,6 +3780,101 @@ function populateHeroSideBayGrid(
   return instanceIndex;
 }
 
+function populateLivingSeamFacadePanels(
+  mesh,
+  instanceIndex,
+  building,
+  presentedZ,
+  frontageYaw,
+  baseY,
+  district,
+  sectorKey,
+  face,
+  segment,
+  isLowerSegment,
+  faceWidth,
+  facadeCell,
+  facadeSector,
+) {
+  if (!mesh || faceWidth <= 0) return instanceIndex;
+  const facadeLayer = isLowerSegment ? 2 : 0;
+  const segmentHeight = segment.top - segment.bottom;
+  const panelFaceWidth = isLowerSegment && (face === 'left' || face === 'right')
+    ? Math.max(faceWidth, building.depth)
+    : faceWidth;
+  const backingWidth = panelFaceWidth;
+  const floorHeight = THREE.MathUtils.clamp(building.floorHeight || 3.2, 2.8, 4.2);
+  const bayWidth = FACADE_BAY_WIDTH_BY_CELL[facadeCell]
+    * (DISTRICT_FACADE_BAY_SCALE[district] ?? 1);
+  if (setFacadePlaneInstance(
+    mesh,
+    instanceIndex,
+    building,
+    presentedZ,
+    frontageYaw,
+    baseY,
+    face,
+    segment.bottom + segmentHeight * 0.5,
+    backingWidth,
+    segmentHeight,
+    Math.max(1, Math.round(backingWidth / bayWidth)),
+    Math.max(1, Math.round(segmentHeight / floorHeight)),
+    facadeLayer,
+    segment,
+    facadeCell,
+    getFacadeTone(building, district, face, isLowerSegment ? 0 : 1, sectorKey),
+    getFacadeVariant(building, district, face, isLowerSegment ? 0 : 1, sectorKey),
+    0.10,
+    facadeSector,
+  )) {
+    instanceIndex += 1;
+  }
+  LIVING_SEAM_FACADE_PANEL_DEFS.forEach((panel, panelIndex) => {
+    if (setFacadePlaneInstance(
+      mesh,
+      instanceIndex,
+      building,
+      presentedZ,
+      frontageYaw,
+      baseY,
+      face,
+      segment.bottom + segmentHeight * 0.5,
+      panelFaceWidth * panel.widthFraction,
+      segmentHeight,
+      1,
+      1,
+      facadeLayer,
+      segment,
+      facadeCell,
+      getFacadeTone(
+        building,
+        district,
+        face,
+        isLowerSegment ? panelIndex : panelIndex + 3,
+        sectorKey,
+      ),
+      getFacadeVariant(
+        building,
+        district,
+        face,
+        isLowerSegment ? panelIndex : panelIndex + 3,
+        sectorKey,
+      ),
+      panel.surfaceOffset,
+      facadeSector,
+      panel.depthLayer * 0.1,
+      panelFaceWidth * panel.alongFaceFraction,
+      panel.uvScaleX,
+      1,
+      panel.uvOffsetX,
+      0,
+    )) {
+      instanceIndex += 1;
+    }
+  });
+  return instanceIndex;
+}
+
 function populateFacadePlanes(
   mesh,
   instanceIndex,
@@ -3696,7 +3886,14 @@ function populateFacadePlanes(
   sectorKey,
   buildingIndex = -1,
 ) {
-  if (!mesh) return { instanceIndex, treatedFaces: 0, bayProjectionCount: 0 };
+  if (!mesh) {
+    return {
+      instanceIndex,
+      treatedFaces: 0,
+      bayProjectionCount: 0,
+      livingSeamPanelCount: 0,
+    };
+  }
   const facadeSector = SCOPED_NIGHT_FACADE_SECTORS.has(sectorKey) ? 1 : 0;
   const facadeHero = sectorKey === '3:0'
     ? (
@@ -3784,6 +3981,9 @@ function populateFacadePlanes(
   const segments = [lowerProfile, upperProfile];
   let treatedFaces = 0;
   let bayProjectionCount = 0;
+  let livingSeamPanelCount = 0;
+  const livingSeamTarget = sectorKey === LIVING_SEAM_FACADE_TARGET.sectorKey
+    && buildingIndex === LIVING_SEAM_FACADE_TARGET.buildingIndex;
 
   FACADE_FACES.forEach((face) => {
     let treated = false;
@@ -3819,8 +4019,20 @@ function populateFacadePlanes(
         facadeLayer,
         segment,
         cell,
-        getFacadeTone(building, district, face, segment === lowerProfile ? 0 : 1),
-        getFacadeVariant(building, district, face, segment === lowerProfile ? 0 : 1),
+        getFacadeTone(
+          building,
+          district,
+          face,
+          segment === lowerProfile ? 0 : 1,
+          sectorKey,
+        ),
+        getFacadeVariant(
+          building,
+          district,
+          face,
+          segment === lowerProfile ? 0 : 1,
+          sectorKey,
+        ),
         FACADE_SURFACE_OFFSET,
         facadeSector,
         facadeHero,
@@ -3872,8 +4084,20 @@ function populateFacadePlanes(
                 facadeLayer,
                 segment,
                 cell,
-                getFacadeTone(building, district, face, segment === lowerProfile ? 0 : 1),
-                getFacadeVariant(building, district, face, segment === lowerProfile ? 0 : 1),
+                getFacadeTone(
+                  building,
+                  district,
+                  face,
+                  segment === lowerProfile ? 0 : 1,
+                  sectorKey,
+                ),
+                getFacadeVariant(
+                  building,
+                  district,
+                  face,
+                  segment === lowerProfile ? 0 : 1,
+                  sectorKey,
+                ),
                 projection.surfaceOffset,
                 facadeSector,
                 facadeHero + projection.depthLayer * 0.1,
@@ -3888,6 +4112,26 @@ function populateFacadePlanes(
               }
             });
           }
+        }
+        if (livingSeamTarget && LIVING_SEAM_FACADE_TARGET.faces.includes(face)) {
+          const panelStart = instanceIndex;
+          instanceIndex = populateLivingSeamFacadePanels(
+            mesh,
+            instanceIndex,
+            building,
+            presentedZ,
+            frontageYaw,
+            baseY,
+            district,
+            sectorKey,
+            face,
+            segment,
+            segment === lowerProfile,
+            faceWidth,
+            cell,
+            facadeSector,
+          );
+          livingSeamPanelCount += instanceIndex - panelStart;
         }
       }
     });
@@ -3915,14 +4159,19 @@ function populateFacadePlanes(
     1,
     lowerProfile,
     cell,
-    getFacadeTone(building, district, 'front', 2),
-    getFacadeVariant(building, district, 'front', 2),
+    getFacadeTone(building, district, 'front', 2, sectorKey),
+    getFacadeVariant(building, district, 'front', 2, sectorKey),
     FACADE_ENTRANCE_SURFACE_OFFSET,
     facadeSector,
   )) {
     instanceIndex += 1;
   }
-  return { instanceIndex, treatedFaces, bayProjectionCount };
+  return {
+    instanceIndex,
+    treatedFaces,
+    bayProjectionCount,
+    livingSeamPanelCount,
+  };
 }
 
 function populateStreetlights(
@@ -4088,7 +4337,32 @@ function populateStreetscape(
     }
   }
 
+  // Keep a deterministic near/mid public-realm beat in the ordinary
+  // 2:0→3:0→4:0 run.  These anchors reuse the same pooled tree/planter
+  // geometry and are placed on the four 8 m sidewalk furnishing strips, so
+  // they stay grounded on the sampled grade and never consume a new draw.
+  let livingBlockAnchorCount = 0;
+  if (!qaPublicCorridorActive && LIVING_BLOCK_STREET_SECTORS.has(descriptor.key)) {
+    const livingBlockAnchors = descriptor.key === '2:0'
+      ? [...LIVING_BLOCK_TREE_ANCHORS, ...LIVING_BLOCK_SEAM_TREE_ANCHORS]
+      : descriptor.key === '4:0'
+        ? [...LIVING_BLOCK_TREE_ANCHORS, ...LIVING_BLOCK_FINANCIAL_TREE_ANCHORS]
+        : LIVING_BLOCK_TREE_ANCHORS;
+    livingBlockAnchors.forEach((anchor) => {
+      const before = count;
+      placeTree(
+        anchor.x,
+        anchor.z,
+        anchor.yaw,
+        anchor.size,
+        1.02,
+      );
+      if (count > before) livingBlockAnchorCount += 1;
+    });
+  }
+
   mesh.count = count;
+  mesh.userData.livingBlockAnchorCount = livingBlockAnchorCount;
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   mesh.computeBoundingSphere();
@@ -4378,6 +4652,7 @@ function* populateSlot(
   let atlasFrontageBuildings = 0;
   let architecturalFaceCount = 0;
   let bayProjectionCount = 0;
+  let livingSeamPanelCount = 0;
   let excludedWaterfrontBuildings = 0;
   const renderOnlyCutaways = [];
   const buildingVolumes = [];
@@ -4475,6 +4750,7 @@ function* populateSlot(
     );
     facadeCount = facadeResult.instanceIndex;
     bayProjectionCount += facadeResult.bayProjectionCount;
+    livingSeamPanelCount += facadeResult.livingSeamPanelCount;
     if (renderCutaway?.facade && facades) {
       // Keep pooled facade counts/attributes complete for presentation
       // validation, but make this exact pair visually absent without moving
@@ -4734,6 +5010,29 @@ function* populateSlot(
         (profileName) => STREETSCAPE_PROFILES[profileName]
           === getStreetscapeProfile(descriptor.district),
       )
+      : null,
+    livingBlock: quality === 'detail' && LIVING_BLOCK_STREET_SECTORS.has(descriptor.key)
+      ? Object.freeze({
+        corridor: '2:0→3:0→4:0 ordinary streamed living block',
+        cameraLocalActors: 'focus tableau routes',
+        treeAnchorCount: group.userData.streetscape?.userData?.livingBlockAnchorCount ?? 0,
+        pooledFurniture: 'streetlights-with-bench-cues',
+        facadeBands: LIVING_BLOCK_FACADE_SECTORS.has(descriptor.key)
+          ? Object.freeze(['lower-storefront', 'upper-mid-rise'])
+          : Object.freeze(['existing-authored-atlas']),
+        seamFacadeRepair: descriptor.key === LIVING_SEAM_FACADE_TARGET.sectorKey
+          ? Object.freeze({
+            buildingIndex: LIVING_SEAM_FACADE_TARGET.buildingIndex,
+            faces: LIVING_SEAM_FACADE_TARGET.faces,
+            panels: livingSeamPanelCount,
+            panelsPerBand: LIVING_SEAM_FACADE_PANEL_DEFS.length + 1,
+            depthLayers: LIVING_SEAM_FACADE_PANEL_DEFS.length + 1,
+            maximumWidthFraction: Math.max(
+              ...LIVING_SEAM_FACADE_PANEL_DEFS.map(({ widthFraction }) => widthFraction),
+            ),
+          })
+          : null,
+      })
       : null,
     surfaceRange,
     waterfront: descriptor.waterfront

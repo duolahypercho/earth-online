@@ -464,7 +464,7 @@ const manifestIds = manifest.tiles.map((tile) => tile.id);
 assert(manifestIds.length >= 3, 'Seam manifest must retain at least the verified three-tile waterfront district');
 assert.equal(new Set(manifestIds).size, manifestIds.length, 'Seam manifest tile IDs must be unique');
 assert.deepEqual([...manifest.tiles].sort((a, b) => a.gridIndex[1] - b.gridIndex[1] || a.gridIndex[0] - b.gridIndex[0]).map(({ id }) => id), manifestIds, 'Seam manifest order must be stable south-to-north, west-to-east');
-for (const required of ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1441-10894']) assert(manifestIds.includes(required), `Seam manifest lost required waterfront tile ${required}`);
+for (const required of ['epsg26910-1440-10893', 'epsg26910-1441-10893', 'epsg26910-1440-10894']) assert(manifestIds.includes(required), `Seam manifest lost required source-ready waterfront tile ${required}`);
 const manifestById = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
 
 const tiles = [];

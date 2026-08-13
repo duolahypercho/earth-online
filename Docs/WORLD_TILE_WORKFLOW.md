@@ -53,6 +53,24 @@ not-published state. Pass a manifest path to validate one tile only. The plan
 command prints all four deterministic tile plans by default, or one plan when
 given a manifest path.
 
+For the native 384 m EPSG:26910 SF artifact set, run the source gate before a
+seam rebuild or any runtime promotion:
+
+```bash
+node scripts/world-tiles/verify-sf-metric-tile-coverage-v1.mjs
+node scripts/world-tiles/verify-sf-metric-tile-provenance-v1.mjs
+node scripts/world-tiles/verify-sf-production-tile-seams-v1.mjs
+```
+
+The coverage verifier regenerates the full DataSF shoreline-and-islands plan
+and rejects a stale plan. The provenance gate fails if a manifest advertises a
+tile whose buffered 1 m terrain window is missing, contains no-data, or is not
+bound to the byte-locked OSM, CRS, and terrain-authorization receipts. It also
+requires EPSG:26910 metres at 1 runtime unit per metre and keeps the incomplete
+vertical evidence labeled `source-declared-navd88-unrealized`. The seam gate
+then checks translated shared-edge samples and deterministic GLB rebuilds. A
+passing source gate is not a claim of realized NAVD88 or survey-grade accuracy.
+
 A worker may advance an individual tile from `planned` only after its source
 locks record source URL, snapshot date, license approval, attribution, and
 SHA-256 digest. The existing SF asset records current OSM and shoreline
