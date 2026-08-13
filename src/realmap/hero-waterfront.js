@@ -7,9 +7,10 @@ import * as THREE from 'three';
  * below only give that classified boundary a readable depth in the hero view.
  */
 export const FERRY_WATERFRONT_PRESENTATION = Object.freeze({
-  landSideCapDepthM: 0.42,
-  faceDepthM: 0.74,
-  topLiftM: 0.16,
+  landSideCapDepthM: 0.72,
+  waterSideBandDepthM: 1.6,
+  faceDepthM: 0.9,
+  topLiftM: 0.2,
   minSegmentLengthM: 0.08,
   collision: false,
   source: 'DataSF shoreline segment centre lines',
@@ -38,12 +39,18 @@ export function createFerryWaterfrontEdge({ mask, elevationAt, seaLevelY }) {
     return null;
   }
 
-  const { landSideCapDepthM, faceDepthM, topLiftM } = FERRY_WATERFRONT_PRESENTATION;
+  const {
+    landSideCapDepthM,
+    waterSideBandDepthM,
+    faceDepthM,
+    topLiftM,
+  } = FERRY_WATERFRONT_PRESENTATION;
   const positions = [];
   const colors = [];
   const indices = [];
   const capColor = new THREE.Color(0x5f625d);
   const faceColor = new THREE.Color(0x384346);
+  const waterlineColor = new THREE.Color(0x2f626b);
   const add = (point, y, color) => {
     const index = positions.length / 3;
     positions.push(point.x, y, point.z);
@@ -57,6 +64,8 @@ export function createFerryWaterfrontEdge({ mask, elevationAt, seaLevelY }) {
     if (!normal) continue;
     const landA = { x: a.x + normal.x * landSideCapDepthM, z: a.z + normal.z * landSideCapDepthM };
     const landB = { x: b.x + normal.x * landSideCapDepthM, z: b.z + normal.z * landSideCapDepthM };
+    const waterA = { x: a.x - normal.x * waterSideBandDepthM, z: a.z - normal.z * waterSideBandDepthM };
+    const waterB = { x: b.x - normal.x * waterSideBandDepthM, z: b.z - normal.z * waterSideBandDepthM };
     const edgeAY = Math.max(seaLevelY + topLiftM, elevationAt(a.x, a.z) + topLiftM);
     const edgeBY = Math.max(seaLevelY + topLiftM, elevationAt(b.x, b.z) + topLiftM);
     const landAY = Math.max(seaLevelY + topLiftM, elevationAt(landA.x, landA.z) + topLiftM);
@@ -70,8 +79,14 @@ export function createFerryWaterfrontEdge({ mask, elevationAt, seaLevelY }) {
     add(b, edgeBY, capColor);
     add(a, faceAY, faceColor);
     add(b, faceBY, faceColor);
+    add(waterA, seaLevelY + 0.025, waterlineColor);
+    add(waterB, seaLevelY + 0.025, waterlineColor);
     indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
     indices.push(base + 2, base + 3, base + 4, base + 3, base + 5, base + 4);
+    // A flat styling band on the classified water side makes the exact source
+    // boundary legible from the locked hero camera. It is not bathymetry,
+    // foam, or surveyed construction; its bounded width is presentation-only.
+    indices.push(base + 2, base + 6, base + 3, base + 3, base + 6, base + 7);
     segments += 1;
   }
   if (!positions.length) return null;

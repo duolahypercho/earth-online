@@ -120,17 +120,33 @@ const FERRY_HERO_CARD_COHORT_TARGETS = Object.freeze([
   Object.freeze({ x: 2251.5, z: 1840 }),
   Object.freeze({ x: 2246, z: 1842.5 }),
 ]);
-// Card 02 looks northeast across the existing Embarcadero primary path. Seed
-// one ordinary traffic record at this source location so the locked frame has
-// a readable moving midground vehicle, without introducing a route or a
-// presentation-only vehicle.
-const FERRY_HERO_TRAFFIC_CARD_TARGET = Object.freeze({
-  cardId: '02-intersection-crosswalk',
-  x: 2251.7,
-  z: 1840.5,
-  sourceRoadId: 283512618,
-  sourceHighway: 'primary',
-});
+// These locked-card target points sit on existing Embarcadero source geometry.
+// They only choose launch positions for ordinary traffic records: paths,
+// signal stops, speed, and subsequent movement continue to be owned by the
+// normal traffic simulation.
+const FERRY_HERO_TRAFFIC_CARD_TARGETS = Object.freeze([
+  Object.freeze({
+    cardId: '01-commercial-street-day',
+    x: 2200.5,
+    z: 1907.0,
+    sourceRoadId: 283512618,
+    sourceHighway: 'primary',
+  }),
+  Object.freeze({
+    cardId: '01-commercial-street-day',
+    x: 2214.5,
+    z: 1888.7,
+    sourceRoadId: 283512618,
+    sourceHighway: 'primary',
+  }),
+  Object.freeze({
+    cardId: '02-intersection-crosswalk',
+    x: 2251.7,
+    z: 1840.5,
+    sourceRoadId: 283512618,
+    sourceHighway: 'primary',
+  }),
+]);
 const FERRY_HERO_REGION_REFERENCE = Object.freeze({
   id: 'sf-ferry-building-hero',
   url: '/data/world/regions/sf-ferry-building-hero.region.json',
@@ -4616,29 +4632,33 @@ function buildTraffic(selectedRoads, signals) {
 function stageFerryHeroTraffic(paths, vehicles) {
   heroTrafficStaging = null;
   if (!isFerryBuildingHeroTile() || !paths.length || !vehicles.length) return null;
-  const target = FERRY_HERO_TRAFFIC_CARD_TARGET;
-  const path = paths.find((candidate) => (
-    String(candidate.road?.id) === String(target.sourceRoadId)
-    && candidate.road?.highway === target.sourceHighway
-  ));
-  if (!path) return null;
-  const closest = closestProgressOnPoints(path.points, target);
-  const vehicle = vehicles[0];
-  vehicle.path = path;
-  vehicle.s = THREE.MathUtils.clamp(closest.s, 0.5, path.length - 0.5);
-  const pose = pathPosition(path, vehicle.s);
-  vehicle.mesh.position.copy(pose.position);
-  vehicle.mesh.rotation.set(0, pose.heading, 0);
-  heroTrafficStaging = {
-    cardId: target.cardId,
-    vehicleIndex: 0,
-    pathId: path.id,
-    sourceRoadId: path.road?.id ?? null,
-    sourceHighway: path.road?.highway ?? null,
-    s: Number(vehicle.s.toFixed(2)),
-    sourcePathDistanceM: Number(closest.distance.toFixed(2)),
-    initialPosition: { x: Number(pose.position.x.toFixed(2)), z: Number(pose.position.z.toFixed(2)) },
-  };
+  const records = [];
+  for (let index = 0; index < Math.min(FERRY_HERO_TRAFFIC_CARD_TARGETS.length, vehicles.length); index += 1) {
+    const target = FERRY_HERO_TRAFFIC_CARD_TARGETS[index];
+    const path = paths.find((candidate) => (
+      String(candidate.road?.id) === String(target.sourceRoadId)
+      && candidate.road?.highway === target.sourceHighway
+    ));
+    if (!path) continue;
+    const closest = closestProgressOnPoints(path.points, target);
+    const vehicle = vehicles[index];
+    vehicle.path = path;
+    vehicle.s = THREE.MathUtils.clamp(closest.s, 0.5, path.length - 0.5);
+    const pose = pathPosition(path, vehicle.s);
+    vehicle.mesh.position.copy(pose.position);
+    vehicle.mesh.rotation.set(0, pose.heading, 0);
+    records.push({
+      cardId: target.cardId,
+      vehicleIndex: index,
+      pathId: path.id,
+      sourceRoadId: path.road?.id ?? null,
+      sourceHighway: path.road?.highway ?? null,
+      s: Number(vehicle.s.toFixed(2)),
+      sourcePathDistanceM: Number(closest.distance.toFixed(2)),
+      initialPosition: { x: Number(pose.position.x.toFixed(2)), z: Number(pose.position.z.toFixed(2)) },
+    });
+  }
+  heroTrafficStaging = records;
   return heroTrafficStaging;
 }
 
@@ -9897,6 +9917,7 @@ function getHeroWaterfrontDiagnostics() {
     segments: userData.segments,
     vertices: userData.vertices,
     landSideCapDepthM: userData.landSideCapDepthM,
+    waterSideBandDepthM: userData.waterSideBandDepthM,
     faceDepthM: userData.faceDepthM,
     topLiftM: userData.topLiftM,
   };
@@ -10259,41 +10280,46 @@ function getHeroTrafficVisualDiagnostics() {
 }
 
 function getHeroTrafficStagingDiagnostics() {
-  if (!heroTrafficStaging || !camera || !trafficState?.vehicles?.[heroTrafficStaging.vehicleIndex]) {
+  if (!heroTrafficStaging || !camera || !trafficState?.vehicles?.length) {
     return heroTrafficStaging;
   }
-  const vehicle = trafficState.vehicles[heroTrafficStaging.vehicleIndex];
-  const box = new THREE.Box3().setFromObject(vehicle.mesh);
-  const corners = [
-    [box.min.x, box.min.y, box.min.z], [box.min.x, box.min.y, box.max.z],
-    [box.min.x, box.max.y, box.min.z], [box.min.x, box.max.y, box.max.z],
-    [box.max.x, box.min.y, box.min.z], [box.max.x, box.min.y, box.max.z],
-    [box.max.x, box.max.y, box.min.z], [box.max.x, box.max.y, box.max.z],
-  ].map(([x, y, z]) => new THREE.Vector3(x, y, z).project(camera));
-  const minX = Math.min(...corners.map((point) => point.x));
-  const maxX = Math.max(...corners.map((point) => point.x));
-  const minY = Math.min(...corners.map((point) => point.y));
-  const maxY = Math.max(...corners.map((point) => point.y));
-  const distanceToCamera = vehicle.mesh.position.distanceTo(camera.position);
-  const distanceToPlayer = playerState
-    ? Math.hypot(vehicle.mesh.position.x - playerState.x, vehicle.mesh.position.z - playerState.z)
-    : null;
-  const fullyInsideFrame = minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1;
-  return {
-    ...heroTrafficStaging,
-    position: {
-      x: Number(vehicle.mesh.position.x.toFixed(2)),
-      z: Number(vehicle.mesh.position.z.toFixed(2)),
-    },
-    distanceToCameraM: Number(distanceToCamera.toFixed(2)),
-    distanceToPlayerM: distanceToPlayer == null ? null : Number(distanceToPlayer.toFixed(2)),
-    screenNdc: {
-      minX: Number(minX.toFixed(3)), maxX: Number(maxX.toFixed(3)),
-      minY: Number(minY.toFixed(3)), maxY: Number(maxY.toFixed(3)),
-    },
-    fullyInsideFrame,
-    readable: fullyInsideFrame && maxX - minX >= 0.025 && maxY - minY >= 0.012,
-  };
+  const records = heroTrafficStaging.map((record) => {
+    const vehicle = trafficState.vehicles[record.vehicleIndex];
+    if (!vehicle) return { ...record, active: false };
+    const box = new THREE.Box3().setFromObject(vehicle.mesh);
+    const corners = [
+      [box.min.x, box.min.y, box.min.z], [box.min.x, box.min.y, box.max.z],
+      [box.min.x, box.max.y, box.min.z], [box.min.x, box.max.y, box.max.z],
+      [box.max.x, box.min.y, box.min.z], [box.max.x, box.min.y, box.max.z],
+      [box.max.x, box.max.y, box.min.z], [box.max.x, box.max.y, box.max.z],
+    ].map(([x, y, z]) => new THREE.Vector3(x, y, z).project(camera));
+    const minX = Math.min(...corners.map((point) => point.x));
+    const maxX = Math.max(...corners.map((point) => point.x));
+    const minY = Math.min(...corners.map((point) => point.y));
+    const maxY = Math.max(...corners.map((point) => point.y));
+    const distanceToCamera = vehicle.mesh.position.distanceTo(camera.position);
+    const distanceToPlayer = playerState
+      ? Math.hypot(vehicle.mesh.position.x - playerState.x, vehicle.mesh.position.z - playerState.z)
+      : null;
+    const fullyInsideFrame = minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1;
+    return {
+      ...record,
+      active: true,
+      position: {
+        x: Number(vehicle.mesh.position.x.toFixed(2)),
+        z: Number(vehicle.mesh.position.z.toFixed(2)),
+      },
+      distanceToCameraM: Number(distanceToCamera.toFixed(2)),
+      distanceToPlayerM: distanceToPlayer == null ? null : Number(distanceToPlayer.toFixed(2)),
+      screenNdc: {
+        minX: Number(minX.toFixed(3)), maxX: Number(maxX.toFixed(3)),
+        minY: Number(minY.toFixed(3)), maxY: Number(maxY.toFixed(3)),
+      },
+      fullyInsideFrame,
+      readable: fullyInsideFrame && maxX - minX >= 0.025 && maxY - minY >= 0.012,
+    };
+  });
+  return { count: records.length, records };
 }
 
 function disposeHeroLandmark() {
