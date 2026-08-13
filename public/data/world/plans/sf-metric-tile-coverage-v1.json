@@ -47,6 +47,19 @@
           560005.9999840065,
           4190005.9999845778
         ]
+      },
+      {
+        "id": "sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json",
+        "lockSha256": "sha256:ce95738b9d070c3574f622a08ca2df5ea31af428b26bc7d6f4765cee26db17d8",
+        "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json",
+        "sourceLockSha256": "sha256:32e0f62afab172ac5de6d2f308f5cc8547202a3b3b7dcdb34da5cbeb57d570a0",
+        "rasterBoundsEpsg26910Metres": [
+          539993.999977164,
+          4179994.000032985,
+          550005.999977164,
+          4190006.000032985
+        ]
       }
     ]
   },
@@ -61,8 +74,8 @@
     "landIntersectingTiles": 981,
     "coastalContextTiles": 264,
     "totalPlannedTiles": 1245,
-    "buildReadyTiles": 121,
-    "missingTerrainTiles": 1124
+    "buildReadyTiles": 275,
+    "missingTerrainTiles": 970
   },
   "tiles": [
     {
@@ -16267,7 +16280,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -16289,7 +16302,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -16311,8 +16324,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16333,8 +16346,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16355,8 +16368,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16377,8 +16390,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16399,8 +16412,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16421,8 +16434,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16443,8 +16456,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16465,8 +16478,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16487,8 +16500,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16509,8 +16522,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16531,8 +16544,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16553,8 +16566,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16575,8 +16588,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16597,8 +16610,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16619,8 +16632,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16641,8 +16654,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16663,8 +16676,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -16685,8 +16698,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17069,7 +17082,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -17091,7 +17104,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -17113,8 +17126,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17135,8 +17148,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17157,8 +17170,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17179,8 +17192,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17201,8 +17214,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17223,8 +17236,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17245,8 +17258,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17267,8 +17280,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17289,8 +17302,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17311,8 +17324,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17333,8 +17346,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17355,8 +17368,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17377,8 +17390,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17399,8 +17412,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17421,8 +17434,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17443,8 +17456,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17465,8 +17478,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17487,8 +17500,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17791,7 +17804,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -17813,7 +17826,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -17835,8 +17848,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17857,8 +17870,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17879,8 +17892,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17901,8 +17914,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17923,8 +17936,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17945,8 +17958,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17967,8 +17980,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -17989,8 +18002,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18011,8 +18024,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18033,8 +18046,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18055,8 +18068,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18077,8 +18090,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18099,8 +18112,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18121,8 +18134,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18143,8 +18156,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18165,8 +18178,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18187,8 +18200,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18209,8 +18222,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18593,7 +18606,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -18615,7 +18628,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -18637,8 +18650,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18659,8 +18672,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18681,8 +18694,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18703,8 +18716,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18725,8 +18738,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18747,8 +18760,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18769,8 +18782,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18791,8 +18804,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18813,8 +18826,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18835,8 +18848,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18857,8 +18870,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18879,8 +18892,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18901,8 +18914,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18923,8 +18936,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18945,8 +18958,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18967,8 +18980,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -18989,8 +19002,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19011,8 +19024,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19400,7 +19413,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -19422,7 +19435,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -19444,7 +19457,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -19466,8 +19479,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19488,8 +19501,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19510,8 +19523,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19532,8 +19545,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19554,8 +19567,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19576,8 +19589,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19598,8 +19611,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19620,8 +19633,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19642,8 +19655,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19664,8 +19677,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19686,8 +19699,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19708,8 +19721,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19730,8 +19743,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19752,8 +19765,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19774,8 +19787,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19796,8 +19809,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -19818,8 +19831,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20207,7 +20220,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20227,7 +20240,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20249,7 +20262,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20271,7 +20284,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20293,7 +20306,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20315,7 +20328,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20337,7 +20350,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -20359,8 +20372,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20381,8 +20394,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20403,8 +20416,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20425,8 +20438,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20447,8 +20460,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20469,8 +20482,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20491,8 +20504,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20513,8 +20526,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20535,8 +20548,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20557,8 +20570,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20579,8 +20592,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20601,8 +20614,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -20623,8 +20636,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21009,7 +21022,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21029,7 +21042,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21049,7 +21062,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21069,7 +21082,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21089,7 +21102,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21111,7 +21124,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21133,7 +21146,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21155,7 +21168,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21177,8 +21190,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21199,8 +21212,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21221,8 +21234,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21243,8 +21256,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21265,8 +21278,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21287,8 +21300,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21309,8 +21322,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21331,8 +21344,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21353,8 +21366,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21375,8 +21388,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21397,8 +21410,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21761,7 +21774,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21781,7 +21794,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21801,7 +21814,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21823,7 +21836,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -21845,8 +21858,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21867,8 +21880,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21889,8 +21902,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21911,8 +21924,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21933,8 +21946,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21955,8 +21968,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21977,8 +21990,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -21999,8 +22012,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22021,8 +22034,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22043,8 +22056,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22065,8 +22078,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22365,7 +22378,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -22387,7 +22400,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -22409,8 +22422,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22431,8 +22444,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22453,8 +22466,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22475,8 +22488,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22497,8 +22510,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22519,8 +22532,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22541,8 +22554,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22563,8 +22576,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22585,8 +22598,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22607,8 +22620,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22629,8 +22642,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22889,7 +22902,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -22911,7 +22924,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -22933,7 +22946,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -22955,8 +22968,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22977,8 +22990,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -22999,8 +23012,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23021,8 +23034,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23043,8 +23056,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23065,8 +23078,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23087,8 +23100,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23109,8 +23122,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23131,8 +23144,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23153,8 +23166,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23413,7 +23426,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -23433,7 +23446,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -23455,7 +23468,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -23477,8 +23490,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23499,8 +23512,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23521,7 +23534,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -23543,7 +23556,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -23565,8 +23578,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23587,8 +23600,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23609,8 +23622,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23631,8 +23644,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23653,8 +23666,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -23675,8 +23688,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -24033,7 +24046,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24055,7 +24068,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24077,8 +24090,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-x54y419",
+        "buildReady": true
       }
     },
     {
@@ -24099,7 +24112,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24121,7 +24134,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24141,7 +24154,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24163,7 +24176,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24185,7 +24198,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24207,7 +24220,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24229,7 +24242,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24251,7 +24264,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24273,7 +24286,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24635,7 +24648,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24657,7 +24670,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24679,7 +24692,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24699,7 +24712,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24719,7 +24732,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24739,7 +24752,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24759,7 +24772,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24779,7 +24792,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24799,7 +24812,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24819,7 +24832,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24839,7 +24852,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -24859,7 +24872,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -25238,7 +25251,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -25258,7 +25271,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -25278,7 +25291,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -25298,7 +25311,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "missing-authorized-1m-terrain-source",
+        "terrainElevation": "byte-locked-3dep-x54y419-contains-nodata",
         "buildReady": false
       }
     },
