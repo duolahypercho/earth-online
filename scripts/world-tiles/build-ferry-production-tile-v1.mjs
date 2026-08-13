@@ -371,14 +371,29 @@ function booleanIntersection(subject, clip, label) {
   return booleanDifference(subject, outsideSurfaces, label);
 }
 
+function canonicalSurfaceBoundaryPoint([x, z]) {
+  const size = TILE.size * SURFACE_TICKS_PER_METRE;
+  const snapMetre = (value) => {
+    const snapped = Math.round(value / SURFACE_TICKS_PER_METRE) * SURFACE_TICKS_PER_METRE;
+    return Math.abs(value - snapped) <= 1 ? snapped : value;
+  };
+  const onVerticalEdge = x === 0 || x === size;
+  const onHorizontalEdge = z === 0 || z === size;
+  return [onHorizontalEdge ? snapMetre(x) : x, onVerticalEdge ? snapMetre(z) : z];
+}
+
 function emitSurfacePolygon(target, polygon, sample, cache, label, lift = 0) {
   const result = triangulatePolygon(polygon, label);
-  const indices = result.vertices.map((point) => {
+  const indices = result.vertices.map((rawPoint) => {
+    const point = canonicalSurfaceBoundaryPoint(rawPoint);
     const key = `${point[0]},${point[1]}`;
     if (!cache.has(key)) { const [e, n] = fromTicks(point); cache.set(key, vertex(target, e, sample(e, n) + lift, n)); }
     return cache.get(key);
   });
-  for (const face of result.triangles) triangle(target, indices[face[0]], indices[face[2]], indices[face[1]]);
+  for (const face of result.triangles) {
+    const a = indices[face[0]]; const b = indices[face[2]]; const c = indices[face[1]];
+    if (a !== b && b !== c && c !== a) triangle(target, a, b, c);
+  }
 }
 
 function emitRoadPolygon(target, polygon, sample, cache, label) {
