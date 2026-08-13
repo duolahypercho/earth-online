@@ -442,6 +442,8 @@ export function createHeroLifeLighting(options = {}) {
       Number(Boolean(second.entry.source.userData.heroLifeDetailPriority))
         - Number(Boolean(first.entry.source.userData.heroLifeDetailPriority))
       || first.distance - second.distance
+      || String(first.entry.source.userData.ambientCohortId || first.entry.source.uuid)
+        .localeCompare(String(second.entry.source.userData.ambientCohortId || second.entry.source.uuid))
       || first.slot - second.slot
     ));
     const selected = detailCandidates.slice(0, maxDetailedActors);
@@ -498,6 +500,7 @@ export function createHeroLifeLighting(options = {}) {
       stats.detailAssignments.push({
         actor: actor.root.name,
         sourceUuid: actor.source.uuid,
+        sourceIdentity: actor.source.userData.ambientCohortId || null,
         position: [
           Number(detailWorldPosition.x.toFixed(3)),
           Number(detailWorldPosition.y.toFixed(3)),

@@ -152,23 +152,26 @@ mat3 heroBayTangentFrame(vec3 eyePosition, vec3 surfaceNormal, vec2 surfacePoint
       0.34
     );
     vec2 heroBaySlope = vec2(heroBayOffsetX, heroBayOffsetY) - heroBayHeight;
-    float heroBayResponse = 0.038 + heroBayWetness * 0.035 + heroBayWind * 0.016;
+    float heroBayResponse = 0.038 + heroBayWetness * 0.052 + heroBayWind * 0.016;
     mat3 heroBayFrame = heroBayTangentFrame(-vViewPosition, normal, vHeroBaySurface);
     normal = normalize(heroBayFrame * vec3(heroBaySlope * heroBayResponse, 1.0));
     // Three's stock geometryViewDir is normalize(vViewPosition); the negated
     // value above is only the eye-space surface position used for derivatives.
     float heroBayFresnel = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
     roughnessFactor = clamp(
-      roughnessFactor + (heroBayHeight - 0.5) * 0.045 + heroBayWetness * 0.055,
-      0.18,
-      0.52
+      roughnessFactor + (heroBayHeight - 0.5) * 0.045 - heroBayWetness * 0.15,
+      0.11,
+      0.46
     );
     vec3 heroBayBody = mix(vec3(0.018, 0.105, 0.15), vec3(0.052, 0.19, 0.235), heroBayHeight);
-    heroBayBody = mix(heroBayBody, vec3(0.038, 0.12, 0.145), heroBayWetness * 0.32);
+    // Rain makes the shared Bay read deeper and smoother, without moving the
+    // source-aligned surface. Fresnel therefore carries more distant sky and
+    // waterfront light while the body retains a cold, legible water depth.
+    heroBayBody = mix(heroBayBody, vec3(0.016, 0.084, 0.12), heroBayWetness * 0.46);
     heroBayBody = mix(heroBayBody, vec3(0.012, 0.045, 0.075), heroBayNight * 0.58);
-    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayBody, 0.28 + heroBayWetness * 0.08);
+    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayBody, 0.28 + heroBayWetness * 0.14);
     vec3 heroBayHorizon = mix(vec3(0.055, 0.17, 0.22), vec3(0.025, 0.075, 0.12), heroBayNight);
-    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayHorizon, heroBayFresnel * (0.12 + heroBayWetness * 0.045));
+    diffuseColor.rgb = mix(diffuseColor.rgb, heroBayHorizon, heroBayFresnel * (0.12 + heroBayWetness * 0.12));
 `;
 
   const wrapper = function onBeforeCompile(shader, renderer) {

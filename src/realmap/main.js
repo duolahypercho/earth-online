@@ -88,6 +88,14 @@ const FERRY_HERO_CAMERA_FRAME = Object.freeze({
 const FERRY_HERO_ATMOSPHERE_POINT_LIGHTS = 4;
 const FERRY_HERO_PRACTICAL_POINT_LIGHTS = 2;
 const FERRY_HERO_PLAZA_POINT_LIGHTS = 4;
+// The hero tile keeps the existing single 2K shadow map, but spends its
+// resolution on the Ferry plaza instead of the much larger exploratory map.
+// These extents cover the OSM terminal, its Market Street approach, and the
+// public forecourt without adding another shadow-casting light.
+const FERRY_HERO_SHADOW_EXTENT_M = 260;
+const FERRY_HERO_SHADOW_FAR_M = 1120;
+const FERRY_HERO_NIGHT_KEY_DISTANCE_M = 32;
+const FERRY_HERO_NIGHT_KEY_SHADOW_MAP = 512;
 const FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT = 16;
 const FERRY_HERO_STAGED_PEDESTRIAN_COUNT = 7;
 const FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M = 1.5;
@@ -102,6 +110,15 @@ const FERRY_STREET_LIFE = Object.freeze({
 // The source 196662077 concrete footway is rendered as a 3.4m Ferry Plaza
 // paving path. These tracks keep a 0.7m edge margin on either side.
 const FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M = 1.0;
+// These are locked QA camera corridors, not scripted destinations. They only
+// seed three ordinary walkers onto the nearest already-built sidewalk path so
+// the bounded presentation layer has a local source cohort for both opening
+// cards. Their normal path-following update remains unchanged.
+const FERRY_HERO_CARD_COHORT_TARGETS = Object.freeze([
+  Object.freeze({ x: 2248, z: 1836.5 }),
+  Object.freeze({ x: 2251.5, z: 1840 }),
+  Object.freeze({ x: 2246, z: 1842.5 }),
+]);
 const FERRY_HERO_REGION_REFERENCE = Object.freeze({
   id: 'sf-ferry-building-hero',
   url: '/data/world/regions/sf-ferry-building-hero.region.json',
@@ -7241,6 +7258,9 @@ let controls;
 let sun;
 let moonFill;
 let nightAmbient;
+let skyFillLight;
+let heroLandmarkFill;
+let heroNightKey;
 let ssaoPassRef = null;
 let cityRoot;
 let trafficState = null;
@@ -8131,6 +8151,26 @@ function offsetPolyline(points, offset) {
   return result;
 }
 
+// Ambient pedestrians must begin from the same OSM paths and transforms on
+// every fresh load. Keep this local seed separate from gameplay randomness:
+// it only chooses presentation cohort properties that were already randomized.
+const AMBIENT_PEDESTRIAN_SEED = 0x53464c49;
+
+function ambientPedestrianRandom(identity, channel) {
+  const input = `${AMBIENT_PEDESTRIAN_SEED}:${identity}:${channel}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  hash += hash << 13;
+  hash ^= hash >>> 7;
+  hash += hash << 3;
+  hash ^= hash >>> 17;
+  hash += hash << 5;
+  return (hash >>> 0) / 4294967296;
+}
+
 function buildSidewalkPaths(roads) {
   const paths = [];
   const vehicleClasses = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service']);
@@ -8141,10 +8181,12 @@ function buildSidewalkPaths(roads) {
     if (pedestrianClasses.has(road.highway)) {
       const length = pathLength(points);
       if (length >= 6) {
+        const pathIdentity = `${road.id}:native`;
         paths.push({
           points,
           length,
-          speed: 1.05 + Math.random() * 0.7,
+          pathIdentity,
+          speed: 1.05 + ambientPedestrianRandom(pathIdentity, 'path-speed') * 0.7,
           sourceRoadId: road.id,
           sourceHighway: road.highway,
           sourceSurface: road.surface || null,
@@ -8159,16 +8201,18 @@ function buildSidewalkPaths(roads) {
       offsetPolyline(points, offset),
       offsetPolyline(points, -offset),
     ];
-    for (const side of sides) {
+    for (const [sideIndex, side] of sides.entries()) {
       let length = 0;
       for (let i = 0; i < side.length - 1; i += 1) {
         length += Math.hypot(side[i + 1].x - side[i].x, side[i + 1].z - side[i].z);
       }
       if (length < 16) continue;
+      const pathIdentity = `${road.id}:side:${sideIndex}`;
       paths.push({
         points: side,
         length,
-        speed: 1.05 + Math.random() * 0.7,
+        pathIdentity,
+        speed: 1.05 + ambientPedestrianRandom(pathIdentity, 'path-speed') * 0.7,
         sourceRoadId: road.id,
         sourceHighway: road.highway,
         sourceSurface: road.surface || null,
@@ -8176,7 +8220,10 @@ function buildSidewalkPaths(roads) {
       });
     }
   }
-  return paths;
+  // OSM extraction order is not presentation identity. Sorting makes the
+  // modulo-based cohort assignment deterministic without changing a path's
+  // source geometry or its walking routine.
+  return paths.sort((first, second) => first.pathIdentity.localeCompare(second.pathIdentity));
 }
 
 function isFerryBuildingHeroTile() {
@@ -8263,6 +8310,9 @@ function stageFerryHeroPedestrians(paths) {
     const pose = pointAlongPath(path.points, s);
     person.path = path;
     person.s = s;
+    person.initialS = s;
+    person.initialPosition = { x: pose.x, z: pose.z };
+    person.initialPathIdentity = path.pathIdentity || `${path.sourceRoadId}:staged`;
     // A shared 0.91 m/s strolling pace preserves authored gaps without
     // freezing movement; it remains within a normal adult walking range.
     person.speed = path.speed * 0.7;
@@ -8277,6 +8327,7 @@ function stageFerryHeroPedestrians(paths) {
       withinSourceWalkwayEnvelope: Math.abs(path.lateralOffsetM || 0) <= FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M,
       reverse: Boolean(path.reverse),
       sourceUuid: person.mesh.uuid,
+      sourceIdentity: person.ambientCohortId,
       speedMps: Number(person.speed.toFixed(2)),
       initialS: Number(s.toFixed(2)),
       launchDistanceM: Number(Math.hypot(pose.x - launch.x, pose.z - launch.z).toFixed(2)),
@@ -8311,7 +8362,7 @@ function stageFerryHeroPedestrians(paths) {
 }
 
 function getHeroPedestrianScreenGate() {
-  if (!camera || !heroPedestrianStaging || !heroLifeLighting) return { active: false, passed: false, adults: [] };
+  if (!camera || !heroLifeLighting) return { active: false, passed: false, adults: [] };
   camera.updateMatrixWorld();
   const stats = heroLifeLighting.getStats();
   const detailed = new Set((stats.detailAssignments || []).map(({ sourceUuid }) => sourceUuid));
@@ -8326,8 +8377,12 @@ function getHeroPedestrianScreenGate() {
     bottom: Math.min(heroFoot.y, heroHead.y),
     top: Math.max(heroFoot.y, heroHead.y),
   } : null;
-  const adults = heroPedestrianStaging.staged.map((entry) => {
-    const foot = entry.person.mesh.getWorldPosition(new THREE.Vector3());
+  const detailedAssignments = stats.detailAssignments || [];
+  const sourceByUuid = new Map(heroLifeLightingSources.map(({ source }) => [source?.uuid, source]));
+  const adults = detailedAssignments.map(({ sourceUuid, sourceIdentity }) => {
+    const source = sourceByUuid.get(sourceUuid);
+    if (!source) return null;
+    const foot = source.getWorldPosition(new THREE.Vector3());
     const footNdc = project(foot);
     const headNdc = project(foot.clone().add(new THREE.Vector3(0, 1.68, 0)));
     const height = Math.abs(headNdc.y - footNdc.y);
@@ -8338,13 +8393,17 @@ function getHeroPedestrianScreenGate() {
       bottom: Math.min(footNdc.y, headNdc.y),
       top: Math.max(footNdc.y, headNdc.y),
     };
+    // The locked intersection card uses the full safe 16:9 viewport. Keep a
+    // modest horizontal gutter while admitting the right-third civilian that
+    // is visibly clear of both the player and the edge.
     const fullyInside = footNdc.z >= -1 && footNdc.z <= 1
-      && rect.left >= -0.75 && rect.right <= 0.75 && rect.bottom >= -0.9 && rect.top <= 0.9;
+      && rect.left >= -0.9 && rect.right <= 0.9 && rect.bottom >= -0.9 && rect.top <= 0.9;
     const overlapsHero = heroRect && rect.left < heroRect.right && rect.right > heroRect.left
       && rect.bottom < heroRect.top && rect.top > heroRect.bottom;
     return {
-      sourceUuid: entry.sourceUuid,
-      detailed: detailed.has(entry.sourceUuid),
+      sourceUuid,
+      sourceIdentity,
+      detailed: detailed.has(sourceUuid),
       ndc: [Number(footNdc.x.toFixed(3)), Number(footNdc.y.toFixed(3)), Number(footNdc.z.toFixed(3))],
       projectedHeight: Number(height.toFixed(3)),
       fullyInside,
@@ -8352,7 +8411,7 @@ function getHeroPedestrianScreenGate() {
       readable: fullyInside && height >= 0.075 && !overlapsHero,
       rect,
     };
-  });
+  }).filter(Boolean);
   const readableDetailed = adults.filter(({ detailed: isDetailed, readable }) => isDetailed && readable);
   // Extra adults may legitimately pass behind a readable trio. The gate asks
   // for one non-overlapping set of three, rather than incorrectly rejecting a
@@ -8372,6 +8431,7 @@ function getHeroPedestrianScreenGate() {
     adults,
     readableDetailedCount: readableDetailed.length,
     separatedReadableSourceUuids: separatedReadable.map(({ sourceUuid }) => sourceUuid),
+    separatedReadableSourceIdentities: separatedReadable.map(({ sourceIdentity }) => sourceIdentity),
     pairwiseSeparated,
     passed: readableDetailed.length >= 3 && pairwiseSeparated,
   };
@@ -8395,8 +8455,13 @@ function getHeroPedestrianStagingDiagnostics() {
       withinSourceWalkwayEnvelope: entry.withinSourceWalkwayEnvelope,
       reverse: entry.reverse,
       sourceUuid: entry.sourceUuid,
+      sourceIdentity: entry.sourceIdentity,
       speedMps: entry.speedMps,
       position: { x: Number(mesh.position.x.toFixed(2)), z: Number(mesh.position.z.toFixed(2)) },
+      initialPosition: {
+        x: Number(entry.position.x.toFixed(2)),
+        z: Number(entry.position.z.toFixed(2)),
+      },
       launchDistanceM: Number(Math.hypot(mesh.position.x - launch.x, mesh.position.z - launch.z).toFixed(2)),
       initialLaunchDistanceM: entry.launchDistanceM,
       driftM: Number(Math.hypot(mesh.position.x - entry.position.x, mesh.position.z - entry.position.z).toFixed(2)),
@@ -8416,6 +8481,7 @@ function getHeroPedestrianStagingDiagnostics() {
   }
   const sourcePathIds = [...new Set(current.map(({ sourceRoadId }) => sourceRoadId))];
   const sourceUuids = current.map(({ sourceUuid }) => sourceUuid);
+  const sourceIdentities = current.map(({ sourceIdentity }) => sourceIdentity);
   const cameraDistances = current.map(({ position }) => (camera
     ? Math.hypot(position.x - camera.position.x, position.z - camera.position.z)
     : null));
@@ -8426,6 +8492,8 @@ function getHeroPedestrianStagingDiagnostics() {
     sourceRoadIds: sourcePathIds,
     sourceUuids,
     sourceUuidUnique: new Set(sourceUuids).size === sourceUuids.length,
+    sourceIdentities,
+    sourceIdentityUnique: new Set(sourceIdentities).size === sourceIdentities.length,
     sourceHighways: [...heroPedestrianStaging.sourceHighways],
     pathLengthM: heroPedestrianStaging.pathLengthM,
     requiredMinimumSpacingM: FERRY_HERO_STAGED_PEDESTRIAN_MIN_SPACING_M,
@@ -8449,6 +8517,36 @@ function getHeroPedestrianStagingDiagnostics() {
     activeLandRegionClear: current.every(({ insideActiveLandRegion }) => insideActiveLandRegion),
     screenSpace: getHeroPedestrianScreenGate(),
     current,
+  };
+}
+
+function getAmbientPedestrianCohortDiagnostics() {
+  // Report launch data, not a sampled animation frame. Reload timing is
+  // intentionally nondeterministic, while these are the source transforms
+  // from which the life renderer receives its presentation identities.
+  const members = pedestrianState.map((person) => {
+    const pose = pointAlongPath(person.path.points, person.initialS);
+    return {
+      id: person.ambientCohortId,
+      pathId: person.initialPathIdentity,
+      sourceRoadId: person.path.sourceRoadId,
+      sourceHighway: person.path.sourceHighway,
+      initialS: Number(person.initialS.toFixed(4)),
+      position: {
+        x: Number(pose.x.toFixed(4)),
+        y: Number(elevationAt(pose.x, pose.z).toFixed(4)),
+        z: Number(pose.z.toFixed(4)),
+      },
+      heading: Number(pose.heading.toFixed(6)),
+      speedMps: Number(person.speed.toFixed(6)),
+      phase: Number(person.phase.toFixed(6)),
+    };
+  });
+  return {
+    seed: AMBIENT_PEDESTRIAN_SEED,
+    count: members.length,
+    identitiesUnique: new Set(members.map(({ id }) => id)).size === members.length,
+    members,
   };
 }
 
@@ -8482,8 +8580,40 @@ function pathLength(points) {
   return length;
 }
 
+function closestPathDistance(path, target) {
+  let best = { distance: Infinity, s: 0 };
+  let walked = 0;
+  for (let index = 0; index < path.points.length - 1; index += 1) {
+    const start = path.points[index];
+    const end = path.points[index + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (length <= 0.001) continue;
+    const t = THREE.MathUtils.clamp(((target.x - start.x) * dx + (target.z - start.z) * dz) / (length * length), 0, 1);
+    const x = start.x + dx * t;
+    const z = start.z + dz * t;
+    const distance = Math.hypot(target.x - x, target.z - z);
+    if (distance < best.distance) best = { distance, s: walked + length * t };
+    walked += length;
+  }
+  return best;
+}
+
+function ferryHeroCardCohortAssignments(paths) {
+  if (!isFerryBuildingHeroTile()) return [];
+  return FERRY_HERO_CARD_COHORT_TARGETS.map((target, index) => {
+    const nearest = paths.reduce((best, path) => {
+      const candidate = closestPathDistance(path, target);
+      return !best || candidate.distance < best.distance ? { path, ...candidate } : best;
+    }, null);
+    return nearest ? { index, target, ...nearest } : null;
+  }).filter(Boolean);
+}
+
 function createPedestrianSystem(roads) {
   const paths = buildSidewalkPaths(roads);
+  const cardCohort = ferryHeroCardCohortAssignments(paths);
   if (pedestrianGroup) {
     cityRoot.remove(pedestrianGroup);
     disposeRoot(pedestrianGroup);
@@ -8504,7 +8634,9 @@ function createPedestrianSystem(roads) {
   const desired = Math.min(320, Math.max(50, Math.floor(paths.length * 0.18)));
   const count = fullCityMode ? Math.min(STREAM.maxPedestrians, desired) : desired;
   for (let i = 0; i < count && paths.length; i += 1) {
-    const path = paths[i % paths.length];
+    const cardAssignment = cardCohort[i - 10] || null;
+    const path = cardAssignment?.path || paths[i % paths.length];
+    const ambientCohortId = `ambient:${path.pathIdentity}:${i}`;
     const avatar = createPedestrianAvatar(palettes[i % palettes.length]);
     const storyIndex = i % 6;
     const story = [
@@ -8515,10 +8647,13 @@ function createPedestrianSystem(roads) {
       { role: 'Worker', action: 'commuting', mood: 'busy', choice: 'skip the crowd' },
       { role: 'Cleaner', action: 'sweeping', mood: 'steady', choice: 'keep the block tidy' },
     ][storyIndex];
-    const s = Math.random() * path.length;
+    const s = cardAssignment
+      ? THREE.MathUtils.clamp(cardAssignment.s, 0.25, path.length - 0.25)
+      : ambientPedestrianRandom(ambientCohortId, 'initial-distance') * path.length;
     const pose = pointAlongPath(path.points, s);
     avatar.position.set(pose.x, elevationAt(pose.x, pose.z), pose.z);
     avatar.rotation.y = pose.heading;
+    avatar.userData.ambientCohortId = ambientCohortId;
     pedestrianGroup.add(avatar);
     if (i % 3 === 0 && !fullCityMode) {
       const bubble = createThoughtBubble();
@@ -8526,10 +8661,16 @@ function createPedestrianSystem(roads) {
     }
     pedestrianState.push({
       mesh: avatar,
+      ambientCohortId,
+      heroCardCohort: Boolean(cardAssignment),
+      heroCardCohortTarget: cardAssignment?.target || null,
       path,
       s,
-      speed: path.speed * (0.85 + Math.random() * 0.3),
-      phase: Math.random() * Math.PI * 2,
+      initialS: s,
+      initialPosition: { x: pose.x, z: pose.z },
+      initialPathIdentity: path.pathIdentity,
+      speed: path.speed * (0.85 + ambientPedestrianRandom(ambientCohortId, 'speed') * 0.3),
+      phase: ambientPedestrianRandom(ambientCohortId, 'phase') * Math.PI * 2,
       story,
     });
   }
@@ -9896,17 +10037,20 @@ function initializeHeroLifeLighting() {
   const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
   const stagedPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
   const stagedSet = new Set(stagedPeople);
+  const cardCohortPeople = pedestrianState.filter(({ heroCardCohort }) => heroCardCohort);
+  const cardCohortSet = new Set(cardCohortPeople);
   // Keep the two authored-crossing sources in the bounded presentation pool.
   // They remain ordinary simulation records; this only guarantees that the
   // existing hero renderer can show them when the player reaches the crossing.
   const streetLifePeople = isFerryBuildingHeroTile() ? pedestrianState.slice(8, 10) : [];
   const streetLifeSet = new Set(streetLifePeople);
-  const priorityPeople = [...new Set([...stagedPeople, ...streetLifePeople])];
+  const priorityPeople = [...new Set([...stagedPeople, ...streetLifePeople, ...cardCohortPeople])];
   const prioritySet = new Set(priorityPeople);
   const pedestrians = (priorityPeople.length ? [...priorityPeople, ...pedestrianState.filter((person) => !prioritySet.has(person))] : pedestrianState.slice())
     .sort((first, second) => (
       (stagedSet.has(second) ? 1 : 0) - (stagedSet.has(first) ? 1 : 0)
       || (streetLifeSet.has(second) ? 1 : 0) - (streetLifeSet.has(first) ? 1 : 0)
+      || (cardCohortSet.has(second) ? 1 : 0) - (cardCohortSet.has(first) ? 1 : 0)
       || Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
         - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
     ))
@@ -10251,6 +10395,117 @@ function getHeroPlazaLightingDiagnostics() {
     night: heroPlazaLighting?.night ?? null,
     wetness: heroPlazaLighting?.wetness ?? null,
     error: heroPlazaLightingError,
+  };
+}
+
+function updateHeroLightingComposition() {
+  if (!sun) return null;
+  const night = THREE.MathUtils.clamp(TIME_OF_DAY_MODES[timeOfDay]?.night ?? 0, 0, 1);
+  const landmark = heroLandmark?.getDiagnostics?.();
+  const tower = landmark?.towerAnchor;
+  const useHeroFrame = Boolean(activeHeroTile && Array.isArray(tower));
+
+  if (useHeroFrame) {
+    const [towerX, towerY, towerZ] = tower;
+    const extent = FERRY_HERO_SHADOW_EXTENT_M;
+    // Camera-independent targeting prevents a close player turn from causing
+    // the clock tower or its plaza shadows to pop out of the fitted frustum.
+    sun.target.position.set(towerX, towerY + 12, towerZ);
+    sun.shadow.camera.left = -extent;
+    sun.shadow.camera.right = extent;
+    sun.shadow.camera.top = extent;
+    sun.shadow.camera.bottom = -extent;
+    sun.shadow.camera.near = 8;
+    sun.shadow.camera.far = FERRY_HERO_SHADOW_FAR_M;
+    sun.shadow.bias = -0.00014;
+    sun.shadow.normalBias = 0.022;
+    sun.shadow.radius = 2.5;
+  } else {
+    sun.shadow.camera.left = -420;
+    sun.shadow.camera.right = 420;
+    sun.shadow.camera.top = 420;
+    sun.shadow.camera.bottom = -420;
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 1600;
+    sun.shadow.bias = -0.00018;
+    sun.shadow.normalBias = 0.028;
+    sun.shadow.radius = 2.2;
+  }
+  sun.target.updateMatrixWorld();
+  sun.shadow.camera.updateProjectionMatrix();
+
+  if (heroLandmarkFill) {
+    heroLandmarkFill.visible = useHeroFrame && night > 0.02;
+    heroLandmarkFill.intensity = useHeroFrame
+      ? THREE.MathUtils.smoothstep(night, 0.02, 1) * 0.48
+      : 0;
+    if (useHeroFrame) {
+      heroLandmarkFill.target.position.set(tower[0], tower[1] + 23, tower[2]);
+      heroLandmarkFill.target.updateMatrixWorld();
+    }
+  }
+  if (heroNightKey) {
+    const launch = FERRY_HERO_PLAZA_LAUNCH;
+    const towerTarget = launch.towerTarget;
+    const headingX = towerTarget.x - launch.x;
+    const headingZ = towerTarget.z - launch.z;
+    const headingLength = Math.hypot(headingX, headingZ) || 1;
+    const forwardX = headingX / headingLength;
+    const forwardZ = headingZ / headingLength;
+    const keyActive = useHeroFrame && night > 0.12;
+    // The exact OSM footway launch and the landmark's documented tower target
+    // define this approach axis. A low spot from its rear edge shapes the
+    // photographed pedestrian pool rather than lighting arbitrary ground.
+    if (keyActive) {
+      const ramp = THREE.MathUtils.smoothstep(night, 0.12, 0.72);
+      const sourceX = launch.x - forwardX * 4.2;
+      const sourceZ = launch.z - forwardZ * 4.2;
+      const targetX = launch.x + forwardX * 14;
+      const targetZ = launch.z + forwardZ * 14;
+      heroNightKey.position.set(sourceX, elevationAt(sourceX, sourceZ) + 7.2, sourceZ);
+      heroNightKey.target.position.set(targetX, elevationAt(targetX, targetZ) + 0.08, targetZ);
+      heroNightKey.target.updateMatrixWorld();
+      heroNightKey.visible = true;
+      heroNightKey.intensity = 96 * ramp;
+      heroNightKey.distance = FERRY_HERO_NIGHT_KEY_DISTANCE_M;
+      heroNightKey.shadow.camera.far = FERRY_HERO_NIGHT_KEY_DISTANCE_M;
+    } else {
+      heroNightKey.visible = false;
+      heroNightKey.intensity = 0;
+    }
+  }
+  heroPerformanceMode?.invalidateShadows();
+  return {
+    heroFrame: useHeroFrame,
+    shadowExtentM: useHeroFrame ? FERRY_HERO_SHADOW_EXTENT_M : 420,
+    shadowFarM: useHeroFrame ? FERRY_HERO_SHADOW_FAR_M : 1600,
+    landmarkFillIntensity: heroLandmarkFill?.intensity ?? 0,
+    shadowLights: sun.castShadow ? 1 : 0,
+    nightKey: heroNightKey ? {
+      active: heroNightKey.visible && heroNightKey.intensity > 0,
+      anchor: heroNightKey.visible ? [heroNightKey.position.x, heroNightKey.position.y, heroNightKey.position.z] : null,
+      target: heroNightKey.visible ? [heroNightKey.target.position.x, heroNightKey.target.position.y, heroNightKey.target.position.z] : null,
+      intensity: heroNightKey.intensity,
+      distanceM: heroNightKey.distance,
+      angleRadians: heroNightKey.angle,
+      penumbra: heroNightKey.penumbra,
+      castShadow: heroNightKey.castShadow,
+      shadowMapSize: [heroNightKey.shadow.mapSize.x, heroNightKey.shadow.mapSize.y],
+      shadowCameraFarM: heroNightKey.shadow.camera.far,
+      anchorSource: 'OSM Market Street footway 779448275 launch-to-Ferry-clock-tower axis',
+    } : null,
+  };
+}
+
+function getHeroLightingDiagnostics() {
+  const composition = updateHeroLightingComposition();
+  return {
+    active: Boolean(activeHeroTile && sun),
+    ...composition,
+    shadowMapSize: sun?.shadow?.mapSize ? [sun.shadow.mapSize.x, sun.shadow.mapSize.y] : null,
+    shadowAutoUpdate: renderer?.shadowMap?.autoUpdate ?? null,
+    landmarkFillShadowless: heroLandmarkFill ? !heroLandmarkFill.castShadow : null,
+    nightKeyShadowBudget: heroNightKey?.castShadow ? 1 : 0,
   };
 }
 
@@ -11579,9 +11834,30 @@ function setupScene() {
   scene.add(moonFill);
   nightAmbient = new THREE.AmbientLight(0x445566, 0);
   scene.add(nightAmbient);
-  const fillLight = new THREE.DirectionalLight(0x88a8c8, 0.42);
-  fillLight.position.set(-280, 320, -220);
-  scene.add(fillLight);
+  skyFillLight = new THREE.DirectionalLight(0x88a8c8, 0.42);
+  skyFillLight.position.set(-280, 320, -220);
+  scene.add(skyFillLight);
+  // One shadowless, tower-facing fill gives the landmark a readable dusk and
+  // night silhouette without multiplying shadow maps or practical lights.
+  heroLandmarkFill = new THREE.DirectionalLight(0x9bb8d2, 0);
+  heroLandmarkFill.name = 'Ferry Building dusk landmark fill';
+  heroLandmarkFill.position.set(2050, 360, 1730);
+  heroLandmarkFill.castShadow = false;
+  scene.add(heroLandmarkFill);
+  // The sole local shadow at night: a narrow, warm pool aligned to an
+  // existing Ferry plaza fixture. The 512px spot map is deliberately tiny
+  // compared with the daytime sun map and carries only near-field grounding.
+  heroNightKey = new THREE.SpotLight(0xffc27a, 0, FERRY_HERO_NIGHT_KEY_DISTANCE_M, Math.PI / 7, 0.62, 2);
+  heroNightKey.name = 'Ferry Building anchored night ground key';
+  heroNightKey.castShadow = true;
+  heroNightKey.shadow.mapSize.set(FERRY_HERO_NIGHT_KEY_SHADOW_MAP, FERRY_HERO_NIGHT_KEY_SHADOW_MAP);
+  heroNightKey.shadow.camera.near = 0.7;
+  heroNightKey.shadow.camera.far = FERRY_HERO_NIGHT_KEY_DISTANCE_M;
+  heroNightKey.shadow.bias = -0.00035;
+  heroNightKey.shadow.normalBias = 0.02;
+  heroNightKey.shadow.radius = 1.5;
+  heroNightKey.visible = false;
+  scene.add(heroNightKey, heroNightKey.target);
 
   camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 1, 4200);
   controls = new OrbitControls(camera, sceneCanvas);
@@ -11757,6 +12033,7 @@ function setTimeOfDay(mode) {
     skyDome.material.uniforms.sunColor.value.set(config.skySun);
   }
   updateNightGlow(config.night);
+  updateHeroLightingComposition();
   syncHeroAtmosphereConditions();
   syncHeroLifeLightingConditions();
   syncHeroPlazaLightingConditions();
@@ -11854,6 +12131,7 @@ function updateNightGlow(amount) {
   }
   if (moonFill) moonFill.intensity = night * 0.5;
   if (nightAmbient) nightAmbient.intensity = night * 0.32;
+  if (skyFillLight) skyFillLight.intensity = 0.42 - night * 0.12;
   if (ssaoPassRef) ssaoPassRef.enabled = night < 0.65;
 }
 
@@ -12577,6 +12855,7 @@ async function buildCity() {
     sun.target.position.set(centroid.x, 0, centroid.z);
     sun.target.updateMatrixWorld();
     initializeHeroPerformanceMode();
+    updateHeroLightingComposition();
     controls.update();
     if (fullCityMode && controls) controls.maxDistance = 5200;
 
@@ -12709,6 +12988,7 @@ function start() {
       heroLifeLighting: getHeroLifeLightingDiagnostics(),
       heroPedestrianStaging: getHeroPedestrianStagingDiagnostics(),
       heroLandmark: getHeroLandmarkDiagnostics(),
+      heroLighting: getHeroLightingDiagnostics(),
       heroCharacter: getHeroCharacterDiagnostics(),
       heroPerformance: getHeroPerformanceDiagnostics(),
       heroCamera: getHeroCameraDiagnostics(),
@@ -12926,6 +13206,7 @@ function start() {
     getHeroLandmark: () => getHeroLandmarkDiagnostics(),
     getHeroPlazaLighting: () => getHeroPlazaLightingDiagnostics(),
     getHeroPedestrianStaging: () => getHeroPedestrianStagingDiagnostics(),
+    getAmbientPedestrianCohort: () => getAmbientPedestrianCohortDiagnostics(),
     getStreetLifeVignette: () => getFerryStreetLifeVignetteDiagnostics(),
     getHeroCharacter: () => getHeroCharacterDiagnostics(),
     getHeroPerformance: () => getHeroPerformanceDiagnostics(),

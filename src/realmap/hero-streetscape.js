@@ -60,6 +60,8 @@ const PALETTE = Object.freeze({
   pavingBorder: 0x9a9992,
   pavingAsphalt: 0x4f5555,
   marking: 0xe7dfc2,
+  gutter: 0x72868b,
+  drain: 0x4c5557,
   utility: 0x394042,
   iron: 0x202729,
   planter: 0x555a55,
@@ -370,6 +372,10 @@ function makeMaterials() {
     }),
     pavingBorder: createStandardMaterial(PALETTE.pavingBorder, 0.86),
     marking: createStandardMaterial(PALETTE.marking, 0.5),
+    // This remains an instanced road-edge batch. The cooler, lower-roughness
+    // finish makes the real curb return legible as a layered road-to-plaza
+    // threshold instead of a single flat asphalt edge.
+    drain: createStandardMaterial(PALETTE.gutter, 0.34, 0.42, { vertexColors: true }),
     utility: createStandardMaterial(PALETTE.utility, 0.42, 0.54),
     iron: createStandardMaterial(PALETTE.iron, 0.34, 0.78),
     planter: createStandardMaterial(PALETTE.planter, 0.72, 0.14),
@@ -394,7 +400,7 @@ function makeBatches(root, materialState) {
     sidewalk: makeBatch(root, 'Ferry Plaza sidewalk slabs', cube, materials.sidewalk, 48),
     tactile: makeBatch(root, 'Source-derived tactile crossing plates', cube, materials.tactile, 8),
     tactileDots: makeBatch(root, 'Source-derived tactile warning dots', disc, materials.tactile, 16),
-    drain: makeBatch(root, 'Road-edge gutters and curb drains', cube, materials.utility, 24),
+    drain: makeBatch(root, 'Road-edge gutters and curb drains', cube, materials.drain, 24),
     paving: makeBatch(root, 'Market Street OSM paving finish', pavingCube, materials.paving, 96),
     pavingBorder: makeBatch(root, 'Market Street paving edge courses', cube, materials.pavingBorder, 48),
     // The tactile warning field uses eleven released seam instances while
@@ -602,6 +608,7 @@ function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds,
   const curbColor = new THREE.Color();
   const slabColor = new THREE.Color();
   let detailSeed = 1;
+  let roadEdgeGutters = 0;
   for (const road of roads) {
     forEachSegment(road, ({ a, b, dx, dz, length, angle, index }) => {
       const nx = -dz / length;
@@ -657,6 +664,7 @@ function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds,
         if (isUsablePoint(gutterX, gutterZ, bounds, isSea)) {
           put(batches.drain, boxMatrix(matrix, gutterX, roadElevation(gutterX, gutterZ) + 0.013, gutterZ,
             length - 0.16, 0.018, 0.28, angle));
+          roadEdgeGutters += 1;
         }
       }
 
@@ -724,6 +732,7 @@ function addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds,
   }
   setBatchColors(batches.curb, (index) => curbColor.setHex(PALETTE.curb).offsetHSL(0, 0, (hash11(index + 4) - 0.5) * 0.09));
   setBatchColors(batches.sidewalk, (index) => slabColor.setHex(PALETTE.sidewalk).offsetHSL(0, 0, (hash11(index + 19) - 0.5) * 0.11));
+  return roadEdgeGutters;
 }
 
 function addPlazaFurniture(batches, sidewalkElevation, bounds, isSea, matrix) {
@@ -869,7 +878,9 @@ export function createFerryBuildingStreetscape(options = {}) {
   const matrix = new THREE.Matrix4();
   addPavingDetail(batches, pavingPaths, terrainElevation, bounds, isSea, matrix);
   const curbTransitions = deriveCurbTransitions(roads, pavingPaths, bounds, isSea);
-  addRoadDetail(batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, curbTransitions, matrix);
+  const roadEdgeGutters = addRoadDetail(
+    batches, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, curbTransitions, matrix,
+  );
   const curbTransitionDetail = addCurbTransitionDetail(
     batches, curbTransitions, roads, roadElevation, sidewalkElevation, bounds, isSea, layers, matrix,
   );
@@ -878,6 +889,10 @@ export function createFerryBuildingStreetscape(options = {}) {
   );
   addPlazaFurniture(batches, sidewalkElevation, bounds, isSea, matrix);
   addFerryFacadeRelief(batches, terrainElevation, bounds, isSea, matrix);
+  const drainColor = new THREE.Color();
+  setBatchColors(batches.drain, (index) => (index < roadEdgeGutters
+    ? drainColor.setHex(PALETTE.gutter).offsetHSL(0, 0, (hash11(index + 37) - 0.5) * 0.08)
+    : drainColor.setHex(PALETTE.drain).offsetHSL(0, 0, (hash11(index + 61) - 0.5) * 0.06)));
   const meshes = finishBatches(batches);
   const stats = Object.freeze({
     drawCalls: meshes.filter((mesh) => mesh.count > 0).length,
@@ -890,6 +905,7 @@ export function createFerryBuildingStreetscape(options = {}) {
       roadId, segmentIndex, distance, x, z,
     })),
     curbTransitionDetail,
+    roadEdgeGutters,
     layers,
   });
   if (stats.drawCalls > FERRY_BUILDING_STREETSCAPE_BUDGET.maxDrawCalls
@@ -914,11 +930,16 @@ export function createFerryBuildingStreetscape(options = {}) {
     wetness = clamp(Number.isFinite(next.wetness) ? next.wetness : wetness, 0, 1);
     for (const material of batches.materials) {
       const dry = dryRoughness.get(material);
-      material.roughness = THREE.MathUtils.lerp(dry, Math.min(dry, 0.2), wetness * (material === materials.leaf ? 0.25 : 0.75));
+      // Wet plaza stone and curb-edge channels need a broad enough PBR shift
+      // to read in a moving drizzle card, not merely in an inspector. This is
+      // material-only: source road/shore geometry and batch counts stay fixed.
+      const wetTarget = material === materials.leaf ? Math.min(dry, 0.58) : Math.min(dry, 0.14);
+      const response = material === materials.leaf ? 0.25 : 0.92;
+      material.roughness = THREE.MathUtils.lerp(dry, wetTarget, wetness * response);
       material.needsUpdate = true;
     }
-    materials.paving.color.copy(pavingDryColor).lerp(new THREE.Color(0x747b7d), wetness * 0.2);
-    materials.paving.envMapIntensity = THREE.MathUtils.lerp(0.72, 1.12, wetness);
+    materials.paving.color.copy(pavingDryColor).lerp(new THREE.Color(0x5e6b70), wetness * 0.34);
+    materials.paving.envMapIntensity = THREE.MathUtils.lerp(0.72, 1.34, wetness);
     materials.paving.needsUpdate = true;
     return wetness;
   }

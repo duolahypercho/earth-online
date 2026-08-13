@@ -50,6 +50,9 @@ assert.ok(landmark.stats.storefrontVariants >= 4, 'facade must retain authored s
 assert.ok(landmark.stats.segmentedFacadeOpenings >= landmark.stats.facadeBaysPerSide * 4, 'both long facades need a ground and upper opening per bay');
 assert.ok(landmark.stats.facadeCavityDepthMetres >= 0.65, 'facade apertures must retain pedestrian-readable cavity depth');
 assert.ok(landmark.stats.facadeReturnDepthMetres >= 0.6, 'facade apertures must retain real jamb/header/sill returns');
+assert.ok(landmark.stats.facadeShadowRevealHeightMetres >= 0.2, 'facade stories require a physical self-shadow reveal, not a painted seam');
+assert.ok(landmark.stats.arcadeCentreDivisions >= landmark.stats.facadeBaysPerSide * 2, 'every player-height arcade bay requires an authored centre division');
+assert.ok(landmark.stats.clockFaceRecessDepthMetres >= 0.15, 'clock faces require a physical recessed backplate for skyline readability');
 assert.equal(landmark.stats.facadeBackingClosed, true, 'authored facade cavities must remain closed rather than exposing a fake interior');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock tower pyramidal roof'), 'clock tower silhouette is required');
 assert.ok(landmark.root.getObjectByName('Ferry Building clock faces').count === 4, 'all four clock faces are required');
@@ -115,6 +118,8 @@ assert.equal(upperFacade.material, facadeMaterial, 'segmented upper masonry must
 roofVolumes.geometry.computeBoundingBox();
 assert.ok(roofVolumes.geometry.boundingBox.max.y - roofVolumes.geometry.boundingBox.min.y > 0.9, 'terminal wings must use pitched roof volumes');
 const clockFaces = landmark.root.getObjectByName('Ferry Building clock faces');
+const shadowCourses = landmark.root.getObjectByName('Ferry Building weathered plinth and tower shadow courses');
+assert.ok(shadowCourses.count >= 10, 'shadow-course batch must include facade reveals and all four clock backplates');
 const clockNormals = [];
 const clockCenters = [];
 for (let index = 0; index < clockFaces.count; index += 1) {
