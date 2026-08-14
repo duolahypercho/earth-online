@@ -28,23 +28,44 @@ const VEHICLE_PALETTE = Object.freeze([0xc44737, 0x2f6fae, 0xd6ad35, 0xdedfe0, 0
 const CIVILIAN_PRESENTATION_PROFILES = Object.freeze([
   Object.freeze({
     silhouette: 'lean', gaitStyle: 'light', phase: 0.42, cadence: 1.06,
-    armSwing: 0.9, posture: -0.006, scale: Object.freeze([0.95, 1.03, 0.96]),
+    armSwing: 0.9, posture: -0.006, shoulderTilt: -0.018, headBias: 0.035,
+    scale: Object.freeze([0.95, 1.03, 0.96]),
   }),
   Object.freeze({
     silhouette: 'layered', gaitStyle: 'steady', phase: 2.16, cadence: 0.98,
-    armSwing: 1, posture: 0, scale: Object.freeze([1.045, 0.985, 1.055]),
+    armSwing: 1, posture: 0, shoulderTilt: 0.012, headBias: -0.025,
+    scale: Object.freeze([1.045, 0.985, 1.055]),
   }),
   Object.freeze({
     silhouette: 'brisk', gaitStyle: 'brisk', phase: 3.88, cadence: 1.12,
-    armSwing: 1.1, posture: 0.012, scale: Object.freeze([0.985, 1.025, 0.94]),
+    armSwing: 1.1, posture: 0.012, shoulderTilt: -0.008, headBias: 0.018,
+    scale: Object.freeze([0.985, 1.025, 0.94]),
   }),
   Object.freeze({
     silhouette: 'tailored', gaitStyle: 'steady', phase: 5.31, cadence: 1.01,
-    armSwing: 0.96, posture: -0.003, scale: Object.freeze([1.015, 1.005, 1.02]),
+    armSwing: 0.96, posture: -0.003, shoulderTilt: 0.006, headBias: -0.012,
+    scale: Object.freeze([1.015, 1.005, 1.02]),
+  }),
+  Object.freeze({
+    silhouette: 'relaxed', gaitStyle: 'light', phase: 0.91, cadence: 0.94,
+    armSwing: 0.84, posture: -0.012, shoulderTilt: -0.016, headBias: -0.04,
+    scale: Object.freeze([1.035, 1.015, 0.975]),
+  }),
+  Object.freeze({
+    silhouette: 'compact', gaitStyle: 'steady', phase: 4.47, cadence: 1.04,
+    armSwing: 1.04, posture: 0.006, shoulderTilt: 0.02, headBias: 0.045,
+    scale: Object.freeze([0.97, 0.975, 1.035]),
+  }),
+  Object.freeze({
+    silhouette: 'long-step', gaitStyle: 'brisk', phase: 5.92, cadence: 1.09,
+    armSwing: 1.14, posture: 0.015, shoulderTilt: -0.012, headBias: 0.01,
+    scale: Object.freeze([1.005, 1.045, 0.965]),
   }),
 ]);
 const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786, vehicle: 0xffd99a });
-const PRACTICAL_HALO_DROP = 2.05;
+// Ferry facade anchors are authored at pavement elevation + 2.35 m. Keep the
+// local additive pool on that pavement instead of hovering below the fixture.
+const PRACTICAL_HALO_DROP = 2.35;
 const PRACTICAL_GLOW_VARIATION = Object.freeze([0.76, 0.94, 0.68, 0.86, 0.62, 0.8]);
 // Detailed civilians deliberately stay out of the static city shadow map:
 // their source-driven motion would otherwise leave a stale hard shadow after
@@ -551,8 +572,13 @@ export function createHeroLifeLighting(options = {}) {
       // distance; none of them feed back into source transforms.
       const rig = actor.root.userData.rig;
       const body = actor.root.userData.body;
+      const headPivot = actor.root.userData.headPivot;
       if (rig) rig.scale.set(...actor.presentationProfile.scale);
-      if (body) body.rotation.x += actor.presentationProfile.posture;
+      if (body) {
+        body.rotation.x += actor.presentationProfile.posture;
+        body.rotation.z += actor.presentationProfile.shoulderTilt;
+      }
+      if (headPivot) headPivot.rotation.y += actor.presentationProfile.headBias;
       if (actor.root.userData.leftArm) actor.root.userData.leftArm.rotation.x *= actor.presentationProfile.armSwing;
       if (actor.root.userData.rightArm) actor.root.userData.rightArm.rotation.x *= actor.presentationProfile.armSwing;
       actor.previousPosition.copy(detailWorldPosition);
@@ -569,6 +595,8 @@ export function createHeroLifeLighting(options = {}) {
         gaitStyle: actor.presentationProfile.gaitStyle,
         paletteIndex: actor.paletteIndex,
         rigScale: actor.presentationProfile.scale,
+        shoulderTilt: actor.presentationProfile.shoulderTilt,
+        headBias: actor.presentationProfile.headBias,
         position: [
           Number(detailWorldPosition.x.toFixed(3)),
           Number(detailWorldPosition.y.toFixed(3)),
