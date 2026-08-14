@@ -1,0 +1,423 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-lod1-adaptive-terrain-proof",
+  "id": "sf-lod1-adaptive-proof-v1",
+  "status": "proof-rejected-source-surface-ambiguity",
+  "nonPromotion": "preview/proof only; not a production package, runtime asset, manifest entry, or streaming input",
+  "adaptivePolicy": "deterministic 4m -> 2m -> 1m quads; tile perimeters and failed/coastline cells retain 1m source triangles; touching quads are balanced to 2:1 and coarse transition edges receive explicit source-height midpoint fans; post-stitch violations split their owning patches and repeat",
+  "coordinateFrame": {
+    "horizontalCrs": "EPSG:26910",
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+    "unitsPerMetre": 1,
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "translationMetres": [
+      0,
+      0,
+      0
+    ],
+    "verticalStatus": "provisional-source-declared-navd88-unrealized"
+  },
+  "sample": {
+    "tiles": [
+      "epsg26910-1440-10892",
+      "epsg26910-1440-10893",
+      "epsg26910-1441-10893",
+      "epsg26910-1440-10894"
+    ],
+    "topology": "connected Ferry three-tile L plus west/south neighbor; same four source-ready tiles as committed 4m/2m proofs"
+  },
+  "sourceBinding": [
+    {
+      "id": "epsg26910-1440-10892",
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10892/epsg26910-1440-10892.lod0.glb",
+        "sha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10892/epsg26910-1440-10892.receipt.json",
+        "sha256": "sha256:7856cb37bbf599e3f98464e4ab614f0dfe6a626c70b9077b6b8d8c6b77b2a767"
+      },
+      "mapPackage": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10892/epsg26910-1440-10892.package.json",
+        "sha256": "sha256:b57ea4eeb72fcdac60eeb010ef419255134a201b04bacea4d1d8c6bf21100f5e"
+      },
+      "sourceLocks": [
+        {
+          "id": "sf-ferry-osm-horizontal-geometry-v1",
+          "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+          "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b",
+          "purpose": "geometry"
+        },
+        {
+          "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+          "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+          "purpose": "horizontal-coordinate-operation"
+        },
+        {
+          "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+          "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619",
+          "purpose": "terrain-elevation"
+        }
+      ]
+    },
+    {
+      "id": "epsg26910-1440-10893",
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.lod0.glb",
+        "sha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.receipt.json",
+        "sha256": "sha256:0ff2168d8e1a3768904c4688d9466a37c33c5d808463b32fbaabe4bd162a6b11"
+      },
+      "mapPackage": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.package.json",
+        "sha256": "sha256:b4e9cfdefcdc22103e29670098b2cb12b398b4f6fc92c9e672e0c62cdf3beb3a"
+      },
+      "sourceLocks": [
+        {
+          "id": "sf-ferry-osm-horizontal-geometry-v1",
+          "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+          "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b",
+          "purpose": "geometry"
+        },
+        {
+          "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+          "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+          "purpose": "horizontal-coordinate-operation"
+        },
+        {
+          "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+          "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619",
+          "purpose": "terrain-elevation"
+        }
+      ]
+    },
+    {
+      "id": "epsg26910-1441-10893",
+      "lod0": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+        "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
+        "sha256": "sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd"
+      },
+      "mapPackage": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.package.json",
+        "sha256": "sha256:2a0d068a8ac5fac4f6548a6d5e30688a48a4ae20fd523693de1b4b6165adb7b3"
+      },
+      "sourceLocks": [
+        {
+          "id": "sf-ferry-osm-horizontal-geometry-v1",
+          "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+          "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b",
+          "purpose": "geometry"
+        },
+        {
+          "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+          "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+          "purpose": "horizontal-coordinate-operation"
+        },
+        {
+          "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+          "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619",
+          "purpose": "terrain-elevation"
+        }
+      ]
+    },
+    {
+      "id": "epsg26910-1440-10894",
+      "lod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10894/epsg26910-1440-10894.lod0.glb",
+        "sha256": "sha256:0e516460e07da7d567d50046150388ad3a49b1c86739c14d7268acd0e33ee96a"
+      },
+      "receipt": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10894/epsg26910-1440-10894.receipt.json",
+        "sha256": "sha256:48741251be3c8fb51892800c3f6e8b9e90012487f1fce3d701555f4b7294e925"
+      },
+      "mapPackage": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10894/epsg26910-1440-10894.package.json",
+        "sha256": "sha256:01f9d3d2d494437fe1053e3a18b75fd13d180c5fe53eef29c98354f2eaa1b52b"
+      },
+      "sourceLocks": [
+        {
+          "id": "sf-ferry-osm-horizontal-geometry-v1",
+          "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+          "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b",
+          "purpose": "geometry"
+        },
+        {
+          "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+          "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+          "purpose": "horizontal-coordinate-operation"
+        },
+        {
+          "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+          "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+          "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619",
+          "purpose": "terrain-elevation"
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "method": "all 385x385 integer LOD0 terrain/water source samples plus every unique fractional LOD0 terrain/water vertex compared with the final adaptive triangles; when sampled error is within budget, every positive-area LOD0/adaptive triangle intersection is clipped and its polygon vertices evaluated",
+    "postStitchRefinement": "after transition fans are built, every measured source vertex above 0.25m maps to its owning >1m patch; those patches are deterministically split and rebalanced until the sampled budget passes or only 1m source triangles remain",
+    "postStitchRefinementConverged": true,
+    "maxHorizontalDeviationMetres": 0,
+    "maxVerticalDeviationMetres": 0.32454186753966496,
+    "maxAdaptiveVerticalDeviationMetresExcludingSourceAmbiguities": 0.24975895881652832,
+    "inheritedSourceSurfaceAmbiguityQualification": "maxVerticalDeviationMetres includes overlapping LOD0 terrain/water candidates; adaptive contract comparison excludes those inherited ambiguities but any ambiguity still rejects promotion",
+    "continuousTriangleOverlayCheck": "not-run; source terrain/water boundary has ambiguous overlapping source heights",
+    "continuousMaxVerticalDeviationMetres": null,
+    "contractBudgets": {
+      "maxHorizontalDeviationMetres": 0.5,
+      "maxVerticalDeviationMetres": 0.25
+    },
+    "sampledExceedsBudget": false,
+    "sampledAmbiguities": 1,
+    "refinementConverged": true,
+    "continuousProven": false,
+    "contractEligible": false,
+    "deterministicRebuild": true,
+    "noTJunctions": true,
+    "adaptiveTopology": [
+      {
+        "id": "epsg26910-1440-10892",
+        "balancedTwoToOne": true,
+        "transitionEdges": 6092,
+        "pairChecks": 33077,
+        "noTJunctions": true
+      },
+      {
+        "id": "epsg26910-1440-10893",
+        "balancedTwoToOne": true,
+        "transitionEdges": 4008,
+        "pairChecks": 28404,
+        "noTJunctions": true
+      },
+      {
+        "id": "epsg26910-1441-10893",
+        "balancedTwoToOne": true,
+        "transitionEdges": 7612,
+        "pairChecks": 47721,
+        "noTJunctions": true
+      },
+      {
+        "id": "epsg26910-1440-10894",
+        "balancedTwoToOne": true,
+        "transitionEdges": 6896,
+        "pairChecks": 50589,
+        "noTJunctions": true
+      }
+    ],
+    "directedSurfacePartition": "terrain/water category follows the serialized directed OSM coastline partition; coastline boundary cells retain source LOD0 triangles",
+    "phaseStableTileBoundaryHeights": true,
+    "seams": [
+      {
+        "tiles": [
+          "epsg26910-1440-10892",
+          "epsg26910-1440-10893"
+        ],
+        "sides": [
+          "north",
+          "south"
+        ],
+        "samples": 385,
+        "maxVerticalDifferenceMetres": 0
+      },
+      {
+        "tiles": [
+          "epsg26910-1440-10893",
+          "epsg26910-1441-10893"
+        ],
+        "sides": [
+          "east",
+          "west"
+        ],
+        "samples": 385,
+        "maxVerticalDifferenceMetres": 0
+      },
+      {
+        "tiles": [
+          "epsg26910-1440-10893",
+          "epsg26910-1440-10894"
+        ],
+        "sides": [
+          "north",
+          "south"
+        ],
+        "samples": 385,
+        "maxVerticalDifferenceMetres": 0
+      }
+    ],
+    "seamEvidenceQualification": "all 385 integer edge samples on the three connected seams; tile perimeters retain 1m source triangles, so phase-stable source heights are checked exactly",
+    "nonTerrainGeometry": "serialized position/index payload hashes for coastline, roads, and buildings match source LOD0; adaptive terrain/water payloads are the only replaced geometry"
+  },
+  "tiles": [
+    {
+      "id": "epsg26910-1440-10892",
+      "artifact": {
+        "path": "public/data/world/preview-artifacts/sf-lod1-adaptive-proof-v1/epsg26910-1440-10892.lod1-adaptive.glb",
+        "sha256": "sha256:5f29f79d9d05a86638e41cf8bcc60a95be4a28344a9ed42f53feb1cccb7d0b01",
+        "bytes": 796416
+      },
+      "cellsByStepMetres": {
+        "1": {
+          "patches": 5124,
+          "triangles": 10248
+        },
+        "2": {
+          "patches": 2855,
+          "triangles": 13104
+        },
+        "4": {
+          "patches": 8182,
+          "triangles": 34090
+        }
+      },
+      "totalPatches": 16161,
+      "triangles": 57442,
+      "measuredSourceSurfaceVertices": 296450,
+      "surfaceAmbiguities": 0,
+      "refinementIterations": 1,
+      "refinementConverged": true,
+      "refinementStopReason": "sample-budget-passed",
+      "violatingSamples": [],
+      "maxHorizontalDeviationMetres": 0,
+      "maxVerticalDeviationMetres": 0.2493518590927124,
+      "maxAdaptiveVerticalDeviationMetresExcludingSourceAmbiguities": 0.2493518590927124,
+      "continuousMaxVerticalDeviationMetres": 0.2493518590927124
+    },
+    {
+      "id": "epsg26910-1440-10893",
+      "artifact": {
+        "path": "public/data/world/preview-artifacts/sf-lod1-adaptive-proof-v1/epsg26910-1440-10893.lod1-adaptive.glb",
+        "sha256": "sha256:717a3c98052f50c5e9eb1486d87eab167676d7f0d1c24d1f34bb202d7b7b18ab",
+        "bytes": 708516
+      },
+      "cellsByStepMetres": {
+        "1": {
+          "patches": 3628,
+          "triangles": 7256
+        },
+        "2": {
+          "patches": 1957,
+          "triangles": 8952
+        },
+        "4": {
+          "patches": 8500,
+          "triangles": 34880
+        }
+      },
+      "totalPatches": 14085,
+      "triangles": 51088,
+      "measuredSourceSurfaceVertices": 296450,
+      "surfaceAmbiguities": 0,
+      "refinementIterations": 1,
+      "refinementConverged": true,
+      "refinementStopReason": "sample-budget-passed",
+      "violatingSamples": [],
+      "maxHorizontalDeviationMetres": 0,
+      "maxVerticalDeviationMetres": 0.2484380602836609,
+      "maxAdaptiveVerticalDeviationMetresExcludingSourceAmbiguities": 0.2484380602836609,
+      "continuousMaxVerticalDeviationMetres": 0.2484380602836609
+    },
+    {
+      "id": "epsg26910-1441-10893",
+      "artifact": {
+        "path": "public/data/world/preview-artifacts/sf-lod1-adaptive-proof-v1/epsg26910-1441-10893.lod1-adaptive.glb",
+        "sha256": "sha256:ccb89735e7fae90588171fe4f212ddd62b482b9f2f8a345e9e1fdcbcbb274fd8",
+        "bytes": 882664
+      },
+      "cellsByStepMetres": {
+        "1": {
+          "patches": 9969,
+          "triangles": 19962
+        },
+        "2": {
+          "patches": 2831,
+          "triangles": 13848
+        },
+        "4": {
+          "patches": 7931,
+          "triangles": 33006
+        }
+      },
+      "totalPatches": 20731,
+      "triangles": 66816,
+      "measuredSourceSurfaceVertices": 297197,
+      "surfaceAmbiguities": 0,
+      "refinementIterations": 0,
+      "refinementConverged": true,
+      "refinementStopReason": "sample-budget-passed",
+      "violatingSamples": [],
+      "maxHorizontalDeviationMetres": 0,
+      "maxVerticalDeviationMetres": 0.2493445873260498,
+      "maxAdaptiveVerticalDeviationMetresExcludingSourceAmbiguities": 0.2493445873260498,
+      "continuousMaxVerticalDeviationMetres": 0.2493445873260498
+    },
+    {
+      "id": "epsg26910-1440-10894",
+      "artifact": {
+        "path": "public/data/world/preview-artifacts/sf-lod1-adaptive-proof-v1/epsg26910-1440-10894.lod1-adaptive.glb",
+        "sha256": "sha256:34aedcd2d9607f8a8c12fb247bba84428cafe8866efe5f36767d6cf5587e8958",
+        "bytes": 901692
+      },
+      "cellsByStepMetres": {
+        "1": {
+          "patches": 9514,
+          "triangles": 19216
+        },
+        "2": {
+          "patches": 2727,
+          "triangles": 13064
+        },
+        "4": {
+          "patches": 8021,
+          "triangles": 33376
+        }
+      },
+      "totalPatches": 20262,
+      "triangles": 65656,
+      "measuredSourceSurfaceVertices": 297850,
+      "surfaceAmbiguities": 1,
+      "refinementIterations": 0,
+      "refinementConverged": true,
+      "refinementStopReason": "adaptive-budget-passed-source-surface-ambiguous",
+      "violatingSamples": [],
+      "maxHorizontalDeviationMetres": 0,
+      "maxVerticalDeviationMetres": 0.32454186753966496,
+      "maxAdaptiveVerticalDeviationMetresExcludingSourceAmbiguities": 0.24975895881652832,
+      "continuousMaxVerticalDeviationMetres": null
+    }
+  ],
+  "budgets": {
+    "measuredSample": {
+      "bytes": 3289288,
+      "triangles": 241002
+    },
+    "sampleAveragePerTile": {
+      "bytes": 822322,
+      "triangles": 60250.5
+    },
+    "projected598AtSampleAverage": {
+      "bytes": 491748556,
+      "triangles": 36029799
+    },
+    "qualification": "arithmetic projection from this four-tile proof sample only; not a citywide forecast or promotion claim"
+  },
+  "runtimeManifestPath": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json"
+}
