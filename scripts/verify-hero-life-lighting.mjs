@@ -203,6 +203,10 @@ try {
   assert.equal(expandedStats.fallbackActors, 0, 'expanded capacity must remove fallback silhouettes');
   assert.equal(expandedStats.pedestriansActive, 7, 'expanded detail cannot drop a staged source');
   assert.equal(new Set(expandedStats.detailAssignments.map(({ sourceUuid }) => sourceUuid)).size, 7, 'expanded detail identities must remain unique');
+  assert.equal(new Set(expandedStats.detailAssignments.map(({ silhouette }) => silhouette)).size, 7, 'all seven staged civilians need distinct deterministic silhouettes');
+  assert.equal(new Set(expandedStats.detailAssignments.map(({ rigScale }) => rigScale.join('/'))).size, 7, 'all seven staged civilians need distinct adult-scale proportions');
+  assert.equal(new Set(expandedStats.detailAssignments.map(({ shoulderTilt }) => shoulderTilt)).size, 7, 'all seven staged civilians need distinct bounded shoulder poses');
+  assert.equal(new Set(expandedStats.detailAssignments.map(({ headBias }) => headBias)).size, 7, 'all seven staged civilians need distinct bounded head poses');
 } finally {
   expanded.dispose();
 }
