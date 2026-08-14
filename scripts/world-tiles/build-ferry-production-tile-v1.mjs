@@ -674,16 +674,16 @@ function emitCoastEdge(target, coastline, sample) {
   }
 }
 
-function bakeGeometry(features, sample) {
+function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP) {
   const terrain = category(); const water = category(); const coastline = category(); const roads = category(); const buildings = category();
   const directedCoastline = assembleDirectedCoastline(features);
   const classified = directedCoastline ? waterSurfaceFromDirectedCoastline(directedCoastline) : null;
   const waterSurface = classified ? { outers: classified.waterFaces.map(({ outer }) => outer) } : null;
   const coastSegments = directedCoastline ? directedCoastline.fragments.flatMap((points) => points.slice(0, -1).map((point, index) => [toTicks(point), toTicks(points[index + 1])])) : [];
   const terrainCache = new Map(); const waterCache = new Map();
-  const side = TILE.size / TERRAIN_STEP + 1;
+  const side = TILE.size / terrainGridStepMetres + 1;
   for (let z = 0; z < side - 1; z += 1) for (let x = 0; x < side - 1; x += 1) {
-    const minX = x * TERRAIN_STEP * SURFACE_TICKS_PER_METRE; const minZ = z * TERRAIN_STEP * SURFACE_TICKS_PER_METRE; const maxX = minX + TERRAIN_STEP * SURFACE_TICKS_PER_METRE; const maxZ = minZ + TERRAIN_STEP * SURFACE_TICKS_PER_METRE;
+    const minX = x * terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const minZ = z * terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const maxX = minX + terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const maxZ = minZ + terrainGridStepMetres * SURFACE_TICKS_PER_METRE;
     const cell = { outers: [[[minX, minZ], [maxX, minZ], [maxX, maxZ], [minX, maxZ]]] };
     const touchesCoast = coastSegments.some(([a, b]) => Math.max(a[0], b[0]) >= minX && Math.min(a[0], b[0]) <= maxX && Math.max(a[1], b[1]) >= minZ && Math.min(a[1], b[1]) <= maxZ);
     if (!waterSurface || !touchesCoast) {
@@ -823,20 +823,24 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0 } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   try {
+    assert(Number.isInteger(terrainGridStepMetres) && terrainGridStepMetres >= 1 && TILE.size % terrainGridStepMetres === 0, 'terrainGridStepMetres must be a positive integer divisor of 384');
+    assert(Number.isInteger(lodLevel) && lodLevel >= 0, 'lodLevel must be a non-negative integer');
+    const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0;
+    assert(isCanonicalLod0 || !write, 'Non-default terrain steps/LOD levels are in-memory proof builds only and may not write production-shaped artifacts');
     outputDir ??= defaultOutputDir(TILE);
     const stem = artifactStem(TILE);
     const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors(verifiedTerrainSourceDigests)]);
     const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
     assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors);
-    const baseGeometry = bakeGeometry(features, terrainSource.sample); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
-    const glbs = geometries.map((geometry, level) => ({ level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }));
-    const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: level < 2 ? 0.000002 : 0, maxVerticalDeviationMetres: level < 2 ? 0.000002 : 0, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
+    const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
+    const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, maxVerticalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
     const sourceFeatures = [];
     for (const feature of included) { const en = representativeEn(feature); const native = inverse(en[0], en[1], horizontalLock); const terrainEvidence = await terrainSource.evidence(en[0], en[1]); const evidencePayload = terrainEvidence.payload; const elevationSampleEvidence = { ...evidencePayload, evidenceSha256: `sha256:${sha256(stableBytes(evidencePayload))}` }; const height = elevationSampleEvidence.sampledSourceDeclaredNavd88UnrealizedMetres;
       const transformedPosition = [q(en[0]), q(en[1]), height];
