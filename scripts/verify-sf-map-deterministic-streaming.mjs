@@ -32,11 +32,27 @@ assert(source.includes('state.queueDistanceBucket = Math.floor(distance / STREAM
 assert(source.includes('distanceBucket: state.queueDistanceBucket,'), 'Queue diagnostics must report the frozen bucket.');
 assert(source.includes('return leftBucket - rightBucket || leftId.localeCompare(rightId);'), 'Queue ties must use a stable tile-id order.');
 assert(!source.includes("activeView === 'plan' ? Math.floor"), 'Queue priority must not recompute camera distance while comparing queued work.');
+assert(source.includes('function focusDistanceToTile(tile)'), 'Tile streaming must have an explicit map-focus distance function.');
+assert(source.includes('controls.target.x - centerX') && source.includes('controls.target.z - centerZ'), 'Tile distance must use controls.target horizontal coordinates.');
+assert(!source.includes('camera.position.x - centerX') && !source.includes('camera.position.z - centerZ'), 'Overview camera position must not drive tile distance.');
+assert(source.includes("distanceReference: 'controls.target horizontal coordinates'"), 'Streaming diagnostics must expose controls.target as the distance reference.');
 assert(source.includes("tile.scale.setScalar(1);"), 'Runtime tile scale must remain one unit per metre.');
+assert(source.includes('tile.position.copy(descriptor.offset);'), 'Runtime tile placement must use the source-derived offset exactly once.');
 assert(source.includes('tile.origin[0] - anchorOrigin[0]'), 'Runtime origin translation must subtract the source anchor exactly once.');
 assert(source.includes("originSubtractions: 1, sceneScale: 1, units: 'metres'"), 'Metric diagnostics must remain exposed.');
 assert(source.includes('receipt grid index does not match the manifest tile'), 'Receipt grid indexes must be checked against the descriptor.');
 assert(source.includes('receipt bounds do not match the metric tile size and origin'), 'Receipt bounds must be checked against the descriptor size and origin.');
+assert(source.includes('const DISTRICT_FIT_TARGET_RESIDENTS = 4;'), 'District presentation must wait for the bounded four-tile verified batch.');
+assert(source.includes('function fitDistrictCameraToVerifiedResidents()'), 'District presentation requires an explicit source-derived local camera fit.');
+assert(source.includes("if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;"), 'District camera fitting must wait for verified resident tiles.');
+assert(source.includes('const bounds = residentDescriptorBounds(batch);'), 'District camera fitting must derive its extent from resident descriptors.');
+assert(source.includes('controls.target.copy(target);'), 'District camera fitting must keep streaming focused on the fitted local target.');
+assert(source.includes('DISTRICT_FIT_MIN_DISTANCE_METRES') && source.includes('DISTRICT_FIT_MAX_DISTANCE_METRES'), 'District camera fitting requires bounded metric distance clamps.');
+assert(source.includes('const DISTRICT_FIT_FRAME_MARGIN = 2.15;'), 'District camera fitting must retain the reviewed local-footprint margin.');
+assert(source.includes("oneTimeStatus: districtFit.status"), 'Streaming diagnostics must expose the one-time District fit status.');
+assert(source.includes("residentBounds: districtFit.residentBounds"), 'Streaming diagnostics must expose District resident bounds.');
+assert(source.includes("cameraDistance: districtFit.cameraDistance"), 'Streaming diagnostics must expose the fitted District camera distance.');
+assert(source.includes("if (name === 'district') resetDistrictFit();"), 'District re-entry must reset the local presentation fit deterministically.');
 
 assert(Array.isArray(manifest.tiles) && manifest.tiles.length > 0, 'Production tile manifest must contain tiles.');
 for (const tile of manifest.tiles) {
@@ -48,6 +64,10 @@ const representative = manifest.tiles.find((tile) => existsSync(resolve(root, ti
 assert(representative, 'No production manifest tile has both committed artifacts available for integrity verification.');
 assert(fileHash(resolve(root, representative.lod0.path)) === declaredHash(representative.lod0.sha256), `${representative.id} GLB bytes do not match its manifest SHA-256.`);
 assert(fileHash(resolve(root, representative.receipt.path)) === declaredHash(representative.receipt.sha256), `${representative.id} receipt bytes do not match its manifest SHA-256.`);
+
+const ferryManifestTile = manifest.tiles.find((tile) => tile.id === 'epsg26910-1441-10893');
+assert(ferryManifestTile, 'The source-locked Ferry tile must remain in the production manifest.');
+assert(JSON.stringify(ferryManifestTile.originEpsg26910VerticalMetres) === JSON.stringify([553344, 4182912, 0]), 'The Ferry metric source origin changed.');
 
 const fallback = {
   glb: 'public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb',
@@ -64,5 +84,5 @@ console.log(JSON.stringify({
   result: 'SF map deterministic streaming verified',
   manifestTiles: manifest.tiles.length,
   representativeTile: representative.id,
-  verified: ['manifest hashes', 'GLB byte verification before parsing', 'receipt verification before diagnostics', 'single deterministic queue', 'one unit per metre'],
+  verified: ['manifest hashes', 'GLB byte verification before parsing', 'receipt verification before diagnostics', 'single deterministic queue', 'controls.target horizontal distance reference', 'one unit per metre'],
 }, null, 2));
