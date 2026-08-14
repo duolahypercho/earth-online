@@ -627,12 +627,12 @@ function canonicalSurfaceBoundaryPoint([x, z]) {
   return [onHorizontalEdge ? snapMetre(x) : x, onVerticalEdge ? snapMetre(z) : z];
 }
 
-function emitSurfacePolygon(target, polygon, sample, cache, label, lift = 0) {
+function emitSurfacePolygon(target, polygon, sample, cache, label, lift = 0, surfaceHeight = null) {
   const result = triangulatePolygon(polygon, label);
   const indices = result.vertices.map((rawPoint) => {
     const point = canonicalSurfaceBoundaryPoint(rawPoint);
     const key = `${point[0]},${point[1]}`;
-    if (!cache.has(key)) { const [e, n] = fromTicks(point); cache.set(key, vertex(target, e, sample(e, n) + lift, n)); }
+    if (!cache.has(key)) { const [e, n] = fromTicks(point); cache.set(key, vertex(target, e, (surfaceHeight ? surfaceHeight(point) : sample(e, n)) + lift, n)); }
     return cache.get(key);
   });
   for (const face of result.triangles) {
@@ -674,8 +674,24 @@ function emitCoastEdge(target, coastline, sample) {
   }
 }
 
-function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP) {
+function canonicalLatticeSurfaceHeight(sample, [x, z]) {
+  assert(Number.isInteger(x) && Number.isInteger(z), 'Canonical lattice height requires integer surface ticks');
+  const direct = (point) => { const [e, n] = fromTicks(point); return sample(e, n); };
+  if (x % SURFACE_TICKS_PER_METRE === 0 && z % SURFACE_TICKS_PER_METRE === 0) return direct([x, z]);
+  const cellX = Math.min(Math.floor(x / SURFACE_TICKS_PER_METRE) * SURFACE_TICKS_PER_METRE, TILE.size * SURFACE_TICKS_PER_METRE - SURFACE_TICKS_PER_METRE);
+  const cellZ = Math.min(Math.floor(z / SURFACE_TICKS_PER_METRE) * SURFACE_TICKS_PER_METRE, TILE.size * SURFACE_TICKS_PER_METRE - SURFACE_TICKS_PER_METRE);
+  const fractionX = (x - cellX) / SURFACE_TICKS_PER_METRE; const fractionZ = (z - cellZ) / SURFACE_TICKS_PER_METRE;
+  const southWest = direct([cellX, cellZ]); const southEast = direct([cellX + SURFACE_TICKS_PER_METRE, cellZ]); const northEast = direct([cellX + SURFACE_TICKS_PER_METRE, cellZ + SURFACE_TICKS_PER_METRE]); const northWest = direct([cellX, cellZ + SURFACE_TICKS_PER_METRE]);
+  // Every cell uses the same southwest-to-northeast diagonal. The two formulas
+  // are barycentric evaluations on that exact source-lattice triangle pair.
+  return fractionX >= fractionZ
+    ? southWest * (1 - fractionX) + southEast * (fractionX - fractionZ) + northEast * fractionZ
+    : southWest * (1 - fractionZ) + northEast * fractionX + northWest * (fractionZ - fractionX);
+}
+
+function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, surfaceHeightOwnership = 'direct-native-pixel') {
   const terrain = category(); const water = category(); const coastline = category(); const roads = category(); const buildings = category();
+  const surfaceHeight = surfaceHeightOwnership === 'canonical-1m-lattice-height-v1' ? (point) => canonicalLatticeSurfaceHeight(sample, point) : null;
   const directedCoastline = assembleDirectedCoastline(features);
   const classified = directedCoastline ? waterSurfaceFromDirectedCoastline(directedCoastline) : null;
   const waterSurface = classified ? { outers: classified.waterFaces.map(({ outer }) => outer) } : null;
@@ -688,13 +704,13 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP) {
     const touchesCoast = coastSegments.some(([a, b]) => Math.max(a[0], b[0]) >= minX && Math.min(a[0], b[0]) <= maxX && Math.max(a[1], b[1]) >= minZ && Math.min(a[1], b[1]) <= maxZ);
     if (!waterSurface || !touchesCoast) {
       const target = classified?.waterFaces.some(({ outer }) => pointInRing([(minX + maxX) / 2, (minZ + maxZ) / 2], outer)) ? water : terrain;
-      emitSurfacePolygon(target, { outer: cell.outers[0] }, sample, target === water ? waterCache : terrainCache, `${TILE.id} ${target === water ? 'water' : 'land'} cell ${x},${z}`);
+      emitSurfacePolygon(target, { outer: cell.outers[0] }, sample, target === water ? waterCache : terrainCache, `${TILE.id} ${target === water ? 'water' : 'land'} cell ${x},${z}`, 0, surfaceHeight);
       continue;
     }
     const waterParts = booleanIntersection(cell, waterSurface, `${TILE.id} water cell ${x},${z}`);
     const landParts = booleanDifference(cell, [waterSurface], `${TILE.id} land cell ${x},${z}`);
-    for (const [index, polygon] of landParts.entries()) emitSurfacePolygon(terrain, polygon, sample, terrainCache, `${TILE.id} land boundary cell ${x},${z}/${index}`);
-    for (const [index, polygon] of waterParts.entries()) emitSurfacePolygon(water, polygon, sample, waterCache, `${TILE.id} water boundary cell ${x},${z}/${index}`);
+    for (const [index, polygon] of landParts.entries()) emitSurfacePolygon(terrain, polygon, sample, terrainCache, `${TILE.id} land boundary cell ${x},${z}/${index}`, 0, surfaceHeight);
+    for (const [index, polygon] of waterParts.entries()) emitSurfacePolygon(water, polygon, sample, waterCache, `${TILE.id} water boundary cell ${x},${z}/${index}`, 0, surfaceHeight);
   }
   if (directedCoastline) {
     for (const way of directedCoastline.ways) { water.sourceIds.add(way.id); coastline.sourceIds.add(way.id); }
@@ -823,21 +839,23 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0 } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel' } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   try {
     assert(Number.isInteger(terrainGridStepMetres) && terrainGridStepMetres >= 1 && TILE.size % terrainGridStepMetres === 0, 'terrainGridStepMetres must be a positive integer divisor of 384');
     assert(Number.isInteger(lodLevel) && lodLevel >= 0, 'lodLevel must be a non-negative integer');
-    const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0;
-    assert(isCanonicalLod0 || !write, 'Non-default terrain steps/LOD levels are in-memory proof builds only and may not write production-shaped artifacts');
+    assert(['direct-native-pixel', 'canonical-1m-lattice-height-v1'].includes(surfaceHeightOwnership), 'Unknown surfaceHeightOwnership mode');
+    const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0 && surfaceHeightOwnership === 'direct-native-pixel';
+    assert(isCanonicalLod0 || !write, 'Non-default terrain steps, LOD levels, or surface ownership modes are in-memory proof builds only and may not write production-shaped artifacts');
+    assert(surfaceHeightOwnership === 'direct-native-pixel' || (terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0), 'Canonical lattice height ownership is limited to the 1 m LOD0 proof');
     outputDir ??= defaultOutputDir(TILE);
     const stem = artifactStem(TILE);
     const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors(verifiedTerrainSourceDigests)]);
     const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
     assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors);
-    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
     const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, maxVerticalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
