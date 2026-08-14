@@ -165,7 +165,7 @@ function expectedDir(identity) {
   return identity === 'epsg26910-1441-10893' ? FERRY_DIR : path.join(METRIC_ROOT, identity);
 }
 
-async function loadTile(identity, manifestEntry) {
+export async function loadTile(identity, manifestEntry) {
   const expected = tileIdentityFromGrid(...identity.split('-').slice(1).map(Number));
   assert.equal(expected.id, identity, `Malformed tile identity ${identity}`);
   const directory = expectedDir(identity);
@@ -291,7 +291,7 @@ async function loadTile(identity, manifestEntry) {
   };
 }
 
-function adjacentPairs(tiles) {
+export function adjacentPairs(tiles) {
   const pairs = [];
   for (let left = 0; left < tiles.length; left += 1) {
     for (let right = left + 1; right < tiles.length; right += 1) {
@@ -377,7 +377,7 @@ function countExclusiveInterior(tile, neighborBounds, category) {
   return count;
 }
 
-function verifyPair(westOrSouth, eastOrNorth) {
+export function verifyPair(westOrSouth, eastOrNorth) {
   const eastingSeam = westOrSouth.expected.gridEasting + 1 === eastOrNorth.expected.gridEasting;
   const label = `${westOrSouth.identity}|${eastOrNorth.identity}`;
   const owner = [westOrSouth.identity, eastOrNorth.identity].sort()[0];
