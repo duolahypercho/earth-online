@@ -64,17 +64,23 @@ controls.minDistance = 24;
 controls.maxDistance = 1200;
 controls.maxPolarAngle = Math.PI * 0.485;
 
-scene.add(new THREE.HemisphereLight(0xc8dfd1, 0x101715, 1.55));
-const sun = new THREE.DirectionalLight(0xffe6bd, 3.25);
-sun.position.set(-180, 310, -90);
+// Keep the fill deliberately below the key: the source buildings are simple
+// OSM extrusions, so their trustworthy silhouette needs light-side separation
+// rather than an invented facade treatment.
+scene.add(new THREE.HemisphereLight(0xc8dfd1, 0x101715, 0.96));
+const sun = new THREE.DirectionalLight(0xffe6bd, 3.6);
+sun.position.set(-280, 430, -210);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -260;
-sun.shadow.camera.right = 260;
-sun.shadow.camera.top = 260;
-sun.shadow.camera.bottom = -260;
-sun.shadow.bias = -0.00008;
+sun.shadow.camera.left = -460;
+sun.shadow.camera.right = 460;
+sun.shadow.camera.top = 460;
+sun.shadow.camera.bottom = -460;
+sun.shadow.bias = -0.00012;
+sun.shadow.normalBias = 0.025;
+sun.shadow.camera.far = 1400;
 scene.add(sun);
+scene.add(sun.target);
 
 const perimeter = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(FALLBACK_TILE.size, 0.05, FALLBACK_TILE.size)),
@@ -91,6 +97,24 @@ const views = {
 const viewFogDensity = { ferry: 0.00145, district: 0.00055, plan: 0.00018 };
 let activeView = 'ferry';
 let viewTransitionSequence = 0;
+const SUN_LOCAL_OFFSET = new THREE.Vector3(-280, 430, -210);
+const LOCAL_SHADOW_REFIT_METRES = 72;
+const PLAN_LOADING_RENDER_INTERVAL_MS = 250;
+const localShadowTarget = new THREE.Vector3(Infinity, Infinity, Infinity);
+const BUILDING_PALETTE = Object.freeze([
+  new THREE.Color(0xc7ad8a), // sun-worn sandstone
+  new THREE.Color(0xaa765c), // muted terracotta
+  new THREE.Color(0x77858c), // cool concrete
+  new THREE.Color(0x8b6456), // weathered brick
+]);
+const PRESENTATION_POLICY = Object.freeze({
+  version: 'sf-map-render-depth-v1',
+  buildingToneCount: BUILDING_PALETTE.length,
+  paletteWorldCellMetres: 62,
+  roadColor: '#53615e',
+  shadows: 'local Ferry/District directional shadow frustum only; Plan retains readable unshadowed overview',
+  planLoadingRenderIntervalMs: PLAN_LOADING_RENDER_INTERVAL_MS,
+});
 const DISTRICT_FIT_TARGET_RESIDENTS = 4;
 const DISTRICT_FIT_MIN_DISTANCE_METRES = 180;
 const DISTRICT_FIT_MAX_DISTANCE_METRES = 2800;
@@ -111,6 +135,61 @@ const explicitViewResidency = {
   epoch: 0,
   lastPrune: null,
 };
+
+function glslColor(color) {
+  return color.toArray().map((channel) => channel.toFixed(6)).join(', ');
+}
+
+function buildingPaletteGlsl() {
+  return BUILDING_PALETTE.map((color, index) => {
+    const tone = `vec3(${glslColor(color)})`;
+    if (index === BUILDING_PALETTE.length - 1) return tone;
+    return `sfToneHash < ${((index + 1) / BUILDING_PALETTE.length).toFixed(2)} ? ${tone} : `;
+  }).join('');
+}
+
+function refitLocalSunShadow(force = false) {
+  // A city-sized Plan view cannot truthfully fit a useful single shadow map.
+  // Ferry and District instead receive a stable local frustum centred on the
+  // stream focus. This only changes illumination, never the metric tile data.
+  if (activeView === 'plan') {
+    sun.castShadow = false;
+    return;
+  }
+  if (!force && localShadowTarget.distanceToSquared(controls.target) < LOCAL_SHADOW_REFIT_METRES ** 2) return;
+  sun.castShadow = true;
+  localShadowTarget.copy(controls.target);
+  sun.target.position.copy(controls.target);
+  sun.position.copy(controls.target).add(SUN_LOCAL_OFFSET);
+  sun.target.updateMatrixWorld();
+  sun.shadow.camera.updateProjectionMatrix();
+  renderer.shadowMap.needsUpdate = true;
+}
+
+function applyBuildingPresentation(material) {
+  material.color.setHex(0xffffff);
+  material.roughness = 0.9;
+  material.metalness = 0;
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = `varying vec3 vSfMapWorldPosition;\n${shader.vertexShader}`
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vSfMapWorldPosition = worldPosition.xyz;');
+    shader.fragmentShader = `varying vec3 vSfMapWorldPosition;\n${shader.fragmentShader}`
+      .replace('#include <color_fragment>', `#include <color_fragment>
+  // World-coordinate cells keep palette choice deterministic across tile
+  // seams while leaving all source positions and geometry untouched.
+  vec2 sfToneCell = floor(vSfMapWorldPosition.xz / ${PRESENTATION_POLICY.paletteWorldCellMetres.toFixed(1)});
+  float sfToneHash = fract(sin(dot(sfToneCell, vec2(127.1, 311.7))) * 43758.5453123);
+  vec3 sfBuildingTone = ${buildingPaletteGlsl()};
+  diffuseColor.rgb *= sfBuildingTone;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  // This is normal-driven material response, not fabricated facade detail:
+  // roofs remain readable against vertical walls before the real shadow pass.
+  float sfRoofFacing = smoothstep(0.16, 0.84, abs(normal.y));
+  diffuseColor.rgb *= mix(0.72, 1.08, sfRoofFacing);`);
+  };
+  material.customProgramCacheKey = () => 'sf-map-building-palette-v1';
+  material.needsUpdate = true;
+}
 
 function copyView(view) {
   return { position: [...view.position], target: [...view.target] };
@@ -200,6 +279,7 @@ function fitDistrictCameraToVerifiedResidents() {
   camera.position.copy(target).addScaledVector(direction, distance);
   controls.target.copy(target);
   controls.update();
+  refitLocalSunShadow(true);
   views.district = { position: camera.position.toArray(), target: target.toArray() };
   viewFogDensity.district = Math.min(0.00055, 0.45 / distance);
   scene.fog.density = viewFogDensity.district;
@@ -226,6 +306,7 @@ function setView(name, immediate = false) {
     camera.position.copy(destination);
     controls.target.copy(target);
     controls.update();
+    refitLocalSunShadow(true);
     if (name === 'district') fitDistrictCameraToVerifiedResidents();
     return;
   }
@@ -240,13 +321,17 @@ function setView(name, immediate = false) {
     camera.position.lerpVectors(startPosition, destination, eased);
     controls.target.lerpVectors(startTarget, target, eased);
     if (fraction < 1) requestAnimationFrame(move);
-    else settleExplicitViewResidency(name);
+    else {
+      refitLocalSunShadow(true);
+      settleExplicitViewResidency(name);
+    }
   };
   requestAnimationFrame(move);
 }
 
 setView('ferry', true);
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
+controls.addEventListener('change', () => refitLocalSunShadow());
 
 function publicPath(path) {
   if (!path) return null;
@@ -448,21 +533,22 @@ async function loadTile(state) {
       if (!node.isMesh) return;
       node.receiveShadow = true;
       node.castShadow = node.material?.name === 'buildings-night';
-      if (node.material?.name === 'terrain-night') node.material.color.setHex(0x18382f);
+      if (node.material?.name === 'terrain-night') node.material.color.setHex(0x1d473a);
       if (node.material?.name === 'roads-night') {
-        node.material.color.setHex(0xa8b89d);
+        node.material.color.setHex(0x53615e);
+        node.material.roughness = 0.96;
         node.material.polygonOffset = true;
         node.material.polygonOffsetFactor = -2;
         node.material.polygonOffsetUnits = -2;
         node.renderOrder = 2;
       }
-      if (node.material?.name === 'buildings-night') node.material.color.setHex(0xb87842);
+      if (node.material?.name === 'buildings-night') applyBuildingPresentation(node.material);
       if (node.material?.name === 'water-osm-coastline-night') {
         node.material.color.setHex(0x0a5870);
         node.material.roughness = 0.22;
         node.material.metalness = 0.18;
       }
-      if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x35a8b7);
+      if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x2f7f8c);
     });
     const receiptArtifact = await fetchVerifiedBytes(descriptor.receipt, descriptor.receiptSha256Hex, `${descriptor.id} receipt`);
     const receipt = JSON.parse(new TextDecoder().decode(receiptArtifact.bytes));
@@ -646,6 +732,27 @@ async function initialiseStream() {
             prunedTileIds: [...explicitViewResidency.lastPrune.prunedTileIds],
           },
         },
+        presentation: {
+          ...PRESENTATION_POLICY,
+          activeViewShadowed: activeView !== 'plan',
+          localShadowTarget: localShadowTarget.toArray(),
+          materialPrograms: {
+            buildings: 'sf-map-building-palette-v1',
+            roads: 'single muted asphalt material',
+          },
+          performance: {
+            drawCalls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            programCount: renderer.info.programs?.length ?? 0,
+            pixelRatio: renderer.getPixelRatio(),
+          },
+        },
+        metricContract: {
+          runtimeUnitsPerMetre: 1,
+          sceneScale: 1,
+          originSubtractions: 1,
+          sourceLockedDescriptors: tileDescriptors.every((descriptor) => Boolean(descriptor.glbSha256Hex && descriptor.receiptSha256Hex)),
+        },
         tiles: [...tileStates.values()].slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
           id: state.descriptor.id,
           resident: Boolean(state.scene),
@@ -664,6 +771,7 @@ initialiseStream();
 
 const clock = new THREE.Clock();
 let lastStreamCheck = 0;
+let lastPlanLoadingRender = -Infinity;
 function animate(now = 0) {
   requestAnimationFrame(animate);
   controls.update(clock.getDelta());
@@ -678,7 +786,16 @@ function animate(now = 0) {
     landmark.style.left = `${(marker.x * 0.5 + 0.5) * window.innerWidth}px`;
     landmark.style.top = `${(-marker.y * 0.5 + 0.5) * window.innerHeight}px`;
   }
-  renderer.render(scene, camera);
+  // The byte-verified queue remains strictly one-at-a-time.  While its Plan
+  // overview is deliberately admitting every committed tile, avoid spending
+  // every animation frame redrawing the growing city.  The completed Plan is
+  // still rendered normally; this only gives verified IO/parse work a bounded
+  // presentation-frame budget during the load phase.
+  const planStillLoading = activeView === 'plan' && (activeLoad || streamDiagnostics.queuedCount > 0);
+  if (!planStillLoading || now - lastPlanLoadingRender >= PLAN_LOADING_RENDER_INTERVAL_MS) {
+    renderer.render(scene, camera);
+    lastPlanLoadingRender = now;
+  }
 }
 animate();
 

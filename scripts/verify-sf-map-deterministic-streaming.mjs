@@ -59,11 +59,20 @@ assert(source.includes("if (name === 'district') resetDistrictFit();"), 'Distric
 assert(source.includes('function settleExplicitViewResidency(name)'), 'Named preset transitions must have an explicit residency-settling rule.');
 assert(source.includes("if (name !== activeView || name === 'plan') return;"), 'Plan must retain its all-resident semantic when named-view residency settles.');
 assert(source.includes('focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES'), 'Named preset settling must prune only outside the strict load radius.');
-assert(source.includes('else settleExplicitViewResidency(name);'), 'Named view cleanup must occur only once its camera transition settles.');
+assert(source.includes('refitLocalSunShadow(true);\n      settleExplicitViewResidency(name);'), 'Named-view light framing and cleanup must occur only once its camera transition settles.');
 assert(source.includes("settleExplicitViewResidency('district');"), 'The District source-derived camera fit must settle cache residency at its final focus.');
 assert(!source.includes("requestAnimationFrame(fitDistrictCameraToVerifiedResidents)"), 'District fitting must not inspect inherited cache before its named preset settles.');
 assert(source.includes('RETAIN_RADIUS_METRES\n// remains the streaming hysteresis contract.'), 'Free orbit and pan must retain the wider hysteresis radius.');
 assert(source.includes('explicitViewResidency:'), 'Streaming diagnostics must expose the named-view residency receipt.');
+assert(source.includes("version: 'sf-map-render-depth-v1'"), 'Presentation diagnostics must expose the renderer-only depth policy.');
+assert(source.includes('function applyBuildingPresentation(material)'), 'Building depth must be a runtime material policy, not a source-geometry rewrite.');
+assert(source.includes('vSfMapWorldPosition'), 'Building palette selection must use seam-stable world coordinates.');
+assert(source.includes("material.customProgramCacheKey = () => 'sf-map-building-palette-v1'"), 'Building material programs must remain bounded and deterministic.');
+assert(source.includes('sun.castShadow = false;'), 'Plan view must explicitly avoid claiming a city-wide local shadow frustum.');
+assert(source.includes('sun.target.position.copy(controls.target);'), 'Ferry and District shadows must centre on the current stream focus.');
+assert(source.includes('tile.scale.setScalar(1);') && source.includes('tile.position.copy(descriptor.offset);'), 'Presentation policy must not change tile scale or origin placement.');
+assert(source.includes('const PLAN_LOADING_RENDER_INTERVAL_MS = 250;'), 'Plan loading needs a bounded render-budget policy.');
+assert(source.includes("activeView === 'plan' && (activeLoad || streamDiagnostics.queuedCount > 0)"), 'Plan render throttling must be presentation-only while source-locked work remains queued.');
 
 assert(Array.isArray(manifest.tiles) && manifest.tiles.length > 0, 'Production tile manifest must contain tiles.');
 for (const tile of manifest.tiles) {
