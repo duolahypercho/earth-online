@@ -77,6 +77,9 @@ for (const material of [facadeMaterial, towerMaterial]) {
 assert.equal(landmark.getDiagnostics().pbr.presentationOnly, true, 'generated PBR material must never be presented as survey reconstruction');
 assert.match(landmark.getDiagnostics().pbr.source, /Poly Haven.*CC0.*Rob Tuytel/, 'PBR diagnostics must retain Poly Haven CC0 provenance');
 assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed glazing rather than a bright transparent grid');
+assert.equal(windowMaterial.color.getHex(), 0x9bb8b4, 'upper glazing must retain its muted recessed-cavity response');
+assert.ok(windowMaterial.roughness >= 0.48, 'upper glazing must stay matte enough to read as a cavity at card distance');
+assert.equal(windowMaterial.metalness, 0, 'upper glazing must not introduce a chrome-like facade response');
 assert.equal(clockMaterial.emissiveIntensity, 0, 'clock faces must not use an emissive toy-like treatment');
 const windowBays = landmark.root.getObjectByName('Ferry Building ground-floor arched storefronts');
 assert.ok(windowBays.geometry.attributes.position.count > 8, 'storefronts must use an authored arched silhouette');

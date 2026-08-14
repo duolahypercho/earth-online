@@ -20,6 +20,12 @@ const detailPedestrians = [
   makePedestrian(18, 1, -1.1),
 ];
 const nearPedestrian = makePedestrian(1, 0);
+const originalTransforms = new Map(
+  [...detailPedestrians, nearPedestrian].map((source) => [
+    source.uuid,
+    { position: source.position.toArray(), quaternion: source.quaternion.toArray() },
+  ]),
+);
 const vehicle = new THREE.Group();
 vehicle.position.set(-9, 0, 18);
 vehicle.rotation.y = -0.5;
@@ -69,17 +75,39 @@ try {
   assert.equal(stats.detailAssignments.length, 4, 'every detailed adult must expose an assignment diagnostic');
   assert.equal(new Set(stats.detailAssignments.map(({ sourceUuid }) => sourceUuid)).size, 4, 'detailed actors cannot share a source');
   assert.deepEqual(
+    new Set(stats.detailAssignments.map(({ gaitStyle }) => gaitStyle)),
+    new Set(['light', 'steady', 'brisk']),
+    'live assignment diagnostics must expose every deterministic gait profile',
+  );
+  assert.equal(new Set(stats.detailAssignments.map(({ paletteIndex }) => paletteIndex)).size, 4, 'live assignment diagnostics must expose distinct wardrobe palette slots');
+  assert.ok(stats.detailAssignments.every(({ rigScale }) => Array.isArray(rigScale) && rigScale.length === 3), 'live assignment diagnostics must expose bounded silhouette scale');
+  assert.deepEqual(
     new Set(stats.detailAssignments.map(({ sourceUuid }) => sourceUuid)),
     new Set(detailPedestrians.map((source) => source.uuid)),
     'detailed actor mapping must cover the four selected source UUIDs exactly',
   );
   assert.equal(activeDetailRoots().length, 4, 'the visible detailed-root count must equal the diagnostic count');
+  assert.equal(new Set(activeDetailRoots().map((root) => root.userData.phase)).size, 4, 'close civilian gait phases must not collapse into a synchronized walk');
+  assert.deepEqual(
+    new Set(activeDetailRoots().map((root) => root.userData.heroLifePresentation.gaitStyle)),
+    new Set(['light', 'steady', 'brisk']),
+    'the close pool must expose every deterministic gait profile',
+  );
+  assert.equal(new Set(activeDetailRoots().map((root) => root.userData.heroLifePresentation.paletteIndex)).size, 4, 'close civilian wardrobe palette assignments must remain distinct');
   for (const root of activeDetailRoots()) {
     assert.ok(detailPedestrians.some((source) => source.uuid === root.userData.heroLifeSource), 'every detailed root must map to a selected source UUID');
     assert.deepEqual(root.scale.toArray(), [1, 1, 1], 'source authoring scale must not make a detailed adult a toy');
+    assert.ok(root.userData.heroLifePresentation, 'detailed civilian needs a bounded presentation profile');
+    assert.ok(['light', 'steady', 'brisk'].includes(root.userData.heroLifePresentation.gaitStyle), 'detailed civilian needs a deterministic gait profile');
+    assert.notDeepEqual(root.userData.rig.scale.toArray(), [1, 1, 1], 'profile silhouette scale must survive the animator reset');
     let visibleSprites = 0;
     root.traverse((object) => { if (object.isSprite && object.visible) visibleSprites += 1; });
     assert.equal(visibleSprites, 0, 'detailed civilians must not display name tags or thought UI');
+  }
+  for (const source of [...detailPedestrians, nearPedestrian]) {
+    const original = originalTransforms.get(source.uuid);
+    assert.deepEqual(source.position.toArray(), original.position, 'presentation update cannot write source positions');
+    assert.deepEqual(source.quaternion.toArray(), original.quaternion, 'presentation update cannot write source rotations');
   }
   assert.equal(stats.vehiclesActive, 1, 'distant vehicle should remain rendered');
   assert.equal(stats.vehiclesDetailed, 1, 'near-field vehicle must keep wheel detail');
