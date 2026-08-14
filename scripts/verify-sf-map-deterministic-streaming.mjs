@@ -45,6 +45,8 @@ assert(source.includes('receipt bounds do not match the metric tile size and ori
 assert(source.includes('const DISTRICT_FIT_TARGET_RESIDENTS = 4;'), 'District presentation must wait for the bounded four-tile verified batch.');
 assert(source.includes('function fitDistrictCameraToVerifiedResidents()'), 'District presentation requires an explicit source-derived local camera fit.');
 assert(source.includes("if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;"), 'District camera fitting must wait for verified resident tiles.');
+assert(source.includes('.filter((state) => state.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)'), 'District fitting must exclude in-flight cache residue from prior views.');
+assert(source.includes('leftBucket - rightBucket || left.descriptor.id.localeCompare(right.descriptor.id)'), 'District fitting must use the deterministic distance-bucket then tile-id policy.');
 assert(source.includes('const bounds = residentDescriptorBounds(batch);'), 'District camera fitting must derive its extent from resident descriptors.');
 assert(source.includes('controls.target.copy(target);'), 'District camera fitting must keep streaming focused on the fitted local target.');
 assert(source.includes('DISTRICT_FIT_MIN_DISTANCE_METRES') && source.includes('DISTRICT_FIT_MAX_DISTANCE_METRES'), 'District camera fitting requires bounded metric distance clamps.');
@@ -52,7 +54,16 @@ assert(source.includes('const DISTRICT_FIT_FRAME_MARGIN = 2.15;'), 'District cam
 assert(source.includes("oneTimeStatus: districtFit.status"), 'Streaming diagnostics must expose the one-time District fit status.');
 assert(source.includes("residentBounds: districtFit.residentBounds"), 'Streaming diagnostics must expose District resident bounds.');
 assert(source.includes("cameraDistance: districtFit.cameraDistance"), 'Streaming diagnostics must expose the fitted District camera distance.');
+assert(source.includes('scene.fog.density = viewFogDensity.district;'), 'The first fitted District frame must apply the same fog density as repeat entries.');
 assert(source.includes("if (name === 'district') resetDistrictFit();"), 'District re-entry must reset the local presentation fit deterministically.');
+assert(source.includes('function settleExplicitViewResidency(name)'), 'Named preset transitions must have an explicit residency-settling rule.');
+assert(source.includes("if (name !== activeView || name === 'plan') return;"), 'Plan must retain its all-resident semantic when named-view residency settles.');
+assert(source.includes('focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES'), 'Named preset settling must prune only outside the strict load radius.');
+assert(source.includes('else settleExplicitViewResidency(name);'), 'Named view cleanup must occur only once its camera transition settles.');
+assert(source.includes("settleExplicitViewResidency('district');"), 'The District source-derived camera fit must settle cache residency at its final focus.');
+assert(!source.includes("requestAnimationFrame(fitDistrictCameraToVerifiedResidents)"), 'District fitting must not inspect inherited cache before its named preset settles.');
+assert(source.includes('RETAIN_RADIUS_METRES\n// remains the streaming hysteresis contract.'), 'Free orbit and pan must retain the wider hysteresis radius.');
+assert(source.includes('explicitViewResidency:'), 'Streaming diagnostics must expose the named-view residency receipt.');
 
 assert(Array.isArray(manifest.tiles) && manifest.tiles.length > 0, 'Production tile manifest must contain tiles.');
 for (const tile of manifest.tiles) {

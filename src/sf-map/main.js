@@ -107,6 +107,10 @@ const districtFit = {
   cameraDistance: null,
   cameraDirection: null,
 };
+const explicitViewResidency = {
+  epoch: 0,
+  lastPrune: null,
+};
 
 function copyView(view) {
   return { position: [...view.position], target: [...view.target] };
@@ -156,13 +160,20 @@ function residentDescriptorBounds(states) {
 function fitDistrictCameraToVerifiedResidents() {
   if (activeView !== 'district' || districtFit.status !== 'awaiting-verified-residents') return;
   const verifiedResidents = [...tileStates.values()]
-    .filter((state) => state.scene)
-    .sort((left, right) => left.descriptor.id.localeCompare(right.descriptor.id));
+    // An admitted tile from the previous named view can finish after that
+    // view has been pruned. Never let that in-flight cache residue choose the
+    // District fit; candidates must belong to the current strict load set.
+    .filter((state) => state.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)
+    .sort((left, right) => {
+      const leftBucket = Math.floor(focusDistanceToTile(left.descriptor) / STREAM_QUEUE_BUCKET_METRES);
+      const rightBucket = Math.floor(focusDistanceToTile(right.descriptor) / STREAM_QUEUE_BUCKET_METRES);
+      return leftBucket - rightBucket || left.descriptor.id.localeCompare(right.descriptor.id);
+    });
   if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;
 
   const priorBatch = districtFit.previousBatchTileIds
     .map((id) => tileStates.get(id))
-    .filter((state) => state?.scene);
+    .filter((state) => state?.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES);
   const batch = priorBatch.length === DISTRICT_FIT_TARGET_RESIDENTS
     ? priorBatch
     : verifiedResidents.slice(0, DISTRICT_FIT_TARGET_RESIDENTS);
@@ -191,6 +202,7 @@ function fitDistrictCameraToVerifiedResidents() {
   controls.update();
   views.district = { position: camera.position.toArray(), target: target.toArray() };
   viewFogDensity.district = Math.min(0.00055, 0.45 / distance);
+  scene.fog.density = viewFogDensity.district;
   districtFit.fitCount += 1;
   districtFit.status = 'fitted';
   districtFit.batchTileIds = batch.map((state) => state.descriptor.id);
@@ -198,6 +210,7 @@ function fitDistrictCameraToVerifiedResidents() {
   districtFit.cameraTarget = target.toArray();
   districtFit.cameraDistance = distance;
   districtFit.cameraDirection = direction.toArray();
+  settleExplicitViewResidency('district');
 }
 
 function setView(name, immediate = false) {
@@ -227,9 +240,9 @@ function setView(name, immediate = false) {
     camera.position.lerpVectors(startPosition, destination, eased);
     controls.target.lerpVectors(startTarget, target, eased);
     if (fraction < 1) requestAnimationFrame(move);
+    else settleExplicitViewResidency(name);
   };
   requestAnimationFrame(move);
-  if (name === 'district') requestAnimationFrame(fitDistrictCameraToVerifiedResidents);
 }
 
 setView('ferry', true);
@@ -523,6 +536,31 @@ function unloadTile(state) {
   updateStats();
 }
 
+// Preset captures must not inherit cache-only tiles from a prior named view.
+// This deliberately does not run during free orbit/pan, where RETAIN_RADIUS_METRES
+// remains the streaming hysteresis contract.
+function settleExplicitViewResidency(name) {
+  if (name !== activeView || name === 'plan') return;
+  const prunedTileIds = [];
+  for (const state of tileStates.values()) {
+    const shouldLoad = focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES;
+    if (!shouldLoad && state.queued) state.queued = false;
+    if (!shouldLoad && state.scene) {
+      prunedTileIds.push(state.descriptor.id);
+      unloadTile(state);
+    }
+  }
+  explicitViewResidency.epoch += 1;
+  explicitViewResidency.lastPrune = {
+    view: name,
+    focusWorldPosition: [controls.target.x, controls.target.z],
+    prunedTileIds,
+  };
+  updateQueueDiagnostics();
+  streamTiles();
+  if (name === 'district') fitDistrictCameraToVerifiedResidents();
+}
+
 function streamTiles() {
   for (const state of tileStates.values()) {
     const distance = focusDistanceToTile(state.descriptor);
@@ -577,6 +615,7 @@ async function initialiseStream() {
     get residentTileIds() { return [...tileStates.values()].filter((state) => state.scene).map((state) => state.descriptor.id); },
     get streamingDiagnostics() {
       return {
+        activeView,
         oneActiveLoad: !activeLoad || Boolean(streamDiagnostics.activeTileId),
         activeLoadCount: activeLoad ? 1 : 0,
         queuePolicy: `distance buckets of ${STREAM_QUEUE_BUCKET_METRES} metres, then lexical tile id`,
@@ -598,6 +637,14 @@ async function initialiseStream() {
           cameraTarget: districtFit.cameraTarget && [...districtFit.cameraTarget],
           cameraDistance: districtFit.cameraDistance,
           cameraDirection: districtFit.cameraDirection && [...districtFit.cameraDirection],
+        },
+        explicitViewResidency: {
+          epoch: explicitViewResidency.epoch,
+          lastPrune: explicitViewResidency.lastPrune && {
+            ...explicitViewResidency.lastPrune,
+            focusWorldPosition: [...explicitViewResidency.lastPrune.focusWorldPosition],
+            prunedTileIds: [...explicitViewResidency.lastPrune.prunedTileIds],
+          },
         },
         tiles: [...tileStates.values()].slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
           id: state.descriptor.id,
