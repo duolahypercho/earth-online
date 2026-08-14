@@ -26,12 +26,15 @@ try {
   const before = await page.evaluate(() => window.__SF_REALMAP__.getHeroLifeLighting());
   await page.waitForTimeout(900);
   const after = await page.evaluate(() => window.__SF_REALMAP__.getHeroLifeLighting());
-  const movementBySlot = before.presentationSamples.flatMap((sample) => {
-    const next = after.presentationSamples.find((candidate) => candidate.slot === sample.slot);
-    if (!sample.active || !sample.position || !next?.active || !next.position) return [];
+  // The Ferry pass deliberately uses seven detailed actors and no instanced
+  // fallback silhouettes. Measure the source-bound actor assignments instead
+  // of the fallback-only presentation samples.
+  const movementBySlot = before.stats.detailAssignments.flatMap((assignment) => {
+    const next = after.stats.detailAssignments.find((candidate) => candidate.sourceUuid === assignment.sourceUuid);
+    if (!assignment.position || !next?.position) return [];
     return [{
-      slot: sample.slot,
-      metres: Math.hypot(next.position[0] - sample.position[0], next.position[2] - sample.position[2]),
+      slot: assignment.actor,
+      metres: Math.hypot(next.position[0] - assignment.position[0], next.position[2] - assignment.position[2]),
     }];
   });
   const plausibleMovement = movementBySlot.some(({ metres }) => metres > 0.05 && metres <= 5);
@@ -40,6 +43,10 @@ try {
   });
   if (after.stats.pedestriansAttached < 1 || after.stats.pedestriansAttached > after.stats.budget.maxPedestrians) {
     fail('pedestrian replacement count is not bounded by the 24-person budget', after.stats);
+  }
+  if (after.sourcePedestrians !== 50 || after.stats.pedestriansAttached !== 7
+    || after.stats.detailedActors !== 7 || after.stats.fallbackActors !== 0) {
+    fail('Ferry staged cohort must retain all sources while rendering only seven detailed actors', after);
   }
   if (after.stats.vehiclesAttached !== 0) fail('life layer attached vehicle replacements', after.stats);
   if (after.hiddenSourcePedestrians !== after.sourcePedestrians) fail('replaced source pedestrians remain visible', after);
