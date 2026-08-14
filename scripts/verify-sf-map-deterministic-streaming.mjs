@@ -71,6 +71,9 @@ assert(!source.includes("requestAnimationFrame(fitDistrictCameraToVerifiedReside
 assert(source.includes('RETAIN_RADIUS_METRES\n// remains the streaming hysteresis contract.'), 'Free orbit and pan must retain the wider hysteresis radius.');
 assert(source.includes('explicitViewResidency:'), 'Streaming diagnostics must expose the named-view residency receipt.');
 assert(source.includes("version: 'sf-map-render-depth-v1'"), 'Presentation diagnostics must expose the renderer-only depth policy.');
+assert(source.includes("ferry: { position: [430, 132, 292], target: [119, 8, 292] }"), 'Ferry camera must retain its reviewed waterfront framing.');
+assert(source.includes('position: camera.position.toArray()'), 'Streaming diagnostics must expose the live camera position.');
+assert(source.includes('target: controls.target.toArray()'), 'Streaming diagnostics must expose the live camera target.');
 assert(source.includes('function applyBuildingPresentation(material)'), 'Building depth must be a runtime material policy, not a source-geometry rewrite.');
 assert(source.includes('vSfMapWorldPosition'), 'Building palette selection must use seam-stable world coordinates.');
 assert(source.includes('vec4 sfMapWorldPosition = vec4( transformed, 1.0 );'), 'The palette must define its world position even when Three omits worldPosition.');

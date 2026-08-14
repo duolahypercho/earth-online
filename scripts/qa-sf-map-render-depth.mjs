@@ -15,6 +15,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function tupleWithin(actual, expected, tolerance = 1e-4) {
+  return Array.isArray(actual) && actual.length === expected.length
+    && actual.every((value, index) => Math.abs(value - expected[index]) <= tolerance);
+}
+
 async function waitForPort(host, targetPort, timeoutMs = 30000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -84,6 +89,7 @@ try {
       const diagnostics = window.__SF_MAP_VIEWER__.streamingDiagnostics;
       return {
         residents: [...window.__SF_MAP_VIEWER__.residentTileIds].sort(),
+        camera: diagnostics.camera,
         presentation: diagnostics.presentation,
         metricContract: diagnostics.metricContract,
         rejected: diagnostics.completed.filter((entry) => entry.result === 'rejected'),
@@ -109,6 +115,9 @@ try {
     assert(Number.isFinite(capture.presentation.performance.drawCalls) && Number.isFinite(capture.presentation.performance.triangles), `${name} lacks render-cost evidence.`);
     assert(capture.presentation.performance.programCount > 0, `${name} did not compile a render program.`);
   }
+  assert(tupleWithin(ferry.camera.position, [430, 132, 292]), `Ferry camera position changed from the reviewed waterfront pose: ${JSON.stringify(ferry.camera.position)}.`);
+  assert(tupleWithin(ferry.camera.target, [119, 8, 292]), `Ferry camera target changed from the source-locked stream focus: ${JSON.stringify(ferry.camera.target)}.`);
+  assert(ferry.camera.fovDegrees === 43 && ferry.camera.nearMetres === 0.5, 'Ferry camera projection changed.');
   assert(errors.length === 0, `Browser errors: ${errors.join(' | ')}`);
 
   const screenshots = { ferry: ferryPath, district: districtPath };
@@ -133,10 +142,10 @@ try {
     district,
     errors,
     plan: {
-      verdict: 'REJECT',
-      reason: 'Full 598-tile LOD0 Plan presentation remains unsuitable pending a lower-LOD/offline-streaming strategy.',
+      verdict: 'UNVERIFIED_CURRENT',
+      reason: 'The current manifest Plan view is outside this focused Ferry/District gate; the historical 598-tile LOD0 attempt remains rejected pending a lower-LOD/offline-streaming strategy.',
       throughputEvidence: {
-        status: 'timed-out after 600000 ms',
+        status: 'historical 598-tile run timed out after 600000 ms',
         residents: 58,
         queued: 540,
         activeLoads: 1,
