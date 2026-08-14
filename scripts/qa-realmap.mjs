@@ -58,6 +58,70 @@ print(round(sum(lum)/len(lum),2), round(sum(1 for v in lum if v>40)/len(lum),5),
   return { meanLuma, brightRatio, maxLuma };
 }
 
+function runPythonComposition(path) {
+  const result = spawnSync('python3', ['-c', `
+import collections
+import sys
+from PIL import Image
+
+im = Image.open(sys.argv[1]).convert('RGB')
+w, h = im.size
+# Ignore the fixed top navigation and right-side inspector panel. This leaves
+# a stable scene-only viewport for each canonical 1440x900 QA card.
+im = im.crop((0, 120, min(w, 1025), h))
+pix = list(im.getdata())
+buckets = collections.Counter((r // 24, g // 24, b // 24) for r, g, b in pix)
+dominant = buckets.most_common(1)[0][1] / max(1, len(pix))
+gray = im.convert('L')
+p = gray.load()
+edges = 0
+samples = 0
+for y in range(1, gray.height - 1, 2):
+    for x in range(1, gray.width - 1, 2):
+        contrast = abs(p[x + 1, y] - p[x - 1, y]) + abs(p[x, y + 1] - p[x, y - 1])
+        edges += contrast > 15
+        samples += 1
+print(round(dominant, 4), round(edges / max(1, samples), 4))
+`, path], { encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  const [dominantRatio, edgeContentRatio] = result.stdout.trim().split(' ').map(Number);
+  return { dominantRatio, edgeContentRatio };
+}
+
+async function presentationSafety(page, poseName) {
+  return page.evaluate((name) => {
+    const lab = window.__SF_REALMAP__;
+    const pose = lab.getSuggestedCameraPoses()?.[name];
+    if (!pose?.position || !pose?.target) return null;
+    const elevation = lab.getElevationAt;
+    const position = pose.elevationAware === false
+      ? pose.position
+      : [pose.position[0], elevation(pose.position[0], pose.position[2]) + pose.position[1], pose.position[2]];
+    const target = pose.elevationAware === false
+      ? pose.target
+      : [pose.target[0], elevation(pose.target[0], pose.target[2]) + pose.target[1], pose.target[2]];
+    const dx = target[0] - position[0];
+    const dy = target[1] - position[1];
+    const dz = target[2] - position[2];
+    const planarDistance = Math.hypot(dx, dz);
+    const firstRayMeters = Math.min(12, planarDistance);
+    let minimumRayClearance = Infinity;
+    for (let meters = 0; meters <= firstRayMeters; meters += 1) {
+      const t = planarDistance > 0 ? meters / planarDistance : 0;
+      const x = position[0] + dx * t;
+      const y = position[1] + dy * t;
+      const z = position[2] + dz * t;
+      minimumRayClearance = Math.min(minimumRayClearance, y - elevation(x, z));
+    }
+    return {
+      pose: name,
+      clearance: Number((position[1] - elevation(position[0], position[2])).toFixed(3)),
+      firstRayMeters: Number(firstRayMeters.toFixed(3)),
+      minimumRayClearance: Number(minimumRayClearance.toFixed(3)),
+    };
+  }, poseName);
+}
+
 try {
   const blindAb = await page.goto(`file://${process.cwd()}/${blindAbPath}`, { waitUntil: 'load', timeout: 30000 });
   await page.waitForFunction(() => document.querySelectorAll('.pair').length === 5, { timeout: 10000 });
@@ -129,6 +193,15 @@ try {
   );
   await page.waitForTimeout(2600);
   await page.screenshot({ path: qaPath('realmap-city.png') });
+  const cityPresentation = runPythonComposition(qaPath('realmap-city.png'));
+  const canyonSafety = await presentationSafety(page, 'canyon');
+  check('City default presentation avoids dominant empty ground', Boolean(cityPresentation && cityPresentation.dominantRatio <= 0.25), cityPresentation);
+  check('City default presentation has road/building edge content', Boolean(cityPresentation && cityPresentation.edgeContentRatio >= 0.35), cityPresentation);
+  check('City presentation camera clears terrain and first view ray', Boolean(
+    canyonSafety
+      && canyonSafety.clearance >= 1.68
+      && canyonSafety.minimumRayClearance >= 0.2,
+  ), canyonSafety);
   await page.evaluate(() => {
     const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
     window.__SF_REALMAP__.setCameraPose(poses.hero);
@@ -417,14 +490,26 @@ try {
     ? Math.hypot(endPlayer.x - startPlayer.x, endPlayer.z - startPlayer.z)
     : 0;
   check('WASD walk moves the player', movedDistance > 0.5, { startPlayer, endPlayer, movedDistance });
-  await page.waitForTimeout(250);
-  await page.screenshot({ path: qaPath('realmap-street.png') });
-  // Walk mode overwrites the camera every frame; orbit + street pose for beauty.
+  // Keep movement validation in walk mode, but capture the canonical Street
+  // card through the terrain-aware presentation corridor rather than the
+  // transient player-follow camera.
   await page.evaluate(() => {
     window.__SF_REALMAP__.setCityMode('orbit');
-    const poses = window.__SF_REALMAP__.getSuggestedCameraPoses();
-    if (poses?.street) window.__SF_REALMAP__.setCameraPose(poses.street);
+    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().street;
+    if (!pose) throw new Error('Street presentation pose missing');
+    window.__SF_REALMAP__.setCameraPose(pose);
   });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: qaPath('realmap-street.png') });
+  const streetPresentation = runPythonComposition(qaPath('realmap-street.png'));
+  const streetSafety = await presentationSafety(page, 'street');
+  check('Street presentation avoids dominant empty ground', Boolean(streetPresentation && streetPresentation.dominantRatio <= 0.25), streetPresentation);
+  check('Street presentation has road/building edge content', Boolean(streetPresentation && streetPresentation.edgeContentRatio >= 0.35), streetPresentation);
+  check('Street presentation camera clears terrain and first view ray', Boolean(
+    streetSafety
+      && streetSafety.clearance >= 1.68
+      && streetSafety.minimumRayClearance >= 0.2,
+  ), streetSafety);
   await page.waitForTimeout(400);
   await page.evaluate(() => window.__SF_REALMAP__.setBeauty(true));
   await page.waitForTimeout(250);
@@ -592,7 +677,13 @@ try {
   } else {
     check('Drive mode enters a real road vehicle', false, 'no nearby vehicle after walk');
   }
-  await page.evaluate(() => window.__SF_REALMAP__.setCityMode('orbit'));
+  await page.evaluate(() => {
+    window.__SF_REALMAP__.setCityMode('orbit');
+    const pose = window.__SF_REALMAP__.getSuggestedCameraPoses().canyon;
+    if (!pose) throw new Error('Inspector presentation pose missing');
+    window.__SF_REALMAP__.setCameraPose(pose);
+  });
+  await page.waitForTimeout(400);
 
   await page.evaluate(() => window.__SF_REALMAP__.showInspector('Street', {
     id: 999,
@@ -610,6 +701,9 @@ try {
   const inspectorVisible = await page.locator('#inspector').isVisible();
   check('Street metadata inspector opens', inspectorVisible);
   await page.screenshot({ path: qaPath('realmap-inspector.png') });
+  const inspectorPresentation = runPythonComposition(qaPath('realmap-inspector.png'));
+  check('Inspector presentation avoids dominant empty ground', Boolean(inspectorPresentation && inspectorPresentation.dominantRatio <= 0.25), inspectorPresentation);
+  check('Inspector presentation has road/building edge content', Boolean(inspectorPresentation && inspectorPresentation.edgeContentRatio >= 0.35), inspectorPresentation);
 } catch (error) {
   errors.push(error.message);
 } finally {

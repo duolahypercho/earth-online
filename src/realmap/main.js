@@ -765,15 +765,20 @@ function getSuggestedCameraPoses() {
       [midX + dirX * lookAhead, 3.2, midZ + dirZ * lookAhead],
       true,
     );
-    // Same dense corridor as canyon, but eye-level and shifted toward the curb
-    // so one facade fills ~35% of frame instead of flat plaza asphalt.
-    const streetHeight = 4.5;
-    const streetLateral = 0.85;
+    // Street is a true eye-level companion to the canyon card. Keep the
+    // camera inside the normal player-height envelope; composition must come
+    // from the real corridor, not an aerial clearance.
+    const streetHeight = 2.2;
+    const streetLateral = 0.15;
+    // Hold the street gaze inside the sourced block rather than all the way
+    // down the long corridor. The gentle upward target keeps the immediate
+    // curb/road in view while resolving onto the real facade massing above it.
+    const streetLookAhead = Math.min(bestCorridor.length * 0.24, 52);
     const streetX = midX + offsetX * streetLateral - dirX * canyonBack;
     const streetZ = midZ + offsetZ * streetLateral - dirZ * canyonBack;
     street = makeCameraPose(
       [streetX, streetHeight, streetZ],
-      [midX + dirX * lookAhead, 5.7, midZ + dirZ * lookAhead],
+      [midX + dirX * streetLookAhead, 14, midZ + dirZ * streetLookAhead],
       true,
     );
   }
@@ -13194,8 +13199,22 @@ async function buildCity() {
       });
     initializeHeroTrafficVisuals();
     initializeHeroLifeLighting();
-    controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
-    camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
+    // A generated downtown used to open on the generic survey camera. On a
+    // steep terrain cell that could leave the viewport dominated by empty
+    // ground. The existing OSM road/building analysis already selects a
+    // dense, terrain-aware presentation corridor, so use it for the ordinary
+    // non-hero default. Hero-tile launch/card corridors remain untouched.
+    const defaultPresentationPose = !activeHeroTile && !fullCityMode
+      ? getSuggestedCameraPoses().canyon
+      : null;
+    const resolvedDefaultPose = resolveCameraPose(defaultPresentationPose);
+    if (resolvedDefaultPose?.position && resolvedDefaultPose?.target) {
+      camera.position.set(...resolvedDefaultPose.position);
+      controls.target.set(...resolvedDefaultPose.target);
+    } else {
+      controls.target.set(centroid.x, elevationAt(centroid.x, centroid.z), centroid.z);
+      camera.position.set(centroid.x - 170, elevationAt(centroid.x, centroid.z) + 190, centroid.z - 210);
+    }
     positionSkyDomeAt(centroid, fullCityMode ? regionSpan(regionPoints) : regionSpan(regionPoints));
     sun.position.set(centroid.x + 420, 620, centroid.z + 380);
     sun.target.position.set(centroid.x, 0, centroid.z);
@@ -13231,6 +13250,14 @@ async function buildCity() {
     if (playButton) playButton.hidden = true;
     document.querySelector('[data-toolbar="city"]').hidden = false;
     setCityMode('orbit');
+    // setCityMode('orbit') restores an exploratory player-relative camera.
+    // Reapply the non-hero default after that transition so the first visible
+    // generated-city card stays on the safe dense corridor above.
+    if (resolvedDefaultPose?.position && resolvedDefaultPose?.target) {
+      camera.position.set(...resolvedDefaultPose.position);
+      controls.target.set(...resolvedDefaultPose.target);
+      controls.update();
+    }
     modeLabel.textContent = 'Exploring generated city';
     hint.textContent = fullCityMode
       ? 'Near three-roads lanes + facades · far city stays simple · E at a door for interiors'
