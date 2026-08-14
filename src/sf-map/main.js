@@ -10,7 +10,11 @@ const FALLBACK_TILE = {
   origin: [553344, 4182912, 0],
   size: 384,
   glb: 'data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb',
+  glbSha256: 'sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310',
+  glbSha256Hex: 'ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310',
   receipt: 'data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json',
+  receiptSha256: 'sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd',
+  receiptSha256Hex: 'fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd',
   source: 'verified Ferry fallback',
 };
 
@@ -148,36 +152,50 @@ function firstPath(value) {
   return value.path || value.url || value.visual || value.asset || null;
 }
 
+function sha256Declaration(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^(?:sha256:)?([a-f0-9]{64})$/i);
+  if (!match) return null;
+  return Object.freeze({ declared: value, hex: match[1].toLowerCase() });
+}
+
+function artifactPathAndHash(value) {
+  const path = firstPath(value);
+  const sha256 = sha256Declaration(value?.sha256);
+  return path && sha256 ? { path: publicPath(path), sha256 } : null;
+}
+
 function manifestTile(raw, index) {
   const origin = raw.originEpsg26910VerticalMetres || raw.tileOriginEpsg26910VerticalMetres || raw.origin;
   const lod0 = raw.lod0 || raw.lods?.find((lod) => lod.level === 0) || raw.artifacts?.lod0;
-  const glb = firstPath(raw.glb) || firstPath(raw.visual) || firstPath(raw.asset) || firstPath(lod0);
-  const receipt = firstPath(raw.receipt) || firstPath(raw.buildReceipt);
-  if (!Array.isArray(origin) || origin.length < 2 || !glb) return null;
+  const glb = artifactPathAndHash(raw.glb) || artifactPathAndHash(raw.visual) || artifactPathAndHash(raw.asset) || artifactPathAndHash(lod0);
+  const receipt = artifactPathAndHash(raw.receipt) || artifactPathAndHash(raw.buildReceipt);
+  if (!Array.isArray(origin) || origin.length < 2 || !glb || !receipt) return null;
   if (![origin[0], origin[1], origin[2] ?? 0].every(Number.isFinite)) return null;
   return {
     id: raw.id || raw.identity || `metric-tile-${index + 1}`,
     gridIndex: raw.gridIndex || raw.grid?.index || null,
     origin: [origin[0], origin[1], origin[2] ?? 0],
     size: raw.tileSizeMetres || raw.tiling?.tileSizeMetres || raw.grid?.tileSizeMeters || 384,
-    glb: publicPath(glb),
-    receipt: publicPath(receipt),
+    glb: glb.path,
+    glbSha256: glb.sha256.declared,
+    glbSha256Hex: glb.sha256.hex,
+    receipt: receipt.path,
+    receiptSha256: receipt.sha256.declared,
+    receiptSha256Hex: receipt.sha256.hex,
     source: 'runtime metric manifest',
   };
 }
 
 async function discoverTiles() {
   for (const path of MANIFEST_PATHS) {
-    try {
-      const response = await fetch(`${BASE_URL}${path}`, { cache: 'no-cache' });
-      if (!response.ok) continue;
-      const manifest = await response.json();
-      const records = manifest.tiles || manifest.entries || manifest.tileSet?.tiles || [];
-      const tiles = records.map(manifestTile).filter(Boolean);
-      if (tiles.length) return { tiles, source: `${path} (${tiles.length} committed)` };
-    } catch {
-      // A missing manifest is normal until adjacent metric packages are committed.
-    }
+    const response = await fetch(`${BASE_URL}${path}`, { cache: 'no-cache' });
+    if (!response.ok) continue;
+    const manifest = await response.json();
+    const records = manifest.tiles || manifest.entries || manifest.tileSet?.tiles || [];
+    const tiles = records.map(manifestTile);
+    if (tiles.length && tiles.every(Boolean)) return { tiles, source: `${path} (${tiles.length} committed)` };
+    if (records.length) throw new Error(`${path} contains a tile without a byte-locked GLB and receipt`);
   }
   return { tiles: [FALLBACK_TILE], source: 'verified Ferry fallback (manifest not committed)' };
 }
@@ -202,11 +220,65 @@ const tileStates = new Map();
 let tileDescriptors = [];
 let anchorOrigin = FALLBACK_TILE.origin;
 let streamingStarted = false;
+let activeLoad = null;
+let queueSequence = 0;
+const STREAM_QUEUE_BUCKET_METRES = 96;
+const STREAM_DIAGNOSTIC_LIMIT = 64;
+const streamDiagnostics = {
+  admissions: [],
+  completed: [],
+  lastQueue: [],
+  queuedCount: 0,
+  activeTileId: null,
+};
+
+function boundedPush(items, value) {
+  items.push(value);
+  if (items.length > STREAM_DIAGNOSTIC_LIMIT) items.shift();
+}
+
+function sha256Hex(bytes) {
+  if (!globalThis.crypto?.subtle) throw new Error('Web Crypto SHA-256 is required for source-locked tile streaming');
+  return globalThis.crypto.subtle.digest('SHA-256', bytes).then((digest) => [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''));
+}
+
+async function fetchVerifiedBytes(path, expectedSha256, label) {
+  const response = await fetch(`${BASE_URL}${path}`, { cache: 'no-cache' });
+  if (!response.ok) throw new Error(`${label} fetch failed (${response.status})`);
+  const bytes = await response.arrayBuffer();
+  const actualSha256 = await sha256Hex(bytes);
+  if (actualSha256 !== expectedSha256) throw new Error(`${label} SHA-256 mismatch: expected ${expectedSha256}, got ${actualSha256}`);
+  return { bytes, actualSha256 };
+}
+
+function loadPriority(state) {
+  return [state.queueDistanceBucket, state.descriptor.id];
+}
+
+function compareQueuedStates(left, right) {
+  const [leftBucket, leftId] = loadPriority(left);
+  const [rightBucket, rightId] = loadPriority(right);
+  return leftBucket - rightBucket || leftId.localeCompare(rightId);
+}
+
+function shouldLoadState(state) {
+  return activeView === 'plan' || cameraDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES;
+}
+
+function updateQueueDiagnostics() {
+  const queued = [...tileStates.values()].filter((state) => state.queued).sort(compareQueuedStates);
+  streamDiagnostics.queuedCount = queued.length;
+  streamDiagnostics.lastQueue = queued.slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
+    id: state.descriptor.id,
+    distanceBucket: state.queueDistanceBucket,
+    sequence: state.queueSequence,
+  }));
+}
 
 function updateStats() {
   const states = [...tileStates.values()];
   const resident = states.filter((state) => state.scene).map((state) => state.descriptor.id);
-  const pending = states.filter((state) => state.loading).length;
+  const pending = states.filter((state) => state.loading || state.queued).length;
   loadedCount.textContent = `${resident.length} / ${tileDescriptors.length}`;
   loadedTiles.textContent = resident.length ? resident.join(' · ') : pending ? 'Loading nearby tiles…' : 'No tile in stream radius';
   loadState.textContent = pending ? `Streaming ${pending} tile${pending === 1 ? '' : 's'}…` : `${resident.length} metric tile${resident.length === 1 ? '' : 's'} resident`;
@@ -222,13 +294,43 @@ function updateReceipt(state, receipt) {
   element('#terrain-resolution').textContent = terrainStep ? `${terrainStep} m grid` : 'source-declared';
 }
 
+function verifyReceiptDescriptor(receipt, descriptor) {
+  const tile = receipt?.tile;
+  if (!tile || receipt.kind !== 'sf-metric-tile-build-receipt' || tile.identity !== descriptor.id) {
+    throw new Error(`${descriptor.id} receipt identity does not match the manifest tile`);
+  }
+  if (tile.scale !== 1 || !Array.isArray(tile.originEpsg26910VerticalMetres)
+    || tile.originEpsg26910VerticalMetres[0] !== descriptor.origin[0]
+    || tile.originEpsg26910VerticalMetres[1] !== descriptor.origin[1]
+    || tile.originEpsg26910VerticalMetres[2] !== descriptor.origin[2]) {
+    throw new Error(`${descriptor.id} receipt does not preserve the 1 unit = 1 metre origin contract`);
+  }
+  if (Array.isArray(descriptor.gridIndex) && (!Array.isArray(tile.gridIndex)
+    || tile.gridIndex[0] !== descriptor.gridIndex[0] || tile.gridIndex[1] !== descriptor.gridIndex[1])) {
+    throw new Error(`${descriptor.id} receipt grid index does not match the manifest tile`);
+  }
+  const bounds = tile.boundsEpsg26910Metres;
+  if (!Array.isArray(bounds) || bounds.length !== 4
+    || bounds[0] !== descriptor.origin[0] || bounds[1] !== descriptor.origin[1]
+    || bounds[2] - bounds[0] !== descriptor.size || bounds[3] - bounds[1] !== descriptor.size) {
+    throw new Error(`${descriptor.id} receipt bounds do not match the metric tile size and origin`);
+  }
+}
+
+function resourcePathFor(path) {
+  const url = new URL(`${BASE_URL}${path}`, window.location.href).href;
+  return url.slice(0, url.lastIndexOf('/') + 1);
+}
+
 async function loadTile(state) {
   const { descriptor } = state;
-  state.loading = true;
   updateStats();
+  let tile = null;
   try {
-    const gltf = await gltfLoader.loadAsync(`${BASE_URL}${descriptor.glb}`);
-    const tile = gltf.scene;
+    const glbArtifact = await fetchVerifiedBytes(descriptor.glb, descriptor.glbSha256Hex, `${descriptor.id} GLB`);
+    state.integrity.glb = { expectedSha256: descriptor.glbSha256, actualSha256: glbArtifact.actualSha256, status: 'verified' };
+    const gltf = await gltfLoader.parseAsync(glbArtifact.bytes, resourcePathFor(descriptor.glb));
+    tile = gltf.scene;
     tile.name = `${descriptor.id} metric tile LOD0`;
     tile.position.copy(descriptor.offset);
     tile.scale.setScalar(1);
@@ -252,13 +354,19 @@ async function loadTile(state) {
       }
       if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x35a8b7);
     });
+    const receiptArtifact = await fetchVerifiedBytes(descriptor.receipt, descriptor.receiptSha256Hex, `${descriptor.id} receipt`);
+    const receipt = JSON.parse(new TextDecoder().decode(receiptArtifact.bytes));
+    verifyReceiptDescriptor(receipt, descriptor);
+    state.integrity.receipt = { expectedSha256: descriptor.receiptSha256, actualSha256: receiptArtifact.actualSha256, status: 'verified' };
     state.scene = tile;
     scene.add(tile);
-    if (descriptor.receipt) {
-      fetch(`${BASE_URL}${descriptor.receipt}`).then((response) => response.ok ? response.json() : null).then((receipt) => updateReceipt(state, receipt)).catch(() => {});
-    }
+    updateReceipt(state, receipt);
+    boundedPush(streamDiagnostics.completed, { id: descriptor.id, result: 'verified-and-resident' });
   } catch (error) {
+    tile && disposeObject(tile);
     state.error = error;
+    state.integrity.failure = error.message;
+    boundedPush(streamDiagnostics.completed, { id: descriptor.id, result: 'rejected', reason: error.message });
     console.error(`Unable to stream ${descriptor.id}`, error);
   } finally {
     state.loading = false;
@@ -269,6 +377,40 @@ async function loadTile(state) {
       window.setTimeout(() => loading.classList.add('is-done'), 280);
     }
   }
+}
+
+function nextQueuedState() {
+  const candidates = [];
+  for (const state of tileStates.values()) {
+    if (!state.queued) continue;
+    if (!shouldLoadState(state)) {
+      state.queued = false;
+      continue;
+    }
+    candidates.push(state);
+  }
+  return candidates.sort(compareQueuedStates)[0] || null;
+}
+
+function pumpLoadQueue() {
+  if (activeLoad) return;
+  const state = nextQueuedState();
+  updateQueueDiagnostics();
+  if (!state) return;
+  state.queued = false;
+  state.loading = true;
+  streamDiagnostics.activeTileId = state.descriptor.id;
+  boundedPush(streamDiagnostics.admissions, {
+    id: state.descriptor.id,
+    distanceBucket: state.queueDistanceBucket,
+    sequence: state.queueSequence,
+  });
+  activeLoad = loadTile(state).finally(() => {
+    activeLoad = null;
+    streamDiagnostics.activeTileId = null;
+    updateQueueDiagnostics();
+    pumpLoadQueue();
+  });
 }
 
 function unloadTile(state) {
@@ -288,9 +430,16 @@ function streamTiles() {
     const distance = cameraDistanceToTile(state.descriptor);
     const shouldLoad = activeView === 'plan' || distance <= STREAM_RADIUS_METRES;
     const shouldRetain = activeView === 'plan' || distance <= RETAIN_RADIUS_METRES;
-    if (shouldLoad && !state.scene && !state.loading && !state.error) loadTile(state);
+    if (shouldLoad && !state.scene && !state.loading && !state.queued && !state.error) {
+      state.queued = true;
+      state.queueSequence = ++queueSequence;
+      state.queueDistanceBucket = Math.floor(distance / STREAM_QUEUE_BUCKET_METRES);
+    }
+    if (!shouldLoad && state.queued) state.queued = false;
     if (!shouldRetain && state.scene) unloadTile(state);
   }
+  updateQueueDiagnostics();
+  pumpLoadQueue();
 }
 
 async function initialiseStream() {
@@ -302,7 +451,23 @@ async function initialiseStream() {
     offset: new THREE.Vector3(tile.origin[0] - anchorOrigin[0], tile.origin[2] - anchorOrigin[2], tile.origin[1] - anchorOrigin[1]),
   }));
   fitOverviewViews(tileDescriptors);
-  for (const descriptor of tileDescriptors) tileStates.set(descriptor.id, { descriptor, scene: null, loading: false, receipt: null, error: null });
+  for (const descriptor of tileDescriptors) {
+    tileStates.set(descriptor.id, {
+      descriptor,
+      scene: null,
+      loading: false,
+      queued: false,
+      queueSequence: 0,
+      queueDistanceBucket: null,
+      receipt: null,
+      error: null,
+      integrity: {
+        glb: { expectedSha256: descriptor.glbSha256, status: 'pending' },
+        receipt: { expectedSha256: descriptor.receiptSha256, status: 'pending' },
+        metric: { originSubtractions: 1, sceneScale: 1, units: 'metres' },
+      },
+    });
+  }
   tileAnchor.textContent = anchor.gridIndex ? anchor.gridIndex.join(' / ') : `${anchorOrigin[0]}E / ${anchorOrigin[1]}N`;
   tileExtent.textContent = `${anchor.size} × ${anchor.size} m`;
   streamSource.textContent = source.toUpperCase();
@@ -312,6 +477,25 @@ async function initialiseStream() {
     get anchorOriginEpsg26910() { return [...anchorOrigin]; },
     get tileDescriptors() { return tileDescriptors.map(({ offset, ...tile }) => ({ ...tile, offset: offset.toArray() })); },
     get residentTileIds() { return [...tileStates.values()].filter((state) => state.scene).map((state) => state.descriptor.id); },
+    get streamingDiagnostics() {
+      return {
+        oneActiveLoad: !activeLoad || Boolean(streamDiagnostics.activeTileId),
+        activeLoadCount: activeLoad ? 1 : 0,
+        queuePolicy: `distance buckets of ${STREAM_QUEUE_BUCKET_METRES} metres, then lexical tile id`,
+        activeTileId: streamDiagnostics.activeTileId,
+        queuedCount: streamDiagnostics.queuedCount,
+        queueOrder: streamDiagnostics.lastQueue.map((entry) => ({ ...entry })),
+        admissions: streamDiagnostics.admissions.map((entry) => ({ ...entry })),
+        completed: streamDiagnostics.completed.map((entry) => ({ ...entry })),
+        tiles: [...tileStates.values()].slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
+          id: state.descriptor.id,
+          resident: Boolean(state.scene),
+          queued: state.queued,
+          loading: state.loading,
+          integrity: JSON.parse(JSON.stringify(state.integrity)),
+        })),
+      };
+    },
     ferryPosition: FERRY.clone(),
     setView,
   });
