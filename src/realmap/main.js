@@ -246,6 +246,7 @@ const ELEVATION_FALLBACK_URL = publicAsset('data/sf/sf-elevation.json');
 
 let cityData = null;
 let terrainData = null;
+let cityLoadPromise = null;
 let region = [];
 let mapCamera = { x: 0, z: 0, scale: 1 };
 let mapDirty = true;
@@ -1019,7 +1020,11 @@ function elevationAt(x, z) {
 }
 
 async function playPrebuiltCity() {
-  applyPreset('city');
+  // The public diagnostic hook can be called while the source payload is
+  // still loading. Wait for that authoritative payload rather than falling
+  // back to a synthetic city envelope.
+  if (!cityData && cityLoadPromise) await cityLoadPromise;
+  if (!applyPreset('city')) throw new Error('Full City source boundary unavailable');
   if (region.length < 3) throw new Error('Full City boundary unavailable');
   bootOverlay.classList.add('is-dismissed');
   hud.inert = false;
@@ -1292,12 +1297,16 @@ function setRegion(points) {
 
 function applyPreset(name) {
   if (name === 'city') {
-    const flat = cityData.boundary[0];
+    const flat = cityData?.boundary?.[0];
+    if (!Array.isArray(flat) || flat.length < 6 || flat.length % 2 !== 0) return false;
     setRegion(Array.from({ length: flat.length / 2 }, (_, i) => [flat[i * 2], flat[i * 2 + 1]]));
+    return true;
   } else if (PRESETS[name]) {
     activeHeroTile = null;
     setRegion(PRESETS[name]);
+    return true;
   }
+  return false;
 }
 
 function mapPointerPosition(event) {
@@ -13311,7 +13320,7 @@ function start() {
   });
   setupMapInteractions();
   setupToolbar();
-  loadCity();
+  cityLoadPromise = loadCity();
 
   launchButton.addEventListener('click', () => {
     bootOverlay.classList.add('is-dismissed');
