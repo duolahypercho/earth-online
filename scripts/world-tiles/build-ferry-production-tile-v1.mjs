@@ -39,6 +39,7 @@ const METRIC_TILE_OUTPUT_ROOT = path.join(ROOT, 'public/data/world/production-ar
 const FEATURE_DISCOVERY_BUFFER_METRES = 128;
 const FERRY_TILE = Object.freeze({ id: 'epsg26910-1441-10893', minE: 553344, minN: 4182912, size: 384, originH: 0, sourceBuffer: 16 });
 let TILE = FERRY_TILE;
+let buildSfMetricTileQueue = Promise.resolve();
 const TERRAIN_STEP = 1;
 const PROVISIONAL_FRAME = 'provisional-utm-source-declared-navd88-unrealized';
 const RETRIEVED_AT = '2026-08-02';
@@ -82,6 +83,29 @@ async function sha256File(filePath) {
   const hash = createHash('sha256'); let bytes = 0;
   for await (const chunk of createReadStream(filePath)) { hash.update(chunk); bytes += chunk.length; }
   return { bytes, sha256: hash.digest('hex') };
+}
+
+function terrainFileIdentity(pathname, fileStat) {
+  return Object.freeze({ pathname, device: fileStat.dev, inode: fileStat.ino, size: fileStat.size, mtimeNs: fileStat.mtimeNs, ctimeNs: fileStat.ctimeNs });
+}
+
+function assertSameTerrainFileIdentity(expected, actual, phase) {
+  assert.deepEqual(actual, expected, `Verified terrain source identity changed ${phase}: ${expected.pathname}`);
+}
+
+export async function hashVerifiedTerrainSourceFile(pathname, { hashFile = sha256File, statFile = stat } = {}) {
+  const before = terrainFileIdentity(pathname, await statFile(pathname, { bigint: true }));
+  const raw = await hashFile(pathname);
+  const after = terrainFileIdentity(pathname, await statFile(pathname, { bigint: true }));
+  assertSameTerrainFileIdentity(before, after, 'while hashing');
+  return Object.freeze({ ...raw, fileIdentity: after });
+}
+
+export async function assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname = verifiedTerrainDigest.fileIdentity?.pathname, statFile = stat, phase = 'before opening' } = {}) {
+  const expected = verifiedTerrainDigest.fileIdentity;
+  assert(expected && Object.isFrozen(expected), 'Verified terrain digest file identity must be immutable');
+  assert.equal(expected.pathname, pathname, 'Verified terrain digest pathname drifted from selected source');
+  assertSameTerrainFileIdentity(expected, terrainFileIdentity(pathname, await statFile(pathname, { bigint: true })), phase);
 }
 
 async function scanPbf(onItems) {
@@ -156,22 +180,66 @@ export async function loadSfMetricSharedInputs() {
   return Object.freeze({ pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache });
 }
 
-async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor) {
-  const rawPath = path.join(ROOT, sourceLock.raster.localRawCache); const raw = await sha256File(rawPath);
-  assert.equal(raw.sha256, sourceLock.raster.sha256, 'GeoTIFF hash does not match lock'); assert.equal((await stat(rawPath)).size, sourceLock.raster.bytes);
-  const reader = await openGeoTiffWindowReader(rawPath); const rasterBounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
-  const clippedBounds = [Math.max(TILE.minE - TILE.sourceBuffer - 2, rasterBounds[0]), Math.max(TILE.minN - TILE.sourceBuffer - 2, rasterBounds[1]), Math.min(TILE.minE + TILE.size + TILE.sourceBuffer + 2, rasterBounds[2]), Math.min(TILE.minN + TILE.size + TILE.sourceBuffer + 2, rasterBounds[3])];
-  assert(clippedBounds[0] < clippedBounds[2] && clippedBounds[1] < clippedBounds[3], `Terrain source ${sourceLock.id} does not overlap ${TILE.id}`);
-  const a = reader.modelToPixel(clippedBounds[0], clippedBounds[3]); const b = reader.modelToPixel(clippedBounds[2], clippedBounds[1]);
-  const column = Math.max(0, Math.floor(a.column)); const row = Math.max(0, Math.floor(a.row)); const right = Math.min(reader.metadata.width, Math.ceil(b.column) + 1); const bottom = Math.min(reader.metadata.height, Math.ceil(b.row) + 1);
-  const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
-  const pixelWindow = (e, n) => { const pixel = reader.modelToPixel(e, n); return { column: Math.floor(pixel.column), row: Math.floor(pixel.row), width: 1, height: 1 }; };
-  const sample = (e, n) => { const pixel = pixelWindow(e, n); const x = pixel.column - window.column; const y = pixel.row - window.row; assert(x >= 0 && y >= 0 && x < window.width && y < window.height, 'Terrain sample outside buffered window'); const value = window.values[y * window.width + x]; assert(value !== window.nodata && Number.isFinite(value), 'Invalid terrain sample'); return value; };
-  const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
-  return { reader, window, sample, evidence, raw, sourceLock, rasterSha256, elevationLock, descriptor };
+/**
+ * Hash every locked GeoTIFF once for a single verifier process. The returned
+ * metadata is deliberately data-only and frozen: callers may reuse it across
+ * rebuilds, but cannot make a later rebuild observe a different digest.
+ */
+export async function loadSfMetricVerifiedTerrainSourceDigests() {
+  const digests = await Promise.all(TERRAIN_SOURCES.map(async ({ sourceLockPath }) => {
+    const sourceLock = JSON.parse(await readFile(sourceLockPath));
+    const raw = await hashVerifiedTerrainSourceFile(path.join(ROOT, sourceLock.raster.localRawCache));
+    assert.equal(raw.bytes, sourceLock.raster.bytes, `GeoTIFF byte count does not match lock ${sourceLock.id}`);
+    assert.equal(raw.sha256, sourceLock.raster.sha256, `GeoTIFF hash does not match lock ${sourceLock.id}`);
+    return Object.freeze({ path: sourceLock.raster.localRawCache, bytes: raw.bytes, sha256: raw.sha256, fileIdentity: raw.fileIdentity });
+  }));
+  assert.equal(new Set(digests.map(({ path: rawPath }) => rawPath)).size, digests.length, 'Terrain digest memo has duplicate raster paths');
+  return Object.freeze(digests);
 }
 
-async function loadTerrainDescriptors() {
+function verifiedTerrainDigestFor(sourceLock, verifiedTerrainSourceDigests) {
+  if (verifiedTerrainSourceDigests === null) return null;
+  assert(Object.isFrozen(verifiedTerrainSourceDigests), 'Verified terrain digest memo must be immutable');
+  const matches = verifiedTerrainSourceDigests.filter(({ path: rawPath }) => rawPath === sourceLock.raster.localRawCache);
+  assert.equal(matches.length, 1, `Verified terrain digest memo must contain exactly one entry for locked GeoTIFF ${sourceLock.id}`);
+  const verified = matches[0];
+  assert(Object.isFrozen(verified), `Verified terrain digest memo entry for ${sourceLock.id} must be immutable`);
+  assert.equal(verified.path, sourceLock.raster.localRawCache, `Verified terrain digest path drifted from lock ${sourceLock.id}`);
+  assert.equal(verified.bytes, sourceLock.raster.bytes, `Verified terrain digest byte count drifted from lock ${sourceLock.id}`);
+  assert.equal(verified.sha256, sourceLock.raster.sha256, `Verified terrain digest hash drifted from lock ${sourceLock.id}`);
+  assert(verified.fileIdentity && Object.isFrozen(verified.fileIdentity), `Verified terrain digest file identity for ${sourceLock.id} must be immutable`);
+  return verified;
+}
+
+async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, verifiedTerrainDigest = null) {
+  const rawPath = path.join(ROOT, sourceLock.raster.localRawCache);
+  const raw = verifiedTerrainDigest ?? await sha256File(rawPath);
+  assert.equal(raw.path ?? sourceLock.raster.localRawCache, sourceLock.raster.localRawCache, `GeoTIFF path does not match lock ${sourceLock.id}`);
+  assert.equal(raw.sha256, sourceLock.raster.sha256, `GeoTIFF hash does not match lock ${sourceLock.id}`); assert.equal(raw.bytes, sourceLock.raster.bytes, `GeoTIFF byte count does not match lock ${sourceLock.id}`);
+  if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath });
+  let reader;
+  try {
+    reader = await openGeoTiffWindowReader(rawPath); const rasterBounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
+    const clippedBounds = [Math.max(TILE.minE - TILE.sourceBuffer - 2, rasterBounds[0]), Math.max(TILE.minN - TILE.sourceBuffer - 2, rasterBounds[1]), Math.min(TILE.minE + TILE.size + TILE.sourceBuffer + 2, rasterBounds[2]), Math.min(TILE.minN + TILE.size + TILE.sourceBuffer + 2, rasterBounds[3])];
+    assert(clippedBounds[0] < clippedBounds[2] && clippedBounds[1] < clippedBounds[3], `Terrain source ${sourceLock.id} does not overlap ${TILE.id}`);
+    const a = reader.modelToPixel(clippedBounds[0], clippedBounds[3]); const b = reader.modelToPixel(clippedBounds[2], clippedBounds[1]);
+    const column = Math.max(0, Math.floor(a.column)); const row = Math.max(0, Math.floor(a.row)); const right = Math.min(reader.metadata.width, Math.ceil(b.column) + 1); const bottom = Math.min(reader.metadata.height, Math.ceil(b.row) + 1);
+    const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
+    const pixelWindow = (e, n) => { const pixel = reader.modelToPixel(e, n); return { column: Math.floor(pixel.column), row: Math.floor(pixel.row), width: 1, height: 1 }; };
+    const sample = (e, n) => { const pixel = pixelWindow(e, n); const x = pixel.column - window.column; const y = pixel.row - window.row; assert(x >= 0 && y >= 0 && x < window.width && y < window.height, 'Terrain sample outside buffered window'); const value = window.values[y * window.width + x]; assert(value !== window.nodata && Number.isFinite(value), 'Invalid terrain sample'); return value; };
+    const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
+    return { reader, window, sample, evidence, raw, rawPath, sourceLock, rasterSha256, elevationLock, descriptor, verifiedTerrainDigest };
+  } catch (error) {
+    if (reader) {
+      try { await reader.close(); } finally {
+        if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after failed window reads/close' });
+      }
+    }
+    throw error;
+  }
+}
+
+async function loadTerrainDescriptors(verifiedTerrainSourceDigests = null) {
   const sourceBounds = [TILE.minE - TILE.sourceBuffer - 2, TILE.minN - TILE.sourceBuffer - 2, TILE.minE + TILE.size + TILE.sourceBuffer + 2, TILE.minN + TILE.size + TILE.sourceBuffer + 2];
   const selected = [];
   for (const descriptor of TERRAIN_SOURCES) {
@@ -181,7 +249,7 @@ async function loadTerrainDescriptors() {
     assert.equal(elevationLock.sourceLock.id, sourceLock.id, 'Terrain elevation authorization source id drifted');
     assert.equal(elevationLock.sourceLock.sha256, sha256(sourceLockBytes), 'Terrain elevation authorization source hash drifted');
     assert.equal(elevationLock.sourceRaster.sha256, sourceLock.raster.sha256, 'Terrain elevation authorization raster hash drifted');
-    selected.push({ ...descriptor, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock, bounds });
+    selected.push({ ...descriptor, sourceLockBytes, elevationLockBytes, sourceLock, elevationLock, bounds, verifiedTerrainDigest: verifiedTerrainDigestFor(sourceLock, verifiedTerrainSourceDigests) });
   }
   assert(selected.length, `No byte-locked terrain source overlaps the buffered tile ${TILE.id}`);
   return selected;
@@ -192,7 +260,13 @@ function terrainCellKey(easting, northing) {
 }
 
 async function openTerrainMosaic(descriptors) {
-  const sources = await Promise.all(descriptors.map(async (descriptor) => ({ ...await openTerrain(descriptor.sourceLock, descriptor.sourceLock.raster.sha256, descriptor.elevationLock, descriptor), cellKey: terrainCellKey((descriptor.bounds[0] + descriptor.bounds[2]) / 2, (descriptor.bounds[1] + descriptor.bounds[3]) / 2) })));
+  const sources = [];
+  try {
+    for (const descriptor of descriptors) sources.push({ ...await openTerrain(descriptor.sourceLock, descriptor.sourceLock.raster.sha256, descriptor.elevationLock, descriptor, descriptor.verifiedTerrainDigest), cellKey: terrainCellKey((descriptor.bounds[0] + descriptor.bounds[2]) / 2, (descriptor.bounds[1] + descriptor.bounds[3]) / 2) });
+  } catch (error) {
+    await closeTerrainSources(sources);
+    throw error;
+  }
   const sourceFor = (easting, northing) => {
     const key = terrainCellKey(easting, northing);
     const source = sources.find(({ cellKey }) => cellKey === key);
@@ -203,8 +277,15 @@ async function openTerrainMosaic(descriptors) {
     sources,
     sample(easting, northing) { return sourceFor(easting, northing).sample(easting, northing); },
     async evidence(easting, northing) { const source = sourceFor(easting, northing); return { source, payload: await source.evidence(easting, northing) }; },
-    async close() { await Promise.all(sources.map(({ reader }) => reader.close())); },
+    async close() { await closeTerrainSources(sources); },
   };
+}
+
+async function closeTerrainSources(sources) {
+  const closeResults = await Promise.allSettled(sources.map(({ reader }) => reader.close()));
+  const closeError = closeResults.find(({ status }) => status === 'rejected')?.reason ?? null;
+  await Promise.all(sources.map(({ verifiedTerrainDigest, rawPath }) => verifiedTerrainDigest && assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after all window reads/close' })));
+  if (closeError) throw closeError;
 }
 
 function category() { return { positions: [], indices: [], sourceIds: new Set() }; }
@@ -742,15 +823,16 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-export async function buildSfMetricTile({ tile: requestedTile, outputDir, write = true, sharedInputs = null } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
-  outputDir ??= defaultOutputDir(TILE);
-  const stem = artifactStem(TILE);
-  const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors()]);
-  const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
-  assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
-  const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); const terrainSource = await openTerrainMosaic(terrainDescriptors);
+  let terrainSource = null;
   try {
+    outputDir ??= defaultOutputDir(TILE);
+    const stem = artifactStem(TILE);
+    const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors(verifiedTerrainSourceDigests)]);
+    const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
+    assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
+    const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors);
     const baseGeometry = bakeGeometry(features, terrainSource.sample); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, level) => ({ level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }));
@@ -766,9 +848,18 @@ export async function buildSfMetricTile({ tile: requestedTile, outputDir, write 
     const landAreaSquareMetres = planAreaSquareMetres(categories.terrain); const waterAreaSquareMetres = planAreaSquareMetres(categories.water);
     assert(Math.abs(landAreaSquareMetres + waterAreaSquareMetres - TILE.size ** 2) <= 0.001, 'Land and OSM-classified water must partition the tile without gaps or overlap');
     const receipt = { schemaVersion: 1, kind: 'sf-metric-tile-build-receipt', id: stem, status: 'provisional-vertical-unrealized', tile: { identity: TILE.id, gridIndex: [TILE.minE / TILE.size, TILE.minN / TILE.size], boundsEpsg26910Metres: [TILE.minE, TILE.minN, TILE.minE + TILE.size, TILE.minN + TILE.size], originEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], runtimeFrame: PROVISIONAL_FRAME, vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, scale: 1 }, source: { osmPbf: { path: relative(PBF_PATH), bytes: pbfHash.bytes, sha256: pbfHash.sha256, queryBoundsWgs84: bounds }, geoTiffs: terrainSource.sources.map((source) => ({ path: source.sourceLock.raster.localRawCache, bytes: source.raw.bytes, sha256: source.raw.sha256, elevationSourceLockId: source.elevationLock.id, ownershipCell: source.cellKey, verticalCertification: 'source-declared-navd88-unrealized', reader: 'geotiff-window-reader-v1', window: { column: source.window.column, row: source.window.row, width: source.window.width, height: source.window.height } })) }, counts: { osmCandidateWays: features.length, emittedCoastlineWays: categories.water.sourceIds.size, emittedRoadWays: categories.roads.sourceIds.size, emittedBuildingWays: categories.buildings.sourceIds.size, packageSourceFeatures: sourceFeatures.length, terrainVertices: categories.terrain.positions.length / 3, waterVertices: categories.water.positions.length / 3, coastlineVertices: categories.coastline.positions.length / 3, roadVertices: categories.roads.positions.length / 3, buildingVertices: categories.buildings.positions.length / 3 }, surfaceClassification: { authority: 'OpenStreetMap natural=coastline ways in the byte-locked PBF', coastlineDirectionRule: 'OSM coastline direction: land on left, water on right', sourceOsmWayIds: [...categories.water.sourceIds].sort((a, b) => a - b), landAreaSquareMetres, waterAreaSquareMetres, partitionAreaSquareMetres: q(landAreaSquareMetres + waterAreaSquareMetres), waterVerticalMode: 'terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level', terrainWaterOverlapAreaSquareMetres: 0 }, ferryBuilding: TILE.id === FERRY_TILE.id ? { sourceFeatureId: 'way/558731934', present: categories.buildings.sourceIds.has(558731934) } : null, lods, relationCoverage: { implemented: false, statement: 'Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage.' }, deterministicInputs: { availableLods: [0], terrainGridStepMetres: TERRAIN_STEP, terrainSampling: 'canonical-10km-cell-owned-direct-native-pixel-float32-le', terrainCellOwnership: 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', surfaceGridMetres: 1 / SURFACE_TICKS_PER_METRE, lod0Construction: '1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings', lod0DeviationMetres: 0, geometryQuantizationDecimalPlaces: 6, buildingHeightPolicy: 'OSM height, else building:levels*3.2m, else 9.6m', roadWidthPolicy: 'OSM width, else deterministic highway-class/lanes table' } };
+    try { await terrainSource.close(); } finally { terrainSource = null; }
     if (write) { await mkdir(outputDir, { recursive: true }); await Promise.all([...glbs.map((glb) => writeFile(path.join(outputDir, glb.name), glb.bytes)), writeFile(path.join(outputDir, `${stem}.receipt.json`), jsonBytes(receipt)), writeFile(path.join(outputDir, `${stem}.package.json`), jsonBytes(packageDescriptor))]); }
     return { outputDir, glbs, receipt, packageDescriptor, categories };
-  } finally { await terrainSource.close(); TILE = previousTile; }
+  } finally {
+    try { await terrainSource?.close(); } finally { TILE = previousTile; }
+  }
+}
+
+export function buildSfMetricTile(options = {}) {
+  const task = buildSfMetricTileQueue.then(() => buildSfMetricTileUnlocked(options));
+  buildSfMetricTileQueue = task.catch(() => {});
+  return task;
 }
 
 export async function buildFerryProductionTile(options = {}) { return buildSfMetricTile(options); }
