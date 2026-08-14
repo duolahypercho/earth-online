@@ -63,6 +63,8 @@ const towerMaterial = landmark.root.getObjectByName('Ferry Building clock tower 
 const windowMaterial = landmark.root.getObjectByName('Ferry Building recessed upper windows and tower louvers').material;
 const clockMaterial = landmark.root.getObjectByName('Ferry Building clock faces').material;
 assert.ok(facadeMaterial.roughness >= 0.8 && facadeMaterial.metalness === 0, 'facade must retain a matte stone response');
+assert.equal(facadeMaterial.emissive.getHex(), 0x7a5b3d, 'facade bounce must retain the reviewed warm masonry tone');
+assert.equal(facadeMaterial.emissiveIntensity, 0.18, 'facade bounce must remain within the reviewed bounded intensity');
 for (const material of [facadeMaterial, towerMaterial]) {
   assert.equal(material.map.colorSpace, THREE.SRGBColorSpace, 'sandstone base color must be decoded as sRGB');
   assert.equal(material.normalMap.colorSpace, THREE.NoColorSpace, 'normal maps must remain linear');
@@ -74,6 +76,8 @@ for (const material of [facadeMaterial, towerMaterial]) {
   assert.equal(material.normalMap.minFilter, THREE.LinearMipmapLinearFilter, 'normal maps must minify with mipmaps');
   assert.ok(material.normalMap.anisotropy >= 8, 'normal maps must retain an anisotropic facade response');
 }
+assert.equal(towerMaterial.emissive.getHex(), 0x7a5b3d, 'tower bounce must retain the reviewed warm masonry tone');
+assert.equal(towerMaterial.emissiveIntensity, 0.15, 'tower bounce must remain within the reviewed bounded intensity');
 assert.equal(landmark.getDiagnostics().pbr.presentationOnly, true, 'generated PBR material must never be presented as survey reconstruction');
 assert.match(landmark.getDiagnostics().pbr.source, /Poly Haven.*CC0.*Rob Tuytel/, 'PBR diagnostics must retain Poly Haven CC0 provenance');
 assert.equal(windowMaterial.transparent, false, 'windows must be opaque recessed glazing rather than a bright transparent grid');
