@@ -67,6 +67,9 @@ const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786,
 // local additive pool on that pavement instead of hovering below the fixture.
 const PRACTICAL_HALO_DROP = 2.35;
 const PRACTICAL_GLOW_VARIATION = Object.freeze([0.76, 0.94, 0.68, 0.86, 0.62, 0.8]);
+// Retain a visibly legible human-scale pool at the Ferry night camera without
+// widening the source-authored light placements or the two-light runtime cap.
+const NIGHT_PRACTICAL_READABILITY_GAIN = 3.45;
 // Detailed civilians deliberately stay out of the static city shadow map:
 // their source-driven motion would otherwise leave a stale hard shadow after
 // the renderer freezes the map.  This slightly denser local contact is the
@@ -676,10 +679,10 @@ export function createHeroLifeLighting(options = {}) {
     const weatherDamping = conditions.weather === 'fog' ? 0.68 : conditions.weather === 'drizzle' ? 0.86 : 1;
     const baseIntensity = (0.08 + conditions.night * 1.25) * weatherDamping;
     // The two runtime Ferry anchors are intentionally local. This gain lifts
-    // only their facade and immediate paving response, rather than changing
-    // ambient/exposure or expanding the practical-light budget.
+    // their immediate pedestrian-facing paving response, rather than changing
+    // ambient/exposure, placements, or the practical-light budget.
     const localizedNightGain = conditions.night > 0.02
-      ? 2.6 + conditions.wetness * 0.4
+      ? NIGHT_PRACTICAL_READABILITY_GAIN + conditions.wetness * 0.4
       : 1;
     practicalMaterial.opacity = conditions.night > 0.02 ? 0.68 + conditions.wetness * 0.1 : 0;
     practicalMaterial.emissiveIntensity = conditions.night > 0.02
