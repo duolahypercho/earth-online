@@ -49,7 +49,13 @@ function assertPlayableHeroFrame(diagnostics, label = 'frame') {
     `${label}: three detailed adults must be screen-visible, separated, and clear of the hero silhouette; ${JSON.stringify(staging.screenSpace)}`,
   );
   assert.ok(life.stagedSourcesAttached >= 7, 'life renderer must own every staged source');
-  assert.ok(life.detailedStagedSourceUuids.length >= 3, 'at least three detailed adult rigs must map to staged sources');
+  assert.equal(life.sourcePedestrians, 50, 'all 50 underlying Ferry simulation identities must remain source-tracked');
+  assert.equal(life.stats.pedestriansAttached, staging.stagedCount, 'the staged pass must be the only visible replacement cohort');
+  assert.deepEqual(
+    [...life.detailedStagedSourceUuids].sort(),
+    [...staging.sourceUuids].sort(),
+    'every staged source must map to exactly one detailed adult rig',
+  );
   assert.equal(life.detailedStagedSourceUnique, true, 'detailed adults cannot share a source identity');
   assert.equal(life.stats.detailedActors, 7, 'every staged Ferry source must use a detailed adult rig');
   assert.equal(life.stats.fallbackActors, 0, 'the default Ferry frame cannot contain fallback silhouettes');
@@ -90,6 +96,8 @@ try {
   await page.waitForTimeout(3500);
   const drift = await page.evaluate(() => window.__SF_REALMAP__.getHeroPedestrianStaging());
   assert.ok(drift.minimumSpacingM >= drift.requiredMinimumSpacingM, 'staging drift cannot clump walkers');
+  assert.deepEqual(drift.sourceUuids, day.staging.sourceUuids, 'weather/time presentation cannot replace staged source identities');
+  assert.deepEqual(drift.sourceIdentities, day.staging.sourceIdentities, 'weather/time presentation cannot alter source schedules');
   assert.equal(errors.length, 0, `browser errors: ${errors.join('; ')}`);
 
   const report = { result: 'verified', url, viewport, day, drizzle, night, drift, errors };

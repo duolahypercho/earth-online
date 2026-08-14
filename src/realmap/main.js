@@ -10194,6 +10194,12 @@ function initializeHeroLifeLighting() {
   const focusX = playerState?.x ?? activeHeroTile.spawn.x;
   const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
   const stagedPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
+  // The staged Ferry pass owns its visible crowd completely. Attaching any
+  // extra ambient sources here consumes the seven detailed slots and leaves
+  // their low-detail replacement silhouettes in the hero frame. Their
+  // simulation records remain in `pedestrianState` and are still captured
+  // below for exact visibility restoration on disposal.
+  const presentationLimit = stagedPeople.length || FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT;
   const stagedSet = new Set(stagedPeople);
   const cardCohortPeople = pedestrianState.filter(({ heroCardCohort }) => heroCardCohort);
   const cardCohortSet = new Set(cardCohortPeople);
@@ -10212,7 +10218,7 @@ function initializeHeroLifeLighting() {
       || Math.hypot(first.mesh.position.x - focusX, first.mesh.position.z - focusZ)
         - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
     ))
-    .slice(0, FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT);
+    .slice(0, presentationLimit);
   // Ferry staging deliberately owns the visible close crowd. The remaining
   // simulated pedestrians keep walking, but their primitive source meshes are
   // hidden while the bounded renderer prevents duplicates/thought UI nearby.
@@ -10221,7 +10227,7 @@ function initializeHeroLifeLighting() {
   heroLifeLightingLifecycle = null;
   heroLifeLighting = createHeroLifeLighting({
     scene: cityRoot,
-    maxPedestrians: FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT,
+    maxPedestrians: presentationLimit,
     // The staged Ferry close pass is intentionally seven sources wide. Give
     // each source a player-grade actor so no low-detail silhouette can split
     // the composition; other hero callers retain the four-rig default.
