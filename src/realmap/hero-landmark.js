@@ -268,12 +268,30 @@ function createMaterials(sandstonePbr) {
   const materials = {
     // Ferry Building reads as sun-aged masonry rather than a saturated game
     // prop: the base is warmer, while ledges and the tower catch more light.
-    sandstone: new THREE.MeshStandardMaterial({ color: 0xd2c29f, roughness: 0.86, metalness: 0.0, ...sandstoneOptions }),
+    // The camera-facing Ferry facade is frequently outside the single hero
+    // sun shadow frustum during the locked launch card.  A restrained warm
+    // masonry bounce keeps its existing recess/shadow hierarchy readable
+    // without turning the stone into an unlit card or adding a light.
+    sandstone: new THREE.MeshStandardMaterial({
+      color: 0xd2c29f,
+      roughness: 0.86,
+      metalness: 0.0,
+      emissive: 0x7a5b3d,
+      emissiveIntensity: 0.18,
+      ...sandstoneOptions,
+    }),
     trimStone: new THREE.MeshStandardMaterial({ color: 0xe0cfaa, roughness: 0.8, metalness: 0.0 }),
     // This is also the deliberate cavity/reveal material. It stays dark enough
     // to read as depth, but not so dark that an arcade becomes black voids.
     weatherStone: new THREE.MeshStandardMaterial({ color: 0x765f49, roughness: 0.94, metalness: 0.0 }),
-    towerStone: new THREE.MeshStandardMaterial({ color: 0xd6c7a5, roughness: 0.82, metalness: 0.0, ...sandstoneOptions }),
+    towerStone: new THREE.MeshStandardMaterial({
+      color: 0xd6c7a5,
+      roughness: 0.82,
+      metalness: 0.0,
+      emissive: 0x7a5b3d,
+      emissiveIntensity: 0.15,
+      ...sandstoneOptions,
+    }),
     // A weathered, low-sheen roof catches broad daylight without reading as
     // chrome. The small metal component is for its seams, not a mirror gloss.
     roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
