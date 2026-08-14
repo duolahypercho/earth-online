@@ -90,6 +90,27 @@ const views = {
 };
 const viewFogDensity = { ferry: 0.00145, district: 0.00055, plan: 0.00018 };
 let activeView = 'ferry';
+let viewTransitionSequence = 0;
+const DISTRICT_FIT_TARGET_RESIDENTS = 4;
+const DISTRICT_FIT_MIN_DISTANCE_METRES = 180;
+const DISTRICT_FIT_MAX_DISTANCE_METRES = 2800;
+const DISTRICT_FIT_FRAME_MARGIN = 2.15;
+let districtOverviewView = null;
+const districtFit = {
+  epoch: 0,
+  fitCount: 0,
+  status: 'inactive',
+  batchTileIds: [],
+  previousBatchTileIds: [],
+  residentBounds: null,
+  cameraTarget: null,
+  cameraDistance: null,
+  cameraDirection: null,
+};
+
+function copyView(view) {
+  return { position: [...view.position], target: [...view.target] };
+}
 
 function fitOverviewViews(descriptors) {
   if (!descriptors.length) return;
@@ -103,6 +124,7 @@ function fitOverviewViews(descriptors) {
   const planHeight = Math.max(depth / (2 * Math.tan(verticalFov / 2)), width / (2 * Math.tan(horizontalFov / 2))) * 1.12;
   views.plan = { position: [centerX, planHeight, centerZ + 0.01], target: [centerX, 0, centerZ] };
   views.district = { position: [centerX - span * 0.72, span * 0.62, centerZ + span * 0.58], target: [centerX, 8, centerZ] };
+  districtOverviewView = copyView(views.district);
   const districtDistance = span * Math.hypot(0.72, 0.62, 0.58);
   viewFogDensity.plan = Math.min(0.00018, 0.28 / planHeight);
   viewFogDensity.district = Math.min(0.00055, 0.45 / districtDistance);
@@ -111,7 +133,75 @@ function fitOverviewViews(descriptors) {
   controls.maxDistance = Math.max(1200, span * 1.4);
 }
 
+function resetDistrictFit() {
+  districtFit.epoch += 1;
+  districtFit.previousBatchTileIds = [...districtFit.batchTileIds];
+  districtFit.status = 'awaiting-verified-residents';
+  districtFit.batchTileIds = [];
+  districtFit.residentBounds = null;
+  districtFit.cameraTarget = null;
+  districtFit.cameraDistance = null;
+  districtFit.cameraDirection = null;
+  if (districtOverviewView) views.district = copyView(districtOverviewView);
+}
+
+function residentDescriptorBounds(states) {
+  const minX = Math.min(...states.map(({ descriptor }) => descriptor.offset.x));
+  const minZ = Math.min(...states.map(({ descriptor }) => descriptor.offset.z));
+  const maxX = Math.max(...states.map(({ descriptor }) => descriptor.offset.x + descriptor.size));
+  const maxZ = Math.max(...states.map(({ descriptor }) => descriptor.offset.z + descriptor.size));
+  return { minX, minZ, maxX, maxZ, width: maxX - minX, depth: maxZ - minZ };
+}
+
+function fitDistrictCameraToVerifiedResidents() {
+  if (activeView !== 'district' || districtFit.status !== 'awaiting-verified-residents') return;
+  const verifiedResidents = [...tileStates.values()]
+    .filter((state) => state.scene)
+    .sort((left, right) => left.descriptor.id.localeCompare(right.descriptor.id));
+  if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;
+
+  const priorBatch = districtFit.previousBatchTileIds
+    .map((id) => tileStates.get(id))
+    .filter((state) => state?.scene);
+  const batch = priorBatch.length === DISTRICT_FIT_TARGET_RESIDENTS
+    ? priorBatch
+    : verifiedResidents.slice(0, DISTRICT_FIT_TARGET_RESIDENTS);
+  const bounds = residentDescriptorBounds(batch);
+  const target = new THREE.Vector3((bounds.minX + bounds.maxX) / 2, 8, (bounds.minZ + bounds.maxZ) / 2);
+  const overview = districtOverviewView || views.district;
+  const direction = new THREE.Vector3(...overview.position).sub(new THREE.Vector3(...overview.target)).normalize();
+  const right = new THREE.Vector3(0, 1, 0).cross(direction).normalize();
+  const up = direction.clone().cross(right).normalize();
+  const corners = [
+    [bounds.minX, bounds.minZ], [bounds.minX, bounds.maxZ],
+    [bounds.maxX, bounds.minZ], [bounds.maxX, bounds.maxZ],
+  ];
+  const halfWidth = Math.max(...corners.map(([x, z]) => Math.abs(new THREE.Vector3(x - target.x, 0, z - target.z).dot(right))));
+  const halfHeight = Math.max(...corners.map(([x, z]) => Math.abs(new THREE.Vector3(x - target.x, 0, z - target.z).dot(up))));
+  const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+  const fitDistance = DISTRICT_FIT_FRAME_MARGIN * Math.max(
+    halfWidth / Math.tan(horizontalFov / 2),
+    halfHeight / Math.tan(verticalFov / 2),
+  );
+  const distance = THREE.MathUtils.clamp(fitDistance, DISTRICT_FIT_MIN_DISTANCE_METRES, Math.min(DISTRICT_FIT_MAX_DISTANCE_METRES, controls.maxDistance));
+  viewTransitionSequence += 1;
+  camera.position.copy(target).addScaledVector(direction, distance);
+  controls.target.copy(target);
+  controls.update();
+  views.district = { position: camera.position.toArray(), target: target.toArray() };
+  viewFogDensity.district = Math.min(0.00055, 0.45 / distance);
+  districtFit.fitCount += 1;
+  districtFit.status = 'fitted';
+  districtFit.batchTileIds = batch.map((state) => state.descriptor.id);
+  districtFit.residentBounds = { ...bounds };
+  districtFit.cameraTarget = target.toArray();
+  districtFit.cameraDistance = distance;
+  districtFit.cameraDirection = direction.toArray();
+}
+
 function setView(name, immediate = false) {
+  if (name === 'district') resetDistrictFit();
   const view = views[name];
   if (!view) return;
   activeView = name;
@@ -123,12 +213,15 @@ function setView(name, immediate = false) {
     camera.position.copy(destination);
     controls.target.copy(target);
     controls.update();
+    if (name === 'district') fitDistrictCameraToVerifiedResidents();
     return;
   }
   const startPosition = camera.position.clone();
   const startTarget = controls.target.clone();
   const started = performance.now();
+  const transition = ++viewTransitionSequence;
   const move = (now) => {
+    if (transition !== viewTransitionSequence) return;
     const fraction = Math.min(1, (now - started) / 720);
     const eased = 1 - (1 - fraction) ** 3;
     camera.position.lerpVectors(startPosition, destination, eased);
@@ -136,6 +229,7 @@ function setView(name, immediate = false) {
     if (fraction < 1) requestAnimationFrame(move);
   };
   requestAnimationFrame(move);
+  if (name === 'district') requestAnimationFrame(fitDistrictCameraToVerifiedResidents);
 }
 
 setView('ferry', true);
@@ -208,11 +302,14 @@ function disposeObject(root) {
   });
 }
 
-function cameraDistanceToTile(tile) {
+// Streaming follows the map focus, not the overview camera.  At full-city
+// scale the camera can be kilometres away from the district it is framing;
+// OrbitControls.target remains the stable, local-world focus in that case.
+function focusDistanceToTile(tile) {
   const half = tile.size / 2;
   const centerX = tile.offset.x + half;
   const centerZ = tile.offset.z + half;
-  return Math.hypot(camera.position.x - centerX, camera.position.z - centerZ);
+  return Math.hypot(controls.target.x - centerX, controls.target.z - centerZ);
 }
 
 const gltfLoader = new GLTFLoader();
@@ -262,7 +359,7 @@ function compareQueuedStates(left, right) {
 }
 
 function shouldLoadState(state) {
-  return activeView === 'plan' || cameraDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES;
+  return activeView === 'plan' || focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES;
 }
 
 function updateQueueDiagnostics() {
@@ -362,6 +459,7 @@ async function loadTile(state) {
     scene.add(tile);
     updateReceipt(state, receipt);
     boundedPush(streamDiagnostics.completed, { id: descriptor.id, result: 'verified-and-resident' });
+    fitDistrictCameraToVerifiedResidents();
   } catch (error) {
     tile && disposeObject(tile);
     state.error = error;
@@ -427,7 +525,7 @@ function unloadTile(state) {
 
 function streamTiles() {
   for (const state of tileStates.values()) {
-    const distance = cameraDistanceToTile(state.descriptor);
+    const distance = focusDistanceToTile(state.descriptor);
     const shouldLoad = activeView === 'plan' || distance <= STREAM_RADIUS_METRES;
     const shouldRetain = activeView === 'plan' || distance <= RETAIN_RADIUS_METRES;
     if (shouldLoad && !state.scene && !state.loading && !state.queued && !state.error) {
@@ -482,11 +580,25 @@ async function initialiseStream() {
         oneActiveLoad: !activeLoad || Boolean(streamDiagnostics.activeTileId),
         activeLoadCount: activeLoad ? 1 : 0,
         queuePolicy: `distance buckets of ${STREAM_QUEUE_BUCKET_METRES} metres, then lexical tile id`,
+        distanceReference: 'controls.target horizontal coordinates',
+        focusWorldPosition: [controls.target.x, controls.target.z],
         activeTileId: streamDiagnostics.activeTileId,
         queuedCount: streamDiagnostics.queuedCount,
         queueOrder: streamDiagnostics.lastQueue.map((entry) => ({ ...entry })),
         admissions: streamDiagnostics.admissions.map((entry) => ({ ...entry })),
         completed: streamDiagnostics.completed.map((entry) => ({ ...entry })),
+        districtFit: {
+          targetResidents: DISTRICT_FIT_TARGET_RESIDENTS,
+          frameMargin: DISTRICT_FIT_FRAME_MARGIN,
+          epoch: districtFit.epoch,
+          fitCount: districtFit.fitCount,
+          oneTimeStatus: districtFit.status,
+          batchTileIds: [...districtFit.batchTileIds],
+          residentBounds: districtFit.residentBounds && { ...districtFit.residentBounds },
+          cameraTarget: districtFit.cameraTarget && [...districtFit.cameraTarget],
+          cameraDistance: districtFit.cameraDistance,
+          cameraDirection: districtFit.cameraDirection && [...districtFit.cameraDirection],
+        },
         tiles: [...tileStates.values()].slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
           id: state.descriptor.id,
           resident: Boolean(state.scene),
