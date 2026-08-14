@@ -46,6 +46,11 @@ const CIVILIAN_PRESENTATION_PROFILES = Object.freeze([
 const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786, vehicle: 0xffd99a });
 const PRACTICAL_HALO_DROP = 2.05;
 const PRACTICAL_GLOW_VARIATION = Object.freeze([0.76, 0.94, 0.68, 0.86, 0.62, 0.8]);
+// Detailed civilians deliberately stay out of the static city shadow map:
+// their source-driven motion would otherwise leave a stale hard shadow after
+// the renderer freezes the map.  This slightly denser local contact is the
+// stable, source-safe grounding cue for the moving near-field rigs.
+const DETAILED_CONTACT_SHADOW_OPACITY = 0.66;
 
 function colorGeometry(geometry, color, centerColor = null) {
   const colors = new Float32Array(geometry.attributes.position.count * 3);
@@ -273,7 +278,7 @@ export function createHeroLifeLighting(options = {}) {
     if (shadow) {
       shadow.visible = true;
       shadow.position.y = -0.105;
-      shadow.material.opacity = 0.52;
+      shadow.material.opacity = DETAILED_CONTACT_SHADOW_OPACITY;
     }
     group.add(root);
     return {

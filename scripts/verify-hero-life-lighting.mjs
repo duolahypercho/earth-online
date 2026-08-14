@@ -103,6 +103,9 @@ try {
     let visibleSprites = 0;
     root.traverse((object) => { if (object.isSprite && object.visible) visibleSprites += 1; });
     assert.equal(visibleSprites, 0, 'detailed civilians must not display name tags or thought UI');
+    assert.equal(root.userData.shadow.visible, true, 'detailed civilian needs a local moving contact shadow');
+    assert.equal(root.userData.shadow.material.opacity, 0.66, 'detailed civilian contact shadow density regressed');
+    assert.equal(root.userData.shadow.position.y, -0.105, 'contact shadow must remain local to the detailed rig');
   }
   for (const source of [...detailPedestrians, nearPedestrian]) {
     const original = originalTransforms.get(source.uuid);
