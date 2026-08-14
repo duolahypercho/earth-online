@@ -10,6 +10,12 @@ const port = Number(process.env.SF_MAP_PRESET_QA_PORT || 5186);
 const baseUrl = `http://127.0.0.1:${port}/sf-map.html`;
 const outputDir = process.env.SF_MAP_PRESET_QA_DIR || join(root, '.qa-sf-map-i10-preset-residency');
 const settleTimeoutMs = Number(process.env.SF_MAP_PRESET_QA_TIMEOUT_MS || 600000);
+const FERRY_RESIDENT_IDS = [
+  'epsg26910-1439-10892', 'epsg26910-1439-10893', 'epsg26910-1439-10894',
+  'epsg26910-1440-10892', 'epsg26910-1440-10893', 'epsg26910-1440-10894',
+  'epsg26910-1440-10895', 'epsg26910-1441-10891', 'epsg26910-1441-10892',
+  'epsg26910-1441-10893',
+];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -32,6 +38,13 @@ async function waitForPort(host, targetPort, timeoutMs = 30000) {
 
 function sameIds(left, right) {
   return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+function assertCompactDistrictBatch(capture, label) {
+  const fit = capture.districtFit;
+  assert(fit.selection === 'nearest-complete-source-2x2-metric-block', `${label} did not use the source-derived compact-batch policy.`);
+  assert(sameIds(fit.batchTileIds, fit.candidateTileIds), `${label} fitted an arrival-dependent batch instead of the preselected source batch.`);
+  assert(fit.residentBounds?.width === 768 && fit.residentBounds?.depth === 768, `${label} did not fit a compact 2×2 384 m metric footprint.`);
 }
 
 async function sideBySide(page, firstPath, repeatPath, outputPath) {
@@ -60,9 +73,9 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(() => Boolean(window.__SF_MAP_VIEWER__), { timeout: 30000 });
 
-  const settled = async (name) => {
+  const settled = async (capturePage, name) => {
     try {
-      await page.waitForFunction((view) => {
+      await capturePage.waitForFunction((view) => {
         const viewer = window.__SF_MAP_VIEWER__;
         const diagnostics = viewer?.streamingDiagnostics;
         if (!viewer || !diagnostics || diagnostics.activeView !== view || diagnostics.activeLoadCount || diagnostics.queuedCount) return false;
@@ -77,7 +90,7 @@ try {
         return JSON.stringify(resident) === JSON.stringify(expected);
       }, name, { timeout: settleTimeoutMs });
     } catch (error) {
-      const progress = await page.evaluate(() => {
+      const progress = await capturePage.evaluate(() => {
         const viewer = window.__SF_MAP_VIEWER__;
         const diagnostics = viewer?.streamingDiagnostics;
         const focus = diagnostics?.focusWorldPosition;
@@ -88,7 +101,7 @@ try {
       });
       throw new Error(`${error.message}\n${JSON.stringify(progress)}`);
     }
-    return page.evaluate(() => {
+    return capturePage.evaluate(() => {
       const viewer = window.__SF_MAP_VIEWER__;
       const diagnostics = viewer.streamingDiagnostics;
       return {
@@ -101,12 +114,12 @@ try {
     });
   };
 
-  const choose = async (name) => {
-    await page.evaluate((view) => window.__SF_MAP_VIEWER__.setView(view), name);
-    return settled(name);
+  const choose = async (capturePage, name) => {
+    await capturePage.evaluate((view) => window.__SF_MAP_VIEWER__.setView(view), name);
+    return settled(capturePage, name);
   };
 
-  const first = await choose('district');
+  const first = await choose(page, 'district');
   const firstPath = join(outputDir, 'district-first.png');
   await page.screenshot({ path: firstPath });
   await page.evaluate(() => window.__SF_MAP_VIEWER__.setView('plan'));
@@ -124,25 +137,48 @@ try {
   assert(plan.retainedLastPrune?.view === 'district', 'Plan incorrectly ran a restrictive named-view prune.');
 
   await page.waitForTimeout(1000);
-  await choose('ferry');
-  const repeat = await choose('district');
+  const ferry = await choose(page, 'ferry');
+  const repeat = await choose(page, 'district');
   const repeatPath = join(outputDir, 'district-repeat.png');
   await page.screenshot({ path: repeatPath });
 
+  const freshPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  freshPage.on('pageerror', (error) => errors.push(error.message));
+  freshPage.on('console', (message) => {
+    if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) errors.push(message.text());
+  });
+  await freshPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await freshPage.waitForFunction(() => Boolean(window.__SF_MAP_VIEWER__), { timeout: 30000 });
+  const fresh = await choose(freshPage, 'district');
+  const freshPath = join(outputDir, 'district-fresh-boot.png');
+  await freshPage.screenshot({ path: freshPath });
+  await freshPage.close();
+
   assert(sameIds(first.residentTileIds, repeat.residentTileIds), 'District resident IDs changed after Plan → Ferry → District.');
+  assert(sameIds(first.residentTileIds, fresh.residentTileIds), 'District resident IDs changed between fresh boots.');
+  assert(sameIds(ferry.residentTileIds, FERRY_RESIDENT_IDS), 'Ferry framing/resident IDs changed from the reviewed source-locked preset.');
   assert(first.residentTileIds.length >= 4 && first.residentTileIds.length <= 16, 'First District resident count is outside the reviewed 4–16 bound.');
   assert(repeat.residentTileIds.length >= 4 && repeat.residentTileIds.length <= 16, 'Repeat District resident count is outside the reviewed 4–16 bound.');
+  assert(fresh.residentTileIds.length >= 4 && fresh.residentTileIds.length <= 16, 'Fresh District resident count is outside the reviewed 4–16 bound.');
   assert(JSON.stringify(first.districtFit.batchTileIds) === JSON.stringify(repeat.districtFit.batchTileIds), 'District fit batch changed between matched preset histories.');
+  assert(JSON.stringify(first.districtFit.batchTileIds) === JSON.stringify(fresh.districtFit.batchTileIds), 'District fit batch changed between fresh boots.');
   assert(JSON.stringify(first.districtFit.cameraTarget) === JSON.stringify(repeat.districtFit.cameraTarget), 'District fit target changed between matched preset histories.');
+  assert(JSON.stringify(first.districtFit.cameraTarget) === JSON.stringify(fresh.districtFit.cameraTarget), 'District fit target changed between fresh boots.');
   assert(first.districtFit.cameraDistance === repeat.districtFit.cameraDistance, 'District fit distance changed between matched preset histories.');
+  assert(first.districtFit.cameraDistance === fresh.districtFit.cameraDistance, 'District fit distance changed between fresh boots.');
+  assertCompactDistrictBatch(first, 'First District capture');
+  assertCompactDistrictBatch(repeat, 'Repeated District capture');
+  assertCompactDistrictBatch(fresh, 'Fresh District capture');
   assert(errors.length === 0, `Browser errors: ${errors.join(' | ')}`);
-  assert(first.rejected.length === 0 && repeat.rejected.length === 0, 'A tile receipt or hash was rejected during matched captures.');
+  assert(first.rejected.length === 0 && repeat.rejected.length === 0 && fresh.rejected.length === 0, 'A tile receipt or hash was rejected during matched captures.');
   const report = {
     result: 'SF map named-preset residency QA passed',
     first,
     repeat,
+    fresh,
+    ferry,
     plan,
-    screenshots: { first: firstPath, repeat: repeatPath },
+    screenshots: { first: firstPath, repeat: repeatPath, fresh: freshPath },
   };
   await writeFile(join(outputDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report, null, 2));

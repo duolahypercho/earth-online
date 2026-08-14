@@ -44,9 +44,15 @@ assert(source.includes('receipt grid index does not match the manifest tile'), '
 assert(source.includes('receipt bounds do not match the metric tile size and origin'), 'Receipt bounds must be checked against the descriptor size and origin.');
 assert(source.includes('const DISTRICT_FIT_TARGET_RESIDENTS = 4;'), 'District presentation must wait for the bounded four-tile verified batch.');
 assert(source.includes('function fitDistrictCameraToVerifiedResidents()'), 'District presentation requires an explicit source-derived local camera fit.');
-assert(source.includes("if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;"), 'District camera fitting must wait for verified resident tiles.');
-assert(source.includes('.filter((state) => state.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)'), 'District fitting must exclude in-flight cache residue from prior views.');
-assert(source.includes('leftBucket - rightBucket || left.descriptor.id.localeCompare(right.descriptor.id)'), 'District fitting must use the deterministic distance-bucket then tile-id policy.');
+assert(source.includes('function selectDistrictFitDescriptors(descriptors)'), 'District fitting must select a source-derived footprint before tile arrivals.');
+assert(source.includes("selection: 'nearest-complete-source-2x2-metric-block'"), 'District diagnostics must identify the deterministic compact-batch policy.');
+assert(source.includes('const east = byGridIndex.get([gridX + 1, gridZ].join(\'/\'));'), 'District fitting must require the east source neighbour.');
+assert(source.includes('const north = byGridIndex.get([gridX, gridZ + 1].join(\'/\'));'), 'District fitting must require the north source neighbour.');
+assert(source.includes('const northEast = byGridIndex.get([gridX + 1, gridZ + 1].join(\'/\'));'), 'District fitting must require the north-east source neighbour.');
+assert(source.includes('if (bounds.width !== descriptor.size * 2 || bounds.depth !== descriptor.size * 2) continue;'), 'District fitting must reject sparse or non-metric 2×2 candidates.');
+assert(source.includes("districtFit.status = 'no-compact-source-batch';"), 'District fitting must fail closed without a compact source batch.');
+assert(source.includes('if (!batch.every((state) => state?.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)) return;'), 'District fitting must wait for every selected source tile to be verified and resident.');
+assert(source.includes('candidateTileIds: districtFitDescriptors.map(({ id }) => id)'), 'District diagnostics must expose the preselected compact source batch.');
 assert(source.includes('const bounds = residentDescriptorBounds(batch);'), 'District camera fitting must derive its extent from resident descriptors.');
 assert(source.includes('controls.target.copy(target);'), 'District camera fitting must keep streaming focused on the fitted local target.');
 assert(source.includes('DISTRICT_FIT_MIN_DISTANCE_METRES') && source.includes('DISTRICT_FIT_MAX_DISTANCE_METRES'), 'District camera fitting requires bounded metric distance clamps.');

@@ -120,6 +120,7 @@ const DISTRICT_FIT_MIN_DISTANCE_METRES = 180;
 const DISTRICT_FIT_MAX_DISTANCE_METRES = 2800;
 const DISTRICT_FIT_FRAME_MARGIN = 2.15;
 let districtOverviewView = null;
+let districtFitDescriptors = [];
 const districtFit = {
   epoch: 0,
   fitCount: 0,
@@ -248,26 +249,49 @@ function residentDescriptorBounds(states) {
   return { minX, minZ, maxX, maxZ, width: maxX - minX, depth: maxZ - minZ };
 }
 
+function selectDistrictFitDescriptors(descriptors) {
+  const overview = districtOverviewView || views.district;
+  const overviewTarget = new THREE.Vector3(...overview.target);
+  const byGridIndex = new Map(descriptors
+    .filter((descriptor) => Array.isArray(descriptor.gridIndex) && descriptor.gridIndex.length === 2)
+    .map((descriptor) => [descriptor.gridIndex.join('/'), descriptor]));
+  const candidates = [];
+  for (const descriptor of descriptors) {
+    if (!Array.isArray(descriptor.gridIndex) || descriptor.gridIndex.length !== 2) continue;
+    const [gridX, gridZ] = descriptor.gridIndex;
+    const east = byGridIndex.get([gridX + 1, gridZ].join('/'));
+    const north = byGridIndex.get([gridX, gridZ + 1].join('/'));
+    const northEast = byGridIndex.get([gridX + 1, gridZ + 1].join('/'));
+    const block = [descriptor, east, north, northEast];
+    if (!block.every(Boolean) || !block.every((tile) => tile.size === descriptor.size)) continue;
+    const bounds = residentDescriptorBounds(block.map((candidate) => ({ descriptor: candidate })));
+    // Grid indices alone are not enough: only an exact metric 2×2 footprint
+    // is eligible to frame the District camera.
+    if (bounds.width !== descriptor.size * 2 || bounds.depth !== descriptor.size * 2) continue;
+    const center = new THREE.Vector3((bounds.minX + bounds.maxX) / 2, 0, (bounds.minZ + bounds.maxZ) / 2);
+    candidates.push({
+      descriptors: block.sort((left, right) => left.id.localeCompare(right.id)),
+      distanceSquared: center.distanceToSquared(overviewTarget),
+    });
+  }
+  candidates.sort((left, right) => left.distanceSquared - right.distanceSquared
+    || left.descriptors.map(({ id }) => id).join('/').localeCompare(right.descriptors.map(({ id }) => id).join('/')));
+  return candidates[0]?.descriptors || [];
+}
+
 function fitDistrictCameraToVerifiedResidents() {
   if (activeView !== 'district' || districtFit.status !== 'awaiting-verified-residents') return;
-  const verifiedResidents = [...tileStates.values()]
-    // An admitted tile from the previous named view can finish after that
-    // view has been pruned. Never let that in-flight cache residue choose the
-    // District fit; candidates must belong to the current strict load set.
-    .filter((state) => state.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)
-    .sort((left, right) => {
-      const leftBucket = Math.floor(focusDistanceToTile(left.descriptor) / STREAM_QUEUE_BUCKET_METRES);
-      const rightBucket = Math.floor(focusDistanceToTile(right.descriptor) / STREAM_QUEUE_BUCKET_METRES);
-      return leftBucket - rightBucket || left.descriptor.id.localeCompare(right.descriptor.id);
-    });
-  if (verifiedResidents.length < DISTRICT_FIT_TARGET_RESIDENTS) return;
-
-  const priorBatch = districtFit.previousBatchTileIds
-    .map((id) => tileStates.get(id))
-    .filter((state) => state?.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES);
-  const batch = priorBatch.length === DISTRICT_FIT_TARGET_RESIDENTS
-    ? priorBatch
-    : verifiedResidents.slice(0, DISTRICT_FIT_TARGET_RESIDENTS);
+  // Arrival order depends on byte verification and parse timing. Select one
+  // compact source footprint before any loads start, then wait for exactly
+  // that footprint to become resident. If a complete metric block cannot be
+  // sourced, leave the overview framing in place rather than fitting sparse
+  // cache residue.
+  if (districtFitDescriptors.length !== DISTRICT_FIT_TARGET_RESIDENTS) {
+    districtFit.status = 'no-compact-source-batch';
+    return;
+  }
+  const batch = districtFitDescriptors.map(({ id }) => tileStates.get(id));
+  if (!batch.every((state) => state?.scene && focusDistanceToTile(state.descriptor) <= STREAM_RADIUS_METRES)) return;
   const bounds = residentDescriptorBounds(batch);
   const target = new THREE.Vector3((bounds.minX + bounds.maxX) / 2, 8, (bounds.minZ + bounds.maxZ) / 2);
   const overview = districtOverviewView || views.district;
@@ -685,6 +709,7 @@ async function initialiseStream() {
     offset: new THREE.Vector3(tile.origin[0] - anchorOrigin[0], tile.origin[2] - anchorOrigin[2], tile.origin[1] - anchorOrigin[1]),
   }));
   fitOverviewViews(tileDescriptors);
+  districtFitDescriptors = selectDistrictFitDescriptors(tileDescriptors);
   for (const descriptor of tileDescriptors) {
     tileStates.set(descriptor.id, {
       descriptor,
@@ -727,6 +752,8 @@ async function initialiseStream() {
         districtFit: {
           targetResidents: DISTRICT_FIT_TARGET_RESIDENTS,
           frameMargin: DISTRICT_FIT_FRAME_MARGIN,
+          selection: 'nearest-complete-source-2x2-metric-block',
+          candidateTileIds: districtFitDescriptors.map(({ id }) => id),
           epoch: districtFit.epoch,
           fitCount: districtFit.fitCount,
           oneTimeStatus: districtFit.status,
