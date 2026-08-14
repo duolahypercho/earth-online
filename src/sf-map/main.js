@@ -90,7 +90,7 @@ perimeter.position.set(FALLBACK_TILE.size / 2, -2.7, FALLBACK_TILE.size / 2);
 scene.add(perimeter);
 
 const views = {
-  ferry: { position: [-8, 158, 475], target: [119, 8, 292] },
+  ferry: { position: [430, 132, 292], target: [119, 8, 292] },
   district: { position: [-42, 240, 505], target: [185, 9, 190] },
   plan: { position: [192, 570, 192.01], target: [192, 0, 192] },
 };
@@ -744,6 +744,13 @@ async function initialiseStream() {
         queuePolicy: `distance buckets of ${STREAM_QUEUE_BUCKET_METRES} metres, then lexical tile id`,
         distanceReference: 'controls.target horizontal coordinates',
         focusWorldPosition: [controls.target.x, controls.target.z],
+        camera: {
+          position: camera.position.toArray(),
+          target: controls.target.toArray(),
+          fovDegrees: camera.fov,
+          nearMetres: camera.near,
+          farMetres: camera.far,
+        },
         activeTileId: streamDiagnostics.activeTileId,
         queuedCount: streamDiagnostics.queuedCount,
         queueOrder: streamDiagnostics.lastQueue.map((entry) => ({ ...entry })),
