@@ -11,7 +11,8 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
+import { loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
+import { rebuildSfMetricTilesInWorkers } from './verify-sf-production-tile-seams-v1.worker-pool.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const FERRY_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
@@ -495,17 +496,21 @@ assert.equal(connectedIds.size, tiles.length, 'Runtime district must form one co
 const seamReports = pairs.map(([left, right]) => verifyPair(left, right));
 
 const sharedInputs = await loadSfMetricSharedInputs();
-const rebuilds = [];
-for (const tile of tiles) {
-  const rebuilt = await buildSfMetricTile({
-    tile: { gridEasting: tile.expected.gridEasting, gridNorthing: tile.expected.gridNorthing },
-    sharedInputs,
-    verifiedTerrainSourceDigests,
-    write: false,
-  });
-  assertDeterministicRebuildMatchesLandedTile(tile, rebuilt);
-  rebuilds.push({ id: tile.identity, artifactHash: tile.lodDigest, deterministicRebuild: true });
-}
+const rebuiltTiles = await rebuildSfMetricTilesInWorkers({
+  tiles: tiles.map((tile) => ({
+    id: tile.identity,
+    gridEasting: tile.expected.gridEasting,
+    gridNorthing: tile.expected.gridNorthing,
+  })),
+  sharedInputs,
+  verifiedTerrainSourceDigests,
+});
+const rebuilds = rebuiltTiles.map(({ tile: workerTile, rebuilt }, index) => {
+  const landedTile = tiles[index];
+  assert.equal(workerTile.id, landedTile.identity, `${landedTile.identity} worker result ordering drifted`);
+  assertDeterministicRebuildMatchesLandedTile(landedTile, rebuilt);
+  return { id: landedTile.identity, artifactHash: landedTile.lodDigest, deterministicRebuild: true };
+});
 
 process.stdout.write(`${JSON.stringify({
   result: 'SF production tile seams passed',
