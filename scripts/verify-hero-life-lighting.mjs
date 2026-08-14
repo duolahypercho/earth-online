@@ -115,7 +115,10 @@ try {
   assert.equal(stats.vehiclesActive, 1, 'distant vehicle should remain rendered');
   assert.equal(stats.vehiclesDetailed, 1, 'near-field vehicle must keep wheel detail');
   assert.equal(stats.activePracticals, 3, 'night practical hierarchy should activate supplied warm anchors');
-  assert.ok(stats.practicalLightPower > 6, 'night anchors must carry enough bounded local light to read on facade and paving');
+  assert.ok(
+    stats.practicalLightPower >= 11.9 && stats.practicalLightPower <= 12.1,
+    'night anchors must retain the bounded practical power needed to separate nearby civilian silhouettes',
+  );
   assert.ok(stats.practicalGlowOpacity >= 0.75, 'night drizzle must expose the bounded emissive practical response');
   assert.equal(stats.pointLights, 6, 'strict practical-light cap regressed');
   assert.equal(stats.drawCalls, 10, 'fixed instanced draw-call budget regressed');
