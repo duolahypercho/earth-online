@@ -45,6 +45,7 @@ import {
 } from './hero-preview-neighbor.js';
 import { createFerryHeroShorelineMask } from './hero-shoreline.js';
 import { createFerryWaterfrontEdge } from './hero-waterfront.js';
+import { createFerryCard04PierDeck, disposeFerryCard04PierDeck } from './hero-waterfront-structures.js';
 import { createFerryBuildingAtmosphere } from './hero-atmosphere.js';
 import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
@@ -58,6 +59,8 @@ import {
   updateHeroLodAndCulling,
 } from './hero-performance.js';
 import './styles.css';
+
+const realmapBootStartedAt = performance.now();
 
 // ★ Street / sidewalk size — embedded in sf-city.json meta.streetDesign.
 //   Global: ?street=&sidewalk=&preset=   or setStreetDesign / setStreetPreset
@@ -1053,6 +1056,7 @@ async function applyBootQuery() {
 }
 
 async function loadCity() {
+  const bootDataStartedAt = performance.now();
   setStatus('boot', 'Fetching real San Francisco OSM data…', 0.1);
   cityData = await fetchCityData();
   const streetSummary = applyStreetDesignFromCityData();
@@ -1084,6 +1088,10 @@ async function loadCity() {
   setStatus('boot', `Ready · ${cityData.meta.counts.detailRoads} detailed streets · ${cityData.meta.counts.signals} signals`, 1);
   launchButton.disabled = false;
   launchButton.textContent = heroLaunch ? `Walk ${heroLaunch.tile.label}` : 'Enter Map Lab';
+  recordNamedHitchEvent('boot.data', bootDataStartedAt, {
+    roads: cityData.meta.counts.roads,
+    detailBuildings: cityData.meta.counts.detailBuildings,
+  });
   await applyBootQuery();
 }
 
@@ -7337,6 +7345,21 @@ let lastFrameTime = performance.now();
 let avgFrameMs = 16.6;
 let frameMsSamples = [];
 let applicationFrameMsSamples = [];
+// Retain the provenance of the same rolling application window exposed by
+// getPerf(). The entries deliberately survive capture/QA calls: a large max is
+// evidence to explain, not something to clear before reporting it.
+const applicationHitchTelemetry = {
+  capacity: 600,
+  sequence: 0,
+  frames: [],
+  frameWriteIndex: 0,
+  frameCount: 0,
+  namedEvents: [],
+  namedStats: Object.create(null),
+};
+// The build overlay owns first-use renderer work. Keep the normal rAF loop
+// paused until the final configured scene has been explicitly warmed below.
+let buildRenderGate = false;
 let ferryStreetLifeVignette = null;
 const moveKeys = new Set();
 let cityMode = 'orbit';
@@ -7352,6 +7375,7 @@ let heroTileHandoff = null;
 let heroTileHandoffLastMovement = null;
 let heroShorelineMask = null;
 let heroWaterfrontEdge = null;
+let heroWaterfrontPierDeck = null;
 let heroPreviewNeighbor = null;
 let heroPreviewMountPromise = null;
 let heroPreviewMountRevision = 0;
@@ -9923,6 +9947,53 @@ function getHeroWaterfrontDiagnostics() {
   };
 }
 
+function getHeroWaterfrontStructureDiagnostics() {
+  if (!heroWaterfrontPierDeck) return null;
+  const { userData } = heroWaterfrontPierDeck;
+  const position = heroWaterfrontPierDeck.geometry?.getAttribute('position');
+  const projected = [];
+  if (camera && position) {
+    heroWaterfrontPierDeck.updateWorldMatrix(true, false);
+    camera.updateMatrixWorld();
+    const point = new THREE.Vector3();
+    for (let index = 0; index < position.count; index += 1) {
+      point.fromBufferAttribute(position, index).applyMatrix4(heroWaterfrontPierDeck.matrixWorld).project(camera);
+      if (point.z >= -1 && point.z <= 1) projected.push(point.clone());
+    }
+  }
+  const ndcBounds = projected.length ? projected.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x), minY: Math.min(bounds.minY, point.y),
+    maxX: Math.max(bounds.maxX, point.x), maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }) : null;
+  const visibleSpan = (minimum, maximum) => Math.max(0, Math.min(1, maximum) - Math.max(-1, minimum)) / 2;
+  const screenWidth = ndcBounds ? visibleSpan(ndcBounds.minX, ndcBounds.maxX) : 0;
+  const screenHeight = ndcBounds ? visibleSpan(ndcBounds.minY, ndcBounds.maxY) : 0;
+  const screenOccupancy = ndcBounds ? {
+    basis: 'visible projected deck-vertex NDC bounding box; not raster pixel coverage',
+    visibleVertices: projected.length,
+    ndcBounds,
+    boundingBoxFraction: Number((screenWidth * screenHeight).toFixed(4)),
+  } : null;
+  return {
+    active: Boolean(heroWaterfrontPierDeck.parent),
+    sourceAligned: userData.sourceAligned === true,
+    sourceWayId: userData.sourceWayId,
+    rawPbfSha256: userData.rawPbfSha256,
+    geometrySha256: userData.geometrySha256,
+    horizontalCoordinates: userData.horizontalCoordinates,
+    presentationOnly: userData.presentationOnly === true,
+    verticalStatus: userData.verticalStatus,
+    deckLiftM: userData.deckLiftM,
+    deckThicknessM: userData.deckThicknessM,
+    affectsCollision: userData.affectsCollision,
+    exclusions: userData.exclusions,
+    renderBudget: userData.renderBudget,
+    vertices: userData.vertices,
+    triangles: userData.triangles,
+    screenOccupancy,
+  };
+}
+
 function heroStreetscapeWetnessForWeather() {
   return weatherMode === 'drizzle' ? 0.9 : weatherMode === 'fog' ? 0.32 : 0;
 }
@@ -11871,6 +11942,7 @@ function updateSandboxAudio() {
 }
 
 function setupScene() {
+  const configStartedAt = performance.now();
   const bootParams = new URLSearchParams(window.location.search);
   const captureMode = bootParams.has('qa') || bootParams.has('capture') || bootParams.has('screenshot');
   const context = sceneCanvas.getContext('webgl2', {
@@ -12011,6 +12083,10 @@ function setupScene() {
     composer = null;
   }
   createRainSystem();
+  recordNamedHitchEvent('config.scene', configStartedAt, {
+    composer: Boolean(composer),
+    captureMode,
+  });
 }
 
 function createRainSystem() {
@@ -12403,8 +12479,119 @@ function countSceneTriangles(root) {
   return Math.round(total);
 }
 
+function roundedMs(value) {
+  return Number(value.toFixed(2));
+}
+
+function recordNamedHitchEvent(name, startedAt, details = null) {
+  const durationMs = performance.now() - startedAt;
+  const event = {
+    id: ++applicationHitchTelemetry.sequence,
+    name,
+    durationMs: roundedMs(durationMs),
+    details,
+  };
+  applicationHitchTelemetry.namedEvents.push(event);
+  if (applicationHitchTelemetry.namedEvents.length > 80) applicationHitchTelemetry.namedEvents.shift();
+  const stats = applicationHitchTelemetry.namedStats[name] || {
+    count: 0,
+    totalMs: 0,
+    maxMs: 0,
+    lastMs: null,
+  };
+  stats.count += 1;
+  stats.totalMs += durationMs;
+  stats.maxMs = Math.max(stats.maxMs, durationMs);
+  stats.lastMs = durationMs;
+  applicationHitchTelemetry.namedStats[name] = stats;
+  return event;
+}
+
+function recordApplicationHitchFrame(startedAt, phases) {
+  const totalMs = performance.now() - startedAt;
+  const record = {
+    id: ++applicationHitchTelemetry.sequence,
+    name: 'render.frame',
+    totalMs: roundedMs(totalMs),
+    phases: Object.fromEntries(Object.entries(phases).map(([name, duration]) => [name, roundedMs(duration)])),
+  };
+  applicationHitchTelemetry.frames[applicationHitchTelemetry.frameWriteIndex] = record;
+  applicationHitchTelemetry.frameWriteIndex = (applicationHitchTelemetry.frameWriteIndex + 1)
+    % applicationHitchTelemetry.capacity;
+  applicationHitchTelemetry.frameCount = Math.min(
+    applicationHitchTelemetry.frameCount + 1,
+    applicationHitchTelemetry.capacity,
+  );
+  const stats = applicationHitchTelemetry.namedStats['render.frame'] || {
+    count: 0,
+    totalMs: 0,
+    maxMs: 0,
+    lastMs: null,
+  };
+  stats.count += 1;
+  stats.totalMs += totalMs;
+  stats.maxMs = Math.max(stats.maxMs, totalMs);
+  stats.lastMs = totalMs;
+  applicationHitchTelemetry.namedStats['render.frame'] = stats;
+  return record;
+}
+
+function getApplicationHitchAttribution() {
+  const { capacity, frameCount, frameWriteIndex } = applicationHitchTelemetry;
+  const frames = frameCount < capacity
+    ? applicationHitchTelemetry.frames.slice(0, frameCount)
+    : applicationHitchTelemetry.frames.slice(frameWriteIndex)
+      .concat(applicationHitchTelemetry.frames.slice(0, frameWriteIndex));
+  const maxFrame = frames.reduce((largest, frame) => (!largest || frame.totalMs > largest.totalMs ? frame : largest), null);
+  const namedEvents = {};
+  for (const [name, stats] of Object.entries(applicationHitchTelemetry.namedStats)) {
+    namedEvents[name] = {
+      count: stats.count,
+      totalMs: roundedMs(stats.totalMs),
+      maxMs: roundedMs(stats.maxMs),
+      lastMs: stats.lastMs == null ? null : roundedMs(stats.lastMs),
+    };
+  }
+  return {
+    definition: 'Retained application frames measure the complete renderLoop callback. Named boot/build wall events, synchronous config, and screenshot readback events remain separate so they cannot be mislabeled as a render-frame hitch.',
+    retainedFrameCount: frames.length,
+    applicationMaxFrame: maxFrame,
+    lastApplicationFrame: frames.at(-1) || null,
+    applicationHitchesOver16_67Ms: frames
+      .filter((frame) => frame.totalMs > 16.67)
+      .sort((a, b) => b.totalMs - a.totalMs)
+      .slice(0, 8),
+    namedEvents,
+    recentNamedEvents: applicationHitchTelemetry.namedEvents.slice(-12),
+  };
+}
+
+async function warmBuildRenderer() {
+  const warmupStartedAt = performance.now();
+  const compileStartedAt = warmupStartedAt;
+  let prePresentStartedAt = null;
+  let warmupError = null;
+  try {
+    await renderer.compileAsync(scene, camera);
+    prePresentStartedAt = performance.now();
+    if (composer) composer.render();
+    else renderer.render(scene, camera);
+  } catch (error) {
+    warmupError = error;
+    throw error;
+  } finally {
+    const warmupEndedAt = performance.now();
+    recordNamedHitchEvent('build.renderer-warmup', warmupStartedAt, {
+      compileAsyncMs: roundedMs((prePresentStartedAt || warmupEndedAt) - compileStartedAt),
+      prePresentMs: prePresentStartedAt == null ? null : roundedMs(warmupEndedAt - prePresentStartedAt),
+      renderer: composer ? 'composer' : 'renderer',
+      error: warmupError ? String(warmupError.message || warmupError) : null,
+    });
+  }
+}
+
 function renderLoop() {
-  if (!renderer || !scene || !camera) {
+  if (buildRenderGate || !renderer || !scene || !camera) {
     requestAnimationFrame(renderLoop);
     return;
   }
@@ -12415,6 +12602,7 @@ function renderLoop() {
   if (frameMsSamples.length > 60) frameMsSamples.shift();
   avgFrameMs = frameMsSamples.reduce((sum, value) => sum + value, 0) / frameMsSamples.length;
   const time = performance.now() / 1000;
+  const simulationStartedAt = performance.now();
   updateSignals(time);
   updateTraffic(dt, time);
   updatePedestrians(dt);
@@ -12454,6 +12642,7 @@ function renderLoop() {
     }
     controls.update();
   }
+  const streamingStartedAt = performance.now();
   updateCityReadout();
   updateMission();
   updateSandboxAudio();
@@ -12466,6 +12655,7 @@ function renderLoop() {
       ? { x: playerState.x, z: playerState.z }
       : { x: camera.position.x, z: camera.position.z };
   updateRoadStreaming(streamFocus);
+  const sceneUpdatesStartedAt = performance.now();
   updateHeroTrafficVisuals();
   updateHeroLifeLighting(dt);
   updateRain(dt);
@@ -12474,11 +12664,20 @@ function renderLoop() {
   heroStreetscape?.update(dt);
   heroLandmark?.update(dt);
   updateHeroPerformance(now);
+  const renderStartedAt = performance.now();
   if (composer) composer.render();
   else renderer.render(scene, camera);
-  applicationFrameMsSamples.push(performance.now() - now);
-  if (applicationFrameMsSamples.length > 600) applicationFrameMsSamples.shift();
+  const readoutStartedAt = performance.now();
   updateReadout3d();
+  const frame = recordApplicationHitchFrame(now, {
+    simulation: streamingStartedAt - simulationStartedAt,
+    streaming: sceneUpdatesStartedAt - streamingStartedAt,
+    sceneUpdates: renderStartedAt - sceneUpdatesStartedAt,
+    render: readoutStartedAt - renderStartedAt,
+    readout: performance.now() - readoutStartedAt,
+  });
+  applicationFrameMsSamples.push(frame.totalMs);
+  if (applicationFrameMsSamples.length > 600) applicationFrameMsSamples.shift();
   requestAnimationFrame(renderLoop);
 }
 
@@ -12673,6 +12872,8 @@ function showInspector(type, data) {
 }
 
 async function buildCity() {
+  const buildStartedAt = performance.now();
+  buildRenderGate = true;
   const buildButton = document.querySelector('[data-action="build"]');
   buildButton.disabled = true;
   buildOverlay.hidden = false;
@@ -12747,6 +12948,11 @@ async function buildCity() {
     disposeHeroLandmark();
     disposeHeroTileHandoff();
     disposeHeroPerformanceMode();
+    if (heroWaterfrontPierDeck) {
+      cityRoot?.remove(heroWaterfrontPierDeck);
+      disposeFerryCard04PierDeck(heroWaterfrontPierDeck);
+      heroWaterfrontPierDeck = null;
+    }
     if (cityRoot) {
       disposeHeroAtmosphere();
       disposeHeroStreetscape();
@@ -12791,6 +12997,10 @@ async function buildCity() {
       })
       : null;
     if (heroWaterfrontEdge) cityRoot.add(heroWaterfrontEdge);
+    heroWaterfrontPierDeck = !fullCityMode && isFerryBuildingHeroTile()
+      ? createFerryCard04PierDeck({ elevationAt })
+      : null;
+    if (heroWaterfrontPierDeck) cityRoot.add(heroWaterfrontPierDeck);
     const shorelineSupport = createShorelineSupport(terrainPoints);
     if (shorelineSupport) cityRoot.add(shorelineSupport);
 
@@ -13005,10 +13215,14 @@ async function buildCity() {
       ssaoPassRef.enabled = true;
     }
 
+    setBuildProgress('WARMUP', 'Preparing renderer before the first visible frame…', 0.98);
+    await warmBuildRenderer();
     setBuildProgress('DONE', fullCityMode
       ? `SF ready · ${formatNumber(detailRoadStreamStats.streets || 0)} streets · ${formatNumber(nearFieldStats.facades)} near facades · shells beyond · interiors behind doors`
       : `City ready · ${formatNumber(usedRoads.length)} streets · ${formatNumber(buildings.detailed.length + buildings.coarse.length)} buildings`, 1);
     await new Promise((resolve) => setTimeout(resolve, 650));
+    lastFrameTime = performance.now();
+    buildRenderGate = false;
     buildOverlay.hidden = true;
     document.body.classList.add('is-city');
     document.querySelector('[data-action="back"]').hidden = false;
@@ -13025,9 +13239,16 @@ async function buildCity() {
     console.error(error);
     setBuildProgress('ERROR', error.message || String(error), 1);
     await new Promise((resolve) => setTimeout(resolve, 1800));
+    lastFrameTime = performance.now();
+    buildRenderGate = false;
     buildOverlay.hidden = true;
     buildButton.disabled = false;
   }
+  recordNamedHitchEvent('build.city', buildStartedAt, {
+    fullCity: fullCityMode,
+    isCity: document.body.classList.contains('is-city'),
+    selectedRoads: selectedRoadsForHit.length,
+  });
 }
 
 function disposeRoot(root) {
@@ -13131,6 +13352,8 @@ function start() {
       heroTileHandoff: getHeroTileHandoffDiagnostics(),
       heroShoreline: getHeroShorelineDiagnostics(),
       heroWaterfront: getHeroWaterfrontDiagnostics(),
+      heroWaterfrontStructures: getHeroWaterfrontStructureDiagnostics(),
+      hitchAttribution: getApplicationHitchAttribution(),
     }),
     getCoverage: () => ({
       cityWideReady,
@@ -13601,8 +13824,10 @@ function start() {
     } : null,
     getFrameDiagnostics: () => {
       if (!renderer || !scene || !camera) return null;
+      const screenshotStartedAt = performance.now();
       if (composer) composer.render();
       else renderer.render(scene, camera);
+      const readbackStartedAt = performance.now();
       const gl = sceneCanvas.getContext('webgl2');
       if (!gl) return null;
       const width = gl.drawingBufferWidth;
@@ -13620,11 +13845,18 @@ function start() {
         maxLuma = Math.max(maxLuma, luma);
         if (luma > 80) bright += 1;
       }
-      return {
+      const result = {
         meanLuma: Number((sum / Math.max(1, count)).toFixed(1)),
         brightRatio: Number((bright / Math.max(1, count)).toFixed(4)),
         maxLuma: Number(maxLuma.toFixed(1)),
       };
+      recordNamedHitchEvent('screenshot.readback', screenshotStartedAt, {
+        renderMs: roundedMs(readbackStartedAt - screenshotStartedAt),
+        readbackAndAnalysisMs: roundedMs(performance.now() - readbackStartedAt),
+        width,
+        height,
+      });
+      return result;
     },
     getPlayerPosition: () => playerState ? { x: playerState.x, z: playerState.z } : null,
     getElevationAt: (x, z) => elevationAt(x, z),
@@ -13709,6 +13941,9 @@ function start() {
     },
     showInspector,
   };
+  recordNamedHitchEvent('boot.runtime-ready', realmapBootStartedAt, {
+    heroLaunch: Boolean(heroLaunch),
+  });
   renderLoop();
 }
 

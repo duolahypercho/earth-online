@@ -59,6 +59,7 @@ async function capture(page, id) {
       heroLifeLighting: perf.heroLifeLighting,
       heroTrafficVisuals: perf.heroTrafficVisuals,
       heroWaterfront: perf.heroWaterfront,
+      heroWaterfrontStructures: perf.heroWaterfrontStructures,
       heroCamera: perf.heroCamera,
     };
   });
