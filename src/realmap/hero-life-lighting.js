@@ -21,6 +21,28 @@ const PEDESTRIAN_PALETTE = Object.freeze([
 ]);
 const SKIN_PALETTE = Object.freeze([0xd5aa86, 0xb77d5b, 0xe0ba94, 0x80502f, 0xc4926c]);
 const VEHICLE_PALETTE = Object.freeze([0xc44737, 0x2f6fae, 0xd6ad35, 0xdedfe0, 0x4a856c]);
+// An adapter-owned, cyclic set keeps close actors individually readable even
+// when the underlying avatar implementation does not expose variant metadata.
+// Palette index remains the existing shared-material wardrobe selector; the
+// small rig scales and gait offsets add no geometry, materials, or draw calls.
+const CIVILIAN_PRESENTATION_PROFILES = Object.freeze([
+  Object.freeze({
+    silhouette: 'lean', gaitStyle: 'light', phase: 0.42, cadence: 1.06,
+    armSwing: 0.9, posture: -0.006, scale: Object.freeze([0.95, 1.03, 0.96]),
+  }),
+  Object.freeze({
+    silhouette: 'layered', gaitStyle: 'steady', phase: 2.16, cadence: 0.98,
+    armSwing: 1, posture: 0, scale: Object.freeze([1.045, 0.985, 1.055]),
+  }),
+  Object.freeze({
+    silhouette: 'brisk', gaitStyle: 'brisk', phase: 3.88, cadence: 1.12,
+    armSwing: 1.1, posture: 0.012, scale: Object.freeze([0.985, 1.025, 0.94]),
+  }),
+  Object.freeze({
+    silhouette: 'tailored', gaitStyle: 'steady', phase: 5.31, cadence: 1.01,
+    armSwing: 0.96, posture: -0.003, scale: Object.freeze([1.015, 1.005, 1.02]),
+  }),
+]);
 const PRACTICAL_COLORS = Object.freeze({ storefront: 0xffb46f, street: 0xffc786, vehicle: 0xffd99a });
 const PRACTICAL_HALO_DROP = 2.05;
 const PRACTICAL_GLOW_VARIATION = Object.freeze([0.76, 0.94, 0.68, 0.86, 0.62, 0.8]);
@@ -230,6 +252,15 @@ export function createHeroLifeLighting(options = {}) {
     root.visible = false;
     root.userData.heroLifeDetailedActor = true;
     root.userData.heroLifeSource = null;
+    const profile = CIVILIAN_PRESENTATION_PROFILES[index % CIVILIAN_PRESENTATION_PROFILES.length];
+    // Set before the first animator call so the newly created layer preserves
+    // this deterministic civilian phase instead of starting every adult at 0.
+    root.userData.phase = profile.phase;
+    root.userData.heroLifePresentation = Object.freeze({
+      silhouette: profile.silhouette,
+      gaitStyle: profile.gaitStyle,
+      paletteIndex: index,
+    });
     // Labels and reaction UI turn a close civilian pass into HUD clutter.
     root.traverse((object) => {
       if (object.isSprite) object.visible = false;
@@ -249,8 +280,11 @@ export function createHeroLifeLighting(options = {}) {
       root,
       source: null,
       paletteIndex: index,
+      presentationProfile: profile,
       previousPosition: new THREE.Vector3(),
       hasPreviousPosition: false,
+      previousForward: new THREE.Vector3(),
+      hasPreviousForward: false,
     };
   });
   const stats = {
@@ -282,6 +316,7 @@ export function createHeroLifeLighting(options = {}) {
   const detailWorldQuaternion = new THREE.Quaternion();
   const detailLocalQuaternion = new THREE.Quaternion();
   const detailInverseGroupQuaternion = new THREE.Quaternion();
+  const detailCurrentForward = new THREE.Vector3();
   const limbSwing = new THREE.Quaternion();
   const counterSwing = new THREE.Quaternion();
   const torsoSway = new THREE.Quaternion();
@@ -422,6 +457,7 @@ export function createHeroLifeLighting(options = {}) {
     actor.root.userData.heroLifeSource = null;
     actor.source = null;
     actor.hasPreviousPosition = false;
+    actor.hasPreviousForward = false;
   }
 
   function chooseDetailedActors(cameraPosition, heroPosition) {
@@ -462,6 +498,7 @@ export function createHeroLifeLighting(options = {}) {
       actor.root.userData.heroLifeSource = actor.source.uuid;
       actor.root.visible = true;
       actor.hasPreviousPosition = false;
+      actor.hasPreviousForward = false;
       stats.swaps += 1;
       detailSourceSet.add(actor.source);
     }
@@ -487,20 +524,46 @@ export function createHeroLifeLighting(options = {}) {
         : 0;
       const moving = actor.hasPreviousPosition && distance > Math.max(0.008, deltaSeconds * 0.09);
       const speedRatio = THREE.MathUtils.clamp(deltaSeconds > 0 ? distance / deltaSeconds / 1.2 : 0, 0, 1);
+      detailCurrentForward.set(0, 0, 1).applyQuaternion(detailWorldQuaternion).setY(0);
+      if (detailCurrentForward.lengthSq() > 0.0001) detailCurrentForward.normalize();
+      const turnLean = actor.hasPreviousForward && deltaSeconds > 0
+        ? THREE.MathUtils.clamp(
+          (actor.previousForward.x * detailCurrentForward.z - actor.previousForward.z * detailCurrentForward.x)
+            / deltaSeconds * 0.055,
+          -0.14,
+          0.14,
+        )
+        : 0;
       animatePlayerAvatar(actor.root, {
         moving,
         speedRatio: moving ? Math.max(0.48, speedRatio) : 0,
         elapsed: elapsedSeconds + actor.paletteIndex * 0.37,
-        delta: deltaSeconds,
+        delta: deltaSeconds * actor.presentationProfile.cadence,
+        turnLean,
       });
+      // Keep the existing palette-index wardrobe selector while these bounded
+      // rig/pose cues make the actor read as an individual at Ferry card
+      // distance; none of them feed back into source transforms.
+      const rig = actor.root.userData.rig;
+      const body = actor.root.userData.body;
+      if (rig) rig.scale.set(...actor.presentationProfile.scale);
+      if (body) body.rotation.x += actor.presentationProfile.posture;
+      if (actor.root.userData.leftArm) actor.root.userData.leftArm.rotation.x *= actor.presentationProfile.armSwing;
+      if (actor.root.userData.rightArm) actor.root.userData.rightArm.rotation.x *= actor.presentationProfile.armSwing;
       actor.previousPosition.copy(detailWorldPosition);
       actor.hasPreviousPosition = true;
+      actor.previousForward.copy(detailCurrentForward);
+      actor.hasPreviousForward = true;
       stats.detailedActors += 1;
       stats.pedestriansActive += 1;
       stats.detailAssignments.push({
         actor: actor.root.name,
         sourceUuid: actor.source.uuid,
         sourceIdentity: actor.source.userData.ambientCohortId || null,
+        silhouette: actor.presentationProfile.silhouette,
+        gaitStyle: actor.presentationProfile.gaitStyle,
+        paletteIndex: actor.paletteIndex,
+        rigScale: actor.presentationProfile.scale,
         position: [
           Number(detailWorldPosition.x.toFixed(3)),
           Number(detailWorldPosition.y.toFixed(3)),

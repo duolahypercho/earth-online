@@ -277,9 +277,10 @@ function createMaterials(sandstonePbr) {
     // A weathered, low-sheen roof catches broad daylight without reading as
     // chrome. The small metal component is for its seams, not a mirror gloss.
     roof: new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.78, metalness: 0.14 }),
-    // Separate upper glazing and warmer ground-floor storefronts prevent the
-    // facade from collapsing into one repeated black rectangle grid.
-    glass: new THREE.MeshPhysicalMaterial({ color: 0xe1efeb, roughness: 0.34, metalness: 0.06, clearcoat: 0.12, transparent: false }),
+    // Keep the source-footprint openings visibly recessed under the existing
+    // sun and plaza lights.  The prior near-white, glossy upper glazing read
+    // as painted panels at card distance, flattening the historic facade.
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x9bb8b4, roughness: 0.48, metalness: 0.0, clearcoat: 0.02, transparent: false }),
     // Per-bay instance colour carries the storefront variation. Keep this
     // neutral base bright so that variation is not multiplied into black.
     storefrontGlass: new THREE.MeshPhysicalMaterial({ color: 0xf2f5e9, roughness: 0.42, metalness: 0.03, clearcoat: 0.08, transparent: false, side: THREE.DoubleSide }),
