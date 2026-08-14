@@ -82,6 +82,16 @@ sun.shadow.camera.far = 1400;
 scene.add(sun);
 scene.add(sun.target);
 
+// Ferry's waterfront camera looks into the shadow-facing side of the simple
+// source extrusions. A bounded, non-shadow-casting daylight fill preserves the
+// real silhouette while giving those vertical faces a stable readable lift.
+// Its azimuth follows the camera around the local focus, so orbiting does not
+// make the source buildings disappear into a black key-shadow.
+const viewFill = new THREE.DirectionalLight(0xb9d7e4, 0.72);
+viewFill.castShadow = false;
+scene.add(viewFill);
+scene.add(viewFill.target);
+
 const perimeter = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(FALLBACK_TILE.size, 0.05, FALLBACK_TILE.size)),
   new THREE.LineBasicMaterial({ color: 0xd7ff48, transparent: true, opacity: 0.34 }),
@@ -98,6 +108,10 @@ const viewFogDensity = { ferry: 0.00145, district: 0.00055, plan: 0.00018 };
 let activeView = 'ferry';
 let viewTransitionSequence = 0;
 const SUN_LOCAL_OFFSET = new THREE.Vector3(-280, 430, -210);
+const VIEW_FILL_DISTANCE_METRES = 360;
+const VIEW_FILL_HEIGHT_METRES = 220;
+const VIEW_FILL_INTENSITY = Object.freeze({ ferry: 0.72, district: 0.46, plan: 0.28 });
+const viewFillHorizontal = new THREE.Vector3();
 const LOCAL_SHADOW_REFIT_METRES = 72;
 const PLAN_LOADING_RENDER_INTERVAL_MS = 250;
 const localShadowTarget = new THREE.Vector3(Infinity, Infinity, Infinity);
@@ -113,6 +127,8 @@ const PRESENTATION_POLICY = Object.freeze({
   paletteWorldCellMetres: 62,
   roadColor: '#53615e',
   shadows: 'local Ferry/District directional shadow frustum only; Plan retains readable unshadowed overview',
+  lightingFill: 'camera-facing neutral daylight fill; non-shadow-casting and presentation-only',
+  lightingFillIntensities: VIEW_FILL_INTENSITY,
   planLoadingRenderIntervalMs: PLAN_LOADING_RENDER_INTERVAL_MS,
 });
 const DISTRICT_FIT_TARGET_RESIDENTS = 4;
@@ -149,10 +165,24 @@ function buildingPaletteGlsl() {
   }).join('');
 }
 
+function refitViewFill() {
+  viewFillHorizontal.copy(camera.position).sub(controls.target);
+  viewFillHorizontal.y = 0;
+  if (viewFillHorizontal.lengthSq() < 1e-6) viewFillHorizontal.set(1, 0, 0);
+  else viewFillHorizontal.normalize();
+  viewFill.position.copy(controls.target)
+    .addScaledVector(viewFillHorizontal, VIEW_FILL_DISTANCE_METRES);
+  viewFill.position.y = controls.target.y + VIEW_FILL_HEIGHT_METRES;
+  viewFill.target.position.copy(controls.target);
+  viewFill.target.updateMatrixWorld();
+  viewFill.intensity = VIEW_FILL_INTENSITY[activeView] ?? VIEW_FILL_INTENSITY.ferry;
+}
+
 function refitLocalSunShadow(force = false) {
   // A city-sized Plan view cannot truthfully fit a useful single shadow map.
   // Ferry and District instead receive a stable local frustum centred on the
   // stream focus. This only changes illumination, never the metric tile data.
+  refitViewFill();
   if (activeView === 'plan') {
     sun.castShadow = false;
     return;
@@ -782,6 +812,12 @@ async function initialiseStream() {
           ...PRESENTATION_POLICY,
           activeViewShadowed: activeView !== 'plan',
           localShadowTarget: localShadowTarget.toArray(),
+          viewFill: {
+            intensity: viewFill.intensity,
+            position: viewFill.position.toArray(),
+            target: viewFill.target.position.toArray(),
+            castShadow: viewFill.castShadow,
+          },
           materialPrograms: {
             buildings: 'sf-map-building-palette-v1',
             roads: 'single muted asphalt material',
