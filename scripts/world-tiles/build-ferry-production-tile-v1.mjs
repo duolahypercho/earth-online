@@ -689,14 +689,75 @@ function canonicalLatticeSurfaceHeight(sample, [x, z]) {
     : southWest * (1 - fractionZ) + northEast * fractionX + northWest * (fractionZ - fractionX);
 }
 
-function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, surfaceHeightOwnership = 'direct-native-pixel') {
+function signedRingAreaTicks(ring) {
+  let twiceArea = 0n;
+  for (let index = 0; index < ring.length; index += 1) {
+    const [ax, az] = ring[index]; const [bx, bz] = ring[(index + 1) % ring.length];
+    twiceArea += BigInt(ax) * BigInt(bz) - BigInt(az) * BigInt(bx);
+  }
+  return twiceArea;
+}
+
+function polygonAreaTicks(polygon) {
+  return signedRingAreaTicks(polygon.outer) - (polygon.holes ?? []).reduce((sum, ring) => sum + signedRingAreaTicks(ring), 0n);
+}
+
+function collectFractionalGridBoundaryVertices(surfaceParts) {
+  const vertical = new Map(); const horizontal = new Map();
+  const add = (map, line, value) => {
+    if (!map.has(line)) map.set(line, new Set()); map.get(line).add(value);
+  };
+  for (const { polygon } of surfaceParts) for (const ring of [polygon.outer, ...(polygon.holes ?? [])]) for (const [x, z] of ring) {
+    if (x % SURFACE_TICKS_PER_METRE === 0 && z % SURFACE_TICKS_PER_METRE !== 0) add(vertical, x, z);
+    if (z % SURFACE_TICKS_PER_METRE === 0 && x % SURFACE_TICKS_PER_METRE !== 0) add(horizontal, z, x);
+  }
+  return { vertical, horizontal };
+}
+
+function splitRingOnGridBoundaryVertices(ring, boundaryVertices) {
+  const split = [];
+  for (let index = 0; index < ring.length; index += 1) {
+    const point = ring[index]; const next = ring[(index + 1) % ring.length]; split.push(point);
+    const vertical = point[0] === next[0] && point[0] % SURFACE_TICKS_PER_METRE === 0 ? boundaryVertices.vertical.get(point[0]) : null;
+    const horizontal = point[1] === next[1] && point[1] % SURFACE_TICKS_PER_METRE === 0 ? boundaryVertices.horizontal.get(point[1]) : null;
+    const candidates = vertical ?? horizontal;
+    if (!candidates) continue;
+    const axis = vertical ? 1 : 0; const direction = Math.sign(next[axis] - point[axis]);
+    for (const value of [...candidates].filter((value) => (value - point[axis]) * direction > 0 && (value - next[axis]) * direction < 0).sort((a, b) => direction * (a - b))) {
+      split.push(axis === 1 ? [point[0], value] : [value, point[1]]);
+    }
+  }
+  return split;
+}
+
+/**
+ * Proof-only topology construction: fractional coastline vertices that occur
+ * on a one-metre cell edge are inserted into every matching cell edge before
+ * triangulation. Existing Clipper/OSM coordinates are retained byte-for-byte;
+ * all new coordinates lie on an already-authored axis-aligned cell edge.
+ */
+function conformSurfacePartsToGridBoundaries(surfaceParts) {
+  const boundaryVertices = collectFractionalGridBoundaryVertices(surfaceParts); let insertedVertices = 0;
+  const parts = surfaceParts.map((part) => {
+    const originalArea = polygonAreaTicks(part.polygon);
+    const outer = splitRingOnGridBoundaryVertices(part.polygon.outer, boundaryVertices);
+    const holes = (part.polygon.holes ?? []).map((ring) => splitRingOnGridBoundaryVertices(ring, boundaryVertices));
+    insertedVertices += outer.length - part.polygon.outer.length + holes.reduce((sum, ring, index) => sum + ring.length - part.polygon.holes[index].length, 0);
+    const polygon = { outer, ...(holes.length ? { holes } : {}) };
+    assert.equal(polygonAreaTicks(polygon), originalArea, `${part.label} conforming stitch changed exact plan area`);
+    return { ...part, polygon };
+  });
+  return { parts, insertedVertices, gridBoundaryVertices: [...boundaryVertices.vertical.values(), ...boundaryVertices.horizontal.values()].reduce((sum, points) => sum + points.size, 0) };
+}
+
+function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons') {
   const terrain = category(); const water = category(); const coastline = category(); const roads = category(); const buildings = category();
   const surfaceHeight = surfaceHeightOwnership === 'canonical-1m-lattice-height-v1' ? (point) => canonicalLatticeSurfaceHeight(sample, point) : null;
   const directedCoastline = assembleDirectedCoastline(features);
   const classified = directedCoastline ? waterSurfaceFromDirectedCoastline(directedCoastline) : null;
   const waterSurface = classified ? { outers: classified.waterFaces.map(({ outer }) => outer) } : null;
   const coastSegments = directedCoastline ? directedCoastline.fragments.flatMap((points) => points.slice(0, -1).map((point, index) => [toTicks(point), toTicks(points[index + 1])])) : [];
-  const terrainCache = new Map(); const waterCache = new Map();
+  const terrainCache = new Map(); const waterCache = new Map(); const surfaceParts = [];
   const side = TILE.size / terrainGridStepMetres + 1;
   for (let z = 0; z < side - 1; z += 1) for (let x = 0; x < side - 1; x += 1) {
     const minX = x * terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const minZ = z * terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const maxX = minX + terrainGridStepMetres * SURFACE_TICKS_PER_METRE; const maxZ = minZ + terrainGridStepMetres * SURFACE_TICKS_PER_METRE;
@@ -704,14 +765,16 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, su
     const touchesCoast = coastSegments.some(([a, b]) => Math.max(a[0], b[0]) >= minX && Math.min(a[0], b[0]) <= maxX && Math.max(a[1], b[1]) >= minZ && Math.min(a[1], b[1]) <= maxZ);
     if (!waterSurface || !touchesCoast) {
       const target = classified?.waterFaces.some(({ outer }) => pointInRing([(minX + maxX) / 2, (minZ + maxZ) / 2], outer)) ? water : terrain;
-      emitSurfacePolygon(target, { outer: cell.outers[0] }, sample, target === water ? waterCache : terrainCache, `${TILE.id} ${target === water ? 'water' : 'land'} cell ${x},${z}`, 0, surfaceHeight);
+      surfaceParts.push({ target, polygon: { outer: cell.outers[0] }, label: `${TILE.id} ${target === water ? 'water' : 'land'} cell ${x},${z}` });
       continue;
     }
     const waterParts = booleanIntersection(cell, waterSurface, `${TILE.id} water cell ${x},${z}`);
     const landParts = booleanDifference(cell, [waterSurface], `${TILE.id} land cell ${x},${z}`);
-    for (const [index, polygon] of landParts.entries()) emitSurfacePolygon(terrain, polygon, sample, terrainCache, `${TILE.id} land boundary cell ${x},${z}/${index}`, 0, surfaceHeight);
-    for (const [index, polygon] of waterParts.entries()) emitSurfacePolygon(water, polygon, sample, waterCache, `${TILE.id} water boundary cell ${x},${z}/${index}`, 0, surfaceHeight);
+    for (const [index, polygon] of landParts.entries()) surfaceParts.push({ target: terrain, polygon, label: `${TILE.id} land boundary cell ${x},${z}/${index}` });
+    for (const [index, polygon] of waterParts.entries()) surfaceParts.push({ target: water, polygon, label: `${TILE.id} water boundary cell ${x},${z}/${index}` });
   }
+  const conforming = surfaceTopology === 'conforming-grid-boundary-stitch-v1' ? conformSurfacePartsToGridBoundaries(surfaceParts) : { parts: surfaceParts, insertedVertices: 0, gridBoundaryVertices: 0 };
+  for (const { target, polygon, label } of conforming.parts) emitSurfacePolygon(target, polygon, sample, target === water ? waterCache : terrainCache, label, 0, surfaceHeight);
   if (directedCoastline) {
     for (const way of directedCoastline.ways) { water.sourceIds.add(way.id); coastline.sourceIds.add(way.id); }
     for (const points of directedCoastline.fragments) emitCoastEdge(coastline, { points }, sample);
@@ -741,7 +804,11 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, su
     buildings.sourceIds.add(way.id);
   }
   if (TILE.id === FERRY_TILE.id) assert(buildings.sourceIds.has(558731934), 'Ferry Building OSM way 558731934 was not baked');
-  return { terrain, water, coastline, roads, buildings };
+  const result = { terrain, water, coastline, roads, buildings };
+  // Keep proof accounting available to the isolated builder without changing
+  // the enumerable category contract used by GLB serialization and receipts.
+  Object.defineProperty(result, 'surfaceTopologyProof', { value: Object.freeze({ mode: surfaceTopology, insertedVertices: conforming.insertedVertices, gridBoundaryVertices: conforming.gridBoundaryVertices }), enumerable: false });
+  return result;
 }
 
 function geometryBounds(categories) {
@@ -839,23 +906,25 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel' } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons' } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   try {
     assert(Number.isInteger(terrainGridStepMetres) && terrainGridStepMetres >= 1 && TILE.size % terrainGridStepMetres === 0, 'terrainGridStepMetres must be a positive integer divisor of 384');
     assert(Number.isInteger(lodLevel) && lodLevel >= 0, 'lodLevel must be a non-negative integer');
     assert(['direct-native-pixel', 'canonical-1m-lattice-height-v1'].includes(surfaceHeightOwnership), 'Unknown surfaceHeightOwnership mode');
+    assert(['independent-cell-polygons', 'conforming-grid-boundary-stitch-v1'].includes(surfaceTopology), 'Unknown surfaceTopology mode');
     const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0 && surfaceHeightOwnership === 'direct-native-pixel';
-    assert(isCanonicalLod0 || !write, 'Non-default terrain steps, LOD levels, or surface ownership modes are in-memory proof builds only and may not write production-shaped artifacts');
+    assert((isCanonicalLod0 && surfaceTopology === 'independent-cell-polygons') || !write, 'Non-default terrain steps, LOD levels, surface ownership modes, or topology modes are in-memory proof builds only and may not write production-shaped artifacts');
     assert(surfaceHeightOwnership === 'direct-native-pixel' || (terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0), 'Canonical lattice height ownership is limited to the 1 m LOD0 proof');
+    assert(surfaceTopology === 'independent-cell-polygons' || surfaceHeightOwnership === 'canonical-1m-lattice-height-v1', 'Conforming topology proof requires canonical 1 m lattice height ownership');
     outputDir ??= defaultOutputDir(TILE);
     const stem = artifactStem(TILE);
     const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors(verifiedTerrainSourceDigests)]);
     const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
     assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors);
-    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology); const geometries = [baseGeometry]; const categories = baseGeometry;
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
     const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, maxVerticalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));

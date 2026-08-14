@@ -1,0 +1,323 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-surface-conforming-stitch-proof",
+  "status": "proof-rejected-phase-a-fixed-diagonal-crossings",
+  "scope": {
+    "committedTileCount": 8,
+    "tileIds": [
+      "epsg26910-1439-10892",
+      "epsg26910-1440-10892",
+      "epsg26910-1441-10892",
+      "epsg26910-1439-10893",
+      "epsg26910-1440-10893",
+      "epsg26910-1441-10893",
+      "epsg26910-1439-10894",
+      "epsg26910-1440-10894"
+    ],
+    "writeDisabled": true,
+    "productionArtifactsMutated": false,
+    "runtimeAssetsMutated": false
+  },
+  "method": {
+    "xy": "Existing OSM/Clipper coastline coordinates are not moved. Fractional vertices discovered on one-metre cell boundaries are inserted on every matching adjacent terrain/water cell edge before triangulation.",
+    "heights": "canonical 1 m lattice triangle interpolation, evaluated before float32 serialization",
+    "topology": "exact same-position C0 plus projected T-junction and positive terrain/water overlap checks",
+    "phaseAGate": "Every emitted triangle must remain on one side of its owning fixed SW-to-NE one-metre source diagonal. A crossing is rejected because per-vertex canonical lattice heights alone do not prove planar source-surface fidelity."
+  },
+  "tolerances": {
+    "postFloat32C0Metres": 0.00001,
+    "tJunctionIncidences": 0,
+    "positiveTerrainWaterOverlapAreaSquareMetres": 0
+  },
+  "validation": {
+    "sourceC0FailsKnown": true,
+    "candidatePasses": true,
+    "phaseADiagonalConforming": false,
+    "defaultFerryAnd1440_10894HashesUnchanged": true,
+    "deterministicTwoBuilds": true,
+    "totalInsertedVertices": 2,
+    "zeroHorizontalAreaDrift": true
+  },
+  "tiles": [
+    {
+      "id": "epsg26910-1439-10892",
+      "gridIndex": [
+        1439,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10892/epsg26910-1439-10892.lod0.glb",
+        "sha256": "sha256:9a55816cfbc85646421cd5618a0773b2d5ed7adf63179e8748942d58a6f82389"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1439-10892.conforming.lod0.glb",
+        "sha256": "sha256:9a55816cfbc85646421cd5618a0773b2d5ed7adf63179e8748942d58a6f82389",
+        "bytes": 3637548
+      },
+      "deterministicRepeatSha256": "sha256:9a55816cfbc85646421cd5618a0773b2d5ed7adf63179e8748942d58a6f82389",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 0
+    },
+    {
+      "id": "epsg26910-1440-10892",
+      "gridIndex": [
+        1440,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10892/epsg26910-1440-10892.lod0.glb",
+        "sha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1440-10892.conforming.lod0.glb",
+        "sha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9",
+        "bytes": 3656060
+      },
+      "deterministicRepeatSha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 0
+    },
+    {
+      "id": "epsg26910-1441-10892",
+      "gridIndex": [
+        1441,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10892/epsg26910-1441-10892.lod0.glb",
+        "sha256": "sha256:7dec51080ecfe8502a44368ba803e0061ff8c452250ee979536dcc78b99a7e10"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1441-10892.conforming.lod0.glb",
+        "sha256": "sha256:76ae5d2d8e1a9c57ad98e377bb63eb82878caebe74d448db798d8017c493271b",
+        "bytes": 3644648
+      },
+      "deterministicRepeatSha256": "sha256:76ae5d2d8e1a9c57ad98e377bb63eb82878caebe74d448db798d8017c493271b",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 120,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 120,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 49
+    },
+    {
+      "id": "epsg26910-1439-10893",
+      "gridIndex": [
+        1439,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10893/epsg26910-1439-10893.lod0.glb",
+        "sha256": "sha256:29fba7db18a23116900bc9acd6a539e13ad86be73692c604a1cd421e614d4016"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1439-10893.conforming.lod0.glb",
+        "sha256": "sha256:29fba7db18a23116900bc9acd6a539e13ad86be73692c604a1cd421e614d4016",
+        "bytes": 3641848
+      },
+      "deterministicRepeatSha256": "sha256:29fba7db18a23116900bc9acd6a539e13ad86be73692c604a1cd421e614d4016",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 0
+    },
+    {
+      "id": "epsg26910-1440-10893",
+      "gridIndex": [
+        1440,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.lod0.glb",
+        "sha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1440-10893.conforming.lod0.glb",
+        "sha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72",
+        "bytes": 3644404
+      },
+      "deterministicRepeatSha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 0
+    },
+    {
+      "id": "epsg26910-1441-10893",
+      "gridIndex": [
+        1441,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+        "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1441-10893.conforming.lod0.glb",
+        "sha256": "sha256:b565027c75c913d3ba542de889fa76ad3db7a164abf5d04efc5ee910a3c28d68",
+        "bytes": 3643944
+      },
+      "deterministicRepeatSha256": "sha256:b565027c75c913d3ba542de889fa76ad3db7a164abf5d04efc5ee910a3c28d68",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 1799,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 1799,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 736
+    },
+    {
+      "id": "epsg26910-1439-10894",
+      "gridIndex": [
+        1439,
+        10894
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10894/epsg26910-1439-10894.lod0.glb",
+        "sha256": "sha256:d261d106fcd481fab8890eafc324cbe6065489f652a9227f39917ee611577e2e"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1439-10894.conforming.lod0.glb",
+        "sha256": "sha256:d261d106fcd481fab8890eafc324cbe6065489f652a9227f39917ee611577e2e",
+        "bytes": 3647936
+      },
+      "deterministicRepeatSha256": "sha256:d261d106fcd481fab8890eafc324cbe6065489f652a9227f39917ee611577e2e",
+      "baselineC0": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 0,
+        "passed": true
+      },
+      "insertedVertices": 0,
+      "insertedGridBoundaryVertices": 0
+    },
+    {
+      "id": "epsg26910-1440-10894",
+      "gridIndex": [
+        1440,
+        10894
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10894/epsg26910-1440-10894.lod0.glb",
+        "sha256": "sha256:0e516460e07da7d567d50046150388ad3a49b1c86739c14d7268acd0e33ee96a"
+      },
+      "candidateLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-conforming-stitch-proof-v1/epsg26910-1440-10894.conforming.lod0.glb",
+        "sha256": "sha256:7fdc6be8d1ef692b2f547ecd52a0d3b98c0b035e36ff058b164c5960e32961ca",
+        "bytes": 3690936
+      },
+      "deterministicRepeatSha256": "sha256:7fdc6be8d1ef692b2f547ecd52a0d3b98c0b035e36ff058b164c5960e32961ca",
+      "baselineC0": {
+        "worstC0Metres": 0.32454186753966496,
+        "c0Findings": 1,
+        "tJunctionIncidences": 2,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 1444,
+        "passed": false
+      },
+      "conformingCandidate": {
+        "worstC0Metres": 0,
+        "c0Findings": 0,
+        "tJunctionIncidences": 0,
+        "positiveTerrainWaterOverlaps": 0,
+        "fixedDiagonalCrossingTriangles": 1444,
+        "passed": true
+      },
+      "insertedVertices": 2,
+      "insertedGridBoundaryVertices": 1312
+    }
+  ]
+}
