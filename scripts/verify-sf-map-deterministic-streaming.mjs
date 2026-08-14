@@ -67,6 +67,13 @@ assert(source.includes('explicitViewResidency:'), 'Streaming diagnostics must ex
 assert(source.includes("version: 'sf-map-render-depth-v1'"), 'Presentation diagnostics must expose the renderer-only depth policy.');
 assert(source.includes('function applyBuildingPresentation(material)'), 'Building depth must be a runtime material policy, not a source-geometry rewrite.');
 assert(source.includes('vSfMapWorldPosition'), 'Building palette selection must use seam-stable world coordinates.');
+assert(source.includes('vec4 sfMapWorldPosition = vec4( transformed, 1.0 );'), 'The palette must define its world position even when Three omits worldPosition.');
+assert(source.includes('sfMapWorldPosition = batchingMatrix * sfMapWorldPosition;'), 'The palette world position must retain batched mesh placement.');
+assert(source.includes('sfMapWorldPosition = instanceMatrix * sfMapWorldPosition;'), 'The palette world position must retain instanced mesh placement.');
+assert(source.includes('sfMapWorldPosition = modelMatrix * sfMapWorldPosition;'), 'The palette world position must retain the source mesh model transform.');
+assert(source.includes('vSfMapWorldPosition = sfMapWorldPosition.xyz;'), 'The palette varying must use the unconditional world position.');
+assert(!source.includes('vSfMapWorldPosition = worldPosition.xyz;'), 'The palette must not depend on Three conditionally declaring worldPosition.');
+assert(source.includes('floor(vSfMapWorldPosition.xz / ${PRESENTATION_POLICY.paletteWorldCellMetres.toFixed(1)})'), 'The four-tone palette must remain world-coordinate seam-stable at its reviewed metric cell size.');
 assert(source.includes("material.customProgramCacheKey = () => 'sf-map-building-palette-v1'"), 'Building material programs must remain bounded and deterministic.');
 assert(source.includes('sun.castShadow = false;'), 'Plan view must explicitly avoid claiming a city-wide local shadow frustum.');
 assert(source.includes('sun.target.position.copy(controls.target);'), 'Ferry and District shadows must centre on the current stream focus.');

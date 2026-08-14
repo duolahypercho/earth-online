@@ -107,6 +107,7 @@ try {
     assert(capture.metricContract?.runtimeUnitsPerMetre === 1 && capture.metricContract.sceneScale === 1 && capture.metricContract.originSubtractions === 1, `${name} changed metric placement.`);
     assert(capture.metricContract.sourceLockedDescriptors, `${name} lost a byte lock.`);
     assert(Number.isFinite(capture.presentation.performance.drawCalls) && Number.isFinite(capture.presentation.performance.triangles), `${name} lacks render-cost evidence.`);
+    assert(capture.presentation.performance.programCount > 0, `${name} did not compile a render program.`);
   }
   assert(errors.length === 0, `Browser errors: ${errors.join(' | ')}`);
 

@@ -172,7 +172,19 @@ function applyBuildingPresentation(material) {
   material.metalness = 0;
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = `varying vec3 vSfMapWorldPosition;\n${shader.vertexShader}`
-      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vSfMapWorldPosition = worldPosition.xyz;');
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+  // Three only declares worldPosition when a built-in feature needs it.
+  // The palette needs it for every building material, including unshadowed
+  // Plan frames, so retain the identical transform under its own identifier.
+  vec4 sfMapWorldPosition = vec4( transformed, 1.0 );
+  #ifdef USE_BATCHING
+    sfMapWorldPosition = batchingMatrix * sfMapWorldPosition;
+  #endif
+  #ifdef USE_INSTANCING
+    sfMapWorldPosition = instanceMatrix * sfMapWorldPosition;
+  #endif
+  sfMapWorldPosition = modelMatrix * sfMapWorldPosition;
+  vSfMapWorldPosition = sfMapWorldPosition.xyz;`);
     shader.fragmentShader = `varying vec3 vSfMapWorldPosition;\n${shader.fragmentShader}`
       .replace('#include <color_fragment>', `#include <color_fragment>
   // World-coordinate cells keep palette choice deterministic across tile
