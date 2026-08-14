@@ -10,8 +10,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildSfMetricTile, loadSfMetricSharedInputs } from './build-ferry-production-tile-v1.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const FERRY_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
@@ -451,6 +451,19 @@ function verifyPair(westOrSouth, eastOrNorth) {
   };
 }
 
+export function assertDeterministicRebuildMatchesLandedTile(tile, rebuilt) {
+  assert.equal(digest(rebuilt.glbs[0].bytes), tile.lodDigest, `${tile.identity} deterministic rebuild hash drifted`);
+  assert.equal(rebuilt.receipt.lods[0].artifactHash, tile.lodDigest, `${tile.identity} rebuilt receipt hash drifted`);
+  assert.deepEqual(rebuilt.receipt.tile.originEpsg26910VerticalMetres, tile.expected.origin, `${tile.identity} rebuilt origin drifted`);
+  assert.equal(rebuilt.receipt.status, PROVISIONAL_STATUS, `${tile.identity} rebuild must remain provisional`);
+  assert.equal(rebuilt.packageDescriptor.status, PROVISIONAL_STATUS, `${tile.identity} rebuilt package must remain provisional`);
+}
+
+export async function verifySfProductionTileSeams() {
+  // This process-local, immutable memo avoids re-hashing the same byte-locked
+  // GeoTIFFs for every deterministic rebuild. The builder still verifies the
+  // memo's exact path, byte count, and digest against each selected lock.
+  const verifiedTerrainSourceDigests = await loadSfMetricVerifiedTerrainSourceDigests();
 assert(await pathExists(MANIFEST_PATH), `Missing metric tile seam manifest: ${relative(MANIFEST_PATH)}`);
 const manifest = await readJson(MANIFEST_PATH);
 assert.equal(manifest.kind, 'sf-metric-tile-set', 'Metric tile-set manifest kind drifted');
@@ -487,13 +500,10 @@ for (const tile of tiles) {
   const rebuilt = await buildSfMetricTile({
     tile: { gridEasting: tile.expected.gridEasting, gridNorthing: tile.expected.gridNorthing },
     sharedInputs,
+    verifiedTerrainSourceDigests,
     write: false,
   });
-  assert.equal(digest(rebuilt.glbs[0].bytes), tile.lodDigest, `${tile.identity} deterministic rebuild hash drifted`);
-  assert.equal(rebuilt.receipt.lods[0].artifactHash, tile.lodDigest, `${tile.identity} rebuilt receipt hash drifted`);
-  assert.deepEqual(rebuilt.receipt.tile.originEpsg26910VerticalMetres, tile.expected.origin, `${tile.identity} rebuilt origin drifted`);
-  assert.equal(rebuilt.receipt.status, PROVISIONAL_STATUS, `${tile.identity} rebuild must remain provisional`);
-  assert.equal(rebuilt.packageDescriptor.status, PROVISIONAL_STATUS, `${tile.identity} rebuilt package must remain provisional`);
+  assertDeterministicRebuildMatchesLandedTile(tile, rebuilt);
   rebuilds.push({ id: tile.identity, artifactHash: tile.lodDigest, deterministicRebuild: true });
 }
 
@@ -515,3 +525,6 @@ process.stdout.write(`${JSON.stringify({
   tileIds: manifestIds,
   water: 'OSM-classified water is accepted only as a hydrologic partition; shared-edge heights must still match the neighboring surface exactly',
 }, null, 2)}\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await verifySfProductionTileSeams();
