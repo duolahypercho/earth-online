@@ -1,0 +1,52 @@
+{
+  "kind": "sf-building-presentation-proof-manifest",
+  "productionManifestTileCount": 773,
+  "schemaVersion": 1,
+  "status": "preview-proof-only-not-production",
+  "tiles": [
+    {
+      "artifact": {
+        "bytes": 36420,
+        "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
+        "sha256": "sha256:d880fe726a242c303b876a6766c51b3a1ee8173b1e328e611e3d3ee1946c57ef"
+      },
+      "counts": {
+        "buildings": 24,
+        "indices": 2163,
+        "primitives": 48,
+        "triangles": 721,
+        "vertices": 514
+      },
+      "ledgers": {
+        "buildingRecordsSha256": "sha256:4fda6de795ca43bdab9143cb831440c91eb4982549bb113dd2b30f2e9ec44666",
+        "indexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+        "positionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.receipt.json",
+      "role": "ferry",
+      "tile": "epsg26910-1441-10893"
+    },
+    {
+      "artifact": {
+        "bytes": 572888,
+        "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
+        "sha256": "sha256:f95009cb15a98d05701ad04c6278fb40631150b8bbfba9155ac7d3c526ac92fa"
+      },
+      "counts": {
+        "buildings": 390,
+        "indices": 35508,
+        "primitives": 780,
+        "triangles": 11836,
+        "vertices": 8412
+      },
+      "ledgers": {
+        "buildingRecordsSha256": "sha256:3895a6110db3b05fd6acc2af5cdd60094ae063d71d2858891624519ed5863fef",
+        "indexSha256": "sha256:48858f61d3e3938c204e800a3a1c4209187512ead57508e36cbadcd64cef1d38",
+        "positionFloat32Sha256": "sha256:9afa3388433275fd660c61496418df7b01473e268227a1eeca98a4b3f630939a"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.receipt.json",
+      "role": "district",
+      "tile": "epsg26910-1430-10882"
+    }
+  ]
+}

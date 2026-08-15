@@ -1054,8 +1054,9 @@ function conformSurfacePartsToGridBoundaries(surfaceParts) {
   return { parts, insertedVertices, gridBoundaryVertices: [...boundaryVertices.vertical.values(), ...boundaryVertices.horizontal.values()].reduce((sum, points) => sum + points.size, 0) };
 }
 
-function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons') {
+function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', buildingPresentationProof = false) {
   const terrain = category(); const water = category(); const coastline = category(); const roads = category(); const buildings = category();
+  if (buildingPresentationProof) Object.defineProperty(buildings, 'presentationRecords', { value: [], enumerable: false });
   const surfaceHeight = surfaceHeightOwnership === 'canonical-1m-lattice-height-v1' ? (point) => canonicalLatticeSurfaceHeight(sample, point) : null;
   const directedCoastline = assembleDirectedCoastline(features);
   const classified = directedCoastline ? waterSurfaceFromDirectedCoastline(directedCoastline) : null;
@@ -1102,9 +1103,17 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, su
   for (const way of features.filter((item) => item.tags.building && item.refs[0] === item.refs.at(-1))) {
     const ring = clipPolygon(way.en.slice(0, -1)); if (ring.length < 3) continue; const faces = ShapeUtils.triangulateShape(ring.map(([e, n]) => new Vector2(e, n)), []); if (!faces.length) continue;
     const height = buildingHeight(way.tags); const floor = ring.map(([e, n]) => sample(e, n)); const bottom = []; const top = [];
+    const presentationRecord = buildingPresentationProof ? { sourceOsmWayId: way.id, heightMetres: q(height), vertexStart: buildings.positions.length / 3, indexStart: buildings.indices.length, roofIndexCount: faces.length * 3, wallSegments: [] } : null;
     for (let i = 0; i < ring.length; i += 1) { bottom.push(vertex(buildings, ring[i][0], floor[i], ring[i][1])); top.push(vertex(buildings, ring[i][0], floor[i] + height, ring[i][1])); }
     for (const face of faces) { triangle(buildings, top[face[0]], top[face[2]], top[face[1]]); }
-    for (let i = 0; i < ring.length; i += 1) { const j = (i + 1) % ring.length; triangle(buildings, bottom[i], bottom[j], top[i]); triangle(buildings, top[i], bottom[j], top[j]); }
+    for (let i = 0; i < ring.length; i += 1) { const j = (i + 1) % ring.length; const indexStart = buildings.indices.length; triangle(buildings, bottom[i], bottom[j], top[i]); triangle(buildings, top[i], bottom[j], top[j]);
+      if (presentationRecord) presentationRecord.wallSegments.push({ indexStart, edgeLengthMetres: q(Math.hypot(ring[j][0] - ring[i][0], ring[j][1] - ring[i][1])) });
+    }
+    if (presentationRecord) {
+      presentationRecord.vertexCount = buildings.positions.length / 3 - presentationRecord.vertexStart;
+      presentationRecord.indexCount = buildings.indices.length - presentationRecord.indexStart;
+      buildings.presentationRecords.push(presentationRecord);
+    }
     buildings.sourceIds.add(way.id);
   }
   if (TILE.id === FERRY_TILE.id) assert(buildings.sourceIds.has(558731934), 'Ferry Building OSM way 558731934 was not baked');
@@ -1112,6 +1121,7 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, su
   // Keep proof accounting available to the isolated builder without changing
   // the enumerable category contract used by GLB serialization and receipts.
   Object.defineProperty(result, 'surfaceTopologyProof', { value: Object.freeze({ mode: surfaceTopology, insertedVertices: conforming.insertedVertices, gridBoundaryVertices: conforming.gridBoundaryVertices }), enumerable: false });
+  if (buildingPresentationProof) Object.defineProperty(result, 'buildingPresentationProof', { value: Object.freeze({ mode: 'source-building-facade-metadata-v1', records: Object.freeze(buildings.presentationRecords.map((record) => Object.freeze(record))) }), enumerable: false });
   return result;
 }
 
@@ -1210,7 +1220,7 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE, buildingPresentationProof = false } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   let terrainAuthorization = null;
@@ -1220,6 +1230,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     assert(['direct-native-pixel', 'canonical-1m-lattice-height-v1'].includes(surfaceHeightOwnership), 'Unknown surfaceHeightOwnership mode');
     assert(['independent-cell-polygons', 'conforming-grid-boundary-stitch-v1'].includes(surfaceTopology), 'Unknown surfaceTopology mode');
     assert(TERRAIN_SELECTION_MODES.has(terrainSelectionMode), `Unknown terrain selection mode ${terrainSelectionMode}`);
+    assert(!buildingPresentationProof || !write, 'Building presentation metadata is an in-memory proof only and may not write production-shaped artifacts');
     assert(terrainSelectionMode !== NATIVE_PIXEL_FALLBACK_PROOF_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
     if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE) terrainAuthorization = await loadSfNativePixelFallbackAuthorization({ requireProductionWrite: write });
     assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || (terrainGridStepMetres === TERRAIN_STEP && surfaceHeightOwnership === 'direct-native-pixel' && surfaceTopology === 'independent-cell-polygons'), 'Per-native-pixel fallback proof requires direct 1 m independent-cell surfaces');
@@ -1235,7 +1246,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors, terrainSelectionMode);
     const authorizedFallbackWrite = terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE && terrainAuthorization?.authorization.productionWriteEnabled === true;
     assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible) || authorizedFallbackWrite, 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
-    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology, buildingPresentationProof); const geometries = [baseGeometry]; const categories = baseGeometry;
     for (const data of Object.values(categories)) for (const value of data.positions) assert(Number.isFinite(value), `Terrain selection emitted a non-finite geometry coordinate for ${TILE.id}`);
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
@@ -1280,6 +1291,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     if (write) { await mkdir(outputDir, { recursive: true }); await Promise.all([...glbs.map((glb) => writeFile(path.join(outputDir, glb.name), glb.bytes)), writeFile(path.join(outputDir, `${stem}.receipt.json`), jsonBytes(receipt)), writeFile(path.join(outputDir, `${stem}.package.json`), jsonBytes(packageDescriptor))]); }
     const result = { outputDir, glbs, receipt, packageDescriptor, categories };
     if (terrainSelectionProof) result.terrainSelectionProof = terrainSelectionProof;
+    if (buildingPresentationProof) result.buildingPresentationProof = baseGeometry.buildingPresentationProof;
     return result;
   } finally {
     try { await terrainSource?.close(); } finally { TILE = previousTile; }
