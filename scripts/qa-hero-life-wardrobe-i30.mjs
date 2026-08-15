@@ -241,8 +241,14 @@ try {
       const next = nightPositions.get(identity);
       return { identity, metres: Number(Math.hypot(next[0] - position[0], next[2] - position[2]).toFixed(4)) };
     });
+  const cameraDeltaM = Number(Math.hypot(
+    nightCamera[0] - dayCamera[0],
+    nightCamera[1] - dayCamera[1],
+    nightCamera[2] - dayCamera[2],
+  ).toFixed(5));
+  const maxSourceMovementM = Math.max(0, ...movement.map(({ metres }) => metres));
   const report = {
-    result: errors.length ? 'failed' : 'captured',
+    result: errors.length ? 'failed' : 'passed',
     url,
     pose,
     buildHash: process.env.SF_QA_BUILD_HASH || 'runtime-head',
@@ -264,11 +270,7 @@ try {
         adultMetrics.map(({ night: metric }) => metric.localBackgroundContrast),
       ).toFixed(3)),
     },
-    cameraDeltaM: Number(Math.hypot(
-      nightCamera[0] - dayCamera[0],
-      nightCamera[1] - dayCamera[1],
-      nightCamera[2] - dayCamera[2],
-    ).toFixed(5)),
+    cameraDeltaM,
     sourceMovementM: movement,
     day: {
       life: day.diagnostics.life,
@@ -284,6 +286,17 @@ try {
   };
   await writeFile(join(outputDir, 'wardrobe-metrics.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report, null, 2));
+  assert.deepEqual(errors, [], 'browser QA must not emit page or console errors');
+  assert.equal(cameraDeltaM, 0, 'day/night QA camera must remain fixed');
+  assert.ok(maxSourceMovementM <= 0.5, 'day/night capture must bound source-driven pedestrian motion');
+  for (const frame of [day, night]) {
+    const stats = frame.diagnostics.life?.stats;
+    assert.equal(stats?.detailedActors, 7, `${frame.name} must retain all seven detailed staged civilians`);
+    assert.equal(stats?.fallbackActors, 0, `${frame.name} must not render fallback civilians`);
+    assert.equal(stats?.drawCalls, 10, `${frame.name} must retain the life draw-call budget`);
+    assert.equal(stats?.materials, 8, `${frame.name} must retain the life material budget`);
+    assert.ok(stats?.pointLights <= 6, `${frame.name} must retain the six-light cap`);
+  }
   await page.close();
 } finally {
   await browser.close();
