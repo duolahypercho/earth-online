@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,15 @@ const OUTPUT_ROOT = process.env.SF_BUILDING_SOURCE_PALETTE_QA_DIR
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const HOST_PAGE_PATH = path.join(ROOT, '.qa-sf-building-source-palette-host.html');
 
+function sha256File(buffer) {
+  return `sha256:${createHash('sha256').update(buffer).digest('hex')}`;
+}
+
+function captureComparable(result) {
+  const { screenshot, screenshotSha256, runIndex, ...comparable } = result;
+  return comparable;
+}
+
 const CASES = Object.freeze([
   {
     role: 'ferry',
@@ -25,6 +35,10 @@ const CASES = Object.freeze([
     fogDensity: 0.00145,
     fillIntensity: 0.72,
     expectedBuildings: 24,
+    expectedToneCounts: [4, 8, 7, 5],
+    expectedToneLedgerSha256: 'sha256:2c960dc01b5a7e12423fe5b8c00291d258ff441ed1ce3576c27c509f40ec44ea',
+    expectedBaselineRender: { calls: 7, triangles: 299725 },
+    expectedCandidateRender: { calls: 8, triangles: 299725 },
   },
   {
     role: 'district',
@@ -36,6 +50,10 @@ const CASES = Object.freeze([
     fogDensity: 0.00055,
     fillIntensity: 0.46,
     expectedBuildings: 390,
+    expectedToneCounts: [94, 102, 98, 96],
+    expectedToneLedgerSha256: 'sha256:1bd403b718dbf02bd07a8baaf7f0711fec99b3b54e2feb1abd01cd202ffae248',
+    expectedBaselineRender: { calls: 5, triangles: 307956 },
+    expectedCandidateRender: { calls: 6, triangles: 307956 },
   },
 ]);
 
@@ -72,8 +90,8 @@ try {
     if (message.type() === 'error') browserErrors.push(message.text());
   });
 
-  const cases = [];
-  for (const spec of CASES) {
+  const captures = [];
+  for (const runIndex of [1, 2]) for (const spec of CASES) {
     await page.goto(`${BASE_URL}/${path.basename(HOST_PAGE_PATH)}`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.setContent(`<!doctype html><style>
       html,body{margin:0;overflow:hidden;background:#07100f}canvas{display:block}
@@ -211,7 +229,23 @@ try {
           colors.push(color.r, color.g, color.b);
         }
         node.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        node.userData.qaSurface = roof ? 'roof' : 'facade';
         node.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: roof ? 0.94 : 0.9, metalness: 0 });
+        node.material.onBeforeCompile = (shader) => {
+          shader.vertexShader = `varying vec3 vQaWorldNormal;\n${shader.vertexShader}`
+            .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+              vQaWorldNormal=normalize(mat3(modelMatrix)*objectNormal);`);
+          shader.fragmentShader = `varying vec3 vQaWorldNormal;\n${shader.fragmentShader}`
+            .replace('#include <normal_fragment_maps>', roof
+              ? `#include <normal_fragment_maps>
+                diffuseColor.rgb*=1.04;`
+              : `#include <normal_fragment_maps>
+                float qaFacadeFacing=abs(dot(normalize(vQaWorldNormal.xz+vec2(.00001)),normalize(vec2(-.79,.61))));
+                float qaFacadeContrast=mix(.52,1.26,pow(qaFacadeFacing,.75));
+                diffuseColor.rgb*=qaFacadeContrast;`);
+        };
+        node.material.customProgramCacheKey = () => `sf-source-id-world-normal-${roof ? 'roof' : 'facade'}-qa-v2`;
+        node.material.needsUpdate = true;
         node.castShadow = true; node.receiveShadow = true;
         coloredPrimitiveVertices += ordinals.count;
       });
@@ -248,23 +282,87 @@ try {
 
       const pixels = new Uint8Array(1440 * 810 * 4);
       renderer.getContext().readPixels(0, 0, 1440, 810, renderer.getContext().RGBA, renderer.getContext().UNSIGNED_BYTE, pixels);
-      function pixelMetrics(left) {
+      const maskTarget = new THREE.WebGLRenderTarget(720, 810, { depthBuffer: true });
+      const originalBackground = candidateScene.background;
+      const originalFog = candidateScene.fog;
+      const originalVisibility = candidateGltf.scene.visible;
+      const originalMaterials = [];
+      candidateGltf.scene.visible = false;
+      candidateScene.background = new THREE.Color(0x000000);
+      candidateScene.fog = null;
+      proofGltf.scene.traverse((node) => {
+        if (!node.isMesh) return;
+        originalMaterials.push([node, node.material]);
+        node.material = new THREE.MeshBasicMaterial({
+          color: node.userData.qaSurface === 'facade' ? 0xff0000 : 0x0000ff,
+          toneMapped: false,
+        });
+      });
+      renderer.setRenderTarget(maskTarget);
+      renderer.setViewport(0, 0, 720, 810); renderer.setScissor(0, 0, 720, 810);
+      renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(candidateScene, cameras[1]);
+      const buildingMaskPixels = new Uint8Array(720 * 810 * 4);
+      renderer.readRenderTargetPixels(maskTarget, 0, 0, 720, 810, buildingMaskPixels);
+      renderer.setRenderTarget(null); maskTarget.dispose();
+      for (const [node, material] of originalMaterials) node.material = material;
+      candidateGltf.scene.visible = originalVisibility;
+      candidateScene.background = originalBackground;
+      candidateScene.fog = originalFog;
+      function quantile(values, fraction) {
+        if (values.length === 0) return null;
+        values.sort((a, b) => a - b);
+        return values[Math.min(values.length - 1, Math.floor((values.length - 1) * fraction))];
+      }
+      function pixelMetrics(left, facadeMaskPixels = null) {
         const x0 = left ? 0 : 720; const width = 720; const height = 810;
-        const luma = new Float32Array(width * height); let sum = 0; let shadow = 0; let chroma = 0;
+        const luma = new Float32Array(width * height); const facadeLuma = []; const roofLuma = [];
+        const facadeMask = new Uint8Array(width * height);
+        let sum = 0; let shadow = 0; let chroma = 0;
         for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
           const source = ((y * 1440) + x0 + x) * 4;
           const r = pixels[source] / 255; const g = pixels[source + 1] / 255; const b = pixels[source + 2] / 255;
           const value = 0.2126 * r + 0.7152 * g + 0.0722 * b; luma[y * width + x] = value;
           sum += value; if (value < 0.14) shadow += 1; chroma += Math.max(r, g, b) - Math.min(r, g, b);
+          const maskSource = (y * width + x) * 4;
+          if (facadeMaskPixels && facadeMaskPixels[maskSource] > 250
+            && facadeMaskPixels[maskSource + 1] < 4 && facadeMaskPixels[maskSource + 2] < 4) {
+            facadeMask[y * width + x] = 1;
+            facadeLuma.push(value);
+          } else if (facadeMaskPixels && facadeMaskPixels[maskSource] < 4
+            && facadeMaskPixels[maskSource + 1] < 4 && facadeMaskPixels[maskSource + 2] > 250) roofLuma.push(value);
         }
-        let edge = 0; let edges = 0;
+        let edge = 0; let edges = 0; let facadeEdge = 0; let facadeEdges = 0;
         for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
           const at = y * width + x;
-          if (x + 1 < width) { edge += Math.abs(luma[at] - luma[at + 1]); edges += 1; }
-          if (y + 1 < height) { edge += Math.abs(luma[at] - luma[at + width]); edges += 1; }
+          if (x + 1 < width) {
+            const delta = Math.abs(luma[at] - luma[at + 1]); edge += delta; edges += 1;
+            if (facadeMask[at] && facadeMask[at + 1]) { facadeEdge += delta; facadeEdges += 1; }
+          }
+          if (y + 1 < height) {
+            const delta = Math.abs(luma[at] - luma[at + width]); edge += delta; edges += 1;
+            if (facadeMask[at] && facadeMask[at + width]) { facadeEdge += delta; facadeEdges += 1; }
+          }
         }
         const count = width * height;
-        return { meanLuma: sum / count, shadowFractionUnder014: shadow / count, meanChroma: chroma / count, edgeEnergy: edge / edges };
+        const globalLuma = Array.from(luma);
+        const globalP10 = quantile(globalLuma, 0.10);
+        const globalP90 = quantile(globalLuma, 0.90);
+        const facadeP10 = quantile(facadeLuma, 0.10);
+        const facadeP90 = quantile(facadeLuma, 0.90);
+        return {
+          meanLuma: sum / count, shadowFractionUnder014: shadow / count, meanChroma: chroma / count, edgeEnergy: edge / edges,
+          globalP10,
+          globalP90,
+          globalP90P10TonalSpan: globalP90 - globalP10,
+          facadeRoiPixels: facadeLuma.length,
+          facadeRoiP10: facadeP10,
+          facadeRoiP90: facadeP90,
+          facadeRoiP90P10TonalSpan: facadeP10 === null || facadeP90 === null ? null : facadeP90 - facadeP10,
+          facadeRoiEdgeEnergy: facadeEdges === 0 ? null : facadeEdge / facadeEdges,
+          facadeRoiMeanLuma: facadeLuma.length === 0 ? null : facadeLuma.reduce((total, value) => total + value, 0) / facadeLuma.length,
+          roofRoiPixels: roofLuma.length,
+          roofRoiMeanLuma: roofLuma.length === 0 ? null : roofLuma.reduce((total, value) => total + value, 0) / roofLuma.length,
+        };
       }
       return {
         receipt: { buildings: receipt.buildingRecords.length, status: receipt.status, claims: receipt.claims },
@@ -277,44 +375,74 @@ try {
         sourceIdentityPalette: {
           rule: 'OSM way ID modulo four', toneCounts,
           ledgerSha256: `sha256:${sourceToneLedgerSha256}`,
+          adjacencySameToneRatio: null,
+          adjacencyDerivation: 'not derivable from receipt building records: they bind IDs and edge hash summaries but no endpoint topology',
         },
-        coloredPrimitiveVertices, normals: 'derived from exact proof triangles at presentation time',
-        baselineRender, candidateRender, baselinePixels: pixelMetrics(true), candidatePixels: pixelMetrics(false),
+        coloredPrimitiveVertices,
+        normals: 'world-space normals derived from exact proof triangles at presentation time',
+        candidateMaterialPass: 'source-ID vertex color plus bounded deterministic world-space facade orientation contrast and roof lift',
+        baselineRender, candidateRender,
+        baselinePixels: pixelMetrics(true, buildingMaskPixels), candidatePixels: pixelMetrics(false, buildingMaskPixels),
       };
     }, spec);
 
     assert.equal(result.receipt.buildings, spec.expectedBuildings, `${spec.role} building count drifted`);
     assert.equal(result.integrity.verifiedBeforeParse, true, `${spec.role} did not verify GLBs before parsing`);
-    assert.equal(result.baselineRender.triangles, result.candidateRender.triangles, `${spec.role} triangle count changed`);
-    assert(result.candidateRender.calls <= result.baselineRender.calls + 1, `${spec.role} added more than one draw call`);
-    assert(result.sourceIdentityPalette.toneCounts.every((count) => count > 0), `${spec.role} did not exercise all source-ID tones`);
+    assert.deepEqual(result.baselineRender, spec.expectedBaselineRender, `${spec.role} baseline render budget drifted`);
+    assert.deepEqual(result.candidateRender, spec.expectedCandidateRender, `${spec.role} candidate render budget drifted`);
+    assert.deepEqual(result.sourceIdentityPalette.toneCounts, spec.expectedToneCounts, `${spec.role} source-ID tone counts drifted`);
+    assert.equal(result.sourceIdentityPalette.ledgerSha256, spec.expectedToneLedgerSha256, `${spec.role} source-ID tone ledger drifted`);
     assert(result.candidatePixels.shadowFractionUnder014 <= result.baselinePixels.shadowFractionUnder014,
       `${spec.role} increased the dark-pixel fraction`);
-    assert(result.candidatePixels.edgeEnergy >= result.baselinePixels.edgeEnergy * 0.9,
-      `${spec.role} lost more than ten percent of baseline edge energy`);
     assert.equal(result.receipt.status, 'preview-proof-only-not-production');
-    const screenshot = path.join(OUTPUT_ROOT, `${spec.role}-exact-baseline-vs-source-id.png`);
+    const screenshot = path.join(OUTPUT_ROOT, `${spec.role}-exact-baseline-vs-source-id-face-normal-capture-${runIndex}.png`);
     await page.screenshot({ path: screenshot });
-    cases.push({ ...spec, screenshot, ...result });
+    captures.push({
+      ...spec, runIndex, screenshot, screenshotSha256: sha256File(await readFile(screenshot)), ...result,
+      strictAcceptance: {
+        globalRelativeSpanFloor: result.baselinePixels.globalP90P10TonalSpan * 0.95,
+        edgeEnergyFloor: result.baselinePixels.edgeEnergy * 0.95,
+        facadeRoiRelativeSpanFloor: result.baselinePixels.facadeRoiP90P10TonalSpan * 1.05,
+        facadeRoiRelativeEdgeFloor: result.baselinePixels.facadeRoiEdgeEnergy * 1.05,
+        globalP90P10TonalSpanPass: result.candidatePixels.globalP90P10TonalSpan
+          >= result.baselinePixels.globalP90P10TonalSpan * 0.95,
+        facadeRoiP90P10TonalSpanPass: result.candidatePixels.facadeRoiP90P10TonalSpan
+          >= result.baselinePixels.facadeRoiP90P10TonalSpan * 1.05,
+        facadeRoiEdgeEnergyPass: result.candidatePixels.facadeRoiEdgeEnergy >= result.baselinePixels.facadeRoiEdgeEnergy * 1.05,
+        edgeEnergyPass: result.candidatePixels.edgeEnergy >= result.baselinePixels.edgeEnergy * 0.95,
+      },
+    });
   }
   assert.equal(browserErrors.length, 0, `Browser errors: ${browserErrors.join(' | ')}`);
+  const cases = CASES.map((spec) => {
+    const pair = captures.filter((capture) => capture.role === spec.role).sort((a, b) => a.runIndex - b.runIndex);
+    assert.equal(pair.length, 2, `${spec.role} did not produce two fresh captures`);
+    assert.deepEqual(captureComparable(pair[0]), captureComparable(pair[1]), `${spec.role} rendered non-deterministic metrics`);
+    assert.equal(pair[0].screenshotSha256, pair[1].screenshotSha256, `${spec.role} screenshots were not byte-identical`);
+    return { ...pair[0], repeatedCapture: { screenshot: pair[1].screenshot, screenshotSha256: pair[1].screenshotSha256 } };
+  });
+  const strictAccepted = cases.every((entry) => entry.strictAcceptance.globalP90P10TonalSpanPass
+    && entry.strictAcceptance.facadeRoiP90P10TonalSpanPass
+    && entry.strictAcceptance.facadeRoiEdgeEnergyPass && entry.strictAcceptance.edgeEnergyPass);
   const report = {
     schemaVersion: 1,
     kind: 'sf-building-source-palette-visual-qa',
-    status: 'preview-report-only-not-production',
+    status: strictAccepted ? 'preview-report-only-not-production-strict-accept' : 'preview-report-only-not-production-strict-reject',
     policy: {
       candidateToneKey: 'byte-locked OSM way ID modulo four',
       geometry: 'exact building-presentation proof positions and indices',
-      normals: 'presentation-time derivation from exact proof triangles',
+      normals: 'camera-independent world-space derivation from exact proof triangles',
       productionPromotionAuthorized: false,
       gameplayChanged: false,
       runtimeMetricContractChanged: false,
     },
+    capturesByteIdentical: true,
     cases,
     browserErrors,
   };
   await writeFile(path.join(OUTPUT_ROOT, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (!strictAccepted) process.exitCode = 1;
 } finally {
   await browser?.close();
   vite.kill('SIGTERM');
