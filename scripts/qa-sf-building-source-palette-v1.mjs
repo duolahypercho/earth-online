@@ -101,16 +101,44 @@ try {
       const proofPath = `/data/world/preview-artifacts/sf-building-presentation-proof-v1/${input.tileId}/${input.tileId}.building-presentation-proof.glb`;
       const receiptPath = `/data/world/preview-artifacts/sf-building-presentation-proof-v1/${input.tileId}/${input.tileId}.building-presentation-proof.receipt.json`;
       const loader = new GLTFLoader();
-      const [baselineGltf, candidateGltf, proofGltf, receipt] = await Promise.all([
-        loader.loadAsync(input.productionPath), loader.loadAsync(input.productionPath),
-        loader.loadAsync(proofPath), fetch(receiptPath).then((response) => response.json()),
-      ]);
+      async function sha256Hex(bytes) {
+        return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+          .map((value) => value.toString(16).padStart(2, '0')).join('');
+      }
+      async function fetchBytes(url) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+        return response.arrayBuffer();
+      }
+      const receiptBytes = await fetchBytes(receiptPath);
+      const receiptSha256 = await sha256Hex(receiptBytes);
+      const receipt = JSON.parse(new TextDecoder().decode(receiptBytes));
       if (receipt.kind !== 'sf-building-presentation-proof-receipt'
         || receipt.status !== 'preview-proof-only-not-production'
         || !receipt.invariants.productionTrianglePositionMultisetExact
         || receipt.invariants.sourceGeometryMoved !== false) {
         throw new Error(`${input.tileId} proof receipt is not source-geometry locked`);
       }
+      const expectedProductionPath = `/${receipt.productionReference.path.replace(/^public\//, '')}`;
+      const expectedProofPath = `/${receipt.proofArtifact.path.replace(/^public\//, '')}`;
+      if (expectedProductionPath !== input.productionPath || expectedProofPath !== proofPath) {
+        throw new Error(`${input.tileId} QA paths differ from the proof receipt`);
+      }
+      const [productionBytes, proofBytes] = await Promise.all([
+        fetchBytes(input.productionPath), fetchBytes(proofPath),
+      ]);
+      const productionSha256 = await sha256Hex(productionBytes);
+      const proofSha256 = await sha256Hex(proofBytes);
+      if (`sha256:${productionSha256}` !== receipt.productionReference.verifiedSha256
+        || `sha256:${proofSha256}` !== receipt.proofArtifact.sha256) {
+        throw new Error(`${input.tileId} GLB bytes differ from the proof receipt`);
+      }
+      const resourcePath = (url) => url.slice(0, url.lastIndexOf('/') + 1);
+      const [baselineGltf, candidateGltf, proofGltf] = await Promise.all([
+        loader.parseAsync(productionBytes.slice(0), resourcePath(input.productionPath)),
+        loader.parseAsync(productionBytes.slice(0), resourcePath(input.productionPath)),
+        loader.parseAsync(proofBytes.slice(0), resourcePath(proofPath)),
+      ]);
 
       const paletteHex = [0xc7ad8a, 0xaa765c, 0x77858c, 0x8b6456];
       const palette = paletteHex.map((hex) => new THREE.Color(hex));
@@ -240,6 +268,12 @@ try {
       }
       return {
         receipt: { buildings: receipt.buildingRecords.length, status: receipt.status, claims: receipt.claims },
+        integrity: {
+          receiptSha256: `sha256:${receiptSha256}`,
+          productionGlbSha256: `sha256:${productionSha256}`,
+          proofGlbSha256: `sha256:${proofSha256}`,
+          verifiedBeforeParse: true,
+        },
         sourceIdentityPalette: {
           rule: 'OSM way ID modulo four', toneCounts,
           ledgerSha256: `sha256:${sourceToneLedgerSha256}`,
@@ -250,6 +284,7 @@ try {
     }, spec);
 
     assert.equal(result.receipt.buildings, spec.expectedBuildings, `${spec.role} building count drifted`);
+    assert.equal(result.integrity.verifiedBeforeParse, true, `${spec.role} did not verify GLBs before parsing`);
     assert.equal(result.baselineRender.triangles, result.candidateRender.triangles, `${spec.role} triangle count changed`);
     assert(result.candidateRender.calls <= result.baselineRender.calls + 1, `${spec.role} added more than one draw call`);
     assert(result.sourceIdentityPalette.toneCounts.every((count) => count > 0), `${spec.role} did not exercise all source-ID tones`);
