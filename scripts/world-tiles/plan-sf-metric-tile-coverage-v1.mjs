@@ -13,23 +13,39 @@ const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-
 const TERRAIN_SOURCES = [
   {
     label: 'x55y419',
+    priority: 10,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x54y419',
+    priority: 10,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x54y418',
+    priority: 10,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x55y418',
+    priority: 10,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'),
+  },
+  {
+    label: 'californiagaps-x54y418',
+    priority: 5,
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json'),
+  },
+  {
+    label: 'californiagaps-x55y418',
+    priority: 5,
+    sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json'),
+    elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json'),
   },
 ];
 const OUTPUT_PATH = path.join(ROOT, 'public/data/world/plans/sf-metric-tile-coverage-v1.json');
@@ -200,16 +216,27 @@ export async function buildSfMetricTileCoveragePlan() {
       if (bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) continue;
       requiredRegions.push({ cellKey: `${cellE},${cellN}`, bounds });
     }
-    const sourcesByCell = new Map(terrainSourceRecords.map((source) => [source.cellKey, source]));
-    const selectedSources = requiredRegions.map(({ cellKey }) => sourcesByCell.get(cellKey));
-    if (selectedSources.every(Boolean)) {
-      const validity = await Promise.all(requiredRegions.map(({ bounds }, index) => sourceRegionIsValid(selectedSources[index], bounds)));
-      const labels = [...new Set(selectedSources.map(({ label }) => label))].sort();
-      if (validity.every(Boolean)) {
+    const sourcesByCell = new Map();
+    for (const source of terrainSourceRecords) {
+      const candidates = sourcesByCell.get(source.cellKey) ?? [];
+      candidates.push(source);
+      candidates.sort((a, b) => b.priority - a.priority || a.label.localeCompare(b.label));
+      sourcesByCell.set(source.cellKey, candidates);
+    }
+    const selectedRegions = await Promise.all(requiredRegions.map(async ({ cellKey, bounds }) => {
+      const candidates = sourcesByCell.get(cellKey) ?? [];
+      for (const candidate of candidates) if (await sourceRegionIsValid(candidate, bounds)) return { candidate, candidates };
+      return { candidate: null, candidates };
+    }));
+    if (selectedRegions.every(({ candidates }) => candidates.length > 0)) {
+      const selectedSources = selectedRegions.map(({ candidate }) => candidate);
+      const labels = [...new Set(selectedSources.filter(Boolean).map(({ label }) => label))].sort();
+      if (selectedSources.every(Boolean)) {
         terrainAvailable = true;
         terrainReason = `available-from-byte-locked-3dep-${labels.join('-and-')}`;
       } else {
-        terrainReason = `byte-locked-3dep-${labels.join('-and-')}-contains-nodata`;
+        const candidateLabels = [...new Set(selectedRegions.flatMap(({ candidates }) => candidates.map(({ label }) => label)))].sort();
+        terrainReason = `byte-locked-3dep-${candidateLabels.join('-and-')}-contains-nodata`;
       }
     }
     readiness.set(tileKey(tile.gridEasting, tile.gridNorthing), { terrainAvailable, terrainReason });

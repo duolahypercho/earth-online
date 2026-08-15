@@ -15,10 +15,10 @@ assert.equal(checked.kind, 'sf-metric-tile-coverage-plan');
 assert.equal(checked.status, 'horizontal-complete-terrain-sources-incomplete', 'Plan must honestly report missing citywide terrain sources');
 assert.equal(checked.sources.shoreline.artifactSha256, 'sha256:a3023288edff7a91f84f20ca54fc55693b2f6a4fa4fb396807378f31be80f01d');
 assert.equal(checked.sources.horizontalTransform.absoluteHorizontalAccuracyFloorMetres, 4);
-assert.equal(checked.sources.availableTerrain.length, 4, 'All four byte-locked mainland 3DEP cells must be planned');
+assert.equal(checked.sources.availableTerrain.length, 6, 'All four original and two fallback CaliforniaGaps source locks must be planned');
 assert.equal(checked.counts.shorelinePolygons, 38, 'All locked DataSF shoreline/island polygons must be represented');
-assert(checked.counts.buildReadyTiles > 3, 'Current terrain source should admit a meaningful eastern-SF batch');
-assert(checked.counts.missingTerrainTiles > 0, 'Plan must expose the missing western/remote terrain source gap');
+assert.equal(checked.counts.buildReadyTiles, 839, 'Locked CaliforniaGaps fallback should admit exactly 25 additional buffered tiles');
+assert.equal(checked.counts.missingTerrainTiles, 406, 'Plan must preserve the exact remaining terrain-source gap');
 assert.equal(checked.counts.totalPlannedTiles, checked.tiles.length);
 assert.equal(new Set(checked.tiles.map(({ id }) => id)).size, checked.tiles.length, 'Tile IDs must be unique');
 for (const tile of checked.tiles) {
@@ -35,5 +35,7 @@ for (const tile of manifest.tiles) assert(plannedIds.has(tile.id), `Resident run
 const mainland = checked.tiles.filter(({ landPolygonIndices }) => landPolygonIndices.includes(0));
 assert(mainland.length > 100, 'Mainland SF coverage is implausibly small');
 assert(checked.tiles.some(({ landPolygonIndices }) => landPolygonIndices.includes(9)), 'Remote San Francisco island polygon coverage is missing');
+assert.equal(checked.tiles.find(({ id }) => id === 'epsg26910-1440-10868')?.sourceReadiness.terrainElevation, 'available-from-byte-locked-3dep-californiagaps-x55y418', 'Known original-source NoData window must select the finite CaliforniaGaps fallback');
+assert.equal(checked.tiles.find(({ id }) => id === 'epsg26910-1441-10868')?.sourceReadiness.terrainElevation, 'byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata', 'Known all-source NoData window must remain fail-closed');
 assert.match(checked.tiles.find(({ id }) => id === 'epsg26910-1441-10895')?.sourceReadiness.terrainElevation || '', /^byte-locked-3dep-.*-contains-nodata$/, 'Known bay no-data tile must fail closed');
 console.log(JSON.stringify({ result: 'SF metric tile coverage plan passed', path: path.relative(ROOT, PLAN_PATH), status: checked.status, counts: checked.counts, residentTiles: manifest.tiles.map(({ id }) => id) }, null, 2));
