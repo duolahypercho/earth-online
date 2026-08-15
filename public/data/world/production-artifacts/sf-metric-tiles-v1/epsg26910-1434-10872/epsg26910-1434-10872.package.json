@@ -1,0 +1,4138 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-one-to-one-map-package",
+  "status": "provisional-vertical-unrealized",
+  "contractId": "sf-one-to-one-reality-v1",
+  "coordinateReference": {
+    "horizontal": {
+      "crs": "EPSG:26910",
+      "unit": "metre"
+    },
+    "vertical": {
+      "datum": "source-declared-navd88-unrealized",
+      "unit": "metre"
+    },
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized"
+  },
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "runtimeAxes": {
+    "x": "east",
+    "y": "up",
+    "z": "north"
+  },
+  "scale": {
+    "runtimeUnitsPerMetre": 1,
+    "horizontalScale": 1,
+    "verticalScale": 1,
+    "verticalExaggeration": 0
+  },
+  "tiling": {
+    "scheme": "rectilinear-utm",
+    "tileSizeMetres": 384,
+    "sourceBufferMetres": 16
+  },
+  "tileOriginEpsg26910VerticalMetres": [
+    550656,
+    4174848,
+    0
+  ],
+  "authorizedHorizontalTransform": {
+    "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+    "path": [
+      "EPSG:1188-inverse",
+      "EPSG:26910-projection"
+    ],
+    "absoluteHorizontalAccuracyFloorMetres": 4,
+    "nad83Realization": "not-claimed",
+    "coordinateEpoch": "not-claimed"
+  },
+  "accuracyQualification": {
+    "absoluteHorizontalAccuracyFloorMetres": 4,
+    "nad83Realization": "not-claimed",
+    "coordinateEpoch": "not-claimed",
+    "lodErrorIsRelativeToTransformedSource": true
+  },
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b",
+      "purpose": "geometry"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+      "purpose": "horizontal-coordinate-operation"
+    },
+    {
+      "id": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json",
+      "sha256": "7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07",
+      "purpose": "terrain-elevation"
+    }
+  ],
+  "sourceFeatures": [
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/8920774",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 676,
+          "row": 4896,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 120.72136688232422,
+        "sampleWindowSha256": "sha256:8316bcf2cb8ec1e54af59a9554fe721d6450c021a2cebf5ee2bdfdd71895a06e",
+        "evidenceSha256": "sha256:ed995209a6ae0908aa31fc42ead9456c16546bee5fd1a7ba3f492ede92105af0"
+      },
+      "sourceGeometryHash": "sha256:a9074ad650c5eae9b16c2379dbcc6cd977acdfc8e933c4ad3cbea5b5f88a1003",
+      "nativeHorizontalPosition": [
+        -122.425038,
+        37.721847,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550670.379821,
+        4175109.655723,
+        120.72136688232422
+      ],
+      "runtimePositionMetres": [
+        14.379821,
+        120.721367,
+        261.655723
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/255178049",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 718,
+          "row": 5101,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 117.30821990966797,
+        "sampleWindowSha256": "sha256:443ced097300375811c6609a1293b2b7a642252c416790e242077459b42bda2b",
+        "evidenceSha256": "sha256:6a67c2e307ee9df692440991f8625eaced7959a5d0f6f8503898cac72c443563"
+      },
+      "sourceGeometryHash": "sha256:664bec19aa18fabcd9b0aaa6c79a6db13750d0df5899d94698be7b547cc5f3fb",
+      "nativeHorizontalPosition": [
+        -122.42457,
+        37.719996,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550712.882658,
+        4174904.580821,
+        117.30821990966797
+      ],
+      "runtimePositionMetres": [
+        56.882658,
+        117.30822,
+        56.580821
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/261015583",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 788,
+          "row": 4853,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 136.95338439941406,
+        "sampleWindowSha256": "sha256:a3d01bc30b5eebc3b50812f67f7b9e98d6e2d550096fdc2b4a2e461cd5d68168",
+        "evidenceSha256": "sha256:90d75d76a73b7af4842af7c809a350e39367b8979a6002b241cc9e1d3cfc33bc"
+      },
+      "sourceGeometryHash": "sha256:d2d77094ddf0f6508fb6479db1e281c57069fd392d0887560cf979e664e1c313",
+      "nativeHorizontalPosition": [
+        -122.423759,
+        37.72223,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550782.831908,
+        4175152.880165,
+        136.95338439941406
+      ],
+      "runtimePositionMetres": [
+        126.831908,
+        136.953384,
+        304.880165
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953353",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 663,
+          "row": 4814,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 137.5999755859375,
+        "sampleWindowSha256": "sha256:45d5c939a96b37fba37c18307f7dd338c6388858c5f7dabe6b454c01fdb94dc0",
+        "evidenceSha256": "sha256:8a8502abc6e02e3d0bb2b58605c236123fac5cae2698948cbcd1ed4f345ff00e"
+      },
+      "sourceGeometryHash": "sha256:ed69744c4aad8648860335179bff3dbb5830fbb6bc1e6b74676028ccb30a1467",
+      "nativeHorizontalPosition": [
+        -122.425182,
+        37.722582,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550657.209851,
+        4175191.072014,
+        137.5999755859375
+      ],
+      "runtimePositionMetres": [
+        1.209851,
+        137.599976,
+        343.072014
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953365",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 679,
+          "row": 4775,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.6862030029297,
+        "sampleWindowSha256": "sha256:20835142f4b07c090ab7a915137e8f57e6f82e7c1cc6d261774cca5ff6ce3a67",
+        "evidenceSha256": "sha256:c48a645e3f3fae9d7d17f007dcc0ef885e30969260e9b0fdd0c4ee8d20a56e02"
+      },
+      "sourceGeometryHash": "sha256:8f326cec737357cc9e8e82edbc8a348a4251012a9069baacc3f82a6222f2fe34",
+      "nativeHorizontalPosition": [
+        -122.42499,
+        37.722939,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550673.938755,
+        4175230.832281,
+        139.6862030029297
+      ],
+      "runtimePositionMetres": [
+        17.938755,
+        139.686203,
+        382.832281
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953376",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 664,
+          "row": 4805,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 137.6951446533203,
+        "sampleWindowSha256": "sha256:fdb465d9aaedab7f31ce928aa8a6411083cbb9c9bfbbf19ed8565088da58dbcd",
+        "evidenceSha256": "sha256:513e66b316087d19ff41df575064bc7199edcecec5c9b4d0aab3b4d6d4364ad2"
+      },
+      "sourceGeometryHash": "sha256:dbaa1fa9d29e65d0b0dc766af2068799534cc39c340c5da5e1ae0423f978f76a",
+      "nativeHorizontalPosition": [
+        -122.425164,
+        37.722663,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550658.762806,
+        4175200.080401,
+        137.6951446533203
+      ],
+      "runtimePositionMetres": [
+        2.762806,
+        137.695145,
+        352.080401
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953401",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 665,
+          "row": 4798,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 137.76190185546875,
+        "sampleWindowSha256": "sha256:862ad89bcf8568b5e118d29304c8e3664de431416255c7cce1c275ba8f642e2a",
+        "evidenceSha256": "sha256:c8463a0d914193ca80e718a923afe011e1edea5a93aa2cfcca68e89ecb7ba96c"
+      },
+      "sourceGeometryHash": "sha256:80f6154d7ee774f174c73398e202dc382ac404050b36e3cb5ae9b86d1289bce3",
+      "nativeHorizontalPosition": [
+        -122.425152,
+        37.72273,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550659.733527,
+        4175207.611424,
+        137.76190185546875
+      ],
+      "runtimePositionMetres": [
+        3.733527,
+        137.761902,
+        359.611424
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953407",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 671,
+          "row": 4776,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.1415557861328,
+        "sampleWindowSha256": "sha256:8ab538154416ae883b4b715f59e5cd3c69b7114b1979b5fbc5236b874612de16",
+        "evidenceSha256": "sha256:033ef2823406350c6b4b7b418385638b2e620f80029dfe5d43d734f8f4dc61c0"
+      },
+      "sourceGeometryHash": "sha256:5b13dfcf751d7e3a67ce722359b272278066999471c2e3491eb3943aaf71e17d",
+      "nativeHorizontalPosition": [
+        -122.425089,
+        37.72293,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550665.188882,
+        4175229.770861,
+        139.1415557861328
+      ],
+      "runtimePositionMetres": [
+        9.188882,
+        139.141556,
+        381.770861
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953411",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 666,
+          "row": 4789,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 138.02957153320312,
+        "sampleWindowSha256": "sha256:c3c6fae649feb02a1ce0e4ebc8091b4290ae680c439676353e72a35f70edd9ef",
+        "evidenceSha256": "sha256:9af5ee9a6ea9f4d38a3479c5db18080094b77d84c4e229d74d664c723e2afd04"
+      },
+      "sourceGeometryHash": "sha256:8b08053f38aef894076757f263791a937f215267eddf44dc67ecbb63cff69b20",
+      "nativeHorizontalPosition": [
+        -122.425148,
+        37.722809,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550660.037577,
+        4175216.320844,
+        138.02957153320312
+      ],
+      "runtimePositionMetres": [
+        4.037577,
+        138.029572,
+        368.320844
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275953420",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 670,
+          "row": 4783,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 138.75318908691406,
+        "sampleWindowSha256": "sha256:804f759c5a6a065a58a2f318f587fb6b702648010427c24dc8629cbe610853c3",
+        "evidenceSha256": "sha256:e14aeda588c7aa990aff8d495dc016961432268d71db1d17cd491b97dbe4596d"
+      },
+      "sourceGeometryHash": "sha256:61d8a2b08bea7babc78e8e74388e76438f2ca9f929ecae2bdda718ff004c417b",
+      "nativeHorizontalPosition": [
+        -122.425102,
+        37.722867,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550664.120172,
+        4175222.779037,
+        138.75318908691406
+      ],
+      "runtimePositionMetres": [
+        8.120172,
+        138.753189,
+        374.779037
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/275955575",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 664,
+          "row": 4834,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 129.32952880859375,
+        "sampleWindowSha256": "sha256:2fd8c803f1bb0c4e7af2bae726080801a5bda288c224fc04ff34aa8607813c43",
+        "evidenceSha256": "sha256:420bee3a08f22ba31eb064843754bfd43c3c893e7cb218d67ed4d54ddf951f37"
+      },
+      "sourceGeometryHash": "sha256:415c850c1d01474b0cc9a7a8e0ca38af0f08409d0e3109f1f61269630709a47b",
+      "nativeHorizontalPosition": [
+        -122.425174,
+        37.722402,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550658.059488,
+        4175171.098861,
+        129.32952880859375
+      ],
+      "runtimePositionMetres": [
+        2.059488,
+        129.329529,
+        323.098861
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276252571",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 663,
+          "row": 4898,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 119.09550476074219,
+        "sampleWindowSha256": "sha256:b390127d97ecf1421204845acc916bcbbd57acb305a5614d3deb842c8caedeb9",
+        "evidenceSha256": "sha256:4da9fcced7809faba7b1c1f153b2c373877b6b9182a218fde4c5df4fbe71562d"
+      },
+      "sourceGeometryHash": "sha256:e3c5ef6a4ef350c7644aefe1f99fafabb2963456a30074c2963bf64dd11bf2a6",
+      "nativeHorizontalPosition": [
+        -122.425186,
+        37.721831,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550657.398432,
+        4175107.761866,
+        119.09550476074219
+      ],
+      "runtimePositionMetres": [
+        1.398432,
+        119.095505,
+        259.761866
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276252573",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 662,
+          "row": 4886,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 120.69783782958984,
+        "sampleWindowSha256": "sha256:7e839f32d96f2e24be1683fa805f3be38d757ce6cacbfc3d94e0514c291e0f95",
+        "evidenceSha256": "sha256:31b641a43e72532e38211d7b38019ccee65a2727c27adee525981e19c58395f0"
+      },
+      "sourceGeometryHash": "sha256:79198d6afd72f07d532029bdd47844641676abe500305443ac2eabd2bd7e179b",
+      "nativeHorizontalPosition": [
+        -122.425193,
+        37.72194,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550656.733755,
+        4175119.896799,
+        120.69783782958984
+      ],
+      "runtimePositionMetres": [
+        0.733755,
+        120.697838,
+        271.896799
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276252590",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 667,
+          "row": 4872,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 124.03451538085938,
+        "sampleWindowSha256": "sha256:bad739541d57d53b55787dcc296e7cf021577df59e139e31216541794bf03afa",
+        "evidenceSha256": "sha256:2a71a7072c5e84f80f97c67d49f1f6daa4a0ad63006786ba9c615a438a9f19ba"
+      },
+      "sourceGeometryHash": "sha256:594f5cfed57dfebe89b3feee2da8d7e0cdbd5dd07b74cb6c2882c7821912550d",
+      "nativeHorizontalPosition": [
+        -122.425134,
+        37.722065,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550661.822722,
+        4175133.747805,
+        124.03451538085938
+      ],
+      "runtimePositionMetres": [
+        5.822722,
+        124.034515,
+        285.747805
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270229",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 685,
+          "row": 4917,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 119.12779235839844,
+        "sampleWindowSha256": "sha256:53099c4223646d54c8746f590fd24604a5779844b051c18ecfefbf835861d081",
+        "evidenceSha256": "sha256:6469d965d3d2a427b9ceb46c30be0e5a26e361bf63590ff018d95cb8b8bf3197"
+      },
+      "sourceGeometryHash": "sha256:bb62cfb24918bd23c1d9e25b83838f3ff8c25f1f73f8238f007dddccaa455165",
+      "nativeHorizontalPosition": [
+        -122.424931,
+        37.721659,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550679.927557,
+        4175088.833671,
+        119.12779235839844
+      ],
+      "runtimePositionMetres": [
+        23.927557,
+        119.127792,
+        240.833671
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270234",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 705,
+          "row": 4884,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 125.96846771240234,
+        "sampleWindowSha256": "sha256:1755b7f1070b7c6d806ed142637bcc63395bf5b1052360d3f48ba8025ad1ef1b",
+        "evidenceSha256": "sha256:86becfabe2e0daa6936c413c051c89e5d2448f6b89d15a4782e7dd7c1a8015b5"
+      },
+      "sourceGeometryHash": "sha256:cbf70a85102a0a352d3b5ef217f2b0ebbd76d4941c7fb4905f11c7e2b4e4393c",
+      "nativeHorizontalPosition": [
+        -122.424709,
+        37.721953,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550699.346976,
+        4175121.567416,
+        125.96846771240234
+      ],
+      "runtimePositionMetres": [
+        43.346976,
+        125.968468,
+        273.567416
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270235",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 682,
+          "row": 4923,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 117.78447723388672,
+        "sampleWindowSha256": "sha256:814beb3f3c48f4aacd7c451b6e14bcc4db2ef57073948a560cc6dfef9277c714",
+        "evidenceSha256": "sha256:b58d9469b60041b264feca4c2698ad270caeaeb431d311096a8010dba0865484"
+      },
+      "sourceGeometryHash": "sha256:f2232b2c868c10afd06d0aab74f457ab80bdb136b77dcf2778451a82b4cfb800",
+      "nativeHorizontalPosition": [
+        -122.424975,
+        37.721601,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550676.137872,
+        4175082.372385,
+        117.78447723388672
+      ],
+      "runtimePositionMetres": [
+        20.137872,
+        117.784477,
+        234.372385
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270238",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 664,
+          "row": 4957,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 114.81440734863281,
+        "sampleWindowSha256": "sha256:577cd77a6f44ca5571c2767984a9c6528439077115569090d19b6762002e87b9",
+        "evidenceSha256": "sha256:a460b698496a8bd85df19ea64e5c08abcbefb7be620550fb9ce44c40e3396eab"
+      },
+      "sourceGeometryHash": "sha256:4c02d755581f51080916f160d83c2a03d5d793c2e1ca7281e87bd473e30d54a2",
+      "nativeHorizontalPosition": [
+        -122.425174,
+        37.721293,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550658.798022,
+        4175048.109381,
+        114.81440734863281
+      ],
+      "runtimePositionMetres": [
+        2.798022,
+        114.814407,
+        200.109381
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270242",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 663,
+          "row": 4964,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 114.54735565185547,
+        "sampleWindowSha256": "sha256:32c2859d664fe02a23b5ea5b983b30327e75c8b2177ca4fc0d552eb725650407",
+        "evidenceSha256": "sha256:f4ee9428108f16041b1c12ec52d778ee2b214227e80e55b1da24266012ec098f"
+      },
+      "sourceGeometryHash": "sha256:1965678b53874b470562a5f5c39bce835a796a10c0fb5dc846b19592722386a8",
+      "nativeHorizontalPosition": [
+        -122.425193,
+        37.721236,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550657.192239,
+        4175041.739146,
+        114.54735565185547
+      ],
+      "runtimePositionMetres": [
+        1.192239,
+        114.547356,
+        193.739146
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270243",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 693,
+          "row": 4904,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 121.54702758789062,
+        "sampleWindowSha256": "sha256:f29748981f52b60774e928f9a4f1811715fb0d1936331b81e9bf719429e978d8",
+        "evidenceSha256": "sha256:0c5499d0187946ac31cfebf48f445391664869b3fe7eae9b07d8681d70a6f848"
+      },
+      "sourceGeometryHash": "sha256:c78e45ecccbf57c766dbc7943332bfd4c7322ecc693cc87a76a87fc66b32e526",
+      "nativeHorizontalPosition": [
+        -122.424842,
+        37.721777,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550687.734766,
+        4175101.965684,
+        121.54702758789062
+      ],
+      "runtimePositionMetres": [
+        31.734766,
+        121.547028,
+        253.965684
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270245",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 666,
+          "row": 4949,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 115.13538360595703,
+        "sampleWindowSha256": "sha256:3504d53356ff1acd1141a146d26d9c9a8b2491d7e2a4ee511256102979bf9673",
+        "evidenceSha256": "sha256:3ca3584eac935018ac4e30be67042fd7716c8407b3a7e56ea9e47c9e36206adf"
+      },
+      "sourceGeometryHash": "sha256:3d8de9e42a4c11a693be63d6e15d4233e0e24f55135855f6bba418b483a88db5",
+      "nativeHorizontalPosition": [
+        -122.42516,
+        37.721371,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550660.015172,
+        4175056.786052,
+        115.13538360595703
+      ],
+      "runtimePositionMetres": [
+        4.015172,
+        115.135384,
+        208.786052
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270248",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 701,
+          "row": 4890,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 125.12496948242188,
+        "sampleWindowSha256": "sha256:1ce48679fdbde4bd6489e14e8c44485012de6dcf2f76c76b6812868b613cb15a",
+        "evidenceSha256": "sha256:6a9382ec007326e21aec97971c47de21b5856a220b563060d7546c7ca71aff72"
+      },
+      "sourceGeometryHash": "sha256:2a71e9745d9d0a52cba4b7f3a027b8e4e4ada4cfe5e466fa166b217b1373bec3",
+      "nativeHorizontalPosition": [
+        -122.424753,
+        37.721894,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550695.520089,
+        4175115.069832,
+        125.12496948242188
+      ],
+      "runtimePositionMetres": [
+        39.520089,
+        125.124969,
+        267.069832
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270249",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 678,
+          "row": 4930,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 116.75308227539062,
+        "sampleWindowSha256": "sha256:5983af9833ab159f4fe4d7443d3962d3c0cf0e0268df85c3c3d321bc9b06bedd",
+        "evidenceSha256": "sha256:3438f7c4829c3828d63c4cd271360bb6112d3560058c5383f7f6bac0ed3fea92"
+      },
+      "sourceGeometryHash": "sha256:3a745441b19d5d441d1a0da4010a1d289572206dec2956d9e872b409b5ed6eba",
+      "nativeHorizontalPosition": [
+        -122.425018,
+        37.721543,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550672.374381,
+        4175075.950095,
+        116.75308227539062
+      ],
+      "runtimePositionMetres": [
+        16.374381,
+        116.753082,
+        227.950095
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270251",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 707,
+          "row": 4877,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 126.47816467285156,
+        "sampleWindowSha256": "sha256:5709e4f6bed64ee39d88c6efee0922f87f3164ff1ec699c4872606957b11d6d8",
+        "evidenceSha256": "sha256:635ad25cfe42ee57cc61c970dcc6e9fa5eba8042d716c4e7a4c997c7e96017d4"
+      },
+      "sourceGeometryHash": "sha256:d36693c9ef76cd479032cc5d5f6b712a651ce9592cc97a350487263b042b7219",
+      "nativeHorizontalPosition": [
+        -122.424681,
+        37.722013,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550701.736287,
+        4175128.230364,
+        126.47816467285156
+      ],
+      "runtimePositionMetres": [
+        45.736287,
+        126.478165,
+        280.230364
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270252",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 669,
+          "row": 4941,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 115.61756134033203,
+        "sampleWindowSha256": "sha256:86ee80481f9ee6cf9479e0269443f0f6abbc094725aa7b531ae68f351ed7450d",
+        "evidenceSha256": "sha256:6d7edc51174e7a3007fb9e855e6d353bf7959934ea6b7054401e4af77aafe3a0"
+      },
+      "sourceGeometryHash": "sha256:4b3cb2d6e7d6c2e4960a4ff3f151e4a9d872e9cc95308ae1acc789c1189cca7a",
+      "nativeHorizontalPosition": [
+        -122.425117,
+        37.721438,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550663.765555,
+        4175064.181775,
+        115.61756134033203
+      ],
+      "runtimePositionMetres": [
+        7.765555,
+        115.617561,
+        216.181775
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270256",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 700,
+          "row": 4899,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 123.5785140991211,
+        "sampleWindowSha256": "sha256:44b7f40141e13ab9ab8dad054b0a051147a665c6850a5b63b368e7ddfd1386de",
+        "evidenceSha256": "sha256:7dd079a364478cccce05965261289ae58a782f21c6be72f6135b8d4dca16c850"
+      },
+      "sourceGeometryHash": "sha256:5e21b79980b9d7f99ae2d88d36990920a4a2cfb0c9e9bf6e5afd9e45ca48e60e",
+      "nativeHorizontalPosition": [
+        -122.424763,
+        37.721819,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550694.706129,
+        4175106.734154,
+        123.5785140991211
+      ],
+      "runtimePositionMetres": [
+        38.706129,
+        123.578514,
+        258.734154
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270259",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 688,
+          "row": 4909,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 120.32735443115234,
+        "sampleWindowSha256": "sha256:9170aad9c64cc68546f3bab20645fe63221e4e6834a4dacf14fdb62ad02efac5",
+        "evidenceSha256": "sha256:f05ad7a783c882e68704e0228bee6fdca7fbc49a4177bb174517bb8e40ced9fd"
+      },
+      "sourceGeometryHash": "sha256:0174407b81794a8d9389e984b10372238d9c841250e8077b0a4827be4bab64ba",
+      "nativeHorizontalPosition": [
+        -122.424907,
+        37.721727,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550682.01369,
+        4175096.433779,
+        120.32735443115234
+      ],
+      "runtimePositionMetres": [
+        26.01369,
+        120.327354,
+        248.433779
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/276270282",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 677,
+          "row": 4937,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 116.38165283203125,
+        "sampleWindowSha256": "sha256:80618cca151b0e39bcff97094fcef29a116646fe12ebe5cfcf11f18ed946761b",
+        "evidenceSha256": "sha256:fea8930dc80e9d49b687a5d6416e460ef0ee614b2bea8e55ec05cc29174d5688"
+      },
+      "sourceGeometryHash": "sha256:4c58f5b35d40c1831fa727bcbd3e5f31dadba99e8e8419cf23f2e780991c074e",
+      "nativeHorizontalPosition": [
+        -122.425024,
+        37.721472,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550671.913596,
+        4175068.10293,
+        116.38165283203125
+      ],
+      "runtimePositionMetres": [
+        15.913596,
+        116.381653,
+        220.10293
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/283721517",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 922,
+          "row": 4944,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 129.96961975097656,
+        "sampleWindowSha256": "sha256:0241fed468b0bd76a86d4a39d0f9c8de1e03e5ad7838a958068a83c4ab08e58b",
+        "evidenceSha256": "sha256:f7b14ea7b92432eb5dbb3ef04f7c20a436f39d164f67397b7fee76649d2a47fb"
+      },
+      "sourceGeometryHash": "sha256:7ee97c23d57dd2c18a299ae7dd7fcc705cf7c8156bd91b06b038a0c4afb916e3",
+      "nativeHorizontalPosition": [
+        -122.422253,
+        37.721401,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550916.184643,
+        4175061.733011,
+        129.96961975097656
+      ],
+      "runtimePositionMetres": [
+        260.184643,
+        129.96962,
+        213.733011
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/283721518",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 909,
+          "row": 4921,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 130.86306762695312,
+        "sampleWindowSha256": "sha256:12ec33a114b5c214c331be48981fbfbbecf3236e9eac2c9a9ac82721bec69da8",
+        "evidenceSha256": "sha256:ed9bc89f8bf55372a0d8f61c119db2961f0c6d920b5a8929317d1e24a504b24b"
+      },
+      "sourceGeometryHash": "sha256:b01474bd13151ce68f90bfaaab1663825a2f3111435eb1ac81164b91d515a82a",
+      "nativeHorizontalPosition": [
+        -122.42239,
+        37.72161,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550903.942737,
+        4175084.83028,
+        130.86306762695312
+      ],
+      "runtimePositionMetres": [
+        247.942737,
+        130.863068,
+        236.83028
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/424957087",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 846,
+          "row": 4833,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.94985961914062,
+        "sampleWindowSha256": "sha256:40cf0010bacb19920048873cc2e54676f2f983dfb5cda060b8cf9ef7e5b6413c",
+        "evidenceSha256": "sha256:fb84841eba3395087efae06fffa52f387ee6dd2638c8f34b7394e5fcf0468fb4"
+      },
+      "sourceGeometryHash": "sha256:c705781acf8f70c6ab8580b87be9651b42d8ca008aaeaa7873c1e947b8dcbfc0",
+      "nativeHorizontalPosition": [
+        -122.4231,
+        37.722408,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550840.86261,
+        4175172.975484,
+        139.94985961914062
+      ],
+      "runtimePositionMetres": [
+        184.86261,
+        139.94986,
+        324.975484
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/427296585",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 699,
+          "row": 4978,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 125.56991577148438,
+        "sampleWindowSha256": "sha256:b8fe03c603449056dc59757c717bb6c1a83ad05cb78ce5eca968bb826097f3e5",
+        "evidenceSha256": "sha256:3661fc2922fe8f7591d686128f51f001c132d459f62b243ed31ee37c5f3233d1"
+      },
+      "sourceGeometryHash": "sha256:a22ee0432c12f9e20c79b8b88d1681a07794fe05182f830946e1d5f2e50d30a9",
+      "nativeHorizontalPosition": [
+        -122.424777,
+        37.721102,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550693.889722,
+        4175027.097994,
+        125.56991577148438
+      ],
+      "runtimePositionMetres": [
+        37.889722,
+        125.569916,
+        179.097994
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/427296586",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 693,
+          "row": 5039,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 121.72712707519531,
+        "sampleWindowSha256": "sha256:c8c32db095a63480a6940166088f62bbd8f7de301a9fcae7ecb26577cf089666",
+        "evidenceSha256": "sha256:62828a830ba5ecf3c82b9e3b1d44b68dc2440f97798820141df0e40aa1ceb9c9"
+      },
+      "sourceGeometryHash": "sha256:b2d22d5fe6ffa416603394c0de68f460266d652446f303cee22f0ea0013e9d5b",
+      "nativeHorizontalPosition": [
+        -122.424855,
+        37.72056,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550687.391683,
+        4174966.978478,
+        121.72712707519531
+      ],
+      "runtimePositionMetres": [
+        31.391683,
+        121.727127,
+        118.978478
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/427296587",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 666,
+          "row": 5063,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 116.22723388671875,
+        "sampleWindowSha256": "sha256:74c3a224afd1134fd365aa1c8ea9fa8fa8da96cce72379099b698e1e3a6ae99d",
+        "evidenceSha256": "sha256:a009af33a0d0bb232c31b2ea2f47d6abfb3ff2a08276e60357b6b7e330d0f456"
+      },
+      "sourceGeometryHash": "sha256:488e19396e9601e9a8f75e434971b3e7dd9f7c6c064a8c0f57791b28669ecdd1",
+      "nativeHorizontalPosition": [
+        -122.425163,
+        37.720343,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550660.456311,
+        4174942.67991,
+        116.22723388671875
+      ],
+      "runtimePositionMetres": [
+        4.456311,
+        116.227234,
+        94.67991
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/427296589",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 787,
+          "row": 5083,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 127.4489974975586,
+        "sampleWindowSha256": "sha256:492ad204aff65a8addd19e9868bb41fe75e1304532b4d22ec23f13a897f41a57",
+        "evidenceSha256": "sha256:3feb782d3e748d888742f13caadf936f4d915622b7b421f4fdaa15afb017c675"
+      },
+      "sourceGeometryHash": "sha256:0a88bf1020524fd8002248c9121dd7f24d452ee2c1cb0b7cba95c820caefcec6",
+      "nativeHorizontalPosition": [
+        -122.423793,
+        37.720153,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550781.251963,
+        4174922.387768,
+        127.4489974975586
+      ],
+      "runtimePositionMetres": [
+        125.251963,
+        127.448997,
+        74.387768
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/427296590",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 696,
+          "row": 5064,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 119.68910217285156,
+        "sampleWindowSha256": "sha256:822b9a19e823921f832d34a467e9acad71f0cb7ed8c21c6098899a800c8bbc22",
+        "evidenceSha256": "sha256:648ad5220bf93dd1a13cac4b103bbd98eeca9b03b14604edde0a8bada93a2925"
+      },
+      "sourceGeometryHash": "sha256:540abea33fc0e4d01564889ae706c3817d1502c53e93cbe9e510ea56f74d85af",
+      "nativeHorizontalPosition": [
+        -122.424822,
+        37.720327,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550690.515981,
+        4174941.154507,
+        119.68910217285156
+      ],
+      "runtimePositionMetres": [
+        34.515981,
+        119.689102,
+        93.154507
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092251",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1012,
+          "row": 5071,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 136.55499267578125,
+        "sampleWindowSha256": "sha256:beb1182a2fa09e2fe5478a441ef44d58e897aeaa2718c2cfd9f67a3a348b09cc",
+        "evidenceSha256": "sha256:4109a619b6d577c237f80e95b020634454b242a09992b6c7aee5a7145963d860"
+      },
+      "sourceGeometryHash": "sha256:f72dcb977a98b3bf71d8880766045e8867b7708061d1383920be42b1db0826c8",
+      "nativeHorizontalPosition": [
+        -122.421233,
+        37.720247,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551006.817344,
+        4174934.22167,
+        136.55499267578125
+      ],
+      "runtimePositionMetres": [
+        350.817344,
+        136.554993,
+        86.22167
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092254",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1036,
+          "row": 5013,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 129.934814453125,
+        "sampleWindowSha256": "sha256:2ddb0fb1021b96dacef380ed544b15b9b860605e6106e6873c8a4f93c940f87d",
+        "evidenceSha256": "sha256:8fc1735afd8fb7e4a3441059fc266885d557b4e5564db273c414394723b47a2a"
+      },
+      "sourceGeometryHash": "sha256:703a6d2765fbc4c09106fa130f1034d88ddc00bdad290bfab0038f5557b0c30f",
+      "nativeHorizontalPosition": [
+        -122.420955,
+        37.720772,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551030.992021,
+        4174992.620524,
+        129.934814453125
+      ],
+      "runtimePositionMetres": [
+        374.992021,
+        129.934814,
+        144.620524
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092261",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 769,
+          "row": 5049,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 131.05726623535156,
+        "sampleWindowSha256": "sha256:988b769b0800fa3e02859cec617ff666120d02051b512b735960b7f6b6f566e4",
+        "evidenceSha256": "sha256:0fa9aff3809796ae4acb6a3ea79aa2c1fc45cad930a095f8f86884bac7338e4c"
+      },
+      "sourceGeometryHash": "sha256:f873eb6dc978b929394b4f3ce2505887726c978aadb9274f4079e2087dceecab",
+      "nativeHorizontalPosition": [
+        -122.423992,
+        37.720461,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550763.532654,
+        4174956.420967,
+        131.05726623535156
+      ],
+      "runtimePositionMetres": [
+        107.532654,
+        131.057266,
+        108.420967
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092262",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 786,
+          "row": 4788,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 147.32595825195312,
+        "sampleWindowSha256": "sha256:d85ab6164b98041200f9bbab65e9444a3668c3f912d7d3e3036e937169f09e98",
+        "evidenceSha256": "sha256:7ea302a6fb63deaa19daf7840ed411c736d041a7008f14f45cae4bbaa565ad0d"
+      },
+      "sourceGeometryHash": "sha256:efcecddffdff42f90fc9948bed42ba9ec1263185e0c12f3d00d91826848d24a3",
+      "nativeHorizontalPosition": [
+        -122.42378,
+        37.722816,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550780.592553,
+        4175217.803669,
+        147.32595825195312
+      ],
+      "runtimePositionMetres": [
+        124.592553,
+        147.325958,
+        369.803669
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092266",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 689,
+          "row": 4810,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 142.01962280273438,
+        "sampleWindowSha256": "sha256:13cc07983e5bae511c7e01406f9d11dcdc4074a5e538161cf946ff4f0201b20b",
+        "evidenceSha256": "sha256:8ea091ab7defc5f0543bf2a9693efae99622e5c1cb482d22cf27da53d45076be"
+      },
+      "sourceGeometryHash": "sha256:22adf7c1806057ba863707d5430f20514f8209f7f7e974b5b080ddc657043758",
+      "nativeHorizontalPosition": [
+        -122.424888,
+        37.722617,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550683.134655,
+        4175195.2144,
+        142.01962280273438
+      ],
+      "runtimePositionMetres": [
+        27.134655,
+        142.019623,
+        347.2144
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092268",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 740,
+          "row": 4863,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 131.59432983398438,
+        "sampleWindowSha256": "sha256:ee76f536390095977b034f11975ad4bbc46d59f6d94c1b61a7e8186b897cde16",
+        "evidenceSha256": "sha256:18a0b11e284bb2e7a043511282d143b82952295bfaf9c3c4a6766edd54ffe9b5"
+      },
+      "sourceGeometryHash": "sha256:ea547b56eefef5e28e7c51481e586cc4cb507626ef44cef9e608937fd9b6ef7d",
+      "nativeHorizontalPosition": [
+        -122.424307,
+        37.722136,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550734.672977,
+        4175142.112409,
+        131.59432983398438
+      ],
+      "runtimePositionMetres": [
+        78.672977,
+        131.59433,
+        294.112409
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092271",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 934,
+          "row": 4797,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 124.1570816040039,
+        "sampleWindowSha256": "sha256:b86a2e76d1ce3f42b355f0957b09ffadddb26e408fa73d63bd3a868aac84304c",
+        "evidenceSha256": "sha256:22640f5817c8f440c7d0c5ecb808e52eacf8939a6f3c24951040dc62feca4555"
+      },
+      "sourceGeometryHash": "sha256:a6a00da723370737b4278b71cc5789f3e3aee20e4c170ef4caa1ccb1f9378687",
+      "nativeHorizontalPosition": [
+        -122.422101,
+        37.72272,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550928.692299,
+        4175208.057703,
+        124.1570816040039
+      ],
+      "runtimePositionMetres": [
+        272.692299,
+        124.157082,
+        360.057703
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092272",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 838,
+          "row": 4806,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 142.76266479492188,
+        "sampleWindowSha256": "sha256:2758526c501c262bad68e41e99f4ff2064d4400a3d9cc615240e5d72c2597297",
+        "evidenceSha256": "sha256:de2e627c36b79eea1979b1551eb9107d535f80dc3ee00362a32823f7224d9182"
+      },
+      "sourceGeometryHash": "sha256:f54f3b0c63d3898d5a63da4164cf1d321bbdfa8157e1b903921b7892afecbc36",
+      "nativeHorizontalPosition": [
+        -122.423197,
+        37.722648,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550832.100811,
+        4175199.50988,
+        142.76266479492188
+      ],
+      "runtimePositionMetres": [
+        176.100811,
+        142.762665,
+        351.50988
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092274",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 854,
+          "row": 4831,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.76834106445312,
+        "sampleWindowSha256": "sha256:7f49c62f58b676b7d4600116c713ec3e8bcc6203329bd3d26bea157930c52ec8",
+        "evidenceSha256": "sha256:af23e88532c34c402aaa7a6bfbb8b28e396b9d3aea085ecb2638a48fc9bb6330"
+      },
+      "sourceGeometryHash": "sha256:7059c23a9f9e5224cd0b11c1eca45f05bbdc4213916ae634f213471e98594f6a",
+      "nativeHorizontalPosition": [
+        -122.423017,
+        37.722417,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550848.167775,
+        4175174.024612,
+        139.76834106445312
+      ],
+      "runtimePositionMetres": [
+        192.167775,
+        139.768341,
+        326.024612
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092275",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 906,
+          "row": 4830,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 128.4539031982422,
+        "sampleWindowSha256": "sha256:f0b4d95c697472b1fa9f03da5c57b488550ab864b87ec670bfcd709e3570adda",
+        "evidenceSha256": "sha256:fa8700bb1d427196f275558f1144799c43324c9d218ce94b34dee3f4b36e4d91"
+      },
+      "sourceGeometryHash": "sha256:1a9780460c555982672b2d7b5ab60c08ca7701f7cd532aeb244be433e1c86730",
+      "nativeHorizontalPosition": [
+        -122.422424,
+        37.722428,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550900.412916,
+        4175175.489775,
+        128.4539031982422
+      ],
+      "runtimePositionMetres": [
+        244.412916,
+        128.453903,
+        327.489775
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092276",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1014,
+          "row": 4914,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 112.19882202148438,
+        "sampleWindowSha256": "sha256:44e429861e557b3e281ebe02c4a1593fdb094dbd7f27b59dbb8d06e2c112eba0",
+        "evidenceSha256": "sha256:c195085e8b43ade6d992060abd494f16b2a13bd4e5dd8e5278d227612815e8ef"
+      },
+      "sourceGeometryHash": "sha256:0e47b4f27e03ccfc26f859f13b7adc32e2dff2148898817b251fc9910647d075",
+      "nativeHorizontalPosition": [
+        -122.4212,
+        37.721665,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551008.782914,
+        4175091.589612,
+        112.19882202148438
+      ],
+      "runtimePositionMetres": [
+        352.782914,
+        112.198822,
+        243.589612
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428092277",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 970,
+          "row": 4874,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 123.29469299316406,
+        "sampleWindowSha256": "sha256:8a16e730918a280bb57ed29c62eb8f5ccae6b5bdf626892a882af983bb367d54",
+        "evidenceSha256": "sha256:b4e9ffc43241072f964aa5147c9da0fab183c8de4bf043608bf0f59d699ade2c"
+      },
+      "sourceGeometryHash": "sha256:ec5971fc03775edebcc2c0c124f4b56625175dfa5a0ececed65e52c571a2a833",
+      "nativeHorizontalPosition": [
+        -122.421703,
+        37.72203,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550964.176488,
+        4175131.768354,
+        123.29469299316406
+      ],
+      "runtimePositionMetres": [
+        308.176488,
+        123.294693,
+        283.768354
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428094165",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1032,
+          "row": 4780,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 107.8016586303711,
+        "sampleWindowSha256": "sha256:341e958eb8c4b527b3806c5ecc03136473e38d5f6fcbe864a5dbf346d9654088",
+        "evidenceSha256": "sha256:d5f6277a1e169a5a7e85a0afa1f6def8617a2603ae8a94a7db0a47e21cf1f76d"
+      },
+      "sourceGeometryHash": "sha256:a02b51e81467112daa282a19be62150466b205983c96907b8dc30a3505ad874a",
+      "nativeHorizontalPosition": [
+        -122.420994,
+        37.722874,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551026.124391,
+        4175225.845927,
+        107.8016586303711
+      ],
+      "runtimePositionMetres": [
+        370.124391,
+        107.801659,
+        377.845927
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/428094175",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1034,
+          "row": 4790,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 106.92559814453125,
+        "sampleWindowSha256": "sha256:2ea091f31f4b604d7dcddd1628cd18a5b29e9c87afcd332896dcda0abfaaa752",
+        "evidenceSha256": "sha256:090e30b7c754d286a61d283689d96c2bf707d2618d92b15030e46b0f761db7cc"
+      },
+      "sourceGeometryHash": "sha256:84cead04cffc7b9433274726ecfce98f5ef4c0eb70b244b1569ce78dd25b0054",
+      "nativeHorizontalPosition": [
+        -122.420962,
+        37.722779,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551028.947702,
+        4175215.29635,
+        106.92559814453125
+      ],
+      "runtimePositionMetres": [
+        372.947702,
+        106.925598,
+        367.29635
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133648",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1015,
+          "row": 4808,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 111.1880874633789,
+        "sampleWindowSha256": "sha256:b643be73b9e8a11d72c0485f2524d35ef49c80af51513119b2fdde352cf5ea1b",
+        "evidenceSha256": "sha256:e503956b9d240a4b8e5aa9b6ff66d0bc05c4ad85e632720fdee04d8078855efa"
+      },
+      "sourceGeometryHash": "sha256:7b79b389330c54128ba2d0d9246095b7deb9201b6af4d0b37818cc320b30c358",
+      "nativeHorizontalPosition": [
+        -122.421181,
+        37.722618,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551009.787518,
+        4175197.306316,
+        111.1880874633789
+      ],
+      "runtimePositionMetres": [
+        353.787518,
+        111.188087,
+        349.306316
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133649",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 876,
+          "row": 4787,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.03091430664062,
+        "sampleWindowSha256": "sha256:622ef0f8561ddb18f0f388c576df269ea99510f0fbfbb15c24b4bce49ffbce22",
+        "evidenceSha256": "sha256:8c57d74f10d15c02a396820cf4920d97fe63fcc4ffc0ba12f3f773ebc8dbb15f"
+      },
+      "sourceGeometryHash": "sha256:9f6ed48d1b21e1add7ef6cf635a7a4865705a5cd9f5ff6706a722c59179d4030",
+      "nativeHorizontalPosition": [
+        -122.422764,
+        37.722815,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550870.152889,
+        4175218.33213,
+        139.03091430664062
+      ],
+      "runtimePositionMetres": [
+        214.152889,
+        139.030914,
+        370.33213
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133661",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 989,
+          "row": 4809,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 113.74635314941406,
+        "sampleWindowSha256": "sha256:74bdb315da4c11cef5ca4b4dbace25be2a62616d37ddd80d1439ce65cad4e545",
+        "evidenceSha256": "sha256:e940b45489a6f26d7a581b433c5b92ae3efa4af7ea92c35e11a4e10f284636b5"
+      },
+      "sourceGeometryHash": "sha256:d08ece0a3a139bdad39f52aae256c2afc17f77e35cf966ddde2f68b09227a738",
+      "nativeHorizontalPosition": [
+        -122.421474,
+        37.72261,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550983.992547,
+        4175196.261206,
+        113.74635314941406
+      ],
+      "runtimePositionMetres": [
+        327.992547,
+        113.746353,
+        348.261206
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133663",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 849,
+          "row": 4910,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 131.707275390625,
+        "sampleWindowSha256": "sha256:ecd6a1033d9dc8ae29d86d9b8602e73eaf58c707f138974bb6396f97742609d1",
+        "evidenceSha256": "sha256:e943b48e3bdd5b229073a612745548a2ecde4c31e341e117165d9c207bc75c82"
+      },
+      "sourceGeometryHash": "sha256:e9aba899b4dfbbf05785ced937a5c44d658a46b02e4f49d45b9986e24ac44793",
+      "nativeHorizontalPosition": [
+        -122.423071,
+        37.721712,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550843.831901,
+        4175095.707526,
+        131.707275390625
+      ],
+      "runtimePositionMetres": [
+        187.831901,
+        131.707275,
+        247.707526
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133664",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 897,
+          "row": 4859,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 131.0659942626953,
+        "sampleWindowSha256": "sha256:032a06adb7f0efb71a999ada455ae5f38c99578bcec69c4956b267f8ab033673",
+        "evidenceSha256": "sha256:9a9e2782a634e32b0bfa0f4b85b4e52b8aa33317296db9183f97563155ddf869"
+      },
+      "sourceGeometryHash": "sha256:f87f7606478d84e5935529c120b869085e8e727585d4379c4fe8a9d805c0edee",
+      "nativeHorizontalPosition": [
+        -122.422527,
+        37.722168,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550891.45985,
+        4175146.582475,
+        131.0659942626953
+      ],
+      "runtimePositionMetres": [
+        235.45985,
+        131.065994,
+        298.582475
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133665",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 873,
+          "row": 4846,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 135.98414611816406,
+        "sampleWindowSha256": "sha256:d61275ebfece086908f4470173b18ddb89dfbd8cb8293e1c7271438886f4f134",
+        "evidenceSha256": "sha256:6891bbd6e0aba252d3a21aba6a363d3746d5f2f66b342695cc3237395e52a63a"
+      },
+      "sourceGeometryHash": "sha256:b23f9f71786ae0462fe07b2711fae01aede7921c84c6d42d53ddcccbef360647",
+      "nativeHorizontalPosition": [
+        -122.422796,
+        37.722285,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550867.696883,
+        4175159.511723,
+        135.98414611816406
+      ],
+      "runtimePositionMetres": [
+        211.696883,
+        135.984146,
+        311.511723
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133667",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 824,
+          "row": 4811,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 142.2692413330078,
+        "sampleWindowSha256": "sha256:66dc2417816ce494f9859613eab2de91e79941b87fc3ad1385806944e85d5b3d",
+        "evidenceSha256": "sha256:b37dd89483875d8fb6156231d9f7064144c08e068586541fb3227226c5adf6bf"
+      },
+      "sourceGeometryHash": "sha256:0b8ff49f5611931805969e79fbbc0f49524beaabd594476765b840f6c5708254",
+      "nativeHorizontalPosition": [
+        -122.423357,
+        37.722606,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550818.022045,
+        4175194.821418,
+        142.2692413330078
+      ],
+      "runtimePositionMetres": [
+        162.022045,
+        142.269241,
+        346.821418
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133670",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 871,
+          "row": 5022,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 144.02191162109375,
+        "sampleWindowSha256": "sha256:8a5360e0670ee6264794828f3b91e531ea075ac260688bac5f5a82d2d9097289",
+        "evidenceSha256": "sha256:494e13e35c7640220fa826fc441487e74bdc224714f733b612718719be40cac1"
+      },
+      "sourceGeometryHash": "sha256:b1b558473a535b5e200176c989d0f072667217e9dd1228876d1fb572ca47637e",
+      "nativeHorizontalPosition": [
+        -122.422836,
+        37.720701,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550865.271206,
+        4174983.667482,
+        144.02191162109375
+      ],
+      "runtimePositionMetres": [
+        209.271206,
+        144.021912,
+        135.667482
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133671",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 819,
+          "row": 4786,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 143.27963256835938,
+        "sampleWindowSha256": "sha256:db5bb5eaad6d31a5246a64a3a1cd4ebe70160c75248386e5df408c092a339ff8",
+        "evidenceSha256": "sha256:14970beda45e85efbdcd0116ca7711d364981126ce64d571c04250c5b9731336"
+      },
+      "sourceGeometryHash": "sha256:d7c5efe60fc154d1899127526ccbf60538a0210e785b87d530d22c8b84ab2a56",
+      "nativeHorizontalPosition": [
+        -122.423403,
+        37.722826,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550813.853481,
+        4175219.15997,
+        143.27963256835938
+      ],
+      "runtimePositionMetres": [
+        157.853481,
+        143.279633,
+        371.15997
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133672",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 856,
+          "row": 4810,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 140.7523956298828,
+        "sampleWindowSha256": "sha256:b618d028a677d2547900e6b171ae0792b0ce30c904aa778b8f012053121c1429",
+        "evidenceSha256": "sha256:e5f3bd0049485d1e6d0dc58bf6f53b475b4dd2a8796ecfac293c80a9f02b516b"
+      },
+      "sourceGeometryHash": "sha256:9f02cf3fc1abf3a0f8606a9ba326cefa2901a3cb0025a37f40d0e2a3cd42a173",
+      "nativeHorizontalPosition": [
+        -122.422993,
+        37.722611,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550850.086419,
+        4175195.545956,
+        140.7523956298828
+      ],
+      "runtimePositionMetres": [
+        194.086419,
+        140.752396,
+        347.545956
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133673",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 834,
+          "row": 4817,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 141.82020568847656,
+        "sampleWindowSha256": "sha256:b1c73e5063c1858a39be06604d594fd66959b769873ca15d03642b9afa2b92dc",
+        "evidenceSha256": "sha256:dd53fb7a160dd2226632bd6a78023241c17d7c861d98b76aec57a69fbee95b8d"
+      },
+      "sourceGeometryHash": "sha256:bb1c85358312b18ca57e92bf79ed54d7e1ce570e73ff5ff57c3341a06640b72a",
+      "nativeHorizontalPosition": [
+        -122.423241,
+        37.722549,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550828.275148,
+        4175188.54363,
+        141.82020568847656
+      ],
+      "runtimePositionMetres": [
+        172.275148,
+        141.820206,
+        340.54363
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430133675",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 891,
+          "row": 4865,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 130.81100463867188,
+        "sampleWindowSha256": "sha256:a809c7af2806d2d689a7cc68365fadafc8eac1d30255881a096c635fcccd7ec3",
+        "evidenceSha256": "sha256:95f66517f19d6085a0109e404e3b60b2da70bde03c75d2565db3e05504121591"
+      },
+      "sourceGeometryHash": "sha256:30fc4b3b3b031a8c2f2530f8efaeb621b2a28711cc0353eba39fa3246f77481a",
+      "nativeHorizontalPosition": [
+        -122.422593,
+        37.722116,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550885.74007,
+        4175140.866437,
+        130.81100463867188
+      ],
+      "runtimePositionMetres": [
+        229.74007,
+        130.811005,
+        292.866437
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430134143",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 854,
+          "row": 4837,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.405517578125,
+        "sampleWindowSha256": "sha256:489a59091db92e7ea6e97dde5194d7f43e4be2105f3dd8d4f755c3c1354e59c4",
+        "evidenceSha256": "sha256:b95b2452202269704871bcabe7232daeeea6b26990c81e2e4124d707b04004a6"
+      },
+      "sourceGeometryHash": "sha256:5cc913d5f942bd1907a89e2567bccf5db46eaa47536e30c11a92da93aa889fd1",
+      "nativeHorizontalPosition": [
+        -122.423012,
+        37.722365,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550848.640022,
+        4175168.18171,
+        139.405517578125
+      ],
+      "runtimePositionMetres": [
+        192.640022,
+        139.405518,
+        320.18171
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430134688",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 712,
+          "row": 4849,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 133.19541931152344,
+        "sampleWindowSha256": "sha256:bacb7462630fedd48b3dbb64b5943e155bc15d3a58ab4aa29f46745782fa98e3",
+        "evidenceSha256": "sha256:af8abb1e789e4b47a19b148500fe5615302bf679cdde1c37d69829d699d620b7"
+      },
+      "sourceGeometryHash": "sha256:abb3839070b8dd68c4454fca29f5dc7fda3540a8cffd866901e0f1ccdbb3cb59",
+      "nativeHorizontalPosition": [
+        -122.42462,
+        37.722271,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550706.942668,
+        4175156.919254,
+        133.19541931152344
+      ],
+      "runtimePositionMetres": [
+        50.942668,
+        133.195419,
+        308.919254
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430134689",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 728,
+          "row": 4811,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 144.9174041748047,
+        "sampleWindowSha256": "sha256:1a8b7d9676bda18dd884a059b4aa9f00961d3437314953921420acecbef2620b",
+        "evidenceSha256": "sha256:5bbfa6e1bda36f22c05b40e37af8e479edfdebb48ed956ea4e6bf99080b72628"
+      },
+      "sourceGeometryHash": "sha256:d0d520d3a61633b6a2e95807a42bbec4d2ee0aceebb27394ffcc5ee6e9064e74",
+      "nativeHorizontalPosition": [
+        -122.424436,
+        37.722607,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550722.920282,
+        4175194.314949,
+        144.9174041748047
+      ],
+      "runtimePositionMetres": [
+        66.920282,
+        144.917404,
+        346.314949
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430134694",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 824,
+          "row": 5056,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 140.69085693359375,
+        "sampleWindowSha256": "sha256:5799dd1fecdf9d647eb8e1782359fdb1e74331dde347d405d9fa9cca2ae142c1",
+        "evidenceSha256": "sha256:14adbd90957435e18f616d15b09140f2d19bf275858c3bbac4e303300213a488"
+      },
+      "sourceGeometryHash": "sha256:f167df214a626e46a341f0ca0788341e8ace77c1bba33dbfbe8f3dcd6b3da81c",
+      "nativeHorizontalPosition": [
+        -122.423374,
+        37.720397,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550818.057754,
+        4174949.726458,
+        140.69085693359375
+      ],
+      "runtimePositionMetres": [
+        162.057754,
+        140.690857,
+        101.726458
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430138506",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 909,
+          "row": 4814,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 128.42491149902344,
+        "sampleWindowSha256": "sha256:f02429272b9e67057dce16d9a23c90fc32dd67ee0687bb9103037c8f4a4b41ed",
+        "evidenceSha256": "sha256:0b8e2899d7abb29365cca7e6633cf1b1f6a78359cbb1e02f10f5e6b1e66f5b25"
+      },
+      "sourceGeometryHash": "sha256:4450479bb756779d8a1089b3c54727f4c75cd618306f74d17903a5b1817f7ad2",
+      "nativeHorizontalPosition": [
+        -122.422382,
+        37.722568,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550903.99507,
+        4175191.126769,
+        128.42491149902344
+      ],
+      "runtimePositionMetres": [
+        247.99507,
+        128.424911,
+        343.126769
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430138756",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 853,
+          "row": 5144,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          201
+        ],
+        "compressedTileBytesRead": 758606,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 132.5006561279297,
+        "sampleWindowSha256": "sha256:d0d3b86a7f6f4b28a294c38fbef645026410e7aa09c59794cbfb52bfc9d8c147",
+        "evidenceSha256": "sha256:a98976d48d6d54ff863e7aa52c482e67879148304e33bcbf9cd08a47c7ec1884"
+      },
+      "sourceGeometryHash": "sha256:b9343843b6e4afa191c2c083a84093b937965e01ec89a6866dc276df217dd84c",
+      "nativeHorizontalPosition": [
+        -122.423046,
+        37.719602,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550847.499825,
+        4174861.6932,
+        132.5006561279297
+      ],
+      "runtimePositionMetres": [
+        191.499825,
+        132.500656,
+        13.6932
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430147126",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 780,
+          "row": 4889,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 136.93701171875,
+        "sampleWindowSha256": "sha256:fd2bff5bac49d5a1c03a384dc961fa26041a050fd5e6b0536cdb8e79a18e03aa",
+        "evidenceSha256": "sha256:999b617cd2570285aafcf36a69c3a5702507ded79cd6720f6ff57d70a9b0b1b0"
+      },
+      "sourceGeometryHash": "sha256:da3d5a2bdbab2a9ca03ce61aa559fbffd10c3fdd7a6ec3098ca37c60fefb871e",
+      "nativeHorizontalPosition": [
+        -122.423856,
+        37.721899,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550774.552505,
+        4175116.064238,
+        136.93701171875
+      ],
+      "runtimePositionMetres": [
+        118.552505,
+        136.937012,
+        268.064238
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430147127",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 664,
+          "row": 4848,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 128.88523864746094,
+        "sampleWindowSha256": "sha256:ee33a3f69076739f96025014760bdc1c870fd020645dffad66d8c7669bac4614",
+        "evidenceSha256": "sha256:8e2acc839c2a97ea44dddc8a20dc5afde7b0672a66689e6ae12da3bcdbcee9f4"
+      },
+      "sourceGeometryHash": "sha256:a81d26c0912c83283eabc538ef484f4f048a55867e0ba17d24387ca21eb10986",
+      "nativeHorizontalPosition": [
+        -122.425173,
+        37.722278,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550658.198719,
+        4175157.436626,
+        128.88523864746094
+      ],
+      "runtimePositionMetres": [
+        2.198719,
+        128.885239,
+        309.436626
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430147128",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1021,
+          "row": 4999,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 125.76241302490234,
+        "sampleWindowSha256": "sha256:d079463be39ea4b26d0780eb09543bcc90675fa6704244cc99e1ef381a4a073e",
+        "evidenceSha256": "sha256:6b472b748c54d6e9465d137cee1d92f02a3ef63114385e0f0e9d08bec57655e8"
+      },
+      "sourceGeometryHash": "sha256:7cb9e2242345ace362cc379479647a9283666d0484fedb31024c5016df46165e",
+      "nativeHorizontalPosition": [
+        -122.421135,
+        37.720897,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551015.035223,
+        4175006.383294,
+        125.76241302490234
+      ],
+      "runtimePositionMetres": [
+        359.035223,
+        125.762413,
+        158.383294
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430147129",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1039,
+          "row": 4874,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 108.07843780517578,
+        "sampleWindowSha256": "sha256:ff290256500d4ba410b4f7df1d20c7e92e8cbb37f82bf1463cb17d731140d0a5",
+        "evidenceSha256": "sha256:ceaaa86169a323f6f8b650f7bd71b13f9c1fb24ad540bc39b389b925d5f434da"
+      },
+      "sourceGeometryHash": "sha256:66f011fd21ee8c0257263748b42cd7f83cb843b83cf191e890ad02e3db3fdb3e",
+      "nativeHorizontalPosition": [
+        -122.420915,
+        37.722028,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551033.632811,
+        4175131.924515,
+        108.07843780517578
+      ],
+      "runtimePositionMetres": [
+        377.632811,
+        108.078438,
+        283.924515
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/430147278",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 721,
+          "row": 5130,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          201
+        ],
+        "compressedTileBytesRead": 758606,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 116.69603729248047,
+        "sampleWindowSha256": "sha256:e15c30fe36e533e864ed2588a25e5ae72c34c7f2169849eb9050d349c51a7869",
+        "evidenceSha256": "sha256:a5c1b0a52aba27be7ca32349e88a23bdaedd5450341e4201910cbdba57544051"
+      },
+      "sourceGeometryHash": "sha256:008f24551b8b1cde5188283ebde82855ff13aed573c1b9bbaee082846dbb28f0",
+      "nativeHorizontalPosition": [
+        -122.424546,
+        37.719739,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550715.216402,
+        4174875.997785,
+        116.69603729248047
+      ],
+      "runtimePositionMetres": [
+        59.216402,
+        116.696037,
+        27.997785
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/434823620",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 700,
+          "row": 4866,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 126.37012481689453,
+        "sampleWindowSha256": "sha256:fc26c4cd193dbd54da2ccb8842954b70615f53f80b2ce4b26347a9afce56471a",
+        "evidenceSha256": "sha256:d5683a4246fcd019d3c8e7e7e7675990fff0ef80a9ddbfcd6e173af84929ebe4"
+      },
+      "sourceGeometryHash": "sha256:661de81a4a65f19173e560e781abfbce8024cc1287f58a0cff674d0125f02de1",
+      "nativeHorizontalPosition": [
+        -122.424758,
+        37.722116,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550694.941659,
+        4175139.647795,
+        126.37012481689453
+      ],
+      "runtimePositionMetres": [
+        38.941659,
+        126.370125,
+        291.647795
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/434823621",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 719,
+          "row": 4855,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 132.04092407226562,
+        "sampleWindowSha256": "sha256:4877d32c229b331bc55e28f1e8a54a36ce97ac550ff74875b23e7c4cd5d177d4",
+        "evidenceSha256": "sha256:74bc58b822d4c05fa25089f11905200ec0a15f0eb2bae12191aa8dabb83fb1ee"
+      },
+      "sourceGeometryHash": "sha256:12069a74082f9ee29c6e371be3abf0dcd226313b36416bd475c6b562f88390ef",
+      "nativeHorizontalPosition": [
+        -122.424541,
+        37.722213,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550713.950958,
+        4175150.532517,
+        132.04092407226562
+      ],
+      "runtimePositionMetres": [
+        57.950958,
+        132.040924,
+        302.532517
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/473033720",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 799,
+          "row": 5134,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          201
+        ],
+        "compressedTileBytesRead": 758606,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 125.2442398071289,
+        "sampleWindowSha256": "sha256:d14c33797005eeaae3b2d292c91ddf981a75b0a796063247e25ecc01ddfcb693",
+        "evidenceSha256": "sha256:ca214161646f405de40e26de750128e65b7685a93b5b3ada3c3cf49d0a616b74"
+      },
+      "sourceGeometryHash": "sha256:ba4937f6a66bc1645455ab8511a88c0601b128a19564eed75295d858a73f050d",
+      "nativeHorizontalPosition": [
+        -122.42366,
+        37.719692,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550793.337008,
+        4174871.307628,
+        125.2442398071289
+      ],
+      "runtimePositionMetres": [
+        137.337008,
+        125.24424,
+        23.307628
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/511557902",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 744,
+          "row": 5114,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 119.49371337890625,
+        "sampleWindowSha256": "sha256:88af7b95dabefbd7a17943261e71857a04beb82b21221001d7f298db675c532d",
+        "evidenceSha256": "sha256:8697dc180eb8a5690371ca2b3beaede4d41b49f8c47e8cba9e26e893ed215831"
+      },
+      "sourceGeometryHash": "sha256:3c7a70a44fab3f6079b1a00f29a969630a7beac2b8cbf1bea5cdee460931c56d",
+      "nativeHorizontalPosition": [
+        -122.424279,
+        37.719875,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550738.683918,
+        4174891.269455,
+        119.49371337890625
+      ],
+      "runtimePositionMetres": [
+        82.683918,
+        119.493713,
+        43.269455
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/564772894",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 740,
+          "row": 5136,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          201
+        ],
+        "compressedTileBytesRead": 758606,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 119.14627838134766,
+        "sampleWindowSha256": "sha256:53078310dccc9c68de31d7e75b9bc494edddd9c655b02e13f65f2b591813bc9d",
+        "evidenceSha256": "sha256:6251dc53ce30690e5c1601dec627e868246a67e47ba0ad2af25721a43ad46d31"
+      },
+      "sourceGeometryHash": "sha256:f2988c55fb16e3b1a58ef868d92dd6d32f154dd6ba9a4080a1661255c68e2968",
+      "nativeHorizontalPosition": [
+        -122.424329,
+        37.719679,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550734.384356,
+        4174869.532414,
+        119.14627838134766
+      ],
+      "runtimePositionMetres": [
+        78.384356,
+        119.146278,
+        21.532414
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/564965165",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 830,
+          "row": 4882,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.3692626953125,
+        "sampleWindowSha256": "sha256:b6942de80811ec22f5cf3d4261c1f6d9d8f88432c6f579b9fba439f6b6afe1fb",
+        "evidenceSha256": "sha256:57467d42eac4157e85df7984d78bcdeab20ffaabada190c0164057685554b320"
+      },
+      "sourceGeometryHash": "sha256:c4a00fd403b9113072a80eebed7a6c9e8853f3cca16b6ee8f9a25b4894af1b8f",
+      "nativeHorizontalPosition": [
+        -122.423293,
+        37.721959,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550824.091119,
+        4175123.067006,
+        139.3692626953125
+      ],
+      "runtimePositionMetres": [
+        168.091119,
+        139.369263,
+        275.067006
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/641752003",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 808,
+          "row": 4900,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 139.63917541503906,
+        "sampleWindowSha256": "sha256:f590bdc7127a0593d72ced18b7765fc4a7188273d064f35180c95c5804b22d39",
+        "evidenceSha256": "sha256:c85b5d2e37284912cfa026077388de05b389ebdf24c91499d97fa22d2184df67"
+      },
+      "sourceGeometryHash": "sha256:75b8225fc6c5ee9836c15cd174881bde708e3d82d7c34af35e30f8b91ac60130",
+      "nativeHorizontalPosition": [
+        -122.423537,
+        37.7218,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550802.683461,
+        4175105.229954,
+        139.63917541503906
+      ],
+      "runtimePositionMetres": [
+        146.683461,
+        139.639175,
+        257.229954
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/801343273",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 917,
+          "row": 4821,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 127.06820678710938,
+        "sampleWindowSha256": "sha256:12c1fc3ef7df325c3cba7dd9eaa40153e4aae77216fe292fff2341c67eb36953",
+        "evidenceSha256": "sha256:660314b9b794a72ea5e6c8ae273172000d8388c9d72ba23ca0912756a0f11c98"
+      },
+      "sourceGeometryHash": "sha256:b0266aeb092e1317119ef85c67d37821ab9e9aae37f7a1a1050a4ed3a77d3ea1",
+      "nativeHorizontalPosition": [
+        -122.422302,
+        37.72251,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550911.050251,
+        4175184.715397,
+        127.06820678710938
+      ],
+      "runtimePositionMetres": [
+        255.050251,
+        127.068207,
+        336.715397
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/1147776024",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1026,
+          "row": 5043,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 132.6081085205078,
+        "sampleWindowSha256": "sha256:13948b6b1ad7afb1c4c3f17a076c135abb45168bc3b7ee015d23886e71801f34",
+        "evidenceSha256": "sha256:0b43a02dec813f88eb4aa3fe443a1930431ba21e71bbea14e2aa3bdb9a8872b8"
+      },
+      "sourceGeometryHash": "sha256:80c8e21b389ae3fe1fe984eaa04510957366a4cced063be920901fb8dcc9ae19",
+      "nativeHorizontalPosition": [
+        -122.421073,
+        37.720505,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551020.757847,
+        4174962.963672,
+        132.6081085205078
+      ],
+      "runtimePositionMetres": [
+        364.757847,
+        132.608109,
+        114.963672
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/1423128987",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 711,
+          "row": 5109,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 116.58904266357422,
+        "sampleWindowSha256": "sha256:cc5f1f04159d9c7b76b96246ae5d33a9cec35d580b1fdd7fc840d381a56b73d9",
+        "evidenceSha256": "sha256:1c886e63007124be0277fba3f3bde2301a342bd7106254713bf18f0482964039"
+      },
+      "sourceGeometryHash": "sha256:2af4651e3f5de13575090adcaf34dc5ed6fba2b158d8745b2d3e195aac9b883f",
+      "nativeHorizontalPosition": [
+        -122.424651,
+        37.719922,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550705.842761,
+        4174896.243955,
+        116.58904266357422
+      ],
+      "runtimePositionMetres": [
+        49.842761,
+        116.589043,
+        48.243955
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/1499477594",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 947,
+          "row": 4789,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 122.3032455444336,
+        "sampleWindowSha256": "sha256:7e8e1a3da0b45ebb4f897ce05e3eb55e2eadd55fca66ee39ebab062a403babfc",
+        "evidenceSha256": "sha256:fe108e9d4c152162af389656d24b00f86afa9496946bbb596a5876b86062aeef"
+      },
+      "sourceGeometryHash": "sha256:77141b61634bab1aa2b0b53337e9dd789292c6855eb512e2cd8842c1d36f8c2b",
+      "nativeHorizontalPosition": [
+        -122.421951,
+        37.722792,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550941.811817,
+        4175216.192221,
+        122.3032455444336
+      ],
+      "runtimePositionMetres": [
+        285.811817,
+        122.303246,
+        368.192221
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/1499478135",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 755,
+          "row": 4923,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          181
+        ],
+        "compressedTileBytesRead": 742482,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 132.8466033935547,
+        "sampleWindowSha256": "sha256:a8f62636bac90d479de0a6d61384efcec73ef129da02fabc4cb96cad821cb5a3",
+        "evidenceSha256": "sha256:323716b5e3a803f018c85ebbcc94a8cfd982498a08884461515628837caf0f05"
+      },
+      "sourceGeometryHash": "sha256:26addf70f5099ba3f6a1ccbb78f4aed33a9b3666880385e6737b5815682adff9",
+      "nativeHorizontalPosition": [
+        -122.424146,
+        37.7216,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        550749.184207,
+        4175082.760233,
+        132.8466033935547
+      ],
+      "runtimePositionMetres": [
+        93.184207,
+        132.846603,
+        234.760233
+      ]
+    },
+    {
+      "sourceId": "bbbike-sanfrancisco-osm-pbf",
+      "sourceFeatureId": "way/1501518858",
+      "publisher": "OpenStreetMap contributors; BBBike extract service",
+      "license": "ODbL-1.0",
+      "retrievedAt": "2026-08-02",
+      "nativeHorizontalCrs": "EPSG:4326",
+      "nativeVerticalDatum": "not-provided-by-2d-source",
+      "sourceLockId": "sf-ferry-osm-horizontal-geometry-v1",
+      "horizontalTransformLockId": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "verticalMode": "terrain-sampled-source-declared-navd88-unrealized",
+      "verticalTransformLockId": "terrain-sample-source-declared-navd88-unrealized",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationSampleEvidence": {
+        "rasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+        "nativePixelWindow": {
+          "column": 1032,
+          "row": 4896,
+          "width": 1,
+          "height": 1
+        },
+        "compressedTileIndices": [
+          182
+        ],
+        "compressedTileBytesRead": 763116,
+        "sampleMethod": "direct-native-pixel-float32-le",
+        "sampledSourceDeclaredNavd88UnrealizedMetres": 108.20896911621094,
+        "sampleWindowSha256": "sha256:de6a6e9a69e4fbea7bb762326463be06f98c7afb316673fe4dce73bc5e2206be",
+        "evidenceSha256": "sha256:8c3830ba784254ef91633c0f46dca7b4a3eb543814f2a36cc7e729d985520b7c"
+      },
+      "sourceGeometryHash": "sha256:d9c167241c9721b1e32da1920dd600df1f549309d2cae4f4f7b8c5b1e02a2d76",
+      "nativeHorizontalPosition": [
+        -122.421002,
+        37.721822,
+        0
+      ],
+      "transformedPositionEpsg26910VerticalMetres": [
+        551026.137536,
+        4175109.056791,
+        108.20896911621094
+      ],
+      "runtimePositionMetres": [
+        370.137536,
+        108.208969,
+        261.056791
+      ]
+    }
+  ],
+  "lods": [
+    {
+      "level": 0,
+      "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "translationMetres": [
+        0,
+        0,
+        0
+      ],
+      "maxHorizontalDeviationMetres": 0.000002,
+      "maxVerticalDeviationMetres": 0.000002,
+      "artifactHash": "sha256:8b3c3b6d62eff952584baf868e3daeb590334de64ce57914ceb9cf8d5e7c1ab0"
+    }
+  ]
+}
