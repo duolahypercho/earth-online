@@ -32,7 +32,7 @@ assert(presentationReceiptIndex >= 0 && glbFetchIndex > presentationReceiptIndex
 assert(source.includes('verifyParsedGlbMetricContract(gltf, descriptor'), 'Parsed GLB metric identity/origin/scale must be verified before admission.');
 assert(source.includes('verifyParsedGlbPresentation(gltf, descriptor.presentation'), 'Parsed GLB presentation metadata must match its descriptor.');
 assert(source.includes('verifyScenePresentation(tile, descriptor.presentation'), 'Parsed mesh attributes must be fail-closed before admission.');
-assert(source.includes('collectSourceToneAttributeBytes(tile, descriptor.presentation)'), 'Source-tone payload bytes must be re-collected after GLTF parsing.');
+assert(source.includes('collectSourceToneAttributeBytes(gltf, descriptor.presentation, descriptor.id)'), 'Source-tone payload bytes must be re-collected in GLTF primitive order after parsing.');
 assert(source.includes('source-tone attribute SHA-256 does not match its receipt ledger'), 'Source-tone payload bytes must match the receipt SHA-256 ledger.');
 assert(source.includes('function pumpLoadQueue()'), 'A deterministic tile admission queue is required.');
 assert(source.includes('if (activeLoad) return;'), 'The queue must allow exactly one active load.');

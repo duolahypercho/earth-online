@@ -110,6 +110,21 @@ expectReject(() => verifyScenePresentation(sceneFixture({ leak: true }), sourceD
 expectReject(() => verifyScenePresentation(sceneFixture({ includeBuildings: false }), sourceDescriptor, 'candidate'), /contains no building mesh/);
 expectReject(() => verifyScenePresentation(sceneFixture(), SF_MAP_LEGACY_BUILDING_PRESENTATION, 'legacy'), /legacy mesh carries/);
 
+const orderedMeshes = [
+  { isMesh: true, material: { name: 'buildings-night' }, geometry: { getAttribute: (name) => name === '_sf_source_tone_v1' ? attribute([2, 3]) : name === 'position' ? { count: 2 } : undefined } },
+  { isMesh: true, material: { name: 'buildings-night' }, geometry: { getAttribute: (name) => name === '_sf_source_tone_v1' ? attribute([0, 1]) : name === 'position' ? { count: 2 } : undefined } },
+];
+const orderedAssociations = new Map([[orderedMeshes[0], { primitives: 5 }], [orderedMeshes[1], { primitives: 2 }]]);
+assert.deepEqual([...collectSourceToneAttributeBytes({
+  scene: { traverse: (visit) => orderedMeshes.forEach(visit) },
+  parser: { associations: orderedAssociations },
+}, sourceDescriptor, 'ordered-fixture')], [0, 1, 2, 3], 'Source-tone payload bytes must follow GLTF primitive order rather than scene traversal order');
+orderedAssociations.set(orderedMeshes[0], { primitives: 2 });
+expectReject(() => collectSourceToneAttributeBytes({
+  scene: { traverse: (visit) => orderedMeshes.forEach(visit) },
+  parser: { associations: orderedAssociations },
+}, sourceDescriptor, 'duplicate-fixture'), /primitive index 2 is duplicated/);
+
 const [mainSource, materialSource, manifestBytes, proofManifestBytes] = await Promise.all([
   readFile(MAIN_PATH, 'utf8'),
   readFile(MATERIAL_PATH, 'utf8'),
@@ -153,7 +168,7 @@ for (const tile of proofManifest.tiles) {
   verifyParsedGlbMetricContract(candidateGltf, metricDescriptor, tile.tile);
   verifyParsedGlbPresentation(candidateGltf, authorizedDescriptorPresentation, tile.tile);
   verifyScenePresentation(candidateGltf.scene, authorizedDescriptorPresentation, tile.tile);
-  const payload = collectSourceToneAttributeBytes(candidateGltf.scene, authorizedDescriptorPresentation);
+  const payload = collectSourceToneAttributeBytes(candidateGltf, authorizedDescriptorPresentation, tile.tile);
   assert.equal(`sha256:${createHash('sha256').update(payload).digest('hex')}`, authorizedPresentationIntegrity.sourceToneAttributeSha256, `${tile.tile} decoded Three attribute bytes do not match the metric receipt ledger`);
 }
 
@@ -164,7 +179,7 @@ const glbParse = mainSource.indexOf('gltfLoader.parseAsync(glbArtifact.bytes');
 const metricGlbVerify = mainSource.indexOf('verifyParsedGlbMetricContract(gltf, descriptor');
 const glbVerify = mainSource.indexOf('verifyParsedGlbPresentation(gltf, descriptor.presentation');
 assert(receiptFetch >= 0 && receiptVerify > receiptFetch && glbFetch > receiptVerify && glbParse > glbFetch && metricGlbVerify > glbParse && glbVerify > metricGlbVerify, 'Receipt authorization must be verified before GLB fetch/parsing and metric/presentation validation');
-assert(mainSource.includes('collectSourceToneAttributeBytes(tile, descriptor.presentation)'));
+assert(mainSource.includes('collectSourceToneAttributeBytes(gltf, descriptor.presentation, descriptor.id)'));
 assert(mainSource.includes('source-tone attribute SHA-256 does not match its receipt ledger'));
 assert(mainSource.includes("material.customProgramCacheKey = () => 'sf-map-building-palette-v1'"));
 assert(mainSource.includes("import { applySourceToneBuildingPresentation } from './building-presentation-material.js'"));
@@ -182,5 +197,5 @@ process.stdout.write(`${JSON.stringify({
   productionGlbHeadersAndReceiptsAudited: manifest.tiles.length,
   proofArtifactsRejectedForProduction: proofManifest.tiles.length,
   sourceTonePolicySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256,
-  verified: ['authorization before GLB fetch/parse', 'positive Three GLTFLoader source-tone path', 'decoded attribute SHA-256 receipt binding', 'GLB root metric identity/origin/scale', 'distinct shader cache keys', 'exact receipt/GLB contract', 'UINT8 scalar domain and count', 'no attribute leakage', 'legacy compatibility'],
+  verified: ['authorization before GLB fetch/parse', 'positive Three GLTFLoader source-tone path', 'decoded attribute SHA-256 receipt binding in explicit primitive order', 'GLB root metric identity/origin/scale', 'distinct shader cache keys', 'exact receipt/GLB contract', 'UINT8 scalar domain and count', 'no attribute leakage', 'legacy compatibility'],
 }, null, 2)}\n`);

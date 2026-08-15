@@ -143,10 +143,15 @@ export function verifyScenePresentation(root, descriptorPresentation, tileId = '
   if (descriptorPresentation.mode === 'source-tone-v1' && buildingMeshes === 0) fail(tileId, 'source-tone tile contains no building mesh to validate');
 }
 
-export function collectSourceToneAttributeBytes(root, descriptorPresentation) {
+export function collectSourceToneAttributeBytes(gltf, descriptorPresentation, tileId = 'metric tile') {
   if (descriptorPresentation.mode !== 'source-tone-v1') return new Uint8Array();
+  const root = gltf?.scene;
+  const associations = gltf?.parser?.associations;
+  if (!root?.traverse || typeof associations?.get !== 'function') {
+    fail(tileId, 'source-tone payload ordering requires GLTFLoader primitive associations');
+  }
   const attributeName = SF_BUILDING_SOURCE_TONE_CONTRACT_V1.attribute.threeAttributeName;
-  const arrays = [];
+  const chunks = [];
   let byteLength = 0;
   root.traverse((node) => {
     if (!node.isMesh) return;
@@ -154,12 +159,22 @@ export function collectSourceToneAttributeBytes(root, descriptorPresentation) {
     if (!materials.some((material) => material?.name === 'buildings-night')) return;
     const array = node.geometry?.getAttribute?.(attributeName)?.array;
     if (!(array instanceof Uint8Array)) return;
-    arrays.push(array);
+    const primitiveIndex = associations.get(node)?.primitives;
+    if (!Number.isInteger(primitiveIndex) || primitiveIndex < 0) {
+      fail(tileId, 'source-tone building mesh is missing its GLTFLoader primitive index');
+    }
+    chunks.push({ primitiveIndex, array });
     byteLength += array.byteLength;
   });
+  chunks.sort((left, right) => left.primitiveIndex - right.primitiveIndex);
+  for (let index = 1; index < chunks.length; index += 1) {
+    if (chunks[index - 1].primitiveIndex === chunks[index].primitiveIndex) {
+      fail(tileId, `source-tone primitive index ${chunks[index].primitiveIndex} is duplicated`);
+    }
+  }
   const payload = new Uint8Array(byteLength);
   let offset = 0;
-  for (const array of arrays) {
+  for (const { array } of chunks) {
     payload.set(array, offset);
     offset += array.byteLength;
   }
