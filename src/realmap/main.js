@@ -114,15 +114,22 @@ const FERRY_STREET_LIFE = Object.freeze({
 // The source 196662077 concrete footway is rendered as a 3.4m Ferry Plaza
 // paving path. These tracks keep a 0.7m edge margin on either side.
 const FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M = 1.0;
-// These are locked QA camera corridors, not scripted destinations. They only
-// seed three ordinary walkers onto the nearest already-built sidewalk path so
-// the bounded presentation layer has a local source cohort for both opening
-// cards. Their normal path-following update remains unchanged.
-const FERRY_HERO_CARD_COHORT_TARGETS = Object.freeze([
-  Object.freeze({ x: 2248, z: 1836.5 }),
-  Object.freeze({ x: 2251.5, z: 1840 }),
-  Object.freeze({ x: 2246, z: 1842.5 }),
+// Card 02 is an authored *presentation selection*, not a second pedestrian
+// simulation.  These are the three pre-existing ambient records (slots
+// 10–12) on the byte-locked 669627682-s1 OSM footway.  Their `s` values are
+// source-path distances; no world-coordinate launch point is invented here.
+const FERRY_CARD02_PEDESTRIAN_SOURCE_PATH = '669627682-s1:native';
+const FERRY_CARD02_PEDESTRIAN_STAGING = Object.freeze([
+  Object.freeze({ s: 12.8, lateralOffsetM: 0, reverse: false }),
+  Object.freeze({ s: 15.4, lateralOffsetM: 0, reverse: false }),
+  Object.freeze({ s: 18.0, lateralOffsetM: 0, reverse: false }),
 ]);
+// Presentation follows the nearest immutable *source launch anchor*, never a
+// camera-card coordinate.  A signed four-metre margin prevents swaps while a
+// walker is in the ambiguous region between the Ferry plaza and intersection
+// source cohorts.  QA probes the ±3.9m/±4.1m margin edges directly.
+const FERRY_CARD02_PRESENTATION_MARGIN_M = 4;
+const FERRY_HERO_PRESENTATION_SWITCH_HISTORY_CAPACITY = 8;
 // These locked-card target points sit on existing Embarcadero source geometry.
 // They only choose launch positions for ordinary traffic records: paths,
 // signal stops, speed, and subsequent movement continue to be owned by the
@@ -7401,6 +7408,9 @@ let collisionCells = new Map();
 let pedestrianGroup = null;
 let pedestrianState = [];
 let heroPedestrianStaging = null;
+let heroLifePresentationMode = 'plaza';
+let heroLifePresentationSwitches = [];
+let heroLifePresentationSwitchCursor = 0;
 let treeGroup = null;
 let furnitureGroup = null;
 let hillVegetationGroup = null;
@@ -8182,6 +8192,10 @@ function updatePlayerWalk(dt) {
     camera.rotation.order = 'YXZ';
     camera.rotation.set(playerPitch, playerYaw, 0);
   }
+  // Presentation selection is evaluated alongside player movement, not from
+  // the renderer's update.  This keeps a source-cohort swap out of the life
+  // layer's own render pass and makes it a deterministic response to travel.
+  syncFerryHeroPresentationSelection();
 }
 
 function createPedestrianAvatar(palette) {
@@ -8466,6 +8480,8 @@ function stageFerryHeroPedestrians(paths) {
 function getHeroPedestrianScreenGate() {
   if (!camera || !heroLifeLighting) return { active: false, passed: false, adults: [] };
   camera.updateMatrixWorld();
+  const viewportWidth = renderer?.domElement?.clientWidth || renderer?.domElement?.width || 1;
+  const viewportHeight = renderer?.domElement?.clientHeight || renderer?.domElement?.height || 1;
   const stats = heroLifeLighting.getStats();
   const detailed = new Set((stats.detailAssignments || []).map(({ sourceUuid }) => sourceUuid));
   const project = (position) => position.clone().project(camera);
@@ -8508,6 +8524,22 @@ function getHeroPedestrianScreenGate() {
       detailed: detailed.has(sourceUuid),
       ndc: [Number(footNdc.x.toFixed(3)), Number(footNdc.y.toFixed(3)), Number(footNdc.z.toFixed(3))],
       projectedHeight: Number(height.toFixed(3)),
+      // Preserve unrounded projection facts for the Card02 silhouette gate.
+      // Rounded diagnostic NDC values above are intentionally presentation
+      // output only and must never decide a pixel-space pass/fail result.
+      screen: {
+        centerPx: {
+          x: (footNdc.x + 1) * viewportWidth * 0.5,
+          y: (1 - footNdc.y) * viewportHeight * 0.5,
+        },
+        heightPx: height * viewportHeight * 0.5,
+        rectPx: {
+          left: (rect.left + 1) * viewportWidth * 0.5,
+          right: (rect.right + 1) * viewportWidth * 0.5,
+          top: (1 - rect.top) * viewportHeight * 0.5,
+          bottom: (1 - rect.bottom) * viewportHeight * 0.5,
+        },
+      },
       fullyInside,
       overlapsHero,
       readable: fullyInside && height >= 0.075 && !overlapsHero,
@@ -8515,14 +8547,49 @@ function getHeroPedestrianScreenGate() {
     };
   }).filter(Boolean);
   const readableDetailed = adults.filter(({ detailed: isDetailed, readable }) => isDetailed && readable);
-  // Extra adults may legitimately pass behind a readable trio. The gate asks
-  // for one non-overlapping set of three, rather than incorrectly rejecting a
-  // frame because a fourth adult shares part of that depth lane.
-  const separatedReadable = [];
-  for (const adult of readableDetailed) {
-    const [x1, y1] = adult.ndc;
-    if (separatedReadable.every(({ ndc: [x2, y2] }) => Math.hypot(x1 - x2, y1 - y2) >= 0.12)) {
-      separatedReadable.push(adult);
+  const silhouetteGapPx = (first, second) => {
+    const horizontal = Math.max(0, first.screen.rectPx.left - second.screen.rectPx.right,
+      second.screen.rectPx.left - first.screen.rectPx.right);
+    const vertical = Math.max(0, first.screen.rectPx.top - second.screen.rectPx.bottom,
+      second.screen.rectPx.top - first.screen.rectPx.bottom);
+    return Math.hypot(horizontal, vertical);
+  };
+  const pairMetrics = [];
+  for (let firstIndex = 0; firstIndex < readableDetailed.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < readableDetailed.length; secondIndex += 1) {
+      const first = readableDetailed[firstIndex];
+      const second = readableDetailed[secondIndex];
+      const centerDistancePx = Math.hypot(
+        first.screen.centerPx.x - second.screen.centerPx.x,
+        first.screen.centerPx.y - second.screen.centerPx.y,
+      );
+      const minCenterDistancePx = Math.max(32, 0.4 * Math.min(first.screen.heightPx, second.screen.heightPx));
+      pairMetrics.push({
+        sourceUuids: [first.sourceUuid, second.sourceUuid],
+        sourceIdentities: [first.sourceIdentity, second.sourceIdentity],
+        centerDistancePx,
+        minCenterDistancePx,
+        silhouetteGapPx: silhouetteGapPx(first, second),
+        passes: centerDistancePx >= minCenterDistancePx && silhouetteGapPx(first, second) >= 4,
+      });
+    }
+  }
+  // Extra adults may legitimately pass behind a readable trio.  Select the
+  // first deterministic three-person clique that has a conservative 4px
+  // silhouette gap and a scale-aware unrounded-projection center separation.
+  let separatedReadable = [];
+  for (let first = 0; first < readableDetailed.length && !separatedReadable.length; first += 1) {
+    for (let second = first + 1; second < readableDetailed.length && !separatedReadable.length; second += 1) {
+      for (let third = second + 1; third < readableDetailed.length; third += 1) {
+        const candidates = [readableDetailed[first], readableDetailed[second], readableDetailed[third]];
+        const ids = new Set(candidates.map(({ sourceUuid }) => sourceUuid));
+        if (pairMetrics.filter(({ sourceUuids, passes }) => (
+          passes && sourceUuids.every((sourceUuid) => ids.has(sourceUuid))
+        )).length === 3) {
+          separatedReadable = candidates;
+          break;
+        }
+      }
     }
   }
   const pairwiseSeparated = separatedReadable.length >= 3;
@@ -8532,6 +8599,12 @@ function getHeroPedestrianScreenGate() {
     heroRect,
     adults,
     readableDetailedCount: readableDetailed.length,
+    pairMetrics: pairMetrics.map((entry) => ({
+      ...entry,
+      centerDistancePx: Number(entry.centerDistancePx.toFixed(4)),
+      minCenterDistancePx: Number(entry.minCenterDistancePx.toFixed(4)),
+      silhouetteGapPx: Number(entry.silhouetteGapPx.toFixed(4)),
+    })),
     separatedReadableSourceUuids: separatedReadable.map(({ sourceUuid }) => sourceUuid),
     separatedReadableSourceIdentities: separatedReadable.map(({ sourceIdentity }) => sourceIdentity),
     pairwiseSeparated,
@@ -8633,7 +8706,17 @@ function getAmbientPedestrianCohortDiagnostics() {
       pathId: person.initialPathIdentity,
       sourceRoadId: person.path.sourceRoadId,
       sourceHighway: person.path.sourceHighway,
+      sourceSurface: person.path.sourceSurface || null,
+      nativePedestrianPath: Boolean(person.path.nativePedestrianPath),
+      lateralOffsetM: Number((person.path.lateralOffsetM || 0).toFixed(4)),
+      reverse: Boolean(person.path.reverse),
+      withinSourceWalkwayEnvelope: Math.abs(person.path.lateralOffsetM || 0) <= FERRY_HERO_PEDESTRIAN_TRACK_HALF_WIDTH_M,
       initialS: Number(person.initialS.toFixed(4)),
+      initialPosition: {
+        x: Number(pose.x.toFixed(4)),
+        y: Number(elevationAt(pose.x, pose.z).toFixed(4)),
+        z: Number(pose.z.toFixed(4)),
+      },
       position: {
         x: Number(pose.x.toFixed(4)),
         y: Number(elevationAt(pose.x, pose.z).toFixed(4)),
@@ -8682,40 +8765,32 @@ function pathLength(points) {
   return length;
 }
 
-function closestPathDistance(path, target) {
-  let best = { distance: Infinity, s: 0 };
-  let walked = 0;
-  for (let index = 0; index < path.points.length - 1; index += 1) {
-    const start = path.points[index];
-    const end = path.points[index + 1];
-    const dx = end.x - start.x;
-    const dz = end.z - start.z;
-    const length = Math.hypot(dx, dz);
-    if (length <= 0.001) continue;
-    const t = THREE.MathUtils.clamp(((target.x - start.x) * dx + (target.z - start.z) * dz) / (length * length), 0, 1);
-    const x = start.x + dx * t;
-    const z = start.z + dz * t;
-    const distance = Math.hypot(target.x - x, target.z - z);
-    if (distance < best.distance) best = { distance, s: walked + length * t };
-    walked += length;
-  }
-  return best;
-}
-
 function ferryHeroCardCohortAssignments(paths) {
   if (!isFerryBuildingHeroTile()) return [];
-  return FERRY_HERO_CARD_COHORT_TARGETS.map((target, index) => {
-    const nearest = paths.reduce((best, path) => {
-      const candidate = closestPathDistance(path, target);
-      return !best || candidate.distance < best.distance ? { path, ...candidate } : best;
-    }, null);
-    return nearest ? { index, target, ...nearest } : null;
-  }).filter(Boolean);
+  const sourcePath = paths.find(({ pathIdentity }) => pathIdentity === FERRY_CARD02_PEDESTRIAN_SOURCE_PATH);
+  if (!sourcePath) return [];
+  return FERRY_CARD02_PEDESTRIAN_STAGING.map((staging, index) => {
+    const track = staging.lateralOffsetM
+      ? offsetPolyline(sourcePath.points, staging.lateralOffsetM)
+      : sourcePath.points;
+    const points = staging.reverse ? track.slice().reverse() : track;
+    const path = {
+      ...sourcePath,
+      points,
+      length: pathLength(points),
+      lateralOffsetM: staging.lateralOffsetM,
+      reverse: staging.reverse,
+    };
+    return { index, path, s: THREE.MathUtils.clamp(staging.s, 0.25, path.length - 0.25) };
+  });
 }
 
 function createPedestrianSystem(roads) {
   const paths = buildSidewalkPaths(roads);
   const cardCohort = ferryHeroCardCohortAssignments(paths);
+  heroLifePresentationMode = 'plaza';
+  heroLifePresentationSwitches = [];
+  heroLifePresentationSwitchCursor = 0;
   if (pedestrianGroup) {
     cityRoot.remove(pedestrianGroup);
     disposeRoot(pedestrianGroup);
@@ -8765,7 +8840,6 @@ function createPedestrianSystem(roads) {
       mesh: avatar,
       ambientCohortId,
       heroCardCohort: Boolean(cardAssignment),
-      heroCardCohortTarget: cardAssignment?.target || null,
       path,
       s,
       initialS: s,
@@ -10174,6 +10248,92 @@ function syncHeroLifeLightingConditions() {
   return heroLifeLighting.setConditions(heroLifeLightingConditions());
 }
 
+function ferryHeroPresentationSelection() {
+  const plazaPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
+  const card02People = pedestrianState.filter(({ heroCardCohort, initialPathIdentity }) => (
+    heroCardCohort && initialPathIdentity === FERRY_CARD02_PEDESTRIAN_SOURCE_PATH
+  ));
+  const nearestImmutableAnchor = (people) => people.reduce((nearest, person) => {
+    const anchor = person.initialPosition;
+    if (!playerState || !anchor) return nearest;
+    const distanceM = Math.hypot(playerState.x - anchor.x, playerState.z - anchor.z);
+    return !nearest || distanceM < nearest.distanceM
+      ? { id: person.ambientCohortId, x: anchor.x, z: anchor.z, distanceM }
+      : nearest;
+  }, null);
+  const plazaAnchor = nearestImmutableAnchor(plazaPeople);
+  const card02Anchor = nearestImmutableAnchor(card02People);
+  // Positive means the intersection source cohort is nearer.  The sources
+  // are immutable launch snapshots, so normal path progression cannot move
+  // this selection boundary or make it camera-pose dependent.
+  const signedMarginM = plazaAnchor && card02Anchor
+    ? plazaAnchor.distanceM - card02Anchor.distanceM
+    : -Infinity;
+  const wasCard02 = heroLifePresentationMode === 'card02';
+  // The epsilon only removes IEEE-754 representation noise at the explicitly
+  // audited ±3.9m/±4.1m signed-margin boundaries.
+  const cardBoundaryEpsilonM = 1e-9;
+  const withinCard02Band = wasCard02
+    ? signedMarginM > -FERRY_CARD02_PRESENTATION_MARGIN_M + cardBoundaryEpsilonM
+    : signedMarginM >= FERRY_CARD02_PRESENTATION_MARGIN_M - cardBoundaryEpsilonM;
+  const nextMode = card02People.length === FERRY_CARD02_PEDESTRIAN_STAGING.length
+    && withinCard02Band
+    ? 'card02'
+    : 'plaza';
+  return {
+    mode: nextMode,
+    people: nextMode === 'card02' ? card02People : plazaPeople,
+    signedMarginM: Number(signedMarginM.toFixed(6)),
+    marginM: FERRY_CARD02_PRESENTATION_MARGIN_M,
+    plazaAnchor: plazaAnchor && {
+      ...plazaAnchor,
+      x: Number(plazaAnchor.x.toFixed(6)),
+      z: Number(plazaAnchor.z.toFixed(6)),
+      distanceM: Number(plazaAnchor.distanceM.toFixed(6)),
+    },
+    card02Anchor: card02Anchor && {
+      ...card02Anchor,
+      x: Number(card02Anchor.x.toFixed(6)),
+      z: Number(card02Anchor.z.toFixed(6)),
+      distanceM: Number(card02Anchor.distanceM.toFixed(6)),
+    },
+  };
+}
+
+function heroLifePresentationSwitchHistory() {
+  if (heroLifePresentationSwitches.length < FERRY_HERO_PRESENTATION_SWITCH_HISTORY_CAPACITY) {
+    return heroLifePresentationSwitches.map((entry) => ({ ...entry }));
+  }
+  return heroLifePresentationSwitches.slice(heroLifePresentationSwitchCursor)
+    .concat(heroLifePresentationSwitches.slice(0, heroLifePresentationSwitchCursor))
+    .map((entry) => ({ ...entry }));
+}
+
+function syncFerryHeroPresentationSelection() {
+  if (!heroLifeLighting || !isFerryBuildingHeroTile()) return false;
+  const next = ferryHeroPresentationSelection();
+  if (next.mode === heroLifePresentationMode) return false;
+  const previousMode = heroLifePresentationMode;
+  heroLifePresentationMode = next.mode;
+  const record = {
+    from: previousMode,
+    to: next.mode,
+    signedMarginM: next.signedMarginM,
+  };
+  if (heroLifePresentationSwitches.length < FERRY_HERO_PRESENTATION_SWITCH_HISTORY_CAPACITY) {
+    heroLifePresentationSwitches.push(record);
+  } else {
+    heroLifePresentationSwitches[heroLifePresentationSwitchCursor] = record;
+    heroLifePresentationSwitchCursor = (heroLifePresentationSwitchCursor + 1)
+      % FERRY_HERO_PRESENTATION_SWITCH_HISTORY_CAPACITY;
+  }
+  // Selection changes only the bounded renderer source cohort.  The three
+  // people remain ordinary path-following records and retain their source
+  // positions, speed, schedule, geometry, and identity.
+  initializeHeroLifeLighting();
+  return true;
+}
+
 function disposeHeroLifeLighting() {
   if (!heroLifeLighting) return;
   const sources = heroLifeLightingSources.slice();
@@ -10202,7 +10362,9 @@ function initializeHeroLifeLighting() {
   if (!activeHeroTile || !cityRoot || !pedestrianState.length) return null;
   const focusX = playerState?.x ?? activeHeroTile.spawn.x;
   const focusZ = playerState?.z ?? activeHeroTile.spawn.z;
-  const stagedPeople = heroPedestrianStaging?.staged.map(({ person }) => person) || [];
+  const selection = ferryHeroPresentationSelection();
+  heroLifePresentationMode = selection.mode;
+  const stagedPeople = selection.people;
   // The staged Ferry pass owns its visible crowd completely. Attaching any
   // extra ambient sources here consumes the seven detailed slots and leaves
   // their low-detail replacement silhouettes in the hero frame. Their
@@ -10215,9 +10377,11 @@ function initializeHeroLifeLighting() {
   // Keep the two authored-crossing sources in the bounded presentation pool.
   // They remain ordinary simulation records; this only guarantees that the
   // existing hero renderer can show them when the player reaches the crossing.
-  const streetLifePeople = isFerryBuildingHeroTile() ? pedestrianState.slice(8, 10) : [];
+  const streetLifePeople = isFerryBuildingHeroTile() && selection.mode === 'plaza' ? pedestrianState.slice(8, 10) : [];
   const streetLifeSet = new Set(streetLifePeople);
-  const priorityPeople = [...new Set([...stagedPeople, ...streetLifePeople, ...cardCohortPeople])];
+  const priorityPeople = selection.mode === 'card02'
+    ? stagedPeople
+    : [...new Set([...stagedPeople, ...streetLifePeople, ...cardCohortPeople])];
   const prioritySet = new Set(priorityPeople);
   const pedestrians = (priorityPeople.length ? [...priorityPeople, ...pedestrianState.filter((person) => !prioritySet.has(person))] : pedestrianState.slice())
     .sort((first, second) => (
@@ -10270,6 +10434,7 @@ function updateHeroLifeLighting(dt) {
 
 function getHeroLifeLightingDiagnostics() {
   const stats = heroLifeLighting?.getStats() || heroLifeLightingStats;
+  const presentation = ferryHeroPresentationSelection();
   const torso = heroLifeLighting?.group.getObjectByName('Hero life pedestrian torsos');
   const sampleMatrix = new THREE.Matrix4();
   const samplePosition = new THREE.Vector3();
@@ -10304,6 +10469,16 @@ function getHeroLifeLightingDiagnostics() {
   return {
     active: Boolean(heroLifeLighting),
     tileId: activeHeroTile?.id || null,
+    presentation: {
+      mode: heroLifePresentationMode,
+      candidateMode: presentation.mode,
+      signedMarginM: presentation.signedMarginM,
+      marginM: presentation.marginM,
+      plazaAnchor: presentation.plazaAnchor,
+      card02Anchor: presentation.card02Anchor,
+      switchHistoryCapacity: FERRY_HERO_PRESENTATION_SWITCH_HISTORY_CAPACITY,
+      switches: heroLifePresentationSwitchHistory(),
+    },
     attached: Boolean(heroLifeLighting?.group.parent),
     stats: stats || null,
     sourcePedestrians: heroLifeLightingSources.length,
@@ -13694,6 +13869,10 @@ function start() {
           playerAvatarGroup.position.set(resolved.x, resolved.y, resolved.z);
         }
       }
+      // Teleport diagnostics use the same source-anchor selection path as
+      // ordinary walking, so card QA cannot select a cohort through a camera
+      // coordinate that live movement would never evaluate.
+      syncFerryHeroPresentationSelection();
       if (fullCityMode && cityWideReady) updateNearFieldFidelity(streamFocusPoint);
       return { x: resolved.x, z: resolved.z };
     },
