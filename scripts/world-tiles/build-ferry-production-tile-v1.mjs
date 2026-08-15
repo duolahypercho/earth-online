@@ -1257,7 +1257,7 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE, buildingPresentationProof = false, buildingSourceToneProof = false } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE, buildingPresentationProof = false, buildingSourceToneProof = false, buildingRelativeHeightProof = false } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   let terrainAuthorization = null;
@@ -1269,6 +1269,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     assert(TERRAIN_SELECTION_MODES.has(terrainSelectionMode), `Unknown terrain selection mode ${terrainSelectionMode}`);
     assert(!buildingPresentationProof || !write, 'Building presentation metadata is an in-memory proof only and may not write production-shaped artifacts');
     assert(!buildingSourceToneProof || !write, 'Building source-tone metadata is a write-disabled production-shaped proof only');
+    assert(!buildingRelativeHeightProof || !write, 'Building relative-height metadata is a write-disabled preview proof only');
     assert(!(buildingPresentationProof && buildingSourceToneProof), 'Building presentation and production-shaped source-tone proofs are mutually exclusive');
     assert(terrainSelectionMode !== NATIVE_PIXEL_FALLBACK_PROOF_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
     if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE) terrainAuthorization = await loadSfNativePixelFallbackAuthorization({ requireProductionWrite: write });
@@ -1285,7 +1286,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors, terrainSelectionMode);
     const authorizedFallbackWrite = terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE && terrainAuthorization?.authorization.productionWriteEnabled === true;
     assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible) || authorizedFallbackWrite, 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
-    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology, buildingPresentationProof || buildingSourceToneProof); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology, buildingPresentationProof || buildingSourceToneProof || buildingRelativeHeightProof); const geometries = [baseGeometry]; const categories = baseGeometry;
     for (const data of Object.values(categories)) for (const value of data.positions) assert(Number.isFinite(value), `Terrain selection emitted a non-finite geometry coordinate for ${TILE.id}`);
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     let buildingSourceToneEvidence = null;
@@ -1359,7 +1360,8 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     if (write) { await mkdir(outputDir, { recursive: true }); await Promise.all([...glbs.map((glb) => writeFile(path.join(outputDir, glb.name), glb.bytes)), writeFile(path.join(outputDir, `${stem}.receipt.json`), jsonBytes(receipt)), writeFile(path.join(outputDir, `${stem}.package.json`), jsonBytes(packageDescriptor))]); }
     const result = { outputDir, glbs, receipt, packageDescriptor, categories };
     if (terrainSelectionProof) result.terrainSelectionProof = terrainSelectionProof;
-    if (buildingPresentationProof) result.buildingPresentationProof = baseGeometry.buildingPresentationProof;
+    if (buildingPresentationProof || buildingSourceToneProof || buildingRelativeHeightProof) result.buildingPresentationProof = baseGeometry.buildingPresentationProof;
+    if (buildingRelativeHeightProof) result.buildingRelativeHeightProof = Object.freeze({ mode: 'source-building-relative-height-v1', status: 'write-disabled-preview-proof-only', records: baseGeometry.buildingPresentationProof.records });
     if (buildingSourceToneProof) result.buildingSourceToneProof = buildingSourceToneEvidence;
     return result;
   } finally {

@@ -1,0 +1,83 @@
+{
+  "attributeContract": {
+    "attribute": {
+      "componentType": 5126,
+      "derivation": "per-source-building emitted bottom/top pair: (vertexY-bottomY)/(topY-bottomY); bottom=0, top=1",
+      "domain": [
+        0,
+        1
+      ],
+      "encoding": "float32-le",
+      "gltfSemantic": "_SF_BUILDING_RELATIVE_HEIGHT_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_building_relative_height_v1",
+      "type": "SCALAR"
+    },
+    "schema": "sf-building-relative-height-v1",
+    "status": "preview-proof-only-not-production"
+  },
+  "attributeContractSha256": "sha256:11061db04f442827a4572fc1f6c1fcdc4ba887916fc9ea85d93f3532cfc2a433",
+  "kind": "sf-building-relative-height-proof-manifest",
+  "productionManifestSha256": "sha256:4018246fb13d633e9181c3b820d956a9156955539c3b335135bbbf5f73e3cefd",
+  "productionManifestTileCount": 803,
+  "productionPromotionAuthorized": false,
+  "productionWriteEnabled": false,
+  "schemaVersion": 1,
+  "status": "preview-proof-only-not-production",
+  "tiles": [
+    {
+      "counts": {
+        "buildingPrimitives": 1,
+        "buildings": 24,
+        "indices": 2163,
+        "primitives": 7,
+        "serializedVertices": 514,
+        "sourceVertices": 514,
+        "triangles": 721
+      },
+      "ledgers": {
+        "geometryPrimitiveLedgerSha256": "sha256:a381f388a8544e8709387aa3b8a8304683b45e791198075c544c081d5ff42d3b",
+        "geometryTriangleIndexSha256": "sha256:48fe432806ec231eb08400109a4ad1b599395757cbf211811c132c32688b9eef",
+        "serializedRelativeHeightAttributeSha256": "sha256:e23747f732a4d3aebd2bb900e7a3ab865c59621ea4a06bcbacca7677cb810e7e",
+        "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+        "sourcePositionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+        "sourceRelativeHeightAttributeSha256": "sha256:09b84e78ffd95b1909471656c510081ca0a45aa6582c1d96afdf5fc75a137f3d"
+      },
+      "proofArtifact": {
+        "bytes": 3648108,
+        "path": "public/data/world/preview-artifacts/sf-building-relative-height-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-relative-height-proof.glb",
+        "sha256": "sha256:bb5bd0d29d2675399db14e6d19bac22556a27ab95c95ee2e502606f329bf6200"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-relative-height-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-relative-height-proof.receipt.json",
+      "role": "ferry",
+      "tile": "epsg26910-1441-10893"
+    },
+    {
+      "counts": {
+        "buildingPrimitives": 1,
+        "buildings": 390,
+        "indices": 35508,
+        "primitives": 5,
+        "serializedVertices": 8412,
+        "sourceVertices": 8412,
+        "triangles": 11836
+      },
+      "ledgers": {
+        "geometryPrimitiveLedgerSha256": "sha256:e302bb77e548016ed4fba3f60a04bbb6c1d0af55ff612c847f3688d3dc4f0609",
+        "geometryTriangleIndexSha256": "sha256:2a36fce91d3019b731212727624e1b39e16ad9099625db8f20b9e1e22995d893",
+        "serializedRelativeHeightAttributeSha256": "sha256:972efa7ddea017e20d6c4f38307f324e6f3eda4c031790e987070c40806b0ff5",
+        "sourceIndexSha256": "sha256:48858f61d3e3938c204e800a3a1c4209187512ead57508e36cbadcd64cef1d38",
+        "sourcePositionFloat32Sha256": "sha256:9afa3388433275fd660c61496418df7b01473e268227a1eeca98a4b3f630939a",
+        "sourceRelativeHeightAttributeSha256": "sha256:bbd9b37852a4dec0072462a34049e5656eb770f9a449d199489d5eb7a7959cdd"
+      },
+      "proofArtifact": {
+        "bytes": 3793548,
+        "path": "public/data/world/preview-artifacts/sf-building-relative-height-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-relative-height-proof.glb",
+        "sha256": "sha256:f7f9d72be9cedfe7dc7f58fe0a6c35394e7796403165afc38ee66e7df27d65c5"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-relative-height-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-relative-height-proof.receipt.json",
+      "role": "district",
+      "tile": "epsg26910-1430-10882"
+    }
+  ]
+}

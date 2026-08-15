@@ -1,0 +1,440 @@
+{
+  "attributeContract": {
+    "attribute": {
+      "componentType": 5126,
+      "derivation": "per-source-building emitted bottom/top pair: (vertexY-bottomY)/(topY-bottomY); bottom=0, top=1",
+      "domain": [
+        0,
+        1
+      ],
+      "encoding": "float32-le",
+      "gltfSemantic": "_SF_BUILDING_RELATIVE_HEIGHT_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_building_relative_height_v1",
+      "type": "SCALAR"
+    },
+    "schema": "sf-building-relative-height-v1",
+    "status": "preview-proof-only-not-production"
+  },
+  "attributeContractSha256": "sha256:11061db04f442827a4572fc1f6c1fcdc4ba887916fc9ea85d93f3532cfc2a433",
+  "buildingRecords": [
+    {
+      "heightMetres": 93,
+      "indexCount": 240,
+      "indexStart": 0,
+      "ordinal": 0,
+      "relativeValuesSha256": "sha256:c545b4bba30bf7175fb9351861812af5f3d17e399a99cb23bd870a6d7cae29d8",
+      "sourceFeatureId": "way/32862406",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "24"
+      },
+      "vertexCount": 56,
+      "vertexStart": 0
+    },
+    {
+      "heightMetres": 25.6,
+      "indexCount": 120,
+      "indexStart": 240,
+      "ordinal": 1,
+      "relativeValuesSha256": "sha256:21cd708e9282f3a473550078f1c8293fb3d1eaf50376f48824cff9e038db2f89",
+      "sourceFeatureId": "way/32862467",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "8",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 28,
+      "vertexStart": 56
+    },
+    {
+      "heightMetres": 32,
+      "indexCount": 138,
+      "indexStart": 360,
+      "ordinal": 2,
+      "relativeValuesSha256": "sha256:a71a3c3ee3297c92bcf4bbeb311923aec8bf13f9d804905122dbc1b1802e5c7a",
+      "sourceFeatureId": "way/32862485",
+      "sourceTags": {
+        "building": "hotel",
+        "building:levels": "10",
+        "roof:shape": "pyramidal"
+      },
+      "vertexCount": 32,
+      "vertexStart": 84
+    },
+    {
+      "heightMetres": 33,
+      "indexCount": 129,
+      "indexStart": 498,
+      "ordinal": 3,
+      "relativeValuesSha256": "sha256:72c9ce02ea33ca9793c5975743edc30786f81a218865b45ba9a4250c1fc777f4",
+      "sourceFeatureId": "way/44106213",
+      "sourceTags": {
+        "building": "government"
+      },
+      "vertexCount": 30,
+      "vertexStart": 116
+    },
+    {
+      "heightMetres": 15,
+      "indexCount": 48,
+      "indexStart": 627,
+      "ordinal": 4,
+      "relativeValuesSha256": "sha256:764be05c081c2d80c544329c64154792b16c9e2559cc2b45c640b34fe4abfcfc",
+      "sourceFeatureId": "way/104599975",
+      "sourceTags": {
+        "building": "commercial",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 12,
+      "vertexStart": 146
+    },
+    {
+      "heightMetres": 28,
+      "indexCount": 75,
+      "indexStart": 675,
+      "ordinal": 5,
+      "relativeValuesSha256": "sha256:a9010122c447feaff61edd180e0583a231e896e38d4fbd1e9f2551ae982f5705",
+      "sourceFeatureId": "way/132238424",
+      "sourceTags": {
+        "building": "yes"
+      },
+      "vertexCount": 18,
+      "vertexStart": 158
+    },
+    {
+      "heightMetres": 17,
+      "indexCount": 30,
+      "indexStart": 750,
+      "ordinal": 6,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/192026932",
+      "sourceTags": {
+        "building": "yes"
+      },
+      "vertexCount": 8,
+      "vertexStart": 176
+    },
+    {
+      "heightMetres": 94,
+      "indexCount": 84,
+      "indexStart": 780,
+      "ordinal": 7,
+      "relativeValuesSha256": "sha256:06622fde15a9ad59dea6493bb9cfb209d3966315fec44d4003e99f5c9b14afba",
+      "sourceFeatureId": "way/192026938",
+      "sourceTags": {
+        "building": "yes"
+      },
+      "vertexCount": 20,
+      "vertexStart": 184
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 48,
+      "indexStart": 864,
+      "ordinal": 8,
+      "relativeValuesSha256": "sha256:764be05c081c2d80c544329c64154792b16c9e2559cc2b45c640b34fe4abfcfc",
+      "sourceFeatureId": "way/193054131",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "3"
+      },
+      "vertexCount": 12,
+      "vertexStart": 204
+    },
+    {
+      "heightMetres": 22.4,
+      "indexCount": 30,
+      "indexStart": 912,
+      "ordinal": 9,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/193054132",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "7",
+        "roof:shape": "gabled"
+      },
+      "vertexCount": 8,
+      "vertexStart": 216
+    },
+    {
+      "heightMetres": 16,
+      "indexCount": 48,
+      "indexStart": 942,
+      "ordinal": 10,
+      "relativeValuesSha256": "sha256:764be05c081c2d80c544329c64154792b16c9e2559cc2b45c640b34fe4abfcfc",
+      "sourceFeatureId": "way/193054133",
+      "sourceTags": {
+        "building": "hotel",
+        "building:levels": "5",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 12,
+      "vertexStart": 224
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 318,
+      "indexStart": 990,
+      "ordinal": 11,
+      "relativeValuesSha256": "sha256:8912f417257c6b7ade31049e60eefe4e9831d0faeaccba00dd30ee6ae5381baf",
+      "sourceFeatureId": "way/193054134",
+      "sourceTags": {
+        "building": "yes"
+      },
+      "vertexCount": 72,
+      "vertexStart": 236
+    },
+    {
+      "heightMetres": 22.4,
+      "indexCount": 48,
+      "indexStart": 1308,
+      "ordinal": 12,
+      "relativeValuesSha256": "sha256:764be05c081c2d80c544329c64154792b16c9e2559cc2b45c640b34fe4abfcfc",
+      "sourceFeatureId": "way/193054135",
+      "sourceTags": {
+        "building": "office",
+        "building:levels": "7",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 12,
+      "vertexStart": 308
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1356,
+      "ordinal": 13,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/193054136",
+      "sourceTags": {
+        "building": "retail",
+        "building:levels": "3",
+        "roof:shape": "mansard"
+      },
+      "vertexCount": 8,
+      "vertexStart": 320
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1386,
+      "ordinal": 14,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/193054137",
+      "sourceTags": {
+        "building": "office",
+        "building:levels": "3",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 8,
+      "vertexStart": 328
+    },
+    {
+      "heightMetres": 25.6,
+      "indexCount": 93,
+      "indexStart": 1416,
+      "ordinal": 15,
+      "relativeValuesSha256": "sha256:035dea718f63c4efc45ebeeae7d3b4316e6c072e56c57780eb953b944ab30a26",
+      "sourceFeatureId": "way/193054138",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "8"
+      },
+      "vertexCount": 22,
+      "vertexStart": 336
+    },
+    {
+      "heightMetres": 12.8,
+      "indexCount": 30,
+      "indexStart": 1509,
+      "ordinal": 16,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/256969674",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "4",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 8,
+      "vertexStart": 358
+    },
+    {
+      "heightMetres": 4,
+      "indexCount": 102,
+      "indexStart": 1539,
+      "ordinal": 17,
+      "relativeValuesSha256": "sha256:5fce69c9bad5376f500ccb707cc4443d22e64cda616cffdec7f4fb5b42ecff99",
+      "sourceFeatureId": "way/260290226",
+      "sourceTags": {
+        "building": "yes",
+        "roof:shape": "flat"
+      },
+      "vertexCount": 24,
+      "vertexStart": 366
+    },
+    {
+      "heightMetres": 15,
+      "indexCount": 201,
+      "indexStart": 1641,
+      "ordinal": 18,
+      "relativeValuesSha256": "sha256:52c3181bf675feda05675a52d22498e3c8712a857eab86e168eb71475c361466",
+      "sourceFeatureId": "way/558731934",
+      "sourceTags": {
+        "building": "terminal"
+      },
+      "vertexCount": 46,
+      "vertexStart": 390
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1842,
+      "ordinal": 19,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/979811981",
+      "sourceTags": {
+        "building": "roof"
+      },
+      "vertexCount": 8,
+      "vertexStart": 436
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1872,
+      "ordinal": 20,
+      "relativeValuesSha256": "sha256:bda8dac224b09366fa9ccbc5c7887a0be3c60c0184e0fb468acf0f4ba0135fcb",
+      "sourceFeatureId": "way/979811987",
+      "sourceTags": {
+        "building": "roof"
+      },
+      "vertexCount": 8,
+      "vertexStart": 444
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 93,
+      "indexStart": 1902,
+      "ordinal": 21,
+      "relativeValuesSha256": "sha256:035dea718f63c4efc45ebeeae7d3b4316e6c072e56c57780eb953b944ab30a26",
+      "sourceFeatureId": "way/1189071405",
+      "sourceTags": {
+        "building": "roof"
+      },
+      "vertexCount": 22,
+      "vertexStart": 452
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 120,
+      "indexStart": 1995,
+      "ordinal": 22,
+      "relativeValuesSha256": "sha256:21cd708e9282f3a473550078f1c8293fb3d1eaf50376f48824cff9e038db2f89",
+      "sourceFeatureId": "way/1301393953",
+      "sourceTags": {
+        "building": "roof"
+      },
+      "vertexCount": 28,
+      "vertexStart": 474
+    },
+    {
+      "heightMetres": 9.6,
+      "indexCount": 48,
+      "indexStart": 2115,
+      "ordinal": 23,
+      "relativeValuesSha256": "sha256:764be05c081c2d80c544329c64154792b16c9e2559cc2b45c640b34fe4abfcfc",
+      "sourceFeatureId": "way/1301393957",
+      "sourceTags": {
+        "building": "roof"
+      },
+      "vertexCount": 12,
+      "vertexStart": 502
+    }
+  ],
+  "counts": {
+    "buildingPrimitives": 1,
+    "buildings": 24,
+    "indices": 2163,
+    "primitives": 7,
+    "serializedVertices": 514,
+    "sourceVertices": 514,
+    "triangles": 721
+  },
+  "invariants": {
+    "emittedHeightsFinitePositive": true,
+    "exactIndexLedgerPreserved": true,
+    "exactPositionLedgerPreserved": true,
+    "exactPrimitiveLedgerPreserved": true,
+    "exactTriangleLedgerPreserved": true,
+    "gameplayOrCollisionChanged": false,
+    "sourceBuildingCoverageComplete": true,
+    "sourceBuildingOwnershipNonOverlapping": true,
+    "sourceGeometryMoved": false,
+    "sourceIndexBytesExact": true,
+    "sourcePositionFloat32BytesExact": true,
+    "sourceRelativeHeightValuesByteExact": true,
+    "sourceTonePayloadPreserved": true,
+    "twoProofArtifactsByteExact": true,
+    "twoProofBaselineBuildsByteExact": true
+  },
+  "kind": "sf-building-relative-height-proof-receipt",
+  "ledgers": {
+    "geometryPrimitiveLedgerSha256": "sha256:a381f388a8544e8709387aa3b8a8304683b45e791198075c544c081d5ff42d3b",
+    "geometryTriangleIndexSha256": "sha256:48fe432806ec231eb08400109a4ad1b599395757cbf211811c132c32688b9eef",
+    "serializedRelativeHeightAttributeSha256": "sha256:e23747f732a4d3aebd2bb900e7a3ab865c59621ea4a06bcbacca7677cb810e7e",
+    "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+    "sourcePositionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+    "sourceRelativeHeightAttributeSha256": "sha256:09b84e78ffd95b1909471656c510081ca0a45aa6582c1d96afdf5fc75a137f3d"
+  },
+  "productionPromotionAuthorized": false,
+  "productionReference": {
+    "declaredSha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500",
+    "exactDefaultBytesPreserved": true,
+    "manifestPath": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json",
+    "manifestSha256": "sha256:4018246fb13d633e9181c3b820d956a9156955539c3b335135bbbf5f73e3cefd",
+    "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.lod0.glb",
+    "receiptPath": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.receipt.json",
+    "receiptSha256": "sha256:eab7233f79c124bb6f4b075a921ba6ac9f58e63754c5d5e5c6397da70e8484f7",
+    "verifiedSha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500"
+  },
+  "productionWriteEnabled": false,
+  "proofArtifact": {
+    "bytes": 3648108,
+    "path": "public/data/world/preview-artifacts/sf-building-relative-height-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-relative-height-proof.glb",
+    "sha256": "sha256:bb5bd0d29d2675399db14e6d19bac22556a27ab95c95ee2e502606f329bf6200"
+  },
+  "schemaVersion": 1,
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "purpose": "geometry",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "purpose": "horizontal-coordinate-operation",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    {
+      "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+      "purpose": "terrain-elevation",
+      "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619"
+    }
+  ],
+  "status": "preview-proof-only-not-production",
+  "tile": {
+    "gridIndex": [
+      1441,
+      10893
+    ],
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "role": "ferry",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}
