@@ -27,6 +27,7 @@
     "verify:sf-native-pixel-fallback-authorization": "node scripts/world-tiles/verify-sf-native-pixel-fallback-authorization-v1.mjs",
     "verify:sf-native-pixel-fallback-production-parity": "node scripts/world-tiles/verify-sf-native-pixel-fallback-production-parity-v1.mjs",
     "verify:sf-native-pixel-fallback-internal-source-switch-continuity": "node scripts/world-tiles/verify-sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.mjs",
+    "verify:sf-native-pixel-fallback-canonical-shared-edge-receipt": "node scripts/world-tiles/verify-sf-native-pixel-fallback-canonical-shared-edge-receipt-v1.mjs",
     "verify:sf-map-streaming": "node scripts/verify-sf-map-deterministic-streaming.mjs",
     "verify:sf-cross-raster-terrain": "node scripts/world-tiles/verify-sf-cross-raster-terrain-v1.mjs",
     "verify:sf-terrain-source-lock": "node scripts/world-tiles/verify-sf-terrain-source-lock-v1.mjs",
