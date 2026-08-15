@@ -6,9 +6,9 @@
   "tiles": [
     {
       "artifact": {
-        "bytes": 24356,
+        "bytes": 24352,
         "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
-        "sha256": "sha256:a88d3909f2c8523cdcc0c5a92b8c61930e59e57df0327586cdcdd6a8cb4241f7"
+        "sha256": "sha256:08fcc82266a6e67c7127b46a79790b63e231d60af6afa87a86efded59c11713a"
       },
       "counts": {
         "buildings": 24,
@@ -32,7 +32,7 @@
       "artifact": {
         "bytes": 343804,
         "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
-        "sha256": "sha256:5f50361d77d3a1d90f72011734c0fd9ed238cbfe7e1356b63af91dd9f1edf293"
+        "sha256": "sha256:3ca086e767cd2cf5ac570123a96ba524e3404e9a0c2f2f0ee4518a97091ce299"
       },
       "counts": {
         "buildings": 390,

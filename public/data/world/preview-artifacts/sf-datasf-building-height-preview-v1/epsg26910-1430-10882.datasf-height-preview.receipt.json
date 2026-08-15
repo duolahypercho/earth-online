@@ -1,0 +1,3616 @@
+{
+  "artifact": {
+    "bytes": 344028,
+    "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1430-10882.datasf-height-preview.glb",
+    "sha256": "sha256:f44f5c6d2707d869a82d6f1afc7d86d97796b9d13adc16735e2a191223223353"
+  },
+  "changes": [
+    {
+      "dataSfBuildingId": "201006.0133584",
+      "dataSfMedianHeightMetres": 5.71,
+      "emittedTopYDeltaRangeMetres": [
+        -3.89,
+        -3.89
+      ],
+      "heightDeltaMetres": -3.89,
+      "osmSourceFeatureId": "way/1411234054",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0135563",
+      "dataSfMedianHeightMetres": 6.79,
+      "emittedTopYDeltaRangeMetres": [
+        -2.81,
+        -2.81
+      ],
+      "heightDeltaMetres": -2.81,
+      "osmSourceFeatureId": "way/1411234058",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0093032",
+      "dataSfMedianHeightMetres": 10.61,
+      "emittedTopYDeltaRangeMetres": [
+        -0.39,
+        -0.39
+      ],
+      "heightDeltaMetres": -0.39,
+      "osmSourceFeatureId": "way/264360881",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0103259",
+      "dataSfMedianHeightMetres": 5.5,
+      "emittedTopYDeltaRangeMetres": [
+        -0.5,
+        -0.5
+      ],
+      "heightDeltaMetres": -0.5,
+      "osmSourceFeatureId": "way/264360882",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0112609",
+      "dataSfMedianHeightMetres": 10.48,
+      "emittedTopYDeltaRangeMetres": [
+        0.48,
+        0.48
+      ],
+      "heightDeltaMetres": 0.48,
+      "osmSourceFeatureId": "way/264360883",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0109012",
+      "dataSfMedianHeightMetres": 7.55,
+      "emittedTopYDeltaRangeMetres": [
+        -0.45,
+        -0.45
+      ],
+      "heightDeltaMetres": -0.45,
+      "osmSourceFeatureId": "way/264360884",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0107334",
+      "dataSfMedianHeightMetres": 6.22,
+      "emittedTopYDeltaRangeMetres": [
+        0.22,
+        0.22
+      ],
+      "heightDeltaMetres": 0.22,
+      "osmSourceFeatureId": "way/264360885",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0156997",
+      "dataSfMedianHeightMetres": 9.62,
+      "emittedTopYDeltaRangeMetres": [
+        -0.38,
+        -0.38
+      ],
+      "heightDeltaMetres": -0.38,
+      "osmSourceFeatureId": "way/264360886",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0092902",
+      "dataSfMedianHeightMetres": 9.7,
+      "emittedTopYDeltaRangeMetres": [
+        -0.3,
+        -0.3
+      ],
+      "heightDeltaMetres": -0.3,
+      "osmSourceFeatureId": "way/264360887",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0144304",
+      "dataSfMedianHeightMetres": 10.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/264360888",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0142282",
+      "dataSfMedianHeightMetres": 9.51,
+      "emittedTopYDeltaRangeMetres": [
+        -0.49,
+        -0.49
+      ],
+      "heightDeltaMetres": -0.49,
+      "osmSourceFeatureId": "way/264360889",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0046807",
+      "dataSfMedianHeightMetres": 12.14,
+      "emittedTopYDeltaRangeMetres": [
+        0.14,
+        0.14
+      ],
+      "heightDeltaMetres": 0.14,
+      "osmSourceFeatureId": "way/264360890",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0126500",
+      "dataSfMedianHeightMetres": 9.84,
+      "emittedTopYDeltaRangeMetres": [
+        -0.16,
+        -0.16
+      ],
+      "heightDeltaMetres": -0.16,
+      "osmSourceFeatureId": "way/264360891",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0112801",
+      "dataSfMedianHeightMetres": 7.74,
+      "emittedTopYDeltaRangeMetres": [
+        -0.26,
+        -0.26
+      ],
+      "heightDeltaMetres": -0.26,
+      "osmSourceFeatureId": "way/264360892",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0075255",
+      "dataSfMedianHeightMetres": 7.58,
+      "emittedTopYDeltaRangeMetres": [
+        -0.42,
+        -0.42
+      ],
+      "heightDeltaMetres": -0.42,
+      "osmSourceFeatureId": "way/264360894",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0073000",
+      "dataSfMedianHeightMetres": 8.8,
+      "emittedTopYDeltaRangeMetres": [
+        -0.2,
+        -0.2
+      ],
+      "heightDeltaMetres": -0.2,
+      "osmSourceFeatureId": "way/264360895",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0020513",
+      "dataSfMedianHeightMetres": 8.3,
+      "emittedTopYDeltaRangeMetres": [
+        0.3,
+        0.3
+      ],
+      "heightDeltaMetres": 0.3,
+      "osmSourceFeatureId": "way/264360896",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0117368",
+      "dataSfMedianHeightMetres": 10.29,
+      "emittedTopYDeltaRangeMetres": [
+        0.29,
+        0.29
+      ],
+      "heightDeltaMetres": 0.29,
+      "osmSourceFeatureId": "way/264360897",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0145016",
+      "dataSfMedianHeightMetres": 10.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/264360898",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0068811",
+      "dataSfMedianHeightMetres": 11.16,
+      "emittedTopYDeltaRangeMetres": [
+        0.16,
+        0.16
+      ],
+      "heightDeltaMetres": 0.16,
+      "osmSourceFeatureId": "way/264360899",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0068612",
+      "dataSfMedianHeightMetres": 8.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/264360900",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0113401",
+      "dataSfMedianHeightMetres": 10.76,
+      "emittedTopYDeltaRangeMetres": [
+        -0.24,
+        -0.24
+      ],
+      "heightDeltaMetres": -0.24,
+      "osmSourceFeatureId": "way/264360901",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0041568",
+      "dataSfMedianHeightMetres": 6.61,
+      "emittedTopYDeltaRangeMetres": [
+        -0.39,
+        -0.39
+      ],
+      "heightDeltaMetres": -0.39,
+      "osmSourceFeatureId": "way/264360902",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0100492",
+      "dataSfMedianHeightMetres": 9.29,
+      "emittedTopYDeltaRangeMetres": [
+        0.29,
+        0.29
+      ],
+      "heightDeltaMetres": 0.29,
+      "osmSourceFeatureId": "way/264360903",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0073802",
+      "dataSfMedianHeightMetres": 8.41,
+      "emittedTopYDeltaRangeMetres": [
+        0.41,
+        0.41
+      ],
+      "heightDeltaMetres": 0.41,
+      "osmSourceFeatureId": "way/264360904",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0137624",
+      "dataSfMedianHeightMetres": 7.67,
+      "emittedTopYDeltaRangeMetres": [
+        -0.33,
+        -0.33
+      ],
+      "heightDeltaMetres": -0.33,
+      "osmSourceFeatureId": "way/264360905",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0097450",
+      "dataSfMedianHeightMetres": 8.54,
+      "emittedTopYDeltaRangeMetres": [
+        -0.46,
+        -0.46
+      ],
+      "heightDeltaMetres": -0.46,
+      "osmSourceFeatureId": "way/264360906",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0092984",
+      "dataSfMedianHeightMetres": 8.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/264360907",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0039278",
+      "dataSfMedianHeightMetres": 13.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/264360908",
+      "previousHeightMetres": 13,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0057310",
+      "dataSfMedianHeightMetres": 9.02,
+      "emittedTopYDeltaRangeMetres": [
+        0.02,
+        0.02
+      ],
+      "heightDeltaMetres": 0.02,
+      "osmSourceFeatureId": "way/264360909",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 20
+    },
+    {
+      "dataSfBuildingId": "201006.0142741",
+      "dataSfMedianHeightMetres": 7.66,
+      "emittedTopYDeltaRangeMetres": [
+        -0.34,
+        -0.34
+      ],
+      "heightDeltaMetres": -0.34,
+      "osmSourceFeatureId": "way/264360914",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0150786",
+      "dataSfMedianHeightMetres": 7.04,
+      "emittedTopYDeltaRangeMetres": [
+        0.04,
+        0.04
+      ],
+      "heightDeltaMetres": 0.04,
+      "osmSourceFeatureId": "way/264360915",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0100248",
+      "dataSfMedianHeightMetres": 6.74,
+      "emittedTopYDeltaRangeMetres": [
+        -0.26,
+        -0.26
+      ],
+      "heightDeltaMetres": -0.26,
+      "osmSourceFeatureId": "way/264360917",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0030272",
+      "dataSfMedianHeightMetres": 8.99,
+      "emittedTopYDeltaRangeMetres": [
+        -0.01,
+        -0.01
+      ],
+      "heightDeltaMetres": -0.01,
+      "osmSourceFeatureId": "way/264360918",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0088958",
+      "dataSfMedianHeightMetres": 10.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/264360923",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0136342",
+      "dataSfMedianHeightMetres": 9.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/264360926",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0069233",
+      "dataSfMedianHeightMetres": 12.16,
+      "emittedTopYDeltaRangeMetres": [
+        0.16,
+        0.16
+      ],
+      "heightDeltaMetres": 0.16,
+      "osmSourceFeatureId": "way/264360927",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0079339",
+      "dataSfMedianHeightMetres": 7.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/264360929",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0130232",
+      "dataSfMedianHeightMetres": 6.71,
+      "emittedTopYDeltaRangeMetres": [
+        -0.29,
+        -0.29
+      ],
+      "heightDeltaMetres": -0.29,
+      "osmSourceFeatureId": "way/264360931",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0144279",
+      "dataSfMedianHeightMetres": 10.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/264360933",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0098705",
+      "dataSfMedianHeightMetres": 9.22,
+      "emittedTopYDeltaRangeMetres": [
+        0.22,
+        0.22
+      ],
+      "heightDeltaMetres": 0.22,
+      "osmSourceFeatureId": "way/264360938",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0151979",
+      "dataSfMedianHeightMetres": 6.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/264360939",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0023232",
+      "dataSfMedianHeightMetres": 9.16,
+      "emittedTopYDeltaRangeMetres": [
+        0.16,
+        0.16
+      ],
+      "heightDeltaMetres": 0.16,
+      "osmSourceFeatureId": "way/264360940",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0082035",
+      "dataSfMedianHeightMetres": 6.73,
+      "emittedTopYDeltaRangeMetres": [
+        -0.27,
+        -0.27
+      ],
+      "heightDeltaMetres": -0.27,
+      "osmSourceFeatureId": "way/264360941",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0070409",
+      "dataSfMedianHeightMetres": 10.01,
+      "emittedTopYDeltaRangeMetres": [
+        0.01,
+        0.01
+      ],
+      "heightDeltaMetres": 0.01,
+      "osmSourceFeatureId": "way/264459122",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0035524",
+      "dataSfMedianHeightMetres": 6.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/264459131",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0034135",
+      "dataSfMedianHeightMetres": 6.5,
+      "emittedTopYDeltaRangeMetres": [
+        -0.5,
+        -0.5
+      ],
+      "heightDeltaMetres": -0.5,
+      "osmSourceFeatureId": "way/264459132",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0029786",
+      "dataSfMedianHeightMetres": 5.87,
+      "emittedTopYDeltaRangeMetres": [
+        -0.13,
+        -0.13
+      ],
+      "heightDeltaMetres": -0.13,
+      "osmSourceFeatureId": "way/264459135",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0038843",
+      "dataSfMedianHeightMetres": 7.2,
+      "emittedTopYDeltaRangeMetres": [
+        0.2,
+        0.2
+      ],
+      "heightDeltaMetres": 0.2,
+      "osmSourceFeatureId": "way/264459140",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0047817",
+      "dataSfMedianHeightMetres": 5.67,
+      "emittedTopYDeltaRangeMetres": [
+        -0.33,
+        -0.33
+      ],
+      "heightDeltaMetres": -0.33,
+      "osmSourceFeatureId": "way/264459144",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0147332",
+      "dataSfMedianHeightMetres": 9.93,
+      "emittedTopYDeltaRangeMetres": [
+        -0.07,
+        -0.07
+      ],
+      "heightDeltaMetres": -0.07,
+      "osmSourceFeatureId": "way/264461902",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0111776",
+      "dataSfMedianHeightMetres": 8.09,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/264461904",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0158604",
+      "dataSfMedianHeightMetres": 10.09,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/264461907",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0154657",
+      "dataSfMedianHeightMetres": 5.8,
+      "emittedTopYDeltaRangeMetres": [
+        -0.2,
+        -0.2
+      ],
+      "heightDeltaMetres": -0.2,
+      "osmSourceFeatureId": "way/264461908",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0149126",
+      "dataSfMedianHeightMetres": 8.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/264461909",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0138730",
+      "dataSfMedianHeightMetres": 8.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/264461910",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0133708",
+      "dataSfMedianHeightMetres": 5.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/264461912",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0156281",
+      "dataSfMedianHeightMetres": 9.2,
+      "emittedTopYDeltaRangeMetres": [
+        0.2,
+        0.2
+      ],
+      "heightDeltaMetres": 0.2,
+      "osmSourceFeatureId": "way/264461913",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0144647",
+      "dataSfMedianHeightMetres": 11.63,
+      "emittedTopYDeltaRangeMetres": [
+        -0.37,
+        -0.37
+      ],
+      "heightDeltaMetres": -0.37,
+      "osmSourceFeatureId": "way/264461914",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0148738",
+      "dataSfMedianHeightMetres": 8,
+      "emittedTopYDeltaRangeMetres": [
+        0,
+        0
+      ],
+      "heightDeltaMetres": 0,
+      "osmSourceFeatureId": "way/264461916",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0150753",
+      "dataSfMedianHeightMetres": 5.01,
+      "emittedTopYDeltaRangeMetres": [
+        0.01,
+        0.01
+      ],
+      "heightDeltaMetres": 0.01,
+      "osmSourceFeatureId": "way/264461918",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0149891",
+      "dataSfMedianHeightMetres": 6.39,
+      "emittedTopYDeltaRangeMetres": [
+        0.39,
+        0.39
+      ],
+      "heightDeltaMetres": 0.39,
+      "osmSourceFeatureId": "way/264461919",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0067121",
+      "dataSfMedianHeightMetres": 6.63,
+      "emittedTopYDeltaRangeMetres": [
+        -0.37,
+        -0.37
+      ],
+      "heightDeltaMetres": -0.37,
+      "osmSourceFeatureId": "way/264461920",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0059368",
+      "dataSfMedianHeightMetres": 10.72,
+      "emittedTopYDeltaRangeMetres": [
+        -0.28,
+        -0.28
+      ],
+      "heightDeltaMetres": -0.28,
+      "osmSourceFeatureId": "way/264463115",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0047228",
+      "dataSfMedianHeightMetres": 9.77,
+      "emittedTopYDeltaRangeMetres": [
+        -0.23,
+        -0.23
+      ],
+      "heightDeltaMetres": -0.23,
+      "osmSourceFeatureId": "way/264463117",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0100524",
+      "dataSfMedianHeightMetres": 9.6,
+      "emittedTopYDeltaRangeMetres": [
+        -0.4,
+        -0.4
+      ],
+      "heightDeltaMetres": -0.4,
+      "osmSourceFeatureId": "way/264463118",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0115622",
+      "dataSfMedianHeightMetres": 11.62,
+      "emittedTopYDeltaRangeMetres": [
+        2.02,
+        2.02
+      ],
+      "heightDeltaMetres": 2.02,
+      "osmSourceFeatureId": "way/264463119",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0049585",
+      "dataSfMedianHeightMetres": 9.55,
+      "emittedTopYDeltaRangeMetres": [
+        -0.45,
+        -0.45
+      ],
+      "heightDeltaMetres": -0.45,
+      "osmSourceFeatureId": "way/264463120",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 26
+    },
+    {
+      "dataSfBuildingId": "201006.0087920",
+      "dataSfMedianHeightMetres": 9.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/264463123",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0106370",
+      "dataSfMedianHeightMetres": 9.93,
+      "emittedTopYDeltaRangeMetres": [
+        -0.07,
+        -0.07
+      ],
+      "heightDeltaMetres": -0.07,
+      "osmSourceFeatureId": "way/264463124",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0058252",
+      "dataSfMedianHeightMetres": 10.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/264463125",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0058315",
+      "dataSfMedianHeightMetres": 10.53,
+      "emittedTopYDeltaRangeMetres": [
+        -0.47,
+        -0.47
+      ],
+      "heightDeltaMetres": -0.47,
+      "osmSourceFeatureId": "way/264463126",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0051709",
+      "dataSfMedianHeightMetres": 8.05,
+      "emittedTopYDeltaRangeMetres": [
+        0.05,
+        0.05
+      ],
+      "heightDeltaMetres": 0.05,
+      "osmSourceFeatureId": "way/264466313",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0096158",
+      "dataSfMedianHeightMetres": 9.63,
+      "emittedTopYDeltaRangeMetres": [
+        -0.37,
+        -0.37
+      ],
+      "heightDeltaMetres": -0.37,
+      "osmSourceFeatureId": "way/264466314",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0036728",
+      "dataSfMedianHeightMetres": 4.03,
+      "emittedTopYDeltaRangeMetres": [
+        0.03,
+        0.03
+      ],
+      "heightDeltaMetres": 0.03,
+      "osmSourceFeatureId": "way/264466315",
+      "previousHeightMetres": 4,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0144857",
+      "dataSfMedianHeightMetres": 8.12,
+      "emittedTopYDeltaRangeMetres": [
+        0.12,
+        0.12
+      ],
+      "heightDeltaMetres": 0.12,
+      "osmSourceFeatureId": "way/264466316",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0059304",
+      "dataSfMedianHeightMetres": 7.69,
+      "emittedTopYDeltaRangeMetres": [
+        -0.31,
+        -0.31
+      ],
+      "heightDeltaMetres": -0.31,
+      "osmSourceFeatureId": "way/264466317",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0096995",
+      "dataSfMedianHeightMetres": 6.85,
+      "emittedTopYDeltaRangeMetres": [
+        -0.15,
+        -0.15
+      ],
+      "heightDeltaMetres": -0.15,
+      "osmSourceFeatureId": "way/264466318",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0065200",
+      "dataSfMedianHeightMetres": 6.31,
+      "emittedTopYDeltaRangeMetres": [
+        0.31,
+        0.31
+      ],
+      "heightDeltaMetres": 0.31,
+      "osmSourceFeatureId": "way/264466319",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0129533",
+      "dataSfMedianHeightMetres": 10.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/264466320",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0053724",
+      "dataSfMedianHeightMetres": 6.36,
+      "emittedTopYDeltaRangeMetres": [
+        0.36,
+        0.36
+      ],
+      "heightDeltaMetres": 0.36,
+      "osmSourceFeatureId": "way/264466321",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0127628",
+      "dataSfMedianHeightMetres": 7.98,
+      "emittedTopYDeltaRangeMetres": [
+        -0.02,
+        -0.02
+      ],
+      "heightDeltaMetres": -0.02,
+      "osmSourceFeatureId": "way/264466322",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0043209",
+      "dataSfMedianHeightMetres": 7.18,
+      "emittedTopYDeltaRangeMetres": [
+        0.18,
+        0.18
+      ],
+      "heightDeltaMetres": 0.18,
+      "osmSourceFeatureId": "way/264466323",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0051713",
+      "dataSfMedianHeightMetres": 9.24,
+      "emittedTopYDeltaRangeMetres": [
+        0.24,
+        0.24
+      ],
+      "heightDeltaMetres": 0.24,
+      "osmSourceFeatureId": "way/264466324",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 18
+    },
+    {
+      "dataSfBuildingId": "201006.0009883",
+      "dataSfMedianHeightMetres": 12.14,
+      "emittedTopYDeltaRangeMetres": [
+        0.14,
+        0.14
+      ],
+      "heightDeltaMetres": 0.14,
+      "osmSourceFeatureId": "way/264466325",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 21
+    },
+    {
+      "dataSfBuildingId": "201006.0100358",
+      "dataSfMedianHeightMetres": 8.85,
+      "emittedTopYDeltaRangeMetres": [
+        -0.15,
+        -0.15
+      ],
+      "heightDeltaMetres": -0.15,
+      "osmSourceFeatureId": "way/264466326",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0018987",
+      "dataSfMedianHeightMetres": 8.2,
+      "emittedTopYDeltaRangeMetres": [
+        0.2,
+        0.2
+      ],
+      "heightDeltaMetres": 0.2,
+      "osmSourceFeatureId": "way/264469950",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0009498",
+      "dataSfMedianHeightMetres": 10.58,
+      "emittedTopYDeltaRangeMetres": [
+        -0.42,
+        -0.42
+      ],
+      "heightDeltaMetres": -0.42,
+      "osmSourceFeatureId": "way/264469951",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0072060",
+      "dataSfMedianHeightMetres": 11.18,
+      "emittedTopYDeltaRangeMetres": [
+        0.18,
+        0.18
+      ],
+      "heightDeltaMetres": 0.18,
+      "osmSourceFeatureId": "way/264469952",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0026987",
+      "dataSfMedianHeightMetres": 7.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/264469953",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0019876",
+      "dataSfMedianHeightMetres": 10.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/264469955",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 18
+    },
+    {
+      "dataSfBuildingId": "201006.0015820",
+      "dataSfMedianHeightMetres": 15.91,
+      "emittedTopYDeltaRangeMetres": [
+        -0.09,
+        -0.09
+      ],
+      "heightDeltaMetres": -0.09,
+      "osmSourceFeatureId": "way/264469956",
+      "previousHeightMetres": 16,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0064401",
+      "dataSfMedianHeightMetres": 6.3,
+      "emittedTopYDeltaRangeMetres": [
+        0.3,
+        0.3
+      ],
+      "heightDeltaMetres": 0.3,
+      "osmSourceFeatureId": "way/264469958",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0095119",
+      "dataSfMedianHeightMetres": 12.04,
+      "emittedTopYDeltaRangeMetres": [
+        0.04,
+        0.04
+      ],
+      "heightDeltaMetres": 0.04,
+      "osmSourceFeatureId": "way/264469959",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0130695",
+      "dataSfMedianHeightMetres": 10.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/264469961",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0114020",
+      "dataSfMedianHeightMetres": 9.83,
+      "emittedTopYDeltaRangeMetres": [
+        -0.17,
+        -0.17
+      ],
+      "heightDeltaMetres": -0.17,
+      "osmSourceFeatureId": "way/264469962",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0006401",
+      "dataSfMedianHeightMetres": 7.88,
+      "emittedTopYDeltaRangeMetres": [
+        -0.12,
+        -0.12
+      ],
+      "heightDeltaMetres": -0.12,
+      "osmSourceFeatureId": "way/264469963",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0126640",
+      "dataSfMedianHeightMetres": 10.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/264469964",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0131672",
+      "dataSfMedianHeightMetres": 9.94,
+      "emittedTopYDeltaRangeMetres": [
+        -0.06,
+        -0.06
+      ],
+      "heightDeltaMetres": -0.06,
+      "osmSourceFeatureId": "way/264469965",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0137462",
+      "dataSfMedianHeightMetres": 10.47,
+      "emittedTopYDeltaRangeMetres": [
+        0.47,
+        0.47
+      ],
+      "heightDeltaMetres": 0.47,
+      "osmSourceFeatureId": "way/264469966",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0132801",
+      "dataSfMedianHeightMetres": 10.11,
+      "emittedTopYDeltaRangeMetres": [
+        0.11,
+        0.11
+      ],
+      "heightDeltaMetres": 0.11,
+      "osmSourceFeatureId": "way/264469967",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0026379",
+      "dataSfMedianHeightMetres": 6.28,
+      "emittedTopYDeltaRangeMetres": [
+        0.28,
+        0.28
+      ],
+      "heightDeltaMetres": 0.28,
+      "osmSourceFeatureId": "way/264469968",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0154447",
+      "dataSfMedianHeightMetres": 6.71,
+      "emittedTopYDeltaRangeMetres": [
+        -0.29,
+        -0.29
+      ],
+      "heightDeltaMetres": -0.29,
+      "osmSourceFeatureId": "way/264471904",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0105996",
+      "dataSfMedianHeightMetres": 8.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.25,
+        0.25
+      ],
+      "heightDeltaMetres": 0.25,
+      "osmSourceFeatureId": "way/264471905",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0070732",
+      "dataSfMedianHeightMetres": 6.38,
+      "emittedTopYDeltaRangeMetres": [
+        0.38,
+        0.38
+      ],
+      "heightDeltaMetres": 0.38,
+      "osmSourceFeatureId": "way/264471906",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0008818",
+      "dataSfMedianHeightMetres": 8.73,
+      "emittedTopYDeltaRangeMetres": [
+        -0.27,
+        -0.27
+      ],
+      "heightDeltaMetres": -0.27,
+      "osmSourceFeatureId": "way/264471907",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0077585",
+      "dataSfMedianHeightMetres": 6.51,
+      "emittedTopYDeltaRangeMetres": [
+        -0.49,
+        -0.49
+      ],
+      "heightDeltaMetres": -0.49,
+      "osmSourceFeatureId": "way/264471908",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 18
+    },
+    {
+      "dataSfBuildingId": "201006.0111927",
+      "dataSfMedianHeightMetres": 5.64,
+      "emittedTopYDeltaRangeMetres": [
+        -0.36,
+        -0.36
+      ],
+      "heightDeltaMetres": -0.36,
+      "osmSourceFeatureId": "way/264471909",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0036169",
+      "dataSfMedianHeightMetres": 6.86,
+      "emittedTopYDeltaRangeMetres": [
+        -0.14,
+        -0.14
+      ],
+      "heightDeltaMetres": -0.14,
+      "osmSourceFeatureId": "way/264471910",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0046465",
+      "dataSfMedianHeightMetres": 5.35,
+      "emittedTopYDeltaRangeMetres": [
+        0.35,
+        0.35
+      ],
+      "heightDeltaMetres": 0.35,
+      "osmSourceFeatureId": "way/264471911",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0088910",
+      "dataSfMedianHeightMetres": 6.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/264471912",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0117423",
+      "dataSfMedianHeightMetres": 6.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.25,
+        0.25
+      ],
+      "heightDeltaMetres": 0.25,
+      "osmSourceFeatureId": "way/264471913",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0089254",
+      "dataSfMedianHeightMetres": 5.9,
+      "emittedTopYDeltaRangeMetres": [
+        -0.1,
+        -0.1
+      ],
+      "heightDeltaMetres": -0.1,
+      "osmSourceFeatureId": "way/264471914",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0110314",
+      "dataSfMedianHeightMetres": 6.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.25,
+        0.25
+      ],
+      "heightDeltaMetres": 0.25,
+      "osmSourceFeatureId": "way/264471915",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0111809",
+      "dataSfMedianHeightMetres": 6.59,
+      "emittedTopYDeltaRangeMetres": [
+        -0.41,
+        -0.41
+      ],
+      "heightDeltaMetres": -0.41,
+      "osmSourceFeatureId": "way/264471916",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0140436",
+      "dataSfMedianHeightMetres": 4.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/264471917",
+      "previousHeightMetres": 4,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0114135",
+      "dataSfMedianHeightMetres": 8.6,
+      "emittedTopYDeltaRangeMetres": [
+        -0.4,
+        -0.4
+      ],
+      "heightDeltaMetres": -0.4,
+      "osmSourceFeatureId": "way/264471918",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0030601",
+      "dataSfMedianHeightMetres": 6.92,
+      "emittedTopYDeltaRangeMetres": [
+        -0.08,
+        -0.08
+      ],
+      "heightDeltaMetres": -0.08,
+      "osmSourceFeatureId": "way/264471919",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0028622",
+      "dataSfMedianHeightMetres": 10.84,
+      "emittedTopYDeltaRangeMetres": [
+        -0.16,
+        -0.16
+      ],
+      "heightDeltaMetres": -0.16,
+      "osmSourceFeatureId": "way/264473642",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0005153",
+      "dataSfMedianHeightMetres": 11.71,
+      "emittedTopYDeltaRangeMetres": [
+        -0.29,
+        -0.29
+      ],
+      "heightDeltaMetres": -0.29,
+      "osmSourceFeatureId": "way/264473643",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0099076",
+      "dataSfMedianHeightMetres": 8.34,
+      "emittedTopYDeltaRangeMetres": [
+        -1.26,
+        -1.26
+      ],
+      "heightDeltaMetres": -1.26,
+      "osmSourceFeatureId": "way/264473644",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0040415",
+      "dataSfMedianHeightMetres": 9.64,
+      "emittedTopYDeltaRangeMetres": [
+        -0.36,
+        -0.36
+      ],
+      "heightDeltaMetres": -0.36,
+      "osmSourceFeatureId": "way/264473645",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 20
+    },
+    {
+      "dataSfBuildingId": "201006.0083070",
+      "dataSfMedianHeightMetres": 6.86,
+      "emittedTopYDeltaRangeMetres": [
+        -0.14,
+        -0.14
+      ],
+      "heightDeltaMetres": -0.14,
+      "osmSourceFeatureId": "way/264473648",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0097979",
+      "dataSfMedianHeightMetres": 7.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/264902409",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0132505",
+      "dataSfMedianHeightMetres": 9.89,
+      "emittedTopYDeltaRangeMetres": [
+        -0.11,
+        -0.11
+      ],
+      "heightDeltaMetres": -0.11,
+      "osmSourceFeatureId": "way/264902411",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0085981",
+      "dataSfMedianHeightMetres": 6.38,
+      "emittedTopYDeltaRangeMetres": [
+        0.38,
+        0.38
+      ],
+      "heightDeltaMetres": 0.38,
+      "osmSourceFeatureId": "way/264902412",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0040528",
+      "dataSfMedianHeightMetres": 11.89,
+      "emittedTopYDeltaRangeMetres": [
+        -0.11,
+        -0.11
+      ],
+      "heightDeltaMetres": -0.11,
+      "osmSourceFeatureId": "way/264902413",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0069506",
+      "dataSfMedianHeightMetres": 9.14,
+      "emittedTopYDeltaRangeMetres": [
+        0.14,
+        0.14
+      ],
+      "heightDeltaMetres": 0.14,
+      "osmSourceFeatureId": "way/264902414",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0096339",
+      "dataSfMedianHeightMetres": 8.17,
+      "emittedTopYDeltaRangeMetres": [
+        0.17,
+        0.17
+      ],
+      "heightDeltaMetres": 0.17,
+      "osmSourceFeatureId": "way/264902415",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0094935",
+      "dataSfMedianHeightMetres": 9.97,
+      "emittedTopYDeltaRangeMetres": [
+        -0.03,
+        -0.03
+      ],
+      "heightDeltaMetres": -0.03,
+      "osmSourceFeatureId": "way/264902416",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0106583",
+      "dataSfMedianHeightMetres": 9.45,
+      "emittedTopYDeltaRangeMetres": [
+        0.45,
+        0.45
+      ],
+      "heightDeltaMetres": 0.45,
+      "osmSourceFeatureId": "way/264902420",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0054466",
+      "dataSfMedianHeightMetres": 8.02,
+      "emittedTopYDeltaRangeMetres": [
+        0.02,
+        0.02
+      ],
+      "heightDeltaMetres": 0.02,
+      "osmSourceFeatureId": "way/264902422",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0076140",
+      "dataSfMedianHeightMetres": 9.17,
+      "emittedTopYDeltaRangeMetres": [
+        0.17,
+        0.17
+      ],
+      "heightDeltaMetres": 0.17,
+      "osmSourceFeatureId": "way/264902423",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0100078",
+      "dataSfMedianHeightMetres": 8.5,
+      "emittedTopYDeltaRangeMetres": [
+        -0.5,
+        -0.5
+      ],
+      "heightDeltaMetres": -0.5,
+      "osmSourceFeatureId": "way/264902425",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0056570",
+      "dataSfMedianHeightMetres": 8.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/264902426",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0149530",
+      "dataSfMedianHeightMetres": 7.85,
+      "emittedTopYDeltaRangeMetres": [
+        -0.15,
+        -0.15
+      ],
+      "heightDeltaMetres": -0.15,
+      "osmSourceFeatureId": "way/264902427",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0075214",
+      "dataSfMedianHeightMetres": 9.53,
+      "emittedTopYDeltaRangeMetres": [
+        -0.47,
+        -0.47
+      ],
+      "heightDeltaMetres": -0.47,
+      "osmSourceFeatureId": "way/264902429",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 17
+    },
+    {
+      "dataSfBuildingId": "201006.0019552",
+      "dataSfMedianHeightMetres": 10.15,
+      "emittedTopYDeltaRangeMetres": [
+        0.15,
+        0.15
+      ],
+      "heightDeltaMetres": 0.15,
+      "osmSourceFeatureId": "way/264902432",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0076976",
+      "dataSfMedianHeightMetres": 5.77,
+      "emittedTopYDeltaRangeMetres": [
+        -0.23,
+        -0.23
+      ],
+      "heightDeltaMetres": -0.23,
+      "osmSourceFeatureId": "way/264902433",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 20
+    },
+    {
+      "dataSfBuildingId": "201006.0051808",
+      "dataSfMedianHeightMetres": 10.59,
+      "emittedTopYDeltaRangeMetres": [
+        -0.41,
+        -0.41
+      ],
+      "heightDeltaMetres": -0.41,
+      "osmSourceFeatureId": "way/264902434",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 22
+    },
+    {
+      "dataSfBuildingId": "201006.0073088",
+      "dataSfMedianHeightMetres": 5.86,
+      "emittedTopYDeltaRangeMetres": [
+        -0.14,
+        -0.14
+      ],
+      "heightDeltaMetres": -0.14,
+      "osmSourceFeatureId": "way/264902435",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0102274",
+      "dataSfMedianHeightMetres": 9.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.25,
+        0.25
+      ],
+      "heightDeltaMetres": 0.25,
+      "osmSourceFeatureId": "way/264902438",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0142737",
+      "dataSfMedianHeightMetres": 6.12,
+      "emittedTopYDeltaRangeMetres": [
+        0.12,
+        0.12
+      ],
+      "heightDeltaMetres": 0.12,
+      "osmSourceFeatureId": "way/264902442",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0143719",
+      "dataSfMedianHeightMetres": 7.26,
+      "emittedTopYDeltaRangeMetres": [
+        0.26,
+        0.26
+      ],
+      "heightDeltaMetres": 0.26,
+      "osmSourceFeatureId": "way/264902443",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0143826",
+      "dataSfMedianHeightMetres": 9.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/264902444",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0107914",
+      "dataSfMedianHeightMetres": 7.9,
+      "emittedTopYDeltaRangeMetres": [
+        -0.1,
+        -0.1
+      ],
+      "heightDeltaMetres": -0.1,
+      "osmSourceFeatureId": "way/264902445",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0100935",
+      "dataSfMedianHeightMetres": 7.62,
+      "emittedTopYDeltaRangeMetres": [
+        -0.38,
+        -0.38
+      ],
+      "heightDeltaMetres": -0.38,
+      "osmSourceFeatureId": "way/265419619",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0109495",
+      "dataSfMedianHeightMetres": 7.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/265419621",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0101030",
+      "dataSfMedianHeightMetres": 5.26,
+      "emittedTopYDeltaRangeMetres": [
+        0.26,
+        0.26
+      ],
+      "heightDeltaMetres": 0.26,
+      "osmSourceFeatureId": "way/265419622",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0128579",
+      "dataSfMedianHeightMetres": 9.09,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/265419624",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0156030",
+      "dataSfMedianHeightMetres": 6.81,
+      "emittedTopYDeltaRangeMetres": [
+        -0.19,
+        -0.19
+      ],
+      "heightDeltaMetres": -0.19,
+      "osmSourceFeatureId": "way/265419625",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0109487",
+      "dataSfMedianHeightMetres": 6.7,
+      "emittedTopYDeltaRangeMetres": [
+        -0.3,
+        -0.3
+      ],
+      "heightDeltaMetres": -0.3,
+      "osmSourceFeatureId": "way/265419627",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0063323",
+      "dataSfMedianHeightMetres": 8.04,
+      "emittedTopYDeltaRangeMetres": [
+        0.04,
+        0.04
+      ],
+      "heightDeltaMetres": 0.04,
+      "osmSourceFeatureId": "way/265419628",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0100903",
+      "dataSfMedianHeightMetres": 6.92,
+      "emittedTopYDeltaRangeMetres": [
+        -0.08,
+        -0.08
+      ],
+      "heightDeltaMetres": -0.08,
+      "osmSourceFeatureId": "way/265419629",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0095934",
+      "dataSfMedianHeightMetres": 6.09,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/265419630",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0111892",
+      "dataSfMedianHeightMetres": 5.09,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/265419631",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0114627",
+      "dataSfMedianHeightMetres": 7.08,
+      "emittedTopYDeltaRangeMetres": [
+        0.08,
+        0.08
+      ],
+      "heightDeltaMetres": 0.08,
+      "osmSourceFeatureId": "way/265419632",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0087110",
+      "dataSfMedianHeightMetres": 5.88,
+      "emittedTopYDeltaRangeMetres": [
+        -0.12,
+        -0.12
+      ],
+      "heightDeltaMetres": -0.12,
+      "osmSourceFeatureId": "way/265419633",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0077723",
+      "dataSfMedianHeightMetres": 8.65,
+      "emittedTopYDeltaRangeMetres": [
+        -0.35,
+        -0.35
+      ],
+      "heightDeltaMetres": -0.35,
+      "osmSourceFeatureId": "way/265419634",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0118735",
+      "dataSfMedianHeightMetres": 5.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/265419635",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0096323",
+      "dataSfMedianHeightMetres": 4.4,
+      "emittedTopYDeltaRangeMetres": [
+        0.4,
+        0.4
+      ],
+      "heightDeltaMetres": 0.4,
+      "osmSourceFeatureId": "way/265419636",
+      "previousHeightMetres": 4,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0095302",
+      "dataSfMedianHeightMetres": 6.03,
+      "emittedTopYDeltaRangeMetres": [
+        0.03,
+        0.03
+      ],
+      "heightDeltaMetres": 0.03,
+      "osmSourceFeatureId": "way/265419637",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0111793",
+      "dataSfMedianHeightMetres": 5.99,
+      "emittedTopYDeltaRangeMetres": [
+        -0.01,
+        -0.01
+      ],
+      "heightDeltaMetres": -0.01,
+      "osmSourceFeatureId": "way/265419638",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0071541",
+      "dataSfMedianHeightMetres": 6.45,
+      "emittedTopYDeltaRangeMetres": [
+        0.45,
+        0.45
+      ],
+      "heightDeltaMetres": 0.45,
+      "osmSourceFeatureId": "way/265419639",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0072780",
+      "dataSfMedianHeightMetres": 5.07,
+      "emittedTopYDeltaRangeMetres": [
+        0.07,
+        0.07
+      ],
+      "heightDeltaMetres": 0.07,
+      "osmSourceFeatureId": "way/265419640",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0058612",
+      "dataSfMedianHeightMetres": 6.81,
+      "emittedTopYDeltaRangeMetres": [
+        -0.19,
+        -0.19
+      ],
+      "heightDeltaMetres": -0.19,
+      "osmSourceFeatureId": "way/265419641",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 17
+    },
+    {
+      "dataSfBuildingId": "201006.0123492",
+      "dataSfMedianHeightMetres": 5.01,
+      "emittedTopYDeltaRangeMetres": [
+        0.01,
+        0.01
+      ],
+      "heightDeltaMetres": 0.01,
+      "osmSourceFeatureId": "way/265419642",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0060480",
+      "dataSfMedianHeightMetres": 7.15,
+      "emittedTopYDeltaRangeMetres": [
+        0.15,
+        0.15
+      ],
+      "heightDeltaMetres": 0.15,
+      "osmSourceFeatureId": "way/265419643",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0121984",
+      "dataSfMedianHeightMetres": 7.83,
+      "emittedTopYDeltaRangeMetres": [
+        -0.17,
+        -0.17
+      ],
+      "heightDeltaMetres": -0.17,
+      "osmSourceFeatureId": "way/265419644",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 21
+    },
+    {
+      "dataSfBuildingId": "201006.0158113",
+      "dataSfMedianHeightMetres": 5.92,
+      "emittedTopYDeltaRangeMetres": [
+        -0.08,
+        -0.08
+      ],
+      "heightDeltaMetres": -0.08,
+      "osmSourceFeatureId": "way/265419645",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0154948",
+      "dataSfMedianHeightMetres": 7.49,
+      "emittedTopYDeltaRangeMetres": [
+        0.49,
+        0.49
+      ],
+      "heightDeltaMetres": 0.49,
+      "osmSourceFeatureId": "way/265419646",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0146824",
+      "dataSfMedianHeightMetres": 5.31,
+      "emittedTopYDeltaRangeMetres": [
+        0.31,
+        0.31
+      ],
+      "heightDeltaMetres": 0.31,
+      "osmSourceFeatureId": "way/265419647",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0146306",
+      "dataSfMedianHeightMetres": 8.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/265419648",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0151412",
+      "dataSfMedianHeightMetres": 5.52,
+      "emittedTopYDeltaRangeMetres": [
+        -0.48,
+        -0.48
+      ],
+      "heightDeltaMetres": -0.48,
+      "osmSourceFeatureId": "way/265419649",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0100481",
+      "dataSfMedianHeightMetres": 6.9,
+      "emittedTopYDeltaRangeMetres": [
+        -0.1,
+        -0.1
+      ],
+      "heightDeltaMetres": -0.1,
+      "osmSourceFeatureId": "way/265419650",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0140220",
+      "dataSfMedianHeightMetres": 8.54,
+      "emittedTopYDeltaRangeMetres": [
+        -0.46,
+        -0.46
+      ],
+      "heightDeltaMetres": -0.46,
+      "osmSourceFeatureId": "way/265419651",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0080609",
+      "dataSfMedianHeightMetres": 7.69,
+      "emittedTopYDeltaRangeMetres": [
+        -0.31,
+        -0.31
+      ],
+      "heightDeltaMetres": -0.31,
+      "osmSourceFeatureId": "way/265419652",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0081851",
+      "dataSfMedianHeightMetres": 6.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/265419653",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0145638",
+      "dataSfMedianHeightMetres": 8.36,
+      "emittedTopYDeltaRangeMetres": [
+        0.36,
+        0.36
+      ],
+      "heightDeltaMetres": 0.36,
+      "osmSourceFeatureId": "way/265419654",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0143427",
+      "dataSfMedianHeightMetres": 5.29,
+      "emittedTopYDeltaRangeMetres": [
+        0.29,
+        0.29
+      ],
+      "heightDeltaMetres": 0.29,
+      "osmSourceFeatureId": "way/265419655",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0088124",
+      "dataSfMedianHeightMetres": 7.26,
+      "emittedTopYDeltaRangeMetres": [
+        0.26,
+        0.26
+      ],
+      "heightDeltaMetres": 0.26,
+      "osmSourceFeatureId": "way/265419656",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0109996",
+      "dataSfMedianHeightMetres": 8.67,
+      "emittedTopYDeltaRangeMetres": [
+        -0.33,
+        -0.33
+      ],
+      "heightDeltaMetres": -0.33,
+      "osmSourceFeatureId": "way/265419657",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0149555",
+      "dataSfMedianHeightMetres": 5.89,
+      "emittedTopYDeltaRangeMetres": [
+        -0.11,
+        -0.11
+      ],
+      "heightDeltaMetres": -0.11,
+      "osmSourceFeatureId": "way/265419658",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0044460",
+      "dataSfMedianHeightMetres": 10.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/265419659",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0073231",
+      "dataSfMedianHeightMetres": 8.85,
+      "emittedTopYDeltaRangeMetres": [
+        -0.15,
+        -0.15
+      ],
+      "heightDeltaMetres": -0.15,
+      "osmSourceFeatureId": "way/265419660",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0138535",
+      "dataSfMedianHeightMetres": 8.27,
+      "emittedTopYDeltaRangeMetres": [
+        0.27,
+        0.27
+      ],
+      "heightDeltaMetres": 0.27,
+      "osmSourceFeatureId": "way/265422753",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0109936",
+      "dataSfMedianHeightMetres": 9.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/265422754",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0128510",
+      "dataSfMedianHeightMetres": 7.03,
+      "emittedTopYDeltaRangeMetres": [
+        0.03,
+        0.03
+      ],
+      "heightDeltaMetres": 0.03,
+      "osmSourceFeatureId": "way/265422755",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0091223",
+      "dataSfMedianHeightMetres": 5.91,
+      "emittedTopYDeltaRangeMetres": [
+        -0.09,
+        -0.09
+      ],
+      "heightDeltaMetres": -0.09,
+      "osmSourceFeatureId": "way/265422756",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0020054",
+      "dataSfMedianHeightMetres": 9.95,
+      "emittedTopYDeltaRangeMetres": [
+        -0.05,
+        -0.05
+      ],
+      "heightDeltaMetres": -0.05,
+      "osmSourceFeatureId": "way/265422757",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0061893",
+      "dataSfMedianHeightMetres": 7.58,
+      "emittedTopYDeltaRangeMetres": [
+        -0.42,
+        -0.42
+      ],
+      "heightDeltaMetres": -0.42,
+      "osmSourceFeatureId": "way/265422758",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0119506",
+      "dataSfMedianHeightMetres": 8.54,
+      "emittedTopYDeltaRangeMetres": [
+        -0.46,
+        -0.46
+      ],
+      "heightDeltaMetres": -0.46,
+      "osmSourceFeatureId": "way/265422759",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0082718",
+      "dataSfMedianHeightMetres": 8.98,
+      "emittedTopYDeltaRangeMetres": [
+        -0.02,
+        -0.02
+      ],
+      "heightDeltaMetres": -0.02,
+      "osmSourceFeatureId": "way/265422760",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0074447",
+      "dataSfMedianHeightMetres": 6.68,
+      "emittedTopYDeltaRangeMetres": [
+        -0.32,
+        -0.32
+      ],
+      "heightDeltaMetres": -0.32,
+      "osmSourceFeatureId": "way/265422761",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0086160",
+      "dataSfMedianHeightMetres": 5.61,
+      "emittedTopYDeltaRangeMetres": [
+        -0.39,
+        -0.39
+      ],
+      "heightDeltaMetres": -0.39,
+      "osmSourceFeatureId": "way/265422762",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0087426",
+      "dataSfMedianHeightMetres": 6.05,
+      "emittedTopYDeltaRangeMetres": [
+        0.05,
+        0.05
+      ],
+      "heightDeltaMetres": 0.05,
+      "osmSourceFeatureId": "way/265422763",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0084868",
+      "dataSfMedianHeightMetres": 8.63,
+      "emittedTopYDeltaRangeMetres": [
+        -0.37,
+        -0.37
+      ],
+      "heightDeltaMetres": -0.37,
+      "osmSourceFeatureId": "way/265422764",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0122135",
+      "dataSfMedianHeightMetres": 8.16,
+      "emittedTopYDeltaRangeMetres": [
+        0.16,
+        0.16
+      ],
+      "heightDeltaMetres": 0.16,
+      "osmSourceFeatureId": "way/265422766",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 17
+    },
+    {
+      "dataSfBuildingId": "201006.0073580",
+      "dataSfMedianHeightMetres": 7.56,
+      "emittedTopYDeltaRangeMetres": [
+        -0.44,
+        -0.44
+      ],
+      "heightDeltaMetres": -0.44,
+      "osmSourceFeatureId": "way/265422767",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 18
+    },
+    {
+      "dataSfBuildingId": "201006.0066965",
+      "dataSfMedianHeightMetres": 7.37,
+      "emittedTopYDeltaRangeMetres": [
+        0.37,
+        0.37
+      ],
+      "heightDeltaMetres": 0.37,
+      "osmSourceFeatureId": "way/265422768",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 19
+    },
+    {
+      "dataSfBuildingId": "201006.0105342",
+      "dataSfMedianHeightMetres": 9.61,
+      "emittedTopYDeltaRangeMetres": [
+        -0.39,
+        -0.39
+      ],
+      "heightDeltaMetres": -0.39,
+      "osmSourceFeatureId": "way/265422769",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 20
+    },
+    {
+      "dataSfBuildingId": "201006.0096355",
+      "dataSfMedianHeightMetres": 5.45,
+      "emittedTopYDeltaRangeMetres": [
+        0.45,
+        0.45
+      ],
+      "heightDeltaMetres": 0.45,
+      "osmSourceFeatureId": "way/265422770",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 21
+    },
+    {
+      "dataSfBuildingId": "201006.0035297",
+      "dataSfMedianHeightMetres": 6.68,
+      "emittedTopYDeltaRangeMetres": [
+        -0.32,
+        -0.32
+      ],
+      "heightDeltaMetres": -0.32,
+      "osmSourceFeatureId": "way/265422771",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 24
+    },
+    {
+      "dataSfBuildingId": "201006.0019068",
+      "dataSfMedianHeightMetres": 9.48,
+      "emittedTopYDeltaRangeMetres": [
+        0.48,
+        0.48
+      ],
+      "heightDeltaMetres": 0.48,
+      "osmSourceFeatureId": "way/265422772",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 24
+    },
+    {
+      "dataSfBuildingId": "201006.0030030",
+      "dataSfMedianHeightMetres": 9.07,
+      "emittedTopYDeltaRangeMetres": [
+        0.07,
+        0.07
+      ],
+      "heightDeltaMetres": 0.07,
+      "osmSourceFeatureId": "way/265422773",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 29
+    },
+    {
+      "dataSfBuildingId": "201006.0108748",
+      "dataSfMedianHeightMetres": 6.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/265422774",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0090137",
+      "dataSfMedianHeightMetres": 8.93,
+      "emittedTopYDeltaRangeMetres": [
+        -0.07,
+        -0.07
+      ],
+      "heightDeltaMetres": -0.07,
+      "osmSourceFeatureId": "way/265422775",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0123238",
+      "dataSfMedianHeightMetres": 6.57,
+      "emittedTopYDeltaRangeMetres": [
+        -0.43,
+        -0.43
+      ],
+      "heightDeltaMetres": -0.43,
+      "osmSourceFeatureId": "way/265422776",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0107355",
+      "dataSfMedianHeightMetres": 9.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/265422777",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0040349",
+      "dataSfMedianHeightMetres": 6.66,
+      "emittedTopYDeltaRangeMetres": [
+        -0.34,
+        -0.34
+      ],
+      "heightDeltaMetres": -0.34,
+      "osmSourceFeatureId": "way/265422778",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0071851",
+      "dataSfMedianHeightMetres": 6.05,
+      "emittedTopYDeltaRangeMetres": [
+        0.05,
+        0.05
+      ],
+      "heightDeltaMetres": 0.05,
+      "osmSourceFeatureId": "way/265422779",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0147787",
+      "dataSfMedianHeightMetres": 8.08,
+      "emittedTopYDeltaRangeMetres": [
+        0.08,
+        0.08
+      ],
+      "heightDeltaMetres": 0.08,
+      "osmSourceFeatureId": "way/265422780",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0136282",
+      "dataSfMedianHeightMetres": 8.22,
+      "emittedTopYDeltaRangeMetres": [
+        0.22,
+        0.22
+      ],
+      "heightDeltaMetres": 0.22,
+      "osmSourceFeatureId": "way/265422781",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0131328",
+      "dataSfMedianHeightMetres": 9.43,
+      "emittedTopYDeltaRangeMetres": [
+        0.43,
+        0.43
+      ],
+      "heightDeltaMetres": 0.43,
+      "osmSourceFeatureId": "way/265422782",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0147468",
+      "dataSfMedianHeightMetres": 6.6,
+      "emittedTopYDeltaRangeMetres": [
+        -0.4,
+        -0.4
+      ],
+      "heightDeltaMetres": -0.4,
+      "osmSourceFeatureId": "way/265425481",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0131493",
+      "dataSfMedianHeightMetres": 5.73,
+      "emittedTopYDeltaRangeMetres": [
+        -0.27,
+        -0.27
+      ],
+      "heightDeltaMetres": -0.27,
+      "osmSourceFeatureId": "way/265425482",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0143989",
+      "dataSfMedianHeightMetres": 8.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/265425483",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0061418",
+      "dataSfMedianHeightMetres": 8.36,
+      "emittedTopYDeltaRangeMetres": [
+        0.36,
+        0.36
+      ],
+      "heightDeltaMetres": 0.36,
+      "osmSourceFeatureId": "way/265425484",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0147017",
+      "dataSfMedianHeightMetres": 8.48,
+      "emittedTopYDeltaRangeMetres": [
+        0.48,
+        0.48
+      ],
+      "heightDeltaMetres": 0.48,
+      "osmSourceFeatureId": "way/265425485",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0097175",
+      "dataSfMedianHeightMetres": 7.79,
+      "emittedTopYDeltaRangeMetres": [
+        -0.21,
+        -0.21
+      ],
+      "heightDeltaMetres": -0.21,
+      "osmSourceFeatureId": "way/265425486",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0147685",
+      "dataSfMedianHeightMetres": 8.08,
+      "emittedTopYDeltaRangeMetres": [
+        0.08,
+        0.08
+      ],
+      "heightDeltaMetres": 0.08,
+      "osmSourceFeatureId": "way/265425487",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0124893",
+      "dataSfMedianHeightMetres": 6.49,
+      "emittedTopYDeltaRangeMetres": [
+        0.49,
+        0.49
+      ],
+      "heightDeltaMetres": 0.49,
+      "osmSourceFeatureId": "way/265425488",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0154660",
+      "dataSfMedianHeightMetres": 7.11,
+      "emittedTopYDeltaRangeMetres": [
+        0.11,
+        0.11
+      ],
+      "heightDeltaMetres": 0.11,
+      "osmSourceFeatureId": "way/265425489",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0097130",
+      "dataSfMedianHeightMetres": 7.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/265425490",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0127347",
+      "dataSfMedianHeightMetres": 7.17,
+      "emittedTopYDeltaRangeMetres": [
+        0.17,
+        0.17
+      ],
+      "heightDeltaMetres": 0.17,
+      "osmSourceFeatureId": "way/265425491",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0082823",
+      "dataSfMedianHeightMetres": 8.15,
+      "emittedTopYDeltaRangeMetres": [
+        0.15,
+        0.15
+      ],
+      "heightDeltaMetres": 0.15,
+      "osmSourceFeatureId": "way/265425492",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0147474",
+      "dataSfMedianHeightMetres": 6.65,
+      "emittedTopYDeltaRangeMetres": [
+        -0.35,
+        -0.35
+      ],
+      "heightDeltaMetres": -0.35,
+      "osmSourceFeatureId": "way/265425493",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0142430",
+      "dataSfMedianHeightMetres": 7.57,
+      "emittedTopYDeltaRangeMetres": [
+        -0.43,
+        -0.43
+      ],
+      "heightDeltaMetres": -0.43,
+      "osmSourceFeatureId": "way/265425494",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0037222",
+      "dataSfMedianHeightMetres": 9.92,
+      "emittedTopYDeltaRangeMetres": [
+        -0.08,
+        -0.08
+      ],
+      "heightDeltaMetres": -0.08,
+      "osmSourceFeatureId": "way/265425495",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0123021",
+      "dataSfMedianHeightMetres": 8.11,
+      "emittedTopYDeltaRangeMetres": [
+        0.11,
+        0.11
+      ],
+      "heightDeltaMetres": 0.11,
+      "osmSourceFeatureId": "way/265425496",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0094922",
+      "dataSfMedianHeightMetres": 8.39,
+      "emittedTopYDeltaRangeMetres": [
+        0.39,
+        0.39
+      ],
+      "heightDeltaMetres": 0.39,
+      "osmSourceFeatureId": "way/265425497",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0138687",
+      "dataSfMedianHeightMetres": 8.3,
+      "emittedTopYDeltaRangeMetres": [
+        0.3,
+        0.3
+      ],
+      "heightDeltaMetres": 0.3,
+      "osmSourceFeatureId": "way/265425499",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0106471",
+      "dataSfMedianHeightMetres": 5.3,
+      "emittedTopYDeltaRangeMetres": [
+        0.3,
+        0.3
+      ],
+      "heightDeltaMetres": 0.3,
+      "osmSourceFeatureId": "way/265425500",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0146429",
+      "dataSfMedianHeightMetres": 7.64,
+      "emittedTopYDeltaRangeMetres": [
+        -0.36,
+        -0.36
+      ],
+      "heightDeltaMetres": -0.36,
+      "osmSourceFeatureId": "way/265425501",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0121288",
+      "dataSfMedianHeightMetres": 7.55,
+      "emittedTopYDeltaRangeMetres": [
+        -0.45,
+        -0.45
+      ],
+      "heightDeltaMetres": -0.45,
+      "osmSourceFeatureId": "way/265425502",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0149352",
+      "dataSfMedianHeightMetres": 8.86,
+      "emittedTopYDeltaRangeMetres": [
+        -0.14,
+        -0.14
+      ],
+      "heightDeltaMetres": -0.14,
+      "osmSourceFeatureId": "way/265425503",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0108818",
+      "dataSfMedianHeightMetres": 8.35,
+      "emittedTopYDeltaRangeMetres": [
+        0.35,
+        0.35
+      ],
+      "heightDeltaMetres": 0.35,
+      "osmSourceFeatureId": "way/265425504",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0144902",
+      "dataSfMedianHeightMetres": 8.67,
+      "emittedTopYDeltaRangeMetres": [
+        -0.33,
+        -0.33
+      ],
+      "heightDeltaMetres": -0.33,
+      "osmSourceFeatureId": "way/265425505",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0048999",
+      "dataSfMedianHeightMetres": 7.87,
+      "emittedTopYDeltaRangeMetres": [
+        -0.13,
+        -0.13
+      ],
+      "heightDeltaMetres": -0.13,
+      "osmSourceFeatureId": "way/265470617",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0036792",
+      "dataSfMedianHeightMetres": 7.51,
+      "emittedTopYDeltaRangeMetres": [
+        -0.49,
+        -0.49
+      ],
+      "heightDeltaMetres": -0.49,
+      "osmSourceFeatureId": "way/265470621",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0041052",
+      "dataSfMedianHeightMetres": 5.58,
+      "emittedTopYDeltaRangeMetres": [
+        -4.02,
+        -4.02
+      ],
+      "heightDeltaMetres": -4.02,
+      "osmSourceFeatureId": "way/265470624",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 13
+    },
+    {
+      "dataSfBuildingId": "201006.0047413",
+      "dataSfMedianHeightMetres": 10.03,
+      "emittedTopYDeltaRangeMetres": [
+        0.03,
+        0.03
+      ],
+      "heightDeltaMetres": 0.03,
+      "osmSourceFeatureId": "way/265470627",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0052855",
+      "dataSfMedianHeightMetres": 9.52,
+      "emittedTopYDeltaRangeMetres": [
+        -0.48,
+        -0.48
+      ],
+      "heightDeltaMetres": -0.48,
+      "osmSourceFeatureId": "way/265470628",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0078747",
+      "dataSfMedianHeightMetres": 7.94,
+      "emittedTopYDeltaRangeMetres": [
+        -0.06,
+        -0.06
+      ],
+      "heightDeltaMetres": -0.06,
+      "osmSourceFeatureId": "way/265470629",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0069705",
+      "dataSfMedianHeightMetres": 7.42,
+      "emittedTopYDeltaRangeMetres": [
+        0.42,
+        0.42
+      ],
+      "heightDeltaMetres": 0.42,
+      "osmSourceFeatureId": "way/265470632",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0062385",
+      "dataSfMedianHeightMetres": 12.56,
+      "emittedTopYDeltaRangeMetres": [
+        -0.44,
+        -0.44
+      ],
+      "heightDeltaMetres": -0.44,
+      "osmSourceFeatureId": "way/265470635",
+      "previousHeightMetres": 13,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0015620",
+      "dataSfMedianHeightMetres": 13.46,
+      "emittedTopYDeltaRangeMetres": [
+        0.46,
+        0.46
+      ],
+      "heightDeltaMetres": 0.46,
+      "osmSourceFeatureId": "way/265470638",
+      "previousHeightMetres": 13,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0089003",
+      "dataSfMedianHeightMetres": 7.85,
+      "emittedTopYDeltaRangeMetres": [
+        -0.15,
+        -0.15
+      ],
+      "heightDeltaMetres": -0.15,
+      "osmSourceFeatureId": "way/265470640",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 18
+    },
+    {
+      "dataSfBuildingId": "201006.0002819",
+      "dataSfMedianHeightMetres": 12.14,
+      "emittedTopYDeltaRangeMetres": [
+        0.14,
+        0.14
+      ],
+      "heightDeltaMetres": 0.14,
+      "osmSourceFeatureId": "way/265470641",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 26
+    },
+    {
+      "dataSfBuildingId": "201006.0112677",
+      "dataSfMedianHeightMetres": 9.49,
+      "emittedTopYDeltaRangeMetres": [
+        0.49,
+        0.49
+      ],
+      "heightDeltaMetres": 0.49,
+      "osmSourceFeatureId": "way/265470643",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0062663",
+      "dataSfMedianHeightMetres": 9.56,
+      "emittedTopYDeltaRangeMetres": [
+        -0.44,
+        -0.44
+      ],
+      "heightDeltaMetres": -0.44,
+      "osmSourceFeatureId": "way/265470645",
+      "previousHeightMetres": 10,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0044489",
+      "dataSfMedianHeightMetres": 15.41,
+      "emittedTopYDeltaRangeMetres": [
+        0.41,
+        0.41
+      ],
+      "heightDeltaMetres": 0.41,
+      "osmSourceFeatureId": "way/265470646",
+      "previousHeightMetres": 15,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0113805",
+      "dataSfMedianHeightMetres": 6.83,
+      "emittedTopYDeltaRangeMetres": [
+        -0.17,
+        -0.17
+      ],
+      "heightDeltaMetres": -0.17,
+      "osmSourceFeatureId": "way/265470648",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0045793",
+      "dataSfMedianHeightMetres": 11.39,
+      "emittedTopYDeltaRangeMetres": [
+        0.39,
+        0.39
+      ],
+      "heightDeltaMetres": 0.39,
+      "osmSourceFeatureId": "way/265470650",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0014197",
+      "dataSfMedianHeightMetres": 12.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/265470653",
+      "previousHeightMetres": 13,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0080421",
+      "dataSfMedianHeightMetres": 9.04,
+      "emittedTopYDeltaRangeMetres": [
+        0.04,
+        0.04
+      ],
+      "heightDeltaMetres": 0.04,
+      "osmSourceFeatureId": "way/265470654",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0073938",
+      "dataSfMedianHeightMetres": 12.38,
+      "emittedTopYDeltaRangeMetres": [
+        0.38,
+        0.38
+      ],
+      "heightDeltaMetres": 0.38,
+      "osmSourceFeatureId": "way/265470655",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0026452",
+      "dataSfMedianHeightMetres": 6.98,
+      "emittedTopYDeltaRangeMetres": [
+        -0.02,
+        -0.02
+      ],
+      "heightDeltaMetres": -0.02,
+      "osmSourceFeatureId": "way/265480104",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0106973",
+      "dataSfMedianHeightMetres": 9.35,
+      "emittedTopYDeltaRangeMetres": [
+        0.35,
+        0.35
+      ],
+      "heightDeltaMetres": 0.35,
+      "osmSourceFeatureId": "way/265480106",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0132166",
+      "dataSfMedianHeightMetres": 5.12,
+      "emittedTopYDeltaRangeMetres": [
+        0.12,
+        0.12
+      ],
+      "heightDeltaMetres": 0.12,
+      "osmSourceFeatureId": "way/265480107",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 16
+    },
+    {
+      "dataSfBuildingId": "201006.0067845",
+      "dataSfMedianHeightMetres": 8.12,
+      "emittedTopYDeltaRangeMetres": [
+        0.12,
+        0.12
+      ],
+      "heightDeltaMetres": 0.12,
+      "osmSourceFeatureId": "way/265480108",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 20
+    },
+    {
+      "dataSfBuildingId": "201006.0091430",
+      "dataSfMedianHeightMetres": 7.98,
+      "emittedTopYDeltaRangeMetres": [
+        -0.02,
+        -0.02
+      ],
+      "heightDeltaMetres": -0.02,
+      "osmSourceFeatureId": "way/265480109",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0084687",
+      "dataSfMedianHeightMetres": 5.2,
+      "emittedTopYDeltaRangeMetres": [
+        0.2,
+        0.2
+      ],
+      "heightDeltaMetres": 0.2,
+      "osmSourceFeatureId": "way/265480110",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0084644",
+      "dataSfMedianHeightMetres": 6.74,
+      "emittedTopYDeltaRangeMetres": [
+        -0.26,
+        -0.26
+      ],
+      "heightDeltaMetres": -0.26,
+      "osmSourceFeatureId": "way/265480111",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0060553",
+      "dataSfMedianHeightMetres": 4.91,
+      "emittedTopYDeltaRangeMetres": [
+        -0.09,
+        -0.09
+      ],
+      "heightDeltaMetres": -0.09,
+      "osmSourceFeatureId": "way/265495005",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0069738",
+      "dataSfMedianHeightMetres": 6.96,
+      "emittedTopYDeltaRangeMetres": [
+        -0.04,
+        -0.04
+      ],
+      "heightDeltaMetres": -0.04,
+      "osmSourceFeatureId": "way/265495006",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0097705",
+      "dataSfMedianHeightMetres": 5.5,
+      "emittedTopYDeltaRangeMetres": [
+        -0.5,
+        -0.5
+      ],
+      "heightDeltaMetres": -0.5,
+      "osmSourceFeatureId": "way/265495007",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0055834",
+      "dataSfMedianHeightMetres": 3.91,
+      "emittedTopYDeltaRangeMetres": [
+        -0.09,
+        -0.09
+      ],
+      "heightDeltaMetres": -0.09,
+      "osmSourceFeatureId": "way/265495008",
+      "previousHeightMetres": 4,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0123274",
+      "dataSfMedianHeightMetres": 5.2,
+      "emittedTopYDeltaRangeMetres": [
+        0.2,
+        0.2
+      ],
+      "heightDeltaMetres": 0.2,
+      "osmSourceFeatureId": "way/265495009",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0124203",
+      "dataSfMedianHeightMetres": 9.31,
+      "emittedTopYDeltaRangeMetres": [
+        0.31,
+        0.31
+      ],
+      "heightDeltaMetres": 0.31,
+      "osmSourceFeatureId": "way/265495010",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0054570",
+      "dataSfMedianHeightMetres": 6.03,
+      "emittedTopYDeltaRangeMetres": [
+        0.03,
+        0.03
+      ],
+      "heightDeltaMetres": 0.03,
+      "osmSourceFeatureId": "way/265495011",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0077800",
+      "dataSfMedianHeightMetres": 5.34,
+      "emittedTopYDeltaRangeMetres": [
+        0.34,
+        0.34
+      ],
+      "heightDeltaMetres": 0.34,
+      "osmSourceFeatureId": "way/265495012",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0013772",
+      "dataSfMedianHeightMetres": 6.11,
+      "emittedTopYDeltaRangeMetres": [
+        0.11,
+        0.11
+      ],
+      "heightDeltaMetres": 0.11,
+      "osmSourceFeatureId": "way/265495013",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 24
+    },
+    {
+      "dataSfBuildingId": "201006.0119177",
+      "dataSfMedianHeightMetres": 8.73,
+      "emittedTopYDeltaRangeMetres": [
+        -0.27,
+        -0.27
+      ],
+      "heightDeltaMetres": -0.27,
+      "osmSourceFeatureId": "way/265495014",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 5
+    },
+    {
+      "dataSfBuildingId": "201006.0015957",
+      "dataSfMedianHeightMetres": 8.17,
+      "emittedTopYDeltaRangeMetres": [
+        0.17,
+        0.17
+      ],
+      "heightDeltaMetres": 0.17,
+      "osmSourceFeatureId": "way/265495015",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0129261",
+      "dataSfMedianHeightMetres": 5.05,
+      "emittedTopYDeltaRangeMetres": [
+        0.05,
+        0.05
+      ],
+      "heightDeltaMetres": 0.05,
+      "osmSourceFeatureId": "way/265495016",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0091585",
+      "dataSfMedianHeightMetres": 11.24,
+      "emittedTopYDeltaRangeMetres": [
+        0.24,
+        0.24
+      ],
+      "heightDeltaMetres": 0.24,
+      "osmSourceFeatureId": "way/265497904",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 10
+    },
+    {
+      "dataSfBuildingId": "201006.0129812",
+      "dataSfMedianHeightMetres": 8.59,
+      "emittedTopYDeltaRangeMetres": [
+        -0.41,
+        -0.41
+      ],
+      "heightDeltaMetres": -0.41,
+      "osmSourceFeatureId": "way/265497907",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0104432",
+      "dataSfMedianHeightMetres": 7.17,
+      "emittedTopYDeltaRangeMetres": [
+        0.17,
+        0.17
+      ],
+      "heightDeltaMetres": 0.17,
+      "osmSourceFeatureId": "way/265497913",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0084955",
+      "dataSfMedianHeightMetres": 11.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.25,
+        0.25
+      ],
+      "heightDeltaMetres": 0.25,
+      "osmSourceFeatureId": "way/265497915",
+      "previousHeightMetres": 11,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0083072",
+      "dataSfMedianHeightMetres": 9.12,
+      "emittedTopYDeltaRangeMetres": [
+        0.12,
+        0.12
+      ],
+      "heightDeltaMetres": 0.12,
+      "osmSourceFeatureId": "way/265497917",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0157106",
+      "dataSfMedianHeightMetres": 8.44,
+      "emittedTopYDeltaRangeMetres": [
+        0.44,
+        0.44
+      ],
+      "heightDeltaMetres": 0.44,
+      "osmSourceFeatureId": "way/268027012",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0070183",
+      "dataSfMedianHeightMetres": 4.81,
+      "emittedTopYDeltaRangeMetres": [
+        -0.19,
+        -0.19
+      ],
+      "heightDeltaMetres": -0.19,
+      "osmSourceFeatureId": "way/268027014",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0087133",
+      "dataSfMedianHeightMetres": 7.4,
+      "emittedTopYDeltaRangeMetres": [
+        0.4,
+        0.4
+      ],
+      "heightDeltaMetres": 0.4,
+      "osmSourceFeatureId": "way/268658127",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0081477",
+      "dataSfMedianHeightMetres": 7.78,
+      "emittedTopYDeltaRangeMetres": [
+        -0.22,
+        -0.22
+      ],
+      "heightDeltaMetres": -0.22,
+      "osmSourceFeatureId": "way/268658135",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 17
+    },
+    {
+      "dataSfBuildingId": "201006.0032028",
+      "dataSfMedianHeightMetres": 6.05,
+      "emittedTopYDeltaRangeMetres": [
+        0.05,
+        0.05
+      ],
+      "heightDeltaMetres": 0.05,
+      "osmSourceFeatureId": "way/268658160",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0008527",
+      "dataSfMedianHeightMetres": 12.21,
+      "emittedTopYDeltaRangeMetres": [
+        0.21,
+        0.21
+      ],
+      "heightDeltaMetres": 0.21,
+      "osmSourceFeatureId": "way/268668273",
+      "previousHeightMetres": 12,
+      "topVerticesChanged": 34
+    },
+    {
+      "dataSfBuildingId": "201006.0010246",
+      "dataSfMedianHeightMetres": 6.55,
+      "emittedTopYDeltaRangeMetres": [
+        -0.45,
+        -0.45
+      ],
+      "heightDeltaMetres": -0.45,
+      "osmSourceFeatureId": "way/268668282",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 7
+    },
+    {
+      "dataSfBuildingId": "201006.0050912",
+      "dataSfMedianHeightMetres": 9.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/268668287",
+      "previousHeightMetres": 9,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0012599",
+      "dataSfMedianHeightMetres": 7.55,
+      "emittedTopYDeltaRangeMetres": [
+        -0.45,
+        -0.45
+      ],
+      "heightDeltaMetres": -0.45,
+      "osmSourceFeatureId": "way/268668289",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 8
+    },
+    {
+      "dataSfBuildingId": "201006.0114914",
+      "dataSfMedianHeightMetres": 5.79,
+      "emittedTopYDeltaRangeMetres": [
+        -0.21,
+        -0.21
+      ],
+      "heightDeltaMetres": -0.21,
+      "osmSourceFeatureId": "way/268684150",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 11
+    },
+    {
+      "dataSfBuildingId": "201006.0040241",
+      "dataSfMedianHeightMetres": 7.68,
+      "emittedTopYDeltaRangeMetres": [
+        -0.32,
+        -0.32
+      ],
+      "heightDeltaMetres": -0.32,
+      "osmSourceFeatureId": "way/268684152",
+      "previousHeightMetres": 8,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0098703",
+      "dataSfMedianHeightMetres": 5.13,
+      "emittedTopYDeltaRangeMetres": [
+        0.13,
+        0.13
+      ],
+      "heightDeltaMetres": 0.13,
+      "osmSourceFeatureId": "way/268684159",
+      "previousHeightMetres": 5,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0072899",
+      "dataSfMedianHeightMetres": 7.23,
+      "emittedTopYDeltaRangeMetres": [
+        0.23,
+        0.23
+      ],
+      "heightDeltaMetres": 0.23,
+      "osmSourceFeatureId": "way/268684161",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 15
+    },
+    {
+      "dataSfBuildingId": "201006.0004896",
+      "dataSfMedianHeightMetres": 7.1,
+      "emittedTopYDeltaRangeMetres": [
+        0.1,
+        0.1
+      ],
+      "heightDeltaMetres": 0.1,
+      "osmSourceFeatureId": "way/268684164",
+      "previousHeightMetres": 7,
+      "topVerticesChanged": 48
+    },
+    {
+      "dataSfBuildingId": "201006.0075422",
+      "dataSfMedianHeightMetres": 6.32,
+      "emittedTopYDeltaRangeMetres": [
+        0.32,
+        0.32
+      ],
+      "heightDeltaMetres": 0.32,
+      "osmSourceFeatureId": "way/268684168",
+      "previousHeightMetres": 6,
+      "topVerticesChanged": 9
+    },
+    {
+      "dataSfBuildingId": "201006.0134184",
+      "dataSfMedianHeightMetres": 10.25,
+      "emittedTopYDeltaRangeMetres": [
+        0.65,
+        0.65
+      ],
+      "heightDeltaMetres": 0.65,
+      "osmSourceFeatureId": "way/709074962",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 4
+    }
+  ],
+  "counts": {
+    "changedTopVertices": 3321,
+    "matchedBuildings": 297,
+    "sourceBuildings": 390
+  },
+  "kind": "sf-datasf-building-height-preview-receipt",
+  "policy": {
+    "absoluteVerticalPlacement": "not claimed",
+    "bottomVertices": "exact source proof retained",
+    "facadeSemantics": "not supplied",
+    "heightField": "hgt_median_m",
+    "horizontalGeometry": "exact source proof X/Z retained",
+    "matchedBuildingsOnly": true,
+    "runtimePromotion": false,
+    "topVertexRule": "uniformly translate every existing top vertex by DataSF hgt_median_m minus the existing extrusion height; preserves the exact source roof shape",
+    "unmatchedBuildings": "exact source proof retained"
+  },
+  "schemaVersion": 1,
+  "source": {
+    "buildingPresentationProof": {
+      "bytes": 343804,
+      "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
+      "sha256": "sha256:3ca086e767cd2cf5ac570123a96ba524e3404e9a0c2f2f0ee4518a97091ce299"
+    },
+    "buildingPresentationProofReceipt": {
+      "bytes": 252567,
+      "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.receipt.json",
+      "sha256": "sha256:b994b211e4160ff62bd61619b146cacbc589ec1c55775c58fb588439b8e275be"
+    },
+    "matchProof": {
+      "bytes": 139382,
+      "path": "public/data/world/preview-artifacts/sf-datasf-osm-building-match-proof-v1/sf-datasf-osm-building-match-proof-v1.receipt.json",
+      "sha256": "sha256:190032d34c126f5aec688409cb6156e4a3b62e2ffc6e3eb114b69ece2d74fe8f"
+    }
+  },
+  "status": "preview-source-height-comparison-only-not-production",
+  "tile": {
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1430-10882",
+    "role": "district",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

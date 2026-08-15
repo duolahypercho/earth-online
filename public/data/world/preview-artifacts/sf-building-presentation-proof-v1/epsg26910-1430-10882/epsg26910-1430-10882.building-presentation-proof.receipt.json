@@ -8990,6 +8990,7 @@
   },
   "invariants": {
     "buildingOwnershipComplete": true,
+    "interleavedBottomTopPairingVerified": true,
     "presentationPrimitiveCountAtMostEight": true,
     "productionTrianglePositionMultisetExact": true,
     "sourceCategoryIndexLedgerBound": true,
@@ -9014,7 +9015,7 @@
   "proofArtifact": {
     "bytes": 343804,
     "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
-    "sha256": "sha256:5f50361d77d3a1d90f72011734c0fd9ed238cbfe7e1356b63af91dd9f1edf293"
+    "sha256": "sha256:3ca086e767cd2cf5ac570123a96ba524e3404e9a0c2f2f0ee4518a97091ce299"
   },
   "schemaVersion": 1,
   "sourceLocks": [
