@@ -1,0 +1,2448 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-fallback-internal-source-switch-continuity-audit-receipt",
+  "id": "sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1",
+  "auditId": "internal-source-switch-continuity-audit-v1",
+  "status": "evidence-only-internal-source-switch-continuity-audit-passed",
+  "productionReadiness": "unproven-visual-metric-acceptability-not-established",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "coordinateReference": {
+    "horizontal": {
+      "crs": "EPSG:26910",
+      "unit": "metre"
+    },
+    "vertical": {
+      "datum": "source-declared-navd88-unrealized",
+      "unit": "metre"
+    },
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized"
+  },
+  "scale": {
+    "runtimeUnitsPerMetre": 1,
+    "horizontalScale": 1,
+    "verticalScale": 1,
+    "verticalExaggeration": 0
+  },
+  "productionWriteEnabled": false,
+  "verifier": {
+    "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.mjs",
+    "sha256": "sha256:f0188fc09ae2f38725889f7e878cfeef44a442f2508b5439ba3529c3aaf758c0",
+    "packageScriptName": "verify:sf-native-pixel-fallback-internal-source-switch-continuity"
+  },
+  "promotionPrerequisiteState": {
+    "id": "internal-source-switch-continuity-audit-v1",
+    "evidenceStatus": "exercised-evidence-only",
+    "parityReceiptStatusBeforeAndAfter": "required-not-exercised",
+    "parityLockStatusBeforeAndAfter": "required-not-exercised",
+    "closesParityPromotionPrerequisite": false,
+    "note": "This audit does not modify the existing parity receipt or lock. Their prerequisite remains required-not-exercised until a deliberate production-promotion update."
+  },
+  "auditContract": {
+    "buildWrite": false,
+    "selectionMode": "per-native-pixel-fallback-production-v1",
+    "candidateTileCount": 25,
+    "nativeLattice": "385x385 samples per 384m tile; adjacent horizontal/vertical pairs at 1m spacing",
+    "sourceAuthorityChange": "sourceLockId/elevationSourceLockId/rasterSha256 tuple differs",
+    "exhaustivePairLedger": "all source-changing adjacent pairs are checked in-memory; canonical evidence binds the sorted ledger by count and SHA-256 and retains deterministic worst-N exemplars",
+    "c0Rule": "all duplicate terrain/water integer lattice vertices must have identical float32 height bits; every lattice coordinate must be present",
+    "glbHeightRule": "each selected source float32 height is q(..., 6 decimal places), then compared by emitted GLB float32 bits",
+    "verticalAccuracyClaim": "none",
+    "metricVisualAcceptability": "not established by this evidence-only audit"
+  },
+  "bindings": {
+    "authorization": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json",
+      "sha256": "sha256:572551aba2887450c1c48de66fb0cfef01b6e0fcaefb5069725a2621ddd9e3a4",
+      "productionWriteEnabled": false
+    },
+    "parityReceipt": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.receipt.json",
+      "sha256": "sha256:7713ee1d4495efae834a191192711769688eb3d38bfc0a3f0d4924e50b3f0246",
+      "productionWriteEnabled": false
+    },
+    "parityLock": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.lock.json",
+      "sha256": "sha256:358724a98ed80de01cf8d7afa9a5bc3a50d1e3cb41050d4b1baf897ed0928766",
+      "productionWriteEnabled": false
+    },
+    "coveragePlan": {
+      "path": "public/data/world/plans/sf-metric-tile-coverage-v1.json",
+      "sha256": "sha256:e7550e604d23213c27895aeb5d20ae59d35e34b695580d2438b6ac6026407bb0",
+      "candidateTileCount": 25
+    },
+    "verifier": {
+      "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.mjs",
+      "sha256": "sha256:f0188fc09ae2f38725889f7e878cfeef44a442f2508b5439ba3529c3aaf758c0",
+      "packageScriptName": "verify:sf-native-pixel-fallback-internal-source-switch-continuity"
+    }
+  },
+  "sourceLocks": [
+    {
+      "role": "original",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715",
+      "rasterSha256": "sha256:ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c",
+      "rasterSha256": "sha256:80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a"
+    },
+    {
+      "role": "original",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:ea8fc1cb4ae79a65146c30a68d8f2f224ba8450010db16d35b3af989bb1d53bd",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07",
+      "rasterSha256": "sha256:a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df",
+      "rasterSha256": "sha256:fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645"
+    }
+  ],
+  "counts": {
+    "candidateTileCount": 25,
+    "buildCount": 25,
+    "sourceSelectionLatticeSamples": 3705625,
+    "glbExactHeightCorrespondenceSamples": 3705625,
+    "glbDuplicateIntegerSurfaceVertices": 19300,
+    "totalAdjacentPairCount": 7392000,
+    "crossSourceNeighbourPairCount": 9868,
+    "originalFallbackNeighbourPairCount": 9483,
+    "withinSourceNeighbourPairCount": 7382132,
+    "sourceSwitchKinds": {
+      "californiagaps-fallback->original": 9016,
+      "original->californiagaps-fallback": 467,
+      "source-lock-change": 385
+    }
+  },
+  "statistics": {
+    "crossSourceNeighbourDeltaMetres": {
+      "count": 9868,
+      "maxMetres": 4.2041015625,
+      "p99Metres": 1.3232345581054688
+    },
+    "withinSourceNeighbourBaselineMetres": {
+      "count": 7382132,
+      "maxMetres": 5.522972106933594,
+      "p99Metres": 0.7056961059570312
+    },
+    "crossToWithinRatios": {
+      "maxCrossToWithin": 0.761202751182127,
+      "p99CrossToWithin": 1.8750770295252819,
+      "denominator": "same-tile adjacent pairs with unchanged chosen source authority; report-only, no acceptance threshold"
+    },
+    "interpretation": "Report-only diagnostics. No max, p99, or ratio is treated as an accuracy or promotion threshold."
+  },
+  "determinism": {
+    "sourceSelectionRecordOrder": "northing ascending, then easting ascending",
+    "crossSourcePairOrder": "tile id ascending, row-major from coordinate, horizontal before vertical",
+    "candidateTileOrder": [
+      "epsg26910-1417-10867",
+      "epsg26910-1418-10867",
+      "epsg26910-1419-10867",
+      "epsg26910-1420-10867",
+      "epsg26910-1421-10867",
+      "epsg26910-1422-10867",
+      "epsg26910-1423-10867",
+      "epsg26910-1424-10867",
+      "epsg26910-1425-10867",
+      "epsg26910-1426-10867",
+      "epsg26910-1427-10867",
+      "epsg26910-1428-10867",
+      "epsg26910-1429-10867",
+      "epsg26910-1430-10867",
+      "epsg26910-1431-10867",
+      "epsg26910-1432-10867",
+      "epsg26910-1433-10867",
+      "epsg26910-1434-10867",
+      "epsg26910-1435-10867",
+      "epsg26910-1436-10867",
+      "epsg26910-1437-10867",
+      "epsg26910-1438-10867",
+      "epsg26910-1439-10867",
+      "epsg26910-1440-10867",
+      "epsg26910-1440-10868"
+    ],
+    "candidateArtifactDirectoriesWritten": false,
+    "productionWriteEnabled": false
+  },
+  "tiles": [
+    {
+      "id": "epsg26910-1417-10867",
+      "gridIndex": [
+        1417,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:050a9c59f2d7cf9efb711ba9dc5a0b4870bff276c2c8cf28424d1fec13ab8c52",
+      "glbBytes": 3583080,
+      "sampleLedgerSha256": "sha256:73321e47eb819fbf67171ab90be57046b201628d77260f509b02674a1f6b9194",
+      "sharedEdgeLedgerSha256": "sha256:7182bb7f70c4fe8fd91749e73c8abf93fb25c5217804230fb9d3e89147ce8059",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 149375,
+        "originalFiniteSamples": 0,
+        "californiaGapsFallbackSamples": 149375
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 0,
+        "originalFallbackPairCount": 0,
+        "crossSourceDelta": {
+          "count": 0,
+          "maxMetres": 0,
+          "p99Metres": 0
+        },
+        "withinSourceBaseline": {
+          "count": 295680,
+          "maxMetres": 3.1092453002929688,
+          "p99Metres": 0.7613716125488281
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1418-10867",
+      "gridIndex": [
+        1418,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:9f862f3f7d2c077943ebcb97d176740eb6680ffb52508a86fa2d53f945629109",
+      "glbBytes": 3597600,
+      "sampleLedgerSha256": "sha256:c35be8ddafa66492465417e68d82d63a24a587c43363af16ea112f735a5d2f38",
+      "sharedEdgeLedgerSha256": "sha256:9ea92b707830bd113b7cc4c1af9e3a6919d03a7960ca607c3f3f6a7ad520426e",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150078,
+        "originalFiniteSamples": 0,
+        "californiaGapsFallbackSamples": 150078
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 0,
+        "originalFallbackPairCount": 0,
+        "crossSourceDelta": {
+          "count": 0,
+          "maxMetres": 0,
+          "p99Metres": 0
+        },
+        "withinSourceBaseline": {
+          "count": 295680,
+          "maxMetres": 1.6433982849121094,
+          "p99Metres": 0.4044647216796875
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1419-10867",
+      "gridIndex": [
+        1419,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:0fd05e2fb8dc3afa9851de81b9706e45a95af8f5d02f2e2a773eb42b5b23ee9f",
+      "glbBytes": 3624956,
+      "sampleLedgerSha256": "sha256:b7cc69931c7d999325cf36bdffcdc2be27e66d90beb44e3db0bfc7a22ce56ead",
+      "sharedEdgeLedgerSha256": "sha256:2815ef98e6bb33e1c1f4ea5e0f9a263699ffcf82440722e6665b34f5a9088df8",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150818,
+        "originalFiniteSamples": 14206,
+        "californiaGapsFallbackSamples": 136612
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 266,
+        "originalFallbackPairCount": 266,
+        "crossSourceDelta": {
+          "count": 266,
+          "maxMetres": 0.44786643981933594,
+          "p99Metres": 0.403289794921875
+        },
+        "withinSourceBaseline": {
+          "count": 295414,
+          "maxMetres": 1.9958152770996094,
+          "p99Metres": 0.5837059020996094
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1420-10867",
+      "gridIndex": [
+        1420,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:fa5859e34fbb13c825fe0151aefbe4bbed38143f71c5836ee6cc3cb10b9f7a40",
+      "glbBytes": 3649328,
+      "sampleLedgerSha256": "sha256:ee5b50d0e522e69316fa017bf675cc8a84b2a2692dd39c94c2e51226463659b6",
+      "sharedEdgeLedgerSha256": "sha256:4144348d6de6bb40f4917813c582c9bf9098ccef10ef2f484bdd2e3f17d06d65",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151566,
+        "originalFiniteSamples": 67533,
+        "californiaGapsFallbackSamples": 84033
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 390,
+        "originalFallbackPairCount": 390,
+        "crossSourceDelta": {
+          "count": 390,
+          "maxMetres": 0.8430595397949219,
+          "p99Metres": 0.5223588943481445
+        },
+        "withinSourceBaseline": {
+          "count": 295290,
+          "maxMetres": 1.8449630737304688,
+          "p99Metres": 0.5580883026123047
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1421-10867",
+      "gridIndex": [
+        1421,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:882e2cda0712c33b515d9a9e80e9a07d7cd5fcbf477be39c012be9060eccd353",
+      "glbBytes": 3666916,
+      "sampleLedgerSha256": "sha256:285daa4003b16d0a4fa4d26eecc6f018da2c5011d7834273db67470529c4ea31",
+      "sharedEdgeLedgerSha256": "sha256:fe10bcfa1f2d02d4c7d60a2127ca4bbde2a2e5f3937fb43e91871d9aa0536ab8",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151365,
+        "originalFiniteSamples": 65817,
+        "californiaGapsFallbackSamples": 85548
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 388,
+        "originalFallbackPairCount": 388,
+        "crossSourceDelta": {
+          "count": 388,
+          "maxMetres": 0.4429149627685547,
+          "p99Metres": 0.24230575561523438
+        },
+        "withinSourceBaseline": {
+          "count": 295292,
+          "maxMetres": 1.0332717895507812,
+          "p99Metres": 0.2777099609375
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1422-10867",
+      "gridIndex": [
+        1422,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:ace6651ebee8271065eb472dbd670df8dd2c89081491dad2ee570acfcb270478",
+      "glbBytes": 3649948,
+      "sampleLedgerSha256": "sha256:f8f3fea0159ad61c93508a0daedaec505836cd25a08821271f996b524fdc67d7",
+      "sharedEdgeLedgerSha256": "sha256:634a48bf59ebeb808daaa027aa17799ddc25efb2333400b68a7c31614d524b9b",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151161,
+        "originalFiniteSamples": 65121,
+        "californiaGapsFallbackSamples": 86040
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 389,
+        "originalFallbackPairCount": 389,
+        "crossSourceDelta": {
+          "count": 389,
+          "maxMetres": 0.3782539367675781,
+          "p99Metres": 0.3354339599609375
+        },
+        "withinSourceBaseline": {
+          "count": 295291,
+          "maxMetres": 1.0271492004394531,
+          "p99Metres": 0.4433021545410156
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1423-10867",
+      "gridIndex": [
+        1423,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:47b762c9c0f6cdb4e32a6f63a06fcc33102b04b0d228a37f882dd078383c7b36",
+      "glbBytes": 3636980,
+      "sampleLedgerSha256": "sha256:ea8a5faa32cc1c5f28a7525e093a8f1dba32aefdf394fdfdce1273a6b5a70c80",
+      "sharedEdgeLedgerSha256": "sha256:761c624ad8d9584b237430b24a609d4ee8082df2a8d253ccb4ddbfce5500224a",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151305,
+        "originalFiniteSamples": 82752,
+        "californiaGapsFallbackSamples": 68553
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 481,
+        "originalFallbackPairCount": 481,
+        "crossSourceDelta": {
+          "count": 481,
+          "maxMetres": 1.9906463623046875,
+          "p99Metres": 1.5428848266601562
+        },
+        "withinSourceBaseline": {
+          "count": 295199,
+          "maxMetres": 5.522972106933594,
+          "p99Metres": 0.5894927978515625
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1424-10867",
+      "gridIndex": [
+        1424,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:d41a2ccdc4917f70a9e310a9c3956724ec09555f71a18ade326fb0c8c7d652be",
+      "glbBytes": 3708264,
+      "sampleLedgerSha256": "sha256:67dd48e433ece5378607cf815d80a4059bb882296dbe5c87af87440beab48bcf",
+      "sharedEdgeLedgerSha256": "sha256:d75e9bddcd7ff727dad90881046b9d961b06ea8588589f10885993fc986dc128",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 152144,
+        "originalFiniteSamples": 66386,
+        "californiaGapsFallbackSamples": 85758
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 457,
+        "originalFallbackPairCount": 457,
+        "crossSourceDelta": {
+          "count": 457,
+          "maxMetres": 2.74053955078125,
+          "p99Metres": 2.3870697021484375
+        },
+        "withinSourceBaseline": {
+          "count": 295223,
+          "maxMetres": 2.6351165771484375,
+          "p99Metres": 0.29064178466796875
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:5c05e884b4bee8119e960cd793589e0be981ec2398cc98417d43569c573d8b07",
+      "glbBytes": 3677416,
+      "sampleLedgerSha256": "sha256:464080583ec9152060a06f2a5147e6eed4ab9cddc9823b9fa96d698c9a1775f2",
+      "sharedEdgeLedgerSha256": "sha256:e400587ff19498915a2b0a5c48883297c835cb17b6310238cc2ad4b3a9d1e515",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 152064,
+        "originalFiniteSamples": 52201,
+        "californiaGapsFallbackSamples": 99863
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 3.5762786865234375,
+          "p99Metres": 3.4841461181640625
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 3.947113037109375,
+          "p99Metres": 0.87200927734375
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1426-10867",
+      "gridIndex": [
+        1426,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:fe875bf9140c37975d1e1c843d6479f12d489ce7cffeb26ed334696d1338fa9d",
+      "glbBytes": 3707192,
+      "sampleLedgerSha256": "sha256:cecb76e41ac02f0bf67491dab38bb63749b31bb93cb0280059f1552324a4f3ef",
+      "sharedEdgeLedgerSha256": "sha256:849d82fb2e47c0883e0dcaa0db8f98e31cd2f4171489f663402b63544ae68bd5",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151722,
+        "originalFiniteSamples": 48457,
+        "californiaGapsFallbackSamples": 103265
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 0.809478759765625,
+          "p99Metres": 0.7236328125
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 3.479522705078125,
+          "p99Metres": 0.8361663818359375
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1427-10867",
+      "gridIndex": [
+        1427,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:0fbc4a3246f2b277034734c3888d642cd7f43d93dc90caf38b4add61ff378adc",
+      "glbBytes": 3710784,
+      "sampleLedgerSha256": "sha256:73bd08450e779169813951f7abc4a8005694c00190a4e1c36baec67c9f987789",
+      "sharedEdgeLedgerSha256": "sha256:9fec856a9e2ec2da2ccc15d62b593a58f19404c0516347d87c9eb21a19f3981e",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 151767,
+        "originalFiniteSamples": 44893,
+        "californiaGapsFallbackSamples": 106874
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 1.1434402465820312,
+          "p99Metres": 0.872406005859375
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 2.37554931640625,
+          "p99Metres": 0.5764617919921875
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1428-10867",
+      "gridIndex": [
+        1428,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:907740ec221c5f9be0e270aa2d7292fb07c4b0d648f279d55e29c0f8383df0f9",
+      "glbBytes": 3641088,
+      "sampleLedgerSha256": "sha256:bece8ffef3edc0f54061323fe46c5d85830de89945ade17a15d6afb79e130320",
+      "sharedEdgeLedgerSha256": "sha256:23db1b7a2ef6cf869920d9a2b2363b15f815ed19c440c747bba4b1a79b40c771",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150352,
+        "originalFiniteSamples": 41210,
+        "californiaGapsFallbackSamples": 109142
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 1.5479583740234375,
+          "p99Metres": 0.7901153564453125
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 1.9721527099609375,
+          "p99Metres": 0.746185302734375
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1429-10867",
+      "gridIndex": [
+        1429,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:cace07bdf39c448f671925d237f5e3fdf3c0eff93eb7c46a83d6427ee0afe2d0",
+      "glbBytes": 3655392,
+      "sampleLedgerSha256": "sha256:9737ed5e0d27e598f3c84b100f7403b4f6b3987ce5e809b816151ad551af0ab7",
+      "sharedEdgeLedgerSha256": "sha256:f6c971a79c12d112de92855295f03460b7e1eeabbee2d46a22d73b33bda1d852",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150987,
+        "originalFiniteSamples": 37472,
+        "californiaGapsFallbackSamples": 113515
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 2.50445556640625,
+          "p99Metres": 1.03570556640625
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 2.734130859375,
+          "p99Metres": 0.7304229736328125
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1430-10867",
+      "gridIndex": [
+        1430,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:08f956c148cfc688a3be6eb97edd1c69ccf41b0571cde8a403763f49ff360fa0",
+      "glbBytes": 3617796,
+      "sampleLedgerSha256": "sha256:85e5e17165f16d6e0ed0372a7fc506caf81ab692307b361b5c1bdcdd924038fd",
+      "sharedEdgeLedgerSha256": "sha256:6fd14ef6066d5642e5b9631f4b8a2690b2a4c34f21da45b49056957b815e9515",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150122,
+        "originalFiniteSamples": 33771,
+        "californiaGapsFallbackSamples": 116351
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 393,
+        "originalFallbackPairCount": 393,
+        "crossSourceDelta": {
+          "count": 393,
+          "maxMetres": 1.8255157470703125,
+          "p99Metres": 1.47637939453125
+        },
+        "withinSourceBaseline": {
+          "count": 295287,
+          "maxMetres": 2.1260986328125,
+          "p99Metres": 0.8633575439453125
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1431-10867",
+      "gridIndex": [
+        1431,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:6c8e2d982c583ff1cfd083de753e35cdd5a3eab766bc46ca330f0623ba8d5a51",
+      "glbBytes": 3601844,
+      "sampleLedgerSha256": "sha256:5f70e6984836f3f921a6751a36ed300dd2286cc444c65426aac93e275c6e27c7",
+      "sharedEdgeLedgerSha256": "sha256:d129d24518a9a729743738237fb83179acb233fb9498855ebfea9c8fc3c7afaa",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 149598,
+        "originalFiniteSamples": 30418,
+        "californiaGapsFallbackSamples": 119180
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 1.14263916015625,
+          "p99Metres": 0.9723358154296875
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 3.060943603515625,
+          "p99Metres": 0.806915283203125
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1432-10867",
+      "gridIndex": [
+        1432,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:f4f4727f6ead6b731f4dc4717e3871776d1a14f756b50cfc891d4df61c056722",
+      "glbBytes": 3611784,
+      "sampleLedgerSha256": "sha256:d57aa6c2ffbf9e86ad3371739fcefb3d35b40c95a9289544ce50efc81a1e402f",
+      "sharedEdgeLedgerSha256": "sha256:9209bbb208f8792cfc48456b2a0d6939ba626fa45846824757b96dd719a94e08",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150280,
+        "originalFiniteSamples": 27251,
+        "californiaGapsFallbackSamples": 123029
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 779,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 779,
+          "maxMetres": 0.8395538330078125,
+          "p99Metres": 0.623687744140625
+        },
+        "withinSourceBaseline": {
+          "count": 294901,
+          "maxMetres": 2.432708740234375,
+          "p99Metres": 0.786529541015625
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:7be3856b0d97f4f0bd1b33fa807979404f5b4b7f50835162dd1dbc039f6802de",
+      "glbBytes": 3582640,
+      "sampleLedgerSha256": "sha256:3284838b5e558214689e15731d455f1cf43af8b11e8b3f93a09144c99f1698bb",
+      "sharedEdgeLedgerSha256": "sha256:56a8744885dc3d09303628228f2f61e7838e7728b5204fef08d7a34176f94d05",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 148897,
+        "originalFiniteSamples": 23347,
+        "californiaGapsFallbackSamples": 125550
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 4.2041015625,
+          "p99Metres": 4.016029357910156
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 1.87774658203125,
+          "p99Metres": 0.8311004638671875
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1434-10867",
+      "gridIndex": [
+        1434,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:a7ad60352a76574a07813a75be290e68e2149551237382356121dd04ea4a925f",
+      "glbBytes": 3621192,
+      "sampleLedgerSha256": "sha256:d29ebc5154171e983dd0945ba7fc82c460e48a689b15944ea2fb87d32a183723",
+      "sharedEdgeLedgerSha256": "sha256:585dd2159b11950862e34305bfb019aea0283fddad6358a2311617e132265b5c",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150291,
+        "originalFiniteSamples": 19887,
+        "californiaGapsFallbackSamples": 130404
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 394,
+        "originalFallbackPairCount": 394,
+        "crossSourceDelta": {
+          "count": 394,
+          "maxMetres": 0.8543624877929688,
+          "p99Metres": 0.7731399536132812
+        },
+        "withinSourceBaseline": {
+          "count": 295286,
+          "maxMetres": 1.9550743103027344,
+          "p99Metres": 0.6946678161621094
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1435-10867",
+      "gridIndex": [
+        1435,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:175692a5a8cb328778c4f2812fc7a9b5f4d6c8b45587809447463adf0f6b5d59",
+      "glbBytes": 3614320,
+      "sampleLedgerSha256": "sha256:a68cd0bfe68dffc9a0f219d104797aa9fe75746e3b00d0fb0f6f9b6e44303f53",
+      "sharedEdgeLedgerSha256": "sha256:75fce23c6b1c0da6f20e9c29dca3f27eccd806fe233d03167b10d6429cc378ae",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 149842,
+        "originalFiniteSamples": 38955,
+        "californiaGapsFallbackSamples": 110887
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 492,
+        "originalFallbackPairCount": 492,
+        "crossSourceDelta": {
+          "count": 492,
+          "maxMetres": 0.6515731811523438,
+          "p99Metres": 0.5351123809814453
+        },
+        "withinSourceBaseline": {
+          "count": 295188,
+          "maxMetres": 2.507843017578125,
+          "p99Metres": 0.6322860717773438
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1436-10867",
+      "gridIndex": [
+        1436,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:137d202f04ce5a48ccee867ca31489f365f1765ad1672f57bbc6227a6a10d085",
+      "glbBytes": 3656468,
+      "sampleLedgerSha256": "sha256:99b82db09081e8e03a0a1981309a5ea994a7d53f5173541f25efd240d4753d81",
+      "sharedEdgeLedgerSha256": "sha256:0ebe263287b246ef4048caf98d0c11bb2271f032840f7e35fdf888f342f8731f",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 150829,
+        "originalFiniteSamples": 78082,
+        "californiaGapsFallbackSamples": 72747
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 458,
+        "originalFallbackPairCount": 458,
+        "crossSourceDelta": {
+          "count": 458,
+          "maxMetres": 0.4640378952026367,
+          "p99Metres": 0.41419267654418945
+        },
+        "withinSourceBaseline": {
+          "count": 295222,
+          "maxMetres": 1.5386152267456055,
+          "p99Metres": 0.3301258087158203
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1437-10867",
+      "gridIndex": [
+        1437,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:64994f510c3b2fecbd73941ddec8a64992788e75d99ac9d22ed8d1c1d933b3e6",
+      "glbBytes": 3576672,
+      "sampleLedgerSha256": "sha256:35690d56e50a7e16e5439e591cc5eaf30c3a182b7095fc2ee7545554d002bdfe",
+      "sharedEdgeLedgerSha256": "sha256:5725f5eac80dfb6588b282c1ae1cc113e2bca6c52e5e3fce23a9af67da08d2f3",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 148888,
+        "originalFiniteSamples": 80816,
+        "californiaGapsFallbackSamples": 68072
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 401,
+        "originalFallbackPairCount": 401,
+        "crossSourceDelta": {
+          "count": 401,
+          "maxMetres": 0.7881312370300293,
+          "p99Metres": 0.3816056251525879
+        },
+        "withinSourceBaseline": {
+          "count": 295279,
+          "maxMetres": 1.2964813709259033,
+          "p99Metres": 0.2593417167663574
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1438-10867",
+      "gridIndex": [
+        1438,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:08d7b52678b2ffcdbfe06ba782c194c2b11b122630611deff5797f0ea39f4a75",
+      "glbBytes": 3569756,
+      "sampleLedgerSha256": "sha256:e8e0780c358507b9eb5234695eafd78b89901bc3ca42059790c1d9caa6bd42bb",
+      "sharedEdgeLedgerSha256": "sha256:1149ef58ccc8328b5ae6c489954a7896765201dbd973c845c69f2ab587fbb663",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 148651,
+        "originalFiniteSamples": 68993,
+        "californiaGapsFallbackSamples": 79658
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 439,
+        "originalFallbackPairCount": 439,
+        "crossSourceDelta": {
+          "count": 439,
+          "maxMetres": 0.3322727680206299,
+          "p99Metres": 0.24348163604736328
+        },
+        "withinSourceBaseline": {
+          "count": 295241,
+          "maxMetres": 0.6068246364593506,
+          "p99Metres": 0.21684503555297852
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1439-10867",
+      "gridIndex": [
+        1439,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:06345eac8ce633d0db159724a1e48c9b55d4780a1e97f40026f19e1eff85c10d",
+      "glbBytes": 3567292,
+      "sampleLedgerSha256": "sha256:813f4c2713465ff96ed9f154595b517b2f8019ce0f098e0e216ddb6236c75e9d",
+      "sharedEdgeLedgerSha256": "sha256:bb6666d3c44948f956815517d022f1d8f6c055c01c9e3e60763cfb6128277423",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 148525,
+        "originalFiniteSamples": 43754,
+        "californiaGapsFallbackSamples": 104771
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 463,
+        "originalFallbackPairCount": 463,
+        "crossSourceDelta": {
+          "count": 463,
+          "maxMetres": 0.4443323612213135,
+          "p99Metres": 0.33069324493408203
+        },
+        "withinSourceBaseline": {
+          "count": 295217,
+          "maxMetres": 0.8582143783569336,
+          "p99Metres": 0.22642230987548828
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1440-10867",
+      "gridIndex": [
+        1440,
+        10867
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:6e50e4a575f17a63997af130ff88177a8cbed59ea74eb5edabaabef9f0649994",
+      "glbBytes": 3564804,
+      "sampleLedgerSha256": "sha256:b94880413f473a25169b941b53764506d5e3423cbfd345f566741b597b87068f",
+      "sharedEdgeLedgerSha256": "sha256:61a12389b72538e613cc4dbe3eb44067e69ab65d0d6b1769d4399bc6ada173cc",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 148399,
+        "originalFiniteSamples": 26799,
+        "californiaGapsFallbackSamples": 121600
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 702,
+        "originalFallbackPairCount": 702,
+        "crossSourceDelta": {
+          "count": 702,
+          "maxMetres": 1.5815114974975586,
+          "p99Metres": 1.3567886352539062
+        },
+        "withinSourceBaseline": {
+          "count": 294978,
+          "maxMetres": 2.010714530944824,
+          "p99Metres": 0.6342391967773438
+        }
+      }
+    },
+    {
+      "id": "epsg26910-1440-10868",
+      "gridIndex": [
+        1440,
+        10868
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:784508091b5c0f617125938bd85be28ce933feac80069114b5824d26ddd30127",
+      "glbBytes": 3587356,
+      "sampleLedgerSha256": "sha256:a124c6c33df95fab4164672f5ba4ce1afede45bcbcd4f95986252ca44e8cc896",
+      "sharedEdgeLedgerSha256": "sha256:d3b4ae5371d573d2d0dd7b9053ecb4998b7f6a39cb11803fccd4fc23c8099fd0",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "sourceSelectionCounts": {
+        "uniqueNativeSampleCoordinates": 149564,
+        "originalFiniteSamples": 146615,
+        "californiaGapsFallbackSamples": 2949
+      },
+      "glbLattice": {
+        "uniqueIntegerSurfaceSamples": 148225,
+        "duplicateVertexCount": 772,
+        "primitiveCounts": {
+          "terrain": 3
+        },
+        "exactHeightCorrespondenceSamples": 148225
+      },
+      "sourceSwitches": {
+        "pairCount": 218,
+        "originalFallbackPairCount": 218,
+        "crossSourceDelta": {
+          "count": 218,
+          "maxMetres": 0.677617073059082,
+          "p99Metres": 0.6318244934082031
+        },
+        "withinSourceBaseline": {
+          "count": 295462,
+          "maxMetres": 3.6454715728759766,
+          "p99Metres": 0.64227294921875
+        }
+      }
+    }
+  ],
+  "crossSourceNeighbourPairExemplars": [
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 338,
+        "z": 327,
+        "easting": 550610,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 338,
+        "z": 328,
+        "easting": 550610,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 95.3494644165039,
+      "leftGlbYBits": 1119793901,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 91.1453628540039,
+      "rightGlbYBits": 1119242861,
+      "deltaMetres": 4.2041015625
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 337,
+        "z": 327,
+        "easting": 550609,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 337,
+        "z": 328,
+        "easting": 550609,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 95.94477844238281,
+      "leftGlbYBits": 1119871930,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 91.79508972167969,
+      "rightGlbYBits": 1119328022,
+      "deltaMetres": 4.149688720703125
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 339,
+        "z": 327,
+        "easting": 550611,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 339,
+        "z": 328,
+        "easting": 550611,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 94.77606201171875,
+      "leftGlbYBits": 1119718744,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 90.66979217529297,
+      "rightGlbYBits": 1119180527,
+      "deltaMetres": 4.106269836425781
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 340,
+        "z": 327,
+        "easting": 550612,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 340,
+        "z": 328,
+        "easting": 550612,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 94.22229766845703,
+      "leftGlbYBits": 1119646161,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 90.20626831054688,
+      "rightGlbYBits": 1119119772,
+      "deltaMetres": 4.016029357910156
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 336,
+        "z": 327,
+        "easting": 550608,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 336,
+        "z": 328,
+        "easting": 550608,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 96.32948303222656,
+      "leftGlbYBits": 1119922354,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 92.37450408935547,
+      "rightGlbYBits": 1119403967,
+      "deltaMetres": 3.9549789428710938
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 341,
+        "z": 327,
+        "easting": 550613,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 341,
+        "z": 328,
+        "easting": 550613,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 93.70111083984375,
+      "leftGlbYBits": 1119577848,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 90.04682922363281,
+      "rightGlbYBits": 1119098874,
+      "deltaMetres": 3.6542816162109375
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 296,
+        "z": 255,
+        "easting": 547496,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 296,
+        "z": 256,
+        "easting": 547496,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.52230834960938,
+      "leftGlbYBits": 1124566454,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 131.94602966308594,
+      "rightGlbYBits": 1124332079,
+      "deltaMetres": 3.5762786865234375
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 335,
+        "z": 327,
+        "easting": 550607,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 335,
+        "z": 328,
+        "easting": 550607,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 96.40229034423828,
+      "leftGlbYBits": 1119931897,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 92.82655334472656,
+      "rightGlbYBits": 1119463218,
+      "deltaMetres": 3.5757369995117188
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 295,
+        "z": 255,
+        "easting": 547495,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 295,
+        "z": 256,
+        "easting": 547495,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.51742553710938,
+      "leftGlbYBits": 1124566134,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 131.95948791503906,
+      "rightGlbYBits": 1124332961,
+      "deltaMetres": 3.5579376220703125
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 294,
+        "z": 255,
+        "easting": 547494,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 294,
+        "z": 256,
+        "easting": 547494,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.52499389648438,
+      "leftGlbYBits": 1124566630,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 131.9823455810547,
+      "rightGlbYBits": 1124334459,
+      "deltaMetres": 3.5426483154296875
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 297,
+        "z": 255,
+        "easting": 547497,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 297,
+        "z": 256,
+        "easting": 547497,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.5149688720703,
+      "leftGlbYBits": 1124565973,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.03082275390625,
+      "rightGlbYBits": 1124337636,
+      "deltaMetres": 3.4841461181640625
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 293,
+        "z": 255,
+        "easting": 547493,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 293,
+        "z": 256,
+        "easting": 547493,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.5592803955078,
+      "leftGlbYBits": 1124568877,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.105224609375,
+      "rightGlbYBits": 1124342512,
+      "deltaMetres": 3.4540557861328125
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 342,
+        "z": 327,
+        "easting": 550614,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 342,
+        "z": 328,
+        "easting": 550614,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 93.17078399658203,
+      "leftGlbYBits": 1119508337,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 89.91990661621094,
+      "rightGlbYBits": 1119082238,
+      "deltaMetres": 3.2508773803710938
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 298,
+        "z": 255,
+        "easting": 547498,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 298,
+        "z": 256,
+        "easting": 547498,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.50173950195312,
+      "leftGlbYBits": 1124565106,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.26768493652344,
+      "rightGlbYBits": 1124353159,
+      "deltaMetres": 3.2340545654296875
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 292,
+        "z": 255,
+        "easting": 547492,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 292,
+        "z": 256,
+        "easting": 547492,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.57467651367188,
+      "leftGlbYBits": 1124569886,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.36972045898438,
+      "rightGlbYBits": 1124359846,
+      "deltaMetres": 3.2049560546875
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 321,
+        "z": 256,
+        "easting": 547521,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 321,
+        "z": 257,
+        "easting": 547521,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.34510803222656,
+      "leftGlbYBits": 1124554841,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.21002197265625,
+      "rightGlbYBits": 1124349380,
+      "deltaMetres": 3.1350860595703125
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 334,
+        "z": 327,
+        "easting": 550606,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 334,
+        "z": 328,
+        "easting": 550606,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 96.3298568725586,
+      "leftGlbYBits": 1119922403,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 93.22248077392578,
+      "rightGlbYBits": 1119515113,
+      "deltaMetres": 3.1073760986328125
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 320,
+        "z": 256,
+        "easting": 547520,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 320,
+        "z": 257,
+        "easting": 547520,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.41610717773438,
+      "leftGlbYBits": 1124559494,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.3963623046875,
+      "rightGlbYBits": 1124361592,
+      "deltaMetres": 3.019744873046875
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 299,
+        "z": 255,
+        "easting": 547499,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 299,
+        "z": 256,
+        "easting": 547499,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.48834228515625,
+      "leftGlbYBits": 1124564228,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.52015686035156,
+      "rightGlbYBits": 1124369705,
+      "deltaMetres": 2.9681854248046875
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 322,
+        "z": 256,
+        "easting": 547522,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 322,
+        "z": 257,
+        "easting": 547522,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 134.75100708007812,
+      "leftGlbYBits": 1124515906,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 131.84042358398438,
+      "rightGlbYBits": 1124325158,
+      "deltaMetres": 2.91058349609375
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 291,
+        "z": 255,
+        "easting": 547491,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 291,
+        "z": 256,
+        "easting": 547491,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.56265258789062,
+      "leftGlbYBits": 1124569098,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.65664672851562,
+      "rightGlbYBits": 1124378650,
+      "deltaMetres": 2.906005859375
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 319,
+        "z": 256,
+        "easting": 547519,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 319,
+        "z": 257,
+        "easting": 547519,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.41920471191406,
+      "leftGlbYBits": 1124559697,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.56369018554688,
+      "rightGlbYBits": 1124372558,
+      "deltaMetres": 2.8555145263671875
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 343,
+        "z": 327,
+        "easting": 550615,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 343,
+        "z": 328,
+        "easting": 550615,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 92.59614562988281,
+      "leftGlbYBits": 1119433018,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 89.76917266845703,
+      "rightGlbYBits": 1119062481,
+      "deltaMetres": 2.8269729614257812
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 300,
+        "z": 255,
+        "easting": 547500,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 300,
+        "z": 256,
+        "easting": 547500,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.47825622558594,
+      "leftGlbYBits": 1124563567,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.71347045898438,
+      "rightGlbYBits": 1124382374,
+      "deltaMetres": 2.7647857666015625
+    },
+    {
+      "tileId": "epsg26910-1424-10867",
+      "gridIndex": [
+        1424,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 379,
+        "z": 248,
+        "easting": 547195,
+        "northing": 4173176
+      },
+      "to": {
+        "x": 379,
+        "z": 249,
+        "easting": 547195,
+        "northing": 4173177
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 104.28360748291016,
+      "leftGlbYBits": 1120964917,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 107.0241470336914,
+      "rightGlbYBits": 1121324125,
+      "deltaMetres": 2.74053955078125
+    },
+    {
+      "tileId": "epsg26910-1424-10867",
+      "gridIndex": [
+        1424,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 380,
+        "z": 248,
+        "easting": 547196,
+        "northing": 4173176
+      },
+      "to": {
+        "x": 380,
+        "z": 249,
+        "easting": 547196,
+        "northing": 4173177
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 104.3309326171875,
+      "leftGlbYBits": 1120971120,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 107.0411148071289,
+      "rightGlbYBits": 1121326349,
+      "deltaMetres": 2.7101821899414062
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 318,
+        "z": 256,
+        "easting": 547518,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 318,
+        "z": 257,
+        "easting": 547518,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.4193878173828,
+      "leftGlbYBits": 1124559709,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.73480224609375,
+      "rightGlbYBits": 1124383772,
+      "deltaMetres": 2.6845855712890625
+    },
+    {
+      "tileId": "epsg26910-1424-10867",
+      "gridIndex": [
+        1424,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 381,
+        "z": 248,
+        "easting": 547197,
+        "northing": 4173176
+      },
+      "to": {
+        "x": 381,
+        "z": 249,
+        "easting": 547197,
+        "northing": 4173177
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 104.44481658935547,
+      "leftGlbYBits": 1120986047,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 107.06657409667969,
+      "rightGlbYBits": 1121329686,
+      "deltaMetres": 2.6217575073242188
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 290,
+        "z": 255,
+        "easting": 547490,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 290,
+        "z": 256,
+        "easting": 547490,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.54847717285156,
+      "leftGlbYBits": 1124568169,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.9435577392578,
+      "rightGlbYBits": 1124397453,
+      "deltaMetres": 2.60491943359375
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 301,
+        "z": 255,
+        "easting": 547501,
+        "northing": 4173183
+      },
+      "to": {
+        "x": 301,
+        "z": 256,
+        "easting": 547501,
+        "northing": 4173184
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.4755859375,
+      "leftGlbYBits": 1124563392,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.88404846191406,
+      "rightGlbYBits": 1124393553,
+      "deltaMetres": 2.5915374755859375
+    },
+    {
+      "tileId": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 344,
+        "z": 327,
+        "easting": 550616,
+        "northing": 4173255
+      },
+      "to": {
+        "x": 344,
+        "z": 328,
+        "easting": 550616,
+        "northing": 4173256
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "leftRasterSha256": "fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 92.17277526855469,
+      "leftGlbYBits": 1119377526,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "rightRasterSha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 89.60072326660156,
+      "rightGlbYBits": 1119040402,
+      "deltaMetres": 2.572052001953125
+    },
+    {
+      "tileId": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "orientation": "vertical",
+      "from": {
+        "x": 317,
+        "z": 256,
+        "easting": 547517,
+        "northing": 4173184
+      },
+      "to": {
+        "x": 317,
+        "z": 257,
+        "easting": 547517,
+        "northing": 4173185
+      },
+      "authorityChange": "californiagaps-fallback->original",
+      "leftSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "leftElevationSourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "leftRasterSha256": "80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a",
+      "leftSourceRole": "californiagaps-fallback",
+      "leftHeightMetres": 135.4371795654297,
+      "leftGlbYBits": 1124560875,
+      "rightSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "rightElevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rightRasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f",
+      "rightSourceRole": "original",
+      "rightHeightMetres": 132.89962768554688,
+      "rightGlbYBits": 1124394574,
+      "deltaMetres": 2.5375518798828125
+    }
+  ],
+  "ledgers": {
+    "crossSourceNeighbourPairCount": 9868,
+    "crossSourceNeighbourPairSha256": "sha256:3e2a016c92e111468a6e5a2372e57f1465333dadfd2e654a57ec9d04a9066215",
+    "ordering": "tile id ascending, row-major from coordinate, horizontal before vertical",
+    "storage": "full sorted ledger checked in-memory; receipt retains count/hash plus deterministic worst-32 exemplars"
+  },
+  "outputContract": {
+    "candidateArtifactsWritten": false,
+    "productionManifestChanged": false,
+    "productionWriteEnabled": false,
+    "evidenceReceiptPath": "public/data/world/source-locks/sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.receipt.json"
+  }
+}

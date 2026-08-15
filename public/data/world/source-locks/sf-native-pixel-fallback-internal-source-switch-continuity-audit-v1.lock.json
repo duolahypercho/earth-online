@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-fallback-internal-source-switch-continuity-audit-lock",
+  "id": "sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1",
+  "auditId": "internal-source-switch-continuity-audit-v1",
+  "status": "evidence-only-internal-source-switch-continuity-audit-passed",
+  "productionReadiness": "unproven-visual-metric-acceptability-not-established",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "productionWriteEnabled": false,
+  "verifier": {
+    "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.mjs",
+    "sha256": "sha256:f0188fc09ae2f38725889f7e878cfeef44a442f2508b5439ba3529c3aaf758c0",
+    "packageScriptName": "verify:sf-native-pixel-fallback-internal-source-switch-continuity"
+  },
+  "promotionPrerequisiteState": {
+    "id": "internal-source-switch-continuity-audit-v1",
+    "evidenceStatus": "exercised-evidence-only",
+    "parityReceiptStatusBeforeAndAfter": "required-not-exercised",
+    "parityLockStatusBeforeAndAfter": "required-not-exercised",
+    "closesParityPromotionPrerequisite": false,
+    "note": "This audit does not modify the existing parity receipt or lock. Their prerequisite remains required-not-exercised until a deliberate production-promotion update."
+  },
+  "promotionGate": {
+    "status": "evidence-only-unproven-visual-metric-acceptability",
+    "requirementId": "internal-source-switch-continuity-audit-v1",
+    "evidenceReceiptPath": "public/data/world/source-locks/sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.receipt.json",
+    "evidenceReceiptSha256": "sha256:fa2a577b0d834c2fdc25bc77c952572d131e322e6e7cdf2c60f5d7609c6e3924",
+    "verticalAccuracyClaim": "none"
+  },
+  "bindings": {
+    "authorization": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json",
+      "sha256": "sha256:572551aba2887450c1c48de66fb0cfef01b6e0fcaefb5069725a2621ddd9e3a4",
+      "productionWriteEnabled": false
+    },
+    "parityReceipt": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.receipt.json",
+      "sha256": "sha256:7713ee1d4495efae834a191192711769688eb3d38bfc0a3f0d4924e50b3f0246",
+      "productionWriteEnabled": false
+    },
+    "parityLock": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.lock.json",
+      "sha256": "sha256:358724a98ed80de01cf8d7afa9a5bc3a50d1e3cb41050d4b1baf897ed0928766",
+      "productionWriteEnabled": false
+    },
+    "coveragePlan": {
+      "path": "public/data/world/plans/sf-metric-tile-coverage-v1.json",
+      "sha256": "sha256:e7550e604d23213c27895aeb5d20ae59d35e34b695580d2438b6ac6026407bb0",
+      "candidateTileCount": 25
+    },
+    "verifier": {
+      "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.mjs",
+      "sha256": "sha256:f0188fc09ae2f38725889f7e878cfeef44a442f2508b5439ba3529c3aaf758c0",
+      "packageScriptName": "verify:sf-native-pixel-fallback-internal-source-switch-continuity"
+    }
+  },
+  "sourceLocks": [
+    {
+      "role": "original",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715",
+      "rasterSha256": "sha256:ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c",
+      "rasterSha256": "sha256:80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a"
+    },
+    {
+      "role": "original",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:ea8fc1cb4ae79a65146c30a68d8f2f224ba8450010db16d35b3af989bb1d53bd",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07",
+      "rasterSha256": "sha256:a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df",
+      "rasterSha256": "sha256:fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645"
+    }
+  ],
+  "candidateTileIds": [
+    "epsg26910-1417-10867",
+    "epsg26910-1418-10867",
+    "epsg26910-1419-10867",
+    "epsg26910-1420-10867",
+    "epsg26910-1421-10867",
+    "epsg26910-1422-10867",
+    "epsg26910-1423-10867",
+    "epsg26910-1424-10867",
+    "epsg26910-1425-10867",
+    "epsg26910-1426-10867",
+    "epsg26910-1427-10867",
+    "epsg26910-1428-10867",
+    "epsg26910-1429-10867",
+    "epsg26910-1430-10867",
+    "epsg26910-1431-10867",
+    "epsg26910-1432-10867",
+    "epsg26910-1433-10867",
+    "epsg26910-1434-10867",
+    "epsg26910-1435-10867",
+    "epsg26910-1436-10867",
+    "epsg26910-1437-10867",
+    "epsg26910-1438-10867",
+    "epsg26910-1439-10867",
+    "epsg26910-1440-10867",
+    "epsg26910-1440-10868"
+  ],
+  "counts": {
+    "candidateTileCount": 25,
+    "buildCount": 25,
+    "sourceSelectionLatticeSamples": 3705625,
+    "glbExactHeightCorrespondenceSamples": 3705625,
+    "glbDuplicateIntegerSurfaceVertices": 19300,
+    "totalAdjacentPairCount": 7392000,
+    "crossSourceNeighbourPairCount": 9868,
+    "originalFallbackNeighbourPairCount": 9483,
+    "withinSourceNeighbourPairCount": 7382132,
+    "sourceSwitchKinds": {
+      "californiagaps-fallback->original": 9016,
+      "original->californiagaps-fallback": 467,
+      "source-lock-change": 385
+    }
+  },
+  "statistics": {
+    "crossSourceNeighbourDeltaMetres": {
+      "count": 9868,
+      "maxMetres": 4.2041015625,
+      "p99Metres": 1.3232345581054688
+    },
+    "withinSourceNeighbourBaselineMetres": {
+      "count": 7382132,
+      "maxMetres": 5.522972106933594,
+      "p99Metres": 0.7056961059570312
+    },
+    "crossToWithinRatios": {
+      "maxCrossToWithin": 0.761202751182127,
+      "p99CrossToWithin": 1.8750770295252819,
+      "denominator": "same-tile adjacent pairs with unchanged chosen source authority; report-only, no acceptance threshold"
+    },
+    "interpretation": "Report-only diagnostics. No max, p99, or ratio is treated as an accuracy or promotion threshold."
+  },
+  "ledgers": {
+    "crossSourceNeighbourPairCount": 9868,
+    "crossSourceNeighbourPairSha256": "sha256:3e2a016c92e111468a6e5a2372e57f1465333dadfd2e654a57ec9d04a9066215",
+    "ordering": "tile id ascending, row-major from coordinate, horizontal before vertical",
+    "storage": "full sorted ledger checked in-memory; receipt retains count/hash plus deterministic worst-32 exemplars"
+  },
+  "writeGate": {
+    "productionWriteEnabled": false,
+    "candidateArtifactDirectoriesWritten": false,
+    "reason": "This is read-only promotion evidence. Visual/metric acceptability and canonical production mosaic promotion remain unproven."
+  }
+}
