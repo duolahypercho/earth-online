@@ -33,6 +33,9 @@ public/data/sf/*.pbf
 # Authoritative source rasters are local build inputs, never public runtime assets.
 Data/raw/usgs-3dep/
 
+# Authoritative DataSF bulk exports are local build inputs, never public runtime assets.
+Data/raw/datasf/
+
 # Local QA / session artifacts
 tmp/
 sessions/

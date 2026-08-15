@@ -1,0 +1,39 @@
+{
+  "claims": {
+    "facadeSemanticsSupplied": false,
+    "gameplayChanged": false,
+    "heightFields": "source fields retained verbatim",
+    "horizontalFootprints": "source WKT only",
+    "productionGeometryChanged": false,
+    "runtimeChanged": false,
+    "verticalReconciliationComplete": false
+  },
+  "extracts": [
+    {
+      "bytes": 37059,
+      "features": 21,
+      "id": "ferry",
+      "path": "public/data/world/preview-artifacts/sf-datasf-building-footprints-v1/epsg26910-1441-10893.datasf-building-footprints.json",
+      "sha256": "sha256:736b3fe2f8fd518994c93d53dd020486a50dcbf488d9e83ecaae4819a0bce9ef",
+      "tileId": "epsg26910-1441-10893"
+    },
+    {
+      "bytes": 513553,
+      "features": 419,
+      "id": "district",
+      "path": "public/data/world/preview-artifacts/sf-datasf-building-footprints-v1/epsg26910-1430-10882.datasf-building-footprints.json",
+      "sha256": "sha256:721e740a8f4fedce766ec98a02f95c3914046b997ec7a8569c693e124d9d47ee",
+      "tileId": "epsg26910-1430-10882"
+    }
+  ],
+  "kind": "sf-datasf-building-footprint-extract-manifest",
+  "schemaVersion": 1,
+  "source": {
+    "bytes": 178760486,
+    "columns": 45,
+    "id": "sf-datasf-building-footprints-2023-v1",
+    "rows": 177023,
+    "sha256": "sha256:7128b9d3d0f350cde3d2f6571ad791beacd71f5d581f6fde6fc7811529ff22d2"
+  },
+  "status": "preview-source-evidence-only-not-production"
+}

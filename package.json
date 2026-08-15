@@ -25,6 +25,8 @@
     "verify:sf-metric-tile-coverage": "node scripts/world-tiles/verify-sf-metric-tile-coverage-v1.mjs",
     "build:sf-building-presentation-proof": "node scripts/world-tiles/build-sf-building-presentation-proof-v1.mjs",
     "verify:sf-building-presentation-proof": "node scripts/world-tiles/verify-sf-building-presentation-proof-v1.mjs",
+    "build:sf-datasf-building-footprints": "node scripts/world-tiles/build-sf-datasf-building-footprint-extract-v1.mjs",
+    "verify:sf-datasf-building-footprints": "node scripts/world-tiles/verify-sf-datasf-building-footprint-extract-v1.mjs",
     "verify:sf-native-pixel-fallback-proof": "node scripts/world-tiles/verify-sf-native-pixel-fallback-proof-v1.mjs",
     "verify:sf-native-pixel-fallback-authorization": "node scripts/world-tiles/verify-sf-native-pixel-fallback-authorization-v1.mjs",
     "verify:sf-native-pixel-fallback-production-parity": "node scripts/world-tiles/verify-sf-native-pixel-fallback-production-parity-v1.mjs",
