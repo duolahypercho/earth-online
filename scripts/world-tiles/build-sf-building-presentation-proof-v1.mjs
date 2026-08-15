@@ -66,8 +66,8 @@ function makePresentationGlb(tile, categories, proof) {
     const ringLength = record.vertexCount / 2;
     let centreX = 0; let centreZ = 0;
     for (let index = 0; index < ringLength; index += 1) {
-      centreX += buildings.positions[(record.vertexStart + index) * 3];
-      centreZ += buildings.positions[(record.vertexStart + index) * 3 + 2];
+      centreX += buildings.positions[(record.vertexStart + index * 2) * 3];
+      centreZ += buildings.positions[(record.vertexStart + index * 2) * 3 + 2];
     }
     centreX /= ringLength; centreZ /= ringLength;
     const familyKey = materialFamily(record.sourceTags); const levelCount = sourceLevels(record.sourceTags);
@@ -75,7 +75,7 @@ function makePresentationGlb(tile, categories, proof) {
     for (let index = 0; index < record.vertexCount; index += 1) {
       const vertexIndex = record.vertexStart + index;
       local[vertexIndex * 3] = buildings.positions[vertexIndex * 3] - centreX;
-      local[vertexIndex * 3 + 1] = index < ringLength ? 0 : record.heightMetres;
+      local[vertexIndex * 3 + 1] = index % 2 === 0 ? 0 : record.heightMetres;
       local[vertexIndex * 3 + 2] = buildings.positions[vertexIndex * 3 + 2] - centreZ;
       buildingOrdinal[vertexIndex] = ordinal;
       tone[vertexIndex] = toneKey;
@@ -184,7 +184,7 @@ async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSource
     tile: { id: tile.id, gridIndex: [tile.gridEasting, tile.gridNorthing], horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized' },
     productionReference: { path: manifestTile.lod0.path, declaredSha256: manifestTile.lod0.sha256, verifiedSha256: `sha256:${sha256(productionGlb)}`, exactDefaultBytesPreserved: true },
     proofArtifact: { path: path.relative(ROOT, path.join(tileOutput, proofName)), bytes: firstProof.bytes.length, sha256: `sha256:${sha256(firstProof.bytes)}` },
-    invariants: { twoBuildProofBytesExact: true, sourcePositionFloat32BytesExact: true, sourceCategoryIndexLedgerBound: true, productionTrianglePositionMultisetExact: true, presentationPrimitiveCountAtMostEight: true, sourceGeometryMoved: false, buildingOwnershipComplete: true },
+    invariants: { twoBuildProofBytesExact: true, sourcePositionFloat32BytesExact: true, sourceCategoryIndexLedgerBound: true, productionTrianglePositionMultisetExact: true, presentationPrimitiveCountAtMostEight: true, sourceGeometryMoved: false, buildingOwnershipComplete: true, interleavedBottomTopPairingVerified: true },
     claims: { facadeCoordinates: 'building-local metric coordinates derived from exact source-bound extrusion vertices', roofWallClassification: 'batched primitive partition follows the existing roof/wall triangle ranges', deterministicToneKey: 'source material family plus OSM way parity; presentation-only', storyBands: 'only enabled where byte-locked OSM building:levels exists; not a sourced window inventory', sourcedWindowInventory: false, sourceBuildingFootprintChanged: false, gameplayOrCollisionChanged: false },
     counts: { buildings: firstProof.records.length, vertices: firstProof.vertexCount, indices: firstProof.indexCount, triangles: firstProof.indexCount / 3, primitives: firstProof.primitiveCount },
     ledgers: { positionFloat32Sha256: `sha256:${sha256(firstProof.sourcePositionBytes)}`, sourceIndexSha256: `sha256:${sha256(firstProof.sourceIndexBytes)}`, sourceTriangleMultisetSha256: firstProof.sourceTriangleLedgerSha256, presentationTriangleMultisetSha256: firstProof.presentationTriangleLedgerSha256, buildingRecordsSha256: `sha256:${sha256(jsonBytes(firstProof.records))}` },

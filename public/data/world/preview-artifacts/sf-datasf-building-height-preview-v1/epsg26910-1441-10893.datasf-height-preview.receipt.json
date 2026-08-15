@@ -1,0 +1,184 @@
+{
+  "artifact": {
+    "bytes": 24588,
+    "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1441-10893.datasf-height-preview.glb",
+    "sha256": "sha256:8ef8977c3c07d046d1e5a4b8ca453079f1bb9c67a47f0bd30749e965b3280919"
+  },
+  "changes": [
+    {
+      "dataSfBuildingId": "201006.0001038",
+      "dataSfMedianHeightMetres": 9.8,
+      "emittedTopYDeltaRangeMetres": [
+        -5.2,
+        -5.2
+      ],
+      "heightDeltaMetres": -5.2,
+      "osmSourceFeatureId": "way/104599975",
+      "previousHeightMetres": 15,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0005385",
+      "dataSfMedianHeightMetres": 23.07,
+      "emittedTopYDeltaRangeMetres": [
+        0.67,
+        0.67
+      ],
+      "heightDeltaMetres": 0.67,
+      "osmSourceFeatureId": "way/193054132",
+      "previousHeightMetres": 22.4,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0005906",
+      "dataSfMedianHeightMetres": 18.07,
+      "emittedTopYDeltaRangeMetres": [
+        2.07,
+        2.07
+      ],
+      "heightDeltaMetres": 2.07,
+      "osmSourceFeatureId": "way/193054133",
+      "previousHeightMetres": 16,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0001079",
+      "dataSfMedianHeightMetres": 19.64,
+      "emittedTopYDeltaRangeMetres": [
+        10.04,
+        10.04
+      ],
+      "heightDeltaMetres": 10.04,
+      "osmSourceFeatureId": "way/193054134",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 36
+    },
+    {
+      "dataSfBuildingId": "201006.0005323",
+      "dataSfMedianHeightMetres": 26.82,
+      "emittedTopYDeltaRangeMetres": [
+        4.42,
+        4.42
+      ],
+      "heightDeltaMetres": 4.42,
+      "osmSourceFeatureId": "way/193054135",
+      "previousHeightMetres": 22.4,
+      "topVerticesChanged": 6
+    },
+    {
+      "dataSfBuildingId": "201006.0006070",
+      "dataSfMedianHeightMetres": 15.36,
+      "emittedTopYDeltaRangeMetres": [
+        5.76,
+        5.76
+      ],
+      "heightDeltaMetres": 5.76,
+      "osmSourceFeatureId": "way/193054136",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0006618",
+      "dataSfMedianHeightMetres": 17.5,
+      "emittedTopYDeltaRangeMetres": [
+        7.9,
+        7.9
+      ],
+      "heightDeltaMetres": 7.9,
+      "osmSourceFeatureId": "way/193054137",
+      "previousHeightMetres": 9.6,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0005244",
+      "dataSfMedianHeightMetres": 10.33,
+      "emittedTopYDeltaRangeMetres": [
+        -2.47,
+        -2.47
+      ],
+      "heightDeltaMetres": -2.47,
+      "osmSourceFeatureId": "way/256969674",
+      "previousHeightMetres": 12.8,
+      "topVerticesChanged": 4
+    },
+    {
+      "dataSfBuildingId": "201006.0017562",
+      "dataSfMedianHeightMetres": 4.45,
+      "emittedTopYDeltaRangeMetres": [
+        0.45,
+        0.45
+      ],
+      "heightDeltaMetres": 0.45,
+      "osmSourceFeatureId": "way/260290226",
+      "previousHeightMetres": 4,
+      "topVerticesChanged": 12
+    },
+    {
+      "dataSfBuildingId": "201006.0002369",
+      "dataSfMedianHeightMetres": 25.69,
+      "emittedTopYDeltaRangeMetres": [
+        0.09,
+        0.09
+      ],
+      "heightDeltaMetres": 0.09,
+      "osmSourceFeatureId": "way/32862467",
+      "previousHeightMetres": 25.6,
+      "topVerticesChanged": 14
+    },
+    {
+      "dataSfBuildingId": "201006.0000121",
+      "dataSfMedianHeightMetres": 25.12,
+      "emittedTopYDeltaRangeMetres": [
+        -7.88,
+        -7.88
+      ],
+      "heightDeltaMetres": -7.88,
+      "osmSourceFeatureId": "way/44106213",
+      "previousHeightMetres": 33,
+      "topVerticesChanged": 15
+    }
+  ],
+  "counts": {
+    "changedTopVertices": 111,
+    "matchedBuildings": 11,
+    "sourceBuildings": 24
+  },
+  "kind": "sf-datasf-building-height-preview-receipt",
+  "policy": {
+    "absoluteVerticalPlacement": "not claimed",
+    "bottomVertices": "exact source proof retained",
+    "facadeSemantics": "not supplied",
+    "heightField": "hgt_median_m",
+    "horizontalGeometry": "exact source proof X/Z retained",
+    "matchedBuildingsOnly": true,
+    "runtimePromotion": false,
+    "topVertexRule": "uniformly translate every existing top vertex by DataSF hgt_median_m minus the existing extrusion height; preserves the exact source roof shape",
+    "unmatchedBuildings": "exact source proof retained"
+  },
+  "schemaVersion": 1,
+  "source": {
+    "buildingPresentationProof": {
+      "bytes": 24352,
+      "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
+      "sha256": "sha256:08fcc82266a6e67c7127b46a79790b63e231d60af6afa87a86efded59c11713a"
+    },
+    "buildingPresentationProofReceipt": {
+      "bytes": 19506,
+      "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.receipt.json",
+      "sha256": "sha256:3311a4ef3ec8434d07bddd3c4290c7ab672d02ef16b467e7e3528a6873f06fcf"
+    },
+    "matchProof": {
+      "bytes": 139382,
+      "path": "public/data/world/preview-artifacts/sf-datasf-osm-building-match-proof-v1/sf-datasf-osm-building-match-proof-v1.receipt.json",
+      "sha256": "sha256:190032d34c126f5aec688409cb6156e4a3b62e2ffc6e3eb114b69ece2d74fe8f"
+    }
+  },
+  "status": "preview-source-height-comparison-only-not-production",
+  "tile": {
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "role": "ferry",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

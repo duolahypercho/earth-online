@@ -45,14 +45,14 @@
           "sha256": "sha256:736b3fe2f8fd518994c93d53dd020486a50dcbf488d9e83ecaae4819a0bce9ef"
         },
         "osmBuildingProof": {
-          "bytes": 24356,
+          "bytes": 24352,
           "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
-          "sha256": "sha256:a88d3909f2c8523cdcc0c5a92b8c61930e59e57df0327586cdcdd6a8cb4241f7"
+          "sha256": "sha256:08fcc82266a6e67c7127b46a79790b63e231d60af6afa87a86efded59c11713a"
         },
         "osmBuildingProofReceipt": {
-          "bytes": 19457,
+          "bytes": 19506,
           "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.receipt.json",
-          "sha256": "sha256:c2b728972825068432a64c3ac7e3e9136fcf8654483b660e838041083afdea35"
+          "sha256": "sha256:3311a4ef3ec8434d07bddd3c4290c7ab672d02ef16b467e7e3528a6873f06fcf"
         }
       },
       "matches": [
@@ -211,12 +211,12 @@
         "osmBuildingProof": {
           "bytes": 343804,
           "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
-          "sha256": "sha256:5f50361d77d3a1d90f72011734c0fd9ed238cbfe7e1356b63af91dd9f1edf293"
+          "sha256": "sha256:3ca086e767cd2cf5ac570123a96ba524e3404e9a0c2f2f0ee4518a97091ce299"
         },
         "osmBuildingProofReceipt": {
-          "bytes": 252518,
+          "bytes": 252567,
           "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.receipt.json",
-          "sha256": "sha256:f0a0a52430b2163d99c72d391278714f027f5b90acbab2e775df082e9e3eefc2"
+          "sha256": "sha256:b994b211e4160ff62bd61619b146cacbc589ec1c55775c58fb588439b8e275be"
         }
       },
       "matches": [
