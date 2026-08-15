@@ -33,6 +33,25 @@ function minMax(values, stride) {
   return { min, max };
 }
 
+function materialFamily(sourceTags) {
+  const value = `${sourceTags['building:material'] ?? ''} ${sourceTags['facade:material'] ?? ''}`.toLowerCase();
+  if (/glass|metal|steel|aluminium|aluminum/.test(value)) return 1;
+  if (/wood|timber/.test(value)) return 2;
+  if (/brick|stone|masonry|concrete|stucco|plaster/.test(value)) return 0;
+  return 3;
+}
+
+function sourceLevels(sourceTags) {
+  const value = Number.parseFloat(sourceTags['building:levels']);
+  return Number.isFinite(value) && value > 0 && value <= 200 ? value : 0;
+}
+
+function triangleIndexLedger(indices) {
+  const triangles = [];
+  for (let index = 0; index < indices.length; index += 3) triangles.push(`${indices[index]},${indices[index + 1]},${indices[index + 2]}`);
+  triangles.sort(); return `sha256:${sha256(Buffer.from(triangles.join('\n')))}`;
+}
+
 function makePresentationGlb(tile, categories, proof) {
   const buildings = categories.buildings;
   const vertexCount = buildings.positions.length / 3;
@@ -40,6 +59,8 @@ function makePresentationGlb(tile, categories, proof) {
   const local = new Array(buildings.positions.length).fill(0);
   const buildingOrdinal = new Array(vertexCount).fill(0);
   const tone = new Array(vertexCount).fill(0);
+  const family = new Array(vertexCount).fill(0);
+  const levels = new Array(vertexCount).fill(0);
   const records = proof.records.map((record, ordinal) => {
     assert.equal(record.vertexCount % 2, 0, `${tile.id} way/${record.sourceOsmWayId} vertex pairing is invalid`);
     const ringLength = record.vertexCount / 2;
@@ -49,7 +70,8 @@ function makePresentationGlb(tile, categories, proof) {
       centreZ += buildings.positions[(record.vertexStart + index) * 3 + 2];
     }
     centreX /= ringLength; centreZ /= ringLength;
-    const toneKey = Number(BigInt(record.sourceOsmWayId) % 4n);
+    const familyKey = materialFamily(record.sourceTags); const levelCount = sourceLevels(record.sourceTags);
+    const toneKey = familyKey * 2 + Number(BigInt(record.sourceOsmWayId) % 2n);
     for (let index = 0; index < record.vertexCount; index += 1) {
       const vertexIndex = record.vertexStart + index;
       local[vertexIndex * 3] = buildings.positions[vertexIndex * 3] - centreX;
@@ -57,11 +79,16 @@ function makePresentationGlb(tile, categories, proof) {
       local[vertexIndex * 3 + 2] = buildings.positions[vertexIndex * 3 + 2] - centreZ;
       buildingOrdinal[vertexIndex] = ordinal;
       tone[vertexIndex] = toneKey;
+      family[vertexIndex] = familyKey;
+      levels[vertexIndex] = levelCount;
     }
     const facadeEdgeLengths = record.wallSegments.map(({ edgeLengthMetres }) => edgeLengthMetres);
     return {
       ordinal,
       sourceFeatureId: `way/${record.sourceOsmWayId}`,
+      sourceTags: record.sourceTags,
+      materialFamily: familyKey,
+      sourceBuildingLevels: levelCount || null,
       deterministicToneKey: toneKey,
       heightMetres: record.heightMetres,
       vertexStart: record.vertexStart,
@@ -86,22 +113,36 @@ function makePresentationGlb(tile, categories, proof) {
   const localView = addView(float32Bytes(local), 34962);
   const buildingView = addView(uint16Bytes(buildingOrdinal), 34962);
   const toneView = addView(uint8Bytes(tone), 34962);
-  const indexBytes = useUint32 ? uint32Bytes(buildings.indices) : uint16Bytes(buildings.indices);
+  const familyView = addView(uint8Bytes(family), 34962);
+  const levelsView = addView(float32Bytes(levels), 34962);
+  const groups = new Map();
+  for (const record of records) for (const surface of ['roof', 'wall']) {
+    const count = surface === 'roof' ? record.roofIndexCount : record.wallIndexCount; if (!count) continue;
+    const firstIndex = record.indexStart + (surface === 'roof' ? 0 : record.roofIndexCount); const key = `${record.materialFamily}:${surface}`;
+    if (!groups.has(key)) groups.set(key, { materialFamily: record.materialFamily, surfaceKind: surface, indices: [], buildingOrdinals: new Set() });
+    groups.get(key).indices.push(...buildings.indices.slice(firstIndex, firstIndex + count)); groups.get(key).buildingOrdinals.add(record.ordinal);
+  }
+  const orderedGroups = [...groups.values()].sort((a, b) => a.materialFamily - b.materialFamily || a.surfaceKind.localeCompare(b.surfaceKind));
+  assert(orderedGroups.length <= 8, `${tile.id} presentation batch budget exceeded`);
+  const presentationIndices = orderedGroups.flatMap((group) => group.indices);
+  assert.equal(triangleIndexLedger(presentationIndices), triangleIndexLedger(buildings.indices), `${tile.id} batching changed the exact source triangle multiset`);
+  const indexBytes = useUint32 ? uint32Bytes(presentationIndices) : uint16Bytes(presentationIndices);
   const indexView = addView(indexBytes, 34963);
   const positionBounds = minMax(buildings.positions, 3); const localBounds = minMax(local, 3);
   const positionAccessor = accessors.length; accessors.push({ bufferView: positionView, componentType: 5126, count: vertexCount, type: 'VEC3', ...positionBounds });
   const localAccessor = accessors.length; accessors.push({ bufferView: localView, componentType: 5126, count: vertexCount, type: 'VEC3', ...localBounds });
   const buildingAccessor = accessors.length; accessors.push({ bufferView: buildingView, componentType: 5123, count: vertexCount, type: 'SCALAR', min: [0], max: [records.length - 1] });
-  const toneAccessor = accessors.length; accessors.push({ bufferView: toneView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [3] });
+  const toneAccessor = accessors.length; accessors.push({ bufferView: toneView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [7] });
+  const familyAccessor = accessors.length; accessors.push({ bufferView: familyView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [3] });
+  const levelsAccessor = accessors.length; accessors.push({ bufferView: levelsView, componentType: 5126, count: vertexCount, type: 'SCALAR', ...minMax(levels, 1) });
   const primitives = [];
-  for (const record of records) for (const surface of ['roof', 'wall']) {
-    const count = surface === 'roof' ? record.roofIndexCount : record.wallIndexCount;
-    if (!count) continue;
-    const firstIndex = record.indexStart + (surface === 'roof' ? 0 : record.roofIndexCount);
-    const slice = buildings.indices.slice(firstIndex, firstIndex + count);
+  let firstIndex = 0;
+  for (const group of orderedGroups) {
+    const count = group.indices.length;
     const indexAccessor = accessors.length;
-    accessors.push({ bufferView: indexView, byteOffset: firstIndex * (useUint32 ? 4 : 2), componentType: useUint32 ? 5125 : 5123, count, type: 'SCALAR', min: [Math.min(...slice)], max: [Math.max(...slice)] });
-    primitives.push({ attributes: { POSITION: positionAccessor, _SF_LOCAL_METRES: localAccessor, _SF_BUILDING_ORDINAL: buildingAccessor, _SF_TONE_KEY: toneAccessor }, indices: indexAccessor, material: surface === 'roof' ? 0 : 1, mode: 4, extras: { sourceFeatureId: record.sourceFeatureId, buildingOrdinal: record.ordinal, surfaceKind: surface, presentationOnly: true } });
+    accessors.push({ bufferView: indexView, byteOffset: firstIndex * (useUint32 ? 4 : 2), componentType: useUint32 ? 5125 : 5123, count, type: 'SCALAR', min: [Math.min(...group.indices)], max: [Math.max(...group.indices)] });
+    primitives.push({ attributes: { POSITION: positionAccessor, _SF_LOCAL_METRES: localAccessor, _SF_BUILDING_ORDINAL: buildingAccessor, _SF_TONE_KEY: toneAccessor, _SF_MATERIAL_FAMILY: familyAccessor, _SF_LEVELS: levelsAccessor }, indices: indexAccessor, material: group.materialFamily * 2 + (group.surfaceKind === 'wall' ? 1 : 0), mode: 4, extras: { materialFamily: group.materialFamily, surfaceKind: group.surfaceKind, sourceBuildingCount: group.buildingOrdinals.size, presentationOnly: true } });
+    firstIndex += count;
   }
   const padding = (4 - offset % 4) % 4; if (padding) { chunks.push(Buffer.alloc(padding)); offset += padding; }
   const bin = Buffer.concat(chunks);
@@ -111,16 +152,16 @@ function makePresentationGlb(tile, categories, proof) {
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0, name: `${tile.id}-building-presentation-proof` }],
     meshes: [{ name: `${tile.id}-building-presentation-proof`, primitives }],
-    materials: [
-      { name: 'building-roof-proof', pbrMetallicRoughness: { baseColorFactor: [0.56, 0.49, 0.42, 1], metallicFactor: 0, roughnessFactor: 0.94 } },
-      { name: 'building-wall-proof', pbrMetallicRoughness: { baseColorFactor: [0.46, 0.36, 0.3, 1], metallicFactor: 0, roughnessFactor: 0.9 } },
-    ],
+    materials: ['masonry', 'glass-metal', 'wood', 'unspecified'].flatMap((name) => [
+      { name: `building-${name}-roof-proof`, pbrMetallicRoughness: { baseColorFactor: [0.56, 0.49, 0.42, 1], metallicFactor: 0, roughnessFactor: 0.94 } },
+      { name: `building-${name}-wall-proof`, pbrMetallicRoughness: { baseColorFactor: [0.46, 0.36, 0.3, 1], metallicFactor: 0, roughnessFactor: 0.9 } },
+    ]),
     buffers: [{ byteLength: bin.length }], bufferViews, accessors,
     extras: { tileId: tile.id, horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized', status: 'preview-proof-only-not-production', sourceWindowInventoryClaim: false },
   };
   let json = Buffer.from(JSON.stringify(gltf)); const jsonPadding = (4 - json.length % 4) % 4; if (jsonPadding) json = Buffer.concat([json, Buffer.alloc(jsonPadding, 0x20)]);
   const output = Buffer.alloc(12 + 8 + json.length + 8 + bin.length); output.writeUInt32LE(0x46546c67, 0); output.writeUInt32LE(2, 4); output.writeUInt32LE(output.length, 8); output.writeUInt32LE(json.length, 12); output.writeUInt32LE(0x4e4f534a, 16); json.copy(output, 20); const binAt = 20 + json.length; output.writeUInt32LE(bin.length, binAt); output.writeUInt32LE(0x004e4942, binAt + 4); bin.copy(output, binAt + 8);
-  return { bytes: output, records, sourcePositionBytes: float32Bytes(buildings.positions), sourceIndexBytes: indexBytes, vertexCount, indexCount: buildings.indices.length, primitiveCount: primitives.length, indexComponentType: useUint32 ? 5125 : 5123 };
+  return { bytes: output, records, sourcePositionBytes: float32Bytes(buildings.positions), sourceIndexBytes: useUint32 ? uint32Bytes(buildings.indices) : uint16Bytes(buildings.indices), sourceTriangleLedgerSha256: triangleIndexLedger(buildings.indices), presentationTriangleLedgerSha256: triangleIndexLedger(presentationIndices), vertexCount, indexCount: buildings.indices.length, primitiveCount: primitives.length, indexComponentType: useUint32 ? 5125 : 5123 };
 }
 
 async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests) {
@@ -143,10 +184,10 @@ async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSource
     tile: { id: tile.id, gridIndex: [tile.gridEasting, tile.gridNorthing], horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized' },
     productionReference: { path: manifestTile.lod0.path, declaredSha256: manifestTile.lod0.sha256, verifiedSha256: `sha256:${sha256(productionGlb)}`, exactDefaultBytesPreserved: true },
     proofArtifact: { path: path.relative(ROOT, path.join(tileOutput, proofName)), bytes: firstProof.bytes.length, sha256: `sha256:${sha256(firstProof.bytes)}` },
-    invariants: { twoBuildProofBytesExact: true, sourcePositionFloat32BytesExact: true, sourceCategoryIndexSequencePreserved: true, productionTrianglePositionSequenceExact: true, sourceGeometryMoved: false, buildingOwnershipComplete: true },
-    claims: { facadeCoordinates: 'building-local metric coordinates derived from exact source-bound extrusion vertices', roofWallClassification: 'primitive partition follows the existing contiguous roof/wall triangle ranges', deterministicToneKey: 'source OSM way id modulo four; presentation-only', sourcedWindowInventory: false, sourceBuildingFootprintChanged: false, gameplayOrCollisionChanged: false },
+    invariants: { twoBuildProofBytesExact: true, sourcePositionFloat32BytesExact: true, sourceCategoryIndexLedgerBound: true, productionTrianglePositionMultisetExact: true, presentationPrimitiveCountAtMostEight: true, sourceGeometryMoved: false, buildingOwnershipComplete: true },
+    claims: { facadeCoordinates: 'building-local metric coordinates derived from exact source-bound extrusion vertices', roofWallClassification: 'batched primitive partition follows the existing roof/wall triangle ranges', deterministicToneKey: 'source material family plus OSM way parity; presentation-only', storyBands: 'only enabled where byte-locked OSM building:levels exists; not a sourced window inventory', sourcedWindowInventory: false, sourceBuildingFootprintChanged: false, gameplayOrCollisionChanged: false },
     counts: { buildings: firstProof.records.length, vertices: firstProof.vertexCount, indices: firstProof.indexCount, triangles: firstProof.indexCount / 3, primitives: firstProof.primitiveCount },
-    ledgers: { positionFloat32Sha256: `sha256:${sha256(firstProof.sourcePositionBytes)}`, indexSha256: `sha256:${sha256(firstProof.sourceIndexBytes)}`, buildingRecordsSha256: `sha256:${sha256(jsonBytes(firstProof.records))}` },
+    ledgers: { positionFloat32Sha256: `sha256:${sha256(firstProof.sourcePositionBytes)}`, sourceIndexSha256: `sha256:${sha256(firstProof.sourceIndexBytes)}`, sourceTriangleMultisetSha256: firstProof.sourceTriangleLedgerSha256, presentationTriangleMultisetSha256: firstProof.presentationTriangleLedgerSha256, buildingRecordsSha256: `sha256:${sha256(jsonBytes(firstProof.records))}` },
     buildingRecords: firstProof.records,
     sourceLocks: first.packageDescriptor.sourceLocks,
   };
