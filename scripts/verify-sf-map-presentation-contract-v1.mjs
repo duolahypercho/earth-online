@@ -5,6 +5,7 @@ import path from 'node:path';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
+  SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
   SF_MAP_LEGACY_BUILDING_PRESENTATION,
   collectSourceToneAttributeBytes,
   normalizeTilePresentation,
@@ -22,6 +23,12 @@ const PROOF_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-build
 
 function expectReject(action, pattern) {
   assert.throws(action, pattern);
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
 }
 
 function attribute(values, options = {}) {
@@ -70,6 +77,7 @@ const sourceDescriptor = normalizeTilePresentation({
   mode: 'source-tone-v1',
   productionWriteEnabled: true,
   productionPromotionAuthorized: true,
+  contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
   contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
 }, 'synthetic-source-tile');
 const sourceReceipt = {
@@ -77,6 +85,7 @@ const sourceReceipt = {
     mode: 'source-tone-v1',
     productionWriteEnabled: true,
     productionPromotionAuthorized: true,
+    contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
     contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
     ledgers: { sourceToneAttributeSha256: `sha256:${'0'.repeat(64)}` },
   },
@@ -85,10 +94,12 @@ const sourceReceipt = {
 assert.deepEqual(normalizeTilePresentation(null), SF_MAP_LEGACY_BUILDING_PRESENTATION);
 assert.equal(normalizeTilePresentation({ mode: 'legacy' }).mode, 'legacy');
 expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: false, productionPromotionAuthorized: false, contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1 }, 'candidate'), /not production-authorized/);
-expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contract: { ...SF_BUILDING_SOURCE_TONE_CONTRACT_V1, schema: 'wrong' } }, 'candidate'), /does not match/);
+expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contractSha256: `sha256:${'0'.repeat(64)}`, contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1 }, 'candidate'), /contract SHA-256/);
+expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1, contract: { ...SF_BUILDING_SOURCE_TONE_CONTRACT_V1, schema: 'wrong' } }, 'candidate'), /does not match/);
 assert.equal(verifyReceiptPresentation({}, SF_MAP_LEGACY_BUILDING_PRESENTATION).mode, 'legacy');
 assert.equal(verifyReceiptPresentation(sourceReceipt, sourceDescriptor).mode, 'source-tone-v1');
 expectReject(() => verifyReceiptPresentation({ presentation: { ...sourceReceipt.presentation, productionWriteEnabled: false } }, sourceDescriptor, 'candidate'), /not authorized/);
+expectReject(() => verifyReceiptPresentation({ presentation: { ...sourceReceipt.presentation, contractSha256: `sha256:${'0'.repeat(64)}` } }, sourceDescriptor, 'candidate'), /contract SHA-256/);
 expectReject(() => verifyReceiptPresentation({ presentation: { ...sourceReceipt.presentation, contract: { ...SF_BUILDING_SOURCE_TONE_CONTRACT_V1, schema: 'wrong' } } }, sourceDescriptor, 'candidate'), /does not match/);
 
 verifyParsedGlbPresentation({ parser: { json: { extras: { presentation: SF_BUILDING_SOURCE_TONE_CONTRACT_V1 } } } }, sourceDescriptor);
@@ -114,16 +125,25 @@ const orderedMeshes = [
   { isMesh: true, material: { name: 'buildings-night' }, geometry: { getAttribute: (name) => name === '_sf_source_tone_v1' ? attribute([2, 3]) : name === 'position' ? { count: 2 } : undefined } },
   { isMesh: true, material: { name: 'buildings-night' }, geometry: { getAttribute: (name) => name === '_sf_source_tone_v1' ? attribute([0, 1]) : name === 'position' ? { count: 2 } : undefined } },
 ];
-const orderedAssociations = new Map([[orderedMeshes[0], { primitives: 5 }], [orderedMeshes[1], { primitives: 2 }]]);
+const orderedJson = { meshes: [
+  { primitives: [null, null, { extras: { category: 'buildings' }, attributes: { _SF_SOURCE_TONE_V1: 1 } }] },
+  { primitives: [null, null, null, null, null, { extras: { category: 'buildings' }, attributes: { _SF_SOURCE_TONE_V1: 2 } }] },
+] };
+const orderedAssociations = new Map([[orderedMeshes[0], { meshes: 1, primitives: 5 }], [orderedMeshes[1], { meshes: 0, primitives: 2 }]]);
 assert.deepEqual([...collectSourceToneAttributeBytes({
   scene: { traverse: (visit) => orderedMeshes.forEach(visit) },
-  parser: { associations: orderedAssociations },
+  parser: { associations: orderedAssociations, json: orderedJson },
 }, sourceDescriptor, 'ordered-fixture')], [0, 1, 2, 3], 'Source-tone payload bytes must follow GLTF primitive order rather than scene traversal order');
-orderedAssociations.set(orderedMeshes[0], { primitives: 2 });
+orderedAssociations.set(orderedMeshes[0], { meshes: 0, primitives: 2 });
 expectReject(() => collectSourceToneAttributeBytes({
   scene: { traverse: (visit) => orderedMeshes.forEach(visit) },
-  parser: { associations: orderedAssociations },
-}, sourceDescriptor, 'duplicate-fixture'), /primitive index 2 is duplicated/);
+  parser: { associations: orderedAssociations, json: orderedJson },
+}, sourceDescriptor, 'duplicate-fixture'), /reused source-tone primitive 0\/2 has different attribute bytes/);
+orderedMeshes[0].geometry = orderedMeshes[1].geometry;
+assert.deepEqual([...collectSourceToneAttributeBytes({
+  scene: { traverse: (visit) => orderedMeshes.forEach(visit) },
+  parser: { associations: orderedAssociations, json: orderedJson },
+}, sourceDescriptor, 'reused-fixture')], [0, 1], 'Repeated scene instances of one GLTF primitive must contribute one identical payload');
 
 const [mainSource, materialSource, manifestBytes, proofManifestBytes] = await Promise.all([
   readFile(MAIN_PATH, 'utf8'),
@@ -133,6 +153,7 @@ const [mainSource, materialSource, manifestBytes, proofManifestBytes] = await Pr
 ]);
 const manifest = JSON.parse(manifestBytes);
 const proofManifest = JSON.parse(proofManifestBytes);
+assert.equal(`sha256:${createHash('sha256').update(JSON.stringify(canonical(SF_BUILDING_SOURCE_TONE_CONTRACT_V1))).digest('hex')}`, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1, 'The full source-tone contract SHA-256 is stale');
 assert(manifest.tiles.every((tile) => tile.presentation == null), 'Current production tiles must remain legacy until promotion is authorized');
 assert.equal(proofManifest.productionPromotionAuthorized, false);
 for (let start = 0; start < manifest.tiles.length; start += 24) {
@@ -154,13 +175,13 @@ for (let start = 0; start < manifest.tiles.length; start += 24) {
 }
 for (const tile of proofManifest.tiles) {
   const receipt = JSON.parse(await readFile(path.join(ROOT, tile.receipt), 'utf8'));
-  expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: receipt.productionPromotionAuthorized, productionPromotionAuthorized: receipt.productionPromotionAuthorized, contract: receipt.contract }, tile.tile), /not production-authorized/);
+  expectReject(() => normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: receipt.productionPromotionAuthorized, productionPromotionAuthorized: receipt.productionPromotionAuthorized, contractSha256: receipt.contractSha256, contract: receipt.contract }, tile.tile), /not production-authorized/);
   const metricReceipt = JSON.parse(await readFile(path.join(ROOT, tile.metricReceipt.path), 'utf8'));
   expectReject(() => verifyReceiptPresentation(metricReceipt, sourceDescriptor, tile.tile), /not authorized for production/);
   const authorizedMetricReceipt = structuredClone(metricReceipt);
   authorizedMetricReceipt.presentation.productionWriteEnabled = true;
   authorizedMetricReceipt.presentation.productionPromotionAuthorized = true;
-  const authorizedDescriptorPresentation = normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contract: receipt.contract }, tile.tile);
+  const authorizedDescriptorPresentation = normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contractSha256: receipt.contractSha256, contract: receipt.contract }, tile.tile);
   const authorizedPresentationIntegrity = verifyReceiptPresentation(authorizedMetricReceipt, authorizedDescriptorPresentation, tile.tile);
   const candidateBytes = await readFile(path.join(ROOT, tile.artifact.path));
   const candidateGltf = await new GLTFLoader().parseAsync(candidateBytes.buffer.slice(candidateBytes.byteOffset, candidateBytes.byteOffset + candidateBytes.byteLength), '');
@@ -197,5 +218,6 @@ process.stdout.write(`${JSON.stringify({
   productionGlbHeadersAndReceiptsAudited: manifest.tiles.length,
   proofArtifactsRejectedForProduction: proofManifest.tiles.length,
   sourceTonePolicySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256,
+  sourceToneContractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
   verified: ['authorization before GLB fetch/parse', 'positive Three GLTFLoader source-tone path', 'decoded attribute SHA-256 receipt binding in explicit primitive order', 'GLB root metric identity/origin/scale', 'distinct shader cache keys', 'exact receipt/GLB contract', 'UINT8 scalar domain and count', 'no attribute leakage', 'legacy compatibility'],
 }, null, 2)}\n`);

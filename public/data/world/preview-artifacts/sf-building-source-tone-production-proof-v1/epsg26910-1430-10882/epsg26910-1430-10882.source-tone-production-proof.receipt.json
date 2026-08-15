@@ -1,9 +1,9 @@
 {
   "artifact": {
-    "byteDeltaFromProduction": 9164,
-    "bytes": 3768416,
+    "byteDeltaFromProduction": 9360,
+    "bytes": 3768612,
     "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.glb",
-    "sha256": "sha256:9afbf790ef88f928ecb34634a988c9d0b6a5a616a231047285e0bac4701052ab"
+    "sha256": "sha256:075c1374c4adad5b51d67aeaa383ea9c052e35ce1e7f73195f3fdc8a98b50d89"
   },
   "contract": {
     "attribute": {
@@ -29,9 +29,15 @@
       "presentationOnly": true,
       "sourceColourClaim": false
     },
+    "payloadOrder": {
+      "association": "GLTFLoader parser.associations {meshes,primitives}",
+      "id": "gltf-mesh-index-then-primitive-index-v1",
+      "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+    },
     "schema": "sf-building-source-tone-v1",
     "status": "presentation-schema-only"
   },
+  "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
   "counts": {
     "buildingPrimitives": 1,
     "candidatePrimitives": 5,
@@ -57,12 +63,12 @@
     "sourceToneAttributeSha256": "sha256:add4e784f8fdf1c6cadbb80ca41f390ecb3bfed8c08de69a9362e759e2d0e675"
   },
   "metricReceipt": {
-    "bytes": 111770,
+    "bytes": 112108,
     "kind": "sf-metric-tile-build-receipt",
     "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.metric-receipt.json",
     "presentationStatus": "write-disabled-production-shaped-proof",
     "productionWriteEnabled": false,
-    "sha256": "sha256:0ca1c77805367c360175ee7ef5e6094d5bb16c7dacc5316dd4fffcb6d8ae854f"
+    "sha256": "sha256:b6a4ddf404d0fc6e4ccf0b829f95c8db2731563201130463133895983386d615"
   },
   "productionPromotionAuthorized": false,
   "productionReference": {

@@ -23,9 +23,15 @@
       "presentationOnly": true,
       "sourceColourClaim": false
     },
+    "payloadOrder": {
+      "association": "GLTFLoader parser.associations {meshes,primitives}",
+      "id": "gltf-mesh-index-then-primitive-index-v1",
+      "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+    },
     "schema": "sf-building-source-tone-v1",
     "status": "presentation-schema-only"
   },
+  "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
   "counts": {
     "buildings": 390,
     "indices": 35508,
@@ -73,9 +79,9 @@
     "verifiedSha256": "sha256:2f41f579bf49bc76891c8b9c6b5d19c7ec49e446155f5136b8c3dd6c8b19054e"
   },
   "proofArtifact": {
-    "bytes": 352988,
+    "bytes": 353184,
     "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.glb",
-    "sha256": "sha256:a22bddb839a91581b17fef164dad3cdc514f0942d786b5cbd145b03933024d3f"
+    "sha256": "sha256:d964b9e762de17e27e7f06421d18c61097e2411464918f88af4208fc8e6df05f"
   },
   "schemaVersion": 1,
   "sourceLocks": [

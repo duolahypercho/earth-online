@@ -20,7 +20,7 @@ import { ShapeUtils, Vector2 } from 'three';
 import { FillRule, triangulate as triangulateClipper, trimCollinear, union as unionClipper } from 'clipper2-ts';
 import { booleanDifference, booleanUnion, classifyBooleanPaths, triangulatePolygon } from './ferry-surface-boolean-v1.mjs';
 import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
-import { SF_BUILDING_SOURCE_TONE_CONTRACT_V1, sourceToneV1ForOsmWayId } from './sf-building-source-tone-contract-v1.mjs';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1, SF_BUILDING_SOURCE_TONE_CONTRACT_V1, sourceToneV1ForOsmWayId } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
@@ -1306,6 +1306,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
         mode: 'source-tone-v1',
         status: 'write-disabled-production-shaped-proof',
         productionWriteEnabled: false,
+        contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
         contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
         counts: { sourceBuildings: sourceRecords.length, sourceVertices: buildingSourceToneValues.length, serializedVertices: serializedToneValues.length },
         ledgers: { sourceRecordsSha256: `sha256:${sha256(stableBytes(sourceRecords))}`, sourceToneAttributeSha256: `sha256:${sha256(Buffer.from(serializedToneValues))}` },

@@ -23,11 +23,17 @@
       "presentationOnly": true,
       "sourceColourClaim": false
     },
+    "payloadOrder": {
+      "association": "GLTFLoader parser.associations {meshes,primitives}",
+      "id": "gltf-mesh-index-then-primitive-index-v1",
+      "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+    },
     "schema": "sf-building-source-tone-v1",
     "status": "presentation-schema-only"
   },
+  "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
   "kind": "sf-building-source-tone-proof-manifest",
-  "productionManifestTileCount": 800,
+  "productionManifestTileCount": 803,
   "productionPromotionAuthorized": false,
   "schemaVersion": 1,
   "status": "preview-proof-only-not-production",
@@ -53,9 +59,9 @@
         "sourceToneRecordsSha256": "sha256:5bc8c7fcf9db0d391447a4d13a1cae75629f03e067144e9e13e1eae2d7a04e96"
       },
       "proofArtifact": {
-        "bytes": 25636,
+        "bytes": 25832,
         "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-source-tone-proof.glb",
-        "sha256": "sha256:2f617c462ebe8d516556047c592c018fd97e56062f80e3b9ed5ef651e88e8b47"
+        "sha256": "sha256:9f3d4ad3c470ec9719a6fb093738f46953833024746be7b6ecb2c28597d9def0"
       },
       "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-source-tone-proof.receipt.json",
       "role": "ferry",
@@ -82,9 +88,9 @@
         "sourceToneRecordsSha256": "sha256:a718684b5ee4333e779d9fadac53c08f955560abb2b76324e7cde7f190a9bd4f"
       },
       "proofArtifact": {
-        "bytes": 352988,
+        "bytes": 353184,
         "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.glb",
-        "sha256": "sha256:a22bddb839a91581b17fef164dad3cdc514f0942d786b5cbd145b03933024d3f"
+        "sha256": "sha256:d964b9e762de17e27e7f06421d18c61097e2411464918f88af4208fc8e6df05f"
       },
       "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.receipt.json",
       "role": "district",

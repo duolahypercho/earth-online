@@ -1,4 +1,5 @@
 const SOURCE_TONE_POLICY_SHA256 = 'sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68';
+const SOURCE_TONE_CONTRACT_SHA256 = 'sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e';
 
 function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -44,11 +45,18 @@ export const SF_BUILDING_SOURCE_TONE_CONTRACT_V1 = deepFreeze({
     normalized: false,
     domain: [0, 3],
   },
+  payloadOrder: {
+    id: 'gltf-mesh-index-then-primitive-index-v1',
+    association: 'GLTFLoader parser.associations {meshes,primitives}',
+    reusedMeshPolicy: 'deduplicate-only-when-attribute-bytes-match',
+  },
   derivation: {
     ...SF_BUILDING_SOURCE_TONE_POLICY_V1,
     policySha256: SF_BUILDING_SOURCE_TONE_POLICY_SHA256_V1,
   },
 });
+
+export const SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1 = SOURCE_TONE_CONTRACT_SHA256;
 
 export const SF_MAP_LEGACY_BUILDING_PRESENTATION = deepFreeze({
   mode: 'legacy',
@@ -66,17 +74,19 @@ export function normalizeTilePresentation(rawPresentation, tileId = 'metric tile
   if (rawPresentation == null) return SF_MAP_LEGACY_BUILDING_PRESENTATION;
   if (!rawPresentation || typeof rawPresentation !== 'object') fail(tileId, 'presentation descriptor is not an object');
   if (rawPresentation.mode === 'legacy') {
-    if (rawPresentation.contract != null) fail(tileId, 'legacy presentation must not declare a source-tone contract');
+    if (rawPresentation.contract != null || rawPresentation.contractSha256 != null) fail(tileId, 'legacy presentation must not declare a source-tone contract');
     return deepFreeze({ mode: 'legacy', status: rawPresentation.status || 'legacy-explicit' });
   }
   if (rawPresentation.mode !== 'source-tone-v1') fail(tileId, `presentation mode ${rawPresentation.mode ?? 'missing'} is unsupported`);
   if (rawPresentation.productionWriteEnabled !== true || rawPresentation.productionPromotionAuthorized !== true) fail(tileId, 'source-tone presentation is not production-authorized');
+  if (rawPresentation.contractSha256 !== SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1) fail(tileId, 'source-tone manifest contract SHA-256 does not match the reviewed schema');
   if (!exactObject(rawPresentation.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1)) fail(tileId, 'source-tone manifest contract does not match the reviewed schema');
   return deepFreeze({
     mode: 'source-tone-v1',
     status: 'production-authorized',
     productionWriteEnabled: true,
     productionPromotionAuthorized: true,
+    contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
     contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
   });
 }
@@ -91,6 +101,7 @@ export function verifyReceiptPresentation(receipt, descriptorPresentation, tileI
   if (presentation.productionWriteEnabled !== true || presentation.productionPromotionAuthorized !== true) {
     fail(tileId, 'source-tone receipt is not authorized for production');
   }
+  if (presentation.contractSha256 !== descriptorPresentation.contractSha256) fail(tileId, 'source-tone receipt contract SHA-256 does not match the manifest');
   if (!exactObject(presentation.contract, descriptorPresentation.contract)) fail(tileId, 'source-tone receipt contract does not match the manifest');
   if (!/^sha256:[a-f0-9]{64}$/i.test(presentation.ledgers?.sourceToneAttributeSha256 || '')) fail(tileId, 'source-tone receipt does not bind the attribute payload with SHA-256');
   return { mode: 'source-tone-v1', status: 'verified-production-authorization', sourceToneAttributeSha256: presentation.ledgers.sourceToneAttributeSha256 };
@@ -151,7 +162,7 @@ export function collectSourceToneAttributeBytes(gltf, descriptorPresentation, ti
     fail(tileId, 'source-tone payload ordering requires GLTFLoader primitive associations');
   }
   const attributeName = SF_BUILDING_SOURCE_TONE_CONTRACT_V1.attribute.threeAttributeName;
-  const chunks = [];
+  const chunksByKey = new Map();
   let byteLength = 0;
   root.traverse((node) => {
     if (!node.isMesh) return;
@@ -159,19 +170,29 @@ export function collectSourceToneAttributeBytes(gltf, descriptorPresentation, ti
     if (!materials.some((material) => material?.name === 'buildings-night')) return;
     const array = node.geometry?.getAttribute?.(attributeName)?.array;
     if (!(array instanceof Uint8Array)) return;
-    const primitiveIndex = associations.get(node)?.primitives;
-    if (!Number.isInteger(primitiveIndex) || primitiveIndex < 0) {
-      fail(tileId, 'source-tone building mesh is missing its GLTFLoader primitive index');
+    const association = associations.get(node);
+    const meshIndex = association?.meshes;
+    const primitiveIndex = association?.primitives;
+    if (!Number.isInteger(meshIndex) || meshIndex < 0 || !Number.isInteger(primitiveIndex) || primitiveIndex < 0) {
+      fail(tileId, 'source-tone building mesh is missing its GLTFLoader mesh/primitive indices');
     }
-    chunks.push({ primitiveIndex, array });
+    const primitive = gltf.parser.json?.meshes?.[meshIndex]?.primitives?.[primitiveIndex];
+    if (primitive?.extras?.category !== 'buildings' || primitive.attributes?._SF_SOURCE_TONE_V1 == null) {
+      fail(tileId, `source-tone association ${meshIndex}/${primitiveIndex} does not identify a building primitive`);
+    }
+    const key = `${meshIndex}/${primitiveIndex}`;
+    const existing = chunksByKey.get(key);
+    if (existing) {
+      if (existing.array.byteLength !== array.byteLength
+        || existing.array.some((value, index) => value !== array[index])) {
+        fail(tileId, `reused source-tone primitive ${key} has different attribute bytes`);
+      }
+      return;
+    }
+    chunksByKey.set(key, { meshIndex, primitiveIndex, array });
     byteLength += array.byteLength;
   });
-  chunks.sort((left, right) => left.primitiveIndex - right.primitiveIndex);
-  for (let index = 1; index < chunks.length; index += 1) {
-    if (chunks[index - 1].primitiveIndex === chunks[index].primitiveIndex) {
-      fail(tileId, `source-tone primitive index ${chunks[index].primitiveIndex} is duplicated`);
-    }
-  }
+  const chunks = [...chunksByKey.values()].sort((left, right) => left.meshIndex - right.meshIndex || left.primitiveIndex - right.primitiveIndex);
   const payload = new Uint8Array(byteLength);
   let offset = 0;
   for (const { array } of chunks) {
