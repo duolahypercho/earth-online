@@ -24,7 +24,7 @@
       "sourceColourClaim": false
     },
     "schema": "sf-building-source-tone-v1",
-    "status": "preview-proof-only-not-production"
+    "status": "presentation-schema-only"
   },
   "counts": {
     "buildings": 390,
@@ -73,9 +73,9 @@
     "verifiedSha256": "sha256:2f41f579bf49bc76891c8b9c6b5d19c7ec49e446155f5136b8c3dd6c8b19054e"
   },
   "proofArtifact": {
-    "bytes": 352996,
+    "bytes": 352988,
     "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.glb",
-    "sha256": "sha256:10fe23ce8bbfb466fc51bf4dace05edada977f1ab8bcc324116b802ee3ba7873"
+    "sha256": "sha256:a22bddb839a91581b17fef164dad3cdc514f0942d786b5cbd145b03933024d3f"
   },
   "schemaVersion": 1,
   "sourceLocks": [
