@@ -22,6 +22,7 @@ parentPort.on('message', async (message) => {
       sharedInputs,
       verifiedTerrainSourceDigests,
       write: false,
+      buildingSourceToneProof: message.tile.buildingSourceToneProof === true,
     });
     parentPort.postMessage({
       type: 'result',

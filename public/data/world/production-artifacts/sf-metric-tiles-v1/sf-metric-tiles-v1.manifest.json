@@ -14790,12 +14790,89 @@
         0
       ],
       "lod0": {
-        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
-        "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.lod0.glb",
+        "sha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500"
       },
       "receipt": {
-        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
-        "sha256": "sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd"
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.receipt.json",
+        "sha256": "sha256:eab7233f79c124bb6f4b075a921ba6ac9f58e63754c5d5e5c6397da70e8484f7"
+      },
+      "presentation": {
+        "mode": "source-tone-v1",
+        "productionWriteEnabled": true,
+        "productionPromotionAuthorized": true,
+        "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+        "contract": {
+          "schema": "sf-building-source-tone-v1",
+          "status": "presentation-schema-only",
+          "attribute": {
+            "gltfSemantic": "_SF_SOURCE_TONE_V1",
+            "threeAttributeName": "_sf_source_tone_v1",
+            "componentType": 5121,
+            "type": "SCALAR",
+            "normalized": false,
+            "domain": [
+              0,
+              3
+            ]
+          },
+          "payloadOrder": {
+            "id": "gltf-mesh-index-then-primitive-index-v1",
+            "association": "GLTFLoader parser.associations {meshes,primitives}",
+            "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+          },
+          "derivation": {
+            "id": "osm-way-id-modulo-4-v1",
+            "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+            "input": "byte-locked OSM source way identity",
+            "outputDomain": [
+              0,
+              3
+            ],
+            "presentationOnly": true,
+            "sourceColourClaim": false,
+            "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68"
+          }
+        },
+        "authorization": {
+          "id": "sf-ferry-source-tone-production-authorization-v1",
+          "path": "public/data/world/source-locks/sf-ferry-source-tone-production-authorization-v1.lock.json",
+          "sha256": "sha256:12c8948324e27b540bfb3757acd081c1043766d42aae9a5427821f1c4aaac37f"
+        },
+        "boundaryMask": {
+          "id": "source-tone-legacy-grid-boundary-mask-v1",
+          "adjacencyPolicy": "static-manifest-cardinal-neighbours-v1",
+          "residencyInput": false,
+          "tileSizeMetres": 384,
+          "exactMatchBandMetres": 4,
+          "blendBandMetres": 16,
+          "legacyGridCellMetres": 62,
+          "legacyNeighbourSides": [
+            "south",
+            "west"
+          ],
+          "legacyNeighbourTileIds": [
+            "epsg26910-1440-10893",
+            "epsg26910-1441-10892"
+          ],
+          "directClosureTileIds": [
+            "epsg26910-1440-10893",
+            "epsg26910-1441-10892",
+            "epsg26910-1441-10893"
+          ],
+          "directSharedBuildingWayIds": [
+            32862406,
+            44106213,
+            132238424,
+            192026932,
+            192026938,
+            1301393957
+          ],
+          "seamLedger": {
+            "path": "public/data/world/preview-artifacts/sf-building-seam-edge-ledger-v1/sf-building-seam-edge-ledger-v1.ledger.json.gz",
+            "sha256": "sha256:97c07b77aa38ea1b74213eb843497801ba49921bbb06c78005712928eecbdbf1"
+          }
+        }
       }
     },
     {

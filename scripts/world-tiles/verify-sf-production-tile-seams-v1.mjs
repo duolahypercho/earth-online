@@ -168,8 +168,13 @@ function expectedDir(identity) {
 export async function loadTile(identity, manifestEntry) {
   const expected = tileIdentityFromGrid(...identity.split('-').slice(1).map(Number));
   assert.equal(expected.id, identity, `Malformed tile identity ${identity}`);
-  const directory = expectedDir(identity);
-  const stem = expectedStem(identity);
+  const sourceToneProduction = manifestEntry?.presentation?.mode === 'source-tone-v1';
+  const directory = sourceToneProduction
+    ? path.dirname(path.resolve(ROOT, manifestEntry.receipt.path))
+    : expectedDir(identity);
+  const stem = sourceToneProduction
+    ? path.basename(manifestEntry.receipt.path, '.receipt.json')
+    : expectedStem(identity);
   const receiptPath = path.join(directory, `${stem}.receipt.json`);
   const packagePath = path.join(directory, `${stem}.package.json`);
   assert(await pathExists(receiptPath), `Missing receipt for ${identity}: ${relative(receiptPath)}`);
@@ -501,6 +506,7 @@ const rebuiltTiles = await rebuildSfMetricTilesInWorkers({
     id: tile.identity,
     gridEasting: tile.expected.gridEasting,
     gridNorthing: tile.expected.gridNorthing,
+    buildingSourceToneProof: manifestById.get(tile.identity)?.presentation?.mode === 'source-tone-v1',
   })),
   sharedInputs,
   verifiedTerrainSourceDigests,

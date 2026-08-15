@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// QA-only mixed-mode proof. This does not authorize a production presentation
-// change: it renders the byte-locked Ferry source-tone proof beside its legacy
-// west/south neighbours and fails if the reviewed edge treatment drifts.
+// Production mixed-mode boundary gate. It renders the authorized Ferry
+// source-tone artifact beside its byte-locked legacy baseline and west/south
+// neighbours, then fails if the reviewed edge treatment drifts.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -18,8 +18,8 @@ const OUTPUT_ROOT = process.env.SF_FERRY_BOUNDARY_MASK_QA_DIR
   || path.join(ROOT, '.qa-sf-map-ferry-boundary-mask-i53');
 const HOST_PAGE_PATH = path.join(ROOT, '.qa-sf-map-ferry-boundary-mask-i53.html');
 const MANIFEST_PATH = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json');
-const PROOF_MANIFEST_PATH = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/sf-building-source-tone-production-proof-v1.manifest.json');
 const LEDGER_PATH = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-seam-edge-ledger-v1/sf-building-seam-edge-ledger-v1.ledger.json.gz');
+const AUTHORIZATION_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-source-tone-production-authorization-v1.lock.json');
 const FERRY_ID = 'epsg26910-1441-10893';
 const WEST_ID = 'epsg26910-1440-10893';
 const SOUTH_ID = 'epsg26910-1441-10892';
@@ -53,18 +53,33 @@ function comparable(capture) {
 
 const manifest = JSON.parse(await readFile(MANIFEST_PATH));
 assert.equal(manifest.tiling.tileSizeMetres, TILE_SIZE_METRES, 'production tile width changed');
-const tiles = [WEST_ID, SOUTH_ID, FERRY_ID].map((id) => {
+const authorization = JSON.parse(await readFile(AUTHORIZATION_PATH));
+const sourceToneFerry = manifest.tiles.find((candidate) => candidate.id === FERRY_ID);
+assert.equal(sourceToneFerry?.presentation?.mode, 'source-tone-v1', 'Ferry production source-tone descriptor is absent');
+assert.equal(sourceToneFerry.presentation.authorization.sha256, digest(await readFile(AUTHORIZATION_PATH)), 'Ferry production authorization lock drifted');
+const tiles = [WEST_ID, SOUTH_ID].map((id) => {
   const tile = manifest.tiles.find((candidate) => candidate.id === id);
   assert(tile, `${id} is missing from the production manifest`);
   assert.equal(tile.presentation, undefined, `${id} must remain production legacy`);
   assert.equal(tile.tileSizeMetres ?? manifest.tiling.tileSizeMetres, TILE_SIZE_METRES, `${id} metric tile size drifted`);
   return tile;
 });
+tiles.push({
+  id: FERRY_ID,
+  gridIndex: sourceToneFerry.gridIndex,
+  originEpsg26910VerticalMetres: sourceToneFerry.originEpsg26910VerticalMetres,
+  lod0: authorization.legacyReference.glb,
+  receipt: authorization.legacyReference.receipt,
+});
 const byId = new Map(tiles.map((tile) => [tile.id, tile]));
-const proofManifest = JSON.parse(await readFile(PROOF_MANIFEST_PATH));
-assert.equal(proofManifest.productionPromotionAuthorized, false, 'proof manifest is not write-disabled');
-const proof = proofManifest.tiles.find((tile) => tile.tile === FERRY_ID);
-assert(proof, 'Ferry production-shaped source-tone proof is absent');
+const proof = {
+  artifact: sourceToneFerry.lod0,
+  metricReceipt: sourceToneFerry.receipt,
+  ledgers: {
+    productionGeometrySha256: authorization.presentation.geometryLedgerSha256,
+    candidateGeometrySha256: authorization.presentation.geometryLedgerSha256,
+  },
+};
 
 // The committed ledger is deterministic JSON gzip. Avoid importing its builder
 // so the QA does not regenerate or alter source-lock evidence.
@@ -118,15 +133,15 @@ try {
       }
       if (await sha(proofReceiptBuffer) !== input.proof.metricReceipt.sha256) throw new Error('Ferry proof metric receipt hash drifted');
       const proofReceipt = JSON.parse(new TextDecoder().decode(proofReceiptBuffer));
-      if (proofReceipt.presentation?.productionWriteEnabled !== false || proofReceipt.presentation?.productionPromotionAuthorized !== undefined
-        || proofReceipt.presentation?.status !== 'write-disabled-production-shaped-proof') throw new Error('Ferry proof is not a write-disabled QA artifact');
+      if (proofReceipt.presentation?.productionWriteEnabled !== true || proofReceipt.presentation?.productionPromotionAuthorized !== true
+        || proofReceipt.presentation?.status !== 'production-authorized-bounded-ferry-mixed-mode') throw new Error('Ferry source-tone receipt is not production authorized');
       if (proofReceipt.tile?.identity !== input.ferry.id || proofReceipt.tile?.scale !== 1
         || JSON.stringify(proofReceipt.tile?.originEpsg26910VerticalMetres) !== JSON.stringify(input.ferry.originEpsg26910VerticalMetres)) throw new Error('Ferry proof metric identity drifted');
       const glbBuffers = await Promise.all(production.map((tile) => bytes(tile.lod0.path)));
       const proofGlbBuffer = await bytes(input.proof.artifact.path);
       for (let index = 0; index < production.length; index += 1) if (await sha(glbBuffers[index]) !== production[index].lod0.sha256) throw new Error(`${production[index].id} GLB hash drifted`);
-      if (await sha(proofGlbBuffer) !== input.proof.artifact.sha256) throw new Error('Ferry source-tone proof GLB hash drifted');
-      if (input.proof.ledgers?.productionGeometrySha256 !== input.proof.ledgers?.candidateGeometrySha256) throw new Error('Ferry proof geometry is not exact production geometry');
+      if (await sha(proofGlbBuffer) !== input.proof.artifact.sha256) throw new Error('Ferry production source-tone GLB hash drifted');
+      if (input.proof.ledgers?.productionGeometrySha256 !== input.proof.ledgers?.candidateGeometrySha256) throw new Error('Ferry source-tone geometry is not exact legacy geometry');
       const loader = new GLTFLoader();
       const baselineGltfs = await Promise.all(production.map((tile, index) => loader.parseAsync(glbBuffers[index].slice(0), resource(tile.lod0.path))));
       const candidateWest = await loader.parseAsync(glbBuffers[0].slice(0), resource(production[0].lod0.path));
@@ -327,7 +342,7 @@ try {
   if (!freshBootPngsExact) for (const capture of captures) capture.rejectionReasons.push('fresh boots changed mixed-mode screenshot bytes');
   const mask = { id: 'source-tone-legacy-grid-boundary-mask-v1', ferryTileId: FERRY_ID, staticAdjacentLegacySides: ['west', 'south'], directClosureTileIds: [FERRY_ID, WEST_ID, SOUTH_ID].sort(), directSharedBuildingWayIds: [...new Set([...westEdge.exactSharedSourceOsmWayIds, ...southEdge.exactSharedSourceOsmWayIds])].sort((a, b) => a - b), tileSizeMetres: TILE_SIZE_METRES, exactMatchBandMetres: 4, blendBandMetres: 16, legacyGridCellMetres: 62, residencyInput: false, geometryChanged: false };
   const strictAccepted = freshBootMetricsExact && freshBootPngsExact && captures.every((capture) => capture.rejectionReasons.length === 0);
-  const report = { schemaVersion: 1, kind: 'sf-map-ferry-mixed-mode-boundary-mask-qa', status: strictAccepted ? 'qa-only-boundary-strategy-passed-not-production' : 'qa-only-boundary-strategy-rejected-not-production', nonPromotion: 'No production manifest, GLB, source geometry, tile origin, or gameplay input was changed.', source: { manifestSha256: digest(await readFile(MANIFEST_PATH)), seamLedgerPath: path.relative(ROOT, LEDGER_PATH), seamLedgerSha256: digest(await readFile(LEDGER_PATH)) }, strategy: { ...mask, maskSha256: digest(jsonBytes(mask)), deterministic: true, baselineResponse: 'live-legacy-building-palette-v1' }, captures, invariants: { matchedScreenshots: true, freshBootPngsExact, receiptsFinishedBeforeGlbs: captures.every((capture) => capture.requestEvents.filter((event) => event.kind === 'receipt' && event.event === 'finished').length === 4), exactMetricOriginScale: captures.every((capture) => capture.metric.runtimeUnitsPerMetre === 1 && capture.metric.sceneScale === 1 && capture.metric.originSubtractions === 1), drawCallsAndTrianglesUnchanged: captures.every((capture) => capture.views.every((view) => JSON.stringify(view.baselineRender) === JSON.stringify(view.candidateRender))), sharedBuildingBoundaryPixelsMaxRgbDeltaAtMostOne: captures.every((capture) => capture.views.every((view) => view.seams.every((seam) => seam.maxRgbDelta <= 1))), shaderDiagnosticsClean: captures.every((capture) => capture.shaderDiagnostics.every((diagnostic) => diagnostic.runnable !== false && !diagnostic.programLog && !diagnostic.vertexShaderLog && !diagnostic.fragmentShaderLog)), productionPromotionAuthorized: false } };
+  const report = { schemaVersion: 1, kind: 'sf-map-ferry-mixed-mode-boundary-mask-qa', status: strictAccepted ? 'authorized-production-boundary-strategy-passed' : 'authorized-production-boundary-strategy-rejected', source: { manifestSha256: digest(await readFile(MANIFEST_PATH)), authorizationSha256: digest(await readFile(AUTHORIZATION_PATH)), seamLedgerPath: path.relative(ROOT, LEDGER_PATH), seamLedgerSha256: digest(await readFile(LEDGER_PATH)) }, strategy: { ...mask, maskSha256: digest(jsonBytes(mask)), deterministic: true, baselineResponse: 'live-legacy-building-palette-v1' }, captures, invariants: { matchedScreenshots: true, freshBootPngsExact, receiptsFinishedBeforeGlbs: captures.every((capture) => capture.requestEvents.filter((event) => event.kind === 'receipt' && event.event === 'finished').length === 4), exactMetricOriginScale: captures.every((capture) => capture.metric.runtimeUnitsPerMetre === 1 && capture.metric.sceneScale === 1 && capture.metric.originSubtractions === 1), drawCallsAndTrianglesUnchanged: captures.every((capture) => capture.views.every((view) => JSON.stringify(view.baselineRender) === JSON.stringify(view.candidateRender))), sharedBuildingBoundaryPixelsMaxRgbDeltaAtMostOne: captures.every((capture) => capture.views.every((view) => view.seams.every((seam) => seam.maxRgbDelta <= 1))), shaderDiagnosticsClean: captures.every((capture) => capture.shaderDiagnostics.every((diagnostic) => diagnostic.runnable !== false && !diagnostic.programLog && !diagnostic.vertexShaderLog && !diagnostic.fragmentShaderLog)), productionPromotionAuthorized: true } };
   await writeFile(path.join(OUTPUT_ROOT, 'report.json'), jsonBytes(report));
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (!strictAccepted) process.exitCode = 1;

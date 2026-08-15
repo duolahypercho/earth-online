@@ -28,6 +28,8 @@
     "build:sf-building-source-tone-proof": "node scripts/world-tiles/build-sf-building-source-tone-proof-v1.mjs",
     "verify:sf-building-source-tone-proof": "node scripts/world-tiles/verify-sf-building-source-tone-proof-v1.mjs",
     "build:sf-building-source-tone-production-proof": "node scripts/world-tiles/build-sf-building-source-tone-production-proof-v1.mjs",
+    "build:sf-ferry-source-tone-production": "node scripts/world-tiles/build-sf-ferry-source-tone-production-v1.mjs --write",
+    "verify:sf-ferry-source-tone-production": "node scripts/world-tiles/build-sf-ferry-source-tone-production-v1.mjs",
     "verify:sf-building-source-tone-production-proof": "node scripts/world-tiles/verify-sf-building-source-tone-production-proof-v1.mjs",
     "verify:sf-building-seam-edge-ledger": "node scripts/world-tiles/verify-sf-building-seam-edge-ledger-v1.mjs",
     "verify:sf-map-presentation-contract": "node scripts/verify-sf-map-presentation-contract-v1.mjs",

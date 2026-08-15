@@ -28,9 +28,12 @@ assert(source.includes("gltfLoader.parseAsync(glbArtifact.bytes"), 'The viewer m
 assert(!source.includes('gltfLoader.loadAsync('), 'Unverified GLTFLoader URL loading is forbidden.');
 assert(source.includes('const receiptArtifact = await fetchVerifiedBytes('), 'Receipts must be byte-verified before diagnostics are updated.');
 const presentationReceiptIndex = source.indexOf('verifyReceiptPresentation(receipt, descriptor.presentation');
+const authorizationFetchIndex = source.indexOf('const authorizationArtifact = await fetchVerifiedBytes(');
+const authorizationVerifyIndex = source.indexOf('verifyProductionPresentationAuthorization(');
 const glbFetchIndex = source.indexOf('const glbArtifact = await fetchVerifiedBytes(');
 const glbParseIndex = source.indexOf('gltfLoader.parseAsync(glbArtifact.bytes');
-assert(presentationReceiptIndex >= 0 && glbFetchIndex > presentationReceiptIndex && glbParseIndex > glbFetchIndex, 'Presentation authorization must be verified before GLB fetch and parsing.');
+assert(presentationReceiptIndex >= 0 && authorizationFetchIndex > presentationReceiptIndex && authorizationVerifyIndex > authorizationFetchIndex && glbFetchIndex > authorizationVerifyIndex && glbParseIndex > glbFetchIndex, 'Receipt and byte-locked production authorization must be verified before GLB fetch and parsing.');
+assert(source.includes('verifyStaticPresentationAdjacency(tileDescriptors);'), 'Static legacy/source-tone adjacency must be verified before streaming.');
 assert(source.includes('verifyParsedGlbMetricContract(gltf, descriptor'), 'Parsed GLB metric identity/origin/scale must be verified before admission.');
 assert(source.includes('verifyParsedGlbPresentation(gltf, descriptor.presentation'), 'Parsed GLB presentation metadata must match its descriptor.');
 assert(source.includes('verifyScenePresentation(tile, descriptor.presentation'), 'Parsed mesh attributes must be fail-closed before admission.');
@@ -116,6 +119,11 @@ assert(fileHash(resolve(root, representative.receipt.path)) === declaredHash(rep
 const ferryManifestTile = manifest.tiles.find((tile) => tile.id === 'epsg26910-1441-10893');
 assert(ferryManifestTile, 'The source-locked Ferry tile must remain in the production manifest.');
 assert(JSON.stringify(ferryManifestTile.originEpsg26910VerticalMetres) === JSON.stringify([553344, 4182912, 0]), 'The Ferry metric source origin changed.');
+assert(ferryManifestTile.presentation?.mode === 'source-tone-v1', 'The Ferry production descriptor must select the authorized source-tone artifact.');
+assert(ferryManifestTile.presentation?.authorization?.sha256 === 'sha256:12c8948324e27b540bfb3757acd081c1043766d42aae9a5427821f1c4aaac37f', 'The Ferry source-tone authorization lock drifted.');
+assert(ferryManifestTile.presentation?.boundaryMask?.residencyInput === false, 'The Ferry boundary strategy must remain independent of load order and residency.');
+assert(JSON.stringify(ferryManifestTile.presentation?.boundaryMask?.legacyNeighbourTileIds) === JSON.stringify(['epsg26910-1440-10893', 'epsg26910-1441-10892']), 'The Ferry static legacy neighbours drifted.');
+assert(manifest.tiles.filter((tile) => tile.presentation?.mode === 'source-tone-v1').length === 1, 'Only the bounded Ferry production tile may use source-tone-v1.');
 
 const fallback = {
   glb: 'public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb',
