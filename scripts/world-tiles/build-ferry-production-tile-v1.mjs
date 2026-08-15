@@ -26,13 +26,13 @@ const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
 const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json');
 const GEOMETRY_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json');
 const TERRAIN_SOURCES = [
-  ['x55y419', 10, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
-  ['x54y419', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
-  ['x54y418', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'],
-  ['x55y418', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'],
-  ['californiagaps-x54y418', 5, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json'],
-  ['californiagaps-x55y418', 5, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json'],
-].map(([label, priority, sourceLockPath, elevationLockPath], sourceOrder) => ({ label, priority, sourceOrder, sourceLockPath: path.join(ROOT, sourceLockPath), elevationLockPath: path.join(ROOT, elevationLockPath) }));
+  ['x55y419', 10, true, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
+  ['x54y419', 10, true, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
+  ['x54y418', 10, true, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'],
+  ['x55y418', 10, true, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'],
+  ['californiagaps-x54y418', 5, false, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json'],
+  ['californiagaps-x55y418', 5, false, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json'],
+].map(([label, priority, productionEligible, sourceLockPath, elevationLockPath], sourceOrder) => ({ label, priority, productionEligible, sourceOrder, sourceLockPath: path.join(ROOT, sourceLockPath), elevationLockPath: path.join(ROOT, elevationLockPath) }));
 const FERRY_OUTPUT_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
 const METRIC_TILE_OUTPUT_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1');
 // OSM ways are node-referenced. A building or long road segment can cross the
@@ -45,6 +45,16 @@ let buildSfMetricTileQueue = Promise.resolve();
 const TERRAIN_STEP = 1;
 const PROVISIONAL_FRAME = 'provisional-utm-source-declared-navd88-unrealized';
 const RETRIEVED_AT = '2026-08-02';
+const DEFAULT_TERRAIN_SELECTION_MODE = 'production-cell-owned-v1';
+const NATIVE_PIXEL_FALLBACK_PROOF_MODE = 'per-native-pixel-fallback-proof-v1';
+const TERRAIN_SELECTION_MODES = new Set([DEFAULT_TERRAIN_SELECTION_MODE, NATIVE_PIXEL_FALLBACK_PROOF_MODE]);
+const NATIVE_PIXEL_SELECTION_POLICY = Object.freeze({
+  name: 'source-locked-original-first-per-native-pixel-v1',
+  candidateOrder: 'original-before-californiagaps',
+  fallbackCondition: 'original-native-pixel-is-nodata',
+  sampleMethod: 'direct-native-pixel-float32-le',
+  interpolation: 'none',
+});
 // A 12 cm paved surface keeps long, terrain-following road ribbons above the
 // sampled ground without changing their authoritative plan geometry.
 const ROAD_LIFT = 0.12;
@@ -213,7 +223,7 @@ function verifiedTerrainDigestFor(sourceLock, verifiedTerrainSourceDigests) {
   return verified;
 }
 
-async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, regionBounds, verifiedTerrainDigest = null) {
+async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, regionBounds, verifiedTerrainDigest = null, { allowNoData = false } = {}) {
   const rawPath = path.join(ROOT, sourceLock.raster.localRawCache);
   const raw = verifiedTerrainDigest ?? await sha256File(rawPath);
   assert.equal(raw.path ?? sourceLock.raster.localRawCache, sourceLock.raster.localRawCache, `GeoTIFF path does not match lock ${sourceLock.id}`);
@@ -227,13 +237,15 @@ async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, 
       if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after rejected coverage window' });
       return null;
     }
-    const validationTopLeft = reader.modelToPixel(regionBounds[0], regionBounds[3]); const validationBottomRight = reader.modelToPixel(regionBounds[2], regionBounds[1]);
-    const validationColumn = Math.max(0, Math.floor(validationTopLeft.column)); const validationRow = Math.max(0, Math.floor(validationTopLeft.row)); const validationRight = Math.min(reader.metadata.width, Math.ceil(validationBottomRight.column) + 1); const validationBottom = Math.min(reader.metadata.height, Math.ceil(validationBottomRight.row) + 1);
-    const validationWindow = await reader.readWindow({ column: validationColumn, row: validationRow, width: validationRight - validationColumn, height: validationBottom - validationRow });
-    if (!validationWindow.values.every((value) => value !== validationWindow.nodata && Number.isFinite(value))) {
-      await reader.close(); reader = null;
-      if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after rejected no-data window' });
-      return null;
+    if (!allowNoData) {
+      const validationTopLeft = reader.modelToPixel(regionBounds[0], regionBounds[3]); const validationBottomRight = reader.modelToPixel(regionBounds[2], regionBounds[1]);
+      const validationColumn = Math.max(0, Math.floor(validationTopLeft.column)); const validationRow = Math.max(0, Math.floor(validationTopLeft.row)); const validationRight = Math.min(reader.metadata.width, Math.ceil(validationBottomRight.column) + 1); const validationBottom = Math.min(reader.metadata.height, Math.ceil(validationBottomRight.row) + 1);
+      const validationWindow = await reader.readWindow({ column: validationColumn, row: validationRow, width: validationRight - validationColumn, height: validationBottom - validationRow });
+      if (!validationWindow.values.every((value) => value !== validationWindow.nodata && Number.isFinite(value))) {
+        await reader.close(); reader = null;
+        if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after rejected no-data window' });
+        return null;
+      }
     }
     const clippedBounds = [Math.max(TILE.minE - TILE.sourceBuffer - 2, rasterBounds[0]), Math.max(TILE.minN - TILE.sourceBuffer - 2, rasterBounds[1]), Math.min(TILE.minE + TILE.size + TILE.sourceBuffer + 2, rasterBounds[2]), Math.min(TILE.minN + TILE.size + TILE.sourceBuffer + 2, rasterBounds[3])];
     assert(clippedBounds[0] < clippedBounds[2] && clippedBounds[1] < clippedBounds[3], `Terrain source ${sourceLock.id} does not overlap ${TILE.id}`);
@@ -241,9 +253,17 @@ async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, 
     const column = Math.max(0, Math.floor(a.column)); const row = Math.max(0, Math.floor(a.row)); const right = Math.min(reader.metadata.width, Math.ceil(b.column) + 1); const bottom = Math.min(reader.metadata.height, Math.ceil(b.row) + 1);
     const window = await reader.readWindow({ column, row, width: right - column, height: bottom - row });
     const pixelWindow = (e, n) => { const pixel = reader.modelToPixel(e, n); return { column: Math.floor(pixel.column), row: Math.floor(pixel.row), width: 1, height: 1 }; };
-    const sample = (e, n) => { const pixel = pixelWindow(e, n); const x = pixel.column - window.column; const y = pixel.row - window.row; assert(x >= 0 && y >= 0 && x < window.width && y < window.height, 'Terrain sample outside buffered window'); const value = window.values[y * window.width + x]; assert(value !== window.nodata && Number.isFinite(value), 'Invalid terrain sample'); return value; };
-    const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
-    return { reader, window, sample, evidence, raw, rawPath, sourceLock, rasterSha256, elevationLock, descriptor, verifiedTerrainDigest };
+    const sampleMaybe = (e, n) => {
+      const pixel = pixelWindow(e, n); const x = pixel.column - window.column; const y = pixel.row - window.row;
+      if (x < 0 || y < 0 || x >= window.width || y >= window.height) return { valid: false, reason: 'outside-window', pixel };
+      const value = window.values[y * window.width + x];
+      if (value === window.nodata) return { valid: false, reason: 'nodata', pixel, value };
+      if (!Number.isFinite(value)) return { valid: false, reason: 'non-finite', pixel, value };
+      return { valid: true, value, pixel };
+    };
+    const sample = (e, n) => { const result = sampleMaybe(e, n); assert(result.valid, `Invalid terrain sample (${result.reason})`); return result.value; };
+    const evidence = async (e, n) => { const nativePixelWindow = pixelWindow(e, n); const direct = await reader.readWindow(nativePixelWindow); const value = direct.values[0]; assert(value !== direct.nodata && Number.isFinite(value), 'Invalid terrain evidence sample'); const bytes = Buffer.allocUnsafe(4); bytes.writeFloatLE(value); return { rasterSha256, nativePixelWindow, compressedTileIndices: direct.tileIndices, compressedTileBytesRead: direct.bytesRead, sampleMethod: 'direct-native-pixel-float32-le', sampledSourceDeclaredNavd88UnrealizedMetres: value, sampleWindowSha256: `sha256:${sha256(bytes)}` }; };
+    return { reader, window, sample, sampleMaybe, evidence, raw, rawPath, sourceLock, rasterSha256, elevationLock, descriptor, verifiedTerrainDigest };
   } catch (error) {
     if (reader) {
       try { await reader.close(); } finally {
@@ -286,7 +306,158 @@ function terrainOwnershipRegions() {
   return regions;
 }
 
-async function openTerrainMosaic(descriptors) {
+function isCaliforniaGapsDescriptor(descriptor) {
+  return descriptor.label.startsWith('californiagaps-');
+}
+
+function proofCoordinateKey(easting, northing) {
+  return `${q(easting)},${q(northing)}`;
+}
+
+/**
+ * Isolated source-selection proof path.  This deliberately opens both the
+ * original and CaliforniaGaps rasters, then chooses one direct native pixel
+ * for each requested sample.  It is never allowed to write a production
+ * artifact; the default cell-owned path below remains byte-compatible.
+ */
+async function openPerNativePixelFallbackProofMosaic(descriptors) {
+  const sources = [];
+  const groups = [];
+  try {
+    const descriptorsByCell = new Map();
+    for (const descriptor of descriptors) {
+      const cellKey = terrainCellKey((descriptor.bounds[0] + descriptor.bounds[2]) / 2, (descriptor.bounds[1] + descriptor.bounds[3]) / 2);
+      const candidates = descriptorsByCell.get(cellKey) ?? [];
+      candidates.push(descriptor);
+      candidates.sort((a, b) => Number(isCaliforniaGapsDescriptor(a)) - Number(isCaliforniaGapsDescriptor(b)) || a.sourceOrder - b.sourceOrder || a.label.localeCompare(b.label));
+      descriptorsByCell.set(cellKey, candidates);
+    }
+    for (const region of terrainOwnershipRegions()) {
+      const descriptorsInCell = descriptorsByCell.get(region.cellKey) ?? [];
+      assert(descriptorsInCell.length, `No byte-locked terrain source owns ${region.cellKey} for ${TILE.id}`);
+      const opened = [];
+      for (const descriptor of descriptorsInCell) {
+        const source = await openTerrain(descriptor.sourceLock, descriptor.sourceLock.raster.sha256, descriptor.elevationLock, descriptor, region.bounds, descriptor.verifiedTerrainDigest, { allowNoData: true });
+        if (source) { const openedSource = { ...source, cellKey: region.cellKey }; opened.push(openedSource); sources.push(openedSource); }
+      }
+      const original = opened.find((source) => !isCaliforniaGapsDescriptor(source.descriptor));
+      assert(original, `Per-native-pixel proof requires an original terrain source for ${region.cellKey}`);
+      const fallbacks = opened.filter((source) => isCaliforniaGapsDescriptor(source.descriptor));
+      groups.push({ cellKey: region.cellKey, bounds: region.bounds, original, fallbacks });
+    }
+    assert(groups.length, `No terrain ownership groups opened for ${TILE.id}`);
+    sources.sort((a, b) => a.descriptor.sourceOrder - b.descriptor.sourceOrder || a.cellKey.localeCompare(b.cellKey));
+  } catch (error) {
+    await closeTerrainSources(sources);
+    throw error;
+  }
+
+  const groupByCell = new Map(groups.map((group) => [group.cellKey, group]));
+  const selectionCache = new Map();
+  const sampleAudit = new Map();
+  const sourceProbeStats = new Map(sources.map((source) => [source.sourceLock.id, { sourceLockId: source.sourceLock.id, finiteCount: 0, noDataCount: 0, nonFiniteCount: 0, outsideWindowCount: 0, chosenCount: 0 }]));
+  const sourceDisagreements = [];
+  const select = (easting, northing) => {
+    const cacheKey = proofCoordinateKey(easting, northing);
+    const cached = selectionCache.get(cacheKey);
+    if (cached) return cached;
+    const cellKey = terrainCellKey(easting, northing); const group = groupByCell.get(cellKey);
+    assert(group, `No authoritative terrain ownership group for sample ${easting},${northing} in ${TILE.id}`);
+    const originalProbe = group.original.sampleMaybe(easting, northing);
+    let selectedSource = group.original; let selectedProbe = originalProbe; let fallbackFrom = null;
+    const fallbackProbes = group.fallbacks.map((candidate) => ({ source: candidate, probe: candidate.sampleMaybe(easting, northing) }));
+    if (!originalProbe.valid) {
+      assert.equal(originalProbe.reason, 'nodata', `Original terrain source ${group.original.sourceLock.id} was unavailable at ${easting},${northing}; CaliforniaGaps fallback is only allowed for original NoData`);
+      const fallback = fallbackProbes.find(({ probe }) => probe.valid)?.source;
+      assert(fallback, `No finite CaliforniaGaps fallback for original NoData at ${easting},${northing} in ${TILE.id}`);
+      selectedSource = fallback; selectedProbe = fallbackProbes.find(({ source }) => source === fallback).probe; fallbackFrom = group.original;
+      assert(selectedProbe.valid && Number.isFinite(selectedProbe.value), `CaliforniaGaps fallback produced an invalid value at ${easting},${northing}`);
+    } else {
+      assert(Number.isFinite(originalProbe.value), `Original terrain source produced a non-finite value at ${easting},${northing}`);
+    }
+    const selection = Object.freeze({ source: selectedSource, probe: selectedProbe, originalProbe, fallbackFrom, probes: Object.freeze([{ source: group.original, probe: originalProbe }, ...fallbackProbes]) });
+    selectionCache.set(cacheKey, selection);
+    return selection;
+  };
+  const audit = (easting, northing, selection) => {
+    const key = proofCoordinateKey(easting, northing); const source = selection.source; const existing = sampleAudit.get(key);
+    if (existing) {
+      assert.equal(existing.sourceLockId, source.sourceLock.id, `Per-native-pixel terrain source changed for ${key}`);
+      assert.deepEqual(existing.nativePixel, { column: selection.probe.pixel.column, row: selection.probe.pixel.row }, `Per-native-pixel terrain pixel changed for ${key}`);
+      return;
+    }
+    for (const { source: candidate, probe } of selection.probes) {
+      const stats = sourceProbeStats.get(candidate.sourceLock.id); assert(stats, `Missing source accounting entry for ${candidate.sourceLock.id}`);
+      if (probe.valid) stats.finiteCount += 1;
+      else if (probe.reason === 'nodata') stats.noDataCount += 1;
+      else if (probe.reason === 'non-finite') stats.nonFiniteCount += 1;
+      else if (probe.reason === 'outside-window') stats.outsideWindowCount += 1;
+    }
+    sourceProbeStats.get(source.sourceLock.id).chosenCount += 1;
+    const finiteFallbacks = selection.probes.filter(({ source: candidate, probe }) => candidate !== selection.fallbackFrom && isCaliforniaGapsDescriptor(candidate.descriptor) && probe.valid);
+    if (selection.originalProbe.valid && finiteFallbacks.length) for (const { probe } of finiteFallbacks) sourceDisagreements.push(Math.abs(selection.originalProbe.value - probe.value));
+    const record = Object.freeze({
+      modelEastingMetres: q(easting),
+      modelNorthingMetres: q(northing),
+      sourceLockId: source.sourceLock.id,
+      elevationSourceLockId: source.elevationLock.id,
+      rasterSha256: source.rasterSha256,
+      nativePixel: { column: selection.probe.pixel.column, row: selection.probe.pixel.row },
+      sampledSourceDeclaredNavd88UnrealizedMetres: selection.probe.value,
+      sourceRole: isCaliforniaGapsDescriptor(source.descriptor) ? 'californiagaps-fallback' : 'original',
+      fallbackFromSourceLockId: selection.fallbackFrom?.sourceLock.id ?? null,
+      fallbackOriginalReason: selection.fallbackFrom ? selection.originalProbe.reason : null,
+      fallbackOriginalNativePixel: selection.fallbackFrom ? { ...selection.originalProbe.pixel } : null,
+    });
+    sampleAudit.set(key, record);
+  };
+  const proof = {
+    mode: NATIVE_PIXEL_FALLBACK_PROOF_MODE,
+    rule: 'original direct native float32 pixel; CaliforniaGaps direct native pixel only when original pixel is NoData; no blending/interpolation',
+    finalize() {
+      const records = [...sampleAudit.values()].sort((a, b) => a.modelNorthingMetres - b.modelNorthingMetres || a.modelEastingMetres - b.modelEastingMetres);
+      const sourceSampleCounts = {};
+      let originalFiniteSamples = 0; let fallbackSamples = 0;
+      for (const record of records) {
+        sourceSampleCounts[record.sourceLockId] = (sourceSampleCounts[record.sourceLockId] ?? 0) + 1;
+        if (record.sourceRole === 'californiagaps-fallback') fallbackSamples += 1; else originalFiniteSamples += 1;
+      }
+      const sortedDisagreements = [...sourceDisagreements].sort((a, b) => a - b);
+      const p99Index = sortedDisagreements.length ? Math.min(sortedDisagreements.length - 1, Math.ceil(sortedDisagreements.length * 0.99) - 1) : -1;
+      const sharedEdgeSamples = Object.fromEntries([
+        ['south', records.filter((record) => Math.abs(record.modelNorthingMetres - TILE.minN) <= 1e-9 && Number.isInteger(record.modelEastingMetres))],
+        ['north', records.filter((record) => Math.abs(record.modelNorthingMetres - (TILE.minN + TILE.size)) <= 1e-9 && Number.isInteger(record.modelEastingMetres))],
+        ['west', records.filter((record) => Math.abs(record.modelEastingMetres - TILE.minE) <= 1e-9 && Number.isInteger(record.modelNorthingMetres))],
+        ['east', records.filter((record) => Math.abs(record.modelEastingMetres - (TILE.minE + TILE.size)) <= 1e-9 && Number.isInteger(record.modelNorthingMetres))],
+      ].map(([edge, edgeRecords]) => [edge, Object.freeze(edgeRecords)]));
+      const sourceStats = Object.fromEntries([...sourceProbeStats.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, stats]) => [id, Object.freeze({ ...stats })]));
+      return Object.freeze({
+        mode: NATIVE_PIXEL_FALLBACK_PROOF_MODE,
+        selectionPolicyName: NATIVE_PIXEL_SELECTION_POLICY.name,
+        selectionPolicy: NATIVE_PIXEL_SELECTION_POLICY,
+        selectionPolicyHash: `sha256:${sha256(stableBytes(NATIVE_PIXEL_SELECTION_POLICY))}`,
+        rule: this.rule,
+        verticalCertification: 'source-declared-navd88-unrealized',
+        status: 'provisional-vertical-unrealized',
+        counts: Object.freeze({ uniqueNativeSampleCoordinates: records.length, originalFiniteSamples, californiaGapsFallbackSamples: fallbackSamples, sourceSampleCounts: Object.freeze(sourceSampleCounts), sourceProbeStats: Object.freeze(sourceStats), bothFiniteSourceComparisons: sortedDisagreements.length, maxBothFiniteDisagreementMetres: sortedDisagreements.at(-1) ?? 0, p99BothFiniteDisagreementMetres: p99Index < 0 ? 0 : sortedDisagreements[p99Index] }),
+        sharedEdgeSamples: Object.freeze(sharedEdgeSamples),
+        sourceLocks: Object.freeze([...new Set(sources.map((source) => source.sourceLock.id))].sort()),
+        records: Object.freeze(records),
+      });
+    },
+  };
+  return {
+    sources,
+    sample(easting, northing) { const selection = select(easting, northing); audit(easting, northing, selection); return selection.probe.value; },
+    async evidence(easting, northing) { const selection = select(easting, northing); audit(easting, northing, selection); return { source: selection.source, payload: await selection.source.evidence(easting, northing) }; },
+    proof,
+    async close() { await closeTerrainSources(sources); },
+  };
+}
+
+async function openTerrainMosaic(descriptors, terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE) {
+  if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PROOF_MODE) return openPerNativePixelFallbackProofMosaic(descriptors);
+  assert.equal(terrainSelectionMode, DEFAULT_TERRAIN_SELECTION_MODE, `Unknown terrain selection mode ${terrainSelectionMode}`);
   const sources = [];
   try {
     const descriptorsByCell = new Map();
@@ -954,7 +1125,7 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons' } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   try {
@@ -962,6 +1133,9 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     assert(Number.isInteger(lodLevel) && lodLevel >= 0, 'lodLevel must be a non-negative integer');
     assert(['direct-native-pixel', 'canonical-1m-lattice-height-v1'].includes(surfaceHeightOwnership), 'Unknown surfaceHeightOwnership mode');
     assert(['independent-cell-polygons', 'conforming-grid-boundary-stitch-v1'].includes(surfaceTopology), 'Unknown surfaceTopology mode');
+    assert(TERRAIN_SELECTION_MODES.has(terrainSelectionMode), `Unknown terrain selection mode ${terrainSelectionMode}`);
+    assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
+    assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || (terrainGridStepMetres === TERRAIN_STEP && surfaceHeightOwnership === 'direct-native-pixel' && surfaceTopology === 'independent-cell-polygons'), 'Per-native-pixel fallback proof requires direct 1 m independent-cell surfaces');
     const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0 && surfaceHeightOwnership === 'direct-native-pixel';
     assert((isCanonicalLod0 && surfaceTopology === 'independent-cell-polygons') || !write, 'Non-default terrain steps, LOD levels, surface ownership modes, or topology modes are in-memory proof builds only and may not write production-shaped artifacts');
     assert(surfaceHeightOwnership === 'direct-native-pixel' || (terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0), 'Canonical lattice height ownership is limited to the 1 m LOD0 proof');
@@ -971,8 +1145,10 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const [resolvedSharedInputs, terrainDescriptors] = await Promise.all([sharedInputs ?? loadSfMetricSharedInputs(), loadTerrainDescriptors(verifiedTerrainSourceDigests)]);
     const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
     assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
-    const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors);
+    const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors, terrainSelectionMode);
+    assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible), 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
     const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology); const geometries = [baseGeometry]; const categories = baseGeometry;
+    for (const data of Object.values(categories)) for (const value of data.positions) assert(Number.isFinite(value), `Terrain selection emitted a non-finite geometry coordinate for ${TILE.id}`);
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
     const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
     const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, maxVerticalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
@@ -987,9 +1163,12 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const landAreaSquareMetres = planAreaSquareMetres(categories.terrain); const waterAreaSquareMetres = planAreaSquareMetres(categories.water);
     assert(Math.abs(landAreaSquareMetres + waterAreaSquareMetres - TILE.size ** 2) <= 0.001, 'Land and OSM-classified water must partition the tile without gaps or overlap');
     const receipt = { schemaVersion: 1, kind: 'sf-metric-tile-build-receipt', id: stem, status: 'provisional-vertical-unrealized', tile: { identity: TILE.id, gridIndex: [TILE.minE / TILE.size, TILE.minN / TILE.size], boundsEpsg26910Metres: [TILE.minE, TILE.minN, TILE.minE + TILE.size, TILE.minN + TILE.size], originEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], runtimeFrame: PROVISIONAL_FRAME, vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, scale: 1 }, source: { osmPbf: { path: relative(PBF_PATH), bytes: pbfHash.bytes, sha256: pbfHash.sha256, queryBoundsWgs84: bounds }, geoTiffs: terrainSource.sources.map((source) => ({ path: source.sourceLock.raster.localRawCache, bytes: source.raw.bytes, sha256: source.raw.sha256, elevationSourceLockId: source.elevationLock.id, ownershipCell: source.cellKey, verticalCertification: 'source-declared-navd88-unrealized', reader: 'geotiff-window-reader-v1', window: { column: source.window.column, row: source.window.row, width: source.window.width, height: source.window.height } })) }, counts: { osmCandidateWays: features.length, emittedCoastlineWays: categories.water.sourceIds.size, emittedRoadWays: categories.roads.sourceIds.size, emittedBuildingWays: categories.buildings.sourceIds.size, packageSourceFeatures: sourceFeatures.length, terrainVertices: categories.terrain.positions.length / 3, waterVertices: categories.water.positions.length / 3, coastlineVertices: categories.coastline.positions.length / 3, roadVertices: categories.roads.positions.length / 3, buildingVertices: categories.buildings.positions.length / 3 }, surfaceClassification: { authority: 'OpenStreetMap natural=coastline ways in the byte-locked PBF', coastlineDirectionRule: 'OSM coastline direction: land on left, water on right', sourceOsmWayIds: [...categories.water.sourceIds].sort((a, b) => a - b), landAreaSquareMetres, waterAreaSquareMetres, partitionAreaSquareMetres: q(landAreaSquareMetres + waterAreaSquareMetres), waterVerticalMode: 'terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level', terrainWaterOverlapAreaSquareMetres: 0 }, ferryBuilding: TILE.id === FERRY_TILE.id ? { sourceFeatureId: 'way/558731934', present: categories.buildings.sourceIds.has(558731934) } : null, lods, relationCoverage: { implemented: false, statement: 'Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage.' }, deterministicInputs: { availableLods: [0], terrainGridStepMetres: TERRAIN_STEP, terrainSampling: 'canonical-10km-cell-owned-direct-native-pixel-float32-le', terrainCellOwnership: 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', surfaceGridMetres: 1 / SURFACE_TICKS_PER_METRE, lod0Construction: '1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings', lod0DeviationMetres: 0, geometryQuantizationDecimalPlaces: 6, buildingHeightPolicy: 'OSM height, else building:levels*3.2m, else 9.6m', roadWidthPolicy: 'OSM width, else deterministic highway-class/lanes table' } };
+    const terrainSelectionProof = terrainSource.proof?.finalize?.() ?? null;
     try { await terrainSource.close(); } finally { terrainSource = null; }
     if (write) { await mkdir(outputDir, { recursive: true }); await Promise.all([...glbs.map((glb) => writeFile(path.join(outputDir, glb.name), glb.bytes)), writeFile(path.join(outputDir, `${stem}.receipt.json`), jsonBytes(receipt)), writeFile(path.join(outputDir, `${stem}.package.json`), jsonBytes(packageDescriptor))]); }
-    return { outputDir, glbs, receipt, packageDescriptor, categories };
+    const result = { outputDir, glbs, receipt, packageDescriptor, categories };
+    if (terrainSelectionProof) result.terrainSelectionProof = terrainSelectionProof;
+    return result;
   } finally {
     try { await terrainSource?.close(); } finally { TILE = previousTile; }
   }

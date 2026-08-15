@@ -14,36 +14,42 @@ const TERRAIN_SOURCES = [
   {
     label: 'x55y419',
     priority: 10,
+    productionEligible: true,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x54y419',
     priority: 10,
+    productionEligible: true,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x54y418',
     priority: 10,
+    productionEligible: true,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'x55y418',
     priority: 10,
+    productionEligible: true,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'californiagaps-x54y418',
     priority: 5,
+    productionEligible: false,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json'),
   },
   {
     label: 'californiagaps-x55y418',
     priority: 5,
+    productionEligible: false,
     sourceLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json'),
     elevationLockPath: path.join(ROOT, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json'),
   },
@@ -232,8 +238,10 @@ export async function buildSfMetricTileCoveragePlan() {
       const selectedSources = selectedRegions.map(({ candidate }) => candidate);
       const labels = [...new Set(selectedSources.filter(Boolean).map(({ label }) => label))].sort();
       if (selectedSources.every(Boolean)) {
-        terrainAvailable = true;
-        terrainReason = `available-from-byte-locked-3dep-${labels.join('-and-')}`;
+        terrainAvailable = selectedSources.every(({ productionEligible }) => productionEligible);
+        terrainReason = terrainAvailable
+          ? `available-from-byte-locked-3dep-${labels.join('-and-')}`
+          : `source-ready-from-byte-locked-3dep-${labels.join('-and-')}-production-seam-policy-pending`;
       } else {
         const candidateLabels = [...new Set(selectedRegions.flatMap(({ candidates }) => candidates.map(({ label }) => label)))].sort();
         terrainReason = `byte-locked-3dep-${candidateLabels.join('-and-')}-contains-nodata`;
@@ -259,13 +267,16 @@ export async function buildSfMetricTileCoveragePlan() {
     };
   });
   const projectedPoints = polygons.flat(2);
+  const fallbackSourceReadyTiles = tiles.filter(({ sourceReadiness }) => sourceReadiness.terrainElevation.startsWith('source-ready-from-byte-locked-3dep-')).length;
   const counts = {
     shorelinePolygons: polygons.length,
     landIntersectingTiles: tiles.filter(({ inclusion }) => inclusion === 'land-intersection').length,
     coastalContextTiles: tiles.filter(({ inclusion }) => inclusion === 'coastal-context-halo').length,
     totalPlannedTiles: tiles.length,
     buildReadyTiles: tiles.filter(({ sourceReadiness }) => sourceReadiness.buildReady).length,
-    missingTerrainTiles: tiles.filter(({ sourceReadiness }) => !sourceReadiness.buildReady).length,
+    fallbackSourceReadyTiles,
+    missingTerrainTiles: tiles.filter(({ sourceReadiness }) => !sourceReadiness.buildReady && !sourceReadiness.terrainElevation.startsWith('source-ready-from-byte-locked-3dep-')).length,
+    productionBlockedTiles: tiles.filter(({ sourceReadiness }) => !sourceReadiness.buildReady).length,
   };
   return {
     schemaVersion: 1,
@@ -278,7 +289,7 @@ export async function buildSfMetricTileCoveragePlan() {
     sources: {
       shoreline: { id: shorelineLock.id, path: relative(SHORELINE_LOCK_PATH), lockSha256: `sha256:${sha256(shorelineLockBytes)}`, artifactPath: relative(SHORELINE_PATH), artifactBytes: shorelineBytes.length, artifactSha256: `sha256:${sha256(shorelineBytes)}` },
       horizontalTransform: { id: horizontalLock.id, path: relative(HORIZONTAL_LOCK_PATH), lockSha256: `sha256:${sha256(horizontalLockBytes)}`, absoluteHorizontalAccuracyFloorMetres: 4 },
-      availableTerrain: terrainSourceRecords.map(({ elevationLock, elevationLockBytes, elevationLockPath, sourceLockBytes, sourceLockPath, bounds }) => ({ id: elevationLock.id, path: relative(elevationLockPath), lockSha256: `sha256:${sha256(elevationLockBytes)}`, sourceLockPath: relative(sourceLockPath), sourceLockSha256: `sha256:${sha256(sourceLockBytes)}`, rasterBoundsEpsg26910Metres: bounds })),
+      availableTerrain: terrainSourceRecords.map(({ elevationLock, elevationLockBytes, elevationLockPath, sourceLockBytes, sourceLockPath, bounds, productionEligible }) => ({ id: elevationLock.id, path: relative(elevationLockPath), lockSha256: `sha256:${sha256(elevationLockBytes)}`, sourceLockPath: relative(sourceLockPath), sourceLockSha256: `sha256:${sha256(sourceLockBytes)}`, rasterBoundsEpsg26910Metres: bounds, productionEligible })),
     },
     landBoundsEpsg26910Metres: [Math.min(...projectedPoints.map(([e]) => e)), Math.min(...projectedPoints.map(([, n]) => n)), Math.max(...projectedPoints.map(([e]) => e)), Math.max(...projectedPoints.map(([, n]) => n))],
     counts,
