@@ -30,7 +30,7 @@
   "kind": "sf-metric-tile-build-receipt",
   "lods": [
     {
-      "artifactHash": "sha256:9afbf790ef88f928ecb34634a988c9d0b6a5a616a231047285e0bac4701052ab",
+      "artifactHash": "sha256:075c1374c4adad5b51d67aeaa383ea9c052e35ce1e7f73195f3fdc8a98b50d89",
       "boundsLocalMetres": {
         "max": [
           384,
@@ -43,7 +43,7 @@
           0
         ]
       },
-      "bytes": 3768416,
+      "bytes": 3768612,
       "level": 0,
       "maxHorizontalDeviationMetres": 0.000002,
       "maxVerticalDeviationMetres": 0.000002,
@@ -123,9 +123,15 @@
         "presentationOnly": true,
         "sourceColourClaim": false
       },
+      "payloadOrder": {
+        "association": "GLTFLoader parser.associations {meshes,primitives}",
+        "id": "gltf-mesh-index-then-primitive-index-v1",
+        "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+      },
       "schema": "sf-building-source-tone-v1",
       "status": "presentation-schema-only"
     },
+    "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
     "counts": {
       "serializedVertices": 8412,
       "sourceBuildings": 390,

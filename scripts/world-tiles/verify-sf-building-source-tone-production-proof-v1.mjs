@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { SF_BUILDING_SOURCE_TONE_CONTRACT_V1 } from './sf-building-source-tone-contract-v1.mjs';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1, SF_BUILDING_SOURCE_TONE_CONTRACT_V1 } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = process.cwd();
 const PROOF_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1');
@@ -91,6 +91,7 @@ assert.equal(proofManifest.kind, 'sf-building-source-tone-production-proof-manif
 assert.equal(proofManifest.status, 'write-disabled-production-shaped-proof');
 assert.equal(proofManifest.productionPromotionAuthorized, false);
 assert.equal(proofManifest.productionManifestTileCount, productionManifest.tiles.length);
+assert.equal(proofManifest.contractSha256, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1);
 assert.deepEqual(proofManifest.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1);
 assert.equal(proofManifest.tiles.length, 2);
 const productionById = new Map(productionManifest.tiles.map((tile) => [tile.id, tile]));
@@ -111,10 +112,12 @@ for (const tile of proofManifest.tiles) {
   assert.equal(metricReceipt.kind, 'sf-metric-tile-build-receipt');
   assert.equal(metricReceipt.tile.identity, tile.tile);
   assert.equal(metricReceipt.tile.scale, 1);
+  assert.equal(metricReceipt.presentation.contractSha256, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1);
   assert.deepEqual(metricReceipt.presentation.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1);
   assert.equal(metricReceipt.presentation.productionWriteEnabled, false);
   assert.equal(receipt.metricReceipt.presentationStatus, 'write-disabled-production-shaped-proof');
   assert.equal(receipt.metricReceipt.productionWriteEnabled, false);
+  assert.equal(receipt.contractSha256, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1);
   assert.deepEqual(receipt.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1);
   assert.equal(receipt.tile.horizontalCrs, 'EPSG:26910');
   assert.equal(receipt.tile.unitsPerMetre, 1);

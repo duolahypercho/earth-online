@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1 } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = process.cwd();
 const PROOF_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-proof-v1');
@@ -69,6 +70,7 @@ const [proofManifest, productionManifest] = await Promise.all([
 assert.equal(proofManifest.kind, 'sf-building-source-tone-proof-manifest');
 assert.equal(proofManifest.status, 'preview-proof-only-not-production');
 assert.equal(proofManifest.productionPromotionAuthorized, false);
+assert.equal(proofManifest.contractSha256, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1);
 assert.equal(proofManifest.productionManifestTileCount, productionManifest.tiles.length);
 assert.equal(proofManifest.tiles.length, 2);
 assert.equal(proofManifest.contract.schema, 'sf-building-source-tone-v1');
@@ -84,6 +86,7 @@ for (const tile of proofManifest.tiles) {
   assert.equal(receipt.kind, 'sf-building-source-tone-proof-receipt');
   assert.equal(receipt.status, 'preview-proof-only-not-production');
   assert.equal(receipt.productionPromotionAuthorized, false);
+  assert.equal(receipt.contractSha256, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1);
   assert.deepEqual(receipt.contract, proofManifest.contract);
   assert.equal(receipt.tile.horizontalCrs, 'EPSG:26910');
   assert.equal(receipt.tile.unitsPerMetre, 1);

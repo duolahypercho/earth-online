@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
 import { makePresentationGlb } from './build-sf-building-presentation-proof-v1.mjs';
-import { SF_BUILDING_SOURCE_TONE_CONTRACT_V1 as CONTRACT } from './sf-building-source-tone-contract-v1.mjs';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1 as CONTRACT_SHA256, SF_BUILDING_SOURCE_TONE_CONTRACT_V1 as CONTRACT } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = process.cwd();
 const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-proof-v1');
@@ -77,6 +77,7 @@ async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSource
     status: 'preview-proof-only-not-production',
     productionPromotionAuthorized: false,
     tile: { id: tile.id, gridIndex: [tile.gridEasting, tile.gridNorthing], horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized' },
+    contractSha256: CONTRACT_SHA256,
     contract: CONTRACT,
     productionReference: { path: manifestTile.lod0.path, declaredSha256: manifestTile.lod0.sha256, verifiedSha256: `sha256:${sha256(productionGlb)}`, receiptPath: manifestTile.receipt.path, receiptSha256: `sha256:${sha256(productionReceipt)}`, exactDefaultBytesPreserved: true },
     legacyProofReference: { path: legacyReceipt.proofArtifact.path, sha256: legacyReceipt.proofArtifact.sha256, receiptPath: path.relative(ROOT, legacyReceiptPath), receiptSha256: `sha256:${sha256(legacyReceiptBytes)}`, exactLegacyBytesPreserved: true },
@@ -102,6 +103,6 @@ for (const tile of TILES) {
   assert(manifestTile, `${tile.id} is not a production resident`);
   tiles.push(await buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests));
 }
-const proofManifest = { schemaVersion: 1, kind: 'sf-building-source-tone-proof-manifest', status: 'preview-proof-only-not-production', productionPromotionAuthorized: false, productionManifestTileCount: manifest.tiles.length, contract: CONTRACT, tiles };
+const proofManifest = { schemaVersion: 1, kind: 'sf-building-source-tone-proof-manifest', status: 'preview-proof-only-not-production', productionPromotionAuthorized: false, productionManifestTileCount: manifest.tiles.length, contractSha256: CONTRACT_SHA256, contract: CONTRACT, tiles };
 await writeFile(path.join(OUTPUT_ROOT, 'sf-building-source-tone-proof-v1.manifest.json'), jsonBytes(proofManifest));
 process.stdout.write(`${JSON.stringify(proofManifest, null, 2)}\n`);
