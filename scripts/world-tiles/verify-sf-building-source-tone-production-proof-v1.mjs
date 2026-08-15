@@ -134,12 +134,13 @@ for (const tile of proofManifest.tiles) {
 
   const [candidateBytes, productionBytes, visualReceipt] = await Promise.all([
     readFile(path.join(ROOT, receipt.artifact.path)),
-    readFile(path.join(ROOT, production.lod0.path)),
+    readFile(path.join(ROOT, receipt.productionReference.path)),
     readFile(path.join(VISUAL_PROOF_ROOT, tile.tile, `${tile.tile}.building-source-tone-proof.receipt.json`), 'utf8').then(JSON.parse),
   ]);
   assert.equal(`sha256:${sha256(candidateBytes)}`, receipt.artifact.sha256);
-  assert.equal(`sha256:${sha256(productionBytes)}`, production.lod0.sha256);
-  assert.equal(receipt.productionReference.sha256, production.lod0.sha256);
+  assert.equal(`sha256:${sha256(productionBytes)}`, receipt.productionReference.sha256);
+  if (production.presentation == null) assert.equal(receipt.productionReference.sha256, production.lod0.sha256);
+  else assert.equal(production.presentation.mode, 'source-tone-v1');
   assert.equal(receipt.artifact.byteDeltaFromProduction, candidateBytes.length - productionBytes.length);
   const candidate = parseGlb(candidateBytes);
   const legacy = parseGlb(productionBytes);

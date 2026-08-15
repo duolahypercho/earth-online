@@ -8,10 +8,15 @@ import {
   normalizeTilePresentation,
   verifyParsedGlbMetricContract,
   verifyParsedGlbPresentation,
+  verifyProductionPresentationAuthorization,
   verifyReceiptPresentation,
   verifyScenePresentation,
 } from './building-presentation-contract.js';
-import { applyLegacyBuildingPresentation, applySourceToneBuildingPresentation } from './building-presentation-material.js';
+import {
+  SF_SOURCE_TONE_LEGACY_GRID_BOUNDARY_MASK_V1,
+  applyLegacyBuildingPresentation,
+  applySourceToneBuildingPresentation,
+} from './building-presentation-material.js';
 import './styles.css';
 
 const BASE_URL = import.meta.env.BASE_URL;
@@ -566,6 +571,17 @@ async function loadTile(state) {
     const presentationIntegrity = verifyReceiptPresentation(receipt, descriptor.presentation, descriptor.id);
     state.integrity.receipt = { expectedSha256: descriptor.receiptSha256, actualSha256: receiptArtifact.actualSha256, status: 'verified' };
     state.integrity.presentation = presentationIntegrity;
+    if (descriptor.presentation.mode === 'source-tone-v1') {
+      const authorizationReference = descriptor.presentation.authorization;
+      const authorizationArtifact = await fetchVerifiedBytes(
+        publicPath(authorizationReference.path),
+        authorizationReference.sha256.slice('sha256:'.length),
+        `${descriptor.id} presentation authorization`,
+      );
+      const authorization = JSON.parse(new TextDecoder().decode(authorizationArtifact.bytes));
+      state.integrity.authorization = verifyProductionPresentationAuthorization(authorization, descriptor, presentationIntegrity, descriptor.id);
+      state.integrity.authorization.actualSha256 = `sha256:${authorizationArtifact.actualSha256}`;
+    }
     const glbArtifact = await fetchVerifiedBytes(descriptor.glb, descriptor.glbSha256Hex, `${descriptor.id} GLB`);
     state.integrity.glb = { expectedSha256: descriptor.glbSha256, actualSha256: glbArtifact.actualSha256, status: 'verified' };
     const gltf = await gltfLoader.parseAsync(glbArtifact.bytes, resourcePathFor(descriptor.glb));
@@ -601,6 +617,12 @@ async function loadTile(state) {
         if (descriptor.presentation.mode === 'source-tone-v1') applySourceToneBuildingPresentation(node.material, {
           palette: BUILDING_PALETTE,
           policySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256,
+          boundaryMask: {
+            ...SF_SOURCE_TONE_LEGACY_GRID_BOUNDARY_MASK_V1,
+            sceneTileOriginMetres: [descriptor.offset.x, descriptor.offset.z],
+            sides: descriptor.presentation.boundaryMask.legacyNeighbourSides,
+            legacyPalette: BUILDING_PALETTE,
+          },
         });
         else applyBuildingPresentation(node.material);
       }
@@ -721,6 +743,27 @@ function streamTiles() {
   pumpLoadQueue();
 }
 
+function verifyStaticPresentationAdjacency(descriptors) {
+  const byGrid = new Map(descriptors.filter(({ gridIndex }) => Array.isArray(gridIndex)).map((descriptor) => [descriptor.gridIndex.join('/'), descriptor]));
+  const directions = [
+    ['west', -1, 0], ['east', 1, 0], ['south', 0, -1], ['north', 0, 1],
+  ];
+  for (const descriptor of descriptors) {
+    if (descriptor.presentation.mode !== 'source-tone-v1') continue;
+    if (!Array.isArray(descriptor.gridIndex)) throw new Error(`${descriptor.id} source-tone presentation requires a metric grid index`);
+    const legacyNeighbours = directions.flatMap(([side, dx, dz]) => {
+      const neighbour = byGrid.get([descriptor.gridIndex[0] + dx, descriptor.gridIndex[1] + dz].join('/'));
+      return neighbour?.presentation.mode === 'legacy' ? [{ side, id: neighbour.id }] : [];
+    });
+    const sides = legacyNeighbours.map(({ side }) => side).sort();
+    const ids = legacyNeighbours.map(({ id }) => id).sort();
+    if (JSON.stringify(sides) !== JSON.stringify(descriptor.presentation.boundaryMask.legacyNeighbourSides)
+      || JSON.stringify(ids) !== JSON.stringify(descriptor.presentation.boundaryMask.legacyNeighbourTileIds)) {
+      throw new Error(`${descriptor.id} static source-tone boundary mask no longer matches manifest adjacency`);
+    }
+  }
+}
+
 async function initialiseStream() {
   const { tiles, source } = await discoverTiles();
   const anchor = tiles.find((tile) => tile.id === FALLBACK_TILE.id) || tiles[0];
@@ -729,6 +772,7 @@ async function initialiseStream() {
     ...tile,
     offset: new THREE.Vector3(tile.origin[0] - anchorOrigin[0], tile.origin[2] - anchorOrigin[2], tile.origin[1] - anchorOrigin[1]),
   }));
+  verifyStaticPresentationAdjacency(tileDescriptors);
   fitOverviewViews(tileDescriptors);
   districtFitDescriptors = selectDistrictFitDescriptors(tileDescriptors);
   for (const descriptor of tileDescriptors) {

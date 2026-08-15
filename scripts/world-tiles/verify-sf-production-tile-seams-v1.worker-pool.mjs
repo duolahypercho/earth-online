@@ -26,7 +26,14 @@ function workerTile(tile) {
   if (!Number.isInteger(tile?.gridEasting) || !Number.isInteger(tile?.gridNorthing)) {
     throw new TypeError('Each rebuild tile must contain integer gridEasting and gridNorthing values');
   }
-  return { gridEasting: tile.gridEasting, gridNorthing: tile.gridNorthing };
+  if (tile.buildingSourceToneProof != null && typeof tile.buildingSourceToneProof !== 'boolean') {
+    throw new TypeError('buildingSourceToneProof must be a boolean when provided');
+  }
+  return {
+    gridEasting: tile.gridEasting,
+    gridNorthing: tile.gridNorthing,
+    buildingSourceToneProof: tile.buildingSourceToneProof === true,
+  };
 }
 
 function rebuiltResult(payload) {

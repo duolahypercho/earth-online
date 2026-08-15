@@ -11,6 +11,7 @@ import {
   normalizeTilePresentation,
   verifyParsedGlbMetricContract,
   verifyParsedGlbPresentation,
+  verifyProductionPresentationAuthorization,
   verifyReceiptPresentation,
   verifyScenePresentation,
 } from '../src/sf-map/building-presentation-contract.js';
@@ -20,6 +21,28 @@ const MAIN_PATH = path.join(ROOT, 'src/sf-map/main.js');
 const MATERIAL_PATH = path.join(ROOT, 'src/sf-map/building-presentation-material.js');
 const MANIFEST_PATH = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json');
 const PROOF_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1');
+const TEST_AUTHORIZATION = Object.freeze({
+  id: 'synthetic-source-tone-authorization-v1',
+  path: 'public/data/world/source-locks/synthetic-source-tone-authorization-v1.lock.json',
+  sha256: `sha256:${'1'.repeat(64)}`,
+});
+const TEST_BOUNDARY_MASK = Object.freeze({
+  id: 'source-tone-legacy-grid-boundary-mask-v1',
+  adjacencyPolicy: 'static-manifest-cardinal-neighbours-v1',
+  residencyInput: false,
+  tileSizeMetres: 384,
+  exactMatchBandMetres: 4,
+  blendBandMetres: 16,
+  legacyGridCellMetres: 62,
+  legacyNeighbourSides: ['west'],
+  legacyNeighbourTileIds: ['epsg26910-0-0'],
+  directClosureTileIds: ['epsg26910-0-0', 'epsg26910-1-0'],
+  directSharedBuildingWayIds: [1],
+  seamLedger: {
+    path: 'public/data/world/preview-artifacts/synthetic-ledger.json.gz',
+    sha256: `sha256:${'2'.repeat(64)}`,
+  },
+});
 
 function expectReject(action, pattern) {
   assert.throws(action, pattern);
@@ -79,7 +102,9 @@ const sourceDescriptor = normalizeTilePresentation({
   productionPromotionAuthorized: true,
   contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
   contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
-}, 'synthetic-source-tile');
+  authorization: TEST_AUTHORIZATION,
+  boundaryMask: TEST_BOUNDARY_MASK,
+}, 'epsg26910-1-0');
 const sourceReceipt = {
   presentation: {
     mode: 'source-tone-v1',
@@ -87,6 +112,8 @@ const sourceReceipt = {
     productionPromotionAuthorized: true,
     contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
     contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
+    authorization: TEST_AUTHORIZATION,
+    boundaryMask: TEST_BOUNDARY_MASK,
     ledgers: { sourceToneAttributeSha256: `sha256:${'0'.repeat(64)}` },
   },
 };
@@ -105,7 +132,7 @@ expectReject(() => verifyReceiptPresentation({ presentation: { ...sourceReceipt.
 verifyParsedGlbPresentation({ parser: { json: { extras: { presentation: SF_BUILDING_SOURCE_TONE_CONTRACT_V1 } } } }, sourceDescriptor);
 verifyParsedGlbPresentation({ parser: { json: { extras: {} } } }, SF_MAP_LEGACY_BUILDING_PRESENTATION);
 expectReject(() => verifyParsedGlbPresentation({ parser: { json: { extras: {} } } }, sourceDescriptor, 'candidate'), /GLB presentation contract/);
-const metricDescriptor = { id: 'synthetic-source-tile', origin: [553344, 4182912, 0] };
+const metricDescriptor = { id: 'epsg26910-1-0', origin: [553344, 4182912, 0] };
 const metricGltf = { parser: { json: { extras: { tileId: metricDescriptor.id, horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, tileOriginEpsg26910VerticalMetres: metricDescriptor.origin } } } };
 verifyParsedGlbMetricContract(metricGltf, metricDescriptor);
 expectReject(() => verifyParsedGlbMetricContract({ parser: { json: { extras: { ...metricGltf.parser.json.extras, unitsPerMetre: 0.5 } } } }, metricDescriptor), /identity\/CRS\/scale/);
@@ -154,7 +181,8 @@ const [mainSource, materialSource, manifestBytes, proofManifestBytes] = await Pr
 const manifest = JSON.parse(manifestBytes);
 const proofManifest = JSON.parse(proofManifestBytes);
 assert.equal(`sha256:${createHash('sha256').update(JSON.stringify(canonical(SF_BUILDING_SOURCE_TONE_CONTRACT_V1))).digest('hex')}`, SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1, 'The full source-tone contract SHA-256 is stale');
-assert(manifest.tiles.every((tile) => tile.presentation == null), 'Current production tiles must remain legacy until promotion is authorized');
+const productionSourceToneTiles = manifest.tiles.filter((tile) => tile.presentation?.mode === 'source-tone-v1');
+assert.deepEqual(productionSourceToneTiles.map(({ id }) => id), ['epsg26910-1441-10893'], 'Exactly the authorized Ferry tile may use source-tone-v1');
 assert.equal(proofManifest.productionPromotionAuthorized, false);
 for (let start = 0; start < manifest.tiles.length; start += 24) {
   await Promise.all(manifest.tiles.slice(start, start + 24).map(async (tile) => {
@@ -162,14 +190,35 @@ for (let start = 0; start < manifest.tiles.length; start += 24) {
       readGlbJson(tile.lod0.path),
       readFile(path.join(ROOT, tile.receipt.path), 'utf8').then(JSON.parse),
     ]);
-    assert.equal(receipt.presentation, undefined, `${tile.id} production receipt unexpectedly declares presentation metadata`);
-    assert.equal(glb.extras?.presentation, undefined, `${tile.id} production GLB unexpectedly declares presentation metadata`);
+    const descriptorPresentation = normalizeTilePresentation(tile.presentation, tile.id);
+    if (descriptorPresentation.mode === 'legacy') {
+      assert.equal(receipt.presentation, undefined, `${tile.id} legacy receipt unexpectedly declares presentation metadata`);
+      assert.equal(glb.extras?.presentation, undefined, `${tile.id} legacy GLB unexpectedly declares presentation metadata`);
+    } else {
+      const presentationIntegrity = verifyReceiptPresentation(receipt, descriptorPresentation, tile.id);
+      const authorizationBytes = await readFile(path.join(ROOT, descriptorPresentation.authorization.path));
+      assert.equal(`sha256:${createHash('sha256').update(authorizationBytes).digest('hex')}`, descriptorPresentation.authorization.sha256, `${tile.id} authorization hash drifted`);
+      const authorization = JSON.parse(authorizationBytes);
+      const productionDescriptor = {
+        id: tile.id,
+        gridIndex: tile.gridIndex,
+        origin: tile.originEpsg26910VerticalMetres,
+        glbSha256: tile.lod0.sha256,
+        presentation: descriptorPresentation,
+      };
+      verifyProductionPresentationAuthorization(authorization, productionDescriptor, presentationIntegrity, tile.id);
+      expectReject(() => verifyProductionPresentationAuthorization({ ...authorization, productionPromotionAuthorized: false }, productionDescriptor, presentationIntegrity, tile.id), /authorization document is invalid/);
+      expectReject(() => verifyProductionPresentationAuthorization({ ...authorization, candidateProof: { ...authorization.candidateProof, glb: { ...authorization.candidateProof.glb, sha256: `sha256:${'0'.repeat(64)}` } } }, productionDescriptor, presentationIntegrity, tile.id), /artifact or presentation ledger drifted/);
+      assert.deepEqual(glb.extras?.presentation, SF_BUILDING_SOURCE_TONE_CONTRACT_V1, `${tile.id} production GLB presentation contract drifted`);
+    }
     assert.equal(glb.extras?.tileId, tile.id, `${tile.id} GLB tile identity drifted`);
     assert.equal(glb.extras?.horizontalCrs, 'EPSG:26910', `${tile.id} GLB CRS drifted`);
     assert.equal(glb.extras?.unitsPerMetre, 1, `${tile.id} GLB scale drifted`);
     assert.deepEqual(glb.extras?.tileOriginEpsg26910VerticalMetres, tile.originEpsg26910VerticalMetres, `${tile.id} GLB origin drifted`);
     for (const mesh of glb.meshes || []) for (const primitive of mesh.primitives || []) {
-      assert.equal(primitive.attributes?._SF_SOURCE_TONE_V1, undefined, `${tile.id} legacy GLB unexpectedly carries a source-tone attribute`);
+      if (descriptorPresentation.mode === 'legacy') assert.equal(primitive.attributes?._SF_SOURCE_TONE_V1, undefined, `${tile.id} legacy GLB unexpectedly carries a source-tone attribute`);
+      else if (primitive.extras?.category === 'buildings') assert.notEqual(primitive.attributes?._SF_SOURCE_TONE_V1, undefined, `${tile.id} source-tone building primitive is missing its attribute`);
+      else assert.equal(primitive.attributes?._SF_SOURCE_TONE_V1, undefined, `${tile.id} source-tone attribute leaked onto ${primitive.extras?.category ?? 'unknown'}`);
     }
   }));
 }
@@ -181,7 +230,9 @@ for (const tile of proofManifest.tiles) {
   const authorizedMetricReceipt = structuredClone(metricReceipt);
   authorizedMetricReceipt.presentation.productionWriteEnabled = true;
   authorizedMetricReceipt.presentation.productionPromotionAuthorized = true;
-  const authorizedDescriptorPresentation = normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contractSha256: receipt.contractSha256, contract: receipt.contract }, tile.tile);
+  authorizedMetricReceipt.presentation.authorization = TEST_AUTHORIZATION;
+  authorizedMetricReceipt.presentation.boundaryMask = TEST_BOUNDARY_MASK;
+  const authorizedDescriptorPresentation = normalizeTilePresentation({ mode: 'source-tone-v1', productionWriteEnabled: true, productionPromotionAuthorized: true, contractSha256: receipt.contractSha256, contract: receipt.contract, authorization: TEST_AUTHORIZATION, boundaryMask: TEST_BOUNDARY_MASK }, tile.tile);
   const authorizedPresentationIntegrity = verifyReceiptPresentation(authorizedMetricReceipt, authorizedDescriptorPresentation, tile.tile);
   const candidateBytes = await readFile(path.join(ROOT, tile.artifact.path));
   const candidateGltf = await new GLTFLoader().parseAsync(candidateBytes.buffer.slice(candidateBytes.byteOffset, candidateBytes.byteOffset + candidateBytes.byteLength), '');
@@ -195,14 +246,17 @@ for (const tile of proofManifest.tiles) {
 
 const receiptFetch = mainSource.indexOf('const receiptArtifact = await fetchVerifiedBytes(');
 const receiptVerify = mainSource.indexOf('verifyReceiptPresentation(receipt, descriptor.presentation');
+const authorizationFetch = mainSource.indexOf('const authorizationArtifact = await fetchVerifiedBytes(');
+const authorizationVerify = mainSource.indexOf('verifyProductionPresentationAuthorization(');
 const glbFetch = mainSource.indexOf('const glbArtifact = await fetchVerifiedBytes(');
 const glbParse = mainSource.indexOf('gltfLoader.parseAsync(glbArtifact.bytes');
 const metricGlbVerify = mainSource.indexOf('verifyParsedGlbMetricContract(gltf, descriptor');
 const glbVerify = mainSource.indexOf('verifyParsedGlbPresentation(gltf, descriptor.presentation');
-assert(receiptFetch >= 0 && receiptVerify > receiptFetch && glbFetch > receiptVerify && glbParse > glbFetch && metricGlbVerify > glbParse && glbVerify > metricGlbVerify, 'Receipt authorization must be verified before GLB fetch/parsing and metric/presentation validation');
+assert(receiptFetch >= 0 && receiptVerify > receiptFetch && authorizationFetch > receiptVerify && authorizationVerify > authorizationFetch && glbFetch > authorizationVerify && glbParse > glbFetch && metricGlbVerify > glbParse && glbVerify > metricGlbVerify, 'Receipt and byte-locked production authorization must be verified before GLB fetch/parsing and metric/presentation validation');
+assert(mainSource.includes('verifyStaticPresentationAdjacency(tileDescriptors);'));
 assert(mainSource.includes('collectSourceToneAttributeBytes(gltf, descriptor.presentation, descriptor.id)'));
 assert(mainSource.includes('source-tone attribute SHA-256 does not match its receipt ledger'));
-assert(mainSource.includes("import { applyLegacyBuildingPresentation, applySourceToneBuildingPresentation } from './building-presentation-material.js'"));
+assert(mainSource.includes('SF_SOURCE_TONE_LEGACY_GRID_BOUNDARY_MASK_V1,') && mainSource.includes('applyLegacyBuildingPresentation,') && mainSource.includes('applySourceToneBuildingPresentation,') && mainSource.includes("} from './building-presentation-material.js';"));
 assert(mainSource.includes('applyLegacyBuildingPresentation(material, {'));
 assert(mainSource.includes("if (descriptor.presentation.mode === 'source-tone-v1') applySourceToneBuildingPresentation(node.material, {"));
 assert(mainSource.includes('policySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256'));
@@ -221,7 +275,7 @@ assert(materialSource.includes('sf-map-building-source-tone-v1:${policySha256}')
 process.stdout.write(`${JSON.stringify({
   result: 'SF map presentation contract passed',
   productionManifestTiles: manifest.tiles.length,
-  productionPresentationModes: { legacyImplicit: manifest.tiles.length, sourceToneV1: 0 },
+  productionPresentationModes: { legacyImplicit: manifest.tiles.length - productionSourceToneTiles.length, sourceToneV1: productionSourceToneTiles.length },
   productionGlbHeadersAndReceiptsAudited: manifest.tiles.length,
   proofArtifactsRejectedForProduction: proofManifest.tiles.length,
   sourceTonePolicySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256,

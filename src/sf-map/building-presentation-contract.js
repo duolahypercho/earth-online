@@ -23,6 +23,53 @@ function fail(tileId, message) {
   throw new Error(`${tileId} ${message}`);
 }
 
+function sha256(value) {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/i.test(value);
+}
+
+function normalizeAuthorizationReference(value, tileId) {
+  if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !value.id.length
+    || typeof value.path !== 'string' || !/^public\/data\/world\/source-locks\/[a-z0-9._-]+\.json$/i.test(value.path)
+    || !sha256(value.sha256)) fail(tileId, 'source-tone production authorization reference is invalid');
+  return deepFreeze({ id: value.id, path: value.path, sha256: value.sha256.toLowerCase() });
+}
+
+function normalizeBoundaryMask(value, tileId) {
+  if (!value || typeof value !== 'object'
+    || value.id !== 'source-tone-legacy-grid-boundary-mask-v1'
+    || value.adjacencyPolicy !== 'static-manifest-cardinal-neighbours-v1'
+    || value.residencyInput !== false
+    || value.tileSizeMetres !== 384 || value.exactMatchBandMetres !== 4
+    || value.blendBandMetres !== 16 || value.legacyGridCellMetres !== 62) {
+    fail(tileId, 'source-tone boundary mask does not match the reviewed static v1 policy');
+  }
+  const sides = [...new Set(value.legacyNeighbourSides ?? [])].sort();
+  const neighbours = [...new Set(value.legacyNeighbourTileIds ?? [])].sort();
+  const closure = [...new Set(value.directClosureTileIds ?? [])].sort();
+  const sharedWays = [...new Set(value.directSharedBuildingWayIds ?? [])].sort((a, b) => a - b);
+  if (!sides.length || !sides.every((side) => ['east', 'north', 'south', 'west'].includes(side))) fail(tileId, 'source-tone boundary mask has invalid cardinal sides');
+  if (neighbours.length !== sides.length || !neighbours.every((id) => typeof id === 'string' && id.startsWith('epsg26910-'))) fail(tileId, 'source-tone boundary mask neighbour inventory is invalid');
+  if (!closure.length || !closure.every((id) => typeof id === 'string' && id.startsWith('epsg26910-'))) fail(tileId, 'source-tone boundary mask closure inventory is invalid');
+  if (!sharedWays.length || !sharedWays.every((id) => Number.isSafeInteger(id) && id >= 0)) fail(tileId, 'source-tone boundary mask shared source-way inventory is invalid');
+  if (!value.seamLedger || typeof value.seamLedger.path !== 'string'
+    || !/^public\/data\/world\/preview-artifacts\/[a-z0-9._/-]+$/i.test(value.seamLedger.path)
+    || value.seamLedger.path.includes('..') || !sha256(value.seamLedger.sha256)) fail(tileId, 'source-tone boundary mask seam ledger is not byte-locked');
+  return deepFreeze({
+    id: value.id,
+    adjacencyPolicy: value.adjacencyPolicy,
+    residencyInput: false,
+    tileSizeMetres: 384,
+    exactMatchBandMetres: 4,
+    blendBandMetres: 16,
+    legacyGridCellMetres: 62,
+    legacyNeighbourSides: sides,
+    legacyNeighbourTileIds: neighbours,
+    directClosureTileIds: closure,
+    directSharedBuildingWayIds: sharedWays,
+    seamLedger: { path: value.seamLedger.path, sha256: value.seamLedger.sha256.toLowerCase() },
+  });
+}
+
 export const SF_BUILDING_SOURCE_TONE_POLICY_V1 = deepFreeze({
   id: 'osm-way-id-modulo-4-v1',
   formula: 'Number(BigInt(sourceOsmWayId) % 4n)',
@@ -81,6 +128,8 @@ export function normalizeTilePresentation(rawPresentation, tileId = 'metric tile
   if (rawPresentation.productionWriteEnabled !== true || rawPresentation.productionPromotionAuthorized !== true) fail(tileId, 'source-tone presentation is not production-authorized');
   if (rawPresentation.contractSha256 !== SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1) fail(tileId, 'source-tone manifest contract SHA-256 does not match the reviewed schema');
   if (!exactObject(rawPresentation.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1)) fail(tileId, 'source-tone manifest contract does not match the reviewed schema');
+  const authorization = normalizeAuthorizationReference(rawPresentation.authorization, tileId);
+  const boundaryMask = normalizeBoundaryMask(rawPresentation.boundaryMask, tileId);
   return deepFreeze({
     mode: 'source-tone-v1',
     status: 'production-authorized',
@@ -88,6 +137,8 @@ export function normalizeTilePresentation(rawPresentation, tileId = 'metric tile
     productionPromotionAuthorized: true,
     contractSha256: SF_BUILDING_SOURCE_TONE_CONTRACT_SHA256_V1,
     contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
+    authorization,
+    boundaryMask,
   });
 }
 
@@ -103,8 +154,34 @@ export function verifyReceiptPresentation(receipt, descriptorPresentation, tileI
   }
   if (presentation.contractSha256 !== descriptorPresentation.contractSha256) fail(tileId, 'source-tone receipt contract SHA-256 does not match the manifest');
   if (!exactObject(presentation.contract, descriptorPresentation.contract)) fail(tileId, 'source-tone receipt contract does not match the manifest');
+  if (!exactObject(presentation.authorization, descriptorPresentation.authorization)) fail(tileId, 'source-tone receipt authorization does not match the manifest');
+  if (!exactObject(presentation.boundaryMask, descriptorPresentation.boundaryMask)) fail(tileId, 'source-tone receipt boundary mask does not match the manifest');
   if (!/^sha256:[a-f0-9]{64}$/i.test(presentation.ledgers?.sourceToneAttributeSha256 || '')) fail(tileId, 'source-tone receipt does not bind the attribute payload with SHA-256');
   return { mode: 'source-tone-v1', status: 'verified-production-authorization', sourceToneAttributeSha256: presentation.ledgers.sourceToneAttributeSha256 };
+}
+
+export function verifyProductionPresentationAuthorization(authorization, descriptor, presentationIntegrity, tileId = descriptor?.id || 'metric tile') {
+  const expected = descriptor?.presentation?.authorization;
+  if (!expected || authorization?.kind !== 'sf-building-source-tone-production-authorization'
+    || authorization.id !== expected.id || authorization.status !== 'production-authorized-bounded-ferry-mixed-mode'
+    || authorization.productionWriteEnabled !== true || authorization.productionPromotionAuthorized !== true) {
+    fail(tileId, 'source-tone production authorization document is invalid');
+  }
+  if (authorization.tile?.id !== tileId || !exactObject(authorization.tile.gridIndex, descriptor.gridIndex)
+    || !exactObject(authorization.tile.originEpsg26910VerticalMetres, descriptor.origin)
+    || authorization.tile.horizontalCrs !== 'EPSG:26910' || authorization.tile.unitsPerMetre !== 1) {
+    fail(tileId, 'source-tone authorization metric tile identity drifted');
+  }
+  if (authorization.presentation?.contractSha256 !== descriptor.presentation.contractSha256
+    || authorization.presentation?.policySha256 !== descriptor.presentation.contract.derivation.policySha256
+    || authorization.presentation?.sourceToneAttributeSha256 !== presentationIntegrity.sourceToneAttributeSha256
+    || authorization.candidateProof?.glb?.sha256 !== descriptor.glbSha256) {
+    fail(tileId, 'source-tone authorization artifact or presentation ledger drifted');
+  }
+  if (!exactObject(normalizeBoundaryMask(authorization.boundaryMask, tileId), descriptor.presentation.boundaryMask)) {
+    fail(tileId, 'source-tone authorization boundary mask drifted');
+  }
+  return { id: authorization.id, status: authorization.status, sha256: expected.sha256 };
 }
 
 export function verifyParsedGlbPresentation(gltf, descriptorPresentation, tileId = 'metric tile') {
