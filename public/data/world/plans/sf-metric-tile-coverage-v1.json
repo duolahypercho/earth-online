@@ -86,6 +86,32 @@
           560005.9999667143,
           4180006.0000295797
         ]
+      },
+      {
+        "id": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json",
+        "lockSha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c",
+        "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json",
+        "sourceLockSha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665",
+        "rasterBoundsEpsg26910Metres": [
+          539993.999977164,
+          4169994.0000295797,
+          550005.999977164,
+          4180006.0000295797
+        ]
+      },
+      {
+        "id": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json",
+        "lockSha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df",
+        "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json",
+        "sourceLockSha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24",
+        "rasterBoundsEpsg26910Metres": [
+          549993.9999667143,
+          4169994.0000295797,
+          560005.9999667143,
+          4180006.0000295797
+        ]
       }
     ]
   },
@@ -100,8 +126,8 @@
     "landIntersectingTiles": 981,
     "coastalContextTiles": 264,
     "totalPlannedTiles": 1245,
-    "buildReadyTiles": 814,
-    "missingTerrainTiles": 431
+    "buildReadyTiles": 839,
+    "missingTerrainTiles": 406
   },
   "tiles": [
     {
@@ -769,7 +795,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -789,7 +815,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -809,8 +835,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -829,8 +855,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -849,8 +875,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -869,8 +895,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -889,8 +915,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -909,8 +935,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -929,8 +955,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -949,8 +975,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -969,8 +995,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -989,8 +1015,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1009,8 +1035,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1029,8 +1055,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1049,8 +1075,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1069,8 +1095,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1089,8 +1115,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418",
+        "buildReady": true
       }
     },
     {
@@ -1109,8 +1135,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-and-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x54y418-and-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1129,8 +1155,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1149,8 +1175,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1169,8 +1195,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1189,8 +1215,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1209,8 +1235,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1229,8 +1255,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1249,8 +1275,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1269,8 +1295,8 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -1289,7 +1315,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1309,7 +1335,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1329,7 +1355,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1349,7 +1375,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1369,7 +1395,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1389,7 +1415,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1469,7 +1495,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1489,7 +1515,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1511,7 +1537,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1533,7 +1559,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1555,7 +1581,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -1577,7 +1603,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2039,8 +2065,8 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
-        "buildReady": false
+        "terrainElevation": "available-from-byte-locked-3dep-californiagaps-x55y418",
+        "buildReady": true
       }
     },
     {
@@ -2061,7 +2087,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2083,7 +2109,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2105,7 +2131,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2127,7 +2153,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2149,7 +2175,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2169,7 +2195,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2189,7 +2215,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2211,7 +2237,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2805,7 +2831,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2827,7 +2853,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2849,7 +2875,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2871,7 +2897,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2891,7 +2917,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2911,7 +2937,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2931,7 +2957,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2951,7 +2977,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2971,7 +2997,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -2993,7 +3019,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3631,7 +3657,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3653,7 +3679,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3673,7 +3699,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3695,7 +3721,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3717,7 +3743,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3737,7 +3763,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3757,7 +3783,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3777,7 +3803,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -3799,7 +3825,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4437,7 +4463,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4459,7 +4485,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4481,7 +4507,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4503,7 +4529,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4525,7 +4551,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4547,7 +4573,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4567,7 +4593,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4667,7 +4693,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -4689,7 +4715,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5305,7 +5331,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5327,7 +5353,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5349,7 +5375,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5415,7 +5441,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5437,7 +5463,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5457,7 +5483,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5561,7 +5587,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5581,7 +5607,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -5603,7 +5629,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6241,7 +6267,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6263,7 +6289,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6329,7 +6355,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6351,7 +6377,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6371,7 +6397,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6475,7 +6501,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6497,7 +6523,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -6519,7 +6545,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -7267,7 +7293,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -7287,7 +7313,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -7387,7 +7413,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -7409,7 +7435,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8113,7 +8139,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8135,7 +8161,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8157,7 +8183,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8179,7 +8205,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8199,7 +8225,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8219,7 +8245,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8241,7 +8267,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8923,7 +8949,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8945,7 +8971,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8967,7 +8993,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -8987,7 +9013,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9007,7 +9033,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9027,7 +9053,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9047,7 +9073,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9069,7 +9095,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9751,7 +9777,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9773,7 +9799,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9795,7 +9821,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9815,7 +9841,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9835,7 +9861,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -9857,7 +9883,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -10561,7 +10587,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -10583,7 +10609,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -10603,7 +10629,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -10623,7 +10649,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -10645,7 +10671,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11327,7 +11353,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11349,7 +11375,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11369,7 +11395,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11389,7 +11415,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11409,7 +11435,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -11431,7 +11457,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12113,7 +12139,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12133,7 +12159,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12153,7 +12179,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12173,7 +12199,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12195,7 +12221,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12877,7 +12903,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12897,7 +12923,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12917,7 +12943,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -12939,7 +12965,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -13619,7 +13645,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -13639,7 +13665,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -13739,7 +13765,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -13759,7 +13785,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -14461,7 +14487,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -14587,7 +14613,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -14609,7 +14635,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -15291,7 +15317,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -15311,7 +15337,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-contains-nodata",
         "buildReady": false
       }
     },
@@ -15457,7 +15483,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-and-x54y419-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-and-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -15479,7 +15505,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x54y418-and-x54y419-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x54y418-and-x54y418-and-x54y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -16161,7 +16187,7 @@
       ],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-and-x55y419-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-and-x55y419-contains-nodata",
         "buildReady": false
       }
     },
@@ -16181,7 +16207,7 @@
       "landPolygonIndices": [],
       "sourceReadiness": {
         "horizontalGeometry": "available-from-byte-locked-datasf-and-osm",
-        "terrainElevation": "byte-locked-3dep-x55y418-and-x55y419-contains-nodata",
+        "terrainElevation": "byte-locked-3dep-californiagaps-x55y418-and-x55y418-and-x55y419-contains-nodata",
         "buildReady": false
       }
     },

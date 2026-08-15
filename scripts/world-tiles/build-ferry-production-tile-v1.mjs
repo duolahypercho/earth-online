@@ -26,11 +26,13 @@ const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
 const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json');
 const GEOMETRY_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json');
 const TERRAIN_SOURCES = [
-  ['public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
-  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
-  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'],
-  ['public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'],
-].map(([sourceLockPath, elevationLockPath]) => ({ sourceLockPath: path.join(ROOT, sourceLockPath), elevationLockPath: path.join(ROOT, elevationLockPath) }));
+  ['x55y419', 10, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
+  ['x54y419', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
+  ['x54y418', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json'],
+  ['x55y418', 10, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json'],
+  ['californiagaps-x54y418', 5, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json'],
+  ['californiagaps-x55y418', 5, 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json'],
+].map(([label, priority, sourceLockPath, elevationLockPath], sourceOrder) => ({ label, priority, sourceOrder, sourceLockPath: path.join(ROOT, sourceLockPath), elevationLockPath: path.join(ROOT, elevationLockPath) }));
 const FERRY_OUTPUT_DIR = path.join(ROOT, 'public/data/world/production-artifacts/ferry-production-tile-v1');
 const METRIC_TILE_OUTPUT_ROOT = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1');
 // OSM ways are node-referenced. A building or long road segment can cross the
@@ -211,7 +213,7 @@ function verifiedTerrainDigestFor(sourceLock, verifiedTerrainSourceDigests) {
   return verified;
 }
 
-async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, verifiedTerrainDigest = null) {
+async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, regionBounds, verifiedTerrainDigest = null) {
   const rawPath = path.join(ROOT, sourceLock.raster.localRawCache);
   const raw = verifiedTerrainDigest ?? await sha256File(rawPath);
   assert.equal(raw.path ?? sourceLock.raster.localRawCache, sourceLock.raster.localRawCache, `GeoTIFF path does not match lock ${sourceLock.id}`);
@@ -220,6 +222,19 @@ async function openTerrain(sourceLock, rasterSha256, elevationLock, descriptor, 
   let reader;
   try {
     reader = await openGeoTiffWindowReader(rawPath); const rasterBounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
+    if (regionBounds[0] < rasterBounds[0] || regionBounds[1] < rasterBounds[1] || regionBounds[2] > rasterBounds[2] || regionBounds[3] > rasterBounds[3]) {
+      await reader.close(); reader = null;
+      if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after rejected coverage window' });
+      return null;
+    }
+    const validationTopLeft = reader.modelToPixel(regionBounds[0], regionBounds[3]); const validationBottomRight = reader.modelToPixel(regionBounds[2], regionBounds[1]);
+    const validationColumn = Math.max(0, Math.floor(validationTopLeft.column)); const validationRow = Math.max(0, Math.floor(validationTopLeft.row)); const validationRight = Math.min(reader.metadata.width, Math.ceil(validationBottomRight.column) + 1); const validationBottom = Math.min(reader.metadata.height, Math.ceil(validationBottomRight.row) + 1);
+    const validationWindow = await reader.readWindow({ column: validationColumn, row: validationRow, width: validationRight - validationColumn, height: validationBottom - validationRow });
+    if (!validationWindow.values.every((value) => value !== validationWindow.nodata && Number.isFinite(value))) {
+      await reader.close(); reader = null;
+      if (verifiedTerrainDigest) await assertVerifiedTerrainSourceUnchanged(verifiedTerrainDigest, { pathname: rawPath, phase: 'after rejected no-data window' });
+      return null;
+    }
     const clippedBounds = [Math.max(TILE.minE - TILE.sourceBuffer - 2, rasterBounds[0]), Math.max(TILE.minN - TILE.sourceBuffer - 2, rasterBounds[1]), Math.min(TILE.minE + TILE.size + TILE.sourceBuffer + 2, rasterBounds[2]), Math.min(TILE.minN + TILE.size + TILE.sourceBuffer + 2, rasterBounds[3])];
     assert(clippedBounds[0] < clippedBounds[2] && clippedBounds[1] < clippedBounds[3], `Terrain source ${sourceLock.id} does not overlap ${TILE.id}`);
     const a = reader.modelToPixel(clippedBounds[0], clippedBounds[3]); const b = reader.modelToPixel(clippedBounds[2], clippedBounds[1]);
@@ -259,10 +274,43 @@ function terrainCellKey(easting, northing) {
   return `${Math.floor((easting - 1e-7) / 10000)},${Math.floor((northing - 1e-7) / 10000)}`;
 }
 
+function terrainOwnershipRegions() {
+  const sourceBounds = [TILE.minE - TILE.sourceBuffer - 2, TILE.minN - TILE.sourceBuffer - 2, TILE.minE + TILE.size + TILE.sourceBuffer + 2, TILE.minN + TILE.size + TILE.sourceBuffer + 2];
+  const minCellE = Math.floor((sourceBounds[0] - 1e-7) / 10000); const maxCellE = Math.floor((sourceBounds[2] - 1e-7) / 10000);
+  const minCellN = Math.floor((sourceBounds[1] - 1e-7) / 10000); const maxCellN = Math.floor((sourceBounds[3] - 1e-7) / 10000);
+  const regions = [];
+  for (let cellN = minCellN; cellN <= maxCellN; cellN += 1) for (let cellE = minCellE; cellE <= maxCellE; cellE += 1) {
+    const bounds = [Math.max(sourceBounds[0], cellE * 10000), Math.max(sourceBounds[1], cellN * 10000), Math.min(sourceBounds[2], (cellE + 1) * 10000), Math.min(sourceBounds[3], (cellN + 1) * 10000)];
+    if (bounds[0] < bounds[2] && bounds[1] < bounds[3]) regions.push({ cellKey: `${cellE},${cellN}`, bounds });
+  }
+  return regions;
+}
+
 async function openTerrainMosaic(descriptors) {
   const sources = [];
   try {
-    for (const descriptor of descriptors) sources.push({ ...await openTerrain(descriptor.sourceLock, descriptor.sourceLock.raster.sha256, descriptor.elevationLock, descriptor, descriptor.verifiedTerrainDigest), cellKey: terrainCellKey((descriptor.bounds[0] + descriptor.bounds[2]) / 2, (descriptor.bounds[1] + descriptor.bounds[3]) / 2) });
+    const descriptorsByCell = new Map();
+    for (const descriptor of descriptors) {
+      const cellKey = terrainCellKey((descriptor.bounds[0] + descriptor.bounds[2]) / 2, (descriptor.bounds[1] + descriptor.bounds[3]) / 2);
+      const candidates = descriptorsByCell.get(cellKey) ?? [];
+      candidates.push(descriptor);
+      candidates.sort((a, b) => b.priority - a.priority || a.label.localeCompare(b.label));
+      descriptorsByCell.set(cellKey, candidates);
+    }
+    for (const region of terrainOwnershipRegions()) {
+      const candidates = descriptorsByCell.get(region.cellKey) ?? [];
+      assert(candidates.length, `No byte-locked terrain source owns ${region.cellKey} for ${TILE.id}`);
+      let selected = null;
+      for (const descriptor of candidates) {
+        const source = await openTerrain(descriptor.sourceLock, descriptor.sourceLock.raster.sha256, descriptor.elevationLock, descriptor, region.bounds, descriptor.verifiedTerrainDigest);
+        if (!source) continue;
+        selected = { ...source, cellKey: region.cellKey };
+        sources.push(selected);
+        break;
+      }
+      assert(selected, `No fully finite byte-locked terrain source owns ${region.cellKey} for ${TILE.id}`);
+    }
+    sources.sort((a, b) => a.descriptor.sourceOrder - b.descriptor.sourceOrder || a.cellKey.localeCompare(b.cellKey));
   } catch (error) {
     await closeTerrainSources(sources);
     throw error;
