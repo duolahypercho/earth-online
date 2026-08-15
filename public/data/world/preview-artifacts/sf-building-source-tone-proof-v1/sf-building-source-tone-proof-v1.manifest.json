@@ -1,0 +1,94 @@
+{
+  "contract": {
+    "attribute": {
+      "componentType": 5121,
+      "domain": [
+        0,
+        3
+      ],
+      "gltfSemantic": "_SF_SOURCE_TONE_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_source_tone_v1",
+      "type": "SCALAR"
+    },
+    "derivation": {
+      "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+      "id": "osm-way-id-modulo-4-v1",
+      "input": "byte-locked OSM source way identity",
+      "outputDomain": [
+        0,
+        3
+      ],
+      "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+      "presentationOnly": true,
+      "sourceColourClaim": false
+    },
+    "schema": "sf-building-source-tone-v1",
+    "status": "preview-proof-only-not-production"
+  },
+  "kind": "sf-building-source-tone-proof-manifest",
+  "productionManifestTileCount": 798,
+  "productionPromotionAuthorized": false,
+  "schemaVersion": 1,
+  "status": "preview-proof-only-not-production",
+  "tiles": [
+    {
+      "counts": {
+        "buildings": 24,
+        "indices": 2163,
+        "primitives": 2,
+        "tones": [
+          4,
+          8,
+          7,
+          5
+        ],
+        "triangles": 721,
+        "vertices": 514
+      },
+      "ledgers": {
+        "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+        "sourcePositionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+        "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59",
+        "sourceToneRecordsSha256": "sha256:5bc8c7fcf9db0d391447a4d13a1cae75629f03e067144e9e13e1eae2d7a04e96"
+      },
+      "proofArtifact": {
+        "bytes": 25644,
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-source-tone-proof.glb",
+        "sha256": "sha256:da32dfa63479a51e886621ac14621bec35f91f1346355ca8f07453e46e3a16cc"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-source-tone-proof.receipt.json",
+      "role": "ferry",
+      "tile": "epsg26910-1441-10893"
+    },
+    {
+      "counts": {
+        "buildings": 390,
+        "indices": 35508,
+        "primitives": 2,
+        "tones": [
+          94,
+          102,
+          98,
+          96
+        ],
+        "triangles": 11836,
+        "vertices": 8412
+      },
+      "ledgers": {
+        "sourceIndexSha256": "sha256:48858f61d3e3938c204e800a3a1c4209187512ead57508e36cbadcd64cef1d38",
+        "sourcePositionFloat32Sha256": "sha256:9afa3388433275fd660c61496418df7b01473e268227a1eeca98a4b3f630939a",
+        "sourceToneAttributeSha256": "sha256:add4e784f8fdf1c6cadbb80ca41f390ecb3bfed8c08de69a9362e759e2d0e675",
+        "sourceToneRecordsSha256": "sha256:a718684b5ee4333e779d9fadac53c08f955560abb2b76324e7cde7f190a9bd4f"
+      },
+      "proofArtifact": {
+        "bytes": 352996,
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.glb",
+        "sha256": "sha256:10fe23ce8bbfb466fc51bf4dace05edada977f1ab8bcc324116b802ee3ba7873"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-source-tone-proof.receipt.json",
+      "role": "district",
+      "tile": "epsg26910-1430-10882"
+    }
+  ]
+}

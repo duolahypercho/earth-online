@@ -1,0 +1,330 @@
+{
+  "contract": {
+    "attribute": {
+      "componentType": 5121,
+      "domain": [
+        0,
+        3
+      ],
+      "gltfSemantic": "_SF_SOURCE_TONE_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_source_tone_v1",
+      "type": "SCALAR"
+    },
+    "derivation": {
+      "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+      "id": "osm-way-id-modulo-4-v1",
+      "input": "byte-locked OSM source way identity",
+      "outputDomain": [
+        0,
+        3
+      ],
+      "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+      "presentationOnly": true,
+      "sourceColourClaim": false
+    },
+    "schema": "sf-building-source-tone-v1",
+    "status": "preview-proof-only-not-production"
+  },
+  "counts": {
+    "buildings": 24,
+    "indices": 2163,
+    "primitives": 2,
+    "tones": [
+      4,
+      8,
+      7,
+      5
+    ],
+    "triangles": 721,
+    "vertices": 514
+  },
+  "invariants": {
+    "gameplayOrCollisionChanged": false,
+    "legacyProofBytesExact": true,
+    "productionDefaultGlbBytesExact": true,
+    "sourceGeometryMoved": false,
+    "sourceIndexBytesExact": true,
+    "sourcePositionFloat32BytesExact": true,
+    "sourceToneAttributeBytesExact": true,
+    "twoBuildProofBytesExact": true
+  },
+  "kind": "sf-building-source-tone-proof-receipt",
+  "ledgers": {
+    "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+    "sourcePositionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+    "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59",
+    "sourceToneRecordsSha256": "sha256:5bc8c7fcf9db0d391447a4d13a1cae75629f03e067144e9e13e1eae2d7a04e96"
+  },
+  "legacyProofReference": {
+    "exactLegacyBytesPreserved": true,
+    "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
+    "receiptPath": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.receipt.json",
+    "receiptSha256": "sha256:3311a4ef3ec8434d07bddd3c4290c7ab672d02ef16b467e7e3528a6873f06fcf",
+    "sha256": "sha256:08fcc82266a6e67c7127b46a79790b63e231d60af6afa87a86efded59c11713a"
+  },
+  "productionPromotionAuthorized": false,
+  "productionReference": {
+    "declaredSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310",
+    "exactDefaultBytesPreserved": true,
+    "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+    "receiptPath": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
+    "receiptSha256": "sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd",
+    "verifiedSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+  },
+  "proofArtifact": {
+    "bytes": 25644,
+    "path": "public/data/world/preview-artifacts/sf-building-source-tone-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-source-tone-proof.glb",
+    "sha256": "sha256:da32dfa63479a51e886621ac14621bec35f91f1346355ca8f07453e46e3a16cc"
+  },
+  "schemaVersion": 1,
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "purpose": "geometry",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "purpose": "horizontal-coordinate-operation",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    {
+      "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+      "purpose": "terrain-elevation",
+      "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619"
+    }
+  ],
+  "sourceToneRecords": [
+    {
+      "ordinal": 0,
+      "sourceFeatureId": "way/32862406",
+      "sourceGeometrySha256": "sha256:8368eaf19ffdae060d089849d3d8637103115a418b15e2f15a5e41088aa5d058",
+      "sourceTagsSha256": "sha256:72e2dce3db02af133212a9532c2662312dc202415a5b41e59ab526fa621c6280",
+      "sourceToneV1": 2,
+      "vertexCount": 56,
+      "vertexStart": 0
+    },
+    {
+      "ordinal": 1,
+      "sourceFeatureId": "way/32862467",
+      "sourceGeometrySha256": "sha256:fd12cd056af87a9a4eb81cfb0544e4ad51f7b1c698dc70f2faec1ca9c4e10194",
+      "sourceTagsSha256": "sha256:0f10055c443abac21ca8a6aefad5968828e499c0274eec2a23401ebb50576ce3",
+      "sourceToneV1": 3,
+      "vertexCount": 28,
+      "vertexStart": 56
+    },
+    {
+      "ordinal": 2,
+      "sourceFeatureId": "way/32862485",
+      "sourceGeometrySha256": "sha256:a3af321163ee278e9c1c1cae193e543e942c2b2e1b26d5b87c97d37af5b7d021",
+      "sourceTagsSha256": "sha256:3ce94af8d1ffb30c2e6acb411e790c18a94bf8bc5d448d1a85206cf526900e26",
+      "sourceToneV1": 1,
+      "vertexCount": 32,
+      "vertexStart": 84
+    },
+    {
+      "ordinal": 3,
+      "sourceFeatureId": "way/44106213",
+      "sourceGeometrySha256": "sha256:cc8345dab30522f88c2af787ed6c1f7c7749b3e51267bc23a52ab1447f465b60",
+      "sourceTagsSha256": "sha256:b99c295ea2d31b60b44730225ffdf269446d6ba6416edaea8b08ad3613b7cae2",
+      "sourceToneV1": 1,
+      "vertexCount": 30,
+      "vertexStart": 116
+    },
+    {
+      "ordinal": 4,
+      "sourceFeatureId": "way/104599975",
+      "sourceGeometrySha256": "sha256:91074efb0a49b06e7e7df015f36e474c7a5c174df50587938c39f4d5b4f55756",
+      "sourceTagsSha256": "sha256:6c4801172f3366656449af61861fef0d485a2180607321387e2a496c59593b2f",
+      "sourceToneV1": 3,
+      "vertexCount": 12,
+      "vertexStart": 146
+    },
+    {
+      "ordinal": 5,
+      "sourceFeatureId": "way/132238424",
+      "sourceGeometrySha256": "sha256:cea70171769982347572efcad68e06bf957cefd75d7baec3df11712c7cf483a1",
+      "sourceTagsSha256": "sha256:96628049bdff90dc2b62a341d43f50aabffcdbf63ddc9090e340ed54021c8861",
+      "sourceToneV1": 0,
+      "vertexCount": 18,
+      "vertexStart": 158
+    },
+    {
+      "ordinal": 6,
+      "sourceFeatureId": "way/192026932",
+      "sourceGeometrySha256": "sha256:283df7dc759ab6377cdcc8e3c7db1c3faad991d2a358d147a03c8285875119f2",
+      "sourceTagsSha256": "sha256:96628049bdff90dc2b62a341d43f50aabffcdbf63ddc9090e340ed54021c8861",
+      "sourceToneV1": 0,
+      "vertexCount": 8,
+      "vertexStart": 176
+    },
+    {
+      "ordinal": 7,
+      "sourceFeatureId": "way/192026938",
+      "sourceGeometrySha256": "sha256:6cd7abafbcd5456d820c23f8e36494f2b7dba2ccac09272cc546c7013c268b7a",
+      "sourceTagsSha256": "sha256:96628049bdff90dc2b62a341d43f50aabffcdbf63ddc9090e340ed54021c8861",
+      "sourceToneV1": 2,
+      "vertexCount": 20,
+      "vertexStart": 184
+    },
+    {
+      "ordinal": 8,
+      "sourceFeatureId": "way/193054131",
+      "sourceGeometrySha256": "sha256:a594ac0e8ef5b88e40d78c7e0d2361af63e44550aab9393ecf84a619dcc31100",
+      "sourceTagsSha256": "sha256:1246b3b9243d9f23c7496409e0c74770867c2b14e986c2fbdc07c33646ebdb31",
+      "sourceToneV1": 3,
+      "vertexCount": 12,
+      "vertexStart": 204
+    },
+    {
+      "ordinal": 9,
+      "sourceFeatureId": "way/193054132",
+      "sourceGeometrySha256": "sha256:cc17b477308deab3fe0c202dd4956c97c8dfe440b25d9ce601bc9b5303d2fb48",
+      "sourceTagsSha256": "sha256:f3edfd64e37cb3dee29a156772d7da2cb3c3184573242f2cd059376331bd0157",
+      "sourceToneV1": 0,
+      "vertexCount": 8,
+      "vertexStart": 216
+    },
+    {
+      "ordinal": 10,
+      "sourceFeatureId": "way/193054133",
+      "sourceGeometrySha256": "sha256:0d9bfe8c0272843598cb30a44b4d039c1de81a763b42c401c0489eede15a61c4",
+      "sourceTagsSha256": "sha256:63acf054902175c5be9044aced17e59f6205fcc9613abe05cce81eb893d18db4",
+      "sourceToneV1": 1,
+      "vertexCount": 12,
+      "vertexStart": 224
+    },
+    {
+      "ordinal": 11,
+      "sourceFeatureId": "way/193054134",
+      "sourceGeometrySha256": "sha256:75046baf1dd3007836daf049dc187f389eca3b556761c242c5c44e5bcecf877f",
+      "sourceTagsSha256": "sha256:96628049bdff90dc2b62a341d43f50aabffcdbf63ddc9090e340ed54021c8861",
+      "sourceToneV1": 2,
+      "vertexCount": 72,
+      "vertexStart": 236
+    },
+    {
+      "ordinal": 12,
+      "sourceFeatureId": "way/193054135",
+      "sourceGeometrySha256": "sha256:b7ef20db26c9cad0679cc76a11a1aae14d58ea0cafc741ad6904edf02fe2e667",
+      "sourceTagsSha256": "sha256:9f9014b2181858524a48ebca5fb3c8ba566321906f80713524ff35a651665aec",
+      "sourceToneV1": 3,
+      "vertexCount": 12,
+      "vertexStart": 308
+    },
+    {
+      "ordinal": 13,
+      "sourceFeatureId": "way/193054136",
+      "sourceGeometrySha256": "sha256:41927da44ec430fcab1668b8e2aef478bb12f28b2ab57941fc48a0932ed426e3",
+      "sourceTagsSha256": "sha256:a7761fc87047925be7d364906e0056474e9591dd5bd5a0c61fdce95347eb0e58",
+      "sourceToneV1": 0,
+      "vertexCount": 8,
+      "vertexStart": 320
+    },
+    {
+      "ordinal": 14,
+      "sourceFeatureId": "way/193054137",
+      "sourceGeometrySha256": "sha256:96bb937e811315e8845fab1d360f2a217604b8c907e5b647b97f6147a98493f3",
+      "sourceTagsSha256": "sha256:4aba4249135e0037ad6ae86bf4d83f76d3a69b1a885f0c5207b700604b4760ef",
+      "sourceToneV1": 1,
+      "vertexCount": 8,
+      "vertexStart": 328
+    },
+    {
+      "ordinal": 15,
+      "sourceFeatureId": "way/193054138",
+      "sourceGeometrySha256": "sha256:4c8225826691b7b162a4bfa49323f1d13cdecbb3d1d1eeb79ffdcc88b514d548",
+      "sourceTagsSha256": "sha256:7fbac0b7ad9cafffc6cf19aa1c59412ee6f50675c3c7f489d54f62eb923c045b",
+      "sourceToneV1": 2,
+      "vertexCount": 22,
+      "vertexStart": 336
+    },
+    {
+      "ordinal": 16,
+      "sourceFeatureId": "way/256969674",
+      "sourceGeometrySha256": "sha256:af1904667b16aedade706afc85bdb1003dbd46245da41038630c8407d6f6795b",
+      "sourceTagsSha256": "sha256:62a0a34b57b45cf35cfe71dc6e49593397a24fe53324b26ceea966a41c80da04",
+      "sourceToneV1": 2,
+      "vertexCount": 8,
+      "vertexStart": 358
+    },
+    {
+      "ordinal": 17,
+      "sourceFeatureId": "way/260290226",
+      "sourceGeometrySha256": "sha256:f438bd3edc219832a72820ecd90d1bb2491c2d12a5f70506c9029e50f555ee32",
+      "sourceTagsSha256": "sha256:e991e602bd5af90d593a20a6e3a05be02b461fa09bc028a1a6a98d1797744b52",
+      "sourceToneV1": 2,
+      "vertexCount": 24,
+      "vertexStart": 366
+    },
+    {
+      "ordinal": 18,
+      "sourceFeatureId": "way/558731934",
+      "sourceGeometrySha256": "sha256:2e96187fb4de8047cee09a63a44099c1f524f77715f7a601b5729bac1bd34d37",
+      "sourceTagsSha256": "sha256:e81c668b20525be260c877fd9317c5a4ba763cc969041e722935850e6a5630ef",
+      "sourceToneV1": 2,
+      "vertexCount": 46,
+      "vertexStart": 390
+    },
+    {
+      "ordinal": 19,
+      "sourceFeatureId": "way/979811981",
+      "sourceGeometrySha256": "sha256:802d6c13ad350cbce864baa5ddd2418792d5b2013da4857146e230e294b4e587",
+      "sourceTagsSha256": "sha256:2b08355fb9137fe4880f7f4100839a1dff5ca5b5e6afe36dd236d5644ee725af",
+      "sourceToneV1": 1,
+      "vertexCount": 8,
+      "vertexStart": 436
+    },
+    {
+      "ordinal": 20,
+      "sourceFeatureId": "way/979811987",
+      "sourceGeometrySha256": "sha256:b5178fe34619a4529968f3f3df8aa92a04d65b6643b0eda0851974549144d7c9",
+      "sourceTagsSha256": "sha256:2b08355fb9137fe4880f7f4100839a1dff5ca5b5e6afe36dd236d5644ee725af",
+      "sourceToneV1": 3,
+      "vertexCount": 8,
+      "vertexStart": 444
+    },
+    {
+      "ordinal": 21,
+      "sourceFeatureId": "way/1189071405",
+      "sourceGeometrySha256": "sha256:43fbf0ce4e3494cac1077a403b206d58c6768c8589ebc7d4fbc5fab906a0f8b8",
+      "sourceTagsSha256": "sha256:2b08355fb9137fe4880f7f4100839a1dff5ca5b5e6afe36dd236d5644ee725af",
+      "sourceToneV1": 1,
+      "vertexCount": 22,
+      "vertexStart": 452
+    },
+    {
+      "ordinal": 22,
+      "sourceFeatureId": "way/1301393953",
+      "sourceGeometrySha256": "sha256:c45f9974ed63e752739f77e9d85b5a8467bc8979f898d4c4d4c852f4c4263415",
+      "sourceTagsSha256": "sha256:2b08355fb9137fe4880f7f4100839a1dff5ca5b5e6afe36dd236d5644ee725af",
+      "sourceToneV1": 1,
+      "vertexCount": 28,
+      "vertexStart": 474
+    },
+    {
+      "ordinal": 23,
+      "sourceFeatureId": "way/1301393957",
+      "sourceGeometrySha256": "sha256:7bbe9572f4db8170792b8b20836221646139f0fe2c3fcf335af68d8e0fd30bd1",
+      "sourceTagsSha256": "sha256:2b08355fb9137fe4880f7f4100839a1dff5ca5b5e6afe36dd236d5644ee725af",
+      "sourceToneV1": 1,
+      "vertexCount": 12,
+      "vertexStart": 502
+    }
+  ],
+  "status": "preview-proof-only-not-production",
+  "tile": {
+    "gridIndex": [
+      1441,
+      10893
+    ],
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

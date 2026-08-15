@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
 
 const ROOT = process.cwd();
@@ -52,13 +53,14 @@ function triangleIndexLedger(indices) {
   triangles.sort(); return `sha256:${sha256(Buffer.from(triangles.join('\n')))}`;
 }
 
-function makePresentationGlb(tile, categories, proof) {
+export function makePresentationGlb(tile, categories, proof, { sourceToneContract = null } = {}) {
   const buildings = categories.buildings;
   const vertexCount = buildings.positions.length / 3;
   assert(vertexCount > 0 && buildings.indices.length > 0, `${tile.id} has no building geometry`);
   const local = new Array(buildings.positions.length).fill(0);
   const buildingOrdinal = new Array(vertexCount).fill(0);
   const tone = new Array(vertexCount).fill(0);
+  const sourceTone = sourceToneContract ? new Array(vertexCount).fill(0) : null;
   const family = new Array(vertexCount).fill(0);
   const levels = new Array(vertexCount).fill(0);
   const records = proof.records.map((record, ordinal) => {
@@ -72,6 +74,7 @@ function makePresentationGlb(tile, categories, proof) {
     centreX /= ringLength; centreZ /= ringLength;
     const familyKey = materialFamily(record.sourceTags); const levelCount = sourceLevels(record.sourceTags);
     const toneKey = familyKey * 2 + Number(BigInt(record.sourceOsmWayId) % 2n);
+    const sourceToneKey = Number(BigInt(record.sourceOsmWayId) % 4n);
     for (let index = 0; index < record.vertexCount; index += 1) {
       const vertexIndex = record.vertexStart + index;
       local[vertexIndex * 3] = buildings.positions[vertexIndex * 3] - centreX;
@@ -79,11 +82,12 @@ function makePresentationGlb(tile, categories, proof) {
       local[vertexIndex * 3 + 2] = buildings.positions[vertexIndex * 3 + 2] - centreZ;
       buildingOrdinal[vertexIndex] = ordinal;
       tone[vertexIndex] = toneKey;
+      if (sourceTone) sourceTone[vertexIndex] = sourceToneKey;
       family[vertexIndex] = familyKey;
       levels[vertexIndex] = levelCount;
     }
     const facadeEdgeLengths = record.wallSegments.map(({ edgeLengthMetres }) => edgeLengthMetres);
-    return {
+    const presentationRecord = {
       ordinal,
       sourceFeatureId: `way/${record.sourceOsmWayId}`,
       sourceTags: record.sourceTags,
@@ -99,6 +103,8 @@ function makePresentationGlb(tile, categories, proof) {
       wallIndexCount: record.indexCount - record.roofIndexCount,
       facadeEdges: { count: facadeEdgeLengths.length, minLengthMetres: Math.min(...facadeEdgeLengths), maxLengthMetres: Math.max(...facadeEdgeLengths), ledgerSha256: `sha256:${sha256(float32Bytes(facadeEdgeLengths))}` },
     };
+    if (sourceTone) presentationRecord.sourceToneV1 = sourceToneKey;
+    return presentationRecord;
   });
   assert.equal(records.reduce((sum, record) => sum + record.vertexCount, 0), vertexCount, `${tile.id} building vertex ownership is incomplete`);
   assert.equal(records.reduce((sum, record) => sum + record.indexCount, 0), buildings.indices.length, `${tile.id} building triangle ownership is incomplete`);
@@ -113,6 +119,7 @@ function makePresentationGlb(tile, categories, proof) {
   const localView = addView(float32Bytes(local), 34962);
   const buildingView = addView(uint16Bytes(buildingOrdinal), 34962);
   const toneView = addView(uint8Bytes(tone), 34962);
+  const sourceToneView = sourceTone ? addView(uint8Bytes(sourceTone), 34962) : null;
   const familyView = addView(uint8Bytes(family), 34962);
   const levelsView = addView(float32Bytes(levels), 34962);
   const groups = new Map();
@@ -133,6 +140,8 @@ function makePresentationGlb(tile, categories, proof) {
   const localAccessor = accessors.length; accessors.push({ bufferView: localView, componentType: 5126, count: vertexCount, type: 'VEC3', ...localBounds });
   const buildingAccessor = accessors.length; accessors.push({ bufferView: buildingView, componentType: 5123, count: vertexCount, type: 'SCALAR', min: [0], max: [records.length - 1] });
   const toneAccessor = accessors.length; accessors.push({ bufferView: toneView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [7] });
+  const sourceToneAccessor = sourceTone ? accessors.length : null;
+  if (sourceTone) accessors.push({ bufferView: sourceToneView, componentType: 5121, normalized: false, count: vertexCount, type: 'SCALAR', min: [Math.min(...sourceTone)], max: [Math.max(...sourceTone)] });
   const familyAccessor = accessors.length; accessors.push({ bufferView: familyView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [3] });
   const levelsAccessor = accessors.length; accessors.push({ bufferView: levelsView, componentType: 5126, count: vertexCount, type: 'SCALAR', ...minMax(levels, 1) });
   const primitives = [];
@@ -141,7 +150,9 @@ function makePresentationGlb(tile, categories, proof) {
     const count = group.indices.length;
     const indexAccessor = accessors.length;
     accessors.push({ bufferView: indexView, byteOffset: firstIndex * (useUint32 ? 4 : 2), componentType: useUint32 ? 5125 : 5123, count, type: 'SCALAR', min: [Math.min(...group.indices)], max: [Math.max(...group.indices)] });
-    primitives.push({ attributes: { POSITION: positionAccessor, _SF_LOCAL_METRES: localAccessor, _SF_BUILDING_ORDINAL: buildingAccessor, _SF_TONE_KEY: toneAccessor, _SF_MATERIAL_FAMILY: familyAccessor, _SF_LEVELS: levelsAccessor }, indices: indexAccessor, material: group.materialFamily * 2 + (group.surfaceKind === 'wall' ? 1 : 0), mode: 4, extras: { materialFamily: group.materialFamily, surfaceKind: group.surfaceKind, sourceBuildingCount: group.buildingOrdinals.size, presentationOnly: true } });
+    const attributes = { POSITION: positionAccessor, _SF_LOCAL_METRES: localAccessor, _SF_BUILDING_ORDINAL: buildingAccessor, _SF_TONE_KEY: toneAccessor, _SF_MATERIAL_FAMILY: familyAccessor, _SF_LEVELS: levelsAccessor };
+    if (sourceTone) attributes._SF_SOURCE_TONE_V1 = sourceToneAccessor;
+    primitives.push({ attributes, indices: indexAccessor, material: group.materialFamily * 2 + (group.surfaceKind === 'wall' ? 1 : 0), mode: 4, extras: { materialFamily: group.materialFamily, surfaceKind: group.surfaceKind, sourceBuildingCount: group.buildingOrdinals.size, presentationOnly: true } });
     firstIndex += count;
   }
   const padding = (4 - offset % 4) % 4; if (padding) { chunks.push(Buffer.alloc(padding)); offset += padding; }
@@ -157,11 +168,11 @@ function makePresentationGlb(tile, categories, proof) {
       { name: `building-${name}-wall-proof`, pbrMetallicRoughness: { baseColorFactor: [0.46, 0.36, 0.3, 1], metallicFactor: 0, roughnessFactor: 0.9 } },
     ]),
     buffers: [{ byteLength: bin.length }], bufferViews, accessors,
-    extras: { tileId: tile.id, horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized', status: 'preview-proof-only-not-production', sourceWindowInventoryClaim: false },
+    extras: { tileId: tile.id, horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized', status: 'preview-proof-only-not-production', sourceWindowInventoryClaim: false, ...(sourceToneContract ? { presentation: sourceToneContract } : {}) },
   };
   let json = Buffer.from(JSON.stringify(gltf)); const jsonPadding = (4 - json.length % 4) % 4; if (jsonPadding) json = Buffer.concat([json, Buffer.alloc(jsonPadding, 0x20)]);
   const output = Buffer.alloc(12 + 8 + json.length + 8 + bin.length); output.writeUInt32LE(0x46546c67, 0); output.writeUInt32LE(2, 4); output.writeUInt32LE(output.length, 8); output.writeUInt32LE(json.length, 12); output.writeUInt32LE(0x4e4f534a, 16); json.copy(output, 20); const binAt = 20 + json.length; output.writeUInt32LE(bin.length, binAt); output.writeUInt32LE(0x004e4942, binAt + 4); bin.copy(output, binAt + 8);
-  return { bytes: output, records, sourcePositionBytes: float32Bytes(buildings.positions), sourceIndexBytes: useUint32 ? uint32Bytes(buildings.indices) : uint16Bytes(buildings.indices), sourceTriangleLedgerSha256: triangleIndexLedger(buildings.indices), presentationTriangleLedgerSha256: triangleIndexLedger(presentationIndices), vertexCount, indexCount: buildings.indices.length, primitiveCount: primitives.length, indexComponentType: useUint32 ? 5125 : 5123 };
+  return { bytes: output, records, sourcePositionBytes: float32Bytes(buildings.positions), sourceIndexBytes: useUint32 ? uint32Bytes(buildings.indices) : uint16Bytes(buildings.indices), sourceToneBytes: sourceTone ? uint8Bytes(sourceTone) : null, sourceTriangleLedgerSha256: triangleIndexLedger(buildings.indices), presentationTriangleLedgerSha256: triangleIndexLedger(presentationIndices), vertexCount, indexCount: buildings.indices.length, primitiveCount: primitives.length, indexComponentType: useUint32 ? 5125 : 5123 };
 }
 
 async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests) {
@@ -195,11 +206,15 @@ async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSource
   return { tile: tile.id, role: tile.role, artifact: receipt.proofArtifact, receipt: path.relative(ROOT, receiptPath), counts: receipt.counts, ledgers: receipt.ledgers };
 }
 
-const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8')); const byId = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
-const [sharedInputs, verifiedTerrainSourceDigests] = await Promise.all([loadSfMetricSharedInputs(), loadSfMetricVerifiedTerrainSourceDigests()]);
-await mkdir(OUTPUT_ROOT, { recursive: true });
-const tiles = [];
-for (const tile of TILES) { const manifestTile = byId.get(tile.id); assert(manifestTile, `${tile.id} is not a production resident`); tiles.push(await buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests)); }
-const proofManifest = { schemaVersion: 1, kind: 'sf-building-presentation-proof-manifest', status: 'preview-proof-only-not-production', productionManifestTileCount: manifest.tiles.length, tiles };
-await writeFile(path.join(OUTPUT_ROOT, 'sf-building-presentation-proof-v1.manifest.json'), jsonBytes(proofManifest));
-process.stdout.write(`${JSON.stringify(proofManifest, null, 2)}\n`);
+export async function buildSfBuildingPresentationProofV1() {
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8')); const byId = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
+  const [sharedInputs, verifiedTerrainSourceDigests] = await Promise.all([loadSfMetricSharedInputs(), loadSfMetricVerifiedTerrainSourceDigests()]);
+  await mkdir(OUTPUT_ROOT, { recursive: true });
+  const tiles = [];
+  for (const tile of TILES) { const manifestTile = byId.get(tile.id); assert(manifestTile, `${tile.id} is not a production resident`); tiles.push(await buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests)); }
+  const proofManifest = { schemaVersion: 1, kind: 'sf-building-presentation-proof-manifest', status: 'preview-proof-only-not-production', productionManifestTileCount: manifest.tiles.length, tiles };
+  await writeFile(path.join(OUTPUT_ROOT, 'sf-building-presentation-proof-v1.manifest.json'), jsonBytes(proofManifest));
+  process.stdout.write(`${JSON.stringify(proofManifest, null, 2)}\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await buildSfBuildingPresentationProofV1();
