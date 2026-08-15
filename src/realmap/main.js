@@ -8385,17 +8385,17 @@ function stageFerryHeroPedestrians(paths) {
       reverse,
     };
   };
-  // Use the real 196662077 footway centerline plus bounded parallel tracks
-  // inside its source-matched 3.4m concrete envelope. The offsets add depth
-  // and shoulder separation while every civilian retains the same OSM way.
+  // Use the real 196662077 concrete footway centerline plus its nearby
+  // 196662071 paving-stone footway. Bounded parallel tracks add depth and
+  // shoulder separation while every civilian retains an exact OSM way.
   const assignments = [
+    { roadId: 196662077, s: 8.0, lateralOffsetM: -1.0, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 8.0, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
     { roadId: 196662077, s: 10.0, lateralOffsetM: -1.0, reverse: true, fromEnd: true },
-    { roadId: 196662077, s: 11.0, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
-    { roadId: 196662077, s: 13.5, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
-    { roadId: 196662077, s: 9.0, lateralOffsetM: 0.55, reverse: true, fromEnd: true },
-    { roadId: 196662077, s: 24.5, lateralOffsetM: -0.9 },
-    { roadId: 196662077, s: 26.0, lateralOffsetM: 0.55 },
-    { roadId: 196662077, s: 29.0, lateralOffsetM: -0.55 },
+    { roadId: 196662077, s: 10.0, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
+    { roadId: 196662071, s: 3.2, lateralOffsetM: 0.0 },
+    { roadId: 196662077, s: 12.0, lateralOffsetM: 1.0, reverse: true, fromEnd: true },
+    { roadId: 196662077, s: 14.0, lateralOffsetM: 0.0, reverse: true, fromEnd: true },
   ].map((assignment) => ({
     ...assignment,
     path: pathForRoad(assignment.roadId, assignment.reverse, assignment.lateralOffsetM),
