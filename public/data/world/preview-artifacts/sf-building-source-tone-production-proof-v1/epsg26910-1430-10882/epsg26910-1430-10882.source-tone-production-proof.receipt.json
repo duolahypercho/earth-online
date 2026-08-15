@@ -1,0 +1,95 @@
+{
+  "artifact": {
+    "byteDeltaFromProduction": 9172,
+    "bytes": 3768424,
+    "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.glb",
+    "sha256": "sha256:3bcd01ed49390cb58eb633435ba40e8406f5823372e58e3c136e7678db7a7c74"
+  },
+  "contract": {
+    "attribute": {
+      "componentType": 5121,
+      "domain": [
+        0,
+        3
+      ],
+      "gltfSemantic": "_SF_SOURCE_TONE_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_source_tone_v1",
+      "type": "SCALAR"
+    },
+    "derivation": {
+      "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+      "id": "osm-way-id-modulo-4-v1",
+      "input": "byte-locked OSM source way identity",
+      "outputDomain": [
+        0,
+        3
+      ],
+      "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+      "presentationOnly": true,
+      "sourceColourClaim": false
+    },
+    "schema": "sf-building-source-tone-v1",
+    "status": "preview-proof-only-not-production"
+  },
+  "counts": {
+    "buildingPrimitives": 1,
+    "candidatePrimitives": 5,
+    "productionPrimitives": 5,
+    "sourceTonePayloadBytes": 8412
+  },
+  "invariants": {
+    "gameplayOrCollisionChanged": false,
+    "metricOriginOrScaleChanged": false,
+    "productionGeometryLedgerExact": true,
+    "productionMaterialAssignmentsExact": true,
+    "productionPrimitiveCountExact": true,
+    "sourceGeometryMoved": false,
+    "twoBuildCandidateBytesExact": true,
+    "twoBuildPackageBytesExact": true,
+    "twoBuildReceiptBytesExact": true
+  },
+  "kind": "sf-building-source-tone-production-proof-receipt",
+  "ledgers": {
+    "candidateGeometrySha256": "sha256:de894f8ee1fabfd235cf92a1a93e22466ef3b4aefbc67a027f75af4ba23e2421",
+    "productionGeometrySha256": "sha256:de894f8ee1fabfd235cf92a1a93e22466ef3b4aefbc67a027f75af4ba23e2421",
+    "sourceRecordsSha256": "sha256:6a443ce614731bd7aed1d110a7370e06516ef8ffc7937dfd7c327c984645f9ac",
+    "sourceToneAttributeSha256": "sha256:add4e784f8fdf1c6cadbb80ca41f390ecb3bfed8c08de69a9362e759e2d0e675"
+  },
+  "productionPromotionAuthorized": false,
+  "productionReference": {
+    "bytes": 3759252,
+    "exactDefaultRebuildBytes": true,
+    "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1430-10882/epsg26910-1430-10882.lod0.glb",
+    "sha256": "sha256:2f41f579bf49bc76891c8b9c6b5d19c7ec49e446155f5136b8c3dd6c8b19054e"
+  },
+  "schemaVersion": 1,
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "purpose": "geometry",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "purpose": "horizontal-coordinate-operation",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    {
+      "id": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json",
+      "purpose": "terrain-elevation",
+      "sha256": "f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715"
+    }
+  ],
+  "status": "write-disabled-production-shaped-proof",
+  "tile": {
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1430-10882",
+    "role": "district",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}
