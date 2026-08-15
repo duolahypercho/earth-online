@@ -4,8 +4,10 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const sourcePath = resolve(root, 'src/sf-map/main.js');
+const materialSourcePath = resolve(root, 'src/sf-map/building-presentation-material.js');
 const manifestPath = resolve(root, 'public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json');
 const source = readFileSync(sourcePath, 'utf8');
+const materialSource = readFileSync(materialSourcePath, 'utf8');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
 function assert(condition, message) {
@@ -84,15 +86,15 @@ assert(source.includes("ferry: { position: [430, 132, 292], target: [119, 8, 292
 assert(source.includes('position: camera.position.toArray()'), 'Streaming diagnostics must expose the live camera position.');
 assert(source.includes('target: controls.target.toArray()'), 'Streaming diagnostics must expose the live camera target.');
 assert(source.includes('function applyBuildingPresentation(material)'), 'Building depth must be a runtime material policy, not a source-geometry rewrite.');
-assert(source.includes('vSfMapWorldPosition'), 'Building palette selection must use seam-stable world coordinates.');
-assert(source.includes('vec4 sfMapWorldPosition = vec4( transformed, 1.0 );'), 'The palette must define its world position even when Three omits worldPosition.');
-assert(source.includes('sfMapWorldPosition = batchingMatrix * sfMapWorldPosition;'), 'The palette world position must retain batched mesh placement.');
-assert(source.includes('sfMapWorldPosition = instanceMatrix * sfMapWorldPosition;'), 'The palette world position must retain instanced mesh placement.');
-assert(source.includes('sfMapWorldPosition = modelMatrix * sfMapWorldPosition;'), 'The palette world position must retain the source mesh model transform.');
-assert(source.includes('vSfMapWorldPosition = sfMapWorldPosition.xyz;'), 'The palette varying must use the unconditional world position.');
-assert(!source.includes('vSfMapWorldPosition = worldPosition.xyz;'), 'The palette must not depend on Three conditionally declaring worldPosition.');
-assert(source.includes('floor(vSfMapWorldPosition.xz / ${PRESENTATION_POLICY.paletteWorldCellMetres.toFixed(1)})'), 'The four-tone palette must remain world-coordinate seam-stable at its reviewed metric cell size.');
-assert(source.includes("material.customProgramCacheKey = () => 'sf-map-building-palette-v1'"), 'Building material programs must remain bounded and deterministic.');
+assert(materialSource.includes('vSfMapWorldPosition'), 'Building palette selection must use seam-stable world coordinates.');
+assert(materialSource.includes('vec4 sfMapWorldPosition = vec4( transformed, 1.0 );'), 'The palette must define its world position even when Three omits worldPosition.');
+assert(materialSource.includes('sfMapWorldPosition = batchingMatrix * sfMapWorldPosition;'), 'The palette world position must retain batched mesh placement.');
+assert(materialSource.includes('sfMapWorldPosition = instanceMatrix * sfMapWorldPosition;'), 'The palette world position must retain instanced mesh placement.');
+assert(materialSource.includes('sfMapWorldPosition = modelMatrix * sfMapWorldPosition;'), 'The palette world position must retain the source mesh model transform.');
+assert(materialSource.includes('vSfMapWorldPosition = sfMapWorldPosition.xyz;'), 'The palette varying must use the unconditional world position.');
+assert(!materialSource.includes('vSfMapWorldPosition = worldPosition.xyz;'), 'The palette must not depend on Three conditionally declaring worldPosition.');
+assert(materialSource.includes('floor(vSfMapWorldPosition.xz / ${paletteWorldCellMetres.toFixed(1)})'), 'The four-tone palette must remain world-coordinate seam-stable at its reviewed metric cell size.');
+assert(materialSource.includes("material.customProgramCacheKey = () => 'sf-map-building-palette-v1'"), 'Building material programs must remain bounded and deterministic.');
 assert(source.includes('sun.castShadow = false;'), 'Plan view must explicitly avoid claiming a city-wide local shadow frustum.');
 assert(source.includes('sun.target.position.copy(controls.target);'), 'Ferry and District shadows must centre on the current stream focus.');
 assert(source.includes('tile.scale.setScalar(1);') && source.includes('tile.position.copy(descriptor.offset);'), 'Presentation policy must not change tile scale or origin placement.');

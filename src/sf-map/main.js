@@ -11,7 +11,7 @@ import {
   verifyReceiptPresentation,
   verifyScenePresentation,
 } from './building-presentation-contract.js';
-import { applySourceToneBuildingPresentation } from './building-presentation-material.js';
+import { applyLegacyBuildingPresentation, applySourceToneBuildingPresentation } from './building-presentation-material.js';
 import './styles.css';
 
 const BASE_URL = import.meta.env.BASE_URL;
@@ -165,18 +165,6 @@ const explicitViewResidency = {
   lastPrune: null,
 };
 
-function glslColor(color) {
-  return color.toArray().map((channel) => channel.toFixed(6)).join(', ');
-}
-
-function buildingPaletteGlsl() {
-  return BUILDING_PALETTE.map((color, index) => {
-    const tone = `vec3(${glslColor(color)})`;
-    if (index === BUILDING_PALETTE.length - 1) return tone;
-    return `sfToneHash < ${((index + 1) / BUILDING_PALETTE.length).toFixed(2)} ? ${tone} : `;
-  }).join('');
-}
-
 function refitViewFill() {
   viewFillHorizontal.copy(camera.position).sub(controls.target);
   viewFillHorizontal.y = 0;
@@ -210,40 +198,10 @@ function refitLocalSunShadow(force = false) {
 }
 
 function applyBuildingPresentation(material) {
-  material.color.setHex(0xffffff);
-  material.roughness = 0.9;
-  material.metalness = 0;
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = `varying vec3 vSfMapWorldPosition;\n${shader.vertexShader}`
-      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
-  // Three only declares worldPosition when a built-in feature needs it.
-  // The palette needs it for every building material, including unshadowed
-  // Plan frames, so retain the identical transform under its own identifier.
-  vec4 sfMapWorldPosition = vec4( transformed, 1.0 );
-  #ifdef USE_BATCHING
-    sfMapWorldPosition = batchingMatrix * sfMapWorldPosition;
-  #endif
-  #ifdef USE_INSTANCING
-    sfMapWorldPosition = instanceMatrix * sfMapWorldPosition;
-  #endif
-  sfMapWorldPosition = modelMatrix * sfMapWorldPosition;
-  vSfMapWorldPosition = sfMapWorldPosition.xyz;`);
-    shader.fragmentShader = `varying vec3 vSfMapWorldPosition;\n${shader.fragmentShader}`
-      .replace('#include <color_fragment>', `#include <color_fragment>
-  // World-coordinate cells keep palette choice deterministic across tile
-  // seams while leaving all source positions and geometry untouched.
-  vec2 sfToneCell = floor(vSfMapWorldPosition.xz / ${PRESENTATION_POLICY.paletteWorldCellMetres.toFixed(1)});
-  float sfToneHash = fract(sin(dot(sfToneCell, vec2(127.1, 311.7))) * 43758.5453123);
-  vec3 sfBuildingTone = ${buildingPaletteGlsl()};
-  diffuseColor.rgb *= sfBuildingTone;`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-  // This is normal-driven material response, not fabricated facade detail:
-  // roofs remain readable against vertical walls before the real shadow pass.
-  float sfRoofFacing = smoothstep(0.16, 0.84, abs(normal.y));
-  diffuseColor.rgb *= mix(0.72, 1.08, sfRoofFacing);`);
-  };
-  material.customProgramCacheKey = () => 'sf-map-building-palette-v1';
-  material.needsUpdate = true;
+  applyLegacyBuildingPresentation(material, {
+    palette: BUILDING_PALETTE,
+    paletteWorldCellMetres: PRESENTATION_POLICY.paletteWorldCellMetres,
+  });
 }
 
 function copyView(view) {
