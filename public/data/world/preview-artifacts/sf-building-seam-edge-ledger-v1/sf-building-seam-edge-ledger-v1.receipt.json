@@ -1,0 +1,68 @@
+{
+  "artifact": {
+    "compressedBytes": 2240877,
+    "compressedSha256": "sha256:97c07b77aa38ea1b74213eb843497801ba49921bbb06c78005712928eecbdbf1",
+    "compression": "gzip-level-9-mtime-0",
+    "ledgerPath": "public/data/world/preview-artifacts/sf-building-seam-edge-ledger-v1/sf-building-seam-edge-ledger-v1.ledger.json.gz",
+    "uncompressedBytes": 19632797,
+    "uncompressedSha256": "sha256:e4a60c9e1436a8357e66aecaf962f2d14106659018d64bdfef8b512c0d0e02cb"
+  },
+  "claims": {
+    "exactBoundaryCoordinateQuantizationMetres": 0.000001,
+    "horizontalCrs": "EPSG:26910",
+    "oneRuntimeUnitPerMetre": true,
+    "verticalSourceAccuracy": "unrealized/source-declared; this artifact makes no vertical accuracy claim"
+  },
+  "counts": {
+    "conservativeClosureTiles": 751,
+    "conservativeEdgesCompared": 1331,
+    "exactClosureTiles": 751,
+    "exactEdges": 1331,
+    "manifestTiles": 803,
+    "sourceWayBoundaryRecords": 29249
+  },
+  "ferry": {
+    "allManifestAdjacencyEdgeCount": 1350,
+    "conservativeAdjacencyEdgeCount": 1331,
+    "conservativeSourceIdClosureTileCount": 751,
+    "exactAdjacencyEdgeCount": 1331,
+    "exactClippedBoundaryClosureTileCount": 751,
+    "exactClosureTileIdsSha256": "sha256:22c4c0964e7534a64faf621ba666b50974e2d4344bd3d44b045a845d1027ca51",
+    "falsePositiveSourceIdWays": 7,
+    "mismatchedSourceIdWays": 0,
+    "tileId": "epsg26910-1441-10893"
+  },
+  "inputs": {
+    "manifest": {
+      "bytes": 559344,
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json",
+      "sha256": "sha256:a06dad48ca62b47a5fe8033b725347481aa3a92e8b884fcca70fe3fb502be820"
+    },
+    "productionGlbInventory": {
+      "sha256": "sha256:4bc8f4f1a0159153e7b669fabc6635109336d1a15c830cac482b44e7ea2a3e13",
+      "tileCount": 803
+    }
+  },
+  "kind": "sf-building-seam-edge-ledger-receipt",
+  "nonPromotion": "This receipt is not a runtime input, production manifest authorization, gameplay input, or vertical accuracy claim.",
+  "schemaVersion": 1,
+  "source": {
+    "geometryLock": {
+      "bytes": 2141,
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "sha256": "sha256:3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    "horizontalLock": {
+      "bytes": 9611,
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "sha256": "sha256:d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    "osmPbf": {
+      "bytes": 32742133,
+      "path": "public/data/sf/SanFrancisco.osm.pbf",
+      "sha256": "sha256:dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae"
+    },
+    "sourceGeometryHash": "sha256:stable-json-over-way-tags-nodeIds-and-q6-lonlat-v1"
+  },
+  "status": "preview-source-lock-evidence-only"
+}
