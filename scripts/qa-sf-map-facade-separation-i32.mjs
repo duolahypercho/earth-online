@@ -245,7 +245,7 @@ try {
     screenshots: { ferry: captures.ferry.screenshot, district: captures.district.screenshot, comparison },
     captures,
     errors,
-    metricMethod: 'Canvas readback over fixed map-only regions; p10/p90 span and edge energy quantify tonal/shape separation, while shadow-crush ratio tracks sub-0.14 luma area.',
+    metricMethod: 'PNG readback over fixed map-only regions; p10/p90 span and edge energy quantify tonal/shape separation, while shadow-crush ratio tracks sub-0.14 luma area.',
   };
   await writeFile(join(outputDir, 'facade-separation-report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report, null, 2));
