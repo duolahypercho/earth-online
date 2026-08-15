@@ -104,6 +104,7 @@ try {
     const result = await page.evaluate(async (input) => {
       const THREE = await import('/node_modules/three/build/three.module.js');
       const { GLTFLoader } = await import('/node_modules/three/examples/jsm/loaders/GLTFLoader.js');
+      const { applySourceToneBuildingPresentation } = await import('/src/sf-map/building-presentation-material.js');
       const renderer = new THREE.WebGLRenderer({
         canvas: document.querySelector('#qa'), antialias: true, preserveDrawingBuffer: true,
       });
@@ -237,24 +238,10 @@ try {
           parsedToneCounts[tone] += 1;
         }
         node.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
-        node.material.onBeforeCompile = (shader) => {
-          shader.vertexShader = `attribute float _sf_source_tone_v1;\nvarying float vQaSourceTone;\nvarying vec3 vQaWorldPosition;\n${shader.vertexShader}`
-            .replace('#include <begin_vertex>', `#include <begin_vertex>
-              vQaSourceTone=clamp(floor(_sf_source_tone_v1+.5),0.0,3.0);
-              vQaWorldPosition=(modelMatrix*vec4(transformed,1.0)).xyz;`);
-          const sourceTonePaletteExpression = `vQaSourceTone<.5?${glslPalette[0]}:vQaSourceTone<1.5?${glslPalette[1]}:vQaSourceTone<2.5?${glslPalette[2]}:${glslPalette[3]}`;
-          shader.fragmentShader = `varying float vQaSourceTone;\nvarying vec3 vQaWorldPosition;\n${shader.fragmentShader}`
-            .replace('#include <color_fragment>', `#include <color_fragment>
-              diffuseColor.rgb*=${sourceTonePaletteExpression};`)
-            .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-              vec3 qaFaceNormal=normalize(cross(dFdx(vQaWorldPosition),dFdy(vQaWorldPosition)));
-              float qaRoofFacing=smoothstep(.5,.9,abs(qaFaceNormal.y));
-              float qaFacadeFacing=abs(dot(normalize(qaFaceNormal.xz+vec2(.00001)),normalize(vec2(-.79,.61))));
-              float qaFacadeContrast=mix(.52,1.26,pow(qaFacadeFacing,.75));
-              diffuseColor.rgb*=mix(qaFacadeContrast,1.08*1.04,qaRoofFacing);`);
-        };
-        node.material.customProgramCacheKey = () => 'sf-source-tone-v1-production-shaped-world-normal-qa-v3';
-        node.material.needsUpdate = true;
+        applySourceToneBuildingPresentation(node.material, {
+          palette,
+          policySha256: receipt.contract.derivation.policySha256,
+        });
         node.castShadow = true; node.receiveShadow = true;
         sourceTonePrimitiveVertices += sourceTones.count;
       });
@@ -394,7 +381,7 @@ try {
         },
         sourceTonePrimitiveVertices,
         normals: 'fragment-derivative face normals from exact world-space positions at presentation time',
-        candidateMaterialPass: 'source-tone-v1 byte attribute shader palette plus bounded deterministic world-space facade orientation contrast and roof lift',
+        candidateMaterialPass: 'exact runtime source-tone-v1 material module: byte attribute palette plus deterministic world-space facade orientation contrast and roof lift',
         baselineRender, candidateRender,
         baselinePixels: pixelMetrics(true, buildingMaskPixels), candidatePixels: pixelMetrics(false, buildingMaskPixels),
       };

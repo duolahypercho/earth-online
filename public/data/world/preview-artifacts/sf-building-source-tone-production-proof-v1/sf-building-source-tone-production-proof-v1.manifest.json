@@ -24,7 +24,7 @@
       "sourceColourClaim": false
     },
     "schema": "sf-building-source-tone-v1",
-    "status": "preview-proof-only-not-production"
+    "status": "presentation-schema-only"
   },
   "kind": "sf-building-source-tone-production-proof-manifest",
   "productionManifestTileCount": 800,
@@ -34,10 +34,10 @@
   "tiles": [
     {
       "artifact": {
-        "byteDeltaFromProduction": 1276,
-        "bytes": 3645220,
+        "byteDeltaFromProduction": 1268,
+        "bytes": 3645212,
         "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.glb",
-        "sha256": "sha256:ea655d6ca82771d244a2d2c5c1355a3f8b5f658b72213361a7ef1eabec69357a"
+        "sha256": "sha256:65a07e530d31529e1226ad45db6bd070f74b9c53cfeda8e1cc400aa43600d8b5"
       },
       "counts": {
         "buildingPrimitives": 1,
@@ -51,16 +51,24 @@
         "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
         "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59"
       },
+      "metricReceipt": {
+        "bytes": 13176,
+        "kind": "sf-metric-tile-build-receipt",
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.metric-receipt.json",
+        "presentationStatus": "write-disabled-production-shaped-proof",
+        "productionWriteEnabled": false,
+        "sha256": "sha256:c0027d2e153bbec429491bd87adaacf9f0ac08ea3d6c0afc71f178076106f633"
+      },
       "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.receipt.json",
       "role": "ferry",
       "tile": "epsg26910-1441-10893"
     },
     {
       "artifact": {
-        "byteDeltaFromProduction": 9172,
-        "bytes": 3768424,
+        "byteDeltaFromProduction": 9164,
+        "bytes": 3768416,
         "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.glb",
-        "sha256": "sha256:3bcd01ed49390cb58eb633435ba40e8406f5823372e58e3c136e7678db7a7c74"
+        "sha256": "sha256:9afbf790ef88f928ecb34634a988c9d0b6a5a616a231047285e0bac4701052ab"
       },
       "counts": {
         "buildingPrimitives": 1,
@@ -73,6 +81,14 @@
         "productionGeometrySha256": "sha256:de894f8ee1fabfd235cf92a1a93e22466ef3b4aefbc67a027f75af4ba23e2421",
         "sourceRecordsSha256": "sha256:6a443ce614731bd7aed1d110a7370e06516ef8ffc7937dfd7c327c984645f9ac",
         "sourceToneAttributeSha256": "sha256:add4e784f8fdf1c6cadbb80ca41f390ecb3bfed8c08de69a9362e759e2d0e675"
+      },
+      "metricReceipt": {
+        "bytes": 111770,
+        "kind": "sf-metric-tile-build-receipt",
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.metric-receipt.json",
+        "presentationStatus": "write-disabled-production-shaped-proof",
+        "productionWriteEnabled": false,
+        "sha256": "sha256:0ca1c77805367c360175ee7ef5e6094d5bb16c7dacc5316dd4fffcb6d8ae854f"
       },
       "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.receipt.json",
       "role": "district",

@@ -25,6 +25,15 @@ assert(source.includes('async function fetchVerifiedBytes('), 'The viewer must f
 assert(source.includes("gltfLoader.parseAsync(glbArtifact.bytes"), 'The viewer must parse only verified GLB bytes.');
 assert(!source.includes('gltfLoader.loadAsync('), 'Unverified GLTFLoader URL loading is forbidden.');
 assert(source.includes('const receiptArtifact = await fetchVerifiedBytes('), 'Receipts must be byte-verified before diagnostics are updated.');
+const presentationReceiptIndex = source.indexOf('verifyReceiptPresentation(receipt, descriptor.presentation');
+const glbFetchIndex = source.indexOf('const glbArtifact = await fetchVerifiedBytes(');
+const glbParseIndex = source.indexOf('gltfLoader.parseAsync(glbArtifact.bytes');
+assert(presentationReceiptIndex >= 0 && glbFetchIndex > presentationReceiptIndex && glbParseIndex > glbFetchIndex, 'Presentation authorization must be verified before GLB fetch and parsing.');
+assert(source.includes('verifyParsedGlbMetricContract(gltf, descriptor'), 'Parsed GLB metric identity/origin/scale must be verified before admission.');
+assert(source.includes('verifyParsedGlbPresentation(gltf, descriptor.presentation'), 'Parsed GLB presentation metadata must match its descriptor.');
+assert(source.includes('verifyScenePresentation(tile, descriptor.presentation'), 'Parsed mesh attributes must be fail-closed before admission.');
+assert(source.includes('collectSourceToneAttributeBytes(tile, descriptor.presentation)'), 'Source-tone payload bytes must be re-collected after GLTF parsing.');
+assert(source.includes('source-tone attribute SHA-256 does not match its receipt ledger'), 'Source-tone payload bytes must match the receipt SHA-256 ledger.');
 assert(source.includes('function pumpLoadQueue()'), 'A deterministic tile admission queue is required.');
 assert(source.includes('if (activeLoad) return;'), 'The queue must allow exactly one active load.');
 assert(source.includes('return [state.queueDistanceBucket, state.descriptor.id];'), 'Queue priority must use the frozen enqueue bucket.');
@@ -94,6 +103,7 @@ assert(Array.isArray(manifest.tiles) && manifest.tiles.length > 0, 'Production t
 for (const tile of manifest.tiles) {
   assert(declaredHash(tile.lod0?.sha256), `${tile.id} is missing a SHA-256 locked GLB.`);
   assert(declaredHash(tile.receipt?.sha256), `${tile.id} is missing a SHA-256 locked receipt.`);
+  assert(tile.presentation == null || ['legacy', 'source-tone-v1'].includes(tile.presentation.mode), `${tile.id} has an unsupported presentation mode.`);
 }
 
 const representative = manifest.tiles.find((tile) => existsSync(resolve(root, tile.lod0.path)) && existsSync(resolve(root, tile.receipt.path)));
@@ -120,5 +130,5 @@ console.log(JSON.stringify({
   result: 'SF map deterministic streaming verified',
   manifestTiles: manifest.tiles.length,
   representativeTile: representative.id,
-  verified: ['manifest hashes', 'GLB byte verification before parsing', 'receipt verification before diagnostics', 'single deterministic queue', 'controls.target horizontal distance reference', 'one unit per metre'],
+  verified: ['manifest hashes', 'receipt authorization before GLB fetch/parsing', 'GLB byte verification before parsing', 'GLB metric/presentation/attribute hash validation', 'single deterministic queue', 'controls.target horizontal distance reference', 'one unit per metre'],
 }, null, 2));

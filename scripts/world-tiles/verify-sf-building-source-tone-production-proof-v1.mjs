@@ -103,6 +103,18 @@ for (const tile of proofManifest.tiles) {
   assert.equal(receipt.kind, 'sf-building-source-tone-production-proof-receipt');
   assert.equal(receipt.status, 'write-disabled-production-shaped-proof');
   assert.equal(receipt.productionPromotionAuthorized, false);
+  assert.deepEqual(tile.metricReceipt, receipt.metricReceipt);
+  const metricReceiptBytes = await readFile(path.join(ROOT, receipt.metricReceipt.path));
+  assert.equal(`sha256:${sha256(metricReceiptBytes)}`, receipt.metricReceipt.sha256);
+  assert.equal(metricReceiptBytes.length, receipt.metricReceipt.bytes);
+  const metricReceipt = JSON.parse(metricReceiptBytes);
+  assert.equal(metricReceipt.kind, 'sf-metric-tile-build-receipt');
+  assert.equal(metricReceipt.tile.identity, tile.tile);
+  assert.equal(metricReceipt.tile.scale, 1);
+  assert.deepEqual(metricReceipt.presentation.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1);
+  assert.equal(metricReceipt.presentation.productionWriteEnabled, false);
+  assert.equal(receipt.metricReceipt.presentationStatus, 'write-disabled-production-shaped-proof');
+  assert.equal(receipt.metricReceipt.productionWriteEnabled, false);
   assert.deepEqual(receipt.contract, SF_BUILDING_SOURCE_TONE_CONTRACT_V1);
   assert.equal(receipt.tile.horizontalCrs, 'EPSG:26910');
   assert.equal(receipt.tile.unitsPerMetre, 1);

@@ -142,9 +142,20 @@ async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSource
     ledgers: { productionGeometrySha256: `sha256:${sha256(jsonBytes(productionLedger))}`, candidateGeometrySha256: `sha256:${sha256(jsonBytes(candidateLedger))}`, sourceToneAttributeSha256: `sha256:${sha256(tonePayload)}`, sourceRecordsSha256: first.buildingSourceToneProof.ledgers.sourceRecordsSha256 },
     sourceLocks: first.packageDescriptor.sourceLocks,
   };
+  const metricReceiptBytes = jsonBytes(first.receipt);
+  const metricReceiptPath = path.join(tileOutput, `${tile.id}.source-tone-production-proof.metric-receipt.json`);
+  await writeFile(metricReceiptPath, metricReceiptBytes);
+  receipt.metricReceipt = {
+    path: path.relative(ROOT, metricReceiptPath),
+    sha256: `sha256:${sha256(metricReceiptBytes)}`,
+    bytes: metricReceiptBytes.length,
+    kind: first.receipt.kind,
+    presentationStatus: first.receipt.presentation.status,
+    productionWriteEnabled: first.receipt.presentation.productionWriteEnabled,
+  };
   const receiptPath = path.join(tileOutput, `${tile.id}.source-tone-production-proof.receipt.json`);
   await writeFile(receiptPath, jsonBytes(receipt));
-  return { tile: tile.id, role: tile.role, artifact: receipt.artifact, receipt: path.relative(ROOT, receiptPath), counts: receipt.counts, ledgers: receipt.ledgers };
+  return { tile: tile.id, role: tile.role, artifact: receipt.artifact, receipt: path.relative(ROOT, receiptPath), metricReceipt: receipt.metricReceipt, counts: receipt.counts, ledgers: receipt.ledgers };
 }
 
 const productionManifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'));

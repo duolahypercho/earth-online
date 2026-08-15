@@ -1,6 +1,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import {
+  SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
+  SF_MAP_LEGACY_BUILDING_PRESENTATION,
+  collectSourceToneAttributeBytes,
+  normalizeTilePresentation,
+  verifyParsedGlbMetricContract,
+  verifyParsedGlbPresentation,
+  verifyReceiptPresentation,
+  verifyScenePresentation,
+} from './building-presentation-contract.js';
+import { applySourceToneBuildingPresentation } from './building-presentation-material.js';
 import './styles.css';
 
 const BASE_URL = import.meta.env.BASE_URL;
@@ -15,6 +26,7 @@ const FALLBACK_TILE = {
   receipt: 'data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json',
   receiptSha256: 'sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd',
   receiptSha256Hex: 'fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd',
+  presentation: SF_MAP_LEGACY_BUILDING_PRESENTATION,
   source: 'verified Ferry fallback',
 };
 
@@ -424,6 +436,7 @@ function artifactPathAndHash(value) {
 }
 
 function manifestTile(raw, index) {
+  const id = raw.id || raw.identity || `metric-tile-${index + 1}`;
   const origin = raw.originEpsg26910VerticalMetres || raw.tileOriginEpsg26910VerticalMetres || raw.origin;
   const lod0 = raw.lod0 || raw.lods?.find((lod) => lod.level === 0) || raw.artifacts?.lod0;
   const glb = artifactPathAndHash(raw.glb) || artifactPathAndHash(raw.visual) || artifactPathAndHash(raw.asset) || artifactPathAndHash(lod0);
@@ -431,7 +444,7 @@ function manifestTile(raw, index) {
   if (!Array.isArray(origin) || origin.length < 2 || !glb || !receipt) return null;
   if (![origin[0], origin[1], origin[2] ?? 0].every(Number.isFinite)) return null;
   return {
-    id: raw.id || raw.identity || `metric-tile-${index + 1}`,
+    id,
     gridIndex: raw.gridIndex || raw.grid?.index || null,
     origin: [origin[0], origin[1], origin[2] ?? 0],
     size: raw.tileSizeMetres || raw.tiling?.tileSizeMetres || raw.grid?.tileSizeMeters || 384,
@@ -441,6 +454,7 @@ function manifestTile(raw, index) {
     receipt: receipt.path,
     receiptSha256: receipt.sha256.declared,
     receiptSha256Hex: receipt.sha256.hex,
+    presentation: normalizeTilePresentation(raw.presentation, id),
     source: 'runtime metric manifest',
   };
 }
@@ -588,10 +602,27 @@ async function loadTile(state) {
   updateStats();
   let tile = null;
   try {
+    const receiptArtifact = await fetchVerifiedBytes(descriptor.receipt, descriptor.receiptSha256Hex, `${descriptor.id} receipt`);
+    const receipt = JSON.parse(new TextDecoder().decode(receiptArtifact.bytes));
+    verifyReceiptDescriptor(receipt, descriptor);
+    const presentationIntegrity = verifyReceiptPresentation(receipt, descriptor.presentation, descriptor.id);
+    state.integrity.receipt = { expectedSha256: descriptor.receiptSha256, actualSha256: receiptArtifact.actualSha256, status: 'verified' };
+    state.integrity.presentation = presentationIntegrity;
     const glbArtifact = await fetchVerifiedBytes(descriptor.glb, descriptor.glbSha256Hex, `${descriptor.id} GLB`);
     state.integrity.glb = { expectedSha256: descriptor.glbSha256, actualSha256: glbArtifact.actualSha256, status: 'verified' };
     const gltf = await gltfLoader.parseAsync(glbArtifact.bytes, resourcePathFor(descriptor.glb));
+    verifyParsedGlbMetricContract(gltf, descriptor, descriptor.id);
+    verifyParsedGlbPresentation(gltf, descriptor.presentation, descriptor.id);
     tile = gltf.scene;
+    verifyScenePresentation(tile, descriptor.presentation, descriptor.id);
+    if (descriptor.presentation.mode === 'source-tone-v1') {
+      const sourceToneBytes = collectSourceToneAttributeBytes(tile, descriptor.presentation);
+      const actualSourceToneSha256 = `sha256:${await sha256Hex(sourceToneBytes)}`;
+      if (actualSourceToneSha256 !== presentationIntegrity.sourceToneAttributeSha256) {
+        throw new Error(`${descriptor.id} source-tone attribute SHA-256 does not match its receipt ledger`);
+      }
+      state.integrity.presentation.actualSourceToneAttributeSha256 = actualSourceToneSha256;
+    }
     tile.name = `${descriptor.id} metric tile LOD0`;
     tile.position.copy(descriptor.offset);
     tile.scale.setScalar(1);
@@ -608,7 +639,13 @@ async function loadTile(state) {
         node.material.polygonOffsetUnits = -2;
         node.renderOrder = 2;
       }
-      if (node.material?.name === 'buildings-night') applyBuildingPresentation(node.material);
+      if (node.material?.name === 'buildings-night') {
+        if (descriptor.presentation.mode === 'source-tone-v1') applySourceToneBuildingPresentation(node.material, {
+          palette: BUILDING_PALETTE,
+          policySha256: SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256,
+        });
+        else applyBuildingPresentation(node.material);
+      }
       if (node.material?.name === 'water-osm-coastline-night') {
         node.material.color.setHex(0x0a5870);
         node.material.roughness = 0.22;
@@ -616,14 +653,10 @@ async function loadTile(state) {
       }
       if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x2f7f8c);
     });
-    const receiptArtifact = await fetchVerifiedBytes(descriptor.receipt, descriptor.receiptSha256Hex, `${descriptor.id} receipt`);
-    const receipt = JSON.parse(new TextDecoder().decode(receiptArtifact.bytes));
-    verifyReceiptDescriptor(receipt, descriptor);
-    state.integrity.receipt = { expectedSha256: descriptor.receiptSha256, actualSha256: receiptArtifact.actualSha256, status: 'verified' };
     state.scene = tile;
     scene.add(tile);
     updateReceipt(state, receipt);
-    boundedPush(streamDiagnostics.completed, { id: descriptor.id, result: 'verified-and-resident' });
+    boundedPush(streamDiagnostics.completed, { id: descriptor.id, result: 'verified-and-resident', presentationMode: descriptor.presentation.mode });
     fitDistrictCameraToVerifiedResidents();
   } catch (error) {
     tile && disposeObject(tile);
@@ -753,6 +786,7 @@ async function initialiseStream() {
       integrity: {
         glb: { expectedSha256: descriptor.glbSha256, status: 'pending' },
         receipt: { expectedSha256: descriptor.receiptSha256, status: 'pending' },
+        presentation: { mode: descriptor.presentation.mode, status: 'pending' },
         metric: { originSubtractions: 1, sceneScale: 1, units: 'metres' },
       },
     });
@@ -820,6 +854,7 @@ async function initialiseStream() {
           },
           materialPrograms: {
             buildings: 'sf-map-building-palette-v1',
+            sourceToneBuildings: `sf-map-building-source-tone-v1:${SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256}`,
             roads: 'single muted asphalt material',
           },
           performance: {
@@ -837,6 +872,7 @@ async function initialiseStream() {
         },
         tiles: [...tileStates.values()].slice(0, STREAM_DIAGNOSTIC_LIMIT).map((state) => ({
           id: state.descriptor.id,
+          presentationMode: state.descriptor.presentation.mode,
           resident: Boolean(state.scene),
           queued: state.queued,
           loading: state.loading,
