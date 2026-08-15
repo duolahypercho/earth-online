@@ -1,7 +1,7 @@
 {
   "buildingRecords": [
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 28,
         "ledgerSha256": "sha256:e41aea880d33453c91238b59092684b5b86eff03468d8e1ed46c5258d6c7c749",
@@ -11,15 +11,21 @@
       "heightMetres": 93,
       "indexCount": 240,
       "indexStart": 0,
+      "materialFamily": 3,
       "ordinal": 0,
       "roofIndexCount": 72,
+      "sourceBuildingLevels": 24,
       "sourceFeatureId": "way/32862406",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "24"
+      },
       "vertexCount": 56,
       "vertexStart": 0,
       "wallIndexCount": 168
     },
     {
-      "deterministicToneKey": 3,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 14,
         "ledgerSha256": "sha256:98cf39d644c77079de0e2341924a8eac82ec457c11a3b58b074a0e80c1b85084",
@@ -29,15 +35,22 @@
       "heightMetres": 25.6,
       "indexCount": 120,
       "indexStart": 240,
+      "materialFamily": 3,
       "ordinal": 1,
       "roofIndexCount": 36,
+      "sourceBuildingLevels": 8,
       "sourceFeatureId": "way/32862467",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "8",
+        "roof:shape": "flat"
+      },
       "vertexCount": 28,
       "vertexStart": 56,
       "wallIndexCount": 84
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 16,
         "ledgerSha256": "sha256:e0f4d14745fcae1f6771fabf62aee872708407298e83a09294e8ce019766011a",
@@ -47,15 +60,22 @@
       "heightMetres": 32,
       "indexCount": 138,
       "indexStart": 360,
+      "materialFamily": 3,
       "ordinal": 2,
       "roofIndexCount": 42,
+      "sourceBuildingLevels": 10,
       "sourceFeatureId": "way/32862485",
+      "sourceTags": {
+        "building": "hotel",
+        "building:levels": "10",
+        "roof:shape": "pyramidal"
+      },
       "vertexCount": 32,
       "vertexStart": 84,
       "wallIndexCount": 96
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 15,
         "ledgerSha256": "sha256:1f3fda05ea917621471a96f41f370aa55a562bbc5347ce0de0c3cd7d29048ad1",
@@ -65,15 +85,20 @@
       "heightMetres": 33,
       "indexCount": 129,
       "indexStart": 498,
+      "materialFamily": 3,
       "ordinal": 3,
       "roofIndexCount": 39,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/44106213",
+      "sourceTags": {
+        "building": "government"
+      },
       "vertexCount": 30,
       "vertexStart": 116,
       "wallIndexCount": 90
     },
     {
-      "deterministicToneKey": 3,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 6,
         "ledgerSha256": "sha256:53e43d5cf52aef62c3767e9d6d09fad7eb981569fdbf3716378c3d04fd2a0eb0",
@@ -83,15 +108,21 @@
       "heightMetres": 15,
       "indexCount": 48,
       "indexStart": 627,
+      "materialFamily": 3,
       "ordinal": 4,
       "roofIndexCount": 12,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/104599975",
+      "sourceTags": {
+        "building": "commercial",
+        "roof:shape": "flat"
+      },
       "vertexCount": 12,
       "vertexStart": 146,
       "wallIndexCount": 36
     },
     {
-      "deterministicToneKey": 0,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 9,
         "ledgerSha256": "sha256:97fad947d44bc2d9e6d1735dc483b60157f37cc0f1e0fd2adc5d10ebb8e468d5",
@@ -101,15 +132,20 @@
       "heightMetres": 28,
       "indexCount": 75,
       "indexStart": 675,
+      "materialFamily": 3,
       "ordinal": 5,
       "roofIndexCount": 21,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/132238424",
+      "sourceTags": {
+        "building": "yes"
+      },
       "vertexCount": 18,
       "vertexStart": 158,
       "wallIndexCount": 54
     },
     {
-      "deterministicToneKey": 0,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:184ea7bd9d3debe81f5f81d179934f83773c72b339f0290c00024ca8c9a0cbb4",
@@ -119,15 +155,20 @@
       "heightMetres": 17,
       "indexCount": 30,
       "indexStart": 750,
+      "materialFamily": 3,
       "ordinal": 6,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/192026932",
+      "sourceTags": {
+        "building": "yes"
+      },
       "vertexCount": 8,
       "vertexStart": 176,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 10,
         "ledgerSha256": "sha256:7348bbfd86fe9aa1d18b0b79d850a3ca6a87765876aea0ce3fc8d0eae5ba150c",
@@ -137,15 +178,20 @@
       "heightMetres": 94,
       "indexCount": 84,
       "indexStart": 780,
+      "materialFamily": 3,
       "ordinal": 7,
       "roofIndexCount": 24,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/192026938",
+      "sourceTags": {
+        "building": "yes"
+      },
       "vertexCount": 20,
       "vertexStart": 184,
       "wallIndexCount": 60
     },
     {
-      "deterministicToneKey": 3,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 6,
         "ledgerSha256": "sha256:8902476fb6856338135148c5ca46143cfbe5edc8826d59f9e2a7a5e818f29d25",
@@ -155,15 +201,21 @@
       "heightMetres": 9.6,
       "indexCount": 48,
       "indexStart": 864,
+      "materialFamily": 3,
       "ordinal": 8,
       "roofIndexCount": 12,
+      "sourceBuildingLevels": 3,
       "sourceFeatureId": "way/193054131",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "3"
+      },
       "vertexCount": 12,
       "vertexStart": 204,
       "wallIndexCount": 36
     },
     {
-      "deterministicToneKey": 0,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:e0e0dcaf2d19d2f11c674557de4171a0f7e7ecb70ae2313a088ac4020cecdf58",
@@ -173,15 +225,22 @@
       "heightMetres": 22.4,
       "indexCount": 30,
       "indexStart": 912,
+      "materialFamily": 3,
       "ordinal": 9,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": 7,
       "sourceFeatureId": "way/193054132",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "7",
+        "roof:shape": "gabled"
+      },
       "vertexCount": 8,
       "vertexStart": 216,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 6,
         "ledgerSha256": "sha256:9dddc5fc1783c02af338b5dbac05f1efa540c241a7d63b07e0d67ebc3597ddd8",
@@ -191,15 +250,22 @@
       "heightMetres": 16,
       "indexCount": 48,
       "indexStart": 942,
+      "materialFamily": 3,
       "ordinal": 10,
       "roofIndexCount": 12,
+      "sourceBuildingLevels": 5,
       "sourceFeatureId": "way/193054133",
+      "sourceTags": {
+        "building": "hotel",
+        "building:levels": "5",
+        "roof:shape": "flat"
+      },
       "vertexCount": 12,
       "vertexStart": 224,
       "wallIndexCount": 36
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 36,
         "ledgerSha256": "sha256:5d7c769c2e53ab292cc719acc0d79d196f7578180a5c51a58e745a10a0a838ed",
@@ -209,15 +275,20 @@
       "heightMetres": 9.6,
       "indexCount": 318,
       "indexStart": 990,
+      "materialFamily": 3,
       "ordinal": 11,
       "roofIndexCount": 102,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/193054134",
+      "sourceTags": {
+        "building": "yes"
+      },
       "vertexCount": 72,
       "vertexStart": 236,
       "wallIndexCount": 216
     },
     {
-      "deterministicToneKey": 3,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 6,
         "ledgerSha256": "sha256:5d31edcbf5d741013de92f4f1d08573c669fad598417777424b4e3e8a6fea2d8",
@@ -227,15 +298,22 @@
       "heightMetres": 22.4,
       "indexCount": 48,
       "indexStart": 1308,
+      "materialFamily": 3,
       "ordinal": 12,
       "roofIndexCount": 12,
+      "sourceBuildingLevels": 7,
       "sourceFeatureId": "way/193054135",
+      "sourceTags": {
+        "building": "office",
+        "building:levels": "7",
+        "roof:shape": "flat"
+      },
       "vertexCount": 12,
       "vertexStart": 308,
       "wallIndexCount": 36
     },
     {
-      "deterministicToneKey": 0,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:084ac1d3780462881c379d163070af7e504befb340793371f96fd4f977e91a65",
@@ -245,15 +323,22 @@
       "heightMetres": 9.6,
       "indexCount": 30,
       "indexStart": 1356,
+      "materialFamily": 3,
       "ordinal": 13,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": 3,
       "sourceFeatureId": "way/193054136",
+      "sourceTags": {
+        "building": "retail",
+        "building:levels": "3",
+        "roof:shape": "mansard"
+      },
       "vertexCount": 8,
       "vertexStart": 320,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:a263cf33dfca3c8b3692c0e5ece0bb280c4d6abcafd53dd89541476603e416e4",
@@ -263,15 +348,22 @@
       "heightMetres": 9.6,
       "indexCount": 30,
       "indexStart": 1386,
+      "materialFamily": 3,
       "ordinal": 14,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": 3,
       "sourceFeatureId": "way/193054137",
+      "sourceTags": {
+        "building": "office",
+        "building:levels": "3",
+        "roof:shape": "flat"
+      },
       "vertexCount": 8,
       "vertexStart": 328,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 11,
         "ledgerSha256": "sha256:2174c3a7f0c8202fc8ded20173fef4e1115541ef7e0543a955d2c7f5dbabe9cb",
@@ -281,15 +373,21 @@
       "heightMetres": 25.6,
       "indexCount": 93,
       "indexStart": 1416,
+      "materialFamily": 3,
       "ordinal": 15,
       "roofIndexCount": 27,
+      "sourceBuildingLevels": 8,
       "sourceFeatureId": "way/193054138",
+      "sourceTags": {
+        "building": "yes",
+        "building:levels": "8"
+      },
       "vertexCount": 22,
       "vertexStart": 336,
       "wallIndexCount": 66
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:8524f14076e12036aee2c9f1ed711a39ef6d32c5f9007fa86f25a3e0feb3e97d",
@@ -299,15 +397,22 @@
       "heightMetres": 12.8,
       "indexCount": 30,
       "indexStart": 1509,
+      "materialFamily": 3,
       "ordinal": 16,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": 4,
       "sourceFeatureId": "way/256969674",
+      "sourceTags": {
+        "building": "commercial",
+        "building:levels": "4",
+        "roof:shape": "flat"
+      },
       "vertexCount": 8,
       "vertexStart": 358,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 12,
         "ledgerSha256": "sha256:3c5511228ac5110daec00eec4be23ab148645cfe4c098b8274c0c5112c899d5a",
@@ -317,15 +422,21 @@
       "heightMetres": 4,
       "indexCount": 102,
       "indexStart": 1539,
+      "materialFamily": 3,
       "ordinal": 17,
       "roofIndexCount": 30,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/260290226",
+      "sourceTags": {
+        "building": "yes",
+        "roof:shape": "flat"
+      },
       "vertexCount": 24,
       "vertexStart": 366,
       "wallIndexCount": 72
     },
     {
-      "deterministicToneKey": 2,
+      "deterministicToneKey": 6,
       "facadeEdges": {
         "count": 23,
         "ledgerSha256": "sha256:c57445906e711fa09a459e012057e05f34dfd7ceb8350d54be9480bae7e713c2",
@@ -335,15 +446,20 @@
       "heightMetres": 15,
       "indexCount": 201,
       "indexStart": 1641,
+      "materialFamily": 3,
       "ordinal": 18,
       "roofIndexCount": 63,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/558731934",
+      "sourceTags": {
+        "building": "terminal"
+      },
       "vertexCount": 46,
       "vertexStart": 390,
       "wallIndexCount": 138
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:a5e8e4a9f78a9815f65f18d61adb4025f72f1995f27ca1588d15398a8d947442",
@@ -353,15 +469,20 @@
       "heightMetres": 9.6,
       "indexCount": 30,
       "indexStart": 1842,
+      "materialFamily": 3,
       "ordinal": 19,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/979811981",
+      "sourceTags": {
+        "building": "roof"
+      },
       "vertexCount": 8,
       "vertexStart": 436,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 3,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 4,
         "ledgerSha256": "sha256:b6b458e64360c3d73cbc150354203de54c30e1a62c98951f97524e62af4302b5",
@@ -371,15 +492,20 @@
       "heightMetres": 9.6,
       "indexCount": 30,
       "indexStart": 1872,
+      "materialFamily": 3,
       "ordinal": 20,
       "roofIndexCount": 6,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/979811987",
+      "sourceTags": {
+        "building": "roof"
+      },
       "vertexCount": 8,
       "vertexStart": 444,
       "wallIndexCount": 24
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 11,
         "ledgerSha256": "sha256:766c48814353829c6d64dfe475bfb0663fc411ca76d298e6fa7f1646f8ad67e4",
@@ -389,15 +515,20 @@
       "heightMetres": 9.6,
       "indexCount": 93,
       "indexStart": 1902,
+      "materialFamily": 3,
       "ordinal": 21,
       "roofIndexCount": 27,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/1189071405",
+      "sourceTags": {
+        "building": "roof"
+      },
       "vertexCount": 22,
       "vertexStart": 452,
       "wallIndexCount": 66
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 14,
         "ledgerSha256": "sha256:ccf9f3b5f67d6b51319c0c26dea1b2418475ba1f42cf8e0d9442187b19bbc5d8",
@@ -407,15 +538,20 @@
       "heightMetres": 9.6,
       "indexCount": 120,
       "indexStart": 1995,
+      "materialFamily": 3,
       "ordinal": 22,
       "roofIndexCount": 36,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/1301393953",
+      "sourceTags": {
+        "building": "roof"
+      },
       "vertexCount": 28,
       "vertexStart": 474,
       "wallIndexCount": 84
     },
     {
-      "deterministicToneKey": 1,
+      "deterministicToneKey": 7,
       "facadeEdges": {
         "count": 6,
         "ledgerSha256": "sha256:59648e3f24d8e52c1df308aab56e5d380a461a2bf97e7731deec3fb7e3447511",
@@ -425,42 +561,51 @@
       "heightMetres": 9.6,
       "indexCount": 48,
       "indexStart": 2115,
+      "materialFamily": 3,
       "ordinal": 23,
       "roofIndexCount": 12,
+      "sourceBuildingLevels": null,
       "sourceFeatureId": "way/1301393957",
+      "sourceTags": {
+        "building": "roof"
+      },
       "vertexCount": 12,
       "vertexStart": 502,
       "wallIndexCount": 36
     }
   ],
   "claims": {
-    "deterministicToneKey": "source OSM way id modulo four; presentation-only",
+    "deterministicToneKey": "source material family plus OSM way parity; presentation-only",
     "facadeCoordinates": "building-local metric coordinates derived from exact source-bound extrusion vertices",
     "gameplayOrCollisionChanged": false,
-    "roofWallClassification": "primitive partition follows the existing contiguous roof/wall triangle ranges",
+    "roofWallClassification": "batched primitive partition follows the existing roof/wall triangle ranges",
     "sourceBuildingFootprintChanged": false,
-    "sourcedWindowInventory": false
+    "sourcedWindowInventory": false,
+    "storyBands": "only enabled where byte-locked OSM building:levels exists; not a sourced window inventory"
   },
   "counts": {
     "buildings": 24,
     "indices": 2163,
-    "primitives": 48,
+    "primitives": 2,
     "triangles": 721,
     "vertices": 514
   },
   "invariants": {
     "buildingOwnershipComplete": true,
-    "productionTrianglePositionSequenceExact": true,
-    "sourceCategoryIndexSequencePreserved": true,
+    "presentationPrimitiveCountAtMostEight": true,
+    "productionTrianglePositionMultisetExact": true,
+    "sourceCategoryIndexLedgerBound": true,
     "sourceGeometryMoved": false,
     "sourcePositionFloat32BytesExact": true,
     "twoBuildProofBytesExact": true
   },
   "kind": "sf-building-presentation-proof-receipt",
   "ledgers": {
-    "buildingRecordsSha256": "sha256:4fda6de795ca43bdab9143cb831440c91eb4982549bb113dd2b30f2e9ec44666",
-    "indexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
-    "positionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4"
+    "buildingRecordsSha256": "sha256:9302beb38820e2f5ff244df222723fbd7519039cd44bb40522e00b2a965614be",
+    "positionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+    "presentationTriangleMultisetSha256": "sha256:7cf5da34a20ba8aeba3df8c4c927f1f72ee28b2a8a1dde2e78052acd0b577076",
+    "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+    "sourceTriangleMultisetSha256": "sha256:7cf5da34a20ba8aeba3df8c4c927f1f72ee28b2a8a1dde2e78052acd0b577076"
   },
   "productionReference": {
     "declaredSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310",
@@ -469,9 +614,9 @@
     "verifiedSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
   },
   "proofArtifact": {
-    "bytes": 36420,
+    "bytes": 24356,
     "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
-    "sha256": "sha256:d880fe726a242c303b876a6766c51b3a1ee8173b1e328e611e3d3ee1946c57ef"
+    "sha256": "sha256:a88d3909f2c8523cdcc0c5a92b8c61930e59e57df0327586cdcdd6a8cb4241f7"
   },
   "schemaVersion": 1,
   "sourceLocks": [

@@ -1103,7 +1103,7 @@ function bakeGeometry(features, sample, terrainGridStepMetres = TERRAIN_STEP, su
   for (const way of features.filter((item) => item.tags.building && item.refs[0] === item.refs.at(-1))) {
     const ring = clipPolygon(way.en.slice(0, -1)); if (ring.length < 3) continue; const faces = ShapeUtils.triangulateShape(ring.map(([e, n]) => new Vector2(e, n)), []); if (!faces.length) continue;
     const height = buildingHeight(way.tags); const floor = ring.map(([e, n]) => sample(e, n)); const bottom = []; const top = [];
-    const presentationRecord = buildingPresentationProof ? { sourceOsmWayId: way.id, heightMetres: q(height), vertexStart: buildings.positions.length / 3, indexStart: buildings.indices.length, roofIndexCount: faces.length * 3, wallSegments: [] } : null;
+    const presentationRecord = buildingPresentationProof ? { sourceOsmWayId: way.id, sourceTags: Object.fromEntries(['building', 'building:levels', 'building:material', 'facade:material', 'roof:material', 'roof:shape'].filter((key) => way.tags[key] !== undefined).map((key) => [key, way.tags[key]])), heightMetres: q(height), vertexStart: buildings.positions.length / 3, indexStart: buildings.indices.length, roofIndexCount: faces.length * 3, wallSegments: [] } : null;
     for (let i = 0; i < ring.length; i += 1) { bottom.push(vertex(buildings, ring[i][0], floor[i], ring[i][1])); top.push(vertex(buildings, ring[i][0], floor[i] + height, ring[i][1])); }
     for (const face of faces) { triangle(buildings, top[face[0]], top[face[2]], top[face[1]]); }
     for (let i = 0; i < ring.length; i += 1) { const j = (i + 1) % ring.length; const indexStart = buildings.indices.length; triangle(buildings, bottom[i], bottom[j], top[i]); triangle(buildings, top[i], bottom[j], top[j]);

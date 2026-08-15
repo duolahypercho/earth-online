@@ -46,6 +46,12 @@ function expandedTrianglePositionBytes(glb, primitives) {
   const bytes = Buffer.alloc(output.length * 4); output.forEach((value, index) => bytes.writeFloatLE(value, index * 4)); return bytes;
 }
 
+function trianglePositionMultisetSha256(bytes) {
+  assert.equal(bytes.length % 36, 0, 'Expanded triangle byte ledger is incomplete');
+  const triangles = []; for (let offset = 0; offset < bytes.length; offset += 36) triangles.push(bytes.subarray(offset, offset + 36).toString('hex'));
+  triangles.sort(); return `sha256:${sha256(Buffer.from(triangles.join('\n')))}`;
+}
+
 const [proofManifest, productionManifest] = await Promise.all([readFile(PROOF_MANIFEST_PATH, 'utf8').then(JSON.parse), readFile(PRODUCTION_MANIFEST_PATH, 'utf8').then(JSON.parse)]);
 assert.equal(proofManifest.kind, 'sf-building-presentation-proof-manifest'); assert.equal(proofManifest.status, 'preview-proof-only-not-production');
 assert.equal(proofManifest.productionManifestTileCount, productionManifest.tiles.length); assert.equal(proofManifest.tiles.length, 2);
@@ -56,7 +62,7 @@ for (const tile of proofManifest.tiles) {
   assert.equal(receipt.kind, 'sf-building-presentation-proof-receipt'); assert.equal(receipt.status, 'preview-proof-only-not-production');
   assert.equal(receipt.tile.horizontalCrs, 'EPSG:26910'); assert.equal(receipt.tile.unitsPerMetre, 1); assert.equal(receipt.tile.verticalCertification, 'source-declared-navd88-unrealized');
   assert.equal(receipt.claims.sourcedWindowInventory, false); assert.equal(receipt.claims.sourceBuildingFootprintChanged, false); assert.equal(receipt.claims.gameplayOrCollisionChanged, false);
-  assert.equal(receipt.invariants.twoBuildProofBytesExact, true); assert.equal(receipt.invariants.sourcePositionFloat32BytesExact, true); assert.equal(receipt.invariants.sourceCategoryIndexSequencePreserved, true); assert.equal(receipt.invariants.productionTrianglePositionSequenceExact, true);
+  assert.equal(receipt.invariants.twoBuildProofBytesExact, true); assert.equal(receipt.invariants.sourcePositionFloat32BytesExact, true); assert.equal(receipt.invariants.sourceCategoryIndexLedgerBound, true); assert.equal(receipt.invariants.productionTrianglePositionMultisetExact, true); assert.equal(receipt.invariants.presentationPrimitiveCountAtMostEight, true);
   const [proofBytes, productionBytes] = await Promise.all([readFile(path.join(ROOT, receipt.proofArtifact.path)), readFile(path.join(ROOT, production.lod0.path))]);
   assert.equal(`sha256:${sha256(proofBytes)}`, receipt.proofArtifact.sha256, `${tile.tile} proof hash mismatch`);
   assert.equal(`sha256:${sha256(productionBytes)}`, production.lod0.sha256, `${tile.tile} production hash mismatch`);
@@ -64,17 +70,18 @@ for (const tile of proofManifest.tiles) {
   const proofGlb = parseGlb(proofBytes); const productionGlb = parseGlb(productionBytes);
   assert.equal(proofGlb.json.extras.unitsPerMetre, 1); assert.equal(proofGlb.json.extras.status, 'preview-proof-only-not-production'); assert.equal(proofGlb.json.extras.sourceWindowInventoryClaim, false);
   const proofPrimitives = proofGlb.json.meshes[0].primitives; const productionPrimitives = productionGlb.json.meshes[0].primitives.filter((primitive) => primitive.extras?.category === 'buildings');
-  assert(productionPrimitives.length > 0, `${tile.tile} production building primitive missing`); assert.equal(proofPrimitives.length, receipt.counts.primitives);
+  assert(productionPrimitives.length > 0, `${tile.tile} production building primitive missing`); assert.equal(proofPrimitives.length, receipt.counts.primitives); assert(proofPrimitives.length <= 8, `${tile.tile} proof exceeds eight presentation batches`);
   const proofExpanded = expandedTrianglePositionBytes(proofGlb, proofPrimitives); const productionExpanded = expandedTrianglePositionBytes(productionGlb, productionPrimitives);
-  assert(proofExpanded.equals(productionExpanded), `${tile.tile} proof triangle positions/order differ from production`);
+  assert.equal(trianglePositionMultisetSha256(proofExpanded), trianglePositionMultisetSha256(productionExpanded), `${tile.tile} proof triangle position multiset differs from production`);
   assert.equal(proofExpanded.length / 12, receipt.counts.indices); assert.equal(receipt.counts.indices / 3, receipt.counts.triangles);
-  const seenBuildings = new Set(); let roof = 0; let wall = 0;
+  const seenBuildings = new Set(accessorValues(proofGlb, proofPrimitives[0].attributes._SF_BUILDING_ORDINAL)); let roof = 0; let wall = 0;
   for (const primitive of proofPrimitives) {
-    assert.deepEqual(Object.keys(primitive.attributes).sort(), ['POSITION', '_SF_BUILDING_ORDINAL', '_SF_LOCAL_METRES', '_SF_TONE_KEY'].sort());
-    assert.equal(primitive.extras.presentationOnly, true); assert.match(primitive.extras.sourceFeatureId, /^way\/\d+$/); seenBuildings.add(primitive.extras.sourceFeatureId);
+    assert.deepEqual(Object.keys(primitive.attributes).sort(), ['POSITION', '_SF_BUILDING_ORDINAL', '_SF_LEVELS', '_SF_LOCAL_METRES', '_SF_MATERIAL_FAMILY', '_SF_TONE_KEY'].sort());
+    assert.equal(primitive.extras.presentationOnly, true); assert(Number.isInteger(primitive.extras.materialFamily) && primitive.extras.materialFamily >= 0 && primitive.extras.materialFamily <= 3); assert(primitive.extras.sourceBuildingCount > 0);
     if (primitive.extras.surfaceKind === 'roof') roof += 1; else if (primitive.extras.surfaceKind === 'wall') wall += 1; else assert.fail('Unknown proof surface kind');
   }
-  assert.equal(seenBuildings.size, receipt.counts.buildings); assert.equal(roof, receipt.counts.buildings); assert.equal(wall, receipt.counts.buildings);
-  verified.push({ tile: tile.tile, role: tile.role, buildings: receipt.counts.buildings, triangles: receipt.counts.triangles, primitives: receipt.counts.primitives, proofSha256: receipt.proofArtifact.sha256, exactProductionTriangleSequence: true });
+  assert.equal(seenBuildings.size, receipt.counts.buildings); assert(roof >= 1 && roof <= 4); assert(wall >= 1 && wall <= 4);
+  for (const record of receipt.buildingRecords) { assert.match(record.sourceFeatureId, /^way\/\d+$/); assert(record.materialFamily >= 0 && record.materialFamily <= 3); if (record.sourceBuildingLevels !== null) assert.equal(record.sourceBuildingLevels, Number.parseFloat(record.sourceTags['building:levels'])); }
+  verified.push({ tile: tile.tile, role: tile.role, buildings: receipt.counts.buildings, triangles: receipt.counts.triangles, primitives: receipt.counts.primitives, proofSha256: receipt.proofArtifact.sha256, exactProductionTriangleMultiset: true });
 }
 process.stdout.write(`${JSON.stringify({ result: 'SF building presentation proof passed', status: 'preview-proof-only-not-production', productionManifestTiles: productionManifest.tiles.length, verified }, null, 2)}\n`);
