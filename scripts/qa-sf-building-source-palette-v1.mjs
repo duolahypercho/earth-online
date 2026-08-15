@@ -38,7 +38,7 @@ const CASES = Object.freeze([
     expectedToneCounts: [4, 8, 7, 5],
     expectedToneLedgerSha256: 'sha256:2c960dc01b5a7e12423fe5b8c00291d258ff441ed1ce3576c27c509f40ec44ea',
     expectedBaselineRender: { calls: 7, triangles: 299725 },
-    expectedCandidateRender: { calls: 8, triangles: 299725 },
+    expectedCandidateRender: { calls: 7, triangles: 299725 },
   },
   {
     role: 'district',
@@ -53,7 +53,7 @@ const CASES = Object.freeze([
     expectedToneCounts: [94, 102, 98, 96],
     expectedToneLedgerSha256: 'sha256:1bd403b718dbf02bd07a8baaf7f0711fec99b3b54e2feb1abd01cd202ffae248',
     expectedBaselineRender: { calls: 5, triangles: 307956 },
-    expectedCandidateRender: { calls: 6, triangles: 307956 },
+    expectedCandidateRender: { calls: 5, triangles: 307956 },
   },
 ]);
 
@@ -116,8 +116,9 @@ try {
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.setScissorTest(true);
 
-      const proofPath = `/data/world/preview-artifacts/sf-building-source-tone-proof-v1/${input.tileId}/${input.tileId}.building-source-tone-proof.glb`;
-      const receiptPath = `/data/world/preview-artifacts/sf-building-source-tone-proof-v1/${input.tileId}/${input.tileId}.building-source-tone-proof.receipt.json`;
+      const proofPath = `/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/${input.tileId}/${input.tileId}.source-tone-production-proof.glb`;
+      const receiptPath = `/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/${input.tileId}/${input.tileId}.source-tone-production-proof.receipt.json`;
+      const sourceReceiptPath = `/data/world/preview-artifacts/sf-building-source-tone-proof-v1/${input.tileId}/${input.tileId}.building-source-tone-proof.receipt.json`;
       const loader = new GLTFLoader();
       async function sha256Hex(bytes) {
         return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
@@ -128,18 +129,20 @@ try {
         if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
         return response.arrayBuffer();
       }
-      const receiptBytes = await fetchBytes(receiptPath);
+      const [receiptBytes, sourceReceiptBytes] = await Promise.all([fetchBytes(receiptPath), fetchBytes(sourceReceiptPath)]);
       const receiptSha256 = await sha256Hex(receiptBytes);
+      const sourceReceiptSha256 = await sha256Hex(sourceReceiptBytes);
       const receipt = JSON.parse(new TextDecoder().decode(receiptBytes));
-      if (receipt.kind !== 'sf-building-source-tone-proof-receipt'
-        || receipt.status !== 'preview-proof-only-not-production'
+      const sourceReceipt = JSON.parse(new TextDecoder().decode(sourceReceiptBytes));
+      if (receipt.kind !== 'sf-building-source-tone-production-proof-receipt'
+        || receipt.status !== 'write-disabled-production-shaped-proof'
         || receipt.productionPromotionAuthorized !== false
-        || !receipt.invariants.productionDefaultGlbBytesExact
+        || !receipt.invariants.productionGeometryLedgerExact
         || receipt.invariants.sourceGeometryMoved !== false) {
         throw new Error(`${input.tileId} proof receipt is not source-geometry locked`);
       }
       const expectedProductionPath = `/${receipt.productionReference.path.replace(/^public\//, '')}`;
-      const expectedProofPath = `/${receipt.proofArtifact.path.replace(/^public\//, '')}`;
+      const expectedProofPath = `/${receipt.artifact.path.replace(/^public\//, '')}`;
       if (expectedProductionPath !== input.productionPath || expectedProofPath !== proofPath) {
         throw new Error(`${input.tileId} QA paths differ from the proof receipt`);
       }
@@ -148,8 +151,9 @@ try {
       ]);
       const productionSha256 = await sha256Hex(productionBytes);
       const proofSha256 = await sha256Hex(proofBytes);
-      if (`sha256:${productionSha256}` !== receipt.productionReference.verifiedSha256
-        || `sha256:${proofSha256}` !== receipt.proofArtifact.sha256) {
+      if (`sha256:${productionSha256}` !== receipt.productionReference.sha256
+        || `sha256:${proofSha256}` !== receipt.artifact.sha256
+        || sourceReceipt.ledgers.sourceToneAttributeSha256 !== receipt.ledgers.sourceToneAttributeSha256) {
         throw new Error(`${input.tileId} GLB bytes differ from the proof receipt`);
       }
       const resourcePath = (url) => url.slice(0, url.lastIndexOf('/') + 1);
@@ -162,7 +166,7 @@ try {
       const paletteHex = [0xc7ad8a, 0xaa765c, 0x77858c, 0x8b6456];
       const palette = paletteHex.map((hex) => new THREE.Color(hex));
       const toneCounts = [0, 0, 0, 0];
-      const sourceToneLedger = receipt.sourceToneRecords.map((record, ordinal) => {
+      const sourceToneLedger = sourceReceipt.sourceToneRecords.map((record, ordinal) => {
         const tone = record.sourceToneV1;
         if (tone !== Number(BigInt(record.sourceFeatureId.split('/')[1]) % 4n)) throw new Error(`${input.tileId} source-tone receipt derivation drifted`);
         toneCounts[tone] += 1;
@@ -217,46 +221,44 @@ try {
 
       proofGltf.scene.position.fromArray(input.worldOffset);
       let sourceTonePrimitiveVertices = 0;
+      const parsedToneCounts = [0, 0, 0, 0];
       proofGltf.scene.traverse((node) => {
         if (!node.isMesh) return;
+        if (node.material?.name !== 'buildings-night') { node.visible = false; return; }
         node.geometry.computeVertexNormals();
-        const ordinals = node.geometry.getAttribute('_sf_building_ordinal');
+        const positions = node.geometry.getAttribute('position');
         const sourceTones = node.geometry.getAttribute('_sf_source_tone_v1');
-        if (!ordinals || !sourceTones || sourceTones.normalized !== false || sourceTones.count !== ordinals.count) {
+        if (!positions || !sourceTones || sourceTones.normalized !== false || sourceTones.count !== positions.count) {
           throw new Error(`${input.tileId} Three.js did not expose the declared source-tone-v1 attribute`);
         }
-        const roof = node.material.name.includes('-roof-');
-        for (let index = 0; index < ordinals.count; index += 1) {
-          const ordinal = Math.round(ordinals.getX(index));
-          const record = receipt.sourceToneRecords[ordinal];
+        for (let index = 0; index < sourceTones.count; index += 1) {
           const tone = sourceTones.getX(index);
-          if (!Number.isInteger(tone) || tone < 0 || tone > 3 || tone !== record.sourceToneV1) throw new Error(`${input.tileId} parsed source-tone-v1 value drifted`);
+          if (!Number.isInteger(tone) || tone < 0 || tone > 3) throw new Error(`${input.tileId} parsed source-tone-v1 value drifted`);
+          parsedToneCounts[tone] += 1;
         }
-        node.userData.qaSurface = roof ? 'roof' : 'facade';
-        node.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: roof ? 0.94 : 0.9, metalness: 0 });
+        node.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
         node.material.onBeforeCompile = (shader) => {
-          shader.vertexShader = `attribute float _sf_source_tone_v1;\nvarying float vQaSourceTone;\nvarying vec3 vQaWorldNormal;\n${shader.vertexShader}`
-            .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
-              vQaWorldNormal=normalize(mat3(modelMatrix)*objectNormal);`)
+          shader.vertexShader = `attribute float _sf_source_tone_v1;\nvarying float vQaSourceTone;\nvarying vec3 vQaWorldPosition;\n${shader.vertexShader}`
             .replace('#include <begin_vertex>', `#include <begin_vertex>
-              vQaSourceTone=clamp(floor(_sf_source_tone_v1+.5),0.0,3.0);`);
+              vQaSourceTone=clamp(floor(_sf_source_tone_v1+.5),0.0,3.0);
+              vQaWorldPosition=(modelMatrix*vec4(transformed,1.0)).xyz;`);
           const sourceTonePaletteExpression = `vQaSourceTone<.5?${glslPalette[0]}:vQaSourceTone<1.5?${glslPalette[1]}:vQaSourceTone<2.5?${glslPalette[2]}:${glslPalette[3]}`;
-          shader.fragmentShader = `varying float vQaSourceTone;\nvarying vec3 vQaWorldNormal;\n${shader.fragmentShader}`
+          shader.fragmentShader = `varying float vQaSourceTone;\nvarying vec3 vQaWorldPosition;\n${shader.fragmentShader}`
             .replace('#include <color_fragment>', `#include <color_fragment>
               diffuseColor.rgb*=${sourceTonePaletteExpression};`)
-            .replace('#include <normal_fragment_maps>', roof
-              ? `#include <normal_fragment_maps>
-                diffuseColor.rgb*=1.08*1.04;`
-              : `#include <normal_fragment_maps>
-                float qaFacadeFacing=abs(dot(normalize(vQaWorldNormal.xz+vec2(.00001)),normalize(vec2(-.79,.61))));
-                float qaFacadeContrast=mix(.52,1.26,pow(qaFacadeFacing,.75));
-                diffuseColor.rgb*=qaFacadeContrast;`);
+            .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+              vec3 qaFaceNormal=normalize(cross(dFdx(vQaWorldPosition),dFdy(vQaWorldPosition)));
+              float qaRoofFacing=smoothstep(.5,.9,abs(qaFaceNormal.y));
+              float qaFacadeFacing=abs(dot(normalize(qaFaceNormal.xz+vec2(.00001)),normalize(vec2(-.79,.61))));
+              float qaFacadeContrast=mix(.52,1.26,pow(qaFacadeFacing,.75));
+              diffuseColor.rgb*=mix(qaFacadeContrast,1.08*1.04,qaRoofFacing);`);
         };
-        node.material.customProgramCacheKey = () => `sf-source-id-world-normal-${roof ? 'roof' : 'facade'}-qa-v2`;
+        node.material.customProgramCacheKey = () => 'sf-source-tone-v1-production-shaped-world-normal-qa-v3';
         node.material.needsUpdate = true;
         node.castShadow = true; node.receiveShadow = true;
-        sourceTonePrimitiveVertices += ordinals.count;
+        sourceTonePrimitiveVertices += sourceTones.count;
       });
+      if (parsedToneCounts.reduce((sum, count) => sum + count, 0) !== receipt.counts.sourceTonePayloadBytes) throw new Error(`${input.tileId} parsed source-tone payload count drifted`);
       candidateScene.add(proofGltf.scene);
 
       const offset = new THREE.Vector3(...input.worldOffset);
@@ -299,11 +301,14 @@ try {
       candidateScene.background = new THREE.Color(0x000000);
       candidateScene.fog = null;
       proofGltf.scene.traverse((node) => {
-        if (!node.isMesh) return;
+        if (!node.isMesh || !node.visible) return;
         originalMaterials.push([node, node.material]);
-        node.material = new THREE.MeshBasicMaterial({
-          color: node.userData.qaSurface === 'facade' ? 0xff0000 : 0x0000ff,
+        node.material = new THREE.ShaderMaterial({
           toneMapped: false,
+          vertexShader: `varying vec3 vQaMaskWorldPosition;
+            void main(){vQaMaskWorldPosition=(modelMatrix*vec4(position,1.0)).xyz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+          fragmentShader: `varying vec3 vQaMaskWorldPosition;
+            void main(){vec3 n=normalize(cross(dFdx(vQaMaskWorldPosition),dFdy(vQaMaskWorldPosition)));float roof=smoothstep(.5,.9,abs(n.y));gl_FragColor=vec4(mix(vec3(1.,0.,0.),vec3(0.,0.,1.),roof),1.);}`,
         });
       });
       renderer.setRenderTarget(maskTarget);
@@ -373,9 +378,10 @@ try {
         };
       }
       return {
-        receipt: { buildings: receipt.sourceToneRecords.length, status: receipt.status, contract: receipt.contract, productionPromotionAuthorized: receipt.productionPromotionAuthorized },
+        receipt: { buildings: sourceReceipt.sourceToneRecords.length, status: receipt.status, contract: receipt.contract, productionPromotionAuthorized: receipt.productionPromotionAuthorized },
         integrity: {
           receiptSha256: `sha256:${receiptSha256}`,
+          sourceReceiptSha256: `sha256:${sourceReceiptSha256}`,
           productionGlbSha256: `sha256:${productionSha256}`,
           proofGlbSha256: `sha256:${proofSha256}`,
           verifiedBeforeParse: true,
@@ -387,7 +393,7 @@ try {
           adjacencyDerivation: 'not derivable from receipt building records: they bind IDs and edge hash summaries but no endpoint topology',
         },
         sourceTonePrimitiveVertices,
-        normals: 'world-space normals derived from exact proof triangles at presentation time',
+        normals: 'fragment-derivative face normals from exact world-space positions at presentation time',
         candidateMaterialPass: 'source-tone-v1 byte attribute shader palette plus bounded deterministic world-space facade orientation contrast and roof lift',
         baselineRender, candidateRender,
         baselinePixels: pixelMetrics(true, buildingMaskPixels), candidatePixels: pixelMetrics(false, buildingMaskPixels),
@@ -402,7 +408,7 @@ try {
     assert.equal(result.sourceIdentityPalette.ledgerSha256, spec.expectedToneLedgerSha256, `${spec.role} source-ID tone ledger drifted`);
     assert(result.candidatePixels.shadowFractionUnder014 <= result.baselinePixels.shadowFractionUnder014,
       `${spec.role} increased the dark-pixel fraction`);
-    assert.equal(result.receipt.status, 'preview-proof-only-not-production');
+    assert.equal(result.receipt.status, 'write-disabled-production-shaped-proof');
     const screenshot = path.join(OUTPUT_ROOT, `${spec.role}-exact-baseline-vs-source-id-face-normal-capture-${runIndex}.png`);
     await page.screenshot({ path: screenshot });
     captures.push({
@@ -438,8 +444,8 @@ try {
     status: strictAccepted ? 'preview-report-only-not-production-strict-accept' : 'preview-report-only-not-production-strict-reject',
     policy: {
       candidateToneKey: 'byte-locked OSM way ID modulo four',
-      geometry: 'exact source-tone proof positions and indices, verified against the legacy proof and production bytes',
-      normals: 'camera-independent world-space derivation from exact proof triangles',
+      geometry: 'production-shaped source-tone proof positions and indices, verified exact against production geometry',
+      normals: 'fragment-derivative face normals from exact world-space positions',
       productionPromotionAuthorized: false,
       gameplayChanged: false,
       runtimeMetricContractChanged: false,

@@ -20,6 +20,7 @@ import { ShapeUtils, Vector2 } from 'three';
 import { FillRule, triangulate as triangulateClipper, trimCollinear, union as unionClipper } from 'clipper2-ts';
 import { booleanDifference, booleanUnion, classifyBooleanPaths, triangulatePolygon } from './ferry-surface-boolean-v1.mjs';
 import { openGeoTiffWindowReader } from './geotiff-window-reader-v1.mjs';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_V1, sourceToneV1ForOsmWayId } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
@@ -1167,6 +1168,37 @@ function partitionIndexedCategory(data, maxVertices = 65_535) {
   return chunks;
 }
 
+function partitionIndexedCategoryWithSourceTone(data, sourceToneValues, maxVertices = 65_535) {
+  assert.equal(sourceToneValues.length, data.positions.length / 3, 'Building source-tone values do not cover every source vertex');
+  const chunks = [];
+  let positions = [];
+  let indices = [];
+  let sourceTones = [];
+  let remap = new Map();
+  const flush = () => {
+    if (indices.length) chunks.push({ positions, indices, sourceTones });
+    positions = [];
+    indices = [];
+    sourceTones = [];
+    remap = new Map();
+  };
+  for (let index = 0; index < data.indices.length; index += 3) {
+    const triangleIndices = data.indices.slice(index, index + 3);
+    const additionalVertices = triangleIndices.filter((sourceIndex) => !remap.has(sourceIndex)).length;
+    if (remap.size + additionalVertices > maxVertices) flush();
+    for (const sourceIndex of triangleIndices) {
+      if (!remap.has(sourceIndex)) {
+        remap.set(sourceIndex, remap.size);
+        positions.push(...data.positions.slice(sourceIndex * 3, sourceIndex * 3 + 3));
+        sourceTones.push(sourceToneValues[sourceIndex]);
+      }
+      indices.push(remap.get(sourceIndex));
+    }
+  }
+  flush();
+  return chunks;
+}
+
 function serializedMeshStats(categories) {
   return Object.fromEntries(Object.entries(categories).map(([name, data]) => {
     const partitions = partitionIndexedCategory(data);
@@ -1180,17 +1212,22 @@ function serializedMeshStats(categories) {
   }));
 }
 
-function makeGlb(categories, level) {
+function makeGlb(categories, level, { buildingSourceToneValues = null, buildingSourceToneContract = null } = {}) {
+  assert.equal(Boolean(buildingSourceToneValues), Boolean(buildingSourceToneContract), 'Building source-tone values and contract must be provided together');
   const allNames = ['terrain', 'water', 'coastline', 'roads', 'buildings']; const names = allNames.filter((name) => categories[name].positions.length); const chunks = []; const bufferViews = []; const accessors = []; const primitives = [];
   let offset = 0; const pad = () => { const count = (4 - offset % 4) % 4; if (count) { chunks.push(Buffer.alloc(count)); offset += count; } };
   const addView = (bytes, target) => { pad(); const index = bufferViews.length; bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: bytes.length, target }); chunks.push(bytes); offset += bytes.length; return index; };
-  for (const name of names) { const material = allNames.indexOf(name); const data = categories[name]; const partitions = partitionIndexedCategory(data);
+  for (const name of names) { const material = allNames.indexOf(name); const data = categories[name]; const partitions = name === 'buildings' && buildingSourceToneValues ? partitionIndexedCategoryWithSourceTone(data, buildingSourceToneValues) : partitionIndexedCategory(data);
     for (const [chunkIndex, partition] of partitions.entries()) { const positions = Buffer.alloc(partition.positions.length * 4); partition.positions.forEach((v, i) => positions.writeFloatLE(v, i * 4)); const indices = Buffer.alloc(partition.indices.length * 2); partition.indices.forEach((v, i) => indices.writeUInt16LE(v, i * 2));
-    const positionView = addView(positions, 34962); const indexView = addView(indices, 34963); const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
+    const positionView = addView(positions, 34962); const sourceToneView = partition.sourceTones ? addView(Buffer.from(partition.sourceTones), 34962) : null; const indexView = addView(indices, 34963); const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
     for (let index = 0; index < partition.positions.length; index += 3) for (let axis = 0; axis < 3; axis += 1) { min[axis] = Math.min(min[axis], partition.positions[index + axis]); max[axis] = Math.max(max[axis], partition.positions[index + axis]); }
     const positionAccessor = accessors.length; accessors.push({ bufferView: positionView, componentType: 5126, count: partition.positions.length / 3, type: 'VEC3', min, max });
+    const sourceToneAccessor = partition.sourceTones ? accessors.length : null;
+    if (partition.sourceTones) accessors.push({ bufferView: sourceToneView, componentType: 5121, normalized: false, count: partition.sourceTones.length, type: 'SCALAR', min: [Math.min(...partition.sourceTones)], max: [Math.max(...partition.sourceTones)] });
     const indexAccessor = accessors.length; accessors.push({ bufferView: indexView, componentType: 5123, count: partition.indices.length, type: 'SCALAR', min: [0], max: [partition.positions.length / 3 - 1] });
-    primitives.push({ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: 4, extras: { category: name, chunkIndex, chunkCount: partitions.length, sourceOsmWayIds: [...data.sourceIds].sort((a, b) => a - b) } });
+    const attributes = { POSITION: positionAccessor };
+    if (partition.sourceTones) attributes._SF_SOURCE_TONE_V1 = sourceToneAccessor;
+    primitives.push({ attributes, indices: indexAccessor, material, mode: 4, extras: { category: name, chunkIndex, chunkCount: partitions.length, sourceOsmWayIds: [...data.sourceIds].sort((a, b) => a - b) } });
     }
   }
   pad(); const bin = Buffer.concat(chunks); const gltf = { asset: { version: '2.0', generator: 'build-sf-metric-tile-v1' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: `${TILE.id}-lod${level}` }], meshes: [{ name: `${TILE.id}-lod${level}`, primitives }], materials: [
@@ -1199,7 +1236,7 @@ function makeGlb(categories, level) {
     { name: 'coastline-osm-night', pbrMetallicRoughness: { baseColorFactor: [0.25, 0.78, 0.86, 1], metallicFactor: 0, roughnessFactor: 0.62 }, emissiveFactor: [0.025, 0.12, 0.14], doubleSided: true },
     { name: 'roads-night', pbrMetallicRoughness: { baseColorFactor: [0.105, 0.12, 0.135, 1], metallicFactor: 0, roughnessFactor: 0.92 } },
     { name: 'buildings-night', pbrMetallicRoughness: { baseColorFactor: [0.34, 0.28, 0.2, 1], metallicFactor: 0, roughnessFactor: 0.86 } },
-  ], buffers: [{ byteLength: bin.length }], bufferViews, accessors, extras: { tileId: TILE.id, lod: level, runtimeFrame: PROVISIONAL_FRAME, horizontalCrs: 'EPSG:26910', verticalCertification: 'source-declared-navd88-unrealized', tileOriginEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, unitsPerMetre: 1 } };
+  ], buffers: [{ byteLength: bin.length }], bufferViews, accessors, extras: { tileId: TILE.id, lod: level, runtimeFrame: PROVISIONAL_FRAME, horizontalCrs: 'EPSG:26910', verticalCertification: 'source-declared-navd88-unrealized', tileOriginEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, unitsPerMetre: 1, ...(buildingSourceToneContract ? { presentation: buildingSourceToneContract } : {}) } };
   let json = Buffer.from(JSON.stringify(gltf)); const jsonPad = (4 - json.length % 4) % 4; if (jsonPad) json = Buffer.concat([json, Buffer.alloc(jsonPad, 0x20)]); const total = 12 + 8 + json.length + 8 + bin.length; const out = Buffer.alloc(total); out.writeUInt32LE(0x46546c67, 0); out.writeUInt32LE(2, 4); out.writeUInt32LE(total, 8); out.writeUInt32LE(json.length, 12); out.writeUInt32LE(0x4e4f534a, 16); json.copy(out, 20); const at = 20 + json.length; out.writeUInt32LE(bin.length, at); out.writeUInt32LE(0x004e4942, at + 4); bin.copy(out, at + 8); return out;
 }
 
@@ -1220,7 +1257,7 @@ function representativeEn(feature) {
  * Bake one native EPSG:26910 384 m tile.  `tile` may contain integer
  * `gridEasting`/`gridNorthing`; the Ferry default is retained for compatibility.
  */
-async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE, buildingPresentationProof = false } = {}) {
+async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE, buildingPresentationProof = false, buildingSourceToneProof = false } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
   let terrainAuthorization = null;
@@ -1231,6 +1268,8 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     assert(['independent-cell-polygons', 'conforming-grid-boundary-stitch-v1'].includes(surfaceTopology), 'Unknown surfaceTopology mode');
     assert(TERRAIN_SELECTION_MODES.has(terrainSelectionMode), `Unknown terrain selection mode ${terrainSelectionMode}`);
     assert(!buildingPresentationProof || !write, 'Building presentation metadata is an in-memory proof only and may not write production-shaped artifacts');
+    assert(!buildingSourceToneProof || !write, 'Building source-tone metadata is a write-disabled production-shaped proof only');
+    assert(!(buildingPresentationProof && buildingSourceToneProof), 'Building presentation and production-shaped source-tone proofs are mutually exclusive');
     assert(terrainSelectionMode !== NATIVE_PIXEL_FALLBACK_PROOF_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
     if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE) terrainAuthorization = await loadSfNativePixelFallbackAuthorization({ requireProductionWrite: write });
     assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || (terrainGridStepMetres === TERRAIN_STEP && surfaceHeightOwnership === 'direct-native-pixel' && surfaceTopology === 'independent-cell-polygons'), 'Per-native-pixel fallback proof requires direct 1 m independent-cell surfaces');
@@ -1246,10 +1285,34 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors, terrainSelectionMode);
     const authorizedFallbackWrite = terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE && terrainAuthorization?.authorization.productionWriteEnabled === true;
     assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible) || authorizedFallbackWrite, 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
-    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology, buildingPresentationProof); const geometries = [baseGeometry]; const categories = baseGeometry;
+    const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology, buildingPresentationProof || buildingSourceToneProof); const geometries = [baseGeometry]; const categories = baseGeometry;
     for (const data of Object.values(categories)) for (const value of data.positions) assert(Number.isFinite(value), `Terrain selection emitted a non-finite geometry coordinate for ${TILE.id}`);
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
-    const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level), geometry }; });
+    let buildingSourceToneEvidence = null;
+    let buildingSourceToneValues = null;
+    if (buildingSourceToneProof) {
+      buildingSourceToneValues = new Array(categories.buildings.positions.length / 3).fill(-1);
+      const sourceRecords = baseGeometry.buildingPresentationProof.records.map((record, ordinal) => {
+        const sourceToneV1 = sourceToneV1ForOsmWayId(record.sourceOsmWayId);
+        for (let vertex = record.vertexStart; vertex < record.vertexStart + record.vertexCount; vertex += 1) {
+          assert.equal(buildingSourceToneValues[vertex], -1, `${TILE.id} building source-tone vertex ownership overlaps`);
+          buildingSourceToneValues[vertex] = sourceToneV1;
+        }
+        return { ordinal, sourceFeatureId: `way/${record.sourceOsmWayId}`, sourceTagsSha256: `sha256:${sha256(stableBytes(record.sourceTags))}`, sourceToneV1, vertexStart: record.vertexStart, vertexCount: record.vertexCount };
+      });
+      assert(buildingSourceToneValues.every((value) => Number.isInteger(value) && value >= 0 && value <= 3), `${TILE.id} building source-tone vertex ownership is incomplete`);
+      const serializedToneValues = partitionIndexedCategoryWithSourceTone(categories.buildings, buildingSourceToneValues).flatMap((partition) => partition.sourceTones);
+      buildingSourceToneEvidence = {
+        mode: 'source-tone-v1',
+        status: 'write-disabled-production-shaped-proof',
+        productionWriteEnabled: false,
+        contract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1,
+        counts: { sourceBuildings: sourceRecords.length, sourceVertices: buildingSourceToneValues.length, serializedVertices: serializedToneValues.length },
+        ledgers: { sourceRecordsSha256: `sha256:${sha256(stableBytes(sourceRecords))}`, sourceToneAttributeSha256: `sha256:${sha256(Buffer.from(serializedToneValues))}` },
+        sourceRecords,
+      };
+    }
+    const glbs = geometries.map((geometry, index) => { const level = lodLevel + index; return { level, name: `${stem}.lod${level}.glb`, bytes: makeGlb(geometry, level, buildingSourceToneProof ? { buildingSourceToneValues, buildingSourceToneContract: SF_BUILDING_SOURCE_TONE_CONTRACT_V1 } : undefined), geometry }; });
     const lods = glbs.map(({ level, bytes, name, geometry }) => ({ level, runtimeFrame: PROVISIONAL_FRAME, scale: [1, 1, 1], translationMetres: [0, 0, 0], maxHorizontalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, maxVerticalDeviationMetres: isCanonicalLod0 ? 0.000002 : null, artifactHash: `sha256:${sha256(bytes)}`, path: `${relative(outputDir)}/${name}`, bytes: bytes.length, boundsLocalMetres: geometryBounds(geometry), meshStats: serializedMeshStats(geometry) }));
     const sourceFeatures = [];
     for (const feature of included) { const en = representativeEn(feature); const native = inverse(en[0], en[1], horizontalLock); const terrainEvidence = await terrainSource.evidence(en[0], en[1]); const evidencePayload = terrainEvidence.payload; const elevationSampleEvidence = { ...evidencePayload, evidenceSha256: `sha256:${sha256(stableBytes(evidencePayload))}` }; const height = elevationSampleEvidence.sampledSourceDeclaredNavd88UnrealizedMetres;
@@ -1276,6 +1339,10 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const landAreaSquareMetres = planAreaSquareMetres(categories.terrain); const waterAreaSquareMetres = planAreaSquareMetres(categories.water);
     assert(Math.abs(landAreaSquareMetres + waterAreaSquareMetres - TILE.size ** 2) <= 0.001, 'Land and OSM-classified water must partition the tile without gaps or overlap');
     const receipt = { schemaVersion: 1, kind: 'sf-metric-tile-build-receipt', id: stem, status: 'provisional-vertical-unrealized', tile: { identity: TILE.id, gridIndex: [TILE.minE / TILE.size, TILE.minN / TILE.size], boundsEpsg26910Metres: [TILE.minE, TILE.minN, TILE.minE + TILE.size, TILE.minN + TILE.size], originEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], runtimeFrame: PROVISIONAL_FRAME, vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, scale: 1 }, source: { osmPbf: { path: relative(PBF_PATH), bytes: pbfHash.bytes, sha256: pbfHash.sha256, queryBoundsWgs84: bounds }, geoTiffs: terrainReceiptSources }, counts: { osmCandidateWays: features.length, emittedCoastlineWays: categories.water.sourceIds.size, emittedRoadWays: categories.roads.sourceIds.size, emittedBuildingWays: categories.buildings.sourceIds.size, packageSourceFeatures: sourceFeatures.length, terrainVertices: categories.terrain.positions.length / 3, waterVertices: categories.water.positions.length / 3, coastlineVertices: categories.coastline.positions.length / 3, roadVertices: categories.roads.positions.length / 3, buildingVertices: categories.buildings.positions.length / 3 }, surfaceClassification: { authority: 'OpenStreetMap natural=coastline ways in the byte-locked PBF', coastlineDirectionRule: 'OSM coastline direction: land on left, water on right', sourceOsmWayIds: [...categories.water.sourceIds].sort((a, b) => a - b), landAreaSquareMetres, waterAreaSquareMetres, partitionAreaSquareMetres: q(landAreaSquareMetres + waterAreaSquareMetres), waterVerticalMode: 'terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level', terrainWaterOverlapAreaSquareMetres: 0 }, ferryBuilding: TILE.id === FERRY_TILE.id ? { sourceFeatureId: 'way/558731934', present: categories.buildings.sourceIds.has(558731934) } : null, lods, relationCoverage: { implemented: false, statement: 'Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage.' }, deterministicInputs: { ...(usesNativePixelFallback ? { terrainSelectionMode } : {}), availableLods: [0], terrainGridStepMetres: TERRAIN_STEP, terrainSampling, terrainCellOwnership: 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', surfaceGridMetres: 1 / SURFACE_TICKS_PER_METRE, lod0Construction: '1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings', lod0DeviationMetres: 0, geometryQuantizationDecimalPlaces: 6, buildingHeightPolicy: 'OSM height, else building:levels*3.2m, else 9.6m', roadWidthPolicy: 'OSM width, else deterministic highway-class/lanes table' } };
+    if (buildingSourceToneEvidence) {
+      receipt.presentation = buildingSourceToneEvidence;
+      packageDescriptor.presentation = buildingSourceToneEvidence;
+    }
     const terrainSelectionProof = terrainSource.proof?.finalize?.() ?? null;
     if (terrainSelectionProof) {
       const evidence = { mode: terrainSelectionProof.mode, status: terrainSelectionProof.status, verticalCertification: terrainSelectionProof.verticalCertification, selectionPolicyName: terrainSelectionProof.selectionPolicyName, selectionPolicyHash: terrainSelectionProof.selectionPolicyHash, rule: terrainSelectionProof.rule, sourceLocks: terrainSelectionProof.sourceLocks, sampleLedgerSha256: terrainSelectionProof.sampleLedgerSha256, sharedEdgeLedgerSha256: terrainSelectionProof.sharedEdgeLedgerSha256, counts: terrainSelectionProof.counts };
@@ -1292,6 +1359,7 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const result = { outputDir, glbs, receipt, packageDescriptor, categories };
     if (terrainSelectionProof) result.terrainSelectionProof = terrainSelectionProof;
     if (buildingPresentationProof) result.buildingPresentationProof = baseGeometry.buildingPresentationProof;
+    if (buildingSourceToneProof) result.buildingSourceToneProof = buildingSourceToneEvidence;
     return result;
   } finally {
     try { await terrainSource?.close(); } finally { TILE = previousTile; }

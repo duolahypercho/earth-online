@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
+import { sourceToneV1ForOsmWayId } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = process.cwd();
 const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-presentation-proof-v1');
@@ -74,7 +75,7 @@ export function makePresentationGlb(tile, categories, proof, { sourceToneContrac
     centreX /= ringLength; centreZ /= ringLength;
     const familyKey = materialFamily(record.sourceTags); const levelCount = sourceLevels(record.sourceTags);
     const toneKey = familyKey * 2 + Number(BigInt(record.sourceOsmWayId) % 2n);
-    const sourceToneKey = Number(BigInt(record.sourceOsmWayId) % 4n);
+    const sourceToneKey = sourceTone ? sourceToneV1ForOsmWayId(record.sourceOsmWayId) : null;
     for (let index = 0; index < record.vertexCount; index += 1) {
       const vertexIndex = record.vertexStart + index;
       local[vertexIndex * 3] = buildings.positions[vertexIndex * 3] - centreX;

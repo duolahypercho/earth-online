@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
 import { makePresentationGlb } from './build-sf-building-presentation-proof-v1.mjs';
+import { SF_BUILDING_SOURCE_TONE_CONTRACT_V1 as CONTRACT } from './sf-building-source-tone-contract-v1.mjs';
 
 const ROOT = process.cwd();
 const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-source-tone-proof-v1');
@@ -14,14 +15,6 @@ const TILES = Object.freeze([
   { id: 'epsg26910-1441-10893', gridEasting: 1441, gridNorthing: 10893, role: 'ferry' },
   { id: 'epsg26910-1430-10882', gridEasting: 1430, gridNorthing: 10882, role: 'district' },
 ]);
-const POLICY = Object.freeze({
-  id: 'osm-way-id-modulo-4-v1',
-  formula: 'Number(BigInt(sourceOsmWayId) % 4n)',
-  input: 'byte-locked OSM source way identity',
-  outputDomain: [0, 3],
-  presentationOnly: true,
-  sourceColourClaim: false,
-});
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 function canonical(value) {
@@ -30,13 +23,6 @@ function canonical(value) {
   return value;
 }
 function jsonBytes(value) { return Buffer.from(`${JSON.stringify(canonical(value), null, 2)}\n`); }
-const POLICY_SHA256 = `sha256:${sha256(jsonBytes(POLICY))}`;
-const CONTRACT = Object.freeze({
-  schema: 'sf-building-source-tone-v1',
-  status: 'preview-proof-only-not-production',
-  attribute: { gltfSemantic: '_SF_SOURCE_TONE_V1', threeAttributeName: '_sf_source_tone_v1', componentType: 5121, type: 'SCALAR', normalized: false, domain: [0, 3] },
-  derivation: { ...POLICY, policySha256: POLICY_SHA256 },
-});
 
 function sourceToneLedger(proof) {
   const bytesPerIndex = proof.indexComponentType === 5125 ? 4 : 2;
