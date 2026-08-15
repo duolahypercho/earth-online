@@ -616,7 +616,7 @@ async function loadTile(state) {
     tile = gltf.scene;
     verifyScenePresentation(tile, descriptor.presentation, descriptor.id);
     if (descriptor.presentation.mode === 'source-tone-v1') {
-      const sourceToneBytes = collectSourceToneAttributeBytes(tile, descriptor.presentation);
+      const sourceToneBytes = collectSourceToneAttributeBytes(gltf, descriptor.presentation, descriptor.id);
       const actualSourceToneSha256 = `sha256:${await sha256Hex(sourceToneBytes)}`;
       if (actualSourceToneSha256 !== presentationIntegrity.sourceToneAttributeSha256) {
         throw new Error(`${descriptor.id} source-tone attribute SHA-256 does not match its receipt ledger`);
