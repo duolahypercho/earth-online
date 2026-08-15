@@ -217,8 +217,17 @@ try {
   assert.equal(reflection.material.uniforms.active, undefined, 'Reserved reflection uniform "active" regressed');
   assert(reflection.material.uniforms.activation.value > 0, 'Night drizzle did not activate pavement reflections');
 
+  atmosphere.setConditions({ weather: 'drizzle', timeOfDay: 'day' });
+  atmosphere.update(1 / 60);
+  assert.equal(
+    Number(reflection.material.uniforms.activation.value.toFixed(3)),
+    0.198,
+    'Daytime drizzle must retain a restrained wet-pavement reflection response',
+  );
+
   atmosphere.setConditions({ weather: 'clear', timeOfDay: 'day' });
   atmosphere.update(1 / 60);
+  assert.equal(reflection.material.uniforms.activation.value, 0, 'Clear day must remove rain reflections');
   const dryWater = atmosphere.getWaterDiagnostics();
   assert.equal(dryWater.uniforms.night, 0, 'Clear day left the Bay night response active');
   assert.equal(dryWater.uniforms.wetness, 0, 'Clear day left the Bay wetness response active');

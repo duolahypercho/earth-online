@@ -648,7 +648,15 @@ export function createFerryBuildingAtmosphere(options = {}) {
       lens.material.emissiveIntensity = 0.35 + active * 2.4;
     }
     for (const reflection of lampAssembly.reflections) {
-      reflection.material.uniforms.activation.value = conditions.night * (0.18 + conditions.wetness * 0.82);
+      // Wet pavement can carry a restrained warm reflection before dusk. The
+      // fixtures already run at a low rain-time intensity, so this is a
+      // material-uniform response only: it does not invent daytime lamps or
+      // add a second road surface / draw batch.
+      reflection.material.uniforms.activation.value = THREE.MathUtils.clamp(
+        conditions.night * (0.18 + conditions.wetness * 0.82) + conditions.wetness * 0.22,
+        0,
+        1,
+      );
     }
   }
 
