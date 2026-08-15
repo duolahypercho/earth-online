@@ -1,0 +1,508 @@
+{
+  "buildingRecords": [
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 28,
+        "ledgerSha256": "sha256:e41aea880d33453c91238b59092684b5b86eff03468d8e1ed46c5258d6c7c749",
+        "maxLengthMetres": 92.21136,
+        "minLengthMetres": 0.325591
+      },
+      "heightMetres": 93,
+      "indexCount": 240,
+      "indexStart": 0,
+      "ordinal": 0,
+      "roofIndexCount": 72,
+      "sourceFeatureId": "way/32862406",
+      "vertexCount": 56,
+      "vertexStart": 0,
+      "wallIndexCount": 168
+    },
+    {
+      "deterministicToneKey": 3,
+      "facadeEdges": {
+        "count": 14,
+        "ledgerSha256": "sha256:98cf39d644c77079de0e2341924a8eac82ec457c11a3b58b074a0e80c1b85084",
+        "maxLengthMetres": 35.496463,
+        "minLengthMetres": 1.625538
+      },
+      "heightMetres": 25.6,
+      "indexCount": 120,
+      "indexStart": 240,
+      "ordinal": 1,
+      "roofIndexCount": 36,
+      "sourceFeatureId": "way/32862467",
+      "vertexCount": 28,
+      "vertexStart": 56,
+      "wallIndexCount": 84
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 16,
+        "ledgerSha256": "sha256:e0f4d14745fcae1f6771fabf62aee872708407298e83a09294e8ce019766011a",
+        "maxLengthMetres": 41.972445,
+        "minLengthMetres": 2.927045
+      },
+      "heightMetres": 32,
+      "indexCount": 138,
+      "indexStart": 360,
+      "ordinal": 2,
+      "roofIndexCount": 42,
+      "sourceFeatureId": "way/32862485",
+      "vertexCount": 32,
+      "vertexStart": 84,
+      "wallIndexCount": 96
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 15,
+        "ledgerSha256": "sha256:1f3fda05ea917621471a96f41f370aa55a562bbc5347ce0de0c3cd7d29048ad1",
+        "maxLengthMetres": 89.910429,
+        "minLengthMetres": 2.002795
+      },
+      "heightMetres": 33,
+      "indexCount": 129,
+      "indexStart": 498,
+      "ordinal": 3,
+      "roofIndexCount": 39,
+      "sourceFeatureId": "way/44106213",
+      "vertexCount": 30,
+      "vertexStart": 116,
+      "wallIndexCount": 90
+    },
+    {
+      "deterministicToneKey": 3,
+      "facadeEdges": {
+        "count": 6,
+        "ledgerSha256": "sha256:53e43d5cf52aef62c3767e9d6d09fad7eb981569fdbf3716378c3d04fd2a0eb0",
+        "maxLengthMetres": 50.870124,
+        "minLengthMetres": 8.236805
+      },
+      "heightMetres": 15,
+      "indexCount": 48,
+      "indexStart": 627,
+      "ordinal": 4,
+      "roofIndexCount": 12,
+      "sourceFeatureId": "way/104599975",
+      "vertexCount": 12,
+      "vertexStart": 146,
+      "wallIndexCount": 36
+    },
+    {
+      "deterministicToneKey": 0,
+      "facadeEdges": {
+        "count": 9,
+        "ledgerSha256": "sha256:97fad947d44bc2d9e6d1735dc483b60157f37cc0f1e0fd2adc5d10ebb8e468d5",
+        "maxLengthMetres": 115.92368,
+        "minLengthMetres": 0.212959
+      },
+      "heightMetres": 28,
+      "indexCount": 75,
+      "indexStart": 675,
+      "ordinal": 5,
+      "roofIndexCount": 21,
+      "sourceFeatureId": "way/132238424",
+      "vertexCount": 18,
+      "vertexStart": 158,
+      "wallIndexCount": 54
+    },
+    {
+      "deterministicToneKey": 0,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:184ea7bd9d3debe81f5f81d179934f83773c72b339f0290c00024ca8c9a0cbb4",
+        "maxLengthMetres": 20.041342,
+        "minLengthMetres": 1.760683
+      },
+      "heightMetres": 17,
+      "indexCount": 30,
+      "indexStart": 750,
+      "ordinal": 6,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/192026932",
+      "vertexCount": 8,
+      "vertexStart": 176,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 10,
+        "ledgerSha256": "sha256:7348bbfd86fe9aa1d18b0b79d850a3ca6a87765876aea0ce3fc8d0eae5ba150c",
+        "maxLengthMetres": 35.069674,
+        "minLengthMetres": 1.006909
+      },
+      "heightMetres": 94,
+      "indexCount": 84,
+      "indexStart": 780,
+      "ordinal": 7,
+      "roofIndexCount": 24,
+      "sourceFeatureId": "way/192026938",
+      "vertexCount": 20,
+      "vertexStart": 184,
+      "wallIndexCount": 60
+    },
+    {
+      "deterministicToneKey": 3,
+      "facadeEdges": {
+        "count": 6,
+        "ledgerSha256": "sha256:8902476fb6856338135148c5ca46143cfbe5edc8826d59f9e2a7a5e818f29d25",
+        "maxLengthMetres": 16.084868,
+        "minLengthMetres": 2.526977
+      },
+      "heightMetres": 9.6,
+      "indexCount": 48,
+      "indexStart": 864,
+      "ordinal": 8,
+      "roofIndexCount": 12,
+      "sourceFeatureId": "way/193054131",
+      "vertexCount": 12,
+      "vertexStart": 204,
+      "wallIndexCount": 36
+    },
+    {
+      "deterministicToneKey": 0,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:e0e0dcaf2d19d2f11c674557de4171a0f7e7ecb70ae2313a088ac4020cecdf58",
+        "maxLengthMetres": 42.158562,
+        "minLengthMetres": 14.191414
+      },
+      "heightMetres": 22.4,
+      "indexCount": 30,
+      "indexStart": 912,
+      "ordinal": 9,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/193054132",
+      "vertexCount": 8,
+      "vertexStart": 216,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 6,
+        "ledgerSha256": "sha256:9dddc5fc1783c02af338b5dbac05f1efa540c241a7d63b07e0d67ebc3597ddd8",
+        "maxLengthMetres": 42.101862,
+        "minLengthMetres": 9.81434
+      },
+      "heightMetres": 16,
+      "indexCount": 48,
+      "indexStart": 942,
+      "ordinal": 10,
+      "roofIndexCount": 12,
+      "sourceFeatureId": "way/193054133",
+      "vertexCount": 12,
+      "vertexStart": 224,
+      "wallIndexCount": 36
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 36,
+        "ledgerSha256": "sha256:5d7c769c2e53ab292cc719acc0d79d196f7578180a5c51a58e745a10a0a838ed",
+        "maxLengthMetres": 26.403726,
+        "minLengthMetres": 0.142611
+      },
+      "heightMetres": 9.6,
+      "indexCount": 318,
+      "indexStart": 990,
+      "ordinal": 11,
+      "roofIndexCount": 102,
+      "sourceFeatureId": "way/193054134",
+      "vertexCount": 72,
+      "vertexStart": 236,
+      "wallIndexCount": 216
+    },
+    {
+      "deterministicToneKey": 3,
+      "facadeEdges": {
+        "count": 6,
+        "ledgerSha256": "sha256:5d31edcbf5d741013de92f4f1d08573c669fad598417777424b4e3e8a6fea2d8",
+        "maxLengthMetres": 42.125138,
+        "minLengthMetres": 0.693941
+      },
+      "heightMetres": 22.4,
+      "indexCount": 48,
+      "indexStart": 1308,
+      "ordinal": 12,
+      "roofIndexCount": 12,
+      "sourceFeatureId": "way/193054135",
+      "vertexCount": 12,
+      "vertexStart": 308,
+      "wallIndexCount": 36
+    },
+    {
+      "deterministicToneKey": 0,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:084ac1d3780462881c379d163070af7e504befb340793371f96fd4f977e91a65",
+        "maxLengthMetres": 41.926743,
+        "minLengthMetres": 14.031999
+      },
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1356,
+      "ordinal": 13,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/193054136",
+      "vertexCount": 8,
+      "vertexStart": 320,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:a263cf33dfca3c8b3692c0e5ece0bb280c4d6abcafd53dd89541476603e416e4",
+        "maxLengthMetres": 42.158562,
+        "minLengthMetres": 13.816354
+      },
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1386,
+      "ordinal": 14,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/193054137",
+      "vertexCount": 8,
+      "vertexStart": 328,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 11,
+        "ledgerSha256": "sha256:2174c3a7f0c8202fc8ded20173fef4e1115541ef7e0543a955d2c7f5dbabe9cb",
+        "maxLengthMetres": 28.521983,
+        "minLengthMetres": 1.201963
+      },
+      "heightMetres": 25.6,
+      "indexCount": 93,
+      "indexStart": 1416,
+      "ordinal": 15,
+      "roofIndexCount": 27,
+      "sourceFeatureId": "way/193054138",
+      "vertexCount": 22,
+      "vertexStart": 336,
+      "wallIndexCount": 66
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:8524f14076e12036aee2c9f1ed711a39ef6d32c5f9007fa86f25a3e0feb3e97d",
+        "maxLengthMetres": 41.954903,
+        "minLengthMetres": 13.9381
+      },
+      "heightMetres": 12.8,
+      "indexCount": 30,
+      "indexStart": 1509,
+      "ordinal": 16,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/256969674",
+      "vertexCount": 8,
+      "vertexStart": 358,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 12,
+        "ledgerSha256": "sha256:3c5511228ac5110daec00eec4be23ab148645cfe4c098b8274c0c5112c899d5a",
+        "maxLengthMetres": 12.130541,
+        "minLengthMetres": 0.809167
+      },
+      "heightMetres": 4,
+      "indexCount": 102,
+      "indexStart": 1539,
+      "ordinal": 17,
+      "roofIndexCount": 30,
+      "sourceFeatureId": "way/260290226",
+      "vertexCount": 24,
+      "vertexStart": 366,
+      "wallIndexCount": 72
+    },
+    {
+      "deterministicToneKey": 2,
+      "facadeEdges": {
+        "count": 23,
+        "ledgerSha256": "sha256:c57445906e711fa09a459e012057e05f34dfd7ceb8350d54be9480bae7e713c2",
+        "maxLengthMetres": 70.016342,
+        "minLengthMetres": 0.262304
+      },
+      "heightMetres": 15,
+      "indexCount": 201,
+      "indexStart": 1641,
+      "ordinal": 18,
+      "roofIndexCount": 63,
+      "sourceFeatureId": "way/558731934",
+      "vertexCount": 46,
+      "vertexStart": 390,
+      "wallIndexCount": 138
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:a5e8e4a9f78a9815f65f18d61adb4025f72f1995f27ca1588d15398a8d947442",
+        "maxLengthMetres": 38.315548,
+        "minLengthMetres": 5.059411
+      },
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1842,
+      "ordinal": 19,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/979811981",
+      "vertexCount": 8,
+      "vertexStart": 436,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 3,
+      "facadeEdges": {
+        "count": 4,
+        "ledgerSha256": "sha256:b6b458e64360c3d73cbc150354203de54c30e1a62c98951f97524e62af4302b5",
+        "maxLengthMetres": 38.419043,
+        "minLengthMetres": 5.149558
+      },
+      "heightMetres": 9.6,
+      "indexCount": 30,
+      "indexStart": 1872,
+      "ordinal": 20,
+      "roofIndexCount": 6,
+      "sourceFeatureId": "way/979811987",
+      "vertexCount": 8,
+      "vertexStart": 444,
+      "wallIndexCount": 24
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 11,
+        "ledgerSha256": "sha256:766c48814353829c6d64dfe475bfb0663fc411ca76d298e6fa7f1646f8ad67e4",
+        "maxLengthMetres": 71.993602,
+        "minLengthMetres": 0.262304
+      },
+      "heightMetres": 9.6,
+      "indexCount": 93,
+      "indexStart": 1902,
+      "ordinal": 21,
+      "roofIndexCount": 27,
+      "sourceFeatureId": "way/1189071405",
+      "vertexCount": 22,
+      "vertexStart": 452,
+      "wallIndexCount": 66
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 14,
+        "ledgerSha256": "sha256:ccf9f3b5f67d6b51319c0c26dea1b2418475ba1f42cf8e0d9442187b19bbc5d8",
+        "maxLengthMetres": 13.399515,
+        "minLengthMetres": 0.590772
+      },
+      "heightMetres": 9.6,
+      "indexCount": 120,
+      "indexStart": 1995,
+      "ordinal": 22,
+      "roofIndexCount": 36,
+      "sourceFeatureId": "way/1301393953",
+      "vertexCount": 28,
+      "vertexStart": 474,
+      "wallIndexCount": 84
+    },
+    {
+      "deterministicToneKey": 1,
+      "facadeEdges": {
+        "count": 6,
+        "ledgerSha256": "sha256:59648e3f24d8e52c1df308aab56e5d380a461a2bf97e7731deec3fb7e3447511",
+        "maxLengthMetres": 13.64611,
+        "minLengthMetres": 0.52669
+      },
+      "heightMetres": 9.6,
+      "indexCount": 48,
+      "indexStart": 2115,
+      "ordinal": 23,
+      "roofIndexCount": 12,
+      "sourceFeatureId": "way/1301393957",
+      "vertexCount": 12,
+      "vertexStart": 502,
+      "wallIndexCount": 36
+    }
+  ],
+  "claims": {
+    "deterministicToneKey": "source OSM way id modulo four; presentation-only",
+    "facadeCoordinates": "building-local metric coordinates derived from exact source-bound extrusion vertices",
+    "gameplayOrCollisionChanged": false,
+    "roofWallClassification": "primitive partition follows the existing contiguous roof/wall triangle ranges",
+    "sourceBuildingFootprintChanged": false,
+    "sourcedWindowInventory": false
+  },
+  "counts": {
+    "buildings": 24,
+    "indices": 2163,
+    "primitives": 48,
+    "triangles": 721,
+    "vertices": 514
+  },
+  "invariants": {
+    "buildingOwnershipComplete": true,
+    "productionTrianglePositionSequenceExact": true,
+    "sourceCategoryIndexSequencePreserved": true,
+    "sourceGeometryMoved": false,
+    "sourcePositionFloat32BytesExact": true,
+    "twoBuildProofBytesExact": true
+  },
+  "kind": "sf-building-presentation-proof-receipt",
+  "ledgers": {
+    "buildingRecordsSha256": "sha256:4fda6de795ca43bdab9143cb831440c91eb4982549bb113dd2b30f2e9ec44666",
+    "indexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+    "positionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4"
+  },
+  "productionReference": {
+    "declaredSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310",
+    "exactDefaultBytesPreserved": true,
+    "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+    "verifiedSha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+  },
+  "proofArtifact": {
+    "bytes": 36420,
+    "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
+    "sha256": "sha256:d880fe726a242c303b876a6766c51b3a1ee8173b1e328e611e3d3ee1946c57ef"
+  },
+  "schemaVersion": 1,
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "purpose": "geometry",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "purpose": "horizontal-coordinate-operation",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    {
+      "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+      "purpose": "terrain-elevation",
+      "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619"
+    }
+  ],
+  "status": "preview-proof-only-not-production",
+  "tile": {
+    "gridIndex": [
+      1441,
+      10893
+    ],
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

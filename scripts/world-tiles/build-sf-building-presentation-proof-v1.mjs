@@ -1,0 +1,164 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { buildSfMetricTile, loadSfMetricSharedInputs, loadSfMetricVerifiedTerrainSourceDigests } from './build-ferry-production-tile-v1.mjs';
+
+const ROOT = process.cwd();
+const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-building-presentation-proof-v1');
+const MANIFEST_PATH = path.join(ROOT, 'public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json');
+const TILES = Object.freeze([
+  { id: 'epsg26910-1441-10893', gridEasting: 1441, gridNorthing: 10893, role: 'ferry' },
+  { id: 'epsg26910-1430-10882', gridEasting: 1430, gridNorthing: 10882, role: 'district' },
+]);
+
+function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+function jsonBytes(value) { return Buffer.from(`${JSON.stringify(canonical(value), null, 2)}\n`); }
+function float32Bytes(values) { const bytes = Buffer.alloc(values.length * 4); values.forEach((value, index) => bytes.writeFloatLE(value, index * 4)); return bytes; }
+function uint16Bytes(values) { const bytes = Buffer.alloc(values.length * 2); values.forEach((value, index) => bytes.writeUInt16LE(value, index * 2)); return bytes; }
+function uint32Bytes(values) { const bytes = Buffer.alloc(values.length * 4); values.forEach((value, index) => bytes.writeUInt32LE(value, index * 4)); return bytes; }
+function uint8Bytes(values) { return Buffer.from(values); }
+
+function minMax(values, stride) {
+  const min = Array(stride).fill(Infinity); const max = Array(stride).fill(-Infinity);
+  for (let index = 0; index < values.length; index += stride) for (let axis = 0; axis < stride; axis += 1) {
+    min[axis] = Math.min(min[axis], values[index + axis]); max[axis] = Math.max(max[axis], values[index + axis]);
+  }
+  return { min, max };
+}
+
+function makePresentationGlb(tile, categories, proof) {
+  const buildings = categories.buildings;
+  const vertexCount = buildings.positions.length / 3;
+  assert(vertexCount > 0 && buildings.indices.length > 0, `${tile.id} has no building geometry`);
+  const local = new Array(buildings.positions.length).fill(0);
+  const buildingOrdinal = new Array(vertexCount).fill(0);
+  const tone = new Array(vertexCount).fill(0);
+  const records = proof.records.map((record, ordinal) => {
+    assert.equal(record.vertexCount % 2, 0, `${tile.id} way/${record.sourceOsmWayId} vertex pairing is invalid`);
+    const ringLength = record.vertexCount / 2;
+    let centreX = 0; let centreZ = 0;
+    for (let index = 0; index < ringLength; index += 1) {
+      centreX += buildings.positions[(record.vertexStart + index) * 3];
+      centreZ += buildings.positions[(record.vertexStart + index) * 3 + 2];
+    }
+    centreX /= ringLength; centreZ /= ringLength;
+    const toneKey = Number(BigInt(record.sourceOsmWayId) % 4n);
+    for (let index = 0; index < record.vertexCount; index += 1) {
+      const vertexIndex = record.vertexStart + index;
+      local[vertexIndex * 3] = buildings.positions[vertexIndex * 3] - centreX;
+      local[vertexIndex * 3 + 1] = index < ringLength ? 0 : record.heightMetres;
+      local[vertexIndex * 3 + 2] = buildings.positions[vertexIndex * 3 + 2] - centreZ;
+      buildingOrdinal[vertexIndex] = ordinal;
+      tone[vertexIndex] = toneKey;
+    }
+    const facadeEdgeLengths = record.wallSegments.map(({ edgeLengthMetres }) => edgeLengthMetres);
+    return {
+      ordinal,
+      sourceFeatureId: `way/${record.sourceOsmWayId}`,
+      deterministicToneKey: toneKey,
+      heightMetres: record.heightMetres,
+      vertexStart: record.vertexStart,
+      vertexCount: record.vertexCount,
+      indexStart: record.indexStart,
+      indexCount: record.indexCount,
+      roofIndexCount: record.roofIndexCount,
+      wallIndexCount: record.indexCount - record.roofIndexCount,
+      facadeEdges: { count: facadeEdgeLengths.length, minLengthMetres: Math.min(...facadeEdgeLengths), maxLengthMetres: Math.max(...facadeEdgeLengths), ledgerSha256: `sha256:${sha256(float32Bytes(facadeEdgeLengths))}` },
+    };
+  });
+  assert.equal(records.reduce((sum, record) => sum + record.vertexCount, 0), vertexCount, `${tile.id} building vertex ownership is incomplete`);
+  assert.equal(records.reduce((sum, record) => sum + record.indexCount, 0), buildings.indices.length, `${tile.id} building triangle ownership is incomplete`);
+
+  const useUint32 = vertexCount > 65_535;
+  const chunks = []; const bufferViews = []; const accessors = []; let offset = 0;
+  const addView = (bytes, target) => {
+    const padding = (4 - offset % 4) % 4; if (padding) { chunks.push(Buffer.alloc(padding)); offset += padding; }
+    const index = bufferViews.length; bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: bytes.length, target }); chunks.push(bytes); offset += bytes.length; return index;
+  };
+  const positionView = addView(float32Bytes(buildings.positions), 34962);
+  const localView = addView(float32Bytes(local), 34962);
+  const buildingView = addView(uint16Bytes(buildingOrdinal), 34962);
+  const toneView = addView(uint8Bytes(tone), 34962);
+  const indexBytes = useUint32 ? uint32Bytes(buildings.indices) : uint16Bytes(buildings.indices);
+  const indexView = addView(indexBytes, 34963);
+  const positionBounds = minMax(buildings.positions, 3); const localBounds = minMax(local, 3);
+  const positionAccessor = accessors.length; accessors.push({ bufferView: positionView, componentType: 5126, count: vertexCount, type: 'VEC3', ...positionBounds });
+  const localAccessor = accessors.length; accessors.push({ bufferView: localView, componentType: 5126, count: vertexCount, type: 'VEC3', ...localBounds });
+  const buildingAccessor = accessors.length; accessors.push({ bufferView: buildingView, componentType: 5123, count: vertexCount, type: 'SCALAR', min: [0], max: [records.length - 1] });
+  const toneAccessor = accessors.length; accessors.push({ bufferView: toneView, componentType: 5121, count: vertexCount, type: 'SCALAR', min: [0], max: [3] });
+  const primitives = [];
+  for (const record of records) for (const surface of ['roof', 'wall']) {
+    const count = surface === 'roof' ? record.roofIndexCount : record.wallIndexCount;
+    if (!count) continue;
+    const firstIndex = record.indexStart + (surface === 'roof' ? 0 : record.roofIndexCount);
+    const slice = buildings.indices.slice(firstIndex, firstIndex + count);
+    const indexAccessor = accessors.length;
+    accessors.push({ bufferView: indexView, byteOffset: firstIndex * (useUint32 ? 4 : 2), componentType: useUint32 ? 5125 : 5123, count, type: 'SCALAR', min: [Math.min(...slice)], max: [Math.max(...slice)] });
+    primitives.push({ attributes: { POSITION: positionAccessor, _SF_LOCAL_METRES: localAccessor, _SF_BUILDING_ORDINAL: buildingAccessor, _SF_TONE_KEY: toneAccessor }, indices: indexAccessor, material: surface === 'roof' ? 0 : 1, mode: 4, extras: { sourceFeatureId: record.sourceFeatureId, buildingOrdinal: record.ordinal, surfaceKind: surface, presentationOnly: true } });
+  }
+  const padding = (4 - offset % 4) % 4; if (padding) { chunks.push(Buffer.alloc(padding)); offset += padding; }
+  const bin = Buffer.concat(chunks);
+  const gltf = {
+    asset: { version: '2.0', generator: 'build-sf-building-presentation-proof-v1' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, name: `${tile.id}-building-presentation-proof` }],
+    meshes: [{ name: `${tile.id}-building-presentation-proof`, primitives }],
+    materials: [
+      { name: 'building-roof-proof', pbrMetallicRoughness: { baseColorFactor: [0.56, 0.49, 0.42, 1], metallicFactor: 0, roughnessFactor: 0.94 } },
+      { name: 'building-wall-proof', pbrMetallicRoughness: { baseColorFactor: [0.46, 0.36, 0.3, 1], metallicFactor: 0, roughnessFactor: 0.9 } },
+    ],
+    buffers: [{ byteLength: bin.length }], bufferViews, accessors,
+    extras: { tileId: tile.id, horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized', status: 'preview-proof-only-not-production', sourceWindowInventoryClaim: false },
+  };
+  let json = Buffer.from(JSON.stringify(gltf)); const jsonPadding = (4 - json.length % 4) % 4; if (jsonPadding) json = Buffer.concat([json, Buffer.alloc(jsonPadding, 0x20)]);
+  const output = Buffer.alloc(12 + 8 + json.length + 8 + bin.length); output.writeUInt32LE(0x46546c67, 0); output.writeUInt32LE(2, 4); output.writeUInt32LE(output.length, 8); output.writeUInt32LE(json.length, 12); output.writeUInt32LE(0x4e4f534a, 16); json.copy(output, 20); const binAt = 20 + json.length; output.writeUInt32LE(bin.length, binAt); output.writeUInt32LE(0x004e4942, binAt + 4); bin.copy(output, binAt + 8);
+  return { bytes: output, records, sourcePositionBytes: float32Bytes(buildings.positions), sourceIndexBytes: indexBytes, vertexCount, indexCount: buildings.indices.length, primitiveCount: primitives.length, indexComponentType: useUint32 ? 5125 : 5123 };
+}
+
+async function buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests) {
+  const options = { tile, write: false, sharedInputs, verifiedTerrainSourceDigests, buildingPresentationProof: true };
+  const first = await buildSfMetricTile(options); const second = await buildSfMetricTile(options);
+  const firstProof = makePresentationGlb(tile, first.categories, first.buildingPresentationProof);
+  const secondProof = makePresentationGlb(tile, second.categories, second.buildingPresentationProof);
+  assert(firstProof.bytes.equals(secondProof.bytes), `${tile.id} proof GLB is not byte deterministic`);
+  assert(firstProof.sourcePositionBytes.equals(secondProof.sourcePositionBytes), `${tile.id} source positions drifted between builds`);
+  assert(firstProof.sourceIndexBytes.equals(secondProof.sourceIndexBytes), `${tile.id} source indices drifted between builds`);
+  const productionGlbPath = path.join(ROOT, manifestTile.lod0.path);
+  const productionGlb = await readFile(productionGlbPath);
+  assert(first.glbs[0].bytes.equals(productionGlb), `${tile.id} default production GLB bytes changed while proof metadata was enabled`);
+  const tileOutput = path.join(OUTPUT_ROOT, tile.id); await mkdir(tileOutput, { recursive: true });
+  const proofName = `${tile.id}.building-presentation-proof.glb`; await writeFile(path.join(tileOutput, proofName), firstProof.bytes);
+  const receipt = {
+    schemaVersion: 1,
+    kind: 'sf-building-presentation-proof-receipt',
+    status: 'preview-proof-only-not-production',
+    tile: { id: tile.id, gridIndex: [tile.gridEasting, tile.gridNorthing], horizontalCrs: 'EPSG:26910', unitsPerMetre: 1, verticalCertification: 'source-declared-navd88-unrealized' },
+    productionReference: { path: manifestTile.lod0.path, declaredSha256: manifestTile.lod0.sha256, verifiedSha256: `sha256:${sha256(productionGlb)}`, exactDefaultBytesPreserved: true },
+    proofArtifact: { path: path.relative(ROOT, path.join(tileOutput, proofName)), bytes: firstProof.bytes.length, sha256: `sha256:${sha256(firstProof.bytes)}` },
+    invariants: { twoBuildProofBytesExact: true, sourcePositionFloat32BytesExact: true, sourceCategoryIndexSequencePreserved: true, productionTrianglePositionSequenceExact: true, sourceGeometryMoved: false, buildingOwnershipComplete: true },
+    claims: { facadeCoordinates: 'building-local metric coordinates derived from exact source-bound extrusion vertices', roofWallClassification: 'primitive partition follows the existing contiguous roof/wall triangle ranges', deterministicToneKey: 'source OSM way id modulo four; presentation-only', sourcedWindowInventory: false, sourceBuildingFootprintChanged: false, gameplayOrCollisionChanged: false },
+    counts: { buildings: firstProof.records.length, vertices: firstProof.vertexCount, indices: firstProof.indexCount, triangles: firstProof.indexCount / 3, primitives: firstProof.primitiveCount },
+    ledgers: { positionFloat32Sha256: `sha256:${sha256(firstProof.sourcePositionBytes)}`, indexSha256: `sha256:${sha256(firstProof.sourceIndexBytes)}`, buildingRecordsSha256: `sha256:${sha256(jsonBytes(firstProof.records))}` },
+    buildingRecords: firstProof.records,
+    sourceLocks: first.packageDescriptor.sourceLocks,
+  };
+  const receiptPath = path.join(tileOutput, `${tile.id}.building-presentation-proof.receipt.json`); await writeFile(receiptPath, jsonBytes(receipt));
+  return { tile: tile.id, role: tile.role, artifact: receipt.proofArtifact, receipt: path.relative(ROOT, receiptPath), counts: receipt.counts, ledgers: receipt.ledgers };
+}
+
+const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8')); const byId = new Map(manifest.tiles.map((tile) => [tile.id, tile]));
+const [sharedInputs, verifiedTerrainSourceDigests] = await Promise.all([loadSfMetricSharedInputs(), loadSfMetricVerifiedTerrainSourceDigests()]);
+await mkdir(OUTPUT_ROOT, { recursive: true });
+const tiles = [];
+for (const tile of TILES) { const manifestTile = byId.get(tile.id); assert(manifestTile, `${tile.id} is not a production resident`); tiles.push(await buildTile(tile, manifestTile, sharedInputs, verifiedTerrainSourceDigests)); }
+const proofManifest = { schemaVersion: 1, kind: 'sf-building-presentation-proof-manifest', status: 'preview-proof-only-not-production', productionManifestTileCount: manifest.tiles.length, tiles };
+await writeFile(path.join(OUTPUT_ROOT, 'sf-building-presentation-proof-v1.manifest.json'), jsonBytes(proofManifest));
+process.stdout.write(`${JSON.stringify(proofManifest, null, 2)}\n`);
