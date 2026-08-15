@@ -301,7 +301,11 @@ export function createHeroLifeLighting(options = {}) {
     const shadow = root.userData.shadow;
     if (shadow) {
       shadow.visible = true;
-      shadow.position.y = -0.105;
+      // The shared skinned shoe envelope terminates at the authored support
+      // surface (~y=0). Keep this existing soft contact cue just above that
+      // surface so the road cannot occlude it; no source/root transform is
+      // changed.
+      shadow.position.y = 0.008;
       shadow.material.opacity = DETAILED_CONTACT_SHADOW_OPACITY;
     }
     group.add(root);
