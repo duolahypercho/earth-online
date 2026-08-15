@@ -25,6 +25,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const PBF_PATH = path.join(ROOT, 'public/data/sf/SanFrancisco.osm.pbf');
 const HORIZONTAL_LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json');
 const GEOMETRY_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json');
+const NATIVE_PIXEL_AUTH_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json');
 const TERRAIN_SOURCES = [
   ['x55y419', 10, true, 'public/data/world/source-locks/sf-ferry-3dep-2023.lock.json', 'public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json'],
   ['x54y419', 10, true, 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-v1.lock.json', 'public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y419-elevation-authorized-v1.lock.json'],
@@ -47,7 +48,8 @@ const PROVISIONAL_FRAME = 'provisional-utm-source-declared-navd88-unrealized';
 const RETRIEVED_AT = '2026-08-02';
 const DEFAULT_TERRAIN_SELECTION_MODE = 'production-cell-owned-v1';
 const NATIVE_PIXEL_FALLBACK_PROOF_MODE = 'per-native-pixel-fallback-proof-v1';
-const TERRAIN_SELECTION_MODES = new Set([DEFAULT_TERRAIN_SELECTION_MODE, NATIVE_PIXEL_FALLBACK_PROOF_MODE]);
+const NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE = 'per-native-pixel-fallback-production-v1';
+const TERRAIN_SELECTION_MODES = new Set([DEFAULT_TERRAIN_SELECTION_MODE, NATIVE_PIXEL_FALLBACK_PROOF_MODE, NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE]);
 const NATIVE_PIXEL_SELECTION_POLICY = Object.freeze({
   name: 'source-locked-original-first-per-native-pixel-v1',
   candidateOrder: 'original-before-californiagaps',
@@ -87,9 +89,88 @@ function artifactStem(tile) {
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const jsonBytes = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 const stableBytes = (value) => Buffer.from(JSON.stringify(value));
+const NATIVE_PIXEL_SELECTION_POLICY_HASH = `sha256:${sha256(stableBytes(NATIVE_PIXEL_SELECTION_POLICY))}`;
 const relative = (filePath) => path.relative(ROOT, filePath).split(path.sep).join('/');
 const q = (value) => Math.round(value * 1e6) / 1e6;
 const sortedTags = (tags = {}) => Object.fromEntries(Object.entries(tags).sort(([a], [b]) => a.localeCompare(b)));
+
+/**
+ * Validate the checked-in per-pixel ownership authorization against the exact
+ * source-lock bytes it names.  This is intentionally fail-closed and is used
+ * by the future production mode before it can ever write an artifact.  The
+ * authorization currently records productionWriteEnabled=false while the
+ * source-aware seam parity gate remains pending.
+ */
+export async function loadSfNativePixelFallbackAuthorization({ requireProductionWrite = false } = {}) {
+  const authorizationBytes = await readFile(NATIVE_PIXEL_AUTH_PATH);
+  const authorization = JSON.parse(authorizationBytes);
+  assert.equal(Buffer.compare(authorizationBytes, jsonBytes(authorization)), 0, 'Native-pixel authorization JSON must be canonical byte-for-byte');
+  assert.equal(authorization.schemaVersion, 1, 'Native-pixel authorization schema drifted');
+  assert.equal(authorization.kind, 'sf-native-pixel-terrain-ownership-authorization', 'Native-pixel authorization kind drifted');
+  assert.equal(authorization.verticalCertification, 'source-declared-navd88-unrealized', 'Native-pixel authorization vertical certification drifted');
+  assert.equal(authorization.policy?.name, NATIVE_PIXEL_SELECTION_POLICY.name, 'Native-pixel ownership policy name drifted');
+  assert.equal(authorization.policy?.sha256, NATIVE_PIXEL_SELECTION_POLICY_HASH, 'Native-pixel ownership policy hash drifted');
+  assert.deepEqual(authorization.policy?.definition, NATIVE_PIXEL_SELECTION_POLICY, 'Native-pixel ownership policy definition drifted');
+  assert.equal(authorization.ownership?.nativePixelRule, 'direct-native-pixel-float32-le', 'Native-pixel rule drifted');
+  assert.equal(authorization.ownership?.fallbackCause, 'original-native-pixel-is-nodata', 'Native-pixel fallback cause drifted');
+  assert.equal(authorization.ownership?.interpolation, 'none', 'Native-pixel ownership must reject interpolation');
+  assert.equal(authorization.ownership?.cellBoundaryRule, 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', 'Native-pixel cell ownership rule drifted');
+  assert.equal(authorization.evidence?.verticalCertification, 'source-declared-navd88-unrealized', 'Native-pixel evidence vertical certification drifted');
+  assert.deepEqual(authorization.evidence?.requiredPerSourceCounts, ['chosenCount', 'finiteCount', 'noDataCount', 'nonFiniteCount', 'outsideWindowCount'], 'Native-pixel evidence count contract drifted');
+  assert.deepEqual(authorization.evidence?.requiredDisagreementStatistics, ['bothFiniteSourceComparisons', 'maxBothFiniteDisagreementMetres', 'p99BothFiniteDisagreementMetres'], 'Native-pixel disagreement evidence contract drifted');
+  assert.deepEqual(authorization.evidence?.requiredSampleFields, ['sourceLockId', 'elevationSourceLockId', 'rasterSha256', 'nativePixel', 'sampledSourceDeclaredNavd88UnrealizedMetres', 'fallbackOriginalReason'], 'Native-pixel sample evidence contract drifted');
+  assert.equal(authorization.evidence?.sampleLedgerDigest, 'sha256-stable-json-over-sorted-sample-records-v1', 'Native-pixel sample-ledger digest contract drifted');
+  assert.equal(authorization.evidence?.seamComparisonRule, 'same-source authority plus exact float32 bits; cross-source authority requires exact float32 bits', 'Native-pixel seam comparison rule drifted');
+  assert.deepEqual(authorization.evidence?.seamCounts, ['sameSourceSamples', 'crossSourceSamples'], 'Native-pixel seam accounting contract drifted');
+  assert.equal(typeof authorization.productionWriteEnabled, 'boolean', 'Native-pixel authorization must explicitly gate production writes');
+  assert.equal(authorization.promotionGate?.requiredTileCount, 25, 'Native-pixel promotion tile count drifted');
+  if (requireProductionWrite) {
+    assert.equal(authorization.productionWriteEnabled, true, 'Native-pixel production write is not enabled by its authorization');
+    assert.equal(authorization.status, 'byte-locked-source-policy-and-seam-parity-production-authorized', 'Native-pixel authorization has not reached its terminal production status');
+    assert.equal(authorization.promotionGate?.status, 'passed', 'Native-pixel source-aware seam parity has not passed');
+    assert.match(authorization.promotionGate?.evidenceReceiptSha256 ?? '', /^sha256:[a-f0-9]{64}$/, 'Native-pixel promotion evidence receipt is not byte-locked');
+  }
+
+  const terrainDescriptors = await Promise.all(TERRAIN_SOURCES.map(async (descriptor) => {
+    const sourceLock = JSON.parse(await readFile(descriptor.sourceLockPath));
+    const bounds = sourceLock.raster.gridEnvelope.modelBoundsAtPixelIsAreaEdges;
+    return { descriptor, sourceLock, cellKey: terrainCellKey((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2) };
+  }));
+  const descriptorsByCell = new Map();
+  for (const item of terrainDescriptors) {
+    const group = descriptorsByCell.get(item.cellKey) ?? [];
+    group.push(item); descriptorsByCell.set(item.cellKey, group);
+  }
+  const fallbackCells = new Set([...descriptorsByCell].filter(([, group]) => group.some(({ descriptor }) => !descriptor.productionEligible)).map(([cellKey]) => cellKey));
+  const expectedSources = terrainDescriptors.filter(({ cellKey }) => fallbackCells.has(cellKey));
+  assert.equal(authorization.sources?.length, expectedSources.length, 'Native-pixel authorization must bind each original/fallback source pair');
+  const recordsBySourceLockId = new Map();
+  for (const record of authorization.sources) {
+    assert(record.sourceLock?.path && record.sourceLock?.sha256 && record.sourceLock?.id, 'Native-pixel authorization source lock binding is incomplete');
+    assert(record.elevationAuthorization?.path && record.elevationAuthorization?.sha256 && record.elevationAuthorization?.id, 'Native-pixel authorization elevation lock binding is incomplete');
+    const sourceLockPath = path.resolve(ROOT, record.sourceLock.path);
+    const elevationLockPath = path.resolve(ROOT, record.elevationAuthorization.path);
+    const [sourceLockBytes, elevationLockBytes] = await Promise.all([readFile(sourceLockPath), readFile(elevationLockPath)]);
+    assert.equal(record.sourceLock.sha256, `sha256:${sha256(sourceLockBytes)}`, `Native-pixel source lock bytes drifted for ${record.sourceLock.id}`);
+    assert.equal(record.elevationAuthorization.sha256, `sha256:${sha256(elevationLockBytes)}`, `Native-pixel elevation authorization bytes drifted for ${record.elevationAuthorization.id}`);
+    const sourceLock = JSON.parse(sourceLockBytes); const elevationLock = JSON.parse(elevationLockBytes);
+    assert.equal(sourceLock.id, record.sourceLock.id, 'Native-pixel source lock id drifted');
+    assert.equal(elevationLock.id, record.elevationAuthorization.id, 'Native-pixel elevation authorization id drifted');
+    assert.equal(elevationLock.sourceLock?.id, sourceLock.id, `Native-pixel elevation authorization source id drifted for ${sourceLock.id}`);
+    assert.equal(elevationLock.sourceLock?.sha256, sha256(sourceLockBytes), `Native-pixel elevation authorization source hash drifted for ${sourceLock.id}`);
+    assert.equal(elevationLock.sourceRaster?.sha256, sourceLock.raster?.sha256, `Native-pixel elevation raster hash drifted for ${sourceLock.id}`);
+    assert.equal(record.rasterSha256, `sha256:${sourceLock.raster?.sha256}`, `Native-pixel raster hash binding drifted for ${sourceLock.id}`);
+    assert(!recordsBySourceLockId.has(sourceLock.id), `Native-pixel source lock duplicated: ${sourceLock.id}`);
+    recordsBySourceLockId.set(sourceLock.id, Object.freeze({ record, sourceLock, elevationLock }));
+  }
+  for (const { descriptor, sourceLock, cellKey } of expectedSources) {
+    assert(recordsBySourceLockId.has(sourceLock.id), `Native-pixel authorization omitted ${sourceLock.id}`);
+    const record = recordsBySourceLockId.get(sourceLock.id).record;
+    assert.equal(record.role, descriptor.productionEligible ? 'original' : 'californiagaps-fallback', `Native-pixel source role drifted for ${sourceLock.id}`);
+    assert.equal(record.cellKey, cellKey, `Native-pixel source cell drifted for ${sourceLock.id}`);
+  }
+  return Object.freeze({ authorization, authorizationBytes, authorizationSha256: `sha256:${sha256(authorizationBytes)}` });
+}
 
 async function sha256File(filePath) {
   const hash = createHash('sha256'); let bytes = 0;
@@ -317,10 +398,12 @@ function proofCoordinateKey(easting, northing) {
 /**
  * Isolated source-selection proof path.  This deliberately opens both the
  * original and CaliforniaGaps rasters, then chooses one direct native pixel
- * for each requested sample.  It is never allowed to write a production
- * artifact; the default cell-owned path below remains byte-compatible.
+ * for each requested sample.  The proof mode is write:false only.  The
+ * production mode shares this implementation but is independently gated by
+ * the byte-locked authorization below; it is currently disabled by policy.
  */
-async function openPerNativePixelFallbackProofMosaic(descriptors) {
+async function openPerNativePixelFallbackProofMosaic(descriptors, mode = NATIVE_PIXEL_FALLBACK_PROOF_MODE) {
+  assert([NATIVE_PIXEL_FALLBACK_PROOF_MODE, NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE].includes(mode), `Unknown native-pixel mosaic mode ${mode}`);
   const sources = [];
   const groups = [];
   try {
@@ -412,7 +495,7 @@ async function openPerNativePixelFallbackProofMosaic(descriptors) {
     sampleAudit.set(key, record);
   };
   const proof = {
-    mode: NATIVE_PIXEL_FALLBACK_PROOF_MODE,
+    mode,
     rule: 'original direct native float32 pixel; CaliforniaGaps direct native pixel only when original pixel is NoData; no blending/interpolation',
     finalize() {
       const records = [...sampleAudit.values()].sort((a, b) => a.modelNorthingMetres - b.modelNorthingMetres || a.modelEastingMetres - b.modelEastingMetres);
@@ -432,13 +515,15 @@ async function openPerNativePixelFallbackProofMosaic(descriptors) {
       ].map(([edge, edgeRecords]) => [edge, Object.freeze(edgeRecords)]));
       const sourceStats = Object.fromEntries([...sourceProbeStats.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, stats]) => [id, Object.freeze({ ...stats })]));
       return Object.freeze({
-        mode: NATIVE_PIXEL_FALLBACK_PROOF_MODE,
+        mode,
         selectionPolicyName: NATIVE_PIXEL_SELECTION_POLICY.name,
         selectionPolicy: NATIVE_PIXEL_SELECTION_POLICY,
         selectionPolicyHash: `sha256:${sha256(stableBytes(NATIVE_PIXEL_SELECTION_POLICY))}`,
         rule: this.rule,
         verticalCertification: 'source-declared-navd88-unrealized',
         status: 'provisional-vertical-unrealized',
+        sampleLedgerSha256: `sha256:${sha256(stableBytes(records))}`,
+        sharedEdgeLedgerSha256: `sha256:${sha256(stableBytes(sharedEdgeSamples))}`,
         counts: Object.freeze({ uniqueNativeSampleCoordinates: records.length, originalFiniteSamples, californiaGapsFallbackSamples: fallbackSamples, sourceSampleCounts: Object.freeze(sourceSampleCounts), sourceProbeStats: Object.freeze(sourceStats), bothFiniteSourceComparisons: sortedDisagreements.length, maxBothFiniteDisagreementMetres: sortedDisagreements.at(-1) ?? 0, p99BothFiniteDisagreementMetres: p99Index < 0 ? 0 : sortedDisagreements[p99Index] }),
         sharedEdgeSamples: Object.freeze(sharedEdgeSamples),
         sourceLocks: Object.freeze([...new Set(sources.map((source) => source.sourceLock.id))].sort()),
@@ -456,7 +541,7 @@ async function openPerNativePixelFallbackProofMosaic(descriptors) {
 }
 
 async function openTerrainMosaic(descriptors, terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE) {
-  if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PROOF_MODE) return openPerNativePixelFallbackProofMosaic(descriptors);
+  if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PROOF_MODE || terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE) return openPerNativePixelFallbackProofMosaic(descriptors, terrainSelectionMode);
   assert.equal(terrainSelectionMode, DEFAULT_TERRAIN_SELECTION_MODE, `Unknown terrain selection mode ${terrainSelectionMode}`);
   const sources = [];
   try {
@@ -1128,13 +1213,15 @@ function representativeEn(feature) {
 async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write = true, sharedInputs = null, verifiedTerrainSourceDigests = null, terrainGridStepMetres = TERRAIN_STEP, lodLevel = 0, surfaceHeightOwnership = 'direct-native-pixel', surfaceTopology = 'independent-cell-polygons', terrainSelectionMode = DEFAULT_TERRAIN_SELECTION_MODE } = {}) {
   const previousTile = TILE; TILE = normalizeTile(requestedTile);
   let terrainSource = null;
+  let terrainAuthorization = null;
   try {
     assert(Number.isInteger(terrainGridStepMetres) && terrainGridStepMetres >= 1 && TILE.size % terrainGridStepMetres === 0, 'terrainGridStepMetres must be a positive integer divisor of 384');
     assert(Number.isInteger(lodLevel) && lodLevel >= 0, 'lodLevel must be a non-negative integer');
     assert(['direct-native-pixel', 'canonical-1m-lattice-height-v1'].includes(surfaceHeightOwnership), 'Unknown surfaceHeightOwnership mode');
     assert(['independent-cell-polygons', 'conforming-grid-boundary-stitch-v1'].includes(surfaceTopology), 'Unknown surfaceTopology mode');
     assert(TERRAIN_SELECTION_MODES.has(terrainSelectionMode), `Unknown terrain selection mode ${terrainSelectionMode}`);
-    assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
+    assert(terrainSelectionMode !== NATIVE_PIXEL_FALLBACK_PROOF_MODE || !write, 'Per-native-pixel fallback terrain selection is an in-memory proof only and may not write artifacts');
+    if (terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE) terrainAuthorization = await loadSfNativePixelFallbackAuthorization({ requireProductionWrite: write });
     assert(terrainSelectionMode === DEFAULT_TERRAIN_SELECTION_MODE || (terrainGridStepMetres === TERRAIN_STEP && surfaceHeightOwnership === 'direct-native-pixel' && surfaceTopology === 'independent-cell-polygons'), 'Per-native-pixel fallback proof requires direct 1 m independent-cell surfaces');
     const isCanonicalLod0 = terrainGridStepMetres === TERRAIN_STEP && lodLevel === 0 && surfaceHeightOwnership === 'direct-native-pixel';
     assert((isCanonicalLod0 && surfaceTopology === 'independent-cell-polygons') || !write, 'Non-default terrain steps, LOD levels, surface ownership modes, or topology modes are in-memory proof builds only and may not write production-shaped artifacts');
@@ -1146,7 +1233,8 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
     const { pbfHash, horizontalLockBytes, geometryAuthBytes, horizontalLock, osmFeatureCache } = resolvedSharedInputs;
     assert.equal(pbfHash.sha256, PBF_SHA256, 'OSM PBF hash mismatch');
     const { bounds, features } = await readOsmFeatures(horizontalLock, osmFeatureCache); terrainSource = await openTerrainMosaic(terrainDescriptors, terrainSelectionMode);
-    assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible), 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
+    const authorizedFallbackWrite = terrainSelectionMode === NATIVE_PIXEL_FALLBACK_PRODUCTION_MODE && terrainAuthorization?.authorization.productionWriteEnabled === true;
+    assert(!write || terrainSource.sources.every(({ descriptor }) => descriptor.productionEligible) || authorizedFallbackWrite, 'Fallback terrain sources are proof-only until an exact seam policy and per-pixel provenance authorization are locked');
     const baseGeometry = bakeGeometry(features, terrainSource.sample, terrainGridStepMetres, surfaceHeightOwnership, surfaceTopology); const geometries = [baseGeometry]; const categories = baseGeometry;
     for (const data of Object.values(categories)) for (const value of data.positions) assert(Number.isFinite(value), `Terrain selection emitted a non-finite geometry coordinate for ${TILE.id}`);
     const included = features.filter((feature) => (feature.tags.highway && categories.roads.sourceIds.has(feature.id)) || (feature.tags.building && categories.buildings.sourceIds.has(feature.id)) || (feature.tags.natural === 'coastline' && categories.water.sourceIds.has(feature.id)));
@@ -1157,13 +1245,37 @@ async function buildSfMetricTileUnlocked({ tile: requestedTile, outputDir, write
       const transformedPosition = [q(en[0]), q(en[1]), height];
       sourceFeatures.push({ sourceId: 'bbbike-sanfrancisco-osm-pbf', sourceFeatureId: `way/${feature.id}`, publisher: 'OpenStreetMap contributors; BBBike extract service', license: 'ODbL-1.0', retrievedAt: RETRIEVED_AT, nativeHorizontalCrs: 'EPSG:4326', nativeVerticalDatum: 'not-provided-by-2d-source', sourceLockId: 'sf-ferry-osm-horizontal-geometry-v1', horizontalTransformLockId: 'sf-ferry-3dep-2023-horizontal-crs-v1', verticalMode: 'terrain-sampled-source-declared-navd88-unrealized', verticalTransformLockId: 'terrain-sample-source-declared-navd88-unrealized', elevationSourceLockId: terrainEvidence.source.elevationLock.id, elevationSampleEvidence, sourceGeometryHash: `sha256:${sha256(stableBytes({ type: 'way', id: feature.id, tags: feature.tags, nodeIds: feature.refs, coordinatesLonLat: feature.lonLat.map(([lon, lat]) => [q(lon), q(lat)]) }))}`, nativeHorizontalPosition: [q(native[0]), q(native[1]), 0], transformedPositionEpsg26910VerticalMetres: transformedPosition, runtimePositionMetres: [q(transformedPosition[0] - TILE.minE), q(height - TILE.originH), q(transformedPosition[1] - TILE.minN)] });
     }
+    const usesNativePixelFallback = terrainSelectionMode !== DEFAULT_TERRAIN_SELECTION_MODE;
+    const terrainReceiptSources = terrainSource.sources.map((source) => ({
+      path: source.sourceLock.raster.localRawCache,
+      bytes: source.raw.bytes,
+      sha256: source.raw.sha256,
+      elevationSourceLockId: source.elevationLock.id,
+      ...(usesNativePixelFallback
+        ? { role: source.descriptor.productionEligible ? 'original-probe-and-candidate' : 'californiagaps-fallback-probe-and-candidate', candidateCell: source.cellKey, ownershipMode: 'per-native-pixel-selection-candidate' }
+        : { ownershipCell: source.cellKey }),
+      verticalCertification: 'source-declared-navd88-unrealized',
+      reader: 'geotiff-window-reader-v1',
+      window: { column: source.window.column, row: source.window.row, width: source.window.width, height: source.window.height },
+    }));
+    const terrainSampling = usesNativePixelFallback ? 'source-locked-original-first-per-native-pixel-with-californiagaps-nodata-fallback-v1' : 'canonical-10km-cell-owned-direct-native-pixel-float32-le';
     const packageDescriptor = { schemaVersion: 1, kind: 'sf-one-to-one-map-package', status: 'provisional-vertical-unrealized', contractId: 'sf-one-to-one-reality-v1', coordinateReference: { horizontal: { crs: 'EPSG:26910', unit: 'metre' }, vertical: { datum: 'source-declared-navd88-unrealized', unit: 'metre' }, runtimeFrame: PROVISIONAL_FRAME }, verticalCertification: 'source-declared-navd88-unrealized', runtimeAxes: { x: 'east', y: 'up', z: 'north' }, scale: { runtimeUnitsPerMetre: 1, horizontalScale: 1, verticalScale: 1, verticalExaggeration: 0 }, tiling: { scheme: 'rectilinear-utm', tileSizeMetres: 384, sourceBufferMetres: 16 }, tileOriginEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], authorizedHorizontalTransform: { id: 'sf-ferry-3dep-2023-horizontal-crs-v1', path: ['EPSG:1188-inverse', 'EPSG:26910-projection'], absoluteHorizontalAccuracyFloorMetres: 4, nad83Realization: 'not-claimed', coordinateEpoch: 'not-claimed' }, accuracyQualification: { absoluteHorizontalAccuracyFloorMetres: 4, nad83Realization: 'not-claimed', coordinateEpoch: 'not-claimed', lodErrorIsRelativeToTransformedSource: true }, sourceLocks: [
       { id: 'sf-ferry-osm-horizontal-geometry-v1', path: relative(GEOMETRY_AUTH_PATH), sha256: sha256(geometryAuthBytes), purpose: 'geometry' }, { id: 'sf-ferry-3dep-2023-horizontal-crs-v1', path: relative(HORIZONTAL_LOCK_PATH), sha256: sha256(horizontalLockBytes), purpose: 'horizontal-coordinate-operation' }, ...terrainSource.sources.map((source) => ({ id: source.elevationLock.id, path: relative(source.descriptor.elevationLockPath), sha256: sha256(source.descriptor.elevationLockBytes), purpose: 'terrain-elevation' })),
     ], sourceFeatures, lods: lods.map(({ path: _path, bytes: _bytes, boundsLocalMetres: _bounds, meshStats: _stats, ...lod }) => lod) };
     const landAreaSquareMetres = planAreaSquareMetres(categories.terrain); const waterAreaSquareMetres = planAreaSquareMetres(categories.water);
     assert(Math.abs(landAreaSquareMetres + waterAreaSquareMetres - TILE.size ** 2) <= 0.001, 'Land and OSM-classified water must partition the tile without gaps or overlap');
-    const receipt = { schemaVersion: 1, kind: 'sf-metric-tile-build-receipt', id: stem, status: 'provisional-vertical-unrealized', tile: { identity: TILE.id, gridIndex: [TILE.minE / TILE.size, TILE.minN / TILE.size], boundsEpsg26910Metres: [TILE.minE, TILE.minN, TILE.minE + TILE.size, TILE.minN + TILE.size], originEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], runtimeFrame: PROVISIONAL_FRAME, vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, scale: 1 }, source: { osmPbf: { path: relative(PBF_PATH), bytes: pbfHash.bytes, sha256: pbfHash.sha256, queryBoundsWgs84: bounds }, geoTiffs: terrainSource.sources.map((source) => ({ path: source.sourceLock.raster.localRawCache, bytes: source.raw.bytes, sha256: source.raw.sha256, elevationSourceLockId: source.elevationLock.id, ownershipCell: source.cellKey, verticalCertification: 'source-declared-navd88-unrealized', reader: 'geotiff-window-reader-v1', window: { column: source.window.column, row: source.window.row, width: source.window.width, height: source.window.height } })) }, counts: { osmCandidateWays: features.length, emittedCoastlineWays: categories.water.sourceIds.size, emittedRoadWays: categories.roads.sourceIds.size, emittedBuildingWays: categories.buildings.sourceIds.size, packageSourceFeatures: sourceFeatures.length, terrainVertices: categories.terrain.positions.length / 3, waterVertices: categories.water.positions.length / 3, coastlineVertices: categories.coastline.positions.length / 3, roadVertices: categories.roads.positions.length / 3, buildingVertices: categories.buildings.positions.length / 3 }, surfaceClassification: { authority: 'OpenStreetMap natural=coastline ways in the byte-locked PBF', coastlineDirectionRule: 'OSM coastline direction: land on left, water on right', sourceOsmWayIds: [...categories.water.sourceIds].sort((a, b) => a - b), landAreaSquareMetres, waterAreaSquareMetres, partitionAreaSquareMetres: q(landAreaSquareMetres + waterAreaSquareMetres), waterVerticalMode: 'terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level', terrainWaterOverlapAreaSquareMetres: 0 }, ferryBuilding: TILE.id === FERRY_TILE.id ? { sourceFeatureId: 'way/558731934', present: categories.buildings.sourceIds.has(558731934) } : null, lods, relationCoverage: { implemented: false, statement: 'Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage.' }, deterministicInputs: { availableLods: [0], terrainGridStepMetres: TERRAIN_STEP, terrainSampling: 'canonical-10km-cell-owned-direct-native-pixel-float32-le', terrainCellOwnership: 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', surfaceGridMetres: 1 / SURFACE_TICKS_PER_METRE, lod0Construction: '1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings', lod0DeviationMetres: 0, geometryQuantizationDecimalPlaces: 6, buildingHeightPolicy: 'OSM height, else building:levels*3.2m, else 9.6m', roadWidthPolicy: 'OSM width, else deterministic highway-class/lanes table' } };
+    const receipt = { schemaVersion: 1, kind: 'sf-metric-tile-build-receipt', id: stem, status: 'provisional-vertical-unrealized', tile: { identity: TILE.id, gridIndex: [TILE.minE / TILE.size, TILE.minN / TILE.size], boundsEpsg26910Metres: [TILE.minE, TILE.minN, TILE.minE + TILE.size, TILE.minN + TILE.size], originEpsg26910VerticalMetres: [TILE.minE, TILE.minN, TILE.originH], originTupleOrder: ['easting', 'northing', 'vertical'], runtimeFrame: PROVISIONAL_FRAME, vertexAxes: { x: 'eastMinusOriginEasting', y: 'verticalMinusOriginVertical', z: 'northMinusOriginNorthing' }, scale: 1 }, source: { osmPbf: { path: relative(PBF_PATH), bytes: pbfHash.bytes, sha256: pbfHash.sha256, queryBoundsWgs84: bounds }, geoTiffs: terrainReceiptSources }, counts: { osmCandidateWays: features.length, emittedCoastlineWays: categories.water.sourceIds.size, emittedRoadWays: categories.roads.sourceIds.size, emittedBuildingWays: categories.buildings.sourceIds.size, packageSourceFeatures: sourceFeatures.length, terrainVertices: categories.terrain.positions.length / 3, waterVertices: categories.water.positions.length / 3, coastlineVertices: categories.coastline.positions.length / 3, roadVertices: categories.roads.positions.length / 3, buildingVertices: categories.buildings.positions.length / 3 }, surfaceClassification: { authority: 'OpenStreetMap natural=coastline ways in the byte-locked PBF', coastlineDirectionRule: 'OSM coastline direction: land on left, water on right', sourceOsmWayIds: [...categories.water.sourceIds].sort((a, b) => a - b), landAreaSquareMetres, waterAreaSquareMetres, partitionAreaSquareMetres: q(landAreaSquareMetres + waterAreaSquareMetres), waterVerticalMode: 'terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level', terrainWaterOverlapAreaSquareMetres: 0 }, ferryBuilding: TILE.id === FERRY_TILE.id ? { sourceFeatureId: 'way/558731934', present: categories.buildings.sourceIds.has(558731934) } : null, lods, relationCoverage: { implemented: false, statement: 'Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage.' }, deterministicInputs: { ...(usesNativePixelFallback ? { terrainSelectionMode } : {}), availableLods: [0], terrainGridStepMetres: TERRAIN_STEP, terrainSampling, terrainCellOwnership: 'half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon', surfaceGridMetres: 1 / SURFACE_TICKS_PER_METRE, lod0Construction: '1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings', lod0DeviationMetres: 0, geometryQuantizationDecimalPlaces: 6, buildingHeightPolicy: 'OSM height, else building:levels*3.2m, else 9.6m', roadWidthPolicy: 'OSM width, else deterministic highway-class/lanes table' } };
     const terrainSelectionProof = terrainSource.proof?.finalize?.() ?? null;
+    if (terrainSelectionProof) {
+      const evidence = { mode: terrainSelectionProof.mode, status: terrainSelectionProof.status, verticalCertification: terrainSelectionProof.verticalCertification, selectionPolicyName: terrainSelectionProof.selectionPolicyName, selectionPolicyHash: terrainSelectionProof.selectionPolicyHash, rule: terrainSelectionProof.rule, sourceLocks: terrainSelectionProof.sourceLocks, sampleLedgerSha256: terrainSelectionProof.sampleLedgerSha256, sharedEdgeLedgerSha256: terrainSelectionProof.sharedEdgeLedgerSha256, counts: terrainSelectionProof.counts };
+      receipt.terrainSelectionEvidence = evidence;
+      packageDescriptor.terrainSelectionEvidence = evidence;
+    }
+    if (terrainAuthorization) {
+      const authorizationEvidence = { id: terrainAuthorization.authorization.id, path: relative(NATIVE_PIXEL_AUTH_PATH), sha256: terrainAuthorization.authorizationSha256, status: terrainAuthorization.authorization.status, productionWriteEnabled: terrainAuthorization.authorization.productionWriteEnabled, promotionGate: terrainAuthorization.authorization.promotionGate, policyName: terrainAuthorization.authorization.policy.name, policySha256: terrainAuthorization.authorization.policy.sha256, sources: terrainAuthorization.authorization.sources };
+      receipt.terrainOwnershipAuthorization = authorizationEvidence;
+      packageDescriptor.terrainOwnershipAuthorization = authorizationEvidence;
+    }
     try { await terrainSource.close(); } finally { terrainSource = null; }
     if (write) { await mkdir(outputDir, { recursive: true }); await Promise.all([...glbs.map((glb) => writeFile(path.join(outputDir, glb.name), glb.bytes)), writeFile(path.join(outputDir, `${stem}.receipt.json`), jsonBytes(receipt)), writeFile(path.join(outputDir, `${stem}.package.json`), jsonBytes(packageDescriptor))]); }
     const result = { outputDir, glbs, receipt, packageDescriptor, categories };
