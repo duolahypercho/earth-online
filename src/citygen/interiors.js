@@ -110,6 +110,8 @@ export function deriveBuildingEntrances(city, options = {}) {
       id: portalId,
       buildingId: rawBuildingId,
       buildingIndex: index,
+      label: stringOrNull(building?.name || building?.typeLabel || building?.type) || `Building ${index + 1}`,
+      address: stringOrNull(building?.address || building?.addr),
       position: point3(position.x, 0, position.z),
       approach: point3(approach.x, 0, approach.z),
       normal: point3(normal.x, 0, normal.z),
