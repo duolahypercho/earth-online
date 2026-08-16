@@ -567,19 +567,38 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   ], INTERIOR_ROUNDED_GEOMETRY);
 
   const doorZ = frontZ - 0.08;
-  addInstances('lobby-glazing', 'glass', surfaces.glass, [
+  const doorPivotOffset = 1.4;
+  const doorLeafWidth = 1.35;
+  const doorLeafHalfWidth = doorLeafWidth / 2;
+  const doorMaxAngle = THREE.MathUtils.degToRad(86);
+  const interiorBounds = {
+    minX: anchor.x - width / 2 + 0.45,
+    maxX: anchor.x + width / 2 - 0.45,
+    minZ: anchor.z - depth / 2 + 0.45,
+    maxZ: frontZ - 0.45,
+  };
+  const glassLeafSpecs = [-1, 1].map((side) => ({
+    side,
+    localX: -side * doorLeafHalfWidth,
+    y: anchor.y + 1.34,
+    size: [doorLeafWidth, 2.65, 0.08],
+  }));
+  const closedDoorRecord = (spec) => ({
+    position: [anchor.x + spec.side * doorPivotOffset + spec.localX, spec.y, doorZ],
+    size: spec.size,
+    color: spec.color,
+  });
+  const glazing = addInstances('lobby-glazing', 'glass', surfaces.glass, [
     { position: [anchor.x - 2.25, anchor.y + 1.48, doorZ], size: [1.45, 2.9, 0.06] },
     { position: [anchor.x + 2.25, anchor.y + 1.48, doorZ], size: [1.45, 2.9, 0.06] },
-    { position: [anchor.x - 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
-    { position: [anchor.x + 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
+    ...glassLeafSpecs.map(closedDoorRecord),
     { position: [anchor.x, anchor.y + 3.55, doorZ], size: [6.02, 0.86, 0.06] },
   ]);
-  addInstances('lobby-door-framing', 'door', surfaces.brass, [
+  const fixedDoorFrameRecords = [
     { position: [anchor.x, anchor.y + 3.02, doorZ - 0.015], size: [6.2, 0.18, 0.18] },
     { position: [anchor.x, anchor.y + 4.0, doorZ - 0.015], size: [6.2, 0.18, 0.18] },
     { position: [anchor.x - 3.02, anchor.y + 1.52, doorZ - 0.015], size: [0.18, 3.16, 0.18] },
     { position: [anchor.x + 3.02, anchor.y + 1.52, doorZ - 0.015], size: [0.18, 3.16, 0.18] },
-    { position: [anchor.x, anchor.y + 1.45, doorZ - 0.015], size: [0.14, 2.96, 0.18] },
     { position: [anchor.x - 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
     { position: [anchor.x + 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
     { position: [anchor.x, anchor.y + 0.06, doorZ - 0.015], size: [6.2, 0.12, 0.2] },
@@ -587,9 +606,95 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [anchor.x - 3.0, anchor.y + 1.95, doorZ - 0.42], size: [0.12, 3.86, 0.74], color: '#95774e' },
     { position: [anchor.x + 3.0, anchor.y + 1.95, doorZ - 0.42], size: [0.12, 3.86, 0.74], color: '#95774e' },
     { position: [anchor.x, anchor.y + 3.92, doorZ - 0.42], size: [6.12, 0.12, 0.74], color: '#95774e' },
-    { position: [anchor.x - 0.42, anchor.y + 1.36, doorZ - 0.12], size: [0.045, 0.72, 0.12], color: '#d6c08e' },
-    { position: [anchor.x + 0.42, anchor.y + 1.36, doorZ - 0.12], size: [0.045, 0.72, 0.12], color: '#d6c08e' },
+  ];
+  const leafFrameSpecs = [-1, 1].flatMap((side) => [
+    {
+      side,
+      localX: -side * (doorLeafWidth - 0.04),
+      y: anchor.y + 1.34,
+      size: [0.07, 2.66, 0.12],
+      color: '#b28e59',
+    },
+    {
+      side,
+      localX: -side * doorLeafHalfWidth,
+      y: anchor.y + 2.64,
+      size: [doorLeafWidth, 0.07, 0.12],
+      color: '#b28e59',
+    },
+    {
+      side,
+      localX: -side * doorLeafHalfWidth,
+      y: anchor.y + 0.055,
+      size: [doorLeafWidth, 0.07, 0.12],
+      color: '#b28e59',
+    },
+    {
+      side,
+      localX: -side * (doorLeafWidth - 0.3),
+      y: anchor.y + 1.36,
+      size: [0.045, 0.72, 0.12],
+      color: '#d6c08e',
+    },
+  ]);
+  const doorFraming = addInstances('lobby-door-framing', 'door', surfaces.brass, [
+    ...fixedDoorFrameRecords,
+    ...leafFrameSpecs.map(closedDoorRecord),
   ], INTERIOR_ROUNDED_GEOMETRY);
+  const doorState = {
+    kind: 'paired-swing-glass',
+    leafCount: 2,
+    pivot: 'side',
+    direction: 'outward',
+    progress: 0,
+    angleDegrees: 0,
+    clearOpeningMeters: 0.1,
+    thresholdZ: doorZ,
+    insideMaxZ: frontZ - 0.45,
+    outsideMaxZ: frontZ + 1.15,
+    isOpen: false,
+    isClosed: true,
+    operable: true,
+    disposed: false,
+  };
+  const doorMatrix = new THREE.Object3D();
+  const writeDoorInstance = (mesh, index, spec, angle) => {
+    doorMatrix.position.set(anchor.x + spec.side * doorPivotOffset, spec.y, doorZ);
+    doorMatrix.rotation.set(0, spec.side * angle, 0);
+    doorMatrix.scale.set(1, 1, 1);
+    doorMatrix.translateX(spec.localX);
+    doorMatrix.scale.set(spec.size[0], spec.size[1], spec.size[2]);
+    doorMatrix.updateMatrix();
+    mesh.setMatrixAt(index, doorMatrix.matrix);
+  };
+  let doorDisposed = false;
+  const setDoorOpen = (value = 1) => {
+    if (doorDisposed) return false;
+    const numeric = Number(value);
+    const progress = THREE.MathUtils.clamp(Number.isFinite(numeric) ? numeric : 0, 0, 1);
+    const angle = doorMaxAngle * progress;
+    glassLeafSpecs.forEach((spec, index) => writeDoorInstance(glazing, index + 2, spec, angle));
+    leafFrameSpecs.forEach((spec, index) => {
+      writeDoorInstance(doorFraming, fixedDoorFrameRecords.length + index, spec, angle);
+    });
+    glazing.instanceMatrix.needsUpdate = true;
+    doorFraming.instanceMatrix.needsUpdate = true;
+    glazing.computeBoundingSphere?.();
+    doorFraming.computeBoundingSphere?.();
+    doorState.progress = progress;
+    doorState.angleDegrees = THREE.MathUtils.radToDeg(angle);
+    doorState.clearOpeningMeters = Math.max(
+      0,
+      2 * (doorPivotOffset - doorLeafWidth * Math.cos(angle)),
+    );
+    doorState.isOpen = progress >= 0.999;
+    doorState.isClosed = progress <= 0.001;
+    interiorBounds.maxZ = progress >= 0.75 ? doorState.outsideMaxZ : doorState.insideMaxZ;
+    doorState.operable = true;
+    doorState.disposed = false;
+    return doorState;
+  };
+  setDoorOpen(0);
 
   const deskX = anchor.x - width * 0.17;
   const deskZ = anchor.z - depth * 0.25;
@@ -841,7 +946,11 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     archetype: portal.interior.archetype,
     propCategories,
     exteriorContext,
+    doorState,
     dispose: () => {
+      doorDisposed = true;
+      doorState.operable = false;
+      doorState.disposed = true;
       for (const surface of materials) surface.dispose();
       for (const texture of textures) {
         texture.userData.cancelPendingLoad?.();
@@ -865,14 +974,11 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   return {
     group,
     floorY: anchor.y,
+    setDoorOpen,
+    doorState,
     spawn: lobbyView,
     views: { lobby: lobbyView, entrance: entranceView },
-    bounds: {
-      minX: anchor.x - width / 2 + 0.45,
-      maxX: anchor.x + width / 2 - 0.45,
-      minZ: anchor.z - depth / 2 + 0.45,
-      maxZ: anchor.z + depth / 2 - 0.45,
-    },
+    bounds: interiorBounds,
     meshes: group.children.filter((child) => child.isMesh).length,
   };
 }

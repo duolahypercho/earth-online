@@ -34,6 +34,7 @@ const REQUIRED_APIS = [
   'getInteriorState',
   'enterBuilding',
   'exitBuilding',
+  'setInteriorDoorOpen',
   'setInteriorView',
   'getRenderer',
 ];
@@ -85,6 +86,13 @@ const runtimeSnapshot = () => page.evaluate(() => {
     if (object.isMesh) activeMeshes.push(object);
   });
   const categories = [...new Set(activeMeshes.map((mesh) => mesh.userData?.category).filter(Boolean))].sort();
+  const glazing = activeGroup?.getObjectByName('lobby-glazing');
+  const doorFraming = activeGroup?.getObjectByName('lobby-door-framing');
+  const instanceMatrix = (mesh, index) => {
+    if (!mesh?.isInstancedMesh || index >= mesh.count) return null;
+    return Array.from(mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16),
+      (value) => Number(value.toFixed(6)));
+  };
   const materialFingerprint = activeMeshes.map((mesh) => {
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     return materials.map((surface) => ({
@@ -114,6 +122,11 @@ const runtimeSnapshot = () => page.evaluate(() => {
       categories,
       declaredCategories: activeGroup.userData?.propCategories || [],
       exteriorContext: activeGroup.userData?.exteriorContext || null,
+      door: activeGroup.userData?.doorState ? { ...activeGroup.userData.doorState } : null,
+      doorMatrices: {
+        glazing: [instanceMatrix(glazing, 2), instanceMatrix(glazing, 3)],
+        framing: [instanceMatrix(doorFraming, 11), instanceMatrix(doorFraming, 15)],
+      },
       materialFingerprint,
       exteriorVisibleChildren: root.children.filter((child) => child !== activeGroup && child.visible).length,
     } : null,
@@ -272,6 +285,22 @@ try {
       texture: '/assets/sf-lobby-exterior-backdrop-generated-v1.png',
       ready: true,
     }, `entry ${portal.buildingId}: generated SF exterior context is loaded`);
+    assert.equal(entered.activeInterior.door?.isClosed, true, `entry ${portal.buildingId}: lobby door starts closed`);
+    assert.equal(entered.activeInterior.door?.operable, true, `entry ${portal.buildingId}: lobby door is operable`);
+
+    const openedDoor = await page.evaluate(() => window.__CITYGEN__.setInteriorDoorOpen(true));
+    assert.equal(openedDoor?.isOpen, true, `entry ${portal.buildingId}: public API opens the lobby door`);
+    await page.waitForTimeout(80);
+    const opened = await runtimeSnapshot();
+    assert.ok(Math.abs(opened.activeInterior.door.angleDegrees - 86) < 0.001,
+      `entry ${portal.buildingId}: door reaches the authored 86 degree angle`);
+    assert.ok(opened.activeInterior.door.clearOpeningMeters >= 2.6,
+      `entry ${portal.buildingId}: open door provides at least 2.6m clearance`);
+    assert.notDeepEqual(opened.activeInterior.doorMatrices, entered.activeInterior.doorMatrices,
+      `entry ${portal.buildingId}: both door presentation batches move`);
+    assert.equal(opened.activeInterior.meshNodes, entered.activeInterior.meshNodes,
+      `entry ${portal.buildingId}: opening the door adds no meshes`);
+    assert.ok(opened.drawCalls <= 40, `entry ${portal.buildingId}: open door stays within 40 draw calls`);
     if (!firstMaterialFingerprint) firstMaterialFingerprint = entered.activeInterior.materialFingerprint;
     if (index === sampleIndexes[0]) {
       await page.addStyleTag({ content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill{display:none!important}' });
@@ -279,7 +308,27 @@ try {
       await page.evaluate(() => window.__CITYGEN__.setInteriorView('entrance'));
       await page.waitForTimeout(80);
       await page.screenshot({ path: '.qa-citygen-interior-entrance.png' });
+      await page.keyboard.down('w');
+      await page.waitForTimeout(4000);
+      await page.keyboard.up('w');
+      const crossed = await runtimeSnapshot();
+      assert.ok(crossed.interior.playerPosition.z > crossed.activeInterior.door.thresholdZ,
+        `entry ${portal.buildingId}: player crosses the open threshold without clipping`);
+      assert.ok(crossed.interior.playerPosition.z <= crossed.activeInterior.door.outsideMaxZ + 0.01,
+        `entry ${portal.buildingId}: streamed exterior vignette remains bounded`);
       await page.evaluate(() => window.__CITYGEN__.setInteriorView('lobby'));
+    }
+    const closedDoor = await page.evaluate(() => window.__CITYGEN__.setInteriorDoorOpen(false));
+    assert.equal(closedDoor?.isClosed, true, `entry ${portal.buildingId}: public API closes the lobby door`);
+    if (index === sampleIndexes[0]) {
+      await page.keyboard.press('e');
+      await page.waitForTimeout(80);
+      assert.equal((await runtimeSnapshot()).activeInterior.door.isOpen, true,
+        `entry ${portal.buildingId}: E opens the lobby door`);
+      await page.keyboard.press('e');
+      await page.waitForTimeout(80);
+      assert.equal((await runtimeSnapshot()).activeInterior.door.isClosed, true,
+        `entry ${portal.buildingId}: E closes the lobby door while the player remains inside`);
     }
 
     await resetRafCounter();
