@@ -28,6 +28,18 @@ const HERO_STOREFRONT_PROFILES = Object.freeze([
   { key: 'market-loft-display', glass: '#2f515d', trim: '#a7bbc2', displayWidth: 0.88, canopyWidth: 3.82, canopyDepth: 0.46 },
 ]);
 
+const HERO_SIGNAGE_PROFILES = Object.freeze(new Map([
+  ['sf-building-132127809', { label: 'HEARST BUILDING', atlasCell: 0 }],
+  ['sf-building-151183777', { label: 'MARKET STREET', atlasCell: 1 }],
+  ['sf-building-132127810', { label: 'CENTRAL TOWER', atlasCell: 2 }],
+  ['sf-building-149335987', { label: '700 MARKET', atlasCell: 3 }],
+  ['sf-building-149335979', { label: '1 KEARNY', atlasCell: 4 }],
+  ['sf-building-149335988', { label: 'MARKET LOFTS', atlasCell: 5 }],
+]));
+const HERO_SIGNAGE_ATLAS_WIDTH = 2304;
+const HERO_SIGNAGE_ATLAS_HEIGHT = 64;
+const HERO_SIGNAGE_ATLAS_COLUMNS = 6;
+
 const STOREFRONT_ROAD_CLASSES = new Set([
   'primary', 'secondary', 'tertiary', 'residential', 'living_street', 'service', 'unclassified',
 ]);
@@ -116,6 +128,98 @@ function roadClearance(point, city) {
   return minimum;
 }
 
+function createHeroSignageAtlas() {
+  const canvas = document.createElement('canvas');
+  canvas.width = HERO_SIGNAGE_ATLAS_WIDTH;
+  canvas.height = HERO_SIGNAGE_ATLAS_HEIGHT;
+  const context = canvas.getContext('2d');
+  const cellWidth = canvas.width / HERO_SIGNAGE_ATLAS_COLUMNS;
+  const palettes = [
+    { field: '#17252d', border: '#c7a86a', text: '#f3ead7' },
+    { field: '#17313a', border: '#b7844f', text: '#f2e5cd' },
+    { field: '#243039', border: '#d2b972', text: '#f5ecd9' },
+    { field: '#25333a', border: '#9db5bd', text: '#f0e8d8' },
+    { field: '#2d2524', border: '#c58b52', text: '#f5e7cf' },
+    { field: '#263138', border: '#9eb3bb', text: '#f1e8d8' },
+  ];
+  const profiles = [...HERO_SIGNAGE_PROFILES.values()].sort((a, b) => a.atlasCell - b.atlasCell);
+  for (const profile of profiles) {
+    const left = profile.atlasCell * cellWidth;
+    const palette = palettes[profile.atlasCell];
+    context.fillStyle = palette.field;
+    context.fillRect(left, 0, cellWidth, canvas.height);
+    context.fillStyle = palette.border;
+    context.fillRect(left, 0, cellWidth, 3);
+    context.fillRect(left, canvas.height - 3, cellWidth, 3);
+    context.fillRect(left + 8, 8, 2, canvas.height - 16);
+    context.fillRect(left + cellWidth - 10, 8, 2, canvas.height - 16);
+    context.fillStyle = palette.text;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.font = '700 28px "Arial Narrow", "Helvetica Neue", Arial, sans-serif';
+    context.fillText(profile.label, left + cellWidth / 2, canvas.height / 2 + 1, cellWidth - 34);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.name = 'hero-storefront-signage-atlas';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.userData = {
+    kind: 'runtime-canvas-atlas',
+    width: canvas.width,
+    height: canvas.height,
+    columns: HERO_SIGNAGE_ATLAS_COLUMNS,
+    rows: 1,
+    cells: profiles.length,
+  };
+  return texture;
+}
+
+function createHeroSignageMesh(quads, texture) {
+  if (!quads.length || !texture) return null;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (const quad of quads) {
+    const firstVertex = positions.length / 3;
+    for (const corner of quad.corners) positions.push(corner.x, corner.y, corner.z);
+    uvs.push(
+      quad.uv.u0, quad.uv.v0,
+      quad.uv.u1, quad.uv.v0,
+      quad.uv.u1, quad.uv.v1,
+      quad.uv.u0, quad.uv.v1,
+    );
+    indices.push(
+      firstVertex, firstVertex + 1, firstVertex + 2,
+      firstVertex, firstVertex + 2, firstVertex + 3,
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.name = 'hero-storefront-signage-geometry';
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  const surface = new THREE.MeshBasicMaterial({
+    map: texture,
+    color: '#ffffff',
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  surface.name = 'hero-storefront-signage-material';
+  const mesh = new THREE.Mesh(geometry, surface);
+  mesh.name = 'hero-storefront-signage';
+  mesh.userData = {
+    kind: 'hero-storefront-signage',
+    signCount: quads.length,
+    atlasCells: HERO_SIGNAGE_ATLAS_COLUMNS,
+  };
+  return mesh;
+}
+
 export function installBuildingPortals(renderer, portals, city = null) {
   if (!renderer?.root || !portals.length) return null;
   const group = new THREE.Group();
@@ -176,10 +280,18 @@ export function installBuildingPortals(renderer, portals, city = null) {
   const portalStyledIds = [];
   const storefrontEntries = [];
   const storefrontBuiltIds = [];
+  const signageAtlas = heroPortalCount ? createHeroSignageAtlas() : null;
+  const signageQuads = [];
+  const signageEntries = [];
+  const signageBuiltIds = [];
   let storefrontAbsoluteRoadOverlaps = 0;
   let storefrontAdditionalRoadIntrusions = 0;
+  let signageAbsoluteRoadOverlaps = 0;
+  let signageAdditionalRoadIntrusions = 0;
   let minimumPortalClearance = Infinity;
   let minimumEdgeClearance = Infinity;
+  let minimumSignageCanopyGap = Infinity;
+  let minimumSignageEdgeClearance = Infinity;
   let portalPositionsUnchanged = true;
   let portalHeadingsUnchanged = true;
   let frameIndex = 0;
@@ -294,6 +406,81 @@ export function installBuildingPortals(renderer, portals, city = null) {
       const edgeB = building?.polygon?.[(edgeIndex + 1) % building?.polygon?.length];
       const edgeLength = edgeA && edgeB ? Math.hypot(edgeB.x - edgeA.x, edgeB.z - edgeA.z) : NaN;
       const edgeClearance = edgeLength / 2 - Math.max(outerOffset + 0.06, storefront.canopyWidth / 2);
+      const signageProfile = HERO_SIGNAGE_PROFILES.get(portal.buildingId);
+      const signageWidth = storefront.canopyWidth - 0.34;
+      const signageHeight = 0.52;
+      const signageCanopyGap = 0.1;
+      const signageOffsetZ = -0.46;
+      const signageCenterY = portal.position.y + 2.56 + signageCanopyGap + signageHeight / 2;
+      const signageEdgeClearance = edgeLength / 2 - signageWidth / 2;
+      const signageUvInsetX = 2 / HERO_SIGNAGE_ATLAS_WIDTH;
+      const signageUvInsetY = 2 / HERO_SIGNAGE_ATLAS_HEIGHT;
+      const signageUv = {
+        u0: signageProfile.atlasCell / HERO_SIGNAGE_ATLAS_COLUMNS + signageUvInsetX,
+        u1: (signageProfile.atlasCell + 1) / HERO_SIGNAGE_ATLAS_COLUMNS - signageUvInsetX,
+        v0: signageUvInsetY,
+        v1: 1 - signageUvInsetY,
+      };
+      const signageCenter = portalLocalPoint(portal, 0, signageOffsetZ);
+      const signageLeft = portalLocalPoint(portal, -signageWidth / 2, signageOffsetZ);
+      const signageRight = portalLocalPoint(portal, signageWidth / 2, signageOffsetZ);
+      let entryAbsoluteRoadOverlaps = 0;
+      let entryAdditionalRoadIntrusions = 0;
+      for (const offsetX of [-signageWidth / 2, 0, signageWidth / 2]) {
+        const componentClearance = roadClearance(portalLocalPoint(portal, offsetX, signageOffsetZ), city);
+        const portalPlaneClearance = roadClearance(portalLocalPoint(portal, offsetX, 0), city);
+        if (componentClearance < 0) entryAbsoluteRoadOverlaps += 1;
+        if (componentClearance < portalPlaneClearance - 0.02) entryAdditionalRoadIntrusions += 1;
+      }
+      signageAbsoluteRoadOverlaps += entryAbsoluteRoadOverlaps;
+      signageAdditionalRoadIntrusions += entryAdditionalRoadIntrusions;
+      minimumSignageCanopyGap = Math.min(minimumSignageCanopyGap, signageCanopyGap);
+      minimumSignageEdgeClearance = Math.min(minimumSignageEdgeClearance, signageEdgeClearance);
+      signageBuiltIds.push(portal.buildingId);
+      signageEntries.push({
+        id: portal.buildingId,
+        label: signageProfile.label,
+        atlasCell: signageProfile.atlasCell,
+        sourceEdgeIndex: edgeIndex,
+        sourceEdgeLength: edgeLength,
+        widthMeters: signageWidth,
+        heightMeters: signageHeight,
+        canopyGapMeters: signageCanopyGap,
+        edgeClearanceMeters: signageEdgeClearance,
+        portalPlaneOffsetMeters: signageOffsetZ,
+        position: { x: signageCenter.x, y: signageCenterY, z: signageCenter.z },
+        heading: portal.heading,
+        uv: signageUv,
+        absoluteRoadOverlaps: entryAbsoluteRoadOverlaps,
+        additionalRoadIntrusions: entryAdditionalRoadIntrusions,
+        finite: [
+          signageProfile.atlasCell,
+          edgeIndex,
+          edgeLength,
+          signageWidth,
+          signageHeight,
+          signageCanopyGap,
+          signageEdgeClearance,
+          signageOffsetZ,
+          signageCenter.x,
+          signageCenterY,
+          signageCenter.z,
+          portal.heading,
+          signageUv.u0,
+          signageUv.u1,
+          signageUv.v0,
+          signageUv.v1,
+        ].every(Number.isFinite),
+      });
+      signageQuads.push({
+        uv: signageUv,
+        corners: [
+          { x: signageLeft.x, y: signageCenterY - signageHeight / 2, z: signageLeft.z },
+          { x: signageRight.x, y: signageCenterY - signageHeight / 2, z: signageRight.z },
+          { x: signageRight.x, y: signageCenterY + signageHeight / 2, z: signageRight.z },
+          { x: signageLeft.x, y: signageCenterY + signageHeight / 2, z: signageLeft.z },
+        ],
+      });
       minimumPortalClearance = Math.min(minimumPortalClearance, portalClearance);
       minimumEdgeClearance = Math.min(minimumEdgeClearance, edgeClearance);
       storefrontBuiltIds.push(portal.buildingId);
@@ -330,8 +517,9 @@ export function installBuildingPortals(renderer, portals, city = null) {
       };
     }
   });
-  for (const mesh of [panels, frames, lights, storefrontGlass, storefrontTrim].filter(Boolean)) {
-    mesh.instanceMatrix.needsUpdate = true;
+  const signage = createHeroSignageMesh(signageQuads, signageAtlas);
+  for (const mesh of [panels, frames, lights, storefrontGlass, storefrontTrim, signage].filter(Boolean)) {
+    if (mesh.instanceMatrix) mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere?.();
     group.add(mesh);
@@ -370,6 +558,51 @@ export function installBuildingPortals(renderer, portals, city = null) {
       sourcePortalsUnchanged: streetwall.sourcePortalsUnchanged,
       finite: storefrontEntries.length === streetwall.expectedIds.length
         && storefrontEntries.every((entry) => entry.finite),
+    };
+    signageBuiltIds.sort();
+    signageEntries.sort((a, b) => a.id.localeCompare(b.id));
+    streetwall.signage = {
+      schemaVersion: 1,
+      pass: 'hero-signage-v1',
+      expectedIds: [...streetwall.expectedIds],
+      builtIds: signageBuiltIds,
+      skippedIds: streetwall.expectedIds.filter((id) => !signageBuiltIds.includes(id)),
+      expectedLabels: [...HERO_SIGNAGE_PROFILES.entries()]
+        .map(([id, profile]) => ({ id, label: profile.label, atlasCell: profile.atlasCell }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+      entries: signageEntries,
+      signInstances: signageEntries.length,
+      meshCount: signage ? 1 : 0,
+      drawGroups: signage ? 1 : 0,
+      triangles: signageEntries.length * 2,
+      geometries: signage ? 1 : 0,
+      textures: signageAtlas ? 1 : 0,
+      minimumCanopyGapMeters: minimumSignageCanopyGap,
+      minimumEdgeClearanceMeters: minimumSignageEdgeClearance,
+      absoluteRoadOverlaps: signageAbsoluteRoadOverlaps,
+      additionalRoadIntrusions: signageAdditionalRoadIntrusions,
+      sourcePortalsUnchanged: streetwall.sourcePortalsUnchanged,
+      portalPositionsUnchanged: streetwall.portalPositionsUnchanged,
+      portalHeadingsUnchanged: streetwall.portalHeadingsUnchanged,
+      atlas: {
+        kind: signageAtlas?.userData.kind || null,
+        width: signageAtlas?.userData.width || 0,
+        height: signageAtlas?.userData.height || 0,
+        columns: signageAtlas?.userData.columns || 0,
+        rows: signageAtlas?.userData.rows || 0,
+        cells: signageAtlas?.userData.cells || 0,
+        colorSpace: signageAtlas?.colorSpace || null,
+        sharedTexture: Boolean(signage && signage.material.map === signageAtlas),
+      },
+      incremental: {
+        drawGroups: signage ? 1 : 0,
+        triangles: signageEntries.length * 2,
+        geometries: signage ? 1 : 0,
+        textures: signageAtlas ? 1 : 0,
+        instances: signageEntries.length,
+      },
+      finite: signageEntries.length === streetwall.expectedIds.length
+        && signageEntries.every((entry) => entry.finite),
     };
   }
   renderer.root.add(group);

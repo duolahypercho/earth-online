@@ -55,13 +55,28 @@ const HERO_SOURCE_VERTEX_COUNTS = Object.freeze(new Map([
   ['sf-building-149335988', 11],
 ]));
 
+const HERO_SIGNAGE_LABELS = Object.freeze(new Map([
+  ['sf-building-132127809', 'HEARST BUILDING'],
+  ['sf-building-132127810', 'CENTRAL TOWER'],
+  ['sf-building-149335979', '1 KEARNY'],
+  ['sf-building-149335987', '700 MARKET'],
+  ['sf-building-149335988', 'MARKET LOFTS'],
+  ['sf-building-151183777', 'MARKET STREET'],
+]));
+
+const STOREFRONT_RENDER_BASELINE = Object.freeze({
+  hero: { drawCalls: 476, triangles: 505434, geometries: 400, textures: 258 },
+  elevated: { drawCalls: 252, triangles: 496070, geometries: 400, textures: 258 },
+  aerial: { drawCalls: 863, triangles: 522067, geometries: 400, textures: 258 },
+});
+
 // Traffic is hidden for deterministic facade/roof isolation. The 642a296
 // atlas baseline is 471 draws / 504,374 triangles on the canonical hero pose
 // and 858 / 521,007 aerial. Actual roof geometry gets only two draw groups and
 // 462 triangles; these caps retain a tiny scheduling/culling margin.
-const HERO_POSE_CAPS = Object.freeze({ drawCalls: 476, triangles: 505500 });
-const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 900, triangles: 530000 });
-const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 864, triangles: 522150 });
+const HERO_POSE_CAPS = Object.freeze({ drawCalls: 477, triangles: 505446, geometries: 401, textures: 259 });
+const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 253, triangles: 496082, geometries: 401, textures: 259 });
+const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 864, triangles: 522079, geometries: 401, textures: 259 });
 
 const sampleRenderer = () => page.evaluate(() => {
   const renderer = window.__CITYGEN__.getRenderer();
@@ -85,10 +100,23 @@ function assertRenderBudget(sample, label, caps) {
     `${label}: drawCalls <=${caps.drawCalls} (${sample.drawCalls})`);
   assert.ok(sample.triangles <= caps.triangles,
     `${label}: triangles <=${caps.triangles} (${sample.triangles})`);
-  assert.ok(sample.geometries <= 430, `${label}: geometries <=430 (${sample.geometries})`);
-  assert.ok(sample.textures <= 305, `${label}: textures <=305 (${sample.textures})`);
+  assert.ok(sample.geometries <= caps.geometries,
+    `${label}: geometries <=${caps.geometries} (${sample.geometries})`);
+  assert.ok(sample.textures <= caps.textures,
+    `${label}: textures <=${caps.textures} (${sample.textures})`);
   assert.deepEqual(sample.identity, { renderer: true, root: true, scene: true, canvas: true },
     `${label}: canonical renderer, root, scene, and canvas remain unchanged`);
+}
+
+function assertRenderDelta(sample, label) {
+  const baseline = STOREFRONT_RENDER_BASELINE[label];
+  assert.ok(baseline, `${label}: storefront render baseline is defined`);
+  const maxima = { drawCalls: 1, triangles: 12, geometries: 1, textures: 1 };
+  for (const field of ['drawCalls', 'triangles', 'geometries', 'textures']) {
+    const delta = sample[field] - baseline[field];
+    assert.ok(Number.isFinite(delta) && delta >= 0 && delta <= maxima[field],
+      `${label}: signage ${field} delta stays within +${maxima[field]} (${delta})`);
+  }
 }
 
 try {
@@ -126,6 +154,35 @@ try {
     const roof = renderer.heroRoofDiagnostics || null;
     const ground = renderer.heroGroundDiagnostics || null;
     const footprint = renderer.buildingFootprintDiagnostics || null;
+    const signageMeshes = [];
+    renderer.root.traverse((object) => {
+      if (object?.name === 'hero-storefront-signage') signageMeshes.push(object);
+    });
+    const signageMesh = signageMeshes.length === 1 ? signageMeshes[0] : null;
+    const geometry = signageMesh?.geometry || null;
+    const uvAttribute = geometry?.getAttribute?.('uv') || null;
+    const positionAttribute = geometry?.getAttribute?.('position') || null;
+    const indexAttribute = geometry?.getIndex?.() || null;
+    const uvGroups = [];
+    if (uvAttribute) {
+      for (let offset = 0; offset + 3 < uvAttribute.count; offset += 4) {
+        const values = [];
+        for (let vertex = offset; vertex < offset + 4; vertex += 1) {
+          values.push({ u: uvAttribute.getX(vertex), v: uvAttribute.getY(vertex) });
+        }
+        const minU = Math.min(...values.map((value) => value.u));
+        const maxU = Math.max(...values.map((value) => value.u));
+        const minV = Math.min(...values.map((value) => value.v));
+        const maxV = Math.max(...values.map((value) => value.v));
+        const cells = [];
+        for (let cell = 0; cell < 6; cell += 1) {
+          const cellMin = cell / 6;
+          const cellMax = (cell + 1) / 6;
+          if (minU >= cellMin - 1e-6 && maxU <= cellMax + 1e-6) cells.push(cell);
+        }
+        uvGroups.push({ minU, maxU, minV, maxV, cells });
+      }
+    }
     return {
       backend: renderer.rendererBackend,
       time: api.getState().clock,
@@ -205,6 +262,41 @@ try {
             sourcePortalsUnchanged: hero.streetwall.storefront.sourcePortalsUnchanged,
             finite: hero.streetwall.storefront.finite,
           } : null,
+          signage: hero.streetwall.signage ? {
+            schemaVersion: hero.streetwall.signage.schemaVersion,
+            pass: hero.streetwall.signage.pass,
+            expectedIds: Array.isArray(hero.streetwall.signage.expectedIds)
+              ? [...hero.streetwall.signage.expectedIds] : null,
+            builtIds: Array.isArray(hero.streetwall.signage.builtIds)
+              ? [...hero.streetwall.signage.builtIds] : null,
+            skippedIds: Array.isArray(hero.streetwall.signage.skippedIds)
+              ? [...hero.streetwall.signage.skippedIds] : null,
+            expectedLabels: Array.isArray(hero.streetwall.signage.expectedLabels)
+              ? hero.streetwall.signage.expectedLabels.map((entry) => ({ ...entry })) : null,
+            entries: Array.isArray(hero.streetwall.signage.entries)
+              ? hero.streetwall.signage.entries.map((entry) => ({
+                ...entry,
+                position: entry?.position ? { ...entry.position } : null,
+                uv: entry?.uv ? { ...entry.uv } : null,
+              })) : null,
+            signInstances: hero.streetwall.signage.signInstances,
+            meshCount: hero.streetwall.signage.meshCount,
+            drawGroups: hero.streetwall.signage.drawGroups,
+            triangles: hero.streetwall.signage.triangles,
+            geometries: hero.streetwall.signage.geometries,
+            textures: hero.streetwall.signage.textures,
+            minimumCanopyGapMeters: hero.streetwall.signage.minimumCanopyGapMeters,
+            minimumEdgeClearanceMeters: hero.streetwall.signage.minimumEdgeClearanceMeters,
+            absoluteRoadOverlaps: hero.streetwall.signage.absoluteRoadOverlaps,
+            additionalRoadIntrusions: hero.streetwall.signage.additionalRoadIntrusions,
+            sourcePortalsUnchanged: hero.streetwall.signage.sourcePortalsUnchanged,
+            portalPositionsUnchanged: hero.streetwall.signage.portalPositionsUnchanged,
+            portalHeadingsUnchanged: hero.streetwall.signage.portalHeadingsUnchanged,
+            atlas: hero.streetwall.signage.atlas ? { ...hero.streetwall.signage.atlas } : null,
+            incremental: hero.streetwall.signage.incremental
+              ? { ...hero.streetwall.signage.incremental } : null,
+            finite: hero.streetwall.signage.finite,
+          } : null,
           incremental: hero.streetwall.incremental ? { ...hero.streetwall.incremental } : null,
         } : null,
       } : null,
@@ -282,6 +374,33 @@ try {
       canvases: document.querySelectorAll('canvas').length,
       sceneCanvases: document.querySelectorAll('#scene-canvas').length,
       rootOccurrences: renderer.scene.children.filter((child) => child === renderer.root).length,
+      signageMesh: {
+        count: signageMeshes.length,
+        name: signageMesh?.name || null,
+        kind: signageMesh?.userData?.kind || null,
+        signCount: signageMesh?.userData?.signCount ?? null,
+        atlasCells: signageMesh?.userData?.atlasCells ?? null,
+        isMesh: signageMesh?.isMesh === true,
+        matrixFinite: signageMesh?.matrix?.elements?.every(Number.isFinite) ?? false,
+        positionFinite: signageMesh?.position
+          ? [signageMesh.position.x, signageMesh.position.y, signageMesh.position.z].every(Number.isFinite)
+          : false,
+        geometryCount: geometry ? 1 : 0,
+        indexed: Boolean(indexAttribute),
+        positionCount: positionAttribute?.count ?? null,
+        uvCount: uvAttribute?.count ?? null,
+        indexCount: indexAttribute?.count ?? null,
+        uvGroups,
+        uvFinite: uvAttribute
+          ? Array.from({ length: uvAttribute.count }, (_, index) => (
+            Number.isFinite(uvAttribute.getX(index)) && Number.isFinite(uvAttribute.getY(index))
+          )).every(Boolean)
+          : false,
+        mapCanvas: Boolean(signageMesh?.material?.map?.isCanvasTexture),
+        mapWidth: signageMesh?.material?.map?.image?.width ?? null,
+        mapHeight: signageMesh?.material?.map?.image?.height ?? null,
+        mapColorSpace: signageMesh?.material?.map?.colorSpace ?? null,
+      },
     };
   });
   report.runtime = runtime;
@@ -476,6 +595,176 @@ try {
   assert.equal(storefront.sourcePortalsUnchanged, true, 'storefronts preserve canonical portal transforms');
   assert.equal(storefront.finite, true, 'storefront geometry metadata is finite');
 
+  const signage = streetwall.signage;
+  assert.ok(signage, 'hero streetwall exposes the authored signage contract');
+  assert.equal(signage.schemaVersion, 1, 'signage diagnostics schema version is 1');
+  assert.equal(signage.pass, 'hero-signage-v1', 'signage contract version is explicit');
+  for (const field of ['expectedIds', 'builtIds']) {
+    assert.ok(Array.isArray(signage[field]), `signage diagnostics expose ${field}`);
+    assert.equal(signage[field].length, HERO_IDS.length,
+      `signage ${field} cover exactly six buildings`);
+    assert.equal(new Set(signage[field]).size, HERO_IDS.length,
+      `signage ${field} contain no duplicate ids`);
+    assert.deepEqual([...signage[field]].sort(), [...HERO_IDS].sort(),
+      `signage ${field} cover the exact audited building id set`);
+  }
+  assert.deepEqual(signage.skippedIds, [], 'no hero signage is skipped');
+  assert.ok(Array.isArray(signage.expectedLabels), 'signage diagnostics expose expected labels');
+  assert.equal(signage.expectedLabels.length, HERO_IDS.length,
+    'signage diagnostics expose six expected labels');
+  const expectedLabelIds = new Set();
+  const expectedLabelValues = new Set();
+  for (const entry of signage.expectedLabels) {
+    assert.ok(entry && HERO_SIGNAGE_LABELS.has(entry.id),
+      'each expected signage label belongs to the audited hero set');
+    assert.equal(entry.label, HERO_SIGNAGE_LABELS.get(entry.id),
+      `${entry.id}: expected San Francisco label is exact`);
+    assert.ok(typeof entry.label === 'string' && entry.label.trim().length > 0,
+      `${entry.id}: signage label is non-empty`);
+    assert.equal(entry.atlasCell, HERO_ATLAS_CELLS.get(entry.id),
+      `${entry.id}: signage label remains in its assigned atlas cell`);
+    expectedLabelIds.add(entry.id);
+    expectedLabelValues.add(entry.label);
+  }
+  assert.equal(expectedLabelIds.size, HERO_IDS.length,
+    'signage expected labels contain no duplicate ids');
+  assert.equal(expectedLabelValues.size, HERO_IDS.length,
+    'signage expected labels are six unique SF identities');
+
+  assert.ok(Array.isArray(signage.entries), 'signage diagnostics expose per-building entries');
+  assert.equal(signage.entries.length, HERO_IDS.length, 'signage diagnostics expose six entries');
+  const signageEntryIds = new Set();
+  const signageEntryLabels = new Set();
+  const signageEntryCells = new Set();
+  for (const entry of signage.entries) {
+    const label = entry?.id;
+    assert.ok(HERO_SIGNAGE_LABELS.has(label), `${label}: signage belongs to the audited hero set`);
+    assert.equal(signageEntryIds.has(label), false, `${label}: signage id is unique`);
+    assert.equal(entry.label, HERO_SIGNAGE_LABELS.get(label),
+      `${label}: storefront sign text is the exact authored SF label`);
+    assert.ok(typeof entry.label === 'string' && entry.label.trim().length > 0,
+      `${label}: storefront sign text is non-empty`);
+    assert.equal(entry.atlasCell, HERO_ATLAS_CELLS.get(label),
+      `${label}: storefront sign uses its assigned atlas cell`);
+    assert.ok(Number.isInteger(entry.sourceEdgeIndex) && entry.sourceEdgeIndex >= 0,
+      `${label}: signage is attached to a concrete source edge`);
+    assert.ok(Number.isFinite(entry.sourceEdgeLength) && entry.sourceEdgeLength >= 7.8,
+      `${label}: signage source edge is wide enough (${entry.sourceEdgeLength}m)`);
+    for (const field of ['widthMeters', 'heightMeters', 'canopyGapMeters',
+      'edgeClearanceMeters', 'portalPlaneOffsetMeters']) {
+      assert.ok(Number.isFinite(entry[field]), `${label}: signage ${field} is finite`);
+    }
+    assert.ok(entry.widthMeters > 0, `${label}: signage width is positive`);
+    assert.equal(entry.heightMeters, 0.52, `${label}: signage height is the authored 0.52m band`);
+    assert.equal(entry.canopyGapMeters, 0.1,
+      `${label}: signage preserves the authored 0.10m canopy/portal gap`);
+    assert.equal(entry.portalPlaneOffsetMeters, -0.46,
+      `${label}: signage remains 0.46m behind the canonical portal plane`);
+    assert.ok(entry.edgeClearanceMeters >= 1.9,
+      `${label}: signage stays inside its source frontage (${entry.edgeClearanceMeters}m)`);
+    assert.ok(entry.position && [entry.position.x, entry.position.y, entry.position.z].every(Number.isFinite),
+      `${label}: signage transform position is finite`);
+    assert.ok(Number.isFinite(entry.heading), `${label}: signage transform heading is finite`);
+    assert.ok(entry.uv && [entry.uv.u0, entry.uv.u1, entry.uv.v0, entry.uv.v1].every(Number.isFinite),
+      `${label}: signage UV rectangle is finite`);
+    const cellMin = entry.atlasCell / signage.atlas.columns;
+    const cellMax = (entry.atlasCell + 1) / signage.atlas.columns;
+    assert.ok(entry.uv.u0 >= cellMin - 1e-6 && entry.uv.u1 <= cellMax + 1e-6,
+      `${label}: signage U coordinates stay inside assigned atlas cell`);
+    assert.ok(entry.uv.v0 >= -1e-6 && entry.uv.v1 <= 1 + 1e-6,
+      `${label}: signage V coordinates stay inside assigned atlas row`);
+    assert.ok(Number.isInteger(entry.absoluteRoadOverlaps) && entry.absoluteRoadOverlaps >= 0,
+      `${label}: signage reports source-level absolute road overlaps`);
+    assert.equal(entry.additionalRoadIntrusions, 0,
+      `${label}: signage adds no road intrusion beyond the canonical portal plane`);
+    assert.equal(entry.finite, true, `${label}: signage transforms and UVs are finite`);
+    signageEntryIds.add(label);
+    signageEntryLabels.add(entry.label);
+    signageEntryCells.add(entry.atlasCell);
+  }
+  assert.equal(signageEntryIds.size, HERO_IDS.length, 'signage entries contain no duplicate ids');
+  assert.equal(signageEntryLabels.size, HERO_IDS.length, 'signage entries contain six unique labels');
+  assert.deepEqual([...signageEntryCells].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5],
+    'signage entries cover every assigned atlas cell exactly once');
+  assert.equal(signage.signInstances, 6, 'signage uses exactly six sign instances');
+  assert.equal(signage.meshCount, 1, 'signage uses exactly one mesh');
+  assert.equal(signage.drawGroups, 1, 'signage uses exactly one draw group');
+  assert.equal(signage.triangles, 12, 'signage adds exactly 12 rendered triangles');
+  assert.equal(signage.geometries, 1, 'signage uses exactly one geometry');
+  assert.equal(signage.textures, 1, 'signage uses exactly one atlas texture');
+  assert.equal(signage.minimumCanopyGapMeters, 0.1,
+    'signage preserves the authored minimum canopy/portal gap');
+  assert.ok(Number.isFinite(signage.minimumEdgeClearanceMeters)
+    && signage.minimumEdgeClearanceMeters >= 1.9,
+  'signage stays inside the minimum source frontage clearance');
+  assert.ok(Number.isInteger(signage.absoluteRoadOverlaps) && signage.absoluteRoadOverlaps >= 0,
+    'signage diagnostics report source-level absolute road overlaps');
+  assert.equal(signage.additionalRoadIntrusions, 0,
+    'signage components add no road intrusion beyond canonical portal planes');
+  assert.equal(signage.sourcePortalsUnchanged, true,
+    'signage preserves canonical source portal transforms');
+  assert.equal(signage.portalPositionsUnchanged, true,
+    'signage preserves canonical source portal positions');
+  assert.equal(signage.portalHeadingsUnchanged, true,
+    'signage preserves canonical source portal headings');
+  assert.deepEqual(signage.atlas, {
+    kind: 'runtime-canvas-atlas',
+    width: 2304,
+    height: 64,
+    columns: 6,
+    rows: 1,
+    cells: 6,
+    colorSpace: 'srgb',
+    sharedTexture: true,
+  }, 'signage atlas is the one shared six-cell runtime canvas');
+  assert.deepEqual(signage.incremental,
+    { drawGroups: 1, triangles: 12, geometries: 1, textures: 1, instances: 6 },
+    'signage render cost is exactly one mesh/texture and six signs');
+  assert.equal(signage.finite, true, 'signage geometry and metadata are finite');
+
+  assert.equal(runtime.signageMesh.count, 1,
+    'scene contains exactly one canonical hero signage mesh');
+  assert.equal(runtime.signageMesh.name, 'hero-storefront-signage',
+    'hero signage mesh has its canonical runtime name');
+  assert.equal(runtime.signageMesh.kind, 'hero-storefront-signage',
+    'hero signage mesh exposes its canonical userData kind');
+  assert.equal(runtime.signageMesh.signCount, 6,
+    'hero signage mesh userData covers exactly six signs');
+  assert.equal(runtime.signageMesh.atlasCells, 6,
+    'hero signage mesh userData exposes six atlas cells');
+  assert.equal(runtime.signageMesh.isMesh, true, 'hero signage presentation uses one Mesh');
+  assert.equal(runtime.signageMesh.geometryCount, 1, 'hero signage scene uses one live geometry');
+  assert.equal(runtime.signageMesh.indexed, true, 'hero signage geometry is indexed');
+  assert.equal(runtime.signageMesh.positionCount, 24,
+    'hero signage geometry contains four vertices for each of six signs');
+  assert.equal(runtime.signageMesh.uvCount, 24,
+    'hero signage geometry exposes one UV per sign vertex');
+  assert.equal(runtime.signageMesh.indexCount, 36,
+    'hero signage geometry contains six indexed triangles per sign');
+  assert.equal(runtime.signageMesh.matrixFinite, true, 'hero signage mesh transform matrix is finite');
+  assert.equal(runtime.signageMesh.positionFinite, true, 'hero signage mesh position is finite');
+  assert.equal(runtime.signageMesh.uvFinite, true, 'hero signage mesh UVs are finite');
+  assert.equal(runtime.signageMesh.uvGroups.length, 6,
+    'hero signage mesh contains six atlas UV quads');
+  const meshUvCells = [];
+  for (const [index, group] of runtime.signageMesh.uvGroups.entries()) {
+    assert.equal(group.cells.length, 1,
+      `hero signage mesh UV quad ${index} is contained by exactly one atlas cell`);
+    assert.ok(group.minV >= -1e-6 && group.maxV <= 1 + 1e-6,
+      `hero signage mesh UV quad ${index} stays inside the atlas row`);
+    meshUvCells.push(group.cells[0]);
+  }
+  assert.deepEqual(meshUvCells.sort((a, b) => a - b), [0, 1, 2, 3, 4, 5],
+    'hero signage mesh UV quads cover each assigned atlas cell exactly once');
+  assert.equal(runtime.signageMesh.mapCanvas, true,
+    'hero signage material uses one runtime canvas texture');
+  assert.equal(runtime.signageMesh.mapWidth, signage.atlas.width,
+    'hero signage texture width matches the atlas contract');
+  assert.equal(runtime.signageMesh.mapHeight, signage.atlas.height,
+    'hero signage texture height matches the atlas contract');
+  assert.equal(runtime.signageMesh.mapColorSpace, 'srgb',
+    'hero signage atlas texture uses sRGB color space');
+
   assert.ok(Number.isFinite(runtime.hero.drawGroups), 'hero draw-group count is finite');
   assert.ok(runtime.hero.drawGroups <= 3,
     `hero facades merge into no more than three draw groups (${runtime.hero.drawGroups})`);
@@ -600,6 +889,7 @@ try {
   await page.screenshot({ path: '.qa-citygen-hero-facades.png' });
   report.render.hero = hero;
   assertRenderBudget(hero, 'hero', HERO_POSE_CAPS);
+  assertRenderDelta(hero, 'hero');
 
   const elevatedVisibility = await page.evaluate(() => {
     const renderer = window.__CITYGEN__.getRenderer();
@@ -626,12 +916,14 @@ try {
   await page.screenshot({ path: '.qa-citygen-hero-roofs.png' });
   report.render.elevated = elevated;
   assertRenderBudget(elevated, 'elevated', ELEVATED_POSE_CAPS);
+  assertRenderDelta(elevated, 'elevated');
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('aerial'));
   await page.waitForTimeout(500);
   const aerial = await sampleRenderer();
   report.render.aerial = aerial;
   assertRenderBudget(aerial, 'aerial', AERIAL_POSE_CAPS);
+  assertRenderDelta(aerial, 'aerial');
 
   assert.deepEqual(errors, [], 'hero facade render emits no browser errors');
 
