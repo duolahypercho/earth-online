@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { buildTrafficGraph, mulberry32 } from './core.js';
 import {
   buildVehicle,
+  buildVehicleBatch,
+  registerVehicleInstance,
+  writeVehicleInstance,
+  commitVehicleBatch,
   buildPedestrian,
   buildPedestrianBatch,
   writePedestrianInstance,
@@ -28,6 +32,9 @@ export class TrafficSim {
     this.city = city;
     this.edges = buildTrafficGraph(city);
     this.group = new THREE.Group();
+    this.vehicleGroup = new THREE.Group();
+    this.vehicleGroup.name = 'logical-vehicles-and-batched-presentation';
+    this.group.add(this.vehicleGroup);
     this.cars = [];
     this.pedestrians = [];
     this.phase = 0;
@@ -49,6 +56,7 @@ export class TrafficSim {
     this.localLifeEnabled = realMap;
     this.localLifeTimer = 0;
     this.localLifeFocus = null;
+    this.localLifeAllowVisibleRefresh = false;
     this.localLifeDiagnostics = {
       enabled: realMap,
       radius: LOCAL_LIFE_RADIUS,
@@ -63,10 +71,16 @@ export class TrafficSim {
       events: [],
     };
     const trafficCount = realMap ? 42 : count;
+    this.vehicleBatch = trafficCount > 0 ? buildVehicleBatch(trafficCount) : null;
+    if (this.vehicleBatch) this.vehicleGroup.add(this.vehicleBatch.group);
     for (let i = 0; i < trafficCount; i += 1) {
       if (!this.edges.length) break;
       const car = this.spawnCar(this.edges[Math.floor(random() * this.edges.length)], paint[Math.floor(random() * paint.length)], random);
       if (car) this.cars.push(car);
+    }
+    if (this.vehicleBatch) {
+      for (const car of this.cars) writeVehicleInstance(this.vehicleBatch, car);
+      commitVehicleBatch(this.vehicleBatch, this.cars.length);
     }
     const pedestrianCount = realMap ? 48 : 26;
     const sidewalkPaths = this.buildSidewalkPaths(city);
@@ -83,6 +97,14 @@ export class TrafficSim {
   }
 
   dispose() {
+    for (const car of this.cars) {
+      car.group.traverse((object) => {
+        if (!object.isMesh) return;
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          material?.dispose?.();
+        }
+      });
+    }
     this.renderer.scene.remove(this.group);
   }
 
@@ -109,6 +131,7 @@ export class TrafficSim {
     const car = {
       group,
       kind,
+      color,
       dims: group.userData.rig.dims,
       edge: null,
       signal: null,
@@ -127,7 +150,8 @@ export class TrafficSim {
       terminalTimer: 0,
     };
     this.assignEdge(car, placement.edge, placement.pathIndex, placement.distance);
-    this.group.add(group);
+    if (this.vehicleBatch) registerVehicleInstance(this.vehicleBatch, car, this.cars.length);
+    this.vehicleGroup.add(group);
     return car;
   }
 
@@ -252,6 +276,10 @@ export class TrafficSim {
     for (const pedestrian of this.pedestrians) {
       this.updatePedestrian(pedestrian, delta);
     }
+    if (this.vehicleBatch) {
+      for (const car of this.cars) writeVehicleInstance(this.vehicleBatch, car);
+      commitVehicleBatch(this.vehicleBatch, this.cars.length);
+    }
     if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
     if (this.localLifeFocus) this.updateLocalLifeCounts(this.localLifeFocus);
   }
@@ -267,13 +295,25 @@ export class TrafficSim {
     this.localLifeTimer = 1;
     this.localLifeFocus = focus;
     this.localLifeDiagnostics.focusUpdates += 1;
+    const allowVisibleDestination = this.localLifeDiagnostics.focusUpdates === 1
+      || this.localLifeAllowVisibleRefresh;
 
     const localCars = this.cars.filter((car) => this.actorDistance(car.group, focus) <= LOCAL_LIFE_RADIUS);
     const localPedestrians = this.pedestrians
       .filter((pedestrian) => this.actorDistance(pedestrian.group, focus) <= LOCAL_LIFE_RADIUS);
-    this.recycleCarsNearFocus(focus, Math.max(0, LOCAL_CAR_TARGET - localCars.length));
-    this.recyclePedestriansNearFocus(focus, Math.max(0, LOCAL_PEDESTRIAN_TARGET - localPedestrians.length));
+    this.recycleCarsNearFocus(focus, Math.max(0, LOCAL_CAR_TARGET - localCars.length), allowVisibleDestination);
+    this.recyclePedestriansNearFocus(
+      focus, Math.max(0, LOCAL_PEDESTRIAN_TARGET - localPedestrians.length), allowVisibleDestination,
+    );
+    this.localLifeAllowVisibleRefresh = false;
     this.updateLocalLifeCounts(focus);
+  }
+
+  requestLocalLifeRefresh({ allowVisible = false } = {}) {
+    if (!this.localLifeEnabled) return;
+    this.localLifeFocus = null;
+    this.localLifeTimer = 0;
+    this.localLifeAllowVisibleRefresh = Boolean(allowVisible);
   }
 
   actorDistance(group, focus) {
@@ -303,7 +343,7 @@ export class TrafficSim {
       .sort((a, b) => a.distanceToFocus - b.distanceToFocus || String(a.path.id || '').localeCompare(String(b.path.id || '')));
   }
 
-  recycleCarsNearFocus(focus, needed) {
+  recycleCarsNearFocus(focus, needed, allowVisibleDestination = false) {
     if (needed <= 0) return;
     const placements = this.nearbyPlacements(
       this.edges.filter((edge) => ['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'service'].includes(edge.highway)),
@@ -326,7 +366,7 @@ export class TrafficSim {
           && Math.abs(this.edgeArc(other) - arc) < 8);
         const edgePosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
         const visibleAfter = this.worldPointIsVisible(edgePosition.x, edgePosition.z);
-        if (clear && (this.localLifeDiagnostics.focusUpdates === 1 || !visibleAfter)) {
+        if (clear && (allowVisibleDestination || !visibleAfter)) {
           selected = { ...candidate, arc, edgePosition, visibleAfter };
           break;
         }
@@ -342,12 +382,13 @@ export class TrafficSim {
       const toDistance = Math.hypot(selected.edgePosition.x - focus.x, selected.edgePosition.z - focus.z);
       this.recordLocalLifeEvent(
         'car', this.cars.indexOf(car), fromDistance, toDistance, visibleBefore, selected.visibleAfter,
+        allowVisibleDestination,
       );
       placed += 1;
     }
   }
 
-  recyclePedestriansNearFocus(focus, needed) {
+  recyclePedestriansNearFocus(focus, needed, allowVisibleDestination = false) {
     if (needed <= 0 || !this.sidewalkPaths?.length) return;
     const placements = this.nearbyPlacements(this.sidewalkPaths, focus);
     if (!placements.length) return;
@@ -365,7 +406,7 @@ export class TrafficSim {
         const arc = clamp(candidate.arc + jitter, 0.5, Math.max(0.5, total - 0.5));
         const pathPosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
         const visibleAfter = this.worldPointIsVisible(pathPosition.x, pathPosition.z);
-        if (this.localLifeDiagnostics.focusUpdates === 1 || !visibleAfter) {
+        if (allowVisibleDestination || !visibleAfter) {
           selected = { ...candidate, total, arc, pathPosition, visibleAfter };
           break;
         }
@@ -382,19 +423,20 @@ export class TrafficSim {
       const toDistance = Math.hypot(selected.pathPosition.x - focus.x, selected.pathPosition.z - focus.z);
       this.recordLocalLifeEvent(
         'pedestrian', pedestrian.instanceIndex, fromDistance, toDistance, visibleBefore, selected.visibleAfter,
+        allowVisibleDestination,
       );
       placed += 1;
     }
   }
 
-  recordLocalLifeEvent(type, index, fromDistance, toDistance, visibleBefore, visibleAfter) {
+  recordLocalLifeEvent(type, index, fromDistance, toDistance, visibleBefore, visibleAfter, intentionalRefresh) {
     this.localLifeDiagnostics.events.push({
       id: `${type}:${index}`,
       fromDistance: Number(fromDistance.toFixed(2)),
       toDistance: Number(toDistance.toFixed(2)),
       visibleBefore,
       visibleAfter,
-      bootstrap: this.localLifeDiagnostics.focusUpdates === 1,
+      intentionalRefresh,
       phase: Number(this.phase.toFixed(3)),
     });
     if (this.localLifeDiagnostics.events.length > 128) this.localLifeDiagnostics.events.shift();
@@ -412,6 +454,34 @@ export class TrafficSim {
       ...this.localLifeDiagnostics,
       focus: this.localLifeFocus ? { ...this.localLifeFocus } : null,
       events: this.localLifeDiagnostics.events.map((event) => ({ ...event })),
+    };
+  }
+
+  getVehicleBatchDiagnostics() {
+    const meshes = [];
+    this.vehicleGroup.traverse((object) => {
+      if (object.isMesh) meshes.push(object);
+    });
+    const geometries = new Set(meshes.map((mesh) => mesh.geometry));
+    const materials = new Set();
+    for (const mesh of meshes) {
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) materials.add(material);
+    }
+    const instances = this.vehicleBatch
+      ? Object.fromEntries(Object.entries(this.vehicleBatch.parts).map(([name, mesh]) => [name, mesh.count]))
+      : {};
+    return {
+      logicalCars: this.cars.length,
+      kinds: this.cars.reduce((counts, car) => ({ ...counts, [car.kind]: (counts[car.kind] || 0) + 1 }), {}),
+      meshes: meshes.length,
+      instancedMeshes: meshes.filter((mesh) => mesh.isInstancedMesh).length,
+      geometries: geometries.size,
+      materials: materials.size,
+      instances,
+      legacyMeshEstimate: this.cars.reduce((total, car) => total + (car.kind === 'taxi' ? 19 : 18), 0),
+      frustumSafe: this.vehicleBatch
+        ? Object.values(this.vehicleBatch.parts).every((mesh) => mesh.frustumCulled === false)
+        : true,
     };
   }
 

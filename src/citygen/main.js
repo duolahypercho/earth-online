@@ -745,6 +745,7 @@ function setMode(mode) {
     state.player.yaw = Math.PI * 0.12;
     state.player.pitch = -0.12;
     updatePlayer(0);
+    state.traffic?.requestLocalLifeRefresh({ allowVisible: true });
   }
   syncPlacementState();
 }
@@ -1572,6 +1573,7 @@ async function boot() {
         frameCityCamera(state.city);
       }
       controls.update();
+      state.traffic?.requestLocalLifeRefresh({ allowVisible: true });
     },
     setMode,
     frameCityCamera,

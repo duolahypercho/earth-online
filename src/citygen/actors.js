@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
-// Shared low-poly geometry for all vehicles keeps the flat-shaded style
-// while making the fleet cheap: meshes clone geometry but get their own
-// emissive-capable materials (taillights, turn signals) so each car can
-// animate independently.
+// Shared low-poly geometry keeps the whole moving fleet to three geometry
+// allocations. Invariant parts are drawn by six aggregate instance batches;
+// only the independently animated rear and turn lights remain per vehicle.
 const GEO = {
+  box: new THREE.BoxGeometry(1, 1, 1),
   wheel: new THREE.CylinderGeometry(0.3, 0.3, 0.24, 8),
   hub: new THREE.CylinderGeometry(0.13, 0.13, 0.26, 8),
 };
@@ -19,20 +19,66 @@ export const CAR_DIMENSIONS = {
 };
 
 function box(parent, w, h, d, material, x, y, z) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  const mesh = new THREE.Mesh(GEO.box, material);
   mesh.position.set(x, y, z);
+  mesh.scale.set(w, h, d);
   parent.add(mesh);
   return mesh;
 }
 
-function addWheel(parent, x, z, hubMaterial) {
+function wheelPivot(x, z) {
   const pivot = new THREE.Group();
   pivot.position.set(x, 0.3, z);
-  const tire = new THREE.Mesh(GEO.wheel, parent.userData.wheelMaterial);
-  const hub = new THREE.Mesh(GEO.hub, hubMaterial);
-  pivot.add(tire, hub);
-  parent.add(pivot);
   return pivot;
+}
+
+const VEHICLE_MATERIALS = {
+  body: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.55, flatShading: true }),
+  cab: new THREE.MeshStandardMaterial({ color: 0xb9d3e0, roughness: 0.2, metalness: 0.2, flatShading: true }),
+  taxiTopper: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.85 }),
+  headlights: new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffe9a8, emissiveIntensity: 0.4 }),
+  tires: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 }),
+  hubs: new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.55, metalness: 0.4, flatShading: true }),
+};
+
+function vehicleLayout(kind, dims) {
+  const lightY = kind === 'bus' ? 1.0 : kind === 'truck' ? 1.25 : 0.55;
+  const rearLightY = kind === 'bus' ? 1.0 : kind === 'truck' ? 1.2 : 0.5;
+  const wheels = kind === 'bus'
+    ? [[-1.05, 2.45], [1.05, 2.45], [-1.05, -2.45], [1.05, -2.45]]
+    : kind === 'truck'
+      ? [[-0.98, 1.6], [0.98, 1.6], [-0.98, -1.7], [0.98, -1.7]]
+      : [[-dims.halfWidth, 1.1], [dims.halfWidth, 1.1], [-dims.halfWidth, -1.1], [dims.halfWidth, -1.1]];
+
+  if (kind === 'bus') {
+    return {
+      body: { position: [0, 1.05, 0], scale: [2.35, 1.7, 7.8] },
+      cab: { position: [0, 1.02, 0], scale: [2.38, 0.35, 7.82] },
+      topper: null,
+      headlights: [-dims.halfWidth, dims.halfWidth].map((x) => ({ position: [x, lightY, dims.frontZ + 0.01], scale: [0.28, 0.16, 0.08] })),
+      wheels,
+      rearLightY,
+    };
+  }
+  if (kind === 'truck') {
+    return {
+      body: { position: [0, 0.92, 0], scale: [2.1, 1.35, 4.6] },
+      cab: { position: [0, 1.18, 1.7], scale: [1.9, 0.8, 1.6] },
+      topper: null,
+      headlights: [-dims.halfWidth, dims.halfWidth].map((x) => ({ position: [x, lightY, dims.frontZ + 0.01], scale: [0.28, 0.16, 0.08] })),
+      wheels,
+      rearLightY,
+    };
+  }
+  const width = kind === 'taxi' ? 1.75 : 1.7;
+  return {
+    body: { position: [0, 0.62, 0], scale: [width, 0.62, 3.6] },
+    cab: { position: [0, 1.12, -0.4], scale: [width * 0.9, 0.5, 1.6] },
+    topper: kind === 'taxi' ? { position: [0, 1.55, -0.4], scale: [0.6, 0.18, 0.34] } : null,
+    headlights: [-dims.halfWidth, dims.halfWidth].map((x) => ({ position: [x, lightY, dims.frontZ + 0.01], scale: [0.28, 0.16, 0.08] })),
+    wheels,
+    rearLightY,
+  };
 }
 
 /**
@@ -43,26 +89,9 @@ function addWheel(parent, x, z, hubMaterial) {
 export function buildVehicle(kind, color) {
   const group = new THREE.Group();
   const dims = CAR_DIMENSIONS[kind] || CAR_DIMENSIONS.sedan;
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.55, flatShading: true });
-  const cabMaterial = new THREE.MeshStandardMaterial({ color: 0xb9d3e0, roughness: 0.2, metalness: 0.2, flatShading: true });
-  const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.85 });
-  group.userData.wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 });
-  const hubMaterial = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.55, metalness: 0.4, flatShading: true });
+  const layout = vehicleLayout(kind, dims);
   const bodyGroup = new THREE.Group();
   group.add(bodyGroup);
-
-  if (kind === 'bus') {
-    box(bodyGroup, 2.35, 1.7, 7.8, bodyMaterial, 0, 1.05, 0);
-    box(bodyGroup, 2.38, 0.35, 7.82, cabMaterial, 0, 1.02, 0);
-  } else if (kind === 'truck') {
-    box(bodyGroup, 2.1, 1.35, 4.6, bodyMaterial, 0, 0.92, 0);
-    box(bodyGroup, 1.9, 0.8, 1.6, cabMaterial, 0, 1.18, 1.7);
-  } else {
-    const width = kind === 'taxi' ? 1.75 : 1.7;
-    box(bodyGroup, width, 0.62, 3.6, bodyMaterial, 0, 0.62, 0);
-    box(bodyGroup, width * 0.9, 0.5, 1.6, cabMaterial, 0, 1.12, -0.4);
-    if (kind === 'taxi') box(bodyGroup, 0.6, 0.18, 0.34, darkMaterial, 0, 1.55, -0.4);
-  }
 
   // Turn-signal emitters sit on the front and rear corners; emissive
   // intensity is driven per-frame by the traffic sim while cornering.
@@ -70,31 +99,26 @@ export function buildVehicle(kind, color) {
   const signalColor = 0xff9d2e;
   const turnSignals = { left: [], right: [] };
   for (const side of [1, -1]) {
-    const frontMat = new THREE.MeshStandardMaterial({ color: signalColor, emissive: signalColor, emissiveIntensity: 0 });
-    const rearMat = new THREE.MeshStandardMaterial({ color: signalColor, emissive: signalColor, emissiveIntensity: 0 });
-    box(bodyGroup, 0.16, 0.12, 0.1, frontMat, side * (dims.halfWidth + 0.06), kind === 'bus' ? 1.0 : kind === 'truck' ? 1.2 : 0.5, dims.frontZ - 0.3);
-    box(bodyGroup, 0.16, 0.12, 0.1, rearMat, side * (dims.halfWidth + 0.06), kind === 'bus' ? 1.0 : kind === 'truck' ? 1.2 : 0.5, dims.rearZ + 0.3);
-    (side > 0 ? turnSignals.left : turnSignals.right).push(frontMat, rearMat);
+    const signalMat = new THREE.MeshStandardMaterial({ color: signalColor, emissive: signalColor, emissiveIntensity: 0 });
+    box(bodyGroup, 0.16, 0.12, 0.1, signalMat, side * (dims.halfWidth + 0.06), layout.rearLightY, dims.frontZ - 0.3);
+    box(bodyGroup, 0.16, 0.12, 0.1, signalMat, side * (dims.halfWidth + 0.06), layout.rearLightY, dims.rearZ + 0.3);
+    (side > 0 ? turnSignals.left : turnSignals.right).push(signalMat);
   }
 
-  const headlightMat = new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffe9a8, emissiveIntensity: 0.4 });
   const taillightMat = new THREE.MeshStandardMaterial({ color: 0xff4433, emissive: 0xff2a1a, emissiveIntensity: 0.25 });
   for (const wx of [-dims.halfWidth, dims.halfWidth]) {
-    box(bodyGroup, 0.28, 0.16, 0.08, headlightMat, wx, kind === 'bus' ? 1.0 : kind === 'truck' ? 1.25 : 0.55, dims.frontZ + 0.01);
-    box(bodyGroup, 0.26, 0.12, 0.08, taillightMat, wx, kind === 'bus' ? 1.0 : kind === 'truck' ? 1.2 : 0.5, dims.rearZ);
+    box(bodyGroup, 0.26, 0.12, 0.08, taillightMat, wx, layout.rearLightY, dims.rearZ);
   }
 
-  const wheels = [];
-  const positions = kind === 'bus'
-    ? [[-1.05, 2.45], [1.05, 2.45], [-1.05, -2.45], [1.05, -2.45]]
-    : kind === 'truck'
-      ? [[-0.98, 1.6], [0.98, 1.6], [-0.98, -1.7], [0.98, -1.7]]
-      : [[-dims.halfWidth, 1.1], [dims.halfWidth, 1.1], [-dims.halfWidth, -1.1], [dims.halfWidth, -1.1]];
-  for (const [wx, wz] of positions) wheels.push(addWheel(group, wx, wz, hubMaterial));
+  // The wheel pivots preserve the existing animation contract without adding
+  // scene nodes. Their matrices are copied into the tire/hub batches.
+  const wheels = layout.wheels.map(([x, z]) => wheelPivot(x, z));
 
   group.userData.rig = {
     kind,
     dims,
+    color,
+    layout,
     body: bodyGroup,
     wheels,
     taillightMat,
@@ -105,6 +129,102 @@ export function buildVehicle(kind, color) {
     bobAmp: 0,
   };
   return group;
+}
+
+/**
+ * Six scene-wide batches replace invariant vehicle meshes. Logical vehicle
+ * groups remain separate for entry, driving, collision, camera, and stateful
+ * lights. The aggregate bounds are intentionally disabled because cars move
+ * across the full city and stale instance bounds can otherwise cull them.
+ */
+export function buildVehicleBatch(count) {
+  const group = new THREE.Group();
+  group.name = 'vehicle-presentation-batch';
+  const parts = {
+    body: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.body, count),
+    cab: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.cab, count),
+    taxiTopper: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.taxiTopper, count),
+    headlights: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.headlights, count * 2),
+    tires: new THREE.InstancedMesh(GEO.wheel, VEHICLE_MATERIALS.tires, count * 4),
+    hubs: new THREE.InstancedMesh(GEO.hub, VEHICLE_MATERIALS.hubs, count * 4),
+  };
+  for (const [name, mesh] of Object.entries(parts)) {
+    mesh.name = `vehicle-${name}-instances`;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+  }
+  return {
+    group,
+    parts,
+    capacity: count,
+    taxiCount: 0,
+    colorsNeedUpdate: false,
+    helper: new THREE.Object3D(),
+    carMatrix: new THREE.Matrix4(),
+    bodyMatrix: new THREE.Matrix4(),
+    partMatrix: new THREE.Matrix4(),
+  };
+}
+
+export function registerVehicleInstance(batch, car, index) {
+  const rig = car.group.userData.rig;
+  car.instanceIndex = index;
+  rig.taxiInstanceIndex = rig.layout.topper ? batch.taxiCount++ : -1;
+  batch.parts.body.setColorAt(index, new THREE.Color(rig.color));
+  batch.colorsNeedUpdate = true;
+}
+
+function writePartMatrix(batch, mesh, index, parentMatrix, part) {
+  const helper = batch.helper;
+  helper.position.fromArray(part.position);
+  helper.rotation.set(0, 0, 0);
+  helper.scale.fromArray(part.scale);
+  helper.updateMatrix();
+  batch.partMatrix.multiplyMatrices(parentMatrix, helper.matrix);
+  mesh.setMatrixAt(index, batch.partMatrix);
+}
+
+export function writeVehicleInstance(batch, car) {
+  const rig = car.group.userData.rig;
+  const index = car.instanceIndex;
+  car.group.updateMatrix();
+  rig.body.updateMatrix();
+  batch.carMatrix.copy(car.group.matrix);
+  batch.bodyMatrix.multiplyMatrices(batch.carMatrix, rig.body.matrix);
+
+  writePartMatrix(batch, batch.parts.body, index, batch.bodyMatrix, rig.layout.body);
+  writePartMatrix(batch, batch.parts.cab, index, batch.bodyMatrix, rig.layout.cab);
+  if (rig.layout.topper) {
+    writePartMatrix(batch, batch.parts.taxiTopper, rig.taxiInstanceIndex, batch.bodyMatrix, rig.layout.topper);
+  }
+  for (let i = 0; i < rig.layout.headlights.length; i += 1) {
+    writePartMatrix(batch, batch.parts.headlights, index * 2 + i, batch.bodyMatrix, rig.layout.headlights[i]);
+  }
+  for (let i = 0; i < rig.wheels.length; i += 1) {
+    const wheel = rig.wheels[i];
+    wheel.updateMatrix();
+    batch.partMatrix.multiplyMatrices(batch.carMatrix, wheel.matrix);
+    batch.parts.tires.setMatrixAt(index * 4 + i, batch.partMatrix);
+    batch.parts.hubs.setMatrixAt(index * 4 + i, batch.partMatrix);
+  }
+}
+
+export function commitVehicleBatch(batch, count) {
+  const counts = {
+    body: count,
+    cab: count,
+    taxiTopper: batch.taxiCount,
+    headlights: count * 2,
+    tires: count * 4,
+    hubs: count * 4,
+  };
+  for (const [name, mesh] of Object.entries(batch.parts)) {
+    mesh.count = counts[name];
+    mesh.instanceMatrix.needsUpdate = true;
+    if (batch.colorsNeedUpdate && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+  batch.colorsNeedUpdate = false;
 }
 
 const SKIN_TONES = [0xc99a74, 0xa9744f, 0x8a5a3b, 0xe0b392, 0x6f4a33];

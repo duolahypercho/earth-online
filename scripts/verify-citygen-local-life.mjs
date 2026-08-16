@@ -49,7 +49,7 @@ const sample = () => page.evaluate(() => {
     },
     diagnostics: traffic.getLocalLifeDiagnostics(),
     render: {
-      calls: renderer.renderer.info.render.calls,
+      drawCalls: renderer.renderer.info.render.drawCalls,
       triangles: renderer.renderer.info.render.triangles,
       geometries: renderer.renderer.info.memory.geometries,
       textures: renderer.renderer.info.memory.textures,
@@ -118,8 +118,8 @@ try {
   assert.ok(events.every((event) => event.fromDistance >= night.diagnostics.recycleRadius));
   assert.ok(events.every((event) => event.toDistance <= night.diagnostics.radius));
   assert.ok(events.every((event) => event.visibleBefore === false));
-  assert.ok(events.filter((event) => !event.bootstrap).every((event) => event.visibleAfter === false));
-  assert.ok(night.render.calls <= 1300, `draw calls remain bounded: ${night.render.calls}`);
+  assert.ok(events.filter((event) => !event.intentionalRefresh).every((event) => event.visibleAfter === false));
+  assert.ok(night.render.drawCalls <= 1200, `draw calls remain bounded: ${night.render.drawCalls}`);
   assert.ok(night.render.triangles <= 520000, `triangles remain bounded: ${night.render.triangles}`);
   assert.deepEqual(errors, []);
 
