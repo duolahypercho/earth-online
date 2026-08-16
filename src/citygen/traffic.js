@@ -702,7 +702,9 @@ export class TrafficSim {
     const x = a.x + (b.x - a.x) * t;
     const z = a.z + (b.z - a.z) * t;
     const y = this.groundY(x, z);
-    pedestrian.group.position.set(x, y + Math.abs(Math.sin(this.phase * walk.cadence + walk.time)) * walk.bob, z);
+    walk.gait = Math.sin(this.phase * walk.cadence + walk.time);
+    walk.bobOffset = Math.abs(walk.gait) * walk.bob;
+    pedestrian.group.position.set(x, y + walk.bobOffset, z);
     const fx = pedestrian.dir > 0 ? b.x - a.x : a.x - b.x;
     const fz = pedestrian.dir > 0 ? b.z - a.z : a.z - b.z;
     pedestrian.group.rotation.y = Math.atan2(fx, fz);
