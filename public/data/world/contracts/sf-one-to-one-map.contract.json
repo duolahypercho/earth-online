@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-one-to-one-map-contract",
+  "id": "sf-one-to-one-reality-v1",
+  "status": "production-coordinate-contract",
+  "scope": {
+    "place": "San Francisco, California, USA",
+    "representation": "A low-poly or Roblox-like visual treatment is allowed; it does not relax spatial requirements.",
+    "excludedSystems": ["gameplay", "traffic", "NPCs"]
+  },
+  "coordinateReference": {
+    "horizontal": {
+      "crs": "EPSG:26910",
+      "name": "NAD83 / UTM zone 10N",
+      "unit": "metre",
+      "authority": "EPSG"
+    },
+    "vertical": {
+      "datum": "NAVD88",
+      "quantity": "orthometric-height",
+      "unit": "metre",
+      "missingDatumPolicy": "realized-navd88-or-provisional-source-declared-elevation-or-reject-source"
+    },
+    "runtimeFrame": "production-utm-navd88"
+  },
+  "authorizedHorizontalTransform": {
+    "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+    "path": ["EPSG:1188-inverse", "EPSG:26910-projection"],
+    "absoluteHorizontalAccuracyFloorMetres": 4,
+    "nad83Realization": "not-claimed",
+    "coordinateEpoch": "not-claimed",
+    "note": "EPSG:26910 establishes metre coordinates and not an absolute source-alignment guarantee."
+  },
+  "runtimeAxes": {
+    "x": "east",
+    "y": "up",
+    "z": "north"
+  },
+  "scale": {
+    "runtimeUnitsPerMetre": 1,
+    "horizontalScale": 1,
+    "verticalScale": 1,
+    "verticalExaggeration": 0,
+    "globalRepositioningAllowed": false,
+    "globalRescalingAllowed": false
+  },
+  "tiling": {
+    "scheme": "rectilinear-utm",
+    "tileSizeMetres": 384,
+    "sourceBufferMetres": 16,
+    "origin": "shared-epsg-26910-grid"
+  },
+  "featureIntegrity": {
+    "sourceFeaturePositions": "unchanged-after-crs-transform",
+    "allowedOperations": ["documented-crs-transform", "documented-vertical-datum-transform", "documented-provisional-terrain-sampling", "documented-topology-repair"],
+    "prohibitedOperations": ["preview-frame-placement", "art-directed-global-offset", "global-scale", "vertical-exaggeration"],
+    "topologyRepair": {
+      "requiresSourceFeatureId": true,
+      "requiresBeforeAfterGeometry": true,
+      "requiresReason": true,
+      "requiresMeasuredDisplacementMetres": true
+    }
+  },
+  "lod": {
+    "permittedChange": "topology-only-within-error-budget; package may declare any contiguous available LOD range beginning at LOD0",
+    "mustPreserve": ["feature-position", "shared-grid-alignment", "runtime-scale"],
+    "maxHorizontalDeviationMetres": 0.5,
+    "maxVerticalDeviationMetres": 0.25,
+    "mayNot": ["globally-rescale", "globally-reposition", "change-coordinate-frame"],
+    "requiredDescriptor": ["level", "runtimeFrame", "scale", "translationMetres", "maxHorizontalDeviationMetres", "maxVerticalDeviationMetres", "artifactHash"],
+    "errorMeaning": "relative mesh deviation from transformed source geometry, not absolute positional accuracy"
+  },
+  "accuracy": {
+    "claim": "source-qualified",
+    "notAClaim": "survey-grade-or-independent-ground-truth",
+    "requiresSourceSpecificQualification": true,
+    "absoluteHorizontalAccuracyFloorMetres": 4,
+    "lodErrorIsNotAbsoluteAccuracy": true,
+    "unsupportedClaimTerms": ["survey", "sub-metre", "exact"],
+    "claimEvidence": "A quantified, source-specific uncertainty record is required before using an unsupported claim term."
+  },
+  "provenance": {
+    "sourceLockDescriptor": ["id", "path", "sha256", "purpose"],
+    "sourceLockDirectory": "public/data/world/source-locks",
+    "requiredPurposes": ["geometry", "horizontal-coordinate-operation", "vertical-datum-transform", "terrain-elevation"],
+    "requiredForEverySourceFeature": [
+      "sourceId",
+      "sourceFeatureId",
+      "publisher",
+      "license",
+      "retrievedAt",
+      "nativeHorizontalCrs",
+      "nativeVerticalDatum",
+      "sourceLockId",
+      "horizontalTransformLockId",
+      "verticalMode",
+      "verticalTransformLockId",
+      "elevationSourceLockId",
+      "elevationSampleEvidence",
+      "sourceGeometryHash",
+      "nativeHorizontalPosition",
+      "transformedPositionEpsg26910VerticalMetres",
+      "runtimePositionMetres"
+    ],
+    "rejectWhenVerticalDatumMissing": false,
+    "twoDimensionalGeometryPolicy": "A source without a native vertical datum is valid only in terrain-sampled-source-declared-navd88-unrealized mode with a byte-locked provisional terrain elevation source and per-feature source-window computation evidence. It cannot certify a vertically production-ready or fully production 1:1 tile until a realized NAVD88 source is separately locked.",
+    "repairRecordRequiredWhenRepaired": true
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-terrain-source-lock",
+  "status": "source-locked-not-built",
+  "id": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+  "title": "San Francisco USGS 3DEP x55y418 terrain source lock",
+  "coverage": { "sourceResolutionMeters": 1, "sourceDimensionsPixels": [10012, 10012], "surface": "bare-earth DEM" },
+  "source": {
+    "producer": "U.S. Geological Survey",
+    "program": "3D Elevation Program (3DEP)",
+    "project": "CA_SanFrancisco_B23",
+    "productTitle": "USGS 1 Meter 10 x55y418 CA_SanFrancisco_B23",
+    "projectMetadataUrl": "https://www.fisheries.noaa.gov/inport/item/73506",
+    "projectMetadataSha256": "8d8b06910fef764176a4c2b21da4f468007ed6fe0e964f829b376f798d795044",
+    "projectMetadataBytes": 97621,
+    "license": "US public domain",
+    "attribution": "U.S. Geological Survey, 3D Elevation Program (3DEP)"
+  },
+  "raster": {
+    "format": "GeoTIFF",
+    "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanFrancisco_B23/TIFF/USGS_1M_10_x55y418_CA_SanFrancisco_B23.tif",
+    "bytes": 147948547,
+    "sha256": "a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781",
+    "etag": "72d642b980ab866bb9a92b733efc2e12",
+    "lastModified": "Fri, 13 Feb 2026 02:57:16 GMT",
+    "gridEnvelope": {
+      "dimensionsPixels": [10012, 10012],
+      "sampleLayout": { "samplesPerPixel": 1, "bitsPerSample": 32, "sampleFormat": "IEEE floating point (3)", "compression": "LZW (5)", "predictor": "floating point (3)", "nodata": -999999, "validPercentFromEmbeddedStatistics": 37.63 },
+      "tileLayout": { "tilePixels": [512, 512], "tileCount": 400, "overviewIfdCount": 5, "overviewsPresent": true },
+      "horizontalEpsg": 26910,
+      "linearUnitEpsg": 9001,
+      "rasterType": "PixelIsArea",
+      "pixelScaleModelSpace": [1, 1, 0],
+      "modelTiepoint": [0, 0, 0, 549993.9999667143, 4180006.0000295797, 0],
+      "pixelToModelAffine": { "columnRowFormula": "X = 549993.9999667143 + column; Y = 4180006.0000295797 - row", "coefficients": [1, 0, 549993.9999667143, 0, -1, 4180006.0000295797] },
+      "modelBoundsAtPixelIsAreaEdges": [549993.9999667143, 4169994.0000295797, 560005.9999667143, 4180006.0000295797],
+      "verticalGeoKeysPresent": false
+    },
+    "localRawCache": "Data/raw/usgs-3dep/ca-sanfrancisco-b23-x55y418/USGS_1M_10_x55y418_CA_SanFrancisco_B23.tif",
+    "localRawCacheGitIgnored": true
+  },
+  "coordinateReference": {
+    "horizontal": { "embeddedGeoKeys": "NAD83 / UTM zone 10N", "expectedEpsg": "EPSG:26910", "units": "metres" },
+    "vertical": { "declaredByProductMetadata": "NAVD88", "units": "metres", "embeddedTiffGeoKeys": "absent; no vertical CRS or geoid may be inferred from this TIFF alone", "geoidAndEpochStatus": "Project metadata names NAVD88 (Geoid18), but a product-specific realization and coordinate epoch are not locked for this reprojected 1 m raster." }
+  },
+  "integrationStatus": { "productionTerrain": "not-built", "tileManifestsChanged": false, "permittedUse": "provisional source-declared elevation sampling after per-window no-data validation", "prohibitedClaims": ["realized NAVD88 certification", "valid terrain where the raster contains no-data", "runtime integration without deterministic artifact verification"] }
+}

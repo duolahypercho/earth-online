@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-building-geometry-height-source-lock",
+  "status": "preview-source-authorized-not-production",
+  "scope": "citywide-building-footprint-and-height-validation",
+  "id": "sf-datasf-building-footprints-2023-v1",
+  "title": "San Francisco Building Footprints geometry and LiDAR height source lock",
+  "sourceId": "datasf-building-footprints-ynuv-fyni",
+  "nativeHorizontalCrs": "EPSG:4326",
+  "nativeVerticalDatum": "NAVD 1988 where explicitly declared by the source fields",
+  "source": {
+    "publisher": "City and County of San Francisco",
+    "datasetId": "ynuv-fyni",
+    "datasetPage": "https://data.sfgov.org/Geographic-Locations-and-Boundaries/Building-Footprints/ynuv-fyni",
+    "bulkCsvUrl": "https://data.sfgov.org/api/views/ynuv-fyni/rows.csv?accessType=DOWNLOAD",
+    "methodologyUrl": "https://data.sfgov.org/api/views/ynuv-fyni/files/e6e73cd0-15be-47a8-9463-9c9a725b72c3?download=true&filename=SF_BldgFoot_2017-05_description.pdf",
+    "format": "CSV with WKT MULTIPOLYGON geometry",
+    "license": "PDDL-1.0",
+    "attribution": "City and County of San Francisco",
+    "snapshot": {
+      "identity": "byte-locked DataSF Building Footprints bulk CSV export",
+      "localPath": "Data/raw/datasf/datasf-building-footprints-ynuv-fyni-2026-08-14.csv",
+      "bytes": 178760486,
+      "sha256": "7128b9d3d0f350cde3d2f6571ad791beacd71f5d581f6fde6fc7811529ff22d2",
+      "rowsExcludingHeader": 177023,
+      "columns": 45,
+      "retrievedAt": "2026-08-15",
+      "upstreamLastModified": "2026-08-14T17:22:28Z",
+      "etag": "\"Z29sZi4yNTI1Nl8zXzEwMTdxc2NZcGVjX05kOUZ4Wk1fSW9JOS1uUWY4VlU---gziqe0BXWsMIccaAJ8uKNbTffHrcUxw--gzip\"",
+      "dataAsOfSourceString": "2023/09/11 12:00:00 PM",
+      "dataLoadedAtSourceString": "2026/08/14 10:21:32 AM"
+    },
+    "methodologySnapshot": {
+      "bytes": 1283528,
+      "sha256": "1fa6af3167ac0935883bff2b3e79fefb8118827e158289f3cbf458769bdf6ad2"
+    },
+    "coordinateReference": {
+      "horizontal": "WGS 84 longitude/latitude coordinates serialized as WKT (EPSG:4326)",
+      "coordinateOrder": ["longitude", "latitude"],
+      "vertical": {
+        "p2010_zminn88ft": "2010 input building mass minimum Z vertex elevation, NAVD 1988 feet",
+        "p2010_zmaxn88ft": "2010 input building mass maximum Z vertex elevation, NAVD 1988 feet",
+        "gnd_min_m": "zonal minimum ground surface height, NAVD 1988 metres",
+        "median_1st_m": "zonal median first-return surface height, NAVD 1988 metres",
+        "hgt_median_m": "zonal median height-surface value, metres; the source description does not declare this field as an absolute elevation",
+        "gnd1st_delta": "median first-return surface minus minimum bare-earth surface, metres",
+        "peak_1st_m": "highest first-return cell value in the building zone, NAVD 1988 metres"
+      }
+    }
+  },
+  "approvedScope": {
+    "place": "Building footprint records present in the locked citywide DataSF export",
+    "geometry": [
+      "source WKT MULTIPOLYGON footprints",
+      "stable DataSF building identifiers",
+      "source-declared LiDAR and 2010 building-mass height fields"
+    ],
+    "permitted": [
+      "deterministic preview-only Ferry and district extracts",
+      "horizontal transformation through sf-ferry-3dep-2023-horizontal-crs-v1",
+      "source-to-source footprint and height comparison with byte-locked OSM buildings",
+      "preview-only building massing validation with explicit field-level provenance"
+    ],
+    "prohibited": [
+      "production tile, runtime, collision, navigation, or gameplay promotion without a separate reviewed authorization",
+      "claiming facade materials, windows, doors, floor plans, occupancy, or current building use",
+      "treating p2010 height fields as current 2023 building massing",
+      "combining NAVD 1988 absolute elevations with current production terrain before vertical reconciliation is implemented and verified",
+      "survey-grade, exact, or sub-metre accuracy claims",
+      "silently substituting median or peak height fields for one another"
+    ]
+  }
+}

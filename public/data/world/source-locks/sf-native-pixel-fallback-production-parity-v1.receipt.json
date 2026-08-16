@@ -1,0 +1,2475 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-fallback-production-parity-receipt",
+  "id": "sf-native-pixel-fallback-production-parity-v1",
+  "status": "byte-locked-all-25-source-aware-seam-parity",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "coordinateReference": {
+    "horizontal": {
+      "crs": "EPSG:26910",
+      "unit": "metre"
+    },
+    "vertical": {
+      "datum": "source-declared-navd88-unrealized",
+      "unit": "metre"
+    },
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized"
+  },
+  "scale": {
+    "runtimeUnitsPerMetre": 1,
+    "horizontalScale": 1,
+    "verticalScale": 1,
+    "verticalExaggeration": 0
+  },
+  "productionWriteEnabled": false,
+  "promotionGate": {
+    "status": "passed-all-25-source-aware-seam-parity",
+    "requiredTileCount": 25,
+    "evidenceReceiptSha256": null
+  },
+  "policy": {
+    "mode": "per-native-pixel-fallback-production-v1",
+    "name": "source-locked-original-first-per-native-pixel-v1",
+    "sha256": "sha256:a475ad47eedff08509bd69782c24c624fecc2b4a4a720a14a518c90220f1ec8b",
+    "definition": {
+      "name": "source-locked-original-first-per-native-pixel-v1",
+      "candidateOrder": "original-before-californiagaps",
+      "fallbackCondition": "original-native-pixel-is-nodata",
+      "sampleMethod": "direct-native-pixel-float32-le",
+      "interpolation": "none"
+    }
+  },
+  "disagreementPolicy": {
+    "status": "report-only",
+    "rationale": "original finite pixels remain authoritative; CaliforniaGaps disagreement is diagnostic evidence only",
+    "interpolation": "none",
+    "verticalAccuracyClaim": "none",
+    "statistics": "record maxBothFiniteDisagreementMetres and p99BothFiniteDisagreementMetres per tile",
+    "promotionEffect": "does-not-count-as-source-agreement"
+  },
+  "crossSourceSeamAudit": {
+    "samples": 0,
+    "productionReadiness": "unproven-no-cross-source-seam-exercised"
+  },
+  "promotionPrerequisites": [
+    {
+      "id": "internal-source-switch-continuity-audit-v1",
+      "status": "required-not-exercised",
+      "requirement": "Exercise an internal source-switch continuity audit where adjacent native samples intentionally cross original and CaliforniaGaps authority."
+    },
+    {
+      "id": "cross-source-seam-gate-v1",
+      "status": "required-not-exercised",
+      "requirement": "Exercise and exact-compare at least one cross-source candidate/resident seam before claiming cross-source production readiness."
+    },
+    {
+      "id": "canonical-production-mosaic-receipt-schema-v1",
+      "status": "required-not-exercised",
+      "requirement": "Promote only after standard production mosaic verifiers consume the per-native-pixel receipt schema."
+    }
+  ],
+  "authorization": {
+    "id": "sf-native-pixel-fallback-production-authorization-v1",
+    "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json",
+    "sha256": "sha256:572551aba2887450c1c48de66fb0cfef01b6e0fcaefb5069725a2621ddd9e3a4",
+    "status": "byte-locked-source-and-policy-authorized-seam-parity-pending",
+    "productionWriteEnabled": false
+  },
+  "coveragePlan": {
+    "path": "public/data/world/plans/sf-metric-tile-coverage-v1.json",
+    "sha256": "sha256:e7550e604d23213c27895aeb5d20ae59d35e34b695580d2438b6ac6026407bb0",
+    "fallbackTileCount": 25,
+    "tileIds": [
+      "epsg26910-1417-10867",
+      "epsg26910-1418-10867",
+      "epsg26910-1419-10867",
+      "epsg26910-1420-10867",
+      "epsg26910-1421-10867",
+      "epsg26910-1422-10867",
+      "epsg26910-1423-10867",
+      "epsg26910-1424-10867",
+      "epsg26910-1425-10867",
+      "epsg26910-1426-10867",
+      "epsg26910-1427-10867",
+      "epsg26910-1428-10867",
+      "epsg26910-1429-10867",
+      "epsg26910-1430-10867",
+      "epsg26910-1431-10867",
+      "epsg26910-1432-10867",
+      "epsg26910-1433-10867",
+      "epsg26910-1434-10867",
+      "epsg26910-1435-10867",
+      "epsg26910-1436-10867",
+      "epsg26910-1437-10867",
+      "epsg26910-1438-10867",
+      "epsg26910-1439-10867",
+      "epsg26910-1440-10867",
+      "epsg26910-1440-10868"
+    ]
+  },
+  "sourceLocks": [
+    {
+      "role": "original",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715",
+      "rasterSha256": "sha256:ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json",
+      "sourceLockSha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c",
+      "rasterSha256": "sha256:80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a"
+    },
+    {
+      "role": "original",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:ea8fc1cb4ae79a65146c30a68d8f2f224ba8450010db16d35b3af989bb1d53bd",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07",
+      "rasterSha256": "sha256:a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "sourceLockPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json",
+      "sourceLockSha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationPath": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json",
+      "elevationAuthorizationSha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df",
+      "rasterSha256": "sha256:fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645"
+    }
+  ],
+  "counts": {
+    "candidateTileCount": 25,
+    "duplicateBuildCount": 25,
+    "candidateArtifactCount": 25,
+    "candidateCandidateSeamCount": 24,
+    "candidateExistingResidentSeamCount": 22,
+    "seamCount": 46,
+    "seamSampleCount": 17710,
+    "exactFloat32SeamCount": 46,
+    "crossSourceSeamSamples": 0
+  },
+  "auditInventory": {
+    "residentIds": [
+      "epsg26910-1420-10868",
+      "epsg26910-1421-10868",
+      "epsg26910-1422-10868",
+      "epsg26910-1423-10868",
+      "epsg26910-1424-10868",
+      "epsg26910-1425-10868",
+      "epsg26910-1426-10868",
+      "epsg26910-1427-10868",
+      "epsg26910-1428-10868",
+      "epsg26910-1429-10868",
+      "epsg26910-1430-10868",
+      "epsg26910-1431-10868",
+      "epsg26910-1432-10868",
+      "epsg26910-1433-10868",
+      "epsg26910-1434-10868",
+      "epsg26910-1435-10868",
+      "epsg26910-1436-10868",
+      "epsg26910-1437-10868",
+      "epsg26910-1438-10868",
+      "epsg26910-1439-10868",
+      "epsg26910-1440-10869"
+    ],
+    "candidateCandidateSeamKeys": [
+      "epsg26910-1417-10867|east->epsg26910-1418-10867|west",
+      "epsg26910-1418-10867|east->epsg26910-1419-10867|west",
+      "epsg26910-1419-10867|east->epsg26910-1420-10867|west",
+      "epsg26910-1420-10867|east->epsg26910-1421-10867|west",
+      "epsg26910-1421-10867|east->epsg26910-1422-10867|west",
+      "epsg26910-1422-10867|east->epsg26910-1423-10867|west",
+      "epsg26910-1423-10867|east->epsg26910-1424-10867|west",
+      "epsg26910-1424-10867|east->epsg26910-1425-10867|west",
+      "epsg26910-1425-10867|east->epsg26910-1426-10867|west",
+      "epsg26910-1426-10867|east->epsg26910-1427-10867|west",
+      "epsg26910-1427-10867|east->epsg26910-1428-10867|west",
+      "epsg26910-1428-10867|east->epsg26910-1429-10867|west",
+      "epsg26910-1429-10867|east->epsg26910-1430-10867|west",
+      "epsg26910-1430-10867|east->epsg26910-1431-10867|west",
+      "epsg26910-1431-10867|east->epsg26910-1432-10867|west",
+      "epsg26910-1432-10867|east->epsg26910-1433-10867|west",
+      "epsg26910-1433-10867|east->epsg26910-1434-10867|west",
+      "epsg26910-1434-10867|east->epsg26910-1435-10867|west",
+      "epsg26910-1435-10867|east->epsg26910-1436-10867|west",
+      "epsg26910-1436-10867|east->epsg26910-1437-10867|west",
+      "epsg26910-1437-10867|east->epsg26910-1438-10867|west",
+      "epsg26910-1438-10867|east->epsg26910-1439-10867|west",
+      "epsg26910-1439-10867|east->epsg26910-1440-10867|west",
+      "epsg26910-1440-10867|north->epsg26910-1440-10868|south"
+    ],
+    "candidateExistingResidentSeamKeys": [
+      "epsg26910-1420-10867|north->epsg26910-1420-10868|south",
+      "epsg26910-1421-10867|north->epsg26910-1421-10868|south",
+      "epsg26910-1422-10867|north->epsg26910-1422-10868|south",
+      "epsg26910-1423-10867|north->epsg26910-1423-10868|south",
+      "epsg26910-1424-10867|north->epsg26910-1424-10868|south",
+      "epsg26910-1425-10867|north->epsg26910-1425-10868|south",
+      "epsg26910-1426-10867|north->epsg26910-1426-10868|south",
+      "epsg26910-1427-10867|north->epsg26910-1427-10868|south",
+      "epsg26910-1428-10867|north->epsg26910-1428-10868|south",
+      "epsg26910-1429-10867|north->epsg26910-1429-10868|south",
+      "epsg26910-1430-10867|north->epsg26910-1430-10868|south",
+      "epsg26910-1431-10867|north->epsg26910-1431-10868|south",
+      "epsg26910-1432-10867|north->epsg26910-1432-10868|south",
+      "epsg26910-1433-10867|north->epsg26910-1433-10868|south",
+      "epsg26910-1434-10867|north->epsg26910-1434-10868|south",
+      "epsg26910-1435-10867|north->epsg26910-1435-10868|south",
+      "epsg26910-1436-10867|north->epsg26910-1436-10868|south",
+      "epsg26910-1437-10867|north->epsg26910-1437-10868|south",
+      "epsg26910-1438-10867|north->epsg26910-1438-10868|south",
+      "epsg26910-1439-10867|north->epsg26910-1439-10868|south",
+      "epsg26910-1440-10868|north->epsg26910-1440-10869|south",
+      "epsg26910-1440-10868|west->epsg26910-1439-10868|east"
+    ]
+  },
+  "tiles": [
+    {
+      "id": "epsg26910-1417-10867",
+      "gridIndex": [
+        1417,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        544128,
+        4172928,
+        544512,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:050a9c59f2d7cf9efb711ba9dc5a0b4870bff276c2c8cf28424d1fec13ab8c52",
+      "duplicateGlbSha256": "sha256:050a9c59f2d7cf9efb711ba9dc5a0b4870bff276c2c8cf28424d1fec13ab8c52",
+      "glbBytes": 3583080,
+      "receiptSha256": "sha256:eba03feff3ce11814386e5c69f8469e6e0e25e8a82fc1e9d8db3ad5d24730167",
+      "duplicateReceiptSha256": "sha256:eba03feff3ce11814386e5c69f8469e6e0e25e8a82fc1e9d8db3ad5d24730167",
+      "packageSha256": "sha256:4d6cdcae100b656a8c305d8699c98c56f0c3853ce6e98950fc2093b4737adfdc",
+      "duplicatePackageSha256": "sha256:4d6cdcae100b656a8c305d8699c98c56f0c3853ce6e98950fc2093b4737adfdc",
+      "sampleLedgerSha256": "sha256:73321e47eb819fbf67171ab90be57046b201628d77260f509b02674a1f6b9194",
+      "sharedEdgeLedgerSha256": "sha256:7182bb7f70c4fe8fd91749e73c8abf93fb25c5217804230fb9d3e89147ce8059",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 149375,
+        "originalFiniteSamples": 0,
+        "californiaGapsFallbackSamples": 149375,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 149375
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 149375,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 149375
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 0,
+            "noDataCount": 149375,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 0
+          }
+        },
+        "bothFiniteSourceComparisons": 0,
+        "maxBothFiniteDisagreementMetres": 0,
+        "p99BothFiniteDisagreementMetres": 0
+      }
+    },
+    {
+      "id": "epsg26910-1418-10867",
+      "gridIndex": [
+        1418,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        544512,
+        4172928,
+        544896,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:9f862f3f7d2c077943ebcb97d176740eb6680ffb52508a86fa2d53f945629109",
+      "duplicateGlbSha256": "sha256:9f862f3f7d2c077943ebcb97d176740eb6680ffb52508a86fa2d53f945629109",
+      "glbBytes": 3597600,
+      "receiptSha256": "sha256:269cc71a0172f7df9da54f3dc27d017eee7efcccdc1412b6046016c42c027264",
+      "duplicateReceiptSha256": "sha256:269cc71a0172f7df9da54f3dc27d017eee7efcccdc1412b6046016c42c027264",
+      "packageSha256": "sha256:6609e3d2171f2e1bcbb357e3883ba1becdd8d883b20e604d20cb40cb35514d59",
+      "duplicatePackageSha256": "sha256:6609e3d2171f2e1bcbb357e3883ba1becdd8d883b20e604d20cb40cb35514d59",
+      "sampleLedgerSha256": "sha256:c35be8ddafa66492465417e68d82d63a24a587c43363af16ea112f735a5d2f38",
+      "sharedEdgeLedgerSha256": "sha256:9ea92b707830bd113b7cc4c1af9e3a6919d03a7960ca607c3f3f6a7ad520426e",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150078,
+        "originalFiniteSamples": 0,
+        "californiaGapsFallbackSamples": 150078,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 150078
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 150078,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 150078
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 0,
+            "noDataCount": 150078,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 0
+          }
+        },
+        "bothFiniteSourceComparisons": 0,
+        "maxBothFiniteDisagreementMetres": 0,
+        "p99BothFiniteDisagreementMetres": 0
+      }
+    },
+    {
+      "id": "epsg26910-1419-10867",
+      "gridIndex": [
+        1419,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        544896,
+        4172928,
+        545280,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:0fd05e2fb8dc3afa9851de81b9706e45a95af8f5d02f2e2a773eb42b5b23ee9f",
+      "duplicateGlbSha256": "sha256:0fd05e2fb8dc3afa9851de81b9706e45a95af8f5d02f2e2a773eb42b5b23ee9f",
+      "glbBytes": 3624956,
+      "receiptSha256": "sha256:0604c04f616c2bc97dddf5b09890c39739702f8e0ad05f2e0d4cf2ab566a817f",
+      "duplicateReceiptSha256": "sha256:0604c04f616c2bc97dddf5b09890c39739702f8e0ad05f2e0d4cf2ab566a817f",
+      "packageSha256": "sha256:8bc5ae616d230d0ab0c80b92e6b9cfa863ea5eb0a6ffbf7b808b20cff6484dbb",
+      "duplicatePackageSha256": "sha256:8bc5ae616d230d0ab0c80b92e6b9cfa863ea5eb0a6ffbf7b808b20cff6484dbb",
+      "sampleLedgerSha256": "sha256:b7cc69931c7d999325cf36bdffcdc2be27e66d90beb44e3db0bfc7a22ce56ead",
+      "sharedEdgeLedgerSha256": "sha256:2815ef98e6bb33e1c1f4ea5e0f9a263699ffcf82440722e6665b34f5a9088df8",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150818,
+        "originalFiniteSamples": 14206,
+        "californiaGapsFallbackSamples": 136612,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 136612,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 14206
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 150818,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 136612
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 14206,
+            "noDataCount": 136612,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 14206
+          }
+        },
+        "bothFiniteSourceComparisons": 14206,
+        "maxBothFiniteDisagreementMetres": 1.4636707305908203,
+        "p99BothFiniteDisagreementMetres": 0.4831256866455078
+      }
+    },
+    {
+      "id": "epsg26910-1420-10867",
+      "gridIndex": [
+        1420,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        545280,
+        4172928,
+        545664,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:fa5859e34fbb13c825fe0151aefbe4bbed38143f71c5836ee6cc3cb10b9f7a40",
+      "duplicateGlbSha256": "sha256:fa5859e34fbb13c825fe0151aefbe4bbed38143f71c5836ee6cc3cb10b9f7a40",
+      "glbBytes": 3649328,
+      "receiptSha256": "sha256:fcbba0f9bc0c1807549a8d9a7aa5006962d8fc9511622973f0490efe284016ea",
+      "duplicateReceiptSha256": "sha256:fcbba0f9bc0c1807549a8d9a7aa5006962d8fc9511622973f0490efe284016ea",
+      "packageSha256": "sha256:b2d7d1f29d3467f662faae9dc022574b1dd4edfaab8ef35ea845cbe642c21eac",
+      "duplicatePackageSha256": "sha256:b2d7d1f29d3467f662faae9dc022574b1dd4edfaab8ef35ea845cbe642c21eac",
+      "sampleLedgerSha256": "sha256:ee5b50d0e522e69316fa017bf675cc8a84b2a2692dd39c94c2e51226463659b6",
+      "sharedEdgeLedgerSha256": "sha256:4144348d6de6bb40f4917813c582c9bf9098ccef10ef2f484bdd2e3f17d06d65",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151566,
+        "originalFiniteSamples": 67533,
+        "californiaGapsFallbackSamples": 84033,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 84033,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 67533
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151566,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 84033
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 67533,
+            "noDataCount": 84033,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 67533
+          }
+        },
+        "bothFiniteSourceComparisons": 67533,
+        "maxBothFiniteDisagreementMetres": 1.6249818801879883,
+        "p99BothFiniteDisagreementMetres": 0.3042011260986328
+      }
+    },
+    {
+      "id": "epsg26910-1421-10867",
+      "gridIndex": [
+        1421,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        545664,
+        4172928,
+        546048,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:882e2cda0712c33b515d9a9e80e9a07d7cd5fcbf477be39c012be9060eccd353",
+      "duplicateGlbSha256": "sha256:882e2cda0712c33b515d9a9e80e9a07d7cd5fcbf477be39c012be9060eccd353",
+      "glbBytes": 3666916,
+      "receiptSha256": "sha256:20764f418f6eaa12498b96ae164ad891b43562afd39b33fef726ac748f0d1967",
+      "duplicateReceiptSha256": "sha256:20764f418f6eaa12498b96ae164ad891b43562afd39b33fef726ac748f0d1967",
+      "packageSha256": "sha256:b7894563105b258240cffb18fb7b2383634a964b3f87d4dbcfeabdc49481dbfd",
+      "duplicatePackageSha256": "sha256:b7894563105b258240cffb18fb7b2383634a964b3f87d4dbcfeabdc49481dbfd",
+      "sampleLedgerSha256": "sha256:285daa4003b16d0a4fa4d26eecc6f018da2c5011d7834273db67470529c4ea31",
+      "sharedEdgeLedgerSha256": "sha256:fe10bcfa1f2d02d4c7d60a2127ca4bbde2a2e5f3937fb43e91871d9aa0536ab8",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151365,
+        "originalFiniteSamples": 65817,
+        "californiaGapsFallbackSamples": 85548,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 85548,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 65817
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151365,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 85548
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 65817,
+            "noDataCount": 85548,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 65817
+          }
+        },
+        "bothFiniteSourceComparisons": 65817,
+        "maxBothFiniteDisagreementMetres": 0.8537960052490234,
+        "p99BothFiniteDisagreementMetres": 0.18187522888183594
+      }
+    },
+    {
+      "id": "epsg26910-1422-10867",
+      "gridIndex": [
+        1422,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        546048,
+        4172928,
+        546432,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:ace6651ebee8271065eb472dbd670df8dd2c89081491dad2ee570acfcb270478",
+      "duplicateGlbSha256": "sha256:ace6651ebee8271065eb472dbd670df8dd2c89081491dad2ee570acfcb270478",
+      "glbBytes": 3649948,
+      "receiptSha256": "sha256:9df0503134de5f05a8160253032eb60ad4103745185fe51e65c1ad9c97b4a1a3",
+      "duplicateReceiptSha256": "sha256:9df0503134de5f05a8160253032eb60ad4103745185fe51e65c1ad9c97b4a1a3",
+      "packageSha256": "sha256:4bb8d4afd6c7096277d6959f2421b3a512d2f6bd6742bd8679c563b357f4feac",
+      "duplicatePackageSha256": "sha256:4bb8d4afd6c7096277d6959f2421b3a512d2f6bd6742bd8679c563b357f4feac",
+      "sampleLedgerSha256": "sha256:f8f3fea0159ad61c93508a0daedaec505836cd25a08821271f996b524fdc67d7",
+      "sharedEdgeLedgerSha256": "sha256:634a48bf59ebeb808daaa027aa17799ddc25efb2333400b68a7c31614d524b9b",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151161,
+        "originalFiniteSamples": 65121,
+        "californiaGapsFallbackSamples": 86040,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 86040,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 65121
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151161,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 86040
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 65121,
+            "noDataCount": 86040,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 65121
+          }
+        },
+        "bothFiniteSourceComparisons": 65121,
+        "maxBothFiniteDisagreementMetres": 2.1978836059570312,
+        "p99BothFiniteDisagreementMetres": 0.26612091064453125
+      }
+    },
+    {
+      "id": "epsg26910-1423-10867",
+      "gridIndex": [
+        1423,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        546432,
+        4172928,
+        546816,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:47b762c9c0f6cdb4e32a6f63a06fcc33102b04b0d228a37f882dd078383c7b36",
+      "duplicateGlbSha256": "sha256:47b762c9c0f6cdb4e32a6f63a06fcc33102b04b0d228a37f882dd078383c7b36",
+      "glbBytes": 3636980,
+      "receiptSha256": "sha256:ea43b66b0702ef6f8f9aebd1b3752a86a6d4e34261585dfe931ce1a448f4badf",
+      "duplicateReceiptSha256": "sha256:ea43b66b0702ef6f8f9aebd1b3752a86a6d4e34261585dfe931ce1a448f4badf",
+      "packageSha256": "sha256:7322801933a1c105ecde8e8024f1689430780575a01a465dc30032dfea89ad83",
+      "duplicatePackageSha256": "sha256:7322801933a1c105ecde8e8024f1689430780575a01a465dc30032dfea89ad83",
+      "sampleLedgerSha256": "sha256:ea8a5faa32cc1c5f28a7525e093a8f1dba32aefdf394fdfdce1273a6b5a70c80",
+      "sharedEdgeLedgerSha256": "sha256:761c624ad8d9584b237430b24a609d4ee8082df2a8d253ccb4ddbfce5500224a",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151305,
+        "originalFiniteSamples": 82752,
+        "californiaGapsFallbackSamples": 68553,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 68553,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 82752
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151305,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 68553
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 82752,
+            "noDataCount": 68553,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 82752
+          }
+        },
+        "bothFiniteSourceComparisons": 82752,
+        "maxBothFiniteDisagreementMetres": 8.1387939453125,
+        "p99BothFiniteDisagreementMetres": 6.0535736083984375
+      }
+    },
+    {
+      "id": "epsg26910-1424-10867",
+      "gridIndex": [
+        1424,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        546816,
+        4172928,
+        547200,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:d41a2ccdc4917f70a9e310a9c3956724ec09555f71a18ade326fb0c8c7d652be",
+      "duplicateGlbSha256": "sha256:d41a2ccdc4917f70a9e310a9c3956724ec09555f71a18ade326fb0c8c7d652be",
+      "glbBytes": 3708264,
+      "receiptSha256": "sha256:32d0717b7ad0e425954f28f152a0862730083a042d7fb1247a11e3539294df1a",
+      "duplicateReceiptSha256": "sha256:32d0717b7ad0e425954f28f152a0862730083a042d7fb1247a11e3539294df1a",
+      "packageSha256": "sha256:9639d7a0bccf7cbd678c19ce1ba15631102d0042962f1f5d098f077952576414",
+      "duplicatePackageSha256": "sha256:9639d7a0bccf7cbd678c19ce1ba15631102d0042962f1f5d098f077952576414",
+      "sampleLedgerSha256": "sha256:67dd48e433ece5378607cf815d80a4059bb882296dbe5c87af87440beab48bcf",
+      "sharedEdgeLedgerSha256": "sha256:d75e9bddcd7ff727dad90881046b9d961b06ea8588589f10885993fc986dc128",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 152144,
+        "originalFiniteSamples": 66386,
+        "californiaGapsFallbackSamples": 85758,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 85758,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 66386
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 152144,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 85758
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 66386,
+            "noDataCount": 85758,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 66386
+          }
+        },
+        "bothFiniteSourceComparisons": 66386,
+        "maxBothFiniteDisagreementMetres": 2.7759246826171875,
+        "p99BothFiniteDisagreementMetres": 0.28305816650390625
+      }
+    },
+    {
+      "id": "epsg26910-1425-10867",
+      "gridIndex": [
+        1425,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        547200,
+        4172928,
+        547584,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:5c05e884b4bee8119e960cd793589e0be981ec2398cc98417d43569c573d8b07",
+      "duplicateGlbSha256": "sha256:5c05e884b4bee8119e960cd793589e0be981ec2398cc98417d43569c573d8b07",
+      "glbBytes": 3677416,
+      "receiptSha256": "sha256:bc7451b8f2a2c967c466275ad386c05a712a6dc8cb16631716ab11413024dc32",
+      "duplicateReceiptSha256": "sha256:bc7451b8f2a2c967c466275ad386c05a712a6dc8cb16631716ab11413024dc32",
+      "packageSha256": "sha256:53a6e03355de8929ae20a7309f5de0086c355d6abfa1c6d2f2b5cee53896fe97",
+      "duplicatePackageSha256": "sha256:53a6e03355de8929ae20a7309f5de0086c355d6abfa1c6d2f2b5cee53896fe97",
+      "sampleLedgerSha256": "sha256:464080583ec9152060a06f2a5147e6eed4ab9cddc9823b9fa96d698c9a1775f2",
+      "sharedEdgeLedgerSha256": "sha256:e400587ff19498915a2b0a5c48883297c835cb17b6310238cc2ad4b3a9d1e515",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 152064,
+        "originalFiniteSamples": 52201,
+        "californiaGapsFallbackSamples": 99863,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 99863,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 52201
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 152064,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 99863
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 52201,
+            "noDataCount": 99863,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 52201
+          }
+        },
+        "bothFiniteSourceComparisons": 52201,
+        "maxBothFiniteDisagreementMetres": 5.7318878173828125,
+        "p99BothFiniteDisagreementMetres": 2.1892547607421875
+      }
+    },
+    {
+      "id": "epsg26910-1426-10867",
+      "gridIndex": [
+        1426,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        547584,
+        4172928,
+        547968,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:fe875bf9140c37975d1e1c843d6479f12d489ce7cffeb26ed334696d1338fa9d",
+      "duplicateGlbSha256": "sha256:fe875bf9140c37975d1e1c843d6479f12d489ce7cffeb26ed334696d1338fa9d",
+      "glbBytes": 3707192,
+      "receiptSha256": "sha256:701285464b3f732cc546772dd4c6575f1cc319d2d0c845c3f191e052b94038ec",
+      "duplicateReceiptSha256": "sha256:701285464b3f732cc546772dd4c6575f1cc319d2d0c845c3f191e052b94038ec",
+      "packageSha256": "sha256:dfef95d1209916b239d8a51c07f7209b46c794853bfe33c8347612a7603a0d0a",
+      "duplicatePackageSha256": "sha256:dfef95d1209916b239d8a51c07f7209b46c794853bfe33c8347612a7603a0d0a",
+      "sampleLedgerSha256": "sha256:cecb76e41ac02f0bf67491dab38bb63749b31bb93cb0280059f1552324a4f3ef",
+      "sharedEdgeLedgerSha256": "sha256:849d82fb2e47c0883e0dcaa0db8f98e31cd2f4171489f663402b63544ae68bd5",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151722,
+        "originalFiniteSamples": 48457,
+        "californiaGapsFallbackSamples": 103265,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 103265,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 48457
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151722,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 103265
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 48457,
+            "noDataCount": 103265,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 48457
+          }
+        },
+        "bothFiniteSourceComparisons": 48457,
+        "maxBothFiniteDisagreementMetres": 2.190704345703125,
+        "p99BothFiniteDisagreementMetres": 0.7869338989257812
+      }
+    },
+    {
+      "id": "epsg26910-1427-10867",
+      "gridIndex": [
+        1427,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        547968,
+        4172928,
+        548352,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:0fbc4a3246f2b277034734c3888d642cd7f43d93dc90caf38b4add61ff378adc",
+      "duplicateGlbSha256": "sha256:0fbc4a3246f2b277034734c3888d642cd7f43d93dc90caf38b4add61ff378adc",
+      "glbBytes": 3710784,
+      "receiptSha256": "sha256:4c8d8a4488d671d761deb762317e16dfd9efa8ded84884e6a7421ec05c624ee4",
+      "duplicateReceiptSha256": "sha256:4c8d8a4488d671d761deb762317e16dfd9efa8ded84884e6a7421ec05c624ee4",
+      "packageSha256": "sha256:894bfb9c1c4ab56192b3abbebb4d3213d5477fa875dff0fb49263f9a4a419b70",
+      "duplicatePackageSha256": "sha256:894bfb9c1c4ab56192b3abbebb4d3213d5477fa875dff0fb49263f9a4a419b70",
+      "sampleLedgerSha256": "sha256:73bd08450e779169813951f7abc4a8005694c00190a4e1c36baec67c9f987789",
+      "sharedEdgeLedgerSha256": "sha256:9fec856a9e2ec2da2ccc15d62b593a58f19404c0516347d87c9eb21a19f3981e",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 151767,
+        "originalFiniteSamples": 44893,
+        "californiaGapsFallbackSamples": 106874,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 106874,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 44893
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 151767,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 106874
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 44893,
+            "noDataCount": 106874,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 44893
+          }
+        },
+        "bothFiniteSourceComparisons": 44893,
+        "maxBothFiniteDisagreementMetres": 1.7148513793945312,
+        "p99BothFiniteDisagreementMetres": 0.6283111572265625
+      }
+    },
+    {
+      "id": "epsg26910-1428-10867",
+      "gridIndex": [
+        1428,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        548352,
+        4172928,
+        548736,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:907740ec221c5f9be0e270aa2d7292fb07c4b0d648f279d55e29c0f8383df0f9",
+      "duplicateGlbSha256": "sha256:907740ec221c5f9be0e270aa2d7292fb07c4b0d648f279d55e29c0f8383df0f9",
+      "glbBytes": 3641088,
+      "receiptSha256": "sha256:0fab2bdc98cdade042aabb0808e75aff82f59777aef5ea36594b3f28027c7e15",
+      "duplicateReceiptSha256": "sha256:0fab2bdc98cdade042aabb0808e75aff82f59777aef5ea36594b3f28027c7e15",
+      "packageSha256": "sha256:fcf77dc9c12a973523b6d5b42af8393b9d4951a51211f1d76d0297e1e20207e6",
+      "duplicatePackageSha256": "sha256:fcf77dc9c12a973523b6d5b42af8393b9d4951a51211f1d76d0297e1e20207e6",
+      "sampleLedgerSha256": "sha256:bece8ffef3edc0f54061323fe46c5d85830de89945ade17a15d6afb79e130320",
+      "sharedEdgeLedgerSha256": "sha256:23db1b7a2ef6cf869920d9a2b2363b15f815ed19c440c747bba4b1a79b40c771",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150352,
+        "originalFiniteSamples": 41210,
+        "californiaGapsFallbackSamples": 109142,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 109142,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 41210
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 150352,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 109142
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 41210,
+            "noDataCount": 109142,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 41210
+          }
+        },
+        "bothFiniteSourceComparisons": 41210,
+        "maxBothFiniteDisagreementMetres": 1.8295440673828125,
+        "p99BothFiniteDisagreementMetres": 0.85833740234375
+      }
+    },
+    {
+      "id": "epsg26910-1429-10867",
+      "gridIndex": [
+        1429,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        548736,
+        4172928,
+        549120,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:cace07bdf39c448f671925d237f5e3fdf3c0eff93eb7c46a83d6427ee0afe2d0",
+      "duplicateGlbSha256": "sha256:cace07bdf39c448f671925d237f5e3fdf3c0eff93eb7c46a83d6427ee0afe2d0",
+      "glbBytes": 3655392,
+      "receiptSha256": "sha256:9fa628c86dfc34f99e5d79cc3143edc13e1b071c76c5ff054f995daafe51a9fb",
+      "duplicateReceiptSha256": "sha256:9fa628c86dfc34f99e5d79cc3143edc13e1b071c76c5ff054f995daafe51a9fb",
+      "packageSha256": "sha256:ed922a0c157c48773e51abd113c52227b48962d60c522e0f5758b9b01fd29c70",
+      "duplicatePackageSha256": "sha256:ed922a0c157c48773e51abd113c52227b48962d60c522e0f5758b9b01fd29c70",
+      "sampleLedgerSha256": "sha256:9737ed5e0d27e598f3c84b100f7403b4f6b3987ce5e809b816151ad551af0ab7",
+      "sharedEdgeLedgerSha256": "sha256:f6c971a79c12d112de92855295f03460b7e1eeabbee2d46a22d73b33bda1d852",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150987,
+        "originalFiniteSamples": 37472,
+        "californiaGapsFallbackSamples": 113515,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 113515,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 37472
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 150987,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 113515
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 37472,
+            "noDataCount": 113515,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 37472
+          }
+        },
+        "bothFiniteSourceComparisons": 37472,
+        "maxBothFiniteDisagreementMetres": 2.658660888671875,
+        "p99BothFiniteDisagreementMetres": 0.959808349609375
+      }
+    },
+    {
+      "id": "epsg26910-1430-10867",
+      "gridIndex": [
+        1430,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        549120,
+        4172928,
+        549504,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:08f956c148cfc688a3be6eb97edd1c69ccf41b0571cde8a403763f49ff360fa0",
+      "duplicateGlbSha256": "sha256:08f956c148cfc688a3be6eb97edd1c69ccf41b0571cde8a403763f49ff360fa0",
+      "glbBytes": 3617796,
+      "receiptSha256": "sha256:94a0ab5d7881c089c07d05afcefddeb74d7d32c2a4792fab03dddaaf1b0599f5",
+      "duplicateReceiptSha256": "sha256:94a0ab5d7881c089c07d05afcefddeb74d7d32c2a4792fab03dddaaf1b0599f5",
+      "packageSha256": "sha256:8c3fdd7681ecfc1a06e7baa001f316a469034f3f313b2298b236a14b61bc7250",
+      "duplicatePackageSha256": "sha256:8c3fdd7681ecfc1a06e7baa001f316a469034f3f313b2298b236a14b61bc7250",
+      "sampleLedgerSha256": "sha256:85e5e17165f16d6e0ed0372a7fc506caf81ab692307b361b5c1bdcdd924038fd",
+      "sharedEdgeLedgerSha256": "sha256:6fd14ef6066d5642e5b9631f4b8a2690b2a4c34f21da45b49056957b815e9515",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150122,
+        "originalFiniteSamples": 33771,
+        "californiaGapsFallbackSamples": 116351,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 116351,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 33771
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 150122,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 116351
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 33771,
+            "noDataCount": 116351,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 33771
+          }
+        },
+        "bothFiniteSourceComparisons": 33771,
+        "maxBothFiniteDisagreementMetres": 2.8711700439453125,
+        "p99BothFiniteDisagreementMetres": 1.1572418212890625
+      }
+    },
+    {
+      "id": "epsg26910-1431-10867",
+      "gridIndex": [
+        1431,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        549504,
+        4172928,
+        549888,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:6c8e2d982c583ff1cfd083de753e35cdd5a3eab766bc46ca330f0623ba8d5a51",
+      "duplicateGlbSha256": "sha256:6c8e2d982c583ff1cfd083de753e35cdd5a3eab766bc46ca330f0623ba8d5a51",
+      "glbBytes": 3601844,
+      "receiptSha256": "sha256:a5862428584a70437a2b19b3bf325ce1d9d51520623c1714ec1605c85e83ef76",
+      "duplicateReceiptSha256": "sha256:a5862428584a70437a2b19b3bf325ce1d9d51520623c1714ec1605c85e83ef76",
+      "packageSha256": "sha256:83139a1b8cf96b91ab379d986d841f0290d2964651f6586ed2fd8d83d9852151",
+      "duplicatePackageSha256": "sha256:83139a1b8cf96b91ab379d986d841f0290d2964651f6586ed2fd8d83d9852151",
+      "sampleLedgerSha256": "sha256:5f70e6984836f3f921a6751a36ed300dd2286cc444c65426aac93e275c6e27c7",
+      "sharedEdgeLedgerSha256": "sha256:d129d24518a9a729743738237fb83179acb233fb9498855ebfea9c8fc3c7afaa",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 149598,
+        "originalFiniteSamples": 30418,
+        "californiaGapsFallbackSamples": 119180,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 119180,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 30418
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 149598,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 119180
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 30418,
+            "noDataCount": 119180,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 30418
+          }
+        },
+        "bothFiniteSourceComparisons": 30418,
+        "maxBothFiniteDisagreementMetres": 2.928253173828125,
+        "p99BothFiniteDisagreementMetres": 0.40802001953125
+      }
+    },
+    {
+      "id": "epsg26910-1432-10867",
+      "gridIndex": [
+        1432,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        549888,
+        4172928,
+        550272,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:f4f4727f6ead6b731f4dc4717e3871776d1a14f756b50cfc891d4df61c056722",
+      "duplicateGlbSha256": "sha256:f4f4727f6ead6b731f4dc4717e3871776d1a14f756b50cfc891d4df61c056722",
+      "glbBytes": 3611784,
+      "receiptSha256": "sha256:d0aa78ebe2fd57bb840ece79d9014e47772e462e80f7b3d505348381590f9a52",
+      "duplicateReceiptSha256": "sha256:d0aa78ebe2fd57bb840ece79d9014e47772e462e80f7b3d505348381590f9a52",
+      "packageSha256": "sha256:5b1e52e6b8966a50c160d542b8841effbbdcb4acb0fafec0340e5dcb89aa0feb",
+      "duplicatePackageSha256": "sha256:5b1e52e6b8966a50c160d542b8841effbbdcb4acb0fafec0340e5dcb89aa0feb",
+      "sampleLedgerSha256": "sha256:d57aa6c2ffbf9e86ad3371739fcefb3d35b40c95a9289544ce50efc81a1e402f",
+      "sharedEdgeLedgerSha256": "sha256:9209bbb208f8792cfc48456b2a0d6939ba626fa45846824757b96dd719a94e08",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150280,
+        "originalFiniteSamples": 27251,
+        "californiaGapsFallbackSamples": 123029,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": 35750,
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 87279,
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": 8392,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 18859
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+            "finiteCount": 44142,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 35750
+          },
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 106138,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 87279
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x54y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+            "finiteCount": 8392,
+            "noDataCount": 35750,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 8392
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 18859,
+            "noDataCount": 87279,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 18859
+          }
+        },
+        "bothFiniteSourceComparisons": 27251,
+        "maxBothFiniteDisagreementMetres": 2.6534576416015625,
+        "p99BothFiniteDisagreementMetres": 0.57061767578125
+      }
+    },
+    {
+      "id": "epsg26910-1433-10867",
+      "gridIndex": [
+        1433,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        550272,
+        4172928,
+        550656,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:7be3856b0d97f4f0bd1b33fa807979404f5b4b7f50835162dd1dbc039f6802de",
+      "duplicateGlbSha256": "sha256:7be3856b0d97f4f0bd1b33fa807979404f5b4b7f50835162dd1dbc039f6802de",
+      "glbBytes": 3582640,
+      "receiptSha256": "sha256:57d9ca5de81f4c117606cc9d583418f1af4c9a8b51b1b5d38955088e1f3d572d",
+      "duplicateReceiptSha256": "sha256:57d9ca5de81f4c117606cc9d583418f1af4c9a8b51b1b5d38955088e1f3d572d",
+      "packageSha256": "sha256:b443d6dfc90f496224dc028253a74caf4f58e3775cc9882cdd3a3d360a996469",
+      "duplicatePackageSha256": "sha256:b443d6dfc90f496224dc028253a74caf4f58e3775cc9882cdd3a3d360a996469",
+      "sampleLedgerSha256": "sha256:3284838b5e558214689e15731d455f1cf43af8b11e8b3f93a09144c99f1698bb",
+      "sharedEdgeLedgerSha256": "sha256:56a8744885dc3d09303628228f2f61e7838e7728b5204fef08d7a34176f94d05",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 148897,
+        "originalFiniteSamples": 23347,
+        "californiaGapsFallbackSamples": 125550,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 125550,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 23347
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 148897,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 125550
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 23347,
+            "noDataCount": 125550,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 23347
+          }
+        },
+        "bothFiniteSourceComparisons": 23347,
+        "maxBothFiniteDisagreementMetres": 6.038505554199219,
+        "p99BothFiniteDisagreementMetres": 5.1560821533203125
+      }
+    },
+    {
+      "id": "epsg26910-1434-10867",
+      "gridIndex": [
+        1434,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        550656,
+        4172928,
+        551040,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:a7ad60352a76574a07813a75be290e68e2149551237382356121dd04ea4a925f",
+      "duplicateGlbSha256": "sha256:a7ad60352a76574a07813a75be290e68e2149551237382356121dd04ea4a925f",
+      "glbBytes": 3621192,
+      "receiptSha256": "sha256:dbddbe477bfccf99e423915492f01e92e90d8d3e2da3c5beac5057b1666bbd3c",
+      "duplicateReceiptSha256": "sha256:dbddbe477bfccf99e423915492f01e92e90d8d3e2da3c5beac5057b1666bbd3c",
+      "packageSha256": "sha256:71e2533d5515ee3cde6a7ea495d26cf52f7020179fb29f610ed944b3baece819",
+      "duplicatePackageSha256": "sha256:71e2533d5515ee3cde6a7ea495d26cf52f7020179fb29f610ed944b3baece819",
+      "sampleLedgerSha256": "sha256:d29ebc5154171e983dd0945ba7fc82c460e48a689b15944ea2fb87d32a183723",
+      "sharedEdgeLedgerSha256": "sha256:585dd2159b11950862e34305bfb019aea0283fddad6358a2311617e132265b5c",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150291,
+        "originalFiniteSamples": 19887,
+        "californiaGapsFallbackSamples": 130404,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 130404,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 19887
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 150291,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 130404
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 19887,
+            "noDataCount": 130404,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 19887
+          }
+        },
+        "bothFiniteSourceComparisons": 19887,
+        "maxBothFiniteDisagreementMetres": 4.061943054199219,
+        "p99BothFiniteDisagreementMetres": 1.2660903930664062
+      }
+    },
+    {
+      "id": "epsg26910-1435-10867",
+      "gridIndex": [
+        1435,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        551040,
+        4172928,
+        551424,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:175692a5a8cb328778c4f2812fc7a9b5f4d6c8b45587809447463adf0f6b5d59",
+      "duplicateGlbSha256": "sha256:175692a5a8cb328778c4f2812fc7a9b5f4d6c8b45587809447463adf0f6b5d59",
+      "glbBytes": 3614320,
+      "receiptSha256": "sha256:16c5134c8e49e04366738540063788b05086a5eea110363b8d4e7d9b7b87f9e1",
+      "duplicateReceiptSha256": "sha256:16c5134c8e49e04366738540063788b05086a5eea110363b8d4e7d9b7b87f9e1",
+      "packageSha256": "sha256:628c4d5aa479ff944c4ecf1d16520e639bb6961729eb8043cdb64598103bfb9f",
+      "duplicatePackageSha256": "sha256:628c4d5aa479ff944c4ecf1d16520e639bb6961729eb8043cdb64598103bfb9f",
+      "sampleLedgerSha256": "sha256:a68cd0bfe68dffc9a0f219d104797aa9fe75746e3b00d0fb0f6f9b6e44303f53",
+      "sharedEdgeLedgerSha256": "sha256:75fce23c6b1c0da6f20e9c29dca3f27eccd806fe233d03167b10d6429cc378ae",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 149842,
+        "originalFiniteSamples": 38955,
+        "californiaGapsFallbackSamples": 110887,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 110887,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 38955
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 149842,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 110887
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 38955,
+            "noDataCount": 110887,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 38955
+          }
+        },
+        "bothFiniteSourceComparisons": 38955,
+        "maxBothFiniteDisagreementMetres": 0.9342899322509766,
+        "p99BothFiniteDisagreementMetres": 0.3299293518066406
+      }
+    },
+    {
+      "id": "epsg26910-1436-10867",
+      "gridIndex": [
+        1436,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        551424,
+        4172928,
+        551808,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:137d202f04ce5a48ccee867ca31489f365f1765ad1672f57bbc6227a6a10d085",
+      "duplicateGlbSha256": "sha256:137d202f04ce5a48ccee867ca31489f365f1765ad1672f57bbc6227a6a10d085",
+      "glbBytes": 3656468,
+      "receiptSha256": "sha256:955bda8d2086c08d16728ca3bda6427123dcaa9019ce0565465bfddd694345ec",
+      "duplicateReceiptSha256": "sha256:955bda8d2086c08d16728ca3bda6427123dcaa9019ce0565465bfddd694345ec",
+      "packageSha256": "sha256:a024a8dacc331b3e2f95c532c35ce158d548f93110a529c962d0812cd4f1a230",
+      "duplicatePackageSha256": "sha256:a024a8dacc331b3e2f95c532c35ce158d548f93110a529c962d0812cd4f1a230",
+      "sampleLedgerSha256": "sha256:99b82db09081e8e03a0a1981309a5ea994a7d53f5173541f25efd240d4753d81",
+      "sharedEdgeLedgerSha256": "sha256:0ebe263287b246ef4048caf98d0c11bb2271f032840f7e35fdf888f342f8731f",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 150829,
+        "originalFiniteSamples": 78082,
+        "californiaGapsFallbackSamples": 72747,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 72747,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 78082
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 150829,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 72747
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 78082,
+            "noDataCount": 72747,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 78082
+          }
+        },
+        "bothFiniteSourceComparisons": 78082,
+        "maxBothFiniteDisagreementMetres": 1.6435070037841797,
+        "p99BothFiniteDisagreementMetres": 0.4433269500732422
+      }
+    },
+    {
+      "id": "epsg26910-1437-10867",
+      "gridIndex": [
+        1437,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        551808,
+        4172928,
+        552192,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:64994f510c3b2fecbd73941ddec8a64992788e75d99ac9d22ed8d1c1d933b3e6",
+      "duplicateGlbSha256": "sha256:64994f510c3b2fecbd73941ddec8a64992788e75d99ac9d22ed8d1c1d933b3e6",
+      "glbBytes": 3576672,
+      "receiptSha256": "sha256:8a89af7d50445bacad8851ec8a20e3bb892f2684277f05fcd960493253227baf",
+      "duplicateReceiptSha256": "sha256:8a89af7d50445bacad8851ec8a20e3bb892f2684277f05fcd960493253227baf",
+      "packageSha256": "sha256:986a56a48cd1baddac25cfd1ee9646985b185c3a9d1d026e7592d2cf0281e57f",
+      "duplicatePackageSha256": "sha256:986a56a48cd1baddac25cfd1ee9646985b185c3a9d1d026e7592d2cf0281e57f",
+      "sampleLedgerSha256": "sha256:35690d56e50a7e16e5439e591cc5eaf30c3a182b7095fc2ee7545554d002bdfe",
+      "sharedEdgeLedgerSha256": "sha256:5725f5eac80dfb6588b282c1ae1cc113e2bca6c52e5e3fce23a9af67da08d2f3",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 148888,
+        "originalFiniteSamples": 80816,
+        "californiaGapsFallbackSamples": 68072,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 68072,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 80816
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 148888,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 68072
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 80816,
+            "noDataCount": 68072,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 80816
+          }
+        },
+        "bothFiniteSourceComparisons": 80816,
+        "maxBothFiniteDisagreementMetres": 0.8651919364929199,
+        "p99BothFiniteDisagreementMetres": 0.22539424896240234
+      }
+    },
+    {
+      "id": "epsg26910-1438-10867",
+      "gridIndex": [
+        1438,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        552192,
+        4172928,
+        552576,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:08d7b52678b2ffcdbfe06ba782c194c2b11b122630611deff5797f0ea39f4a75",
+      "duplicateGlbSha256": "sha256:08d7b52678b2ffcdbfe06ba782c194c2b11b122630611deff5797f0ea39f4a75",
+      "glbBytes": 3569756,
+      "receiptSha256": "sha256:ff6f0769b80136717b8e6e2c59dc3e009cf4cce3a521071aa7574ba6ac4e31da",
+      "duplicateReceiptSha256": "sha256:ff6f0769b80136717b8e6e2c59dc3e009cf4cce3a521071aa7574ba6ac4e31da",
+      "packageSha256": "sha256:1081aef1f5280d0baa54e5eac055bc257a13171d3e9327188ae836a82e89840d",
+      "duplicatePackageSha256": "sha256:1081aef1f5280d0baa54e5eac055bc257a13171d3e9327188ae836a82e89840d",
+      "sampleLedgerSha256": "sha256:e8e0780c358507b9eb5234695eafd78b89901bc3ca42059790c1d9caa6bd42bb",
+      "sharedEdgeLedgerSha256": "sha256:1149ef58ccc8328b5ae6c489954a7896765201dbd973c845c69f2ab587fbb663",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 148651,
+        "originalFiniteSamples": 68993,
+        "californiaGapsFallbackSamples": 79658,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 79658,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 68993
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 148651,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 79658
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 68993,
+            "noDataCount": 79658,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 68993
+          }
+        },
+        "bothFiniteSourceComparisons": 68993,
+        "maxBothFiniteDisagreementMetres": 0.6513056755065918,
+        "p99BothFiniteDisagreementMetres": 0.11266756057739258
+      }
+    },
+    {
+      "id": "epsg26910-1439-10867",
+      "gridIndex": [
+        1439,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        552576,
+        4172928,
+        552960,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:06345eac8ce633d0db159724a1e48c9b55d4780a1e97f40026f19e1eff85c10d",
+      "duplicateGlbSha256": "sha256:06345eac8ce633d0db159724a1e48c9b55d4780a1e97f40026f19e1eff85c10d",
+      "glbBytes": 3567292,
+      "receiptSha256": "sha256:eaed107c0d5b35b329f611988e87975823b2319376fe96bcf3cc4c3f76f7e244",
+      "duplicateReceiptSha256": "sha256:eaed107c0d5b35b329f611988e87975823b2319376fe96bcf3cc4c3f76f7e244",
+      "packageSha256": "sha256:d5864ff3159d7816a938e63aa7ea66c85a775251171f1bdff6cf674f68b8268d",
+      "duplicatePackageSha256": "sha256:d5864ff3159d7816a938e63aa7ea66c85a775251171f1bdff6cf674f68b8268d",
+      "sampleLedgerSha256": "sha256:813f4c2713465ff96ed9f154595b517b2f8019ce0f098e0e216ddb6236c75e9d",
+      "sharedEdgeLedgerSha256": "sha256:bb6666d3c44948f956815517d022f1d8f6c055c01c9e3e60763cfb6128277423",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 148525,
+        "originalFiniteSamples": 43754,
+        "californiaGapsFallbackSamples": 104771,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 104771,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 43754
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 148525,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 104771
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 43754,
+            "noDataCount": 104771,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 43754
+          }
+        },
+        "bothFiniteSourceComparisons": 43754,
+        "maxBothFiniteDisagreementMetres": 1.9620890617370605,
+        "p99BothFiniteDisagreementMetres": 0.15737533569335938
+      }
+    },
+    {
+      "id": "epsg26910-1440-10867",
+      "gridIndex": [
+        1440,
+        10867
+      ],
+      "boundsEpsg26910Metres": [
+        552960,
+        4172928,
+        553344,
+        4173312
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:6e50e4a575f17a63997af130ff88177a8cbed59ea74eb5edabaabef9f0649994",
+      "duplicateGlbSha256": "sha256:6e50e4a575f17a63997af130ff88177a8cbed59ea74eb5edabaabef9f0649994",
+      "glbBytes": 3564804,
+      "receiptSha256": "sha256:8f8cf2147553f2515b59d0917b0e16e6c442bc891646a8c6e6aa3aad393212b6",
+      "duplicateReceiptSha256": "sha256:8f8cf2147553f2515b59d0917b0e16e6c442bc891646a8c6e6aa3aad393212b6",
+      "packageSha256": "sha256:6cc693e8811b32067621eb5531069401e7dee4331c3b550b689b1de982ceb9e5",
+      "duplicatePackageSha256": "sha256:6cc693e8811b32067621eb5531069401e7dee4331c3b550b689b1de982ceb9e5",
+      "sampleLedgerSha256": "sha256:b94880413f473a25169b941b53764506d5e3423cbfd345f566741b597b87068f",
+      "sharedEdgeLedgerSha256": "sha256:61a12389b72538e613cc4dbe3eb44067e69ab65d0d6b1769d4399bc6ada173cc",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 148399,
+        "originalFiniteSamples": 26799,
+        "californiaGapsFallbackSamples": 121600,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 121600,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 26799
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 148399,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 121600
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 26799,
+            "noDataCount": 121600,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 26799
+          }
+        },
+        "bothFiniteSourceComparisons": 26799,
+        "maxBothFiniteDisagreementMetres": 3.7650375366210938,
+        "p99BothFiniteDisagreementMetres": 2.165750503540039
+      }
+    },
+    {
+      "id": "epsg26910-1440-10868",
+      "gridIndex": [
+        1440,
+        10868
+      ],
+      "boundsEpsg26910Metres": [
+        552960,
+        4173312,
+        553344,
+        4173696
+      ],
+      "mode": "per-native-pixel-fallback-production-v1",
+      "status": "provisional-vertical-unrealized",
+      "verticalCertification": "source-declared-navd88-unrealized",
+      "productionWriteEnabled": false,
+      "glbSha256": "sha256:784508091b5c0f617125938bd85be28ce933feac80069114b5824d26ddd30127",
+      "duplicateGlbSha256": "sha256:784508091b5c0f617125938bd85be28ce933feac80069114b5824d26ddd30127",
+      "glbBytes": 3587356,
+      "receiptSha256": "sha256:de6f695c629c4beafc0f07b4677733819d56ce6f33800cd83160ff2cd164aee4",
+      "duplicateReceiptSha256": "sha256:de6f695c629c4beafc0f07b4677733819d56ce6f33800cd83160ff2cd164aee4",
+      "packageSha256": "sha256:004aa9051f3eff1277a06284ab788c790a2d1b014a84137dd867d8c97b5f26ae",
+      "duplicatePackageSha256": "sha256:004aa9051f3eff1277a06284ab788c790a2d1b014a84137dd867d8c97b5f26ae",
+      "sampleLedgerSha256": "sha256:a124c6c33df95fab4164672f5ba4ce1afede45bcbcd4f95986252ca44e8cc896",
+      "sharedEdgeLedgerSha256": "sha256:d3b4ae5371d573d2d0dd7b9053ecb4998b7f6a39cb11803fccd4fc23c8099fd0",
+      "sourceLocks": [
+        "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "sf-3dep-ca-sanfrancisco-b23-x55y418-v1"
+      ],
+      "counts": {
+        "uniqueNativeSampleCoordinates": 149564,
+        "originalFiniteSamples": 146615,
+        "californiaGapsFallbackSamples": 2949,
+        "sourceSampleCounts": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": 2949,
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": 146615
+        },
+        "sourceProbeStats": {
+          "sf-3dep-ca-californiagaps-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+            "finiteCount": 149564,
+            "noDataCount": 0,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 2949
+          },
+          "sf-3dep-ca-sanfrancisco-b23-x55y418-v1": {
+            "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+            "finiteCount": 146615,
+            "noDataCount": 2949,
+            "nonFiniteCount": 0,
+            "outsideWindowCount": 0,
+            "chosenCount": 146615
+          }
+        },
+        "bothFiniteSourceComparisons": 146615,
+        "maxBothFiniteDisagreementMetres": 5.832551956176758,
+        "p99BothFiniteDisagreementMetres": 2.2353858947753906
+      }
+    }
+  ],
+  "seams": [
+    {
+      "leftTileId": "epsg26910-1417-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1418-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:00c715fb8d7e5dcfb49cd389727c71d58bfb1917d65f079bbf978bcdfa9efcff",
+      "rightArtifactSha256": "sha256:9f862f3f7d2c077943ebcb97d176740eb6680ffb52508a86fa2d53f945629109"
+    },
+    {
+      "leftTileId": "epsg26910-1418-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1419-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:7ad9543979c1213af7774585441b273eb28a0c0735cee32b52b8a7286a17163a",
+      "rightArtifactSha256": "sha256:0fd05e2fb8dc3afa9851de81b9706e45a95af8f5d02f2e2a773eb42b5b23ee9f"
+    },
+    {
+      "leftTileId": "epsg26910-1419-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1420-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:4d1b7f529897e8a43dd266126c91b66b0ad3abf92eea247bb9278fa773d866d5",
+      "rightArtifactSha256": "sha256:fa5859e34fbb13c825fe0151aefbe4bbed38143f71c5836ee6cc3cb10b9f7a40"
+    },
+    {
+      "leftTileId": "epsg26910-1420-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1421-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:d8b6b42eda4135800fef531cdf0e1584acc71c0fd3d3e041b504ce57913e181c",
+      "rightArtifactSha256": "sha256:882e2cda0712c33b515d9a9e80e9a07d7cd5fcbf477be39c012be9060eccd353"
+    },
+    {
+      "leftTileId": "epsg26910-1420-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1420-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:eb3756ca211dc7ca276204231492cc81d7f92dffbce5edbb6e8c06a8134537c9",
+      "rightArtifactSha256": "sha256:7955130abcdefb3ff228d32e6009a57785ac59f6edbabfd86545fd259f16e962"
+    },
+    {
+      "leftTileId": "epsg26910-1421-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1422-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:72cdb01bb4c8c5e414bb82a80ef3d596f0cfb26f4e82981e7ca0cb96fa761b54",
+      "rightArtifactSha256": "sha256:ace6651ebee8271065eb472dbd670df8dd2c89081491dad2ee570acfcb270478"
+    },
+    {
+      "leftTileId": "epsg26910-1421-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1421-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:eb2bb6e22d65c506e04fe6a4eceaab6477c823af3d5e82431d11833fda64c9ac",
+      "rightArtifactSha256": "sha256:dfee6c962d04628bf809bbb49526a9a30a40ca997e06db3ddb25bd1ed75340b9"
+    },
+    {
+      "leftTileId": "epsg26910-1422-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1423-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:cc9d5352aaab47306b4752e8af0b85142153c12709b4d2c6a88adf35610a926b",
+      "rightArtifactSha256": "sha256:47b762c9c0f6cdb4e32a6f63a06fcc33102b04b0d228a37f882dd078383c7b36"
+    },
+    {
+      "leftTileId": "epsg26910-1422-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1422-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:4d7f4f1ab7502a793a0318a01ea73883a8ba115a0217ca1cdae674c0c62335ce",
+      "rightArtifactSha256": "sha256:05af9656ad1675c8f965035b2d4b6eb2f7052c4c248ec8c475ad2805723181c5"
+    },
+    {
+      "leftTileId": "epsg26910-1423-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1424-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:087432bbb3733a611d1de574ff87b03c5e167b64b80ff3294e7cdfcc0301b9a3",
+      "rightArtifactSha256": "sha256:d41a2ccdc4917f70a9e310a9c3956724ec09555f71a18ade326fb0c8c7d652be"
+    },
+    {
+      "leftTileId": "epsg26910-1423-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1423-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:084f857a908a29534983a1e8f311e7e1c0078d6f5855bc683ec8d56c8fd70aa8",
+      "rightArtifactSha256": "sha256:b276bdd157eb48d2d5a4c19e3908d088c24a2d1f4f0dc2384863215ef6194be0"
+    },
+    {
+      "leftTileId": "epsg26910-1424-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1425-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:86c97c82e8b6d2c8444acd1fd192929708d7b47be40f06d86c52b5019461c893",
+      "rightArtifactSha256": "sha256:5c05e884b4bee8119e960cd793589e0be981ec2398cc98417d43569c573d8b07"
+    },
+    {
+      "leftTileId": "epsg26910-1424-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1424-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:b5dfc3438181d92091894aa547ede855dcf0c60a261529ca30e4c94c7ea44f22",
+      "rightArtifactSha256": "sha256:26debb9b4d5eb45004d48c10446cf9d6ee1a08bf19be82c3a025c4705c1313c7"
+    },
+    {
+      "leftTileId": "epsg26910-1425-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1426-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:dcfe44882ca8d396f9c085961d3fc86dd5ba2892430b191c717dd8d3bb2b945e",
+      "rightArtifactSha256": "sha256:fe875bf9140c37975d1e1c843d6479f12d489ce7cffeb26ed334696d1338fa9d"
+    },
+    {
+      "leftTileId": "epsg26910-1425-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1425-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:faf086f2b63b8690d9e11e52e286cca62b782e24e8763ac61f37a2182cf05998",
+      "rightArtifactSha256": "sha256:45be198c86ac2977f7cf6a1d85aafa4dd9264348b4a54ac7f080729557bd4af8"
+    },
+    {
+      "leftTileId": "epsg26910-1426-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1427-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:4dc7ea47e217114837ed42c3580869a28b3594d71aa4fb5ee3c5a4aa0ee5c7a1",
+      "rightArtifactSha256": "sha256:0fbc4a3246f2b277034734c3888d642cd7f43d93dc90caf38b4add61ff378adc"
+    },
+    {
+      "leftTileId": "epsg26910-1426-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1426-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:dafa409ba77f2413e8c3589de87b63f19b8befa987820b345fadb2305410f7e5",
+      "rightArtifactSha256": "sha256:ab2952a83a68b4da0f4791d92c8b934b17c2f975fe3a34cee33fb136f27a49fc"
+    },
+    {
+      "leftTileId": "epsg26910-1427-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1428-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:668a63c404dc8c803710684a9847516f6b2e8b6b60729373d504e0cf91ef8e80",
+      "rightArtifactSha256": "sha256:907740ec221c5f9be0e270aa2d7292fb07c4b0d648f279d55e29c0f8383df0f9"
+    },
+    {
+      "leftTileId": "epsg26910-1427-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1427-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:ed0714791ca3e2e12b33fb159474dae585786e4bd97685604a038e78772f571c",
+      "rightArtifactSha256": "sha256:0f3d5ab428081f05af97d54e611feb73cfcc76721716f6a5738661994f270bfd"
+    },
+    {
+      "leftTileId": "epsg26910-1428-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1429-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:519dc2ab9e079bb9133c1ef4abc868aec586fb422376367b81967f3012a09a20",
+      "rightArtifactSha256": "sha256:cace07bdf39c448f671925d237f5e3fdf3c0eff93eb7c46a83d6427ee0afe2d0"
+    },
+    {
+      "leftTileId": "epsg26910-1428-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1428-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:a427f86f8db557ceb3af31bf1747e5fd31c4db479037e49efa4230815689d6ba",
+      "rightArtifactSha256": "sha256:230a8e31ac319aa0bdfe72ceab12a87e3928bd76cdab9dc20da1ddd81eb6f6fc"
+    },
+    {
+      "leftTileId": "epsg26910-1429-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1430-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:afd1dcd20bcbfc6d9efaf9c5ff4c93738090d977f01b4bc1059235c4ea8d2a6d",
+      "rightArtifactSha256": "sha256:08f956c148cfc688a3be6eb97edd1c69ccf41b0571cde8a403763f49ff360fa0"
+    },
+    {
+      "leftTileId": "epsg26910-1429-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1429-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:c4d5e11c583bbc44cfa15510d40753f05fa071bb49fcd7e64ad464373518167d",
+      "rightArtifactSha256": "sha256:be6a0f696fb0b4f1a11766e2be9bcf3c39a4826d3ceb7f64f96c3dc00e3f57f7"
+    },
+    {
+      "leftTileId": "epsg26910-1430-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1431-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:ff21c52ddf1c273f99d8b14b96686fb5f5b6ed10482c98a0b082c99c34940937",
+      "rightArtifactSha256": "sha256:6c8e2d982c583ff1cfd083de753e35cdd5a3eab766bc46ca330f0623ba8d5a51"
+    },
+    {
+      "leftTileId": "epsg26910-1430-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1430-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:778f84f088cf937b9805cebf6efe13714e36b31f842c2bef80ff20fcdefd9228",
+      "rightArtifactSha256": "sha256:89a9e2e43d209ddbce81260bd37487640260b70d24d89916bdaebeeac3ada451"
+    },
+    {
+      "leftTileId": "epsg26910-1431-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1432-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:80a9c83d2485e89484aac00dce19917b536c3cb7e41a9cee666f4c0781150efa",
+      "rightArtifactSha256": "sha256:f4f4727f6ead6b731f4dc4717e3871776d1a14f756b50cfc891d4df61c056722"
+    },
+    {
+      "leftTileId": "epsg26910-1431-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1431-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:8c757702df3d81d61f7d541edf16a6ad8f0a58f2410e79da9e1d48e8aadec9b4",
+      "rightArtifactSha256": "sha256:c8d4a37eac307e28f423bb55c93e010bca7a617a4421a9e2e0f0e4f84cbfd9d3"
+    },
+    {
+      "leftTileId": "epsg26910-1432-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1433-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:5bb4e8a6c2be664adca8b92d0ebd845d9e2af326ca2ebe56138f876997f00923",
+      "rightArtifactSha256": "sha256:7be3856b0d97f4f0bd1b33fa807979404f5b4b7f50835162dd1dbc039f6802de"
+    },
+    {
+      "leftTileId": "epsg26910-1432-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1432-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:b0c05932c7ebe5fe095343c455f724d9e5f20fe419421346013bdcd0928478d9",
+      "rightArtifactSha256": "sha256:bbb516735fa623ed468f2c4b382743801ec5b518a794d370b50490b85e25867b"
+    },
+    {
+      "leftTileId": "epsg26910-1433-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1434-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:90614c1e9866fdad2e9c95c922f28d759432d2d6bb9ea5ab06e0c0ea26786346",
+      "rightArtifactSha256": "sha256:a7ad60352a76574a07813a75be290e68e2149551237382356121dd04ea4a925f"
+    },
+    {
+      "leftTileId": "epsg26910-1433-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1433-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:aca7f7c3d344747d4aeffcf521755a9dfb2e14b167777176e1539971a703f5ed",
+      "rightArtifactSha256": "sha256:388c71abf660480528953251c005c1eaab91dcbd49d9a915c9d5efc9704b3f1a"
+    },
+    {
+      "leftTileId": "epsg26910-1434-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1435-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:a44e27a55310c9382eb658e3d2ee58e04c5597d26a93737b04e5c6ef0ba25c56",
+      "rightArtifactSha256": "sha256:175692a5a8cb328778c4f2812fc7a9b5f4d6c8b45587809447463adf0f6b5d59"
+    },
+    {
+      "leftTileId": "epsg26910-1434-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1434-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:5c922c66294d4567108d2423431e61bf3ae1b30628f7f8a7790066d5812ff0b3",
+      "rightArtifactSha256": "sha256:0be9dac88face9320f110e17052127c2293fc0f4b34a4a3b4223bc8b60514fb7"
+    },
+    {
+      "leftTileId": "epsg26910-1435-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1436-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:e8cc1f571d032774d7308f3229edc19e90ccc87fc4dcb57d5d92f3dc9544c6b7",
+      "rightArtifactSha256": "sha256:137d202f04ce5a48ccee867ca31489f365f1765ad1672f57bbc6227a6a10d085"
+    },
+    {
+      "leftTileId": "epsg26910-1435-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1435-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:cb3c4670d39a48bea5fd0c42c87d45b6930570d9cf468f5886551ee9e7f0d74f",
+      "rightArtifactSha256": "sha256:6726373a066ac7d8a2d9aadd932175053d03a2bb55fc9550ac86e604e5e80fba"
+    },
+    {
+      "leftTileId": "epsg26910-1436-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1437-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:e39947f56fd3de53ad7e203cc9cd01d960c3ca896a63a0f132100f081b75bddd",
+      "rightArtifactSha256": "sha256:64994f510c3b2fecbd73941ddec8a64992788e75d99ac9d22ed8d1c1d933b3e6"
+    },
+    {
+      "leftTileId": "epsg26910-1436-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1436-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:b3f84a47ed729d531c6134cae43c21cfe7da517794d7c05be0e9f7acd13aa277",
+      "rightArtifactSha256": "sha256:2cea060711c0da813a517e53743a67def352543150b78974ae2ce6b40ff78533"
+    },
+    {
+      "leftTileId": "epsg26910-1437-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1438-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:acc3fcf0bffad711e5e4ac8378ca93f56ed48e065eb240e1dce34e97f2943a23",
+      "rightArtifactSha256": "sha256:08d7b52678b2ffcdbfe06ba782c194c2b11b122630611deff5797f0ea39f4a75"
+    },
+    {
+      "leftTileId": "epsg26910-1437-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1437-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:c68e38bd4e7d76a0db93c20aa01bc8b5981949f210c4e036c847da14becadd66",
+      "rightArtifactSha256": "sha256:4b347a53eda514bd3b60753ae1d32671d6414a136716feb4800f9aed77e7eaf9"
+    },
+    {
+      "leftTileId": "epsg26910-1438-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1439-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:f46c01807cf436e4df0a8eb80211ace2a7fbbf4cf494de14fc6d20a2dc7caecf",
+      "rightArtifactSha256": "sha256:06345eac8ce633d0db159724a1e48c9b55d4780a1e97f40026f19e1eff85c10d"
+    },
+    {
+      "leftTileId": "epsg26910-1438-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1438-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:89b1eee103a2fda4a6e4151592d89e449ebc0297faaedd31f3b47ee1353cba5b",
+      "rightArtifactSha256": "sha256:2fb2f3af05f8e4f04f832dd352659fe78d86638ab82818cd228c53319ac4026e"
+    },
+    {
+      "leftTileId": "epsg26910-1439-10867",
+      "leftSide": "east",
+      "rightTileId": "epsg26910-1440-10867",
+      "rightSide": "west",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:86158e65be0ab6f7d2ca7188bf93b32c4a578a8a3313dc3fb99a8962122bec00",
+      "rightArtifactSha256": "sha256:6e50e4a575f17a63997af130ff88177a8cbed59ea74eb5edabaabef9f0649994"
+    },
+    {
+      "leftTileId": "epsg26910-1439-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1439-10868",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:d81720303fe639b4c88e5735d928a67787461948f6f2831435ef57a60c0dff22",
+      "rightArtifactSha256": "sha256:89891beebac523c68689fa1815587bd3e50e102ee273a35ac6c5b20c1acc8bf6"
+    },
+    {
+      "leftTileId": "epsg26910-1440-10867",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1440-10868",
+      "rightSide": "south",
+      "kind": "candidate-candidate",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:8774038b277453c46aa2bbff95fe1d34e17b5201e16b7d9beb9ecbd2a1350481",
+      "rightArtifactSha256": "sha256:784508091b5c0f617125938bd85be28ce933feac80069114b5824d26ddd30127"
+    },
+    {
+      "leftTileId": "epsg26910-1440-10868",
+      "leftSide": "north",
+      "rightTileId": "epsg26910-1440-10869",
+      "rightSide": "south",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:b0d77dc910726f5f64234f4d9365568c752f96e43aa965a3dcab8e2ea3b76ca6",
+      "rightArtifactSha256": "sha256:b53fe8fca9fdf13c9820108b376b459f280cd8fb34e8eb535aa9403e1c890e78"
+    },
+    {
+      "leftTileId": "epsg26910-1440-10868",
+      "leftSide": "west",
+      "rightTileId": "epsg26910-1439-10868",
+      "rightSide": "east",
+      "kind": "candidate-existing-resident",
+      "samples": 385,
+      "exactFloat32Bits": true,
+      "sameSourceSamples": 385,
+      "crossSourceSamples": 0,
+      "sourceAuthoritySampleLedgerSha256": "sha256:9c38e71cfe73de4cf80976adb2ebc5e7620099f6c3100b36de8af89023835b24",
+      "rightArtifactSha256": "sha256:89891beebac523c68689fa1815587bd3e50e102ee273a35ac6c5b20c1acc8bf6"
+    }
+  ],
+  "residentByteIdentity": {
+    "epsg26910-1420-10868": {
+      "glbSha256": "sha256:7955130abcdefb3ff228d32e6009a57785ac59f6edbabfd86545fd259f16e962",
+      "receiptSha256": "sha256:14a8b149477343b5fcf8f2537cd41191d253734f1940d85fae528e2c9a377d56",
+      "packageSha256": "sha256:0b3018471712888bdedc77bb7c5e7f5906758aba67b9a8d63233dcc36c4ec38f"
+    },
+    "epsg26910-1421-10868": {
+      "glbSha256": "sha256:dfee6c962d04628bf809bbb49526a9a30a40ca997e06db3ddb25bd1ed75340b9",
+      "receiptSha256": "sha256:97c9e6148275acbe4f9c28ca7d3dcc50bf7b4dc20599a5f2cef5e8973f8e3f3f",
+      "packageSha256": "sha256:4c286b7b7ef82ab917f2381521a268887966f8dd3e8ae03717b8eaab97e2e880"
+    },
+    "epsg26910-1422-10868": {
+      "glbSha256": "sha256:05af9656ad1675c8f965035b2d4b6eb2f7052c4c248ec8c475ad2805723181c5",
+      "receiptSha256": "sha256:b7efe98d8c2023c69149403832a6748733833e3bad0c3686108adc144ffeff5e",
+      "packageSha256": "sha256:c5302dd4a69c9bdac11cc7d2df4725a6140a3d19115f65becfb646dfc49dc98a"
+    },
+    "epsg26910-1423-10868": {
+      "glbSha256": "sha256:b276bdd157eb48d2d5a4c19e3908d088c24a2d1f4f0dc2384863215ef6194be0",
+      "receiptSha256": "sha256:cc608567e2fb78e2e47d4efd661e2dc2f0fb0e08b1340ea2cc9899352feaed50",
+      "packageSha256": "sha256:96b0c35b0eedfdcc02cb0011f788630019d93477960a8b1b0083c25fd0d1e2a5"
+    },
+    "epsg26910-1424-10868": {
+      "glbSha256": "sha256:26debb9b4d5eb45004d48c10446cf9d6ee1a08bf19be82c3a025c4705c1313c7",
+      "receiptSha256": "sha256:b08d0ae4aec0ec40d159ae06a509e87db5683cc0a1222f5e9661186482a6887a",
+      "packageSha256": "sha256:c762a9f5d2a62e0898d7797c23f96429de1ebf566f889edc305d278c7caa91a2"
+    },
+    "epsg26910-1425-10868": {
+      "glbSha256": "sha256:45be198c86ac2977f7cf6a1d85aafa4dd9264348b4a54ac7f080729557bd4af8",
+      "receiptSha256": "sha256:cf80aaeeae5b1f9e350949ea2f9c38f37c54966968b780a746a0f2db90565c3f",
+      "packageSha256": "sha256:7a6ee48ec4eba12e4dddf12dc690a7cd279e48b432bec547f7e491a51ac5e508"
+    },
+    "epsg26910-1426-10868": {
+      "glbSha256": "sha256:ab2952a83a68b4da0f4791d92c8b934b17c2f975fe3a34cee33fb136f27a49fc",
+      "receiptSha256": "sha256:6a49c24f35d68a1b6d91dcc342524daff1fa680c5c34a7510c2df3c828025080",
+      "packageSha256": "sha256:1f1e51d9149f176671624b88800e6071f9431b5396a48e853651c956d63ae9b2"
+    },
+    "epsg26910-1427-10868": {
+      "glbSha256": "sha256:0f3d5ab428081f05af97d54e611feb73cfcc76721716f6a5738661994f270bfd",
+      "receiptSha256": "sha256:f639425b688a1265bd6e82e45e7267abbd99e7cc9ec5491a9bd25bd175f6edb9",
+      "packageSha256": "sha256:73fb7f4a0291ebb51933b7c70cb8b5ec021594c7438a0915dcfcbd7f9feeea2c"
+    },
+    "epsg26910-1428-10868": {
+      "glbSha256": "sha256:230a8e31ac319aa0bdfe72ceab12a87e3928bd76cdab9dc20da1ddd81eb6f6fc",
+      "receiptSha256": "sha256:05cd5c4e13bff9b5223a641d3596b04657927db7c00dde7a791b88d1a280d124",
+      "packageSha256": "sha256:9fdf0b9f7cc8f72e68b3b1f8747440cf7518a288ba7a0a9f06f162bc1b01cfb5"
+    },
+    "epsg26910-1429-10868": {
+      "glbSha256": "sha256:be6a0f696fb0b4f1a11766e2be9bcf3c39a4826d3ceb7f64f96c3dc00e3f57f7",
+      "receiptSha256": "sha256:11a02dce61221cd527745e47d1d5387f473c2fa7085cc74a00bb1d6ee6fec01c",
+      "packageSha256": "sha256:046b25b97b0154d342b9b1ece8d249f89af6aebc4daec11ae2bdb2511b6cedde"
+    },
+    "epsg26910-1430-10868": {
+      "glbSha256": "sha256:89a9e2e43d209ddbce81260bd37487640260b70d24d89916bdaebeeac3ada451",
+      "receiptSha256": "sha256:4531eddb71cc49d59032ece87a143c6536c47c3d6df29422e5ee458b3a59c6c2",
+      "packageSha256": "sha256:da0678f994d38f2d37bcd912d9d159ab0c623d9058f1b1f4728bd0369dc9a90e"
+    },
+    "epsg26910-1431-10868": {
+      "glbSha256": "sha256:c8d4a37eac307e28f423bb55c93e010bca7a617a4421a9e2e0f0e4f84cbfd9d3",
+      "receiptSha256": "sha256:a1e12d6dbb28725df0722cf2326f7e6ae80a34e11471083f17decb5ec1a357c4",
+      "packageSha256": "sha256:cb1ad7de8e47524a0c277e5573cc51786388a25c9d9fe72f363722f14dc8b5b6"
+    },
+    "epsg26910-1432-10868": {
+      "glbSha256": "sha256:bbb516735fa623ed468f2c4b382743801ec5b518a794d370b50490b85e25867b",
+      "receiptSha256": "sha256:8a3ee49d2b11ad73316b13dea153ebb8c24a0bf9efce111790aab9012be718bd",
+      "packageSha256": "sha256:5d6057da05911ca6574e5fec2c44b25cefab7f70d1c1b195e98af8fcadda7bde"
+    },
+    "epsg26910-1433-10868": {
+      "glbSha256": "sha256:388c71abf660480528953251c005c1eaab91dcbd49d9a915c9d5efc9704b3f1a",
+      "receiptSha256": "sha256:806c3b3a24e2a1d032e47e68fcfd77ca137219f46ae31f2fd6809c9a73d943fa",
+      "packageSha256": "sha256:b265d573e41c44052a6517ebed55a1541808c5337b1f1970ecf0418e01a45808"
+    },
+    "epsg26910-1434-10868": {
+      "glbSha256": "sha256:0be9dac88face9320f110e17052127c2293fc0f4b34a4a3b4223bc8b60514fb7",
+      "receiptSha256": "sha256:cf6079bf4b6ce9a00c23f55d40bd362c4d82d0000f9597a85537a7148008e400",
+      "packageSha256": "sha256:38b125e6567b1a2deae4d75423826cbe8498f3c9ef561727ecaba2a9721e6a20"
+    },
+    "epsg26910-1435-10868": {
+      "glbSha256": "sha256:6726373a066ac7d8a2d9aadd932175053d03a2bb55fc9550ac86e604e5e80fba",
+      "receiptSha256": "sha256:f290a3ca79e71c699a6f6246b4983f5558913fe6a2f3d1522bd006c8ef212cb7",
+      "packageSha256": "sha256:50daafc04e55d8b1fd3f3dabccd7933f42f18fd3b9150495dca5b52090464906"
+    },
+    "epsg26910-1436-10868": {
+      "glbSha256": "sha256:2cea060711c0da813a517e53743a67def352543150b78974ae2ce6b40ff78533",
+      "receiptSha256": "sha256:9ff8debac4cd877df9d4a25f7ae898e635fbe8e8d59bbf99892c9cd32c2a06ea",
+      "packageSha256": "sha256:46abde5d0ee2f633e4c1e132f6737e635941a13c0af553446331e6f68021c0d0"
+    },
+    "epsg26910-1437-10868": {
+      "glbSha256": "sha256:4b347a53eda514bd3b60753ae1d32671d6414a136716feb4800f9aed77e7eaf9",
+      "receiptSha256": "sha256:94ffd786666be60184e16c838025b8dff943211798f712e052ad2d5611bf2bf7",
+      "packageSha256": "sha256:18d595397340c626a3a7f25a4fef8637275351f248747a5969ce7cf28ed20d64"
+    },
+    "epsg26910-1438-10868": {
+      "glbSha256": "sha256:2fb2f3af05f8e4f04f832dd352659fe78d86638ab82818cd228c53319ac4026e",
+      "receiptSha256": "sha256:4aa0a9db65214de6dc76b5f9478c2f945fb1a629a270c859194f54b120951509",
+      "packageSha256": "sha256:2126ff1edf1383dd5836439ca37d2df780b4f212112d1d9bd996609f78004d7b"
+    },
+    "epsg26910-1439-10868": {
+      "glbSha256": "sha256:89891beebac523c68689fa1815587bd3e50e102ee273a35ac6c5b20c1acc8bf6",
+      "receiptSha256": "sha256:a749beb8780436441365d203d0b6d0d552e52fa24dd2102e534b602be25d1859",
+      "packageSha256": "sha256:1c6b763d0edeab4a6904909a87cf9ca9ecfedf76ecca2cd9817ea844a863112c"
+    },
+    "epsg26910-1440-10869": {
+      "glbSha256": "sha256:b53fe8fca9fdf13c9820108b376b459f280cd8fb34e8eb535aa9403e1c890e78",
+      "receiptSha256": "sha256:545f6e549f04856cacff508dc42137698abc694df891e93c4cf27e363d15be8f",
+      "packageSha256": "sha256:de56b4a8f7cf82cdc8c0d1a61b7b15db9f746f0a6539a0ca29948c600db15f24"
+    }
+  },
+  "outputContract": {
+    "buildWrite": false,
+    "glbArtifactsWritten": false,
+    "productionManifestChanged": false,
+    "productionTileManifestPath": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json"
+  }
+}

@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-fallback-production-parity-lock",
+  "id": "sf-native-pixel-fallback-production-parity-v1",
+  "status": "byte-locked-all-25-source-aware-seam-parity",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "productionWriteEnabled": false,
+  "promotionGate": {
+    "status": "passed-all-25-source-aware-seam-parity",
+    "requiredTileCount": 25,
+    "evidenceReceiptPath": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.receipt.json",
+    "evidenceReceiptSha256": "sha256:7713ee1d4495efae834a191192711769688eb3d38bfc0a3f0d4924e50b3f0246"
+  },
+  "policy": {
+    "mode": "per-native-pixel-fallback-production-v1",
+    "name": "source-locked-original-first-per-native-pixel-v1",
+    "sha256": "sha256:a475ad47eedff08509bd69782c24c624fecc2b4a4a720a14a518c90220f1ec8b",
+    "definition": {
+      "name": "source-locked-original-first-per-native-pixel-v1",
+      "candidateOrder": "original-before-californiagaps",
+      "fallbackCondition": "original-native-pixel-is-nodata",
+      "sampleMethod": "direct-native-pixel-float32-le",
+      "interpolation": "none"
+    }
+  },
+  "disagreementPolicy": {
+    "status": "report-only",
+    "rationale": "original finite pixels remain authoritative; CaliforniaGaps disagreement is diagnostic evidence only",
+    "interpolation": "none",
+    "verticalAccuracyClaim": "none",
+    "statistics": "record maxBothFiniteDisagreementMetres and p99BothFiniteDisagreementMetres per tile",
+    "promotionEffect": "does-not-count-as-source-agreement"
+  },
+  "crossSourceSeamAudit": {
+    "samples": 0,
+    "productionReadiness": "unproven-no-cross-source-seam-exercised"
+  },
+  "promotionPrerequisites": [
+    {
+      "id": "internal-source-switch-continuity-audit-v1",
+      "status": "required-not-exercised",
+      "requirement": "Exercise an internal source-switch continuity audit where adjacent native samples intentionally cross original and CaliforniaGaps authority."
+    },
+    {
+      "id": "cross-source-seam-gate-v1",
+      "status": "required-not-exercised",
+      "requirement": "Exercise and exact-compare at least one cross-source candidate/resident seam before claiming cross-source production readiness."
+    },
+    {
+      "id": "canonical-production-mosaic-receipt-schema-v1",
+      "status": "required-not-exercised",
+      "requirement": "Promote only after standard production mosaic verifiers consume the per-native-pixel receipt schema."
+    }
+  ],
+  "authorization": {
+    "id": "sf-native-pixel-fallback-production-authorization-v1",
+    "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json",
+    "sha256": "sha256:572551aba2887450c1c48de66fb0cfef01b6e0fcaefb5069725a2621ddd9e3a4",
+    "status": "byte-locked-source-and-policy-authorized-seam-parity-pending",
+    "productionWriteEnabled": false
+  },
+  "coveragePlan": {
+    "path": "public/data/world/plans/sf-metric-tile-coverage-v1.json",
+    "sha256": "sha256:e7550e604d23213c27895aeb5d20ae59d35e34b695580d2438b6ac6026407bb0",
+    "fallbackTileCount": 25,
+    "tileIds": [
+      "epsg26910-1417-10867",
+      "epsg26910-1418-10867",
+      "epsg26910-1419-10867",
+      "epsg26910-1420-10867",
+      "epsg26910-1421-10867",
+      "epsg26910-1422-10867",
+      "epsg26910-1423-10867",
+      "epsg26910-1424-10867",
+      "epsg26910-1425-10867",
+      "epsg26910-1426-10867",
+      "epsg26910-1427-10867",
+      "epsg26910-1428-10867",
+      "epsg26910-1429-10867",
+      "epsg26910-1430-10867",
+      "epsg26910-1431-10867",
+      "epsg26910-1432-10867",
+      "epsg26910-1433-10867",
+      "epsg26910-1434-10867",
+      "epsg26910-1435-10867",
+      "epsg26910-1436-10867",
+      "epsg26910-1437-10867",
+      "epsg26910-1438-10867",
+      "epsg26910-1439-10867",
+      "epsg26910-1440-10867",
+      "epsg26910-1440-10868"
+    ]
+  },
+  "sourceLocks": [
+    {
+      "role": "original",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "sourceLockSha256": "sha256:bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationSha256": "sha256:f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715",
+      "rasterSha256": "sha256:ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "54,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+      "sourceLockSha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+      "elevationAuthorizationSha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c",
+      "rasterSha256": "sha256:80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a"
+    },
+    {
+      "role": "original",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+      "sourceLockSha256": "sha256:ea8fc1cb4ae79a65146c30a68d8f2f224ba8450010db16d35b3af989bb1d53bd",
+      "elevationAuthorizationId": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationSha256": "sha256:7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07",
+      "rasterSha256": "sha256:a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "55,417",
+      "sourceLockId": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+      "sourceLockSha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24",
+      "elevationAuthorizationId": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+      "elevationAuthorizationSha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df",
+      "rasterSha256": "sha256:fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645"
+    }
+  ],
+  "audited": {
+    "tileIds": [
+      "epsg26910-1417-10867",
+      "epsg26910-1418-10867",
+      "epsg26910-1419-10867",
+      "epsg26910-1420-10867",
+      "epsg26910-1421-10867",
+      "epsg26910-1422-10867",
+      "epsg26910-1423-10867",
+      "epsg26910-1424-10867",
+      "epsg26910-1425-10867",
+      "epsg26910-1426-10867",
+      "epsg26910-1427-10867",
+      "epsg26910-1428-10867",
+      "epsg26910-1429-10867",
+      "epsg26910-1430-10867",
+      "epsg26910-1431-10867",
+      "epsg26910-1432-10867",
+      "epsg26910-1433-10867",
+      "epsg26910-1434-10867",
+      "epsg26910-1435-10867",
+      "epsg26910-1436-10867",
+      "epsg26910-1437-10867",
+      "epsg26910-1438-10867",
+      "epsg26910-1439-10867",
+      "epsg26910-1440-10867",
+      "epsg26910-1440-10868"
+    ],
+    "residentIds": [
+      "epsg26910-1420-10868",
+      "epsg26910-1421-10868",
+      "epsg26910-1422-10868",
+      "epsg26910-1423-10868",
+      "epsg26910-1424-10868",
+      "epsg26910-1425-10868",
+      "epsg26910-1426-10868",
+      "epsg26910-1427-10868",
+      "epsg26910-1428-10868",
+      "epsg26910-1429-10868",
+      "epsg26910-1430-10868",
+      "epsg26910-1431-10868",
+      "epsg26910-1432-10868",
+      "epsg26910-1433-10868",
+      "epsg26910-1434-10868",
+      "epsg26910-1435-10868",
+      "epsg26910-1436-10868",
+      "epsg26910-1437-10868",
+      "epsg26910-1438-10868",
+      "epsg26910-1439-10868",
+      "epsg26910-1440-10869"
+    ],
+    "candidateCandidateSeamKeys": [
+      "epsg26910-1417-10867|east->epsg26910-1418-10867|west",
+      "epsg26910-1418-10867|east->epsg26910-1419-10867|west",
+      "epsg26910-1419-10867|east->epsg26910-1420-10867|west",
+      "epsg26910-1420-10867|east->epsg26910-1421-10867|west",
+      "epsg26910-1421-10867|east->epsg26910-1422-10867|west",
+      "epsg26910-1422-10867|east->epsg26910-1423-10867|west",
+      "epsg26910-1423-10867|east->epsg26910-1424-10867|west",
+      "epsg26910-1424-10867|east->epsg26910-1425-10867|west",
+      "epsg26910-1425-10867|east->epsg26910-1426-10867|west",
+      "epsg26910-1426-10867|east->epsg26910-1427-10867|west",
+      "epsg26910-1427-10867|east->epsg26910-1428-10867|west",
+      "epsg26910-1428-10867|east->epsg26910-1429-10867|west",
+      "epsg26910-1429-10867|east->epsg26910-1430-10867|west",
+      "epsg26910-1430-10867|east->epsg26910-1431-10867|west",
+      "epsg26910-1431-10867|east->epsg26910-1432-10867|west",
+      "epsg26910-1432-10867|east->epsg26910-1433-10867|west",
+      "epsg26910-1433-10867|east->epsg26910-1434-10867|west",
+      "epsg26910-1434-10867|east->epsg26910-1435-10867|west",
+      "epsg26910-1435-10867|east->epsg26910-1436-10867|west",
+      "epsg26910-1436-10867|east->epsg26910-1437-10867|west",
+      "epsg26910-1437-10867|east->epsg26910-1438-10867|west",
+      "epsg26910-1438-10867|east->epsg26910-1439-10867|west",
+      "epsg26910-1439-10867|east->epsg26910-1440-10867|west",
+      "epsg26910-1440-10867|north->epsg26910-1440-10868|south"
+    ],
+    "candidateExistingResidentSeamKeys": [
+      "epsg26910-1420-10867|north->epsg26910-1420-10868|south",
+      "epsg26910-1421-10867|north->epsg26910-1421-10868|south",
+      "epsg26910-1422-10867|north->epsg26910-1422-10868|south",
+      "epsg26910-1423-10867|north->epsg26910-1423-10868|south",
+      "epsg26910-1424-10867|north->epsg26910-1424-10868|south",
+      "epsg26910-1425-10867|north->epsg26910-1425-10868|south",
+      "epsg26910-1426-10867|north->epsg26910-1426-10868|south",
+      "epsg26910-1427-10867|north->epsg26910-1427-10868|south",
+      "epsg26910-1428-10867|north->epsg26910-1428-10868|south",
+      "epsg26910-1429-10867|north->epsg26910-1429-10868|south",
+      "epsg26910-1430-10867|north->epsg26910-1430-10868|south",
+      "epsg26910-1431-10867|north->epsg26910-1431-10868|south",
+      "epsg26910-1432-10867|north->epsg26910-1432-10868|south",
+      "epsg26910-1433-10867|north->epsg26910-1433-10868|south",
+      "epsg26910-1434-10867|north->epsg26910-1434-10868|south",
+      "epsg26910-1435-10867|north->epsg26910-1435-10868|south",
+      "epsg26910-1436-10867|north->epsg26910-1436-10868|south",
+      "epsg26910-1437-10867|north->epsg26910-1437-10868|south",
+      "epsg26910-1438-10867|north->epsg26910-1438-10868|south",
+      "epsg26910-1439-10867|north->epsg26910-1439-10868|south",
+      "epsg26910-1440-10868|north->epsg26910-1440-10869|south",
+      "epsg26910-1440-10868|west->epsg26910-1439-10868|east"
+    ],
+    "seamCount": 46,
+    "seamSampleCount": 17710,
+    "exactFloat32SeamCount": 46,
+    "crossSourceSeamSamples": 0
+  },
+  "writeGate": {
+    "productionWriteEnabled": false,
+    "reason": "Standard production mosaic verifiers still require canonical per-pixel receipt schema promotion; this lock is validation evidence only."
+  }
+}

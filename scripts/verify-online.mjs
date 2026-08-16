@@ -141,6 +141,11 @@ try {
   }
   check('player entered a parked car', entered === true, entered);
   if (entered) {
+    await page1.waitForFunction(() => {
+      const embodiment = window.__SF_SIM__.getPlayerVehicleEmbodimentState?.();
+      return window.__SF_SIM__.isDriving()
+        && (embodiment?.phase === 'seated' || embodiment?.phase === 'drive-by');
+    }, null, { timeout: 5000 });
     await page1.keyboard.down('w');
     await page1.waitForTimeout(1400);
     await page1.keyboard.up('w');
@@ -178,48 +183,51 @@ try {
     }, food.position);
     const after = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     check(
-      'life-sim eating action works',
-      lifeResult.canEat === true
-        && lifeResult.ate === true
-        && after.cash < before.cash
-        && after.needs.hunger < before.needs.hunger,
+      'life-sim eating rejects a context-free driving bypass',
+      lifeResult.canEat === false
+        && lifeResult.ate === false
+        && after.cash === before.cash
+        && after.needs.hunger <= before.needs.hunger + 0.08,
       {
         lifeResult,
         before: { cash: before.cash, hunger: before.needs.hunger },
         after: { cash: after.cash, hunger: after.needs.hunger },
       },
     );
-    const beforeWork = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
     const worked = await page1.evaluate((position) => {
       const sim = window.__SF_SIM__;
+      const before = sim.lifeSim.getState();
       const canWork = sim.lifeSim.canWork(position);
-      const workedShift = sim.lifeSim.workShift(position);
-      return { canWork, workedShift };
+      const started = sim.lifeSim.workShift();
+      const after = sim.lifeSim.getState();
+      return { before, canWork, started, after };
     }, food.position);
-    const afterWork = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
+    const beforeWork = worked.before;
+    const afterWork = worked.after;
     check(
-      'life-sim work shift earns cash',
+      'life-sim work rejects a context-free driving bypass',
       worked.canWork === true
-        && worked.workedShift === true
-        && afterWork.cash > beforeWork.cash
-        && afterWork.needs.energy < beforeWork.needs.energy,
+        && worked.started === false
+        && afterWork.cash === beforeWork.cash
+        && afterWork.lastTransaction?.at === beforeWork.lastTransaction?.at,
       {
         worked,
-        before: { cash: beforeWork.cash, energy: beforeWork.needs.energy },
-        after: { cash: afterWork.cash, energy: afterWork.needs.energy },
+        before: { cash: beforeWork.cash, needs: beforeWork.needs },
+        after: { cash: afterWork.cash, needs: afterWork.needs },
       },
     );
-    const beforeRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
-    const rested = await page1.evaluate(() => {
-      const ok = window.__SF_SIM__.lifeSim.rest();
-      return ok;
+    const restAttempt = await page1.evaluate(() => {
+      const before = window.__SF_SIM__.lifeSim.getState();
+      const rested = window.__SF_SIM__.lifeSim.rest();
+      const after = window.__SF_SIM__.lifeSim.getState();
+      return { before, rested, after };
     });
-    const afterRest = await page1.evaluate(() => window.__SF_SIM__.lifeSim.getState());
+    const { before: beforeRest, rested, after: afterRest } = restAttempt;
     check(
-      'life-sim rest recovers energy and spends time',
-      rested === true
-        && afterRest.needs.energy > beforeRest.needs.energy
-        && afterRest.clock > beforeRest.clock,
+      'life-sim rest rejects a context-free driving bypass',
+      rested === false
+        && afterRest.needs.energy === beforeRest.needs.energy
+        && afterRest.clock === beforeRest.clock,
       {
         rested,
         before: { energy: beforeRest.needs.energy, clock: beforeRest.clock },

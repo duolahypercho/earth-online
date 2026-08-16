@@ -1,0 +1,46 @@
+{
+  "claims": {
+    "facadeSemanticsSupplied": false,
+    "gameplayChanged": false,
+    "productionGeometryChanged": false,
+    "runtimeChanged": false,
+    "verticalReconciliationComplete": false
+  },
+  "kind": "sf-datasf-building-height-preview-manifest",
+  "regions": [
+    {
+      "artifact": {
+        "bytes": 24588,
+        "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1441-10893.datasf-height-preview.glb",
+        "sha256": "sha256:8ef8977c3c07d046d1e5a4b8ca453079f1bb9c67a47f0bd30749e965b3280919"
+      },
+      "changesSha256": "sha256:ed3a84785fa587c6d2508ad8292cbac7afcb6bb1d694c86bb54d986369748aa4",
+      "counts": {
+        "changedTopVertices": 111,
+        "matchedBuildings": 11,
+        "sourceBuildings": 24
+      },
+      "id": "ferry",
+      "receipt": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1441-10893.datasf-height-preview.receipt.json",
+      "tileId": "epsg26910-1441-10893"
+    },
+    {
+      "artifact": {
+        "bytes": 344028,
+        "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1430-10882.datasf-height-preview.glb",
+        "sha256": "sha256:f44f5c6d2707d869a82d6f1afc7d86d97796b9d13adc16735e2a191223223353"
+      },
+      "changesSha256": "sha256:d064cb290cef1b18ea696514077f55b5f7e64c9889aa3666775fb5c75378ef79",
+      "counts": {
+        "changedTopVertices": 3321,
+        "matchedBuildings": 297,
+        "sourceBuildings": 390
+      },
+      "id": "district",
+      "receipt": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1430-10882.datasf-height-preview.receipt.json",
+      "tileId": "epsg26910-1430-10882"
+    }
+  ],
+  "schemaVersion": 1,
+  "status": "preview-source-height-comparison-only-not-production"
+}

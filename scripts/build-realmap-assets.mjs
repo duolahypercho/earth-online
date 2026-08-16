@@ -7,6 +7,7 @@ import {
   createStreetDesign,
   streetDesignToMapMeta,
 } from '../src/realmap/street-design.js';
+import { canonicalBuildTimestamp } from './build-clock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -119,7 +120,21 @@ function digestFile(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+export function createCityMetadata({ generatedAt, projection, boundaryRings, detailBBox, streetDesign, counts, sources }) {
+  return {
+    generatedAt,
+    center: CENTER,
+    projection,
+    boundaryRings,
+    detailBBox,
+    streetDesign,
+    counts,
+    sources,
+  };
+}
+
 async function main() {
+  const buildTimestamp = canonicalBuildTimestamp();
   await ensureShoreline();
   if (!fs.existsSync(ATLAS_PATH)) {
     throw new Error(`Missing atlas. Run scripts/build-sf-atlas.mjs first: ${ATLAS_PATH}`);
@@ -245,16 +260,14 @@ async function main() {
     }
   }
 
-  const streetDesign = streetDesignToMapMeta(createStreetDesign());
+  const streetDesign = streetDesignToMapMeta(createStreetDesign(), { generatedAt: buildTimestamp });
 
   const city = {
-    meta: {
-      generatedAt: new Date().toISOString(),
-      center: CENTER,
+    meta: createCityMetadata({
+      generatedAt: buildTimestamp,
       projection: atlas.meta.projection,
       boundaryRings: boundary.length,
       detailBBox: atlas.meta?.detailBBox || null,
-      /** Street/sidewalk sizing knobs — consumed by realmap Full City */
       streetDesign,
       counts: {
         roads: cityRoads.length,
@@ -282,7 +295,7 @@ async function main() {
           sha256: digestFile(SHORELINE_PATH),
         },
       ],
-    },
+    }),
     boundary,
     roads: cityRoads,
     detailRoads,
@@ -301,4 +314,4 @@ async function main() {
   console.log(JSON.stringify(city.meta.counts));
 }
 
-await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

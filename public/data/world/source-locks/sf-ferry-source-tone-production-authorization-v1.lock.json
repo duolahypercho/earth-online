@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-building-source-tone-production-authorization",
+  "id": "sf-ferry-source-tone-production-authorization-v1",
+  "status": "production-authorized-bounded-ferry-mixed-mode",
+  "productionWriteEnabled": true,
+  "productionPromotionAuthorized": true,
+  "tile": {
+    "id": "epsg26910-1441-10893",
+    "gridIndex": [1441, 10893],
+    "originEpsg26910VerticalMetres": [553344, 4182912, 0],
+    "horizontalCrs": "EPSG:26910",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  },
+  "presentation": {
+    "mode": "source-tone-v1",
+    "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+    "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+    "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59",
+    "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
+    "geometryLedgerSha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954"
+  },
+  "legacyReference": {
+    "glb": {
+      "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+      "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+    },
+    "receipt": {
+      "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.receipt.json",
+      "sha256": "sha256:fdba34c57b6af539a5a2d53bc185f3dd091ede4323f836c7716c619bf07c15fd"
+    },
+    "fallbackRemainsLegacy": true
+  },
+  "candidateProof": {
+    "manifest": {
+      "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/sf-building-source-tone-production-proof-v1.manifest.json",
+      "sha256": "sha256:a500ec5b908c7461462aaccf11c8a4079a1d26fafcd88dfc5397209da4c81cfb"
+    },
+    "glb": {
+      "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.glb",
+      "sha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500",
+      "bytes": 3645408
+    },
+    "metricReceipt": {
+      "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.metric-receipt.json",
+      "sha256": "sha256:0f5b0f7a70b37060d0beec16ae459b917c7e64c0ab987fb22ad37ee02c72cbe9"
+    },
+    "proofReceipt": {
+      "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.receipt.json",
+      "sha256": "sha256:5bceebcdbbf79bc32596ab9e5a492ebb005dcf8cd6034f2bf9cdc974d7ab2351"
+    }
+  },
+  "boundaryMask": {
+    "id": "source-tone-legacy-grid-boundary-mask-v1",
+    "adjacencyPolicy": "static-manifest-cardinal-neighbours-v1",
+    "residencyInput": false,
+    "tileSizeMetres": 384,
+    "exactMatchBandMetres": 4,
+    "blendBandMetres": 16,
+    "legacyGridCellMetres": 62,
+    "legacyNeighbourSides": ["south", "west"],
+    "legacyNeighbourTileIds": ["epsg26910-1440-10893", "epsg26910-1441-10892"],
+    "directClosureTileIds": ["epsg26910-1440-10893", "epsg26910-1441-10892", "epsg26910-1441-10893"],
+    "directSharedBuildingWayIds": [32862406, 44106213, 132238424, 192026932, 192026938, 1301393957],
+    "seamLedger": {
+      "path": "public/data/world/preview-artifacts/sf-building-seam-edge-ledger-v1/sf-building-seam-edge-ledger-v1.ledger.json.gz",
+      "sha256": "sha256:97c07b77aa38ea1b74213eb843497801ba49921bbb06c78005712928eecbdbf1"
+    }
+  },
+  "qaEvidence": {
+    "command": "npm run qa:sf-map-ferry-boundary-mask",
+    "script": {
+      "path": "scripts/qa-sf-map-ferry-boundary-mask-i53.mjs",
+      "sha256": "sha256:c224e08e93dc27ab886f72353019a29818b3939784f964d0e27da040884d50df"
+    },
+    "twoFreshBootsExact": true,
+    "screenshotSha256": "sha256:e1314c8117e77f7f87041a2f0e020b24c5672a26ebfdbbceef48c5d788c838bf",
+    "views": [
+      {"kind": "orthographic-top-down-exact-seam", "westSamples": 372, "southSamples": 306, "maxRgbDelta": 0},
+      {"kind": "perspective-tilted-live-legacy-normal", "westSamples": 734, "southSamples": 1667, "maxRgbDelta": 0}
+    ],
+    "drawCallsAndTrianglesUnchanged": true,
+    "metricOriginScaleUnchanged": true,
+    "productionFilesMutatedByQa": false
+  },
+  "scope": {
+    "productionTileCountAtAuthorization": 803,
+    "authorizedTileCount": 1,
+    "gameplayChanged": false,
+    "geometryOrIndicesChanged": false,
+    "horizontalOrVerticalSourceClaimChanged": false,
+    "citywideSourceToneClaim": false
+  }
+}

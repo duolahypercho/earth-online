@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import parse from 'osm-pbf-parser';
 import through from 'through2';
+import { canonicalBuildTimestamp } from './build-clock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -123,7 +124,7 @@ function intersects(bbox, other) {
     && bbox.maxLon >= other.minLon;
 }
 
-function simplify(points, tolerance) {
+export function simplify(points, tolerance) {
   if (points.length <= 2) return points;
   let maxDistance = 0;
   let index = 0;
@@ -142,7 +143,7 @@ function simplify(points, tolerance) {
   return [...left.slice(0, -1), ...right];
 }
 
-function simplifyClosedRing(points, tolerance) {
+export function simplifyClosedRing(points, tolerance) {
   if (points.length < 4) return points;
   const first = points[0];
   const last = points[points.length - 1];
@@ -153,14 +154,14 @@ function simplifyClosedRing(points, tolerance) {
   return simplified.length >= 3 ? simplified : open;
 }
 
-function pointToSegmentDistance(p, a, b) {
-  const dx = b.lat - a.lat;
-  const dy = b.lon - a.lon;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq === 0) return Math.hypot(p.lat - a.lat, p.lon - a.lon);
-  let t = ((p.lat - a.lat) * dx + (p.lon - a.lon) * dy) / lengthSq;
+export function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq === 0) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq;
   t = Math.max(0, Math.min(1, t));
-  return Math.hypot(p.lat - (a.lat + t * dx), p.lon - (a.lon + t * dy));
+  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
 }
 
 function laneCountForWay(tags, cls) {
@@ -316,7 +317,22 @@ function makeRoadRecord(way, cls, points) {
   };
 }
 
+export function createAtlasMetadata({ generatedAt, counts }) {
+  return {
+    generatedAt,
+    center: CENTER,
+    projection: {
+      metersPerDegreeLat: METERS_PER_DEG_LAT,
+      metersPerDegreeLon: METERS_PER_DEG_LON,
+    },
+    cityBBox: CITY_BBOX,
+    detailBBox: DETAIL_BBOX,
+    counts,
+  };
+}
+
 async function main() {
+  const buildTimestamp = canonicalBuildTimestamp();
   const pbfPath = process.argv.includes('--download') ? null : PBF_PATH;
   const source = pbfPath && fs.existsSync(pbfPath)
     ? pbfPath
@@ -408,15 +424,8 @@ async function main() {
   }
 
   const atlas = {
-    meta: {
-      generatedAt: new Date().toISOString(),
-      center: CENTER,
-      projection: {
-        metersPerDegreeLat: METERS_PER_DEG_LAT,
-        metersPerDegreeLon: METERS_PER_DEG_LON,
-      },
-      cityBBox: CITY_BBOX,
-      detailBBox: DETAIL_BBOX,
+    meta: createAtlasMetadata({
+      generatedAt: buildTimestamp,
       counts: {
         roads: cityRoads.length,
         detailRoads: detailRoads.length,
@@ -424,7 +433,7 @@ async function main() {
         detailBuildings: detailBuildings.length,
         signals: signals.length,
       },
-    },
+    }),
     boundary: boundaryRings,
     roads: cityRoads,
     detailRoads,
@@ -439,4 +448,4 @@ async function main() {
   console.log(JSON.stringify(atlas.meta.counts));
 }
 
-await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

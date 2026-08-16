@@ -13,6 +13,12 @@ import { createBlackboard, tick as tickBehaviorTree } from './npc-behavior-tree.
 import { createTreeForRole } from './npc-trees.js';
 
 const POOL_SIZE = 48;
+const MAX_PERSISTED_COMBAT_DEFEATS = 8;
+const VEHICLE_IMPACT_DEFEAT_COUNT = 2;
+const SFPD_OFFICER_POOL_SIZE = 3;
+const SFPD_OFFICER_SPEED = 3.25;
+const SFPD_OFFICER_STANDOFF = [11.5, 13, 14.5];
+const SFPD_OFFICER_TRACER_SECONDS = 0.18;
 // Eight camera-facing actors carry the costly face/clothing treatment; the
 // remainder preserve a readable, varied background crowd inside the 48-person
 // fixed pool. This keeps the hero pass bounded on Cinema quality.
@@ -37,6 +43,14 @@ const ADULT_STEP_LENGTH = 0.68;
 const GAIT_START_DAMP = 10.2;
 const GAIT_STOP_DAMP = 5.4;
 const MAX_DT = 0.05;
+const VEHICLE_WITNESS_FLEE_SPEED = 2.45;
+const VEHICLE_WITNESS_MAX_TRAVEL = 4.4;
+// Shared contact envelope for the inline crowd animator. It is intentionally
+// small so the fixed pool stays grounded without a per-actor IK pass.
+const CONTACT_PELVIS_DROP = 0.008;
+const CONTACT_PELVIS_ROLL = 0.035;
+const CONTACT_KNEE_BEND = 0.045;
+const CONTACT_TOE_ROLL = 0.06;
 
 const STATE_WALK = 0;
 const STATE_IDLE = 1;
@@ -54,6 +68,11 @@ const LATERAL_DRIFT = 1.35;
 const CROWD_CELL_SIZE = PERSONAL_SPACE;
 const CROWD_CELL_STRIDE = 4096;
 const MAX_PATH_ATTACH_DISTANCE = 2.2;
+const ON_FOOT_PLAYER_RADIUS = 0.72;
+const ON_FOOT_PEDESTRIAN_RADIUS = 0.46;
+const ON_FOOT_CONTACT_MARGIN = 0.025;
+const ON_FOOT_CONTACT_REARM_GAP = 0.18;
+const ON_FOOT_PLAYER_YIELD_SHIFT = 0.28;
 
 const SKIN = [0xd5aa86, 0xc4926c, 0xb77d5b, 0x9d6549, 0x80502f, 0xe0ba94, 0x6d402b];
 const HAIR = [0x171719, 0x2b201d, 0x4e3324, 0x704b2e, 0x9a6d3d, 0x7d7d76, 0xc2a274];
@@ -292,6 +311,671 @@ export function getStreamedPedestrianVisualProfile() {
     topColors: [...TOPS],
     bottomColors: [...BOTTOMS],
     shoeColors: [...SHOES],
+  };
+}
+
+/**
+ * Three small, persistent SFPD rigs paired one-to-one with live traffic
+ * responders. The actors are transient pursuit presentation: they never enter
+ * resident identity, witness, favor, impact, or persistence ledgers.
+ */
+export function createSfpdOfficerResponse({
+  scene,
+  getNearestWorldBlocker,
+  getSurfaceHeight,
+} = {}) {
+  if (!scene?.isScene) {
+    throw new TypeError('createSfpdOfficerResponse requires a THREE.Scene.');
+  }
+
+  const group = new THREE.Group();
+  group.name = 'SFPD on-foot response';
+  scene.add(group);
+  const officers = [];
+  const origin = new THREE.Vector3();
+  const destination = new THREE.Vector3();
+  const direction = new THREE.Vector3();
+  const playerHead = new THREE.Vector3();
+  const muzzlePoint = new THREE.Vector3();
+  const aimQuaternion = new THREE.Quaternion();
+  const forwardAxis = new THREE.Vector3(0, 0, 1);
+  const officerBounds = new THREE.Box3();
+  const events = {
+    aims: 0,
+    shots: 0,
+    damage: [],
+    officerFires: [],
+    bookings: 0,
+  };
+  let blockerCycles = 0;
+  let blockedCycleElapsed = 0;
+  let lastBlocked = null;
+  let lastLevel = 0;
+
+  function material(color, options = {}) {
+    return new THREE.MeshStandardMaterial({
+      color,
+      roughness: options.roughness ?? 0.72,
+      metalness: options.metalness ?? 0.04,
+      emissive: options.emissive ?? 0x000000,
+      emissiveIntensity: options.emissiveIntensity ?? 0,
+      transparent: options.transparent ?? false,
+      opacity: options.opacity ?? 1,
+      depthWrite: options.depthWrite ?? true,
+    });
+  }
+
+  function addPart(parent, geometry, partMaterial, position, name) {
+    const mesh = new THREE.Mesh(geometry, partMaterial);
+    mesh.name = name;
+    mesh.position.set(position[0], position[1], position[2]);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function makeOfficer(slot) {
+    const root = new THREE.Group();
+    root.name = `SFPD officer ${slot + 1}`;
+    root.visible = false;
+    root.userData.sfpdOfficer = true;
+    root.userData.combatDisabled = false;
+    root.userData.combatDefeated = false;
+    const navy = material(slot === 1 ? 0x172d48 : 0x122640);
+    const darkNavy = material(0x091522);
+    const skin = material([0xbd805b, 0xd1a07c, 0x8d5c42][slot]);
+    const metal = material(0xc8d2d8, { roughness: 0.3, metalness: 0.72 });
+    const weaponMaterial = material(0x15191d, { roughness: 0.34, metalness: 0.52 });
+    const telegraphMaterial = new THREE.LineBasicMaterial({
+      color: 0xff5d4d,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const tracerMaterial = new THREE.LineBasicMaterial({
+      color: 0xffc05a,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const torso = addPart(root, new THREE.BoxGeometry(0.62, 0.72, 0.34), navy, [0, 1.14, 0], 'SFPD uniform torso');
+    const belt = addPart(root, new THREE.BoxGeometry(0.68, 0.11, 0.39), darkNavy, [0, 0.79, 0], 'SFPD duty belt');
+    const badge = addPart(root, new THREE.OctahedronGeometry(0.075, 0), metal, [-0.18, 1.31, 0.185], 'SFPD badge');
+    const head = addPart(root, new THREE.SphereGeometry(0.22, 8, 6), skin, [0, 1.73, 0], 'SFPD officer head');
+    const cap = addPart(root, new THREE.CylinderGeometry(0.22, 0.24, 0.1, 8), darkNavy, [0, 1.94, 0], 'SFPD patrol cap');
+    const capBill = addPart(root, new THREE.BoxGeometry(0.28, 0.035, 0.2), darkNavy, [0, 1.91, 0.16], 'SFPD cap bill');
+    const leftLeg = addPart(root, new THREE.BoxGeometry(0.23, 0.72, 0.25), navy, [-0.17, 0.36, 0], 'SFPD left leg');
+    const rightLeg = addPart(root, new THREE.BoxGeometry(0.23, 0.72, 0.25), navy, [0.17, 0.36, 0], 'SFPD right leg');
+    const leftArm = addPart(root, new THREE.BoxGeometry(0.18, 0.62, 0.2), navy, [-0.38, 1.13, 0.02], 'SFPD support arm');
+    const rightArm = addPart(root, new THREE.BoxGeometry(0.18, 0.62, 0.2), navy, [0.38, 1.13, 0.02], 'SFPD weapon arm');
+    const weapon = addPart(root, new THREE.BoxGeometry(0.14, 0.16, 0.48), weaponMaterial, [0.17, 1.34, 0.38], 'SFPD visible sidearm');
+    weapon.rotation.x = -0.08;
+
+    const telegraphGeometry = new THREE.BufferGeometry();
+    telegraphGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const telegraph = new THREE.Line(telegraphGeometry, telegraphMaterial);
+    telegraph.name = 'SFPD aim telegraph';
+    telegraph.visible = false;
+    telegraph.frustumCulled = false;
+    scene.add(telegraph);
+
+    const tracerGeometry = new THREE.BufferGeometry();
+    tracerGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const tracer = new THREE.Line(tracerGeometry, tracerMaterial);
+    tracer.name = 'SFPD pressure tracer';
+    tracer.visible = false;
+    tracer.frustumCulled = false;
+    scene.add(tracer);
+
+    group.add(root);
+    const officer = {
+      slot,
+      id: null,
+      responderId: null,
+      root,
+      torso,
+      belt,
+      badge,
+      head,
+      cap,
+      capBill,
+      leftLeg,
+      rightLeg,
+      leftArm,
+      rightArm,
+      weapon,
+      telegraph,
+      telegraphMaterial,
+      tracer,
+      tracerMaterial,
+      tracerLife: 0,
+      state: 'cleared',
+      grounded: true,
+      hasLineOfSight: false,
+      blocker: null,
+      distance: null,
+      phase: slot * 1.7,
+      deployState: 'cleared',
+      deployElapsed: 0,
+      deployStart: new THREE.Vector3(),
+      deployEnd: new THREE.Vector3(),
+      parentVehicleSpeed: null,
+      parentVehicleDistance: null,
+      parentVehicleHoldRequested: false,
+      parentVehicleHolding: false,
+      exitClearance: 0,
+      bodyVehicleOverlap: false,
+      groundResidual: 0,
+      surfaceY: null,
+      footY: null,
+      targetable: false,
+      aimStartedAt: null,
+      holdPosition: false,
+      materials: [navy, darkNavy, skin, metal, weaponMaterial, telegraphMaterial, tracerMaterial],
+    };
+    officers.push(officer);
+    return officer;
+  }
+
+  for (let index = 0; index < SFPD_OFFICER_POOL_SIZE; index += 1) makeOfficer(index);
+
+  function setLine(line, start, end) {
+    const attribute = line.geometry.getAttribute('position');
+    attribute.setXYZ(0, start.x, start.y, start.z);
+    attribute.setXYZ(1, end.x, end.y, end.z);
+    attribute.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
+  }
+
+  function deactivate(officer, { resetDefeat = false } = {}) {
+    officer.root.visible = false;
+    officer.telegraph.visible = false;
+    officer.telegraphMaterial.opacity = 0;
+    officer.tracer.visible = false;
+    officer.tracerMaterial.opacity = 0;
+    officer.tracerLife = 0;
+    officer.state = 'cleared';
+    officer.hasLineOfSight = false;
+    officer.blocker = null;
+    officer.distance = null;
+    officer.deployState = 'cleared';
+    officer.deployElapsed = 0;
+    officer.parentVehicleSpeed = null;
+    officer.parentVehicleDistance = null;
+    officer.parentVehicleHoldRequested = false;
+    officer.parentVehicleHolding = false;
+    officer.exitClearance = 0;
+    officer.bodyVehicleOverlap = false;
+    officer.groundResidual = 0;
+    officer.surfaceY = null;
+    officer.footY = null;
+    officer.targetable = false;
+    officer.aimStartedAt = null;
+    officer.holdPosition = false;
+    officer.id = null;
+    officer.responderId = null;
+    delete officer.root.userData.sfpdOfficerId;
+    delete officer.root.userData.sfpdResponderId;
+    if (resetDefeat) {
+      officer.root.rotation.z = 0;
+      officer.root.userData.combatDisabled = false;
+      officer.root.userData.combatDefeated = false;
+      officer.root.userData.combatReaction = 'settled';
+      officer.root.userData.combatReactionUntil = 0;
+    }
+  }
+
+  function clear({ resetDefeats = true } = {}) {
+    officers.forEach((officer) => deactivate(officer, { resetDefeat: resetDefeats }));
+    lastLevel = 0;
+    lastBlocked = null;
+  }
+
+  function updateLos(officer, playerPosition) {
+    muzzlePoint.copy(officer.root.position);
+    muzzlePoint.y += 1.36;
+    playerHead.set(playerPosition.x, (Number(playerPosition.y) || 0) + 1.34, playerPosition.z);
+    direction.subVectors(playerHead, muzzlePoint);
+    const targetDistance = direction.length();
+    if (targetDistance <= 0.01) {
+      officer.hasLineOfSight = true;
+      officer.blocker = null;
+      return;
+    }
+    direction.multiplyScalar(1 / targetDistance);
+    const blocker = getNearestWorldBlocker?.(muzzlePoint, direction, targetDistance - 0.08) ?? null;
+    officer.blocker = blocker && Number.isFinite(blocker.distance) ? blocker : null;
+    officer.hasLineOfSight = !officer.blocker;
+  }
+
+  function groundOfficer(officer, fallbackY = 0) {
+    const sampled = getSurfaceHeight?.({
+      x: officer.root.position.x,
+      z: officer.root.position.z,
+    });
+    const surfaceY = Number.isFinite(sampled) ? sampled : Number(fallbackY) || 0;
+    officer.root.position.y = surfaceY;
+    officer.root.updateWorldMatrix(true, true);
+    officerBounds.setFromObject(officer.root, true);
+    if (Number.isFinite(officerBounds.min.y)) {
+      officer.root.position.y += surfaceY - officerBounds.min.y;
+      officer.root.updateWorldMatrix(true, true);
+      officerBounds.setFromObject(officer.root, true);
+    }
+    officer.footY = Number.isFinite(officerBounds.min.y) ? officerBounds.min.y : surfaceY;
+    officer.groundResidual = Math.abs(officer.footY - surfaceY);
+    officer.grounded = officer.groundResidual <= 0.03;
+    officer.surfaceY = surfaceY;
+  }
+
+  function update(dt = 0, elapsed = 0, {
+    active = false,
+    level = 0,
+    responders = [],
+    playerPosition = null,
+    outdoor = true,
+    pressure = null,
+  } = {}) {
+    const delta = THREE.MathUtils.clamp(Number(dt) || 0, 0, 0.1);
+    const desired = active && outdoor && playerPosition && level >= 2
+      ? Math.min(SFPD_OFFICER_POOL_SIZE, Math.floor(level), responders.length)
+      : 0;
+    let anyBlocked = false;
+    for (let index = 0; index < officers.length; index += 1) {
+      const officer = officers[index];
+      const responder = responders[index];
+      if (index >= desired || !responder?.active || !responder.position) {
+        deactivate(officer);
+        continue;
+      }
+      const nextId = `sfpd-officer-${responder.id}`;
+      const newlyAssigned = officer.id !== nextId;
+      officer.id = nextId;
+      officer.responderId = responder.id;
+      officer.root.name = `SFPD officer ${nextId}`;
+      officer.root.userData.sfpdOfficerId = nextId;
+      officer.root.userData.sfpdResponderId = responder.id;
+      officer.parentVehicleSpeed = Math.max(0, Number(responder.speed) || 0);
+      officer.parentVehicleHoldRequested = responder.deploymentHold?.requested === true;
+      officer.parentVehicleHolding = responder.deploymentHold?.holding === true;
+      officer.holdPosition = responder.qaHoldPosition === true;
+      officer.parentVehicleDistance = Number.isFinite(responder.distance)
+        ? responder.distance
+        : Math.hypot(
+          responder.position.x - playerPosition.x,
+          responder.position.z - playerPosition.z,
+        );
+      if (newlyAssigned) {
+        const heading = Number(responder.heading) || 0;
+        const curbSide = responder.dir === -1 ? -1 : 1;
+        const groundY = Number(responder.position.y) || Number(playerPosition.y) || 0;
+        officer.deployStart.set(
+          responder.position.x + Math.cos(heading) * 0.72 * curbSide,
+          groundY,
+          responder.position.z - Math.sin(heading) * 0.72 * curbSide,
+        );
+        officer.deployEnd.set(
+          responder.position.x + Math.cos(heading) * 1.72 * curbSide,
+          groundY,
+          responder.position.z - Math.sin(heading) * 1.72 * curbSide,
+        );
+        officer.root.position.copy(officer.deployStart);
+        officer.deployState = 'waiting-for-stop';
+        officer.deployElapsed = 0;
+        officer.root.visible = false;
+        officer.targetable = false;
+        officer.root.rotation.z = 0;
+        officer.root.userData.combatDisabled = false;
+        officer.root.userData.combatDefeated = false;
+      }
+      if (officer.deployState === 'waiting-for-stop') {
+        officer.root.visible = false;
+        officer.targetable = false;
+        if (officer.parentVehicleSpeed <= 2) {
+          officer.deployState = 'exiting';
+          officer.deployElapsed = 0;
+          officer.root.visible = true;
+        } else {
+          continue;
+        }
+      }
+      if (officer.deployState === 'exiting') {
+        officer.deployElapsed += delta;
+        const exitProgress = THREE.MathUtils.smoothstep(
+          THREE.MathUtils.clamp(officer.deployElapsed / 0.5, 0, 1),
+          0,
+          1,
+        );
+        officer.root.position.lerpVectors(officer.deployStart, officer.deployEnd, exitProgress);
+        officer.exitClearance = officer.root.position.distanceTo(officer.deployStart);
+        officer.bodyVehicleOverlap = officer.exitClearance < 0.34;
+        officer.targetable = exitProgress >= 0.55;
+        officer.state = 'exiting';
+        groundOfficer(officer, playerPosition.y);
+        if (exitProgress < 1) continue;
+        officer.deployState = 'deployed';
+        officer.bodyVehicleOverlap = false;
+        officer.targetable = true;
+      }
+      const downed = officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true;
+      officer.distance = Math.hypot(
+        playerPosition.x - officer.root.position.x,
+        playerPosition.z - officer.root.position.z,
+      );
+      if (downed) {
+        officer.state = 'downed';
+        officer.hasLineOfSight = false;
+        officer.telegraph.visible = false;
+        officer.telegraphMaterial.opacity = 0;
+        officer.root.rotation.z = THREE.MathUtils.damp(officer.root.rotation.z, -1.12, 8, delta);
+        groundOfficer(officer, playerPosition.y);
+      } else {
+        const meleeReaction = officer.root.userData.combatReactionSource === 'melee'
+          && officer.root.userData.combatReaction === 'hit-react';
+        if (meleeReaction && officer.root.userData.meleeRecoilPending === true) {
+          const recoilX = Number(officer.root.userData.meleeRecoilDirectionX) || 0;
+          const recoilZ = Number(officer.root.userData.meleeRecoilDirectionZ) || 0;
+          const length = Math.hypot(recoilX, recoilZ) || 1;
+          const applied = Math.max(0, Number(officer.root.userData.meleeRecoilApplied) || 0);
+          const next = Math.min(0.34, applied + delta * 1.15);
+          officer.root.position.x += recoilX / length * (next - applied);
+          officer.root.position.z += recoilZ / length * (next - applied);
+          officer.root.userData.meleeRecoilApplied = next;
+          if (next >= 0.34 - 1e-5) officer.root.userData.meleeRecoilPending = false;
+        }
+        const standoff = SFPD_OFFICER_STANDOFF[index];
+        direction.set(
+          playerPosition.x - officer.root.position.x,
+          0,
+          playerPosition.z - officer.root.position.z,
+        );
+        const planarDistance = direction.length();
+        if (planarDistance > 0.001) direction.multiplyScalar(1 / planarDistance);
+        if (meleeReaction) {
+          officer.state = 'staggered';
+        } else if (officer.holdPosition) {
+          officer.state = 'holding';
+        } else if (planarDistance > standoff + 0.8) {
+          officer.root.position.addScaledVector(direction, Math.min(planarDistance - standoff, SFPD_OFFICER_SPEED * delta));
+          officer.state = 'advancing';
+        } else if (planarDistance < standoff - 1.8) {
+          officer.root.position.addScaledVector(direction, -Math.min(standoff - planarDistance, SFPD_OFFICER_SPEED * 0.72 * delta));
+          officer.state = 'repositioning';
+        } else {
+          officer.state = 'aiming';
+        }
+        officer.root.rotation.y = Math.atan2(direction.x, direction.z);
+        const gait = officer.state === 'advancing' || officer.state === 'repositioning'
+          ? Math.sin(elapsed * 9 + officer.phase) * 0.48
+          : 0;
+        officer.leftLeg.rotation.x = gait;
+        officer.rightLeg.rotation.x = -gait;
+        officer.leftArm.rotation.x = officer.state === 'aiming' ? -0.86 : -gait * 0.58;
+        officer.rightArm.rotation.x = officer.state === 'aiming' ? -0.98 : gait * 0.58;
+        if (meleeReaction) {
+          const pulse = 0.72 + Math.sin(elapsed * 26 + officer.phase) * 0.28;
+          officer.torso.rotation.x = 0.13;
+          officer.torso.rotation.z = 0.1 * pulse;
+          officer.head.rotation.z = 0.15 * pulse;
+          officer.leftArm.rotation.z = 0.2 * pulse;
+          officer.rightArm.rotation.z = -0.2 * pulse;
+        } else {
+          officer.torso.rotation.x = THREE.MathUtils.damp(officer.torso.rotation.x, 0, 16, delta);
+          officer.torso.rotation.z = THREE.MathUtils.damp(officer.torso.rotation.z, 0, 16, delta);
+          officer.head.rotation.z = THREE.MathUtils.damp(officer.head.rotation.z, 0, 16, delta);
+          officer.leftArm.rotation.z = THREE.MathUtils.damp(officer.leftArm.rotation.z, 0, 16, delta);
+          officer.rightArm.rotation.z = THREE.MathUtils.damp(officer.rightArm.rotation.z, 0, 16, delta);
+        }
+        groundOfficer(officer, playerPosition.y);
+        updateLos(officer, playerPosition);
+        anyBlocked ||= !officer.hasLineOfSight;
+        const locking = pressure?.phase === 'locking'
+          && pressure?.responderId === officer.responderId
+          && officer.hasLineOfSight;
+        if (locking && !officer.telegraph.visible) {
+          officer.aimStartedAt = elapsed;
+          events.aims += 1;
+        }
+        officer.telegraph.visible = locking;
+        officer.telegraphMaterial.opacity = locking
+          ? 0.34 + Math.min(0.58, (Number(pressure.lock) || 0) * 0.7)
+          : 0;
+        if (locking) {
+          setLine(officer.telegraph, muzzlePoint, playerHead);
+          if (officer.state !== 'aiming') officer.state = 'aiming';
+        } else {
+          officer.aimStartedAt = null;
+        }
+      }
+      if (officer.tracerLife > 0) {
+        officer.tracerLife = Math.max(0, officer.tracerLife - delta);
+        officer.tracer.visible = officer.tracerLife > 0;
+        officer.tracerMaterial.opacity = officer.tracerLife / SFPD_OFFICER_TRACER_SECONDS;
+      } else {
+        officer.tracer.visible = false;
+        officer.tracerMaterial.opacity = 0;
+      }
+    }
+    if (desired > 0 && anyBlocked) {
+      blockedCycleElapsed += delta;
+      while (blockedCycleElapsed >= 0.85) {
+        blockedCycleElapsed -= 0.85;
+        blockerCycles += 1;
+      }
+    } else {
+      blockedCycleElapsed = 0;
+    }
+    if (desired > 0 && lastBlocked !== null && anyBlocked !== lastBlocked) blockerCycles += 1;
+    if (desired > 0) lastBlocked = anyBlocked;
+    lastLevel = desired > 0 ? Math.floor(level) : 0;
+    return getState();
+  }
+
+  function getPressureAuthority({ responderId = null } = {}) {
+    const officer = officers.find((entry) => (
+      entry.root.visible && entry.targetable && entry.responderId === responderId
+    ));
+    const live = Boolean(officer
+      && officer.root.userData.combatDisabled !== true
+      && officer.root.userData.combatDefeated !== true);
+    return {
+      authorized: Boolean(live && officer.hasLineOfSight),
+      officerId: officer?.id ?? null,
+      responderId,
+      live,
+      los: Boolean(officer?.hasLineOfSight),
+      blocked: Boolean(officer?.blocker),
+      blocker: officer?.blocker ? {
+        source: officer.blocker.source || 'world',
+        distance: Math.round(officer.blocker.distance * 1000) / 1000,
+      } : null,
+    };
+  }
+
+  function registerPressureShot(responderId, playerPosition) {
+    const officer = officers.find((entry) => (
+      entry.root.visible && entry.targetable && entry.responderId === responderId
+    ));
+    if (!officer || officer.root.userData.combatDisabled === true
+      || officer.root.userData.combatDefeated === true || !officer.hasLineOfSight) return false;
+    muzzlePoint.copy(officer.root.position);
+    muzzlePoint.y += 1.36;
+    playerHead.set(playerPosition.x, (Number(playerPosition.y) || 0) + 1.34, playerPosition.z);
+    setLine(officer.tracer, muzzlePoint, playerHead);
+    direction.subVectors(playerHead, muzzlePoint).normalize();
+    aimQuaternion.setFromUnitVectors(forwardAxis, direction);
+    officer.weapon.quaternion.copy(aimQuaternion);
+    officer.tracerLife = SFPD_OFFICER_TRACER_SECONDS;
+    officer.tracer.visible = true;
+    officer.tracerMaterial.opacity = 1;
+    events.shots += 1;
+    events.officerFires.push({ officerId: officer.id });
+    if (events.officerFires.length > 24) events.officerFires.shift();
+    return true;
+  }
+
+  function recordAim() {
+    events.aims += 1;
+  }
+
+  function recordDamage({ targetId = 'player', source = 'pursuit-pressure', los = false, blocked = false } = {}) {
+    events.damage.push({ targetId, source, los: los === true, blocked: blocked === true });
+    if (events.damage.length > 24) events.damage.shift();
+  }
+
+  function recordBooking() {
+    events.bookings += 1;
+  }
+
+  function resetEvents() {
+    events.aims = 0;
+    events.shots = 0;
+    events.damage.length = 0;
+    events.officerFires.length = 0;
+    events.bookings = 0;
+    blockerCycles = 0;
+    blockedCycleElapsed = 0;
+  }
+
+  function getCombatCandidates(out = []) {
+    for (const officer of officers) {
+      if (!officer.root.visible || !officer.targetable
+        || officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true) continue;
+      out.push({
+        kind: 'officer',
+        id: officer.id,
+        officerId: officer.id,
+        responderId: officer.responderId,
+        label: 'SFPD officer',
+        mesh: officer.root,
+        radius: 0.78,
+        height: 1.08,
+      });
+    }
+    return out;
+  }
+
+  function getState() {
+    const snapshots = officers.filter((officer) => officer.id !== null).map((officer) => {
+      const downed = officer.root.userData.combatDisabled === true
+        || officer.root.userData.combatDefeated === true;
+      return {
+        id: officer.id,
+        responderId: officer.responderId,
+        visible: officer.root.visible,
+        live: !downed,
+        state: downed ? 'downed' : officer.state,
+        parentVehicleId: officer.responderId,
+        distance: officer.distance === null ? null : Math.round(officer.distance * 10) / 10,
+        los: !downed && officer.hasLineOfSight,
+        blocked: !downed && Boolean(officer.blocker),
+        surfaceDelta: Math.round(officer.groundResidual * 1000) / 1000,
+        surfaceY: Number.isFinite(officer.surfaceY)
+          ? Math.round(officer.surfaceY * 1000) / 1000
+          : null,
+        footY: Number.isFinite(officer.footY)
+          ? Math.round(officer.footY * 1000) / 1000
+          : null,
+        targetable: officer.targetable && !downed,
+        defeated: downed,
+        deploy: {
+          state: officer.deployState,
+          vehicleSpeed: officer.parentVehicleSpeed === null
+            ? null
+            : Math.round(officer.parentVehicleSpeed * 10) / 10,
+          holdRequested: officer.parentVehicleHoldRequested,
+          holding: officer.parentVehicleHolding,
+          distance: officer.parentVehicleDistance === null
+            ? null
+            : Math.round(officer.parentVehicleDistance * 10) / 10,
+          exitClearance: Math.round(officer.exitClearance * 1000) / 1000,
+          bodyVehicleOverlap: officer.bodyVehicleOverlap,
+        },
+        aim: {
+          telegraphActive: officer.telegraph.visible,
+          startedAt: officer.aimStartedAt,
+          weaponMuzzle: true,
+          muzzlePosition: {
+            x: Math.round((officer.root.position.x) * 1000) / 1000,
+            y: Math.round((officer.root.position.y + 1.36) * 1000) / 1000,
+            z: Math.round((officer.root.position.z) * 1000) / 1000,
+          },
+        },
+        position: {
+          x: Math.round(officer.root.position.x * 1000) / 1000,
+          y: Math.round(officer.root.position.y * 1000) / 1000,
+          z: Math.round(officer.root.position.z * 1000) / 1000,
+        },
+        morphology: {
+          human: Boolean(officer.head && officer.torso && officer.leftLeg && officer.rightLeg),
+          uniform: Boolean(officer.badge && officer.cap && officer.belt),
+          badge: Boolean(officer.badge),
+          belt: Boolean(officer.belt),
+          weapon: Boolean(officer.weapon?.visible),
+          grounded: officer.grounded,
+        },
+      };
+    });
+    const activeTimers = officers.reduce((count, officer) => (
+      count + (officer.tracerLife > 0 ? 1 : 0) + (officer.telegraph.visible ? 1 : 0)
+    ), 0);
+    const activeProjectiles = officers.filter((officer) => officer.tracer.visible).length;
+    return {
+      level: lastLevel,
+      officers: snapshots,
+      events: {
+        aims: events.aims,
+        shots: events.shots,
+        damage: events.damage.map((entry) => ({ ...entry })),
+        officerFires: events.officerFires.map((entry) => ({ ...entry })),
+        bookings: events.bookings,
+      },
+      blocker: {
+        solid: snapshots.some((officer) => officer.blocked),
+        cycles: blockerCycles,
+      },
+      resources: {
+        officerActors: snapshots.length,
+        activeTimers,
+        activeListeners: 0,
+        activeProjectiles,
+      },
+      cleared: snapshots.length === 0 && activeTimers === 0 && activeProjectiles === 0,
+    };
+  }
+
+  function dispose() {
+    clear();
+    officers.forEach((officer) => {
+      officer.root.traverse((object) => object.geometry?.dispose?.());
+      officer.telegraph.geometry.dispose();
+      officer.tracer.geometry.dispose();
+      officer.materials.forEach((entry) => entry.dispose());
+      officer.telegraph.removeFromParent();
+      officer.tracer.removeFromParent();
+    });
+    group.removeFromParent();
+  }
+
+  return {
+    group,
+    update,
+    clear,
+    getState,
+    getCombatCandidates,
+    getPressureAuthority,
+    registerPressureShot,
+    recordAim,
+    recordDamage,
+    recordBooking,
+    resetEvents,
+    dispose,
   };
 }
 
@@ -1068,8 +1752,13 @@ function createSharedGeometry() {
     // while using one paired arm and one paired leg mesh instead of the
     // close-up component stack. The navigation and behavior rigs still
     // receive the same transform handles below.
-    crowdArms: new THREE.BoxGeometry(0.16, 0.72, 0.14),
-    crowdLegs: new THREE.BoxGeometry(0.22, 0.84, 0.2),
+    // Background actors keep the same two-mesh-per-side budget, but rounded
+    // low-poly limb caps avoid the rectangular "action figure" silhouette at
+    // street distance. Capsule dimensions preserve the previous 0.72 m arm
+    // and 0.84 m leg envelopes, so existing pivots and gait amplitudes remain
+    // unchanged while feet/hand ends catch a softer contact highlight.
+    crowdArms: new THREE.CapsuleGeometry(0.085, 0.55, 2, 6),
+    crowdLegs: new THREE.CapsuleGeometry(0.12, 0.6, 2, 6),
     hood: new THREE.TorusGeometry(0.145, 0.03, 5, 12),
     beanie: new THREE.SphereGeometry(0.19, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.54),
     capBrim: new THREE.BoxGeometry(0.18, 0.026, 0.11),
@@ -1147,7 +1836,12 @@ function createHeroSkeleton() {
 function buildSkinnedHeroActor(geometry, materials, job, legacyRoot, actorIndex, visualVariant = null) {
   const root = new THREE.Group();
   root.name = `NPC hero rig / ${job.id}`;
-  root.scale.copy(legacyRoot.scale);
+  // Bone segments must retain their authored world lengths throughout close
+  // acting. A non-uniform actor-root scale changes a rotated bone's measured
+  // world length even when the bone and its local scale never change, so hero
+  // rigs use their authored height as one uniform adult-size scalar. Shape
+  // variation remains in the skinned silhouette and wardrobe geometry.
+  root.scale.setScalar(legacyRoot.scale.y);
 
   const materialSet = [
     materials.skin,
@@ -2063,7 +2757,14 @@ function createData(mesh, job, index, rng, hero = false) {
   };
 }
 
-export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
+export function createPedestrianSystem({
+  scene,
+  sidewalkNetwork,
+  onPlayerCrowdContact,
+  getCivilianCounterContext,
+  hasCivilianCounterLineOfSight,
+  onCivilianMeleeCounter,
+} = {}) {
   if (!scene?.isScene) throw new TypeError('createPedestrianSystem requires a THREE.Scene.');
 
   const group = new THREE.Group();
@@ -2107,6 +2808,55 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   let focusRadiusSquared = Infinity;
   let qaSoloGroupIndex = null;
   let qaForceWalkIndex = null;
+  let qaWitnessResidentId = null;
+  let qaWitnessPosition = null;
+  let onFootPlayerCollisionProbe = null;
+  let onFootPlayerCollisionLatch = new Set();
+  let qaPlayerContactStage = null;
+  const onFootPlayerContactDiagnostics = {
+    probes: 0,
+    contactTests: 0,
+    corrections: 0,
+    contacts: 0,
+    rearmed: 0,
+    yields: 0,
+    lastProbe: null,
+    lastCorrection: null,
+    lastContact: null,
+  };
+
+  // Civilian retaliation intentionally lives beside the pooled resident state:
+  // combat only marks a melee reaction, while this system owns route-safe
+  // recovery, the upper-body animation, and the one-shot consequence edge.
+  const CIVILIAN_COUNTER_WINDUP_MIN = 0.14;
+  const CIVILIAN_COUNTER_RECOVERY = 0.42;
+  const CIVILIAN_COUNTER_COOLDOWN = 1.05;
+  const CIVILIAN_COUNTER_MIN_RANGE = 0.85;
+  const CIVILIAN_COUNTER_MAX_RANGE = 1.6;
+  const CIVILIAN_COUNTER_EVADE_RANGE = 1.75;
+  const CIVILIAN_COUNTER_CLOSING_DISTANCE = 0.36;
+  const CIVILIAN_COUNTER_CLOSING_SPEED = 0.8;
+  const CIVILIAN_COUNTER_TORSO_SURFACE = 0.18;
+  const CIVILIAN_COUNTER_UPPER_CHEST_OFFSET = 0.45;
+  const CIVILIAN_COUNTER_MIN_SEPARATION = ON_FOOT_PLAYER_RADIUS
+    + ON_FOOT_PEDESTRIAN_RADIUS + ON_FOOT_CONTACT_MARGIN;
+  const counterHandPoint = new THREE.Vector3();
+  const counterHandCenter = new THREE.Vector3();
+  const counterShoulderPoint = new THREE.Vector3();
+  const counterElbowPoint = new THREE.Vector3();
+  const counterFistDirection = new THREE.Vector3();
+  const counterDownAxis = new THREE.Vector3(0, -1, 0);
+  const counterLocalDirection = new THREE.Vector3();
+  const counterPoleDirection = new THREE.Vector3();
+  const counterSolvedElbow = new THREE.Vector3();
+  const counterSolvedHand = new THREE.Vector3();
+  const counterParentQuaternion = new THREE.Quaternion();
+  const counterArmBaseQuaternion = new THREE.Quaternion();
+  const counterForearmBaseQuaternion = new THREE.Quaternion();
+  const counterArmTargetQuaternion = new THREE.Quaternion();
+  const counterForearmTargetQuaternion = new THREE.Quaternion();
+  const counterTargetPoint = new THREE.Vector3();
+  const counterLosOrigin = new THREE.Vector3();
 
   // Enrich each crosswalk with the traffic-signal context it needs to time
   // pedestrian phases realistically. A crossing over the east-west roadway
@@ -2150,6 +2900,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
   const conversationForward = new THREE.Vector3();
   const conversationSide = new THREE.Vector3();
   let beautyRouteCursor = 0;
+  let lastUpdateElapsed = 0;
   const system = {};
 
   function dayNightFactor() {
@@ -3013,6 +3764,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     const rightHeelStrike = Math.pow(Math.max(0, -Math.cos(phase + 0.12)), 14) * gait;
     const leftToeOff = Math.pow(Math.max(0, -Math.sin(phase - 0.18)), 8) * gait;
     const rightToeOff = Math.pow(Math.max(0, Math.sin(phase - 0.18)), 8) * gait;
+    const leftContact = leftStance * (0.62 + leftHeelStrike * 0.38);
+    const rightContact = rightStance * (0.62 + rightHeelStrike * 0.38);
+    const contactBalance = rightContact - leftContact;
+    const contactWeight = Math.max(leftContact, rightContact);
     const turnRate = data.turnRate;
     const turnLean = THREE.MathUtils.clamp(
       turnRate * 0.032 + data.turnIntent * 0.045,
@@ -3030,19 +3785,25 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     const swing = sinPhase * 0.62 * strideScale * crowdBoost * heroBoost;
     const shoulderTwist = sinPhase * 0.19 * gait;
     const bob = gait > 0.001
-      ? (-Math.pow(Math.abs(cosPhase), 4) * 0.019 * gait - data.stepPulse * 0.009)
+      ? (-Math.pow(Math.abs(cosPhase), 4) * 0.019 * gait
+        - data.stepPulse * 0.009
+        - contactWeight * CONTACT_PELVIS_DROP)
         * gaitCue.bob
       : Math.sin(elapsed * 1.7 + data.phase) * 0.006;
     ud.rig.position.y = bob;
     // Pelvis drops over the planted hip while the swing side rises.
     const hipDrop = 0.032 * gait;
-    ud.rig.position.x = -sinPhase * 0.028 * gait;
+    ud.rig.position.x = -sinPhase * 0.028 * gait + contactBalance * 0.006;
     ud.rig.rotation.x = 0.018 * gait
       + Math.sin(phase * 2) * 0.01 * gait
       + gaitCue.lean * gait
       + (crossingCross ? 0.014 * gait : 0)
       - data.grade * 0.055 * gait;
-    ud.rig.rotation.z = -sinPhase * 0.032 * gait - turnLean;
+    // A restrained pelvis roll follows the planted foot, making the capsule
+    // crowd and the skinned heroes share the same weighted contact read.
+    ud.rig.rotation.z = -sinPhase * 0.032 * gait
+      + contactBalance * CONTACT_PELVIS_ROLL * gait
+      - turnLean;
     const leftHipY = ud.leftHipY;
     const rightHipY = ud.rightHipY;
     const leftHipX = ud.leftHipX ?? 0;
@@ -3064,10 +3825,18 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     ud.rightLeg.rotation.y = sinPhase * 0.055 * gait;
     const footLiftScale = skinnedRig ? 0.72 : 1;
     ud.leftShin.rotation.x = (
-      leftSwing * 0.88 * footLiftScale - leftStance * 0.09 + leftHeelStrike * 0.06 - leftToeOff * 0.04
+      leftSwing * 0.88 * footLiftScale
+      - leftStance * 0.09
+      - leftContact * CONTACT_KNEE_BEND
+      + leftHeelStrike * 0.06
+      - leftToeOff * 0.04
     ) * gait;
     ud.rightShin.rotation.x = (
-      rightSwing * 0.88 * footLiftScale - rightStance * 0.09 + rightHeelStrike * 0.06 - rightToeOff * 0.04
+      rightSwing * 0.88 * footLiftScale
+      - rightStance * 0.09
+      - rightContact * CONTACT_KNEE_BEND
+      + rightHeelStrike * 0.06
+      - rightToeOff * 0.04
     ) * gait;
     // Feet advance only during swing; stance holds the shoe line to kill skate.
     const leftFootZOffset = leftSwing * 0.052 * gait;
@@ -3090,10 +3859,18 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     // Skinned foot bones detach when pitch is exaggerated — keep rotation mild.
     const footPitchScale = skinnedRig ? 0.48 : 1;
     ud.leftFoot.rotation.x = footNeutralX
-      + (leftSwing * 0.38 * footPitchScale - leftStance * 0.08 + leftFootPlant * 0.06 + leftHeelStrike * 0.04 - leftToeOff * 0.03) * gait
+      + (leftSwing * 0.38 * footPitchScale
+        - leftStance * 0.08
+        + leftFootPlant * 0.06
+        + leftHeelStrike * 0.04
+        - leftToeOff * CONTACT_TOE_ROLL) * gait
       - data.grade * 0.025 * gait;
     ud.rightFoot.rotation.x = footNeutralX
-      + (rightSwing * 0.38 * footPitchScale - rightStance * 0.08 + rightFootPlant * 0.06 + rightHeelStrike * 0.04 - rightToeOff * 0.03) * gait
+      + (rightSwing * 0.38 * footPitchScale
+        - rightStance * 0.08
+        + rightFootPlant * 0.06
+        + rightHeelStrike * 0.04
+        - rightToeOff * CONTACT_TOE_ROLL) * gait
       - data.grade * 0.025 * gait;
     const armSwing = swing * 0.92 * ud.armSwing * gaitCue.arm;
     ud.leftArm.rotation.x = -armSwing;
@@ -3118,7 +3895,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       ud.rightLeg.rotation.x *= 1.12;
     }
     ud.body.rotation.z = gait > 0.001
-      ? -sinPhase * 0.032 * gait
+      ? -sinPhase * 0.032 * gait + contactBalance * 0.02 * gait
       : Math.sin(elapsed + data.phase) * 0.014;
     ud.body.rotation.x += data.grade * 0.12 * gait;
     ud.body.rotation.y = -shoulderTwist * 0.88 + turnLean * 0.32 + data.turnIntent * 0.035 * gait;
@@ -3595,9 +4372,963 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
   }
 
+  // Combat owns only the short-lived reaction cue on the pooled mesh. The
+  // pedestrian system consumes that cue here so navigation, spacing, and
+  // normal schedule behavior remain the source of truth once it settles.
+  function applyCombatReactionMovement(data, delta) {
+    const userData = data.mesh.userData;
+    const reaction = userData?.combatReaction;
+    if (!userData || !reaction || reaction === 'settled') return false;
+    if (userData.meleeRecoilPending === true) {
+      let directionX = Number(userData.meleeRecoilDirectionX) || 0;
+      let directionZ = Number(userData.meleeRecoilDirectionZ) || 0;
+      const directionLength = Math.hypot(directionX, directionZ) || 1;
+      directionX /= directionLength;
+      directionZ /= directionLength;
+      const applied = Math.max(0, Number(userData.meleeRecoilApplied) || 0);
+      const targetDistance = 0.34;
+      const next = Math.min(targetDistance, applied + Math.max(0, delta) * 1.15);
+      const step = next - applied;
+      // This is deliberately a short, time-integrated root recoil rather than
+      // a hit-frame teleport. Hold the existing path briefly, then let its
+      // normal route sampling take ownership again from the displaced pose.
+      if (step > 0) {
+        data.mesh.position.x += directionX * step;
+        data.mesh.position.z += directionZ * step;
+        data.groundY = data.mesh.position.y;
+        userData.meleeRecoilApplied = next;
+      }
+      if (next >= targetDistance - 1e-5 && userData.meleeRecoilResynced !== true) {
+        // Preserve the recoil when normal path sampling resumes: fold its
+        // lateral component into the existing lane offset, then reattach the
+        // longitudinal path coordinate to the displaced root. Lane recovery
+        // already damps back toward home, so this settles without a snap.
+        const forwardX = Math.sin(data.heading);
+        const forwardZ = Math.cos(data.heading);
+        const rightX = forwardZ;
+        const rightZ = -forwardX;
+        const lateral = directionX * rightX + directionZ * rightZ;
+        data.laneOffset = THREE.MathUtils.clamp(
+          (Number(data.laneOffset) || 0) + lateral * targetDistance,
+          -LATERAL_DRIFT,
+          LATERAL_DRIFT,
+        );
+        const location = data.path ? locateOnPath(data.path, data.mesh.position) : null;
+        if (location) {
+          data.segment = location.segment;
+          data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+          setDestinationFor(data);
+        }
+        userData.meleeRecoilResynced = true;
+        userData.meleeRecoilPending = false;
+      }
+      if (data.state !== STATE_IDLE) setBehaviorState(data, STATE_IDLE, 0.72, 'combat:melee-recoil');
+      else data.timer = Math.max(data.timer, 0.72);
+      return true;
+    }
+    if (reaction !== 'flee') return reaction === 'hit-react' || reaction === 'staggered';
+
+    let directionX = Number(userData.combatReactionDirectionX) || 0;
+    let directionZ = Number(userData.combatReactionDirectionZ) || 0;
+    const directionLength = Math.hypot(directionX, directionZ);
+    if (directionLength < 0.001) {
+      directionX = Math.sin(data.heading + Math.PI);
+      directionZ = Math.cos(data.heading + Math.PI);
+    } else {
+      directionX /= directionLength;
+      directionZ /= directionLength;
+    }
+    if (data.state !== STATE_WALK && data.state !== STATE_CROSS) {
+      setBehaviorState(data, STATE_WALK, 1.6, 'combat:flee');
+    }
+    data.walkPace = Math.max(data.walkPace || 1, 1.28);
+    data.mesh.position.x += directionX * 2.8 * delta;
+    data.mesh.position.z += directionZ * 2.8 * delta;
+    data.heading = Math.atan2(directionX, directionZ);
+    data.mesh.rotation.y = data.heading;
+    data.turnRate = 0;
+    return true;
+  }
+
+  function applyCombatReactionPose(data, elapsed, active) {
+    if (!active) return;
+    const userData = data.mesh.userData;
+    const reaction = userData?.combatReaction;
+    if (reaction !== 'hit-react' && reaction !== 'staggered') return;
+    const melee = userData.combatReactionSource === 'melee';
+    const pulse = 0.72 + Math.sin(elapsed * 26 + data.phase) * 0.28;
+    const stagger = reaction === 'staggered' ? 1.18 : 1;
+    if (melee) {
+      // The root recoil is owned by applyCombatReactionMovement(). This is a
+      // paired upper-body response only: a readable chest check, head snap,
+      // and raised guard arm on the same live actor, with no route/foot edit.
+      const directionX = Number(userData.combatReactionDirectionX) || 0;
+      const directionZ = Number(userData.combatReactionDirectionZ) || 0;
+      const side = Math.sign(
+        directionX * Math.cos(data.heading) - directionZ * Math.sin(data.heading),
+      ) || 1;
+      userData.body.rotation.x += 0.34 * stagger;
+      userData.body.rotation.z += side * 0.32 * stagger;
+      userData.headPivot.rotation.x -= 0.22 * pulse;
+      userData.headPivot.rotation.z -= side * 0.34 * pulse;
+      userData.leftArm.rotation.x -= 0.82 * pulse;
+      userData.leftArm.rotation.z += side * 0.58 * pulse;
+      // Counter-rotate the forearm into a guard so it reads as an elbowed
+      // reaction, not a single rigid arm bar.
+      userData.leftForearm.rotation.x += 0.62 * pulse;
+      userData.rightArm.rotation.x += 0.32 * pulse;
+      userData.rightArm.rotation.z -= side * 0.32 * pulse;
+      userData.rig.position.x += side * 0.018 * pulse;
+      return;
+    }
+    userData.body.rotation.x += 0.11 * stagger;
+    userData.body.rotation.z += Math.sin(elapsed * 24 + data.phase) * 0.11 * stagger;
+    userData.headPivot.rotation.z += Math.sin(elapsed * 18 + data.phase) * 0.16 * pulse;
+    userData.leftArm.rotation.z += 0.16 * pulse * stagger;
+    userData.rightArm.rotation.z -= 0.16 * pulse * stagger;
+    userData.rig.position.x += Math.sin(elapsed * 22 + data.phase) * 0.012 * stagger;
+  }
+
+  function counterStateFor(data) {
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (!userData.civilianMeleeCounter) {
+      userData.civilianMeleeCounter = {
+        phase: 'idle',
+        reactionToken: null,
+        attempt: 0,
+        hand: data.index % 2 === 0 ? 'right' : 'left',
+        recoveryReadyAt: 0,
+        windupStartedAt: 0,
+        contactAt: 0,
+        recoveryUntil: 0,
+        cooldownUntil: 0,
+        closingApplied: 0,
+        closingResynced: false,
+        closingEvaded: false,
+        closingLastDistance: null,
+        neutralArmTelemetry: null,
+        emitted: false,
+        lastEvent: null,
+      };
+    }
+    return userData.civilianMeleeCounter;
+  }
+
+  function resetCivilianMeleeCounter(data) {
+    const userData = data?.mesh?.userData;
+    if (!userData) return;
+    // Restore/restart may replace combat state without rewriting a pooled
+    // mesh's old reaction marker. Remember that marker as consumed so a reset
+    // cannot replay a pre-reset melee hit on the next pedestrian tick.
+    const reactionUntil = Number(userData.combatReactionUntil) || 0;
+    const reactionToken = userData.combatReactionSource === 'melee'
+      ? `${reactionUntil.toFixed(3)}:${userData.combatReaction || ''}`
+      : null;
+    userData.civilianMeleeCounter = {
+      phase: 'idle',
+      reactionToken,
+      attempt: 0,
+      hand: data.index % 2 === 0 ? 'right' : 'left',
+      recoveryReadyAt: 0,
+      windupStartedAt: 0,
+      contactAt: 0,
+      recoveryUntil: 0,
+      cooldownUntil: 0,
+      closingApplied: 0,
+      closingResynced: false,
+      closingEvaded: false,
+      closingLastDistance: null,
+      neutralArmTelemetry: null,
+      emitted: false,
+      lastEvent: null,
+    };
+  }
+
+  function civilianCounterHoldsRoute(data) {
+    const userData = data?.mesh?.userData;
+    if (userData?.combatDefeated === true || userData?.combatDisabled === true) return false;
+    const phase = userData?.civilianMeleeCounter?.phase;
+    return phase === 'delay' || phase === 'windup' || phase === 'contact' || phase === 'recovery';
+  }
+
+  function counterEligible(data) {
+    const userData = data.mesh.userData || {};
+    return data.mesh.visible === true
+      && userData.combatDefeated !== true
+      && userData.combatDisabled !== true;
+  }
+
+  function setCivilianCounterTarget(data, context) {
+    const playerPosition = context?.position;
+    const torsoPosition = context?.torsoPosition;
+    if (!Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return false;
+    counterTargetPoint.set(
+      Number.isFinite(torsoPosition?.x) ? torsoPosition.x : playerPosition.x,
+      (Number.isFinite(torsoPosition?.y) ? torsoPosition.y : (Number(playerPosition.y) || 0) + 1.04)
+        + CIVILIAN_COUNTER_UPPER_CHEST_OFFSET,
+      Number.isFinite(torsoPosition?.z) ? torsoPosition.z : playerPosition.z,
+    );
+    // Aim at the near surface of the Traveler's upper chest, not the center
+    // of their collision shell. Gameplay range still uses the unchanged root
+    // distance; this offset only gives the fixed hand chain a physical contact
+    // point on the visible body.
+    const surfaceX = data.mesh.position.x - counterTargetPoint.x;
+    const surfaceZ = data.mesh.position.z - counterTargetPoint.z;
+    const surfaceLength = Math.hypot(surfaceX, surfaceZ);
+    if (surfaceLength > 1e-5) {
+      counterTargetPoint.x += surfaceX / surfaceLength * CIVILIAN_COUNTER_TORSO_SURFACE;
+      counterTargetPoint.z += surfaceZ / surfaceLength * CIVILIAN_COUNTER_TORSO_SURFACE;
+    }
+    return true;
+  }
+
+  function startCivilianCounterAfterRecovery(data, elapsed) {
+    const state = counterStateFor(data);
+    state.attempt += 1;
+    // These offsets are stable per resident/attempt, so a capture is
+    // repeatable without synchronizing random timers across systems.
+    const recoveryDelay = 0.25 + ((data.index * 97 + state.attempt * 53) % 651) / 1000;
+    const contactDelay = 0.18 + ((data.index * 71 + state.attempt * 31) % 241) / 1000;
+    state.phase = 'delay';
+    state.recoveryReadyAt = elapsed + recoveryDelay;
+    state.windupStartedAt = 0;
+    state.contactAt = 0;
+    state.recoveryUntil = 0;
+    state.closingApplied = 0;
+    state.closingResynced = false;
+    state.closingEvaded = false;
+    state.closingLastDistance = null;
+    const neutralChain = readCivilianCounterArmChain(data, state, null);
+    state.neutralArmTelemetry = neutralChain ? Object.freeze({
+      lengths: neutralChain.lengths,
+      scales: neutralChain.scales,
+    }) : null;
+    state.emitted = false;
+    state.timing = {
+      recoveryDelayMs: Math.round(recoveryDelay * 1000),
+      windupMs: Math.max(Math.round(CIVILIAN_COUNTER_WINDUP_MIN * 1000), Math.round(contactDelay * 1000)),
+      contactMs: Math.round(contactDelay * 1000),
+    };
+  }
+
+  function resyncCivilianCounterRoute(data, state) {
+    if (state.closingResynced || state.closingApplied <= 1e-5) return;
+    const location = data.path ? locateOnPath(data.path, data.mesh.position) : null;
+    if (location) {
+      data.segment = location.segment;
+      data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+      setDestinationFor(data);
+    }
+    data.groundY = data.mesh.position.y;
+    state.closingResynced = true;
+  }
+
+  function applyCivilianCounterClosingStep(data, delta) {
+    const state = counterStateFor(data);
+    if ((state.phase !== 'delay' && state.phase !== 'windup')
+      || state.closingApplied >= CIVILIAN_COUNTER_CLOSING_DISTANCE
+      || !counterEligible(data)) return;
+    const context = getCivilianCounterContext?.() || null;
+    const playerPosition = context?.position;
+    const contextValid = context?.running === true
+      && context?.onFoot === true
+      && context?.outdoor === true
+      && context?.passenger !== true
+      && context?.transition !== true;
+    if (!contextValid || !Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return;
+    const deltaX = playerPosition.x - data.mesh.position.x;
+    const deltaZ = playerPosition.z - data.mesh.position.z;
+    const distance = Math.hypot(deltaX, deltaZ);
+    if (Number.isFinite(state.closingLastDistance)
+      && distance > state.closingLastDistance + 0.06) state.closingEvaded = true;
+    state.closingLastDistance = distance;
+    if (state.closingEvaded) return;
+    if (distance <= CIVILIAN_COUNTER_MIN_SEPARATION + 1e-5) return;
+    counterLosOrigin.set(data.mesh.position.x, data.mesh.position.y + 1.04, data.mesh.position.z);
+    setCivilianCounterTarget(data, context);
+    if (typeof hasCivilianCounterLineOfSight !== 'function'
+      || hasCivilianCounterLineOfSight(counterLosOrigin, counterTargetPoint) !== true) return;
+    const step = Math.min(
+      0.04,
+      CIVILIAN_COUNTER_CLOSING_SPEED * Math.max(0, delta),
+      CIVILIAN_COUNTER_CLOSING_DISTANCE - state.closingApplied,
+      distance - CIVILIAN_COUNTER_MIN_SEPARATION,
+    );
+    if (step <= 1e-5) return;
+    data.mesh.position.x += deltaX / distance * step;
+    data.mesh.position.z += deltaZ / distance * step;
+    state.closingApplied += step;
+    data.groundY = data.mesh.position.y;
+  }
+
+  function updateCivilianMeleeCounter(data, elapsed) {
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    const state = counterStateFor(data);
+    const reactionUntil = Number(userData.combatReactionUntil) || 0;
+    const meleeReaction = userData.combatReactionSource === 'melee';
+    const token = meleeReaction ? `${reactionUntil.toFixed(3)}:${userData.combatReaction || ''}` : null;
+
+    if (userData.combatDefeated === true || userData.combatDisabled === true) {
+      // Defeat takes authority immediately: cancel all pending/visible stages,
+      // consume any live melee marker, and leave no counter pose or event to
+      // resolve on the same frame.
+      state.reactionToken = token ?? state.reactionToken;
+      state.emitted = true;
+      resyncCivilianCounterRoute(data, state);
+      state.phase = 'idle';
+      state.cooldownUntil = 0;
+      return state;
+    }
+
+    if (token && token !== state.reactionToken) {
+      state.reactionToken = token;
+      // A fresh melee marker supersedes an unstarted response; an already
+      // visible counter is allowed to finish its readable whiff/contact.
+      if (state.phase === 'idle' || state.phase === 'cooldown' || state.phase === 'awaiting-recovery' || state.phase === 'delay') {
+        state.phase = 'awaiting-recovery';
+        state.emitted = false;
+      }
+    }
+
+    if (state.phase === 'awaiting-recovery') {
+      const recovered = userData.combatReactionSource !== 'melee'
+        && userData.meleeRecoilPending !== true
+        && reactionUntil <= elapsed;
+      if (recovered) {
+        if (counterEligible(data) && elapsed >= state.cooldownUntil) {
+          startCivilianCounterAfterRecovery(data, elapsed);
+        } else {
+          state.phase = 'cooldown';
+          state.cooldownUntil = Math.max(state.cooldownUntil, elapsed + CIVILIAN_COUNTER_COOLDOWN);
+        }
+      }
+      return state;
+    }
+
+    if (state.phase === 'delay' && elapsed >= state.recoveryReadyAt) {
+      state.phase = 'windup';
+      state.windupStartedAt = elapsed;
+      state.contactAt = elapsed + (state.timing.contactMs / 1000);
+    } else if (state.phase === 'windup' && elapsed >= state.contactAt) {
+      state.phase = 'contact';
+    } else if (state.phase === 'recovery' && elapsed >= state.recoveryUntil) {
+      resyncCivilianCounterRoute(data, state);
+      state.phase = 'cooldown';
+      state.cooldownUntil = elapsed + CIVILIAN_COUNTER_COOLDOWN;
+    } else if (state.phase === 'cooldown' && elapsed >= state.cooldownUntil) {
+      state.phase = 'idle';
+    }
+    return state;
+  }
+
+  function applyCivilianCounterPose(data, elapsed) {
+    const state = counterStateFor(data);
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    if (!['windup', 'contact', 'recovery'].includes(state.phase)) return;
+    const windupDuration = Math.max(CIVILIAN_COUNTER_WINDUP_MIN, (state.timing?.contactMs || 180) / 1000);
+    const windup = state.phase === 'windup'
+      ? THREE.MathUtils.clamp((elapsed - state.windupStartedAt) / windupDuration, 0, 1)
+      : 1;
+    const recoveryProgress = state.phase === 'recovery'
+      ? THREE.MathUtils.clamp(
+        (elapsed - (state.recoveryUntil - CIVILIAN_COUNTER_RECOVERY)) / CIVILIAN_COUNTER_RECOVERY,
+        0,
+        1,
+      )
+      : 0;
+    const recovery = state.phase === 'recovery'
+      ? 1 - THREE.MathUtils.smoothstep(recoveryProgress, 0.58, 1)
+      : 1;
+    const power = windup * recovery;
+    const shoulderSide = state.hand === 'left' ? -1 : 1;
+    // `animate()` owns legs and locomotion. This additive layer touches only
+    // the torso/shoulder/elbow/forearm/hand chain, preserving grounded feet
+    // and the route's root position through the complete counter.
+    const whiff = state.phase === 'recovery' && state.lastEvent?.hit === false;
+    if (state.phase === 'windup') {
+      // Pull the striking shoulder away and fold the elbow across the ribs.
+      // This anticipation is deliberately compact and opposite the contact
+      // line so even the shortest windup reads before the fixed-chain solve.
+      userData.body.rotation.x -= 0.2 * power;
+      userData.body.rotation.z += shoulderSide * 0.2 * power;
+      arm.rotation.x += 0.18 * power;
+      arm.rotation.y -= shoulderSide * 0.16 * power;
+      arm.rotation.z += shoulderSide * 1.22 * power;
+      forearm.rotation.x += 2.08 * power;
+      forearm.rotation.z -= shoulderSide * 0.34 * power;
+    } else if (whiff) {
+      // A miss carries past the target instead of recoiling along the contact
+      // line. The feet remain planted while the torso and bent elbow sell the
+      // lost momentum during the ordinary recovery window.
+      userData.body.rotation.x += 0.2 * power;
+      userData.body.rotation.z -= shoulderSide * 0.34 * power;
+      arm.rotation.x -= 1.18 * power;
+      arm.rotation.y += shoulderSide * 0.34 * power;
+      arm.rotation.z -= shoulderSide * 0.42 * power;
+      forearm.rotation.x += 0.46 * power;
+      forearm.rotation.z += shoulderSide * 0.28 * power;
+    } else {
+      // Rotate the chest into contact, then solve the unscaled shoulder/elbow
+      // chain toward the live torso. Recovery smoothly releases this solve;
+      // neither bone position nor scale changes at runtime.
+      userData.body.rotation.x += 0.35 * power;
+      userData.body.rotation.y -= shoulderSide * 1.25 * power;
+      userData.body.rotation.z -= shoulderSide * 0.08 * power;
+      const context = getCivilianCounterContext?.() || null;
+      const heldTarget = state.phase === 'recovery'
+        && state.lastEvent?.hit === true
+        && recoveryProgress <= 0.58
+        && Number.isFinite(state.lastEvent.target?.x)
+        && Number.isFinite(state.lastEvent.target?.y)
+        && Number.isFinite(state.lastEvent.target?.z);
+      let hasTarget = false;
+      if (heldTarget) {
+        counterTargetPoint.set(
+          state.lastEvent.target.x,
+          state.lastEvent.target.y,
+          state.lastEvent.target.z,
+        );
+        hasTarget = true;
+      } else {
+        hasTarget = setCivilianCounterTarget(data, context);
+      }
+      if (hasTarget) {
+        counterArmBaseQuaternion.copy(arm.quaternion);
+        counterForearmBaseQuaternion.copy(forearm.quaternion);
+        if (aimCivilianCounterArmAtTarget(data, state, counterTargetPoint)) {
+          counterArmTargetQuaternion.copy(arm.quaternion);
+          counterForearmTargetQuaternion.copy(forearm.quaternion);
+          arm.quaternion.slerpQuaternions(
+            counterArmBaseQuaternion,
+            counterArmTargetQuaternion,
+            power,
+          );
+          forearm.quaternion.slerpQuaternions(
+            counterForearmBaseQuaternion,
+            counterForearmTargetQuaternion,
+            power,
+          );
+        }
+      }
+    }
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (hand) {
+      hand.rotation.x += (whiff ? 0.18 : -0.34) * power;
+      hand.rotation.z -= shoulderSide * (whiff ? 0.24 : 0.08) * power;
+    }
+  }
+
+  function orientCivilianCounterTowardPlayer(data, delta) {
+    if (!civilianCounterHoldsRoute(data)) return;
+    const playerPosition = getCivilianCounterContext?.()?.position;
+    if (!Number.isFinite(playerPosition?.x) || !Number.isFinite(playerPosition?.z)) return;
+    const desired = Math.atan2(
+      playerPosition.x - data.mesh.position.x,
+      playerPosition.z - data.mesh.position.z,
+    );
+    const offset = Math.atan2(
+      Math.sin(desired - data.heading),
+      Math.cos(desired - data.heading),
+    );
+    // A 22/s damp reaches the contact-facing target within 12° during the
+    // shortest permitted 180 ms windup, without moving the rooted feet.
+    data.heading += offset * (1 - Math.exp(-22 * Math.max(0, delta)));
+    data.mesh.rotation.y = data.heading;
+    data.turnRate = 0;
+  }
+
+  function aimCivilianCounterArmAtTarget(data, state, targetPoint) {
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    if (!arm?.parent || !forearm?.parent || !targetPoint) return false;
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (!hand?.parent) return false;
+    data.mesh.updateMatrixWorld(true);
+    arm.getWorldPosition(counterShoulderPoint);
+    forearm.getWorldPosition(counterElbowPoint);
+    hand.getWorldPosition(counterHandCenter);
+    const upperLength = counterShoulderPoint.distanceTo(counterElbowPoint);
+    const forearmLength = counterElbowPoint.distanceTo(counterHandCenter);
+    if (upperLength <= 1e-5 || forearmLength <= 1e-5) return false;
+    counterFistDirection.subVectors(targetPoint, counterShoulderPoint);
+    const targetDistance = counterFistDirection.length();
+    if (targetDistance <= 1e-5) return false;
+    counterFistDirection.multiplyScalar(1 / targetDistance);
+
+    // Analytic two-bone IK with a stable outward/upward elbow pole. Clamp
+    // unreachable targets to the authored chain length; the grounded closing
+    // step and torso rotation supply the remaining reach without telescoping.
+    const solvedDistance = THREE.MathUtils.clamp(
+      targetDistance,
+      Math.abs(upperLength - forearmLength) + 1e-4,
+      upperLength + forearmLength - 0.004,
+    );
+    const along = (
+      upperLength * upperLength - forearmLength * forearmLength
+      + solvedDistance * solvedDistance
+    ) / (2 * solvedDistance);
+    const bend = Math.sqrt(Math.max(0, upperLength * upperLength - along * along));
+    const shoulderSide = state.hand === 'left' ? -1 : 1;
+    counterPoleDirection.set(
+      shoulderSide * Math.cos(data.heading),
+      0.9,
+      -shoulderSide * Math.sin(data.heading),
+    );
+    counterPoleDirection.addScaledVector(
+      counterFistDirection,
+      -counterPoleDirection.dot(counterFistDirection),
+    );
+    if (counterPoleDirection.lengthSq() <= 1e-6) counterPoleDirection.set(0, 1, 0);
+    counterPoleDirection.normalize();
+    counterSolvedElbow.copy(counterShoulderPoint)
+      .addScaledVector(counterFistDirection, along)
+      .addScaledVector(counterPoleDirection, bend);
+    counterSolvedHand.copy(counterShoulderPoint).addScaledVector(counterFistDirection, solvedDistance);
+
+    counterLocalDirection.subVectors(counterSolvedElbow, counterShoulderPoint).normalize();
+    arm.parent.getWorldQuaternion(counterParentQuaternion).invert();
+    counterLocalDirection.applyQuaternion(counterParentQuaternion).normalize();
+    arm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
+    data.mesh.updateMatrixWorld(true);
+    forearm.getWorldPosition(counterElbowPoint);
+    counterLocalDirection.subVectors(counterSolvedHand, counterElbowPoint).normalize();
+    forearm.parent.getWorldQuaternion(counterParentQuaternion).invert();
+    counterLocalDirection.applyQuaternion(counterParentQuaternion).normalize();
+    forearm.quaternion.setFromUnitVectors(counterDownAxis, counterLocalDirection);
+    return true;
+  }
+
+  function readCivilianCounterArmChain(data, state, targetPoint, { align = false } = {}) {
+    const userData = data.mesh.userData;
+    const arm = state.hand === 'left' ? userData.leftArm : userData.rightArm;
+    const forearm = state.hand === 'left' ? userData.leftForearm : userData.rightForearm;
+    const hand = state.hand === 'left' ? userData.leftHand : userData.rightHand;
+    if (!hand?.getWorldPosition) return null;
+    if (align) aimCivilianCounterArmAtTarget(data, state, targetPoint);
+    data.mesh.updateMatrixWorld(true);
+    arm.getWorldPosition(counterShoulderPoint);
+    forearm.getWorldPosition(counterElbowPoint);
+    hand.getWorldPosition(counterHandCenter);
+    const handDistance = targetPoint ? counterHandCenter.distanceTo(targetPoint) : Infinity;
+    const fistRadius = 0.12;
+    if (targetPoint && handDistance > 1e-5) {
+      counterFistDirection.subVectors(targetPoint, counterHandCenter).multiplyScalar(1 / handDistance);
+      counterHandPoint.copy(counterHandCenter).addScaledVector(
+        counterFistDirection,
+        Math.min(fistRadius, handDistance),
+      );
+    } else {
+      counterHandPoint.copy(counterHandCenter);
+    }
+    return {
+      shoulder: { x: counterShoulderPoint.x, y: counterShoulderPoint.y, z: counterShoulderPoint.z },
+      elbow: { x: counterElbowPoint.x, y: counterElbowPoint.y, z: counterElbowPoint.z },
+      handCenter: { x: counterHandCenter.x, y: counterHandCenter.y, z: counterHandCenter.z },
+      fist: { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z },
+      lengths: Object.freeze({
+        upperArm: Math.round(counterShoulderPoint.distanceTo(counterElbowPoint) * 10000) / 10000,
+        forearm: Math.round(counterElbowPoint.distanceTo(counterHandCenter) * 10000) / 10000,
+      }),
+      scales: Object.freeze({
+        upperArm: Object.freeze({ x: arm.scale.x, y: arm.scale.y, z: arm.scale.z }),
+        forearm: Object.freeze({ x: forearm.scale.x, y: forearm.scale.y, z: forearm.scale.z }),
+      }),
+      contactGap: Math.max(0, handDistance - fistRadius),
+    };
+  }
+
+  function resolveCivilianCounter(data, elapsed) {
+    const state = counterStateFor(data);
+    if (state.phase !== 'contact' || state.emitted) return;
+    state.emitted = true;
+    const identity = residentIdentityFor(data);
+    const context = getCivilianCounterContext?.() || null;
+    const playerPosition = context?.position;
+    if (!setCivilianCounterTarget(data, context)) {
+      counterTargetPoint.set(data.mesh.position.x, data.mesh.position.y + 1.06, data.mesh.position.z);
+    }
+    const armChain = readCivilianCounterArmChain(data, state, counterTargetPoint, { align: true });
+    if (!armChain) counterHandPoint.copy(counterTargetPoint);
+    counterLosOrigin.set(data.mesh.position.x, data.mesh.position.y + 1.04, data.mesh.position.z);
+    const distance = playerPosition
+      ? Math.hypot(data.mesh.position.x - playerPosition.x, data.mesh.position.z - playerPosition.z)
+      : Infinity;
+    const contextValid = context?.running === true
+      && context?.onFoot === true
+      && context?.outdoor === true
+      && context?.passenger !== true
+      && context?.transition !== true;
+    const inRange = distance >= CIVILIAN_COUNTER_MIN_RANGE && distance <= CIVILIAN_COUNTER_MAX_RANGE;
+    const clearLos = contextValid && inRange && counterEligible(data)
+      && typeof hasCivilianCounterLineOfSight === 'function'
+      && hasCivilianCounterLineOfSight(counterLosOrigin, counterTargetPoint) === true;
+    const handGap = armChain?.contactGap ?? Infinity;
+    const hit = contextValid && counterEligible(data) && inRange && clearLos && handGap <= 0.1;
+    const phase = hit ? 'contact' : 'whiff';
+    const event = Object.freeze({
+      kind: 'civilian-melee-counter',
+      residentId: identity.id,
+      residentObjectUuid: data.mesh.uuid,
+      phase,
+      timing: Object.freeze({
+        ...state.timing,
+        startedAtMs: Math.round(state.windupStartedAt * 1000),
+        resolvedAtMs: Math.round(elapsed * 1000),
+        closingDistance: Math.round(state.closingApplied * 1000) / 1000,
+      }),
+      hand: Object.freeze({
+        side: state.hand,
+        x: counterHandPoint.x,
+        y: counterHandPoint.y,
+        z: counterHandPoint.z,
+      }),
+      target: Object.freeze({ x: counterTargetPoint.x, y: counterTargetPoint.y, z: counterTargetPoint.z }),
+      armChain: Object.freeze({
+        shoulder: Object.freeze(armChain?.shoulder ?? { x: null, y: null, z: null }),
+        elbow: Object.freeze(armChain?.elbow ?? { x: null, y: null, z: null }),
+        handCenter: Object.freeze(armChain?.handCenter ?? { x: null, y: null, z: null }),
+        fist: Object.freeze(armChain?.fist ?? { x: counterHandPoint.x, y: counterHandPoint.y, z: counterHandPoint.z }),
+        neutral: state.neutralArmTelemetry,
+        lengths: armChain?.lengths ?? null,
+        scales: armChain?.scales ?? null,
+        contactGap: Number.isFinite(handGap) ? Math.round(handGap * 1000) / 1000 : null,
+      }),
+      hit,
+      distance: Number.isFinite(distance) ? Math.round(distance * 1000) / 1000 : null,
+      reason: hit
+        ? null
+        : !counterEligible(data) ? 'resident-unavailable'
+          : !contextValid ? 'player-context'
+            : distance > CIVILIAN_COUNTER_EVADE_RANGE ? 'evaded'
+              : !inRange ? 'out-of-range'
+                : !clearLos ? 'blocked'
+                  : handGap > 0.1 ? 'hand-gap'
+                  : 'whiff',
+    });
+    state.lastEvent = event;
+    onCivilianMeleeCounter?.(event);
+    state.phase = 'recovery';
+    state.recoveryUntil = elapsed + CIVILIAN_COUNTER_RECOVERY;
+  }
+
+  function applyVehicleImpactPose(data, elapsed) {
+    const userData = data.mesh.userData;
+    const until = Number(userData?.vehicleImpactUntil) || 0;
+    if (!userData || until <= elapsed) {
+      if (userData && until > 0) {
+        userData.vehicleImpactUntil = 0;
+        userData.vehicleImpactDirectionX = 0;
+        userData.vehicleImpactDirectionZ = 0;
+      }
+      return;
+    }
+    const remaining = THREE.MathUtils.clamp((until - elapsed) / 1.35, 0, 1);
+    const pulse = 0.68 + Math.sin(elapsed * 25 + data.phase) * 0.32;
+    const side = THREE.MathUtils.clamp(
+      Number(userData.vehicleImpactDirectionX) || 0,
+      -1,
+      1,
+    );
+    userData.body.rotation.x += 0.24 * remaining;
+    userData.body.rotation.z += (0.14 + Math.abs(side) * 0.12) * Math.sign(side || 1) * remaining;
+    userData.headPivot.rotation.z -= Math.sign(side || 1) * 0.22 * pulse * remaining;
+    userData.leftArm.rotation.z += 0.28 * pulse * remaining;
+    userData.rightArm.rotation.z -= 0.28 * pulse * remaining;
+    userData.rig.position.y -= 0.08 * remaining;
+  }
+
+  function applyVehicleWitnessReaction(data, delta, elapsed) {
+    const userData = data.mesh.userData;
+    const until = Number(userData?.vehicleWitnessUntil) || 0;
+    if (!userData || until <= elapsed) {
+      if (userData && until > 0) {
+        userData.vehicleWitnessUntil = 0;
+        userData.vehicleWitnessDirectionX = 0;
+        userData.vehicleWitnessDirectionZ = 0;
+        userData.vehicleWitnessOffsetX = 0;
+        userData.vehicleWitnessOffsetZ = 0;
+        userData.vehicleWitnessTravel = 0;
+        userData.vehicleWitnessReaction = null;
+      }
+      return false;
+    }
+    let directionX = Number(userData.vehicleWitnessDirectionX) || 0;
+    let directionZ = Number(userData.vehicleWitnessDirectionZ) || 0;
+    const directionLength = Math.hypot(directionX, directionZ) || 1;
+    directionX /= directionLength;
+    directionZ /= directionLength;
+    if (data.state !== STATE_WALK && data.state !== STATE_CROSS) {
+      setBehaviorState(data, STATE_WALK, 1.8, 'vehicle-impact:witness-flee');
+    }
+    data.walkPace = Math.max(data.walkPace || 1, 1.32);
+    const travel = Math.min(
+      VEHICLE_WITNESS_MAX_TRAVEL,
+      (Number(userData.vehicleWitnessTravel) || 0) + VEHICLE_WITNESS_FLEE_SPEED * delta,
+    );
+    const baseX = Number.isFinite(userData.vehicleWitnessBaseX)
+      ? userData.vehicleWitnessBaseX
+      : data.mesh.position.x;
+    const baseZ = Number.isFinite(userData.vehicleWitnessBaseZ)
+      ? userData.vehicleWitnessBaseZ
+      : data.mesh.position.z;
+    userData.vehicleWitnessTravel = travel;
+    userData.vehicleWitnessOffsetX = directionX * travel;
+    userData.vehicleWitnessOffsetZ = directionZ * travel;
+    data.mesh.position.x = baseX + userData.vehicleWitnessOffsetX;
+    data.mesh.position.z = baseZ + userData.vehicleWitnessOffsetZ;
+    const pathLocation = locateOnPath(data.path, data.mesh.position);
+    const pathPoints = pointsForPath(data.path);
+    const pathStart = pathPoints[pathLocation.segment];
+    const pathEnd = pathPoints[pathLocation.segment + 1];
+    if (pathStart?.isVector3 && pathEnd?.isVector3) {
+      data.mesh.position.y = THREE.MathUtils.lerp(pathStart.y, pathEnd.y, pathLocation.pathT);
+      data.groundY = data.mesh.position.y;
+    } else if (Number.isFinite(userData.vehicleWitnessBaseY)) {
+      data.mesh.position.y = userData.vehicleWitnessBaseY;
+      data.groundY = data.mesh.position.y;
+    }
+    data.heading = Math.atan2(directionX, directionZ);
+    data.mesh.rotation.y = data.heading;
+    const pulse = 0.82 + Math.sin(elapsed * 18 + data.phase) * 0.18;
+    userData.body.rotation.x -= 0.08;
+    userData.headPivot.rotation.z += 0.1 * pulse;
+    userData.rightArm.rotation.x -= 0.82;
+    userData.rightArm.rotation.z += 0.72 * pulse;
+    userData.leftArm.rotation.z -= 0.28 * pulse;
+    return true;
+  }
+
+  function setOnFootPlayerCollisionProbe(probe = null) {
+    if (!probe?.active
+      || !Number.isFinite(probe.start?.x)
+      || !Number.isFinite(probe.start?.z)
+      || !Number.isFinite(probe.end?.x)
+      || !Number.isFinite(probe.end?.z)) {
+      onFootPlayerCollisionProbe = null;
+      onFootPlayerCollisionLatch.clear();
+      return false;
+    }
+    onFootPlayerCollisionProbe = {
+      start: { x: probe.start.x, z: probe.start.z },
+      end: { x: probe.end.x, z: probe.end.z },
+      radius: THREE.MathUtils.clamp(
+        Number(probe.radius) || ON_FOOT_PLAYER_RADIUS,
+        0.3,
+        0.8,
+      ),
+    };
+    return true;
+  }
+
+  function livingPlayerContactResident(data) {
+    if (!data?.mesh?.visible) return false;
+    const userData = data.mesh.userData || {};
+    return userData.combatDefeated !== true
+      && userData.combatDisabled !== true;
+  }
+
+  function sweptPlayerResidentContact(probe, data) {
+    const radius = probe.radius + ON_FOOT_PEDESTRIAN_RADIUS;
+    const startX = probe.start.x - data.mesh.position.x;
+    const startZ = probe.start.z - data.mesh.position.z;
+    const moveX = probe.end.x - probe.start.x;
+    const moveZ = probe.end.z - probe.start.z;
+    const moveLengthSq = moveX * moveX + moveZ * moveZ;
+    const radiusSq = radius * radius;
+    const startDistanceSq = startX * startX + startZ * startZ;
+    let amount = null;
+    if (startDistanceSq <= radiusSq) {
+      amount = 0;
+    } else if (moveLengthSq > 1e-8) {
+      const along = startX * moveX + startZ * moveZ;
+      const discriminant = along * along - moveLengthSq * (startDistanceSq - radiusSq);
+      if (discriminant >= 0) {
+        const candidate = (-along - Math.sqrt(discriminant)) / moveLengthSq;
+        if (candidate >= 0 && candidate <= 1) amount = candidate;
+      }
+    }
+    onFootPlayerContactDiagnostics.contactTests += 1;
+    if (amount === null) return null;
+
+    const contactX = probe.start.x + moveX * amount;
+    const contactZ = probe.start.z + moveZ * amount;
+    let normalX = contactX - data.mesh.position.x;
+    let normalZ = contactZ - data.mesh.position.z;
+    let normalLength = Math.hypot(normalX, normalZ);
+    if (normalLength < 1e-5) {
+      normalX = -moveX;
+      normalZ = -moveZ;
+      normalLength = Math.hypot(normalX, normalZ);
+    }
+    if (normalLength < 1e-5) {
+      normalX = Math.cos(data.heading + (data.index % 2 ? Math.PI : 0));
+      normalZ = -Math.sin(data.heading + (data.index % 2 ? Math.PI : 0));
+      normalLength = 1;
+    }
+    normalX /= normalLength;
+    normalZ /= normalLength;
+    const moveLength = Math.sqrt(moveLengthSq);
+    const safeAmount = moveLength > 1e-5
+      ? Math.max(0, amount - ON_FOOT_CONTACT_MARGIN / moveLength)
+      : 0;
+    return {
+      amount,
+      safeAmount,
+      radius,
+      normalX,
+      normalZ,
+      contactX,
+      contactZ,
+    };
+  }
+
+  function applyPlayerContactYield(data, contact) {
+    const rightX = Math.cos(data.heading);
+    const rightZ = -Math.sin(data.heading);
+    const awayX = data.mesh.position.x - contact.contactX;
+    const awayZ = data.mesh.position.z - contact.contactZ;
+    const sideDot = awayX * rightX + awayZ * rightZ;
+    const side = Math.abs(sideDot) > 0.02
+      ? Math.sign(sideDot)
+      : (data.index % 2 === 0 ? 1 : -1);
+    const laneShift = side * ON_FOOT_PLAYER_YIELD_SHIFT;
+    data.laneOffset = THREE.MathUtils.clamp(
+      data.laneOffset + laneShift,
+      -LATERAL_DRIFT,
+      LATERAL_DRIFT,
+    );
+    if (!data.transfer && data.state !== STATE_CROSS) {
+      data.transfer = {
+        target: data.mesh.position.clone().add(new THREE.Vector3(
+          rightX * laneShift,
+          0,
+          rightZ * laneShift,
+        )),
+        playerYield: true,
+      };
+    }
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    userData.playerYieldUntil = lastUpdateElapsed + 0.55;
+    userData.playerYieldSide = side;
+    userData.playerYieldCount = (Number(userData.playerYieldCount) || 0) + 1;
+    onFootPlayerContactDiagnostics.yields += 1;
+    return { side, distance: ON_FOOT_PLAYER_YIELD_SHIFT };
+  }
+
+  function resolveOnFootPlayerContact() {
+    const probe = onFootPlayerCollisionProbe;
+    onFootPlayerCollisionProbe = null;
+    if (!probe) {
+      onFootPlayerCollisionLatch.clear();
+      return null;
+    }
+    onFootPlayerContactDiagnostics.probes += 1;
+    onFootPlayerContactDiagnostics.lastProbe = {
+      start: { ...probe.start },
+      end: { ...probe.end },
+      radius: probe.radius,
+    };
+    const nextLatch = new Set();
+    let best = null;
+    for (const data of pool) {
+      if (!livingPlayerContactResident(data)) continue;
+      const identity = residentIdentityFor(data);
+      const endDistance = Math.hypot(
+        probe.end.x - data.mesh.position.x,
+        probe.end.z - data.mesh.position.z,
+      );
+      const combinedRadius = probe.radius + ON_FOOT_PEDESTRIAN_RADIUS;
+      if (onFootPlayerCollisionLatch.has(identity.id)) {
+        const awayProgress = (probe.end.x - probe.start.x)
+          * (probe.start.x - data.mesh.position.x)
+          + (probe.end.z - probe.start.z)
+          * (probe.start.z - data.mesh.position.z);
+        const deliberatelySeparated = endDistance - combinedRadius > ON_FOOT_CONTACT_REARM_GAP
+          && awayProgress > 1e-4;
+        if (!deliberatelySeparated) {
+          nextLatch.add(identity.id);
+        } else {
+          onFootPlayerContactDiagnostics.rearmed += 1;
+        }
+      }
+      const contact = sweptPlayerResidentContact(probe, data);
+      if (!contact) continue;
+      const candidate = { data, identity, contact };
+      if (!best
+        || contact.amount < best.contact.amount - 1e-7
+        || (Math.abs(contact.amount - best.contact.amount) <= 1e-7
+          && identity.id.localeCompare(best.identity.id) < 0)) {
+        best = candidate;
+      }
+    }
+    onFootPlayerCollisionLatch = nextLatch;
+    if (!best) return null;
+
+    const { data, identity, contact } = best;
+    const wasLatched = onFootPlayerCollisionLatch.has(identity.id);
+    onFootPlayerCollisionLatch.add(identity.id);
+    const newContact = !wasLatched;
+    const correctedPosition = contact.amount === 0
+      ? {
+        x: data.mesh.position.x + contact.normalX * (contact.radius + ON_FOOT_CONTACT_MARGIN),
+        z: data.mesh.position.z + contact.normalZ * (contact.radius + ON_FOOT_CONTACT_MARGIN),
+      }
+      : {
+        x: THREE.MathUtils.lerp(probe.start.x, probe.end.x, contact.safeAmount),
+        z: THREE.MathUtils.lerp(probe.start.z, probe.end.z, contact.safeAmount),
+      };
+    const yieldState = newContact ? applyPlayerContactYield(data, contact) : null;
+    const event = {
+      kind: 'on-foot-pedestrian-contact',
+      residentId: identity.id,
+      residentIndex: data.index,
+      residentObjectUuid: data.mesh.uuid,
+      residentLabel: identity.label,
+      role: data.job.id,
+      newContact,
+      latched: !newContact,
+      contactAmount: Math.round(contact.amount * 1000) / 1000,
+      safeAmount: Math.round(contact.safeAmount * 1000) / 1000,
+      playerRadius: probe.radius,
+      pedestrianRadius: ON_FOOT_PEDESTRIAN_RADIUS,
+      separation: probe.radius + ON_FOOT_PEDESTRIAN_RADIUS + ON_FOOT_CONTACT_MARGIN,
+      residentPosition: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+      contactPoint: { x: contact.contactX, z: contact.contactZ },
+      normal: { x: contact.normalX, z: contact.normalZ },
+      correctedPosition,
+      yield: yieldState,
+    };
+    onFootPlayerContactDiagnostics.corrections += 1;
+    if (newContact) onFootPlayerContactDiagnostics.contacts += 1;
+    const consequence = onPlayerCrowdContact?.(event) ?? null;
+    const appliedPosition = Number.isFinite(consequence?.correctedPosition?.x)
+      && Number.isFinite(consequence?.correctedPosition?.z)
+      ? { ...consequence.correctedPosition }
+      : { ...correctedPosition };
+    const resolvedEvent = consequence && typeof consequence === 'object'
+      ? { ...event, correctedPosition: appliedPosition, consequence: { ...consequence } }
+      : { ...event, correctedPosition: appliedPosition };
+    resolvedEvent.finalClearance = Math.hypot(
+      appliedPosition.x - data.mesh.position.x,
+      appliedPosition.z - data.mesh.position.z,
+    ) - contact.radius;
+    resolvedEvent.finalOverlap = resolvedEvent.finalClearance < -1e-4;
+    onFootPlayerContactDiagnostics.lastCorrection = resolvedEvent;
+    if (newContact) onFootPlayerContactDiagnostics.lastContact = resolvedEvent;
+    return resolvedEvent;
+  }
+
   function update(dt = 0, elapsed = 0) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const delta = Math.min(dt, MAX_DT);
+    lastUpdateElapsed = Number.isFinite(elapsed) ? elapsed : lastUpdateElapsed + delta;
     for (const data of pool) {
       if (!data.path) continue;
       if (keepOutOfCableCarAperture(data)) continue;
@@ -3620,8 +5351,12 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
         data.walkPace = Math.max(data.walkPace || 1, 1);
       }
 
+      // The counter takes temporary ownership only once it is visible. Keep
+      // the current path coordinate and root transform intact, then normal
+      // sampling resumes from that exact point after recovery.
+      const counterHoldsRoute = civilianCounterHoldsRoute(data);
       let transferStep = false;
-      if (data.transfer) {
+      if (!counterHoldsRoute && data.transfer) {
         const transfer = data.transfer;
         transferStep = true;
         if (moveTo(data, transfer.target, delta, moveSpeedFor(data) * 1.25, { ignorePush: true })) {
@@ -3629,9 +5364,9 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
           data.groundY = transfer.target.y;
           data.transfer = null;
         }
-      } else if (data.state === STATE_CROSS) {
+      } else if (!counterHoldsRoute && data.state === STATE_CROSS) {
         updateCrossing(data, delta, elapsed);
-      } else if (data.state === STATE_IDLE || data.state === STATE_WORK) {
+      } else if (!counterHoldsRoute && (data.state === STATE_IDLE || data.state === STATE_WORK)) {
         data.timer -= delta;
         if (data.timer <= 0) {
           setBehaviorState(data, STATE_WALK);
@@ -3641,19 +5376,19 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
           data.t += (moveSpeedFor(data) * delta)
             / Math.max(0.1, points[data.segment].distanceTo(points[data.segment + 1]));
         }
-      } else {
+      } else if (!counterHoldsRoute) {
         data.grade = pathGradeFor(data);
         data.t += (moveSpeedFor(data) * delta)
           / Math.max(0.1, points[data.segment].distanceTo(points[data.segment + 1]));
       }
 
-      if (data.transfer) transferStep = true;
-      if (!transferStep && data.state === STATE_WALK && data.t >= 1) {
+      if (!counterHoldsRoute && data.transfer) transferStep = true;
+      if (!counterHoldsRoute && !transferStep && data.state === STATE_WALK && data.t >= 1) {
         data.t = 1;
         advance(data);
         if (data.transfer) transferStep = true;
       }
-      if (!transferStep
+      if (!counterHoldsRoute && !transferStep
         && data.state !== STATE_CROSS && data.state !== STATE_IDLE && data.state !== STATE_WORK) {
         if (sample(data, position)) {
           data.mesh.position.copy(position);
@@ -3666,7 +5401,10 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
         }
       }
       // QA harness: keep force-walk flags hot; BT skipped while forced.
-      if (qaForceWalkIndex != null && (
+      if (counterHoldsRoute) {
+        data.pushX = 0;
+        data.pushZ = 0;
+      } else if (qaForceWalkIndex != null && (
         data.index === qaForceWalkIndex
         || group.children.indexOf(data.mesh) === qaForceWalkIndex
       )) {
@@ -3674,7 +5412,20 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       } else {
         tickNpcBehavior(data, delta);
       }
+      if (!counterHoldsRoute
+        && qaWitnessResidentId === residentIdentityFor(data).id
+        && qaWitnessPosition) {
+        data.mesh.position.set(
+          qaWitnessPosition.x,
+          qaWitnessPosition.y,
+          qaWitnessPosition.z,
+        );
+      }
+      const combatReactionActive = applyCombatReactionMovement(data, delta);
       animate(data, elapsed, delta);
+      applyCombatReactionPose(data, elapsed, combatReactionActive);
+      applyVehicleImpactPose(data, elapsed);
+      applyVehicleWitnessReaction(data, delta, elapsed);
 
       const soloMesh = qaSoloGroupIndex != null ? group.children[qaSoloGroupIndex] : null;
       const visible = soloMesh
@@ -3683,6 +5434,12 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
           || (data.mesh.position.x - focusX) ** 2
             + (data.mesh.position.z - focusZ) ** 2 <= focusRadiusSquared;
       data.mesh.visible = visible;
+
+      updateCivilianMeleeCounter(data, elapsed);
+      applyCivilianCounterClosingStep(data, delta);
+      orientCivilianCounterTowardPlayer(data, delta);
+      applyCivilianCounterPose(data, elapsed);
+      resolveCivilianCounter(data, elapsed);
 
       shadowPosition.set(data.mesh.position.x, data.mesh.position.y + 0.012, data.mesh.position.z);
       const strideShadow = 1 + Math.abs(Math.sin(elapsed * 5.7 * data.cadence + data.phase)) * data.gaitBlend * 0.08;
@@ -3726,6 +5483,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       data.pushX = 0;
       data.pushZ = 0;
       if (!data.mesh.visible) continue;
+      if (civilianCounterHoldsRoute(data)) continue;
       const moving = data.state === STATE_WALK
         || (data.state === STATE_CROSS && data.crossing?.phase === 'cross');
       // A passing neighbor should create a temporary sidestep, not permanently
@@ -3798,6 +5556,7 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
       );
     }
 
+    resolveOnFootPlayerContact();
     contactShadows.instanceMatrix.needsUpdate = true;
   }
 
@@ -3806,6 +5565,296 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     if (featured?.actorIndex === data.index) return featured;
     const serial = String(data.index + 1).padStart(2, '0');
     return { id: `resident-${serial}`, label: `Resident ${serial}` };
+  }
+
+  function clonePlayerContactEvent(event) {
+    if (!event) return null;
+    return {
+      ...event,
+      correctedPosition: event.correctedPosition ? { ...event.correctedPosition } : null,
+      residentPosition: event.residentPosition ? { ...event.residentPosition } : null,
+      contactPoint: event.contactPoint ? { ...event.contactPoint } : null,
+      normal: event.normal ? { ...event.normal } : null,
+      yield: event.yield ? { ...event.yield } : null,
+      consequence: event.consequence ? { ...event.consequence } : undefined,
+    };
+  }
+
+  function getOnFootPlayerContactDiagnostics() {
+    return {
+      probes: onFootPlayerContactDiagnostics.probes,
+      contactTests: onFootPlayerContactDiagnostics.contactTests,
+      corrections: onFootPlayerContactDiagnostics.corrections,
+      contacts: onFootPlayerContactDiagnostics.contacts,
+      rearmed: onFootPlayerContactDiagnostics.rearmed,
+      yields: onFootPlayerContactDiagnostics.yields,
+      activeLatchCount: onFootPlayerCollisionLatch.size,
+      latchedResidentIds: [...onFootPlayerCollisionLatch].sort(),
+      lastProbe: onFootPlayerContactDiagnostics.lastProbe
+        ? {
+          start: { ...onFootPlayerContactDiagnostics.lastProbe.start },
+          end: { ...onFootPlayerContactDiagnostics.lastProbe.end },
+          radius: onFootPlayerContactDiagnostics.lastProbe.radius,
+        }
+        : null,
+      lastCorrection: clonePlayerContactEvent(onFootPlayerContactDiagnostics.lastCorrection),
+      lastContact: clonePlayerContactEvent(onFootPlayerContactDiagnostics.lastContact),
+      thresholds: {
+        defaultPlayerRadius: ON_FOOT_PLAYER_RADIUS,
+        pedestrianRadius: ON_FOOT_PEDESTRIAN_RADIUS,
+        margin: ON_FOOT_CONTACT_MARGIN,
+        rearmGap: ON_FOOT_CONTACT_REARM_GAP,
+        yieldShift: ON_FOOT_PLAYER_YIELD_SHIFT,
+      },
+    };
+  }
+
+  function resetOnFootPlayerContactDiagnostics() {
+    onFootPlayerCollisionProbe = null;
+    onFootPlayerCollisionLatch.clear();
+    onFootPlayerContactDiagnostics.probes = 0;
+    onFootPlayerContactDiagnostics.contactTests = 0;
+    onFootPlayerContactDiagnostics.corrections = 0;
+    onFootPlayerContactDiagnostics.contacts = 0;
+    onFootPlayerContactDiagnostics.rearmed = 0;
+    onFootPlayerContactDiagnostics.yields = 0;
+    onFootPlayerContactDiagnostics.lastProbe = null;
+    onFootPlayerContactDiagnostics.lastCorrection = null;
+    onFootPlayerContactDiagnostics.lastContact = null;
+  }
+
+  function clearOnFootPlayerContactQaStage() {
+    const staged = qaPlayerContactStage;
+    if (!staged) return false;
+    const { data, restore } = staged;
+    data.mesh.position.copy(restore.position);
+    data.mesh.rotation.y = restore.rotationY;
+    data.mesh.visible = restore.visible;
+    data.state = restore.state;
+    data.path = restore.path;
+    data.segment = restore.segment;
+    data.direction = restore.direction;
+    data.t = restore.t;
+    data.beautyRoute = restore.beautyRoute;
+    data.timer = restore.timer;
+    data.vignette = restore.vignette;
+    data.interaction = restore.interaction;
+    data.stationAnchor = restore.stationAnchor?.clone?.() ?? restore.stationAnchor;
+    data.crossing = restore.crossing;
+    data.transfer = restore.transfer;
+    data.heading = restore.heading;
+    data.groundY = restore.groundY;
+    data.laneOffset = restore.laneOffset;
+    data.laneOffsetHome = restore.laneOffsetHome;
+    data.destination = restore.destination?.clone?.() ?? restore.destination;
+    data.destinationKind = restore.destinationKind;
+    data.destinationReached = restore.destinationReached;
+    data.walkPace = restore.walkPace;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    userData.playerYieldUntil = restore.playerYieldUntil;
+    userData.playerYieldSide = restore.playerYieldSide;
+    userData.playerYieldCount = restore.playerYieldCount;
+    qaSoloGroupIndex = restore.qaSoloGroupIndex;
+    qaForceWalkIndex = restore.qaForceWalkIndex;
+    qaPlayerContactStage = null;
+    resetOnFootPlayerContactDiagnostics();
+    return true;
+  }
+
+  function stageOnFootPlayerContactQa({ kind = 'contact', placement = null } = {}) {
+    if (!['contact', 'diagonal', 'empty'].includes(kind)) return null;
+    clearOnFootPlayerContactQaStage();
+    const data = pool.find((entry) => (
+      entry.hero === true
+      && entry.job.id === 'phone'
+      && entry.path
+      && livingPlayerContactResident(entry)
+      && !occupiesCableCarAperture(entry)
+    )) || pool.find((entry) => entry.path && livingPlayerContactResident(entry));
+    if (!data) return null;
+    const identity = residentIdentityFor(data);
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    resetCivilianMeleeCounter(data);
+    const restore = {
+      position: data.mesh.position.clone(),
+      rotationY: data.mesh.rotation.y,
+      visible: data.mesh.visible,
+      state: data.state,
+      path: data.path,
+      segment: data.segment,
+      direction: data.direction,
+      t: data.t,
+      beautyRoute: data.beautyRoute,
+      timer: data.timer,
+      vignette: data.vignette,
+      interaction: data.interaction,
+      stationAnchor: data.stationAnchor?.clone?.() ?? data.stationAnchor,
+      crossing: data.crossing,
+      transfer: data.transfer,
+      heading: data.heading,
+      groundY: data.groundY,
+      laneOffset: data.laneOffset,
+      laneOffsetHome: data.laneOffsetHome,
+      destination: data.destination?.clone?.() ?? data.destination,
+      destinationKind: data.destinationKind,
+      destinationReached: data.destinationReached,
+      walkPace: data.walkPace,
+      playerYieldUntil: userData.playerYieldUntil,
+      playerYieldSide: userData.playerYieldSide,
+      playerYieldCount: userData.playerYieldCount,
+      qaSoloGroupIndex,
+      qaForceWalkIndex,
+    };
+    const groupIndex = group.children.indexOf(data.mesh);
+    qaSoloGroupIndex = groupIndex;
+    qaForceWalkIndex = null;
+
+    // Use an actual waypoint on the broad north sidewalk of the eastern core
+    // block. This keeps the hero's feet on authoritative sidewalk elevation
+    // while leaving road-side camera room; the former phone-hero position sat
+    // in a narrow facade pocket whose raised parcel hid the contact at eye level.
+    let openWaypoint = null;
+    const openTargetX = 56;
+    const openTargetZ = 55.15;
+    for (const path of paths) {
+      const pathPoints = pointsForPath(path);
+      for (let pointIndex = 0; pointIndex < pathPoints.length - 1; pointIndex += 1) {
+        const candidate = pathPoints[pointIndex];
+        const distanceSq = (candidate.x - openTargetX) ** 2
+          + (candidate.z - openTargetZ) ** 2;
+        if (!openWaypoint || distanceSq < openWaypoint.distanceSq) {
+          openWaypoint = { path, pointIndex, distanceSq };
+        }
+      }
+    }
+    if (openWaypoint) {
+      const pathPoints = pointsForPath(openWaypoint.path);
+      data.path = openWaypoint.path;
+      data.beautyRoute = false;
+      data.direction = 1;
+      data.segment = Math.min(openWaypoint.pointIndex, pathPoints.length - 2);
+      data.t = openWaypoint.pointIndex >= pathPoints.length - 1 ? 1 : 0;
+      data.laneOffset = 0;
+      data.laneOffsetHome = 0;
+      setDestinationFor(data);
+      if (sample(data, position)) {
+        data.mesh.position.copy(position);
+        data.groundY = position.y;
+        data.heading = Math.atan2(direction.x, direction.z);
+        data.mesh.rotation.y = data.heading;
+      }
+    }
+    setBehaviorState(data, STATE_IDLE, 30, 'qa:player-contact');
+    data.crossing = null;
+    data.transfer = null;
+    if (Number.isFinite(placement?.residentPosition?.x)
+      && Number.isFinite(placement?.residentPosition?.z)
+      && Number.isFinite(placement?.residentPosition?.y)) {
+      data.mesh.position.set(
+        placement.residentPosition.x,
+        placement.residentPosition.y,
+        placement.residentPosition.z,
+      );
+      data.groundY = placement.residentPosition.y;
+      const location = locateOnPath(data.path, data.mesh.position);
+      data.segment = location.segment;
+      data.t = data.direction > 0 ? location.pathT : 1 - location.pathT;
+      setDestinationFor(data);
+    }
+    data.mesh.visible = true;
+    data.groundY = data.mesh.position.y;
+    const forwardX = Math.sin(data.heading);
+    const forwardZ = Math.cos(data.heading);
+    const rightX = Math.cos(data.heading);
+    const rightZ = -Math.sin(data.heading);
+    const lateral = kind === 'diagonal'
+      ? 0.62
+      : kind === 'empty'
+        ? ON_FOOT_PLAYER_RADIUS + ON_FOOT_PEDESTRIAN_RADIUS + 0.56
+        : 0;
+    const start = {
+      x: data.mesh.position.x + forwardX * 1.7 + rightX * lateral,
+      y: data.mesh.position.y,
+      z: data.mesh.position.z + forwardZ * 1.7 + rightZ * lateral,
+    };
+    const yaw = kind === 'empty'
+      ? Math.atan2(-forwardX, -forwardZ)
+      : Math.atan2(
+        data.mesh.position.x - start.x,
+        data.mesh.position.z - start.z,
+      ) + Math.PI;
+    qaPlayerContactStage = { kind, data, identity, restore, start, yaw };
+    resetOnFootPlayerContactDiagnostics();
+    return {
+      ready: true,
+      syntheticEvents: 0,
+      kind,
+      residentId: identity.id,
+      residentIndex: data.index,
+      residentGroupIndex: groupIndex,
+      residentObjectUuid: data.mesh.uuid,
+      playerPose: {
+        position: { ...start },
+        yaw,
+      },
+    };
+  }
+
+  function getOnFootPlayerContactQaState() {
+    const staged = qaPlayerContactStage;
+    const diagnostics = getOnFootPlayerContactDiagnostics();
+    const data = staged?.data
+      || (diagnostics.lastCorrection
+        ? pool.find((entry) => residentIdentityFor(entry).id
+          === diagnostics.lastCorrection.residentId)
+        : null);
+    const identity = data ? residentIdentityFor(data) : null;
+    const userData = data?.mesh?.userData || {};
+    const corrected = diagnostics.lastCorrection?.correctedPosition;
+    const combinedRadius = (diagnostics.lastCorrection?.playerRadius ?? ON_FOOT_PLAYER_RADIUS)
+      + ON_FOOT_PEDESTRIAN_RADIUS;
+    const clearance = data && corrected
+      ? Math.hypot(
+        corrected.x - data.mesh.position.x,
+        corrected.z - data.mesh.position.z,
+      ) - combinedRadius
+      : null;
+    return {
+      active: Boolean(staged),
+      kind: staged?.kind ?? null,
+      syntheticEvents: 0,
+      resident: data && identity ? {
+        id: identity.id,
+        index: data.index,
+        objectUuid: data.mesh.uuid,
+        visible: data.mesh.visible === true,
+        live: userData.combatDefeated !== true && userData.combatDisabled !== true,
+        defeated: userData.combatDefeated === true || userData.combatDisabled === true,
+        position: {
+          x: data.mesh.position.x,
+          y: data.mesh.position.y,
+          z: data.mesh.position.z,
+        },
+        groundY: data.groundY,
+        yield: {
+          active: (Number(userData.playerYieldUntil) || 0) > lastUpdateElapsed,
+          side: Number(userData.playerYieldSide) || 0,
+          count: Number(userData.playerYieldCount) || 0,
+          remaining: Math.max(
+            0,
+            (Number(userData.playerYieldUntil) || 0) - lastUpdateElapsed,
+          ),
+        },
+      } : null,
+      collision: {
+        finalClearance: clearance,
+        finalOverlap: Number.isFinite(clearance) ? clearance < -1e-4 : false,
+        latchedResidentIds: diagnostics.latchedResidentIds,
+        lastCorrection: diagnostics.lastCorrection,
+        lastContact: diagnostics.lastContact,
+      },
+      diagnostics,
+    };
   }
 
   function residentDestinationFor(data) {
@@ -4054,31 +6103,372 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     }
   }
 
+  function setQaWitnessAnchor(residentId = null, anchor = null) {
+    if (typeof residentId !== 'string'
+      || !Number.isFinite(anchor?.x)
+      || !Number.isFinite(anchor?.y)
+      || !Number.isFinite(anchor?.z)) {
+      qaWitnessResidentId = null;
+      qaWitnessPosition = null;
+      return false;
+    }
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data?.mesh?.visible) return false;
+    qaWitnessResidentId = residentId;
+    qaWitnessPosition = { x: anchor.x, y: anchor.y, z: anchor.z };
+    return true;
+  }
+
   function setWeather(mode = 'clear') {
     system.weather = WEATHER_MODES.has(mode) ? mode : 'clear';
   }
 
-  function getNearestPerson(position, maxDistance = 4) {
+  function getNearestPerson(position, maxDistance = 4, { includeDefeated = false } = {}) {
     if (!position) return null;
     let nearest = null;
     let nearestDistance = Infinity;
     for (const data of pool) {
       if (!data.mesh.visible) continue;
+      const combatDefeated = data.mesh.userData?.combatDefeated === true
+        || data.mesh.userData?.combatDisabled === true;
+      if (combatDefeated && !includeDefeated) continue;
       const distance = Math.hypot(
         data.mesh.position.x - position.x,
         data.mesh.position.z - position.z,
       );
       if (distance <= maxDistance && distance < nearestDistance) {
+        const identity = residentIdentityFor(data);
         nearestDistance = distance;
         nearest = {
+          id: identity.id,
+          label: identity.label,
+          role: data.job.id,
           mesh: data.mesh,
           job: data.job,
           distance,
           heading: data.heading,
+          position: {
+            x: data.mesh.position.x,
+            y: data.mesh.position.y,
+            z: data.mesh.position.z,
+          },
+          combatDefeated,
         };
       }
     }
     return nearest;
+  }
+
+  function getVehicleImpactCandidates(probe, out = []) {
+    out.length = 0;
+    if (!probe?.start || !probe?.end) return out;
+    const padding = Math.max(0.8, Number(probe.halfWidth) || 0) + 0.7;
+    const minX = Math.min(probe.start.x, probe.end.x) - padding;
+    const maxX = Math.max(probe.start.x, probe.end.x) + padding;
+    const minZ = Math.min(probe.start.z, probe.end.z) - padding;
+    const maxZ = Math.max(probe.start.z, probe.end.z) + padding;
+    for (const data of pool) {
+      if (!data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      const combatDefeated = userData.combatDefeated === true
+        || userData.combatDisabled === true;
+      if (combatDefeated) continue;
+      const { x, y, z } = data.mesh.position;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      const identity = residentIdentityFor(data);
+      out.push({
+        id: identity.id,
+        label: identity.label,
+        position: { x, y, z },
+        heading: data.heading,
+        radius: 0.42,
+        combatDefeated: false,
+        activity: data.state === STATE_CROSS
+          ? `crossing:${data.crossing?.phase || 'approach'}`
+          : data.state === STATE_WORK ? 'working'
+            : data.state === STATE_IDLE ? 'paused' : 'walking',
+      });
+    }
+    return out;
+  }
+
+  function getCombatCandidates(out = []) {
+    out.length = 0;
+    for (const data of pool) {
+      if (!data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated === true || userData.combatDisabled === true) continue;
+      const identity = residentIdentityFor(data);
+      out.push({
+        kind: 'pedestrian',
+        id: identity.id,
+        residentId: identity.id,
+        groupIndex: group.children.indexOf(data.mesh),
+        label: identity.label,
+        mesh: data.mesh,
+        radius: 0.72,
+        height: 1.18,
+      });
+    }
+    return out;
+  }
+
+  function validateCombatAftermathState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || snapshot.version !== 1) return null;
+    if (!Array.isArray(snapshot.residents)
+      || snapshot.residents.length > MAX_PERSISTED_COMBAT_DEFEATS) return null;
+    const seen = new Set();
+    const records = [];
+    for (const entry of snapshot.residents) {
+      if (!entry || typeof entry !== 'object') return null;
+      const residentId = typeof entry.residentId === 'string'
+        ? entry.residentId.trim()
+        : '';
+      const role = typeof entry.role === 'string' ? entry.role.trim() : '';
+      if (!residentId || residentId.length > 96 || !role || role.length > 48
+        || seen.has(residentId)) return null;
+      const data = pool.find((candidate) => residentIdentityFor(candidate).id === residentId);
+      if (!data || data.job.id !== role) return null;
+      seen.add(residentId);
+      records.push({ residentId, role, data });
+    }
+    return records;
+  }
+
+  function exportCombatAftermathState() {
+    const residents = [];
+    for (const data of pool) {
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated !== true && userData.combatDisabled !== true) continue;
+      const identity = residentIdentityFor(data);
+      residents.push({ residentId: identity.id, role: data.job.id });
+      if (residents.length >= MAX_PERSISTED_COMBAT_DEFEATS) break;
+    }
+    return { version: 1, residents };
+  }
+
+  function canImportCombatAftermathState(snapshot) {
+    return validateCombatAftermathState(snapshot) !== null;
+  }
+
+  function importCombatAftermathState(snapshot) {
+    const records = validateCombatAftermathState(snapshot);
+    if (!records) return false;
+    pool.forEach((data) => {
+      const userData = data.mesh.userData || (data.mesh.userData = {});
+      resetCivilianMeleeCounter(data);
+      userData.vehicleImpactCount = 0;
+      userData.vehicleImpactUntil = 0;
+      userData.vehicleImpactDirectionX = 0;
+      userData.vehicleImpactDirectionZ = 0;
+      if (userData.combatDefeated !== true && userData.combatDisabled !== true) return;
+      data.mesh.rotation.z = 0;
+      userData.combatHitCount = 0;
+      userData.combatHitUntil = 0;
+      userData.combatDisabled = false;
+      userData.combatDefeated = false;
+      userData.combatDefeatedAt = null;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionStrength = 0;
+    });
+    records.forEach(({ data }) => {
+      const userData = data.mesh.userData || (data.mesh.userData = {});
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = 0;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'defeat-persisted';
+      userData.combatReactionStrength = 1;
+    });
+    return true;
+  }
+
+  function clearCombatAftermathState() {
+    return importCombatAftermathState({ version: 1, residents: [] });
+  }
+
+  function resetCivilianMeleeCounters() {
+    pool.forEach(resetCivilianMeleeCounter);
+  }
+
+  function registerVehicleImpact(residentId, { directionX = 0, directionZ = 0 } = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data?.mesh?.visible) return null;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (userData.combatDefeated === true || userData.combatDisabled === true) return null;
+    const directionLength = Math.hypot(directionX, directionZ) || 1;
+    userData.vehicleImpactUntil = lastUpdateElapsed + 1.35;
+    userData.vehicleImpactDirectionX = directionX / directionLength;
+    userData.vehicleImpactDirectionZ = directionZ / directionLength;
+    userData.vehicleImpactCount = (Number(userData.vehicleImpactCount) || 0) + 1;
+    const defeated = userData.vehicleImpactCount >= VEHICLE_IMPACT_DEFEAT_COUNT;
+    if (defeated) {
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = Math.round(lastUpdateElapsed * 1000) / 1000;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'vehicle-impact';
+      userData.combatReactionStrength = 1;
+    }
+    return {
+      residentId,
+      count: userData.vehicleImpactCount,
+      reaction: defeated ? 'vehicle-defeated' : 'vehicle-stagger',
+      remaining: 1.35,
+      defeated,
+    };
+  }
+
+  function getVehicleImpactState(residentId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data) return null;
+    const userData = data.mesh.userData || {};
+    return {
+      residentId,
+      count: Number(userData.vehicleImpactCount) || 0,
+      active: (Number(userData.vehicleImpactUntil) || 0) > lastUpdateElapsed,
+      remaining: Math.max(0, (Number(userData.vehicleImpactUntil) || 0) - lastUpdateElapsed),
+      combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+    };
+  }
+
+  function getCivilianMeleeCounterState(residentId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!data) return null;
+    const state = data.mesh.userData?.civilianMeleeCounter;
+    const identity = residentIdentityFor(data);
+    return {
+      residentId: identity.id,
+      residentObjectUuid: data.mesh.uuid,
+      live: counterEligible(data),
+      phase: state?.phase ?? 'idle',
+      hand: state?.hand ?? null,
+      timing: state?.timing ? { ...state.timing } : null,
+      cooldownRemaining: Math.max(0, (Number(state?.cooldownUntil) || 0) - lastUpdateElapsed),
+      closingDistance: Math.round((Number(state?.closingApplied) || 0) * 1000) / 1000,
+      lastEvent: state?.lastEvent ?? null,
+      armChain: state?.lastEvent?.armChain ?? null,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+    };
+  }
+
+  function getVehicleImpactWitness(residentId, maxDistance = 18) {
+    const victim = pool.find((entry) => residentIdentityFor(entry).id === residentId);
+    if (!victim?.mesh?.visible) return null;
+    const victimPosition = victim.mesh.position;
+    const limit = Number.isFinite(maxDistance) ? Math.max(2, maxDistance) : 18;
+    const candidates = [];
+    for (const data of pool) {
+      if (data === victim || !data.mesh.visible) continue;
+      const userData = data.mesh.userData || {};
+      if (userData.combatDefeated === true || userData.combatDisabled === true) continue;
+      const distance = Math.hypot(
+        data.mesh.position.x - victimPosition.x,
+        data.mesh.position.z - victimPosition.z,
+      );
+      if (distance > limit) continue;
+      const identity = residentIdentityFor(data);
+      candidates.push({
+        id: identity.id,
+        label: identity.label,
+        role: data.job.id,
+        distance,
+        position: {
+          x: data.mesh.position.x,
+          y: data.mesh.position.y,
+          z: data.mesh.position.z,
+        },
+        victimPosition: {
+          x: victimPosition.x,
+          y: victimPosition.y,
+          z: victimPosition.z,
+        },
+      });
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
+    return candidates[0] || null;
+  }
+
+  function registerVehicleWitnessReaction(witnessId, {
+    originX = 0,
+    originZ = 0,
+  } = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data?.mesh?.visible) return null;
+    const userData = data.mesh.userData || (data.mesh.userData = {});
+    if (userData.combatDefeated === true || userData.combatDisabled === true) return null;
+    let directionX = data.mesh.position.x - (Number(originX) || 0);
+    let directionZ = data.mesh.position.z - (Number(originZ) || 0);
+    const directionLength = Math.hypot(directionX, directionZ);
+    if (directionLength < 0.001) {
+      directionX = Math.sin(data.heading + Math.PI);
+      directionZ = Math.cos(data.heading + Math.PI);
+    } else {
+      directionX /= directionLength;
+      directionZ /= directionLength;
+    }
+    userData.vehicleWitnessUntil = lastUpdateElapsed + 1.8;
+    userData.vehicleWitnessDirectionX = directionX;
+    userData.vehicleWitnessDirectionZ = directionZ;
+    userData.vehicleWitnessBaseX = data.mesh.position.x;
+    userData.vehicleWitnessBaseY = data.mesh.position.y;
+    userData.vehicleWitnessBaseZ = data.mesh.position.z;
+    userData.vehicleWitnessTravel = 0;
+    userData.vehicleWitnessOffsetX = 0;
+    userData.vehicleWitnessOffsetZ = 0;
+    userData.vehicleWitnessReaction = 'phone-flee';
+    userData.vehicleWitnessCount = (Number(userData.vehicleWitnessCount) || 0) + 1;
+    return {
+      witnessId,
+      count: userData.vehicleWitnessCount,
+      reaction: 'phone-flee',
+      remaining: 1.8,
+    };
+  }
+
+  function registerIncidentWitnessReaction(witnessId, options = {}) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data) return null;
+    const activeUntil = Number(data.mesh.userData?.vehicleWitnessUntil) || 0;
+    if (activeUntil > lastUpdateElapsed) return null;
+    return registerVehicleWitnessReaction(witnessId, options);
+  }
+
+  function getVehicleWitnessState(witnessId) {
+    const data = pool.find((entry) => residentIdentityFor(entry).id === witnessId);
+    if (!data) return null;
+    const userData = data.mesh.userData || {};
+    return {
+      witnessId,
+      count: Number(userData.vehicleWitnessCount) || 0,
+      reaction: userData.vehicleWitnessReaction || null,
+      active: (Number(userData.vehicleWitnessUntil) || 0) > lastUpdateElapsed,
+      remaining: Math.max(0, (Number(userData.vehicleWitnessUntil) || 0) - lastUpdateElapsed),
+      displacement: Math.hypot(
+        Number(userData.vehicleWitnessOffsetX) || 0,
+        Number(userData.vehicleWitnessOffsetZ) || 0,
+      ),
+      groundError: Math.abs(data.mesh.position.y - data.groundY),
+      combatDefeated: userData.combatDefeated === true || userData.combatDisabled === true,
+      position: {
+        x: data.mesh.position.x,
+        y: data.mesh.position.y,
+        z: data.mesh.position.z,
+      },
+    };
   }
 
   setWeather('clear');
@@ -4087,9 +6477,31 @@ export function createPedestrianSystem({ scene, sidewalkNetwork } = {}) {
     update,
     setFocus,
     setQaSolo,
+    setQaWitnessAnchor,
     getStats,
     getFeaturedResidentSnapshots,
     getNearestPerson,
+    setOnFootPlayerCollisionProbe,
+    getOnFootPlayerContactDiagnostics,
+    stageOnFootPlayerContactQa,
+    clearOnFootPlayerContactQaStage,
+    getOnFootPlayerContactQaState,
+    getCombatCandidates,
+    exportCombatAftermathState,
+    canImportCombatAftermathState,
+    importCombatAftermathState,
+    clearCombatAftermathState,
+    resetCivilianMeleeCounters,
+    getVehicleImpactCandidates,
+    registerVehicleImpact,
+    getVehicleImpactState,
+    getCivilianMeleeCounterState,
+    getVehicleImpactWitness,
+    registerVehicleWitnessReaction,
+    getVehicleWitnessState,
+    getIncidentWitness: getVehicleImpactWitness,
+    registerWitnessReaction: registerIncidentWitnessReaction,
+    getWitnessState: getVehicleWitnessState,
     setWeather,
     setDayHour,
     getDayHour,

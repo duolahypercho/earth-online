@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SIGNAL_PERIOD, signalOffsetForPosition, signalPhaseAt } from './signals.js';
+import { HYDE_MEASURED_GRADE } from './district_massing.js';
 
 // Geographic references used for the authored signatures (geography only;
 // no proprietary meshes or textures): OpenStreetMap/ODbL landmark and street
@@ -15,7 +16,18 @@ const ROAD_MARKING_OFFSET = 0.044;
 const SIGNAL_UPDATE_INTERVAL = 0.05;
 const MAX_DETAIL_BUILDINGS = 36;
 const MAX_PROXY_BUILDINGS = 24;
+const publicAsset = (path) => `${import.meta.env?.BASE_URL ?? '/'}${path.replace(/^\//, '')}`;
 const SIGNAL_GROUPS = Object.freeze({ eastWest: 0, northSouth: 1 });
+// Opt-in waterfront evidence composition.  This is published with the
+// authored Embarcadero presentation for QA tooling; normal camera defaults
+// and the runtime roam path remain unchanged.
+const EMBARCADERO_C3_VIEW = Object.freeze({
+  id: 'sf-evidence:3:0:embarcadero-c3',
+  sectorKey: '3:0',
+  camera: Object.freeze({ x: 1400, y: 28, z: 0 }),
+  lookAt: Object.freeze({ x: 1030, y: 28, z: 12 }),
+  composition: 'waterfront-landmarks',
+});
 
 const EXPANSION_SECTORS = Object.freeze([
   Object.freeze({
@@ -192,7 +204,7 @@ const EXPANSION_SECTORS = Object.freeze([
     landmark: 'lombard-switchback',
     treeCadence: 8,
     signalEvery: 2,
-    grade: 0.095,
+    grade: HYDE_MEASURED_GRADE,
   }),
   Object.freeze({
     key: '0:5',
@@ -445,6 +457,162 @@ function createSharedResources() {
   const trunk = new THREE.CylinderGeometry(0.11, 0.14, 1, 6);
   const pole = new THREE.CylinderGeometry(0.035, 0.05, 1, 6);
   const window = new THREE.BoxGeometry(1, 1, 1);
+  const facadePanel = new THREE.PlaneGeometry(1, 1, 2, 2);
+  const loadFacadePhoto = (assetPath) => {
+    // Node invariant scripts construct the shared scene without a DOM. Keep
+    // their material graph deterministic while allowing the browser path to
+    // load the public photographic skins normally.
+    if (typeof document === 'undefined') return null;
+    const texture = new THREE.TextureLoader().load(publicAsset(assetPath));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    return texture;
+  };
+  const loadWaterTexture = () => {
+    // Keep Node invariant runs deterministic while the browser receives the
+    // authored seamless bay-water texture. Keep the projected C3 shoreline
+    // to roughly 2.5–3 oblique cycles across z (rather than the prior eight
+    // horizontal runs) while preserving the same single texture draw.
+    if (typeof document === 'undefined') return null;
+    const texture = new THREE.TextureLoader().load(publicAsset('assets/sf-bay-water-generated-v3.png'));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2.4, 2.8);
+    texture.offset.set(0.23, 0.17);
+    texture.center.set(0.5, 0.5);
+    texture.rotation = 0.82;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+    return texture;
+  };
+  const waterTexture = loadWaterTexture();
+  const makeFacadePhotoMaterial = (texture, color, offsetX, repeatX) => {
+    const map = texture?.clone?.() ?? null;
+    if (map) {
+      map.offset.x = offsetX;
+      map.repeat.x = repeatX;
+      map.needsUpdate = true;
+    }
+    return new THREE.MeshStandardMaterial({
+      ...(map ? { map, bumpMap: map, bumpScale: 0.055 } : {}),
+      color,
+      roughness: 0.84,
+      metalness: 0.01,
+      side: THREE.DoubleSide,
+    });
+  };
+  const makeFacadePhotoVariants = (texture, color, repeatX = 0.22) => (
+    [0.01, 0.255, 0.5, 0.745].map((offsetX) => (
+      makeFacadePhotoMaterial(texture, color, offsetX, repeatX)
+    ))
+  );
+  const edwardianFacade = loadFacadePhoto('assets/sf-edwardian-facade.png');
+  const edwardianFacadeAlt = loadFacadePhoto('assets/sf-edwardian-facade-2.png');
+  const facadePaintedLadyPhotos = makeFacadePhotoVariants(edwardianFacade, 0xe7d4c5);
+  const facadeStuccoPhotos = makeFacadePhotoVariants(edwardianFacadeAlt, 0xd8c7b1);
+  const facadeBrickPhotos = makeFacadePhotoVariants(edwardianFacadeAlt, 0xc18268);
+  const facadePhotoMaterials = [facadePaintedLadyPhotos, facadeStuccoPhotos, facadeBrickPhotos];
+  const facadePhotoBaseColors = facadePhotoMaterials.map((family) => (
+    family.map((material) => material.color.clone())
+  ));
+  const facadeNightMaterials = [
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero warm night pane amber',
+      color: 0xf4a45d,
+      emissive: 0xff702c,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.42,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero cool night pane mint',
+      color: 0xd6e2d8,
+      emissive: 0x9fc9c0,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.4,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero warm night pane copper',
+      color: 0xd88752,
+      emissive: 0xe75525,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.46,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero cool night pane blue',
+      color: 0x8b9da6,
+      emissive: 0x536e7d,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.48,
+    }),
+  ];
+  // Hero landmarks own a separate pane pool. Keeping these out of the
+  // district-wide facadeNight array prevents the C3 occupancy treatment from
+  // changing Hyde or any other streamed facade family.
+  const landmarkNightMaterials = [
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero landmark warm pane amber',
+      color: 0xf4a45d,
+      emissive: 0xff702c,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.42,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero landmark cool pane mint',
+      color: 0xd6e2d8,
+      emissive: 0x9fc9c0,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.4,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero landmark warm pane copper',
+      color: 0xd88752,
+      emissive: 0xe75525,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.46,
+    }),
+    new THREE.MeshStandardMaterial({
+      name: 'Embarcadero landmark cool pane blue',
+      color: 0x8b9da6,
+      emissive: 0x536e7d,
+      emissiveIntensity: 0,
+      fog: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      roughness: 0.48,
+    }),
+  ];
   const materials = {
     road: new THREE.MeshStandardMaterial({ color: 0x3d4546, roughness: 0.94, metalness: 0.02 }),
     sidewalk: new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.92 }),
@@ -478,6 +646,71 @@ function createSharedResources() {
     landmarkStone: new THREE.MeshStandardMaterial({ color: 0xc2b69d, roughness: 0.78 }),
     landmarkBrick: new THREE.MeshStandardMaterial({ color: 0x875044, roughness: 0.84 }),
     landmarkOrange: new THREE.MeshStandardMaterial({ color: 0xa34835, roughness: 0.68 }),
+    // Embarcadero hero landmarks use an explicit dark/copper palette instead
+    // of the shared pale stone/brick proxy colors.  These materials stay
+    // pooled in the expansion resource set and are animated by the same
+    // setNightLighting lifecycle as the landmark panes below.
+    landmarkDarkPodium: new THREE.MeshStandardMaterial({
+      name: 'Embarcadero landmark dark podium',
+      color: 0x586a72,
+      roughness: 0.64,
+      metalness: 0.16,
+      fog: false,
+    }),
+    transamericaBody: new THREE.MeshStandardMaterial({
+      name: 'Transamerica Pyramid dark glazing body',
+      color: 0x1e3542,
+      roughness: 0.3,
+      metalness: 0.42,
+      emissive: 0x07151d,
+      emissiveIntensity: 0.04,
+      fog: false,
+    }),
+    transamericaAccent: new THREE.MeshStandardMaterial({
+      name: 'Transamerica Pyramid copper structural fins',
+      color: 0xb45138,
+      roughness: 0.48,
+      metalness: 0.2,
+      emissive: 0x2a0f0a,
+      emissiveIntensity: 0.03,
+      fog: false,
+    }),
+    salesforceGlass: new THREE.MeshStandardMaterial({
+      name: 'Salesforce Tower dark blue glazing',
+      color: 0x164356,
+      roughness: 0.24,
+      metalness: 0.46,
+      emissive: 0x06131b,
+      emissiveIntensity: 0.04,
+      fog: false,
+    }),
+    salesforceAccent: new THREE.MeshStandardMaterial({
+      name: 'Salesforce Tower warm structural ribs',
+      color: 0xc37a45,
+      roughness: 0.46,
+      metalness: 0.18,
+      emissive: 0x2c1408,
+      emissiveIntensity: 0.03,
+      fog: false,
+    }),
+    salesforceCrown: new THREE.MeshStandardMaterial({
+      name: 'Salesforce Tower dark stepped crown',
+      color: 0x293c49,
+      roughness: 0.34,
+      metalness: 0.3,
+      emissive: 0x081822,
+      emissiveIntensity: 0.04,
+      fog: false,
+    }),
+    salesforceCap: new THREE.MeshStandardMaterial({
+      name: 'Salesforce Tower crown cap copper',
+      color: 0xd0a363,
+      roughness: 0.42,
+      metalness: 0.22,
+      emissive: 0x321c0b,
+      emissiveIntensity: 0.03,
+      fog: false,
+    }),
     roof: new THREE.MeshStandardMaterial({ color: 0x3b4648, roughness: 0.76 }),
     entryHeader: new THREE.MeshStandardMaterial({
       color: 0xc17a4b,
@@ -485,14 +718,152 @@ function createSharedResources() {
       emissive: 0x4d2519,
       emissiveIntensity: 0.2,
     }),
+    // Shared photographic skins keep the Hyde modules in the same Edwardian
+    // visual language as the rest of the city while leaving the pooled
+    // low-poly cornices, bays, awnings, and storefronts visible.
+    facadePaintedLadyPhotos,
+    facadeStuccoPhotos,
+    facadeBrickPhotos,
+    facadeNight: facadeNightMaterials,
+    landmarkNight: landmarkNightMaterials,
+    shorelineReflection: new THREE.MeshBasicMaterial({
+      name: 'Embarcadero dedicated water-coupled reflection ribbons',
+      color: 0xffffff,
+      vertexColors: true,
+      side: THREE.FrontSide,
+      fog: false,
+      transparent: true,
+      opacity: 0.74,
+      blending: THREE.NormalBlending,
+      depthTest: true,
+      depthWrite: false,
+    }),
+    shorelineWaterField: new THREE.MeshBasicMaterial({
+      name: 'Embarcadero saturated low-poly water field',
+      ...(waterTexture ? { map: waterTexture } : {}),
+      color: 0xffffff,
+      vertexColors: true,
+      side: THREE.FrontSide,
+      // This bounded authored field must retain its vertex-color facets in
+      // the waterfront vista; the surrounding scene still supplies fog.
+      fog: false,
+      transparent: false,
+      opacity: 1,
+      depthTest: true,
+      depthWrite: true,
+      toneMapped: false,
+    }),
   };
-  return { box, tower, canopy, trunk, pole, window, materials };
+  return {
+    box,
+    tower,
+    canopy,
+    trunk,
+    pole,
+    window,
+    facadePanel,
+    facadePhotoMaterials,
+    facadePhotoBaseColors,
+    materials,
+  };
 }
 
 function appendQuad(positions, colors, a, b, c, d, color) {
   positions.push(...a, ...b, ...c, ...a, ...c, ...d);
   if (colors && color) {
     for (let i = 0; i < 6; i += 1) colors.push(color.r, color.g, color.b);
+  }
+}
+
+// Surface strips are viewed from above in the waterfront evidence pose. Keep
+// their shared material FrontSide and normalize the authored vertex winding
+// here, rather than masking a back-facing field with DoubleSide/depth cheats.
+function appendUpwardQuad(positions, colors, a, b, c, d, color) {
+  const abx = b[0] - a[0];
+  const abz = b[2] - a[2];
+  const acx = c[0] - a[0];
+  const acz = c[2] - a[2];
+  const normalY = abz * acx - abx * acz;
+  if (normalY < 0) {
+    appendQuad(positions, colors, a, d, c, b, color);
+  } else {
+    appendQuad(positions, colors, a, b, c, d, color);
+  }
+}
+
+function appendTexturedQuad(positions, colors, uvs, a, b, c, d, color, ua, ub, uc, ud) {
+  positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+  if (colors && color) {
+    for (let i = 0; i < 6; i += 1) colors.push(color.r, color.g, color.b);
+  }
+  if (uvs) uvs.push(...ua, ...ub, ...uc, ...ua, ...uc, ...ud);
+}
+
+// Textured water uses the same winding guard as the untextured field. Keep
+// the optional UV stream local to the bay mesh so every other surface helper
+// stays on its existing pooled geometry path.
+function appendUpwardTexturedQuad(positions, colors, uvs, a, b, c, d, color, ua, ub, uc, ud) {
+  const normalY = (p0, p1, p2) => {
+    const abx = p1[0] - p0[0];
+    const abz = p1[2] - p0[2];
+    const acx = p2[0] - p0[0];
+    const acz = p2[2] - p0[2];
+    return abz * acx - abx * acz;
+  };
+  // A strongly curved final water edge can make one diagonal of a quad fold
+  // even when the other diagonal remains upward. Choose the best of the two
+  // diagonals and both windings so every emitted triangle stays FrontSide.
+  const candidates = [
+    { points: [a, b, c, a, c, d], colors: [color, color, color, color, color, color], uvs: [ua, ub, uc, ua, uc, ud] },
+    { points: [a, d, c, a, c, b], colors: [color, color, color, color, color, color], uvs: [ua, ud, uc, ua, uc, ub] },
+    { points: [a, b, d, b, c, d], colors: [color, color, color, color, color, color], uvs: [ua, ub, ud, ub, uc, ud] },
+    { points: [a, d, b, d, c, b], colors: [color, color, color, color, color, color], uvs: [ua, ud, ub, ud, uc, ub] },
+  ];
+  let best = candidates[0];
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    const score = Math.min(
+      normalY(candidate.points[0], candidate.points[1], candidate.points[2]),
+      normalY(candidate.points[3], candidate.points[4], candidate.points[5]),
+    );
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+    if (score >= 0) break;
+  }
+  positions.push(...best.points.flat());
+  if (colors) best.colors.forEach((entry) => colors.push(entry.r, entry.g, entry.b));
+  if (uvs) best.uvs.forEach((entry) => uvs.push(...entry));
+}
+
+function appendGradientQuad(positions, colors, a, b, c, d, ca, cb, cc, cd) {
+  positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+  if (colors) {
+    colors.push(
+      ca.r, ca.g, ca.b,
+      cb.r, cb.g, cb.b,
+      cc.r, cc.g, cc.b,
+      ca.r, ca.g, ca.b,
+      cc.r, cc.g, cc.b,
+      cd.r, cd.g, cd.b,
+    );
+  }
+}
+
+// Reflection bands use a tapered wall-to-water profile. Preserve FrontSide
+// normals while carrying the warm/cool-to-muted gradient through both
+// triangles, so the diagonal split never reads as a painted road mark.
+function appendUpwardGradientQuad(positions, colors, a, b, c, d, ca, cb, cc, cd) {
+  const abx = b[0] - a[0];
+  const abz = b[2] - a[2];
+  const acx = c[0] - a[0];
+  const acz = c[2] - a[2];
+  const normalY = abz * acx - abx * acz;
+  if (normalY < 0) {
+    appendGradientQuad(positions, colors, a, d, c, b, ca, cd, cc, cb);
+  } else {
+    appendGradientQuad(positions, colors, a, b, c, d, ca, cb, cc, cd);
   }
 }
 
@@ -1691,6 +2062,7 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     return mesh;
   };
   let landmark = null;
+  let landmarkVisualIdentity = null;
   if (blueprint.landmark === 'coit-tower') {
     // Telegraph Hill sits in the forward sightline of the North Beach stop.
     // A broad, terraced shoulder keeps Coit grounded in the neighborhood
@@ -3138,6 +3510,241 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     }
     const overlook = addSurfaceBox('Russian Hill overlook pad', x, z, [14, 0.4, 10], shared.materials.landmarkStone);
     overlook.castShadow = true;
+
+    // Hyde encounter slice: three ordinary blocks (about 146 m from
+    // z=-105 to z=41) sit on the existing raised sidewalks.  The modules are
+    // shallow street-wall cues rather than a second massing system; each uses
+    // the pooled box/window materials and follows the same local grade as the
+    // streamed road surface.  Alternating families keep the corridor legible
+    // at eye level without filling the whole Russian Hill sector with bespoke
+    // meshes.
+    const hydeGradeAt = (xAt, zAt, span = 12) => (
+      (surfaceAt(xAt, zAt + span) - surfaceAt(xAt, zAt - span)) / (span * 2)
+    );
+    const hydeFacade = ({ family, side, z: facadeZ, width, height, body, roof, accent, photoMaterials, photoFamilyIndex }) => {
+      const x = side < 0 ? -82 : -54;
+      const facing = side < 0 ? 1 : -1;
+      const baseY = surfaceAt(x, facadeZ);
+      const facade = new THREE.Group();
+      facade.name = `Hyde corridor ${family} facade ${facadeZ}`;
+      facade.position.set(x, baseY, facadeZ);
+      facade.userData.encounterGrade = HYDE_MEASURED_GRADE;
+      facade.userData.measuredGrade = HYDE_MEASURED_GRADE;
+      // Follow the sampled terrain grade at each block.  The shared profile
+      // owns the exact vertical datum; using a local finite difference keeps
+      // both ends of a long frontage seated on that datum with no float or
+      // buried corner when the analytic terrain adds its gentle cross-slope.
+      facade.rotation.x = -Math.atan(hydeGradeAt(x, facadeZ, width * 0.5));
+      const part = (name, scale, px, py, pz, material, rotationY = 0) => {
+        const mesh = new THREE.Mesh(shared.box, material);
+        mesh.name = name;
+        mesh.position.set(px, py + scale[1] * 0.5, pz);
+        mesh.scale.set(scale[0], scale[1], scale[2]);
+        mesh.rotation.y = rotationY;
+        mesh.userData.facadeFamily = family;
+        facade.add(mesh);
+        return mesh;
+      };
+
+      part(`${family} grounded plinth`, [4.0, 0.42, width], 0, 0, 0, shared.materials.landmarkStone);
+      part(`${family} body`, [3.5, height, width - 0.8], 0, 0.42, 0, body);
+      part(`${family} roof cap`, [3.9, 0.34, width + 0.4], 0, 0.42 + height, 0, roof);
+
+      const frontX = facing * 1.82;
+      // The photo carries its own aligned window rhythm; suppress the old
+      // flat front window bands so they do not fight the photographic skin.
+      // Keep the low-poly body, cornice, and family-specific depth cues below.
+      const photoBayWidth = 7.6;
+      const photoBayHeight = height - 0.38;
+      const photoBayCenters = [-12, -4, 4, 12];
+      photoBayCenters.forEach((bayCenter, bayIndex) => {
+        const photoPanel = new THREE.Mesh(
+          shared.facadePanel,
+          photoMaterials?.[bayIndex % photoMaterials.length] ?? shared.materials.landmarkStone,
+        );
+        photoPanel.name = `${family} road-facing Edwardian photo bay ${bayIndex + 1}`;
+        photoPanel.position.set(
+          frontX + facing * 0.045,
+          0.42 + photoBayHeight * 0.5,
+          bayCenter,
+        );
+        photoPanel.rotation.y = facing * Math.PI * 0.5;
+        photoPanel.scale.set(photoBayWidth, photoBayHeight, 1);
+        photoPanel.userData.facadeFamily = family;
+        photoPanel.userData.facadePhoto = true;
+        photoPanel.userData.photoBayWidth = photoBayWidth;
+        facade.add(photoPanel);
+
+        // Each bay has three outward depth layers: recessed photo, reveal
+        // jambs, then projecting casing/sill. The 0.4 m gaps keep the four
+        // crops distinct instead of creating a stretched repeating stripe.
+        const revealX = frontX + facing * 0.14;
+        const casingX = frontX + facing * 0.28;
+        const edgeOffset = photoBayWidth * 0.5 + 0.09;
+        part(`${family} photo bay ${bayIndex + 1} recessed reveal left`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter - edgeOffset, shared.materials.trim);
+        part(`${family} photo bay ${bayIndex + 1} recessed reveal right`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter + edgeOffset, shared.materials.trim);
+        part(`${family} photo bay ${bayIndex + 1} casing left`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter - edgeOffset, accent);
+        part(`${family} photo bay ${bayIndex + 1} casing right`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter + edgeOffset, accent);
+        part(`${family} photo bay ${bayIndex + 1} projecting sill`, [0.34, 0.16, photoBayWidth + 0.28], casingX, 0.42 + photoBayHeight - 0.2, bayCenter, shared.materials.trim);
+
+        // Keep the photographic texture intact by day, but break its dense
+        // repeated night stripe with a few deterministic, per-bay occupancy
+        // panes. These are tiny pooled window meshes, hidden at day and never
+        // large enough to read as a broad emissive slab.
+        const bayHash = (salt) => {
+          const value = Math.sin(
+            (facadeZ * 0.73) + (side * 17.1) + (photoFamilyIndex * 29.7)
+              + (bayIndex * 11.3) + (salt * 7.9),
+          ) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        const litPaneCount = 1 + Math.floor(bayHash(1) * 3);
+        for (let paneIndex = 0; paneIndex < litPaneCount; paneIndex += 1) {
+          const pane = new THREE.Mesh(
+            shared.window,
+            shared.materials.facadeNight[(photoFamilyIndex + bayIndex + paneIndex) % shared.materials.facadeNight.length],
+          );
+          const paneHeight = 0.34 + bayHash(paneIndex + 2) * 0.38;
+          const paneY = Math.min(
+            0.42 + photoBayHeight - paneHeight * 0.7,
+            1.55 + bayHash(paneIndex + 4) * 6.8,
+          );
+          pane.name = `${family} photo bay ${bayIndex + 1} sparse night pane ${paneIndex + 1}`;
+          pane.position.set(
+            frontX + facing * 0.105,
+            paneY,
+            bayCenter + (bayHash(paneIndex + 5) - 0.5) * 4.8,
+          );
+          pane.scale.set(0.04, paneHeight, 0.38 + bayHash(paneIndex + 6) * 0.42);
+          pane.userData.facadeFamily = family;
+          pane.userData.facadeNightOverlay = true;
+          pane.userData.nightBay = bayIndex + 1;
+          pane.userData.nightOccupancy = litPaneCount / 3;
+          pane.castShadow = false;
+          pane.receiveShadow = false;
+          facade.add(pane);
+        }
+      });
+
+      // A grounded threshold and a small family-specific street treatment
+      // keep the frontage from reading as a blank colored slab.
+      part(`${family} curb threshold`, [1.52, 0.18, 2.05], frontX + facing * 0.14, 0, 0, shared.materials.sidewalk);
+      part(`${family} public doorway`, [0.14, 2.12, 1.12], frontX + facing * 0.2, 0.18, 0, shared.materials.door);
+      part(`${family} entry header`, [0.18, 0.22, 1.52], frontX + facing * 0.24, 2.45, 0, shared.materials.entryHeader);
+      if (family === 'painted-lady') {
+        part('painted-lady cornice bay left', [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, -12, accent);
+        part('painted-lady cornice bay right', [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, 12, accent);
+      } else if (family === 'stucco') {
+        part('stucco awning band', [0.36, 0.18, width * 0.72], frontX + facing * 0.24, 3.88, 0, accent);
+        part('stucco balcony rail', [0.26, 0.1, width * 0.54], frontX + facing * 0.3, 6.55, 0, shared.materials.trim);
+      } else {
+        part('brick mercantile storefront band', [0.3, 1.28, width * 0.66], frontX + facing * 0.22, 0.72, 0, shared.materials.landmarkOrange);
+        part('brick mercantile sign rail', [0.28, 0.18, width * 0.58], frontX + facing * 0.25, 3.88, 0, accent);
+      }
+      facade.traverse((object) => {
+        if (!object.isMesh) return;
+        object.castShadow = !object.userData.facadeNightOverlay;
+        object.receiveShadow = !object.userData.facadeNightOverlay;
+      });
+      group.add(facade);
+    };
+
+    [
+      { z: -88, family: 'painted-lady', body: shared.materials.landmarkStone, roof: shared.materials.roof, accent: shared.materials.landmarkOrange, photoMaterials: shared.materials.facadePaintedLadyPhotos, photoFamilyIndex: 0 },
+      { z: -32, family: 'stucco', body: shared.materials.trim, roof: shared.materials.roof, accent: shared.materials.landmarkStone, photoMaterials: shared.materials.facadeStuccoPhotos, photoFamilyIndex: 1 },
+      { z: 24, family: 'brick-mercantile', body: shared.materials.landmarkBrick, roof: shared.materials.roof, accent: shared.materials.landmarkOrange, photoMaterials: shared.materials.facadeBrickPhotos, photoFamilyIndex: 2 },
+    ].forEach((module) => {
+      [-1, 1].forEach((side) => hydeFacade({ ...module, side, width: 34, height: side < 0 ? 11.2 : 9.6 }));
+    });
+
+    const hydeCurbWest = addSurfaceStrip(
+      'Hyde corridor west curb cap',
+      [-77.95, -106],
+      [-77.95, 42],
+      0.18,
+      shared.materials.curb,
+      SURFACE_OFFSET + 0.09,
+      24,
+    );
+    const hydeCurbEast = addSurfaceStrip(
+      'Hyde corridor east curb cap',
+      [-58.05, -106],
+      [-58.05, 42],
+      0.18,
+      shared.materials.curb,
+      SURFACE_OFFSET + 0.09,
+      24,
+    );
+    hydeCurbWest.userData.encounterGrade = HYDE_MEASURED_GRADE;
+    hydeCurbEast.userData.encounterGrade = HYDE_MEASURED_GRADE;
+
+    const hydeTree = (name, xTree, zTree, scale = 1) => {
+      const tree = new THREE.Group();
+      tree.name = name;
+      tree.position.set(xTree, surfaceAt(xTree, zTree), zTree);
+      tree.rotation.x = -Math.atan(hydeGradeAt(xTree, zTree, 4));
+      const trunk = new THREE.Mesh(shared.trunk, shared.materials.trunk);
+      trunk.name = `${name} grounded trunk`;
+      trunk.position.y = 1.08 * scale;
+      trunk.scale.set(0.24 * scale, 2.16 * scale, 0.24 * scale);
+      const canopy = new THREE.Mesh(shared.canopy, shared.materials.tree);
+      canopy.name = `${name} canopy`;
+      canopy.position.y = 4.1 * scale;
+      canopy.scale.set(2.15 * scale, 4.2 * scale, 2.15 * scale);
+      tree.add(trunk, canopy);
+      tree.userData.grounded = true;
+      tree.userData.encounterGrade = HYDE_MEASURED_GRADE;
+      group.add(tree);
+    };
+    [
+      [-76.4, -76, 1.06],
+      [-76.4, -20, 0.98],
+      [-59.6, 4, 1.02],
+      [-59.6, 36, 0.92],
+    ].forEach(([treeX, treeZ, scale], index) => {
+      hydeTree(`Hyde corridor street tree ${index + 1}`, treeX, treeZ, scale);
+    });
+
+    const hydeBench = (name, xBench, zBench, heading = 0) => {
+      const bench = new THREE.Group();
+      bench.name = name;
+      bench.position.set(xBench, surfaceAt(xBench, zBench), zBench);
+      bench.rotation.x = -Math.atan(hydeGradeAt(xBench, zBench, 2));
+      bench.rotation.y = heading;
+      const seat = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      seat.name = `${name} seat`;
+      seat.position.y = 0.78;
+      seat.scale.set(0.9, 0.18, 3.2);
+      const back = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      back.name = `${name} back`;
+      back.position.set(0, 1.38, 0.38);
+      back.scale.set(0.9, 0.92, 3.2);
+      const legA = new THREE.Mesh(shared.box, shared.materials.signalHousing);
+      legA.position.set(0, 0.36, -1.06);
+      legA.scale.set(0.7, 0.72, 0.18);
+      const legB = legA.clone();
+      legB.position.z = 0.82;
+      bench.add(seat, back, legA, legB);
+      bench.userData.grounded = true;
+      group.add(bench);
+    };
+    hydeBench('Hyde corridor public bench north', -76.2, -54, Math.PI * 0.5);
+    hydeBench('Hyde corridor public bench south', -59.8, 28, -Math.PI * 0.5);
+
+    const hydrant = new THREE.Group();
+    hydrant.name = 'Hyde corridor grounded hydrant';
+    hydrant.position.set(-75.8, surfaceAt(-75.8, -4), -4);
+    hydrant.rotation.x = -Math.atan(hydeGradeAt(-75.8, -4, 1));
+    const hydrantBody = new THREE.Mesh(shared.trunk, shared.materials.landmarkOrange);
+    hydrantBody.position.y = 0.58;
+    hydrantBody.scale.set(3.2, 1.18, 3.2);
+    const hydrantCap = new THREE.Mesh(shared.box, shared.materials.landmarkOrange);
+    hydrantCap.position.y = 0.93;
+    hydrantCap.scale.set(0.32, 0.12, 0.32);
+    hydrant.add(hydrantBody, hydrantCap);
+    hydrant.userData.grounded = true;
+    group.add(hydrant);
+
     landmark = {
       x,
       z,
@@ -3228,18 +3835,118 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     const x = 40;
     const z = 90;
     const base = surfaceAt(x, z);
-    const podium = addSurfaceBox('Transamerica plaza podium', x, z, [32, 9, 32], shared.materials.landmarkStone);
+    // Anchor the pyramid on the west side of the centered waterfront vista.
+    // Keep the existing canyon/park pack at its source coordinates while the
+    // landmark itself shares the clear sightline ray through the z≈0 gap.
+    const pyramidX = -120;
+    const pyramidZ = 0;
+    const pyramidBase = surfaceAt(pyramidX, pyramidZ);
+    const podium = addSurfaceBox(
+      'Transamerica plaza podium',
+      pyramidX,
+      pyramidZ,
+      [32, 9, 32],
+      shared.materials.landmarkDarkPodium,
+    );
     podium.castShadow = true;
-    const pyramid = new THREE.Mesh(new THREE.ConeGeometry(15, 124, 4), shared.materials.window);
+    // A stepped, warm stone base and contrasting dark-red tapered body keep
+    // the pyramid readable as a landmark instead of a generic window proxy.
+    const pyramidBaseTier = addSurfaceBox(
+      'Transamerica plaza lower stepped tier',
+      pyramidX,
+      pyramidZ,
+      [38, 2.2, 38],
+      shared.materials.transamericaAccent,
+      9,
+    );
+    pyramidBaseTier.castShadow = true;
+    const pyramidUpperTier = addSurfaceBox(
+      'Transamerica plaza upper stepped tier',
+      pyramidX,
+      pyramidZ,
+      [30, 1.35, 30],
+      shared.materials.landmarkDarkPodium,
+      11.2,
+    );
+    pyramidUpperTier.castShadow = true;
+    const pyramid = new THREE.Mesh(new THREE.ConeGeometry(18, 118, 4), shared.materials.transamericaBody);
     pyramid.name = 'Transamerica Pyramid tapered shaft';
-    pyramid.position.set(x, base + 9 + 62, z);
+    pyramid.position.set(pyramidX, pyramidBase + 9 + 59, pyramidZ);
     pyramid.rotation.y = Math.PI * 0.25;
     pyramid.castShadow = true;
     group.add(pyramid);
-    const spire = new THREE.Mesh(shared.pole, shared.materials.window);
+    [
+      [-7.2, -7.2],
+      [7.2, -7.2],
+      [7.2, 7.2],
+      [-7.2, 7.2],
+    ].forEach(([edgeX, edgeZ], index) => {
+      const fin = addSurfaceBox(
+        `Transamerica Pyramid corner fin ${index + 1}`,
+        pyramidX + edgeX,
+        pyramidZ + edgeZ,
+        [1.45, 86, 1.45],
+        index % 2 ? shared.materials.landmarkDarkPodium : shared.materials.transamericaAccent,
+        11.5,
+      );
+      fin.castShadow = true;
+    });
+    [
+      { offset: 42, size: 22, material: shared.materials.transamericaAccent },
+      { offset: 78, size: 14, material: shared.materials.landmarkDarkPodium },
+    ].forEach(({ offset, size, material }, index) => {
+      const belt = addSurfaceBox(
+        `Transamerica Pyramid structural belt ${index + 1}`,
+        pyramidX,
+        pyramidZ,
+        [size, 1.05, size],
+        material,
+        offset,
+      );
+      belt.castShadow = true;
+    });
+    const transamericaPaneRows = [18, 34, 50, 66, 82, 98];
+    const transamericaPaneColumns = [-0.62, -0.21, 0.21, 0.62];
+    transamericaPaneRows.forEach((row, rowIndex) => {
+      const t = THREE.MathUtils.clamp((row - 9) / 118, 0, 1);
+      const radius = Math.max(2.2, 18 * (1 - t));
+      // Keep the upper rows separated in the long C3 view instead of
+      // collapsing four panes into one bright center stripe as the pyramid
+      // tapers.  The larger overlays remain bounded within the landmark
+      // silhouette and use the existing pooled window geometry/materials.
+      const paneRadius = Math.max(radius, 8);
+      transamericaPaneColumns.forEach((column, columnIndex) => {
+        const pane = new THREE.Mesh(
+          shared.window,
+          shared.materials.landmarkNight[(rowIndex * 3 + columnIndex) % shared.materials.landmarkNight.length],
+        );
+        pane.name = `Transamerica Pyramid sparse night pane ${rowIndex + 1}-${columnIndex + 1}`;
+        pane.position.set(
+          // C3 approaches from +X; place the overlay just beyond the
+          // analytic cone surface so the depth-tested pane cannot disappear
+          // behind the tapered body.
+          pyramidX + radius + 0.2,
+          pyramidBase + row,
+          pyramidZ + paneRadius * column,
+        );
+        pane.scale.set(
+          0.09,
+          1.72 + ((rowIndex + columnIndex) % 3) * 0.42,
+          2.0 + ((rowIndex * 2 + columnIndex) % 3) * 0.38,
+        );
+        pane.userData.landmarkNightPane = 'transamerica';
+        pane.userData.facadeNightOverlay = true;
+        pane.userData.cameraFacingSurface = '+X/cone';
+        pane.material.depthTest = true;
+        pane.castShadow = false;
+        pane.receiveShadow = false;
+        group.add(pane);
+      });
+    });
+    const spire = new THREE.Mesh(shared.pole, shared.materials.transamericaAccent);
     spire.name = 'Transamerica Pyramid spire';
-    spire.position.set(x, base + 140, z);
-    spire.scale.set(1.0, 26, 1.0);
+    spire.position.set(pyramidX, pyramidBase + 140, pyramidZ);
+    spire.scale.set(1.15, 24, 1.15);
     spire.castShadow = true;
     group.add(spire);
     // Street-level canyon flanks on Sansome / Montgomery cues.
@@ -3282,18 +3989,311 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     promenade.receiveShadow = true;
     const seawall = addSurfaceBox('Embarcadero seawall', 176, 0, [1.4, 1.2, 340], shared.materials.landmarkStone, 0.05);
     seawall.castShadow = true;
-    const bay = addSurfaceStrip('Embarcadero bay water shelf', [186, -180], [186, 180], 18, shared.materials.water, 0.12, 28);
+    // The bay is a shallow low-poly field rather than one flat apron. Its
+    // sampled ripple profile keeps the water connected to the wall while the
+    // tiled, rotated photo texture carries the readable bay depth/reflections.
+    // Keep the field immediately waterward of the authored frontage shells;
+    // the 1m reveal still tucks beneath the irregular edge while avoiding
+    // AABB interpenetration with the last enterable waterfront bay.
+    const waterFieldStartX = 178;
+    // Keep the far water bounded near the promenade and shape its final edge
+    // per row. The irregular seam reads as an intentional dry pier edge while
+    // preserving a dry foreground beyond it (including the benches/planters).
+    const waterFieldEndX = 220;
+    const waterFieldColumns = [178, 185, 194, 205, waterFieldEndX];
+    const waterFieldBoundaryDrift = Object.freeze([
+      -10, 14, -12, 18, -8, 16, -11, -6, 8,
+      -12, -14, 20, -9, 18, -13, 16, -7,
+    ]);
+    const waterFieldBoundaryXAt = (zAt) => {
+      const t = THREE.MathUtils.clamp(((zAt + 180) / 360) * (waterFieldBoundaryDrift.length - 1), 0, waterFieldBoundaryDrift.length - 1);
+      const index = Math.min(waterFieldBoundaryDrift.length - 2, Math.floor(t));
+      const mix = t - index;
+      return waterFieldEndX + THREE.MathUtils.lerp(
+        waterFieldBoundaryDrift[index],
+        waterFieldBoundaryDrift[index + 1],
+        mix,
+      );
+    };
+    const waterFieldBoundaryMinX = waterFieldEndX + Math.min(...waterFieldBoundaryDrift);
+    const waterFieldBoundaryMaxX = waterFieldEndX + Math.max(...waterFieldBoundaryDrift);
+    const waterFieldTextureEndX = waterFieldBoundaryMaxX;
+    const waterFieldRows = 16;
+    const waterFieldRowSpacing = 360 / (waterFieldRows - 1);
+    // Lift the authored field clear of the terrain so the mapped bay remains
+    // visible across every facet. Ripple amplitudes stay bounded below the
+    // neutral shore cap and expose the true minimum terrain clearance.
+    const waterFieldBaseOffset = 0.45;
+    const waterFieldRippleAmplitude = 0.018 + 0.012 + 0.008;
+    const waterFieldHeightAt = (xAt, zAt) => (
+      surfaceAt(xAt, zAt)
+      + waterFieldBaseOffset
+      + Math.sin((zAt * 0.11) + (xAt * 0.31)) * 0.018
+      + Math.cos((zAt * 0.037) - (xAt * 0.17)) * 0.012
+      + Math.sin((zAt * 0.22) + (xAt * 0.07)) * 0.008
+    );
+    // Keep vertex colors as a restrained depth tint; the generated texture,
+    // not a high-chroma polygon fill, owns the visible water/reflection read.
+    const waterFieldShallow = new THREE.Color(0xd2e2df);
+    const waterFieldDeep = new THREE.Color(0x9ab8bd);
+    const waterFieldPositions = [];
+    const waterFieldColors = [];
+    const waterFieldUvs = [];
+    const waterFieldColorAt = (xAt, zAt) => {
+      const depth = THREE.MathUtils.clamp((xAt - waterFieldStartX) / (waterFieldEndX - waterFieldStartX), 0, 1);
+      const shade = 0.93 + Math.sin((zAt * 0.08) + (xAt * 0.13)) * 0.07;
+      return waterFieldShallow.clone().lerp(waterFieldDeep, depth).multiplyScalar(shade);
+    };
+    const waterFieldUvAt = (xAt, zAt) => [
+      (xAt - waterFieldStartX) / (waterFieldTextureEndX - waterFieldStartX),
+      (zAt + 180) / 360,
+    ];
+    for (let column = 0; column < waterFieldColumns.length - 1; column += 1) {
+      const x0 = waterFieldColumns[column];
+      const boundaryColumn = column === waterFieldColumns.length - 2;
+      for (let row = 0; row < waterFieldRows - 1; row += 1) {
+        const z0 = -180 + row * waterFieldRowSpacing;
+        const z1 = -180 + (row + 1) * waterFieldRowSpacing;
+        const x1z0 = boundaryColumn ? waterFieldBoundaryXAt(z0) : waterFieldColumns[column + 1];
+        const x1z1 = boundaryColumn ? waterFieldBoundaryXAt(z1) : waterFieldColumns[column + 1];
+        const p00 = [x0, waterFieldHeightAt(x0, z0), z0];
+        const p10 = [x1z0, waterFieldHeightAt(x1z0, z0), z0];
+        const p11 = [x1z1, waterFieldHeightAt(x1z1, z1), z1];
+        const p01 = [x0, waterFieldHeightAt(x0, z1), z1];
+        appendUpwardTexturedQuad(
+          waterFieldPositions,
+          waterFieldColors,
+          waterFieldUvs,
+          p00,
+          p10,
+          p11,
+          p01,
+          waterFieldColorAt((x0 * 2 + x1z0 + x1z1) * 0.25, (z0 + z1) * 0.5),
+          waterFieldUvAt(x0, z0),
+          waterFieldUvAt(x1z0, z0),
+          waterFieldUvAt(x1z1, z1),
+          waterFieldUvAt(x0, z1),
+        );
+      }
+    }
+    const bay = createSurfaceMesh(
+      'Embarcadero bay water shelf',
+      waterFieldPositions,
+      waterFieldColors,
+      shared.materials.shorelineWaterField,
+    );
+    bay.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(waterFieldUvs, 2));
+    bay.geometry.computeBoundingSphere();
     bay.receiveShadow = true;
+    bay.castShadow = false;
+    bay.userData.waterfrontShoreline = true;
+    bay.userData.lowPolyWaterField = true;
+    bay.userData.waterFieldColumns = waterFieldColumns.length;
+    bay.userData.waterFieldRows = waterFieldRows;
+    bay.userData.waterFieldBandCount = waterFieldColumns.length - 1;
+    bay.userData.depthNormalVariation = true;
+    bay.userData.waterTextureAsset = 'assets/sf-bay-water-generated-v3.png';
+    bay.userData.waterTextureTiled = true;
+    bay.userData.waterTextureRepeat = Object.freeze({ u: 2.4, v: 2.8 });
+    bay.userData.waterTextureRotation = 0.82;
+    bay.userData.waterTextureOffset = Object.freeze({ u: 0.23, v: 0.17 });
+    bay.userData.waterFieldBaseOffset = waterFieldBaseOffset;
+    bay.userData.waterFieldRippleAmplitude = waterFieldRippleAmplitude;
+    bay.userData.minimumTerrainClearance = waterFieldBaseOffset - waterFieldRippleAmplitude;
+    bay.userData.waterFieldEdgeIrregular = true;
+    bay.userData.waterFieldBoundaryRange = Object.freeze({ minX: waterFieldBoundaryMinX, maxX: waterFieldBoundaryMaxX });
+    bay.userData.waterFieldRange = Object.freeze({ startX: waterFieldStartX, endX: waterFieldEndX });
+    group.add(bay);
+
+    // A single neutral, low-profile bulkhead follows the same irregular edge
+    // so dry foreground reads as a deliberate promenade/pier termination.
+    const bulkheadPositions = [];
+    const bulkheadWidthProfile = Object.freeze([
+      1.1, 1.7, 1.25, 2.0, 1.0, 1.6, 1.15, 1.85, 1.05,
+      1.55, 1.15, 1.9, 1.0, 1.65, 1.2, 1.8, 1.1,
+    ]);
+    const bulkheadTopProfile = Object.freeze([
+      0.08, 0.14, 0.05, 0.12, 0.07, 0.16, 0.06, 0.13, 0.09,
+      0.15, 0.05, 0.12, 0.08, 0.16, 0.06, 0.14, 0.09,
+    ]);
+    for (let row = 0; row < waterFieldRows - 1; row += 1) {
+      const z0 = -180 + row * waterFieldRowSpacing;
+      const z1 = -180 + (row + 1) * waterFieldRowSpacing;
+      const edgeX0 = waterFieldBoundaryXAt(z0);
+      const edgeX1 = waterFieldBoundaryXAt(z1);
+      const width0 = bulkheadWidthProfile[row];
+      const width1 = bulkheadWidthProfile[row + 1];
+      const outerX0 = edgeX0 + width0;
+      const outerX1 = edgeX1 + width1;
+      const edgeTop0 = waterFieldHeightAt(edgeX0, z0) + bulkheadTopProfile[row];
+      const edgeTop1 = waterFieldHeightAt(edgeX1, z1) + bulkheadTopProfile[row + 1];
+      const outerTop0 = [outerX0, edgeTop0, z0];
+      const outerTop1 = [outerX1, edgeTop1, z1];
+      const edgeTop0Point = [edgeX0, edgeTop0, z0];
+      const edgeTop1Point = [edgeX1, edgeTop1, z1];
+      const outerBottom0 = [outerX0, surfaceAt(outerX0, z0) + SURFACE_OFFSET + 0.02, z0];
+      const outerBottom1 = [outerX1, surfaceAt(outerX1, z1) + SURFACE_OFFSET + 0.02, z1];
+      const edgeBottom0 = [edgeX0, surfaceAt(edgeX0, z0) + SURFACE_OFFSET + 0.02, z0];
+      const edgeBottom1 = [edgeX1, surfaceAt(edgeX1, z1) + SURFACE_OFFSET + 0.02, z1];
+      appendUpwardQuad(bulkheadPositions, null, edgeTop0Point, outerTop0, outerTop1, edgeTop1Point);
+      appendQuad(bulkheadPositions, null, outerBottom0, outerTop0, outerTop1, outerBottom1);
+      appendQuad(bulkheadPositions, null, edgeBottom1, edgeBottom0, edgeTop0Point, edgeTop1Point);
+    }
+    const bulkhead = createSurfaceMesh(
+      'Embarcadero irregular dry promenade bulkhead cap',
+      bulkheadPositions,
+      null,
+      shared.materials.landmarkStone,
+    );
+    bulkhead.castShadow = true;
+    bulkhead.receiveShadow = true;
+    bulkhead.userData.waterfrontShoreline = true;
+    bulkhead.userData.lowProfileBulkhead = true;
+    bulkhead.userData.continuous = true;
+    bulkhead.userData.boundaryRange = Object.freeze({ minX: waterFieldBoundaryMinX, maxX: waterFieldBoundaryMaxX });
+    bulkhead.userData.widthRange = Object.freeze({
+      min: Math.min(...bulkheadWidthProfile),
+      max: Math.max(...bulkheadWidthProfile),
+    });
+    bulkhead.userData.heightRange = Object.freeze({
+      min: Math.min(...bulkheadTopProfile),
+      max: Math.max(...bulkheadTopProfile),
+    });
+    bulkhead.userData.contactOffset = 0.02;
+    group.add(bulkhead);
+    // Replace the single straight wall/water seam with one continuous,
+    // low-poly cap that follows the grade but varies its block edge in x/y.
+    // The small waterward reveal keeps the wall legible from the fixed vista
+    // while preserving the existing promenade, seawall, and shelf footprints.
+    const shoreNodeCount = 17;
+    const shoreNodeSpacing = 360 / (shoreNodeCount - 1);
+    const shoreDrift = [0.02, -0.17, 0.28, -0.08, 0.19, -0.24, 0.11, 0.34, -0.13, 0.06, -0.27, 0.17, -0.04, 0.23, -0.16, 0.09, -0.02];
+    const shoreHeights = [1.2, 1.58, 1.04, 1.46, 1.22, 1.74, 1.12, 1.54, 0.98, 1.66, 1.18, 1.5, 1.06, 1.72, 1.26, 1.58, 1.1];
+    const shoreNodes = shoreDrift.map((drift, index) => {
+      const zAt = -180 + index * shoreNodeSpacing;
+      const backX = 178.42 + drift * 0.28;
+      const outerX = 181.62 + drift * 0.62;
+      const backY = surfaceAt(backX, zAt) + SURFACE_OFFSET + 0.016;
+      const outerY = surfaceAt(outerX, zAt) + SURFACE_OFFSET + 0.016;
+      return {
+        z: zAt,
+        backX,
+        outerX,
+        backY,
+        outerY,
+        height: shoreHeights[index],
+      };
+    });
+    const shoreEdgePositions = [];
+    for (let index = 0; index < shoreNodes.length - 1; index += 1) {
+      const start = shoreNodes[index];
+      const end = shoreNodes[index + 1];
+      const backBottomStart = [start.backX, start.backY, start.z];
+      const backBottomEnd = [end.backX, end.backY, end.z];
+      const outerBottomStart = [start.outerX, start.outerY, start.z];
+      const outerBottomEnd = [end.outerX, end.outerY, end.z];
+      const backTopStart = [start.backX, start.backY + start.height, start.z];
+      const backTopEnd = [end.backX, end.backY + end.height, end.z];
+      const outerTopStart = [start.outerX, start.outerY + start.height * 0.92, start.z];
+      const outerTopEnd = [end.outerX, end.outerY + end.height * 0.92, end.z];
+      appendQuad(shoreEdgePositions, null, backTopStart, outerTopStart, outerTopEnd, backTopEnd);
+      appendQuad(shoreEdgePositions, null, outerBottomStart, outerBottomEnd, outerTopEnd, outerTopStart);
+      appendQuad(shoreEdgePositions, null, backBottomEnd, backBottomStart, backTopStart, backTopEnd);
+      appendQuad(shoreEdgePositions, null, backBottomStart, outerBottomStart, outerTopStart, backTopStart);
+      appendQuad(shoreEdgePositions, null, outerBottomEnd, backBottomEnd, backTopEnd, outerTopEnd);
+    }
+    const shoreEdge = createSurfaceMesh(
+      'Embarcadero irregular low-poly shore edge',
+      shoreEdgePositions,
+      null,
+      shared.materials.curb,
+    );
+    shoreEdge.castShadow = true;
+    shoreEdge.userData.waterfrontShoreline = true;
+    shoreEdge.userData.shoreEdgeNodeCount = shoreNodeCount;
+    shoreEdge.userData.contactOffset = 0.034;
+    group.add(shoreEdge);
+
+    // Four connected, segmented ribbons carry alternating warm/cool
+    // reflections from the seawall into the bounded water field. Shared node
+    // positions make each ribbon continuous while the taper/drift keeps the
+    // pooled draw from reading as a triangular or lane-marking decal.
+    const shorelineRibbonSpecs = [
+      { x: 181.5, z: -42, length: 8, width: 2.0, drift: [0, 0.8, -0.5, 0.2] },
+      { x: 182.5, z: -12, length: 8, width: 1.8, drift: [0, -0.7, 0.6, -0.2] },
+      { x: 183.5, z: 18, length: 8, width: 1.9, drift: [0, 0.9, -0.8, 0.3] },
+      { x: 184.5, z: 48, length: 7, width: 1.5, drift: [0, -0.8, 0.7, -0.3] },
+    ];
+    const shorelineRibbonPositions = [];
+    const shorelineRibbonColors = [];
+    const shorelineWarm = new THREE.Color(0xe2b673);
+    const shorelineWarmTail = new THREE.Color(0x315d6a);
+    const shorelineCool = new THREE.Color(0x82cbd0);
+    const shorelineCoolTail = new THREE.Color(0x214f60);
+    shorelineRibbonSpecs.forEach(({ x: shoreX, z: ribbonZ, length, width, drift }, index) => {
+      const sample = (xAt, zAt) => [xAt, waterFieldHeightAt(xAt, zAt) + 0.12, zAt];
+      const isCool = index % 2 === 1;
+      const head = isCool ? shorelineCool : shorelineWarm;
+      const tail = isCool ? shorelineCoolTail : shorelineWarmTail;
+      const nodeCount = drift.length;
+      for (let node = 0; node < nodeCount - 1; node += 1) {
+        const t0 = node / (nodeCount - 1);
+        const t1 = (node + 1) / (nodeCount - 1);
+        const x0 = shoreX + length * t0;
+        const x1 = shoreX + length * t1;
+        const z0 = ribbonZ + drift[node];
+        const z1 = ribbonZ + drift[node + 1];
+        const width0 = width * (1 - t0 * 0.68);
+        const width1 = width * (1 - t1 * 0.68);
+        const color0 = head.clone().lerp(tail, t0 * 0.72);
+        const color1 = head.clone().lerp(tail, t1 * 0.72);
+        appendUpwardGradientQuad(
+          shorelineRibbonPositions,
+          shorelineRibbonColors,
+          sample(x0, z0 - width0 * 0.5),
+          sample(x0, z0 + width0 * 0.5),
+          sample(x1, z1 + width1 * 0.5),
+          sample(x1, z1 - width1 * 0.5),
+          color0,
+          color0,
+          color1,
+          color1,
+        );
+      }
+    });
+    const shorelineGlints = createSurfaceMesh(
+      'Embarcadero segmented shoreline reflection ribbons',
+      shorelineRibbonPositions,
+      shorelineRibbonColors,
+      shared.materials.shorelineReflection,
+    );
+    shorelineGlints.receiveShadow = false;
+    shorelineGlints.castShadow = false;
+    shorelineGlints.userData.waterfrontShoreline = true;
+    shorelineGlints.userData.shorelineRibbonCount = shorelineRibbonSpecs.length;
+    shorelineGlints.userData.shorelineGlintCount = shorelineRibbonSpecs.length;
+    shorelineGlints.userData.segmentCount = shorelineRibbonSpecs.length * 3;
+    shorelineGlints.userData.nonPeriodic = true;
+    shorelineGlints.userData.waterCoupledMaterial = true;
+    shorelineGlints.userData.warmCoolVertexColors = true;
+    shorelineGlints.userData.contactOffset = 0.12;
+    group.add(shorelineGlints);
     for (let pier = -3; pier <= 3; pier += 1) {
       const pz = pier * 48;
-      const shed = addSurfaceBox(
-        `Embarcadero pier shed ${pier}`,
-        170,
-        pz,
-        [12, 7 + (Math.abs(pier) % 3), 18],
-        shared.materials.landmarkStone,
-      );
-      shed.castShadow = true;
+      // Keep the central three fingers as a promenade/water sightline while
+      // the outer sheds retain the authored pier rhythm. This is intentionally
+      // scoped to sheds -1/0/+1; no global visibility or camera changes are
+      // needed.
+      if (Math.abs(pier) > 1) {
+        const shed = addSurfaceBox(
+          `Embarcadero pier shed ${pier}`,
+          170,
+          pz,
+          [12, 7 + (Math.abs(pier) % 3), 18],
+          shared.materials.landmarkStone,
+        );
+        shed.castShadow = true;
+      }
       const finger = addSurfaceBox(
         `Embarcadero pier finger ${pier}`,
         182,
@@ -3308,20 +4308,812 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
     ferry.castShadow = true;
     const clock = addSurfaceBox('Ferry Building clock tower cue', 168, -48, [5.2, 28, 5.2], shared.materials.landmarkStone, 12);
     clock.castShadow = true;
+    // The nave's bay-facing side is the dominant pale slab in the C3 view.
+    // Keep the original nave and clock cue intact, but layer a grounded east
+    // facade across its 72 m promenade frontage. Seven unequal bays keep no
+    // one photo/glazing component large enough to read as another slab while
+    // the central gap preserves the clock tower silhouette.
+    const ferryEastFacade = new THREE.Group();
+    ferryEastFacade.name = 'Ferry Building east glazed bay facade';
+    ferryEastFacade.userData.waterfrontCorridor = 'embarcadero-164m-east-frontage';
+    ferryEastFacade.userData.grounded = true;
+    ferryEastFacade.userData.ferryEastFacade = Object.freeze({
+      orientation: '+X/east',
+      frontageMeters: 72,
+      panelCount: 7,
+      panelWidths: Object.freeze([8, 8.8, 9, 5.46, 11, 11, 9.94]),
+      maxPanelWidth: 11,
+      depthLayers: 3,
+      sparseNightPaneCount: 14,
+      centralClockGap: 5.4,
+    });
+    const ferryBayWidths = [8, 8.8, 9, 5.46, 11, 11, 9.94];
+    const ferryBayGaps = [0.68, 0.68, 0.68, 5.4, 0.68, 0.68];
+    const ferryFacadeMaterials = [
+      shared.materials.salesforceGlass,
+      shared.materials.landmarkDarkPodium,
+      shared.materials.salesforceGlass,
+      shared.materials.landmarkDarkPodium,
+      shared.materials.salesforceGlass,
+      shared.materials.landmarkDarkPodium,
+      shared.materials.salesforceGlass,
+    ];
+    const ferryPanelHeight = 10.7;
+    const ferryBaseX = 176.08;
+    const ferryFrontageStart = -84;
+    let ferryBayCursor = ferryFrontageStart;
+    ferryBayWidths.forEach((bayWidth, bayIndex) => {
+      const bayCenter = ferryBayCursor + bayWidth * 0.5;
+      const baySurface = surfaceAt(ferryBaseX, bayCenter);
+      const halfWidth = bayWidth * 0.5;
+      const grade = (
+        surfaceAt(ferryBaseX, bayCenter + halfWidth)
+        - surfaceAt(ferryBaseX, bayCenter - halfWidth)
+      ) / Math.max(bayWidth, 1);
+      const bay = new THREE.Group();
+      bay.name = `Ferry Building east glazed bay ${bayIndex + 1}`;
+      bay.position.set(176.08, baySurface, bayCenter);
+      bay.rotation.x = -Math.atan(grade);
+      bay.userData.ferryEastFacade = true;
+      bay.userData.ferryBayIndex = bayIndex;
+      bay.userData.panelWidth = bayWidth;
+
+      const ferryPart = (name, scale, px, py, pz, material) => {
+        const mesh = new THREE.Mesh(shared.box, material);
+        mesh.name = name;
+        mesh.position.set(px, py + scale[1] * 0.5, pz);
+        mesh.scale.set(scale[0], scale[1], scale[2]);
+        mesh.userData.ferryEastFacade = true;
+        mesh.userData.ferryBayIndex = bayIndex;
+        bay.add(mesh);
+        return mesh;
+      };
+      const lowerDoorHeight = 2.7;
+      const lowerDoorWidth = Math.min(3.6, bayWidth * 0.52);
+      const spandrelBottom = 3.18;
+      const spandrelHeight = 0.62;
+      const upperWindowBottom = spandrelBottom + spandrelHeight + 0.04;
+      const upperWindowHeight = 5.6;
+      const upperWindowWidth = Math.max(2.8, bayWidth - 1.08);
+      const lowerDoor = new THREE.Mesh(shared.facadePanel, shared.materials.door);
+      lowerDoor.name = `Ferry Building east glazed bay ${bayIndex + 1} lower door`;
+      lowerDoor.position.set(0, 0.42 + lowerDoorHeight * 0.5, 0);
+      lowerDoor.rotation.y = Math.PI * 0.5;
+      lowerDoor.scale.set(lowerDoorWidth, lowerDoorHeight, 1);
+      lowerDoor.userData.ferryEastFacade = true;
+      lowerDoor.userData.lowerDoor = true;
+      lowerDoor.userData.panelWidth = lowerDoorWidth;
+      bay.add(lowerDoor);
+      const panel = new THREE.Mesh(shared.facadePanel, ferryFacadeMaterials[bayIndex]);
+      panel.name = `Ferry Building east glazed bay ${bayIndex + 1} dark panel`;
+      panel.position.set(0, upperWindowBottom + upperWindowHeight * 0.5, 0);
+      panel.rotation.y = Math.PI * 0.5;
+      panel.scale.set(upperWindowWidth, upperWindowHeight, 1);
+      panel.userData.ferryEastFacade = true;
+      panel.userData.facadePhoto = false;
+      panel.userData.darkGlazing = 'upper-window';
+      panel.userData.panelWidth = upperWindowWidth;
+      panel.userData.panelHeight = upperWindowHeight;
+      bay.add(panel);
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} grounded east plinth`,
+        [0.42, 0.42, bayWidth + 0.34],
+        0.2,
+        0,
+        0,
+        shared.materials.landmarkDarkPodium,
+      );
+      const edgeOffset = halfWidth + 0.11;
+      // Recessed edge, projecting pilasters, and stone belts form the
+      // Beaux-Arts three-layer depth stack without a full-height dark run.
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} recessed reveal left`,
+        [0.12, ferryPanelHeight, 0.08],
+        0.12,
+        0.42,
+        -edgeOffset,
+        shared.materials.trim,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} recessed reveal right`,
+        [0.12, ferryPanelHeight, 0.08],
+        0.12,
+        0.42,
+        edgeOffset,
+        shared.materials.trim,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} projecting casing left`,
+        [0.22, ferryPanelHeight + 0.16, 0.14],
+        0.28,
+        0.34,
+        -edgeOffset,
+        shared.materials.salesforceAccent,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} projecting casing right`,
+        [0.22, ferryPanelHeight + 0.16, 0.14],
+        0.28,
+        0.34,
+        edgeOffset,
+        shared.materials.salesforceAccent,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} projecting sill`,
+        [0.3, 0.16, bayWidth + 0.26],
+        0.26,
+        spandrelBottom - 0.16,
+        0,
+        shared.materials.trim,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} warm stone mid-belt`,
+        [0.34, spandrelHeight, bayWidth + 0.3],
+        0.3,
+        spandrelBottom,
+        0,
+        shared.materials.landmarkStone,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} upper window lintel`,
+        [0.34, 0.18, upperWindowWidth + 0.3],
+        0.3,
+        upperWindowBottom + upperWindowHeight - 0.12,
+        0,
+        shared.materials.landmarkStone,
+      );
+      ferryPart(
+        `Ferry Building bay ${bayIndex + 1} lower door lintel`,
+        [0.28, 0.18, lowerDoorWidth + 0.34],
+        0.28,
+        0.42 + lowerDoorHeight - 0.12,
+        0,
+        shared.materials.landmarkStone,
+      );
+      const mullionCount = bayWidth >= 7.5 ? 1 : 0;
+      for (let mullion = 0; mullion < mullionCount; mullion += 1) {
+        ferryPart(
+          `Ferry Building bay ${bayIndex + 1} upper window mullion`,
+          [0.12, upperWindowHeight, 0.1],
+          0.24,
+          upperWindowBottom,
+          0,
+          shared.materials.salesforceAccent,
+        );
+      }
+
+      // Two compact upper openings per bay establish day-time glazing. Their
+      // smaller warm/cool overlays are driven by the existing night lifecycle.
+      for (let paneIndex = 0; paneIndex < 2; paneIndex += 1) {
+        const paneZ = (paneIndex === 0 ? -0.24 : 0.24) * upperWindowWidth;
+        const opening = new THREE.Mesh(shared.window, shared.materials.window);
+        opening.name = `Ferry Building bay ${bayIndex + 1} dark opening ${paneIndex + 1}`;
+        opening.position.set(0.07, upperWindowBottom + 1.5 + paneIndex * 2.65, paneZ);
+        opening.scale.set(0.08, 1.38, Math.min(1.15, upperWindowWidth * 0.18));
+        opening.userData.ferryEastFacade = true;
+        opening.userData.darkGlazing = true;
+        bay.add(opening);
+        const nightPane = new THREE.Mesh(
+          shared.window,
+          shared.materials.facadeNight[(bayIndex + paneIndex) % shared.materials.facadeNight.length],
+        );
+        nightPane.name = `Ferry Building bay ${bayIndex + 1} sparse night pane ${paneIndex + 1}`;
+        nightPane.position.set(0.14, upperWindowBottom + 1.5 + paneIndex * 2.65, paneZ);
+        nightPane.scale.set(0.05, 0.64, Math.min(0.46, upperWindowWidth * 0.07));
+        nightPane.userData.ferryEastFacade = true;
+        nightPane.userData.facadeNightOverlay = true;
+        nightPane.castShadow = false;
+        nightPane.receiveShadow = false;
+        bay.add(nightPane);
+      }
+      ferryEastFacade.add(bay);
+      ferryBayCursor += bayWidth + (ferryBayGaps[bayIndex] ?? 0);
+    });
+    const ferryCorniceBase = surfaceAt(ferryBaseX, -48);
+    const ferryCorniceGrade = (
+      surfaceAt(ferryBaseX, -12)
+      - surfaceAt(ferryBaseX, -84)
+    ) / 72;
+    const steppedCornice = new THREE.Mesh(shared.box, shared.materials.landmarkStone);
+    steppedCornice.name = 'Ferry Building continuous stepped roof cornice';
+    steppedCornice.position.set(0.38, ferryCorniceBase + 10.74, -48);
+    steppedCornice.scale.set(0.38, 0.24, 72);
+    steppedCornice.rotation.x = -Math.atan(ferryCorniceGrade);
+    steppedCornice.userData.ferryEastFacade = true;
+    steppedCornice.userData.steppedCornice = true;
+    ferryEastFacade.add(steppedCornice);
+    const steppedCorniceCap = new THREE.Mesh(shared.box, shared.materials.trim);
+    steppedCorniceCap.name = 'Ferry Building continuous stepped cornice cap';
+    steppedCorniceCap.position.set(0.54, ferryCorniceBase + 11.02, -48);
+    steppedCorniceCap.scale.set(0.24, 0.14, 70.8);
+    steppedCorniceCap.rotation.x = -Math.atan(ferryCorniceGrade);
+    steppedCorniceCap.userData.ferryEastFacade = true;
+    steppedCorniceCap.userData.steppedCornice = true;
+    ferryEastFacade.add(steppedCorniceCap);
+    group.add(ferryEastFacade);
     // Street trees / lamps along the promenade every block.
     for (let lz = -150; lz <= 150; lz += 24) {
       const lamp = addSurfaceBox(`Embarcadero lamp ${lz}`, 164, lz, [0.24, 4.2, 0.24], shared.materials.signalHousing, 0.2);
       lamp.castShadow = true;
     }
+
+    // Bounded waterfront encounter slice: a 164 m east-frontage run from
+    // the Sansome canyon toward the seawall. Four compact photo bays per
+    // module keep every panel below 12 m while the pooled trims/reveals retain
+    // a readable depth stack at street distance.
+    const waterfrontGradeAt = (xAt, zAt, span = 10) => (
+      (surfaceAt(xAt, zAt + span) - surfaceAt(xAt, zAt - span)) / (span * 2)
+    );
+    const waterfrontFacade = ({ family, z: facadeZ, height, photoMaterials, photoFamilyIndex, frontageWidth = 38 }) => {
+      const facadeX = 154;
+      const facing = -1;
+      const width = frontageWidth;
+      const narrowModule = width < 30;
+      const bayCenters = narrowModule ? [-4.4, 4.4] : [-14.4, -4.8, 4.8, 14.4];
+      const baseY = surfaceAt(facadeX, facadeZ);
+      const facade = new THREE.Group();
+      facade.name = `Embarcadero waterfront ${family} facade ${facadeZ}`;
+      facade.position.set(facadeX, baseY, facadeZ);
+      facade.rotation.x = -Math.atan(waterfrontGradeAt(facadeX, facadeZ, width * 0.5));
+      facade.userData.waterfrontCorridor = 'embarcadero-164m-east-frontage';
+      facade.userData.grounded = true;
+      facade.userData.encounterGrade = blueprint.grade;
+      const part = (name, scale, px, py, pz, material) => {
+        const mesh = new THREE.Mesh(shared.box, material);
+        mesh.name = name;
+        mesh.position.set(px, py + scale[1] * 0.5, pz);
+        mesh.scale.set(scale[0], scale[1], scale[2]);
+        mesh.userData.waterfrontFacadeFamily = family;
+        facade.add(mesh);
+        return mesh;
+      };
+      part(`${family} grounded waterfront plinth`, [4.0, 0.42, width], 0, 0, 0, shared.materials.landmarkStone);
+      part(`${family} waterfront body`, [3.6, height, width - 0.8], 0, 0.42, 0, family === 'painted-lady'
+        ? shared.materials.landmarkStone
+        : family === 'brick-mercantile' ? shared.materials.landmarkBrick : shared.materials.trim);
+      part(`${family} waterfront roof cap`, [3.9, 0.34, width + 0.4], 0, 0.42 + height, 0, shared.materials.roof);
+
+      const frontX = facing * 1.82;
+      const photoBayWidth = narrowModule ? 7.6 : 8.4;
+      const photoBayHeight = height - 0.38;
+      bayCenters.forEach((bayCenter, bayIndex) => {
+        const photoPanel = new THREE.Mesh(
+          shared.facadePanel,
+          photoMaterials[bayIndex % photoMaterials.length],
+        );
+        photoPanel.name = `${family} waterfront road-facing photo bay ${bayIndex + 1}`;
+        photoPanel.position.set(frontX + facing * 0.045, 0.42 + photoBayHeight * 0.5, bayCenter);
+        photoPanel.rotation.y = facing * Math.PI * 0.5;
+        photoPanel.scale.set(photoBayWidth, photoBayHeight, 1);
+        photoPanel.userData.facadePhoto = true;
+        photoPanel.userData.waterfrontFacadeFamily = family;
+        photoPanel.userData.photoBayWidth = photoBayWidth;
+        facade.add(photoPanel);
+
+        const revealX = frontX + facing * 0.14;
+        const casingX = frontX + facing * 0.28;
+        const edgeOffset = photoBayWidth * 0.5 + 0.09;
+        part(`${family} waterfront bay ${bayIndex + 1} recessed reveal left`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter - edgeOffset, shared.materials.trim);
+        part(`${family} waterfront bay ${bayIndex + 1} recessed reveal right`, [0.12, photoBayHeight, 0.08], revealX, 0.42, bayCenter + edgeOffset, shared.materials.trim);
+        part(`${family} waterfront bay ${bayIndex + 1} casing left`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter - edgeOffset, shared.materials.landmarkOrange);
+        part(`${family} waterfront bay ${bayIndex + 1} casing right`, [0.24, photoBayHeight + 0.16, 0.14], casingX, 0.34, bayCenter + edgeOffset, shared.materials.landmarkOrange);
+        part(`${family} waterfront bay ${bayIndex + 1} projecting sill`, [0.34, 0.16, photoBayWidth + 0.28], casingX, 0.42 + photoBayHeight - 0.2, bayCenter, shared.materials.trim);
+
+        const bayHash = (salt) => {
+          const value = Math.sin(
+            (facadeZ * 0.61) + (photoFamilyIndex * 31.2) + (bayIndex * 13.4) + (salt * 7.1),
+          ) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        const litPaneCount = 1 + Math.floor(bayHash(1) * 3);
+        for (let paneIndex = 0; paneIndex < litPaneCount; paneIndex += 1) {
+          const pane = new THREE.Mesh(
+            shared.window,
+            shared.materials.facadeNight[(photoFamilyIndex + bayIndex + paneIndex) % shared.materials.facadeNight.length],
+          );
+          const paneHeight = 0.34 + bayHash(paneIndex + 2) * 0.38;
+          pane.name = `${family} waterfront bay ${bayIndex + 1} sparse night pane ${paneIndex + 1}`;
+          pane.position.set(
+            frontX + facing * 0.105,
+            Math.min(0.42 + photoBayHeight - paneHeight * 0.7, 1.55 + bayHash(paneIndex + 4) * 6.8),
+            bayCenter + (bayHash(paneIndex + 5) - 0.5) * 4.8,
+          );
+          pane.scale.set(0.04, paneHeight, 0.38 + bayHash(paneIndex + 6) * 0.42);
+          pane.userData.facadeNightOverlay = true;
+          pane.userData.waterfrontFacadeFamily = family;
+          pane.castShadow = false;
+          pane.receiveShadow = false;
+          facade.add(pane);
+        }
+      });
+
+      // The two outer painted-lady modules also need an east/bay-facing back
+      // for the centered C3 vista. Reuse the shipped facade-photo atlas and
+      // pooled trim/window geometry, but split the rear frontage into four
+      // intentionally unequal bays so no single pale body face spans the
+      // frame. The panel, reveal, casing, and sill offsets form three shallow
+      // depth layers while the deterministic panes keep night occupancy
+      // separated from the baked photo grid.
+      const addBayFacingPaintedLadyBack = family === 'painted-lady'
+        && (facadeZ === -60 || facadeZ === 60);
+      if (addBayFacingPaintedLadyBack) {
+        const rearBaySpecs = [
+          { center: -14.45, width: 7.2 },
+          { center: -5.1, width: 8.6 },
+          { center: 4.95, width: 10.4 },
+          { center: 14.45, width: 6.9 },
+        ];
+        const rearX = 1.82;
+        const rearPanelHeight = height - 0.38;
+        let rearNightPaneCount = 0;
+        const rearHash = (bayIndex, paneIndex, salt) => {
+          const value = Math.sin(
+            (facadeZ * 0.47)
+              + (bayIndex * 17.9)
+              + (paneIndex * 23.7)
+              + (salt * 11.3),
+          ) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        rearBaySpecs.forEach((spec, bayIndex) => {
+          const panel = new THREE.Mesh(
+            shared.facadePanel,
+            photoMaterials[(bayIndex + (facadeZ > 0 ? 1 : 0)) % photoMaterials.length],
+          );
+          panel.name = `${family} waterfront bay-facing back panel ${bayIndex + 1}`;
+          panel.position.set(
+            rearX + 0.045,
+            0.42 + rearPanelHeight * 0.5,
+            spec.center,
+          );
+          panel.rotation.y = Math.PI * 0.5;
+          panel.scale.set(spec.width, rearPanelHeight, 1);
+          panel.userData.facadePhoto = true;
+          panel.userData.waterfrontFacadeFamily = family;
+          panel.userData.bayFacingBack = true;
+          panel.userData.photoBayWidth = spec.width;
+          facade.add(panel);
+
+          const edgeOffset = spec.width * 0.5 + 0.09;
+          const revealX = rearX + 0.14;
+          const casingX = rearX + 0.28;
+          // Three explicit depth layers: recessed reveal, casing, and sill.
+          part(
+            `${family} waterfront back bay ${bayIndex + 1} recessed reveal left`,
+            [0.12, rearPanelHeight, 0.08],
+            revealX,
+            0.42,
+            spec.center - edgeOffset,
+            shared.materials.trim,
+          );
+          part(
+            `${family} waterfront back bay ${bayIndex + 1} recessed reveal right`,
+            [0.12, rearPanelHeight, 0.08],
+            revealX,
+            0.42,
+            spec.center + edgeOffset,
+            shared.materials.trim,
+          );
+          part(
+            `${family} waterfront back bay ${bayIndex + 1} casing left`,
+            [0.24, rearPanelHeight + 0.16, 0.14],
+            casingX,
+            0.34,
+            spec.center - edgeOffset,
+            shared.materials.landmarkOrange,
+          );
+          part(
+            `${family} waterfront back bay ${bayIndex + 1} casing right`,
+            [0.24, rearPanelHeight + 0.16, 0.14],
+            casingX,
+            0.34,
+            spec.center + edgeOffset,
+            shared.materials.landmarkOrange,
+          );
+          part(
+            `${family} waterfront back bay ${bayIndex + 1} projecting sill`,
+            [0.34, 0.16, spec.width + 0.28],
+            casingX,
+            0.42 + rearPanelHeight - 0.2,
+            spec.center,
+            shared.materials.trim,
+          );
+
+          // Three separated panes per bay keep the rear occupancy sparse but
+          // legible in night mode without another full-width stripe.
+          for (let paneIndex = 0; paneIndex < 3; paneIndex += 1) {
+            const pane = new THREE.Mesh(
+              shared.window,
+              shared.materials.facadeNight[
+                (photoFamilyIndex + bayIndex + paneIndex + 1) % shared.materials.facadeNight.length
+              ],
+            );
+            const paneHeight = 0.34 + rearHash(bayIndex, paneIndex, 2) * 0.38;
+            pane.name = `${family} waterfront back bay ${bayIndex + 1} sparse night pane ${paneIndex + 1}`;
+            pane.position.set(
+              rearX + 0.39,
+              Math.min(
+                0.42 + rearPanelHeight - paneHeight * 0.7,
+                1.55 + rearHash(bayIndex, paneIndex, 4) * 6.8,
+              ),
+              spec.center + (paneIndex - 1) * 0.82 + (rearHash(bayIndex, paneIndex, 5) - 0.5) * 0.36,
+            );
+            pane.scale.set(0.04, paneHeight, 0.34 + rearHash(bayIndex, paneIndex, 6) * 0.36);
+            pane.userData.facadeNightOverlay = true;
+            pane.userData.waterfrontFacadeFamily = family;
+            pane.userData.bayFacingBack = true;
+            pane.castShadow = false;
+            pane.receiveShadow = false;
+            facade.add(pane);
+            rearNightPaneCount += 1;
+          }
+        });
+        facade.userData.bayFacingBack = Object.freeze({
+          orientation: '+X/east',
+          panelCount: rearBaySpecs.length,
+          panelWidths: Object.freeze(rearBaySpecs.map((spec) => spec.width)),
+          maxPanelWidth: Math.max(...rearBaySpecs.map((spec) => spec.width)),
+          depthLayers: 3,
+          sparseNightPaneCount: rearNightPaneCount,
+        });
+      }
+
+      part(`${family} waterfront entry threshold`, [1.52, 0.18, 2.05], frontX + facing * 0.14, 0, 0, shared.materials.sidewalk);
+      part(`${family} waterfront public doorway`, [0.14, 2.12, 1.12], frontX + facing * 0.2, 0.18, 0, shared.materials.door);
+      part(`${family} waterfront PUBLIC LOBBY sign`, [0.18, 0.22, 2.8], frontX + facing * 0.24, 2.45, 0, shared.materials.entryHeader);
+      if (family === 'painted-lady') {
+        part(`${family} waterfront bay cornice left`, [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, bayCenters[0], shared.materials.landmarkOrange);
+        part(`${family} waterfront bay cornice right`, [0.34, 0.22, 6.6], frontX + facing * 0.34, 0.42 + height - 0.48, bayCenters[bayCenters.length - 1], shared.materials.landmarkOrange);
+      } else if (family === 'stucco') {
+        part(`${family} waterfront awning band`, [0.36, 0.18, width * 0.72], frontX + facing * 0.24, 3.88, 0, shared.materials.landmarkStone);
+        part(`${family} waterfront balcony rail`, [0.26, 0.1, width * 0.54], frontX + facing * 0.3, 6.55, 0, shared.materials.trim);
+      } else {
+        part(`${family} waterfront storefront band`, [0.3, 1.28, width * 0.66], frontX + facing * 0.22, 0.72, 0, shared.materials.landmarkOrange);
+        part(`${family} waterfront sign rail`, [0.28, 0.18, width * 0.58], frontX + facing * 0.25, 3.88, 0, shared.materials.landmarkOrange);
+      }
+      facade.traverse((object) => {
+        if (!object.isMesh) return;
+        object.castShadow = !object.userData.facadeNightOverlay;
+        object.receiveShadow = !object.userData.facadeNightOverlay;
+      });
+      group.add(facade);
+    };
+    [
+      { z: -60, family: 'painted-lady', height: 15.2, photoMaterials: shared.materials.facadePaintedLadyPhotos, photoFamilyIndex: 0 },
+      { z: -20, family: 'brick-mercantile', height: 18.0, frontageWidth: 18, photoMaterials: shared.materials.facadeBrickPhotos, photoFamilyIndex: 2 },
+      { z: 20, family: 'stucco', height: 16.0, frontageWidth: 18, photoMaterials: shared.materials.facadeStuccoPhotos, photoFamilyIndex: 1 },
+      { z: 60, family: 'painted-lady', height: 17.4, photoMaterials: shared.materials.facadePaintedLadyPhotos, photoFamilyIndex: 0 },
+    ].forEach((module) => waterfrontFacade(module));
+
+    const corridorCurb = addSurfaceStrip(
+      'Embarcadero waterfront encounter curb cap',
+      [155, -84],
+      [155, 84],
+      0.22,
+      shared.materials.curb,
+      SURFACE_OFFSET + 0.09,
+      24,
+    );
+    corridorCurb.userData.waterfrontCorridor = 'embarcadero-164m-east-frontage';
+
+    // Salesforce Tower anchors the south end of the slice as the taller
+    // glass hierarchy beside the shorter Transamerica pyramid.
+    // Place the tower on the clear block immediately west of the waterfront
+    // frontage.  The west-side anchor shares the centered gap ray with the
+    // Transamerica podium while leaving generated shells and photo frontage
+    // spatially disjoint.
+    const salesforceX = -126;
+    const salesforceZ = 48;
+    const salesforceBase = surfaceAt(salesforceX, salesforceZ);
+    const salesforceWorldX = descriptor.center.x + salesforceX;
+    const salesforceWorldZ = descriptor.center.z + salesforceZ;
+    // The fixed C3 camera sees this anchor along (+374,-48) in world X/Z,
+    // not along the axis-aligned +X face. Keep the pane normal and tangent
+    // explicit so depth-tested overlays sit on the visible radial shaft face.
+    const salesforceFaceDeltaX = EMBARCADERO_C3_VIEW.camera.x - salesforceWorldX;
+    const salesforceFaceDeltaZ = EMBARCADERO_C3_VIEW.camera.z - salesforceWorldZ;
+    const salesforceFaceLength = Math.hypot(salesforceFaceDeltaX, salesforceFaceDeltaZ) || 1;
+    const salesforceFaceNormal = Object.freeze({
+      x: salesforceFaceDeltaX / salesforceFaceLength,
+      z: salesforceFaceDeltaZ / salesforceFaceLength,
+    });
+    const salesforceFaceTangent = Object.freeze({
+      x: -salesforceFaceNormal.z,
+      z: salesforceFaceNormal.x,
+    });
+    const salesforcePodium = addSurfaceBox(
+      'Salesforce Tower transit podium',
+      salesforceX,
+      salesforceZ,
+      [36, 8, 30],
+      shared.materials.landmarkDarkPodium,
+    );
+    salesforcePodium.castShadow = true;
+    const salesforcePodiumBand = addSurfaceBox(
+      'Salesforce Tower transit podium contrast band',
+      salesforceX,
+      salesforceZ,
+      [34, 1.3, 28],
+      shared.materials.salesforceAccent,
+      8,
+    );
+    salesforcePodiumBand.castShadow = true;
+    const salesforceShaftHeight = 108;
+    const salesforceShaft = new THREE.Mesh(shared.tower, shared.materials.salesforceGlass);
+    salesforceShaft.name = 'Salesforce Tower tapered glass shaft';
+    salesforceShaft.position.set(salesforceX, salesforceBase + 8 + salesforceShaftHeight * 0.5, salesforceZ);
+    salesforceShaft.scale.set(14, salesforceShaftHeight, 14);
+    salesforceShaft.castShadow = true;
+    group.add(salesforceShaft);
+    // Four front ribs and three horizontal belts provide the vertical bay
+    // rhythm that distinguishes Salesforce from the adjacent pyramid.
+    // Widen only the decorative ribs inside the already-clear block.  The
+    // anchor, podium, collision volume, and portals stay fixed while the
+    // outer ribs give the tower a legible silhouette in the exact C3 vista.
+    [-20, -6, 6, 20].forEach((zOffset, index) => {
+      const rib = addSurfaceBox(
+        `Salesforce Tower vertical facade rib ${index + 1}`,
+        salesforceX + 6.4,
+        salesforceZ + zOffset,
+        [1.05, 94, 1.1],
+        index % 2 ? shared.materials.landmarkDarkPodium : shared.materials.salesforceAccent,
+        10,
+      );
+      rib.castShadow = true;
+    });
+    [28, 54, 80].forEach((offset, index) => {
+      const belt = addSurfaceBox(
+        `Salesforce Tower horizontal bay belt ${index + 1}`,
+        salesforceX + 6.7,
+        salesforceZ,
+        [1.18, 1.05, 27],
+        index === 1 ? shared.materials.salesforceCrown : shared.materials.salesforceAccent,
+        offset,
+      );
+      belt.castShadow = true;
+    });
+    const salesforcePaneRows = [18, 34, 50, 66, 82, 98];
+    const salesforcePaneColumns = [-0.65, -0.22, 0.22, 0.65];
+    salesforcePaneRows.forEach((row, rowIndex) => {
+      const t = THREE.MathUtils.clamp((row - 8) / salesforceShaftHeight, 0, 1);
+      const radius = 14 * (0.62 - 0.12 * t);
+      const paneRadius = Math.max(radius, 8);
+      salesforcePaneColumns.forEach((column, columnIndex) => {
+        const tangentOffset = paneRadius * column;
+        // Approximate the six-sided shaft support along the C3 normal. The
+        // 0.92 factor is the authored hex face support ratio; +0.4m is the
+        // real surface offset that keeps depth-tested panes out of the glass.
+        const radialSurface = Math.sqrt(
+          Math.max(0, (radius * 0.92) ** 2 - tangentOffset ** 2),
+        ) + 0.4;
+        const pane = new THREE.Mesh(
+          shared.window,
+          shared.materials.landmarkNight[(rowIndex * 3 + columnIndex + 1) % shared.materials.landmarkNight.length],
+        );
+        pane.name = `Salesforce Tower sparse night pane ${rowIndex + 1}-${columnIndex + 1}`;
+        pane.position.set(
+          salesforceX + salesforceFaceNormal.x * radialSurface
+            + salesforceFaceTangent.x * tangentOffset,
+          salesforceBase + row,
+          salesforceZ + salesforceFaceNormal.z * radialSurface
+            + salesforceFaceTangent.z * tangentOffset,
+        );
+        pane.rotation.y = Math.atan2(-salesforceFaceNormal.z, salesforceFaceNormal.x);
+        pane.scale.set(
+          0.09,
+          1.72 + ((rowIndex + columnIndex) % 3) * 0.42,
+          2.0 + ((rowIndex * 2 + columnIndex) % 3) * 0.38,
+        );
+        pane.userData.landmarkNightPane = 'salesforce';
+        pane.userData.facadeNightOverlay = true;
+        pane.userData.cameraFacingSurface = 'C3-radial-hex-face';
+        pane.material.depthTest = true;
+        pane.castShadow = false;
+        pane.receiveShadow = false;
+        group.add(pane);
+      });
+    });
+    const salesforceCrownHeight = 34;
+    const salesforceCrown = new THREE.Mesh(shared.tower, shared.materials.salesforceCrown);
+    salesforceCrown.name = 'Salesforce Tower stepped crown';
+    salesforceCrown.position.set(
+      salesforceX,
+      salesforceBase + 8 + salesforceShaftHeight + salesforceCrownHeight * 0.5,
+      salesforceZ,
+    );
+    salesforceCrown.scale.set(12, salesforceCrownHeight, 12);
+    salesforceCrown.castShadow = true;
+    group.add(salesforceCrown);
+    const salesforceCrownShoulder = addSurfaceBox(
+      'Salesforce Tower crown shoulder ring',
+      salesforceX,
+      salesforceZ,
+      [24, 2.3, 26],
+      shared.materials.salesforceAccent,
+      150,
+    );
+    salesforceCrownShoulder.castShadow = true;
+    const salesforceCrownCap = addSurfaceBox(
+      'Salesforce Tower crown cap',
+      salesforceX,
+      salesforceZ,
+      [16, 2.2, 18],
+      shared.materials.salesforceCap,
+      153,
+    );
+    salesforceCrownCap.castShadow = true;
+    const salesforceBeacon = addSurfaceBox(
+      'Salesforce Tower crown beacon base',
+      salesforceX,
+      salesforceZ,
+      [8, 1.6, 8],
+      shared.materials.salesforceAccent,
+      170,
+    );
+    salesforceBeacon.castShadow = true;
+    const salesforceSpire = new THREE.Mesh(shared.pole, shared.materials.salesforceAccent);
+    salesforceSpire.name = 'Salesforce Tower crown spire';
+    salesforceSpire.position.set(salesforceX, salesforceBase + 164, salesforceZ);
+    salesforceSpire.scale.set(1.2, 18, 1.2);
+    salesforceSpire.castShadow = true;
+    group.add(salesforceSpire);
+    landmarkVisualIdentity = Object.freeze({
+      evidenceView: EMBARCADERO_C3_VIEW,
+      transamerica: Object.freeze({
+        dayMaterials: Object.freeze([
+          shared.materials.transamericaBody.name,
+          shared.materials.transamericaAccent.name,
+          shared.materials.landmarkDarkPodium.name,
+        ]),
+        structuralCues: Object.freeze([
+          'tapered-shaft',
+          'four-corner-fins',
+          'two-structural-belts',
+          'spire',
+        ]),
+        nightPaneCount: 24,
+        nightPaneGrid: '4x6',
+        nightPanePalette: 'warm-cool-separated',
+      }),
+      salesforce: Object.freeze({
+        dayMaterials: Object.freeze([
+          shared.materials.salesforceGlass.name,
+          shared.materials.salesforceAccent.name,
+          shared.materials.salesforceCrown.name,
+          shared.materials.salesforceCap.name,
+        ]),
+        structuralCues: Object.freeze([
+          'tapered-glass-shaft',
+          'four-vertical-ribs',
+          'three-horizontal-belts',
+          'stepped-crown-and-spire',
+        ]),
+        nightPaneCount: 24,
+        nightPaneGrid: '4x6',
+        nightPanePalette: 'warm-cool-separated',
+      }),
+    });
+    group.userData.landmarkVisualIdentity = landmarkVisualIdentity;
+    const salesforceDoorZ = salesforceZ - 15.16;
+    const salesforceDoor = new THREE.Mesh(shared.box, shared.materials.door);
+    salesforceDoor.name = 'Salesforce Transit Center public entrance door';
+    salesforceDoor.position.set(salesforceX, salesforceBase + 1.1, salesforceDoorZ);
+    salesforceDoor.scale.set(1.4, 2.2, 0.16);
+    salesforceDoor.castShadow = false;
+    const salesforceSign = new THREE.Mesh(shared.box, shared.materials.entryHeader);
+    salesforceSign.name = 'Salesforce Transit Center PUBLIC LOBBY sign';
+    salesforceSign.position.set(salesforceX, salesforceBase + 2.42, salesforceDoorZ);
+    salesforceSign.scale.set(3.6, 0.2, 0.1);
+    salesforceSign.castShadow = false;
+    group.add(salesforceDoor, salesforceSign);
+    const salesforceWorldY = descriptor.elevation + salesforceBase;
+    buildingVolumes.push(Object.freeze({
+      id: `${descriptor.key}:waterfront:salesforce-tower`,
+      buildingIndex: buildingVolumes.length,
+      sectorKey: descriptor.key,
+      coordinateSpace: 'world',
+      district: blueprint.district,
+      quality: 'detail',
+      source: 'authored-waterfront-entrance',
+      architecturalFaces: 4,
+      facadeAtlasCell: 3,
+      geometryStyle: 'landmark',
+      frontageYaw: 0,
+      storefrontBand: true,
+      floors: 62,
+      rooms: Object.freeze([{
+        id: `${descriptor.key}:waterfront:salesforce-room`,
+        floor: 1,
+        state: 'district-archetype-room',
+        walkable: true,
+        archetype: 'financial-office',
+      }]),
+      interiorState: 'district-archetype-room',
+      interiorArchetype: 'financial-office',
+      collisionMode: 'aabb-shell',
+      doorMesh: true,
+      signposted: true,
+      entrance: Object.freeze({
+        x: salesforceWorldX,
+        y: salesforceWorldY + 1.1,
+        z: descriptor.center.z + salesforceDoorZ,
+        normalX: 0,
+        normalZ: -1,
+        returnPath: Object.freeze([
+          Object.freeze({ x: salesforceWorldX, y: salesforceWorldY + 0.8, z: descriptor.center.z + salesforceDoorZ - 3.6 }),
+          Object.freeze({ x: salesforceWorldX, y: salesforceWorldY + 0.8, z: descriptor.center.z + salesforceDoorZ - 8 }),
+        ]),
+      }),
+      center: Object.freeze({ x: salesforceWorldX, y: salesforceWorldY + 8 + 145, z: salesforceWorldZ }),
+      min: Object.freeze({ x: salesforceWorldX - 18, y: salesforceWorldY, z: salesforceWorldZ - 15 }),
+      max: Object.freeze({ x: salesforceWorldX + 18, y: salesforceWorldY + 223, z: salesforceWorldZ + 15 }),
+      label: 'Salesforce Transit Center Tower',
+    }));
+    // Promenade furniture remains in the same grade frame as the seawall and
+    // facade frontage so two benches and four trees read as grounded public
+    // realm instead of floating props.
+    const waterfrontTree = (name, xTree, zTree, scale = 1) => {
+      const tree = new THREE.Group();
+      tree.name = name;
+      tree.position.set(xTree, surfaceAt(xTree, zTree), zTree);
+      tree.rotation.x = -Math.atan(waterfrontGradeAt(xTree, zTree, 4));
+      const trunk = new THREE.Mesh(shared.trunk, shared.materials.trunk);
+      trunk.position.y = 1.08 * scale;
+      trunk.scale.set(0.24 * scale, 2.16 * scale, 0.24 * scale);
+      const canopy = new THREE.Mesh(shared.canopy, shared.materials.tree);
+      canopy.position.y = 4.1 * scale;
+      canopy.scale.set(2.15 * scale, 4.2 * scale, 2.15 * scale);
+      tree.add(trunk, canopy);
+      tree.userData.grounded = true;
+      tree.userData.waterfrontCorridor = 'embarcadero-164m-east-frontage';
+      group.add(tree);
+    };
+    [[160, -68, 1.05], [160, -20, 0.96], [160, 28, 1.04], [160, 68, 0.94]].forEach(([tx, tz, scale], index) => {
+      waterfrontTree(`Embarcadero waterfront street tree ${index + 1}`, tx, tz, scale);
+    });
+    const waterfrontBench = (name, xBench, zBench, heading) => {
+      const bench = new THREE.Group();
+      bench.name = name;
+      bench.position.set(xBench, surfaceAt(xBench, zBench), zBench);
+      bench.rotation.x = -Math.atan(waterfrontGradeAt(xBench, zBench, 2));
+      bench.rotation.y = heading;
+      const seat = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      seat.position.y = 0.78;
+      seat.scale.set(0.9, 0.18, 3.2);
+      const back = new THREE.Mesh(shared.box, shared.materials.boardwalk);
+      back.position.set(0, 1.38, 0.38);
+      back.scale.set(0.9, 0.92, 3.2);
+      const legA = new THREE.Mesh(shared.box, shared.materials.signalHousing);
+      legA.position.set(0, 0.36, -1.06);
+      legA.scale.set(0.7, 0.72, 0.18);
+      const legB = legA.clone();
+      legB.position.z = 0.82;
+      bench.add(seat, back, legA, legB);
+      bench.userData.grounded = true;
+      bench.userData.waterfrontCorridor = 'embarcadero-164m-east-frontage';
+      group.add(bench);
+    };
+    waterfrontBench('Embarcadero waterfront public bench south', 161, -42, Math.PI * 0.5);
+    waterfrontBench('Embarcadero waterfront public bench north', 161, 42, Math.PI * 0.5);
+    group.userData.waterfrontCorridor = Object.freeze({
+      id: 'embarcadero-164m-east-frontage',
+      startZ: -82,
+      endZ: 82,
+      centerX: 154,
+      length: 164,
+      source: 'Embarcadero seawall / pier grid',
+      shorelineX: 176,
+      evidenceView: EMBARCADERO_C3_VIEW,
+    });
     landmark = {
-      x,
-      z,
+      x: pyramidX,
+      z: pyramidZ,
       width: 28,
       depth: 28,
       height: 140,
       style: 'landmark',
       heading: 0,
-      baseY: base,
+      baseY: pyramidBase,
       label: 'Transamerica Pyramid',
     };
   } else if (blueprint.landmark === 'sfmoma-design') {
@@ -4121,6 +5913,7 @@ function addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, desc
       label: landmark.label,
     }));
   }
+  return landmarkVisualIdentity;
 }
 
 // Authored signatures are additive overlays on top of the existing pooled
@@ -4239,7 +6032,14 @@ function createExpansionOverlay({ descriptor, blueprint, catalog, shared }) {
   const buildingVolumes = buildingPass.buildingVolumes.map((volume) => (
     translateAuthoredVolumeToWorld(volume, descriptor)
   ));
-  addLandmark(detail, blueprint, surfaceAt, shared, buildingVolumes, descriptor);
+  const landmarkVisualIdentity = addLandmark(
+    detail,
+    blueprint,
+    surfaceAt,
+    shared,
+    buildingVolumes,
+    descriptor,
+  );
   root.userData.buildingVolumes = Object.freeze(buildingVolumes);
 
   const proxyAnchor = new THREE.Mesh(shared.box, shared.materials.landmarkStone);
@@ -4252,6 +6052,10 @@ function createExpansionOverlay({ descriptor, blueprint, catalog, shared }) {
     district: blueprint.district,
     cue: blueprint.roadName,
     landmark: blueprint.landmark,
+    evidenceViews: landmarkVisualIdentity
+      ? Object.freeze({ c3: EMBARCADERO_C3_VIEW })
+      : null,
+    landmarkVisualIdentity,
     roadNames: roadNetwork.roadNames,
     laneCount: roadNetwork.laneData.length,
     crossings: roadNetwork.crossings.length,
@@ -4306,6 +6110,53 @@ function createExpansionOverlay({ descriptor, blueprint, catalog, shared }) {
     const night = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
     shared.materials.window.emissiveIntensity = THREE.MathUtils.lerp(0.22, 1.85, night);
     shared.materials.entryHeader.emissiveIntensity = THREE.MathUtils.lerp(0.16, 1.1, night);
+    // Keep the two Embarcadero hero silhouettes dark and color-separated by
+    // day.  Night raises only a restrained material-local response; the
+    // separated warm/cool panes below remain the readable occupancy source.
+    shared.materials.landmarkDarkPodium.emissiveIntensity = THREE.MathUtils.lerp(0.01, 0.05, night);
+    shared.materials.transamericaBody.emissiveIntensity = THREE.MathUtils.lerp(0.04, 0.24, night);
+    shared.materials.transamericaAccent.emissiveIntensity = THREE.MathUtils.lerp(0.03, 0.36, night);
+    shared.materials.salesforceGlass.emissiveIntensity = THREE.MathUtils.lerp(0.04, 0.22, night);
+    shared.materials.salesforceAccent.emissiveIntensity = THREE.MathUtils.lerp(0.03, 0.38, night);
+    shared.materials.salesforceCrown.emissiveIntensity = THREE.MathUtils.lerp(0.04, 0.24, night);
+    shared.materials.salesforceCap.emissiveIntensity = THREE.MathUtils.lerp(0.03, 0.34, night);
+    if (shared.materials.shorelineReflection) {
+      // MeshBasicMaterial has no emissive channel; use its base color and
+      // normal alpha lifecycle to keep the vertex-colored bands legible.
+      shared.materials.shorelineReflection.opacity = THREE.MathUtils.lerp(0.74, 0.96, night);
+      shared.materials.shorelineReflection.color.setRGB(
+        THREE.MathUtils.lerp(1.0, 0.94, night),
+        THREE.MathUtils.lerp(1.0, 0.98, night),
+        THREE.MathUtils.lerp(1.0, 1.08, night),
+      );
+    }
+    if (shared.materials.shorelineWaterField) {
+      shared.materials.shorelineWaterField.color.setRGB(
+        THREE.MathUtils.lerp(1.0, 1.16, night),
+        THREE.MathUtils.lerp(1.0, 1.28, night),
+        THREE.MathUtils.lerp(1.0, 1.46, night),
+      );
+    }
+    // At sunset the baked photo grid is only a dark architectural skin;
+    // sparse per-bay panes below own the readable occupancy lights.
+    const bakedGridBrightness = [0.16, 0.075, 0.2, 0.1];
+    shared.facadePhotoMaterials.forEach((family, familyIndex) => {
+      family.forEach((material, bayIndex) => {
+        const base = shared.facadePhotoBaseColors[familyIndex][bayIndex];
+        const nightBrightness = bakedGridBrightness[bayIndex];
+        material.color.copy(base).multiplyScalar(THREE.MathUtils.lerp(1, nightBrightness, night));
+      });
+    });
+    shared.materials.facadeNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.08 + occupancy * 0.16);
+      material.emissiveIntensity = night * (0.55 + occupancy * 0.45);
+    });
+    shared.materials.landmarkNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.62 + occupancy * 0.28);
+      material.emissiveIntensity = night * (2.0 + occupancy * 1.1);
+    });
   };
   let lastSignalUpdate = -Infinity;
   const update = (dt, elapsed) => {
@@ -4880,6 +6731,41 @@ export function createSanFranciscoExpansion({
     const night = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
     shared.materials.window.emissiveIntensity = THREE.MathUtils.lerp(0.22, 1.85, night);
     shared.materials.entryHeader.emissiveIntensity = THREE.MathUtils.lerp(0.16, 1.1, night);
+    if (shared.materials.shorelineReflection) {
+      shared.materials.shorelineReflection.opacity = THREE.MathUtils.lerp(0.74, 0.96, night);
+      shared.materials.shorelineReflection.color.setRGB(
+        THREE.MathUtils.lerp(1.0, 0.94, night),
+        THREE.MathUtils.lerp(1.0, 0.98, night),
+        THREE.MathUtils.lerp(1.0, 1.08, night),
+      );
+    }
+    if (shared.materials.shorelineWaterField) {
+      shared.materials.shorelineWaterField.color.setRGB(
+        THREE.MathUtils.lerp(1.0, 1.16, night),
+        THREE.MathUtils.lerp(1.0, 1.28, night),
+        THREE.MathUtils.lerp(1.0, 1.46, night),
+      );
+    }
+    // Match the overlay treatment above so the baked grid stays subdued
+    // while the bounded warm/cool panes remain the only bright occupancy cue.
+    const bakedGridBrightness = [0.16, 0.075, 0.2, 0.1];
+    shared.facadePhotoMaterials.forEach((family, familyIndex) => {
+      family.forEach((material, bayIndex) => {
+        const base = shared.facadePhotoBaseColors[familyIndex][bayIndex];
+        const nightBrightness = bakedGridBrightness[bayIndex];
+        material.color.copy(base).multiplyScalar(THREE.MathUtils.lerp(1, nightBrightness, night));
+      });
+    });
+    shared.materials.facadeNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.08 + occupancy * 0.16);
+      material.emissiveIntensity = night * (0.55 + occupancy * 0.45);
+    });
+    shared.materials.landmarkNight.forEach((material, index) => {
+      const occupancy = [0.52, 0.24, 0.7, 0.36][index];
+      material.opacity = night * (0.62 + occupancy * 0.28);
+      material.emissiveIntensity = night * (2.0 + occupancy * 1.1);
+    });
     cache.forEach((runtime) => runtime.setNightLighting?.(night));
   };
 

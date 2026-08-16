@@ -56,6 +56,8 @@ const SHIFT_STEPS = Object.freeze([
     portalLabel: 'Coit Tower observation deck',
   },
 ]);
+const SHIFT_TIME_LIMIT_SECONDS = 480;
+const SHIFT_BASE_CASH_REWARD = 180;
 
 function findPortal(city, label) {
   return city?.portals?.find((portal) => portal.room && portal.label === label) || null;
@@ -74,7 +76,7 @@ function formatClock(seconds) {
  * existing interactions, so the player is rewarded for seeing the work that is
  * already in the world rather than chasing abstract UI-only checkpoints.
  */
-export function createCityShift({ scene, city, onAdvance } = {}) {
+export function createCityShift({ scene, city, onAdvance, onStepAttempt } = {}) {
   if (!scene?.isScene || !city) {
     throw new TypeError('createCityShift requires a THREE.Scene and city runtime.');
   }
@@ -90,6 +92,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     score: 0,
     elapsed: 0,
     lastAdvance: null,
+    cashReward: 0,
+    failureReason: null,
   };
 
   const marker = new THREE.Group();
@@ -139,6 +143,8 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
   const targetVector = new THREE.Vector3();
   const markerVector = new THREE.Vector3();
   let markerTime = 0;
+  let canonicalSessionId = null;
+  let canonicalRevision = 0;
 
   function currentStep() {
     return steps[state.stepIndex] || null;
@@ -175,28 +181,55 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     return Math.hypot(position.x - target.x, position.z - target.z);
   }
 
-  function emitAdvance(step, completed) {
+  function emitAdvance(step, completed, metadata = {}) {
     const baseReward = 280;
     const timeBonus = Math.max(80, 520 - Math.round(state.elapsed * 4));
     state.score += baseReward + timeBonus;
     state.lastAdvance = step.id;
+    const canonicalCashReward = Number(metadata.canonicalCashReward);
+    state.cashReward = completed
+      ? metadata.source === 'coop' && Number.isInteger(canonicalCashReward)
+        ? THREE.MathUtils.clamp(canonicalCashReward, SHIFT_BASE_CASH_REWARD, 320)
+        : SHIFT_BASE_CASH_REWARD
+          + Math.max(0, Math.ceil((SHIFT_TIME_LIMIT_SECONDS - state.elapsed) / 60) * 10)
+      : 0;
     const message = completed
-      ? `Waterfront loop complete · ${formatClock(state.elapsed)} · score ${state.score}`
+      ? `Waterfront loop complete · ${formatClock(state.elapsed)} · $${state.cashReward} paid`
       : `${step.shortLabel} logged · next: ${currentStep()?.shortLabel || 'free roam'}`;
     onAdvance?.({
       step,
       completed,
       message,
       score: state.score,
+      cashReward: state.cashReward,
+      ...metadata,
     });
   }
 
-  function advance(step) {
+  function fail(reason = 'time-limit') {
+    if (state.status !== 'running') return null;
+    state.status = 'failed';
+    state.failureReason = String(reason || 'time-limit');
+    state.cashReward = 0;
+    marker.visible = false;
+    const message = `Shift failed · ${formatClock(state.elapsed)} · replay to try again`;
+    onAdvance?.({
+      step: currentStep(),
+      completed: false,
+      failed: true,
+      message,
+      score: state.score,
+      cashReward: 0,
+    });
+    return { failed: true, reason: state.failureReason };
+  }
+
+  function advance(step, metadata = {}) {
     if (state.status !== 'running' || !step || step !== currentStep()) return null;
     state.stepIndex += 1;
     const completed = state.stepIndex >= steps.length;
     if (completed) state.status = 'complete';
-    emitAdvance(step, completed);
+    emitAdvance(step, completed, metadata);
     return { completed, step };
   }
 
@@ -206,6 +239,10 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     state.score = 0;
     state.elapsed = 0;
     state.lastAdvance = null;
+    state.cashReward = 0;
+    state.failureReason = null;
+    canonicalSessionId = null;
+    canonicalRevision = 0;
     marker.visible = true;
   }
 
@@ -213,11 +250,73 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     start();
   }
 
+  function exportState() {
+    return {
+      status: state.status,
+      stepIndex: state.stepIndex,
+      score: state.score,
+      elapsed: state.elapsed,
+      lastAdvance: state.lastAdvance,
+      cashReward: state.cashReward,
+      failureReason: state.failureReason,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const allowedStatuses = new Set(['running', 'complete', 'failed']);
+    if (!allowedStatuses.has(snapshot.status)) return false;
+    const stepIndex = Number(snapshot.stepIndex);
+    const score = Number(snapshot.score);
+    const elapsed = Number(snapshot.elapsed);
+    if (!Number.isFinite(stepIndex) || !Number.isFinite(score) || !Number.isFinite(elapsed)) {
+      return false;
+    }
+    state.status = snapshot.status;
+    state.stepIndex = THREE.MathUtils.clamp(Math.round(stepIndex), 0, steps.length);
+    if (state.status === 'complete') state.stepIndex = steps.length;
+    if (state.status === 'running' && elapsed >= SHIFT_TIME_LIMIT_SECONDS) {
+      state.status = 'failed';
+    }
+    state.score = Math.max(0, Math.round(score));
+    state.elapsed = THREE.MathUtils.clamp(elapsed, 0, SHIFT_TIME_LIMIT_SECONDS);
+    state.lastAdvance = typeof snapshot.lastAdvance === 'string'
+      ? snapshot.lastAdvance.slice(0, 64)
+      : null;
+    state.cashReward = state.status === 'complete'
+      ? Math.max(0, Math.round(Number(snapshot.cashReward) || 0))
+      : 0;
+    state.failureReason = state.status === 'failed'
+      ? String(snapshot.failureReason || 'time-limit').slice(0, 64)
+      : null;
+    marker.visible = state.status === 'running';
+    return true;
+  }
+
+  function awardBonus(amount = 0) {
+    const bonus = Math.max(0, Math.round(Number(amount) || 0));
+    state.score += bonus;
+    return state.score;
+  }
+
   function onPortalEntered(portal) {
     const step = currentStep();
     if (state.status !== 'running' || step?.kind !== 'portal' || !portal) return null;
     const matchingPortal = step.portal && portal.id === step.portal.id;
     if (!matchingPortal) return null;
+    const attempt = onStepAttempt?.({
+      step,
+      stepIndex: state.stepIndex,
+      totalSteps: steps.length,
+      interaction: {
+        kind: 'portal',
+        id: portal.id,
+        label: portal.label,
+        x: portal.position?.x,
+        z: portal.position?.z,
+      },
+    });
+    if (attempt === 'deferred') return { pending: true, step };
     return advance(step);
   }
 
@@ -225,12 +324,93 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
     const step = currentStep();
     if (state.status !== 'running' || step?.kind !== 'hotspot' || !result) return null;
     if (result.id !== step.hotspotId) return null;
+    const attempt = onStepAttempt?.({
+      step,
+      stepIndex: state.stepIndex,
+      totalSteps: steps.length,
+      interaction: {
+        kind: 'hotspot',
+        id: result.id,
+        distance: result.distance,
+        enabled: result.enabled,
+      },
+    });
+    if (attempt === 'deferred') return { pending: true, step };
     return advance(step);
+  }
+
+  function applyCanonicalProgress(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const sessionId = typeof snapshot.sessionId === 'string'
+      ? snapshot.sessionId.trim().slice(0, 64)
+      : '';
+    const revision = Number(snapshot.revision);
+    const completedSteps = Number(snapshot.completedSteps);
+    const completionRevision = Number(snapshot.completionRevision);
+    const cashReward = Number(snapshot.cashReward);
+    const status = snapshot.status;
+    if (!sessionId
+      || !Number.isInteger(revision)
+      || revision < 1
+      || !Number.isInteger(completedSteps)
+      || completedSteps < 0
+      || completedSteps > steps.length
+      || !['running', 'complete'].includes(status)
+      || (status === 'complete') !== (completedSteps === steps.length)
+      || (status === 'complete' && (
+        !Number.isInteger(completionRevision)
+        || completionRevision !== revision
+        || !Number.isInteger(cashReward)
+        || cashReward < SHIFT_BASE_CASH_REWARD
+        || cashReward > 320
+      ))) return null;
+    if (canonicalSessionId && canonicalSessionId !== sessionId) return null;
+    if (revision <= canonicalRevision
+      || completedSteps < state.stepIndex
+      || completedSteps > state.stepIndex + 1) return null;
+    canonicalSessionId = sessionId;
+    canonicalRevision = revision;
+    const applied = [];
+    if (state.status === 'running' && state.stepIndex < completedSteps) {
+      const step = currentStep();
+      const result = advance(step, {
+        source: 'coop',
+        sessionId,
+        canonicalRevision: revision,
+        completionRevision: status === 'complete' ? completionRevision : null,
+        canonicalCashReward: status === 'complete' ? cashReward : 0,
+      });
+      if (!result) return null;
+      applied.push(result.step.id);
+    }
+    return {
+      sessionId,
+      revision,
+      status: state.status,
+      completedSteps: state.stepIndex,
+      applied,
+    };
+  }
+
+  function failCanonicalSession(sessionId, reason = 'co-op-session-ended') {
+    if (!canonicalSessionId
+      || canonicalSessionId !== String(sessionId || '')
+      || state.status !== 'running') return null;
+    const result = fail(reason);
+    canonicalSessionId = null;
+    canonicalRevision = 0;
+    return result;
   }
 
   function update(dt = 0, position = null, activePortal = null) {
     const delta = Number.isFinite(dt) ? Math.max(0, dt) : 0;
-    if (state.status === 'running') state.elapsed += delta;
+    if (state.status === 'running') {
+      state.elapsed += delta;
+      if (state.elapsed >= SHIFT_TIME_LIMIT_SECONDS) {
+        state.elapsed = SHIFT_TIME_LIMIT_SECONDS;
+        fail('time-limit');
+      }
+    }
     markerTime += delta;
 
     const target = targetPosition(activePortal);
@@ -258,9 +438,14 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
       status: state.status,
       title: 'The Waterfront Loop',
       objective: step?.label || 'Free roam the city and make your own route.',
-      hint: step?.hint || 'Shift complete · H to hide the HUD and enjoy the view.',
-      tag: step?.tag || 'DONE',
+      hint: state.status === 'failed'
+        ? 'Time expired · replay the shift to restart the route.'
+        : step?.hint || 'Shift complete · H to hide the HUD and enjoy the view.',
+      tag: state.status === 'failed' ? 'FAILED' : step?.tag || 'DONE',
       score: state.score,
+      cashReward: state.cashReward,
+      failureReason: state.failureReason,
+      timeLimit: SHIFT_TIME_LIMIT_SECONDS,
       elapsed: state.elapsed,
       clock: formatClock(state.elapsed),
       distance,
@@ -288,12 +473,2528 @@ export function createCityShift({ scene, city, onAdvance } = {}) {
   return {
     start,
     restart,
+    awardBonus,
     update,
     getState,
+    exportState,
+    importState,
     onPortalEntered,
     onHotspotUsed,
+    applyCanonicalProgress,
+    failCanonicalSession,
+    fail,
     dispose,
     steps,
+    get status() {
+      return state.status;
+    },
+  };
+}
+
+const STREET_HEAT_SAMPLE_INTERVAL = 0.18;
+const STREET_HEAT_SPEED_THRESHOLD = 8.2;
+const STREET_HEAT_PURSUIT_THRESHOLD = 30;
+const STREET_HEAT_HIGH_THRESHOLD = 58;
+const STREET_HEAT_CRITICAL_THRESHOLD = 82;
+const STREET_HEAT_ESCAPE_THRESHOLD = 14;
+const STREET_HEAT_NEARBY_RADIUS = 9;
+const STREET_HEAT_NEAR_MISS_RADIUS = 4.8;
+const STREET_HEAT_NEAR_MISS_COOLDOWN = 2.2;
+const STREET_HEAT_ESCAPE_WINDOW = 3.4;
+const STREET_HEAT_PURSUIT_COOL_RATE = 6.2;
+const STREET_HEAT_COMBAT_HOLD_SECONDS = 2.8;
+// A real vehicle entry now includes a bounded door/seat handoff before the
+// player receives throttle authority. Preserve the original getaway window
+// after that presentation instead of spending most of it during ingress.
+const STREET_HEAT_THEFT_HOLD_SECONDS = 8;
+const STREET_HEAT_COMBAT_DECAY = 2.4;
+const STREET_HEAT_COMBAT_PURSUIT_DECAY = 2.8;
+const STREET_HEAT_RESPONDER_CONTACT_RADIUS = 5.5;
+const STREET_HEAT_RESPONDER_REARM_RADIUS = 8.5;
+const STREET_HEAT_PRESSURE_MIN_RADIUS = 10;
+const STREET_HEAT_PRESSURE_MAX_RADIUS = 28;
+const STREET_HEAT_PRESSURE_LOCK_SECONDS = 1.05;
+const STREET_HEAT_PRESSURE_LEVEL_TWO_COOLDOWN = 2.4;
+const STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN = 1.7;
+// A deliberate brake hold acts as surrender within roughly one vehicle length
+// of the live responder. Traffic safety can keep the shells out of overlap;
+// releasing the brake or moving the player still cancels the hold.
+const STREET_HEAT_ARREST_CONTINUATION_RADIUS = 10;
+const STREET_HEAT_ARREST_LATCH_MAX_SEPARATION = 48;
+const STREET_HEAT_ARREST_SPEED = 1.2;
+const STREET_HEAT_ARREST_HOLD_SECONDS = 1.2;
+
+function formatHeat(value) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+}
+
+/**
+ * A compact driving risk loop layered over the existing traffic simulation.
+ * Speeding and close passes build heat; once a moving vehicle notices the
+ * player, the target beacon stays on that traffic actor until the player
+ * slows down and creates a clean gap. It is intentionally data-driven so the
+ * traffic system remains the only owner of vehicle motion and collision
+ * safety.
+ */
+export function createStreetHeat({
+  scene,
+  getTrafficSnapshot,
+  getPursuitResponder,
+  getPursuitResponders,
+  getResponderPressureAuthority,
+  onEvent,
+} = {}) {
+  if (!scene?.isScene) {
+    throw new TypeError('createStreetHeat requires a THREE.Scene.');
+  }
+
+  const state = {
+    status: 'ready',
+    heat: 0,
+    pursuitActive: false,
+    level: 0,
+    targetId: null,
+    targetPosition: null,
+    responderId: null,
+    responderDistance: null,
+    responderIds: [],
+    responderDistances: [],
+    responderContacts: 0,
+    pressurePhase: 'idle',
+    pressureLock: 0,
+    pressureCooldown: 0,
+    pressureCount: 0,
+    pressureResponderId: null,
+    arrestHold: 0,
+    arrests: 0,
+    nearestDistance: null,
+    nearMisses: 0,
+    witnessReports: 0,
+    safeElapsed: 0,
+    sampleElapsed: STREET_HEAT_SAMPLE_INTERVAL,
+    nearMissCooldown: 0,
+    combatHold: 0,
+    theftHold: 0,
+    lastEvent: null,
+    lastWitnessEvent: null,
+  };
+
+  let lastWitnessIncidentId = null;
+
+  const marker = new THREE.Group();
+  marker.name = 'Street heat pursuit beacon';
+  marker.visible = false;
+  marker.renderOrder = 10;
+  marker.frustumCulled = false;
+
+  const markerCoreMaterial = new THREE.MeshStandardMaterial({
+    color: 0xff6e46,
+    emissive: 0xc22d20,
+    emissiveIntensity: 2.4,
+    roughness: 0.28,
+    metalness: 0.08,
+    transparent: true,
+    opacity: 0.96,
+    depthWrite: false,
+  });
+  const markerRingMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff9d6e,
+    transparent: true,
+    opacity: 0.76,
+    depthWrite: false,
+  });
+  const markerCore = new THREE.Mesh(
+    new THREE.ConeGeometry(0.3, 0.82, 5),
+    markerCoreMaterial,
+  );
+  markerCore.position.y = 2.25;
+  const markerStem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.035, 2.35, 5),
+    markerCoreMaterial,
+  );
+  markerStem.position.y = 1.1;
+  const markerRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.86, 0.052, 6, 18),
+    markerRingMaterial,
+  );
+  markerRing.rotation.x = Math.PI * 0.5;
+  markerRing.position.y = 0.08;
+  marker.add(markerCore, markerStem, markerRing);
+  scene.add(marker);
+
+  let markerTime = 0;
+  let latestPosition = null;
+  let latestSpeed = 0;
+  let latestDriving = false;
+  let responderContactLatched = false;
+  let surrenderContactLatched = false;
+
+  function currentLevel() {
+    if (!state.pursuitActive) return 0;
+    if (state.heat >= STREET_HEAT_CRITICAL_THRESHOLD) return 3;
+    if (state.heat >= STREET_HEAT_HIGH_THRESHOLD) return 2;
+    return 1;
+  }
+
+  function emitEvent(kind, message, score = 0, details = null) {
+    state.lastEvent = { kind, message, score, ...(details || {}) };
+    onEvent?.({
+      kind,
+      message,
+      score,
+      ...(details || {}),
+      state: getState(),
+    });
+  }
+
+  // Public incident ingress for non-driving systems (for example the on-foot
+  // combat loop). Keeping heat mutation here means every source shares the
+  // same pursuit thresholds, level transitions, and HUD event stream instead
+  // of maintaining a second, conflicting heat counter in the caller.
+  function addHeat(amount = 0, {
+    kind = 'incident',
+    message = null,
+    score = 0,
+    notify = true,
+    source = 'street',
+  } = {}) {
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, 100);
+    if (state.status !== 'running' || delta <= 0) return getState();
+    const previousHeat = state.heat;
+    state.heat = THREE.MathUtils.clamp(state.heat + delta, 0, 100);
+    state.safeElapsed = 0;
+    if (source === 'combat') {
+      state.combatHold = Math.max(state.combatHold, STREET_HEAT_COMBAT_HOLD_SECONDS);
+    } else if (source === 'vehicle-theft') {
+      state.theftHold = Math.max(state.theftHold, STREET_HEAT_THEFT_HOLD_SECONDS);
+    }
+    if (notify && (message || state.heat > previousHeat)) {
+      emitEvent(
+        kind,
+        message || `Street heat +${formatHeat(delta)} · heat ${formatHeat(state.heat)}`,
+        score,
+      );
+    }
+    if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
+      state.pursuitActive = true;
+      state.responderContacts = 0;
+      responderContactLatched = false;
+      surrenderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
+      state.targetId = null;
+      state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
+      state.safeElapsed = 0;
+      state.level = currentLevel();
+      emitEvent(
+        'pursuit-start',
+        'Traffic heat · a tail picked you up. Keep moving, then cool off.',
+      );
+    }
+    state.level = currentLevel();
+    return getState();
+  }
+
+  function reset() {
+    state.status = 'running';
+    state.heat = 0;
+    state.pursuitActive = false;
+    state.level = 0;
+    state.targetId = null;
+    state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
+    state.responderContacts = 0;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
+    state.arrestHold = 0;
+    state.arrests = 0;
+    state.nearestDistance = null;
+    state.nearMisses = 0;
+    state.witnessReports = 0;
+    state.safeElapsed = 0;
+    state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
+    state.nearMissCooldown = 0;
+    state.combatHold = 0;
+    state.theftHold = 0;
+    state.lastEvent = null;
+    state.lastWitnessEvent = null;
+    lastWitnessIncidentId = null;
+    latestPosition = null;
+    latestSpeed = 0;
+    latestDriving = false;
+    responderContactLatched = false;
+    surrenderContactLatched = false;
+    marker.visible = false;
+  }
+
+  function resolveArrest({
+    wasDriving = latestDriving,
+    reason = 'surrender',
+  } = {}) {
+    if (!state.pursuitActive) return null;
+    const heatBefore = state.heat;
+    state.heat = 0;
+    state.pursuitActive = false;
+    state.level = 0;
+    state.targetId = null;
+    state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
+    state.responderContacts = 0;
+    responderContactLatched = false;
+    surrenderContactLatched = false;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
+    state.nearestDistance = null;
+    state.safeElapsed = 0;
+    state.combatHold = 0;
+    state.theftHold = 0;
+    state.arrestHold = 0;
+    state.arrests += 1;
+    marker.visible = false;
+    emitEvent(
+      'arrested',
+      reason === 'pursuit-defeat'
+        ? 'Responder contact ended the pursuit · booking and recovery.'
+        : 'Responder boxed you in · booking and roadside release.',
+      0,
+      { heatBefore: formatHeat(heatBefore), wasDriving, reason },
+    );
+    return getState();
+  }
+
+  function reportVehicleResponderContact({ responderId = null } = {}) {
+    if (!state.pursuitActive || !latestDriving || responderContactLatched) return null;
+    if (Number.isInteger(responderId)
+      && state.responderIds.length > 0
+      && !state.responderIds.includes(responderId)) return null;
+    responderContactLatched = true;
+    state.responderContacts += 1;
+    emitEvent(
+      'responder-contact',
+      'Responder contact · vehicle integrity hit.',
+      0,
+      {
+        contactNumber: state.responderContacts,
+        responderId,
+        physicalContact: true,
+      },
+    );
+    return getState();
+  }
+
+  function start() {
+    reset();
+  }
+
+  function restart() {
+    reset();
+  }
+
+  function sampleTraffic(position, playerVehicleId) {
+    const snapshot = getTrafficSnapshot?.();
+    const vehicles = Array.isArray(snapshot?.vehicles) ? snapshot.vehicles : [];
+    let nearest = null;
+    let nearestDistance = Infinity;
+    vehicles.forEach((vehicle) => {
+      if (!vehicle || vehicle.id === playerVehicleId || vehicle.visible === false) return;
+      if (!Number.isFinite(vehicle.position?.x) || !Number.isFinite(vehicle.position?.z)) return;
+      if (!Number.isFinite(vehicle.speed) || vehicle.speed < 0.8) return;
+      const distance = Math.hypot(
+        vehicle.position.x - position.x,
+        vehicle.position.z - position.z,
+      );
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = vehicle;
+      }
+    });
+    state.nearestDistance = nearest ? nearestDistance : null;
+    if (state.pursuitActive) {
+      const targetStillVisible = vehicles.find(
+        (vehicle) => vehicle?.id === state.targetId && vehicle.visible !== false,
+      );
+      if (targetStillVisible?.position) {
+        state.targetPosition = {
+          x: targetStillVisible.position.x,
+          z: targetStillVisible.position.z,
+        };
+      } else if (nearest) {
+        state.targetId = nearest.id;
+        state.targetPosition = {
+          x: nearest.position.x,
+          z: nearest.position.z,
+        };
+      } else {
+        state.targetId = null;
+        state.targetPosition = null;
+      }
+    } else if (nearest && nearestDistance <= STREET_HEAT_NEARBY_RADIUS) {
+      state.targetId = nearest.id;
+      state.targetPosition = {
+        x: nearest.position.x,
+        z: nearest.position.z,
+      };
+    }
+    return nearestDistance;
+  }
+
+  function update(dt = 0, {
+    driving = false,
+    speed = 0,
+    position = null,
+    playerVehicleId = null,
+    surrendering = false,
+    onFootSurrendering = false,
+    onFootMoving = false,
+    onFootPressureEligible = false,
+    onFootResponsePending = false,
+  } = {}) {
+    const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
+    markerTime += delta;
+    if (state.status !== 'running') {
+      marker.visible = false;
+      return getState();
+    }
+
+    latestDriving = driving === true;
+    latestSpeed = Math.max(0, Number(speed) || 0);
+    latestPosition = position?.isVector3
+      ? position
+      : Number.isFinite(position?.x) && Number.isFinite(position?.z)
+        ? position
+        : null;
+    if (!latestDriving) {
+      state.nearestDistance = null;
+      state.targetId = null;
+      state.targetPosition = null;
+    }
+    state.nearMissCooldown = Math.max(0, state.nearMissCooldown - delta);
+    state.combatHold = Math.max(0, state.combatHold - delta);
+    state.theftHold = Math.max(0, state.theftHold - delta);
+    state.pressureCooldown = Math.max(0, state.pressureCooldown - delta);
+    state.sampleElapsed += delta;
+
+    let nearestDistance = state.nearestDistance ?? Infinity;
+    if (latestDriving && latestPosition && state.sampleElapsed >= STREET_HEAT_SAMPLE_INTERVAL) {
+      state.sampleElapsed = 0;
+      nearestDistance = sampleTraffic(latestPosition, playerVehicleId);
+    }
+    if (state.pursuitActive) {
+      const responderList = getPursuitResponders?.();
+      const responders = Array.isArray(responderList) && responderList.length
+        ? responderList.filter((entry) => entry?.active)
+        : [getPursuitResponder?.()].filter((entry) => entry?.active);
+      const responder = responders[0];
+      if (responder?.active && Number.isFinite(responder.position?.x)
+        && Number.isFinite(responder.position?.z)) {
+        state.responderIds = responders.map((entry) => entry.id);
+        state.responderDistances = responders.map((entry) => (
+          Number.isFinite(entry.distance)
+            ? entry.distance
+            : Math.hypot(
+              entry.position.x - (latestPosition?.x ?? 0),
+              entry.position.z - (latestPosition?.z ?? 0),
+            )
+        ));
+        state.responderId = responder.id;
+        state.responderDistance = state.responderDistances[0];
+        state.targetId = responder.id;
+        state.targetPosition = {
+          x: responder.position.x,
+          z: responder.position.z,
+        };
+        nearestDistance = Math.min(...state.responderDistances);
+      } else {
+        state.responderId = null;
+        state.responderDistance = null;
+        state.responderIds = [];
+        state.responderDistances = [];
+        if (!latestDriving) {
+          state.targetId = null;
+          state.targetPosition = null;
+        }
+      }
+    } else {
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
+    }
+
+    const responderContactDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
+    if (state.pursuitActive
+      && !latestDriving
+      && responderContactDistance !== null
+      && responderContactDistance <= STREET_HEAT_RESPONDER_CONTACT_RADIUS
+      && !responderContactLatched) {
+      responderContactLatched = true;
+      state.responderContacts += 1;
+      emitEvent(
+        'responder-contact',
+        'Responder contact · you took damage.',
+        0,
+        { contactNumber: state.responderContacts },
+      );
+    } else if (state.pursuitActive
+      && responderContactLatched
+      && responderContactDistance !== null
+      && responderContactDistance >= STREET_HEAT_RESPONDER_REARM_RADIUS) {
+      responderContactLatched = false;
+    }
+
+    const pressureLevel = currentLevel();
+    const pressureDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
+    const pressureIndex = pressureDistance === null
+      ? -1
+      : state.responderDistances.indexOf(pressureDistance);
+    const pressureResponderId = pressureIndex >= 0
+      ? state.responderIds[pressureIndex] ?? null
+      : null;
+    const pressureAuthority = pressureResponderId === null
+      ? null
+      : getResponderPressureAuthority?.({
+        responderId: pressureResponderId,
+        level: pressureLevel,
+        distance: pressureDistance,
+        position: latestPosition,
+      }) ?? null;
+    const pressureEligible = state.pursuitActive
+      && !latestDriving
+      && onFootPressureEligible === true
+      && pressureLevel >= 2
+      && pressureDistance !== null
+      && pressureDistance > STREET_HEAT_PRESSURE_MIN_RADIUS
+      && pressureDistance <= STREET_HEAT_PRESSURE_MAX_RADIUS
+      && pressureAuthority?.authorized === true
+      && pressureAuthority?.live === true
+      && pressureAuthority?.los === true;
+    const pressureContextAvailable = state.pursuitActive
+      && !latestDriving
+      && onFootPressureEligible === true;
+    if (!pressureContextAvailable) {
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureResponderId = null;
+    } else if (state.pressureCooldown > 0) {
+      state.pressurePhase = 'cooldown';
+      state.pressureLock = 0;
+      state.pressureResponderId = null;
+    } else if (pressureEligible) {
+      if (state.pressureResponderId !== pressureResponderId) {
+        state.pressureLock = 0;
+        state.pressureResponderId = pressureResponderId;
+      }
+      if (state.pressureLock <= 0) {
+        state.pressurePhase = 'locking';
+        emitEvent(
+          'responder-pressure-lock',
+          'Responder pressure · move beyond 28 m or close to surrender range.',
+          0,
+          {
+            responderId: pressureResponderId,
+            officerId: pressureAuthority.officerId,
+            level: pressureLevel,
+            distance: pressureDistance,
+            los: true,
+            blocked: false,
+          },
+        );
+      }
+      state.pressureLock += delta;
+      if (state.pressureLock >= STREET_HEAT_PRESSURE_LOCK_SECONDS) {
+        const damage = pressureLevel >= 3 ? 10 : 8;
+        const cooldown = pressureLevel >= 3
+          ? STREET_HEAT_PRESSURE_LEVEL_THREE_COOLDOWN
+          : STREET_HEAT_PRESSURE_LEVEL_TWO_COOLDOWN;
+        state.pressureCount += 1;
+        state.pressurePhase = 'cooldown';
+        state.pressureLock = 0;
+        state.pressureCooldown = cooldown;
+        state.pressureResponderId = null;
+        emitEvent(
+          'responder-pressure',
+          `Responder pressure hit · ${damage} health.`,
+          0,
+          {
+            responderId: pressureResponderId,
+            officerId: pressureAuthority.officerId,
+            level: pressureLevel,
+            distance: pressureDistance,
+            damage,
+            pressureNumber: state.pressureCount,
+            los: true,
+            blocked: false,
+          },
+        );
+      }
+    } else {
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureResponderId = null;
+    }
+
+    const nearestResponderDistance = state.responderDistances.length > 0
+      ? Math.min(...state.responderDistances)
+      : null;
+    if (!state.pursuitActive
+      || !latestDriving
+      || surrendering !== true
+      || nearestResponderDistance === null
+      || nearestResponderDistance > STREET_HEAT_ARREST_LATCH_MAX_SEPARATION) {
+      surrenderContactLatched = false;
+    } else if (nearestResponderDistance !== null
+      && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS) {
+      // Contact starts a deliberate booking attempt. Preserve that transient
+      // intent while S remains held so a road-bound oncoming responder can
+      // pass naturally as the player finishes braking to a full stop.
+      surrenderContactLatched = true;
+    }
+    const surrenderEligible = latestDriving
+      ? surrendering === true
+        && surrenderContactLatched
+        && latestSpeed <= STREET_HEAT_ARREST_SPEED
+      : onFootSurrendering === true && onFootMoving !== true;
+    const responderWithinArrestRange = latestDriving
+      ? surrenderContactLatched
+      : nearestResponderDistance !== null
+        && nearestResponderDistance <= STREET_HEAT_ARREST_CONTINUATION_RADIUS;
+    const surrenderIntent = state.pursuitActive
+      && responderWithinArrestRange
+      && (latestDriving ? surrendering === true : surrenderEligible);
+    // A driver is already visibly complying while braking. Count that real-S
+    // dwell from responder contact instead of waiting until the car reaches
+    // 1.2 m/s, which otherwise lets an oncoming road-bound responder travel a
+    // full block before the booking timer even starts. Resolution still
+    // requires the vehicle to be stopped.
+    state.arrestHold = surrenderIntent ? state.arrestHold + delta : 0;
+    if (state.pursuitActive
+      && surrenderEligible
+      && state.arrestHold >= STREET_HEAT_ARREST_HOLD_SECONDS) {
+      return resolveArrest({ wasDriving: latestDriving, reason: 'surrender' });
+    }
+
+    const speedRisk = latestDriving
+      ? THREE.MathUtils.clamp(
+        (latestSpeed - STREET_HEAT_SPEED_THRESHOLD) / 4.8,
+        0,
+        1,
+      )
+      : 0;
+    const closeRisk = latestDriving && nearestDistance < STREET_HEAT_NEARBY_RADIUS
+      ? 1 - THREE.MathUtils.clamp(nearestDistance / STREET_HEAT_NEARBY_RADIUS, 0, 1)
+      : 0;
+    const drivingRisk = speedRisk * 8.8 + closeRisk * 4.5;
+    if (latestDriving && drivingRisk > 0.01) {
+      state.heat += delta * drivingRisk;
+    } else if (latestDriving && state.theftHold <= 0) {
+      state.heat -= delta * (state.pursuitActive ? STREET_HEAT_PURSUIT_COOL_RATE : 12);
+    } else if (!latestDriving && state.theftHold <= 0 && onFootResponsePending !== true) {
+      const combatDecay = state.combatHold > 0
+        ? (state.pursuitActive ? STREET_HEAT_COMBAT_PURSUIT_DECAY : STREET_HEAT_COMBAT_DECAY)
+        : (state.pursuitActive ? 10.5 : 17);
+      state.heat -= delta * combatDecay;
+    }
+    state.heat = THREE.MathUtils.clamp(state.heat, 0, 100);
+
+    const closePass = latestDriving
+      && latestSpeed > 5.2
+      && nearestDistance <= STREET_HEAT_NEAR_MISS_RADIUS;
+    if (closePass && state.nearMissCooldown <= 0) {
+      state.nearMisses += 1;
+      state.nearMissCooldown = STREET_HEAT_NEAR_MISS_COOLDOWN;
+      state.heat = Math.min(100, state.heat + 7.5);
+      emitEvent('near-miss', `Close pass +60 · heat ${formatHeat(state.heat)}`, 60);
+    }
+
+    if (!state.pursuitActive && state.heat >= STREET_HEAT_PURSUIT_THRESHOLD) {
+      state.pursuitActive = true;
+      state.responderContacts = 0;
+      responderContactLatched = false;
+      surrenderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
+      state.arrestHold = 0;
+      state.targetId = null;
+      state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
+      state.safeElapsed = 0;
+      state.level = currentLevel();
+      emitEvent(
+        'pursuit-start',
+        'Traffic heat · a tail picked you up. Keep moving, then cool off.',
+      );
+    }
+
+    const previousLevel = state.level;
+    state.level = currentLevel();
+    if (state.pursuitActive && state.level > previousLevel && state.level > 1) {
+      emitEvent(
+        state.level === 3 ? 'critical' : 'high-heat',
+        state.level === 3
+          ? 'Critical heat · break contact before the grid closes in.'
+          : 'High heat · brake clean and create distance from the tail.',
+      );
+    }
+
+    const safeToEscape = state.pursuitActive
+      && latestSpeed < 4.2
+      && nearestDistance > STREET_HEAT_NEARBY_RADIUS
+      && !(latestDriving && surrendering === true && surrenderContactLatched);
+    state.safeElapsed = safeToEscape ? state.safeElapsed + delta : 0;
+    if (
+      state.pursuitActive
+      && state.heat <= STREET_HEAT_ESCAPE_THRESHOLD
+      && state.safeElapsed >= STREET_HEAT_ESCAPE_WINDOW
+    ) {
+      state.pursuitActive = false;
+      state.level = 0;
+      state.targetId = null;
+      state.targetPosition = null;
+      state.responderId = null;
+      state.responderDistance = null;
+      state.responderIds = [];
+      state.responderDistances = [];
+      state.responderContacts = 0;
+      responderContactLatched = false;
+      surrenderContactLatched = false;
+      state.pressurePhase = 'idle';
+      state.pressureLock = 0;
+      state.pressureCooldown = 0;
+      state.pressureCount = 0;
+      state.pressureResponderId = null;
+      state.arrestHold = 0;
+      state.safeElapsed = 0;
+      state.heat = 0;
+      emitEvent('escaped', 'Tail lost · clean getaway +420', 420);
+    }
+
+    state.level = currentLevel();
+    if (state.pursuitActive && state.targetPosition) {
+      marker.visible = true;
+      marker.position.set(
+        state.targetPosition.x,
+        (latestPosition?.y ?? 0) + 2.55,
+        state.targetPosition.z,
+      );
+      markerCore.position.y = 2.22 + Math.sin(markerTime * 4.2) * 0.15;
+      markerCore.rotation.y = markerTime * 2.1;
+      markerRing.rotation.z = markerTime * 1.25;
+      markerRing.scale.setScalar(0.92 + Math.sin(markerTime * 4.2) * 0.08);
+      markerCoreMaterial.emissiveIntensity = 2.05 + state.level * 0.7;
+      markerRingMaterial.opacity = 0.62 + state.level * 0.07;
+    } else {
+      marker.visible = false;
+    }
+    return getState();
+  }
+
+  function reportWitness({
+    incidentId = null,
+    witnessId = null,
+    witnessLabel = 'A resident',
+    victimId = null,
+    incidentLabel = 'impact',
+  } = {}) {
+    const normalizedIncidentId = Number(incidentId);
+    const normalizedWitnessId = typeof witnessId === 'string' ? witnessId.slice(0, 96) : '';
+    const normalizedVictimId = typeof victimId === 'string' ? victimId.slice(0, 96) : '';
+    const normalizedIncidentLabel = typeof incidentLabel === 'string' && incidentLabel.trim()
+      ? incidentLabel.trim().slice(0, 32)
+      : 'impact';
+    if (state.status !== 'running'
+      || !Number.isInteger(normalizedIncidentId)
+      || normalizedIncidentId <= 0
+      || !normalizedWitnessId
+      || !normalizedVictimId
+      || normalizedWitnessId === normalizedVictimId) return null;
+    if (lastWitnessIncidentId === normalizedIncidentId) {
+      return {
+        reported: false,
+        reason: 'incident-latched',
+        incidentId: normalizedIncidentId,
+        witnessReports: state.witnessReports,
+      };
+    }
+    lastWitnessIncidentId = normalizedIncidentId;
+    state.witnessReports += 1;
+    state.lastWitnessEvent = {
+      kind: 'witness-report',
+      incidentId: normalizedIncidentId,
+      witnessId: normalizedWitnessId,
+      victimId: normalizedVictimId,
+      witnessReports: state.witnessReports,
+      message: `${String(witnessLabel || 'A resident').slice(0, 64)} called in the ${normalizedIncidentLabel}.`,
+    };
+    onEvent?.({
+      ...state.lastWitnessEvent,
+      score: 0,
+      state: getState(),
+    });
+    return {
+      reported: true,
+      ...state.lastWitnessEvent,
+    };
+  }
+
+  function getState() {
+    const heat = formatHeat(state.heat);
+    const escapeSeconds = Math.max(
+      STREET_HEAT_ESCAPE_WINDOW - state.safeElapsed,
+      (state.heat - STREET_HEAT_ESCAPE_THRESHOLD) / STREET_HEAT_PURSUIT_COOL_RATE,
+      0,
+    );
+    const hint = state.pursuitActive
+      ? `Break contact: slow under 4 m/s and stay clear for ${Math.max(
+        0,
+        Math.ceil(escapeSeconds),
+      )} s.`
+      : heat > 0
+        ? `Traffic heat ${heat} · ease off to cool down.`
+        : 'Drive clean or push your luck to wake the street heat.';
+    return {
+      status: state.status,
+      active: state.status === 'running',
+      heat,
+      level: state.level,
+      pursuitActive: state.pursuitActive,
+      targetId: state.targetId,
+      responderId: state.responderId,
+      responderIds: [...state.responderIds],
+      responderCount: state.responderIds.length,
+      responderDistance: state.responderDistance === null
+        ? null
+        : Math.round(state.responderDistance * 10) / 10,
+      responderDistances: state.responderDistances.map(
+        (distance) => Math.round(distance * 10) / 10,
+      ),
+      responderContacts: state.responderContacts,
+      pressure: {
+        phase: state.pressurePhase,
+        lock: Math.round(state.pressureLock * 100) / 100,
+        cooldown: Math.round(state.pressureCooldown * 100) / 100,
+        count: state.pressureCount,
+        responderId: state.pressureResponderId,
+      },
+      arrestHold: Math.round(state.arrestHold * 100) / 100,
+      arrests: state.arrests,
+      nearestDistance: state.nearestDistance,
+      nearMisses: state.nearMisses,
+      witnessReports: state.witnessReports,
+      combatHold: Math.round(state.combatHold * 10) / 10,
+      combatActive: state.combatHold > 0,
+      theftHold: Math.round(state.theftHold * 10) / 10,
+      safeElapsed: state.safeElapsed,
+      hint,
+      label: state.pursuitActive ? `HEAT ${state.level}` : heat > 0 ? `HEAT ${heat}` : 'HEAT CLEAR',
+      lastEvent: state.lastEvent,
+      lastWitnessEvent: state.lastWitnessEvent,
+    };
+  }
+
+  function exportState() {
+    return {
+      heat: state.heat,
+      pursuitActive: state.pursuitActive,
+      responderContacts: state.responderContacts,
+      responderContactLatched,
+      nearMisses: state.nearMisses,
+      witnessReports: state.witnessReports,
+      combatHold: state.combatHold,
+      theftHold: state.theftHold,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const heat = Number(snapshot.heat);
+    const responderContacts = Number(snapshot.responderContacts);
+    const responderContactLatchSnapshot = snapshot.responderContactLatched;
+    const nearMisses = Number(snapshot.nearMisses);
+    const witnessReports = snapshot.witnessReports === undefined
+      ? 0
+      : Number(snapshot.witnessReports);
+    const combatHold = Number(snapshot.combatHold);
+    const theftHold = snapshot.theftHold === undefined ? 0 : Number(snapshot.theftHold);
+    if (!Number.isFinite(heat)
+      || typeof snapshot.pursuitActive !== 'boolean'
+      || !Number.isFinite(responderContacts)
+      || (responderContactLatchSnapshot !== undefined
+        && typeof responderContactLatchSnapshot !== 'boolean')
+      || !Number.isFinite(nearMisses)
+      || !Number.isFinite(witnessReports)
+      || !Number.isFinite(combatHold)
+      || !Number.isFinite(theftHold)) {
+      return false;
+    }
+    const clampedHeat = THREE.MathUtils.clamp(heat, 0, 100);
+    const normalizedResponderContacts = snapshot.pursuitActive
+      ? THREE.MathUtils.clamp(Math.round(responderContacts), 0, 1000)
+      : 0;
+    const importedResponderContactLatched = responderContactLatchSnapshot === undefined
+      ? normalizedResponderContacts > 0
+      : responderContactLatchSnapshot;
+    if ((snapshot.pursuitActive && clampedHeat <= 0)
+      || (!snapshot.pursuitActive && clampedHeat >= STREET_HEAT_PURSUIT_THRESHOLD)) {
+      return false;
+    }
+    if ((!snapshot.pursuitActive && importedResponderContactLatched)
+      || (importedResponderContactLatched && normalizedResponderContacts <= 0)) return false;
+    state.status = 'running';
+    state.heat = clampedHeat;
+    state.pursuitActive = snapshot.pursuitActive;
+    state.responderContacts = normalizedResponderContacts;
+    responderContactLatched = importedResponderContactLatched;
+    surrenderContactLatched = false;
+    state.pressurePhase = 'idle';
+    state.pressureLock = 0;
+    state.pressureCooldown = 0;
+    state.pressureCount = 0;
+    state.pressureResponderId = null;
+    state.nearMisses = Math.max(0, Math.round(nearMisses));
+    state.witnessReports = THREE.MathUtils.clamp(Math.round(witnessReports), 0, 100000);
+    state.combatHold = THREE.MathUtils.clamp(
+      combatHold,
+      0,
+      STREET_HEAT_COMBAT_HOLD_SECONDS,
+    );
+    state.theftHold = THREE.MathUtils.clamp(
+      theftHold,
+      0,
+      STREET_HEAT_THEFT_HOLD_SECONDS,
+    );
+    state.level = currentLevel();
+    state.targetId = null;
+    state.targetPosition = null;
+    state.responderId = null;
+    state.responderDistance = null;
+    state.responderIds = [];
+    state.responderDistances = [];
+    state.arrestHold = 0;
+    state.arrests = 0;
+    state.nearestDistance = null;
+    state.safeElapsed = 0;
+    state.sampleElapsed = STREET_HEAT_SAMPLE_INTERVAL;
+    state.nearMissCooldown = 0;
+    state.lastEvent = null;
+    state.lastWitnessEvent = null;
+    lastWitnessIncidentId = null;
+    latestPosition = null;
+    latestSpeed = 0;
+    latestDriving = false;
+    marker.visible = false;
+    return true;
+  }
+
+  function dispose() {
+    marker.removeFromParent();
+    markerCoreMaterial.dispose();
+    markerRingMaterial.dispose();
+    markerCore.geometry.dispose();
+    markerStem.geometry.dispose();
+    markerRing.geometry.dispose();
+  }
+
+  return {
+    start,
+    restart,
+    addHeat,
+    reportIncident: addHeat,
+    reportWitness,
+    resolveArrest,
+    reportVehicleResponderContact,
+    update,
+    getState,
+    exportState,
+    importState,
+    dispose,
+    get status() {
+      return state.status;
+    },
+  };
+}
+
+const COMBAT_MAGAZINE_SIZE = 12;
+const COMBAT_STARTING_RESERVE = 48;
+const COMBAT_RESERVE_CAPACITY = 120;
+const COMBAT_FIRE_INTERVAL = 0.18;
+const COMBAT_RELOAD_SECONDS = 1.18;
+const COMBAT_MAX_RANGE = 42;
+const COMBAT_HEALTH_MAX = 100;
+const COMBAT_HEALTH_RECOVERY_DELAY = 2.1;
+const COMBAT_HEALTH_RECOVERY_RATE = 18;
+const COMBAT_DOWNED_SECONDS = 2.4;
+const COMBAT_TRACER_POOL_SIZE = 8;
+const COMBAT_MUZZLE_POOL_SIZE = 4;
+const COMBAT_IMPACT_POOL_SIZE = 10;
+const COMBAT_PED_NEAR_MISS_RADIUS = 3.25;
+const COMBAT_TRAFFIC_NEAR_MISS_RADIUS = 4.4;
+const COMBAT_PED_REACTION_SECONDS = 2.35;
+const COMBAT_TRAFFIC_REACTION_SECONDS = 2.05;
+const MELEE_DURATION = 0.62;
+const MELEE_CONTACT_TIME = 0.22;
+const MELEE_MIN_RANGE = 0.72;
+const MELEE_MAX_RANGE = 1.5;
+const MELEE_FRONT_DOT = 0.65;
+
+function combatVectorFrom(value, target, fallbackY = 0) {
+  if (value?.isVector3) {
+    target.copy(value);
+    return true;
+  }
+  if (!Number.isFinite(value?.x) || !Number.isFinite(value?.z)) return false;
+  target.set(value.x, Number.isFinite(value.y) ? value.y : fallbackY, value.z);
+  return true;
+}
+
+/**
+ * Small, deterministic third-person action layer. The city remains the owner
+ * of pedestrian/traffic motion; this module only samples their public pose
+ * snapshots when a shot is fired and adds pooled presentation effects.
+ */
+export function createCombatLoop({
+  scene,
+  camera = null,
+  getPlayerPosition,
+  getPlayerHeading,
+  getAimDirection,
+  getPedestrianCandidates,
+  getTrafficSnapshot,
+  getTrafficRoot,
+  getTargets,
+  getMuzzleOrigin,
+  getNearestWorldBlocker,
+  streetHeat = null,
+  onEvent,
+  onRecoil,
+} = {}) {
+  if (!scene?.isScene) {
+    throw new TypeError('createCombatLoop requires a THREE.Scene.');
+  }
+
+  const state = {
+    status: 'ready',
+    enabled: false,
+    aiming: false,
+    triggerHeld: false,
+    ammo: COMBAT_MAGAZINE_SIZE,
+    reserveAmmo: COMBAT_STARTING_RESERVE,
+    reloadTimer: 0,
+    cooldown: 0,
+    health: COMBAT_HEALTH_MAX,
+    damageFlash: 0,
+    downedTimer: 0,
+    recoveryDelay: 0,
+    recoverySuspended: false,
+    recoil: 0,
+    shots: 0,
+    hits: 0,
+    misses: 0,
+    hitStreak: 0,
+    lockedTargetId: null,
+    lastHit: null,
+    hitConfirmTimer: 0,
+    lastEvent: null,
+    lastReaction: null,
+    reactionCount: 0,
+    defeats: 0,
+    lastDefeat: null,
+    melee: {
+      active: false,
+      elapsed: 0,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      attempts: 0,
+      contacts: 0,
+      misses: 0,
+      lastTargetId: null,
+      lastReason: null,
+      lastContact: null,
+      target: null,
+      heading: 0,
+      contacted: false,
+      startedAt: null,
+    },
+    clock: 0,
+  };
+
+  const playerPosition = new THREE.Vector3();
+  const rayOrigin = new THREE.Vector3();
+  const muzzleOrigin = new THREE.Vector3();
+  const aimDirection = new THREE.Vector3(0, 0, -1);
+  const fallbackDirection = new THREE.Vector3();
+  const candidatePoint = new THREE.Vector3();
+  const closestPoint = new THREE.Vector3();
+  const linePoint = new THREE.Vector3();
+  const upAxis = new THREE.Vector3(0, 1, 0);
+  const forwardAxis = new THREE.Vector3(0, 0, 1);
+  const effectQuaternion = new THREE.Quaternion();
+  const targetCandidates = [];
+  const nearMissCandidates = [];
+  const targetStates = new Map();
+  const reactionMeshes = new Set();
+
+  const tracerPool = [];
+  const muzzlePool = [];
+  const impactPool = [];
+
+  function makeTracer(index) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const material = new THREE.LineBasicMaterial({
+      color: 0xffd18a,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const line = new THREE.Line(geometry, material);
+    line.name = `Combat tracer ${index + 1}`;
+    line.frustumCulled = false;
+    line.visible = false;
+    scene.add(line);
+    return {
+      line,
+      material,
+      life: 0,
+      maxLife: 0.16,
+      index,
+    };
+  }
+
+  function makeMuzzle(index) {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffb45b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.72, 5), material);
+    mesh.name = `Combat muzzle flash ${index + 1}`;
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return {
+      mesh,
+      material,
+      life: 0,
+      maxLife: 0.11,
+      index,
+    };
+  }
+
+  function makeImpact(index) {
+    const group = new THREE.Group();
+    group.name = `Combat impact ${index + 1}`;
+    group.visible = false;
+    group.frustumCulled = false;
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0x71e0ce,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffc86b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 0), coreMaterial);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.05, 5, 10), ringMaterial);
+    const shardA = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    const shardB = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    const shardC = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1, 0), ringMaterial);
+    shardA.position.set(0.31, 0.08, 0);
+    shardB.position.set(-0.2, 0.27, 0.04);
+    shardC.position.set(-0.06, -0.3, -0.03);
+    group.add(core, ring, shardA, shardB, shardC);
+    scene.add(group);
+    return {
+      group,
+      core,
+      ring,
+      shards: [shardA, shardB, shardC],
+      coreMaterial,
+      ringMaterial,
+      life: 0,
+      maxLife: 0.42,
+      index,
+      attachMesh: null,
+      attachHeight: 1.15,
+    };
+  }
+
+  for (let index = 0; index < COMBAT_TRACER_POOL_SIZE; index += 1) {
+    tracerPool.push(makeTracer(index));
+  }
+  for (let index = 0; index < COMBAT_MUZZLE_POOL_SIZE; index += 1) {
+    muzzlePool.push(makeMuzzle(index));
+  }
+  for (let index = 0; index < COMBAT_IMPACT_POOL_SIZE; index += 1) {
+    impactPool.push(makeImpact(index));
+  }
+
+  let tracerCursor = 0;
+  let muzzleCursor = 0;
+  let impactCursor = 0;
+
+  function emitEvent(kind, message, details = {}) {
+    state.lastEvent = {
+      kind,
+      message,
+      at: Math.round(state.clock * 1000) / 1000,
+      ...details,
+    };
+    onEvent?.({
+      kind,
+      message,
+      ...details,
+      state: getState(),
+    });
+  }
+
+  function clearEffects() {
+    tracerPool.forEach((effect) => {
+      effect.life = 0;
+      effect.line.visible = false;
+      effect.material.opacity = 0;
+    });
+    muzzlePool.forEach((effect) => {
+      effect.life = 0;
+      effect.mesh.visible = false;
+      effect.material.opacity = 0;
+    });
+    impactPool.forEach((effect) => {
+      effect.life = 0;
+      effect.group.visible = false;
+      effect.coreMaterial.opacity = 0;
+      effect.ringMaterial.opacity = 0;
+      effect.attachMesh = null;
+    });
+  }
+
+  function reset({ running = true } = {}) {
+    state.status = running ? 'running' : 'ready';
+    state.enabled = running;
+    state.aiming = false;
+    state.triggerHeld = false;
+    state.ammo = COMBAT_MAGAZINE_SIZE;
+    state.reserveAmmo = COMBAT_STARTING_RESERVE;
+    state.reloadTimer = 0;
+    state.cooldown = 0;
+    state.health = COMBAT_HEALTH_MAX;
+    state.damageFlash = 0;
+    state.downedTimer = 0;
+    state.recoveryDelay = 0;
+    state.recoverySuspended = false;
+    state.recoil = 0;
+    state.shots = 0;
+    state.hits = 0;
+    state.misses = 0;
+    state.hitStreak = 0;
+    state.lockedTargetId = null;
+    state.lastHit = null;
+    state.hitConfirmTimer = 0;
+    state.lastEvent = null;
+    state.lastReaction = null;
+    state.reactionCount = 0;
+    state.defeats = 0;
+    state.lastDefeat = null;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.attempts = 0;
+    state.melee.contacts = 0;
+    state.melee.misses = 0;
+    state.melee.lastTargetId = null;
+    state.melee.lastReason = null;
+    state.melee.lastContact = null;
+    state.melee.target = null;
+    state.melee.heading = 0;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
+    state.clock = 0;
+    tracerCursor = 0;
+    muzzleCursor = 0;
+    impactCursor = 0;
+    reactionMeshes.forEach((mesh) => {
+      const userData = mesh?.userData;
+      if (!userData) return;
+      mesh.rotation.z = 0;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionDirectionX = 0;
+      userData.combatReactionDirectionZ = 0;
+      userData.combatReactionStrength = 0;
+      userData.meleeRecoilPending = false;
+      userData.meleeRecoilDirectionX = 0;
+      userData.meleeRecoilDirectionZ = 0;
+      userData.meleeRecoilApplied = 0;
+      userData.meleeRecoilResynced = false;
+      userData.combatBrakeUntil = 0;
+      userData.combatDisabled = false;
+      userData.combatDefeated = false;
+      userData.combatDefeatedAt = null;
+    });
+    reactionMeshes.clear();
+    targetStates.forEach((target) => {
+      if (target.mesh) {
+        target.mesh.rotation.z = 0;
+        if (target.mesh.userData) target.mesh.userData.combatReaction = 'settled';
+      }
+    });
+    targetStates.clear();
+    clearEffects();
+  }
+
+  function start() {
+    reset({ running: true });
+    return getState();
+  }
+
+  function restart() {
+    reset({ running: true });
+    emitEvent('restart', 'On-foot kit reset · 12 rounds ready.');
+    return getState();
+  }
+
+  function stop() {
+    reset({ running: false });
+    return getState();
+  }
+
+  function setEnabled(enabled = true) {
+    state.enabled = Boolean(enabled) && state.status === 'running';
+    if (!state.enabled) {
+      state.aiming = false;
+      state.triggerHeld = false;
+      cancelMelee('disabled');
+    }
+    return state.enabled;
+  }
+
+  function setAiming(aiming = false) {
+    if (state.status !== 'running' || !state.enabled) {
+      state.aiming = false;
+      return false;
+    }
+    state.aiming = Boolean(aiming);
+    if (state.aiming) cancelMelee('aiming');
+    return state.aiming;
+  }
+
+  function setTriggerHeld(held = false) {
+    state.triggerHeld = Boolean(held) && state.status === 'running' && state.enabled;
+    return state.triggerHeld;
+  }
+
+  function exportState() {
+    return {
+      ammo: state.ammo,
+      reserveAmmo: state.reserveAmmo,
+      health: state.health,
+    };
+  }
+
+  function importState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const ammo = Number(snapshot.ammo);
+    const reserveAmmo = Number(snapshot.reserveAmmo);
+    const health = Number(snapshot.health);
+    if (!Number.isFinite(ammo) || !Number.isFinite(reserveAmmo) || !Number.isFinite(health)) return false;
+    state.ammo = THREE.MathUtils.clamp(Math.round(ammo), 0, COMBAT_MAGAZINE_SIZE);
+    state.reserveAmmo = THREE.MathUtils.clamp(Math.round(reserveAmmo), 0, COMBAT_RESERVE_CAPACITY);
+    state.health = THREE.MathUtils.clamp(health, 1, COMBAT_HEALTH_MAX);
+    state.aiming = false;
+    state.triggerHeld = false;
+    state.reloadTimer = 0;
+    state.cooldown = 0;
+    state.damageFlash = 0;
+    state.downedTimer = 0;
+    state.recoveryDelay = state.health < COMBAT_HEALTH_MAX
+      ? COMBAT_HEALTH_RECOVERY_DELAY
+      : 0;
+    state.recoverySuspended = false;
+    state.recoil = 0;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.lastReason = 'state-imported';
+    state.melee.lastContact = null;
+    state.melee.target = null;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
+    clearEffects();
+    return true;
+  }
+
+  function getPlayerOrigin(target, height = 1.38) {
+    const source = getPlayerPosition?.();
+    if (!combatVectorFrom(source, target, 0)) return false;
+    target.y += height;
+    return true;
+  }
+
+  function getAimRay() {
+    if (!getPlayerOrigin(rayOrigin, 0)) return false;
+    if (camera?.isCamera) {
+      camera.getWorldPosition(rayOrigin);
+      camera.getWorldDirection(aimDirection).normalize();
+    } else if (getAimDirection) {
+      const result = getAimDirection(aimDirection);
+      if (result?.isVector3) aimDirection.copy(result).normalize();
+      else if (aimDirection.lengthSq() < 0.5) return false;
+    } else {
+      const heading = Number(getPlayerHeading?.());
+      const safeHeading = Number.isFinite(heading) ? heading : 0;
+      fallbackDirection.set(Math.sin(safeHeading), 0, Math.cos(safeHeading));
+      aimDirection.copy(fallbackDirection);
+    }
+    if (aimDirection.lengthSq() < 0.5) return false;
+    aimDirection.normalize();
+    return true;
+  }
+
+  function collectTargets() {
+    targetCandidates.length = 0;
+    if (getTargets) {
+      const supplied = getTargets(rayOrigin, COMBAT_MAX_RANGE, targetCandidates);
+      if (Array.isArray(supplied) && supplied !== targetCandidates) {
+        supplied.forEach((target) => targetCandidates.push(target));
+      }
+      return targetCandidates;
+    }
+    const pedestrianTargets = getPedestrianCandidates?.(
+      rayOrigin,
+      COMBAT_MAX_RANGE,
+      targetCandidates,
+    );
+    if (Array.isArray(pedestrianTargets) && pedestrianTargets !== targetCandidates) {
+      pedestrianTargets.forEach((target) => targetCandidates.push(target));
+    }
+    const trafficSnapshot = getTrafficSnapshot?.();
+    const vehicles = Array.isArray(trafficSnapshot?.vehicles)
+      ? trafficSnapshot.vehicles
+      : [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!vehicle
+        || vehicle.visible === false
+        || vehicle.combatEligible === false
+        || vehicle.damage?.disabled === true
+        || !Number.isFinite(vehicle.position?.x)) continue;
+      targetCandidates.push({
+        kind: 'traffic',
+        id: `traffic:${vehicle.id ?? index}`,
+        label: vehicle.identity?.label || vehicle.class || 'Traffic',
+        position: vehicle.position,
+        mesh: getTrafficRoot?.(vehicle.id ?? index) || null,
+        radius: vehicle.class === 'bus' ? 1.65 : 1.2,
+        height: vehicle.class === 'bus' ? 1.15 : 0.82,
+        vehicle,
+      });
+    }
+    return targetCandidates;
+  }
+
+  function candidateCenter(candidate, target) {
+    if (candidate?.mesh?.getWorldPosition) {
+      candidate.mesh.getWorldPosition(target);
+    } else if (!combatVectorFrom(candidate?.position, target, 0)) {
+      return false;
+    }
+    target.y += Number.isFinite(candidate?.height)
+      ? candidate.height
+      : candidate?.kind === 'traffic' ? 0.82 : 1.15;
+    return true;
+  }
+
+  function findWorldBlocker() {
+    if (typeof getNearestWorldBlocker !== 'function') return null;
+    const blocker = getNearestWorldBlocker(rayOrigin, aimDirection, COMBAT_MAX_RANGE);
+    const distance = Number(blocker?.distance);
+    if (!Number.isFinite(distance) || distance < 0 || distance > COMBAT_MAX_RANGE
+      || !combatVectorFrom(blocker?.point, closestPoint)) return null;
+    return {
+      distance,
+      point: closestPoint.clone(),
+      source: typeof blocker.source === 'string' ? blocker.source : 'world',
+      sectorKey: typeof blocker.sectorKey === 'string' ? blocker.sectorKey : null,
+      buildingId: blocker.buildingId ?? null,
+      objectName: typeof blocker.objectName === 'string' ? blocker.objectName : null,
+    };
+  }
+
+  function targetTieKey(candidate) {
+    const kind = candidate?.kind === 'traffic' || candidate?.vehicle
+      ? 'traffic'
+      : candidate?.kind === 'officer' ? 'officer' : 'pedestrian';
+    return `${kind}:${String(candidate?.id ?? '')}`;
+  }
+
+  function meleeKindFor(candidate) {
+    if (!candidate || candidate.kind === 'traffic' || candidate.vehicle) return null;
+    return candidate.kind === 'officer' ? 'officer' : 'pedestrian';
+  }
+
+  function inspectMeleeCandidate(candidate, heading = 0) {
+    const kind = meleeKindFor(candidate);
+    if ((kind !== 'pedestrian' && kind !== 'officer')
+      || !candidate
+      || candidate.visible === false
+      || candidate.mesh?.visible === false
+      || candidate.mesh?.userData?.combatDisabled === true
+      || !combatVectorFrom(getPlayerPosition?.(), playerPosition, 0)
+      || !candidateCenter(candidate, candidatePoint)) return null;
+    const dx = candidatePoint.x - playerPosition.x;
+    const dz = candidatePoint.z - playerPosition.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < MELEE_MIN_RANGE || distance > MELEE_MAX_RANGE) return null;
+    const safeHeading = Number.isFinite(heading) ? heading : 0;
+    const forwardX = Math.sin(safeHeading);
+    const forwardZ = Math.cos(safeHeading);
+    const dot = (dx * forwardX + dz * forwardZ) / Math.max(distance, 1e-6);
+    if (dot < MELEE_FRONT_DOT) return null;
+    rayOrigin.copy(playerPosition);
+    rayOrigin.y += 1.05;
+    closestPoint.copy(candidatePoint).sub(rayOrigin);
+    const rayDistance = closestPoint.length();
+    if (rayDistance <= 0.001) return null;
+    closestPoint.multiplyScalar(1 / rayDistance);
+    const blocker = typeof getNearestWorldBlocker === 'function'
+      ? getNearestWorldBlocker(rayOrigin, closestPoint, rayDistance)
+      : null;
+    if (Number.isFinite(blocker?.distance) && blocker.distance < rayDistance - 0.06) return null;
+    return {
+      candidate,
+      kind,
+      distance,
+      dot,
+      point: candidatePoint.clone(),
+    };
+  }
+
+  function findMeleeCandidate(heading) {
+    const candidates = collectTargets();
+    let best = null;
+    let bestKey = '';
+    for (const candidate of candidates) {
+      const inspected = inspectMeleeCandidate(candidate, heading);
+      if (!inspected) continue;
+      const key = targetTieKey(candidate);
+      if (best && (inspected.distance > best.distance + 1e-6
+        || (Math.abs(inspected.distance - best.distance) <= 1e-6 && key >= bestKey))) continue;
+      best = inspected;
+      bestKey = key;
+    }
+    return best;
+  }
+
+  function findHit(blockerDistance = COMBAT_MAX_RANGE) {
+    if (!getAimRay()) return null;
+    const candidates = collectTargets();
+    let best = null;
+    let bestDistance = Infinity;
+    let bestKey = '';
+    const maximumDistance = Number.isFinite(blockerDistance)
+      ? Math.max(0, Math.min(COMBAT_MAX_RANGE, blockerDistance - 0.05))
+      : COMBAT_MAX_RANGE;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      if (!candidate
+        || candidate.visible === false
+        || candidate.mesh?.visible === false
+        || candidate.mesh?.userData?.combatDisabled === true) continue;
+      if (!candidateCenter(candidate, candidatePoint)) continue;
+      linePoint.copy(candidatePoint).sub(rayOrigin);
+      const centerDistance = linePoint.dot(aimDirection);
+      if (centerDistance < 0 || centerDistance > COMBAT_MAX_RANGE) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(centerDistance).add(rayOrigin);
+      const radius = Number.isFinite(candidate.radius)
+        ? candidate.radius
+        : candidate.kind === 'traffic' ? 1.2 : 0.72;
+      const perpendicularSquared = closestPoint.distanceToSquared(candidatePoint);
+      if (perpendicularSquared > radius * radius) continue;
+      const entryDistance = Math.max(
+        0,
+        centerDistance - Math.sqrt(Math.max(0, radius * radius - perpendicularSquared)),
+      );
+      if (entryDistance >= maximumDistance) continue;
+      const tieKey = targetTieKey(candidate);
+      if (entryDistance > bestDistance + 1e-6
+        || (Math.abs(entryDistance - bestDistance) <= 1e-6 && tieKey >= bestKey)) continue;
+      best = candidate;
+      bestDistance = entryDistance;
+      bestKey = tieKey;
+    }
+    if (!best) return null;
+    return {
+      candidate: best,
+      distance: bestDistance,
+      point: rayOrigin.clone().addScaledVector(aimDirection, bestDistance),
+    };
+  }
+
+  function setWorldReaction(candidate, reaction, duration, directionX = 0, directionZ = 0, source = 'combat') {
+    const mesh = candidate?.mesh;
+    if (!mesh) return false;
+    const userData = mesh.userData || (mesh.userData = {});
+    const length = Math.hypot(directionX, directionZ);
+    const normalizedX = length > 0.001 ? directionX / length : 0;
+    const normalizedZ = length > 0.001 ? directionZ / length : 0;
+    const until = state.clock + Math.max(0.25, duration);
+    userData.combatReaction = reaction;
+    userData.combatReactionUntil = until;
+    userData.combatReactionSource = source;
+    userData.combatReactionDirectionX = normalizedX;
+    userData.combatReactionDirectionZ = normalizedZ;
+    userData.combatReactionStrength = 1;
+    if (source === 'melee') {
+      userData.meleeRecoilPending = true;
+      userData.meleeRecoilDirectionX = normalizedX;
+      userData.meleeRecoilDirectionZ = normalizedZ;
+      userData.meleeRecoilApplied = 0;
+      userData.meleeRecoilResynced = false;
+    }
+    userData.combatBrakeUntil = reaction === 'brake' ? until : 0;
+    reactionMeshes.add(mesh);
+    state.reactionCount += 1;
+    state.lastReaction = {
+      targetId: String(candidate.id ?? `${candidate.kind || 'actor'}:unknown`),
+      kind: candidate.kind === 'traffic' || candidate.vehicle
+        ? 'traffic'
+        : candidate.kind === 'officer' ? 'officer' : 'pedestrian',
+      reaction,
+      source,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    return true;
+  }
+
+  function markNearMisses(blockerDistance = COMBAT_MAX_RANGE) {
+    nearMissCandidates.length = 0;
+    const maximumDistance = Number.isFinite(blockerDistance)
+      ? Math.max(0, Math.min(COMBAT_MAX_RANGE, blockerDistance - 0.05))
+      : COMBAT_MAX_RANGE;
+    for (let index = 0; index < targetCandidates.length; index += 1) {
+      const candidate = targetCandidates[index];
+      if (!candidate
+        || !candidate.mesh
+        || candidate.visible === false
+        || candidate.mesh.visible === false
+        || candidate.mesh.userData?.combatDisabled === true) continue;
+      const kind = candidate.kind === 'traffic' || candidate.vehicle
+        ? 'traffic'
+        : candidate.kind === 'officer' ? 'officer' : 'pedestrian';
+      const maxRadius = kind === 'traffic'
+        ? COMBAT_TRAFFIC_NEAR_MISS_RADIUS
+        : COMBAT_PED_NEAR_MISS_RADIUS;
+      if (!candidateCenter(candidate, candidatePoint)) continue;
+      linePoint.copy(candidatePoint).sub(rayOrigin);
+      const centerDistance = linePoint.dot(aimDirection);
+      if (centerDistance < 0 || centerDistance > COMBAT_MAX_RANGE || centerDistance > 32) continue;
+      closestPoint.copy(aimDirection).multiplyScalar(centerDistance).add(rayOrigin);
+      const perpendicularSquared = closestPoint.distanceToSquared(candidatePoint);
+      if (perpendicularSquared > maxRadius * maxRadius) continue;
+      const entryDistance = Math.max(
+        0,
+        centerDistance - Math.sqrt(Math.max(0, maxRadius * maxRadius - perpendicularSquared)),
+      );
+      if (entryDistance >= maximumDistance) continue;
+      const userData = candidate.mesh.userData || (candidate.mesh.userData = {});
+      if (Number(userData.combatReactionUntil) > state.clock
+        && userData.combatReactionSource === 'combat') continue;
+      let directionX = candidatePoint.x - closestPoint.x;
+      let directionZ = candidatePoint.z - closestPoint.z;
+      if (directionX * directionX + directionZ * directionZ < 0.0001) {
+        directionX = -aimDirection.z;
+        directionZ = aimDirection.x;
+      }
+      nearMissCandidates.push({
+        candidate,
+        kind,
+        directionX,
+        directionZ,
+        distance: entryDistance,
+        tieKey: targetTieKey(candidate),
+      });
+    }
+    nearMissCandidates.sort((left, right) => (
+      left.distance - right.distance || left.tieKey.localeCompare(right.tieKey)
+    ));
+    let reactionCount = 0;
+    for (let index = 0; index < Math.min(3, nearMissCandidates.length); index += 1) {
+      const { candidate, kind, directionX, directionZ } = nearMissCandidates[index];
+      if (setWorldReaction(
+        candidate,
+        kind === 'traffic' ? 'brake' : 'flee',
+        kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
+        directionX,
+        directionZ,
+        'near-miss',
+      )) reactionCount += 1;
+    }
+    return reactionCount;
+  }
+
+  function spawnTracer(start, end) {
+    const effect = tracerPool[tracerCursor % tracerPool.length];
+    tracerCursor += 1;
+    const attribute = effect.line.geometry.getAttribute('position');
+    attribute.setXYZ(0, start.x, start.y, start.z);
+    attribute.setXYZ(1, end.x, end.y, end.z);
+    attribute.needsUpdate = true;
+    effect.line.geometry.computeBoundingSphere();
+    effect.life = effect.maxLife;
+    effect.line.visible = true;
+    effect.material.opacity = 0.94;
+  }
+
+  function spawnMuzzle(origin, direction) {
+    const effect = muzzlePool[muzzleCursor % muzzlePool.length];
+    muzzleCursor += 1;
+    effectQuaternion.setFromUnitVectors(upAxis, direction);
+    effect.mesh.position.copy(origin);
+    effect.mesh.quaternion.copy(effectQuaternion);
+    // Deterministic alternating flare length keeps replay probes stable.
+    effect.mesh.scale.set(1, 0.84 + ((state.shots + effect.index) % 3) * 0.08, 1);
+    effect.life = effect.maxLife;
+    effect.mesh.visible = true;
+    effect.material.opacity = 0.98;
+  }
+
+  function spawnImpact(position, kind = 'pedestrian', targetMesh = null, targetHeight = 1.15) {
+    const effect = impactPool[impactCursor % impactPool.length];
+    impactCursor += 1;
+    effect.group.position.copy(position);
+    effectQuaternion.setFromUnitVectors(forwardAxis, aimDirection);
+    effect.group.quaternion.copy(effectQuaternion);
+    effect.group.scale.setScalar(kind === 'traffic' ? 1.22 : 1);
+    effect.life = effect.maxLife;
+    effect.group.visible = true;
+    effect.attachMesh = targetMesh || null;
+    effect.attachHeight = Number.isFinite(targetHeight) ? targetHeight : 1.15;
+    effect.coreMaterial.color.setHex(kind === 'traffic' ? 0xffc86b : 0x71e0ce);
+    effect.coreMaterial.opacity = 0.96;
+    effect.ringMaterial.opacity = 0.84;
+    effect.shards.forEach((shard, index) => {
+      shard.rotation.set(0.4 * index, 0.8 - index * 0.22, index * 1.1);
+    });
+  }
+
+  function markReaction(candidate, kind, source = 'hit', directionX = 0, directionZ = 0) {
+    const id = String(candidate.id ?? `${kind}:unknown`);
+    let target = targetStates.get(id);
+    if (!target) {
+      target = {
+        id,
+        kind,
+        label: String(candidate.label || (kind === 'traffic'
+          ? 'Traffic'
+          : kind === 'officer' ? 'SFPD officer' : 'Pedestrian')),
+        health: kind === 'officer'
+          ? 1
+          : kind === 'traffic'
+          ? Math.max(1, Math.ceil(
+            // Traffic snapshots round health to one decimal. Remove that
+            // maximum rounding error before deriving remaining quarter-hits.
+            (Number(candidate.vehicle?.damage?.health || 0) - 0.051)
+            / Math.max(1, Number(candidate.vehicle?.damage?.maxHealth || 1) / 4),
+          ))
+          : 2,
+        hits: 0,
+        reactionUntil: 0,
+        defeated: false,
+        consequence: null,
+        mesh: candidate.mesh || null,
+      };
+      targetStates.set(id, target);
+    }
+    target.hits += 1;
+    target.health = Math.max(0, target.health - 1);
+    target.reactionUntil = state.clock + (kind === 'traffic'
+      ? COMBAT_TRAFFIC_REACTION_SECONDS
+      : COMBAT_PED_REACTION_SECONDS);
+    target.mesh = candidate.mesh || target.mesh;
+    target.defeated = target.health <= 0;
+    if (target.mesh) {
+      const userData = target.mesh.userData || (target.mesh.userData = {});
+      userData.combatHitCount = target.hits;
+      userData.combatHitUntil = target.reactionUntil;
+    }
+    const reaction = kind === 'traffic'
+      ? target.defeated ? 'staggered' : 'brake'
+      : target.defeated ? 'staggered' : 'hit-react';
+    setWorldReaction(
+      candidate,
+      reaction,
+      kind === 'traffic' ? COMBAT_TRAFFIC_REACTION_SECONDS : COMBAT_PED_REACTION_SECONDS,
+      directionX,
+      directionZ,
+      source,
+    );
+    if (target.defeated) {
+      target.consequence = kind === 'traffic'
+        ? 'vehicle-disabled'
+        : kind === 'officer' ? 'officer-downed' : 'actor-downed';
+    }
+    if (target.defeated && target.mesh) {
+      const userData = target.mesh.userData || (target.mesh.userData = {});
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatDefeatedAt = Math.round(state.clock * 1000) / 1000;
+      userData.combatReaction = 'staggered';
+      userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+      userData.combatReactionSource = 'defeat';
+      if (kind === 'traffic') userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+    }
+    return target;
+  }
+
+  function beginMelee() {
+    if (state.status !== 'running' || !state.enabled) return { started: false, reason: 'inactive' };
+    if (state.aiming) return { started: false, reason: 'aiming' };
+    if (state.reloadTimer > 0) return { started: false, reason: 'reloading' };
+    if (state.melee.active) return { started: false, reason: 'busy' };
+    const heading = Number(getPlayerHeading?.());
+    const safeHeading = Number.isFinite(heading) ? heading : 0;
+    const target = findMeleeCandidate(safeHeading);
+    state.melee.active = true;
+    state.melee.elapsed = 0;
+    state.melee.attempts += 1;
+    state.melee.lastTargetId = target?.candidate?.id ? String(target.candidate.id) : null;
+    state.melee.lastReason = target ? 'windup' : 'no-target';
+    state.melee.lastContact = null;
+    state.melee.target = target?.candidate ?? null;
+    state.melee.heading = safeHeading;
+    state.melee.contacted = false;
+    state.melee.startedAt = state.clock;
+    return {
+      started: true,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      targetId: state.melee.lastTargetId,
+    };
+  }
+
+  function cancelMelee(reason = 'cancelled') {
+    if (!state.melee.active && !state.melee.target) return false;
+    state.melee.active = false;
+    state.melee.elapsed = 0;
+    state.melee.target = null;
+    state.melee.contacted = false;
+    state.melee.startedAt = null;
+    state.melee.lastReason = reason;
+    return true;
+  }
+
+  function resolveMeleeContact() {
+    const target = state.melee.target;
+    const inspected = target ? inspectMeleeCandidate(target, state.melee.heading) : null;
+    state.melee.contacted = true;
+    if (!inspected) {
+      state.melee.misses += 1;
+      state.melee.lastReason = target ? 'invalid-contact' : 'no-target';
+      return null;
+    }
+    const directionX = inspected.point.x - playerPosition.x;
+    const directionZ = inspected.point.z - playerPosition.z;
+    const reaction = markReaction(
+      inspected.candidate,
+      inspected.kind,
+      'melee',
+      directionX,
+      directionZ,
+    );
+    if (!reaction) {
+      state.melee.misses += 1;
+      state.melee.lastReason = 'reaction-refused';
+      return null;
+    }
+    state.hits += 1;
+    state.hitStreak += 1;
+    state.lockedTargetId = reaction.id;
+    state.lastHit = {
+      targetId: reaction.id,
+      kind: inspected.kind,
+      label: reaction.label,
+      distance: Math.round(inspected.distance * 100) / 100,
+      hits: reaction.hits,
+      defeated: reaction.defeated,
+      source: 'melee',
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    state.hitConfirmTimer = 1.15;
+    aimDirection.set(Math.sin(state.melee.heading), 0, Math.cos(state.melee.heading));
+    spawnImpact(inspected.point, inspected.kind, reaction.mesh, inspected.candidate.height);
+    reportHeat(inspected.kind, true, 'melee');
+    const incidentId = 2_000_000 + state.melee.attempts;
+    const residentId = inspected.kind === 'pedestrian'
+      ? inspected.candidate.residentId ?? reaction.id
+      : null;
+    state.melee.contacts += 1;
+    state.melee.lastReason = 'contact';
+    state.melee.lastContact = {
+      targetId: reaction.id,
+      targetKind: inspected.kind,
+      distance: Math.round(inspected.distance * 100) / 100,
+      dot: Math.round(inspected.dot * 1000) / 1000,
+      incidentId,
+      defeated: reaction.defeated,
+    };
+    emitEvent(
+      'impact',
+      `${inspected.kind === 'officer' ? 'Officer' : 'Pedestrian'} staggered · ${reaction.defeated ? 'reaction complete' : 'hit confirmed'}`,
+      {
+        hit: true,
+        source: 'melee',
+        incidentId,
+        targetId: reaction.id,
+        targetKind: inspected.kind,
+        residentId,
+        officerId: inspected.kind === 'officer' ? inspected.candidate.officerId ?? reaction.id : null,
+        vehicleId: null,
+        defeated: reaction.defeated,
+      },
+    );
+    if (reaction.defeated) {
+      state.defeats += 1;
+      state.lastDefeat = {
+        targetId: reaction.id,
+        targetKind: inspected.kind,
+        label: reaction.label,
+        consequence: reaction.consequence,
+        source: 'melee',
+        at: Math.round(state.clock * 1000) / 1000,
+      };
+      emitEvent(
+        'defeat',
+        `${reaction.label} disabled · no longer an active target.`,
+        { ...state.lastDefeat },
+      );
+    }
+    return state.melee.lastContact;
+  }
+
+  function updateMelee(delta) {
+    if (!state.melee.active) return;
+    state.melee.elapsed = Math.min(MELEE_DURATION, state.melee.elapsed + delta);
+    if (!state.melee.contacted && state.melee.elapsed >= MELEE_CONTACT_TIME) {
+      resolveMeleeContact();
+    }
+    if (state.melee.elapsed >= MELEE_DURATION) {
+      state.melee.active = false;
+      state.melee.target = null;
+    }
+  }
+
+  function getMeleeState() {
+    const melee = state.melee;
+    const targetId = melee.target?.id ? String(melee.target.id) : melee.lastTargetId;
+    const lastContact = melee.lastContact ? Object.freeze({ ...melee.lastContact }) : null;
+    const progress = melee.active
+      ? THREE.MathUtils.clamp(melee.elapsed / MELEE_DURATION, 0, 1)
+      : 1;
+    const phase = !melee.active
+      ? 'idle'
+      : melee.elapsed < MELEE_CONTACT_TIME
+        ? 'windup'
+        : melee.elapsed < MELEE_DURATION * 0.68
+          ? 'contact'
+          : 'recovery';
+    return Object.freeze({
+      active: melee.active === true,
+      phase,
+      progress: Math.round(progress * 1000) / 1000,
+      elapsed: Math.round(melee.elapsed * 1000) / 1000,
+      duration: MELEE_DURATION,
+      contactTime: MELEE_CONTACT_TIME,
+      startedAt: Number.isFinite(melee.startedAt) ? Math.round(melee.startedAt * 1000) / 1000 : null,
+      attempts: melee.attempts,
+      contacts: melee.contacts,
+      misses: melee.misses,
+      targetId,
+      lastReason: melee.lastReason,
+      lastContact,
+      ammoCost: 0,
+      range: Object.freeze({ min: MELEE_MIN_RANGE, max: MELEE_MAX_RANGE }),
+      frontDotMinimum: MELEE_FRONT_DOT,
+      strike: Object.freeze({
+        startedAtMs: Number.isFinite(melee.startedAt) ? Math.round(melee.startedAt * 1000) : null,
+        windupMs: Math.round(MELEE_CONTACT_TIME * 1000),
+        contactAtMs: Number.isFinite(melee.startedAt)
+          ? Math.round((melee.startedAt + MELEE_CONTACT_TIME) * 1000)
+          : null,
+        contactMs: Math.round(MELEE_CONTACT_TIME * 1000),
+        totalMs: Math.round(MELEE_DURATION * 1000),
+        recoveredAtMs: Number.isFinite(melee.startedAt)
+          ? Math.round((melee.startedAt + MELEE_DURATION) * 1000)
+          : null,
+      }),
+    });
+  }
+
+  function reportHeat(kind, hit, source = 'combat') {
+    if (!streetHeat?.addHeat) return null;
+    const amount = hit
+      ? kind === 'pedestrian' ? 14 : kind === 'officer' ? 12 : 9
+      : 2.5;
+    const message = hit
+      ? `${kind === 'pedestrian' ? 'Civilian' : kind === 'officer' ? 'Officer' : 'Traffic'} ${source === 'melee' ? 'assault' : 'impact'} · street heat +${amount}`
+      : `Unsafe fire · street heat +${amount}`;
+    return streetHeat.addHeat(amount, {
+      kind: hit ? 'combat-impact' : 'combat-fire',
+      message,
+      notify: false,
+      source,
+    });
+  }
+
+  function reload() {
+    if (state.status !== 'running' || !state.enabled) return false;
+    if (state.melee.active) return false;
+    if (state.reloadTimer > 0 || state.ammo >= COMBAT_MAGAZINE_SIZE || state.reserveAmmo <= 0) return false;
+    state.reloadTimer = COMBAT_RELOAD_SECONDS;
+    state.triggerHeld = false;
+    emitEvent('reload-start', 'Reloading · keep your head up.');
+    return true;
+  }
+
+  function addReserveAmmo(amount = 0) {
+    if (state.status !== 'running') return null;
+    const requested = Math.max(0, Math.round(Number(amount) || 0));
+    if (requested <= 0 || state.reserveAmmo >= COMBAT_RESERVE_CAPACITY) return null;
+    const before = state.reserveAmmo;
+    state.reserveAmmo = Math.min(COMBAT_RESERVE_CAPACITY, before + requested);
+    return {
+      added: state.reserveAmmo - before,
+      reserveAmmo: state.reserveAmmo,
+      capacity: COMBAT_RESERVE_CAPACITY,
+    };
+  }
+
+  function fire() {
+    if (state.status !== 'running' || !state.enabled) return { fired: false, reason: 'inactive' };
+    if (state.reloadTimer > 0) return { fired: false, reason: 'reloading' };
+    if (state.cooldown > 0) return { fired: false, reason: 'cooldown' };
+    if (state.ammo <= 0) {
+      reload();
+      return { fired: false, reason: 'empty' };
+    }
+    state.ammo -= 1;
+    state.shots += 1;
+    state.cooldown = COMBAT_FIRE_INTERVAL;
+    state.recoil = Math.min(1, state.recoil + 0.68);
+    onRecoil?.(0.026);
+
+    if (!getAimRay()) return { fired: false, reason: 'no-aim' };
+    const customMuzzle = getMuzzleOrigin?.(muzzleOrigin, aimDirection);
+    if (!customMuzzle) {
+      muzzleOrigin.copy(rayOrigin).addScaledVector(aimDirection, 0.32);
+      // Pull the visual muzzle back to the avatar when a player pose is
+      // available; the ray itself remains camera-centre so third-person aim
+      // is predictable and independent of camera distance.
+      const playerMuzzle = getPlayerOrigin(playerPosition, 1.22);
+      if (playerMuzzle) muzzleOrigin.copy(playerPosition).addScaledVector(aimDirection, 0.48);
+    }
+    const blocker = findWorldBlocker();
+    const hit = findHit(blocker?.distance ?? COMBAT_MAX_RANGE);
+    linePoint.copy(rayOrigin).addScaledVector(aimDirection, hit?.distance ?? COMBAT_MAX_RANGE);
+    spawnTracer(muzzleOrigin, hit?.point || blocker?.point || linePoint);
+    spawnMuzzle(muzzleOrigin, aimDirection);
+    if (!hit && blocker) {
+      state.misses += 1;
+      state.hitStreak = 0;
+      state.lockedTargetId = null;
+      // The shell terminates the ray, but actors between the muzzle and that
+      // shell can still react. The blocker-aware selector excludes every
+      // candidate whose near-miss sphere begins behind the solid surface.
+      const nearReactions = markNearMisses(blocker.distance);
+      reportHeat('street', false);
+      const blockerPoint = {
+        x: Math.round(blocker.point.x * 1000) / 1000,
+        y: Math.round(blocker.point.y * 1000) / 1000,
+        z: Math.round(blocker.point.z * 1000) / 1000,
+      };
+      const blockerRay = {
+        origin: { x: rayOrigin.x, y: rayOrigin.y, z: rayOrigin.z },
+        direction: { x: aimDirection.x, y: aimDirection.y, z: aimDirection.z },
+      };
+      emitEvent('shot', 'Shot blocked by the city fabric · watch the street heat.', {
+        hit: false,
+        blocked: true,
+        targetId: null,
+        nearReactions,
+        source: blocker.source,
+        distance: Math.round(blocker.distance * 1000) / 1000,
+        point: blockerPoint,
+        ray: blockerRay,
+        blocker: {
+          source: blocker.source,
+          distance: Math.round(blocker.distance * 1000) / 1000,
+          point: blockerPoint,
+          sectorKey: blocker.sectorKey,
+          buildingId: blocker.buildingId,
+          objectName: blocker.objectName,
+        },
+      });
+      return {
+        fired: true,
+        hit: false,
+        blocked: true,
+        blocker: {
+          source: blocker.source,
+          distance: blocker.distance,
+          point: blockerPoint,
+          sectorKey: blocker.sectorKey,
+          buildingId: blocker.buildingId,
+          objectName: blocker.objectName,
+        },
+        ray: blockerRay,
+        nearReactions,
+        ammo: state.ammo,
+      };
+    }
+    if (!hit) {
+      state.misses += 1;
+      state.hitStreak = 0;
+      state.lockedTargetId = null;
+      const nearReactions = markNearMisses();
+      reportHeat('street', false);
+      emitEvent('shot', 'Shot fired · watch the street heat.', {
+        hit: false,
+        blocked: false,
+        targetId: null,
+        nearReactions,
+      });
+      return {
+        fired: true,
+        hit: false,
+        blocked: false,
+        nearReactions,
+        ammo: state.ammo,
+      };
+    }
+
+    const kind = hit.candidate.kind === 'traffic' || hit.candidate.vehicle
+      ? 'traffic'
+      : hit.candidate.kind === 'officer' ? 'officer' : 'pedestrian';
+    const target = markReaction(hit.candidate, kind);
+    state.hits += 1;
+    state.hitStreak += 1;
+    state.lockedTargetId = target.id;
+    state.lastHit = {
+      targetId: target.id,
+      kind,
+      label: target.label,
+      distance: Math.round(hit.distance * 100) / 100,
+      hits: target.hits,
+      defeated: target.defeated,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    state.hitConfirmTimer = 1.15;
+    spawnImpact(hit.point, kind, target.mesh, hit.candidate.height);
+    reportHeat(kind, true);
+    emitEvent('shot', 'Shot fired · impact registered.', {
+      hit: true,
+      blocked: false,
+      targetId: target.id,
+      targetKind: kind,
+    });
+    emitEvent(
+      'impact',
+      `${kind === 'traffic' ? 'Vehicle' : kind === 'officer' ? 'Officer' : 'Pedestrian'} staggered · ${target.defeated ? 'reaction complete' : 'hit confirmed'}`,
+      {
+        hit: true,
+        incidentId: 1_000_000 + state.shots,
+        targetId: target.id,
+        targetKind: kind,
+        residentId: kind === 'pedestrian' ? hit.candidate.residentId ?? target.id : null,
+        officerId: kind === 'officer' ? hit.candidate.officerId ?? target.id : null,
+        vehicleId: kind === 'traffic' ? Number(hit.candidate.vehicle?.id) : null,
+        defeated: target.defeated,
+      },
+    );
+    if (target.defeated) {
+      state.defeats += 1;
+      state.lastDefeat = {
+        targetId: target.id,
+        targetKind: kind,
+        label: target.label,
+        consequence: target.consequence,
+        at: Math.round(state.clock * 1000) / 1000,
+      };
+      emitEvent(
+        'defeat',
+        `${target.label} disabled · no longer an active target.`,
+        { ...state.lastDefeat },
+      );
+    }
+    return {
+      fired: true,
+      hit: true,
+      blocked: false,
+      targetId: target.id,
+      targetKind: kind,
+      defeated: target.defeated,
+      consequence: target.consequence,
+      ammo: state.ammo,
+    };
+  }
+
+  function damage(amount = 0, source = 'street') {
+    if (state.status !== 'running' || !state.enabled) return false;
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, COMBAT_HEALTH_MAX);
+    if (delta <= 0) return false;
+    state.health = Math.max(0, state.health - delta);
+    state.damageFlash = Math.max(state.damageFlash, 0.42);
+    state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
+    state.lastEvent = {
+      kind: 'damage',
+      message: `Damage received · ${Math.round(delta)} health`,
+      source,
+      at: Math.round(state.clock * 1000) / 1000,
+    };
+    onEvent?.({
+      kind: 'damage',
+      message: state.lastEvent.message,
+      source,
+      amount: delta,
+      state: getState(),
+    });
+    if (state.health <= 0) {
+      state.status = 'downed';
+      state.enabled = false;
+      state.aiming = false;
+      state.triggerHeld = false;
+      cancelMelee('downed');
+      state.downedTimer = COMBAT_DOWNED_SECONDS;
+      emitEvent('downed', 'You are down · recovering in the street.', { source });
+    }
+    return true;
+  }
+
+  function heal(amount = 0) {
+    const delta = THREE.MathUtils.clamp(Number(amount) || 0, 0, COMBAT_HEALTH_MAX);
+    if (delta <= 0 || state.status !== 'running') return false;
+    state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta);
+    return true;
+  }
+
+  function recoverFromDowned(health = 58, source = 'recovery') {
+    if (state.status !== 'downed') return null;
+    state.status = 'running';
+    state.enabled = true;
+    state.health = THREE.MathUtils.clamp(Number(health) || 58, 1, COMBAT_HEALTH_MAX);
+    state.downedTimer = 0;
+    state.recoveryDelay = COMBAT_HEALTH_RECOVERY_DELAY;
+    state.recoverySuspended = false;
+    emitEvent(
+      'revive',
+      source === 'pursuit-booking'
+        ? 'Booked and released · 58 health.'
+        : 'Back on your feet · stay sharp.',
+      { source },
+    );
+    return getState();
+  }
+
+  function updateWorldReactions() {
+    reactionMeshes.forEach((mesh) => {
+      const userData = mesh?.userData;
+      if (userData?.combatDisabled === true) return;
+      if (!userData || Number(userData.combatReactionUntil) > state.clock) return;
+      userData.combatReaction = 'settled';
+      userData.combatReactionUntil = 0;
+      userData.combatReactionSource = null;
+      userData.combatReactionDirectionX = 0;
+      userData.combatReactionDirectionZ = 0;
+      userData.combatReactionStrength = 0;
+      userData.combatBrakeUntil = 0;
+      reactionMeshes.delete(mesh);
+    });
+  }
+
+  function updateReactions() {
+    targetStates.forEach((target) => {
+      const mesh = target.mesh;
+      if (!mesh) return;
+      const userData = mesh.userData || (mesh.userData = {});
+      if (target.defeated) {
+        mesh.rotation.z = THREE.MathUtils.damp(
+          mesh.rotation.z,
+          target.kind === 'traffic' ? 0 : -1.05,
+          7,
+          1 / 60,
+        );
+        userData.combatReaction = 'staggered';
+        userData.combatReactionUntil = Number.MAX_SAFE_INTEGER;
+        userData.combatReactionSource = 'defeat';
+        if (target.kind === 'traffic') userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+        return;
+      }
+      const remaining = target.reactionUntil - state.clock;
+      if (remaining > 0) {
+        const duration = target.kind === 'traffic'
+          ? COMBAT_TRAFFIC_REACTION_SECONDS
+          : COMBAT_PED_REACTION_SECONDS;
+        const pulse = THREE.MathUtils.clamp(remaining / duration, 0, 1);
+        mesh.rotation.z = Math.sin(state.clock * 28 + target.hits) * 0.2 * pulse;
+        userData.combatReaction = target.kind === 'traffic'
+          ? 'brake'
+          : target.defeated ? 'staggered' : 'hit-react';
+      } else if (userData.combatReaction) {
+        mesh.rotation.z = THREE.MathUtils.damp(mesh.rotation.z, 0, 16, 1 / 60);
+        if (Math.abs(mesh.rotation.z) < 0.005) {
+          mesh.rotation.z = 0;
+          userData.combatReaction = 'settled';
+        }
+      }
+    });
+  }
+
+  function updateEffects(delta) {
+    tracerPool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.line.visible = false;
+        effect.material.opacity = 0;
+        return;
+      }
+      effect.material.opacity = THREE.MathUtils.clamp(effect.life / effect.maxLife, 0, 1) * 0.94;
+    });
+    muzzlePool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.mesh.visible = false;
+        effect.material.opacity = 0;
+        return;
+      }
+      effect.material.opacity = THREE.MathUtils.clamp(effect.life / effect.maxLife, 0, 1);
+      effect.mesh.scale.x = 0.78 + effect.life / effect.maxLife * 0.36;
+      effect.mesh.scale.z = effect.mesh.scale.x;
+    });
+    impactPool.forEach((effect) => {
+      if (effect.life <= 0) return;
+      effect.life -= delta;
+      if (effect.life <= 0) {
+        effect.life = 0;
+        effect.group.visible = false;
+        effect.coreMaterial.opacity = 0;
+        effect.ringMaterial.opacity = 0;
+        effect.attachMesh = null;
+        return;
+      }
+      if (effect.attachMesh?.visible && effect.attachMesh.getWorldPosition) {
+        effect.attachMesh.getWorldPosition(candidatePoint);
+        candidatePoint.y += effect.attachHeight;
+        effect.group.position.copy(candidatePoint);
+      }
+      const progress = 1 - effect.life / effect.maxLife;
+      effect.coreMaterial.opacity = (1 - progress) * 0.96;
+      effect.ringMaterial.opacity = (1 - progress) * 0.84;
+      effect.group.scale.setScalar(0.84 + progress * 1.45);
+      effect.ring.rotation.z += delta * 7;
+      effect.shards.forEach((shard, index) => {
+        shard.rotation.x += delta * (4.2 + index * 0.7);
+        shard.rotation.y -= delta * (3.5 + index * 0.5);
+      });
+    });
+  }
+
+  function update(dt = 0, { active = true, suspendRecovery = false } = {}) {
+    const delta = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
+    state.clock += delta;
+    if (state.status === 'ready') {
+      updateEffects(delta);
+      return getState();
+    }
+    if (active === false) setEnabled(false);
+    else if (state.status === 'running') state.enabled = true;
+
+    state.cooldown = Math.max(0, state.cooldown - delta);
+    state.recoil = Math.max(0, state.recoil - delta * 4.8);
+    state.damageFlash = Math.max(0, state.damageFlash - delta);
+    state.hitConfirmTimer = Math.max(0, state.hitConfirmTimer - delta);
+    updateEffects(delta);
+    updateWorldReactions();
+    updateReactions();
+
+    if (state.status === 'downed') {
+      state.downedTimer = Math.max(0, state.downedTimer - delta);
+      if (state.downedTimer <= 0) {
+        recoverFromDowned(58, 'street-recovery');
+      }
+      return getState();
+    }
+    if (state.reloadTimer > 0) {
+      state.reloadTimer = Math.max(0, state.reloadTimer - delta);
+      if (state.reloadTimer <= 0) {
+        const needed = COMBAT_MAGAZINE_SIZE - state.ammo;
+        const loaded = Math.min(needed, state.reserveAmmo);
+        state.ammo += loaded;
+        state.reserveAmmo -= loaded;
+        emitEvent('reload-complete', `Reloaded · ${state.ammo}/${COMBAT_MAGAZINE_SIZE}`);
+      }
+    }
+    updateMelee(delta);
+    state.recoverySuspended = suspendRecovery === true && state.health < COMBAT_HEALTH_MAX;
+    if (!state.recoverySuspended) {
+      if (state.recoveryDelay > 0) {
+        state.recoveryDelay = Math.max(0, state.recoveryDelay - delta);
+      } else if (state.health < COMBAT_HEALTH_MAX) {
+        state.health = Math.min(COMBAT_HEALTH_MAX, state.health + delta * COMBAT_HEALTH_RECOVERY_RATE);
+      }
+    }
+    if (state.enabled && state.triggerHeld && state.reloadTimer <= 0 && state.cooldown <= 0) {
+      fire();
+    }
+    return getState();
+  }
+
+  function getState() {
+    return {
+      status: state.status,
+      active: state.status === 'running' && state.enabled,
+      aiming: state.aiming,
+      triggerHeld: state.triggerHeld,
+      ammo: state.ammo,
+      magazineSize: COMBAT_MAGAZINE_SIZE,
+      reserveAmmo: state.reserveAmmo,
+      reserveCapacity: COMBAT_RESERVE_CAPACITY,
+      reloading: state.reloadTimer > 0,
+      reloadProgress: state.reloadTimer > 0
+        ? THREE.MathUtils.clamp(1 - state.reloadTimer / COMBAT_RELOAD_SECONDS, 0, 1)
+        : 0,
+      cooldown: state.cooldown,
+      health: Math.round(state.health * 10) / 10,
+      maxHealth: COMBAT_HEALTH_MAX,
+      damageFlash: state.damageFlash,
+      downedTimer: state.downedTimer,
+      recovering: state.health < COMBAT_HEALTH_MAX
+        && state.recoveryDelay <= 0
+        && !state.recoverySuspended,
+      recoverySuspended: state.recoverySuspended,
+      recoil: state.recoil,
+      shots: state.shots,
+      hits: state.hits,
+      misses: state.misses,
+      hitStreak: state.hitStreak,
+      lockedTargetId: state.lockedTargetId,
+      lastHit: state.lastHit ? { ...state.lastHit } : null,
+      hitConfirm: state.hitConfirmTimer > 0,
+      hitConfirmTimer: Math.round(state.hitConfirmTimer * 1000) / 1000,
+      hitLabel: state.lastHit?.label || null,
+      lastReaction: state.lastReaction ? { ...state.lastReaction } : null,
+      reactionCount: state.reactionCount,
+      defeats: state.defeats,
+      lastDefeat: state.lastDefeat ? { ...state.lastDefeat } : null,
+      activeWorldReactions: reactionMeshes.size,
+      melee: getMeleeState(),
+      lastEvent: state.lastEvent ? { ...state.lastEvent } : null,
+    };
+  }
+
+  function getTargetState(id) {
+    const target = targetStates.get(String(id));
+    if (!target) return null;
+    return {
+      id: target.id,
+      kind: target.kind,
+      label: target.label,
+      health: target.health,
+      hits: target.hits,
+      defeated: target.defeated,
+      consequence: target.consequence,
+      targetable: !target.defeated,
+      reaction: target.defeated
+        ? 'disabled'
+        : target.reactionUntil > state.clock ? 'staggered' : 'settled',
+    };
+  }
+
+  function dispose() {
+    tracerPool.forEach((effect) => {
+      effect.line.removeFromParent();
+      effect.line.geometry.dispose();
+      effect.material.dispose();
+    });
+    muzzlePool.forEach((effect) => {
+      effect.mesh.removeFromParent();
+      effect.mesh.geometry.dispose();
+      effect.material.dispose();
+    });
+    impactPool.forEach((effect) => {
+      effect.group.removeFromParent();
+      effect.core.geometry.dispose();
+      effect.ring.geometry.dispose();
+      effect.shards.forEach((shard) => shard.geometry.dispose());
+      effect.coreMaterial.dispose();
+      effect.ringMaterial.dispose();
+    });
+    targetStates.clear();
+    reactionMeshes.clear();
+  }
+
+  return {
+    start,
+    restart,
+    stop,
+    update,
+    fire,
+    beginMelee,
+    getMeleeState,
+    reload,
+    addReserveAmmo,
+    damage,
+    damagePlayer: damage,
+    heal,
+    recoverFromDowned,
+    setAiming,
+    aim: setAiming,
+    setTriggerHeld,
+    setEnabled,
+    exportState,
+    importState,
+    getState,
+    getTargetState,
+    dispose,
     get status() {
       return state.status;
     },

@@ -1968,6 +1968,117 @@ export function createCity({ scene, renderer }) {
     return door;
   };
 
+  const coreFacadeDiagnostics = [];
+  const coreFacadeProfiles = new Map([
+    ['Civic Center Espresso', { kind: 'cafe', bays: 3, accent: materials.limestone }],
+    ['Van Ness Residence Hotel', { kind: 'hotel', bays: 3, accent: masonryMaterials[1] }],
+    ['Midtown Produce Market', { kind: 'market', bays: 5, accent: materials.signGreen }],
+    ['Pyramid Plaza Cafe', { kind: 'cafe', bays: 3, accent: materials.limestone }],
+    ['South Market Tower Lobby', { kind: 'tower', bays: 3, accent: materials.paintedMetal }],
+  ]);
+
+  const addCoreStreetFacade = ({ label, x, z, width, depth, height, baseY, style }) => {
+    const profile = coreFacadeProfiles.get(label);
+    if (!profile) return;
+    const facade = new THREE.Group();
+    facade.name = `Core facade detail / ${label}`;
+    facade.userData.coreFacadeLabel = label;
+    facade.userData.facadeKind = profile.kind;
+    facade.position.set(x, 0, z - depth * 0.5);
+    group.add(facade);
+
+    const detailMeshes = [];
+    const detailBox = (name, widthM, heightM, depthM, material, localX, y, localZ) => {
+      const mesh = addBox(facade, widthM, heightM, depthM, material, localX, y, localZ);
+      mesh.name = `${label} / ${name}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData.coreFacadeDetail = true;
+      mesh.userData.coreFacadeLabel = label;
+      detailMeshes.push(mesh);
+      return mesh;
+    };
+
+    // A dark backing, projecting jambs and a substantial header create an
+    // actual 28-42cm depth stack without cutting the collision shell.
+    const groundWidth = Math.max(4.8, width * (profile.kind === 'market' ? 0.84 : 0.68));
+    detailBox('recessed ground glazing', groundWidth, 2.55, 0.08, materials.glass,
+      0, baseY + 1.52, -0.18);
+    const bayWidth = groundWidth / profile.bays;
+    for (let index = 0; index <= profile.bays; index += 1) {
+      const bayX = -groundWidth * 0.5 + index * bayWidth;
+      detailBox('ground jamb', 0.15, 2.8, 0.42, profile.accent,
+        bayX, baseY + 1.48, -0.35);
+    }
+    detailBox('ground lintel', groundWidth + 0.5, 0.28, 0.48, profile.accent,
+      0, baseY + 2.93, -0.38);
+    detailBox('ground sill', groundWidth + 0.25, 0.16, 0.34, materials.metalDark,
+      0, baseY + 0.22, -0.3);
+
+    const upperBottom = baseY + 4.25;
+    const upperTop = baseY + Math.max(5.8, height - 1.35);
+    const upperHeight = Math.max(1.6, upperTop - upperBottom);
+    const outerInset = Math.max(0.65, width * 0.075);
+    const upperWidth = width - outerInset * 2;
+    const upperBayCount = profile.kind === 'market' ? 5 : profile.bays;
+    for (let index = 0; index <= upperBayCount; index += 1) {
+      const bayX = -upperWidth * 0.5 + (upperWidth / upperBayCount) * index;
+      detailBox('upper vertical reveal', 0.18, upperHeight, 0.34,
+        profile.kind === 'tower' ? materials.metalDark : profile.accent,
+        bayX, upperBottom + upperHeight * 0.5, -0.28);
+    }
+
+    const storyCount = Math.max(1, Math.min(8, Math.floor((upperHeight + 0.5) / 4.1)));
+    for (let story = 0; story <= storyCount; story += 1) {
+      const y = upperBottom + (upperHeight / storyCount) * story;
+      detailBox('upper horizontal reveal', upperWidth + 0.34, 0.13, 0.32,
+        profile.kind === 'tower' ? materials.paintedMetal : profile.accent,
+        0, y, -0.27);
+    }
+
+    const corniceDepth = profile.kind === 'tower' ? 0.34 : 0.62;
+    detailBox('street cornice', width + 0.55, 0.34, corniceDepth, profile.accent,
+      0, baseY + height - 0.58, -corniceDepth * 0.55);
+    if (profile.kind !== 'tower') {
+      detailBox('cornice shadow', width * 0.9, 0.16, 0.45, materials.metalDark,
+        0, baseY + height - 0.96, -0.28);
+    }
+
+    if (profile.kind === 'cafe') {
+      detailBox('cafe awning', groundWidth * 0.72, 0.18, 0.95, materials.signGreen,
+        0, baseY + 2.68, -0.82);
+      for (const side of [-1, 1]) {
+        detailBox('awning bracket', 0.1, 0.62, 0.1, materials.metalDark,
+          side * groundWidth * 0.31, baseY + 2.38, -0.48);
+      }
+    } else if (profile.kind === 'market') {
+      for (const side of [-1, 0, 1]) {
+        detailBox('market canopy', bayWidth * 0.82, 0.16, 0.82,
+          side === 0 ? materials.signGreen : materials.limestone,
+          side * bayWidth * 1.25, baseY + 2.7, -0.72);
+      }
+    } else if (profile.kind === 'hotel') {
+      detailBox('hotel entry canopy', groundWidth * 0.42, 0.2, 1.05, materials.metalDark,
+        0, baseY + 2.75, -0.86);
+      detailBox('hotel blade sign', 0.44, 2.35, 0.18, materials.signGreen,
+        groundWidth * 0.5 + 0.42, baseY + 4.4, -0.48);
+    } else if (profile.kind === 'tower') {
+      detailBox('tower portal surround', groundWidth * 0.38, 3.2, 0.44, materials.limestone,
+        0, baseY + 1.7, -0.37);
+      detailBox('tower canopy', groundWidth * 0.55, 0.18, 1.18, materials.paintedMetal,
+        0, baseY + 3.05, -0.92);
+    }
+
+    coreFacadeDiagnostics.push({
+      label,
+      kind: profile.kind,
+      detailCount: detailMeshes.length,
+      depthMeters: profile.kind === 'cafe' || profile.kind === 'tower' ? 1.18 : 1.05,
+      bounds: { x, z, width, depth, height },
+      group: facade,
+    });
+  };
+
   const addBuilding = ({
     x,
     z,
@@ -2185,6 +2296,8 @@ export function createCity({ scene, renderer }) {
         z - depth * 0.5 - 0.32,
       );
     }
+
+    addCoreStreetFacade({ label, x, z, width, depth, height, baseY, style });
 
     const entryZ = z - depth * 0.5 - 0.34;
     const resolvedDistrict = district || inferDistrict(x, z, style);
@@ -6225,6 +6338,35 @@ export function createCity({ scene, renderer }) {
     };
   };
   const cameraRaycaster = new THREE.Raycaster();
+  const blockerRayDirection = new THREE.Vector3();
+  const getNearestRayBlocker = (origin, direction, maxDistance = 160) => {
+    if (!origin || !direction
+      || !Number.isFinite(origin.x)
+      || !Number.isFinite(origin.y)
+      || !Number.isFinite(origin.z)
+      || !Number.isFinite(direction.x)
+      || !Number.isFinite(direction.y)
+      || !Number.isFinite(direction.z)) return null;
+    const distanceLimit = Number(maxDistance);
+    if (!Number.isFinite(distanceLimit) || distanceLimit <= 0) return null;
+    blockerRayDirection.set(direction.x, direction.y, direction.z);
+    if (blockerRayDirection.lengthSq() < 1e-10) return null;
+    blockerRayDirection.normalize();
+    cameraRaycaster.set(origin, blockerRayDirection);
+    cameraRaycaster.near = 0;
+    cameraRaycaster.far = distanceLimit;
+    const hit = cameraRaycaster.intersectObjects(collisionMeshes, false)[0];
+    if (!hit || !Number.isFinite(hit.distance) || hit.distance < 0 || hit.distance > distanceLimit) {
+      return null;
+    }
+    return {
+      distance: hit.distance,
+      point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+      source: 'core',
+      collisionKind: 'collision-mesh',
+      objectName: hit.object?.name || null,
+    };
+  };
   const resolveCameraPosition = (target, desired) => {
     if (!target || !desired) return desired;
     if (interiorRoot.visible && activePortal?.room) {
@@ -6252,6 +6394,16 @@ export function createCity({ scene, renderer }) {
     // inside the collision mesh when orbiting close to a building.
     const safeDistance = Math.max(0.18, hit.distance - 0.7);
     return target.clone().addScaledVector(direction, Math.min(distance, safeDistance));
+  };
+
+  const getSurfaceHeight = (positionOrX, optionalZ) => {
+    const x = typeof positionOrX === 'number' ? positionOrX : positionOrX?.x;
+    const z = typeof positionOrX === 'number' ? optionalZ : positionOrX?.z;
+    if (!Number.isFinite(x)
+      || !Number.isFinite(z)
+      || Math.abs(x) > CITY_HALF_X
+      || Math.abs(z) > CITY_HALF_Z) return null;
+    return streetHeight(x, z);
   };
 
   const signalHeads = [];
@@ -6956,6 +7108,13 @@ export function createCity({ scene, renderer }) {
       };
     },
     getPortalCoverage,
+    getCoreFacadeDiagnostics() {
+      return coreFacadeDiagnostics.map(({ group: facadeGroup, ...entry }) => ({
+        ...entry,
+        visible: facadeGroup.visible,
+        worldPosition: facadeGroup.getWorldPosition(new THREE.Vector3()).toArray(),
+      }));
+    },
     getInteriorState,
     getInteriorInteraction,
     useInteriorInteraction,
@@ -6966,6 +7125,8 @@ export function createCity({ scene, renderer }) {
     get weather() {
       return weatherMode;
     },
+    getNearestRayBlocker,
+    getSurfaceHeight,
     resolveCameraPosition,
     update,
     stats: {
