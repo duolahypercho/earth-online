@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "img2threejs.spec-validation-evidence",
-  "generatedAt": "2026-08-16T22:38:00Z",
+  "generatedAt": "2026-08-16T23:27:10Z",
   "spec": ".img2threejs/sfmoma-v2/object-sculpt-spec.json",
-  "specSha256": "1e38281be6f71ecc8e9c1ecdec205a944b12fdd4c5b466517fe7b2533f2bf7d8",
+  "specSha256": "b7e74f801c9bd2ee5b28272987de3e022f2b753b9fc71b15b9cc1973a934bc2c",
   "materialAnalysis": ".img2threejs/sfmoma-v2/material-analysis.json",
   "materialAnalysisSha256": "2fa2fb0a010cdcae409bc300ba8956a887fd836406bf63c3c8a49392324cef58",
   "blueprint": ".img2threejs/sfmoma-v2/spec-authoring-blueprint.json",
@@ -17,7 +17,7 @@
   "codegenSmoke": ".img2threejs/sfmoma-v2/codegen-smoke-report.json",
   "codegenSmokeSha256": "d9452c33d066aea2f2edc9f8dc704ba76b1bf838f5fff02cb842c5f71c4fc1ed",
   "state": ".img2threejs/sfmoma-v2/state.json",
-  "stateSha256": "402a6408ca1bc57d81acf9af09e0cfdac13ba29cda23b5f619110ca7ca6f90a8",
+  "stateSha256": "f6ad9102c8e839f35117409bffc4af4eeb40e4c47988c3627fb07b405bc2c2e1",
   "pathPolicy": {
     "workspaceArtifacts": "repository-relative paths rooted at .img2threejs/sfmoma-v2 or public/assets",
     "skillRegistry": "skill://img2threejs/docs/materials/material-reference.json",
@@ -195,6 +195,35 @@
     "productionRequirement": "Subject-specific WebGPU-safe factory required for all nine repetitions; never import a generated renderer/composer/controls/lights into the canonical world.",
     "buildGateMarked": false,
     "finalActionReadyGate": "pending"
+  },
+  "blockoutReview": {
+    "status": "refine-spec",
+    "boundedAssemblyGate": "pass-narrowly",
+    "aiVisionScore": 0.52,
+    "visualAcceptanceThreshold": 0.7,
+    "aaaReadinessScore": 0.14,
+    "referenceWinner": true,
+    "tier1": {
+      "passed": false,
+      "silhouetteIoU": 0.4999,
+      "aspectRatioDelta": 0.1741,
+      "scaleDelta": 0.2108
+    },
+    "evidence": {
+      "render": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+      "renderSha256": "b1525cd08f357b5bbe0f078eceda021f44cce7e00eca81edf160af0fb7f04057",
+      "comparison": ".qa-sfmoma-v2-blockout-comparison.png",
+      "comparisonSha256": "639bb2530eae742d9f6788fcc13861d15a06402c45ce5989d14753da82024e16",
+      "metrics": ".qa-sfmoma-v2-blockout-metrics.json",
+      "metricsSha256": "058abb517f9d0fca3f8ddc2cc61fc949d6b649fb8e34f53a7e52da2ab210b15f",
+      "featureReview": ".img2threejs/sfmoma-v2/blockout-feature-review-v1.json",
+      "featureReviewSha256": "fcf568a2476ee8a23cf75c844853a868c286ee877fe8fe9293f9d1d706b174f5"
+    },
+    "limitations": [
+      "Canonical terrain contact and placement are not proven by the elevated QA root.",
+      "The blockout remains below critical identity thresholds and is not cleared for structural-pass.",
+      "AAA open-world parity is explicitly rejected."
+    ]
   },
   "nextExpectedState": "build-current-pass"
 }
