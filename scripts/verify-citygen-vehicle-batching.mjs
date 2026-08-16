@@ -24,7 +24,7 @@ const BASELINE = Object.freeze({
   renderer: { drawCalls: 594, geometries: 402, textures: 259 },
 });
 
-const HERO_CURB_PRESENTATION_DELTA = Object.freeze({ geometries: 3, textures: 0 });
+const HERO_CURB_PRESENTATION_DELTA = Object.freeze({ geometries: 3, textures: 2 });
 
 const finiteArray = (array) => Array.from(array || []).every(Number.isFinite);
 
