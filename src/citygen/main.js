@@ -709,6 +709,17 @@ function setInteriorView(pose = 'lobby') {
   return true;
 }
 
+function setInteriorDoorOpen(value = true) {
+  const active = state.interiors.active;
+  if (!active?.setDoorOpen) return false;
+  const progress = typeof value === 'boolean' ? (value ? 1 : 0) : value;
+  const door = active.setDoorOpen(progress);
+  if (!door) return false;
+  updatePlayer(0);
+  syncPlacementState();
+  return { ...door };
+}
+
 function resetBuildingInteriors() {
   if (state.interiors.active) {
     exitBuilding(false);
@@ -835,7 +846,7 @@ function syncPlacementState() {
     : state.placement
       ? 'Add mode · click a block to build · drag orbit · Esc to exit'
       : state.mode === 'interior'
-        ? 'Interior · WASD explore · E or Esc exit'
+        ? 'Interior · WASD explore · E open/close door · Esc exit'
       : state.mode === 'walk'
         ? 'Walk mode · WASD move · E enter a door or car · M orbit'
         : 'Drag orbit · click inspect · WASD walk · E enter a door or car · Esc exit';
@@ -1792,6 +1803,7 @@ async function boot() {
         buildingId: state.interiors.active.buildingId,
         portalId: state.interiors.active.portal.id,
         roomId: state.interiors.active.group.userData.roomId,
+        door: state.interiors.active.doorState ? { ...state.interiors.active.doorState } : null,
       } : null,
       playerPosition: {
         x: state.player.x,
@@ -1804,6 +1816,7 @@ async function boot() {
     enterNearestBuilding: () => enterBuilding(null, false),
     exitBuilding: () => exitBuilding(true),
     setInteriorView,
+    setInteriorDoorOpen,
     loadBuiltinSf,
     loadMetricSf,
     getMetricMap: () => state.metricMap,
@@ -2082,8 +2095,13 @@ async function boot() {
       else inspector.hidden = true;
     }
     if (key === 'e') {
-      if (state.interiors.active) exitBuilding(true);
-      else if (state.mode !== 'walk' || !enterBuilding(null, false)) toggleVehicle();
+      const active = state.interiors.active;
+      if (active) {
+        const door = active.doorState;
+        if (door?.isClosed) setInteriorDoorOpen(true);
+        else if (state.player.z >= door.thresholdZ - 0.15) exitBuilding(true);
+        else setInteriorDoorOpen(false);
+      } else if (state.mode !== 'walk' || !enterBuilding(null, false)) toggleVehicle();
     }
     if (key === 'm') {
       if (state.interiors.active) exitBuilding(true);
