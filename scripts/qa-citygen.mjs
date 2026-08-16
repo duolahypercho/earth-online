@@ -317,10 +317,9 @@ try {
       && imported.streets === original.streets
       && imported.signals === original.signals
       && api.getCity().meta.imported === true;
-    await api.generate('sanfrancisco', 731);
     return {
       ok,
-      importedGenerator: api.getCity().meta.generator,
+      importedGenerator: imported.generator,
       before: { buildings: original.buildings, streets: original.streets, signals: original.signals },
       after: { buildings: imported.buildings, streets: imported.streets, signals: imported.signals },
     };

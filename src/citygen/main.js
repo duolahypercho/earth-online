@@ -728,10 +728,21 @@ function setMode(mode) {
     state.renderer.setWalkMode(true);
   }
   if (mode === 'walk') {
-    state.player.x = 0;
-    state.player.z = 0;
+    const realMap = state.city?.meta?.generator !== 'procedural';
+    const road = realMap
+      ? state.city?.segments?.find((segment) => segment.points?.length >= 2 && !['footway', 'pedestrian'].includes(segment.highway))
+      : null;
+    const midpoint = road
+      ? road.points[Math.floor(road.points.length / 2)]
+      : {
+          x: realMap ? (state.city.meta.bounds.minX + state.city.meta.bounds.maxX) / 2 : 0,
+          z: realMap ? (state.city.meta.bounds.minZ + state.city.meta.bounds.maxZ) / 2 : 0,
+        };
+    state.player.x = midpoint.x;
+    state.player.z = midpoint.z;
     state.player.yaw = Math.PI * 0.12;
     state.player.pitch = -0.12;
+    updatePlayer(0);
   }
   syncPlacementState();
 }
@@ -1312,6 +1323,7 @@ async function boot() {
       generator: state.city?.meta?.generator || null,
       placedBuildings: state.addedBuildings.length,
       rendererBackend: state.renderer?.rendererBackend || 'unknown',
+      busy: state.busy || osmBusy,
       webgpu: state.renderer?.rendererBackend === 'webgpu',
       webgl2: state.renderer?.rendererBackend === 'webgl2-fallback',
       vehicle: Boolean(state.vehicle),
@@ -1547,6 +1559,7 @@ async function boot() {
     togglePlacement,
     enterVehicle: (force = false) => toggleVehicle(force),
     exitVehicle: () => toggleVehicle(false),
+    loadBuiltinSf,
     loadMetricSf,
     getMetricMap: () => state.metricMap,
     exportMetadata,
@@ -1562,7 +1575,17 @@ async function boot() {
       return { ok: true, city };
     },
   };
-  await generate('sanfrancisco', 731);
+  setExplorerBusy(true, 'Loading San Francisco…', 'Building the main OSM streets, terrain, structures, and simulation');
+  try {
+    const initialCity = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+    await buildCity(initialCity);
+  } catch (error) {
+    reportError(`Main San Francisco map failed: ${error.message}`, 'initial-sf');
+    setExplorerBusy(false);
+    await generate('sanfrancisco', 731);
+  } finally {
+    setExplorerBusy(false);
+  }
   makeGhost();
   syncDayTheme();
   resetInspector();
