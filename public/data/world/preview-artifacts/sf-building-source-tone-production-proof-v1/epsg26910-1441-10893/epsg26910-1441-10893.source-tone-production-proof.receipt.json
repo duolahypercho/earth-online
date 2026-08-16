@@ -1,0 +1,109 @@
+{
+  "artifact": {
+    "byteDeltaFromProduction": 1464,
+    "bytes": 3645408,
+    "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.glb",
+    "sha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500"
+  },
+  "contract": {
+    "attribute": {
+      "componentType": 5121,
+      "domain": [
+        0,
+        3
+      ],
+      "gltfSemantic": "_SF_SOURCE_TONE_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_source_tone_v1",
+      "type": "SCALAR"
+    },
+    "derivation": {
+      "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+      "id": "osm-way-id-modulo-4-v1",
+      "input": "byte-locked OSM source way identity",
+      "outputDomain": [
+        0,
+        3
+      ],
+      "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+      "presentationOnly": true,
+      "sourceColourClaim": false
+    },
+    "payloadOrder": {
+      "association": "GLTFLoader parser.associations {meshes,primitives}",
+      "id": "gltf-mesh-index-then-primitive-index-v1",
+      "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+    },
+    "schema": "sf-building-source-tone-v1",
+    "status": "presentation-schema-only"
+  },
+  "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+  "counts": {
+    "buildingPrimitives": 1,
+    "candidatePrimitives": 7,
+    "productionPrimitives": 7,
+    "sourceTonePayloadBytes": 514
+  },
+  "invariants": {
+    "gameplayOrCollisionChanged": false,
+    "metricOriginOrScaleChanged": false,
+    "productionGeometryLedgerExact": true,
+    "productionMaterialAssignmentsExact": true,
+    "productionPrimitiveCountExact": true,
+    "sourceGeometryMoved": false,
+    "twoBuildCandidateBytesExact": true,
+    "twoBuildPackageBytesExact": true,
+    "twoBuildReceiptBytesExact": true
+  },
+  "kind": "sf-building-source-tone-production-proof-receipt",
+  "ledgers": {
+    "candidateGeometrySha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954",
+    "productionGeometrySha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954",
+    "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
+    "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59"
+  },
+  "metricReceipt": {
+    "bytes": 13514,
+    "kind": "sf-metric-tile-build-receipt",
+    "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.metric-receipt.json",
+    "presentationStatus": "write-disabled-production-shaped-proof",
+    "productionWriteEnabled": false,
+    "sha256": "sha256:0f5b0f7a70b37060d0beec16ae459b917c7e64c0ab987fb22ad37ee02c72cbe9"
+  },
+  "productionPromotionAuthorized": false,
+  "productionReference": {
+    "bytes": 3643944,
+    "exactDefaultRebuildBytes": true,
+    "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+    "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+  },
+  "schemaVersion": 1,
+  "sourceLocks": [
+    {
+      "id": "sf-ferry-osm-horizontal-geometry-v1",
+      "path": "public/data/world/source-locks/sf-ferry-osm-horizontal-geometry-v1.lock.json",
+      "purpose": "geometry",
+      "sha256": "3277201281b83f794287ac8edd7e4b258b409aee09c914bbb47d6249f0302e2b"
+    },
+    {
+      "id": "sf-ferry-3dep-2023-horizontal-crs-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "purpose": "horizontal-coordinate-operation",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21"
+    },
+    {
+      "id": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+      "path": "public/data/world/source-locks/sf-ferry-3dep-terrain-elevation-authorized-v1.lock.json",
+      "purpose": "terrain-elevation",
+      "sha256": "7ff0e3c8d171036af707c7e4445cde66a100af41251de0b8955ee881484fc619"
+    }
+  ],
+  "status": "write-disabled-production-shaped-proof",
+  "tile": {
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "role": "ferry",
+    "unitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

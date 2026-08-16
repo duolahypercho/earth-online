@@ -3,14 +3,156 @@ import {
   createPlayerAvatar,
   animatePlayerAvatar,
   createNameTagSprite,
-  createRemoteCar,
-  updateRemoteCar,
 } from './player.js';
 
 const DEFAULT_PORT = 8787;
 const STATE_INTERVAL = 1 / 14;
 const PEER_TIMEOUT = 6000;
-const REMOTE_CAR_FALLBACK = '__fallback__';
+const PEER_GAMEPLAY_EVENT_LIFETIME = 6000;
+const GAMEPLAY_ACTIVITIES = new Set([
+  'idle', 'walking', 'driving', 'aiming', 'wanted', 'pursuit', 'working', 'downed',
+]);
+const GAMEPLAY_HEALTH_BANDS = new Set(['healthy', 'injured', 'critical', 'downed']);
+const MISSION_STATUSES = new Set(['running', 'complete', 'failed']);
+const COOP_STEPS = Object.freeze([
+  'welcome-center',
+  'welcome-desk',
+  'bay-route-model',
+  'map-archive',
+  'ferry-building',
+  'coit-tower',
+]);
+const GAMEPLAY_EVENT_KINDS = new Set([
+  'arrested',
+  'critical',
+  'escaped',
+  'high-heat',
+  'near-miss',
+  'pedestrian-impact',
+  'pursuit-start',
+  'responder-contact',
+  'traffic-violation',
+  'vehicle-theft',
+  'witness-dispatch',
+  'witness-report',
+  'reckless-collision',
+]);
+
+function boundedInteger(value, min, max, fallback = min) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function sanitizeGameplayEvent(event) {
+  if (!event || typeof event !== 'object') return null;
+  const id = String(event.id || '').trim().slice(0, 48);
+  const kind = String(event.kind || '').trim();
+  if (!id || !GAMEPLAY_EVENT_KINDS.has(kind)) return null;
+  return {
+    id,
+    kind,
+    message: String(event.message || '').trim().slice(0, 96),
+    heat: boundedInteger(event.heat, 0, 100),
+    wantedLevel: boundedInteger(event.wantedLevel, 0, 3),
+  };
+}
+
+function sanitizeGameplayStatus(gameplay) {
+  if (!gameplay || typeof gameplay !== 'object') return null;
+  const activity = GAMEPLAY_ACTIVITIES.has(gameplay.activity) ? gameplay.activity : 'idle';
+  const healthBand = GAMEPLAY_HEALTH_BANDS.has(gameplay.healthBand)
+    ? gameplay.healthBand
+    : 'healthy';
+  const pursuitActive = gameplay.pursuitActive === true;
+  const event = sanitizeGameplayEvent(gameplay.event);
+  const eventId = String(gameplay.eventId || event?.id || '').trim().slice(0, 48) || null;
+  return {
+    heat: boundedInteger(gameplay.heat, 0, 100),
+    wantedLevel: pursuitActive
+      ? Math.max(1, boundedInteger(gameplay.wantedLevel, 0, 3))
+      : 0,
+    pursuitActive,
+    healthBand,
+    activity,
+    eventId,
+    event,
+  };
+}
+
+function sanitizeMissionPresence(mission) {
+  if (!mission || typeof mission !== 'object' || Array.isArray(mission)) return null;
+  const revision = Number(mission.revision);
+  const completedSteps = Number(mission.completedSteps);
+  const totalSteps = Number(mission.totalSteps);
+  if (!Number.isInteger(revision)
+    || revision < 1
+    || revision > 1000000000
+    || !MISSION_STATUSES.has(mission.status)
+    || !Number.isInteger(completedSteps)
+    || !Number.isInteger(totalSteps)
+    || totalSteps < 1
+    || totalSteps > 24
+    || completedSteps < 0
+    || completedSteps > totalSteps) return null;
+  return {
+    revision,
+    status: mission.status,
+    completedSteps,
+    totalSteps,
+    objective: String(mission.objective || '').trim().slice(0, 72),
+  };
+}
+
+function sanitizeCoopSession(session, localId) {
+  if (!session || typeof session !== 'object' || Array.isArray(session)) return null;
+  const sessionId = String(session.sessionId || '').trim().slice(0, 64);
+  const revision = Number(session.revision);
+  const completedSteps = Number(session.completedSteps);
+  const members = Array.isArray(session.members)
+    ? session.members.map((member) => String(member || '').trim().slice(0, 48))
+    : [];
+  const steps = Array.isArray(session.steps) ? session.steps : [];
+  const complete = completedSteps === COOP_STEPS.length;
+  const completionRevision = session.completionRevision == null
+    ? null
+    : Number(session.completionRevision);
+  const cashReward = Number(session.cashReward);
+  if (!sessionId
+    || !Number.isInteger(revision)
+    || revision < 1
+    || !Number.isInteger(completedSteps)
+    || completedSteps < 0
+    || completedSteps > COOP_STEPS.length
+    || !['running', 'complete'].includes(session.status)
+    || (session.status === 'complete') !== complete
+    || steps.length !== COOP_STEPS.length
+    || steps.some((step, index) => step !== COOP_STEPS[index])
+    || members.length < 1
+    || members.length > 2
+    || new Set(members).size !== members.length
+    || !members.includes(localId)
+    || session.leaderId !== members[0]
+    || (complete && (
+      !Number.isInteger(completionRevision)
+      || completionRevision !== revision
+      || !Number.isInteger(cashReward)
+      || cashReward !== 260
+    ))
+    || (!complete && (completionRevision !== null || cashReward !== 0))
+    || session.currentStepId !== (complete ? null : COOP_STEPS[completedSteps])) return null;
+  return {
+    sessionId,
+    revision,
+    status: session.status,
+    leaderId: session.leaderId,
+    members,
+    steps: [...COOP_STEPS],
+    completedSteps,
+    currentStepId: session.currentStepId,
+    completionRevision,
+    cashReward,
+  };
+}
 
 function endpointFromLocation() {
   const query = new URLSearchParams(window.location.search);
@@ -35,7 +177,13 @@ export function createNetworking({
   audioContext,
   getLocalState,
   onChatMessage,
+  onPeerGameplayEvent,
+  onPeerGameplayEventClear,
   onConnectionChange,
+  onCoopSessionChange,
+  onVehicleLeaseGranted,
+  onVehicleLeaseDenied,
+  onVehicleLeaseRevoked,
 } = {}) {
   if (typeof WebSocket === 'undefined' || typeof document === 'undefined') return null;
 
@@ -60,6 +208,20 @@ export function createNetworking({
   let voiceSource = null;
   let voiceSampleTimer = 0;
   let voiceTimeData = new Uint8Array(0);
+  let coopSession = null;
+  let coopRequestSequence = 0;
+  let vehicleLeaseRequestSequence = 0;
+  let pendingVehicleClaim = null;
+  let localVehicleLease = null;
+  const remoteVehicleLeases = new Map();
+  const vehicleLeaseDiagnostics = {
+    claims: 0,
+    grants: 0,
+    denials: 0,
+    releases: 0,
+    revocations: 0,
+  };
+  const coopRevisionBySession = new Map();
 
   const room = new THREE.Group();
   room.name = 'Remote online players';
@@ -82,6 +244,10 @@ export function createNetworking({
         connected: peer.connected,
         x: peer.targetPosition?.x ?? null,
         z: peer.targetPosition?.z ?? null,
+        gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
+        mission: peer.mission ? { ...peer.mission } : null,
+        gameplayEventCount: peer.gameplayEventCount,
+        lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
       })),
     });
   }
@@ -94,11 +260,128 @@ export function createNetworking({
       driving: peer.state?.mode === 'drive',
       x: peer.targetPosition?.x ?? null,
       z: peer.targetPosition?.z ?? null,
+      gameplay: peer.gameplay ? { ...peer.gameplay, event: null } : null,
+      mission: peer.mission ? { ...peer.mission } : null,
     }));
   }
 
   function send(payload) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  }
+
+  function requestVehicleLease(vehicleId) {
+    if (!state.connected || !Number.isInteger(vehicleId) || pendingVehicleClaim) return false;
+    vehicleLeaseRequestSequence += 1;
+    const requestId = `${state.id || 'pending'}:vehicle:${vehicleLeaseRequestSequence}`;
+    pendingVehicleClaim = { requestId, vehicleId, requestedAt: performance.now() };
+    vehicleLeaseDiagnostics.claims += 1;
+    send({ type: 'vehicle:claim', requestId, vehicleId });
+    return true;
+  }
+
+  function releaseVehicleLease(vehicleId = localVehicleLease?.vehicleId, reason = 'released') {
+    const lease = localVehicleLease;
+    if (!lease || lease.vehicleId !== vehicleId) return false;
+    send({
+      type: 'vehicle:release',
+      requestId: `${state.id || 'pending'}:release:${lease.revision}`,
+      vehicleId: lease.vehicleId,
+      revision: lease.revision,
+      token: lease.token,
+      reason,
+    });
+    localVehicleLease = null;
+    vehicleLeaseDiagnostics.releases += 1;
+    return true;
+  }
+
+  function clearLocalVehicleLease(reason, notify = true) {
+    const previous = localVehicleLease;
+    localVehicleLease = null;
+    pendingVehicleClaim = null;
+    if (previous && notify) {
+      vehicleLeaseDiagnostics.revocations += 1;
+      onVehicleLeaseRevoked?.({ ...previous, reason });
+    }
+  }
+
+  function handleVehicleLease(message) {
+    const vehicleId = Number(message.vehicleId);
+    const revision = Number(message.revision);
+    if (!Number.isInteger(vehicleId) || !Number.isInteger(revision)) return;
+    if (message.status === 'granted') {
+      const ownerId = String(message.ownerId || '');
+      const prior = remoteVehicleLeases.get(vehicleId);
+      if (!prior || revision >= prior.revision) {
+        remoteVehicleLeases.set(vehicleId, { vehicleId, ownerId, revision });
+      }
+      if (message.token
+        && pendingVehicleClaim?.requestId === message.requestId
+        && pendingVehicleClaim.vehicleId === vehicleId
+        && ownerId === state.id) {
+        localVehicleLease = { vehicleId, revision, token: message.token };
+        pendingVehicleClaim = null;
+        vehicleLeaseDiagnostics.grants += 1;
+        onVehicleLeaseGranted?.({ ...localVehicleLease });
+      }
+      return;
+    }
+    if (message.status === 'denied') {
+      if (pendingVehicleClaim?.requestId !== message.requestId) return;
+      const denied = pendingVehicleClaim;
+      pendingVehicleClaim = null;
+      vehicleLeaseDiagnostics.denials += 1;
+      onVehicleLeaseDenied?.({
+        vehicleId: denied.vehicleId,
+        reason: String(message.reason || 'denied'),
+        revision,
+      });
+      return;
+    }
+    if (message.status !== 'released') return;
+    const previousRevision = Number(message.previousRevision);
+    const known = remoteVehicleLeases.get(vehicleId);
+    if (known && Number.isInteger(previousRevision) && known.revision <= previousRevision) {
+      remoteVehicleLeases.delete(vehicleId);
+    }
+    for (const peer of peers.values()) {
+      if (peer.id !== message.ownerId || peer.state?.vehicleId !== vehicleId) continue;
+      clearRemoteCar(peer);
+      if (peer.state) peer.state.mode = 'walk';
+      if (peer.avatar) peer.avatar.visible = true;
+    }
+    if (localVehicleLease?.vehicleId === vehicleId
+      && Number.isInteger(previousRevision)
+      && localVehicleLease.revision <= previousRevision) {
+      clearLocalVehicleLease(message.reason || 'released', message.reason !== 'released');
+    }
+  }
+
+  function submitCoopStep({ stepIndex, stepId, context } = {}) {
+    if (!state.connected || !Number.isInteger(stepIndex) || COOP_STEPS[stepIndex] !== stepId) {
+      return false;
+    }
+    coopRequestSequence += 1;
+    send({
+      type: 'coop:advance',
+      requestId: `${state.id || 'pending'}:${coopRequestSequence}`,
+      stepIndex,
+      stepId,
+      context: context && typeof context === 'object' ? { ...context } : null,
+    });
+    return true;
+  }
+
+  function leaveCoopSession() {
+    if (!state.connected || !coopSession) return false;
+    send({ type: 'coop:leave', sessionId: coopSession.sessionId });
+    return true;
+  }
+
+  function clearLocalCoopSession() {
+    const previous = coopSession;
+    coopSession = null;
+    if (previous) onCoopSessionChange?.(null, previous);
   }
 
   function scheduleReconnect() {
@@ -121,7 +404,6 @@ export function createNetworking({
     }
     ws.addEventListener('open', () => {
       state.error = null;
-      state.connected = true;
       send({
         type: 'join',
         name: state.name,
@@ -143,7 +425,11 @@ export function createNetworking({
       state.voiceOn = false;
       state.talking = false;
       cleanupAllPeers();
+      remoteVehicleLeases.clear();
+      clearLocalVehicleLease('disconnected');
+      clearLocalCoopSession();
       broadcastSnapshot();
+      onConnectionChange?.(false);
       scheduleReconnect();
     });
     ws.addEventListener('error', () => {
@@ -155,14 +441,20 @@ export function createNetworking({
   function handleMessage(message) {
     if (message?.type === 'welcome') {
       state.id = message.id;
+      const wasConnected = state.connected;
+      state.connected = true;
       // The boot flow already owns the local alias. The server welcome only
       // carries its default, so never let it overwrite a chosen name.
       if (!state.name || state.name === 'Traveler') {
         state.name = message.name || state.name;
       }
+      for (const lease of message.vehicleLeases || []) {
+        handleVehicleLease(lease);
+      }
       for (const peer of message.peers || []) {
         addPeer(peer);
       }
+      if (!wasConnected) onConnectionChange?.(true);
       broadcastSnapshot();
     } else if (message?.type === 'peer:join') {
       addPeer(message.peer);
@@ -178,7 +470,9 @@ export function createNetworking({
     if (peer.name !== peer.displayName) {
       refreshPeerNameTag(peer);
     }
-    applyPeerState(peer, message);
+    if (applyPeerState(peer, message)) broadcastSnapshot();
+    } else if (message?.type === 'vehicle:lease') {
+      handleVehicleLease(message);
     } else if (message?.type === 'chat') {
       onChatMessage?.({
         id: message.from,
@@ -188,6 +482,33 @@ export function createNetworking({
       });
     } else if (message?.type === 'rtc') {
       handleRtc(message.from, message.data);
+    } else if (message?.type === 'coop:state') {
+      if (message.session == null) {
+        const previous = coopSession;
+        const sessionId = String(message.sessionId || previous?.sessionId || '').trim();
+        const revision = Number(message.revision);
+        const baseline = coopRevisionBySession.get(sessionId) || 0;
+        if (previous?.sessionId === sessionId
+          && Number.isInteger(revision)
+          && revision > baseline) {
+          coopRevisionBySession.set(sessionId, revision);
+          coopSession = null;
+          onCoopSessionChange?.(null, previous);
+        }
+      } else {
+        const next = sanitizeCoopSession(message.session, state.id);
+        const baseline = next ? coopRevisionBySession.get(next.sessionId) || 0 : Infinity;
+        if (next && next.revision > baseline
+          && (!coopSession || coopSession.sessionId === next.sessionId)) {
+          const previous = coopSession;
+          coopRevisionBySession.set(next.sessionId, next.revision);
+          coopSession = next;
+          onCoopSessionChange?.(
+            { ...next, members: [...next.members], steps: [...next.steps] },
+            previous,
+          );
+        }
+      }
     } else if (message?.type === 'roster') {
       for (const peer of message.peers || []) {
         if (peer.id === state.id) continue;
@@ -220,6 +541,13 @@ export function createNetworking({
       headingSm: Math.PI,
       moving: false,
       talking: false,
+      gameplay: null,
+      mission: null,
+      missionRevision: 0,
+      gameplayEventCount: 0,
+      lastGameplayEvent: null,
+      lastGameplayEventId: null,
+      lastGameplayEventAt: 0,
       connected: true,
       lastSeen: performance.now(),
       panner: null,
@@ -258,10 +586,7 @@ export function createNetworking({
       room.remove(peer.avatar);
       disposeAvatar(peer.avatar);
     }
-    if (peer.car?.fallbackMesh) {
-      room.remove(peer.car.fallbackMesh);
-      disposeAvatar(peer.car.fallbackMesh);
-    }
+    onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     peers.delete(id);
   }
 
@@ -273,10 +598,7 @@ export function createNetworking({
         room.remove(peer.avatar);
         disposeAvatar(peer.avatar);
       }
-      if (peer.car?.fallbackMesh) {
-        room.remove(peer.car.fallbackMesh);
-        disposeAvatar(peer.car.fallbackMesh);
-      }
+      onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
     }
     peers.clear();
   }
@@ -294,9 +616,43 @@ export function createNetworking({
 
   function applyPeerState(peer, incoming) {
     const hadDrive = peer.state?.mode === 'drive';
-    const hasDrive = incoming.mode === 'drive';
+    const incomingLease = remoteVehicleLeases.get(incoming.vehicleId);
+    const hasDrive = incoming.mode === 'drive'
+      && incomingLease?.ownerId === peer.id
+      && incomingLease.revision === Number(incoming.vehicleLeaseRevision);
+    const previousGameplay = peer.gameplay;
+    const previousMission = peer.mission;
+    const gameplay = sanitizeGameplayStatus(incoming.gameplay);
+    const incomingMission = sanitizeMissionPresence(incoming.mission);
+    let receivedGameplayEvent = false;
+    if (gameplay?.event && gameplay.event.id !== peer.lastGameplayEventId) {
+      peer.lastGameplayEventId = gameplay.event.id;
+      peer.lastGameplayEvent = gameplay.event;
+      peer.gameplayEventCount += 1;
+      peer.lastGameplayEventAt = performance.now();
+      receivedGameplayEvent = true;
+      onPeerGameplayEvent?.({
+        peerId: peer.id,
+        peerName: peer.name,
+        event: { ...gameplay.event },
+      });
+    }
+    const clearedGameplayEvent = gameplay?.eventId == null && peer.lastGameplayEvent != null;
+    if (clearedGameplayEvent) {
+      peer.lastGameplayEvent = null;
+      peer.lastGameplayEventAt = 0;
+      peer.gameplayEventCount = 0;
+      onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
+    }
+    peer.gameplay = gameplay ? { ...gameplay, event: null } : null;
+    if (incoming.mission == null) {
+      peer.mission = null;
+    } else if (incomingMission && incomingMission.revision > peer.missionRevision) {
+      peer.mission = incomingMission;
+      peer.missionRevision = incomingMission.revision;
+    }
     peer.state = {
-      mode: incoming.mode || 'walk',
+      mode: hasDrive ? 'drive' : incoming.mode === 'interior' ? 'interior' : 'walk',
       vehicleId: incoming.vehicleId ?? null,
       vehicleClass: incoming.vehicleClass || 'sedan',
       vehicleColor: incoming.vehicleColor ?? 0x3f6f8f,
@@ -313,7 +669,7 @@ export function createNetworking({
     if (hasDrive && !hadDrive) {
       clearRemoteCar(peer);
       const car = attachTrafficCar(peer, incoming);
-      if (!car) attachFallbackCar(peer, incoming);
+      if (!car) peer.car = { type: 'pending', id: incoming.vehicleId };
     } else if (!hasDrive && hadDrive) {
       clearRemoteCar(peer);
     } else if (hasDrive) {
@@ -324,9 +680,12 @@ export function createNetworking({
         yaw: peer.targetYaw,
       };
       const ok = traffic?.setRemotePose?.(incoming.vehicleId, pose);
-      if (!ok && !peer.car?.fallbackMesh) {
+      if (ok && peer.car?.type !== 'traffic') {
+        peer.car = { type: 'traffic', id: incoming.vehicleId };
+        peer.carOwner = true;
+      } else if (!ok && peer.car?.type !== 'pending') {
         clearRemoteCar(peer);
-        attachFallbackCar(peer, incoming);
+        peer.car = { type: 'pending', id: incoming.vehicleId };
       }
     }
 
@@ -336,6 +695,15 @@ export function createNetworking({
         peer.avatar.position.lerp(peer.targetPosition, 1 - Math.exp(-10 * 0.016));
       }
     }
+    return receivedGameplayEvent || clearedGameplayEvent
+      || previousGameplay?.heat !== peer.gameplay?.heat
+      || previousGameplay?.wantedLevel !== peer.gameplay?.wantedLevel
+      || previousGameplay?.pursuitActive !== peer.gameplay?.pursuitActive
+      || previousGameplay?.healthBand !== peer.gameplay?.healthBand
+      || previousGameplay?.activity !== peer.gameplay?.activity
+      || previousMission?.revision !== peer.mission?.revision
+      || previousMission?.status !== peer.mission?.status
+      || previousMission?.completedSteps !== peer.mission?.completedSteps;
   }
 
   function attachTrafficCar(peer, incoming) {
@@ -352,25 +720,9 @@ export function createNetworking({
     return peer.car;
   }
 
-  function attachFallbackCar(peer, incoming) {
-    const mesh = createRemoteCar({
-      className: incoming.vehicleClass || 'sedan',
-      color: incoming.vehicleColor ?? 0x3f6f8f,
-      taxi: incoming.vehicleClass === 'taxi',
-    });
-    mesh.position.copy(peer.targetPosition);
-    mesh.rotation.y = peer.targetYaw;
-    room.add(mesh);
-    peer.car = { type: 'fallback', id: REMOTE_CAR_FALLBACK, fallbackMesh: mesh };
-  }
-
   function clearRemoteCar(peer) {
     if (peer.car?.type === 'traffic' && peer.carOwner) {
       traffic?.clearRemotePose?.(peer.car.id);
-    }
-    if (peer.car?.fallbackMesh) {
-      room.remove(peer.car.fallbackMesh);
-      disposeAvatar(peer.car.fallbackMesh);
     }
     peer.car = null;
     peer.carOwner = false;
@@ -415,8 +767,19 @@ export function createNetworking({
         moving: Boolean(local.moving),
         talking: state.talking,
         vehicleId: local.vehicleId ?? null,
+        vehicleLeaseToken: localVehicleLease?.vehicleId === local.vehicleId
+          ? localVehicleLease.token
+          : null,
+        vehicleLeaseRevision: localVehicleLease?.vehicleId === local.vehicleId
+          ? localVehicleLease.revision
+          : null,
         vehicleClass: local.vehicleClass || null,
         vehicleColor: local.vehicleColor ?? null,
+        coopMotion: local.coopMotion && typeof local.coopMotion === 'object'
+          ? { ...local.coopMotion }
+          : null,
+        gameplay: sanitizeGameplayStatus(local.gameplay),
+        mission: sanitizeMissionPresence(local.mission),
       });
     }
 
@@ -424,12 +787,20 @@ export function createNetworking({
     const lambda = 1 - Math.exp(-12 * dt);
     for (const peer of peers.values()) {
       if (now - peer.lastSeen > PEER_TIMEOUT) {
-        peer.connected = false;
-        if (peer.avatar) peer.avatar.visible = false;
+        removePeer(peer.id);
+        broadcastSnapshot();
         continue;
       }
       if (!peer.connected) {
         peer.connected = true;
+        broadcastSnapshot();
+      }
+      if (peer.lastGameplayEvent
+        && now - peer.lastGameplayEventAt > PEER_GAMEPLAY_EVENT_LIFETIME) {
+        peer.lastGameplayEvent = null;
+        peer.lastGameplayEventAt = 0;
+        peer.gameplayEventCount = 0;
+        onPeerGameplayEventClear?.({ peerId: peer.id, peerName: peer.name });
         broadcastSnapshot();
       }
       peer.yaw = dampAngle(peer.yaw, peer.targetYaw, 10, dt);
@@ -442,13 +813,13 @@ export function createNetworking({
             z: peer.targetPosition.z,
             yaw: peer.targetYaw,
           });
-        } else if (peer.car?.fallbackMesh) {
-          peer.car.fallbackMesh.position.lerp(peer.targetPosition, lambda);
-          peer.car.fallbackMesh.rotation.y = peer.yaw;
-          updateRemoteCar(peer.car.fallbackMesh, {
-            speed: peer.moving ? 11 : 0,
-            delta: dt,
+        } else if (peer.car?.type === 'pending') {
+          const attached = attachTrafficCar(peer, {
+            vehicleId: peer.car.id,
+            vehicleClass: peer.state.vehicleClass,
+            vehicleColor: peer.state.vehicleColor,
           });
+          if (!attached) peer.car = { type: 'pending', id: peer.state.vehicleId };
         }
       } else if (peer.avatar) {
         peer.avatar.position.lerp(peer.targetPosition, lambda);
@@ -748,8 +1119,10 @@ export function createNetworking({
   function dispose() {
     disposed = true;
     if (reconnectTimer) window.clearTimeout(reconnectTimer);
+    releaseVehicleLease(localVehicleLease?.vehicleId, 'disposed');
     disableVoice();
     cleanupAllPeers();
+    clearLocalCoopSession();
     ws?.close();
     room.remove();
   }
@@ -770,12 +1143,32 @@ export function createNetworking({
     setTalking,
     getVoiceDebug,
     sendChat,
+    requestVehicleLease,
+    releaseVehicleLease,
+    hasVehicleLease: (vehicleId) => localVehicleLease?.vehicleId === vehicleId,
+    getVehicleLeaseDiagnostics: () => ({
+      local: localVehicleLease ? { ...localVehicleLease, token: '[held]' } : null,
+      pending: pendingVehicleClaim ? { ...pendingVehicleClaim } : null,
+      remote: [...remoteVehicleLeases.values()].map((lease) => ({ ...lease })),
+      counters: { ...vehicleLeaseDiagnostics },
+    }),
+    submitCoopStep,
+    leaveCoopSession,
+    getCoopSession: () => coopSession
+      ? { ...coopSession, members: [...coopSession.members], steps: [...coopSession.steps] }
+      : null,
     getState: () => ({ ...state, peerCount: peers.size }),
     getPeers: () => [...peers.values()].map((peer) => ({
       id: peer.id,
       name: peer.name,
       talking: peer.talking,
       driving: peer.state?.mode === 'drive',
+      x: peer.targetPosition?.x ?? null,
+      z: peer.targetPosition?.z ?? null,
+      gameplay: peer.gameplay ? { ...peer.gameplay } : null,
+      mission: peer.mission ? { ...peer.mission } : null,
+      gameplayEventCount: peer.gameplayEventCount,
+      lastGameplayEvent: peer.lastGameplayEvent ? { ...peer.lastGameplayEvent } : null,
     })),
     dispose,
   };

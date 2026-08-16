@@ -1,0 +1,503 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-surface-grid-ownership-proof",
+  "id": "sf-surface-grid-ownership-proof-v1",
+  "status": "proof-rejected-residual-topology-or-near-grid-continuity",
+  "nonPromotion": "preview/proof only; not a production package, runtime asset, manifest entry, streaming input, or realized vertical datum claim",
+  "scope": {
+    "committedTileCount": 8,
+    "missingNortheastCell": "epsg26910-1441-10894 is intentionally excluded because it is not committed production-ready",
+    "tiles": [
+      "epsg26910-1439-10892",
+      "epsg26910-1440-10892",
+      "epsg26910-1441-10892",
+      "epsg26910-1439-10893",
+      "epsg26910-1440-10893",
+      "epsg26910-1441-10893",
+      "epsg26910-1439-10894",
+      "epsg26910-1440-10894"
+    ],
+    "baselineFindingsExpected": 6
+  },
+  "coordinateFrame": {
+    "horizontalCrs": "EPSG:26910",
+    "unitsPerMetre": 1,
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "verticalStatus": "provisional-source-declared-navd88-unrealized"
+  },
+  "sourceSemantics": {
+    "sourceTerrain": "byte-locked 3DEP GeoTIFF direct native pixel float32 samples provide the canonical 1 m lattice corners; no datum conversion, smoothing, or hydroflattening",
+    "sourceHorizontal": "byte-locked OSM coastline plan geometry in EPSG:26910, represented internally at one-thousandth metre ticks",
+    "proposedRule": "at integer 1 m lattice corners use direct locked PixelIsArea samples; at every fractional terrain/water vertex evaluate the same fixed southwest-to-northeast diagonal 1 m lattice triangle by barycentric interpolation",
+    "exactnessQualification": "The proof preserves encoded OSM-plan XY exactly and changes only fractional-vertex height evaluation. A rejection means this height rule alone cannot remove residual topology or near-grid continuity findings without a fixed-diagonal polygon split."
+  },
+  "validation": {
+    "method": "decode source and preview terrain/water GLBs; fail on exact shared-vertex disagreement or distinct vertices within 1.1 mm across a whole-metre grid line with vertical delta above 1e-6 m",
+    "baselineFindings": 6,
+    "repairedFindings": 6,
+    "maxHorizontalDisplacementMetres": 0,
+    "maxCanonicalTickDisplacementMetres": 0,
+    "horizontalSurfaceTopologyIdentical": true,
+    "maxPreviewVerticalDiscontinuityMetres": 0.001152992249,
+    "deterministicRebuild": true,
+    "productionManifestUntouched": true
+  },
+  "tiles": [
+    {
+      "id": "epsg26910-1439-10892",
+      "gridIndex": [
+        1439,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10892/epsg26910-1439-10892.lod0.glb",
+        "sha256": "sha256:9a55816cfbc85646421cd5618a0773b2d5ed7adf63179e8748942d58a6f82389"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1439-10892.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:9a55816cfbc85646421cd5618a0773b2d5ed7adf63179e8748942d58a6f82389",
+        "bytes": 3637548
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:4d92052c11b4ed21f9c4abba6cde6eab6d81085c4075d7314ff8b131ca0d7882",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 148997
+      }
+    },
+    {
+      "id": "epsg26910-1440-10892",
+      "gridIndex": [
+        1440,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10892/epsg26910-1440-10892.lod0.glb",
+        "sha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1440-10892.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:052f3ab0e5b32845718d33a623099fcaf787ff550bdccee7da464ea475cc45c9",
+        "bytes": 3656060
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:4d92052c11b4ed21f9c4abba6cde6eab6d81085c4075d7314ff8b131ca0d7882",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 148997
+      }
+    },
+    {
+      "id": "epsg26910-1441-10892",
+      "gridIndex": [
+        1441,
+        10892
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10892/epsg26910-1441-10892.lod0.glb",
+        "sha256": "sha256:7dec51080ecfe8502a44368ba803e0061ff8c452250ee979536dcc78b99a7e10"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1441-10892.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:76ae5d2d8e1a9c57ad98e377bb63eb82878caebe74d448db798d8017c493271b",
+        "bytes": 3644648
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:15b9beac5388315fbdacb3a475e0b44da8d5a9a5805cdb847466cd87d0914351",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 149095
+      }
+    },
+    {
+      "id": "epsg26910-1439-10893",
+      "gridIndex": [
+        1439,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10893/epsg26910-1439-10893.lod0.glb",
+        "sha256": "sha256:29fba7db18a23116900bc9acd6a539e13ad86be73692c604a1cd421e614d4016"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1439-10893.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:29fba7db18a23116900bc9acd6a539e13ad86be73692c604a1cd421e614d4016",
+        "bytes": 3641848
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:4d92052c11b4ed21f9c4abba6cde6eab6d81085c4075d7314ff8b131ca0d7882",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 148997
+      }
+    },
+    {
+      "id": "epsg26910-1440-10893",
+      "gridIndex": [
+        1440,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10893/epsg26910-1440-10893.lod0.glb",
+        "sha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1440-10893.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:734ad1bdef8098ba0d4b8c70f1028ee6a413988b51fe2cd8efa9db5c05ac6d72",
+        "bytes": 3644404
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:4d92052c11b4ed21f9c4abba6cde6eab6d81085c4075d7314ff8b131ca0d7882",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 148997
+      }
+    },
+    {
+      "id": "epsg26910-1441-10893",
+      "gridIndex": [
+        1441,
+        10893
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+        "sha256": "sha256:ca6021f03d8335f80b0ebcaab9b50320f6f302b2ab8a1b886cd9995a45074310"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1441-10893.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:b565027c75c913d3ba542de889fa76ad3db7a164abf5d04efc5ee910a3c28d68",
+        "bytes": 3643944
+      },
+      "sourceContinuity": {
+        "violations": 4,
+        "maxVerticalDiscontinuityMetres": 1.152307033539,
+        "findings": [
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=347",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 1.106617927551,
+            "left": [
+              346.998992919922,
+              2.723022937775,
+              14
+            ],
+            "right": [
+              347,
+              1.616405010223,
+              14
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "z=14",
+            "horizontalSeparationMetres": 0.001000404358,
+            "verticalDeltaMetres": 1.152307033539,
+            "left": [
+              347,
+              2.768712043762,
+              13.998999595642
+            ],
+            "right": [
+              347,
+              1.616405010223,
+              14
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=184",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.003684997559,
+            "left": [
+              183.998992919922,
+              2.834400892258,
+              209
+            ],
+            "right": [
+              184,
+              2.830715894699,
+              209
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "z=209",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.004334926605,
+            "left": [
+              184,
+              2.826380968094,
+              208.998992919922
+            ],
+            "right": [
+              184,
+              2.830715894699,
+              209
+            ]
+          }
+        ]
+      },
+      "previewContinuity": {
+        "violations": 4,
+        "maxVerticalDiscontinuityMetres": 0.001152992249,
+        "findings": [
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=347",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.001106977463,
+            "left": [
+              346.998992919922,
+              1.617511987686,
+              14
+            ],
+            "right": [
+              347,
+              1.616405010223,
+              14
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "z=14",
+            "horizontalSeparationMetres": 0.001000404358,
+            "verticalDeltaMetres": 0.001152992249,
+            "left": [
+              347,
+              1.617558002472,
+              13.998999595642
+            ],
+            "right": [
+              347,
+              1.616405010223,
+              14
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=184",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.000004053116,
+            "left": [
+              183.998992919922,
+              2.830719947815,
+              209
+            ],
+            "right": [
+              184,
+              2.830715894699,
+              209
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "z=209",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.000003814697,
+            "left": [
+              184,
+              2.830712080002,
+              208.998992919922
+            ],
+            "right": [
+              184,
+              2.830715894699,
+              209
+            ]
+          }
+        ]
+      },
+      "horizontalSurfaceTopologySha256": "sha256:9d0fb08181853eb0f09819ea52b15a8d3425ccc0d5ff17ce0e4f87b9fe044da4",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 150184
+      }
+    },
+    {
+      "id": "epsg26910-1439-10894",
+      "gridIndex": [
+        1439,
+        10894
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1439-10894/epsg26910-1439-10894.lod0.glb",
+        "sha256": "sha256:d261d106fcd481fab8890eafc324cbe6065489f652a9227f39917ee611577e2e"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1439-10894.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:d261d106fcd481fab8890eafc324cbe6065489f652a9227f39917ee611577e2e",
+        "bytes": 3647936
+      },
+      "sourceContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "previewContinuity": {
+        "violations": 0,
+        "maxVerticalDiscontinuityMetres": 0,
+        "findings": []
+      },
+      "horizontalSurfaceTopologySha256": "sha256:4d92052c11b4ed21f9c4abba6cde6eab6d81085c4075d7314ff8b131ca0d7882",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 148997
+      }
+    },
+    {
+      "id": "epsg26910-1440-10894",
+      "gridIndex": [
+        1440,
+        10894
+      ],
+      "sourceLod0": {
+        "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1440-10894/epsg26910-1440-10894.lod0.glb",
+        "sha256": "sha256:0e516460e07da7d567d50046150388ad3a49b1c86739c14d7268acd0e33ee96a"
+      },
+      "previewLod0": {
+        "path": "public/data/world/preview-artifacts/sf-surface-grid-ownership-proof-v1/epsg26910-1440-10894.lod0.grid-ownership-preview.glb",
+        "sha256": "sha256:52823bd1d432a74fd47cfb843d232a9a45c24ebc34aa8884d8ebcf47fd57527e",
+        "bytes": 3690924
+      },
+      "sourceContinuity": {
+        "violations": 2,
+        "maxVerticalDiscontinuityMetres": 0.324869036674,
+        "findings": [
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=284",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.002285957336,
+            "left": [
+              283.998992919922,
+              3.588118076324,
+              244
+            ],
+            "right": [
+              284,
+              3.590404033661,
+              244
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=232",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.324869036674,
+            "left": [
+              231.998992919922,
+              -0.743489980698,
+              267
+            ],
+            "right": [
+              232,
+              -1.068359017372,
+              267
+            ]
+          }
+        ]
+      },
+      "previewContinuity": {
+        "violations": 2,
+        "maxVerticalDiscontinuityMetres": 0.000324964523,
+        "findings": [
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=284",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.000002145767,
+            "left": [
+              283.998992919922,
+              3.590401887894,
+              244
+            ],
+            "right": [
+              284,
+              3.590404033661,
+              244
+            ]
+          },
+          {
+            "kind": "nearGridCrossingVerticalDiscontinuity",
+            "gridLine": "x=232",
+            "horizontalSeparationMetres": 0.001007080078,
+            "verticalDeltaMetres": 0.000324964523,
+            "left": [
+              231.998992919922,
+              -1.068034052849,
+              267
+            ],
+            "right": [
+              232,
+              -1.068359017372,
+              267
+            ]
+          }
+        ]
+      },
+      "horizontalSurfaceTopologySha256": "sha256:e4a1591f592ae79a5bdec383f70ac525ffd0ccc8e269b18d0bc3f322af670753",
+      "horizontalMovement": {
+        "maxHorizontalDisplacementMetres": 0,
+        "movedVertices": 0,
+        "repairedSurfaceVertices": 151402
+      }
+    }
+  ]
+}

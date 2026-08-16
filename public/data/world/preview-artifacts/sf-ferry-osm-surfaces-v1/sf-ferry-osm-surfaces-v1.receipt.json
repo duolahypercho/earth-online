@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "sf-ferry-osm-surfaces-v1-receipt",
+  "status": "preview-artifact-not-for-runtime-or-manifest-promotion",
+  "previewOnly": true,
+  "artifact": {
+    "path": "public/data/world/preview-artifacts/sf-ferry-osm-surfaces-v1/sf-ferry-osm-surfaces-v1.json",
+    "bytes": 108787,
+    "sha256": "83c38436aabeca3219905f7eafe8f2b3c6cbe3760546d8777b761e08bc9d1f9c"
+  },
+  "rawPbf": {
+    "path": "public/data/sf/SanFrancisco.osm.pbf",
+    "bytes": 32742133,
+    "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae",
+    "format": "OSM PBF"
+  },
+  "counts": {
+    "requestedKeyWays": 10,
+    "sourceWaysPreserved": 13,
+    "surfaceRecords": 11,
+    "relationOuterRings": 1,
+    "relationHoles": 2
+  },
+  "limitations": [
+    "Preview-only visual-source artifact; it is not referenced by runtime code, city data, atlas data, or tile manifests.",
+    "No elevation, collision, physics, navigation, ownership clipping, render offset, or production suitability is supplied or implied.",
+    "Areas and local coordinates use the declared local approximation and are not a survey, legal, or precision-geodesy claim."
+  ]
+}

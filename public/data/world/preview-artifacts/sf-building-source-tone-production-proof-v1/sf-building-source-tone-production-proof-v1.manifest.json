@@ -1,0 +1,104 @@
+{
+  "contract": {
+    "attribute": {
+      "componentType": 5121,
+      "domain": [
+        0,
+        3
+      ],
+      "gltfSemantic": "_SF_SOURCE_TONE_V1",
+      "normalized": false,
+      "threeAttributeName": "_sf_source_tone_v1",
+      "type": "SCALAR"
+    },
+    "derivation": {
+      "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+      "id": "osm-way-id-modulo-4-v1",
+      "input": "byte-locked OSM source way identity",
+      "outputDomain": [
+        0,
+        3
+      ],
+      "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+      "presentationOnly": true,
+      "sourceColourClaim": false
+    },
+    "payloadOrder": {
+      "association": "GLTFLoader parser.associations {meshes,primitives}",
+      "id": "gltf-mesh-index-then-primitive-index-v1",
+      "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+    },
+    "schema": "sf-building-source-tone-v1",
+    "status": "presentation-schema-only"
+  },
+  "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+  "kind": "sf-building-source-tone-production-proof-manifest",
+  "productionManifestTileCount": 803,
+  "productionPromotionAuthorized": false,
+  "schemaVersion": 1,
+  "status": "write-disabled-production-shaped-proof",
+  "tiles": [
+    {
+      "artifact": {
+        "byteDeltaFromProduction": 1464,
+        "bytes": 3645408,
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.glb",
+        "sha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500"
+      },
+      "counts": {
+        "buildingPrimitives": 1,
+        "candidatePrimitives": 7,
+        "productionPrimitives": 7,
+        "sourceTonePayloadBytes": 514
+      },
+      "ledgers": {
+        "candidateGeometrySha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954",
+        "productionGeometrySha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954",
+        "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
+        "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59"
+      },
+      "metricReceipt": {
+        "bytes": 13514,
+        "kind": "sf-metric-tile-build-receipt",
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.metric-receipt.json",
+        "presentationStatus": "write-disabled-production-shaped-proof",
+        "productionWriteEnabled": false,
+        "sha256": "sha256:0f5b0f7a70b37060d0beec16ae459b917c7e64c0ab987fb22ad37ee02c72cbe9"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.source-tone-production-proof.receipt.json",
+      "role": "ferry",
+      "tile": "epsg26910-1441-10893"
+    },
+    {
+      "artifact": {
+        "byteDeltaFromProduction": 9360,
+        "bytes": 3768612,
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.glb",
+        "sha256": "sha256:075c1374c4adad5b51d67aeaa383ea9c052e35ce1e7f73195f3fdc8a98b50d89"
+      },
+      "counts": {
+        "buildingPrimitives": 1,
+        "candidatePrimitives": 5,
+        "productionPrimitives": 5,
+        "sourceTonePayloadBytes": 8412
+      },
+      "ledgers": {
+        "candidateGeometrySha256": "sha256:de894f8ee1fabfd235cf92a1a93e22466ef3b4aefbc67a027f75af4ba23e2421",
+        "productionGeometrySha256": "sha256:de894f8ee1fabfd235cf92a1a93e22466ef3b4aefbc67a027f75af4ba23e2421",
+        "sourceRecordsSha256": "sha256:6a443ce614731bd7aed1d110a7370e06516ef8ffc7937dfd7c327c984645f9ac",
+        "sourceToneAttributeSha256": "sha256:add4e784f8fdf1c6cadbb80ca41f390ecb3bfed8c08de69a9362e759e2d0e675"
+      },
+      "metricReceipt": {
+        "bytes": 112108,
+        "kind": "sf-metric-tile-build-receipt",
+        "path": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.metric-receipt.json",
+        "presentationStatus": "write-disabled-production-shaped-proof",
+        "productionWriteEnabled": false,
+        "sha256": "sha256:b6a4ddf404d0fc6e4ccf0b829f95c8db2731563201130463133895983386d615"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-source-tone-production-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.source-tone-production-proof.receipt.json",
+      "role": "district",
+      "tile": "epsg26910-1430-10882"
+    }
+  ]
+}

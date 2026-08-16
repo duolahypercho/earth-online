@@ -11,6 +11,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import {
+  SIGNAL_PERIOD,
   signalOffsetForPosition,
   signalPhaseAt,
 } from './signals.js';
@@ -54,6 +55,19 @@ const TURN_SPAN = 8.2;        // lane path either side of an intersection (m)
 const BRAKE_LIGHT_DECEL = -0.65;
 const SIGNAL_REACTION = 0.32; // perception/actuation allowance for stop planning
 const STOP_SIGN_HOLD = 0.45;  // full stop dwell before release at stop control
+const PLAYER_PEDESTRIAN_IMPACT_MIN_SPEED = 4;
+const PLAYER_PEDESTRIAN_IMPACT_RADIUS = 0.42;
+const ON_FOOT_VEHICLE_IMPACT_MIN_SPEED = 4;
+// The running Traveler reaches roughly 0.99 m from the root in the widest
+// authored pose. Keep a small visual gap outside that rendered silhouette.
+const ON_FOOT_PLAYER_RADIUS = 1.05;
+// Vehicle specs describe the chassis collision core; bumpers, wheels and
+// pursuit kits extend the rendered shell by up to ~0.36 m longitudinally and
+// ~0.19 m laterally in the current fleet.
+const ON_FOOT_VEHICLE_SHELL_LENGTH_PAD = 0.4;
+const ON_FOOT_VEHICLE_SHELL_WIDTH_PAD = 0.22;
+const ON_FOOT_VEHICLE_CLEARANCE_MARGIN = 0.18;
+const ON_FOOT_VEHICLE_REARM_GAP = 0.75;
 const CURB_LANE_LIMIT = 5.2;  // moving vehicles hug the marked right lane (m)
 const CURB_LANE_OFFSET = 4.9; // parking-lane centerline (m)
 const BIKE_LANE_OFFSET = 3.95; // between travel lane and parking / curb
@@ -87,6 +101,23 @@ const TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED = 72 * 72;
 const TRAFFIC_PRODUCTION_DETAIL_RADIUS_SQUARED = 26 * 26;
 const BUS_STOP_GAP_MIN = 42;
 const BUS_STOP_GAP_SPAN = 30;
+const VEHICLE_DAMAGE_COOLDOWN = 0.85;
+const PURSUIT_RESPONDER_REARM_DISTANCE = 8.5;
+const MAX_PERSISTED_COLLISION_AFTERMATH = 8;
+const PERSISTED_COLLISION_DAMAGE_SOURCES = new Set([
+  'reckless-collision',
+  'combat-impact',
+]);
+const VEHICLE_HEALTH_BY_CLASS = Object.freeze({
+  bike: 60,
+  sedan: 100,
+  taxi: 100,
+  suv: 115,
+  pickup: 125,
+  van: 135,
+  truck: 165,
+  bus: 190,
+});
 
 // Bay Area-ish body color distribution (whites/silvers/blacks dominate)
 const BODY_PALETTE = [
@@ -767,15 +798,17 @@ function buildShared() {
     unitBox, unitPlane, roundedBox, unitWheel, contactDisc, wheelWell,
     sedanCabin, suvCabin, utilityCabin, bodyMat,
     windowMat: new THREE.MeshPhysicalMaterial({
-      color: 0x1c333e,
+      color: 0x315461,
       roughness: 0.12,
       metalness: 0.16,
       clearcoat: 0.22,
       clearcoatRoughness: 0.1,
       envMapIntensity: 1.16,
       transparent: true,
-      opacity: 0.82,
-      depthWrite: true,
+      // Keep the real seated Traveler readable without turning the fleet into
+      // clear plastic. The cabin furniture and dark aperture retain depth.
+      opacity: 0.38,
+      depthWrite: false,
     }),
     busWindowMat: new THREE.MeshPhysicalMaterial({
       color: 0x315461,
@@ -856,6 +889,13 @@ function buildShared() {
       title: 'BAY PARCEL',
       subtitle: 'LOCAL DELIVERY',
     }),
+    pursuitBadgeMat: fleetLabelMat({
+      background: '#112535',
+      accent: '#4aa3ff',
+      ink: '#f7fbff',
+      title: 'SFPD',
+      subtitle: 'STREET RESPONSE',
+    }),
     taxiTrimMat: new THREE.MeshStandardMaterial({ color: 0x24211b, roughness: 0.58, metalness: 0.2 }),
     beaconOffMat: new THREE.MeshStandardMaterial({
       color: 0x5b3408,
@@ -868,6 +908,30 @@ function buildShared() {
       emissive: 0xff8a16,
       emissiveIntensity: 3.4,
       roughness: 0.3,
+    }),
+    pursuitRedOffMat: new THREE.MeshStandardMaterial({
+      color: 0x4b1015,
+      emissive: 0x8f101c,
+      emissiveIntensity: 0.18,
+      roughness: 0.3,
+    }),
+    pursuitRedOnMat: new THREE.MeshStandardMaterial({
+      color: 0xff2638,
+      emissive: 0xff1329,
+      emissiveIntensity: 4.4,
+      roughness: 0.22,
+    }),
+    pursuitBlueOffMat: new THREE.MeshStandardMaterial({
+      color: 0x102c56,
+      emissive: 0x123f8e,
+      emissiveIntensity: 0.18,
+      roughness: 0.3,
+    }),
+    pursuitBlueOnMat: new THREE.MeshStandardMaterial({
+      color: 0x247bff,
+      emissive: 0x176dff,
+      emissiveIntensity: 4.4,
+      roughness: 0.22,
     }),
     contactMat: new THREE.MeshBasicMaterial({
       color: 0x111516,
@@ -1004,10 +1068,27 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   // submitting every glass pane, wheel hub, indicator, and trim mesh once the
   // vehicle is beyond the near street-view pocket. Simulation and collision
   // state remain unchanged; the full assembly returns inside the pocket.
+  const proxyProfile = cls === 'bike'
+    ? { width: 0.42, height: 0.16, length: 0.82, y: 0.34 }
+    : cls === 'sedan' || cls === 'taxi'
+      ? { width: 1.58, height: 0.46, length: 1.78, y: 0.34 }
+      : cls === 'suv'
+        ? { width: 0.98, height: 0.62, length: 0.98, y: 0.4 }
+        : cls === 'pickup'
+          ? { width: 0.98, height: 0.5, length: 0.98, y: 0.35 }
+          : cls === 'van'
+            ? { width: 0.98, height: 0.62, length: 0.98, y: 0.42 }
+            : cls === 'truck'
+              ? { width: 0.98, height: 0.36, length: 0.98, y: 0.3 }
+              : { width: 0.985, height: 0.68, length: 0.985, y: 0.46 };
   const proxyBody = new THREE.Mesh(shared.roundedBox, paint);
   proxyBody.name = 'Traffic distance silhouette';
-  proxyBody.position.y = hgt * 0.46;
-  proxyBody.scale.set(wid * 0.98, hgt * 0.72, len * 0.98);
+  proxyBody.position.y = hgt * proxyProfile.y;
+  proxyBody.scale.set(
+    wid * proxyProfile.width,
+    hgt * proxyProfile.height,
+    len * proxyProfile.length,
+  );
   proxyBody.castShadow = false;
   proxyBody.receiveShadow = true;
   proxyBody.visible = false;
@@ -1022,14 +1103,14 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // gets a convincing arch and the body never appears to clip through a
     // floating wheel at close range.
     const well = new THREE.Mesh(shared.wheelWell, shared.wheelWellMat);
-    well.scale.set(r * 1.16, r * 1.16, 1);
-    well.position.set(Math.sign(x) * wid * 0.488, r * 1.03, z);
+    well.scale.set(r * 1.1, r * 1.1, 1);
+    well.position.set(Math.sign(x) * wid * 0.452, r * 1.03, z);
     well.rotation.y = Math.PI * 0.5;
     bodyG.add(well);
     const w = new THREE.Mesh(shared.unitWheel, shared.tireMat);
     const tireWidth = Math.min(0.3, Math.max(0.2, wid * 0.125));
     w.scale.set(tireWidth, r, r);
-    w.position.set(Math.sign(x) * wid * 0.49, r, z);
+    w.position.set(Math.sign(x) * wid * 0.447, r, z);
     w.castShadow = false;
     w.receiveShadow = true;
     const hub = new THREE.Mesh(shared.unitWheel, shared.hubMat);
@@ -1056,10 +1137,14 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // catches the environment, while the dash and two seat rows create actual
     // depth instead of a single opaque blue slab.
     taperedBox(shared, geometry, shared.windowMat, width, height, length, 0, y, z, bodyG);
-    box(shared, shared.interiorMat, width * 0.72, 0.055, length * 0.66,
+    const cabinFloor = box(shared, shared.interiorMat, width * 0.72, 0.055, length * 0.66,
       0, y - height * 0.31, z - length * 0.02, bodyG);
-    box(shared, shared.interiorMat, width * 0.72, height * 0.12, length * 0.13,
+    cabinFloor.name = `${cls} cabin floor`;
+    cabinFloor.userData.embodimentCabin = true;
+    const dashboard = box(shared, shared.interiorMat, width * 0.72, height * 0.12, length * 0.13,
       0, y - height * 0.1, z + length * 0.29, bodyG);
+    dashboard.name = `${cls} dashboard`;
+    dashboard.userData.embodimentCabin = true;
     for (const seatZ of [-0.13, -0.28]) {
       for (const side of [-1, 1]) {
         roundedBox(shared, shared.seatMat, width * 0.22, height * 0.3, length * 0.17,
@@ -1080,6 +1165,25 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     }
   };
 
+  if (['sedan', 'taxi', 'suv', 'pickup', 'van'].includes(cls)) {
+    const rockerWidth = cls === 'pickup' ? wid * 0.08 : wid * 0.1;
+    const rockerOffset = cls === 'pickup' ? wid * 0.4 : wid * 0.455;
+    for (const side of [-1, 1]) {
+      const rocker = roundedBox(
+        shared,
+        paint,
+        rockerWidth,
+        wheelR * 0.5,
+        len * 0.72,
+        side * rockerOffset,
+        wheelR * 1.14,
+        0,
+        bodyG,
+      );
+      rocker.name = `${cls} connected rocker and fender bridge`;
+    }
+  }
+
   if (cls === 'bike') {
     // Low-poly city bike: diamond frame, disc wheels, flat bars, seat.
     const frameMat = shared.bodyMat(readableBodyColor(color, cls));
@@ -1094,7 +1198,37 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     // Narrow the contact patch for a bike footprint.
     contactShadow.scale.set(wid * 0.9, len * 0.55, 1);
   } else if (cls === 'sedan' || cls === 'taxi') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.46, len * 0.98, 0, hgt * 0.38, 0, bodyG);
+    // Build the sedan lower body around a real occupant cavity. A single
+    // full-width solid slab made the authored driver intersect painted metal
+    // even when the visible seated pose was correct. The floor, side sills,
+    // engine bay and trunk retain the same exterior silhouette while leaving
+    // the central footwell/cabin volume physically empty.
+    const floor = roundedBox(
+      shared, shared.underbodyMat,
+      wid * 0.72, hgt * 0.07, len * 0.58,
+      0, hgt * 0.13, -len * 0.015, bodyG,
+    );
+    floor.name = `${cls} occupant cabin floor pan`;
+    for (const side of [-1, 1]) {
+      const sill = roundedBox(
+        shared, paint,
+        wid * 0.105, hgt * 0.5, len * 0.98,
+        side * wid * 0.438, hgt * 0.34, 0, bodyG,
+      );
+      sill.name = `${cls} exterior side sill`;
+    }
+    const engineBay = roundedBox(
+      shared, paint,
+      wid * 0.88, hgt * 0.46, len * 0.27,
+      0, hgt * 0.33, len * 0.355, bodyG,
+    );
+    engineBay.name = `${cls} front engine body`;
+    const trunkBody = roundedBox(
+      shared, paint,
+      wid * 0.9, hgt * 0.44, len * 0.22,
+      0, hgt * 0.32, -len * 0.39, bodyG,
+    );
+    trunkBody.name = `${cls} rear trunk body`;
     // Hood and trunk decks sit lower than the roof so the side profile reads
     // as a three-box sedan rather than one extruded slab.
     roundedBox(shared, paint, wid * 0.94, hgt * 0.15, len * 0.28,
@@ -1104,9 +1238,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addCabin({
       geometry: shared.sedanCabin,
       width: wid * 0.86,
-      height: hgt * 0.4,
+      height: hgt * 0.28,
       length: len * 0.48,
-      y: hgt * 0.82,
+      y: hgt * 0.62,
       z: -len * 0.02,
       roofLength: 0.36,
     });
@@ -1122,7 +1256,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addWheel(-wid * 0.47, -len * 0.32, wheelR);
     addWheel(wid * 0.47, -len * 0.32, wheelR);
   } else if (cls === 'suv') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.5, len * 0.98, 0, hgt * 0.36, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.98, hgt * 0.54, len * 0.98, 0, hgt * 0.33, 0, bodyG);
     roundedBox(shared, paint, wid * 0.93, hgt * 0.2, len * 0.22,
       0, hgt * 0.56, len * 0.36, bodyG);
     roundedBox(shared, paint, wid * 0.94, hgt * 0.18, len * 0.16,
@@ -1130,9 +1264,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     addCabin({
       geometry: shared.suvCabin,
       width: wid * 0.88,
-      height: hgt * 0.42,
+      height: hgt * 0.46,
       length: len * 0.56,
-      y: hgt * 0.78,
+      y: hgt * 0.84,
       z: -len * 0.04,
       roofLength: 0.42,
     });
@@ -1140,43 +1274,43 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
       box(shared, shared.rubberTrimMat, 0.055, 0.075, len * 0.72,
         side * wid * 0.505, hgt * 0.2, 0, bodyG);
       box(shared, shared.roofEquipmentMat, 0.055, 0.055, len * 0.58,
-        side * wid * 0.34, hgt * 1.055, -len * 0.03, bodyG);
+        side * wid * 0.34, hgt * 1.15, -len * 0.03, bodyG);
     }
     addWheel(-wid * 0.47, len * 0.33, wheelR, true);
     addWheel(wid * 0.47, len * 0.33, wheelR, true);
     addWheel(-wid * 0.47, -len * 0.32, wheelR);
     addWheel(wid * 0.47, -len * 0.32, wheelR);
   } else if (cls === 'pickup') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.43, len * 0.98, 0, hgt * 0.34, 0, bodyG);
-    roundedBox(shared, paint, wid * 0.94, hgt * 0.46, len * 0.37,
-      0, hgt * 0.66, len * 0.17, bodyG);
+    roundedBox(shared, paint, wid * 0.9, hgt * 0.47, len * 0.98, 0, hgt * 0.32, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.86, hgt * 0.38, len * 0.37,
+      0, hgt * 0.57, len * 0.17, bodyG);
     addCabin({
       geometry: shared.utilityCabin,
-      width: wid * 0.87,
-      height: hgt * 0.34,
+      width: wid * 0.8,
+      height: hgt * 0.28,
       length: len * 0.28,
-      y: hgt * 0.78,
+      y: hgt * 0.68,
       z: len * 0.18,
       roofLength: 0.42,
     });
-    box(shared, shared.underbodyMat, wid * 0.78, 0.08, len * 0.28,
+    box(shared, shared.underbodyMat, wid * 0.72, 0.08, len * 0.28,
       0, hgt * 0.42, -len * 0.29, bodyG);
     for (const side of [-1, 1]) {
       box(shared, paint, 0.13, hgt * 0.35, len * 0.34,
-        side * wid * 0.45, hgt * 0.57, -len * 0.28, bodyG);
+        side * wid * 0.4, hgt * 0.57, -len * 0.28, bodyG);
       box(shared, shared.rubberTrimMat, 0.045, 0.055, len * 0.34,
-        side * wid * 0.515, hgt * 0.76, -len * 0.28, bodyG);
+        side * wid * 0.45, hgt * 0.76, -len * 0.28, bodyG);
     }
-    box(shared, paint, wid * 0.91, hgt * 0.34, 0.12,
+    box(shared, paint, wid * 0.84, hgt * 0.34, 0.12,
       0, hgt * 0.56, -len * 0.46, bodyG);
-    box(shared, shared.rubberTrimMat, wid * 0.76, 0.055, 0.05,
+    box(shared, shared.rubberTrimMat, wid * 0.7, 0.055, 0.05,
       0, hgt * 0.76, -len * 0.46, bodyG);
     addWheel(-wid * 0.47, len * 0.34, wheelR, true);
     addWheel(wid * 0.47, len * 0.34, wheelR, true);
     addWheel(-wid * 0.47, -len * 0.33, wheelR);
     addWheel(wid * 0.47, -len * 0.33, wheelR);
   } else if (cls === 'van') {
-    roundedBox(shared, paint, wid * 0.98, hgt * 0.72, len * 0.98, 0, hgt * 0.5, 0, bodyG);
+    roundedBox(shared, paint, wid * 0.98, hgt * 0.76, len * 0.98, 0, hgt * 0.47, 0, bodyG);
     addCabin({
       geometry: shared.utilityCabin,
       width: wid * 0.9,
@@ -1391,6 +1525,102 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     ));
   }
 
+  // Any eligible fleet car can be recruited as a live law responder. Keep
+  // the kit dormant during ordinary traffic duty, then reveal a shared SFPD
+  // placard and alternating emergency lamps while the vehicle is assigned.
+  // The group lives on the root so its authority cue remains visible when the
+  // detailed body swaps to the distance silhouette.
+  let pursuitKit = null;
+  const pursuitLights = { red: [], blue: [] };
+  if (!['bike', 'bus', 'truck', 'taxi'].includes(cls)) {
+    pursuitKit = new THREE.Group();
+    pursuitKit.name = 'SFPD pursuit response kit';
+    pursuitKit.visible = false;
+    const roofY = hgt * (cls === 'pickup' || cls === 'van' ? 1.06 : 1.08);
+    const roofZ = cls === 'pickup' ? len * 0.15 : len * 0.04;
+    box(shared, shared.lightHousingMat, Math.min(1.08, wid * 0.62), 0.055, 0.22,
+      0, roofY, roofZ, pursuitKit);
+    pursuitLights.red.push(box(
+      shared,
+      shared.pursuitRedOffMat,
+      Math.min(0.42, wid * 0.23),
+      0.13,
+      0.18,
+      -Math.min(0.27, wid * 0.17),
+      roofY + 0.055,
+      roofZ,
+      pursuitKit,
+    ));
+    pursuitLights.blue.push(box(
+      shared,
+      shared.pursuitBlueOffMat,
+      Math.min(0.42, wid * 0.23),
+      0.13,
+      0.18,
+      Math.min(0.27, wid * 0.17),
+      roofY + 0.055,
+      roofZ,
+      pursuitKit,
+    ));
+    const grilleY = Math.max(0.42, hgt * 0.48);
+    pursuitLights.red.push(box(
+      shared,
+      shared.pursuitRedOffMat,
+      0.16,
+      0.09,
+      0.055,
+      -wid * 0.18,
+      grilleY,
+      len * 0.5 + 0.08,
+      pursuitKit,
+    ));
+    pursuitLights.blue.push(box(
+      shared,
+      shared.pursuitBlueOffMat,
+      0.16,
+      0.09,
+      0.055,
+      wid * 0.18,
+      grilleY,
+      len * 0.5 + 0.08,
+      pursuitKit,
+    ));
+    const pursuitBadgeWidth = identity.key === 'sfmta-service' ? 1.68 : 1.12;
+    const pursuitBadgeHeight = identity.key === 'sfmta-service' ? 0.52 : 0.4;
+    for (const side of [-1, 1]) {
+      sideBadge(
+        shared,
+        shared.pursuitBadgeMat,
+        pursuitBadgeWidth,
+        pursuitBadgeHeight,
+        side * wid * 0.526,
+        identity.key === 'sfmta-service' ? hgt * 0.57 : hgt * 0.58,
+        identity.key === 'sfmta-service' ? -len * 0.1 : 0,
+        pursuitKit,
+        'SFPD pursuit side mark',
+      );
+    }
+    frontBadge(
+      shared,
+      shared.pursuitBadgeMat,
+      Math.min(0.96, wid * 0.58),
+      0.28,
+      0,
+      hgt * 0.64,
+      len * 0.5 + 0.09,
+      pursuitKit,
+      'SFPD pursuit front mark',
+    );
+    pursuitKit.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = child.userData.noReceiveShadow !== true;
+      child.updateMatrix();
+      child.matrixAutoUpdate = false;
+    });
+    root.add(pursuitKit);
+  }
+
   // Small manufactured details give the pooled traffic a shared automotive
   // language with the authored hero car: bumpers, mirrors, window breaks and
   // a low belt line are visible even when a vehicle is several car lengths
@@ -1402,12 +1632,23 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   const indicatorLeft = [];
   const indicatorRight = [];
   if (cls !== 'bike') {
-  box(shared, shared.underbodyMat, wid * 0.78, 0.13, len * 0.76, 0, wheelR * 0.72, 0, bodyG);
+  if (cls === 'sedan' || cls === 'taxi') {
+    for (const side of [-1, 1]) {
+      const chassisRail = box(
+        shared, shared.underbodyMat,
+        wid * 0.07, 0.13, len * 0.76,
+        side * wid * 0.44, wheelR * 0.72, 0, bodyG,
+      );
+      chassisRail.name = `${cls} underbody side rail`;
+    }
+  } else {
+    box(shared, shared.underbodyMat, wid * 0.78, 0.13, len * 0.76, 0, wheelR * 0.72, 0, bodyG);
+  }
   if (cls !== 'bus' && cls !== 'truck') {
     // Roof antenna fin seated on each class's actual cabin roof, plus a
     // single exhaust tip: the small manufactured cues that keep the light
     // vehicles reading as automobiles rather than painted blocks at range.
-    const roofAnchor = cls === 'pickup' ? [hgt * 0.96, len * 0.13]
+    const roofAnchor = cls === 'pickup' ? [hgt * 0.79, len * 0.13]
       : cls === 'van' ? [hgt * 0.96, len * 0.18]
         : cls === 'suv' ? [hgt, -len * 0.14]
           : [hgt, -len * 0.16];
@@ -1462,8 +1703,9 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
           lampX, hgt * 0.95, len * 0.5 - 0.24, bodyG);
       }
     }
-    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, -wid * 0.56, hgt * 0.72, len * 0.23, bodyG);
-    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, wid * 0.56, hgt * 0.72, len * 0.23, bodyG);
+    const utilityMirrorOffset = cls === 'pickup' ? wid * 0.47 : wid * 0.56;
+    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, -utilityMirrorOffset, hgt * 0.72, len * 0.23, bodyG);
+    box(shared, shared.mirrorMat, 0.14, 0.18, 0.28, utilityMirrorOffset, hgt * 0.72, len * 0.23, bodyG);
   } else {
     box(shared, shared.trimMat, wid * 0.84, 0.09, 0.1, 0, hgt * 0.18, -len * 0.5 - 0.04, bodyG);
     box(shared, shared.trimMat, wid * 0.84, 0.09, 0.1, 0, hgt * 0.2, len * 0.5 + 0.04, bodyG);
@@ -1527,6 +1769,79 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
   indicatorRight.push(box(shared, shared.indicatorOffMat, 0.065, 0.1, 0.15, wid / 2 + 0.01, ly, len * 0.32, bodyG));
   } // end non-bike automotive fascia / lighting
 
+  // Continuous local-player embodiment sockets. They are authored on the
+  // ordinary traffic root, so the seat and door follow the exact settled car
+  // transform without creating a second vehicle authority. AI leaves both
+  // pivots at zero/closed; main animates only the active player's selected
+  // side during its bounded ingress/egress presentation.
+  let embodiment = null;
+  if (identity.category === 'private' && ['sedan', 'suv', 'pickup', 'van'].includes(cls)) {
+    const seatY = cls === 'sedan' ? 0.23 : cls === 'suv' ? 0.46 : cls === 'pickup' ? 0.52 : 0.66;
+    const seatZ = cls === 'pickup' || cls === 'van' ? len * 0.17 : len * 0.035;
+    const doorHeight = Math.min(1.14, hgt * 0.62);
+    const doorLength = Math.min(1.35, len * 0.3);
+    const doors = {};
+    const seats = {};
+    for (const side of [-1, 1]) {
+      const sideKey = side < 0 ? 'left' : 'right';
+      const seat = new THREE.Object3D();
+      seat.name = `Traveler ${sideKey} driver seat socket`;
+      seat.position.set(0, seatY, seatZ);
+      bodyG.add(seat);
+
+      const pivot = new THREE.Group();
+      pivot.name = `Traveler ${sideKey} driver door pivot`;
+      pivot.userData.vehicleEmbodimentDoor = true;
+      pivot.userData.apertureAngle = 0;
+      pivot.userData.traversal = 0;
+      pivot.position.set(side * wid * 0.505, hgt * 0.5, seatZ + doorLength * 0.5);
+      const aperture = box(
+        shared,
+        shared.interiorMat,
+        0.035,
+        doorHeight * 0.92,
+        doorLength * 0.92,
+        side * wid * 0.499,
+        hgt * 0.5,
+        seatZ,
+        bodyG,
+      );
+      aperture.name = `Traveler ${sideKey} driver door dark aperture`;
+      aperture.visible = false;
+      aperture.userData.vehicleEmbodimentAperture = true;
+      const panel = roundedBox(
+        shared,
+        paint,
+        0.055,
+        doorHeight,
+        doorLength,
+        0,
+        0,
+        -doorLength * 0.5,
+        pivot,
+      );
+      panel.name = `Traveler ${sideKey} driver door panel`;
+      panel.userData.vehicleEmbodimentDoorPanel = true;
+      bodyG.add(pivot);
+      seats[sideKey] = seat;
+      doors[sideKey] = { pivot, panel, aperture, side, angle: 0 };
+    }
+    embodiment = {
+      class: cls,
+      halfWidth: wid * 0.5,
+      halfLength: len * 0.5,
+      cabin: {
+        centerY: hgt * (cls === 'van' ? 0.7 : 0.62),
+        halfWidth: wid * 0.43,
+        halfHeight: hgt * (cls === 'van' ? 0.3 : 0.22),
+        halfLength: len * (cls === 'pickup' ? 0.17 : cls === 'van' ? 0.2 : 0.25),
+      },
+      seats,
+      doors,
+    };
+    root.userData.vehicleEmbodiment = embodiment;
+  }
+
   bodyG.traverse((child) => {
     if (!child.isMesh) return;
     // Bikes are cheap enough to cast; the car fleet keeps contact discs so
@@ -1546,6 +1861,8 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     wheels,
     frontWheels,
     beaconLights,
+    pursuitKit,
+    pursuitLights,
     tailLights,
     rearIndicatorLeft,
     rearIndicatorRight,
@@ -1556,6 +1873,7 @@ function buildVehicleMesh(shared, cls, spec, color, identity = VEHICLE_IDENTITIE
     indicatorOffMat: shared.indicatorOffMat,
     indicatorOnMat: shared.indicatorOnMat,
     wiperPivot,
+    embodiment,
     // Keep the former material keys wired during Vite hot reloads so an
     // already-running update closure cannot dereference a missing material.
     tailMat: shared.tailOffMat,
@@ -1590,36 +1908,67 @@ function addProxyClassCue(shared, root, cls, spec, paint) {
   const proxyCueG = new THREE.Group();
   proxyCueG.name = 'Traffic distance class cue';
   proxyCueG.visible = false;
-  const { wid, hgt, len } = spec;
+  const { wid, hgt, len, wheelR } = spec;
+  if (cls !== 'bike') {
+    const proxyWheelRadius = wheelR;
+    const frontZ = len * (cls === 'bus' ? 0.36 : cls === 'truck' ? 0.35 : 0.32);
+    const rearZ = -len * (cls === 'bus' ? 0.32 : cls === 'truck' ? 0.26 : 0.32);
+    for (const z of [frontZ, rearZ]) {
+      for (const side of [-1, 1]) {
+        const wheel = new THREE.Mesh(shared.unitWheel, shared.tireMat);
+        wheel.name = 'Connected proxy wheel';
+        wheel.scale.set(Math.min(0.3, Math.max(0.2, wid * 0.125)), proxyWheelRadius, proxyWheelRadius);
+        wheel.position.set(side * wid * 0.447, proxyWheelRadius, z);
+        wheel.castShadow = false;
+        wheel.receiveShadow = true;
+        proxyCueG.add(wheel);
+      }
+    }
+  }
   if (cls === 'bike') {
     box(shared, paint, wid * 0.35, hgt * 0.08, len * 0.72,
       0, hgt * 0.48, 0, proxyCueG);
   } else if (cls === 'bus') {
+    roundedBox(shared, shared.windowMat, wid * 0.86, hgt * 0.26, len * 0.84,
+      0, hgt * 0.76, 0, proxyCueG);
     roundedBox(shared, shared.bodyMat(BUS_STRIPE), wid * 0.92, hgt * 0.1, len * 0.94,
       0, hgt * 0.58, 0, proxyCueG);
     frontBadge(shared, shared.busRouteMat, wid * 0.34, hgt * 0.12, 0, hgt * 0.66, len * 0.47, proxyCueG,
       'Pooled Muni route board');
   } else if (cls === 'taxi') {
+    taperedBox(shared, shared.sedanCabin, shared.windowMat,
+      wid * 0.9, hgt * 0.28, len * 0.52, 0, hgt * 0.66, -len * 0.02, proxyCueG);
     box(shared, shared.signMat, wid * 0.42, hgt * 0.12, len * 0.22,
       0, hgt * 0.92, -len * 0.04, proxyCueG);
     for (const side of [-1, 1]) {
       box(shared, shared.taxiTrimMat, 0.03, hgt * 0.08, len * 0.72,
         side * wid * 0.5, hgt * 0.48, 0, proxyCueG);
     }
-  } else if (cls === 'truck' || cls === 'van') {
-    box(shared, paint, wid * 0.82, hgt * 0.08, len * 0.42,
-      0, hgt * 0.72, -len * 0.08, proxyCueG);
-    box(shared, shared.trimMat, wid * 0.18, hgt * 0.08, len * 0.08,
-      0, hgt * 0.72, len * 0.38, proxyCueG);
+  } else if (cls === 'truck') {
+    roundedBox(shared, shared.bodyMat(0xf0ede6), wid * 0.94, hgt * 0.66, len * 0.64,
+      0, hgt * 0.58, -len * 0.13, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.82, hgt * 0.25, len * 0.2, 0, hgt * 0.7, len * 0.33, proxyCueG);
+  } else if (cls === 'van') {
+    roundedBox(shared, paint, wid * 0.92, hgt * 0.42, len * 0.88,
+      0, hgt * 0.68, -len * 0.02, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.84, hgt * 0.25, len * 0.28, 0, hgt * 0.78, len * 0.28, proxyCueG);
   } else if (cls === 'pickup') {
-    box(shared, paint, wid * 0.76, hgt * 0.28, len * 0.34,
-      0, hgt * 0.58, -len * 0.24, proxyCueG);
+    taperedBox(shared, shared.utilityCabin, shared.windowMat,
+      wid * 0.82, hgt * 0.28, len * 0.3, 0, hgt * 0.68, len * 0.18, proxyCueG);
+    for (const side of [-1, 1]) {
+      box(shared, paint, 0.12, hgt * 0.28, len * 0.34,
+        side * wid * 0.42, hgt * 0.54, -len * 0.28, proxyCueG);
+    }
   } else if (cls === 'suv') {
+    taperedBox(shared, shared.suvCabin, shared.windowMat,
+      wid * 0.84, hgt * 0.46, len * 0.56, 0, hgt * 0.8, -len * 0.04, proxyCueG);
     box(shared, shared.roofEquipmentMat, wid * 0.42, hgt * 0.05, len * 0.52,
-      0, hgt * 0.92, -len * 0.03, proxyCueG);
+      0, hgt * 1.06, -len * 0.03, proxyCueG);
   } else {
-    taperedBox(shared, shared.sedanCabin, paint, wid * 0.72, hgt * 0.16, len * 0.34,
-      0, hgt * 0.78, -len * 0.02, proxyCueG);
+    taperedBox(shared, shared.sedanCabin, shared.windowMat,
+      wid * 0.9, hgt * 0.28, len * 0.52, 0, hgt * 0.66, -len * 0.02, proxyCueG);
   }
   root.add(proxyCueG);
   return proxyCueG;
@@ -1652,7 +2001,15 @@ function buildClassList(rng, count) {
 
 /* ---------------- factory ---------------- */
 
-export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
+export function createTrafficSystem({
+  scene,
+  roadNetwork,
+  fleetSize,
+  onPlayerTrafficViolation,
+  onPlayerVehicleCollision,
+  onPlayerOnFootVehicleContact,
+  canRepairPlayerVehicle,
+} = {}) {
   const group = new THREE.Group();
   group.name = 'traffic';
   if (scene && typeof scene.add === 'function') scene.add(group);
@@ -1705,14 +2062,764 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     taxiPickups: 0,
     serviceStops: 0,
     deliveryStops: 0,
+    vehicleDamageEvents: 0,
+    collisionDamageEvents: 0,
+    recklessCollisionEvents: 0,
+    lastPlayerCollision: null,
+    disabledVehicles: 0,
+    vehicleRepairs: 0,
+    vehicleThefts: 0,
+    playerRedLightViolations: 0,
+    pedestrianImpactEvents: 0,
+    sweptVehicleCollisionTests: 0,
+    sweptVehicleCollisionEvents: 0,
+    sweptVehicleNearMisses: 0,
+    lastSweptVehicleCollision: null,
+    onFootVehicleContactTests: 0,
+    onFootVehicleContacts: 0,
+    onFootVehicleCorrections: 0,
+    onFootVehicleBlockingContacts: 0,
+    onFootVehicleDamageContacts: 0,
+    lastOnFootVehicleContact: null,
+    lastOnFootVehicleCorrection: null,
+    pursuitRouteDecisions: 0,
+    pursuitRouteFallbacks: 0,
+    lastPursuitRouteDecision: null,
   };
   let playerVehicle = null;
+  let lastPlayerParkedVehicle = null;
+  let impoundedPlayerVehicle = null;
+  const playerGarageSlots = [null, null];
+  let playerGarageRetrieveCursor = 0;
+  let taxiRide = null;
+  let muniRide = null;
+  let playerSignalViolationLatch = null;
+  let playerPedestrianImpactProbe = null;
+  let playerPedestrianImpactLatch = new Set();
+  let playerVehicleCollisionLatch = new Set();
+  let onFootPlayerCollisionProbe = null;
+  let onFootVehicleCollisionLatch = new Set();
+  let onFootVehicleImpactQaStage = null;
+  let vehicleEmbodimentQaHold = null;
   const playerInput = { throttle: 0, brake: 0, steer: 0 };
   let shared = null;
   let focusActive = false;
   let focusX = 0;
   let focusZ = 0;
   let focusRadiusSquared = Infinity;
+  const pursuitResponder = {
+    active: false,
+    targetIndex: -1,
+    targetIndexes: [],
+    playerVehicleId: null,
+    playerX: 0,
+    playerZ: 0,
+    level: 1,
+    distance: null,
+  };
+  const pursuitBookingVisual = {
+    vehicleIndex: -1,
+    until: 0,
+  };
+  const pursuitDeploymentHoldIds = new Set();
+  const pursuitDeploymentHoldingIds = new Set();
+
+  function damageStateFor(vehicle) {
+    if (vehicle.disabled || vehicle.health <= 0) return 'disabled';
+    const ratio = vehicle.health / Math.max(1, vehicle.maxHealth);
+    if (ratio <= 0.28) return 'critical';
+    if (ratio <= 0.68) return 'damaged';
+    return 'clear';
+  }
+
+  function distanceSquaredToSegment(point, start, end) {
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const lengthSquared = dx * dx + dz * dz;
+    if (lengthSquared <= 1e-8) {
+      return (point.x - start.x) ** 2 + (point.z - start.z) ** 2;
+    }
+    const along = THREE.MathUtils.clamp(
+      ((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSquared,
+      0,
+      1,
+    );
+    const closestX = start.x + dx * along;
+    const closestZ = start.z + dz * along;
+    return (point.x - closestX) ** 2 + (point.z - closestZ) ** 2;
+  }
+
+  function footprintAxes(heading = 0) {
+    const forward = { x: Math.sin(heading), z: Math.cos(heading) };
+    return {
+      forward,
+      right: { x: forward.z, z: -forward.x },
+    };
+  }
+
+  function footprintsOverlap(left, right, margin = 0.04) {
+    const leftAxes = footprintAxes(left.heading);
+    const rightAxes = footprintAxes(right.heading);
+    const dx = right.x - left.x;
+    const dz = right.z - left.z;
+    const axes = [leftAxes.forward, leftAxes.right, rightAxes.forward, rightAxes.right];
+    for (const axis of axes) {
+      const centerDistance = Math.abs(dx * axis.x + dz * axis.z);
+      const leftRadius = left.halfLength * Math.abs(
+        leftAxes.forward.x * axis.x + leftAxes.forward.z * axis.z,
+      ) + left.halfWidth * Math.abs(
+        leftAxes.right.x * axis.x + leftAxes.right.z * axis.z,
+      );
+      const rightRadius = right.halfLength * Math.abs(
+        rightAxes.forward.x * axis.x + rightAxes.forward.z * axis.z,
+      ) + right.halfWidth * Math.abs(
+        rightAxes.right.x * axis.x + rightAxes.right.z * axis.z,
+      );
+      if (centerDistance > leftRadius + rightRadius + margin) return false;
+    }
+    return true;
+  }
+
+  function aabbFootprintSatClearance(bounds, footprint) {
+    if (!Number.isFinite(bounds?.min?.x)
+      || !Number.isFinite(bounds?.min?.z)
+      || !Number.isFinite(bounds?.max?.x)
+      || !Number.isFinite(bounds?.max?.z)) return null;
+    const center = {
+      x: (bounds.min.x + bounds.max.x) * 0.5,
+      z: (bounds.min.z + bounds.max.z) * 0.5,
+    };
+    const half = {
+      x: Math.max(0, (bounds.max.x - bounds.min.x) * 0.5),
+      z: Math.max(0, (bounds.max.z - bounds.min.z) * 0.5),
+    };
+    const footprintBasis = footprintAxes(footprint.heading);
+    const axes = [
+      { x: 1, z: 0 },
+      { x: 0, z: 1 },
+      footprintBasis.forward,
+      footprintBasis.right,
+    ];
+    const dx = center.x - footprint.x;
+    const dz = center.z - footprint.z;
+    let greatestAxisGap = -Infinity;
+    for (const axis of axes) {
+      const centerDistance = Math.abs(dx * axis.x + dz * axis.z);
+      const bodyRadius = half.x * Math.abs(axis.x) + half.z * Math.abs(axis.z);
+      const vehicleRadius = footprint.halfLength * Math.abs(
+        footprintBasis.forward.x * axis.x + footprintBasis.forward.z * axis.z,
+      ) + footprint.halfWidth * Math.abs(
+        footprintBasis.right.x * axis.x + footprintBasis.right.z * axis.z,
+      );
+      greatestAxisGap = Math.max(greatestAxisGap, centerDistance - bodyRadius - vehicleRadius);
+    }
+    return greatestAxisGap;
+  }
+
+  function interpolateHeading(start, end, amount) {
+    const delta = Math.atan2(Math.sin(end - start), Math.cos(end - start));
+    return start + delta * amount;
+  }
+
+  function vehicleFootprint(vehicle, pose) {
+    return {
+      x: pose.x,
+      z: pose.z,
+      heading: Number.isFinite(pose.heading) ? pose.heading : 0,
+      halfLength: vehicle.spec.len * 0.5,
+      halfWidth: vehicle.spec.wid * 0.5,
+    };
+  }
+
+  function onFootVehicleFootprint(vehicle, pose) {
+    const footprint = vehicleFootprint(vehicle, pose);
+    footprint.halfLength += ON_FOOT_VEHICLE_SHELL_LENGTH_PAD;
+    footprint.halfWidth += ON_FOOT_VEHICLE_SHELL_WIDTH_PAD;
+    return footprint;
+  }
+
+  function sweptFootprintContact(player, playerStart, other, otherStart) {
+    const playerEnd = player.mesh.root.position;
+    const otherEnd = other.mesh.root.position;
+    const playerHeading = Number.isFinite(player.heading) ? player.heading : playerStart.heading;
+    const otherHeading = Number.isFinite(other.heading) ? other.heading : otherStart.heading;
+    const playerTravel = Math.hypot(playerEnd.x - playerStart.x, playerEnd.z - playerStart.z);
+    const otherTravel = Math.hypot(otherEnd.x - otherStart.x, otherEnd.z - otherStart.z);
+    const broadRadius = Math.hypot(player.spec.len, player.spec.wid) * 0.5
+      + Math.hypot(other.spec.len, other.spec.wid) * 0.5
+      + 0.2;
+    const relativeStart = {
+      x: playerStart.x - otherStart.x,
+      z: playerStart.z - otherStart.z,
+    };
+    const relativeEnd = {
+      x: playerEnd.x - otherEnd.x,
+      z: playerEnd.z - otherEnd.z,
+    };
+    if (distanceSquaredToSegment({ x: 0, z: 0 }, relativeStart, relativeEnd)
+      > broadRadius * broadRadius) return null;
+
+    const steps = Math.max(3, Math.min(12, Math.ceil((playerTravel + otherTravel) / 0.25)));
+    for (let step = 0; step <= steps; step += 1) {
+      const amount = step / steps;
+      const playerPose = {
+        x: THREE.MathUtils.lerp(playerStart.x, playerEnd.x, amount),
+        z: THREE.MathUtils.lerp(playerStart.z, playerEnd.z, amount),
+        heading: interpolateHeading(playerStart.heading, playerHeading, amount),
+      };
+      const otherPose = {
+        x: THREE.MathUtils.lerp(otherStart.x, otherEnd.x, amount),
+        z: THREE.MathUtils.lerp(otherStart.z, otherEnd.z, amount),
+        heading: interpolateHeading(otherStart.heading, otherHeading, amount),
+      };
+      diagnostics.sweptVehicleCollisionTests += 1;
+      if (footprintsOverlap(
+        vehicleFootprint(player, playerPose),
+        vehicleFootprint(other, otherPose),
+      )) {
+        return {
+          amount,
+          safeAmount: Math.max(0, (step - 1) / steps),
+          playerPose,
+          otherPose,
+        };
+      }
+    }
+    return null;
+  }
+
+  function discFootprintClearance(point, footprint, radius = ON_FOOT_PLAYER_RADIUS) {
+    const axes = footprintAxes(footprint.heading);
+    const dx = point.x - footprint.x;
+    const dz = point.z - footprint.z;
+    const localRight = dx * axes.right.x + dz * axes.right.z;
+    const localForward = dx * axes.forward.x + dz * axes.forward.z;
+    const outsideRight = Math.max(0, Math.abs(localRight) - footprint.halfWidth);
+    const outsideForward = Math.max(0, Math.abs(localForward) - footprint.halfLength);
+    if (outsideRight > 0 || outsideForward > 0) {
+      return Math.hypot(outsideRight, outsideForward) - radius;
+    }
+    return -Math.min(
+      footprint.halfWidth - Math.abs(localRight),
+      footprint.halfLength - Math.abs(localForward),
+    ) - radius;
+  }
+
+  function separateDiscFromFootprint(point, footprint, radius = ON_FOOT_PLAYER_RADIUS) {
+    const axes = footprintAxes(footprint.heading);
+    const dx = point.x - footprint.x;
+    const dz = point.z - footprint.z;
+    const localRight = dx * axes.right.x + dz * axes.right.z;
+    const localForward = dx * axes.forward.x + dz * axes.forward.z;
+    const clampedRight = THREE.MathUtils.clamp(
+      localRight,
+      -footprint.halfWidth,
+      footprint.halfWidth,
+    );
+    const clampedForward = THREE.MathUtils.clamp(
+      localForward,
+      -footprint.halfLength,
+      footprint.halfLength,
+    );
+    let separatedRight = localRight;
+    let separatedForward = localForward;
+    const deltaRight = localRight - clampedRight;
+    const deltaForward = localForward - clampedForward;
+    const outsideDistance = Math.hypot(deltaRight, deltaForward);
+    if (outsideDistance > 1e-5) {
+      const push = Math.max(0, radius - outsideDistance) + ON_FOOT_VEHICLE_CLEARANCE_MARGIN;
+      separatedRight += (deltaRight / outsideDistance) * push;
+      separatedForward += (deltaForward / outsideDistance) * push;
+    } else {
+      const rightDepth = footprint.halfWidth + radius - Math.abs(localRight);
+      const forwardDepth = footprint.halfLength + radius - Math.abs(localForward);
+      if (rightDepth <= forwardDepth) {
+        separatedRight = (localRight < 0 ? -1 : 1)
+          * (footprint.halfWidth + radius + ON_FOOT_VEHICLE_CLEARANCE_MARGIN);
+      } else {
+        separatedForward = (localForward < 0 ? -1 : 1)
+          * (footprint.halfLength + radius + ON_FOOT_VEHICLE_CLEARANCE_MARGIN);
+      }
+    }
+    return {
+      x: footprint.x
+        + axes.right.x * separatedRight
+        + axes.forward.x * separatedForward,
+      z: footprint.z
+        + axes.right.z * separatedRight
+        + axes.forward.z * separatedForward,
+    };
+  }
+
+  function sweptDiscFootprintContact(probe, vehicle, vehicleStart) {
+    const vehicleEnd = vehicle.mesh.root.position;
+    const endHeading = Number.isFinite(vehicle.heading)
+      ? vehicle.heading
+      : vehicleStart.heading;
+    const broadRadius = Math.hypot(
+      vehicle.spec.len * 0.5 + ON_FOOT_VEHICLE_SHELL_LENGTH_PAD,
+      vehicle.spec.wid * 0.5 + ON_FOOT_VEHICLE_SHELL_WIDTH_PAD,
+    ) + probe.radius + 0.2;
+    const relativeStart = {
+      x: probe.start.x - vehicleStart.x,
+      z: probe.start.z - vehicleStart.z,
+    };
+    const relativeEnd = {
+      x: probe.end.x - vehicleEnd.x,
+      z: probe.end.z - vehicleEnd.z,
+    };
+    if (distanceSquaredToSegment({ x: 0, z: 0 }, relativeStart, relativeEnd)
+      > broadRadius * broadRadius) return null;
+    const playerTravel = Math.hypot(
+      probe.end.x - probe.start.x,
+      probe.end.z - probe.start.z,
+    );
+    const vehicleTravel = Math.hypot(
+      vehicleEnd.x - vehicleStart.x,
+      vehicleEnd.z - vehicleStart.z,
+    );
+    const steps = Math.max(3, Math.min(16, Math.ceil((playerTravel + vehicleTravel) / 0.2)));
+    for (let step = 0; step <= steps; step += 1) {
+      const amount = step / steps;
+      const point = {
+        x: THREE.MathUtils.lerp(probe.start.x, probe.end.x, amount),
+        z: THREE.MathUtils.lerp(probe.start.z, probe.end.z, amount),
+      };
+      const footprint = onFootVehicleFootprint(vehicle, {
+        x: THREE.MathUtils.lerp(vehicleStart.x, vehicleEnd.x, amount),
+        z: THREE.MathUtils.lerp(vehicleStart.z, vehicleEnd.z, amount),
+        heading: interpolateHeading(vehicleStart.heading, endHeading, amount),
+      });
+      diagnostics.onFootVehicleContactTests += 1;
+      if (discFootprintClearance(point, footprint, probe.radius)
+        <= ON_FOOT_VEHICLE_CLEARANCE_MARGIN) {
+        const safeAmount = Math.max(0, (step - 1) / steps);
+        return {
+          amount,
+          safeAmount,
+          point,
+          footprint,
+          safeFootprint: onFootVehicleFootprint(vehicle, {
+            x: THREE.MathUtils.lerp(vehicleStart.x, vehicleEnd.x, safeAmount),
+            z: THREE.MathUtils.lerp(vehicleStart.z, vehicleEnd.z, safeAmount),
+            heading: interpolateHeading(vehicleStart.heading, endHeading, safeAmount),
+          }),
+        };
+      }
+    }
+    return null;
+  }
+
+  function setOnFootPlayerCollisionProbe(probe = null) {
+    if (!probe?.active
+      || !Number.isFinite(probe.start?.x)
+      || !Number.isFinite(probe.start?.z)
+      || !Number.isFinite(probe.end?.x)
+      || !Number.isFinite(probe.end?.z)) {
+      onFootPlayerCollisionProbe = null;
+      onFootVehicleCollisionLatch.clear();
+      return false;
+    }
+    onFootPlayerCollisionProbe = {
+      start: { x: probe.start.x, z: probe.start.z },
+      end: { x: probe.end.x, z: probe.end.z },
+      radius: THREE.MathUtils.clamp(
+        Number(probe.radius) || ON_FOOT_PLAYER_RADIUS,
+        0.2,
+        1.25,
+      ),
+    };
+    return true;
+  }
+
+  function resolveOnFootPlayerVehicleContacts(motionStarts) {
+    const probe = onFootPlayerCollisionProbe;
+    if (!probe || !motionStarts) {
+      onFootVehicleCollisionLatch.clear();
+      return null;
+    }
+    const nextLatch = new Set();
+    let best = null;
+    let bestNew = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      const vehicleStart = motionStarts.get(vehicle);
+      if (!vehicleStart
+        || vehicle.mesh.root.visible !== true
+        || vehicle.remoteControlled
+        || vehicle.garageStored
+        || vehicle.impounded) continue;
+      const footprint = onFootVehicleFootprint(vehicle, {
+        x: vehicle.mesh.root.position.x,
+        z: vehicle.mesh.root.position.z,
+        heading: vehicle.heading ?? vehicle.mesh.root.rotation.y,
+      });
+      const finalClearance = discFootprintClearance(probe.end, footprint, probe.radius);
+      if (onFootVehicleCollisionLatch.has(index)
+        && finalClearance <= ON_FOOT_VEHICLE_REARM_GAP) {
+        nextLatch.add(index);
+      }
+      const contact = sweptDiscFootprintContact(probe, vehicle, vehicleStart);
+      if (!contact) continue;
+      nextLatch.add(index);
+      const candidate = {
+        index,
+        vehicle,
+        contact,
+        footprint,
+        latched: onFootVehicleCollisionLatch.has(index),
+      };
+      if (!best || contact.amount < best.contact.amount) best = candidate;
+      if (!candidate.latched && (!bestNew || contact.amount < bestNew.contact.amount)) {
+        bestNew = candidate;
+      }
+    }
+    onFootVehicleCollisionLatch = nextLatch;
+    if (!best) return null;
+
+    // Correction always belongs to the earliest physical obstruction. A new
+    // contact can authorize an event only when it is that same earliest hit;
+    // a latched car in front therefore occludes later cars in the sweep.
+    const eventCandidate = bestNew
+      && bestNew.index === best.index
+      && bestNew.contact.amount <= best.contact.amount + 1e-6
+      ? bestNew
+      : null;
+    const newContact = Boolean(eventCandidate);
+
+    const speed = Math.max(0, Number(best.vehicle.speed) || 0);
+    const responderVehicle = pursuitResponder.active
+      && pursuitResponder.targetIndexes.includes(best.index);
+    const damaging = newContact
+      && best.vehicle.disabled !== true
+      && !responderVehicle
+      && speed >= ON_FOOT_VEHICLE_IMPACT_MIN_SPEED;
+    const safePoint = {
+      x: THREE.MathUtils.lerp(probe.start.x, probe.end.x, best.contact.safeAmount),
+      z: THREE.MathUtils.lerp(probe.start.z, probe.end.z, best.contact.safeAmount),
+    };
+    let correctedPosition = discFootprintClearance(
+      safePoint,
+      best.contact.safeFootprint,
+      probe.radius,
+    ) < ON_FOOT_VEHICLE_CLEARANCE_MARGIN
+      ? separateDiscFromFootprint(safePoint, best.contact.safeFootprint, probe.radius)
+      : safePoint;
+    // A fast vehicle can travel far enough between the sampled contact and
+    // the end of this frame that contact-time rewind alone still leaves the
+    // rendered body inside its final shell. Preserve the contact-time result,
+    // then apply one bounded end-OBB push only when it is still required.
+    if (discFootprintClearance(correctedPosition, best.footprint, probe.radius)
+      < ON_FOOT_VEHICLE_CLEARANCE_MARGIN) {
+      correctedPosition = separateDiscFromFootprint(
+        correctedPosition,
+        best.footprint,
+        probe.radius,
+      );
+    }
+    const damage = damaging
+      ? THREE.MathUtils.clamp(8 + speed * 2.6, 18, 48)
+      : 0;
+    const event = {
+      kind: 'on-foot-vehicle-contact',
+      vehicleId: best.index,
+      vehicleClass: best.vehicle.cls,
+      vehicleLabel: best.vehicle.identity?.label || best.vehicle.cls,
+      speed: Math.round(speed * 10) / 10,
+      latched: best.latched,
+      pursuitResponder: responderVehicle,
+      damaging,
+      damage: Math.round(damage * 10) / 10,
+      threshold: ON_FOOT_VEHICLE_IMPACT_MIN_SPEED,
+      contactAmount: Math.round(best.contact.amount * 1000) / 1000,
+      contactFootprint: { ...best.contact.footprint },
+      endFootprint: { ...best.footprint },
+      bodyRadius: probe.radius,
+      correctedPosition,
+    };
+    diagnostics.onFootVehicleCorrections += 1;
+    if (newContact) {
+      diagnostics.onFootVehicleContacts += 1;
+      if (damaging) diagnostics.onFootVehicleDamageContacts += 1;
+      else diagnostics.onFootVehicleBlockingContacts += 1;
+    }
+    const consequence = onPlayerOnFootVehicleContact?.(event) ?? null;
+    const appliedPosition = Number.isFinite(consequence?.correctedPosition?.x)
+      && Number.isFinite(consequence?.correctedPosition?.z)
+      ? { ...consequence.correctedPosition }
+      : { ...correctedPosition };
+    const resolvedEvent = consequence && typeof consequence === 'object'
+      ? { ...event, correctedPosition: appliedPosition, consequence: { ...consequence } }
+      : { ...event, correctedPosition: appliedPosition };
+    diagnostics.lastOnFootVehicleCorrection = {
+      ...resolvedEvent,
+      correctedPosition: { ...resolvedEvent.correctedPosition },
+    };
+    if (newContact) {
+      diagnostics.lastOnFootVehicleContact = {
+        ...resolvedEvent,
+        correctedPosition: { ...resolvedEvent.correctedPosition },
+      };
+    }
+    return resolvedEvent;
+  }
+
+  function resolvePlayerVehicleFootprintCollisions(motionStarts, elapsed) {
+    if (!playerVehicle || !motionStarts?.has(playerVehicle) || playerVehicle.disabled) {
+      playerVehicleCollisionLatch.clear();
+      return;
+    }
+    const playerStart = motionStarts.get(playerVehicle);
+    const currentOverlaps = new Set();
+    let emitted = false;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const other = vehicles[index];
+      if (other === playerVehicle
+        || !motionStarts.has(other)
+        || other.impounded
+        || other.garageStored
+        || other.remoteControlled
+        || other === impoundedPlayerVehicle) continue;
+      const otherStart = motionStarts.get(other);
+      const centerDistance = Math.hypot(
+        playerVehicle.mesh.root.position.x - other.mesh.root.position.x,
+        playerVehicle.mesh.root.position.z - other.mesh.root.position.z,
+      );
+      const responderVehicle = pursuitResponder.active
+        && pursuitResponder.targetIndexes.includes(index);
+      if (responderVehicle
+        && playerVehicleCollisionLatch.has(index)
+        && centerDistance < PURSUIT_RESPONDER_REARM_DISTANCE) {
+        currentOverlaps.add(index);
+      }
+      const currentOverlap = footprintsOverlap(
+        vehicleFootprint(playerVehicle, {
+          x: playerVehicle.mesh.root.position.x,
+          z: playerVehicle.mesh.root.position.z,
+          heading: playerVehicle.heading,
+        }),
+        vehicleFootprint(other, {
+          x: other.mesh.root.position.x,
+          z: other.mesh.root.position.z,
+          heading: other.heading,
+        }),
+      );
+      if (currentOverlap) currentOverlaps.add(index);
+      const contact = sweptFootprintContact(playerVehicle, playerStart, other, otherStart);
+      if (!contact) {
+        if (centerDistance <= 5.5) diagnostics.sweptVehicleNearMisses += 1;
+        continue;
+      }
+      currentOverlaps.add(index);
+      if (emitted
+        || playerVehicleCollisionLatch.has(index)
+        || elapsed < playerVehicle.damageCooldownUntil
+        || other.disabled) continue;
+
+      const playerHeading = Number.isFinite(playerVehicle.heading) ? playerVehicle.heading : 0;
+      const otherHeading = Number.isFinite(other.heading) ? other.heading : 0;
+      const playerVelocity = {
+        x: Math.sin(playerHeading) * playerVehicle.speed,
+        z: Math.cos(playerHeading) * playerVehicle.speed,
+      };
+      const otherVelocity = {
+        x: Math.sin(otherHeading) * other.speed,
+        z: Math.cos(otherHeading) * other.speed,
+      };
+      const relativeSpeed = Math.hypot(
+        playerVelocity.x - otherVelocity.x,
+        playerVelocity.z - otherVelocity.z,
+      );
+      if (relativeSpeed <= 1.5) continue;
+
+      const responderContact = responderVehicle;
+      const damage = responderContact
+        ? 22
+        : THREE.MathUtils.clamp(relativeSpeed * 5.8, 6, 42);
+      const playerDamage = applyVehicleDamage(
+        playerVehicle,
+        damage,
+        responderContact ? 'pursuit-contact' : 'traffic-impact',
+      );
+      const victimDamage = applyVehicleDamage(
+        other,
+        THREE.MathUtils.clamp(damage * (responderContact ? 0.32 : 0.55), 4, 24),
+        responderContact ? 'pursuit-response-impact' : 'reckless-collision',
+      );
+      playerVehicle.speed *= responderContact ? 0.48 : 0.58;
+      playerVehicle.longitudinalAccel = Math.min(0, playerVehicle.longitudinalAccel);
+      other.speed *= 0.68;
+      other.longitudinalAccel = Math.min(0, other.longitudinalAccel);
+      other.hazardUntil = Math.max(other.hazardUntil, elapsed + 2.4);
+
+      // Rewind the player's path to just before the first sampled overlap.
+      // This keeps the visible bodies separated and keeps the authoritative
+      // straight or turn path parameter coherent with the rendered pose.
+      const safeAmount = contact.safeAmount;
+      const playerPath = playerVehicle.turn ? 'turn' : 'road';
+      const turnDistanceBeforeRewind = playerVehicle.turn?.distance ?? null;
+      if (playerVehicle.turn) {
+        const turnStartDistance = playerStart.turn === playerVehicle.turn
+          && Number.isFinite(playerStart.turnDistance)
+          ? playerStart.turnDistance
+          : 0;
+        playerVehicle.turn.distance = THREE.MathUtils.lerp(
+          turnStartDistance,
+          playerVehicle.turn.distance,
+          safeAmount,
+        );
+      } else if (playerStart.road === playerVehicle.road
+        && Number.isFinite(playerStart.s)
+        && Number.isFinite(playerVehicle.s)) {
+        playerVehicle.s = THREE.MathUtils.lerp(playerStart.s, playerVehicle.s, safeAmount);
+      }
+      playerVehicle.mesh.root.position.x = THREE.MathUtils.lerp(
+        playerStart.x,
+        playerVehicle.mesh.root.position.x,
+        safeAmount,
+      );
+      playerVehicle.mesh.root.position.z = THREE.MathUtils.lerp(
+        playerStart.z,
+        playerVehicle.mesh.root.position.z,
+        safeAmount,
+      );
+      const postContactOverlap = footprintsOverlap(
+        vehicleFootprint(playerVehicle, {
+          x: playerVehicle.mesh.root.position.x,
+          z: playerVehicle.mesh.root.position.z,
+          heading: interpolateHeading(playerStart.heading, playerVehicle.heading, safeAmount),
+        }),
+        vehicleFootprint(other, {
+          x: other.mesh.root.position.x,
+          z: other.mesh.root.position.z,
+          heading: other.heading,
+        }),
+      );
+
+      diagnostics.sweptVehicleCollisionEvents += 1;
+      if (!responderContact) diagnostics.recklessCollisionEvents += 1;
+      const collisionEvent = {
+        kind: responderContact ? 'pursuit-contact' : 'reckless-collision',
+        sequence: diagnostics.sweptVehicleCollisionEvents,
+        playerVehicleId: vehicles.indexOf(playerVehicle),
+        victimVehicleId: index,
+        victimClass: other.cls,
+        victimLabel: other.identity?.label || other.cls,
+        responderId: responderContact ? index : null,
+        responderContact,
+        relativeSpeed: Math.round(relativeSpeed * 10) / 10,
+        sweepAmount: Math.round(contact.amount * 1000) / 1000,
+        postContactOverlap,
+        playerPath,
+        turnDistanceBeforeRewind,
+        turnDistanceAfterRewind: playerVehicle.turn?.distance ?? null,
+        playerDamage,
+        victimDamage,
+      };
+      const aftermath = onPlayerVehicleCollision?.(collisionEvent) ?? null;
+      if (aftermath && typeof aftermath === 'object') collisionEvent.aftermath = { ...aftermath };
+      diagnostics.lastPlayerCollision = collisionEvent;
+      diagnostics.lastSweptVehicleCollision = collisionEvent;
+      playerVehicle.damageCooldownUntil = elapsed + VEHICLE_DAMAGE_COOLDOWN;
+      emitted = true;
+    }
+    playerVehicleCollisionLatch = currentOverlaps;
+  }
+
+  function vehicleDamageSnapshot(vehicle) {
+    if (!vehicle) return null;
+    return {
+      health: Math.round(vehicle.health * 10) / 10,
+      maxHealth: vehicle.maxHealth,
+      ratio: Math.round(vehicle.health / Math.max(1, vehicle.maxHealth) * 1000) / 1000,
+      state: vehicle.damageState,
+      disabled: vehicle.disabled,
+      lastDamage: vehicle.lastDamage ? { ...vehicle.lastDamage } : null,
+    };
+  }
+
+  function syncVehicleDamageMetadata(vehicle) {
+    const userData = vehicle.mesh.root.userData || (vehicle.mesh.root.userData = {});
+    userData.vehicleHealth = vehicle.health;
+    userData.vehicleMaxHealth = vehicle.maxHealth;
+    userData.vehicleDamageState = vehicle.damageState;
+    userData.vehicleDisabled = vehicle.disabled;
+  }
+
+  function syncVehicleCombatDisabledMetadata(vehicle, disabled) {
+    const userData = vehicle?.mesh?.root?.userData;
+    if (!userData) return;
+    if (disabled) {
+      userData.combatDisabled = true;
+      userData.combatDefeated = true;
+      userData.combatBrakeUntil = Number.MAX_SAFE_INTEGER;
+      return;
+    }
+    delete userData.combatDisabled;
+    delete userData.combatDefeated;
+    delete userData.combatDefeatedAt;
+    delete userData.combatBrakeUntil;
+  }
+
+  function vehicleEligibleForCombatDamage(vehicle) {
+    return Boolean(vehicle
+      && !vehicle.disabled
+      && vehicle !== playerVehicle
+      && vehicle !== lastPlayerParkedVehicle
+      && vehicle !== impoundedPlayerVehicle
+      && !vehicle.garageStored
+      && !vehicle.remoteControlled);
+  }
+
+  function applyVehicleDamage(vehicle, amount = 0, source = 'impact') {
+    if (!vehicle || vehicle.disabled) return vehicleDamageSnapshot(vehicle);
+    const damage = THREE.MathUtils.clamp(Number(amount) || 0, 0, vehicle.maxHealth);
+    if (damage <= 0) return vehicleDamageSnapshot(vehicle);
+    vehicle.health = Math.max(0, vehicle.health - damage);
+    vehicle.disabled = vehicle.health <= 0;
+    vehicle.damageState = damageStateFor(vehicle);
+    vehicle.lastDamage = {
+      amount: Math.round(damage * 10) / 10,
+      source: String(source || 'impact'),
+      at: Math.round(lastElapsed * 1000) / 1000,
+    };
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : Math.max(vehicle.hazardUntil, lastElapsed + 2.4);
+    diagnostics.vehicleDamageEvents += 1;
+    if (vehicle.lastDamage.source === 'traffic-impact') diagnostics.collisionDamageEvents += 1;
+    if (vehicle.disabled) {
+      diagnostics.disabledVehicles += 1;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.blinkSide = 0;
+      if (vehicle.playerControlled) {
+        playerInput.throttle = 0;
+        playerInput.brake = 1;
+        playerInput.steer = 0;
+      }
+    }
+    syncVehicleDamageMetadata(vehicle);
+    return vehicleDamageSnapshot(vehicle);
+  }
+
+  function repairVehicleRecord(vehicle, source = 'repair') {
+    if (!vehicle) return null;
+    const needsRepair = vehicle.disabled
+      || vehicle.health < vehicle.maxHealth
+      || vehicle.lastDamage !== null;
+    const wasDisabled = vehicle.disabled;
+    vehicle.health = vehicle.maxHealth;
+    vehicle.disabled = false;
+    vehicle.damageState = 'clear';
+    vehicle.damageCooldownUntil = 0;
+    vehicle.lastDamage = null;
+    if (!vehicle.pursuitResponder) vehicle.hazardUntil = 0;
+    if (wasDisabled) diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles - 1);
+    if (needsRepair) diagnostics.vehicleRepairs += 1;
+    syncVehicleDamageMetadata(vehicle);
+    return { ...vehicleDamageSnapshot(vehicle), source };
+  }
 
   // Muni coach curb program: per-direction stop lines along each road, far
   // enough from intersections that a dwelling bus never blocks the box. The
@@ -1833,6 +2940,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         const bobPhase = rng() * Math.PI * 2;
         const servicePhase = bobPhase / (Math.PI * 2);
         const serviceProfile = CURB_SERVICE_PROFILES[identity.curbService];
+        const maxHealth = VEHICLE_HEALTH_BY_CLASS[cls] || 100;
         vehicles.push({
           cls, spec, mesh, identity,
           road: ri, dir, s,
@@ -1872,6 +2980,22 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           pullOutBlockedSince: null,
           hazardUntil: 0,
           mergeSignalUntil: 0,
+          pursuitResponder: false,
+          pursuitLevel: 0,
+          pursuitRouteRevision: 0,
+          pursuitRouteScore: null,
+          pursuitRouteTargetDistance: null,
+          pursuitRoutePlannedAt: null,
+          maxHealth,
+          health: maxHealth,
+          damageState: 'clear',
+          disabled: false,
+          impounded: false,
+          garageStored: false,
+          damageCooldownUntil: 0,
+          lastDamage: null,
+          theftReported: false,
+          registeredOwner: false,
         });
         placed = true;
         placedParked = spawnParked;
@@ -1879,6 +3003,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       if (placedParked) continue;
     }
     for (const v of vehicles) group.add(v.mesh.root);
+    for (const v of vehicles) syncVehicleDamageMetadata(v);
     stats.active = vehicles.length;
     for (const vehicle of vehicles) {
       diagnostics.classMix[vehicle.cls] = (diagnostics.classMix[vehicle.cls] || 0) + 1;
@@ -2178,6 +3303,40 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     }
   }
 
+  // Keep two ordinary private cars available at the curb for the normal
+  // on-foot vehicle-entry loop. They remain regular fleet actors (and use the
+  // same pull-out path later); the longer opening dwell simply makes the
+  // theft consequence reachable without racing the first simulation frames.
+  const theftReadyVehicles = vehicles.filter((vehicle) => (
+    vehicle.identity.category === 'private'
+    && vehicle.cls !== 'bike'
+    && vehicle !== heroSedan
+    && !presentationCars.includes(vehicle)
+  )).slice(0, 2);
+  theftReadyVehicles.forEach((vehicle, index) => {
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = 42 + index * 4 + vehicle.servicePhase * 3;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.waitingForGreen = false;
+    vehicle.greenReleaseAt = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.nextCurbStopAt = Infinity;
+    vehicle.nextServiceAt = Infinity;
+    vehicle.busStopIndex = -1;
+    vehicle.pullOutBlockedSince = null;
+    vehicle.hazardUntil = 0;
+    vehicle.mergeSignalUntil = 0;
+    vehicle.blinkSide = 0;
+    vehicle.laneOffsetSm = CURB_LANE_OFFSET;
+    vehicle.mesh.root.userData.theftReady = true;
+  });
+
   // Wire the img2threejs polished taxi into near-detail LOD for every cab.
   // Procedural yellow shells remain the distance silhouette + rain fallback.
   if (typeof document !== 'undefined') {
@@ -2265,6 +3424,50 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   function distanceToEnd(v, road = roads[v.road]) {
     return v.dir === 1 ? road.len - v.s : v.s;
+  }
+
+  function signalApproachFor(v, road = roads[v.road], time = lastElapsed) {
+    if (!v || !road || v.turn) return null;
+    const end = v.dir === 1 ? 1 : 0;
+    const nodeIndex = road.endNode[end];
+    const signal = signals.get(nodeIndex);
+    if (!signal) return null;
+    const group = road.signalGroup[end];
+    return {
+      nodeIndex,
+      group,
+      phase: signalPhaseAt(group, time, signal.offset),
+      remaining: signalPhaseAt.remaining(group, time, signal.offset),
+      offset: signal.offset,
+      distance: distanceToEnd(v, road) - STOP_MARGIN - v.half,
+    };
+  }
+
+  function reportPlayerRedLightCrossing(v, road, nextS, time) {
+    if (!v?.playerControlled || v.turn) return null;
+    const approach = signalApproachFor(v, road, time);
+    if (!approach || approach.phase !== 'red') return null;
+    const nextDistance = (v.dir === 1 ? road.len - nextS : nextS)
+      - STOP_MARGIN
+      - v.half;
+    if (approach.distance < 0 || nextDistance >= 0) return null;
+    const phaseCycle = Math.floor((time + approach.offset) / SIGNAL_PERIOD);
+    const key = `${v.road}:${approach.nodeIndex}:${phaseCycle}`;
+    if (playerSignalViolationLatch === key) return null;
+    playerSignalViolationLatch = key;
+    diagnostics.playerRedLightViolations += 1;
+    const event = {
+      kind: 'traffic-violation',
+      violation: 'red-light',
+      vehicleId: vehicles.indexOf(v),
+      road: v.road,
+      nodeIndex: approach.nodeIndex,
+      turnSide: v.route?.side ?? 0,
+      phase: approach.phase,
+      at: time,
+    };
+    onPlayerTrafficViolation?.(event);
+    return event;
   }
 
   function roadCruise(v, road) {
@@ -2368,10 +3571,15 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         dir,
         side,
         weight,
+        outX,
+        outZ,
       });
     }
 
     if (!choices.length) {
+      if (v.pursuitResponder && pursuitResponder.active) {
+        diagnostics.pursuitRouteFallbacks += 1;
+      }
       if (!isDirectionLegal(road, -v.dir) || !isTurnAllowed({ side: 1, uTurn: true, rule: turnRule })) {
         diagnostics.oneWayRejects += 1;
         v.route = null;
@@ -2382,13 +3590,63 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       return;
     }
 
-    let pick = rng() * totalWeight;
     let route = choices[choices.length - 1];
-    for (const choice of choices) {
-      pick -= choice.weight;
-      if (pick <= 0) {
-        route = choice;
-        break;
+    if (v.pursuitResponder && pursuitResponder.active) {
+      const targetX = pursuitResponder.playerX;
+      const targetZ = pursuitResponder.playerZ;
+      const targetDistanceFromNode = Math.hypot(targetX - node.x, targetZ - node.z);
+      let bestScore = Infinity;
+      for (const choice of choices) {
+        const nextRoad = roads[choice.road];
+        const lookAhead = Math.min(
+          Math.max(0, nextRoad.len - TURN_SPAN),
+          THREE.MathUtils.clamp(targetDistanceFromNode, 18, 64),
+        );
+        const lookAheadS = choice.dir === 1
+          ? lookAhead
+          : nextRoad.len - lookAhead;
+        sampleRoad(nextRoad, lookAheadS);
+        const distance = Math.hypot(targetX - samp.x, targetZ - samp.z);
+        const targetLength = Math.max(0.1, targetDistanceFromNode);
+        const targetDirectionX = (targetX - node.x) / targetLength;
+        const targetDirectionZ = (targetZ - node.z) / targetLength;
+        const alignment = choice.outX * targetDirectionX + choice.outZ * targetDirectionZ;
+        const turnCost = choice.side === 0 ? 0 : choice.side > 0 ? 0.3 : 0.5;
+        const score = distance
+          - alignment * Math.min(18, targetDistanceFromNode * 0.18)
+          + turnCost;
+        if (score < bestScore - 1e-6
+          || (Math.abs(score - bestScore) <= 1e-6 && choice.road < route.road)) {
+          bestScore = score;
+          route = choice;
+        }
+      }
+      v.pursuitRouteRevision = (v.pursuitRouteRevision || 0) + 1;
+      v.pursuitRouteScore = Math.round(bestScore * 1000) / 1000;
+      v.pursuitRouteTargetDistance = Math.round(targetDistanceFromNode * 1000) / 1000;
+      v.pursuitRoutePlannedAt = Math.round(lastElapsed * 1000) / 1000;
+      diagnostics.pursuitRouteDecisions += 1;
+      diagnostics.lastPursuitRouteDecision = {
+        vehicleId: vehicles.indexOf(v),
+        revision: v.pursuitRouteRevision,
+        fromRoad: v.road,
+        toRoad: route.road,
+        dir: route.dir,
+        side: route.side,
+        score: v.pursuitRouteScore,
+        targetDistance: v.pursuitRouteTargetDistance,
+        targetX: Math.round(targetX * 1000) / 1000,
+        targetZ: Math.round(targetZ * 1000) / 1000,
+        at: v.pursuitRoutePlannedAt,
+      };
+    } else {
+      let pick = rng() * totalWeight;
+      for (const choice of choices) {
+        pick -= choice.weight;
+        if (pick <= 0) {
+          route = choice;
+          break;
+        }
       }
     }
     v.route = route;
@@ -2870,7 +4128,11 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     for (const bucket of laneBuckets) bucket.length = 0;
     for (const v of vehicles) {
       v.leader = null;
-      if (v.parked || vehicleIsCurbside(v) || v.playerControlled || v.remoteControlled) continue;
+      // A locally driven vehicle still participates in the lane ordering so
+      // its forward safety correction can produce a real impact consequence.
+      // Remote vehicles remain excluded because their network poses do not
+      // own a reliable road-progress value in this simulation.
+      if (v.parked || v.impounded || v.garageStored || vehicleIsCurbside(v) || v.remoteControlled) continue;
       const bucketIndex = v.road * 2 + (v.dir === 1 ? 0 : 1);
       laneBuckets[bucketIndex].push(v);
     }
@@ -2910,6 +4172,28 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     }
   }
 
+  function updateMuniRideProgress() {
+    if (!muniRide || muniRide.arrived) return;
+    const vehicle = muniRide.vehicle;
+    const point = vehicle.mesh.root.position;
+    muniRide.traveled += Math.hypot(point.x - muniRide.lastX, point.z - muniRide.lastZ);
+    muniRide.lastX = point.x;
+    muniRide.lastZ = point.z;
+    const dwelling = vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed;
+    if (!muniRide.departed) {
+      if (!dwelling && (muniRide.traveled > 1.5 || vehicle.speed > 0.6)) {
+        muniRide.departed = true;
+      }
+      return;
+    }
+    if (dwelling && muniRide.traveled >= 8) {
+      muniRide.arrived = true;
+      muniRide.arrivedAt = lastElapsed;
+    }
+  }
+
   function update(dt, elapsed) {
     if (!vehicles.length) return;
     if (!Number.isFinite(dt) || dt <= 0) {
@@ -2921,6 +4205,27 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     dt = Math.min(dt, MAX_DT);
     lastElapsed = Number.isFinite(elapsed) ? elapsed : lastElapsed + dt;
     const t = lastElapsed;
+    if (pursuitBookingVisual.vehicleIndex >= 0 && t >= pursuitBookingVisual.until) {
+      const bookingVehicle = vehicles[pursuitBookingVisual.vehicleIndex];
+      if (bookingVehicle) bookingVehicle.mesh.root.userData.pursuitBooking = false;
+      pursuitBookingVisual.vehicleIndex = -1;
+      pursuitBookingVisual.until = 0;
+    }
+    const playerImpactStart = playerVehicle
+      ? {
+        x: playerVehicle.mesh.root.position.x,
+        z: playerVehicle.mesh.root.position.z,
+      }
+      : null;
+    const vehicleMotionStarts = new Map(vehicles.map((vehicle) => [vehicle, {
+      x: vehicle.mesh.root.position.x,
+      z: vehicle.mesh.root.position.z,
+      heading: Number.isFinite(vehicle.heading) ? vehicle.heading : vehicle.mesh.root.rotation.y,
+      road: vehicle.road,
+      s: vehicle.s,
+      turn: vehicle.turn,
+      turnDistance: vehicle.turn?.distance ?? null,
+    }]));
     rebuildLaneLeaders();
 
     let speedSum = 0;
@@ -2930,8 +4235,61 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     let turningCount = 0;
     let visibleCount = 0;
 
-    for (const v of vehicles) {
+    for (let vehicleIndex = 0; vehicleIndex < vehicles.length; vehicleIndex += 1) {
+      const v = vehicles[vehicleIndex];
+      const embodimentQaHeld = vehicleEmbodimentQaHold?.vehicle === v
+        && !v.playerControlled;
       let road = roads[v.road];
+      if (v.impounded || v.garageStored) {
+        v.speed = 0;
+        v.longitudinalAccel = 0;
+        v.accelSm = 0;
+        v.blinkSide = 0;
+        v.mesh.root.visible = false;
+        continue;
+      }
+      const pursuitResponderActive = pursuitResponder.active
+        && pursuitResponder.targetIndexes.includes(vehicleIndex)
+        && !v.playerControlled
+        && !v.remoteControlled;
+      const pursuitDeploymentHoldRequested = pursuitResponderActive
+        && pursuitDeploymentHoldIds.has(vehicleIndex);
+      const pursuitBookingActive = !pursuitResponder.active
+        && pursuitBookingVisual.vehicleIndex === vehicleIndex
+        && t < pursuitBookingVisual.until
+        && !v.playerControlled
+        && !v.remoteControlled;
+      if (pursuitResponderActive) {
+        v.pursuitResponder = true;
+        v.pursuitLevel = pursuitResponder.level;
+        const userData = v.mesh.root.userData || (v.mesh.root.userData = {});
+        userData.pursuitResponder = true;
+        userData.pursuitLevel = pursuitResponder.level;
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.42);
+      }
+      if (v.mesh.pursuitKit) {
+        const pursuitVisualActive = pursuitResponderActive || pursuitBookingActive;
+        v.mesh.pursuitKit.visible = pursuitVisualActive;
+        const redOn = pursuitVisualActive
+          && (t * 5.4 + vehicleIndex * 0.17) % 1 < 0.46;
+        const blueOn = pursuitVisualActive && !redOn;
+        const redMaterial = redOn ? shared.pursuitRedOnMat : shared.pursuitRedOffMat;
+        const blueMaterial = blueOn ? shared.pursuitBlueOnMat : shared.pursuitBlueOffMat;
+        for (const light of v.mesh.pursuitLights.red) {
+          if (light.material !== redMaterial) light.material = redMaterial;
+        }
+        for (const light of v.mesh.pursuitLights.blue) {
+          if (light.material !== blueMaterial) light.material = blueMaterial;
+        }
+      }
+      const combatData = v.mesh.root.userData || {};
+      const combatBrakeUntil = Number(combatData.combatBrakeUntil);
+      const combatBrakeActive = Number.isFinite(combatBrakeUntil)
+        && combatBrakeUntil > 0
+        && (combatData.combatReaction === 'brake' || combatData.combatReaction === 'staggered');
+      if (combatBrakeActive) {
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.75);
+      }
 
       // A remote player owns this vehicle: the networking layer drives its
       // mesh directly and the local AI must not move, queue, or rehome it.
@@ -2984,7 +4342,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         v.blinkSide = v.route?.side ?? 0;
       }
 
-      if (!v.turn && !v.route && distanceToEnd(v, road) < ROUTE_LOOKAHEAD) {
+      if (!embodimentQaHeld && !v.turn && !v.route && distanceToEnd(v, road) < ROUTE_LOOKAHEAD) {
         if (v.playerControlled) planPlayerRoute(v);
         else planRoute(v);
       }
@@ -2992,6 +4350,16 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const targetRoad = v.turn ? roads[v.turn.route.road] : road;
       let desired = roadCruise(v, targetRoad)
         * (1 + 0.035 * Math.sin(t * 0.31 + v.bobPhase));
+      if (pursuitResponderActive && !v.parked) {
+        const roadLimit = targetRoad.speedLimit ?? v.cruise;
+        desired = Math.max(
+          desired,
+          Math.min(v.cruise * 1.28, roadLimit * 1.22),
+        );
+      }
+      if (Number.isFinite(v.qaOnFootImpactSpeedCap)) {
+        desired = Math.min(desired, Math.max(0, v.qaOnFootImpactSpeedCap));
+      }
       let holdS = null;
       let curbHoldS = null;
       let curbApproach = 0;
@@ -2999,6 +4367,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
       if (v.parked) {
         desired = 0;
+      }
+      if (pursuitBookingActive) {
+        desired = 0;
+        v.hazardUntil = Math.max(v.hazardUntil, pursuitBookingVisual.until);
       }
 
       if (!v.playerControlled) {
@@ -3278,6 +4650,50 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         }
       }
 
+      // A nearby shot makes civilian traffic brake hard for a brief, visible
+      // beat. The normal kinematic envelope still owns the actual movement,
+      // so lane safety, turns, and recovery back to cruising remain intact.
+      if (combatBrakeActive && !v.parked) {
+        const urgency = 1;
+        const brakeTarget = Math.max(
+          0,
+          v.speed - v.spec.brake * (0.78 + urgency * 0.34) * dt,
+        );
+        desired = Math.min(desired, brakeTarget);
+        v.longitudinalAccel = Math.min(
+          v.longitudinalAccel,
+          -v.spec.brake * (0.4 + urgency * 0.45),
+        );
+      }
+      if (v.disabled) {
+        desired = 0;
+        v.playerSteer = 0;
+        v.longitudinalAccel = Math.min(0, v.longitudinalAccel);
+      }
+
+      // On-foot responders make a real curbside handoff instead of driving
+      // through their paired officer. The normal deceleration envelope owns
+      // the approach; once the car is below deployment speed, pin its exact
+      // road/turn coordinate until the caller releases the bounded hold.
+      if (pursuitDeploymentHoldRequested) {
+        desired = 0;
+        v.hazardUntil = Math.max(v.hazardUntil, t + 0.42);
+        if (v.speed <= 2) {
+          v.speed = 0;
+          v.longitudinalAccel = 0;
+          v.accelSm = 0;
+          pursuitDeploymentHoldingIds.add(vehicleIndex);
+        } else {
+          pursuitDeploymentHoldingIds.delete(vehicleIndex);
+        }
+      } else {
+        pursuitDeploymentHoldingIds.delete(vehicleIndex);
+      }
+      if (v.mesh.root.userData) {
+        v.mesh.root.userData.pursuitDeploymentHoldRequested = pursuitDeploymentHoldRequested;
+        v.mesh.root.userData.pursuitDeploymentHolding = pursuitDeploymentHoldingIds.has(vehicleIndex);
+      }
+
       // Servicing a curb hold: stay stopped in the parking lane until the
       // dwell elapses, then merge back through a gap check.
       if (curbHoldS !== null && t < v.curbDwellUntil) {
@@ -3354,14 +4770,82 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         let positionClamped = false;
         let nextS = v.s + v.dir * v.speed * dt;
         if (v.leader) {
+          const leaderIndex = vehicles.indexOf(v.leader);
+          const responderContact = pursuitResponder.active
+            && pursuitResponder.targetIndexes.includes(leaderIndex);
           const gapAfter = (v.leadS - nextS) * v.dir - v.leadHalf - v.half;
-          const emergencyGap = MIN_GAP * weatherGapFactor()
-            + v.speed * MIN_MOVING_HEADWAY * weatherHeadwayFactor();
+          const emergencyGap = v.playerControlled
+            ? 0.12
+            : MIN_GAP * weatherGapFactor()
+              + v.speed * MIN_MOVING_HEADWAY * weatherHeadwayFactor();
           if (gapAfter < emergencyGap) {
+            const correction = emergencyGap - gapAfter;
             diagnostics.maxSafetyCorrection = Math.max(
               diagnostics.maxSafetyCorrection,
-              emergencyGap - gapAfter,
+              correction,
             );
+            const relativeImpactSpeed = Math.max(0, previousSpeed - v.leadSpeed);
+            if (v.playerControlled
+              && !v.disabled
+              && t >= v.damageCooldownUntil
+              && (!responderContact || !playerVehicleCollisionLatch.has(leaderIndex))
+              && relativeImpactSpeed > 1.5) {
+              const damage = responderContact
+                ? 22
+                : THREE.MathUtils.clamp(
+                  relativeImpactSpeed * 7.5 + correction * 4,
+                  6,
+                  42,
+                );
+              const playerDamage = applyVehicleDamage(
+                v,
+                damage,
+                responderContact ? 'pursuit-contact' : 'traffic-impact',
+              );
+              if (!v.leader.disabled) {
+                const victimDamageAmount = THREE.MathUtils.clamp(
+                  damage * (responderContact ? 0.32 : 0.55),
+                  4,
+                  24,
+                );
+                const victimDamage = applyVehicleDamage(
+                  v.leader,
+                  victimDamageAmount,
+                  responderContact ? 'pursuit-response-impact' : 'reckless-collision',
+                );
+                v.leader.speed *= 0.72;
+                v.leader.longitudinalAccel = Math.min(0, v.leader.longitudinalAccel);
+                v.leader.hazardUntil = Math.max(v.leader.hazardUntil, t + 2.4);
+                if (responderContact) diagnostics.sweptVehicleCollisionEvents += 1;
+                else diagnostics.recklessCollisionEvents += 1;
+                const collisionEvent = {
+                  kind: responderContact ? 'pursuit-contact' : 'reckless-collision',
+                  sequence: responderContact
+                    ? diagnostics.sweptVehicleCollisionEvents
+                    : diagnostics.recklessCollisionEvents,
+                  playerVehicleId: vehicles.indexOf(v),
+                  victimVehicleId: leaderIndex,
+                  victimClass: v.leader.cls,
+                  victimLabel: v.leader.identity?.label || v.leader.cls,
+                  responderId: responderContact ? leaderIndex : null,
+                  responderContact,
+                  relativeSpeed: Math.round(relativeImpactSpeed * 10) / 10,
+                  playerPath: 'road',
+                  playerDamage,
+                  victimDamage,
+                };
+                const aftermath = onPlayerVehicleCollision?.(collisionEvent) ?? null;
+                if (aftermath && typeof aftermath === 'object') {
+                  collisionEvent.aftermath = { ...aftermath };
+                }
+                diagnostics.lastPlayerCollision = collisionEvent;
+                if (responderContact) {
+                  diagnostics.lastSweptVehicleCollision = collisionEvent;
+                  playerVehicleCollisionLatch.add(leaderIndex);
+                }
+              }
+              v.damageCooldownUntil = t + VEHICLE_DAMAGE_COOLDOWN;
+            }
             nextS = v.leadS - v.dir * (v.leadHalf + v.half + emergencyGap);
             v.speed = Math.min(v.speed, v.leadSpeed);
             v.longitudinalAccel = Math.min(0, v.longitudinalAccel);
@@ -3378,6 +4862,13 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           nextS = curbHoldS;
           v.speed = 0;
           v.longitudinalAccel = 0;
+        }
+        if (v.playerControlled) {
+          // This runs before beginTurn below. Enterable vehicle front bumpers
+          // reach the authored stop line before their center reaches the
+          // TURN_SPAN curve entry, so straight and steer-selected crossings
+          // share the same red-light edge and debounce path.
+          reportPlayerRedLightCrossing(v, road, nextS, t);
         }
         v.s = nextS;
 
@@ -3419,6 +4910,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         lastElapsed < HERO_GATE_SECONDS
         &&
         !v.turn
+        && !pursuitResponderActive
         && (v.cls === 'truck' || v.cls === 'bus')
         && heroCrossRoadSet.has(v.road)
       ) {
@@ -3428,6 +4920,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       }
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.road === heroRoadIndex
         && (
           v.s < heroCameraCutoff
@@ -3452,6 +4945,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       // cable-car hero band. Rehome them to the surrounding grid continuously.
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.cls === 'bus'
         && heroNorthRoadIndex >= 0
         && v.road === heroNorthRoadIndex
@@ -3472,6 +4966,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       // cable-car hero band during QA captures. Keep them north of the lens.
       if (
         !v.turn
+        && !pursuitResponderActive
         && v.cls === 'taxi'
         && heroNorthRoadIndex >= 0
         && v.road === heroNorthRoadIndex
@@ -3496,6 +4991,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         lastElapsed < HERO_GATE_SECONDS
         &&
         !v.turn
+        && !pursuitResponderActive
         && !(v.cls === 'truck' || v.cls === 'bus')
         && heroCrossRoadSet.has(v.road)
       ) {
@@ -3568,10 +5064,16 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
             : curbBlend > 0 ? 1.55
               : v.mergeSignalUntil > t ? 1.65
                 : 2.2;
-          v.laneOffsetSm = v.laneOffsetSm === undefined
-            ? targetOffset
-            : v.laneOffsetSm + (targetOffset - v.laneOffsetSm)
-              * Math.min(1, dt * lateralRate);
+          if (embodimentQaHeld) {
+            v.laneOffsetSm = vehicleEmbodimentQaHold.laneOffset;
+          } else if (v === lastPlayerParkedVehicle && v.parked) {
+            v.laneOffsetSm = v.laneOffsetSm === undefined ? targetOffset : v.laneOffsetSm;
+          } else {
+            v.laneOffsetSm = v.laneOffsetSm === undefined
+              ? targetOffset
+              : v.laneOffsetSm + (targetOffset - v.laneOffsetSm)
+                * Math.min(1, dt * lateralRate);
+          }
         }
         const offset = v.laneOffsetSm;
         if (
@@ -3605,22 +5107,28 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       const distanceSquared = (px - focusX) ** 2 + (pz - focusZ) ** 2;
       const visible = !focusActive || distanceSquared <= focusRadiusSquared;
       const nearDetail = !focusActive || distanceSquared <= TRAFFIC_NEAR_DETAIL_RADIUS_SQUARED;
-      v.mesh.root.visible = visible;
-      if (visible) visibleCount += 1;
+      v.mesh.root.visible = (embodimentQaHeld || visible) && v.qaOnFootImpactHidden !== true;
+      if (v.mesh.root.visible) visibleCount += 1;
 
       const speedRatio = Math.min(1, v.speed / v.spec.vMax);
+      const damageRatio = 1 - v.health / Math.max(1, v.maxHealth);
+      const damageSag = v.disabled ? 0.075 : damageRatio > 0.72 ? 0.035 : 0;
       v.mesh.bodyG.position.y = Math.sin(t * 8.5 + v.bobPhase) * 0.014 * speedRatio
-        + Math.sin(t * 2.05 + v.bobPhase * 2) * 0.005;
+        + Math.sin(t * 2.05 + v.bobPhase * 2) * 0.005
+        - damageSag;
       v.mesh.bodyG.rotation.x = Math.max(
         -0.045,
         Math.min(0.045, -v.accelSm * 0.012),
-      );
+      ) + (v.disabled ? 0.018 : 0);
       const rollTarget = Math.max(
         -0.06,
         Math.min(0.06, -yawRate * v.speed * 0.006),
       );
       v.rollSm += (rollTarget - v.rollSm) * Math.min(1, dt * 6);
-      v.mesh.bodyG.rotation.z = v.rollSm;
+      const damageLean = v.disabled
+        ? (v.servicePhase < 0.5 ? -0.035 : 0.035)
+        : damageRatio > 0.72 ? (v.servicePhase < 0.5 ? -0.014 : 0.014) : 0;
+      v.mesh.bodyG.rotation.z = v.rollSm + damageLean;
 
       const wheelbase = v.spec.len * (v.cls === 'bus' ? 0.62 : 0.6);
       const steerTarget = Math.max(
@@ -3683,8 +5191,10 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         || (curbHoldS !== null)
         || v.parked;
       const brakeOn = !v.parked
-        && (actualAccel <= BRAKE_LIGHT_DECEL
+        && (v.disabled
+          || actualAccel <= BRAKE_LIGHT_DECEL
           || holdActive
+          || combatBrakeActive
           || (desired < 0.05 && v.speed < 0.12)
           || (v.playerControlled && playerInput.brake > 0 && v.speed > 0.4));
       const tailLights = v.mesh.tailLights;
@@ -3697,7 +5207,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         v.mesh.tailMat.emissiveIntensity = brakeOn ? 2.6 : 0.8;
       }
 
-      const hazardOn = t < v.hazardUntil;
+      const hazardOn = v.disabled || t < v.hazardUntil;
       const blinkOn = (hazardOn || Boolean(v.blinkSide)) && (t * 2.2) % 1 < 0.52;
       if (Array.isArray(v.mesh.indicatorLeft) && Array.isArray(v.mesh.indicatorRight)) {
         const leftMaterial = blinkOn && (hazardOn || v.blinkSide < 0)
@@ -3731,9 +5241,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       }
 
       if (Array.isArray(v.mesh.beaconLights) && v.mesh.beaconLights.length) {
-        const beaconActive = curbApproach > 0.05
+        const beaconActive = !pursuitResponderActive && (curbApproach > 0.05
           || vehicleIsCurbside(v)
-          || v.mergeSignalUntil > t;
+          || v.mergeSignalUntil > t);
         const beaconOn = beaconActive && (t * 2.8 + v.servicePhase) % 1 < 0.42;
         const beaconMaterial = beaconOn ? shared.beaconOnMat : shared.beaconOffMat;
         for (const light of v.mesh.beaconLights) {
@@ -3746,6 +5256,9 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       if (v.speed < 0.35 && (v.leader || v.waitingForGreen)) queuedCount += 1;
       if (v.waitingForGreen) signalQueuedCount += 1;
     }
+
+    resolvePlayerVehicleFootprintCollisions(vehicleMotionStarts, t);
+    resolveOnFootPlayerVehicleContacts(vehicleMotionStarts);
 
     stats.active = vehicles.length;
     stats.visible = visibleCount;
@@ -3773,6 +5286,20 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     diagnosticDuration += dt;
     speedIntegral += (speedSum / vehicles.length) * dt;
     diagnostics.meanSpeed = speedIntegral / diagnosticDuration;
+    if (playerVehicle && playerImpactStart) {
+      const point = playerVehicle.mesh.root.position;
+      playerPedestrianImpactProbe = {
+        vehicleId: vehicles.indexOf(playerVehicle),
+        start: playerImpactStart,
+        end: { x: point.x, z: point.z },
+        speed: playerVehicle.speed,
+        halfWidth: playerVehicle.spec.wid * 0.5,
+      };
+    } else {
+      playerPedestrianImpactProbe = null;
+      playerPedestrianImpactLatch.clear();
+    }
+    updateMuniRideProgress();
   }
 
   function getStats() {
@@ -3781,6 +5308,425 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       visible: stats.visible,
       avgSpeed: stats.avgSpeed,
       signalPhase: stats.signalPhase,
+    };
+  }
+
+  function getOnFootVehicleContactDiagnostics() {
+    return {
+      probeActive: Boolean(onFootPlayerCollisionProbe),
+      latchCount: onFootVehicleCollisionLatch.size,
+      tests: diagnostics.onFootVehicleContactTests,
+      contacts: diagnostics.onFootVehicleContacts,
+      corrections: diagnostics.onFootVehicleCorrections,
+      blockingContacts: diagnostics.onFootVehicleBlockingContacts,
+      damageContacts: diagnostics.onFootVehicleDamageContacts,
+      lastContact: diagnostics.lastOnFootVehicleContact
+        ? {
+          ...diagnostics.lastOnFootVehicleContact,
+          correctedPosition: {
+            ...diagnostics.lastOnFootVehicleContact.correctedPosition,
+          },
+          contactFootprint: diagnostics.lastOnFootVehicleContact.contactFootprint
+            ? { ...diagnostics.lastOnFootVehicleContact.contactFootprint }
+            : undefined,
+          endFootprint: diagnostics.lastOnFootVehicleContact.endFootprint
+            ? { ...diagnostics.lastOnFootVehicleContact.endFootprint }
+            : undefined,
+          consequence: diagnostics.lastOnFootVehicleContact.consequence
+            ? {
+              ...diagnostics.lastOnFootVehicleContact.consequence,
+              correctedPosition: diagnostics.lastOnFootVehicleContact.consequence.correctedPosition
+                ? { ...diagnostics.lastOnFootVehicleContact.consequence.correctedPosition }
+                : undefined,
+            }
+            : undefined,
+        }
+        : null,
+      lastCorrection: diagnostics.lastOnFootVehicleCorrection
+        ? {
+          ...diagnostics.lastOnFootVehicleCorrection,
+          correctedPosition: {
+            ...diagnostics.lastOnFootVehicleCorrection.correctedPosition,
+          },
+          contactFootprint: diagnostics.lastOnFootVehicleCorrection.contactFootprint
+            ? { ...diagnostics.lastOnFootVehicleCorrection.contactFootprint }
+            : undefined,
+          endFootprint: diagnostics.lastOnFootVehicleCorrection.endFootprint
+            ? { ...diagnostics.lastOnFootVehicleCorrection.endFootprint }
+            : undefined,
+          consequence: diagnostics.lastOnFootVehicleCorrection.consequence
+            ? {
+              ...diagnostics.lastOnFootVehicleCorrection.consequence,
+              correctedPosition: diagnostics.lastOnFootVehicleCorrection.consequence.correctedPosition
+                ? { ...diagnostics.lastOnFootVehicleCorrection.consequence.correctedPosition }
+                : undefined,
+            }
+            : undefined,
+        }
+        : null,
+    };
+  }
+
+  function restoreOnFootVehicleImpactQaStage() {
+    const saved = onFootVehicleImpactQaStage?.saved;
+    const vehicle = onFootVehicleImpactQaStage?.vehicle;
+    if (!saved || !vehicle) return;
+    vehicle.remoteControlled = saved.remoteControlled;
+    vehicle.disabled = saved.disabled;
+    vehicle.garageStored = saved.garageStored;
+    vehicle.impounded = saved.impounded;
+    vehicle.parked = saved.parked;
+    vehicle.parkedAt = saved.parkedAt;
+    vehicle.dwellUntil = saved.dwellUntil;
+    vehicle.speed = saved.speed;
+    vehicle.longitudinalAccel = saved.longitudinalAccel;
+    vehicle.accelSm = saved.accelSm;
+    vehicle.health = saved.health;
+    vehicle.damageState = saved.damageState;
+    vehicle.mesh.root.visible = saved.visible;
+    delete vehicle.qaOnFootImpactSpeedCap;
+    delete vehicle.qaOnFootImpactHidden;
+    syncVehicleDamageMetadata(vehicle);
+    syncVehicleCombatDisabledMetadata(vehicle, vehicle.disabled);
+    onFootVehicleImpactQaStage = null;
+  }
+
+  function stageOnFootVehicleImpactQa({ kind = 'high-speed', referencePosition = null } = {}) {
+    restoreOnFootVehicleImpactQaStage();
+    setOnFootPlayerCollisionProbe(null);
+    const allowed = new Set([
+      'high-speed', 'low-speed', 'disabled', 'parallel', 'hidden', 'garage',
+      'impounded', 'remote', 'downed', 'pursuit-responder',
+    ]);
+    if (!allowed.has(kind)) return null;
+    const reference = Number.isFinite(referencePosition?.x) && Number.isFinite(referencePosition?.z)
+      ? referencePosition
+      : { x: focusX, z: focusZ };
+    const responderCandidates = kind === 'pursuit-responder'
+      ? pursuitResponder.targetIndexes.map((index) => vehicles[index]).filter(Boolean)
+      : null;
+    const eligible = (responderCandidates || vehicles).filter((vehicle) => (
+      vehicle
+      && vehicle.mesh.root.visible
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.garageStored
+      && !vehicle.impounded
+      && vehicle.cls !== 'bike'
+    ));
+    const wantsMoving = kind === 'high-speed';
+    const movingPrivate = eligible.filter((vehicle) => wantsMoving
+      && vehicle.identity.category === 'private'
+      && !vehicle.identity.curbService
+      && !vehicle.disabled
+      && !vehicle.parked
+      && vehicle.speed >= 2);
+    const preferred = movingPrivate.length ? movingPrivate : eligible.filter((vehicle) => wantsMoving
+      ? !vehicle.disabled && !vehicle.parked && vehicle.speed >= 2
+      : !vehicle.disabled && (vehicle.parked || vehicle.speed <= 0.5));
+    const candidates = preferred.length ? preferred : eligible.filter((vehicle) => !vehicle.disabled);
+    candidates.sort((left, right) => (
+      Math.hypot(
+        left.mesh.root.position.x - reference.x,
+        left.mesh.root.position.z - reference.z,
+      ) - Math.hypot(
+        right.mesh.root.position.x - reference.x,
+        right.mesh.root.position.z - reference.z,
+      )
+    ));
+    const vehicle = candidates[0];
+    if (!vehicle) return null;
+    const saved = {
+      remoteControlled: vehicle.remoteControlled,
+      disabled: vehicle.disabled,
+      garageStored: vehicle.garageStored,
+      impounded: vehicle.impounded,
+      parked: vehicle.parked,
+      parkedAt: vehicle.parkedAt,
+      dwellUntil: vehicle.dwellUntil,
+      speed: vehicle.speed,
+      longitudinalAccel: vehicle.longitudinalAccel,
+      accelSm: vehicle.accelSm,
+      health: vehicle.health,
+      damageState: vehicle.damageState,
+      visible: vehicle.mesh.root.visible,
+    };
+    onFootVehicleImpactQaStage = { kind, vehicle, saved };
+    const negativeContext = ['hidden', 'garage', 'impounded', 'remote', 'downed']
+      .includes(kind);
+    if (wantsMoving) {
+      vehicle.parked = false;
+      vehicle.speed = 4.4;
+      vehicle.qaOnFootImpactSpeedCap = 4.4;
+    } else {
+      vehicle.parked = kind !== 'pursuit-responder';
+      vehicle.parkedAt = lastElapsed;
+      vehicle.dwellUntil = 10000;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.accelSm = 0;
+      vehicle.qaOnFootImpactSpeedCap = 0;
+    }
+    if (kind === 'disabled') {
+      vehicle.disabled = true;
+      vehicle.health = 0;
+      vehicle.damageState = 'disabled';
+      syncVehicleDamageMetadata(vehicle);
+      syncVehicleCombatDisabledMetadata(vehicle, true);
+    } else if (kind === 'hidden') {
+      vehicle.qaOnFootImpactHidden = true;
+      vehicle.mesh.root.visible = false;
+    } else if (kind === 'garage') {
+      vehicle.garageStored = true;
+      vehicle.mesh.root.visible = false;
+    } else if (kind === 'impounded') {
+      vehicle.impounded = true;
+      vehicle.mesh.root.visible = false;
+    } else if (kind === 'remote') {
+      vehicle.remoteControlled = true;
+    }
+    const heading = Number(vehicle.heading ?? vehicle.mesh.root.rotation.y) || 0;
+    const axes = footprintAxes(heading);
+    const halfLength = vehicle.spec.len * 0.5;
+    const halfWidth = vehicle.spec.wid * 0.5;
+    const stagedHalfLength = halfLength + ON_FOOT_VEHICLE_SHELL_LENGTH_PAD;
+    const stagedHalfWidth = halfWidth + ON_FOOT_VEHICLE_SHELL_WIDTH_PAD;
+    let playerPose;
+    if (kind === 'parallel') {
+      playerPose = {
+        x: vehicle.mesh.root.position.x
+          - axes.right.x * (stagedHalfWidth + ON_FOOT_PLAYER_RADIUS + 0.55),
+        z: vehicle.mesh.root.position.z
+          - axes.right.z * (stagedHalfWidth + ON_FOOT_PLAYER_RADIUS + 0.55),
+        yaw: heading + Math.PI,
+      };
+    } else if (negativeContext) {
+      playerPose = {
+        x: vehicle.mesh.root.position.x
+          + axes.right.x * (stagedHalfWidth + ON_FOOT_PLAYER_RADIUS + 0.55),
+        z: vehicle.mesh.root.position.z
+          + axes.right.z * (stagedHalfWidth + ON_FOOT_PLAYER_RADIUS + 0.55),
+        yaw: heading,
+      };
+    } else {
+      playerPose = {
+        x: vehicle.mesh.root.position.x
+          - axes.forward.x * (stagedHalfLength + ON_FOOT_PLAYER_RADIUS + 0.52),
+        z: vehicle.mesh.root.position.z
+          - axes.forward.z * (stagedHalfLength + ON_FOOT_PLAYER_RADIUS + 0.52),
+        yaw: heading + Math.PI,
+      };
+    }
+    return {
+      kind,
+      vehicleId: vehicles.indexOf(vehicle),
+      playerPose,
+      speed: vehicle.speed,
+      disabled: vehicle.disabled,
+      excluded: negativeContext,
+    };
+  }
+
+  function clearVehicleEmbodimentQaHold({ restore = true } = {}) {
+    const held = vehicleEmbodimentQaHold;
+    if (!held?.vehicle) return;
+    const { vehicle, saved } = held;
+    if (restore && saved) {
+      vehicle.road = saved.road;
+      vehicle.dir = saved.dir;
+      vehicle.s = saved.s;
+      vehicle.laneOffsetSm = saved.laneOffsetSm;
+      vehicle.heading = saved.heading;
+      vehicle.speed = saved.speed;
+      vehicle.longitudinalAccel = saved.longitudinalAccel;
+      vehicle.accelSm = saved.accelSm;
+      vehicle.playerSteer = saved.playerSteer;
+      vehicle.route = saved.route;
+      vehicle.turn = saved.turn;
+      vehicle.leader = saved.leader;
+      vehicle.parked = saved.parked;
+      vehicle.parkedAt = saved.parkedAt;
+      vehicle.dwellUntil = saved.dwellUntil;
+      vehicle.curbDwellUntil = saved.curbDwellUntil;
+      vehicle.blinkSide = saved.blinkSide;
+      vehicle.pullOutBlockedSince = saved.pullOutBlockedSince;
+      vehicle.mesh.root.position.copy(saved.position);
+      vehicle.mesh.root.rotation.copy(saved.rotation);
+      vehicle.mesh.root.visible = saved.visible;
+    }
+    if (vehicle.mesh.root.userData) delete vehicle.mesh.root.userData.vehicleEmbodimentQaHeld;
+    vehicleEmbodimentQaHold = null;
+  }
+
+  function stagePlayerVehicleEmbodimentQa({ referencePosition = null, preferredClass = null } = {}) {
+    if (playerVehicle || impoundedPlayerVehicle || taxiRide || muniRide) return null;
+    clearVehicleEmbodimentQaHold();
+    const reference = Number.isFinite(referencePosition?.x) && Number.isFinite(referencePosition?.z)
+      ? referencePosition
+      : { x: focusX, z: focusZ };
+    const candidates = vehicles.map((vehicle, index) => ({ vehicle, index })).filter(({ vehicle }) => (
+      vehicle
+      && (vehicle.identity.category === 'private' || Boolean(preferredClass))
+      && vehicle.mesh.root.userData?.vehicleEmbodiment
+      && (!preferredClass || vehicle.cls === preferredClass)
+      && !vehicle.remoteControlled
+      && !vehicle.garageStored
+      && !vehicle.impounded
+      && !vehicle.disabled
+      && (preferredClass || (
+        Math.abs(vehicle.mesh.root.position.x) <= 220
+        && Math.abs(vehicle.mesh.root.position.z) <= 220
+      ))
+    ));
+    candidates.sort((left, right) => (
+      (left.vehicle.identity.category === 'private' ? 0 : 1)
+      - (right.vehicle.identity.category === 'private' ? 0 : 1)
+      || Math.hypot(
+        left.vehicle.mesh.root.position.x - reference.x,
+        left.vehicle.mesh.root.position.z - reference.z,
+      ) - Math.hypot(
+        right.vehicle.mesh.root.position.x - reference.x,
+        right.vehicle.mesh.root.position.z - reference.z,
+      ) || left.index - right.index
+    ));
+    const selected = candidates[0];
+    if (!selected) return null;
+    const vehicle = selected.vehicle;
+    const saved = {
+      road: vehicle.road,
+      dir: vehicle.dir,
+      s: vehicle.s,
+      laneOffsetSm: vehicle.laneOffsetSm,
+      heading: vehicle.heading,
+      speed: vehicle.speed,
+      longitudinalAccel: vehicle.longitudinalAccel,
+      accelSm: vehicle.accelSm,
+      playerSteer: vehicle.playerSteer,
+      route: vehicle.route,
+      turn: vehicle.turn,
+      leader: vehicle.leader,
+      parked: vehicle.parked,
+      parkedAt: vehicle.parkedAt,
+      dwellUntil: vehicle.dwellUntil,
+      curbDwellUntil: vehicle.curbDwellUntil,
+      blinkSide: vehicle.blinkSide,
+      pullOutBlockedSince: vehicle.pullOutBlockedSince,
+      position: vehicle.mesh.root.position.clone(),
+      rotation: vehicle.mesh.root.rotation.clone(),
+      visible: vehicle.mesh.root.visible,
+    };
+    if (!vehicle.mesh.root.visible) {
+      const stagedProjection = projectVehiclePoseToRoad(
+        reference,
+        vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
+      );
+      if (!stagedProjection) return null;
+      vehicle.road = stagedProjection.road;
+      vehicle.dir = stagedProjection.dir;
+      vehicle.s = stagedProjection.s;
+      vehicle.laneOffsetSm = stagedProjection.lateral;
+      vehicle.heading = stagedProjection.heading;
+      vehicle.mesh.root.position.set(
+        stagedProjection.x,
+        stagedProjection.y,
+        stagedProjection.z,
+      );
+      vehicle.mesh.root.rotation.y = stagedProjection.heading;
+    }
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.playerSteer = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = lastElapsed;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.mesh.root.visible = true;
+    vehicleEmbodimentQaHold = {
+      vehicle,
+      index: selected.index,
+      saved,
+      laneOffset: Number.isFinite(vehicle.laneOffsetSm)
+        ? vehicle.laneOffsetSm
+        : roads[vehicle.road]?.laneOffset ?? LANE_OFFSET,
+    };
+    vehicle.mesh.root.userData.vehicleEmbodimentQaHeld = true;
+    return {
+      kind: 'core-private',
+      vehicleId: selected.index,
+      class: vehicle.cls,
+      position: {
+        x: vehicle.mesh.root.position.x,
+        y: vehicle.mesh.root.position.y,
+        z: vehicle.mesh.root.position.z,
+      },
+      heading: Number(vehicle.heading ?? vehicle.mesh.root.rotation.y) || 0,
+      syntheticEvents: 0,
+    };
+  }
+
+  function getOnFootVehicleImpactQaState(playerProbe = null) {
+    const stage = onFootVehicleImpactQaStage;
+    const vehicle = stage?.vehicle;
+    if (!stage || !vehicle) return null;
+    const playerPosition = playerProbe?.position || playerProbe;
+    const playerRenderedBounds = playerProbe?.renderedBounds || null;
+    const footprint = onFootVehicleFootprint(vehicle, {
+      x: vehicle.mesh.root.position.x,
+      z: vehicle.mesh.root.position.z,
+      heading: vehicle.heading ?? vehicle.mesh.root.rotation.y,
+    });
+    const rootClearance = Number.isFinite(playerPosition?.x) && Number.isFinite(playerPosition?.z)
+      ? discFootprintClearance(playerPosition, footprint, ON_FOOT_PLAYER_RADIUS)
+      : null;
+    const finalOverlap = Number.isFinite(rootClearance)
+      ? rootClearance <= 0
+      : false;
+    const renderedSatClearance = aabbFootprintSatClearance(playerRenderedBounds, footprint);
+    vehicle.mesh.root.updateWorldMatrix(true, true);
+    const renderedBox = new THREE.Box3().setFromObject(vehicle.mesh.root, true);
+    const renderedBounds = renderedBox.isEmpty() ? null : {
+      min: { x: renderedBox.min.x, y: renderedBox.min.y, z: renderedBox.min.z },
+      max: { x: renderedBox.max.x, y: renderedBox.max.y, z: renderedBox.max.z },
+    };
+    return {
+      kind: stage.kind,
+      vehicleId: vehicles.indexOf(vehicle),
+      speed: Math.round(vehicle.speed * 10) / 10,
+      position: { x: footprint.x, z: footprint.z },
+      heading: footprint.heading,
+      halfLength: footprint.halfLength,
+      halfWidth: footprint.halfWidth,
+      obb: {
+        center: { x: footprint.x, z: footprint.z },
+        heading: footprint.heading,
+        halfLength: footprint.halfLength,
+        halfWidth: footprint.halfWidth,
+      },
+      renderedBounds,
+      bodyClearance: {
+        radius: ON_FOOT_PLAYER_RADIUS,
+        root: Number.isFinite(rootClearance)
+          ? Math.round(rootClearance * 1000) / 1000
+          : null,
+        renderedSat: Number.isFinite(renderedSatClearance)
+          ? Math.round(renderedSatClearance * 1000) / 1000
+          : null,
+        renderedOverlap: Number.isFinite(renderedSatClearance)
+          ? renderedSatClearance <= 0
+          : null,
+      },
+      visible: vehicle.mesh.root.visible,
+      disabled: vehicle.disabled,
+      parked: vehicle.parked,
+      garageStored: vehicle.garageStored,
+      impounded: vehicle.impounded,
+      remote: vehicle.remoteControlled,
+      finalOverlap,
+      actorCount: vehicles.length,
     };
   }
 
@@ -3795,6 +5741,346 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     focusZ = position.z;
     const safeRadius = Number.isFinite(radius) ? Math.max(32, radius) : 340;
     focusRadiusSquared = safeRadius * safeRadius;
+  }
+
+  function clearPursuitResponder() {
+    for (const vehicle of vehicles) {
+      if (!vehicle.pursuitResponder) continue;
+      vehicle.pursuitResponder = false;
+      vehicle.pursuitLevel = 0;
+      const userData = vehicle.mesh.root.userData || {};
+      userData.pursuitResponder = false;
+      userData.pursuitLevel = 0;
+      userData.pursuitSlot = null;
+      if (vehicle.mesh.pursuitKit) vehicle.mesh.pursuitKit.visible = false;
+    }
+    pursuitResponder.active = false;
+    pursuitResponder.targetIndex = -1;
+    pursuitResponder.targetIndexes.length = 0;
+    pursuitResponder.playerVehicleId = null;
+    pursuitResponder.distance = null;
+    pursuitDeploymentHoldIds.clear();
+    pursuitDeploymentHoldingIds.clear();
+  }
+
+  function setPursuitDeploymentHolds(responderIds = []) {
+    const next = new Set();
+    for (const id of responderIds) {
+      if (!Number.isInteger(id) || next.size >= 3) continue;
+      if (!pursuitResponder.targetIndexes.includes(id)) continue;
+      next.add(id);
+    }
+    for (const id of pursuitDeploymentHoldIds) {
+      if (next.has(id)) continue;
+      pursuitDeploymentHoldingIds.delete(id);
+      const root = vehicles[id]?.mesh?.root;
+      if (root?.userData) {
+        root.userData.pursuitDeploymentHoldRequested = false;
+        root.userData.pursuitDeploymentHolding = false;
+      }
+    }
+    pursuitDeploymentHoldIds.clear();
+    for (const id of next) pursuitDeploymentHoldIds.add(id);
+    for (const id of next) {
+      const root = vehicles[id]?.mesh?.root;
+      if (!root?.userData) continue;
+      root.userData.pursuitDeploymentHoldRequested = true;
+      root.userData.pursuitDeploymentHolding = pursuitDeploymentHoldingIds.has(id);
+    }
+    return pursuitDeploymentHoldIds.size;
+  }
+
+  function setPursuitResponder({
+    active = false,
+    position = null,
+    playerVehicleId = null,
+    level = 1,
+    presentation = null,
+  } = {}) {
+    if (!active || !Number.isFinite(position?.x) || !Number.isFinite(position?.z)) {
+      if (presentation === 'booking' && pursuitResponder.targetIndexes.length > 0) {
+        let nearestIndex = pursuitResponder.targetIndexes[0];
+        let nearestDistance = Infinity;
+        for (const index of pursuitResponder.targetIndexes) {
+          const vehicle = vehicles[index];
+          if (!vehicle) continue;
+          const distance = Math.hypot(
+            vehicle.mesh.root.position.x - pursuitResponder.playerX,
+            vehicle.mesh.root.position.z - pursuitResponder.playerZ,
+          );
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = index;
+          }
+        }
+        const bookingVehicle = vehicles[nearestIndex];
+        pursuitBookingVisual.vehicleIndex = nearestIndex;
+        pursuitBookingVisual.until = lastElapsed + 5;
+        if (bookingVehicle) {
+          bookingVehicle.speed = 0;
+          bookingVehicle.longitudinalAccel = 0;
+          bookingVehicle.accelSm = 0;
+          bookingVehicle.hazardUntil = pursuitBookingVisual.until;
+          bookingVehicle.mesh.root.userData.pursuitBooking = true;
+        }
+      }
+      clearPursuitResponder();
+      return getPursuitResponder();
+    }
+    if (pursuitBookingVisual.vehicleIndex >= 0) {
+      const bookingVehicle = vehicles[pursuitBookingVisual.vehicleIndex];
+      if (bookingVehicle) bookingVehicle.mesh.root.userData.pursuitBooking = false;
+      pursuitBookingVisual.vehicleIndex = -1;
+      pursuitBookingVisual.until = 0;
+    }
+    pursuitResponder.active = true;
+    pursuitResponder.playerVehicleId = Number.isInteger(playerVehicleId) ? playerVehicleId : null;
+    pursuitResponder.playerX = position.x;
+    pursuitResponder.playerZ = position.z;
+    pursuitResponder.level = THREE.MathUtils.clamp(Math.floor(Number(level) || 1), 1, 3);
+    const requiredCount = pursuitResponder.level;
+    const eligible = (vehicle, index) => Boolean(
+      vehicle
+      && index !== pursuitResponder.playerVehicleId
+      && vehicle.mesh.root.visible
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.impounded
+      && !vehicle.garageStored
+      && !vehicle.disabled
+      && !vehicle.parked
+      && !taxiAtServiceStop(vehicle)
+      && !deliveryAtServiceStop(vehicle)
+      && vehicle.cls !== 'bike'
+      && vehicle.cls !== 'bus'
+      && vehicle.cls !== 'truck'
+      && vehicle.cls !== 'taxi'
+      && vehicle.identity.category !== 'delivery',
+    );
+    const retained = pursuitResponder.targetIndexes.filter(
+      (index) => eligible(vehicles[index], index),
+    ).slice(0, requiredCount);
+    const retainedSet = new Set(retained);
+    const candidates = [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!eligible(vehicle, index) || retainedSet.has(index)) continue;
+      const dx = vehicle.mesh.root.position.x - pursuitResponder.playerX;
+      const dz = vehicle.mesh.root.position.z - pursuitResponder.playerZ;
+      const distance = Math.hypot(dx, dz);
+      const toPlayerX = -dx / Math.max(0.1, distance);
+      const toPlayerZ = -dz / Math.max(0.1, distance);
+      const facingPlayer = Math.sin(vehicle.mesh.root.rotation.y) * toPlayerX
+        + Math.cos(vehicle.mesh.root.rotation.y) * toPlayerZ;
+      candidates.push({
+        index,
+        score: distance * (facingPlayer > 0.1 ? 0.52 : 1.2),
+      });
+    }
+    candidates.sort((a, b) => a.score - b.score || a.index - b.index);
+    while (retained.length < requiredCount && candidates.length) {
+      retained.push(candidates.shift().index);
+    }
+    const nextSet = new Set(retained);
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!vehicle.pursuitResponder || nextSet.has(index)) continue;
+      vehicle.pursuitResponder = false;
+      vehicle.pursuitLevel = 0;
+      vehicle.mesh.root.userData.pursuitResponder = false;
+      vehicle.mesh.root.userData.pursuitLevel = 0;
+      vehicle.mesh.root.userData.pursuitSlot = null;
+      if (vehicle.mesh.pursuitKit) vehicle.mesh.pursuitKit.visible = false;
+    }
+    pursuitResponder.targetIndexes = retained;
+    pursuitResponder.targetIndex = retained[0] ?? -1;
+    if (!retained.length) {
+      pursuitResponder.active = false;
+      pursuitResponder.distance = null;
+      return getPursuitResponder();
+    }
+    retained.forEach((index, slot) => {
+      const target = vehicles[index];
+      const newlyAssigned = !target.pursuitResponder;
+      target.pursuitResponder = true;
+      target.pursuitLevel = pursuitResponder.level;
+      // Ambient traffic can already have a random junction choice queued when
+      // it is recruited. Re-plan that unopened choice against the live player
+      // target so the first visible responder turn belongs to the chase.
+      if (newlyAssigned && !target.turn) {
+        target.route = null;
+        target.blinkSide = 0;
+      }
+      const userData = target.mesh.root.userData || (target.mesh.root.userData = {});
+      userData.pursuitResponder = true;
+      userData.pursuitLevel = pursuitResponder.level;
+      userData.pursuitSlot = slot;
+    });
+    const primary = vehicles[pursuitResponder.targetIndex];
+    pursuitResponder.distance = Math.hypot(
+      primary.mesh.root.position.x - pursuitResponder.playerX,
+      primary.mesh.root.position.z - pursuitResponder.playerZ,
+    );
+    return getPursuitResponder();
+  }
+
+  function pursuitRouteIsLegal(vehicle, route) {
+    if (!vehicle || !route) return true;
+    const sourceRoad = roads[vehicle.road];
+    if (!sourceRoad) return false;
+    if (route.uTurn) {
+      return route.road === vehicle.road
+        && route.dir === -vehicle.dir
+        && isDirectionLegal(sourceRoad, route.dir);
+    }
+    const nextRoad = roads[route.road];
+    if (!nextRoad || !isDirectionLegal(nextRoad, route.dir)) return false;
+    const end = vehicle.dir === 1 ? 1 : 0;
+    const nodeIndex = sourceRoad.endNode[end];
+    const node = nodes[nodeIndex];
+    if (!node?.ends?.some((edge) => (
+      edge.road === route.road
+      && (edge.end === 0 ? 1 : -1) === route.dir
+    ))) return false;
+    const approachPoint = {
+      x: sourceRoad.px[end === 1 ? 0 : sourceRoad.px.length - 1],
+      z: sourceRoad.pz[end === 1 ? 0 : sourceRoad.pz.length - 1],
+    };
+    return isTurnAllowed({
+      side: route.side,
+      rule: findTurnRule(node, approachPoint, turnRules),
+    });
+  }
+
+  function pursuitRouteSnapshot(vehicle) {
+    const route = vehicle?.turn?.route || vehicle?.route;
+    if (!route) return null;
+    if (route.uTurn) {
+      return {
+        road: Number.isInteger(route.road) ? route.road : vehicle.road,
+        dir: Number.isInteger(route.dir) ? route.dir : -vehicle.dir,
+        side: route.side ?? 1,
+        uTurn: true,
+      };
+    }
+    return {
+      road: route.road,
+      dir: route.dir,
+      side: route.side ?? 0,
+      uTurn: Boolean(route.uTurn),
+    };
+  }
+
+  function getPursuitChaseDiagnostics() {
+    return {
+      active: pursuitResponder.active,
+      level: pursuitResponder.active ? pursuitResponder.level : 0,
+      target: pursuitResponder.active
+        ? {
+          x: Math.round(pursuitResponder.playerX * 1000) / 1000,
+          z: Math.round(pursuitResponder.playerZ * 1000) / 1000,
+        }
+        : null,
+      routeDecisions: diagnostics.pursuitRouteDecisions,
+      routeFallbacks: diagnostics.pursuitRouteFallbacks,
+      lastDecision: diagnostics.lastPursuitRouteDecision
+        ? { ...diagnostics.lastPursuitRouteDecision }
+        : null,
+      bookingVisual: pursuitBookingVisual.vehicleIndex >= 0
+        && lastElapsed < pursuitBookingVisual.until
+        ? {
+          vehicleId: pursuitBookingVisual.vehicleIndex,
+          remaining: Math.round((pursuitBookingVisual.until - lastElapsed) * 1000) / 1000,
+        }
+        : null,
+      responders: pursuitResponder.targetIndexes.map((index) => {
+        const vehicle = vehicles[index];
+        if (!vehicle) return null;
+        const route = pursuitRouteSnapshot(vehicle);
+        return {
+          id: index,
+          road: vehicle.road,
+          dir: vehicle.dir,
+          s: Math.round(vehicle.s * 1000) / 1000,
+          speed: Math.round(vehicle.speed * 1000) / 1000,
+          heading: Math.round((vehicle.heading ?? vehicle.mesh.root.rotation.y) * 1000) / 1000,
+          position: {
+            x: Math.round(vehicle.mesh.root.position.x * 1000) / 1000,
+            y: Math.round(vehicle.mesh.root.position.y * 1000) / 1000,
+            z: Math.round(vehicle.mesh.root.position.z * 1000) / 1000,
+          },
+          routeRevision: vehicle.pursuitRouteRevision || 0,
+          route,
+          routeLegal: pursuitRouteIsLegal(vehicle, route),
+          routeScore: Number.isFinite(vehicle.pursuitRouteScore)
+            ? vehicle.pursuitRouteScore
+            : null,
+          plannedTargetDistance: Number.isFinite(vehicle.pursuitRouteTargetDistance)
+            ? vehicle.pursuitRouteTargetDistance
+            : null,
+          plannedAt: Number.isFinite(vehicle.pursuitRoutePlannedAt)
+            ? vehicle.pursuitRoutePlannedAt
+            : null,
+          targetDistance: Math.round(Math.hypot(
+            vehicle.mesh.root.position.x - pursuitResponder.playerX,
+            vehicle.mesh.root.position.z - pursuitResponder.playerZ,
+          ) * 1000) / 1000,
+        };
+      }).filter(Boolean),
+    };
+  }
+
+  function getPursuitResponders() {
+    if (!pursuitResponder.active) return [];
+    return pursuitResponder.targetIndexes.map((index, slot) => {
+      const target = vehicles[index];
+      if (!target) return null;
+      const point = target.mesh.root.position;
+      const distance = Math.hypot(
+        point.x - pursuitResponder.playerX,
+        point.z - pursuitResponder.playerZ,
+      );
+      return {
+        active: true,
+        id: index,
+        index,
+        slot,
+        class: target.cls,
+        identity: target.identity.key,
+        label: target.identity.label,
+        distance: Math.round(distance * 10) / 10,
+        position: { x: point.x, y: point.y, z: point.z },
+        speed: Math.round(target.speed * 10) / 10,
+        level: pursuitResponder.level,
+        closing: target.speed > 0,
+        deploymentHold: {
+          requested: pursuitDeploymentHoldIds.has(index),
+          holding: pursuitDeploymentHoldingIds.has(index),
+        },
+        deploymentHoldRequested: pursuitDeploymentHoldIds.has(index),
+        deploymentHolding: pursuitDeploymentHoldingIds.has(index),
+        road: target.road,
+        dir: target.dir,
+        routeRevision: target.pursuitRouteRevision || 0,
+        route: pursuitRouteSnapshot(target),
+      };
+    }).filter(Boolean);
+  }
+
+  function getPursuitResponder() {
+    const primary = getPursuitResponders()[0];
+    if (!primary) {
+      return {
+        active: false,
+        id: null,
+        index: null,
+        distance: null,
+        position: null,
+        level: 0,
+      };
+    }
+    pursuitResponder.distance = primary.distance;
+    return primary;
   }
 
   function getDiagnostics() {
@@ -3823,6 +6109,18 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     let featuredCount = 0;
     for (let index = 0; index < vehicles.length; index += 1) {
       const v = vehicles[index];
+      const combatData = v.mesh.root.userData || {};
+      const combatReaction = combatData.combatReaction;
+      const combatBrakeUntil = Number(combatData.combatBrakeUntil);
+      const combatBrakeActive = !v.parked
+        && Number.isFinite(combatBrakeUntil)
+        && combatBrakeUntil > 0
+        && (combatReaction === 'brake' || combatReaction === 'staggered');
+      const pursuitResponderActive = pursuitResponder.active
+        && pursuitResponder.targetIndexes.includes(index)
+        && v.pursuitResponder;
+      const taxiPassengerActive = taxiRide?.vehicle === v;
+      const muniPassengerActive = muniRide?.vehicle === v;
       const curbside = Number.isFinite(v.curbDwellUntil);
       const parkedDwellEnd = (v.parkedAt ?? t) + v.dwellUntil;
       const activeRoute = v.turn?.route || v.route;
@@ -3831,7 +6129,35 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       let actionKey = 'driving';
       let actionLabel = 'Driving';
       let actionDetail = null;
-      if (v.parked) {
+      if (v.garageStored) {
+        actionKey = 'garage-stored';
+        actionLabel = 'Stored at Ferry garage';
+        actionDetail = 'owned roster';
+      } else if (v.impounded) {
+        actionKey = 'impounded';
+        actionLabel = 'Held at Ferry impound';
+        actionDetail = 'retrieval pending';
+      } else if (v.disabled) {
+        actionKey = 'vehicle-disabled';
+        actionLabel = 'Vehicle disabled';
+        actionDetail = v.lastDamage?.source || 'damage';
+      } else if (pursuitResponderActive) {
+        actionKey = 'pursuit-responder';
+        actionLabel = 'Pursuit responder';
+        actionDetail = 'closing on player';
+      } else if (combatBrakeActive) {
+        actionKey = 'combat-brake';
+        actionLabel = 'Braking after gunfire';
+        actionDetail = 'reacting to nearby fire';
+      } else if (taxiPassengerActive) {
+        actionKey = 'taxi-passenger';
+        actionLabel = 'Taxi passenger boarding';
+        actionDetail = 'Ferry Building fare';
+      } else if (muniPassengerActive) {
+        actionKey = muniRide.arrived ? 'muni-arrival' : 'muni-passenger';
+        actionLabel = muniRide.arrived ? 'Muni passenger arrival' : 'Muni passenger ride';
+        actionDetail = 'one-stop fare';
+      } else if (v.parked) {
         actionKey = 'parked';
         actionLabel = 'Parked at curb';
         actionDetail = parkedDwellEnd > t ? 'dwelling' : 'pull-out pending';
@@ -3860,7 +6186,15 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
       let stopCue = null;
       let dwellRemaining = null;
-      if (v.parked) {
+      if (v.garageStored) {
+        stopCue = 'garage-stored';
+      } else if (v.impounded) {
+        stopCue = 'impounded';
+      } else if (taxiPassengerActive) {
+        stopCue = 'taxi-passenger';
+      } else if (muniPassengerActive) {
+        stopCue = muniRide.arrived ? 'muni-arrival' : 'muni-passenger';
+      } else if (v.parked) {
         stopCue = 'parked';
         dwellRemaining = Math.max(0, parkedDwellEnd - t);
       } else if (curbside) {
@@ -3888,7 +6222,7 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         || presentationCars.includes(v);
       if (featured) featuredCount += 1;
 
-      const hazardOn = t < v.hazardUntil;
+      const hazardOn = v.disabled || t < v.hazardUntil;
       records.push({
         id: index,
         class: v.cls,
@@ -3925,12 +6259,20 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
           colorHex,
           board: v.cls === 'bus' ? BUS_ROUTE_BOARD : null,
         },
+        damage: vehicleDamageSnapshot(v),
+        combatEligible: vehicleEligibleForCombatDamage(v),
+        theft: {
+          eligible: v.identity.category === 'private',
+          reported: v.theftReported === true,
+          registeredOwner: v.registeredOwner === true,
+        },
         indicators: {
           left: v.blinkSide < 0,
           right: v.blinkSide > 0,
           hazard: hazardOn,
         },
         speed: Math.round(v.speed * 10) / 10,
+        heading: v.heading ?? v.mesh.root.rotation.y ?? 0,
         road: v.road,
         s: Math.round(v.s * 10) / 10,
         position: {
@@ -3940,6 +6282,23 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
         visible: v.mesh.root.visible,
         featured,
         heroCue,
+        reaction: combatBrakeActive
+          ? {
+            key: 'brake',
+            source: combatData.combatReactionSource || 'combat',
+            remaining: null,
+          }
+          : null,
+        pursuit: pursuitResponderActive
+          ? {
+            active: true,
+            level: pursuitResponder.level,
+            distance: Math.round(Math.hypot(
+              v.mesh.root.position.x - pursuitResponder.playerX,
+              v.mesh.root.position.z - pursuitResponder.playerZ,
+            ) * 10) / 10,
+          }
+          : null,
       });
     }
     return {
@@ -3989,28 +6348,91 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
 
   /* ---- player driving ---- */
 
-  function getNearestEnterableVehicle(position, maxDistance = 3.6) {
-    if (!position) return null;
+  function projectVehiclePoseToRoad(position, heading, {
+    maxDistance = 6.5,
+    snapToLane = false,
+  } = {}) {
+    if (!Number.isFinite(position?.x)
+      || !Number.isFinite(position?.z)
+      || !Number.isFinite(heading)) return null;
+    const headingX = Math.sin(heading);
+    const headingZ = Math.cos(heading);
     let best = null;
-    for (let index = 0; index < vehicles.length; index += 1) {
-      const vehicle = vehicles[index];
-      if (vehicle.cls === 'bike') continue;
-      if (vehicle.playerControlled || vehicle.remoteControlled) continue;
-      if (!vehicle.parked && vehicle.speed > 0.9) continue;
-      const point = vehicle.mesh.root.position;
-      const distance = Math.hypot(point.x - position.x, point.z - position.z);
-      if (distance <= maxDistance && (!best || distance < best.distance)) {
-        best = { index, vehicle, distance };
+    for (let roadIndex = 0; roadIndex < roads.length; roadIndex += 1) {
+      const road = roads[roadIndex];
+      const legalDirs = Array.isArray(road.dirs) && road.dirs.length ? road.dirs : [1, -1];
+      for (let segment = 0; segment < road.px.length - 1; segment += 1) {
+        const dx = road.px[segment + 1] - road.px[segment];
+        const dz = road.pz[segment + 1] - road.pz[segment];
+        const segmentLengthSquared = dx * dx + dz * dz;
+        if (segmentLengthSquared <= 1e-8) continue;
+        const segmentLength = Math.sqrt(segmentLengthSquared);
+        const t = THREE.MathUtils.clamp(
+          ((position.x - road.px[segment]) * dx
+            + (position.z - road.pz[segment]) * dz) / segmentLengthSquared,
+          0,
+          1,
+        );
+        const centerX = road.px[segment] + dx * t;
+        const centerY = road.py[segment]
+          + (road.py[segment + 1] - road.py[segment]) * t;
+        const centerZ = road.pz[segment] + dz * t;
+        const offsetX = position.x - centerX;
+        const offsetZ = position.z - centerZ;
+        const distanceSquared = offsetX * offsetX + offsetZ * offsetZ;
+        for (const dir of legalDirs) {
+          const tangentX = dx / segmentLength * dir;
+          const tangentZ = dz / segmentLength * dir;
+          const alignment = headingX * tangentX + headingZ * tangentZ;
+          const score = distanceSquared + (1 - alignment) * 4;
+          if (best && score >= best.score) continue;
+          const rightX = tangentZ;
+          const rightZ = -tangentX;
+          best = {
+            score,
+            distanceSquared,
+            road: roadIndex,
+            dir,
+            s: road.cum[segment] + segmentLength * t,
+            lateral: offsetX * rightX + offsetZ * rightZ,
+            centerX,
+            centerZ,
+            rightX,
+            rightZ,
+            x: centerX + rightX * (offsetX * rightX + offsetZ * rightZ),
+            y: centerY,
+            z: centerZ + rightZ * (offsetX * rightX + offsetZ * rightZ),
+            heading: Math.atan2(tangentX, tangentZ),
+          };
+        }
       }
+    }
+    const safeDistance = Math.max(0, Number(maxDistance) || 0);
+    if (!best || Math.sqrt(best.distanceSquared) > safeDistance) {
+      return null;
+    }
+    if (snapToLane) {
+      const laneOffset = roads[best.road]?.laneOffset ?? LANE_OFFSET;
+      best.lateral = laneOffset;
+      best.x = best.centerX + best.rightX * laneOffset;
+      best.z = best.centerZ + best.rightZ * laneOffset;
+    } else if (Math.abs(best.lateral) > 6.5) {
+      return null;
     }
     return best;
   }
 
-  function enterPlayerVehicle(index) {
-    if (playerVehicle || !Number.isInteger(index)) return false;
-    const vehicle = vehicles[index];
-    if (!vehicle || vehicle.playerControlled || vehicle.remoteControlled) return false;
+  function activatePlayerVehicleRecord(vehicle) {
+    if (!vehicle
+      || vehicle.impounded
+      || vehicle.garageStored
+      || (playerVehicle && playerVehicle !== vehicle)) return false;
+    if (lastPlayerParkedVehicle && lastPlayerParkedVehicle !== vehicle) {
+      lastPlayerParkedVehicle.dwellUntil = 4;
+      lastPlayerParkedVehicle.curbDwellUntil = Infinity;
+    }
     vehicle.playerControlled = true;
+    vehicle.impounded = false;
     vehicle.parked = false;
     vehicle.parkedAt = null;
     vehicle.speed = 0;
@@ -4025,18 +6447,849 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     vehicle.nextCurbStopAt = Infinity;
     vehicle.nextServiceAt = Infinity;
     vehicle.busStopIndex = -1;
-    vehicle.hazardUntil = 0;
     vehicle.mergeSignalUntil = 0;
     vehicle.pullOutBlockedSince = null;
     vehicle.playerSteer = 0;
-    vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
+    playerSignalViolationLatch = null;
+    playerVehicleCollisionLatch.clear();
+    lastPlayerParkedVehicle = null;
     playerVehicle = vehicle;
+    return true;
+  }
+
+  function getNearestEnterableVehicle(position, maxDistance = 3.6) {
+    if (!position) return null;
+    const held = vehicleEmbodimentQaHold;
+    if (held?.vehicle) {
+      const vehicle = held.vehicle;
+      const eligible = vehicle.cls !== 'bike'
+        && !vehicle.impounded
+        && !vehicle.garageStored
+        && !taxiAtServiceStop(vehicle)
+        && !transitAtStop(vehicle)
+        && !deliveryAtServiceStop(vehicle)
+        && !vehicle.disabled
+        && !vehicle.playerControlled
+        && !vehicle.remoteControlled
+        && vehicle.parked
+        && vehicle.mesh.root.visible;
+      const distance = Math.hypot(
+        vehicle.mesh.root.position.x - position.x,
+        vehicle.mesh.root.position.z - position.z,
+      );
+      if (eligible && distance <= maxDistance) {
+        return { index: held.index, vehicle, distance };
+      }
+      clearVehicleEmbodimentQaHold();
+    }
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (vehicle.cls === 'bike') continue;
+      if (vehicle.impounded) continue;
+      if (vehicle.garageStored) continue;
+      if (taxiAtServiceStop(vehicle)) continue;
+      if (transitAtStop(vehicle)) continue;
+      if (deliveryAtServiceStop(vehicle)) continue;
+      if (vehicle.disabled && vehicle !== lastPlayerParkedVehicle) continue;
+      if (vehicle.playerControlled || vehicle.remoteControlled) continue;
+      if (!vehicle.parked && vehicle.speed > 0.9) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = { index, vehicle, distance };
+      }
+    }
+    return best;
+  }
+
+  function taxiAtServiceStop(vehicle) {
+    return Boolean(
+      vehicle
+      && vehicle.identity.category === 'taxi'
+      && vehicle.identity.curbService === 'taxi'
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed,
+    );
+  }
+
+  function getNearestTaxiService(position, maxDistance = 3.8) {
+    if (!position || taxiRide || muniRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!taxiAtServiceStop(vehicle)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = { index, vehicle, distance };
+      }
+    }
+    return best;
+  }
+
+  function deliveryAtServiceStop(vehicle) {
+    return Boolean(
+      vehicle
+      && vehicle.identity.category === 'delivery'
+      && vehicle.identity.curbService === 'delivery'
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil > lastElapsed,
+    );
+  }
+
+  function getNearestDeliveryService(position, maxDistance = 3.8) {
+    if (!position || taxiRide || muniRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!deliveryAtServiceStop(vehicle)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = {
+          index,
+          distance,
+          class: vehicle.cls,
+          identity: vehicle.identity.key,
+          label: vehicle.identity.label,
+          dwellRemaining: Math.max(0, vehicle.curbDwellUntil - lastElapsed),
+          position: { x: point.x, y: point.y, z: point.z },
+        };
+      }
+    }
+    return best;
+  }
+
+  function acceptDeliveryService(index) {
+    if (playerVehicle || taxiRide || muniRide || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!deliveryAtServiceStop(vehicle)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 1.2);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    const point = vehicle.mesh.root.position;
+    return {
+      vehicleId: index,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      label: vehicle.identity.label,
+      position: { x: point.x, y: point.y, z: point.z },
+    };
+  }
+
+  function transitAtStop(vehicle, minimumDwell = 0) {
+    return Boolean(
+      vehicle
+      && vehicle.cls === 'bus'
+      && vehicle.mesh.root.visible
+      && !vehicle.disabled
+      && !vehicle.impounded
+      && !vehicle.garageStored
+      && !vehicle.playerControlled
+      && !vehicle.remoteControlled
+      && !vehicle.parked
+      && vehicle.speed < 0.25
+      && Number.isFinite(vehicle.curbDwellUntil)
+      && vehicle.curbDwellUntil - lastElapsed >= Math.max(0, minimumDwell),
+    );
+  }
+
+  function getNearestTransitService(position, maxDistance = 3.8, minimumDwell = 2.8) {
+    if (!position || taxiRide || muniRide) return null;
+    let best = null;
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (!transitAtStop(vehicle, minimumDwell)) continue;
+      const point = vehicle.mesh.root.position;
+      const distance = Math.hypot(point.x - position.x, point.z - position.z);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = {
+          index,
+          distance,
+          class: vehicle.cls,
+          identity: vehicle.identity.key,
+          label: vehicle.identity.label,
+          dwellRemaining: Math.max(0, vehicle.curbDwellUntil - lastElapsed),
+          road: vehicle.road,
+          position: { x: point.x, y: point.y, z: point.z },
+        };
+      }
+    }
+    return best;
+  }
+
+  function beginMuniRide(index) {
+    if (muniRide
+      || taxiRide
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!transitAtStop(vehicle, 0.35)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.7);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    const point = vehicle.mesh.root.position;
+    muniRide = {
+      vehicle,
+      vehicleId: index,
+      startedAt: lastElapsed,
+      departed: false,
+      arrived: false,
+      arrivedAt: null,
+      traveled: 0,
+      lastX: point.x,
+      lastZ: point.z,
+    };
+    return getMuniRideState();
+  }
+
+  function getMuniRideState() {
+    if (!muniRide) return null;
+    const vehicle = muniRide.vehicle;
+    const point = vehicle.mesh.root.position;
+    return {
+      active: true,
+      phase: muniRide.arrived ? 'arrived' : muniRide.departed ? 'en-route' : 'boarding',
+      arrived: muniRide.arrived,
+      vehicleId: muniRide.vehicleId,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      position: { x: point.x, y: point.y, z: point.z },
+      heading: vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
+      road: vehicle.road,
+      s: vehicle.s,
+      traveled: Math.round(muniRide.traveled * 10) / 10,
+      elapsed: Math.max(0, lastElapsed - muniRide.startedAt),
+      dwellRemaining: Number.isFinite(vehicle.curbDwellUntil)
+        ? Math.max(0, vehicle.curbDwellUntil - lastElapsed)
+        : 0,
+    };
+  }
+
+  function completeMuniRide() {
+    const state = getMuniRideState();
+    if (!state?.arrived) return null;
+    const vehicle = muniRide.vehicle;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.6);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    muniRide = null;
+    return { ...state, active: false };
+  }
+
+  function cancelMuniRide() {
+    if (!muniRide) return false;
+    muniRide = null;
+    return true;
+  }
+
+  function beginTaxiRide(index) {
+    if (taxiRide
+      || muniRide
+      || playerVehicle
+      || !Number.isInteger(index)) return null;
+    const vehicle = vehicles[index];
+    if (!taxiAtServiceStop(vehicle)) return null;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 4.2);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    taxiRide = {
+      vehicle,
+      vehicleId: index,
+      startedAt: lastElapsed,
+    };
+    return getTaxiRideState();
+  }
+
+  function getTaxiRideState() {
+    if (!taxiRide) return null;
+    const point = taxiRide.vehicle.mesh.root.position;
+    return {
+      active: true,
+      vehicleId: taxiRide.vehicleId,
+      class: taxiRide.vehicle.cls,
+      identity: taxiRide.vehicle.identity.key,
+      position: { x: point.x, y: point.y, z: point.z },
+      elapsed: Math.max(0, lastElapsed - taxiRide.startedAt),
+    };
+  }
+
+  function completeTaxiRide() {
+    const state = getTaxiRideState();
+    if (!state) return null;
+    const vehicle = taxiRide.vehicle;
+    vehicle.curbDwellUntil = Math.max(vehicle.curbDwellUntil, lastElapsed + 0.6);
+    vehicle.hazardUntil = Math.max(vehicle.hazardUntil, vehicle.curbDwellUntil);
+    taxiRide = null;
+    return { ...state, active: false };
+  }
+
+  function cancelTaxiRide() {
+    if (!taxiRide) return false;
+    taxiRide = null;
+    return true;
+  }
+
+  function enterPlayerVehicle(index) {
+    if (playerVehicle || impoundedPlayerVehicle || taxiRide || muniRide || !Number.isInteger(index)) return false;
+    const vehicle = vehicles[index];
+    if (!vehicle
+      || vehicle.playerControlled
+      || vehicle.remoteControlled
+      || vehicle.garageStored
+      || (vehicle.disabled && vehicle !== lastPlayerParkedVehicle)) return false;
+    vehicle.hazardUntil = 0;
+    vehicle.laneOffsetSm = (roads[vehicle.road]?.laneOffset ?? LANE_OFFSET) + vehicle.laneBias;
+    const entered = activatePlayerVehicleRecord(vehicle);
+    if (entered && vehicleEmbodimentQaHold?.vehicle === vehicle) {
+      clearVehicleEmbodimentQaHold({ restore: false });
+    }
+    return entered;
+  }
+
+  function serializePlayerVehicleState(vehicle, mode) {
+    if (!vehicle) return null;
+    const index = vehicles.indexOf(vehicle);
+    const point = vehicle.mesh.root.position;
+    return {
+      mode,
+      vehicleId: index,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      position: { x: point.x, z: point.z },
+      heading: vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0,
+      damage: vehicleDamageSnapshot(vehicle),
+      theftReported: vehicle.theftReported === true,
+      registeredOwner: vehicle.registeredOwner === true,
+    };
+  }
+
+  function exportPlayerVehicleState() {
+    if (playerVehicle) return serializePlayerVehicleState(playerVehicle, 'driving');
+    if (impoundedPlayerVehicle) {
+      return serializePlayerVehicleState(impoundedPlayerVehicle, 'impounded');
+    }
+    return serializePlayerVehicleState(lastPlayerParkedVehicle, 'parked');
+  }
+
+  function exportCollisionAftermathState() {
+    const records = [];
+    for (let index = 0; index < vehicles.length; index += 1) {
+      const vehicle = vehicles[index];
+      if (records.length >= MAX_PERSISTED_COLLISION_AFTERMATH) break;
+      if (!vehicle
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled
+        || !PERSISTED_COLLISION_DAMAGE_SOURCES.has(vehicle.lastDamage?.source)
+        || vehicle.health >= vehicle.maxHealth) continue;
+      records.push({
+        vehicleId: index,
+        class: vehicle.cls,
+        identity: vehicle.identity.key,
+        damage: vehicleDamageSnapshot(vehicle),
+      });
+    }
+    return { version: 1, vehicles: records };
+  }
+
+  function validateCollisionAftermathState(snapshot, excludedVehicleIds = []) {
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.vehicles)
+      || snapshot.vehicles.length > MAX_PERSISTED_COLLISION_AFTERMATH) return null;
+    const validated = [];
+    const ids = new Set();
+    const excludedIds = new Set(
+      Array.isArray(excludedVehicleIds)
+        ? excludedVehicleIds.filter((id) => Number.isInteger(id))
+        : [],
+    );
+    for (const record of snapshot.vehicles) {
+      const vehicleId = Number(record?.vehicleId);
+      const health = Number(record?.damage?.health);
+      const maxHealth = Number(record?.damage?.maxHealth);
+      const lastDamage = record?.damage?.lastDamage;
+      const vehicle = vehicles[vehicleId];
+      const combatHealthStep = vehicle?.maxHealth / 4;
+      const normalizedHealth = lastDamage?.source === 'combat-impact'
+        ? Math.round(health / combatHealthStep) * combatHealthStep
+        : health;
+      if (!Number.isInteger(vehicleId)
+        || ids.has(vehicleId)
+        || excludedIds.has(vehicleId)
+        || !vehicle
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled
+        || record.class !== vehicle.cls
+        || record.identity !== vehicle.identity.key
+        || maxHealth !== vehicle.maxHealth
+        || !Number.isFinite(health)
+        || health < 0
+        || health >= vehicle.maxHealth
+        || (lastDamage?.source === 'combat-impact'
+          && Math.abs(health - normalizedHealth) > 0.051)
+        || typeof record.damage?.disabled !== 'boolean'
+        || record.damage.disabled !== (normalizedHealth <= 0)
+        || !lastDamage
+        || !PERSISTED_COLLISION_DAMAGE_SOURCES.has(lastDamage.source)
+        || !Number.isFinite(Number(lastDamage.amount))
+        || Number(lastDamage.amount) <= 0
+        || Number(lastDamage.amount) > vehicle.maxHealth
+        || !Number.isFinite(Number(lastDamage.at))
+        || Number(lastDamage.at) < 0
+        || Number(lastDamage.at) > 1000000000) return null;
+      ids.add(vehicleId);
+      validated.push({ vehicle, health: normalizedHealth, lastDamage });
+    }
+    return validated;
+  }
+
+  function canImportCollisionAftermathState(snapshot, excludedVehicleIds = []) {
+    return validateCollisionAftermathState(snapshot, excludedVehicleIds) !== null;
+  }
+
+  function importCollisionAftermathState(snapshot) {
+    const validated = validateCollisionAftermathState(snapshot);
+    if (!validated) return false;
+    for (const vehicle of vehicles) {
+      if (!PERSISTED_COLLISION_DAMAGE_SOURCES.has(vehicle.lastDamage?.source)
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || vehicle.garageStored
+        || vehicle.remoteControlled) continue;
+      if (vehicle.disabled) diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles - 1);
+      vehicle.health = vehicle.maxHealth;
+      vehicle.disabled = false;
+      vehicle.damageState = 'clear';
+      vehicle.lastDamage = null;
+      vehicle.hazardUntil = 0;
+      syncVehicleDamageMetadata(vehicle);
+      syncVehicleCombatDisabledMetadata(vehicle, false);
+    }
+    for (const { vehicle, health, lastDamage } of validated) {
+      vehicle.health = health;
+      vehicle.disabled = health <= 0;
+      vehicle.damageState = damageStateFor(vehicle);
+      vehicle.lastDamage = {
+        amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+        source: lastDamage.source,
+        at: Math.max(0, Number(lastDamage.at)),
+      };
+      vehicle.damageCooldownUntil = 0;
+      vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+      if (vehicle.disabled) {
+        diagnostics.disabledVehicles += 1;
+        vehicle.speed = 0;
+        vehicle.longitudinalAccel = 0;
+        vehicle.route = null;
+        vehicle.turn = null;
+        vehicle.blinkSide = 0;
+      }
+      syncVehicleDamageMetadata(vehicle);
+      syncVehicleCombatDisabledMetadata(
+        vehicle,
+        vehicle.disabled && lastDamage.source === 'combat-impact',
+      );
+    }
+    return true;
+  }
+
+  function importPlayerVehicleState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const mode = snapshot.mode === undefined ? 'driving' : snapshot.mode;
+    const vehicleId = Number(snapshot.vehicleId);
+    const heading = Number(snapshot.heading);
+    const health = Number(snapshot.damage?.health);
+    const maxHealth = Number(snapshot.damage?.maxHealth);
+    if (!['driving', 'parked', 'impounded'].includes(mode)
+      || !Number.isInteger(vehicleId)
+      || !Number.isFinite(heading)
+      || !Number.isFinite(health)
+      || !Number.isFinite(maxHealth)
+      || typeof snapshot.class !== 'string'
+      || typeof snapshot.identity !== 'string'
+      || typeof snapshot.theftReported !== 'boolean'
+      || (snapshot.registeredOwner !== undefined
+        && typeof snapshot.registeredOwner !== 'boolean')
+      || typeof snapshot.damage?.disabled !== 'boolean') return false;
+    const vehicle = vehicles[vehicleId];
+    if (!vehicle
+      || vehicle.cls !== snapshot.class
+      || vehicle.identity.key !== snapshot.identity
+      || vehicle.remoteControlled
+      || vehicle.garageStored
+      || (snapshot.registeredOwner === true && vehicle.identity.category !== 'private')
+      || (playerVehicle && playerVehicle !== vehicle)
+      || (mode !== 'driving' && playerVehicle)
+      || maxHealth !== vehicle.maxHealth
+      || health < 0
+      || health > vehicle.maxHealth
+      || snapshot.damage.disabled !== (health <= 0)) return false;
+    const projection = projectVehiclePoseToRoad(snapshot.position, heading);
+    if (!projection) return false;
+    const lastDamage = snapshot.damage.lastDamage;
+    if (lastDamage !== null && lastDamage !== undefined && (
+      typeof lastDamage !== 'object'
+      || !Number.isFinite(Number(lastDamage.amount))
+      || !Number.isFinite(Number(lastDamage.at))
+      || typeof lastDamage.source !== 'string'
+    )) return false;
+
+    const wasDisabled = vehicle.disabled;
+    playerVehicleCollisionLatch.clear();
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    vehicle.health = health;
+    vehicle.disabled = snapshot.damage.disabled;
+    vehicle.damageState = damageStateFor(vehicle);
+    vehicle.lastDamage = lastDamage ? {
+      amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+      source: lastDamage.source.slice(0, 64),
+      at: Math.max(0, Number(lastDamage.at)),
+    } : null;
+    vehicle.damageCooldownUntil = 0;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    vehicle.theftReported = snapshot.theftReported;
+    vehicle.registeredOwner = snapshot.registeredOwner === true;
+    vehicle.garageStored = false;
+    if (wasDisabled !== vehicle.disabled) {
+      diagnostics.disabledVehicles += vehicle.disabled ? 1 : -1;
+      diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
+    }
+    syncVehicleDamageMetadata(vehicle);
+    if (mode === 'driving') {
+      if (impoundedPlayerVehicle === vehicle) impoundedPlayerVehicle = null;
+      if (!activatePlayerVehicleRecord(vehicle)) return false;
+    } else if (mode === 'parked') {
+      if (lastPlayerParkedVehicle && lastPlayerParkedVehicle !== vehicle) {
+        lastPlayerParkedVehicle.dwellUntil = 4;
+        lastPlayerParkedVehicle.curbDwellUntil = Infinity;
+      }
+      vehicle.playerControlled = false;
+      vehicle.playerSteer = 0;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.accelSm = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.leader = null;
+      vehicle.parked = true;
+      vehicle.impounded = false;
+      vehicle.parkedAt = null;
+      vehicle.dwellUntil = Infinity;
+      vehicle.curbDwellUntil = Infinity;
+      lastPlayerParkedVehicle = vehicle;
+      if (impoundedPlayerVehicle === vehicle) impoundedPlayerVehicle = null;
+    } else {
+      if (lastPlayerParkedVehicle === vehicle) lastPlayerParkedVehicle = null;
+      vehicle.playerControlled = false;
+      vehicle.playerSteer = 0;
+      vehicle.speed = 0;
+      vehicle.longitudinalAccel = 0;
+      vehicle.accelSm = 0;
+      vehicle.route = null;
+      vehicle.turn = null;
+      vehicle.leader = null;
+      vehicle.parked = true;
+      vehicle.impounded = true;
+      vehicle.parkedAt = null;
+      vehicle.dwellUntil = Infinity;
+      vehicle.curbDwellUntil = Infinity;
+      vehicle.mesh.root.visible = false;
+      impoundedPlayerVehicle = vehicle;
+    }
+    if (mode === 'driving' && vehicle.disabled) {
+      playerInput.throttle = 0;
+      playerInput.brake = 1;
+      playerInput.steer = 0;
+    }
+    return true;
+  }
+
+  function reportPlayerVehicleTheft() {
+    if (!playerVehicle || playerVehicle.identity.category !== 'private') return null;
+    if (playerVehicle.registeredOwner) {
+      return {
+        reported: false,
+        reason: 'registered-owner',
+        vehicleId: vehicles.indexOf(playerVehicle),
+      };
+    }
+    if (playerVehicle.theftReported) {
+      return {
+        reported: false,
+        reason: 'already-reported',
+        vehicleId: vehicles.indexOf(playerVehicle),
+      };
+    }
+    playerVehicle.theftReported = true;
+    diagnostics.vehicleThefts += 1;
+    return {
+      reported: true,
+      vehicleId: vehicles.indexOf(playerVehicle),
+      class: playerVehicle.cls,
+      identity: playerVehicle.identity.key,
+      label: playerVehicle.identity.label,
+    };
+  }
+
+  function getPlayerVehicleRegistrationState() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle || playerVehicle || impoundedPlayerVehicle) return null;
+    return {
+      ...serializePlayerVehicleState(vehicle, 'parked'),
+      eligible: vehicle.identity.category === 'private',
+    };
+  }
+
+  function registerParkedPlayerVehicle() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || vehicle.identity.category !== 'private'
+      || vehicle.registeredOwner) return null;
+    vehicle.registeredOwner = true;
+    return serializePlayerVehicleState(vehicle, 'parked');
+  }
+
+  function setGarageStoredState(vehicle, stored) {
+    if (!vehicle) return;
+    vehicle.garageStored = stored;
+    vehicle.impounded = false;
+    vehicle.playerControlled = false;
+    vehicle.playerSteer = 0;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    vehicle.mesh.root.visible = !stored;
+  }
+
+  function getPlayerGarageState() {
+    const slots = playerGarageSlots.map((vehicle, slot) => (
+      vehicle ? { slot, ...serializePlayerVehicleState(vehicle, 'garage') } : null
+    ));
+    return {
+      capacity: playerGarageSlots.length,
+      count: slots.filter(Boolean).length,
+      nextRetrieveSlot: playerGarageRetrieveCursor,
+      slots,
+    };
+  }
+
+  function exportPlayerGarageState() {
+    return getPlayerGarageState();
+  }
+
+  function storeParkedPlayerVehicleInGarage() {
+    const vehicle = lastPlayerParkedVehicle;
+    const slot = playerGarageSlots.findIndex((entry) => entry === null);
+    if (!vehicle
+      || slot < 0
+      || playerVehicle
+      || impoundedPlayerVehicle
+      || taxiRide
+      || muniRide
+      || vehicle.identity.category !== 'private'
+      || vehicle.registeredOwner !== true
+      || vehicle.garageStored) return null;
+    lastPlayerParkedVehicle = null;
+    playerGarageSlots[slot] = vehicle;
+    setGarageStoredState(vehicle, true);
+    return { slot, vehicle: serializePlayerVehicleState(vehicle, 'garage') };
+  }
+
+  function retrievePlayerGarageVehicle(position, heading = 0, requestedSlot = null) {
+    if (playerVehicle
+      || lastPlayerParkedVehicle
+      || impoundedPlayerVehicle
+      || taxiRide
+      || muniRide) return null;
+    const hasRequestedSlot = Number.isInteger(requestedSlot);
+    let slot = hasRequestedSlot ? requestedSlot : -1;
+    if (hasRequestedSlot && (
+      slot < 0 || slot >= playerGarageSlots.length || !playerGarageSlots[slot]
+    )) return null;
+    if (!hasRequestedSlot) {
+      slot = -1;
+      for (let offset = 0; offset < playerGarageSlots.length; offset += 1) {
+        const candidate = (playerGarageRetrieveCursor + offset) % playerGarageSlots.length;
+        if (playerGarageSlots[candidate]) {
+          slot = candidate;
+          break;
+        }
+      }
+    }
+    if (slot < 0) return null;
+    const vehicle = playerGarageSlots[slot];
+    const projection = projectVehiclePoseToRoad(position, heading, {
+      maxDistance: 96,
+      snapToLane: true,
+    });
+    if (!projection) return null;
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    setGarageStoredState(vehicle, false);
+    playerGarageSlots[slot] = null;
+    playerGarageRetrieveCursor = (slot + 1) % playerGarageSlots.length;
+    lastPlayerParkedVehicle = vehicle;
+    return { slot, vehicle: serializePlayerVehicleState(vehicle, 'parked') };
+  }
+
+  function importPlayerGarageState(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || !Array.isArray(snapshot.slots)) return false;
+    if (snapshot.slots.length !== playerGarageSlots.length) return false;
+    const cursor = Number(snapshot.nextRetrieveSlot ?? 0);
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor >= playerGarageSlots.length) return false;
+    const validated = [];
+    const vehicleIds = new Set();
+    for (let slot = 0; slot < snapshot.slots.length; slot += 1) {
+      const entry = snapshot.slots[slot];
+      if (entry === null) {
+        validated.push(null);
+        continue;
+      }
+      const vehicleId = Number(entry.vehicleId);
+      const heading = Number(entry.heading);
+      const health = Number(entry.damage?.health);
+      const maxHealth = Number(entry.damage?.maxHealth);
+      if (entry.mode !== 'garage'
+        || entry.slot !== slot
+        || !Number.isInteger(vehicleId)
+        || vehicleIds.has(vehicleId)
+        || !Number.isFinite(heading)
+        || !Number.isFinite(health)
+        || !Number.isFinite(maxHealth)
+        || typeof entry.class !== 'string'
+        || entry.identity !== 'private'
+        || entry.registeredOwner !== true
+        || typeof entry.theftReported !== 'boolean'
+        || typeof entry.damage?.disabled !== 'boolean') return false;
+      const vehicle = vehicles[vehicleId];
+      if (!vehicle
+        || vehicle.cls !== entry.class
+        || vehicle.identity.key !== entry.identity
+        || vehicle.identity.category !== 'private'
+        || vehicle.remoteControlled
+        || vehicle === playerVehicle
+        || vehicle === lastPlayerParkedVehicle
+        || vehicle === impoundedPlayerVehicle
+        || maxHealth !== vehicle.maxHealth
+        || health < 0
+        || health > maxHealth
+        || entry.damage.disabled !== (health <= 0)) return false;
+      const projection = projectVehiclePoseToRoad(entry.position, heading);
+      if (!projection) return false;
+      const lastDamage = entry.damage.lastDamage;
+      if (lastDamage !== null && lastDamage !== undefined && (
+        typeof lastDamage !== 'object'
+        || !Number.isFinite(Number(lastDamage.amount))
+        || !Number.isFinite(Number(lastDamage.at))
+        || typeof lastDamage.source !== 'string'
+      )) return false;
+      vehicleIds.add(vehicleId);
+      validated.push({
+        vehicle,
+        projection,
+        health,
+        disabled: entry.damage.disabled,
+        theftReported: entry.theftReported,
+        lastDamage,
+      });
+    }
+
+    for (const vehicle of playerGarageSlots) {
+      if (vehicle && !vehicleIds.has(vehicles.indexOf(vehicle))) setGarageStoredState(vehicle, false);
+    }
+    playerGarageSlots.fill(null);
+    validated.forEach((entry, slot) => {
+      if (!entry) return;
+      const { vehicle, projection, health, disabled, theftReported, lastDamage } = entry;
+      const wasDisabled = vehicle.disabled;
+      vehicle.road = projection.road;
+      vehicle.dir = projection.dir;
+      vehicle.s = projection.s;
+      vehicle.laneOffsetSm = projection.lateral;
+      vehicle.heading = projection.heading;
+      vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+      vehicle.mesh.root.rotation.y = projection.heading;
+      vehicle.health = health;
+      vehicle.disabled = disabled;
+      vehicle.damageState = damageStateFor(vehicle);
+      vehicle.lastDamage = lastDamage ? {
+        amount: Math.round(Number(lastDamage.amount) * 10) / 10,
+        source: lastDamage.source.slice(0, 64),
+        at: Math.max(0, Number(lastDamage.at)),
+      } : null;
+      vehicle.damageCooldownUntil = 0;
+      vehicle.theftReported = theftReported;
+      vehicle.registeredOwner = true;
+      if (wasDisabled !== disabled) {
+        diagnostics.disabledVehicles += disabled ? 1 : -1;
+        diagnostics.disabledVehicles = Math.max(0, diagnostics.disabledVehicles);
+      }
+      syncVehicleDamageMetadata(vehicle);
+      setGarageStoredState(vehicle, true);
+      playerGarageSlots[slot] = vehicle;
+    });
+    playerGarageRetrieveCursor = cursor;
     return true;
   }
 
   function exitPlayerVehicle() {
     if (!playerVehicle) return null;
     const vehicle = playerVehicle;
+    const currentPoint = vehicle.mesh.root.position;
+    const parkedProjection = projectVehiclePoseToRoad({
+      x: currentPoint.x,
+      z: currentPoint.z,
+    }, vehicle.heading ?? vehicle.mesh.root.rotation.y ?? 0);
+    if (parkedProjection) {
+      vehicle.road = parkedProjection.road;
+      vehicle.dir = parkedProjection.dir;
+      vehicle.s = parkedProjection.s;
+      vehicle.laneOffsetSm = parkedProjection.lateral;
+      vehicle.heading = parkedProjection.heading;
+      vehicle.mesh.root.position.set(
+        parkedProjection.x,
+        parkedProjection.y,
+        parkedProjection.z,
+      );
+      vehicle.mesh.root.rotation.y = parkedProjection.heading;
+    }
     const point = vehicle.mesh.root.position;
     const exit = {
       x: point.x,
@@ -4052,12 +7305,80 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     vehicle.turn = null;
     vehicle.parked = true;
     vehicle.parkedAt = null;
-    vehicle.dwellUntil = 5 + vehicle.servicePhase * 4;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    lastPlayerParkedVehicle = vehicle;
     playerVehicle = null;
+    playerVehicleCollisionLatch.clear();
     return exit;
   }
 
+  function impoundPlayerVehicle() {
+    const vehicle = lastPlayerParkedVehicle;
+    if (!vehicle || playerVehicle || impoundedPlayerVehicle) return null;
+    lastPlayerParkedVehicle = null;
+    impoundedPlayerVehicle = vehicle;
+    vehicle.impounded = true;
+    vehicle.playerControlled = false;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.mesh.root.visible = false;
+    return exportPlayerVehicleState();
+  }
+
+  function getImpoundedVehicleState() {
+    return serializePlayerVehicleState(impoundedPlayerVehicle, 'impounded');
+  }
+
+  function retrieveImpoundedPlayerVehicle(position, heading = 0) {
+    const vehicle = impoundedPlayerVehicle;
+    if (!vehicle || playerVehicle || lastPlayerParkedVehicle) return null;
+    const projection = projectVehiclePoseToRoad(position, heading, {
+      maxDistance: 96,
+      snapToLane: true,
+    });
+    if (!projection) return null;
+    vehicle.road = projection.road;
+    vehicle.dir = projection.dir;
+    vehicle.s = projection.s;
+    vehicle.laneOffsetSm = projection.lateral;
+    vehicle.heading = projection.heading;
+    vehicle.mesh.root.position.set(projection.x, projection.y, projection.z);
+    vehicle.mesh.root.rotation.y = projection.heading;
+    vehicle.impounded = false;
+    vehicle.playerControlled = false;
+    vehicle.playerSteer = 0;
+    vehicle.speed = 0;
+    vehicle.longitudinalAccel = 0;
+    vehicle.accelSm = 0;
+    vehicle.route = null;
+    vehicle.turn = null;
+    vehicle.leader = null;
+    vehicle.parked = true;
+    vehicle.parkedAt = null;
+    vehicle.dwellUntil = Infinity;
+    vehicle.curbDwellUntil = Infinity;
+    vehicle.hazardUntil = vehicle.disabled ? Infinity : 0;
+    impoundedPlayerVehicle = null;
+    lastPlayerParkedVehicle = vehicle;
+    return exportPlayerVehicleState();
+  }
+
   function setPlayerInput(input = {}) {
+    if (playerVehicle?.disabled) {
+      playerInput.throttle = 0;
+      playerInput.brake = 1;
+      playerInput.steer = 0;
+      return;
+    }
     playerInput.throttle = THREE.MathUtils.clamp(Number(input.throttle) || 0, 0, 1);
     playerInput.brake = THREE.MathUtils.clamp(Number(input.brake) || 0, 0, 1);
     playerInput.steer = THREE.MathUtils.clamp(Number(input.steer) || 0, -1, 1);
@@ -4077,14 +7398,120 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
       heading: vehicle.heading ?? 0,
       speed: vehicle.speed,
       road: vehicle.road,
+      signalAhead: signalApproachFor(vehicle),
+      damage: vehicleDamageSnapshot(vehicle),
+      theft: {
+        eligible: vehicle.identity.category === 'private',
+        reported: vehicle.theftReported === true,
+        registeredOwner: vehicle.registeredOwner === true,
+      },
     };
+  }
+
+  function getPlayerPedestrianImpactProbe() {
+    if (!playerPedestrianImpactProbe || !playerVehicle) return null;
+    return {
+      vehicleId: playerPedestrianImpactProbe.vehicleId,
+      start: { ...playerPedestrianImpactProbe.start },
+      end: { ...playerPedestrianImpactProbe.end },
+      speed: playerPedestrianImpactProbe.speed,
+      halfWidth: playerPedestrianImpactProbe.halfWidth,
+    };
+  }
+
+  function resolvePlayerPedestrianImpact(candidates = []) {
+    const probe = playerPedestrianImpactProbe;
+    if (!playerVehicle || !probe || !Array.isArray(candidates)) {
+      playerPedestrianImpactLatch.clear();
+      return null;
+    }
+    const currentOverlaps = new Set();
+    let contact = null;
+    let contactDistanceSquared = Infinity;
+    for (const candidate of candidates) {
+      if (!candidate?.id
+        || candidate.combatDefeated === true
+        || !Number.isFinite(candidate.position?.x)
+        || !Number.isFinite(candidate.position?.z)) continue;
+      const radius = probe.halfWidth
+        + Math.max(PLAYER_PEDESTRIAN_IMPACT_RADIUS, Number(candidate.radius) || 0);
+      const distanceSquared = distanceSquaredToSegment(
+        candidate.position,
+        probe.start,
+        probe.end,
+      );
+      if (distanceSquared > radius * radius) continue;
+      const wasLatched = playerPedestrianImpactLatch.has(candidate.id);
+      if (wasLatched) currentOverlaps.add(candidate.id);
+      if (probe.speed < PLAYER_PEDESTRIAN_IMPACT_MIN_SPEED || wasLatched || contact) continue;
+      currentOverlaps.add(candidate.id);
+      contact = candidate;
+      contactDistanceSquared = distanceSquared;
+    }
+    playerPedestrianImpactLatch = currentOverlaps;
+    if (!contact) return null;
+
+    const travelX = probe.end.x - probe.start.x;
+    const travelZ = probe.end.z - probe.start.z;
+    const travelLength = Math.hypot(travelX, travelZ);
+    const directionX = travelLength > 1e-4
+      ? travelX / travelLength
+      : Math.sin(playerVehicle.heading || 0);
+    const directionZ = travelLength > 1e-4
+      ? travelZ / travelLength
+      : Math.cos(playerVehicle.heading || 0);
+    const impactSpeed = probe.speed;
+    const damageAmount = THREE.MathUtils.clamp(4 + impactSpeed * 0.9, 7, 14);
+    const damage = applyVehicleDamage(playerVehicle, damageAmount, 'pedestrian-impact');
+    playerVehicle.speed *= 0.72;
+    playerVehicle.longitudinalAccel = Math.min(0, playerVehicle.longitudinalAccel);
+    playerVehicle.hazardUntil = Math.max(playerVehicle.hazardUntil, lastElapsed + 1.8);
+    diagnostics.pedestrianImpactEvents += 1;
+    return {
+      kind: 'pedestrian-impact',
+      residentId: contact.id,
+      residentLabel: contact.label || 'Resident',
+      speed: Math.round(impactSpeed * 10) / 10,
+      distance: Math.round(Math.sqrt(contactDistanceSquared) * 100) / 100,
+      directionX,
+      directionZ,
+      damage,
+    };
+  }
+
+  function damagePlayerVehicle(amount = 0, source = 'impact') {
+    if (!playerVehicle) return null;
+    return applyVehicleDamage(playerVehicle, amount, source);
+  }
+
+  function damageTrafficVehicleFromCombat(index) {
+    const vehicle = vehicles[index];
+    if (!vehicleEligibleForCombatDamage(vehicle)) return null;
+    const damage = applyVehicleDamage(vehicle, vehicle.maxHealth / 4, 'combat-impact');
+    if (damage?.disabled) syncVehicleCombatDisabledMetadata(vehicle, true);
+    return {
+      vehicleId: index,
+      class: vehicle.cls,
+      identity: vehicle.identity.key,
+      damage,
+    };
+  }
+
+  function repairPlayerVehicle(source = 'repair') {
+    if (!playerVehicle) return null;
+    if (canRepairPlayerVehicle?.({
+      index: playerVehicle.index,
+      disabled: playerVehicle.disabled,
+      source,
+    }) === false) return null;
+    return repairVehicleRecord(playerVehicle, source);
   }
 
   /* ---- remote player vehicles ---- */
 
   function setRemotePose(index, pose = {}) {
     const vehicle = vehicles[index];
-    if (!vehicle || vehicle.playerControlled) return false;
+    if (!vehicle || vehicle.playerControlled || vehicle.impounded || vehicle.garageStored) return false;
     if (!vehicle.remoteControlled) {
       vehicle.remoteControlled = true;
       vehicle.parked = false;
@@ -4155,15 +7582,58 @@ export function createTrafficSystem({ scene, roadNetwork, fleetSize } = {}) {
     setFocus,
     getStats,
     getDiagnostics,
+    getOnFootVehicleContactDiagnostics,
+    getOnFootVehicleImpactQaState,
     getVehicleLifeSnapshot,
+    setPursuitResponder,
+    setPursuitDeploymentHolds,
+    setOnFootPlayerCollisionProbe,
+    stageOnFootVehicleImpactQa,
+    stagePlayerVehicleEmbodimentQa,
+    getPursuitResponder,
+    getPursuitResponders,
+    getPursuitChaseDiagnostics,
     getRuleProbeSample,
     setWeather,
     setNightLighting,
     getNearestEnterableVehicle,
+    getNearestTaxiService,
+    getNearestTransitService,
+    getNearestDeliveryService,
+    acceptDeliveryService,
+    beginMuniRide,
+    getMuniRideState,
+    completeMuniRide,
+    cancelMuniRide,
+    beginTaxiRide,
+    getTaxiRideState,
+    completeTaxiRide,
+    cancelTaxiRide,
     enterPlayerVehicle,
+    exportPlayerVehicleState,
+    importPlayerVehicleState,
+    exportCollisionAftermathState,
+    canImportCollisionAftermathState,
+    importCollisionAftermathState,
+    getPlayerGarageState,
+    exportPlayerGarageState,
+    importPlayerGarageState,
+    storeParkedPlayerVehicleInGarage,
+    retrievePlayerGarageVehicle,
+    reportPlayerVehicleTheft,
+    getPlayerVehicleRegistrationState,
+    registerParkedPlayerVehicle,
     exitPlayerVehicle,
+    impoundPlayerVehicle,
+    getImpoundedVehicleState,
+    retrieveImpoundedPlayerVehicle,
     setPlayerInput,
     getPlayerVehicleState,
+    getPlayerPedestrianImpactProbe,
+    resolvePlayerPedestrianImpact,
+    damageTrafficVehicleFromCombat,
+    damagePlayerVehicle,
+    repairPlayerVehicle,
     isPlayerDriving,
     setRemotePose,
     clearRemotePose,

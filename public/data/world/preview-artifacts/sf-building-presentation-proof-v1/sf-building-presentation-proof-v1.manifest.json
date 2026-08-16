@@ -1,0 +1,56 @@
+{
+  "kind": "sf-building-presentation-proof-manifest",
+  "productionManifestTileCount": 800,
+  "schemaVersion": 1,
+  "status": "preview-proof-only-not-production",
+  "tiles": [
+    {
+      "artifact": {
+        "bytes": 24352,
+        "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.glb",
+        "sha256": "sha256:08fcc82266a6e67c7127b46a79790b63e231d60af6afa87a86efded59c11713a"
+      },
+      "counts": {
+        "buildings": 24,
+        "indices": 2163,
+        "primitives": 2,
+        "triangles": 721,
+        "vertices": 514
+      },
+      "ledgers": {
+        "buildingRecordsSha256": "sha256:9302beb38820e2f5ff244df222723fbd7519039cd44bb40522e00b2a965614be",
+        "positionFloat32Sha256": "sha256:c90210f2a7eecaa4b4d7a4070f2d74d47a384c69e81490c758784f9799e72ce4",
+        "presentationTriangleMultisetSha256": "sha256:7cf5da34a20ba8aeba3df8c4c927f1f72ee28b2a8a1dde2e78052acd0b577076",
+        "sourceIndexSha256": "sha256:908f9e9f7e8e5057a84973dca145b90355bebb51a48d3afb7ef2e3788312cb42",
+        "sourceTriangleMultisetSha256": "sha256:7cf5da34a20ba8aeba3df8c4c927f1f72ee28b2a8a1dde2e78052acd0b577076"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1441-10893/epsg26910-1441-10893.building-presentation-proof.receipt.json",
+      "role": "ferry",
+      "tile": "epsg26910-1441-10893"
+    },
+    {
+      "artifact": {
+        "bytes": 343804,
+        "path": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.glb",
+        "sha256": "sha256:3ca086e767cd2cf5ac570123a96ba524e3404e9a0c2f2f0ee4518a97091ce299"
+      },
+      "counts": {
+        "buildings": 390,
+        "indices": 35508,
+        "primitives": 2,
+        "triangles": 11836,
+        "vertices": 8412
+      },
+      "ledgers": {
+        "buildingRecordsSha256": "sha256:ac610ec14d5b05d41aef5742957fa2b5459fae30e66f5f643a97b9801bcfab99",
+        "positionFloat32Sha256": "sha256:9afa3388433275fd660c61496418df7b01473e268227a1eeca98a4b3f630939a",
+        "presentationTriangleMultisetSha256": "sha256:adc449384ee50a0bd54b0b4c7bd37f071f51e8c35d86d19b95fb5dd316ce544c",
+        "sourceIndexSha256": "sha256:48858f61d3e3938c204e800a3a1c4209187512ead57508e36cbadcd64cef1d38",
+        "sourceTriangleMultisetSha256": "sha256:adc449384ee50a0bd54b0b4c7bd37f071f51e8c35d86d19b95fb5dd316ce544c"
+      },
+      "receipt": "public/data/world/preview-artifacts/sf-building-presentation-proof-v1/epsg26910-1430-10882/epsg26910-1430-10882.building-presentation-proof.receipt.json",
+      "role": "district",
+      "tile": "epsg26910-1430-10882"
+    }
+  ]
+}

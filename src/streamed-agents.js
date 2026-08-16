@@ -36,6 +36,23 @@ const FOCUS_TABLEAU_PEDESTRIANS = 10;
 const FOCUS_VEHICLE_SPACING = 22;
 const FOCUS_PEDESTRIAN_SPACING = 7.5;
 const FOCUS_RESTAGE_DISTANCE = 40;
+// The ordinary corridor uses the existing focus tableau and actor pools.  A
+// modest presentation lift on its Civic/Financial endpoints keeps those
+// camera-local silhouettes readable without changing C3's authored 3:0 view
+// or the representative lease/capacity model.
+const LIVING_BLOCK_ACTOR_SECTORS = new Set(['2:0', '4:0']);
+const LIVING_BLOCK_VEHICLE_SCALE = 1.1;
+const LIVING_BLOCK_PEDESTRIAN_SCALE = 1.12;
+// The normal QA orbit can sit roughly 64 m behind or ahead of its focus. Keep
+// every living-block tableau vehicle on a deterministic, camera-clear slot
+// with a small reversible band. This leaves the six class silhouettes on one
+// readable street axis without teleporting them during fixed-step updates.
+const LIVING_BLOCK_FOCUS_LONGITUDINAL_OFFSETS = Object.freeze([-44, -32, -8, -20, 32, 44]);
+const LIVING_BLOCK_FOCUS_LATERAL_OFFSETS = Object.freeze([-4, 4, -2.4, 0.8, -3.3, 3.3]);
+const LIVING_BLOCK_FOCUS_PEDESTRIAN_OFFSETS = Object.freeze([
+  -40, -32, -24, -16, -8, 4, 16, 28, 40, 52,
+]);
+const LIVING_BLOCK_FOCUS_SLOT_BAND = 4;
 // The roam camera sits ~64 m behind the focus target. Negative longitudinal
 // offsets place actors between the lens and focus, which repeatedly clipped
 // the same lower-left silhouette in every district capture.
@@ -236,8 +253,8 @@ const FOCUS_VEHICLE_CLASS_ORDER = Object.freeze([
   'taxi',
   'bus',
   'van',
-  'bike',
   'sedan',
+  'bike',
   'suv',
 ]);
 const VEHICLE_CLASS_LANE_BIAS = Object.freeze({
@@ -897,6 +914,31 @@ function nearFocusProgressAt(sectorKey, focusPosition, orientation, longitudinal
   );
 }
 
+function keepLivingBlockVehicleInCameraBand(actor) {
+  if (!actor
+    || actor.kind !== 'vehicle'
+    || !LIVING_BLOCK_ACTOR_SECTORS.has(actor.sectorKey)
+    || !Number.isFinite(actor.livingBlockFocusLongitudinal)) return;
+  const localLongitudinal = -SECTOR_SIZE * 0.5 + actor.progress;
+  const targetOffset = LIVING_BLOCK_FOCUS_LONGITUDINAL_OFFSETS[actor.localSlot] || 0;
+  let relative = localLongitudinal - actor.livingBlockFocusLongitudinal - targetOffset;
+  if (relative < -LIVING_BLOCK_FOCUS_SLOT_BAND) {
+    relative = -LIVING_BLOCK_FOCUS_SLOT_BAND;
+    actor.direction = 1;
+  } else if (relative > LIVING_BLOCK_FOCUS_SLOT_BAND) {
+    relative = LIVING_BLOCK_FOCUS_SLOT_BAND;
+    actor.direction = -1;
+  } else {
+    return;
+  }
+  const boundedLongitudinal = THREE.MathUtils.clamp(
+    actor.livingBlockFocusLongitudinal + targetOffset + relative,
+    -SECTOR_SIZE * 0.44,
+    SECTOR_SIZE * 0.44,
+  );
+  actor.progress = modulo(boundedLongitudinal + SECTOR_SIZE * 0.5, SECTOR_SIZE);
+}
+
 function createInstancedMesh(geometry, material, capacity, name) {
   const mesh = new THREE.InstancedMesh(geometry, material, capacity);
   mesh.name = name;
@@ -920,37 +962,29 @@ function createPools(scene) {
   root.name = 'Streamed district visible agents';
   root.userData.streamedAgentPool = true;
 
-  const bodyMaterial = new THREE.MeshStandardMaterial({
+  const bodyMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
-    emissive: 0x162126,
-    emissiveIntensity: 0.26,
-    roughness: 0.68,
-    metalness: 0.12,
-    vertexColors: true,
+    vertexColors: false,
+    fog: true,
+    toneMapped: false,
   });
-  const vehicleAccentMaterial = new THREE.MeshStandardMaterial({
+  const vehicleAccentMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
-    emissive: 0x142028,
-    emissiveIntensity: 0.32,
-    roughness: 0.52,
-    metalness: 0.1,
-    vertexColors: true,
+    vertexColors: false,
+    fog: true,
+    toneMapped: false,
   });
-  const vehicleIdentityMaterial = new THREE.MeshStandardMaterial({
+  const vehicleIdentityMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
-    emissive: 0x2a1d0d,
-    emissiveIntensity: 0.42,
-    roughness: 0.46,
-    metalness: 0.08,
-    vertexColors: true,
+    vertexColors: false,
+    fog: true,
+    toneMapped: false,
   });
-  const glassMaterial = new THREE.MeshStandardMaterial({
-    color: 0x90a8b2,
-    emissive: 0x0d1c24,
-    emissiveIntensity: 0.24,
-    roughness: 0.2,
-    metalness: 0.22,
-    vertexColors: true,
+  const glassMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    vertexColors: false,
+    fog: true,
+    toneMapped: false,
   });
   const tireMaterial = new THREE.MeshStandardMaterial({
     color: 0x171a1d,
@@ -1152,6 +1186,7 @@ function createActorSlots(capacity, kind) {
     gaitRate: 8,
     gaitPhase: 0,
     progress: 0,
+    livingBlockFocusLongitudinal: Number.NaN,
     speed: 0,
     moving: false,
     waiting: false,
@@ -1170,6 +1205,7 @@ function createActorSlots(capacity, kind) {
     storyMood: null,
     storyChoice: null,
     storyPartnerSlot: -1,
+    presentationCue: null,
     appearance: null,
     behaviorTree: null,
     behaviorActivity: null,
@@ -1340,6 +1376,8 @@ export function createStreamedAgentSystem({
       && localSlot < FOCUS_TABLEAU_VEHICLES
       && focusPosition,
     );
+    const livingBlockSectorActor = tier === 'detail' && LIVING_BLOCK_ACTOR_SECTORS.has(sectorKey);
+    const livingBlockActor = livingBlockSectorActor && focusTableau;
     const tableauSlot = localSlot < FOCUS_TABLEAU_VEHICLES;
     // Focus tableau locks a readable four-class set so taxi / SFMTA bus /
     // service van / private do not collapse into repeated black boxes.
@@ -1360,6 +1398,9 @@ export function createStreamedAgentSystem({
         : focusBodyPalette[Math.floor(seededUnit(seed, 2) * focusBodyPalette.length)]
           || bodyColors[Math.floor(seededUnit(seed, 2) * bodyColors.length)];
     const bodyTint = new THREE.Color(bodyColor);
+    if (LIVING_BLOCK_ACTOR_SECTORS.has(sectorKey) && tableauSlot && localSlot === 3) {
+      bodyTint.setHex(0x5f83b8);
+    }
     // Private cars still get a lift so graphite paints do not read as black boxes.
     const minLightness = className === 'bus'
       ? (tableauSlot ? 0.58 : 0.5)
@@ -1375,6 +1416,17 @@ export function createStreamedAgentSystem({
       minLightness,
       className === 'taxi' || className === 'van' || className === 'bike' ? 0.24 : 0.16,
     );
+    if (livingBlockSectorActor) {
+      // Per-instance albedo lift keeps the ordinary day/night tableau
+      // readable without changing the shared material or adding emissive
+      // glow.  Class hues remain the identity cue (taxi yellow, bus cream,
+      // van orange/blue, private cool neutrals).
+      liftReadableColor(
+        bodyTint,
+        Math.min(0.74, minLightness + 0.1),
+        className === 'bus' || className === 'van' ? 0.3 : 0.24,
+      );
+    }
     const displayBodyColor = bodyTint.getHex();
     const accentColor = VEHICLE_ACCENT_COLORS[className] || VEHICLE_ACCENT_COLORS.sedan;
     const roofCueColor = VEHICLE_ROOF_CUE_COLORS[className] || VEHICLE_ROOF_CUE_COLORS.sedan;
@@ -1393,6 +1445,11 @@ export function createStreamedAgentSystem({
     actor.orientation = Math.abs(coordinates.x + coordinates.z) % 2 === 1
       ? 'east-west'
       : 'north-south';
+    actor.livingBlockFocusLongitudinal = livingBlockActor
+      ? (actor.orientation === 'east-west'
+        ? focusPosition.x - coordinates.x * SECTOR_SIZE
+        : focusPosition.z - coordinates.z * SECTOR_SIZE)
+      : Number.NaN;
     actor.roadLine = streetLineFor(sectorKey, localSlot, 'vehicle');
     actor.direction = localSlot % 2 === 0 ? 1 : -1;
     actor.sidewalkSide = localSlot % 4 < 2 ? -1 : 1;
@@ -1403,9 +1460,14 @@ export function createStreamedAgentSystem({
     actor.spacingOffset = (seededUnit(seed, 5) - 0.5) * VEHICLE_SPACING_JITTER
       + (VEHICLE_CLASS_SPACING[className] || 0) * (actor.direction > 0 ? 1 : -1);
     actor.focusTableau = focusTableau;
+    actor.presentationCue = livingBlockActor ? 'ordinary-living-block-near-traffic' : null;
     actor.visualScale = tableauSlot
       ? (className === 'bus' ? 1.02 : className === 'bike' ? 1.2 : 1.08) + seededUnit(seed, 6) * 0.08
       : (className === 'bus' ? 0.94 : className === 'bike' ? 1.08 : 0.97) + seededUnit(seed, 6) * 0.08;
+    if (livingBlockSectorActor) {
+      actor.visualScale *= LIVING_BLOCK_VEHICLE_SCALE;
+      if (livingBlockActor && localSlot === 3) actor.visualScale *= 1.28;
+    }
     actor.dwelling = false;
     actor.dwellUntil = 0;
     actor.signalIntent = null;
@@ -1468,15 +1530,24 @@ export function createStreamedAgentSystem({
     };
     if (keepMotion) actor.progress = previousProgress;
     pools.meshes.vehicleBodies.setColorAt(actor.poolIndex, bodyTint);
+    const cabinTint = new THREE.Color(actor.appearance.cabinColor);
+    const trimTint = new THREE.Color(accentColor);
+    const roofTint = new THREE.Color(roofCueColor);
+    if (livingBlockSectorActor) {
+      liftReadableColor(cabinTint, 0.5, 0.2);
+      liftReadableColor(trimTint, 0.54, 0.3);
+      liftReadableColor(roofTint, 0.52, 0.28);
+    }
     pools.meshes.vehicleCabins.setColorAt(
       actor.poolIndex,
-      new THREE.Color(actor.appearance.cabinColor),
+      cabinTint,
     );
-    pools.meshes.vehicleRoofDetails.setColorAt(actor.poolIndex, new THREE.Color(roofCueColor));
-    pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2, new THREE.Color(accentColor));
-    pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2 + 1, new THREE.Color(accentColor));
+    pools.meshes.vehicleRoofDetails.setColorAt(actor.poolIndex, roofTint);
+    pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2, trimTint);
+    pools.meshes.vehicleSideTrims.setColorAt(actor.poolIndex * 2 + 1, trimTint);
     const rearLamp = new THREE.Color(actor.appearance.brakeColor);
-    const frontLamp = new THREE.Color(0xfff4cf);
+    const frontLamp = new THREE.Color(livingBlockActor ? 0xfff8da : 0xfff4cf);
+    if (livingBlockActor) liftReadableColor(frontLamp, 0.74, 0.24);
     pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2, rearLamp);
     pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2 + 1, frontLamp);
     colorsDirty = true;
@@ -1501,6 +1572,7 @@ export function createStreamedAgentSystem({
       && localSlot < FOCUS_TABLEAU_PEDESTRIANS
       && focusPosition,
     );
+    const livingBlockActor = focusTableau && LIVING_BLOCK_ACTOR_SECTORS.has(sectorKey);
     const tableauSlot = localSlot < FOCUS_TABLEAU_PEDESTRIANS;
     const tableauStory = tableauSlot ? FOCUS_TABLEAU_MICRO_STORIES[localSlot] : null;
     let role = tableauStory?.role || pickWeighted(seed, 1, districtProfile.roles);
@@ -1560,6 +1632,7 @@ export function createStreamedAgentSystem({
     actor.spacingOffset = (seededUnit(seed, 6) - 0.5) * PEDESTRIAN_SPACING_JITTER;
     const roleCue = PEDESTRIAN_ROLE_CUES[role] || DEFAULT_PEDESTRIAN_ROLE_CUE;
     actor.focusTableau = focusTableau;
+    actor.presentationCue = livingBlockActor ? 'ordinary-living-block-near-pedestrian' : null;
     actor.storyLabel = tableauStory?.label || null;
     actor.storyBeat = tableauStory?.beat || null;
     actor.storyMood = tableauStory?.mood || null;
@@ -1581,6 +1654,11 @@ export function createStreamedAgentSystem({
     actor.limbScale = roleCue.limb * (
       tableauSlot ? 1.01 + seededUnit(seed, 9) * 0.1 : 0.96 + seededUnit(seed, 9) * 0.08
     );
+    if (livingBlockActor) {
+      actor.bodyWidthScale *= LIVING_BLOCK_PEDESTRIAN_SCALE;
+      actor.bodyDepthScale *= LIVING_BLOCK_PEDESTRIAN_SCALE;
+      actor.limbScale *= 1.05;
+    }
     actor.gaitScale = roleCue.gait;
     actor.gaitRate = 7.4 + seededUnit(seed, 10) * 1.2;
     actor.gaitPhase = seededUnit(seed, 11) * Math.PI * 2;
@@ -1829,11 +1907,22 @@ export function createStreamedAgentSystem({
       if (actor.localSlot >= tableauCount) return;
       const route = focusTableauRoute(actor.kind, actor.localSlot, focusSectorKey);
       if (!route) return;
+      const livingBlockVehicle = actor.kind === 'vehicle'
+        && LIVING_BLOCK_ACTOR_SECTORS.has(focusSectorKey);
+      const livingBlockPedestrian = actor.kind === 'pedestrian'
+        && LIVING_BLOCK_ACTOR_SECTORS.has(focusSectorKey);
+      const stagedLongitudinalOffset = livingBlockVehicle
+        ? (LIVING_BLOCK_FOCUS_LONGITUDINAL_OFFSETS[actor.localSlot]
+          ?? route.longitudinalOffset)
+        : livingBlockPedestrian
+          ? (LIVING_BLOCK_FOCUS_PEDESTRIAN_OFFSETS[actor.localSlot]
+            ?? route.longitudinalOffset)
+        : route.longitudinalOffset;
       const stagedProgress = nearFocusProgressAt(
         focusSectorKey,
         focusPosition,
         route.orientation,
-        route.longitudinalOffset,
+        stagedLongitudinalOffset,
       );
       if (stagedProgress === null) return;
       // A QA teleport can leave a representative mid-crossing or in a dwell
@@ -1842,6 +1931,13 @@ export function createStreamedAgentSystem({
       // untouched and the next fixed step resumes ordinary motion.
       actor.progress = stagedProgress;
       actor.orientation = route.orientation;
+      if (livingBlockVehicle) {
+        const coordinates = parseSectorKey(actor.sectorKey);
+        actor.livingBlockFocusLongitudinal = route.orientation === 'east-west'
+          ? focusPosition.x - coordinates.x * SECTOR_SIZE
+          : focusPosition.z - coordinates.z * SECTOR_SIZE;
+        actor.presentationCue = 'ordinary-living-block-near-traffic';
+      }
       actor.roadLine = nearFocusStreetLine(
         focusSectorKey,
         focusPosition,
@@ -1985,15 +2081,22 @@ export function createStreamedAgentSystem({
           : 0.18)
       : 0;
     const lane = actor.laneOffset + dwellPull * actor.sidewalkSide * actor.direction;
+    const livingBlockLateral = actor.presentationCue === 'ordinary-living-block-near-traffic'
+      ? LIVING_BLOCK_FOCUS_LATERAL_OFFSETS[actor.localSlot]
+      : Number.NaN;
     let x;
     let z;
     let yaw;
     if (actor.orientation === 'east-west') {
       x = centerX + longitudinal;
-      z = centerZ + actor.roadLine + actor.direction * lane;
+      z = centerZ + actor.roadLine + (Number.isFinite(livingBlockLateral)
+        ? livingBlockLateral
+        : actor.direction * lane);
       yaw = actor.direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
     } else {
-      x = centerX - actor.direction * lane + actor.roadLine;
+      x = centerX + actor.roadLine + (Number.isFinite(livingBlockLateral)
+        ? livingBlockLateral
+        : -actor.direction * lane);
       z = centerZ + longitudinal;
       yaw = actor.direction > 0 ? 0 : Math.PI;
     }
@@ -2197,6 +2300,7 @@ export function createStreamedAgentSystem({
       );
       pools.meshes.vehicleHeadlights.setColorAt(actor.poolIndex * 2, blinkOn ? indicator : rear);
       colorsDirty = true;
+      keepLivingBlockVehicleInCameraBand(actor);
       placeVehicle(actor);
       return;
     }
@@ -2279,6 +2383,7 @@ export function createStreamedAgentSystem({
       new THREE.Color(rearColor),
     );
     colorsDirty = true;
+    keepLivingBlockVehicleInCameraBand(actor);
     placeVehicle(actor);
   };
 
@@ -2700,6 +2805,7 @@ export function createStreamedAgentSystem({
     poolIndex: actor.poolIndex,
     tier: actor.tier,
     role: actor.role,
+    presentationCue: actor.presentationCue || null,
     destination: actor.destination,
     activity: actor.activity,
     pace: Math.round(actor.pace * 1000) / 1000,

@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-fallback-canonical-shared-edge-receipt-lock",
+  "id": "sf-native-pixel-fallback-canonical-shared-edge-receipt-v1",
+  "gateId": "canonical-shared-edge-receipt-schema-v1",
+  "status": "canonical-schema-verified-evidence-only",
+  "productionReadiness": "unproven-production-writes-disabled-vertical-accuracy-unrealized",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "productionWriteEnabled": false,
+  "schemaContract": {
+    "name": "sf-native-pixel-fallback-production-receipt-v1",
+    "version": 1,
+    "perNativePixelAuthorityTuple": [
+      "sourceLockId",
+      "elevationSourceLockId",
+      "rasterSha256"
+    ],
+    "perNativePixelHeightComparison": "emitted float32 height bits (uint32 little-endian) exact equality",
+    "canonicalEdgeInvariant": "same exact EPSG:26910 coordinate + same selection policy hash + same half-open cell function => crossSourceSamples must be 0",
+    "mixedEdgeClassification": "candidate canonical-per-native-pixel versus resident legacy-cell-owned; exact authority tuples and float32 height bits are compared independently",
+    "cellRule": {
+      "name": "half-open-epsg26910-10000m-cell-v1",
+      "crs": "EPSG:26910",
+      "cellSizeMetres": 10000,
+      "epsilonMetres": 1e-7,
+      "boundaryOwnership": "exact-boundary-belongs-west-and-south",
+      "function": "floor((coordinateMetres - 1e-7) / 10000)"
+    },
+    "cellRuleSha256": "sha256:65c1d318099c71680501d4355c01583613b8f8127c4595774a318f75633c093e",
+    "productionWriteEnabled": false
+  },
+  "verifier": {
+    "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-canonical-shared-edge-receipt-v1.mjs",
+    "sha256": "sha256:5caccf25c5757ac29950f7b07196eacc9b5bc92b35c5d061af3ae0623540932d",
+    "packageScriptName": "verify:sf-native-pixel-fallback-canonical-shared-edge-receipt"
+  },
+  "bindings": {
+    "authorization": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-authorization-v1.lock.json",
+      "sha256": "sha256:572551aba2887450c1c48de66fb0cfef01b6e0fcaefb5069725a2621ddd9e3a4",
+      "productionWriteEnabled": false
+    },
+    "parityReceipt": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.receipt.json",
+      "sha256": "sha256:7713ee1d4495efae834a191192711769688eb3d38bfc0a3f0d4924e50b3f0246",
+      "productionWriteEnabled": false
+    },
+    "parityLock": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-production-parity-v1.lock.json",
+      "sha256": "sha256:358724a98ed80de01cf8d7afa9a5bc3a50d1e3cb41050d4b1baf897ed0928766",
+      "productionWriteEnabled": false
+    },
+    "sourceSwitchReceipt": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.receipt.json",
+      "sha256": "sha256:fa2a577b0d834c2fdc25bc77c952572d131e322e6e7cdf2c60f5d7609c6e3924",
+      "productionWriteEnabled": false
+    },
+    "sourceSwitchLock": {
+      "path": "public/data/world/source-locks/sf-native-pixel-fallback-internal-source-switch-continuity-audit-v1.lock.json",
+      "sha256": "sha256:42386b02a974c8834c18958712655cbac24ad7465007338db3882b8c106d13f9",
+      "productionWriteEnabled": false
+    },
+    "coveragePlan": {
+      "path": "public/data/world/plans/sf-metric-tile-coverage-v1.json",
+      "sha256": "sha256:e7550e604d23213c27895aeb5d20ae59d35e34b695580d2438b6ac6026407bb0",
+      "candidateTileCount": 25
+    },
+    "productionManifest": {
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json",
+      "sha256": "sha256:9a9a1a5aafc6d1408e8f36f195bbe336209819adcdf4dd0e925298c0eeb2c7d4"
+    },
+    "verifier": {
+      "path": "scripts/world-tiles/verify-sf-native-pixel-fallback-canonical-shared-edge-receipt-v1.mjs",
+      "sha256": "sha256:5caccf25c5757ac29950f7b07196eacc9b5bc92b35c5d061af3ae0623540932d",
+      "packageScriptName": "verify:sf-native-pixel-fallback-canonical-shared-edge-receipt"
+    }
+  },
+  "promotionGate": {
+    "status": "evidence-only-schema-verified-not-production-ready",
+    "evidenceReceiptPath": "public/data/world/source-locks/sf-native-pixel-fallback-canonical-shared-edge-receipt-v1.receipt.json",
+    "evidenceReceiptSha256": "sha256:9a7575c372d1060935b6ad3fbe07d6e2b0d3e242aebbfeef48f95bf2a3f80f92",
+    "canonicalInvariantPassed": true,
+    "mixedEdgesExactlyCompared": true,
+    "productionWriteEnabled": false,
+    "verticalAccuracyClaim": "none"
+  },
+  "counts": {
+    "candidateTileCount": 25,
+    "residentTileCount": 21,
+    "canonicalCanonicalSeamCount": 24,
+    "mixedLegacyCanonicalSeamCount": 22,
+    "seamCount": 46,
+    "seamSampleCount": 17710,
+    "canonicalCanonicalCrossSourceSamples": 0,
+    "mixedLegacyCanonicalCrossSourceSamples": 0,
+    "exactFloat32SeamCount": 46
+  },
+  "canonicalInvariant": {
+    "policyHash": "sha256:a475ad47eedff08509bd69782c24c624fecc2b4a4a720a14a518c90220f1ec8b",
+    "halfOpenCellRuleSha256": "sha256:65c1d318099c71680501d4355c01583613b8f8127c4595774a318f75633c093e",
+    "crossSourceSamples": 0,
+    "status": "passed"
+  },
+  "mixedEdgeAudit": {
+    "classification": "mixed-legacy-canonical",
+    "authorityTupleMismatchSamples": 0,
+    "exactFloat32HeightMismatchSamples": 0,
+    "status": "exact-authority-and-height-match-observed"
+  },
+  "boundarySentinel": {
+    "seam": "epsg26910-1432-10867|north->epsg26910-1432-10868|south",
+    "rule": "half-open EPSG:26910 10000m cells; exact boundary belongs west/south via epsilon 1e-7m",
+    "sampleIndex": 112,
+    "coordinate": {
+      "easting": 550000,
+      "northing": 4173312
+    },
+    "selectedCell": "54,417",
+    "nextSample": {
+      "sampleIndex": 113,
+      "coordinate": {
+        "easting": 550001,
+        "northing": 4173312
+      },
+      "selectedCell": "55,417"
+    },
+    "candidateAuthority": {
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    "residentAuthority": {
+      "sourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+      "elevationSourceLockId": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+      "rasterSha256": "ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    "candidateHeightBits": 1127289071,
+    "residentHeightBits": 1127289071,
+    "authorityTupleEqual": true,
+    "float32HeightBitsEqual": true
+  },
+  "writeGate": {
+    "productionWriteEnabled": false,
+    "candidateArtifactDirectoriesWritten": false,
+    "productionManifestChanged": false,
+    "reason": "Canonical receipt schema evidence does not authorize production writes or vertical accuracy claims."
+  }
+}

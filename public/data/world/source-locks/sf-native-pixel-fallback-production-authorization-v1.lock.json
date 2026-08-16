@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "kind": "sf-native-pixel-terrain-ownership-authorization",
+  "id": "sf-native-pixel-fallback-production-authorization-v1",
+  "status": "byte-locked-source-and-policy-authorized-seam-parity-pending",
+  "verticalCertification": "source-declared-navd88-unrealized",
+  "productionWriteEnabled": false,
+  "promotionGate": {
+    "status": "pending-all-25-source-aware-seam-parity",
+    "requiredTileCount": 25,
+    "evidenceReceiptSha256": null
+  },
+  "policy": {
+    "name": "source-locked-original-first-per-native-pixel-v1",
+    "sha256": "sha256:a475ad47eedff08509bd69782c24c624fecc2b4a4a720a14a518c90220f1ec8b",
+    "definition": {
+      "name": "source-locked-original-first-per-native-pixel-v1",
+      "candidateOrder": "original-before-californiagaps",
+      "fallbackCondition": "original-native-pixel-is-nodata",
+      "sampleMethod": "direct-native-pixel-float32-le",
+      "interpolation": "none"
+    }
+  },
+  "ownership": {
+    "nativePixelRule": "direct-native-pixel-float32-le",
+    "fallbackCause": "original-native-pixel-is-nodata",
+    "interpolation": "none",
+    "cellBoundaryRule": "half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon",
+    "sourceDeclaredVerticalRule": "preserve source-declared-navd88-unrealized; no geoid, epoch, or vertical realization claim"
+  },
+  "evidence": {
+    "verticalCertification": "source-declared-navd88-unrealized",
+    "requiredPerSourceCounts": [
+      "chosenCount",
+      "finiteCount",
+      "noDataCount",
+      "nonFiniteCount",
+      "outsideWindowCount"
+    ],
+    "requiredDisagreementStatistics": [
+      "bothFiniteSourceComparisons",
+      "maxBothFiniteDisagreementMetres",
+      "p99BothFiniteDisagreementMetres"
+    ],
+    "requiredSampleFields": [
+      "sourceLockId",
+      "elevationSourceLockId",
+      "rasterSha256",
+      "nativePixel",
+      "sampledSourceDeclaredNavd88UnrealizedMetres",
+      "fallbackOriginalReason"
+    ],
+    "sampleLedgerDigest": "sha256-stable-json-over-sorted-sample-records-v1",
+    "seamComparisonRule": "same-source authority plus exact float32 bits; cross-source authority requires exact float32 bits",
+    "seamCounts": [
+      "sameSourceSamples",
+      "crossSourceSamples"
+    ]
+  },
+  "sources": [
+    {
+      "role": "original",
+      "cellKey": "54,417",
+      "sourceLock": {
+        "id": "sf-3dep-ca-sanfrancisco-b23-x54y418-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-v1.lock.json",
+        "sha256": "sha256:bfdb49d38c2f6d0aea8b732c1389b08d3046cf947d79f1304f95bac571240739"
+      },
+      "elevationAuthorization": {
+        "id": "sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x54y418-elevation-authorized-v1.lock.json",
+        "sha256": "sha256:f2c4582ebe44a67ce397d23f6734859dd0569fd1b7d985f62f45b1655af30715"
+      },
+      "rasterSha256": "sha256:ff3afb13eb3bc64996aa3318825efef82b34ead35ad4c8342b7136e04ca4d07f"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "54,417",
+      "sourceLock": {
+        "id": "sf-3dep-ca-californiagaps-b23-x54y418-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-v1.lock.json",
+        "sha256": "sha256:488cd265c40e0a850457fcf942d4ce35f17c3237f72953afdc69c1e48c17b665"
+      },
+      "elevationAuthorization": {
+        "id": "sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x54y418-elevation-authorized-v1.lock.json",
+        "sha256": "sha256:c9b5584feefa7a76cc71ba6444631aac5844ff77edd0964e7aa19568db20ae1c"
+      },
+      "rasterSha256": "sha256:80e0f3dcb177f5749454eda17b66b6e890834f788c2f53fbe5bdbc5812b3d75a"
+    },
+    {
+      "role": "original",
+      "cellKey": "55,417",
+      "sourceLock": {
+        "id": "sf-3dep-ca-sanfrancisco-b23-x55y418-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-v1.lock.json",
+        "sha256": "sha256:ea8fc1cb4ae79a65146c30a68d8f2f224ba8450010db16d35b3af989bb1d53bd"
+      },
+      "elevationAuthorization": {
+        "id": "sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-sanfrancisco-b23-x55y418-elevation-authorized-v1.lock.json",
+        "sha256": "sha256:7e7c58e72e4ee6e53c3ded30d5dee90efe664d843718a57b6a05a212dfd91d07"
+      },
+      "rasterSha256": "sha256:a7bdf929446234f06642452bb43600cc650e93ccf8713d6f479becf848c69781"
+    },
+    {
+      "role": "californiagaps-fallback",
+      "cellKey": "55,417",
+      "sourceLock": {
+        "id": "sf-3dep-ca-californiagaps-b23-x55y418-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-v1.lock.json",
+        "sha256": "sha256:c9f1a9bbbe63a30087414bae2e4755a567ffb7c3901a060771484e5b08739e24"
+      },
+      "elevationAuthorization": {
+        "id": "sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1",
+        "path": "public/data/world/source-locks/sf-3dep-ca-californiagaps-b23-x55y418-elevation-authorized-v1.lock.json",
+        "sha256": "sha256:24d2fe482bddb853a59e70879df215425491ef03eaec50ac7fde160a49cb53df"
+      },
+      "rasterSha256": "sha256:fc84e32680626ec372b7615aaece93fef483b2614a412ffcb71930b0de72c645"
+    }
+  ]
+}

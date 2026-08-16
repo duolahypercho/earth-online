@@ -1,0 +1,424 @@
+{
+  "counts": {
+    "buildingVertices": 514,
+    "coastlineVertices": 48,
+    "emittedBuildingWays": 24,
+    "emittedCoastlineWays": 2,
+    "emittedRoadWays": 221,
+    "osmCandidateWays": 540,
+    "packageSourceFeatures": 247,
+    "roadVertices": 2432,
+    "terrainVertices": 74922,
+    "waterVertices": 74798
+  },
+  "deterministicInputs": {
+    "availableLods": [
+      0
+    ],
+    "buildingHeightPolicy": "OSM height, else building:levels*3.2m, else 9.6m",
+    "geometryQuantizationDecimalPlaces": 6,
+    "lod0Construction": "1 m terrain cells partitioned by directed OSM coastline into exclusive terrain/water primitives, plus coastline edge, OSM roads, and buildings",
+    "lod0DeviationMetres": 0,
+    "roadWidthPolicy": "OSM width, else deterministic highway-class/lanes table",
+    "surfaceGridMetres": 0.001,
+    "terrainCellOwnership": "half-open EPSG:26910 10000m cells; exact boundary belongs west/south via 1e-7m epsilon",
+    "terrainGridStepMetres": 1,
+    "terrainSampling": "canonical-10km-cell-owned-direct-native-pixel-float32-le"
+  },
+  "ferryBuilding": {
+    "present": true,
+    "sourceFeatureId": "way/558731934"
+  },
+  "id": "ferry-production-tile-v1",
+  "kind": "sf-metric-tile-build-receipt",
+  "lods": [
+    {
+      "artifactHash": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500",
+      "boundsLocalMetres": {
+        "max": [
+          384,
+          97.901493,
+          384
+        ],
+        "min": [
+          0,
+          -2.425344,
+          0
+        ]
+      },
+      "bytes": 3645408,
+      "level": 0,
+      "maxHorizontalDeviationMetres": 0.000002,
+      "maxVerticalDeviationMetres": 0.000002,
+      "meshStats": {
+        "buildings": {
+          "indices": 2163,
+          "primitiveChunks": 1,
+          "sourceOsmWayCount": 24,
+          "triangles": 721,
+          "vertices": 514
+        },
+        "coastline": {
+          "indices": 72,
+          "primitiveChunks": 1,
+          "sourceOsmWayCount": 2,
+          "triangles": 24,
+          "vertices": 48
+        },
+        "roads": {
+          "indices": 7734,
+          "primitiveChunks": 1,
+          "sourceOsmWayCount": 221,
+          "triangles": 2578,
+          "vertices": 2432
+        },
+        "terrain": {
+          "indices": 444948,
+          "primitiveChunks": 2,
+          "sourceOsmWayCount": 0,
+          "triangles": 148316,
+          "vertices": 75053
+        },
+        "water": {
+          "indices": 444258,
+          "primitiveChunks": 2,
+          "sourceOsmWayCount": 2,
+          "triangles": 148086,
+          "vertices": 75131
+        }
+      },
+      "path": "public/data/world/production-artifacts/ferry-production-tile-v1/ferry-production-tile-v1.lod0.glb",
+      "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "translationMetres": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "presentation": {
+    "contract": {
+      "attribute": {
+        "componentType": 5121,
+        "domain": [
+          0,
+          3
+        ],
+        "gltfSemantic": "_SF_SOURCE_TONE_V1",
+        "normalized": false,
+        "threeAttributeName": "_sf_source_tone_v1",
+        "type": "SCALAR"
+      },
+      "derivation": {
+        "formula": "Number(BigInt(sourceOsmWayId) % 4n)",
+        "id": "osm-way-id-modulo-4-v1",
+        "input": "byte-locked OSM source way identity",
+        "outputDomain": [
+          0,
+          3
+        ],
+        "policySha256": "sha256:2972f0a33f4a32ff9e62f60b8cc7d4a5e575c337cc46e4dd559a12bb4722ef68",
+        "presentationOnly": true,
+        "sourceColourClaim": false
+      },
+      "payloadOrder": {
+        "association": "GLTFLoader parser.associations {meshes,primitives}",
+        "id": "gltf-mesh-index-then-primitive-index-v1",
+        "reusedMeshPolicy": "deduplicate-only-when-attribute-bytes-match"
+      },
+      "schema": "sf-building-source-tone-v1",
+      "status": "presentation-schema-only"
+    },
+    "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+    "counts": {
+      "serializedVertices": 514,
+      "sourceBuildings": 24,
+      "sourceVertices": 514
+    },
+    "ledgers": {
+      "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
+      "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59"
+    },
+    "mode": "source-tone-v1",
+    "productionWriteEnabled": false,
+    "sourceRecords": [
+      {
+        "ordinal": 0,
+        "sourceFeatureId": "way/32862406",
+        "sourceTagsSha256": "sha256:b9651d8257d392943acab634c8921c3d8c30222d255df069525108ab64268280",
+        "sourceToneV1": 2,
+        "vertexCount": 56,
+        "vertexStart": 0
+      },
+      {
+        "ordinal": 1,
+        "sourceFeatureId": "way/32862467",
+        "sourceTagsSha256": "sha256:58919612a9f2ca44719db96ae40d78605a9fb0a79f7b93faec86d3ed2107f24d",
+        "sourceToneV1": 3,
+        "vertexCount": 28,
+        "vertexStart": 56
+      },
+      {
+        "ordinal": 2,
+        "sourceFeatureId": "way/32862485",
+        "sourceTagsSha256": "sha256:8cd1b3fc17db4ca23c780140139ed9e513136883d37cbe330b42da4d75c27584",
+        "sourceToneV1": 1,
+        "vertexCount": 32,
+        "vertexStart": 84
+      },
+      {
+        "ordinal": 3,
+        "sourceFeatureId": "way/44106213",
+        "sourceTagsSha256": "sha256:d91ad230cbe7b29898031f2decb834c395e4992ad98a39b3878d1bf75f280539",
+        "sourceToneV1": 1,
+        "vertexCount": 30,
+        "vertexStart": 116
+      },
+      {
+        "ordinal": 4,
+        "sourceFeatureId": "way/104599975",
+        "sourceTagsSha256": "sha256:1004e56492b1650f21ba54c249e65fa0fa3d140c576f619dde75d8f7e625be7f",
+        "sourceToneV1": 3,
+        "vertexCount": 12,
+        "vertexStart": 146
+      },
+      {
+        "ordinal": 5,
+        "sourceFeatureId": "way/132238424",
+        "sourceTagsSha256": "sha256:ecc72616282abaa375da352312e4ea471a9ea9e1e3a80ae3c4e861554c5d84e2",
+        "sourceToneV1": 0,
+        "vertexCount": 18,
+        "vertexStart": 158
+      },
+      {
+        "ordinal": 6,
+        "sourceFeatureId": "way/192026932",
+        "sourceTagsSha256": "sha256:ecc72616282abaa375da352312e4ea471a9ea9e1e3a80ae3c4e861554c5d84e2",
+        "sourceToneV1": 0,
+        "vertexCount": 8,
+        "vertexStart": 176
+      },
+      {
+        "ordinal": 7,
+        "sourceFeatureId": "way/192026938",
+        "sourceTagsSha256": "sha256:ecc72616282abaa375da352312e4ea471a9ea9e1e3a80ae3c4e861554c5d84e2",
+        "sourceToneV1": 2,
+        "vertexCount": 20,
+        "vertexStart": 184
+      },
+      {
+        "ordinal": 8,
+        "sourceFeatureId": "way/193054131",
+        "sourceTagsSha256": "sha256:bdf758fdbe149862893b7a00a5a16911b5dd926f39de01f7e46af3ba90cd3f3d",
+        "sourceToneV1": 3,
+        "vertexCount": 12,
+        "vertexStart": 204
+      },
+      {
+        "ordinal": 9,
+        "sourceFeatureId": "way/193054132",
+        "sourceTagsSha256": "sha256:26ac55edfa008cfaaed8a4ab3e7ae4d060d7e87d35cacf3b5274a47e17e99b48",
+        "sourceToneV1": 0,
+        "vertexCount": 8,
+        "vertexStart": 216
+      },
+      {
+        "ordinal": 10,
+        "sourceFeatureId": "way/193054133",
+        "sourceTagsSha256": "sha256:d3f83d4d3c8a9a4c5d5777bbd16da08267085b65db7b3afaff7b2cb8a0a5b7f1",
+        "sourceToneV1": 1,
+        "vertexCount": 12,
+        "vertexStart": 224
+      },
+      {
+        "ordinal": 11,
+        "sourceFeatureId": "way/193054134",
+        "sourceTagsSha256": "sha256:ecc72616282abaa375da352312e4ea471a9ea9e1e3a80ae3c4e861554c5d84e2",
+        "sourceToneV1": 2,
+        "vertexCount": 72,
+        "vertexStart": 236
+      },
+      {
+        "ordinal": 12,
+        "sourceFeatureId": "way/193054135",
+        "sourceTagsSha256": "sha256:b643cba2a20e35961a3740c35a34c1805901583d0ed5869056fdb5e7192c58a7",
+        "sourceToneV1": 3,
+        "vertexCount": 12,
+        "vertexStart": 308
+      },
+      {
+        "ordinal": 13,
+        "sourceFeatureId": "way/193054136",
+        "sourceTagsSha256": "sha256:bc29e72f81ac9e3c52993fc2940fad8598ac625e35aa2721afe4956f9faa9a31",
+        "sourceToneV1": 0,
+        "vertexCount": 8,
+        "vertexStart": 320
+      },
+      {
+        "ordinal": 14,
+        "sourceFeatureId": "way/193054137",
+        "sourceTagsSha256": "sha256:71e4ad49c34dc7e3ab062ccf36531ff511819cd5302aad254093488c42b4bad7",
+        "sourceToneV1": 1,
+        "vertexCount": 8,
+        "vertexStart": 328
+      },
+      {
+        "ordinal": 15,
+        "sourceFeatureId": "way/193054138",
+        "sourceTagsSha256": "sha256:fc86bc168e8864a1ff0a08dbcacc269c65c9e9c85f4c4799c531037c78aee0a8",
+        "sourceToneV1": 2,
+        "vertexCount": 22,
+        "vertexStart": 336
+      },
+      {
+        "ordinal": 16,
+        "sourceFeatureId": "way/256969674",
+        "sourceTagsSha256": "sha256:82ea9fceb9a6f5090ba67058d4079baed1bff711b0a9caab702c89866c2e829f",
+        "sourceToneV1": 2,
+        "vertexCount": 8,
+        "vertexStart": 358
+      },
+      {
+        "ordinal": 17,
+        "sourceFeatureId": "way/260290226",
+        "sourceTagsSha256": "sha256:9a17fcd1ea2182fa9a293fb464892a080be5e4395cce877127fb621152fd459d",
+        "sourceToneV1": 2,
+        "vertexCount": 24,
+        "vertexStart": 366
+      },
+      {
+        "ordinal": 18,
+        "sourceFeatureId": "way/558731934",
+        "sourceTagsSha256": "sha256:4bdd5dc4eb4608341e3e2881c40ad6247a59b172a5fa06b168610acc1e9f90f4",
+        "sourceToneV1": 2,
+        "vertexCount": 46,
+        "vertexStart": 390
+      },
+      {
+        "ordinal": 19,
+        "sourceFeatureId": "way/979811981",
+        "sourceTagsSha256": "sha256:a98dc9060e8eacc83847f9753d576fe60932109a7d8479ff639ddc62fc6afb4a",
+        "sourceToneV1": 1,
+        "vertexCount": 8,
+        "vertexStart": 436
+      },
+      {
+        "ordinal": 20,
+        "sourceFeatureId": "way/979811987",
+        "sourceTagsSha256": "sha256:a98dc9060e8eacc83847f9753d576fe60932109a7d8479ff639ddc62fc6afb4a",
+        "sourceToneV1": 3,
+        "vertexCount": 8,
+        "vertexStart": 444
+      },
+      {
+        "ordinal": 21,
+        "sourceFeatureId": "way/1189071405",
+        "sourceTagsSha256": "sha256:a98dc9060e8eacc83847f9753d576fe60932109a7d8479ff639ddc62fc6afb4a",
+        "sourceToneV1": 1,
+        "vertexCount": 22,
+        "vertexStart": 452
+      },
+      {
+        "ordinal": 22,
+        "sourceFeatureId": "way/1301393953",
+        "sourceTagsSha256": "sha256:a98dc9060e8eacc83847f9753d576fe60932109a7d8479ff639ddc62fc6afb4a",
+        "sourceToneV1": 1,
+        "vertexCount": 28,
+        "vertexStart": 474
+      },
+      {
+        "ordinal": 23,
+        "sourceFeatureId": "way/1301393957",
+        "sourceTagsSha256": "sha256:a98dc9060e8eacc83847f9753d576fe60932109a7d8479ff639ddc62fc6afb4a",
+        "sourceToneV1": 1,
+        "vertexCount": 12,
+        "vertexStart": 502
+      }
+    ],
+    "status": "write-disabled-production-shaped-proof"
+  },
+  "relationCoverage": {
+    "implemented": false,
+    "statement": "Directed OSM coastline ways are represented for coastal land/water ownership. Unassembled OSM multipolygon relations remain unrepresented and are not claimed as coverage."
+  },
+  "schemaVersion": 1,
+  "source": {
+    "geoTiffs": [
+      {
+        "bytes": 86461076,
+        "elevationSourceLockId": "sf-ferry-3dep-terrain-elevation-authorized-v1",
+        "ownershipCell": "55,418",
+        "path": "Data/raw/usgs-3dep/66ce871ad34e98e8a92453cb/USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+        "reader": "geotiff-window-reader-v1",
+        "sha256": "9cc9c03f4ddaf8ec6712951b980157ea02293c7723761466e6e60f21147a9424",
+        "verticalCertification": "source-declared-navd88-unrealized",
+        "window": {
+          "column": 3332,
+          "height": 422,
+          "row": 6691,
+          "width": 422
+        }
+      }
+    ],
+    "osmPbf": {
+      "bytes": 32742133,
+      "path": "public/data/sf/SanFrancisco.osm.pbf",
+      "queryBoundsWgs84": {
+        "east": -122.38827589561829,
+        "north": 37.79660036890246,
+        "south": 37.79086975157422,
+        "west": -122.39559196375622
+      },
+      "sha256": "dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae"
+    }
+  },
+  "status": "provisional-vertical-unrealized",
+  "surfaceClassification": {
+    "authority": "OpenStreetMap natural=coastline ways in the byte-locked PBF",
+    "coastlineDirectionRule": "OSM coastline direction: land on left, water on right",
+    "landAreaSquareMetres": 73779.146959,
+    "partitionAreaSquareMetres": 147455.999999,
+    "sourceOsmWayIds": [
+      43008440,
+      207781141
+    ],
+    "terrainWaterOverlapAreaSquareMetres": 0,
+    "waterAreaSquareMetres": 73676.85304,
+    "waterVerticalMode": "terrain-sampled-source-declared-navd88-unrealized; hydrologic classification only, not a tidal or hydroflattened water level"
+  },
+  "tile": {
+    "boundsEpsg26910Metres": [
+      553344,
+      4182912,
+      553728,
+      4183296
+    ],
+    "gridIndex": [
+      1441,
+      10893
+    ],
+    "identity": "epsg26910-1441-10893",
+    "originEpsg26910VerticalMetres": [
+      553344,
+      4182912,
+      0
+    ],
+    "originTupleOrder": [
+      "easting",
+      "northing",
+      "vertical"
+    ],
+    "runtimeFrame": "provisional-utm-source-declared-navd88-unrealized",
+    "scale": 1,
+    "vertexAxes": {
+      "x": "eastMinusOriginEasting",
+      "y": "verticalMinusOriginVertical",
+      "z": "northMinusOriginNorthing"
+    }
+  }
+}

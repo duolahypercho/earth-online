@@ -1085,6 +1085,34 @@ noscript {
   transition: width 260ms ease;
 }
 
+.hud__mission[data-pulse="true"] {
+  animation: hud-mission-pulse 720ms ease-out;
+}
+
+.hud__mission-progress-fill[data-pulse="true"] {
+  animation: hud-progress-pulse 720ms ease-out;
+}
+
+@keyframes hud-mission-pulse {
+  0% {
+    border-color: rgba(242, 181, 109, 0.72);
+    box-shadow: 0 0 1.6rem rgba(242, 181, 109, 0.32), var(--hud-shadow-tight);
+  }
+  100% {
+    box-shadow: var(--hud-shadow-tight);
+  }
+}
+
+@keyframes hud-progress-pulse {
+  0%,
+  100% {
+    filter: none;
+  }
+  45% {
+    filter: brightness(1.65);
+  }
+}
+
 .hud__mission-list {
   display: grid;
   gap: 0.3rem;
@@ -1584,6 +1612,10 @@ noscript {
   grid-row: 2;
   align-self: end;
   justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
   max-width: min(29rem, 62vw);
   margin: 0;
   margin-bottom: 6.5rem;
@@ -1598,6 +1630,127 @@ noscript {
   line-height: 1.4;
   text-align: center;
   backdrop-filter: blur(18px) saturate(120%);
+  animation: hud-message-in 240ms ease-out;
+}
+
+.hud__message-dot {
+  width: 0.38rem;
+  height: 0.38rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--hud-teal);
+  box-shadow: 0 0 0.65rem rgba(107, 214, 197, 0.72);
+  animation: hud-message-dot 2.2s ease-in-out infinite;
+}
+
+.hud__message-text {
+  min-width: 0;
+}
+
+@keyframes hud-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hud-message-dot {
+  50% {
+    opacity: 0.42;
+  }
+}
+
+.hud__callout {
+  position: fixed;
+  left: 50%;
+  bottom: max(10.25rem, 26vh);
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.08rem 0.72rem;
+  width: min(100%, 24rem);
+  padding: 0.68rem 0.9rem 0.64rem;
+  border: 1px solid rgba(107, 214, 197, 0.34);
+  border-left: 2px solid var(--hud-teal);
+  border-radius: 0.32rem;
+  color: var(--hud-ink);
+  background:
+    linear-gradient(145deg, rgba(12, 25, 26, 0.9), rgba(6, 10, 13, 0.78)),
+    var(--hud-glass-strong);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32), 0 0 1.6rem rgba(107, 214, 197, 0.12);
+  backdrop-filter: blur(18px) saturate(120%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(10px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.hud__callout[data-open="true"] {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.hud__callout--closing {
+  opacity: 0 !important;
+  transform: translateX(-50%) translateY(8px) !important;
+}
+
+.hud__callout-kicker {
+  grid-column: 1;
+  align-self: start;
+  padding-top: 0.08rem;
+  color: var(--hud-teal);
+  font-family: var(--hud-mono);
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hud__callout-title {
+  grid-column: 2;
+  color: var(--hud-ink);
+  font-family: var(--hud-display);
+  font-size: 1.04rem;
+  font-stretch: condensed;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.hud__callout-detail {
+  grid-column: 2;
+  margin-top: 0.26rem;
+  color: var(--hud-muted);
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+
+.hud__callout[data-kind="complete"] {
+  border-color: rgba(242, 181, 109, 0.56);
+  border-left-color: var(--hud-gold);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32), 0 0 1.8rem rgba(242, 181, 109, 0.18);
+}
+
+.hud__callout[data-kind="complete"] .hud__callout-kicker {
+  color: var(--hud-gold);
+}
+
+.hud__callout[data-kind="low"] {
+  border-color: rgba(238, 128, 111, 0.5);
+  border-left-color: var(--hud-red);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32), 0 0 1.8rem rgba(238, 128, 111, 0.14);
+}
+
+.hud__callout[data-kind="low"] .hud__callout-kicker {
+  color: var(--hud-red);
 }
 
 .hud__footer {
@@ -2353,6 +2506,25 @@ noscript {
   gap: 0.28rem;
 }
 
+.hud__life-inventory {
+  color: var(--hud-teal);
+  font-family: var(--hud-mono);
+  font-size: 0.46rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.hud__life-favor {
+  color: var(--hud-gold);
+  font-family: var(--hud-mono);
+  font-size: 0.48rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .hud__life-bar {
   display: grid;
   grid-template-columns: 4.4rem 1fr;
@@ -2394,6 +2566,22 @@ noscript {
 @keyframes life-low-pulse {
   50% {
     filter: brightness(1.45);
+  }
+}
+
+.hud__life-bar[data-flash='true'] .hud__life-bar-fill {
+  animation: life-need-flash 720ms ease-out;
+}
+
+@keyframes life-need-flash {
+  0%,
+  100% {
+    filter: none;
+    box-shadow: none;
+  }
+  40% {
+    filter: brightness(1.8);
+    box-shadow: 0 0 1rem currentColor;
   }
 }
 
@@ -2650,4 +2838,513 @@ noscript {
   grid-column: 3;
   color: var(--hud-faint);
   font-size: 0.46rem;
+}
+
+/* ---- contextual readable HUD -------------------------------------------
+ * The default game loop keeps the HUD mounted for accessibility and map /
+ * online controls, but normal play only needs a few small edge chips.  The
+ * context classes are intentionally additive so a caller can opt back into
+ * the diagnostic layout with setReadable(false).
+ */
+.hud.hud--readable {
+  grid-template-columns: minmax(8rem, 16rem) 1fr minmax(8rem, 13rem);
+  gap: 0.65rem 1rem;
+  padding:
+    max(0.8rem, env(safe-area-inset-top))
+    max(0.9rem, env(safe-area-inset-right))
+    max(0.8rem, env(safe-area-inset-bottom))
+    max(0.9rem, env(safe-area-inset-left));
+}
+
+.hud.hud--readable::before {
+  opacity: 0.025;
+}
+
+.hud.hud--readable::after {
+  opacity: 0;
+}
+
+.hud.hud--readable .hud__header {
+  grid-column: 1 / 3;
+  grid-template-columns: minmax(8rem, 10.5rem) minmax(8rem, 14rem);
+  column-gap: 0.7rem;
+  row-gap: 0.2rem;
+}
+
+.hud.hud--readable .hud__identity {
+  padding: 0.08rem 0 0.18rem 0.48rem;
+  border-left-width: 1px;
+}
+
+.hud.hud--readable .hud__eyebrow,
+.hud.hud--readable .hud__context-label,
+.hud.hud--readable .hud__context-activity {
+  font-size: 0.46rem;
+  letter-spacing: 0.1em;
+}
+
+.hud.hud--readable .hud__title {
+  margin-top: 0.22rem;
+  font-size: clamp(1.2rem, 1.7vw, 1.62rem);
+  line-height: 0.88;
+}
+
+.hud.hud--readable .hud__context {
+  max-width: 14rem;
+  padding: 0.32rem 0.48rem 0.34rem;
+  border-left-width: 1px;
+  border-radius: 0 0.28rem 0.28rem 0;
+  background: rgba(8, 18, 20, 0.42);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable .hud__context-district {
+  font-size: 0.84rem;
+}
+
+.hud.hud--readable .hud__context-activity {
+  max-width: 21ch;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hud.hud--readable .hud__route {
+  display: none;
+}
+
+.hud.hud--readable .hud__telemetry {
+  position: fixed;
+  top: max(3.18rem, calc(env(safe-area-inset-top) + 2.3rem));
+  right: max(0.9rem, env(safe-area-inset-right));
+  z-index: 12;
+  width: auto;
+  min-width: 0;
+  padding: 0.26rem 0.42rem;
+  border-color: rgba(107, 214, 197, 0.24);
+  border-radius: 0.28rem;
+  background: rgba(7, 17, 19, 0.46);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable .hud__telemetry::before {
+  width: 1.5rem;
+  height: 1px;
+  box-shadow: none;
+}
+
+.hud.hud--readable .hud__telemetry-bar {
+  gap: 0;
+  margin: 0;
+}
+
+.hud.hud--readable .hud__telemetry-title {
+  font-size: 0.46rem;
+  letter-spacing: 0.1em;
+}
+
+.hud.hud--readable .hud__metrics,
+.hud.hud--readable .hud__quality,
+.hud.hud--readable .hud__telemetry-actions {
+  display: none;
+}
+
+.hud.hud--readable .hud__mission {
+  position: fixed;
+  top: auto;
+  left: max(0.9rem, env(safe-area-inset-left));
+  bottom: max(6.15rem, calc(env(safe-area-inset-bottom) + 5.35rem));
+  z-index: 11;
+  width: min(14rem, calc(100vw - 1.8rem));
+  max-height: 2.3rem;
+  padding: 0.34rem 0.48rem;
+  border-left-width: 1px;
+  border-radius: 0 0.32rem 0.32rem 0;
+  background: rgba(8, 18, 20, 0.48);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable .hud__mission-header {
+  gap: 0.4rem;
+}
+
+.hud.hud--readable .hud__mission-kicker,
+.hud.hud--readable .hud__mission-tag {
+  font-size: 0.46rem;
+}
+
+.hud.hud--readable .hud__mission-title {
+  max-width: calc(100% - 0.2rem);
+  margin: 0.2rem 0 0;
+  padding-right: 0.1rem;
+  overflow: hidden;
+  font-size: 0.76rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud.hud--readable .hud__mission-objective,
+.hud.hud--readable .hud__mission-hint,
+.hud.hud--readable .hud__mission-meta,
+.hud.hud--readable .hud__mission-progress,
+.hud.hud--readable .hud__mission-list {
+  display: none;
+}
+
+.hud.hud--readable .hud__mission-restart {
+  position: absolute;
+  top: 0.27rem;
+  right: 0.3rem;
+  min-height: 1.35rem;
+  margin: 0;
+  padding: 0.18rem 0.36rem;
+  font-size: 0.44rem;
+}
+
+.hud.hud--readable .hud__state {
+  position: fixed;
+  left: max(0.9rem, env(safe-area-inset-left));
+  bottom: max(3.72rem, calc(env(safe-area-inset-bottom) + 3rem));
+  z-index: 11;
+  display: flex;
+  flex-wrap: nowrap;
+  width: auto;
+  max-width: min(19rem, calc(100vw - 1.8rem));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.hud.hud--readable .hud__state .status-chip {
+  min-height: 1.38rem;
+  padding: 0.27rem 0.42rem;
+  border-radius: 0.25rem;
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
+  background: rgba(8, 13, 16, 0.42);
+  box-shadow: none;
+}
+
+.hud.hud--readable .hud__state-life {
+  order: 0;
+  flex: 0 1 auto;
+  max-width: 9.5rem;
+  min-width: 0;
+}
+
+.hud.hud--readable .hud__state-life .status-chip__detail {
+  display: none;
+}
+
+.hud.hud--readable .hud__state-life .status-chip__value {
+  max-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud.hud--readable .hud__state .status-chip--entry[data-availability="hidden"] {
+  display: none;
+}
+
+.hud.hud--readable .hud__life {
+  left: max(0.9rem, env(safe-area-inset-left));
+  bottom: max(0.78rem, env(safe-area-inset-bottom));
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  width: auto;
+  max-width: min(15rem, calc(100vw - 1.8rem));
+  padding: 0.28rem 0.42rem;
+  border-color: rgba(245, 240, 231, 0.13);
+  border-radius: 0.28rem;
+  background: rgba(8, 13, 16, 0.48);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable .hud__life-header {
+  gap: 0.32rem;
+  white-space: nowrap;
+}
+
+.hud.hud--readable .hud__life-title {
+  font-size: 0.46rem;
+}
+
+.hud.hud--readable .hud__life-clock,
+.hud.hud--readable .hud__life-cash,
+.hud.hud--readable .hud__life-mood {
+  font-size: 0.44rem;
+}
+
+.hud.hud--readable .hud__life-bars,
+.hud.hud--readable .hud__life-inventory:not(.hud__life-debt),
+.hud.hud--readable .hud__life-favor,
+.hud.hud--readable .hud__life-debt:not([data-outstanding="true"]) {
+  display: none;
+}
+
+.hud.hud--readable .hud__life-debt[data-outstanding="true"] {
+  display: inline;
+  font-size: 0.44rem;
+  white-space: nowrap;
+}
+
+.hud.hud--readable .hud__online {
+  top: max(0.8rem, env(safe-area-inset-top));
+  right: max(0.9rem, env(safe-area-inset-right));
+  z-index: 13;
+  display: block;
+  width: auto;
+  max-width: 9rem;
+  padding: 0.28rem 0.42rem;
+  border-color: rgba(245, 240, 231, 0.13);
+  border-radius: 0.28rem;
+  background: rgba(8, 13, 16, 0.48);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable .hud__online-header {
+  gap: 0.3rem;
+}
+
+.hud.hud--readable .hud__online-status,
+.hud.hud--readable .hud__online-count {
+  font-size: 0.44rem;
+}
+
+.hud.hud--readable .hud__voice-toggle {
+  padding: 0.18rem 0.3rem;
+  font-size: 0.42rem;
+}
+
+.hud.hud--readable .hud__players,
+.hud.hud--readable .hud__chat-log,
+.hud.hud--readable .hud__chat-row {
+  display: none;
+}
+
+.hud.hud--readable .hud__interaction {
+  position: fixed;
+  right: max(0.9rem, env(safe-area-inset-right));
+  bottom: max(3.7rem, calc(env(safe-area-inset-bottom) + 3rem));
+  z-index: 14;
+  max-width: min(19rem, calc(100vw - 1.8rem));
+  margin: 0;
+  padding: 0.34rem 0.48rem 0.34rem 0.52rem;
+  min-height: 1.65rem;
+  border-radius: 0.28rem;
+  background: rgba(8, 13, 16, 0.58);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+  font-size: 0.5rem;
+}
+
+.hud.hud--readable .hud__interaction-prompt {
+  padding-left: 0.48rem;
+}
+
+.hud.hud--readable .hud__message {
+  position: fixed;
+  top: max(5rem, calc(env(safe-area-inset-top) + 4rem));
+  left: 50%;
+  z-index: 14;
+  max-width: min(24rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.32rem 0.52rem;
+  border-radius: 0.26rem;
+  background: rgba(8, 13, 16, 0.56);
+  box-shadow: none;
+  font-size: 0.58rem;
+  transform: translateX(-50%);
+}
+
+.hud.hud--readable .hud__callout {
+  top: max(6.7rem, calc(env(safe-area-inset-top) + 5.7rem));
+  bottom: auto;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.46rem 0.62rem;
+  background: rgba(8, 13, 16, 0.66);
+  box-shadow: none;
+}
+
+.hud.hud--readable .hud__footer {
+  position: fixed;
+  right: max(0.9rem, env(safe-area-inset-right));
+  bottom: max(0.8rem, env(safe-area-inset-bottom));
+  z-index: 12;
+  display: flex;
+  gap: 0.42rem;
+  pointer-events: none;
+}
+
+.hud.hud--readable .hud__controls {
+  display: flex;
+  gap: 0;
+}
+
+.hud.hud--readable .hud__control:not(:first-child) {
+  display: none;
+}
+
+.hud.hud--readable .hud__control {
+  padding: 0.22rem 0.34rem;
+  border: 1px solid rgba(245, 240, 231, 0.12);
+  border-radius: 0.24rem;
+  background: rgba(8, 13, 16, 0.42);
+}
+
+.hud.hud--readable .hud__control-label {
+  display: none;
+}
+
+.hud.hud--readable .hud__key {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.44rem;
+}
+
+.hud.hud--readable .hud__camera {
+  padding-left: 0;
+  border-left: 0;
+  font-size: 0.44rem;
+}
+
+/* A vehicle readout is the one deliberately larger chip during driving. */
+.hud.hud--readable.hud--context-drive .hud__mission,
+.hud.hud--readable.hud--context-drive .hud__state,
+.hud.hud--readable.hud--context-drive .hud__life,
+.hud.hud--readable.hud--context-combat .hud__mission,
+.hud.hud--readable.hud--context-combat .hud__state,
+.hud.hud--readable.hud--context-combat .hud__life,
+.hud.hud--readable.hud--context-interior .hud__mission,
+.hud.hud--readable.hud--context-interior .hud__state,
+.hud.hud--readable.hud--context-interior .hud__life,
+.hud.hud--readable.hud--context-interior .hud__online,
+.hud.hud--readable.hud--context-interior .hud__telemetry {
+  display: none;
+}
+
+/* Combat has its own reticle / ammo / health readout in main.js. Keep the
+ * action prompt available for surrender or recovery, but remove unrelated
+ * city chrome from the sight picture. */
+.hud.hud--readable.hud--context-combat .hud__header,
+.hud.hud--readable.hud--context-combat .hud__telemetry,
+.hud.hud--readable.hud--context-combat .hud__online,
+.hud.hud--readable.hud--context-combat .hud__footer {
+  display: none;
+}
+
+/* Interior views retain the room title and interaction affordance only. */
+.hud.hud--readable.hud--context-interior .hud__header {
+  grid-template-columns: minmax(0, 18rem);
+  grid-template-areas: "context";
+}
+
+.hud.hud--readable.hud--context-interior .hud__identity,
+.hud.hud--readable.hud--context-interior .hud__footer {
+  display: none;
+}
+
+.hud.hud--readable.hud--context-interior .hud__context {
+  max-width: 18rem;
+  background: rgba(30, 22, 14, 0.5);
+}
+
+.hud.hud--readable.hud--context-drive .hud__drive {
+  right: max(0.9rem, env(safe-area-inset-right));
+  bottom: max(0.8rem, env(safe-area-inset-bottom));
+  min-width: 10rem;
+  padding: 0.34rem 0.48rem;
+  border-radius: 0.3rem;
+  background: rgba(7, 17, 19, 0.62);
+  box-shadow: none;
+  backdrop-filter: blur(8px) saturate(105%);
+}
+
+.hud.hud--readable.hud--context-drive .hud__footer {
+  bottom: max(3.25rem, calc(env(safe-area-inset-bottom) + 2.5rem));
+}
+
+.hud.hud--readable.hud--context-combat .hud__interaction {
+  display: none;
+}
+
+.hud.hud--readable.hud--context-interior .hud__interaction {
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+}
+
+.hud.hud--readable.hud--context-menu .hud__mission,
+.hud.hud--readable.hud--context-pause .hud__mission {
+  position: relative;
+  top: auto;
+  left: auto;
+  bottom: auto;
+  width: min(100%, 18rem);
+  max-height: 11.5rem;
+  padding: 0.58rem 0.68rem 0.56rem;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-shadow-tight);
+  backdrop-filter: blur(16px) saturate(118%);
+}
+
+.hud.hud--readable.hud--context-menu .hud__mission-objective,
+.hud.hud--readable.hud--context-menu .hud__mission-hint,
+.hud.hud--readable.hud--context-menu .hud__mission-meta,
+.hud.hud--readable.hud--context-menu .hud__mission-progress,
+.hud.hud--readable.hud--context-menu .hud__mission-list,
+.hud.hud--readable.hud--context-pause .hud__mission-objective,
+.hud.hud--readable.hud--context-pause .hud__mission-hint,
+.hud.hud--readable.hud--context-pause .hud__mission-meta,
+.hud.hud--readable.hud--context-pause .hud__mission-progress,
+.hud.hud--readable.hud--context-pause .hud__mission-list {
+  display: revert;
+}
+
+@media (max-width: 760px) {
+  .hud.hud--readable {
+    padding: 0.7rem;
+  }
+
+  .hud.hud--readable .hud__mission,
+  .hud.hud--readable .hud__state,
+  .hud.hud--readable .hud__life {
+    left: 0.7rem;
+  }
+
+  .hud.hud--readable .hud__online,
+  .hud.hud--readable .hud__telemetry,
+  .hud.hud--readable .hud__interaction,
+  .hud.hud--readable .hud__footer,
+  .hud.hud--readable.hud--context-drive .hud__drive {
+    right: 0.7rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .hud.hud--readable .hud__header {
+    grid-column: 1;
+    grid-template-columns: minmax(6.5rem, 1fr) minmax(7rem, 45vw);
+    column-gap: 0.45rem;
+  }
+
+  .hud.hud--readable .hud__title {
+    font-size: 1.18rem;
+  }
+
+  .hud.hud--readable .hud__context {
+    max-width: 10rem;
+  }
+
+  .hud.hud--readable .hud__mission {
+    max-width: calc(100vw - 1.4rem);
+  }
 }

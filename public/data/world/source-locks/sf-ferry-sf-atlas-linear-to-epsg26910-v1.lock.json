@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "kind": "earth-preview-local-frame-bridge-lock",
+  "status": "preview-only-pointwise-conversion-not-for-runtime",
+  "id": "sf-ferry-sf-atlas-linear-to-epsg26910-v1",
+  "title": "Ferry planned 2x2 sf-atlas-linear-v1 to generic EPSG:26910 preview bridge",
+  "scope": "This lock only converts points in the existing sf-atlas-linear-v1 preview frame through its stated local-to-[longitude, latitude] formula and then through the separately locked generic WGS 84-to-EPSG:26910 operation. It records the four planned Ferry 2x2 tile corners and their build-buffer corners. It is not a surveyed control transformation, not a rectilinear UTM tile grid, not runtime terrain, not terrain-manifest promotion, not a vertical bridge, and not a sub-metre claim.",
+  "sourceEvidence": {
+    "atlas": {
+      "path": "public/data/sf/sf-atlas.json",
+      "sha256": "ff4c51f4cc78238d6bd7786df2bc0b2eea71e6489f3bed59c65c33dbc51f3e24",
+      "meta": {
+        "centerLonLatDegrees": [-122.4194, 37.778],
+        "metersPerDegreeLonLat": [87986.24747640654, 110574]
+      }
+    },
+    "city": {
+      "path": "public/data/sf/sf-city.json",
+      "sha256": "026a8cd2dbea946d8dba0e7f8e7b4f9d49154030f2cc2aed718712dfa7bb62f4",
+      "meta": {
+        "centerLonLatDegrees": [-122.4194, 37.778],
+        "metersPerDegreeLonLat": [87986.24747640654, 110574],
+        "atlasArtifactDeclaredSha256": "ff4c51f4cc78238d6bd7786df2bc0b2eea71e6489f3bed59c65c33dbc51f3e24",
+        "atlasArtifactDeclarationNote": "sf-city.json meta.sources[0].sha256 is written by build-realmap-assets.mjs as digestFile(ATLAS_PATH). Despite that source entry's human-readable OSM name, this receipt is the derived sf-atlas.json artifact hash, not the raw OSM extract hash."
+      }
+    },
+    "cityGzip": {
+      "path": "public/data/sf/sf-city.json.gz",
+      "sha256": "3de1574503496c5a1f981cb1f6695b5a1da0c7d4878ab7e1e98c4697dd836606"
+    },
+    "horizontalOperation": {
+      "path": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json",
+      "sha256": "d5a86d211be380eec4bc03ff5e97dbef4dfaf2866578ab5330c90c7b586fcc21",
+      "targetCrs": "EPSG:26910",
+      "combinedAccuracyMetres": 4,
+      "limitation": "The referenced operation is generic NAD83 only: no realization, coordinate epoch, grid dependency, or sub-metre alignment is established."
+    },
+    "plannedManifests": [
+      { "id": "sf-local-5-4", "path": "public/data/world/tiles/sf-local-5-4.manifest.json", "sha256": "51a00a4601729a76cc5b2a24d4e9a4fa137e8b809d8be1eefc5603554bc6a393" },
+      { "id": "sf-local-5-5", "path": "public/data/world/tiles/sf-local-5-5.manifest.json", "sha256": "2998840865b1833b9bcc7951d133995e39d6637149650cad7049318dfa5cb70f" },
+      { "id": "sf-local-6-4", "path": "public/data/world/tiles/sf-local-6-4.manifest.json", "sha256": "dc6a1bf8f7934d9df2dfb7f0a2dd1c339ffb5e671c1a874561307f8ed09d87dc" },
+      { "id": "sf-local-6-5", "path": "public/data/world/tiles/sf-local-6-5.manifest.json", "sha256": "65c1dec098cc32a94ef6de7d7dd9f511cb5577f7d5c3611656fb40085b57cd6a" }
+    ],
+    "manifestWgsBoundsVerification": {
+      "canonicalDecimalPlaces": 13,
+      "rawFormulaMaximumAbsoluteDeltaDegrees": 2e-14,
+      "permittedNonzeroRawDeltas": [
+        { "path": "sf-local-6-5.grid.wgs84Bounds[2]", "actualMinusComputedDegrees": 1.4210854715202004e-14 },
+        { "path": "sf-local-6-5.grid.wgs84BuildBounds[2]", "actualMinusComputedDegrees": 1.4210854715202004e-14 }
+      ],
+      "allOtherComponentsRawExact": true,
+      "interpretation": "All four current manifest bounds recompute exactly at the declared 13-decimal canonical representation. Exactly two named raw IEEE-754 JSON values differ from direct evaluation by one ULP (+1.4210854715202004e-14 degree); every other component is raw-exact. This is serialization-only, is separately bounded by the verifier, and is not a spatial-accuracy allowance."
+    }
+  },
+  "localFrame": {
+    "name": "sf-atlas-linear-v1",
+    "units": "metres",
+    "axisOrder": ["east", "north", "up"],
+    "anchorWgs84LonLatDegrees": [-122.4194, 37.778],
+    "metersPerDegreeLonLat": [87986.24747640654, 110574],
+    "formula": {
+      "inputOrder": ["localEastMetres", "localNorthMetres"],
+      "outputOrder": ["longitudeDegrees", "latitudeDegrees"],
+      "longitudeDegrees": "anchorLongitudeDegrees + localEastMetres / metersPerDegreeLongitude",
+      "latitudeDegrees": "anchorLatitudeDegrees + localNorthMetres / metersPerDegreeLatitude",
+      "inverseInputOrder": ["longitudeDegrees", "latitudeDegrees"],
+      "inverseOutputOrder": ["localEastMetres", "localNorthMetres"],
+      "localEastMetres": "(longitudeDegrees - anchorLongitudeDegrees) * metersPerDegreeLongitude",
+      "localNorthMetres": "(latitudeDegrees - anchorLatitudeDegrees) * metersPerDegreeLatitude"
+    },
+    "axisAndSignAssertions": [
+      "Increasing local east increases longitude.",
+      "Increasing local north increases latitude.",
+      "The local coordinate order is [east, north], whereas the WGS84 data order supplied to the horizontal lock is [longitude, latitude].",
+      "The runtime horizontal convention is x→east and z→north. Runtime y/height is excluded from this bridge; it is neither input nor output."
+    ],
+    "runtimeHorizontalConvention": {
+      "runtimeAxes": { "x": "east", "z": "north", "y": "height-excluded" },
+      "bridgeInput": "runtime [x, z] is local [east, north] in metres",
+      "bridgeOutput": "runtime [x, z] is local [east, north] in metres",
+      "verticalInputOrOutput": false
+    }
+  },
+  "conversion": {
+    "pipeline": ["sf-atlas-linear-v1 local [east, north] metres", "linear local-to-[longitude, latitude] degrees", "sf-ferry-3dep-2023-horizontal-crs-v1 generic WGS84-to-EPSG:26910 [easting, northing] metres"],
+    "inversePipeline": ["sf-ferry-3dep-2023-horizontal-crs-v1 generic EPSG:26910 [easting, northing] to WGS84 [longitude, latitude] degrees", "linear [longitude, latitude]-to-local [east, north] metres"],
+    "direction": "bidirectional-pointwise-preview-only",
+    "pointwiseOnly": true,
+    "isRectilinearUtmGrid": false,
+    "verticalBridge": false,
+    "runtimeUse": "prohibited",
+    "terrainManifestPromotion": "prohibited",
+    "surveyControl": "not established",
+    "subMetreClaim": false
+  },
+  "geometryPrecisionDebt": {
+    "sfCityHorizontalCoordinateQuantizationMetres": 0.1,
+    "atlasRoadSimplificationMetres": { "ordinaryRoads": 2.5, "detailRoads": 1.2 },
+    "sfCityRoadSimplificationMetres": { "ordinaryRoads": 3.2 },
+    "recovery": "The bridge cannot recover original OSM geometry, pre-simplification atlas geometry, survey control, or any precision removed by sf-city 0.1 m quantization and road simplification."
+  },
+  "plannedTiles": [
+    {
+      "id": "sf-local-5-4",
+      "coreCorners": [
+        { "id": "southwest", "localEastNorthMetres": [1920, 1536], "lonLatDegrees": [-122.39757840793227, 37.79189114981822], "epsg26910EnMetres": [553040.3687859398, 4182896.195045079] },
+        { "id": "southeast", "localEastNorthMetres": [2304, 1536], "lonLatDegrees": [-122.39321408951872, 37.79189114981822], "epsg26910EnMetres": [553424.6299586574, 4182898.679930258] },
+        { "id": "northwest", "localEastNorthMetres": [1920, 1920], "lonLatDegrees": [-122.39757840793227, 37.795363937272775], "epsg26910EnMetres": [553037.8860485475, 4183281.4998424286] },
+        { "id": "northeast", "localEastNorthMetres": [2304, 1920], "lonLatDegrees": [-122.39321408951872, 37.795363937272775], "epsg26910EnMetres": [553422.1292329079, 4183283.984805495] }
+      ],
+      "buildBufferCorners": [
+        { "id": "southwest", "localEastNorthMetres": [1904, 1520], "lonLatDegrees": [-122.39776025453284, 37.791746450340945], "epsg26910EnMetres": [553024.4613173481, 4182880.037535961] },
+        { "id": "southeast", "localEastNorthMetres": [2320, 1520], "lonLatDegrees": [-122.39303224291817, 37.791746450340945], "epsg26910EnMetres": [553440.7450664032, 4182882.729491388] },
+        { "id": "northwest", "localEastNorthMetres": [1904, 1936], "lonLatDegrees": [-122.39776025453284, 37.79550863675005], "epsg26910EnMetres": [553021.7724971466, 4183297.4510629205] },
+        { "id": "northeast", "localEastNorthMetres": [2320, 1936], "lonLatDegrees": [-122.39303224291817, 37.79550863675005], "epsg26910EnMetres": [553438.0351348658, 4183300.1431097575] }
+      ]
+    },
+    {
+      "id": "sf-local-5-5",
+      "coreCorners": [
+        { "id": "southwest", "localEastNorthMetres": [1920, 1920], "lonLatDegrees": [-122.39757840793227, 37.795363937272775], "epsg26910EnMetres": [553037.8860485475, 4183281.4998424286] },
+        { "id": "southeast", "localEastNorthMetres": [2304, 1920], "lonLatDegrees": [-122.39321408951872, 37.795363937272775], "epsg26910EnMetres": [553422.1292329079, 4183283.984805495] },
+        { "id": "northwest", "localEastNorthMetres": [1920, 2304], "lonLatDegrees": [-122.39757840793227, 37.79883672472733], "epsg26910EnMetres": [553035.403115663, 4183666.8048649714] },
+        { "id": "northeast", "localEastNorthMetres": [2304, 2304], "lonLatDegrees": [-122.39321408951872, 37.79883672472733], "epsg26910EnMetres": [553419.6283102501, 4183669.2899058885] }
+      ],
+      "buildBufferCorners": [
+        { "id": "southwest", "localEastNorthMetres": [1904, 1904], "lonLatDegrees": [-122.39776025453284, 37.7952192377955], "epsg26910EnMetres": [553021.9793376129, 4183265.342320694] },
+        { "id": "southeast", "localEastNorthMetres": [2320, 1904], "lonLatDegrees": [-122.39303224291817, 37.7952192377955], "epsg26910EnMetres": [553438.243599345, 4183268.034360501] },
+        { "id": "northwest", "localEastNorthMetres": [1904, 2320], "lonLatDegrees": [-122.39776025453284, 37.798981424204605], "epsg26910EnMetres": [553019.2903056922, 4183682.7560916166] },
+        { "id": "northeast", "localEastNorthMetres": [2320, 2320], "lonLatDegrees": [-122.39303224291817, 37.798981424204605], "epsg26910EnMetres": [553435.5334544264, 4183685.44822279] }
+      ]
+    },
+    {
+      "id": "sf-local-6-4",
+      "coreCorners": [
+        { "id": "southwest", "localEastNorthMetres": [2304, 1536], "lonLatDegrees": [-122.39321408951872, 37.79189114981822], "epsg26910EnMetres": [553424.6299586574, 4182898.679930258] },
+        { "id": "southeast", "localEastNorthMetres": [2688, 1536], "lonLatDegrees": [-122.38884977110519, 37.79189114981822], "epsg26910EnMetres": [553808.89120935, 4182901.1827543885] },
+        { "id": "northwest", "localEastNorthMetres": [2304, 1920], "lonLatDegrees": [-122.39321408951872, 37.795363937272775], "epsg26910EnMetres": [553422.1292329079, 4183283.984805495] },
+        { "id": "northeast", "localEastNorthMetres": [2688, 1920], "lonLatDegrees": [-122.38884977110519, 37.795363937272775], "epsg26910EnMetres": [553806.3724952032, 4183286.4877080745] }
+      ],
+      "buildBufferCorners": [
+        { "id": "southwest", "localEastNorthMetres": [2288, 1520], "lonLatDegrees": [-122.39339593611929, 37.791746450340945], "epsg26910EnMetres": [553408.7232363131, 4182882.5216704393] },
+        { "id": "southeast", "localEastNorthMetres": [2704, 1520], "lonLatDegrees": [-122.38866792450462, 37.791746450340945], "epsg26910EnMetres": [553825.0070698427, 4182885.2330597057] },
+        { "id": "northwest", "localEastNorthMetres": [2288, 1936], "lonLatDegrees": [-122.39339593611929, 37.79550863675005], "epsg26910EnMetres": [553406.0149287265, 4183299.9352817517] },
+        { "id": "northeast", "localEastNorthMetres": [2704, 1936], "lonLatDegrees": [-122.38866792450462, 37.79550863675005], "epsg26910EnMetres": [553822.2776508731, 4183302.646763087] }
+      ]
+    },
+    {
+      "id": "sf-local-6-5",
+      "coreCorners": [
+        { "id": "southwest", "localEastNorthMetres": [2304, 1920], "lonLatDegrees": [-122.39321408951872, 37.795363937272775], "epsg26910EnMetres": [553422.1292329079, 4183283.984805495] },
+        { "id": "southeast", "localEastNorthMetres": [2688, 1920], "lonLatDegrees": [-122.38884977110519, 37.795363937272775], "epsg26910EnMetres": [553806.3724952032, 4183286.4877080745] },
+        { "id": "northwest", "localEastNorthMetres": [2304, 2304], "lonLatDegrees": [-122.39321408951872, 37.79883672472733], "epsg26910EnMetres": [553419.6283102501, 4183669.2899058885] },
+        { "id": "northeast", "localEastNorthMetres": [2688, 2304], "lonLatDegrees": [-122.38884977110519, 37.79883672472733], "epsg26910EnMetres": [553803.8535827319, 4183671.7928868807] }
+      ],
+      "buildBufferCorners": [
+        { "id": "southwest", "localEastNorthMetres": [2288, 1904], "lonLatDegrees": [-122.39339593611929, 37.7952192377955], "epsg26910EnMetres": [553406.2232682814, 4183267.8265330377] },
+        { "id": "southeast", "localEastNorthMetres": [2704, 1904], "lonLatDegrees": [-122.38866792450462, 37.7952192377955], "epsg26910EnMetres": [553822.4876144446, 4183270.538007293] },
+        { "id": "northwest", "localEastNorthMetres": [2288, 2320], "lonLatDegrees": [-122.39339593611929, 37.798981424204605], "epsg26910EnMetres": [553403.5147474415, 4183685.240388273] },
+        { "id": "northeast", "localEastNorthMetres": [2704, 2320], "lonLatDegrees": [-122.38866792450462, 37.798981424204605], "epsg26910EnMetres": [553819.7579805596, 4183687.951954554] }
+      ]
+    }
+  ],
+  "numericalEvidence": {
+    "method": "All values use the locked linear local-to-WGS formula followed by the dependency-free transverse-Mercator series for the existing generic EPSG:26910 lock. Values evidence the variation of that pointwise conversion; they do not establish local survey accuracy.",
+    "combinedCoreBoundsEastNorthMetres": [1920, 1536, 2688, 2304],
+    "combinedBuildBufferBoundsEastNorthMetres": [1904, 1520, 2704, 2320],
+    "gridConvergenceAtCoreCorners": [
+      { "localEastNorthMetres": [1920, 1536], "positiveEastGridAngleDegrees": 0.3691731601311972, "positiveNorthGridAngleDegrees": 90.36916971001205, "eastStepGridMetres": 1.0007008099915213, "northStepGridMetres": 1.0034184445654062, "orthogonalityErrorDegrees": 0.0000034501191521485453 },
+      { "localEastNorthMetres": [2688, 1536], "positiveEastGridAngleDegrees": 0.3745224131986275, "positiveNorthGridAngleDegrees": 90.37451895811074, "eastStepGridMetres": 1.000701820195151, "northStepGridMetres": 1.003419460484133, "orthogonalityErrorDegrees": 0.0000034550878922345873 },
+      { "localEastNorthMetres": [1920, 2304], "positiveEastGridAngleDegrees": 0.3692308719352103, "positiveNorthGridAngleDegrees": 90.36922742132336, "eastStepGridMetres": 1.0006071215111532, "northStepGridMetres": 1.003419625500299, "orthogonalityErrorDegrees": 0.000003450611856692376 },
+      { "localEastNorthMetres": [2688, 2304], "positiveEastGridAngleDegrees": 0.3745809726045802, "positiveNorthGridAngleDegrees": 90.37457750096596, "eastStepGridMetres": 1.0006081313832216, "northStepGridMetres": 1.0034206406779735, "orthogonalityErrorDegrees": 0.0000034716386210220662 }
+    ],
+    "nonRectilinearity": {
+      "coreParallelogramResidualEnMetres": [-0.07195634127128869, 0.0003125998191535473],
+      "coreParallelogramResidualMagnitudeMetres": 0.07195702028153403,
+      "buildBufferParallelogramResidualEnMetres": [-0.07807762722950429, 0.00033919233828783035],
+      "buildBufferParallelogramResidualMagnitudeMetres": 0.07807836400201904,
+      "interpretation": "A non-zero fourth-corner-minus-affine-parallelogram residual demonstrates that this local linear frame must not be described as a rectilinear EPSG:26910 grid."
+    },
+    "closure": {
+      "method": "Projected perimeter vector sum SW→SE→NE→NW→SW, using the same four projected vertices.",
+      "coreResidualEnMetres": [0, 0],
+      "buildBufferResidualEnMetres": [0, 0],
+      "interpretation": "This algebraic closure only proves that the recorded corner order is internally consistent; it does not imply rectilinearity or survey closure."
+    },
+    "affineResidual": {
+      "method": "Least-squares affine [1,u,v] fit to nine 3x3 samples over each combined rectangle, where u and v are normalized around local [2304,1920].",
+      "coreMaxResidualMagnitudeMetres": 0.018274982895782506,
+      "buildBufferMaxResidualMagnitudeMetres": 0.019829636999787403,
+      "interpretation": "Even the best affine approximation has a non-zero residual. It is included to reject an affine/rectilinear promotion, not as an accuracy budget."
+    },
+    "combinedProjectedEdgeLengthsMetres": {
+      "method": "Straight-line Euclidean lengths between consecutive pointwise generic EPSG:26910 corner vectors in the order south, east, north, west. They evidence non-rectilinearity and are not survey distances.",
+      "core": { "south": 768.5386083525353, "east": 770.6265982831814, "north": 768.4666555557445, "west": 770.6258186667407 },
+      "buildBuffer": { "south": 800.5626117326007, "east": 802.7360569231405, "north": 800.4845379513777, "west": 802.7352109853362 }
+    }
+  },
+  "limitations": [
+    "Pointwise preview conversion only; not a local-to-UTM survey transformation.",
+    "The referenced horizontal operation has 4 m generic accuracy and no stated NAD83 realization or coordinate epoch.",
+    "No terrain sampling, vertical datum/geoid conversion, water reference, runtime placement, or manifest update is authorized by this lock.",
+    "No sub-metre, seam, collision, building, road, or georeferencing quality claim follows from these numerical vectors."
+  ],
+  "tooling": {
+    "verifier": "scripts/world-tiles/verify-sf-atlas-linear-to-epsg26910-v1.mjs",
+    "receipt": "The verifier recomputes every local-to-WGS and WGS-to-generic-EPSG:26910 vector, validates planned manifest WGS bounds directly from local bounds, and emits this lock's exact UTF-8 SHA-256."
+  }
+}
