@@ -1,0 +1,87 @@
+{
+  "ok": false,
+  "verdict": "rejected-contaminated-crop",
+  "confidence": 0,
+  "estimatedFidelity": 0,
+  "targetThreshold": 0.7,
+  "materialId": "stripedStone",
+  "sourceImage": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png",
+  "outDir": ".img2threejs/sfmoma-v2/material-evidence/stripedStone",
+  "palette": [
+    "#87523F",
+    "#A06851",
+    "#593528",
+    "#181614",
+    "#E6E0DA"
+  ],
+  "maps": {
+    "albedo": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/stripedStone/stripedstone_albedo.png",
+      "url": "stripedstone_albedo.png",
+      "channel": "albedo",
+      "source": "reference-pixel-extraction"
+    },
+    "roughness": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/stripedStone/stripedstone_roughness.png",
+      "url": "stripedstone_roughness.png",
+      "channel": "roughness",
+      "source": "reference-pixel-extraction"
+    },
+    "height": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/stripedStone/stripedstone_height.png",
+      "url": "stripedstone_height.png",
+      "channel": "height",
+      "source": "reference-pixel-extraction"
+    },
+    "normal": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/stripedStone/stripedstone_normal.png",
+      "url": "stripedstone_normal.png",
+      "channel": "normal",
+      "source": "reference-pixel-extraction"
+    },
+    "ao": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/stripedStone/stripedstone_ao.png",
+      "url": "stripedstone_ao.png",
+      "channel": "ao",
+      "source": "reference-pixel-extraction"
+    }
+  },
+  "diagnostics": {
+    "sourceWidth": 512,
+    "sourceHeight": 341,
+    "mapSize": 1024,
+    "cropBBoxPixels": {
+      "x": 0,
+      "y": 0,
+      "width": 512,
+      "height": 341
+    },
+    "mask": {
+      "backgroundColor": "#8A5B48",
+      "backgroundNoise": 78.288,
+      "transparentPixelFraction": 0,
+      "foregroundCoverage": 0.626
+    },
+    "mapStats": {
+      "valueRange": 0.7915,
+      "heightP90Gradient": 0.06433,
+      "roughnessBase": 0.716,
+      "roughnessVariation": 0.117,
+      "normalStrength": 0.232,
+      "blurRadius": 21
+    },
+    "palette": [
+      "#87523F",
+      "#A06851",
+      "#593528",
+      "#181614",
+      "#E6E0DA"
+    ]
+  },
+  "warnings": [
+    "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+    "Rejected: grid-zone crop contained adjacent materials and cannot support material-specific PBR claims."
+  ],
+  "limitation": "Historical coarse extraction only; not wired into the spec. See material-analysis.json for the visually isolated replacement crop.",
+  "rejectedByVisualInspection": true
+}

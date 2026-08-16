@@ -1,0 +1,1930 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.spec-authoring-blueprint",
+  "templateSource": ".img2threejs/sfmoma-v1/object-sculpt-spec.json",
+  "target": "SFMOMA Source-Honest Landmark V2",
+  "sourceBoundary": "Presentation-only reconstruction. OSM sf-building-41692824 remains authoritative for footprint, EPSG:26910 placement, collision, height/source status, and portal identity.",
+  "coordinateFrame": {
+    "front": "+Z faces the reference-matched Third Street presentation camera",
+    "up": "+Y",
+    "right": "+X",
+    "origin": "local presentation root at the podium ground-center; canonical world placement is supplied externally by the OSM runtime",
+    "scaleReference": "reference-relative ratios only; no generated-image dimension is surveyed or authoritative",
+    "transformSpace": "parent-local",
+    "transformContract": "Top-level components are relative to the implicit returned Group; every child position and rotation is relative to its named parent pivot."
+  },
+  "silhouette": {
+    "boundingShape": "wide stepped brick mass with a centered attached striped cylinder and one rear pale rippled shell",
+    "aspectRatios": [
+      "overall width:height approximately 1.55 in the fixed concept view",
+      "turret visible height:width approximately 1.65",
+      "oculus major:minor axis approximately 1.32"
+    ],
+    "symmetry": "intentionally asymmetric wings around a dominant near-central turret",
+    "dominantCurves": [
+      "tilted elliptical oculus",
+      "cylindrical turret",
+      "continuous rounded expansion corners and horizontal ripples"
+    ],
+    "negativeSpaces": [
+      "deep central entry",
+      "punched podium windows",
+      "curtain-wall slots",
+      "oculus glazing inset"
+    ],
+    "landmarks": [
+      "broad stepped red-brick wings",
+      "alternating black-white turret courses",
+      "tilted annular oculus",
+      "dark granite base",
+      "one contiguous pale rippled expansion"
+    ]
+  },
+  "componentDescriptors": [
+    {
+      "id": "granitePodium",
+      "name": "Granite grounding podium",
+      "level": "macro",
+      "role": "podium-mass",
+      "parent": null,
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "granite",
+      "dimensions": [
+        1,
+        0.16,
+        0.42
+      ],
+      "position": [
+        0,
+        0.08,
+        0
+      ],
+      "localFeatures": [
+        "granitePodium.punchedWindowVoids",
+        "granitePodium.baseCourse",
+        "granitePodium.podiumCap"
+      ],
+      "sockets": [
+        "entrySeat",
+        "windowBankSeat"
+      ],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(34, 37, 39, 1.0)",
+        "rgba(58, 61, 63, 1.0)"
+      ]
+    },
+    {
+      "id": "brickWings",
+      "name": "Stepped Botta brick wings",
+      "level": "macro",
+      "role": "primary-facade-mass",
+      "parent": null,
+      "primitive": "extrude",
+      "topologyClass": "assembled-solid",
+      "material": "brick",
+      "dimensions": [
+        0.96,
+        0.74,
+        0.38
+      ],
+      "position": [
+        -0.02,
+        0.45,
+        0.02
+      ],
+      "localFeatures": [
+        "brickWings.steppedSilhouette",
+        "brickWings.recessedStageJoints"
+      ],
+      "sockets": [
+        "westSetbackSeat",
+        "eastSetbackSeat",
+        "centerBarSeat",
+        "facadeSkinSeat",
+        "rooflineSeat"
+      ],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(143, 76, 55, 1.0)",
+        "rgba(102, 51, 39, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "profile2D": {
+          "points": [
+            [
+              -0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              0.12
+            ],
+            [
+              0.34,
+              0.12
+            ],
+            [
+              0.34,
+              0.31
+            ],
+            [
+              0.13,
+              0.31
+            ],
+            [
+              0.13,
+              0.5
+            ],
+            [
+              -0.14,
+              0.5
+            ],
+            [
+              -0.14,
+              0.35
+            ],
+            [
+              -0.34,
+              0.35
+            ],
+            [
+              -0.34,
+              0.14
+            ],
+            [
+              -0.5,
+              0.14
+            ]
+          ],
+          "depth": 1
+        }
+      }
+    },
+    {
+      "id": "brickCentralTower",
+      "name": "Central attached brick tower",
+      "level": "macro",
+      "role": "central-facade-mass",
+      "parent": null,
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "brick",
+      "dimensions": [
+        0.27,
+        0.82,
+        0.31
+      ],
+      "position": [
+        0.02,
+        0.49,
+        -0.05
+      ],
+      "localFeatures": [
+        "brickCentralTower.sideReturns"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(146, 78, 56, 1.0)",
+        "rgba(106, 54, 40, 1.0)"
+      ]
+    },
+    {
+      "id": "stripedTurret",
+      "name": "Embedded striped cylindrical turret",
+      "level": "macro",
+      "role": "identity-cylinder",
+      "parent": null,
+      "primitive": "cylinder",
+      "topologyClass": "assembled-solid",
+      "material": "stripedStone",
+      "dimensions": [
+        0.25,
+        0.72,
+        0.25
+      ],
+      "position": [
+        0.03,
+        0.56,
+        0.08
+      ],
+      "localFeatures": [
+        "stripedTurret.bandedCourses",
+        "stripedTurret.centralNeckGroove",
+        "stripedTurret.embeddedSideReturns",
+        "stripedTurret.bandEdgeShadow"
+      ],
+      "sockets": [
+        "oculusSeat",
+        "bandSkinSeat",
+        "neckSeat"
+      ],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(224, 220, 211, 1.0)",
+        "rgba(49, 49, 48, 1.0)"
+      ]
+    },
+    {
+      "id": "rippledExpansion",
+      "name": "Contiguous pale rippled expansion",
+      "level": "macro",
+      "role": "continuous-expansion-mass",
+      "parent": null,
+      "primitive": "curve-sweep",
+      "topologyClass": "continuous-sculpt",
+      "material": "frp",
+      "dimensions": [
+        0.49,
+        0.78,
+        0.48
+      ],
+      "position": [
+        0.27,
+        0.55,
+        -0.13
+      ],
+      "localFeatures": [
+        "rippledExpansion.horizontalRippleProfile",
+        "rippledExpansion.roundedCornerContinuity",
+        "rippledExpansion.hiddenElevationInferenceLimit"
+      ],
+      "sockets": [
+        "expansionGlassSeat",
+        "rippleSkinSeat",
+        "panelGridSeat"
+      ],
+      "colorClass": "plastic",
+      "colors": [
+        "rgba(225, 225, 222, 1.0)",
+        "rgba(190, 192, 192, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "curveSweep": {
+          "spine": [
+            [
+              -0.5,
+              -0.18,
+              0
+            ],
+            [
+              -0.28,
+              0.04,
+              0.06
+            ],
+            [
+              0,
+              0.18,
+              0.1
+            ],
+            [
+              0.28,
+              0.15,
+              0.06
+            ],
+            [
+              0.5,
+              -0.05,
+              -0.02
+            ]
+          ],
+          "crossSection": {
+            "points": [
+              [
+                -0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5
+              ],
+              [
+                -0.5,
+                0.5
+              ]
+            ]
+          },
+          "closed": false
+        }
+      }
+    },
+    {
+      "id": "glassAtriumCore",
+      "name": "Glazed atrium depth core",
+      "level": "macro",
+      "role": "atrium-mass",
+      "parent": null,
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "glass",
+      "dimensions": [
+        0.23,
+        0.62,
+        0.3
+      ],
+      "position": [
+        0.11,
+        0.47,
+        0.04
+      ],
+      "localFeatures": [
+        "glassAtriumCore.interiorDepth"
+      ],
+      "sockets": [
+        "curtainWallSeat",
+        "interiorBackingSeat"
+      ],
+      "colorClass": "glass",
+      "colors": [
+        "rgba(72, 91, 96, 0.72)",
+        "rgba(21, 29, 31, 0.82)"
+      ]
+    },
+    {
+      "id": "westSetback",
+      "name": "West stepped facade mass",
+      "level": "meso",
+      "role": "facade-stage",
+      "parent": "brickWings",
+      "parentSocket": "westSetbackSeat",
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "brick",
+      "dimensions": [
+        0.34,
+        0.57,
+        0.35
+      ],
+      "position": [
+        -0.29,
+        -0.08,
+        -0.01
+      ],
+      "localFeatures": [
+        "westSetback.returnDepth"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(137, 70, 50, 1.0)",
+        "rgba(95, 47, 36, 1.0)"
+      ]
+    },
+    {
+      "id": "eastSetback",
+      "name": "East stepped facade mass",
+      "level": "meso",
+      "role": "facade-stage",
+      "parent": "brickWings",
+      "parentSocket": "eastSetbackSeat",
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "brick",
+      "dimensions": [
+        0.36,
+        0.48,
+        0.34
+      ],
+      "position": [
+        0.33,
+        -0.11,
+        0
+      ],
+      "localFeatures": [
+        "eastSetback.returnDepth"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(147, 77, 55, 1.0)",
+        "rgba(104, 52, 39, 1.0)"
+      ]
+    },
+    {
+      "id": "centralBrickBar",
+      "name": "Central horizontal brick bar",
+      "level": "meso",
+      "role": "facade-bridge",
+      "parent": "brickWings",
+      "parentSocket": "centerBarSeat",
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "brick",
+      "dimensions": [
+        0.56,
+        0.18,
+        0.38
+      ],
+      "position": [
+        -0.04,
+        -0.02,
+        0.06
+      ],
+      "localFeatures": [
+        "centralBrickBar.deepReveal"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(150, 80, 57, 1.0)",
+        "rgba(105, 53, 40, 1.0)"
+      ]
+    },
+    {
+      "id": "brickFacade",
+      "name": "Brick course relief system",
+      "level": "meso",
+      "role": "facade-relief",
+      "parent": "brickWings",
+      "parentSocket": "facadeSkinSeat",
+      "primitive": "instanced-cluster",
+      "topologyClass": "surface-relief",
+      "material": "brick",
+      "dimensions": [
+        0.94,
+        0.72,
+        0.02
+      ],
+      "position": [
+        0.02,
+        0,
+        0.18
+      ],
+      "localFeatures": [
+        "brickFacade.brickCourses",
+        "brickFacade.edgeReturnCourses"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(148, 77, 55, 1.0)",
+        "rgba(93, 45, 34, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "box"
+      }
+    },
+    {
+      "id": "roofline",
+      "name": "Stepped parapet cap system",
+      "level": "meso",
+      "role": "roofline-relief",
+      "parent": "brickWings",
+      "parentSocket": "rooflineSeat",
+      "primitive": "instanced-cluster",
+      "topologyClass": "surface-relief",
+      "material": "darkMetal",
+      "dimensions": [
+        0.94,
+        0.03,
+        0.4
+      ],
+      "position": [
+        0.02,
+        0.37,
+        -0.02
+      ],
+      "localFeatures": [
+        "roofline.parapetSteps"
+      ],
+      "sockets": [],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(32, 35, 36, 1.0)",
+        "rgba(63, 65, 65, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "box"
+      }
+    },
+    {
+      "id": "entryAssembly",
+      "name": "Deep central entry assembly",
+      "level": "meso",
+      "role": "entry-volume",
+      "parent": "granitePodium",
+      "parentSocket": "entrySeat",
+      "primitive": "extrude",
+      "topologyClass": "assembled-solid",
+      "material": "darkMetal",
+      "dimensions": [
+        0.18,
+        0.22,
+        0.11
+      ],
+      "position": [
+        0.02,
+        0.05,
+        0.22
+      ],
+      "localFeatures": [
+        "entryAssembly.recessedEntry"
+      ],
+      "sockets": [
+        "glazingSeat",
+        "canopySeat"
+      ],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(27, 29, 29, 1.0)",
+        "rgba(65, 65, 61, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "profile2D": {
+          "points": [
+            [
+              -0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              0.5
+            ],
+            [
+              -0.5,
+              0.5
+            ]
+          ],
+          "holes": [
+            [
+              [
+                -0.29,
+                -0.34
+              ],
+              [
+                0.29,
+                -0.34
+              ],
+              [
+                0.29,
+                0.27
+              ],
+              [
+                -0.29,
+                0.27
+              ]
+            ]
+          ],
+          "depth": 1
+        }
+      }
+    },
+    {
+      "id": "entryGlazing",
+      "name": "Entry door and transom glazing",
+      "level": "meso",
+      "role": "entry-glazing",
+      "parent": "entryAssembly",
+      "parentSocket": "glazingSeat",
+      "primitive": "plane-card",
+      "topologyClass": "conforming-shell",
+      "material": "glass",
+      "dimensions": [
+        0.14,
+        0.17,
+        0.01
+      ],
+      "position": [
+        0,
+        0,
+        0.06
+      ],
+      "localFeatures": [
+        "entryGlazing.doorGrid"
+      ],
+      "sockets": [],
+      "colorClass": "glass",
+      "colors": [
+        "rgba(37, 49, 51, 0.74)",
+        "rgba(11, 16, 17, 0.90)"
+      ]
+    },
+    {
+      "id": "entryCanopy",
+      "name": "Entry canopy and soffit",
+      "level": "meso",
+      "role": "entry-slab",
+      "parent": "entryAssembly",
+      "parentSocket": "canopySeat",
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "darkMetal",
+      "dimensions": [
+        0.18,
+        0.02,
+        0.1
+      ],
+      "position": [
+        0,
+        0.12,
+        0.02
+      ],
+      "localFeatures": [
+        "entryCanopy.soffitShadow"
+      ],
+      "sockets": [],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(31, 33, 33, 1.0)",
+        "rgba(69, 70, 68, 1.0)"
+      ]
+    },
+    {
+      "id": "curtainWalls",
+      "name": "Vertical curtain-wall slots",
+      "level": "meso",
+      "role": "glazing-grid",
+      "parent": "glassAtriumCore",
+      "parentSocket": "curtainWallSeat",
+      "primitive": "instanced-cluster",
+      "topologyClass": "assembled-solid",
+      "material": "glass",
+      "dimensions": [
+        0.21,
+        0.58,
+        0.03
+      ],
+      "position": [
+        0,
+        0,
+        0.16
+      ],
+      "localFeatures": [
+        "curtainWalls.verticalSlotMullions"
+      ],
+      "sockets": [],
+      "colorClass": "glass",
+      "colors": [
+        "rgba(66, 85, 89, 0.76)",
+        "rgba(17, 25, 27, 0.90)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "box"
+      }
+    },
+    {
+      "id": "graniteWindowBanks",
+      "name": "Podium punched-window bank",
+      "level": "meso",
+      "role": "window-bank",
+      "parent": "granitePodium",
+      "parentSocket": "windowBankSeat",
+      "primitive": "instanced-cluster",
+      "topologyClass": "assembled-solid",
+      "material": "darkMetal",
+      "dimensions": [
+        0.82,
+        0.06,
+        0.02
+      ],
+      "position": [
+        0,
+        -0.01,
+        0.22
+      ],
+      "localFeatures": [
+        "graniteWindowBanks.darkInteriorDepth"
+      ],
+      "sockets": [],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(18, 20, 20, 1.0)",
+        "rgba(52, 55, 55, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "box"
+      }
+    },
+    {
+      "id": "oculusAssembly",
+      "name": "Tilted annular oculus rim",
+      "level": "meso",
+      "role": "identity-ring",
+      "parent": "stripedTurret",
+      "parentSocket": "oculusSeat",
+      "primitive": "torus",
+      "topologyClass": "assembled-solid",
+      "material": "stripedStone",
+      "dimensions": [
+        0.23,
+        0.28,
+        0.07
+      ],
+      "position": [
+        0,
+        0.16,
+        0.13
+      ],
+      "localFeatures": [
+        "oculusAssembly.annularBevel"
+      ],
+      "sockets": [
+        "glazingSeat"
+      ],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(221, 217, 209, 1.0)",
+        "rgba(47, 47, 46, 1.0)"
+      ],
+      "rotation": [
+        0.24,
+        0,
+        -0.28
+      ]
+    },
+    {
+      "id": "oculusGlazing",
+      "name": "Tilted elliptical oculus glazing",
+      "level": "meso",
+      "role": "oculus-glazing",
+      "parent": "oculusAssembly",
+      "parentSocket": "glazingSeat",
+      "primitive": "extrude",
+      "topologyClass": "conforming-shell",
+      "material": "glass",
+      "dimensions": [
+        0.17,
+        0.22,
+        0.025
+      ],
+      "position": [
+        0,
+        0,
+        0.035
+      ],
+      "localFeatures": [
+        "oculusGlazing.radialMullions"
+      ],
+      "sockets": [],
+      "colorClass": "glass",
+      "colors": [
+        "rgba(77, 96, 99, 0.78)",
+        "rgba(25, 34, 36, 0.88)"
+      ],
+      "geometryDescriptor": {
+        "profile2D": {
+          "points": [
+            [
+              0.5,
+              0
+            ],
+            [
+              0.462,
+              0.191
+            ],
+            [
+              0.354,
+              0.354
+            ],
+            [
+              0.191,
+              0.462
+            ],
+            [
+              0,
+              0.5
+            ],
+            [
+              -0.191,
+              0.462
+            ],
+            [
+              -0.354,
+              0.354
+            ],
+            [
+              -0.462,
+              0.191
+            ],
+            [
+              -0.5,
+              0
+            ],
+            [
+              -0.462,
+              -0.191
+            ],
+            [
+              -0.354,
+              -0.354
+            ],
+            [
+              -0.191,
+              -0.462
+            ],
+            [
+              0,
+              -0.5
+            ],
+            [
+              0.191,
+              -0.462
+            ],
+            [
+              0.354,
+              -0.354
+            ],
+            [
+              0.462,
+              -0.191
+            ]
+          ],
+          "depth": 1
+        }
+      },
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "inheritedWorldTilt": [
+        0.24,
+        0,
+        -0.28
+      ],
+      "inheritedFrom": "oculusAssembly"
+    },
+    {
+      "id": "turretBandRelief",
+      "name": "Alternating turret course geometry",
+      "level": "meso",
+      "role": "turret-relief",
+      "parent": "stripedTurret",
+      "parentSocket": "bandSkinSeat",
+      "primitive": "instanced-cluster",
+      "topologyClass": "surface-relief",
+      "material": "stripedStone",
+      "dimensions": [
+        0.26,
+        0.7,
+        0.26
+      ],
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "localFeatures": [
+        "turretBandRelief.wrappedCourseDepth"
+      ],
+      "sockets": [],
+      "colorClass": "stone",
+      "colors": [
+        "rgba(225, 221, 213, 1.0)",
+        "rgba(48, 48, 47, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "torus",
+        "torusTubeRatio": 0.12
+      }
+    },
+    {
+      "id": "turretNeck",
+      "name": "Turret vertical neck trim",
+      "level": "meso",
+      "role": "turret-trim",
+      "parent": "stripedTurret",
+      "parentSocket": "neckSeat",
+      "primitive": "extrude",
+      "topologyClass": "assembled-solid",
+      "material": "darkMetal",
+      "dimensions": [
+        0.025,
+        0.45,
+        0.035
+      ],
+      "position": [
+        0,
+        -0.11,
+        0.14
+      ],
+      "localFeatures": [
+        "turretNeck.attachedGrooveDepth"
+      ],
+      "sockets": [],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(31, 33, 33, 1.0)",
+        "rgba(65, 67, 67, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "profile2D": {
+          "points": [
+            [
+              -0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              -0.5
+            ],
+            [
+              0.5,
+              0.5
+            ],
+            [
+              -0.5,
+              0.5
+            ]
+          ],
+          "depth": 1
+        }
+      }
+    },
+    {
+      "id": "expansionGlazing",
+      "name": "Continuous expansion glass ribbon",
+      "level": "meso",
+      "role": "expansion-glazing",
+      "parent": "rippledExpansion",
+      "parentSocket": "expansionGlassSeat",
+      "primitive": "curve-sweep",
+      "topologyClass": "conforming-shell",
+      "material": "glass",
+      "dimensions": [
+        0.47,
+        0.18,
+        0.43
+      ],
+      "position": [
+        0,
+        -0.01,
+        0.01
+      ],
+      "localFeatures": [
+        "expansionGlazing.continuousMullionRibbon"
+      ],
+      "sockets": [],
+      "colorClass": "glass",
+      "colors": [
+        "rgba(89, 105, 108, 0.76)",
+        "rgba(33, 43, 45, 0.88)"
+      ],
+      "geometryDescriptor": {
+        "curveSweep": {
+          "spine": [
+            [
+              -0.5,
+              -0.08,
+              0
+            ],
+            [
+              -0.25,
+              0.02,
+              0.04
+            ],
+            [
+              0,
+              0.08,
+              0.07
+            ],
+            [
+              0.27,
+              0.06,
+              0.04
+            ],
+            [
+              0.5,
+              -0.04,
+              0
+            ]
+          ],
+          "crossSection": {
+            "points": [
+              [
+                -0.5,
+                -0.08
+              ],
+              [
+                0.5,
+                -0.08
+              ],
+              [
+                0.5,
+                0.08
+              ],
+              [
+                -0.5,
+                0.08
+              ]
+            ]
+          },
+          "closed": false
+        }
+      }
+    },
+    {
+      "id": "expansionRippleSkin",
+      "name": "Expansion horizontal ripple relief",
+      "level": "meso",
+      "role": "expansion-relief",
+      "parent": "rippledExpansion",
+      "parentSocket": "rippleSkinSeat",
+      "primitive": "curve-sweep",
+      "topologyClass": "surface-relief",
+      "material": "frp",
+      "dimensions": [
+        0.5,
+        0.76,
+        0.49
+      ],
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "localFeatures": [
+        "expansionRippleSkin.grazingLightRidges"
+      ],
+      "sockets": [],
+      "colorClass": "plastic",
+      "colors": [
+        "rgba(228, 228, 225, 1.0)",
+        "rgba(194, 196, 196, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "curveSweep": {
+          "spine": [
+            [
+              -0.5,
+              -0.17,
+              0
+            ],
+            [
+              -0.28,
+              0.04,
+              0.06
+            ],
+            [
+              0,
+              0.18,
+              0.1
+            ],
+            [
+              0.28,
+              0.15,
+              0.06
+            ],
+            [
+              0.5,
+              -0.05,
+              -0.02
+            ]
+          ],
+          "crossSection": {
+            "points": [
+              [
+                -0.5,
+                -0.025
+              ],
+              [
+                0.5,
+                -0.025
+              ],
+              [
+                0.5,
+                0.025
+              ],
+              [
+                -0.5,
+                0.025
+              ]
+            ]
+          },
+          "closed": false
+        }
+      }
+    },
+    {
+      "id": "expansionPanelGrid",
+      "name": "Expansion FRP panel seam grid",
+      "level": "meso",
+      "role": "panel-relief",
+      "parent": "rippledExpansion",
+      "parentSocket": "panelGridSeat",
+      "primitive": "plane-card",
+      "topologyClass": "surface-relief",
+      "material": "frp",
+      "dimensions": [
+        0.49,
+        0.77,
+        0.49
+      ],
+      "position": [
+        0,
+        0,
+        0.005
+      ],
+      "localFeatures": [
+        "expansionPanelGrid.seamRhythm"
+      ],
+      "sockets": [],
+      "colorClass": "plastic",
+      "colors": [
+        "rgba(224, 225, 223, 1.0)",
+        "rgba(181, 184, 184, 1.0)"
+      ],
+      "geometryDescriptor": {
+        "baseGeometry": "plane-card"
+      }
+    },
+    {
+      "id": "interiorBacking",
+      "name": "Dark interior glazing backing",
+      "level": "meso",
+      "role": "interior-depth",
+      "parent": "glassAtriumCore",
+      "parentSocket": "interiorBackingSeat",
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "material": "darkMetal",
+      "dimensions": [
+        0.2,
+        0.56,
+        0.04
+      ],
+      "position": [
+        0,
+        0,
+        0.08
+      ],
+      "localFeatures": [
+        "interiorBacking.parallaxDepth"
+      ],
+      "sockets": [],
+      "colorClass": "metal",
+      "colors": [
+        "rgba(13, 17, 18, 1.0)",
+        "rgba(38, 44, 45, 1.0)"
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "id": "brick",
+      "name": "Reference-inferred red brick",
+      "materialClass": "stone",
+      "baseColor": "#92503B",
+      "secondary": [
+        "#6A3428",
+        "#B06A50"
+      ],
+      "roughness": 0.76,
+      "roughnessVariation": 0.12,
+      "metalness": 0,
+      "normalStrength": 0.34,
+      "aoStrength": 0.36,
+      "localOverrides": [
+        {
+          "id": "brick.mortarJoints",
+          "mask": "course-grid",
+          "roughness": 0.9,
+          "normalStrength": 0.24,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "granite",
+      "name": "Reference-inferred charcoal granite",
+      "materialClass": "stone",
+      "baseColor": "#303436",
+      "secondary": [
+        "#191C1D",
+        "#55595A"
+      ],
+      "roughness": 0.58,
+      "roughnessVariation": 0.12,
+      "metalness": 0,
+      "normalStrength": 0.22,
+      "aoStrength": 0.34,
+      "localOverrides": [
+        {
+          "id": "granite.panelJoints",
+          "mask": "panel-grid",
+          "roughness": 0.72,
+          "normalStrength": 0.18,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c0.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stripedStone",
+      "name": "Reference-inferred striped stone",
+      "materialClass": "stone",
+      "baseColor": "#DDD9D1",
+      "secondary": [
+        "#303130",
+        "#F0EEE8"
+      ],
+      "roughness": 0.5,
+      "roughnessVariation": 0.08,
+      "metalness": 0,
+      "normalStrength": 0.2,
+      "aoStrength": 0.28,
+      "localOverrides": [
+        {
+          "id": "stripedStone.bandEdgeShadow",
+          "mask": "alternating-course-edges",
+          "roughness": 0.6,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png"
+          ]
+        },
+        {
+          "id": "stripedStone.oculusRimCatchlight",
+          "mask": "annular-rim",
+          "roughness": 0.34,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "glass",
+      "name": "Reference-inferred blue-gray glazing",
+      "materialClass": "glass",
+      "baseColor": "#53696D",
+      "secondary": [
+        "#1D292B",
+        "#81979A"
+      ],
+      "roughness": 0.18,
+      "roughnessVariation": 0.07,
+      "metalness": 0,
+      "normalStrength": 0.04,
+      "aoStrength": 0.16,
+      "transmission": 0.42,
+      "localOverrides": [
+        {
+          "id": "glass.controlledSpecular",
+          "mask": "visible-glazing",
+          "roughness": 0.16,
+          "clearcoat": 0.28,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "darkMetal",
+      "name": "Reference-inferred charcoal metal",
+      "materialClass": "metal",
+      "baseColor": "#222728",
+      "secondary": [
+        "#111516",
+        "#4D5354"
+      ],
+      "roughness": 0.32,
+      "roughnessVariation": 0.09,
+      "metalness": 0.68,
+      "normalStrength": 0.1,
+      "aoStrength": 0.22,
+      "localOverrides": [
+        {
+          "id": "darkMetal.mullionEdgeHighlights",
+          "mask": "frame-edges",
+          "roughness": 0.24,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "frp",
+      "name": "Reference-inferred pale rippled FRP",
+      "materialClass": "plastic",
+      "baseColor": "#E2E2DF",
+      "secondary": [
+        "#C2C4C4",
+        "#F2F2EF"
+      ],
+      "roughness": 0.62,
+      "roughnessVariation": 0.1,
+      "metalness": 0,
+      "normalStrength": 0.3,
+      "aoStrength": 0.3,
+      "localOverrides": [
+        {
+          "id": "frp.panelSeams",
+          "mask": "panel-seam-grid",
+          "roughness": 0.76,
+          "normalStrength": 0.22,
+          "evidenceRefs": [
+            ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c2.png"
+          ]
+        }
+      ]
+    }
+  ],
+  "repetitionSystems": [
+    {
+      "id": "brickCourseRelief",
+      "level": "meso",
+      "parent": "brickFacade",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic generator only emits radial repetition; 160 brick courses would become a circular ring instead of horizontal relief on the stepped facade.",
+      "requiredCustomPlacement": {
+        "mode": "facade-course-surface-grid",
+        "contract": "Place 160 shallow horizontal course strips in component-local facade planes, clipped at windows, entry reveals, and the oculus opening."
+      },
+      "primitive": "box",
+      "material": "brick",
+      "instanceScale": [
+        0.006,
+        0.002,
+        0.18
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "brickFacade",
+      "instances": 160,
+      "distribution": "Reference-relative horizontal facade-course intent; it is deliberately absent from generic codegen until facade-grid production placement exists.",
+      "geometry": "instanced shallow course strip",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png"
+      ]
+    },
+    {
+      "id": "brickMortarJointGrid",
+      "level": "meso",
+      "parent": "brickFacade",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic radial loop cannot express a staggered running-bond mortar grid on stepped planar facades.",
+      "requiredCustomPlacement": {
+        "mode": "facade-running-bond-grid",
+        "contract": "Place 320 course-aligned mortar joints with alternating half-course offsets in local facade planes and clip them at architectural openings."
+      },
+      "primitive": "box",
+      "material": "brick",
+      "instanceScale": [
+        0.003,
+        0.001,
+        0.12
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "brickFacade",
+      "instances": 320,
+      "distribution": "Course-aligned mortar intent; runtime material response remains authoritative until a custom running-bond geometry placement exists.",
+      "geometry": "independent height field plus close-range relief",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png"
+      ]
+    },
+    {
+      "id": "turretBandCourses",
+      "level": "meso",
+      "parent": "turretBandRelief",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic radial loop would overlap 18 torus instances at one elevation instead of stacking horizontal courses along the turret axis.",
+      "requiredCustomPlacement": {
+        "mode": "stacked-axis-courses",
+        "contract": "Place 18 annular courses at distinct local-Y elevations around the embedded cylinder, preserving alternating dark and pale bands."
+      },
+      "primitive": "torus",
+      "material": "stripedStone",
+      "instanceScale": [
+        0.125,
+        0.018,
+        0.125
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "turretBandRelief",
+      "instances": 18,
+      "distribution": "Eighteen wrapped horizontal courses remain production intent and are deliberately absent from generic codegen until stacked-axis placement exists.",
+      "geometry": "annular band geometry",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png"
+      ]
+    },
+    {
+      "id": "oculusMullionRadials",
+      "level": "meso",
+      "parent": "oculusGlazing",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic circular radial loop halves placement radius, cannot reach the glazing center reliably, and cannot clip spokes or chords to the tilted elliptical boundary.",
+      "requiredCustomPlacement": {
+        "mode": "ellipse-clipped-radial-and-chord",
+        "contract": "Place 13 dark-metal mullions in oculus-local space from the center/spine to the true elliptical glazing boundary, with explicit clipping and inherited assembly tilt."
+      },
+      "primitive": "box",
+      "material": "darkMetal",
+      "instanceScale": [
+        0.1,
+        0.006,
+        0.006
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "oculusGlazing",
+      "instances": 13,
+      "distribution": "Radial and chord mullions clipped to the tilted ellipse.",
+      "geometry": "thin dark-metal strips above inset glazing",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png"
+      ]
+    },
+    {
+      "id": "curtainWallMullionGrid",
+      "level": "meso",
+      "parent": "curtainWalls",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic radial loop cannot place vertical mullions and transoms in rectilinear curtain-wall bays.",
+      "requiredCustomPlacement": {
+        "mode": "facade-rectilinear-grid",
+        "contract": "Place 46 local facade-frame members as vertical bays and restrained transoms, clipped to the glazing boundaries."
+      },
+      "primitive": "box",
+      "material": "darkMetal",
+      "instanceScale": [
+        0.008,
+        0.18,
+        0.008
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "curtainWalls",
+      "instances": 46,
+      "distribution": "Visible vertical bays and restrained transoms remain production intent and are absent from generic codegen pending custom facade-grid placement.",
+      "geometry": "instanced dark-metal frame members",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png"
+      ]
+    },
+    {
+      "id": "frpRippleCourses",
+      "level": "meso",
+      "parent": "expansionRippleSkin",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic radial loop would overlap torus instances instead of following the continuous pale shell curvature.",
+      "requiredCustomPlacement": {
+        "mode": "curve-following-shell-ridges",
+        "contract": "Place 72 horizontal ridge sweeps along the expansion curve-sweep surface with continuous tangency and no floating boxes or rings."
+      },
+      "primitive": "torus",
+      "material": "frp",
+      "instanceScale": [
+        0.24,
+        0.004,
+        0.24
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "expansionRippleSkin",
+      "instances": 72,
+      "distribution": "Horizontal ridges following one continuous curved shell remain production intent and are absent from generic codegen pending custom curve-following placement.",
+      "geometry": "curve-following ridge sweeps",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png"
+      ]
+    },
+    {
+      "id": "podiumWindowArray",
+      "level": "meso",
+      "parent": "graniteWindowBanks",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic radial loop would arrange podium windows in a circle instead of linear facade bays with visible return depth.",
+      "requiredCustomPlacement": {
+        "mode": "linear-bay-array",
+        "contract": "Place 28 punched-window proxies in measured local facade rows, including return depth and corner-aware clipping."
+      },
+      "primitive": "box",
+      "material": "darkMetal",
+      "instanceScale": [
+        0.025,
+        0.025,
+        0.012
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "graniteWindowBanks",
+      "instances": 28,
+      "distribution": "Small punched openings with visible return depth remain production intent and are absent from generic codegen pending custom linear-bay placement.",
+      "geometry": "framed void proxies with dark backing",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c2.png"
+      ]
+    },
+    {
+      "id": "oculusAnnulusLightStripes",
+      "level": "meso",
+      "parent": "oculusAssembly",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic circular radial loop cannot conform light stripe wedges to the oculus rim's unequal local X/Y radii.",
+      "requiredCustomPlacement": {
+        "mode": "elliptical-annulus-alternating-stripes",
+        "contract": "Place 12 light annular stripe segments along the true elliptical rim, interleaved at 15-degree phase with the dark segments and inheriting the assembly tilt once."
+      },
+      "primitive": "box",
+      "material": "stripedStone",
+      "instanceScale": [
+        0.05,
+        0.012,
+        0.01
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "oculusAssembly",
+      "instances": 12,
+      "distribution": "Alternating light radial wedges around the tilted annulus.",
+      "geometry": "radially oriented light stone strips",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png"
+      ]
+    },
+    {
+      "id": "oculusAnnulusDarkStripes",
+      "level": "meso",
+      "parent": "oculusAssembly",
+      "count": 0,
+      "codegenEnabled": false,
+      "productionFactoryRequired": true,
+      "blockedReason": "The generic circular radial loop cannot conform dark stripe wedges to the oculus rim's unequal local X/Y radii.",
+      "requiredCustomPlacement": {
+        "mode": "elliptical-annulus-alternating-stripes",
+        "contract": "Place 12 dark annular stripe segments along the true elliptical rim, interleaved at 15-degree phase with the light segments and inheriting the assembly tilt once."
+      },
+      "primitive": "box",
+      "material": "granite",
+      "instanceScale": [
+        0.05,
+        0.012,
+        0.01
+      ],
+      "placement": {
+        "mode": "custom-factory-required"
+      },
+      "owner": "oculusAssembly",
+      "instances": 12,
+      "distribution": "Alternating dark radial wedges interleaved with the light annulus strips.",
+      "geometry": "radially oriented dark stone strips",
+      "buildsGeometry": true,
+      "realization": "custom-factory-required",
+      "evidenceRefs": [
+        ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png"
+      ]
+    }
+  ],
+  "viewEvidence": [
+    {
+      "id": "fixed-front-three-quarter",
+      "view": "reference-matched front three-quarter",
+      "imageRegion": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "units": "normalized"
+      },
+      "observations": [
+        "Only image-supported view; use for silhouette, proportions, palette, and visible attachment evidence."
+      ],
+      "confidence": 0.9
+    },
+    {
+      "id": "right-orbit",
+      "view": "right orbit review",
+      "imageRegion": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "units": "normalized"
+      },
+      "observations": [
+        "Review inferred depth, turret embed, and expansion continuity; do not score hidden facade likeness as observed truth."
+      ],
+      "confidence": 0.45
+    },
+    {
+      "id": "rear-orbit",
+      "view": "rear orbit review",
+      "imageRegion": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "units": "normalized"
+      },
+      "observations": [
+        "Hidden rear is conservative inference for volume and grounding only."
+      ],
+      "confidence": 0.3
+    },
+    {
+      "id": "left-orbit",
+      "view": "left orbit review",
+      "imageRegion": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "units": "normalized"
+      },
+      "observations": [
+        "Review wing returns and attached massing without claiming surveyed rear detail."
+      ],
+      "confidence": 0.4
+    },
+    {
+      "id": "elevated-three-quarter",
+      "view": "elevated three-quarter review",
+      "imageRegion": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1,
+        "units": "normalized"
+      },
+      "observations": [
+        "Review roofline staging, oculus tilt, ripple shell continuity, and absence of floating geometry."
+      ],
+      "confidence": 0.42
+    }
+  ],
+  "lightingFromPhoto": [
+    "key light: broad neutral overcast daylight from camera-left and above; treat as readability evidence, not baked albedo",
+    "fill light: cool low-contrast sky fill preserving brick and granite shadow detail",
+    "rim or environment light: neutral studio environment for glass, metal, and striped-stone response",
+    "exposure and tone mapping: fixed neutral exposure with ACES-compatible tone mapping; no cinematic bloom",
+    "contact shadow: soft ground shadow and AO at podium, attached mass seams, entry reveal, and oculus inset"
+  ],
+  "featureReviewTargets": [
+    {
+      "id": "bottaMassing",
+      "name": "Broad stepped Botta brick massing",
+      "tier": "critical",
+      "passIds": [
+        "blockout",
+        "structural-pass"
+      ],
+      "minimumScore": 0.84,
+      "mustPass": true,
+      "componentRefs": [
+        "granitePodium",
+        "brickWings",
+        "brickCentralTower"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter"
+      ]
+    },
+    {
+      "id": "turretOculusIdentity",
+      "name": "Embedded striped cylinder and tilted annular oculus",
+      "tier": "critical",
+      "passIds": [
+        "blockout",
+        "structural-pass",
+        "form-refinement"
+      ],
+      "minimumScore": 0.86,
+      "mustPass": true,
+      "componentRefs": [
+        "stripedTurret",
+        "oculusAssembly",
+        "oculusGlazing",
+        "turretBandRelief"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter"
+      ]
+    },
+    {
+      "id": "rippledExpansionContinuity",
+      "name": "Single contiguous pale rippled expansion",
+      "tier": "critical",
+      "passIds": [
+        "blockout",
+        "form-refinement"
+      ],
+      "minimumScore": 0.84,
+      "mustPass": true,
+      "componentRefs": [
+        "rippledExpansion",
+        "expansionGlazing",
+        "expansionRippleSkin"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter",
+        "right-orbit",
+        "rear-orbit"
+      ]
+    },
+    {
+      "id": "humanScaleEntry",
+      "name": "Deep entry, podium openings, and glazing scale",
+      "tier": "critical",
+      "passIds": [
+        "structural-pass",
+        "form-refinement"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": true,
+      "componentRefs": [
+        "entryAssembly",
+        "entryGlazing",
+        "graniteWindowBanks",
+        "curtainWalls"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter"
+      ]
+    },
+    {
+      "id": "pbrReliefSeparation",
+      "name": "Independent PBR channels and geometry-backed relief",
+      "tier": "critical",
+      "passIds": [
+        "material-pass",
+        "surface-pass",
+        "lighting-pass"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": true,
+      "componentRefs": [
+        "brickFacade",
+        "turretBandRelief",
+        "expansionRippleSkin"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter"
+      ]
+    },
+    {
+      "id": "groundedAttachments",
+      "name": "All presentation volumes remain grounded and attached",
+      "tier": "important",
+      "passIds": [
+        "structural-pass",
+        "interaction-pass"
+      ],
+      "minimumScore": 0.78,
+      "mustPass": false,
+      "componentRefs": [
+        "granitePodium",
+        "brickWings",
+        "brickCentralTower",
+        "stripedTurret",
+        "rippledExpansion",
+        "glassAtriumCore"
+      ],
+      "evidenceRefs": [
+        "right-orbit",
+        "rear-orbit",
+        "left-orbit",
+        "elevated-three-quarter"
+      ]
+    },
+    {
+      "id": "nonSurveySourceBoundary",
+      "name": "Generated concept never overrides canonical OSM truth",
+      "tier": "important",
+      "passIds": [
+        "interaction-pass",
+        "optimization-pass"
+      ],
+      "minimumScore": 1,
+      "mustPass": false,
+      "componentRefs": [
+        "granitePodium",
+        "brickWings",
+        "brickCentralTower",
+        "stripedTurret",
+        "rippledExpansion",
+        "glassAtriumCore"
+      ],
+      "evidenceRefs": [
+        "fixed-front-three-quarter"
+      ]
+    }
+  ],
+  "rootPolicy": {
+    "removeComponentId": "root",
+    "container": "implicit Group returned by createSFMOMASourceHonestLandmarkV2Model",
+    "topLevelComponents": [
+      "granitePodium",
+      "brickWings",
+      "brickCentralTower",
+      "stripedTurret",
+      "rippledExpansion",
+      "glassAtriumCore"
+    ]
+  },
+  "attachmentPolicy": {
+    "mode": "static-socketed",
+    "localStart": [
+      0,
+      0,
+      0
+    ],
+    "localEnd": [
+      0,
+      0,
+      0
+    ],
+    "endpointRole": "generator-compatibility-zero-length-placeholder",
+    "measuredTopology": false,
+    "socketAlignment": "All 18 parent sockets exactly match the associated child parent-local position and rotation in the authored spec.",
+    "reason": "Equal endpoints ensure makeAttachmentEndpoint returns null, so the generator uses each component primitive and dimensions instead of substituting a cylinder. Parent sockets record hierarchy seats; endpoints do not claim measured topology."
+  },
+  "scoreMapping": {
+    "source": ".img2threejs/sfmoma-v2/suitability.json",
+    "scale": "rounded suitability score multiplied by three; occlusion risk is separately inferred from single-view coverage",
+    "scores": {
+      "object_isolation": 3,
+      "silhouette_readability": 3,
+      "depth_inference": 2,
+      "primitive_decomposition": 3,
+      "material_procedurality": 3,
+      "occlusion_risk": 2,
+      "interaction_fit": 2
+    }
+  },
+  "materialRuntimeContract": {
+    "declaredRuntimeTextureResolution": 1024,
+    "referencePbrMapDimensions": [
+      512,
+      512
+    ],
+    "referencePbrUsage": "probe-only look-development evidence",
+    "runtimeMaps": "future independent procedural 1024x1024 or greater albedo, roughness, height, normal, and AO maps",
+    "glass": {
+      "roughness": 0.18,
+      "transmission": 0.42,
+      "hardLimit": "bounded visual inference from isolated glass crop; not measured optical data"
+    },
+    "darkMetal": {
+      "roughness": 0.32,
+      "metalness": 0.68,
+      "hardLimit": "bounded visual inference from isolated canopy crop; not measured alloy data"
+    }
+  },
+  "scalePolicy": {
+    "removeTransformScale": true,
+    "reason": "generate_threejs_factory.scale_vector prioritizes transform.scale; removing the placeholder [1,1,1] makes declared component dimensions drive emitted geometry scale."
+  }
+}
