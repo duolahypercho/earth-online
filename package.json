@@ -142,6 +142,7 @@
     "verify:citygen-sidewalk-props": "node scripts/verify-citygen-sidewalk-props.mjs",
     "verify:citygen-street-lamps": "node scripts/verify-citygen-street-lamps.mjs",
     "verify:citygen-local-life": "node scripts/verify-citygen-local-life.mjs",
+    "verify:citygen-vehicle-batching": "node scripts/verify-citygen-vehicle-batching.mjs",
     "verify:online-vehicle-ownership": "node scripts/verify-online-vehicle-ownership.mjs",
     "verify:online-gameplay": "node scripts/verify-online-gameplay.mjs",
     "verify:online-coop-shift": "node scripts/verify-online-coop-shift.mjs",
