@@ -44,9 +44,10 @@ try {
   if (after.stats.pedestriansAttached < 1 || after.stats.pedestriansAttached > after.stats.budget.maxPedestrians) {
     fail('pedestrian replacement count is not bounded by the 24-person budget', after.stats);
   }
-  if (after.sourcePedestrians !== 50 || after.stats.pedestriansAttached !== 7
-    || after.stats.detailedActors !== 7 || after.stats.fallbackActors !== 0) {
-    fail('Ferry staged cohort must retain all sources while rendering only seven detailed actors', after);
+  if (after.sourcePedestrians !== 50 || after.stagedSourcesAttached !== 7
+    || after.stats.pedestriansAttached !== 9 || after.stats.detailedActors !== 7
+    || after.stats.fallbackActors !== 0) {
+    fail('Ferry presentation must retain all sources, attach seven staged plus two crossing records, and render only seven detailed actors', after);
   }
   if (after.stats.vehiclesAttached !== 0) fail('life layer attached vehicle replacements', after.stats);
   if (after.hiddenSourcePedestrians !== after.sourcePedestrians) fail('replaced source pedestrians remain visible', after);

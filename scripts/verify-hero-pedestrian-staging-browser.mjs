@@ -50,7 +50,11 @@ function assertPlayableHeroFrame(diagnostics, label = 'frame') {
   );
   assert.ok(life.stagedSourcesAttached >= 7, 'life renderer must own every staged source');
   assert.equal(life.sourcePedestrians, 50, 'all 50 underlying Ferry simulation identities must remain source-tracked');
-  assert.equal(life.stats.pedestriansAttached, staging.stagedCount, 'the staged pass must be the only visible replacement cohort');
+  assert.equal(
+    life.stats.pedestriansAttached,
+    staging.stagedCount + 2,
+    'the renderer must retain the seven staged adults plus two dormant authored crossing sources',
+  );
   assert.deepEqual(
     [...life.detailedStagedSourceUuids].sort(),
     [...staging.sourceUuids].sort(),
@@ -59,7 +63,11 @@ function assertPlayableHeroFrame(diagnostics, label = 'frame') {
   assert.equal(life.detailedStagedSourceUnique, true, 'detailed adults cannot share a source identity');
   assert.equal(life.stats.detailedActors, 7, 'every staged Ferry source must use a detailed adult rig');
   assert.equal(life.stats.fallbackActors, 0, 'the default Ferry frame cannot contain fallback silhouettes');
-  assert.equal(life.stats.budget.maxDetailedActors, 7, 'expanded detail capacity must stay scoped to the staged Ferry pass');
+  assert.equal(
+    life.stats.budget.maxDetailedActors,
+    staging.stagedCount + 2,
+    'detail capacity must stay scoped to the staged adults and two authored crossing sources',
+  );
   assert.equal(life.hiddenSourcePedestrians, life.sourcePedestrians, 'primitive sources must be fully hidden');
   assert.equal(life.effectiveThoughtBubbles, 0, 'hero frame must not show thought-bubble UI');
   assert.equal(life.stats.pedestriansActive, life.stats.detailedActors + life.stats.fallbackActors, 'a pedestrian may render exactly once');

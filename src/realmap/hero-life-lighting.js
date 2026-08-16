@@ -84,6 +84,7 @@ const STORY_ROLE_PRESENTATION = Object.freeze({
   Worker: Object.freeze({ jobId: 'worker', cue: 'hi-vis-tool' }),
   Cleaner: Object.freeze({ jobId: 'cleaner', cue: 'broom' }),
 });
+const RESIDENT_BAG_VARIANT_SEEDS = Object.freeze([1, 4, 0, 7, 9, 11, 3]);
 
 function storyRolePresentation(record) {
   const storyRole = typeof record?.story?.role === 'string' ? record.story.role : 'Resident';
@@ -323,9 +324,20 @@ export function createHeroLifeLighting(options = {}) {
     const root = createHeroPlayerAvatar({
       name: `Ferry civilian ${index + 1}`,
       jobId: role.jobId,
-      variantSeed: index,
+      // The shared commuter wardrobe has deterministic backpack, messenger,
+      // and no-bag variants. The bounded Resident cue explicitly selects the
+      // existing bag variant so "everyday-bag" is visible rather than
+      // only reported in diagnostics; source identity and motion are untouched.
+      variantSeed: role.cue === 'everyday-bag'
+        ? RESIDENT_BAG_VARIANT_SEEDS[index % RESIDENT_BAG_VARIANT_SEEDS.length]
+        : index,
       scale: 1,
     });
+    if (role.cue === 'everyday-bag') {
+      const bag = root.getObjectByName('Messenger bag') || root.getObjectByName('Everyday backpack');
+      if (!bag) throw new Error('Resident everyday-bag presentation variant did not produce a bag');
+      root.userData.prop = bag;
+    }
     root.name = `Ferry detailed civilian ${index + 1}`;
     root.visible = false;
     root.userData.heroLifeDetailedActor = true;
@@ -670,7 +682,8 @@ export function createHeroLifeLighting(options = {}) {
         roleJobId: actor.roleJobId,
         roleCue: actor.roleCue,
         rolePropVisible: Boolean(actor.root.userData.prop?.visible
-          && actor.root.userData.prop.children.some((child) => child.visible)),
+          && (actor.root.userData.prop.isMesh
+            || actor.root.userData.prop.children.some((child) => child.visible))),
         rigScale: actor.presentationProfile.scale,
         shoulderTilt: actor.presentationProfile.shoulderTilt,
         headBias: actor.presentationProfile.headBias,

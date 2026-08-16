@@ -69,11 +69,11 @@ function assertCard01Strict({ staging, life }) {
     'Card01 must render the seven deterministic authored story roles',
   );
   const visibleRoleCues = life.stats.detailAssignments.filter(({ rolePropVisible }) => rolePropVisible);
-  assert.ok(visibleRoleCues.length >= 6, `Card01 needs at least six visible prop cues; got ${visibleRoleCues.length}`);
+  assert.equal(visibleRoleCues.length, 7, 'Card01 needs all seven authored prop cues visible');
   assert.deepEqual(
     new Set(visibleRoleCues.map(({ roleCue }) => roleCue)),
-    new Set(['parcel', 'coffee', 'camera', 'hi-vis-tool', 'broom']),
-    'Card01 must expose five distinct deterministic authored role cues',
+    new Set(['parcel', 'coffee', 'everyday-bag', 'camera', 'hi-vis-tool', 'broom']),
+    'Card01 must expose all six distinct deterministic authored role cues',
   );
   const adults = staging.screenSpace.adults.filter(({ detailed, readable, fullyInside }) => detailed && readable && fullyInside);
   const inBand = adults.filter(({ screen }) => (
