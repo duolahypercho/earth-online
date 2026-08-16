@@ -38,6 +38,105 @@ function landmarkKind(building) {
 const BUILDING_UV_METRES_X = 12;
 const BUILDING_UV_METRES_Y = 4.6;
 const BUILDING_FOOTPRINT_EPSILON = 1e-4;
+const HERO_FACADE_ATLAS_URL = '/assets/sf-market-kearny-hero-atlas-v1.png';
+const HERO_FACADE_ATLAS_RESOLUTION = 1254;
+const HERO_FACADE_IDS = Object.freeze(new Map([
+  ['sf-building-132127809', { cell: 0, pattern: 'hearst-stone' }],
+  ['sf-building-151183777', { cell: 1, pattern: 'market-bronze-glass' }],
+  ['sf-building-132127810', { cell: 2, pattern: 'central-art-deco' }],
+  ['sf-building-149335987', { cell: 3, pattern: 'market-limestone-grid' }],
+  ['sf-building-149335979', { cell: 4, pattern: 'kearny-brick-stone' }],
+  ['sf-building-149335988', { cell: 5, pattern: 'market-industrial-loft' }],
+]));
+
+function heroFacadeMaterialGroup(building) {
+  const facade = building.facade || 'modern-grid';
+  if (facade === 'loft' && building.material === 'brick') return 'brick';
+  if (facade === 'loft' && building.material === 'glass') return 'glass';
+  if (facade === 'modern-grid' && building.material === 'concrete') return 'concrete';
+  return null;
+}
+
+function heroFacadeCell(building, group) {
+  const authored = HERO_FACADE_IDS.get(building.id);
+  if (authored) return authored;
+  if (group === 'glass') return { cell: 1, pattern: 'market-bronze-glass' };
+  if (group === 'concrete') {
+    return hashString(`${building.id}-hero-atlas`) % 2 === 0
+      ? { cell: 2, pattern: 'central-art-deco' }
+      : { cell: 3, pattern: 'market-limestone-grid' };
+  }
+  const brickCells = [
+    { cell: 0, pattern: 'hearst-stone' },
+    { cell: 4, pattern: 'kearny-brick-stone' },
+    { cell: 5, pattern: 'market-industrial-loft' },
+  ];
+  return brickCells[hashString(`${building.id}-hero-atlas`) % brickCells.length];
+}
+
+function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex) {
+  const uv = geometry.attributes.uv;
+  if (!uv || footprintPointCount < 3 || cellIndex < 0 || cellIndex > 5) return false;
+  const insetU = 1 / HERO_FACADE_ATLAS_RESOLUTION;
+  const insetV = 1 / HERO_FACADE_ATLAS_RESOLUTION;
+  const column = cellIndex % 3;
+  const visualRow = Math.floor(cellIndex / 3);
+  const uMin = column / 3 + insetU;
+  const uMax = (column + 1) / 3 - insetU;
+  // Texture UVs use a bottom-left origin after the image loader's Y flip.
+  const vMin = visualRow === 0 ? 0.5 + insetV : insetV;
+  const vMax = visualRow === 0 ? 1 - insetV : 0.5 - insetV;
+  const roofU = (uMin + uMax) / 2;
+  const roofV = vMax - 0.012;
+  for (let i = 0; i < footprintPointCount; i += 1) uv.setXY(i, roofU, roofV);
+  for (let edge = 0; edge < footprintPointCount; edge += 1) {
+    const start = footprintPointCount + edge * 4;
+    uv.setXY(start, uMin, vMin);
+    uv.setXY(start + 1, uMax, vMin);
+    uv.setXY(start + 2, uMax, vMax);
+    uv.setXY(start + 3, uMin, vMax);
+  }
+  uv.needsUpdate = true;
+  return Array.from(uv.array).every(Number.isFinite);
+}
+
+async function loadHeroFacadeTextures() {
+  const texture = await new THREE.TextureLoader().loadAsync(HERO_FACADE_ATLAS_URL);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 4;
+
+  const image = texture.image;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const r = pixels.data[i];
+    const g = pixels.data[i + 1];
+    const b = pixels.data[i + 2];
+    const luminance = r * 0.2126 + g * 0.7152 + b * 0.0722;
+    const windowLike = luminance < 126 && b >= r * 0.72 && b >= g * 0.72;
+    const glow = windowLike ? Math.round(150 + (126 - luminance) * 0.7) : 0;
+    pixels.data[i] = glow;
+    pixels.data[i + 1] = Math.round(glow * 0.84);
+    pixels.data[i + 2] = Math.round(glow * 0.52);
+    pixels.data[i + 3] = 255;
+  }
+  context.putImageData(pixels, 0, 0);
+  const nightTexture = new THREE.CanvasTexture(canvas);
+  nightTexture.wrapS = THREE.ClampToEdgeWrapping;
+  nightTexture.wrapT = THREE.ClampToEdgeWrapping;
+  nightTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  nightTexture.magFilter = THREE.LinearFilter;
+  nightTexture.anisotropy = 4;
+  return { texture, nightTexture };
+}
 
 function signedFootprintArea(points) {
   let area = 0;
@@ -544,6 +643,13 @@ export class CityRenderer {
       triangleCount: 0,
       triangleDelta: 0,
     };
+    this.heroFacadeDiagnostics = {
+      asset: HERO_FACADE_ATLAS_URL,
+      heroes: [],
+      drawGroups: 0,
+      triangleDelta: 0,
+      atlasLoaded: false,
+    };
     this.nightEmissive = [];
     this.neonGlowMaterials = [];
     this.lampBulbs = [];
@@ -843,6 +949,13 @@ export class CityRenderer {
         maxAreaRelativeError: 0,
         triangleCount: 0,
         triangleDelta: 0,
+      };
+      this.heroFacadeDiagnostics = {
+        asset: HERO_FACADE_ATLAS_URL,
+        heroes: [],
+        drawGroups: 0,
+        triangleDelta: 0,
+        atlasLoaded: false,
       };
       this.signalMeshes = [];
       this.root = null;
@@ -1245,9 +1358,25 @@ export class CityRenderer {
     // hundreds of real-map buildings share ~90 cached day/night texture pairs
     // and merge into one mesh per bucket instead of one mesh per building.
     const textureGroups = new Map();
+    const heroTextureGroups = new Map();
     const facadeSeed = Number(city.meta.seedInt || 1);
     const random = mulberry32(facadeSeed);
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    let heroTextures = null;
+    if (realMap) {
+      try {
+        heroTextures = await loadHeroFacadeTextures();
+      } catch (error) {
+        console.warn(`Hero facade atlas unavailable: ${error.message}`);
+      }
+    }
+    this.heroFacadeDiagnostics = {
+      asset: HERO_FACADE_ATLAS_URL,
+      heroes: [],
+      drawGroups: 0,
+      triangleDelta: 0,
+      atlasLoaded: Boolean(heroTextures),
+    };
     const footprintDiagnostics = {
       sourceCount: realMap ? city.buildings.length : 0,
       polygonShells: 0,
@@ -1295,7 +1424,8 @@ export class CityRenderer {
       const baseY = this.terrain?.heightAt ? this.terrain.heightAt((minX + maxX) / 2, (minZ + maxZ) / 2) : 0;
       const center = new THREE.Vector3((minX + maxX) / 2, baseY + height / 2, (minZ + maxZ) / 2);
       const isFlat = building.type === 'warehouse' || building.type === 'civic' || building.type === 'park';
-      const useTexture = !isFlat && random() < 0.88;
+      const textureRoll = random();
+      const useTexture = HERO_FACADE_IDS.has(building.id) || (!isFlat && textureRoll < 0.88);
       const materialKey = building.material;
       const sourceArea = footprint ? Math.abs(signedFootprintArea(footprint)) : ringArea(points);
       let shell = footprint ? polygonExtrusionGeometry(footprint, height, baseY) : null;
@@ -1340,6 +1470,36 @@ export class CityRenderer {
 
       if (useTexture) {
         const facadeStyle = building.facade || 'modern-grid';
+        const atlasGroupKey = realMap && footprintMode === 'polygon-footprint' && heroTextures
+          ? heroFacadeMaterialGroup(building)
+          : null;
+        if (atlasGroupKey) {
+          const atlasCell = heroFacadeCell(building, atlasGroupKey);
+          const finite = remapPolygonFacadeToAtlas(geometry, footprint.length, atlasCell.cell);
+          let atlasGroup = heroTextureGroups.get(atlasGroupKey);
+          if (!atlasGroup) {
+            atlasGroup = { geoms: [], material: atlasGroupKey, buildingIds: [], patternKeys: new Set() };
+            heroTextureGroups.set(atlasGroupKey, atlasGroup);
+          }
+          atlasGroup.geoms.push(geometry);
+          atlasGroup.buildingIds.push(building.id);
+          atlasGroup.patternKeys.add(atlasCell.pattern);
+          this.geometryCache.push(geometry);
+          if (HERO_FACADE_IDS.has(building.id)) {
+            this.heroFacadeDiagnostics.heroes.push({
+              id: building.id,
+              footprintMode,
+              finite,
+              roofline: true,
+              cornice: true,
+              parapet: true,
+              patternKeys: [atlasCell.pattern],
+              presentation: 'atlas-baked',
+              cell: atlasCell.cell,
+            });
+          }
+          continue;
+        }
         const varietyCount = realMap ? 6 : 2;
         const variety = Math.floor(hashString(`${facadeStyle}-${building.material}-${building.id}`) % varietyCount);
         const vividFacade = building.type === 'shop' || facadeStyle === 'shopfront';
@@ -1416,6 +1576,42 @@ export class CityRenderer {
     }
 
     this.buildingFootprintDiagnostics = footprintDiagnostics;
+
+    for (const [key, group] of heroTextureGroups) {
+      const merged = mergeGeometries(group.geoms, false);
+      if (!merged) continue;
+      merged.computeVertexNormals();
+      const material = new THREE.MeshStandardMaterial({
+        map: heroTextures.texture,
+        emissive: 0xffd29a,
+        emissiveMap: heroTextures.nightTexture,
+        emissiveIntensity: 0,
+        roughness: key === 'glass' ? 0.32 : key === 'concrete' ? 0.64 : 0.72,
+        metalness: key === 'glass' ? 0.22 : 0.04,
+        flatShading: true,
+      });
+      this.nightEmissive.push({
+        material,
+        texture: heroTextures.texture,
+        nightTexture: heroTextures.nightTexture,
+        nightIntensity: key === 'glass' ? 0.2 : 0.28,
+      });
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = {
+        kind: 'buildings-hero-textured',
+        material: key,
+        footprintMode: 'polygon-footprint',
+        buildingIds: group.buildingIds,
+        patternKeys: [...group.patternKeys],
+      };
+      root.add(mesh);
+      this.pickables.push(mesh);
+      this.geometryCache.push(merged);
+      this.heroFacadeDiagnostics.drawGroups += 1;
+    }
+    this.heroFacadeDiagnostics.heroes.sort((a, b) => a.id.localeCompare(b.id));
 
     for (const [key, group] of flatGroups) {
       const merged = mergeGeometries(group.geoms, false);
