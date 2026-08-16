@@ -9,6 +9,14 @@
       "kind": "map-source",
       "runtimeEntry": "plugins/sf-authoritative-metric-map/index.js",
       "verificationPage": "plugins/sf-authoritative-metric-map/verify.html"
+    },
+    {
+      "id": "sf-building-interiors",
+      "name": "San Francisco building interiors",
+      "owner": "simulation",
+      "kind": "world-feature",
+      "runtimeEntry": "plugins/sf-building-interiors/index.js",
+      "verificationPage": "plugins/sf-building-interiors/verify.html"
     }
   ]
 }

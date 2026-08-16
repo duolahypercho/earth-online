@@ -1,4 +1,5 @@
 import sfAuthoritativeMetricMapPlugin from '../../plugins/sf-authoritative-metric-map/index.js';
+import sfBuildingInteriorsPlugin from '../../plugins/sf-building-interiors/index.js';
 
 const WORLD_ID = 'sf';
 const REQUIRED_TEXT_FIELDS = Object.freeze([
@@ -28,6 +29,7 @@ function validatePlugin(plugin) {
 
 const registeredPlugins = [
   sfAuthoritativeMetricMapPlugin,
+  sfBuildingInteriorsPlugin,
 ].map(validatePlugin);
 
 const pluginsById = new Map();
