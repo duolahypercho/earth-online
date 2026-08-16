@@ -68,8 +68,9 @@ const STOREFRONT_RENDER_BASELINE = Object.freeze({
   hero: { drawCalls: 476, triangles: 449146, geometries: 401, textures: 258 },
   elevated: { drawCalls: 252, triangles: 439854, geometries: 401, textures: 258 },
   // Aerial intentionally force-submits the exact 520-car partition source;
-  // keep that 49,920-triangle presentation inside this facade isolation gate.
-  aerial: { drawCalls: 863, triangles: 597479, geometries: 401, textures: 258 },
+  // keep the detailed 58,240-triangle parked-car presentation inside this
+  // facade isolation gate.
+  aerial: { drawCalls: 868, triangles: 614119, geometries: 406, textures: 261 },
 });
 
 const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
@@ -90,7 +91,7 @@ const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
 // vehicle hull geometry introduced by the independently verified vehicle pass.
 const HERO_POSE_CAPS = Object.freeze({ drawCalls: 480, triangles: 505894, geometries: 405, textures: 261 });
 const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 259, triangles: 496696, geometries: 406, textures: 261 });
-const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 870, triangles: 597479, geometries: 406, textures: 261 });
+const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 870, triangles: 614119, geometries: 406, textures: 261 });
 
 const sampleRenderer = () => page.evaluate(() => {
   const renderer = window.__CITYGEN__.getRenderer();

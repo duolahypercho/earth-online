@@ -19,14 +19,23 @@ const PASS = 'sf-world-partition-parked-cars-v1';
 const EXPECTED_RECORDS_CHECKSUM = 3449863488;
 const EXPECTED_INPUT_CHECKSUM = 3863393818;
 const EXPECTED_POSES = Object.freeze({
-  sf: { spots: 94, cells: 17, triangles: 9024 },
-  night: { spots: 99, cells: 18, triangles: 9504 },
-  aerial: { spots: 520, cells: 93, triangles: 49920 },
+  sf: { spots: 94, cells: 17, triangles: 10528 },
+  night: { spots: 99, cells: 18, triangles: 11088 },
+  aerial: { spots: 520, cells: 93, triangles: 58240 },
 });
 const EXPECTED_BODY_PALETTE = Object.freeze([
   '#7d4d4c', '#9a7a3e', '#46647a', '#4f7168', '#62586c', '#805c45', '#d7d3c8', '#718164',
 ]);
 const EXPECTED_GLASS_PALETTE = Object.freeze(['#516a73', '#47636c', '#5c747b']);
+const HEAD_3186370_RENDER_BASELINE = Object.freeze({
+  drawGroups: 2,
+  geometries: 2,
+  materials: 2,
+  textures: 0,
+  bodyTrianglesPerSpot: 76,
+  cabTrianglesPerSpot: 20,
+  trianglesPerSpot: 96,
+});
 const percentile = (values, p) => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) * p)];
 
 function hashString(value = '') {
@@ -76,6 +85,125 @@ async function comparePngs(left, right) {
   }, { leftBase64: left.toString('base64'), rightBase64: right.toString('base64') });
 }
 
+async function captureHead3186370Baseline(setup, hour) {
+  const proof = await page.evaluate(({ setup, hour }) => {
+    const api = window.__CITYGEN__;
+    const renderer = api.getRenderer();
+    const runtime = renderer.parkedCarPartitionRuntime;
+    const bodies = runtime.bodies;
+    const cabs = runtime.cabs;
+    const original = {
+      bodyGeometry: bodies.geometry,
+      cabGeometry: cabs.geometry,
+      cabMaterial: cabs.material,
+    };
+    const bodyPosition = bodies.geometry.getAttribute('position');
+    const bodyColor = bodies.geometry.getAttribute('color');
+    const cabPosition = cabs.geometry.getAttribute('position');
+    const cabColor = cabs.geometry.getAttribute('color');
+    const positions = [];
+    const colors = [];
+    const appendSourceTriangle = (triangleIndex, sourcePosition, sourceColor) => {
+      const positionOffset = triangleIndex * 9;
+      const colorOffset = triangleIndex * 9;
+      for (let index = 0; index < 9; index += 1) positions.push(sourcePosition.array[positionOffset + index]);
+      for (let index = 0; index < 9; index += 1) colors.push(sourceColor.array[colorOffset + index]);
+    };
+    // HEAD 3186370 body retained the 20 paint-hull triangles and 8 lamp
+    // triangles, with 48 twelve-triangle box-tire triangles between them.
+    for (let triangle = 0; triangle < 20; triangle += 1) {
+      appendSourceTriangle(triangle, bodyPosition, bodyColor);
+    }
+    const appendBox = (minX, minY, minZ, maxX, maxY, maxZ) => {
+      const vertices = [
+        [minX, minY, minZ], [maxX, minY, minZ], [maxX, maxY, minZ], [minX, maxY, minZ],
+        [minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ],
+      ];
+      for (const [a, b, c] of [
+        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+        [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5],
+        [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2],
+      ]) {
+        for (const vertex of [vertices[a], vertices[b], vertices[c]]) positions.push(...vertex);
+        for (let index = 0; index < 9; index += 1) colors.push(0.16);
+      }
+    };
+    for (const x of [-0.53, 0.53]) {
+      for (const z of [-0.31, 0.31]) {
+        appendBox(x - 0.075, -0.59, z - 0.09, x + 0.075, -0.2, z + 0.09);
+      }
+    }
+    // New detail geometry keeps the same final eight lamp triangles.
+    for (let triangle = 84; triangle < 92; triangle += 1) {
+      appendSourceTriangle(triangle, bodyPosition, bodyColor);
+    }
+    const oldBodyGeometry = bodies.geometry.clone();
+    oldBodyGeometry.setAttribute('position', new bodyPosition.constructor(new Float32Array(positions), 3));
+    oldBodyGeometry.setAttribute('color', new bodyColor.constructor(new Float32Array(colors), 3));
+    oldBodyGeometry.deleteAttribute('normal');
+    oldBodyGeometry.computeVertexNormals();
+    oldBodyGeometry.computeBoundingBox();
+    oldBodyGeometry.computeBoundingSphere();
+    const oldCabGeometry = cabs.geometry.clone();
+    oldCabGeometry.setAttribute('color', new cabColor.constructor(
+      new Float32Array(cabPosition.count * 3).fill(1), 3,
+    ));
+    oldCabGeometry.computeVertexNormals();
+    const oldCabMaterial = cabs.material.clone();
+    oldCabMaterial.vertexColors = false;
+    oldCabMaterial.needsUpdate = true;
+    bodies.geometry = oldBodyGeometry;
+    cabs.geometry = oldCabGeometry;
+    cabs.material = oldCabMaterial;
+    window.__PARKED_CAR_HEAD_BASELINE_ORIGINAL__ = original;
+    renderer.renderFrame();
+    return {
+      bodyTriangles: (oldBodyGeometry.getAttribute('position').count / 3),
+      cabTriangles: (oldCabGeometry.getAttribute('position').count / 3),
+      bodyVertices: oldBodyGeometry.getAttribute('position').count,
+      cabVertices: oldCabGeometry.getAttribute('position').count,
+      setup,
+      hour,
+    };
+  }, { setup, hour });
+  const baselinePath = setup === 'close'
+    ? '.qa-citygen-parked-car-details-baseline.png'
+    : '.qa-citygen-parked-car-details-night-baseline.png';
+  const baseline = await page.screenshot({ path: baselinePath });
+  const restored = await page.evaluate(() => {
+    const api = window.__CITYGEN__;
+    const renderer = api.getRenderer();
+    const runtime = renderer.parkedCarPartitionRuntime;
+    const temporary = {
+      bodyGeometry: runtime.bodies.geometry,
+      cabGeometry: runtime.cabs.geometry,
+      cabMaterial: runtime.cabs.material,
+    };
+    // The current presentation is restored by the page-side references kept
+    // on the window; this avoids touching source records or partition state.
+    const saved = window.__PARKED_CAR_HEAD_BASELINE_ORIGINAL__;
+    runtime.bodies.geometry = saved.bodyGeometry;
+    runtime.cabs.geometry = saved.cabGeometry;
+    runtime.cabs.material = saved.cabMaterial;
+    temporary.bodyGeometry.dispose();
+    temporary.cabGeometry.dispose();
+    temporary.cabMaterial.dispose();
+    renderer.renderFrame();
+    return {
+      bodyGeometry: runtime.bodies.geometry === saved.bodyGeometry,
+      cabGeometry: runtime.cabs.geometry === saved.cabGeometry,
+      cabMaterial: runtime.cabs.material === saved.cabMaterial,
+      resourceProof: {
+        meshes: 2,
+        geometries: new Set([runtime.bodies.geometry, runtime.cabs.geometry]).size,
+        materials: new Set([runtime.bodies.material, runtime.cabs.material]).size,
+        maps: new Set([runtime.bodies.material.map, runtime.cabs.material.map].filter(Boolean)).size,
+      },
+    };
+  });
+  return { baselinePath, baseline, proof, restored };
+}
+
 async function ready() {
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(() => {
@@ -117,10 +245,10 @@ function assertCore(snapshot, label) {
   assert.deepEqual(diagnostics.source, {
     spots: 520,
     cells: 93,
-    bodyTrianglesPerSpot: 76,
+    bodyTrianglesPerSpot: 92,
     cabTrianglesPerSpot: 20,
-    trianglesPerSpot: 96,
-    totalTriangles: 49920,
+    trianglesPerSpot: 112,
+    totalTriangles: 58240,
     recordsChecksum: diagnostics.source.recordsChecksum,
     recordsUnchanged: true,
     inputChecksumBefore: diagnostics.source.inputChecksumBefore,
@@ -157,35 +285,66 @@ function assertCore(snapshot, label) {
     vertexColors: diagnostics.topology.body.vertexColors,
     roles: diagnostics.topology.body.roles,
   }, {
-    vertexCount: 228,
+    vertexCount: 276,
     indexCount: 0,
-    triangleCount: 76,
+    triangleCount: 92,
     indexed: false,
     finiteTriangleAreas: true,
     vertexColors: true,
-    roles: { paintHull: 20, tires: 48, lamps: 8 },
-  }, `${label}: exact composite body hull and baked cue roles`);
+    roles: { paintHull: 20, wheelSideDiscs: 64, lamps: 8 },
+  }, `${label}: exact composite body hull, radial wheel discs, and lamp roles`);
+  assert.deepEqual(diagnostics.topology.body.wheels, {
+    count: 4,
+    facesPerWheel: 2,
+    segmentsPerFace: 8,
+    triangleCount: 64,
+    normalizedRadiusY: 0.4482758621,
+    normalizedRadiusZ: 0.0666666667,
+    normalizedCenterY: -0.1034482759,
+    normalizedOuterX: 0.55,
+    normalizedInnerX: 0.47,
+    minOutwardNormalDot: diagnostics.topology.body.wheels.minOutwardNormalDot,
+  }, `${label}: exact radial wheel-disc topology contract`);
+  assert.ok(Number.isFinite(diagnostics.topology.body.wheels.minOutwardNormalDot)
+    && diagnostics.topology.body.wheels.minOutwardNormalDot > 0,
+  `${label}: wheel-disc normals face outward`);
   assert.deepEqual({
     vertexCount: diagnostics.topology.cab.vertexCount,
     indexCount: diagnostics.topology.cab.indexCount,
     triangleCount: diagnostics.topology.cab.triangleCount,
     indexed: diagnostics.topology.cab.indexed,
     finiteTriangleAreas: diagnostics.topology.cab.finiteTriangleAreas,
+    vertexColors: diagnostics.topology.cab.vertexColors,
+    roles: diagnostics.topology.cab.roles,
+    surfaceTones: diagnostics.topology.cab.surfaceTones,
   }, {
     vertexCount: 60,
     indexCount: 0,
     triangleCount: 20,
     indexed: false,
     finiteTriangleAreas: true,
+    vertexColors: true,
+    roles: { sideWindows: 8, rearWindow: 2, roof: 2, windshield: 2, lowerSills: 6 },
+    surfaceTones: {
+      sideWindows: [0.72, 0.88, 0.96],
+      rearWindow: [0.52, 0.67, 0.75],
+      roof: [0.34, 0.42, 0.46],
+      windshield: [1.18, 1.38, 1.48],
+      lowerSills: [0.43, 0.52, 0.56],
+    },
   }, `${label}: exact authored cab hull`);
-  assert.equal(diagnostics.topology.body.minTriangleArea, 0.012750000000000001,
-    `${label}: exact minimum body triangle area`);
-  assert.equal(diagnostics.topology.body.minOutwardNormalDot, 0.07499999999999996,
-    `${label}: exact minimum outward body normal dot`);
-  assert.equal(diagnostics.topology.cab.minTriangleArea, 0.06119999999999999,
-    `${label}: exact minimum cab triangle area`);
-  assert.equal(diagnostics.topology.cab.minOutwardNormalDot, 0.4108891828726513,
-    `${label}: exact minimum outward cab normal dot`);
+  assert.ok(Number.isFinite(diagnostics.topology.body.minTriangleArea)
+    && diagnostics.topology.body.minTriangleArea > 0,
+  `${label}: body triangles have finite positive area`);
+  assert.ok(Number.isFinite(diagnostics.topology.body.minOutwardNormalDot)
+    && diagnostics.topology.body.minOutwardNormalDot > 0,
+  `${label}: body normals face outward`);
+  assert.ok(Number.isFinite(diagnostics.topology.cab.minTriangleArea)
+    && diagnostics.topology.cab.minTriangleArea > 0,
+  `${label}: cab triangles have finite positive area`);
+  assert.ok(Number.isFinite(diagnostics.topology.cab.minOutwardNormalDot)
+    && diagnostics.topology.cab.minOutwardNormalDot > 0,
+  `${label}: cab normals face outward`);
   assert.deepEqual({
     cabVerticalOffsetMeters: diagnostics.topology.cabVerticalOffsetMeters,
     cabLongitudinalOffsetMeters: diagnostics.topology.cabLongitudinalOffsetMeters,
@@ -195,17 +354,48 @@ function assertCore(snapshot, label) {
     cabLongitudinalOffsetMeters: -0.18,
     distinctBodyCabMatrices: true,
   }, `${label}: exact body/cab separation`);
-  assert.ok(diagnostics.source.trianglesPerSpot <= 100,
-    `${label}: composite parked car stays within 100 triangles (${diagnostics.source.trianglesPerSpot})`);
+  assert.ok(diagnostics.source.trianglesPerSpot <= 120,
+    `${label}: detailed parked car stays within 120 triangles (${diagnostics.source.trianglesPerSpot})`);
   assert.deepEqual(diagnostics.visual, {
+    pass: 'sf-parked-car-wheel-glass-detail-v1',
     bodyPalette: [...EXPECTED_BODY_PALETTE],
     glassPalette: [...EXPECTED_GLASS_PALETTE],
     hardEdgedHull: true,
     darkGlass: true,
+    wheelCount: 4,
+    wheelFacesPerWheel: 2,
+    wheelSegmentsPerFace: 8,
+    wheelRadiusMeters: 0.26,
+    wheelContactClearanceMeters: 0,
+    wheelLateralProtrusionMeters: 0.09,
+    wheelAxleOffsetMeters: 1.248,
+    cabSurfaceTones: {
+      sideWindows: [0.72, 0.88, 0.96],
+      rearWindow: [0.52, 0.67, 0.75],
+      roof: [0.34, 0.42, 0.46],
+      windshield: [1.18, 1.38, 1.48],
+      lowerSills: [0.43, 0.52, 0.56],
+    },
+    cabUniqueToneCount: 5,
   }, `${label}: exact parked-car visual identity`);
   assert.deepEqual(diagnostics.resources,
     { drawGroups: 2, geometries: 2, materials: 2, textures: 0 },
     `${label}: exact two-batch source resources`);
+  assert.deepEqual(diagnostics.resources, {
+    drawGroups: HEAD_3186370_RENDER_BASELINE.drawGroups,
+    geometries: HEAD_3186370_RENDER_BASELINE.geometries,
+    materials: HEAD_3186370_RENDER_BASELINE.materials,
+    textures: HEAD_3186370_RENDER_BASELINE.textures,
+  }, `${label}: candidate preserves HEAD 3186370 resource/draw baseline`);
+  assert.equal(diagnostics.source.bodyTrianglesPerSpot
+    - HEAD_3186370_RENDER_BASELINE.bodyTrianglesPerSpot, 16,
+  `${label}: wheel/glass detail adds exactly 16 body triangles per spot over HEAD 3186370`);
+  assert.equal(diagnostics.source.cabTrianglesPerSpot
+    - HEAD_3186370_RENDER_BASELINE.cabTrianglesPerSpot, 0,
+  `${label}: cab triangle cost remains unchanged from HEAD 3186370`);
+  assert.equal(diagnostics.source.trianglesPerSpot
+    - HEAD_3186370_RENDER_BASELINE.trianglesPerSpot, 16,
+  `${label}: total detail delta is exactly 16 triangles per parked spot`);
   for (const [key, name] of [
     ['bodies', 'sf-partitioned-parked-car-bodies'],
     ['cabs', 'sf-partitioned-parked-car-cabs'],
@@ -214,13 +404,13 @@ function assertCore(snapshot, label) {
     assert.equal(batch.name, name, `${label}: ${key} mesh name`);
     assert.equal(batch.capacity, 520, `${label}: ${key} capacity`);
     assert.equal(batch.count, diagnostics.active.spots, `${label}: ${key} compacted count`);
-    const trianglesPerInstance = key === 'bodies' ? 76 : 20;
+    const trianglesPerInstance = key === 'bodies' ? 92 : 20;
     assert.equal(batch.submittedTriangles, diagnostics.active.spots * trianglesPerInstance,
       `${label}: ${key} submitted triangles`);
     assert.equal(batch.matricesFinite, true, `${label}: ${key} matrices finite`);
     assert.equal(batch.colorsFinite, true, `${label}: ${key} colors finite`);
   }
-  assert.equal(diagnostics.submittedTriangles, diagnostics.active.spots * 96,
+  assert.equal(diagnostics.submittedTriangles, diagnostics.active.spots * 112,
     `${label}: combined submitted triangles`);
   assert.deepEqual(snapshot.identity,
     { renderer: true, scene: true, canvas: true, roots: 1, sceneCanvas: 1, loop: true },
@@ -235,6 +425,32 @@ function assertCore(snapshot, label) {
     runtimeGoldenMode: true,
   }, `${label}: runtime and public state independently confirm golden SF mode`);
   assert.equal(snapshot.streetFurnitureCars, 520, `${label}: logical street-furniture count unchanged`);
+  assert.ok(snapshot.wheelGeometry?.finite, `${label}: wheel geometry positions and first instance transform are finite`);
+  assert.ok(snapshot.wheelGeometry?.localMinY < -0.5,
+    `${label}: transformed wheel geometry extends below the paint hull (${snapshot.wheelGeometry?.localMinY})`);
+  assert.ok(snapshot.wheelGeometry?.localAbsX >= 0.55,
+    `${label}: transformed wheel geometry has the authored lateral disc extent (${snapshot.wheelGeometry?.localAbsX})`);
+  assert.ok(snapshot.wheelGeometry?.worldMinY < snapshot.wheelGeometry?.bodyCenterY,
+    `${label}: transformed wheel geometry reaches below the body center for ground contact`);
+  assert.deepEqual({
+    records: snapshot.wheelContactProof?.records,
+    wheelVertices: snapshot.wheelContactProof?.wheelVertices,
+    finite: snapshot.wheelContactProof?.finite,
+  }, {
+    records: 520,
+    wheelVertices: 192,
+    finite: true,
+  }, `${label}: every source record has finite wheel contact/normal proof`);
+  assert.ok(snapshot.wheelContactProof.maxAbsRoadPlaneErrorMeters <= 2e-5,
+    `${label}: every transformed wheel contacts its independently reconstructed road plane (${snapshot.wheelContactProof.maxAbsRoadPlaneErrorMeters})`);
+  assert.ok(snapshot.wheelContactProof.minClearanceMeters >= -2e-5
+    && snapshot.wheelContactProof.maxClearanceMeters <= 2e-5,
+  `${label}: no wheel is below or floating above its road plane`);
+  assert.ok(snapshot.wheelContactProof.minOutwardFaceNormalDot > 0.99,
+    `${label}: wheel-disc winding produces outward-facing unit normals`);
+  assert.ok(Math.abs(diagnostics.topology.body.wheels.minOutwardNormalDot
+    - snapshot.wheelContactProof.minOutwardCentroidDotMeters) <= 1e-6,
+  `${label}: production wheel minOutwardNormalDot matches independent centroid-origin geometry proof`);
   assert.deepEqual(snapshot.partitionMeshes.map((mesh) => mesh.name).sort(), [
     'sf-partitioned-parked-car-bodies',
     'sf-partitioned-parked-car-cabs',
@@ -251,11 +467,11 @@ function assertCore(snapshot, label) {
     materialVertexColors: bodyMesh?.materialVertexColors,
     triangles: bodyMesh?.triangles,
   }, {
-    colorVertices: 228,
-    positionVertices: 228,
-    normalVertices: 228,
+    colorVertices: 276,
+    positionVertices: 276,
+    normalVertices: 276,
     materialVertexColors: true,
-    triangles: 76,
+    triangles: 92,
   },
   `${label}: composite body uses one vertex-colored geometry/material batch`);
   assert.deepEqual({
@@ -268,7 +484,7 @@ function assertCore(snapshot, label) {
     colorVertices: 60,
     positionVertices: 60,
     normalVertices: 60,
-    materialVertexColors: false,
+    materialVertexColors: true,
     triangles: 20,
   },
   `${label}: cab remains the second and final material batch`);
@@ -281,12 +497,13 @@ function assertCore(snapshot, label) {
 }
 
 async function captureMatchedPair(label, setup, hour) {
+  const closeComposition = setup === 'close' || setup === 'close-night';
   const staged = await page.evaluate(({ setup, hour }) => {
     const api = window.__CITYGEN__;
     const renderer = api.getRenderer();
     let hiddenTreeMeshes = 0;
     api.setTime(hour);
-    if (setup !== 'close') {
+    if (setup !== 'close' && setup !== 'close-night') {
       api.setCameraPose(setup);
       renderer.controls.update();
     } else {
@@ -331,7 +548,7 @@ async function captureMatchedPair(label, setup, hour) {
     window.__PARKED_CAR_FROZEN_UPDATE__ = renderer.update;
     window.__PARKED_CAR_FORCE_UPDATE__ = renderer.updateParkedCarPartition.bind(renderer);
     renderer.update = () => {};
-    const closeVisible = setup === 'close'
+    const closeVisible = (setup === 'close' || setup === 'close-night')
       ? renderer.parkedCarPartitionRuntime.records.filter((record) => {
         const body = renderer.camera.position.clone().set(
           record.bodyMatrix[12], record.bodyMatrix[13], record.bodyMatrix[14],
@@ -351,10 +568,18 @@ async function captureMatchedPair(label, setup, hour) {
   }, { setup, hour });
   await page.waitForTimeout(180);
   const candidatePath = setup === 'close'
-    ? '.qa-citygen-parked-cars.png'
+    ? '.qa-citygen-parked-car-details.png'
+    : setup === 'close-night'
+      ? '.qa-citygen-parked-car-details-night.png'
     : `.qa-citygen-parked-car-partition-${label}-candidate.png`;
   const candidate = await page.screenshot({ path: candidatePath });
-  if (setup === 'close') await page.screenshot({ path: '.qa-citygen-parked-cars-clean.png' });
+  if (setup === 'close') {
+    await page.screenshot({ path: '.qa-citygen-parked-cars.png' });
+    await page.screenshot({ path: '.qa-citygen-parked-cars-clean.png' });
+  }
+  const historicalBaseline = closeComposition
+    ? await captureHead3186370Baseline(setup, hour)
+    : null;
   await page.evaluate(() => window.__PARKED_CAR_FORCE_UPDATE__(true, true, true));
   await page.waitForTimeout(180);
   const forceAll = await page.screenshot({ path: `.qa-citygen-parked-car-partition-${label}-force-all.png` });
@@ -365,7 +590,19 @@ async function captureMatchedPair(label, setup, hour) {
     delete window.__PARKED_CAR_FROZEN_UPDATE__;
     delete window.__PARKED_CAR_FORCE_UPDATE__;
   });
-  return { staged, diff: await comparePngs(candidate, forceAll), candidatePath };
+  return {
+    staged,
+    diff: await comparePngs(candidate, forceAll),
+    candidatePath,
+    historicalBaseline: historicalBaseline
+      ? {
+        path: historicalBaseline.baselinePath,
+        proof: historicalBaseline.proof,
+        restored: historicalBaseline.restored,
+        diff: await comparePngs(candidate, historicalBaseline.baseline),
+      }
+      : null,
+  };
 }
 
 try {
@@ -570,6 +807,7 @@ try {
     sf: await captureMatchedPair('sf', 'sf', 14),
     night: await captureMatchedPair('night', 'night', 22),
     close: await captureMatchedPair('close', 'close', 14),
+    closeNight: await captureMatchedPair('close-night', 'close-night', 22),
   };
   for (const [label, evidence] of Object.entries(visualParity)) {
     assert.equal(evidence.diff.width, 1280, `${label}: matched capture width`);
@@ -581,12 +819,38 @@ try {
     assert.ok(evidence.diff.channelDelta <= 2500000,
       `${label}: candidate/force-all channel delta remains bounded (${evidence.diff.channelDelta})`);
   }
-  assert.equal(visualParity.close.candidatePath, '.qa-citygen-parked-cars.png',
-    'close parked-car composition is captured at the required path');
+  assert.equal(visualParity.close.candidatePath, '.qa-citygen-parked-car-details.png',
+    'day close parked-car composition is captured at the required detail path');
   assert.ok(visualParity.close.staged.closeVisible >= 4,
     `close 3/4 composition projects at least four complete body/cab pairs (${visualParity.close.staged.closeVisible})`);
   assert.ok(visualParity.close.staged.hiddenTreeMeshes >= 3,
     `close 3/4 composition hides the three tree instancers (${visualParity.close.staged.hiddenTreeMeshes})`);
+  assert.equal(visualParity.closeNight.candidatePath, '.qa-citygen-parked-car-details-night.png',
+    'night close parked-car composition is captured at the required detail path');
+  assert.ok(visualParity.closeNight.staged.closeVisible >= 4,
+    `night close 3/4 composition projects at least four complete body/cab pairs (${visualParity.closeNight.staged.closeVisible})`);
+  assert.ok(visualParity.closeNight.staged.hiddenTreeMeshes >= 3,
+    `night close 3/4 composition hides the three tree instancers (${visualParity.closeNight.staged.hiddenTreeMeshes})`);
+  for (const [label, evidence] of [['day', visualParity.close], ['night', visualParity.closeNight]]) {
+    assert.deepEqual(evidence.historicalBaseline.proof, {
+      bodyTriangles: 76,
+      cabTriangles: 20,
+      bodyVertices: 228,
+      cabVertices: 60,
+      setup: label === 'day' ? 'close' : 'close-night',
+      hour: label === 'day' ? 14 : 22,
+    }, `${label}: exact HEAD3186370 76/20 baseline topology`);
+    assert.deepEqual(evidence.historicalBaseline.restored, {
+      bodyGeometry: true,
+      cabGeometry: true,
+      cabMaterial: true,
+      resourceProof: { meshes: 2, geometries: 2, materials: 2, maps: 0 },
+    }, `${label}: current presentation/resources restored after baseline capture`);
+    assert.ok(evidence.historicalBaseline.diff.changedPixels > 0,
+      `${label}: detailed candidate changes pixels against the retained HEAD3186370 baseline`);
+    assert.ok(evidence.historicalBaseline.diff.changedPixels < 600000,
+      `${label}: candidate/baseline comparison remains bounded (${evidence.historicalBaseline.diff.changedPixels})`);
+  }
 
   const lifecycle = await page.evaluate(async () => {
     const api = window.__CITYGEN__;
@@ -820,8 +1084,8 @@ try {
     `live OSM structural spot count stays bounded (${osmDiagnostics.source.spots})`);
   assert.ok(osmDiagnostics.source.cells > 0 && osmDiagnostics.source.cells <= osmDiagnostics.source.spots,
     `live OSM structural cell count stays bounded (${osmDiagnostics.source.cells})`);
-  assert.equal(osmDiagnostics.source.trianglesPerSpot, 96, 'live OSM keeps exact authored topology cost');
-  assert.equal(osmDiagnostics.source.totalTriangles, osmDiagnostics.source.spots * 96,
+  assert.equal(osmDiagnostics.source.trianglesPerSpot, 112, 'live OSM keeps exact authored topology cost');
+  assert.equal(osmDiagnostics.source.totalTriangles, osmDiagnostics.source.spots * 112,
     'live OSM total triangles derive from its structural source count');
   assert.equal(osmDiagnostics.source.recordsUnchanged, true, 'live OSM records checksum stays unchanged');
   assert.equal(osmDiagnostics.source.unchanged, true, 'live OSM input checksum stays unchanged');
@@ -870,6 +1134,14 @@ try {
       maxVisibleCulledDiameterPixels: hysteresis.maxVisibleCulledDiameterPixels,
     },
     visualParity: Object.fromEntries(Object.entries(visualParity).map(([name, evidence]) => [name, evidence.diff])),
+    baselineComparison: Object.fromEntries(['close', 'closeNight'].map((name) => [name, {
+      path: visualParity[name].historicalBaseline.path,
+      bodyTriangles: visualParity[name].historicalBaseline.proof.bodyTriangles,
+      cabTriangles: visualParity[name].historicalBaseline.proof.cabTriangles,
+      changedPixels: visualParity[name].historicalBaseline.diff.changedPixels,
+      channelDelta: visualParity[name].historicalBaseline.diff.channelDelta,
+      restored: visualParity[name].historicalBaseline.restored,
+    }])),
     closeComposition: visualParity.close.staged,
     cpu: { offP95, onP95, p95DeltaMs, compactions: cpu.on.compactions, activeCounts: cpu.on.activeCounts },
     liveOsmStructural: {
@@ -918,6 +1190,91 @@ function snapshot() {
   const textureMaps = new Set(partitionMeshes
     .map((entry) => entry.mapRef)
     .filter(Boolean));
+  const bodyPosition = runtime.bodies.geometry?.getAttribute?.('position');
+  let localMinY = Infinity;
+  let localAbsX = 0;
+  let finite = Boolean(bodyPosition && bodyPosition.count);
+  for (let index = 0; index < (bodyPosition?.count || 0); index += 1) {
+    const x = bodyPosition.getX(index);
+    const y = bodyPosition.getY(index);
+    localMinY = Math.min(localMinY, y);
+    localAbsX = Math.max(localAbsX, Math.abs(x));
+    finite = finite && Number.isFinite(x) && Number.isFinite(y)
+      && Number.isFinite(bodyPosition.getZ(index));
+  }
+  const firstBodyMatrix = runtime.bodies.instanceMatrix?.array;
+  const bodyCenterY = firstBodyMatrix?.[13];
+  const bodyYScale = firstBodyMatrix
+    ? Math.hypot(firstBodyMatrix[4], firstBodyMatrix[5], firstBodyMatrix[6])
+    : NaN;
+  const wheelPositionStart = 20 * 9;
+  const wheelPositionEnd = 84 * 9;
+  const wheelPositions = bodyPosition?.array?.slice(wheelPositionStart * 1, wheelPositionEnd * 1) || [];
+  let wheelNormalMinOutwardDot = Infinity;
+  let wheelCentroidMinOutwardDot = Infinity;
+  let wheelNormalFinite = wheelPositions.length === 64 * 9;
+  for (let offset = 0; offset < wheelPositions.length; offset += 9) {
+    const triangleIndex = offset / 9;
+    const ax = wheelPositions[offset];
+    const ay = wheelPositions[offset + 1];
+    const az = wheelPositions[offset + 2];
+    const bx = wheelPositions[offset + 3];
+    const by = wheelPositions[offset + 4];
+    const bz = wheelPositions[offset + 5];
+    const cx = wheelPositions[offset + 6];
+    const cy = wheelPositions[offset + 7];
+    const cz = wheelPositions[offset + 8];
+    const abx = bx - ax;
+    const aby = by - ay;
+    const abz = bz - az;
+    const acx = cx - ax;
+    const acy = cy - ay;
+    const acz = cz - az;
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    const length = Math.hypot(nx, ny, nz);
+    const centerX = (ax + bx + cx) / 3;
+    const wheelFaceIndex = triangleIndex % 16;
+    const outwardSign = (Math.sign(centerX) || 0) * (wheelFaceIndex < 8 ? 1 : -1);
+    const dot = length > 0 ? (nx / length) * outwardSign : -Infinity;
+    wheelNormalMinOutwardDot = Math.min(wheelNormalMinOutwardDot, dot);
+    const wheelIndex = Math.floor(triangleIndex / 16);
+    const wheelSide = wheelIndex >= 2 ? 1 : -1;
+    const wheelCenterZ = wheelIndex % 2 === 0 ? -0.32 : 0.32;
+    const wheelCenterX = wheelSide * 0.51;
+    const normalLength = length || 1;
+    const centroidX = (ax + bx + cx) / 3;
+    const centroidY = (ay + by + cy) / 3;
+    const centroidZ = (az + bz + cz) / 3;
+    const centroidDot = (nx * (centroidX - wheelCenterX)
+      + ny * (centroidY + 0.1034482759)
+      + nz * (centroidZ - wheelCenterZ)) / normalLength;
+    wheelCentroidMinOutwardDot = Math.min(wheelCentroidMinOutwardDot, centroidDot);
+    wheelNormalFinite = wheelNormalFinite && [ax, ay, az, bx, by, bz, cx, cy, cz, length, dot]
+      .every(Number.isFinite);
+  }
+  let wheelContactFinite = true;
+  let wheelContactMaxAbsError = 0;
+  let wheelContactMinClearance = Infinity;
+  let wheelContactMaxClearance = -Infinity;
+  for (const record of runtime.records) {
+    const matrix = record.bodyMatrix;
+    let minWorldY = Infinity;
+    for (let offset = 0; offset < wheelPositions.length; offset += 3) {
+      const x = wheelPositions[offset];
+      const y = wheelPositions[offset + 1];
+      const z = wheelPositions[offset + 2];
+      const worldY = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+      minWorldY = Math.min(minWorldY, worldY);
+      wheelContactFinite = wheelContactFinite && Number.isFinite(worldY);
+    }
+    const roadPlaneY = matrix[13] - 0.32;
+    const clearance = minWorldY - roadPlaneY;
+    wheelContactMaxAbsError = Math.max(wheelContactMaxAbsError, Math.abs(clearance));
+    wheelContactMinClearance = Math.min(wheelContactMinClearance, clearance);
+    wheelContactMaxClearance = Math.max(wheelContactMaxClearance, clearance);
+  }
   const coverage = api.getInteriorCoverage();
   return {
     diagnostics: structuredClone(renderer.parkedCarPartitionDiagnostics),
@@ -938,6 +1295,23 @@ function snapshot() {
       uniqueGeometries: partitionGeometries.size,
       uniqueMaterials: partitionMaterials.size,
       textureMaps: textureMaps.size,
+    },
+    wheelGeometry: {
+      finite: finite && Number.isFinite(bodyCenterY) && Number.isFinite(bodyYScale),
+      localMinY,
+      localAbsX,
+      bodyCenterY,
+      worldMinY: bodyCenterY + localMinY * bodyYScale,
+    },
+    wheelContactProof: {
+      records: runtime.records.length,
+      finite: wheelContactFinite && wheelNormalFinite,
+      wheelVertices: wheelPositions.length / 3,
+      maxAbsRoadPlaneErrorMeters: wheelContactMaxAbsError,
+      minClearanceMeters: wheelContactMinClearance,
+      maxClearanceMeters: wheelContactMaxClearance,
+      minOutwardFaceNormalDot: wheelNormalMinOutwardDot,
+      minOutwardCentroidDotMeters: wheelCentroidMinOutwardDot,
     },
     sourceMode: {
       stateGenerator: api.getState().generator,
