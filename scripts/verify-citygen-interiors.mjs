@@ -34,6 +34,7 @@ const REQUIRED_APIS = [
   'getInteriorState',
   'enterBuilding',
   'exitBuilding',
+  'setInteriorView',
   'getRenderer',
 ];
 
@@ -42,7 +43,13 @@ const baseline = () => page.evaluate(() => {
   const renderer = api.getRenderer();
   const root = renderer.root;
   const canvas = renderer.renderer?.domElement || document.querySelector('canvas');
-  window.__CITYGEN_INTERIOR_QA_BASELINE__ = { renderer, root, canvas };
+  window.__CITYGEN_INTERIOR_QA_BASELINE__ = {
+    renderer,
+    root,
+    canvas,
+    childVisibility: new Map(root.children.map((child) => [child.uuid, child.visible])),
+    trafficVisible: api.getTraffic()?.group?.visible ?? null,
+  };
   const objects = { meshes: 0, groups: 0 };
   root.traverse((object) => {
     if (object.isMesh) objects.meshes += 1;
@@ -56,6 +63,7 @@ const baseline = () => page.evaluate(() => {
     drawCalls: renderer.renderer.info.render.drawCalls,
     triangles: renderer.renderer.info.render.triangles,
     geometries: renderer.renderer.info.memory.geometries,
+    textures: renderer.renderer.info.memory.textures,
   };
 });
 
@@ -71,6 +79,26 @@ const runtimeSnapshot = () => page.evaluate(() => {
     if (object.isGroup) objects.groups += 1;
     if (object.name === 'active-building-interior') interiorGroups.push(object);
   });
+  const activeGroup = interiorGroups[0] || null;
+  const activeMeshes = [];
+  activeGroup?.traverse((object) => {
+    if (object.isMesh) activeMeshes.push(object);
+  });
+  const categories = [...new Set(activeMeshes.map((mesh) => mesh.userData?.category).filter(Boolean))].sort();
+  const materialFingerprint = activeMeshes.map((mesh) => {
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    return materials.map((surface) => ({
+      node: mesh.name,
+      category: mesh.userData?.category || null,
+      color: surface?.color?.getHexString?.() || null,
+      emissive: surface?.emissive?.getHexString?.() || null,
+      roughness: surface?.roughness ?? null,
+      metalness: surface?.metalness ?? null,
+      opacity: surface?.opacity ?? null,
+      transparent: surface?.transparent ?? null,
+    }));
+  }).flat().sort((a, b) => `${a.node}:${a.category}`.localeCompare(`${b.node}:${b.category}`));
+  const childVisibility = [...reference.childVisibility.entries()];
   return {
     identity: {
       renderer: renderer === reference.renderer,
@@ -81,9 +109,20 @@ const runtimeSnapshot = () => page.evaluate(() => {
     sceneCanvases: document.querySelectorAll('#scene-canvas').length,
     objects,
     interiorGroups: interiorGroups.length,
+    activeInterior: activeGroup ? {
+      meshNodes: activeMeshes.length,
+      categories,
+      declaredCategories: activeGroup.userData?.propCategories || [],
+      materialFingerprint,
+      exteriorVisibleChildren: root.children.filter((child) => child !== activeGroup && child.visible).length,
+    } : null,
+    visibilityRestored: childVisibility.every(([uuid, visible]) => root.children.find((child) => child.uuid === uuid)?.visible === visible),
+    trafficVisible: api.getTraffic()?.group?.visible ?? null,
+    baselineTrafficVisible: reference.trafficVisible,
     drawCalls: renderer.renderer.info.render.drawCalls,
     triangles: renderer.renderer.info.render.triangles,
     geometries: renderer.renderer.info.memory.geometries,
+    textures: renderer.renderer.info.memory.textures,
     raf: { ...window.__CITYGEN_INTERIOR_QA_RAF__ },
     interior: api.getInteriorState(),
     state: api.getState(),
@@ -176,6 +215,7 @@ try {
   assert.equal(portalReport.coverage?.registered, 700, 'coverage reports 700 registered portals');
   assert.equal(portalReport.coverage?.functional, 700, 'coverage reports 700 functional interiors');
   assert.equal(portalReport.coverage?.missing, 0, 'coverage reports no missing interiors');
+  assert.equal(portalReport.coverage?.accessible, 700, 'all portal approach cells are physically walkable');
   portals.forEach((portal, index) => {
     assert.equal(typeof portal.buildingId, 'string', `portal ${index} has a building id`);
     assert.ok(portal.buildingId.length > 0, `portal ${index} building id is non-empty`);
@@ -196,6 +236,7 @@ try {
   assert.equal(before.canvases, 2, 'canonical SF has one scene canvas plus one 2D minimap canvas');
   const sampleIndexes = [0, Math.floor(portals.length / 2), portals.length - 1];
   const samples = [];
+  let firstMaterialFingerprint = null;
 
   for (const index of sampleIndexes) {
     const portal = portals[index];
@@ -208,9 +249,24 @@ try {
     assert.equal(activeBuildingId(entered.interior), portal.buildingId, `entry ${portal.buildingId}: active building`);
     assert.equal(entered.interiorGroups, 1, `entry ${portal.buildingId}: exactly one active interior group`);
     assertBoundedDelta(before, entered, `entry ${portal.buildingId}`);
+    assert.ok(entered.activeInterior.meshNodes <= 40, `entry ${portal.buildingId}: <=40 active meshes`);
+    assert.ok(entered.drawCalls <= 40, `entry ${portal.buildingId}: <=40 active draw calls`);
+    assert.equal(entered.activeInterior.exteriorVisibleChildren, 0, `entry ${portal.buildingId}: exterior partition is hidden`);
+    assert.equal(entered.trafficVisible, false, `entry ${portal.buildingId}: traffic is hidden`);
+    const requiredCategories = ['ceiling', 'door', 'floor', 'glass', 'greenery', 'grounding', 'lighting', 'reception', 'seating', 'signage', 'trim', 'wall'];
+    assert.ok(entered.activeInterior.categories.length >= 12, `entry ${portal.buildingId}: at least 12 rendered prop categories`);
+    assert.deepEqual(entered.activeInterior.declaredCategories, entered.activeInterior.categories,
+      `entry ${portal.buildingId}: declared categories match rendered categories`);
+    requiredCategories.forEach((category) => assert.ok(entered.activeInterior.categories.includes(category),
+      `entry ${portal.buildingId}: rendered ${category} category`));
+    if (!firstMaterialFingerprint) firstMaterialFingerprint = entered.activeInterior.materialFingerprint;
     if (index === sampleIndexes[0]) {
       await page.addStyleTag({ content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill{display:none!important}' });
       await page.screenshot({ path: '.qa-citygen-interior.png' });
+      await page.evaluate(() => window.__CITYGEN__.setInteriorView('entrance'));
+      await page.waitForTimeout(80);
+      await page.screenshot({ path: '.qa-citygen-interior-entrance.png' });
+      await page.evaluate(() => window.__CITYGEN__.setInteriorView('lobby'));
     }
 
     await resetRafCounter();
@@ -227,6 +283,8 @@ try {
     assertNoRuntimeReplacement(exited, `exit ${portal.buildingId}`);
     assert.equal(activeBuildingId(exited.interior), null, `exit ${portal.buildingId}: no active building`);
     assert.equal(exited.interiorGroups, 0, `exit ${portal.buildingId}: active interior group is disposed`);
+    assert.equal(exited.visibilityRestored, true, `exit ${portal.buildingId}: exterior visibility map is restored`);
+    assert.equal(exited.trafficVisible, exited.baselineTrafficVisible, `exit ${portal.buildingId}: traffic visibility is restored`);
     const player = assertFiniteVector(playerPosition(exited.interior, exited.state),
       `exit ${portal.buildingId}: public interior/player position`);
     const approach = assertFiniteVector(portal.approach, `portal ${portal.buildingId} approach`);
@@ -242,6 +300,25 @@ try {
     });
   }
 
+  const repeatPortal = portals[sampleIndexes[0]];
+  const cycleMemory = [];
+  for (let cycle = 0; cycle < 5; cycle += 1) {
+    await page.evaluate((buildingId) => window.__CITYGEN__.enterBuilding(buildingId), repeatPortal.buildingId);
+    await page.waitForTimeout(80);
+    const entered = await runtimeSnapshot();
+    assert.deepEqual(entered.activeInterior.materialFingerprint, firstMaterialFingerprint,
+      `repeat cycle ${cycle + 1}: deterministic material palette`);
+    cycleMemory.push({ geometries: entered.geometries, textures: entered.textures });
+    await page.evaluate(() => window.__CITYGEN__.exitBuilding());
+    await page.waitForTimeout(80);
+    const exited = await runtimeSnapshot();
+    assert.equal(exited.interiorGroups, 0, `repeat cycle ${cycle + 1}: interior disposed`);
+  }
+  const warmedMemory = cycleMemory[1];
+  for (const memory of cycleMemory.slice(2)) {
+    assert.deepEqual(memory, warmedMemory, 'repeat entry does not grow geometry or texture memory after warm-up');
+  }
+
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({
     result: 'PASS',
@@ -249,6 +326,7 @@ try {
     coverage: portalReport.coverage,
     baseline: before,
     samples,
+    cycleMemory,
     errors,
   }, null, 2));
 } catch (error) {

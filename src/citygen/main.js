@@ -551,12 +551,34 @@ function buildCollisionGrid(city, cell = 2) {
     const maxZ = Math.max(...block.polygon.map((p) => p.z));
     markRect(minX - 0.2, maxX + 0.2, minZ - 0.2, maxZ + 0.2);
   }
-  return { grid, width, depth, cell, bounds, isBlocked(x, z) {
-    const gx = Math.floor((x - this.bounds.minX) / this.cell);
-    const gz = Math.floor((z - this.bounds.minZ) / this.cell);
-    if (gx < 0 || gx >= this.width || gz < 0 || gz >= this.depth) return true;
-    return this.grid[gz * this.width + gx] === 1;
-  } };
+  return {
+    grid,
+    width,
+    depth,
+    cell,
+    bounds,
+    isBlocked(x, z) {
+      const gx = Math.floor((x - this.bounds.minX) / this.cell);
+      const gz = Math.floor((z - this.bounds.minZ) / this.cell);
+      if (gx < 0 || gx >= this.width || gz < 0 || gz >= this.depth) return true;
+      return this.grid[gz * this.width + gx] === 1;
+    },
+    clearDisc(x, z, radius = 1.2) {
+      const minGX = Math.max(0, Math.floor((x - radius - this.bounds.minX) / this.cell));
+      const maxGX = Math.min(this.width - 1, Math.floor((x + radius - this.bounds.minX) / this.cell));
+      const minGZ = Math.max(0, Math.floor((z - radius - this.bounds.minZ) / this.cell));
+      const maxGZ = Math.min(this.depth - 1, Math.floor((z + radius - this.bounds.minZ) / this.cell));
+      for (let gz = minGZ; gz <= maxGZ; gz += 1) {
+        for (let gx = minGX; gx <= maxGX; gx += 1) {
+          const centerX = this.bounds.minX + (gx + 0.5) * this.cell;
+          const centerZ = this.bounds.minZ + (gz + 0.5) * this.cell;
+          if (Math.hypot(centerX - x, centerZ - z) <= radius + this.cell * 0.75) {
+            this.grid[gz * this.width + gx] = 0;
+          }
+        }
+      }
+    },
+  };
 }
 
 function syncModePresentation() {
@@ -575,10 +597,29 @@ function syncModePresentation() {
 }
 
 function configureBuildingInteriors(city) {
-  const { portals, coverage } = buildingInteriorsPlugin.load({ city });
+  const { portals: sourcePortals, coverage } = buildingInteriorsPlugin.load({ city });
+  const heightAt = state.renderer.terrain?.heightAt;
+  const portals = sourcePortals.map((portal) => ({
+    ...portal,
+    position: {
+      ...portal.position,
+      y: heightAt ? heightAt(portal.position.x, portal.position.z) : portal.position.y,
+    },
+    approach: {
+      ...portal.approach,
+      y: heightAt ? heightAt(portal.approach.x, portal.approach.z) : portal.approach.y,
+    },
+  }));
   state.interiors.portals = portals;
   state.interiors.byBuildingId = new Map(portals.map((portal) => [portal.buildingId, portal]));
   state.interiors.coverage = coverage;
+  if (state.collision) {
+    for (const portal of portals) state.collision.clearDisc(portal.approach.x, portal.approach.z);
+    state.interiors.coverage = {
+      ...coverage,
+      accessible: portals.filter((portal) => !state.collision.isBlocked(portal.approach.x, portal.approach.z)).length,
+    };
+  }
   state.interiors.markers = installBuildingPortals(state.renderer, portals);
 }
 
@@ -602,8 +643,8 @@ function enterBuilding(buildingId = null, force = true) {
     : nearestBuildingPortal(force);
   if (!portal || !state.renderer?.root || !state.city) return false;
   if (!force && Math.hypot(portal.approach.x - state.player.x, portal.approach.z - state.player.z) > 3.2) return false;
+  if (state.interiors.active) return false;
   if (state.vehicle) toggleVehicle(false);
-  if (state.interiors.active) exitBuilding(false);
   const exterior = {
     x: state.player.x,
     z: state.player.z,
@@ -657,6 +698,17 @@ function exitBuilding(restorePlayer = true) {
   return true;
 }
 
+function setInteriorView(pose = 'lobby') {
+  const view = state.interiors.active?.views?.[pose];
+  if (!view) return false;
+  state.player.x = view.x;
+  state.player.z = view.z;
+  state.player.yaw = view.yaw;
+  state.player.pitch = view.pitch;
+  updatePlayer(0);
+  return true;
+}
+
 function resetBuildingInteriors() {
   if (state.interiors.active) {
     exitBuilding(false);
@@ -676,12 +728,12 @@ async function buildCity(city, { reframe = true } = {}) {
   if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
   await state.renderer.buildCity(city, { day: state.day });
+  state.collision = buildCollisionGrid(city);
   configureBuildingInteriors(city);
   if (state.traffic) {
     state.traffic.dispose();
   }
   state.traffic = new TrafficSim(state.renderer, city, { count: city.meta.generator === 'openstreetmap' ? 14 : 26 });
-  state.collision = buildCollisionGrid(city);
   if (reframe) frameCityCamera(city);
   updateReadout(city);
   document.querySelectorAll('.preset').forEach((button) => {
@@ -1360,6 +1412,7 @@ async function loadMetricSf() {
       signals: [],
     };
     state.city = city;
+    state.collision = null;
     configureBuildingInteriors(city);
     state.metricMap = {
       anchorOriginEpsg26910: bundle.anchorOriginEpsg26910,
@@ -1750,6 +1803,7 @@ async function boot() {
     enterBuilding: (buildingId) => enterBuilding(buildingId, true),
     enterNearestBuilding: () => enterBuilding(null, false),
     exitBuilding: () => exitBuilding(true),
+    setInteriorView,
     loadBuiltinSf,
     loadMetricSf,
     getMetricMap: () => state.metricMap,
