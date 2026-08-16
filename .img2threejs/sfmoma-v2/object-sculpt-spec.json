@@ -970,13 +970,16 @@
     "currentPass": "blockout",
     "completedPasses": [],
     "lastCompletedPass": "",
-    "blockedReason": "blockout requires a browser screenshot and self-correction review before structural-pass unlocks",
+    "blockedReason": "",
     "nextRequiredEvidence": [
-      "blockout browser render screenshot from your agent's browser/screenshot tool",
-      "side-by-side reference/render comparison sheet",
-      "AI vision score >= 0.7 with layer scores and mismatch critique",
-      "critical semantic feature scores from the same image pair meeting their individual thresholds",
-      "reviewHistory entry for blockout with action=continue"
+      "Silhouette reads correctly without materials.",
+      "Quality contract has named all required macro feature groups before code generation.",
+      "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold.",
+      "browser render screenshot from your agent's browser/screenshot tool",
+      "side-by-side reference/render comparison sheet for AI vision review",
+      "AI vision score at or above the visual acceptance threshold",
+      "all critical semantic feature scores from the shared image pair at or above their thresholds",
+      "self-correction review appended with action=continue before the next pass"
     ]
   },
   "lookDevTargets": {
@@ -1501,16 +1504,16 @@
       "attachment": null,
       "dimensions": {
         "width": 0.96,
-        "height": 0.74,
-        "depth": 0.38,
+        "height": 0.64,
+        "depth": 0.3,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
           -0.02,
-          0.45,
-          0.02
+          0.4,
+          0.03
         ],
         "rotation": [
           0,
@@ -1626,8 +1629,8 @@
           ],
           "scale": [
             0.96,
-            0.74,
-            0.38
+            0.64,
+            0.3
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -1709,17 +1712,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.27,
-        "height": 0.82,
-        "depth": 0.31,
+        "width": 0.25,
+        "height": 0.86,
+        "depth": 0.28,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0.02,
-          0.49,
-          -0.05
+          -0.14,
+          0.51,
+          -0.02
         ],
         "rotation": [
           0,
@@ -1763,9 +1766,9 @@
             0
           ],
           "scale": [
-            0.27,
-            0.82,
-            0.31
+            0.25,
+            0.86,
+            0.28
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -1845,17 +1848,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.25,
-        "height": 0.72,
-        "depth": 0.25,
+        "width": 0.27,
+        "height": 0.74,
+        "depth": 0.27,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0.03,
-          0.56,
-          0.08
+          0.02,
+          0.53,
+          0.09
         ],
         "rotation": [
           0,
@@ -1942,9 +1945,9 @@
             0
           ],
           "scale": [
-            0.25,
-            0.72,
-            0.25
+            0.27,
+            0.74,
+            0.27
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -2126,17 +2129,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.49,
-        "height": 0.78,
-        "depth": 0.48,
+        "width": 0.58,
+        "height": 0.7,
+        "depth": 0.24,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0.27,
-          0.55,
-          -0.13
+          0.24,
+          0.51,
+          -0.03
         ],
         "rotation": [
           0,
@@ -2223,9 +2226,9 @@
             0
           ],
           "scale": [
-            0.49,
-            0.78,
-            0.48
+            0.58,
+            0.7,
+            0.24
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -2352,17 +2355,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.23,
-        "height": 0.62,
-        "depth": 0.3,
+        "width": 0.14,
+        "height": 0.56,
+        "depth": 0.1,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0.11,
-          0.47,
-          0.04
+          0.17,
+          0.44,
+          0.18
         ],
         "rotation": [
           0,
@@ -2435,9 +2438,9 @@
             0
           ],
           "scale": [
-            0.23,
-            0.62,
-            0.3
+            0.14,
+            0.56,
+            0.1
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -8296,8 +8299,132 @@
       ]
     }
   ],
-  "visualEvidence": [],
-  "reviewHistory": [],
+  "visualEvidence": [
+    {
+      "timestamp": "2026-08-16T23:14:08.744651+00:00",
+      "passId": "blockout",
+      "estimatedFidelity": 0.52,
+      "aiVisionScore": 0.52,
+      "visualAcceptanceThreshold": 0.7,
+      "layerScores": {
+        "silhouetteProportion": 0.52,
+        "componentStructure": 0.6,
+        "formDetail": 0.25,
+        "materialSurface": 0.2,
+        "lightingCamera": 0.5
+      },
+      "featureReviews": [
+        {
+          "id": "bottaMassing",
+          "score": 0.52,
+          "visible": true,
+          "notes": "Six masses read, but the lower stepped base is too narrow and vertical."
+        },
+        {
+          "id": "turretOculusIdentity",
+          "score": 0.58,
+          "visible": true,
+          "notes": "Embedded and readable, but too circular and front-facing."
+        },
+        {
+          "id": "rippledExpansionContinuity",
+          "score": 0.5,
+          "visible": true,
+          "notes": "Contiguous and shallow enough for blockout, but still reads as a barrel-like arch."
+        }
+      ],
+      "referenceScreenshot": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "renderScreenshot": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+      "comparisonImage": ".qa-sfmoma-v2-blockout-comparison.png",
+      "cameraView": "front-three-quarter",
+      "notes": "Canonical world remains visible; QA root is intentionally elevated, so this evidence does not prove terrain contact or canonical integration.",
+      "aiVisionNotes": "Ultra-depth independent critic scored the exact SHA 64f5f5bb... at 5.2/10. Bounded blockout legibility passes narrowly; reference fidelity and all critical feature thresholds fail. GTA/Watch Dogs AAA readiness is 1.4/10."
+    }
+  ],
+  "reviewHistory": [
+    {
+      "timestamp": "2026-08-16T23:14:08.744651+00:00",
+      "passId": "blockout",
+      "estimatedFidelity": 0.52,
+      "aiVisionScore": 0.52,
+      "visualAcceptanceThreshold": 0.7,
+      "layerScores": {
+        "silhouetteProportion": 0.52,
+        "componentStructure": 0.6,
+        "formDetail": 0.25,
+        "materialSurface": 0.2,
+        "lightingCamera": 0.5
+      },
+      "featureReviews": [
+        {
+          "id": "bottaMassing",
+          "score": 0.52,
+          "visible": true,
+          "notes": "Six masses read, but the lower stepped base is too narrow and vertical."
+        },
+        {
+          "id": "turretOculusIdentity",
+          "score": 0.58,
+          "visible": true,
+          "notes": "Embedded and readable, but too circular and front-facing."
+        },
+        {
+          "id": "rippledExpansionContinuity",
+          "score": 0.5,
+          "visible": true,
+          "notes": "Contiguous and shallow enough for blockout, but still reads as a barrel-like arch."
+        }
+      ],
+      "action": "refine-spec",
+      "summary": "Transform correction makes all six macro masses legible, but the blockout remains too tall and narrow with insufficient broad stepped brick massing and a barrel-like expansion.",
+      "matched": [
+        "six macro masses legible",
+        "oculus embedded and readable",
+        "glass core reveal visible",
+        "no component-level floating or inside-out geometry"
+      ],
+      "mismatches": [
+        "reference remains decisive winner",
+        "lower brick wings are too narrow and under-stepped",
+        "white expansion still reads as a rounded arch",
+        "oculus is too circular and front-facing",
+        "canonical terrain contact remains unproven"
+      ],
+      "specFixes": [
+        "widen and step the lower brick wing silhouette",
+        "replace the expansion arch with a shallower asymmetric wavy facade profile",
+        "tilt and proportion the oculus closer to the concept",
+        "preserve OSM source authority"
+      ],
+      "codeFixes": [],
+      "evidence": [
+        ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+        ".qa-sfmoma-v2-blockout-right.png",
+        ".qa-sfmoma-v2-blockout-rear.png",
+        ".qa-sfmoma-v2-blockout-left.png",
+        ".qa-sfmoma-v2-blockout-elevated.png",
+        ".qa-sfmoma-v2-blockout-comparison.png",
+        ".qa-sfmoma-v2-blockout-metrics.json",
+        ".img2threejs/sfmoma-v2/blockout-feature-review-v1.json"
+      ],
+      "mapStrippedRender": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+      "reviewViewpoints": [
+        "front-three-quarter",
+        "right",
+        "rear",
+        "left",
+        "elevated-three-quarter"
+      ],
+      "visualEvidence": {
+        "referenceScreenshot": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+        "renderScreenshot": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+        "comparisonImage": ".qa-sfmoma-v2-blockout-comparison.png",
+        "cameraView": "front-three-quarter",
+        "notes": "Canonical world remains visible; QA root is intentionally elevated, so this evidence does not prove terrain contact or canonical integration.",
+        "aiVisionNotes": "Ultra-depth independent critic scored the exact SHA 64f5f5bb... at 5.2/10. Bounded blockout legibility passes narrowly; reference fidelity and all critical feature thresholds fail. GTA/Watch Dogs AAA readiness is 1.4/10."
+      }
+    }
+  ],
   "lodPlan": [
     {
       "tier": "near",
@@ -8525,6 +8652,131 @@
       "status": "proceed",
       "unresolvedNotObservedMaterials": [],
       "regions": 6
+    }
+  ],
+  "tier1Results": [
+    {
+      "passed": false,
+      "checks": {
+        "silhouetteIoU": 0.4999,
+        "aspectRatioDelta": 0.1741,
+        "scaleDelta": 0.2108,
+        "bilateralSymmetryError": 0.1263,
+        "colorDelta": {
+          "checked": 24,
+          "maxDeltaE": 34.04,
+          "perComponent": [
+            {
+              "componentId": null,
+              "deltaE": 7.09
+            },
+            {
+              "componentId": null,
+              "deltaE": 14.63
+            },
+            {
+              "componentId": null,
+              "deltaE": 15.39
+            },
+            {
+              "componentId": null,
+              "deltaE": 30.54
+            },
+            {
+              "componentId": null,
+              "deltaE": 33.28
+            },
+            {
+              "componentId": null,
+              "deltaE": 14.54
+            },
+            {
+              "componentId": null,
+              "deltaE": 12.32
+            },
+            {
+              "componentId": null,
+              "deltaE": 15.12
+            },
+            {
+              "componentId": null,
+              "deltaE": 16.26
+            },
+            {
+              "componentId": null,
+              "deltaE": 15.22
+            },
+            {
+              "componentId": null,
+              "deltaE": 6.99
+            },
+            {
+              "componentId": null,
+              "deltaE": 5.88
+            },
+            {
+              "componentId": null,
+              "deltaE": 7.92
+            },
+            {
+              "componentId": null,
+              "deltaE": 7.55
+            },
+            {
+              "componentId": null,
+              "deltaE": 12.0
+            },
+            {
+              "componentId": null,
+              "deltaE": 1.67
+            },
+            {
+              "componentId": null,
+              "deltaE": 30.13
+            },
+            {
+              "componentId": null,
+              "deltaE": 16.01
+            },
+            {
+              "componentId": null,
+              "deltaE": 31.14
+            },
+            {
+              "componentId": null,
+              "deltaE": 7.55
+            },
+            {
+              "componentId": null,
+              "deltaE": 19.97
+            },
+            {
+              "componentId": null,
+              "deltaE": 34.04
+            },
+            {
+              "componentId": null,
+              "deltaE": 33.51
+            },
+            {
+              "componentId": null,
+              "deltaE": 1.2
+            }
+          ],
+          "gated": false
+        }
+      },
+      "failures": [
+        "silhouette IoU 0.500 is below threshold 0.85",
+        "aspect-ratio delta 0.174 exceeds threshold 0.05",
+        "scale delta 0.211 exceeds threshold 0.08",
+        "blockout requires --map-stripped-render evidence"
+      ],
+      "maskWarnings": [
+        "render: image is not clearly isolated from background; using most pixels as material evidence"
+      ],
+      "renderHash": "b1525cd08f357b5b",
+      "passId": "blockout"
     }
   ]
 }
