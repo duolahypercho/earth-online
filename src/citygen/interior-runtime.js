@@ -343,55 +343,92 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     sign: makeMaterial('#ffffff', { map: textures[6], emissive: '#6a5333', emissiveIntensity: 0.18, roughness: 0.38, metalness: 0.06 }),
     art: makeMaterial('#ffffff', { map: textures[7], roughness: 0.5, metalness: 0.02 }),
     screen: makeMaterial('#182a32', { emissive: '#68a4b5', emissiveIntensity: 0.34, roughness: 0.18, metalness: 0.12 }),
+    indicator: makeMaterial('#ffcf8a', { emissive: '#ff9d3d', emissiveIntensity: 0.85, roughness: 0.3, metalness: 0.1 }),
+    body: makeMaterial('#ffffff', { roughness: 0.86, metalness: 0 }),
+    head: makeMaterial('#ffffff', { roughness: 0.7, metalness: 0 }),
+    luggage: makeMaterial('#ffffff', { roughness: 0.6, metalness: 0.08 }),
   };
   const add = (options) => addBox(group, options);
-  const addInstances = (name, category, surface, records, rounded = false) => {
-    const mesh = new THREE.InstancedMesh(rounded ? INTERIOR_ROUNDED_GEOMETRY : INTERIOR_BOX_GEOMETRY, surface, records.length);
+  const addInstances = (name, category, surface, records, geometry = INTERIOR_BOX_GEOMETRY) => {
+    const mesh = new THREE.InstancedMesh(geometry, surface, records.length);
     mesh.name = name;
     mesh.userData.category = category;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     const instance = new THREE.Object3D();
+    const tint = new THREE.Color();
     records.forEach((record, index) => {
       instance.position.set(record.position[0], record.position[1], record.position[2]);
       instance.rotation.set(...(record.rotation || [0, 0, 0]));
       instance.scale.set(record.size[0], record.size[1], record.size[2]);
       instance.updateMatrix();
       mesh.setMatrixAt(index, instance.matrix);
+      if (record.color) {
+        tint.set(record.color);
+        mesh.setColorAt(index, tint);
+      }
     });
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere?.();
     group.add(mesh);
     return mesh;
   };
 
-  add({ name: 'lobby-floor-marble', category: 'floor', size: [width, 0.18, depth], position: [anchor.x, anchor.y - 0.09, anchor.z], surface: surfaces.floor });
+  const backZ = anchor.z - depth / 2;
+  const frontZ = anchor.z + depth / 2;
+  const leftX = anchor.x - width / 2;
+  const rightX = anchor.x + width / 2;
+  const corridorDepth = 3.8;
+  const corridorHalf = 1.1;
+  const corridorHeight = 2.7;
+  const openingZ = anchor.z + depth * 0.16;
+  const segALength = depth * 0.66 - corridorHalf;
+  const segBLength = depth * 0.34 - corridorHalf;
+
+  addInstances('lobby-floor-marble', 'floor', surfaces.floor, [
+    { position: [anchor.x, anchor.y - 0.09, anchor.z], size: [width, 0.18, depth] },
+    { position: [rightX + corridorDepth / 2, anchor.y - 0.09, openingZ], size: [corridorDepth, 0.18, corridorHalf * 2] },
+  ]);
   add({ name: 'lobby-coffered-ceiling', category: 'ceiling', size: [width, 0.14, depth], position: [anchor.x, anchor.y + height, anchor.z], surface: surfaces.ceiling });
-  add({ name: 'lobby-back-wall', category: 'wall', size: [width, height, 0.18], position: [anchor.x, anchor.y + height / 2, anchor.z - depth / 2], surface: surfaces.wall });
-  add({ name: 'lobby-left-wall', category: 'wall', size: [0.18, height, depth], position: [anchor.x - width / 2, anchor.y + height / 2, anchor.z], surface: surfaces.wall });
-  add({ name: 'lobby-right-wall', category: 'wall', size: [0.18, height, depth], position: [anchor.x + width / 2, anchor.y + height / 2, anchor.z], surface: surfaces.wall });
   const frontSection = Math.max(1.2, (width - 6.2) / 2);
-  add({ name: 'lobby-front-left', category: 'entrance', size: [frontSection, height, 0.18], position: [anchor.x - (width + 6.2) / 4, anchor.y + height / 2, anchor.z + depth / 2], surface: surfaces.wall });
-  add({ name: 'lobby-front-right', category: 'entrance', size: [frontSection, height, 0.18], position: [anchor.x + (width + 6.2) / 4, anchor.y + height / 2, anchor.z + depth / 2], surface: surfaces.wall });
-
-  add({ name: 'lobby-baseboard-back', category: 'trim', size: [width - 0.2, 0.18, 0.1], position: [anchor.x, anchor.y + 0.09, anchor.z - depth / 2 + 0.13], surface: surfaces.trim });
-  add({ name: 'lobby-baseboard-left', category: 'trim', size: [0.1, 0.18, depth - 0.2], position: [anchor.x - width / 2 + 0.13, anchor.y + 0.09, anchor.z], surface: surfaces.trim });
-  add({ name: 'lobby-baseboard-right', category: 'trim', size: [0.1, 0.18, depth - 0.2], position: [anchor.x + width / 2 - 0.13, anchor.y + 0.09, anchor.z], surface: surfaces.trim });
+  addInstances('lobby-wall-shell', 'wall', surfaces.wall, [
+    { position: [anchor.x, anchor.y + height / 2, backZ], size: [width, height, 0.18] },
+    { position: [leftX, anchor.y + height / 2, anchor.z], size: [0.18, height, depth] },
+    { position: [anchor.x - (width + 6.2) / 4, anchor.y + height / 2, frontZ], size: [frontSection, height, 0.18] },
+    { position: [anchor.x + (width + 6.2) / 4, anchor.y + height / 2, frontZ], size: [frontSection, height, 0.18] },
+    { position: [rightX, anchor.y + height / 2, anchor.z - depth / 2 + segALength / 2], size: [0.18, height, segALength] },
+    { position: [rightX, anchor.y + height / 2, openingZ + corridorHalf + segBLength / 2], size: [0.18, height, segBLength] },
+    { position: [rightX, anchor.y + corridorHeight + (height - corridorHeight) / 2, openingZ], size: [0.18, height - corridorHeight, corridorHalf * 2] },
+    { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight / 2, openingZ - corridorHalf], size: [corridorDepth, corridorHeight, 0.18] },
+    { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight / 2, openingZ + corridorHalf], size: [corridorDepth, corridorHeight, 0.18] },
+    { position: [rightX + corridorDepth, anchor.y + corridorHeight / 2, openingZ], size: [0.18, corridorHeight, corridorHalf * 2] },
+    { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight + 0.07, openingZ], size: [corridorDepth, 0.14, corridorHalf * 2] },
+  ]);
+  addInstances('lobby-trim-baseboards', 'trim', surfaces.trim, [
+    { position: [anchor.x, anchor.y + 0.09, backZ + 0.13], size: [width - 0.2, 0.18, 0.1] },
+    { position: [leftX + 0.13, anchor.y + 0.09, anchor.z], size: [0.1, 0.18, depth - 0.2] },
+    { position: [rightX - 0.13, anchor.y + 0.09, anchor.z - depth / 2 + segALength / 2], size: [0.1, 0.18, Math.max(0.2, segALength - 0.1)] },
+    { position: [rightX - 0.13, anchor.y + 0.09, openingZ + corridorHalf + segBLength / 2], size: [0.1, 0.18, Math.max(0.2, segBLength - 0.1)] },
+  ]);
   addInstances('lobby-back-wall-pilasters', 'architecture', surfaces.brass, [
-    { position: [anchor.x + width * 0.12, anchor.y + height / 2, anchor.z - depth / 2 + 0.18], size: [0.16, height - 0.22, 0.16] },
-    { position: [anchor.x + width * 0.47, anchor.y + height / 2, anchor.z - depth / 2 + 0.18], size: [0.16, height - 0.22, 0.16] },
-  ], true);
+    { position: [leftX + 0.7, anchor.y + height / 2, backZ + 0.18], size: [0.16, height - 0.22, 0.16] },
+    { position: [anchor.x + 1.1, anchor.y + height / 2, backZ + 0.18], size: [0.16, height - 0.22, 0.16] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-ceiling-coffers', 'ceiling', surfaces.wood, [
-    { position: [anchor.x - width * 0.28, anchor.y + height - 0.13, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
-    { position: [anchor.x + width * 0.28, anchor.y + height - 0.13, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
-    { position: [anchor.x, anchor.y + height - 0.13, anchor.z - depth * 0.28], size: [width * 0.62, 0.1, 0.075] },
-    { position: [anchor.x, anchor.y + height - 0.13, anchor.z + depth * 0.08], size: [width * 0.62, 0.1, 0.075] },
-  ], true);
+    { position: [anchor.x - width * 0.28, anchor.y + height - 0.08, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
+    { position: [anchor.x + width * 0.28, anchor.y + height - 0.08, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
+    { position: [anchor.x, anchor.y + height - 0.08, anchor.z - depth * 0.28], size: [width * 0.62, 0.1, 0.075] },
+    { position: [anchor.x, anchor.y + height - 0.08, anchor.z + depth * 0.08], size: [width * 0.62, 0.1, 0.075] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
-  const doorZ = anchor.z + depth / 2 - 0.08;
-  add({ name: 'lobby-glass-left', category: 'glass', size: [1.45, 2.9, 0.06], position: [anchor.x - 2.25, anchor.y + 1.48, doorZ], surface: surfaces.glass });
-  add({ name: 'lobby-glass-right', category: 'glass', size: [1.45, 2.9, 0.06], position: [anchor.x + 2.25, anchor.y + 1.48, doorZ], surface: surfaces.glass });
-  add({ name: 'lobby-door-left', category: 'door', size: [1.35, 2.65, 0.08], position: [anchor.x - 0.7, anchor.y + 1.34, doorZ], surface: surfaces.glass });
-  add({ name: 'lobby-door-right', category: 'door', size: [1.35, 2.65, 0.08], position: [anchor.x + 0.7, anchor.y + 1.34, doorZ], surface: surfaces.glass });
+  const doorZ = frontZ - 0.08;
+  addInstances('lobby-glazing', 'glass', surfaces.glass, [
+    { position: [anchor.x - 2.25, anchor.y + 1.48, doorZ], size: [1.45, 2.9, 0.06] },
+    { position: [anchor.x + 2.25, anchor.y + 1.48, doorZ], size: [1.45, 2.9, 0.06] },
+    { position: [anchor.x - 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
+    { position: [anchor.x + 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
+  ]);
   add({ name: 'lobby-door-transom', category: 'door', size: [6.2, 0.14, 0.13], position: [anchor.x, anchor.y + 3.0, doorZ], surface: surfaces.brass, rounded: true });
 
   const deskX = anchor.x - width * 0.17;
@@ -399,65 +436,95 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   add({ name: 'lobby-reception-desk', category: 'reception', size: [5.2, 1.02, 0.86], position: [deskX, anchor.y + 0.51, deskZ], surface: surfaces.wood, rounded: true });
   add({ name: 'lobby-reception-counter', category: 'reception', size: [5.5, 0.11, 1.05], position: [deskX, anchor.y + 1.08, deskZ], surface: surfaces.stone, rounded: true });
   add({ name: 'lobby-reception-plinth', category: 'reception', size: [3.0, 0.18, 0.98], position: [deskX, anchor.y + 0.09, deskZ], surface: surfaces.brass, rounded: true });
-  for (const side of [-1, 1]) {
-    add({ name: `lobby-reception-terminal-${side}`, category: 'equipment', size: [0.62, 0.46, 0.12], position: [deskX + side * 1.2, anchor.y + 1.38, deskZ - 0.24], surface: surfaces.screen, rounded: true });
-  }
+  addInstances('lobby-reception-terminals', 'equipment', surfaces.screen, [
+    { position: [deskX - 1.2, anchor.y + 1.38, deskZ - 0.24], size: [0.62, 0.46, 0.12] },
+    { position: [deskX + 1.2, anchor.y + 1.38, deskZ - 0.24], size: [0.62, 0.46, 0.12] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
   const sign = new THREE.Mesh(INTERIOR_PLANE_GEOMETRY, surfaces.sign);
   sign.name = 'lobby-san-francisco-sign';
   sign.userData.category = 'signage';
-  sign.position.set(deskX, anchor.y + 2.55, anchor.z - depth / 2 + 0.11);
+  sign.position.set(deskX, anchor.y + 2.55, backZ + 0.11);
   sign.scale.set(4.6, 1.35, 1);
   group.add(sign);
+
+  const liftLeftX = anchor.x + width * 0.23;
+  const liftRightX = anchor.x + width * 0.38;
+  const liftCenterX = (liftLeftX + liftRightX) / 2;
+  const liftBankWidth = liftRightX - liftLeftX + 2.0;
+  const liftFaceZ = backZ + 0.44;
   addInstances('lobby-elevator-doors', 'elevator', surfaces.trim, [
-    { position: [anchor.x + width * 0.25, anchor.y + 1.28, anchor.z - depth / 2 + 0.12], size: [1.5, 2.55, 0.1] },
-    { position: [anchor.x + width * 0.4, anchor.y + 1.28, anchor.z - depth / 2 + 0.12], size: [1.5, 2.55, 0.1] },
-    { position: [anchor.x + width * 0.25, anchor.y + 2.68, anchor.z - depth / 2 + 0.14], size: [1.66, 0.12, 0.14] },
-    { position: [anchor.x + width * 0.4, anchor.y + 2.68, anchor.z - depth / 2 + 0.14], size: [1.66, 0.12, 0.14] },
-  ], true);
+    { position: [liftLeftX, anchor.y + 1.28, liftFaceZ], size: [1.5, 2.55, 0.1] },
+    { position: [liftRightX, anchor.y + 1.28, liftFaceZ], size: [1.5, 2.55, 0.1] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
+  addInstances('lobby-elevator-surround', 'elevator', surfaces.stone, [
+    { position: [liftLeftX - 1.0, anchor.y + 1.65, backZ + 0.25], size: [0.24, 3.3, 0.5] },
+    { position: [liftRightX + 1.0, anchor.y + 1.65, backZ + 0.25], size: [0.24, 3.3, 0.5] },
+    { position: [liftCenterX, anchor.y + 3.12, backZ + 0.25], size: [liftBankWidth - 0.24, 0.44, 0.5] },
+    { position: [liftCenterX, anchor.y + 0.08, backZ + 0.28], size: [liftBankWidth, 0.16, 0.56] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
+  addInstances('lobby-elevator-indicators', 'elevator', surfaces.indicator, [
+    { position: [liftLeftX, anchor.y + 2.86, backZ + 0.52], size: [0.44, 0.18, 0.06] },
+    { position: [liftRightX, anchor.y + 2.86, backZ + 0.52], size: [0.44, 0.18, 0.06] },
+    { position: [liftCenterX, anchor.y + 1.32, backZ + 0.52], size: [0.12, 0.22, 0.06] },
+  ]);
+
+  addInstances('lobby-corridor-frames', 'trim', surfaces.trim, [
+    ...[0.12, corridorDepth * 0.36, corridorDepth * 0.7].flatMap((offset) => [
+      { position: [rightX + offset, anchor.y + corridorHeight / 2, openingZ - corridorHalf + 0.09], size: [0.14, corridorHeight, 0.14] },
+      { position: [rightX + offset, anchor.y + corridorHeight / 2, openingZ + corridorHalf - 0.09], size: [0.14, corridorHeight, 0.14] },
+      { position: [rightX + offset, anchor.y + corridorHeight - 0.07, openingZ], size: [0.14, 0.16, corridorHalf * 2 - 0.04] },
+    ]),
+    { position: [rightX + corridorDepth - 0.1, anchor.y + 1.17, openingZ], size: [0.1, 2.34, 1.5] },
+    { position: [rightX + corridorDepth - 0.16, anchor.y + 1.17, openingZ], size: [0.14, 0.08, 1.62] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
+
+  add({ name: 'lobby-vestibule-soffit', category: 'vestibule', size: [6.2, 0.34, 2.0], position: [anchor.x, anchor.y + height - 0.17, frontZ - 1.09], surface: surfaces.wood, rounded: true });
+  addInstances('lobby-vestibule-columns', 'vestibule', surfaces.stone, [-1, 1].map((side) => ({
+    position: [anchor.x + side * 2.7, anchor.y + (height - 0.34) / 2, frontZ - 1.6],
+    size: [0.55, height - 0.34, 0.55],
+  })), INTERIOR_CYLINDER_GEOMETRY);
+  addInstances('lobby-queue-stanchions', 'vestibule', surfaces.brass, [
+    [-1.7, 0.12], [1.7, 0.12], [-1.7, 0.3], [1.7, 0.3],
+  ].map(([offsetX, offsetZ]) => ({
+    position: [anchor.x + offsetX, anchor.y + 0.48, anchor.z + depth * offsetZ],
+    size: [0.07, 0.96, 0.07],
+  })), INTERIOR_ROUNDED_GEOMETRY);
 
   const sofaZ = anchor.z + depth * 0.06;
   const sofaCenters = [-1, 1].map((side) => anchor.x + side * width * 0.29);
   addInstances('lobby-sofa-frames', 'seating', surfaces.fabric, sofaCenters.flatMap((x) => [
     { position: [x, anchor.y + 0.34, sofaZ], size: [2.65, 0.38, 0.94] },
     { position: [x, anchor.y + 0.88, sofaZ + 0.35], size: [2.65, 0.78, 0.24] },
-  ]), true);
+  ]), INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-sofa-arms', 'seating', surfaces.fabric, sofaCenters.flatMap((x) => [-1, 1].map((side) => ({
     position: [x + side * 1.24, anchor.y + 0.62, sofaZ], size: [0.2, 0.62, 0.94],
-  }))), true);
+  }))), INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-sofa-cushions', 'seating', surfaces.fabric, sofaCenters.flatMap((x) => [-1, 1].map((side) => ({
     position: [x + side * 0.62, anchor.y + 0.57, sofaZ - 0.03], size: [1.14, 0.2, 0.78],
-  }))), true);
+  }))), INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-sofa-legs', 'seating', surfaces.brass, sofaCenters.flatMap((x) => [-1, 1].flatMap((sideX) => [-1, 1].map((sideZ) => ({
     position: [x + sideX * 1.12, anchor.y + 0.12, sofaZ + sideZ * 0.32], size: [0.08, 0.24, 0.08],
-  })))), true);
+  })))), INTERIOR_ROUNDED_GEOMETRY);
   const tableCenters = [-1, 1].map((side) => anchor.x + side * width * 0.13);
   addInstances('lobby-table-tops', 'table', surfaces.stone, tableCenters.map((x) => ({
     position: [x, anchor.y + 0.42, sofaZ - 0.1], size: [1.25, 0.12, 0.72],
-  })), true);
+  })), INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-table-pedestals', 'table', surfaces.brass, tableCenters.map((x) => ({
     position: [x, anchor.y + 0.21, sofaZ - 0.1], size: [0.16, 0.42, 0.16],
-  })), true);
-  add({ name: 'lobby-runner-rug', category: 'rug', size: [2.25, 0.035, Math.min(3.8, depth * 0.23)], position: [anchor.x - width * 0.04, anchor.y + 0.02, anchor.z + depth * 0.17], surface: surfaces.rug, rounded: true });
+  })), INTERIOR_ROUNDED_GEOMETRY);
+  addInstances('lobby-runner-rug', 'rug', surfaces.rug, [
+    { position: [anchor.x - width * 0.04, anchor.y + 0.02, anchor.z + depth * 0.17], size: [2.25, 0.035, Math.min(3.8, depth * 0.23)] },
+    { position: [rightX + corridorDepth / 2, anchor.y + 0.02, openingZ], size: [corridorDepth - 0.2, 0.03, corridorHalf * 2 - 1.0] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
-  const addPlant = (side) => {
-    const pot = new THREE.Mesh(INTERIOR_CYLINDER_GEOMETRY, surfaces.terracotta);
-    pot.name = `lobby-planter-${side}`;
-    pot.userData.category = 'greenery';
-    pot.position.set(anchor.x + side * width * 0.4, anchor.y + 0.46, anchor.z - depth * 0.34);
-    pot.scale.set(0.76, 0.9, 0.76);
-    pot.castShadow = true;
-    group.add(pot);
-    const foliage = new THREE.Mesh(INTERIOR_SPHERE_GEOMETRY, surfaces.foliage);
-    foliage.name = `lobby-foliage-${side}`;
-    foliage.userData.category = 'greenery';
-    foliage.position.set(pot.position.x, anchor.y + 1.35, pot.position.z);
-    foliage.scale.set(1.05, 1.6, 1.05);
-    foliage.castShadow = true;
-    group.add(foliage);
-  };
-  addPlant(-1);
-  addPlant(1);
+  const planterSpots = [-1, 1].map((side) => [anchor.x + side * width * 0.4, anchor.z - depth * 0.34]);
+  addInstances('lobby-planters', 'greenery', surfaces.terracotta, planterSpots.map(([x, z]) => ({
+    position: [x, anchor.y + 0.46, z], size: [0.76, 0.9, 0.76],
+  })), INTERIOR_CYLINDER_GEOMETRY);
+  addInstances('lobby-foliage', 'greenery', surfaces.foliage, planterSpots.map(([x, z]) => ({
+    position: [x, anchor.y + 1.35, z], size: [1.05, 1.6, 1.05],
+  })), INTERIOR_SPHERE_GEOMETRY);
 
   const artOffset = (seededUnit(portal.id) - 0.5) * 0.6;
   const art = new THREE.InstancedMesh(INTERIOR_PLANE_GEOMETRY, surfaces.art, 2);
@@ -473,7 +540,54 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   });
   art.instanceMatrix.needsUpdate = true;
   group.add(art);
-  add({ name: 'lobby-fire-safety', category: 'safety', size: [0.24, 0.7, 0.2], position: [anchor.x - width / 2 + 0.28, anchor.y + 0.65, anchor.z - depth * 0.05], surface: surfaces.safety, rounded: true });
+  add({ name: 'lobby-fire-safety', category: 'safety', size: [0.24, 0.7, 0.2], position: [leftX + 0.28, anchor.y + 0.65, anchor.z - depth * 0.05], surface: surfaces.safety, rounded: true });
+
+  const suitColors = ['#33404c', '#54392c', '#5c3038', '#2f4d56', '#6a6052'];
+  const skinColors = ['#e6b28a', '#c88f66', '#8d5f41', '#efc9a1'];
+  const pick = (list, salt) => list[Math.floor(seededUnit(`${portal.id}:${salt}`) * list.length) % list.length];
+  const liftGuestX = anchor.x + width * 0.3;
+  const liftGuestZ = anchor.z - depth * 0.4;
+  const arrivalX = anchor.x - width * 0.05;
+  const arrivalZ = anchor.z + depth * 0.1;
+  const standingPerson = (x, z, color, pose = 0) => [
+    { position: [x, anchor.y + 1.12, z], size: [0.72, 0.82, 0.5], color },
+    { position: [x - 0.12, anchor.y + 0.47, z], size: [0.22, 0.94, 0.22], color },
+    { position: [x + 0.12, anchor.y + 0.47, z], size: [0.22, 0.94, 0.22], color },
+    { position: [x - 0.27, anchor.y + 1.08, z], size: [0.18, 0.72, 0.18], rotation: [0, 0, 0.12 + pose], color },
+    { position: [x + 0.27, anchor.y + 1.08, z], size: [0.18, 0.72, 0.18], rotation: [0, 0, -0.12 + pose], color },
+  ];
+  const staffX = deskX + 0.45;
+  const staffZ = deskZ - 0.8;
+  const seatedX = sofaCenters[0] + 0.55;
+  const seatedZ = sofaZ - 0.02;
+  const staffColor = '#2c3a46';
+  const seatedColor = pick(suitColors, 'seated-coat');
+  const liftColor = pick(suitColors, 'lift-coat');
+  const arrivalColor = pick(suitColors, 'arrival-coat');
+  addInstances('lobby-occupant-bodies', 'occupants', surfaces.body, [
+    ...standingPerson(staffX, staffZ, staffColor, -0.05),
+    { position: [seatedX, anchor.y + 1.08, seatedZ], size: [0.7, 0.72, 0.48], color: seatedColor },
+    { position: [seatedX - 0.13, anchor.y + 0.34, seatedZ - 0.3], size: [0.2, 0.64, 0.2], color: seatedColor },
+    { position: [seatedX + 0.13, anchor.y + 0.34, seatedZ - 0.3], size: [0.2, 0.64, 0.2], color: seatedColor },
+    { position: [seatedX - 0.26, anchor.y + 1.05, seatedZ], size: [0.17, 0.64, 0.17], rotation: [0, 0, 0.2], color: seatedColor },
+    { position: [seatedX + 0.26, anchor.y + 1.05, seatedZ], size: [0.17, 0.64, 0.17], rotation: [0, 0, -0.2], color: seatedColor },
+    ...standingPerson(liftGuestX, liftGuestZ, liftColor, 0.04),
+    ...standingPerson(arrivalX, arrivalZ, arrivalColor, -0.03),
+  ], INTERIOR_CYLINDER_GEOMETRY);
+  addInstances('lobby-occupant-heads', 'occupants', surfaces.head, [
+    { position: [staffX, anchor.y + 1.72, staffZ], size: [0.46, 0.5, 0.46], color: pick(skinColors, 'staff-skin') },
+    { position: [seatedX, anchor.y + 1.58, seatedZ], size: [0.44, 0.48, 0.44], color: pick(skinColors, 'seated-skin') },
+    { position: [liftGuestX, anchor.y + 1.72, liftGuestZ], size: [0.46, 0.5, 0.46], color: pick(skinColors, 'lift-skin') },
+    { position: [arrivalX, anchor.y + 1.72, arrivalZ], size: [0.46, 0.5, 0.46], color: pick(skinColors, 'arrival-skin') },
+  ], INTERIOR_SPHERE_GEOMETRY);
+  addInstances('lobby-luggage', 'luggage', surfaces.luggage, [
+    { position: [liftGuestX + 0.5, anchor.y + 0.31, liftGuestZ + 0.08], size: [0.44, 0.62, 0.26], color: '#74462f' },
+    { position: [liftGuestX + 0.86, anchor.y + 0.22, liftGuestZ + 0.2], size: [0.34, 0.44, 0.22], color: '#3d4a54' },
+    { position: [liftGuestX + 0.5, anchor.y + 0.72, liftGuestZ + 0.08], size: [0.06, 0.25, 0.06], color: '#74462f' },
+    { position: [liftGuestX + 0.5, anchor.y + 0.84, liftGuestZ + 0.08], size: [0.24, 0.05, 0.06], color: '#74462f' },
+    { position: [liftGuestX + 0.86, anchor.y + 0.52, liftGuestZ + 0.2], size: [0.05, 0.18, 0.05], color: '#3d4a54' },
+    { position: [liftGuestX + 0.86, anchor.y + 0.61, liftGuestZ + 0.2], size: [0.2, 0.04, 0.05], color: '#3d4a54' },
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
   const shadowMaterial = new THREE.MeshBasicMaterial({ color: '#17130f', transparent: true, opacity: 0.17, depthWrite: false });
   materials.add(shadowMaterial);
@@ -483,6 +597,13 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     [anchor.x - width * 0.4, anchor.z - depth * 0.34, 1.45, 1.45],
     [anchor.x + width * 0.4, anchor.z - depth * 0.34, 1.45, 1.45],
     [deskX, deskZ, 5.4, 1.2],
+    [deskX + 0.45, deskZ - 0.8, 0.62, 0.62],
+    [sofaCenters[0] + 0.55, sofaZ - 0.02, 0.6, 0.6],
+    [liftGuestX, liftGuestZ, 0.62, 0.62],
+    [liftGuestX + 0.66, liftGuestZ + 0.14, 1.1, 0.6],
+    [arrivalX, arrivalZ, 0.62, 0.62],
+    [anchor.x - 2.7, frontZ - 1.6, 1.0, 1.0],
+    [anchor.x + 2.7, frontZ - 1.6, 1.0, 1.0],
   ];
   const contactShadows = new THREE.InstancedMesh(INTERIOR_SHADOW_GEOMETRY, shadowMaterial, shadowSpots.length);
   contactShadows.name = 'lobby-contact-shadows';
@@ -496,26 +617,26 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     contactShadows.setMatrixAt(index, shadowDummy.matrix);
   });
   contactShadows.instanceMatrix.needsUpdate = true;
+  contactShadows.computeBoundingSphere?.();
   group.add(contactShadows);
 
-  const lightCount = 4;
-  const fixtureRecords = Array.from({ length: lightCount }, (_, index) => ({
-    position: [anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.1, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2)],
-    size: [1.82, 0.08, 0.68],
-  }));
-  addInstances('lobby-fixture-bezels', 'lighting', surfaces.trim, fixtureRecords, true);
-  const panels = new THREE.InstancedMesh(INTERIOR_PANEL_GEOMETRY, surfaces.light, lightCount);
-  panels.name = 'lobby-ceiling-fixtures';
-  panels.userData.category = 'lighting';
-  const dummy = new THREE.Object3D();
-  for (let index = 0; index < lightCount; index += 1) {
-    dummy.position.set(anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.12, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2));
-    dummy.updateMatrix();
-    panels.setMatrixAt(index, dummy.matrix);
-  }
-  panels.instanceMatrix.needsUpdate = true;
-  group.add(panels);
-  for (let index = 0; index < lightCount; index += 1) {
+  const fixtureRecords = [
+    ...Array.from({ length: 4 }, (_, index) => ({
+      position: [anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.1, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2)],
+      size: [1.82, 0.08, 0.68],
+    })),
+    { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight - 0.09, openingZ], size: [0.62, 0.08, 1.5] },
+  ];
+  addInstances('lobby-fixture-bezels', 'lighting', surfaces.trim, fixtureRecords, INTERIOR_ROUNDED_GEOMETRY);
+  const panelRecords = [
+    ...Array.from({ length: 4 }, (_, index) => ({
+      position: [anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.12, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2)],
+      size: [1, 1, 1],
+    })),
+    { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight - 0.11, openingZ], size: [0.42, 1, 1.55] },
+  ];
+  addInstances('lobby-ceiling-fixtures', 'lighting', surfaces.light, panelRecords, INTERIOR_PANEL_GEOMETRY);
+  for (let index = 0; index < 4; index += 1) {
     const light = new THREE.PointLight(0xffd7a2, 2.4, 10, 2);
     light.name = 'lobby-fixture-light';
     light.userData.category = 'lighting';
