@@ -1,0 +1,1204 @@
+/**
+ * CityGen core — deterministic procedural city + rich metadata model.
+ *
+ * The generated city is intentionally city-agnostic ("any city"): district
+ * names, street naming, and zoning are driven by a seeded style profile so
+ * the same generator can make SF-flavored, grid, garden-city, or old-town
+ * maps. Real OSM cities are converted into this same model by osm.js.
+ */
+
+export const CITY_SCHEMA_VERSION = 1;
+
+export const HIGHWAY_PROFILE = Object.freeze({
+  motorway: { lanes: 4, laneW: 3.5, sidewalk: 0, class: 'motorway' },
+  trunk: { lanes: 4, laneW: 3.4, sidewalk: 1.6, class: 'trunk' },
+  primary: { lanes: 4, laneW: 3.3, sidewalk: 2.6, class: 'primary' },
+  secondary: { lanes: 3, laneW: 3.25, sidewalk: 2.5, class: 'secondary' },
+  tertiary: { lanes: 2, laneW: 3.2, sidewalk: 2.4, class: 'tertiary' },
+  unclassified: { lanes: 2, laneW: 3.15, sidewalk: 2.3, class: 'unclassified' },
+  residential: { lanes: 2, laneW: 3.1, sidewalk: 2.3, class: 'residential' },
+  living_street: { lanes: 2, laneW: 2.9, sidewalk: 2.2, class: 'living_street' },
+  service: { lanes: 1, laneW: 3.0, sidewalk: 0.8, class: 'service' },
+  pedestrian: { lanes: 1, laneW: 3.4, sidewalk: 0, class: 'pedestrian' },
+  footway: { lanes: 1, laneW: 2.0, sidewalk: 0, class: 'footway' },
+  cycleway: { lanes: 1, laneW: 2.2, sidewalk: 0, class: 'cycleway' },
+  path: { lanes: 1, laneW: 1.8, sidewalk: 0, class: 'path' },
+});
+
+export const BUILDING_TYPES = Object.freeze({
+  // These are real-ish story counts. The old minimums produced 6-13 m
+  // buildings next to full-size cars, which read as toys; the floor is
+  // raised so the massing reads like a city from the sidewalk.
+  tower: { label: 'Tower', heights: [8, 18], density: 0.82 },
+  midrise: { label: 'Mid-rise', heights: [4, 9], density: 0.9 },
+  rowhouse: { label: 'Rowhouse', heights: [3, 5], density: 0.88 },
+  warehouse: { label: 'Warehouse', heights: [2, 4], density: 0.78 },
+  shop: { label: 'Shopfront', heights: [2, 4], density: 0.72 },
+  civic: { label: 'Civic', heights: [3, 7], density: 0.95 },
+  landmark: { label: 'Landmark', heights: [9, 20], density: 1.0 },
+  park: { label: 'Park', heights: [0, 0], density: 0 },
+});
+
+/** Deterministic PRNG used for every city seed. */
+export function mulberry32(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function hashString(value = '') {
+  let hash = 2166136261;
+  for (let i = 0; i < String(value).length; i += 1) {
+    hash ^= String(value).charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+export function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+export function ringArea(points) {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.z - b.x * a.z;
+  }
+  return Math.abs(area / 2);
+}
+
+export function pointInPolygon(point, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i];
+    const b = points[j];
+    if ((a.z > point.z) !== (b.z > point.z)
+      && point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+export function polygonBounds(points) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+export function rectPolygon(minX, maxX, minZ, maxZ) {
+  return [
+    { x: minX, z: minZ },
+    { x: maxX, z: minZ },
+    { x: maxX, z: maxZ },
+    { x: minX, z: maxZ },
+  ];
+}
+
+/**
+ * Smooth periodic terrain. Deterministic, bounded, and cheap enough to call
+ * per-vertex at build time.
+ */
+export function terrainHeight(x, z, seed) {
+  const sx = Math.sin(x * 0.0061 + seed * 0.13) * 0.5
+    + Math.sin(x * 0.0141 + z * 0.0047 + seed * 0.071) * 0.5;
+  const sz = Math.sin(z * 0.0053 + seed * 0.19) * 0.6
+    + Math.sin(x * 0.0037 + z * 0.0111 + seed * 0.043) * 0.4;
+  const s2 = Math.sin((x + z) * 0.0023 + seed * 0.31) * 0.8
+    + Math.sin((x - z) * 0.0031 + seed * 0.17) * 0.7;
+  return (sx * 4.2 + sz * 5.4 + s2 * 6.5) * 0.32 + 2.2;
+}
+
+function smooth(value, a, b) {
+  if (value <= a) return 0;
+  if (value >= b) return 1;
+  const t = (value - a) / (b - a);
+  return t * t * (3 - 2 * t);
+}
+
+function flattenTerrain(x, z, seed, streetLines) {
+  let flatten = 0;
+  const threshold = 7.5;
+  const hard = 2.2;
+  for (const line of streetLines) {
+    const d = distanceToSegment({ x, z }, line.a, line.b);
+    const influence = 1 - smooth(d, hard, threshold);
+    if (influence > flatten) flatten = influence;
+  }
+  const t = smooth(flatten, 0.1, 1);
+  return terrainHeight(x, z, seed) * (1 - t * 0.62);
+}
+
+function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq === 0) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
+}
+
+function makeStreetLines(vertical, horizontal) {
+  const lines = [];
+  for (const x of vertical) lines.push({ a: { x, z: horizontal[0] }, b: { x, z: horizontal[horizontal.length - 1] } });
+  for (const z of horizontal) lines.push({ a: { x: vertical[0], z }, b: { x: vertical[vertical.length - 1], z } });
+  return lines;
+}
+
+function pickStreetNames(random, style, index, isVertical) {
+  const verticalNames = style.verticalNames;
+  const horizontalNames = style.horizontalNames;
+  if (isVertical) {
+    const named = verticalNames[index];
+    if (named) return named;
+    return `${index + 1}${index === 0 ? 'st' : index === 1 ? 'nd' : index === 2 ? 'rd' : 'th'} Ave`;
+  }
+  const named = horizontalNames[index];
+  if (named) return named;
+  return `${style.namePrefix} ${String.fromCharCode(65 + (index % 26))} St`;
+}
+
+function classifyRoad(type) {
+  const profile = HIGHWAY_PROFILE[type] || HIGHWAY_PROFILE.residential;
+  return {
+    highway: profile.class,
+    lanes: profile.lanes,
+    laneW: profile.laneW,
+    sidewalkW: profile.sidewalk,
+    asphaltWidth: profile.lanes * profile.laneW,
+  };
+}
+/** Zone speed defaults (km/h) for procedural streets that lack OSM tags. */
+const ZONE_MAXSPEED_KMH = Object.freeze({
+  motorway: 100, trunk: 90, primary: 60, secondary: 50, tertiary: 50,
+  unclassified: 45, residential: 40, living_street: 20, service: 25,
+  pedestrian: 10, footway: 6, cycleway: 20, path: 10,
+});
+
+function buildGridStreets(city, random, style) {
+  const vertical = [];
+  const horizontal = [];
+  const vCount = 9 + Math.floor(random() * 3);
+  const hCount = 10 + Math.floor(random() * 3);
+  let x = -style.extent / 2;
+  let z = -style.extent / 2;
+  for (let i = 0; i < vCount; i += 1) {
+    vertical.push(Math.round(x));
+    x += 54 + random() * 34;
+  }
+  for (let i = 0; i < hCount; i += 1) {
+    horizontal.push(Math.round(z));
+    z += 48 + random() * 34;
+  }
+  // Push the last streets near the intended edge so the map is tidy.
+  if (vertical.length > 1) vertical[vertical.length - 1] = Math.round(style.extent / 2);
+  if (horizontal.length > 1) horizontal[horizontal.length - 1] = Math.round(style.extent / 2);
+
+  const streets = [];
+  const vNames = vertical.map((value, index) => ({
+    id: `v-${index}`,
+    name: pickStreetNames(random, style, index, true),
+    orientation: 'vertical',
+    axis: 'x',
+    position: value,
+  }));
+  const hNames = horizontal.map((value, index) => ({
+    id: `h-${index}`,
+    name: pickStreetNames(random, style, index, false),
+    orientation: 'horizontal',
+    axis: 'z',
+    position: value,
+  }));
+
+  for (let i = 0; i < vertical.length; i += 1) {
+    const type = i === Math.floor(vertical.length / 2) ? 'primary'
+      : i === 0 || i === vertical.length - 1 ? 'tertiary'
+        : random() < 0.16 ? 'secondary' : 'residential';
+    streets.push({
+      ...vNames[i],
+      highway: type,
+      ...classifyRoad(type),
+      oneway: random() < 0.22 ? (random() < 0.5 ? 'increasing' : 'decreasing') : 'both',
+      maxspeed: '',
+      maxspeedKmh: ZONE_MAXSPEED_KMH[type] || 40,
+      maxspeedSource: 'zone-default',
+      cycleway: '',
+      sidewalkLeft: classifyRoad(type).sidewalkW,
+      sidewalkRight: classifyRoad(type).sidewalkW,
+      blocks: [],
+      signalIds: [],
+    });
+  }
+  for (let i = 0; i < horizontal.length; i += 1) {
+    const type = i === Math.floor(horizontal.length / 2) ? 'secondary'
+      : i === 0 || i === horizontal.length - 1 ? 'tertiary'
+        : random() < 0.14 ? 'secondary' : 'residential';
+    streets.push({
+      ...hNames[i],
+      highway: type,
+      ...classifyRoad(type),
+      oneway: random() < 0.2 ? (random() < 0.5 ? 'increasing' : 'decreasing') : 'both',
+      maxspeed: '',
+      maxspeedKmh: ZONE_MAXSPEED_KMH[type] || 40,
+      maxspeedSource: 'zone-default',
+      cycleway: '',
+      sidewalkLeft: classifyRoad(type).sidewalkW,
+      sidewalkRight: classifyRoad(type).sidewalkW,
+      blocks: [],
+      signalIds: [],
+    });
+  }
+  return { streets, vertical, horizontal, streetLines: makeStreetLines(vertical, horizontal) };
+}
+
+function assignDistrict(ix, iy, vCount, hCount, style) {
+  const east = ix / Math.max(1, vCount - 1);
+  const north = 1 - iy / Math.max(1, hCount - 1);
+  if (east > 0.62 && north > 0.55) return style.districts[0] || 'North Beach';
+  if (east > 0.55 && north > 0.25) return style.districts[1] || 'Financial';
+  if (east > 0.45 && north <= 0.25) return style.districts[2] || 'SoMa';
+  if (east <= 0.45 && north <= 0.45) return style.districts[3] || 'Mission';
+  if (east <= 0.35 && north > 0.6) return style.districts[4] || 'Presidio';
+  return style.districts[5] || 'Sunset';
+}
+
+function buildingHeightFor(type, random, district, iy, hCount) {
+  const spec = BUILDING_TYPES[type];
+  let min = spec.heights[0];
+  let max = spec.heights[1];
+  if (type === 'tower' && district === 'Financial') {
+    min = 8;
+    max = 17;
+  } else if (type === 'tower' && district === 'SoMa') {
+    min = 6;
+    max = 13;
+  } else if ((type === 'midrise' || type === 'shop') && district === 'North Beach') {
+    max = Math.min(max, 5);
+  }
+  if (iy === hCount - 2 && type === 'landmark') {
+    min = 12;
+    max = 18;
+  }
+  const stories = Math.round(min + random() * (max - min));
+  return {
+    stories,
+    height: stories * (type === 'warehouse' ? 3.4 : type === 'tower' ? 3.8 : 3.15) + (random() < 0.35 ? 1.5 : 0),
+  };
+}
+
+function buildBlocksAndBuildings(city, random, style, grid) {
+  const { streets, vertical, horizontal } = grid;
+  const byAxis = { x: [], z: [] };
+  for (const street of streets) {
+    byAxis[street.axis].push(street);
+  }
+  const vSorted = [...byAxis.x].sort((a, b) => a.position - b.position);
+  const hSorted = [...byAxis.z].sort((a, b) => a.position - b.position);
+  const blocks = [];
+  const buildings = [];
+  let blockId = 0;
+  let buildingId = 0;
+
+  const landmarkCells = new Set();
+  const parkIndex = Math.floor(random() * 5);
+  const towerIx = Math.floor(vSorted.length * 0.68);
+  const towerIy = Math.floor(hSorted.length * 0.32);
+  landmarkCells.add(`${towerIx}-${towerIy}`);
+  landmarkCells.add(`${Math.floor(vSorted.length * 0.5)}-${Math.floor(hSorted.length * 0.5)}`);
+
+  for (let ix = 0; ix < vSorted.length - 1; ix += 1) {
+    for (let iy = 0; iy < hSorted.length - 1; iy += 1) {
+      const west = vSorted[ix];
+      const east = vSorted[ix + 1];
+      const south = hSorted[iy];
+      const north = hSorted[iy + 1];
+      const district = assignDistrict(ix, iy, vSorted.length, hSorted.length, style);
+      const block = {
+        id: `b-${blockId}`,
+        district,
+        polygon: rectPolygon(
+          west.position + west.asphaltWidth / 2 + west.sidewalkW + 1.2,
+          east.position - east.asphaltWidth / 2 - east.sidewalkW - 1.2,
+          south.position + south.asphaltWidth / 2 + south.sidewalkW + 1.2,
+          north.position - north.asphaltWidth / 2 - north.sidewalkW - 1.2,
+        ),
+        streets: [west.id, east.id, south.id, north.id],
+        buildings: [],
+      };
+      blockId += 1;
+      if (block.polygon[0].x >= block.polygon[1].x - 4 || block.polygon[0].z >= block.polygon[3].z - 4) continue;
+      blocks.push(block);
+
+      const isPark = `${ix}-${iy}` === `${Math.floor(vSorted.length * 0.28)}-${parkIndex}` && iy < hSorted.length - 3;
+      const isLandmark = landmarkCells.has(`${ix}-${iy}`);
+      const cellKey = `${ix}-${iy}`;
+      if (isPark) {
+        block.landUse = 'park';
+        block.buildings = [];
+        continue;
+      }
+
+      // Subdivide the block into parcels along its longest side.
+      const w = block.polygon[1].x - block.polygon[0].x;
+      const d = block.polygon[3].z - block.polygon[0].z;
+      const alongX = w >= d;
+      const divisions = Math.min(6, 2 + Math.floor(random() * 4));
+      const cuts = [];
+      let cursor = 0;
+      for (let i = 0; i < divisions; i += 1) {
+        const frac = (i + 1) / divisions;
+        const jitter = (random() - 0.5) * 0.09;
+        const next = clamp(frac + jitter, 0.06, 0.94);
+        cuts.push(Math.max(cursor + 0.035, next));
+        cursor = next;
+      }
+      const parcelRects = [];
+      let start = 0;
+      for (let i = 0; i < divisions; i += 1) {
+        const end = i === divisions - 1 ? 1 : cuts[i];
+        if (alongX) {
+          parcelRects.push({
+            minX: block.polygon[0].x + (block.polygon[1].x - block.polygon[0].x) * start,
+            maxX: block.polygon[0].x + (block.polygon[1].x - block.polygon[0].x) * end,
+            minZ: block.polygon[0].z,
+            maxZ: block.polygon[3].z,
+          });
+        } else {
+          parcelRects.push({
+            minX: block.polygon[0].x,
+            maxX: block.polygon[1].x,
+            minZ: block.polygon[0].z + (block.polygon[3].z - block.polygon[0].z) * start,
+            maxZ: block.polygon[0].z + (block.polygon[3].z - block.polygon[0].z) * end,
+          });
+        }
+        start = end;
+      }
+
+      for (let p = 0; p < parcelRects.length; p += 1) {
+        const rect = parcelRects[p];
+        const parcelW = rect.maxX - rect.minX;
+        const parcelD = rect.maxZ - rect.minZ;
+        if (parcelW < 6 || parcelD < 6) continue;
+        const roll = random();
+        let type = 'midrise';
+        if (district === 'Financial' || district === 'SoMa') {
+          type = roll < 0.4 ? 'tower' : roll < 0.62 ? 'midrise' : roll < 0.86 ? 'shop' : 'warehouse';
+        } else if (district === 'North Beach' || district === 'Mission') {
+          type = roll < 0.52 ? 'rowhouse' : roll < 0.7 ? 'midrise' : roll < 0.88 ? 'shop' : 'warehouse';
+        } else if (district === 'Presidio' || district === 'Sunset') {
+          type = roll < 0.66 ? 'rowhouse' : roll < 0.84 ? 'midrise' : 'shop';
+        }
+        if (isLandmark) {
+          type = cellKey === `${towerIx}-${towerIy}` ? 'landmark' : 'civic';
+        }
+        const spec = BUILDING_TYPES[type];
+        const heightInfo = buildingHeightFor(type, random, district, iy, hSorted.length);
+        const inset = type === 'rowhouse' ? 1.1 : type === 'shop' ? 1.4 : 0.8;
+        const setFront = 1.8 + random() * 2.4;
+        const setBack = type === 'rowhouse' ? 2.2 + random() * 2.4 : 1.6 + random() * 2.2;
+        const setSide = 1.2 + random() * 1.6;
+        const footprint = {
+          minX: rect.minX + setSide,
+          maxX: rect.maxX - (rect.maxX - rect.minX > 15 ? setSide : 0.4),
+          minZ: rect.minZ + setBack,
+          maxZ: rect.maxZ - setFront,
+        };
+        if (footprint.maxX - footprint.minX < 4 || footprint.maxZ - footprint.minZ < 4) continue;
+        const polygon = rectPolygon(footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ);
+        const building = {
+          id: `bu-${buildingId}`,
+          blockId: block.id,
+          district,
+          type,
+          typeLabel: spec.label,
+          usage: type === 'tower' ? 'office'
+            : type === 'rowhouse' ? 'residential'
+              : type === 'civic' ? 'civic'
+                : type === 'landmark' ? 'landmark'
+                  : type === 'warehouse' ? 'industrial' : 'retail',
+          name: landmarkName(type, district, buildingId, random),
+          polygon,
+          ...heightInfo,
+          footprintArea: ringArea(polygon),
+          yearBuilt: 1875 + Math.floor(random() * 145),
+          density: spec.density,
+          material: (() => {
+            const pool = type !== 'tower' && type !== 'landmark'
+              ? ['painted', 'painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone'].filter((m) => style.materials.includes(m))
+              : style.materials;
+            return pool[Math.floor(random() * pool.length)] || style.materials[0];
+          })(),
+          facade: type === 'shop' ? 'shopfront'
+            : type === 'rowhouse' ? (random() < 0.5 ? 'bay-window' : 'edwardian')
+              : type === 'tower' ? (random() < 0.5 ? 'modern-grid' : 'loft')
+                : style.facades[Math.floor(random() * style.facades.length)],
+          landmark: isLandmark,
+          facingStreet: p === 0 ? south.name : p === parcelRects.length - 1 ? north.name : (random() < 0.5 ? west.name : east.name),
+          address: '',
+          roofShape: '',
+          shop: '',
+          amenity: '',
+          tourism: '',
+        };
+        buildings.push(building);
+        block.buildings.push(building.id);
+        buildingId += 1;
+      }
+    }
+  }
+  return { blocks, buildings };
+}
+
+function landmarkName(type, district, index, random) {
+  if (type === 'landmark') {
+    const names = ['Transamerica Spire', 'Bayview Beacon', 'City Pavilion', 'Summit Exchange'];
+    return names[index % names.length];
+  }
+  if (type === 'civic') {
+    const names = ['Civic Hall', 'Central Library', 'County Museum', 'Transit Hub'];
+    return names[Math.floor(random() * names.length)];
+  }
+  return '';
+}
+
+function buildSignalsAndIntersections(city, random, grid) {
+  const { streets, vertical, horizontal } = grid;
+  const vSorted = streets.filter((s) => s.axis === 'x').sort((a, b) => a.position - b.position);
+  const hSorted = streets.filter((s) => s.axis === 'z').sort((a, b) => a.position - b.position);
+  const intersections = [];
+  const signals = [];
+  let signalId = 0;
+  const majorV = new Set(vSorted.filter((s) => s.highway === 'primary' || s.highway === 'secondary').map((s) => s.id));
+  const majorH = new Set(hSorted.filter((s) => s.highway === 'primary' || s.highway === 'secondary').map((s) => s.id));
+  for (const v of vSorted) {
+    for (const h of hSorted) {
+      const intersection = {
+        id: `i-${v.id}-${h.id}`,
+        position: { x: v.position, z: h.position },
+        streetIds: [v.id, h.id],
+      };
+      intersections.push(intersection);
+      v.signalIds.push(null);
+      h.signalIds.push(null);
+      if ((majorV.has(v.id) && majorH.has(h.id)) || (v.highway === 'primary' && h.highway !== 'service')) {
+        const signal = {
+          id: `s-${signalId}`,
+          intersectionId: intersection.id,
+          streetIds: [v.id, h.id],
+          position: { x: v.position - 3.2, z: h.position - 3.2 },
+          heading: v.position > 0 ? 'north' : 'west',
+          phaseOffset: Math.round(random() * 3) / 4,
+          period: 8,
+        };
+        signals.push(signal);
+        intersection.signalId = signal.id;
+        intersection.signal = signal;
+        v.signalIds[v.signalIds.length - 1] = signal.id;
+        h.signalIds[h.signalIds.length - 1] = signal.id;
+        signalId += 1;
+      }
+    }
+  }
+  return { intersections, signals };
+}
+
+function buildRoadSegments(city, grid, intersections) {
+  const { streets, vertical, horizontal } = grid;
+  const vSorted = streets.filter((s) => s.axis === 'x').sort((a, b) => a.position - b.position);
+  const hSorted = streets.filter((s) => s.axis === 'z').sort((a, b) => a.position - b.position);
+  const segments = [];
+  let segmentId = 0;
+  for (const v of vSorted) {
+    for (let i = 0; i < hSorted.length - 1; i += 1) {
+      const a = { x: v.position, z: hSorted[i].position };
+      const b = { x: v.position, z: hSorted[i + 1].position };
+      const intersection = intersections.find((it) => it.position.x === a.x && it.position.z === a.z);
+      segments.push({
+        id: `seg-v-${segmentId++}`,
+        streetId: v.id,
+        streetName: v.name,
+        highway: v.highway,
+        lanes: v.lanes,
+        oneway: v.oneway,
+        width: v.asphaltWidth,
+        sidewalkW: v.sidewalkW,
+        sidewalkLeft: v.sidewalkLeft,
+        sidewalkRight: v.sidewalkRight,
+        maxspeed: v.maxspeed || '',
+        maxspeedKmh: v.maxspeedKmh || 0,
+        cycleway: v.cycleway || '',
+        points: [a, b],
+        signalId: intersection?.signal?.id || null,
+        intersectionId: intersection?.id || null,
+      });
+    }
+  }
+  for (const h of hSorted) {
+    for (let i = 0; i < vSorted.length - 1; i += 1) {
+      const a = { x: vSorted[i].position, z: h.position };
+      const b = { x: vSorted[i + 1].position, z: h.position };
+      const intersection = intersections.find((it) => it.position.x === a.x && it.position.z === a.z);
+      segments.push({
+        id: `seg-h-${segmentId++}`,
+        streetId: h.id,
+        streetName: h.name,
+        highway: h.highway,
+        lanes: h.lanes,
+        oneway: h.oneway,
+        width: h.asphaltWidth,
+        sidewalkW: h.sidewalkW,
+        sidewalkLeft: h.sidewalkLeft,
+        sidewalkRight: h.sidewalkRight,
+        maxspeed: h.maxspeed || '',
+        maxspeedKmh: h.maxspeedKmh || 0,
+        cycleway: h.cycleway || '',
+        points: [a, b],
+        signalId: intersection?.signal?.id || null,
+        intersectionId: intersection?.id || null,
+      });
+    }
+  }
+  return segments;
+}
+
+/**
+ * Generate a city as plain data. Every visual, block, street, and signal is
+ * derived from `seed`, so the same seed always produces the same map.
+ */
+export function generateCity({ seed = 731, style = 'sanfrancisco', extent = 640 } = {}) {
+  const seedInt = Math.abs(hashString(String(seed)) % 2147483647) || 731;
+  const random = mulberry32(seedInt);
+  const styles = {
+    sanfrancisco: {
+      name: 'San Francisco',
+      districts: ['North Beach', 'Financial', 'SoMa', 'Mission', 'Presidio', 'Sunset'],
+      verticalNames: ['Presidio Ave', 'Van Ness Blvd', 'Gough St', 'Franklin St', 'Polk St', '1st Ave', '3rd Ave', '5th Ave', '8th Ave', 'Great Hwy'],
+      horizontalNames: ['Chestnut St', 'Green St', 'Union St', 'Market St', 'Mission St', 'Valencia St', 'Castro St', 'Haight St', 'Divisadero St', 'Taraval St'],
+      materials: ['painted', 'plaster', 'brick', 'concrete', 'clapboard', 'glass', 'stone', 'painted'],
+      facades: ['edwardian', 'modern-grid', 'bay-window', 'shopfront', 'loft', 'art-deco'],
+      namePrefix: 'Civic',
+      extent,
+      density: 1.15,
+    },
+    gridiron: {
+      name: 'Grid City',
+      districts: ['Old Town', 'Midtown', 'Southside', 'Eastside', 'Northside', 'Westend'],
+      verticalNames: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'],
+      horizontalNames: ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'],
+      materials: ['painted', 'brick', 'stone', 'concrete', 'plaster'],
+      facades: ['modern-grid', 'shopfront', 'loft', 'art-deco'],
+      namePrefix: 'Main',
+      extent,
+      density: 0.9,
+    },
+    garden: {
+      name: 'Garden City',
+      districts: ['Grove', 'Meadow', 'Orchard', 'River', 'Hillcrest', 'Fairview'],
+      verticalNames: ['Willow Ave', 'Cedar Ave', 'Birch Ave', 'Oak Ave', 'Maple Ave', 'Pine Ave'],
+      horizontalNames: ['Meadow St', 'Orchard St', 'River St', 'Grove St', 'Hillcrest St'],
+      materials: ['painted', 'clapboard', 'stone', 'plaster', 'brick'],
+      facades: ['edwardian', 'bay-window', 'shopfront'],
+      namePrefix: 'Cedar',
+      extent,
+      density: 0.7,
+    },
+  };
+  const styleProfile = styles[style] || styles.sanfrancisco;
+  const grid = buildGridStreets(null, random, styleProfile);
+  // Apply real street proportions before blocks are carved: full-size cars
+  // need curb-to-curb asphalt, not unscaled OSM centerlines.
+  const streetScale = 1.9;
+  const sidewalkScale = 1.35;
+  for (const street of grid.streets) {
+    street.asphaltWidth = Number((street.asphaltWidth * streetScale).toFixed(2));
+    street.sidewalkW = Number((street.sidewalkW * sidewalkScale).toFixed(2));
+  }
+  const city = {
+    schemaVersion: CITY_SCHEMA_VERSION,
+    meta: {
+      name: styleProfile.name,
+      seed: String(seed),
+      seedInt,
+      style,
+      generator: 'procedural',
+      center: { x: 0, z: 0 },
+      bounds: { minX: -extent / 2, maxX: extent / 2, minZ: -extent / 2, maxZ: extent / 2 },
+      terrain: { type: 'soft-hills', flattenNearRoads: true },
+      streetDesign: {
+        streetScale,
+        sidewalkScale,
+        curbHeight: 0.16,
+        roadLift: 0.5,
+      },
+      generatedAt: new Date().toISOString(),
+    },
+    blocks: [],
+    buildings: [],
+    streets: grid.streets,
+    segments: [],
+    intersections: [],
+    signals: [],
+    terrain: { type: 'soft-hills', streetLines: grid.streetLines, seed: seedInt },
+  };
+  const blocksAndBuildings = buildBlocksAndBuildings(city, random, styleProfile, grid);
+  city.blocks = blocksAndBuildings.blocks;
+  city.buildings = blocksAndBuildings.buildings;
+  const signals = buildSignalsAndIntersections(city, random, grid);
+  city.intersections = signals.intersections;
+  city.signals = signals.signals;
+  city.segments = buildRoadSegments(city, grid, signals.intersections);
+  // Terrain helper used by the renderer and player.
+  city.terrain.heightAt = (x, z) => flattenTerrain(x, z, seedInt, grid.streetLines);
+  for (const street of city.streets) {
+    street.blocks = city.blocks
+      .filter((b) => b.streets.includes(street.id))
+      .map((b) => b.id);
+  }
+  return city;
+}
+
+/** Hover/pick metadata lookup: nearest building, block, street, or signal. */
+export function lookupAt(city, x, z, { maxBuildingDistance = 1e9 } = {}) {
+  let building = null;
+  let best = maxBuildingDistance;
+  for (const candidate of city.buildings) {
+    if (pointInPolygon({ x, z }, candidate.polygon)) {
+      building = candidate;
+      best = 0;
+      break;
+    }
+    const d = distanceToPolygon({ x, z }, candidate.polygon);
+    if (d < best) {
+      best = d;
+      building = candidate;
+    }
+  }
+  const block = city.blocks.find((b) => pointInPolygon({ x, z }, b.polygon)) || null;
+  let street = null;
+  let streetDistance = Infinity;
+  for (const candidate of city.segments) {
+    for (let i = 0; i < candidate.points.length - 1; i += 1) {
+      const d = distanceToSegment({ x, z }, candidate.points[i], candidate.points[i + 1]);
+      if (d < streetDistance) {
+        streetDistance = d;
+        street = candidate;
+      }
+    }
+  }
+  let signal = null;
+  for (const candidate of city.signals) {
+    if (Math.hypot(candidate.position.x - x, candidate.position.z - z) < 2.8) {
+      signal = candidate;
+      break;
+    }
+  }
+  return {
+    building: building?.landmark ? building : null,
+    block,
+    street: street && streetDistance < 16 ? street : null,
+    streetDistance,
+    signal,
+  };
+}
+
+function distanceToPolygon(point, points) {
+  let best = Infinity;
+  for (let i = 0; i < points.length; i += 1) {
+    const d = distanceToSegment(point, points[i], points[(i + 1) % points.length]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** Directed lane edges for cars: right-hand lane offsets respecting one-way. */
+export function buildTrafficGraph(city) {
+  const edges = [];
+  for (const segment of city.segments) {
+    if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway') continue;
+    const offset = Math.max(1.15, segment.width / 2 - 1.45);
+    const directions = segment.oneway === 'increasing' ? [1] : segment.oneway === 'decreasing' ? [-1] : [1, -1];
+    for (const dir of directions) {
+      // Edges enter and leave intersections on the street centerline so the
+      // graph is connected at every crossing. The lane offset only applies
+      // along the straight portion of the block.
+      const vertical = segment.streetId.startsWith('v');
+      let points = segment.points.map((p, index, list) => {
+        const atEnd = index === 0 || index === list.length - 1;
+        // Right-hand traffic: on a vertical street (+x forward) the driver
+        // sits at -z; on a horizontal street (+z forward) the driver sits at
+        // +x. The old code applied the same sign to both axes, so horizontal
+        // streets drove on the wrong side.
+        const lane = vertical
+          ? (dir > 0 ? -offset : offset)
+          : (dir > 0 ? offset : -offset);
+        return {
+          x: p.x + (vertical && !atEnd ? lane : 0),
+          z: p.z + (!vertical && !atEnd ? lane : 0),
+        };
+      });
+      // Grid segments are exactly two vertices, which would put every car on
+      // the centerline. Insert a mid-block vertex with the real lane offset
+      // so traffic visibly drives on the correct side of the road.
+      if (points.length === 2) {
+        const lane = vertical
+          ? (dir > 0 ? -offset : offset)
+          : (dir > 0 ? offset : -offset);
+        points = [
+          points[0],
+          {
+            x: (points[0].x + points[1].x) / 2 + (vertical ? 0 : lane),
+            z: (points[0].z + points[1].z) / 2 + (vertical ? lane : 0),
+          },
+          points[1],
+        ];
+      }
+      if (dir < 0) points.reverse();
+      edges.push({
+        id: `${segment.id}-${dir > 0 ? 'fwd' : 'rev'}`,
+        segmentId: segment.id,
+        direction: dir > 0 ? 'increasing' : 'decreasing',
+        streetId: segment.streetId,
+        streetName: segment.streetName,
+        highway: segment.highway,
+        points,
+        signalId: dir > 0 ? segment.signalId : segment.signalId,
+      });
+    }
+  }
+  // Connection map by endpoint coordinates.
+  const byEnd = new Map();
+  for (const edge of edges) {
+    const last = edge.points[edge.points.length - 1];
+    const key = `${Math.round(last.x / 2) * 2}-${Math.round(last.z / 2) * 2}`;
+    if (!byEnd.has(key)) byEnd.set(key, []);
+    byEnd.get(key).push(edge);
+  }
+  for (const edge of edges) {
+    const first = edge.points[0];
+    const key = `${Math.round(first.x / 2) * 2}-${Math.round(first.z / 2) * 2}`;
+    edge.outgoing = (byEnd.get(key) || []).filter((e) => e.id !== edge.id);
+  }
+  return edges;
+}
+
+export function describeCity(city) {
+  const stats = {
+    name: city?.meta?.name || 'City',
+    generator: city?.meta?.generator || 'unknown',
+    seed: city?.meta?.seed,
+    blocks: city?.blocks?.length || 0,
+    buildings: city?.buildings?.length || 0,
+    streets: city?.streets?.length || 0,
+    segments: city?.segments?.length || 0,
+    signals: city?.signals?.length || 0,
+    intersections: city?.intersections?.length || 0,
+  };
+  const oneway = (city?.streets || []).filter((s) => s.oneway !== 'both').length;
+  stats.oneWayStreets = oneway;
+  stats.areaKm2 = Number((((city?.meta?.bounds?.maxX || 0) - (city?.meta?.bounds?.minX || 0))
+    * ((city?.meta?.bounds?.maxZ || 0) - (city?.meta?.bounds?.minZ || 0)) / 1e6).toFixed(2));
+  return stats;
+}
+
+/**
+ * Validate and append a player-authored building at an arbitrary world point.
+ *
+ * The generator already produces full block metadata, so placement reuses the
+ * same block/district/street model: the new building becomes an ordinary city
+ * building with a `userAdded` flag instead of a separate object type.
+ */
+export function planBuildingPlacement(city, x, z, { type = null, random = null } = {}) {
+  if (!city || !Array.isArray(city.blocks)) {
+    return { ok: false, reason: 'City is not ready' };
+  }
+  const rng = random || mulberry32((Date.now() ^ Math.floor(x * 1000)) >>> 0);
+  const block = city.blocks.find((candidate) => (
+    candidate.landUse !== 'park'
+    && candidate.polygon?.length
+    && pointInPolygon({ x, z }, candidate.polygon)
+  ));
+  if (!block) {
+    return { ok: false, reason: 'Click inside a buildable block' };
+  }
+
+  const bounds = polygonBounds(block.polygon);
+  const district = block.district || 'Downtown';
+  const candidates = [[x, z]];
+  for (const dx of [0, 4, -4, 8, -8, 12, -12]) {
+    for (const dz of [0, 4, -4, 8, -8, 12, -12]) {
+      if (dx === 0 && dz === 0) continue;
+      candidates.push([x + dx, z + dz]);
+    }
+  }
+  let lastFailure = { ok: false, reason: 'No buildable space in this block' };
+  for (const [px, pz] of candidates) {
+    const result = tryPlaceAt(city, block, bounds, district, px, pz, rng, type);
+    if (result.ok) return result;
+    lastFailure = result;
+  }
+  return lastFailure;
+}
+
+function tryPlaceAt(city, block, bounds, district, x, z, rng, requestedType) {
+  const nearStreet = nearestSegmentForPoint(city, x, z);
+  const streetDistance = nearStreet?.distance ?? Infinity;
+  if (nearStreet && streetDistance < nearStreet.segment.width / 2 + nearStreet.segment.sidewalkW + 1.6) {
+    return { ok: false, reason: 'Keep buildings off sidewalks and roads' };
+  }
+
+  let buildingType = requestedType;
+  if (!buildingType) {
+    const downtown = district === 'Financial' || district === 'SoMa';
+    if (streetDistance < 26 && rng() < 0.55) buildingType = 'shop';
+    else if (downtown) buildingType = rng() < 0.42 ? 'midrise' : rng() < 0.7 ? 'shop' : 'tower';
+    else if (district === 'North Beach' || district === 'Mission') buildingType = rng() < 0.6 ? 'rowhouse' : rng() < 0.82 ? 'midrise' : 'shop';
+    else buildingType = rng() < 0.6 ? 'rowhouse' : rng() < 0.85 ? 'midrise' : 'shop';
+  }
+  const spec = BUILDING_TYPES[buildingType] || BUILDING_TYPES.midrise;
+  const width = clamp(13, 8, Math.max(8, bounds.maxX - bounds.minX - 2));
+  const depth = clamp(11, 7, Math.max(7, bounds.maxZ - bounds.minZ - 2));
+  const footprint = {
+    minX: x - width / 2,
+    maxX: x + width / 2,
+    minZ: z - depth / 2,
+    maxZ: z + depth / 2,
+  };
+  const corners = [
+    { x: footprint.minX, z: footprint.minZ },
+    { x: footprint.maxX, z: footprint.minZ },
+    { x: footprint.maxX, z: footprint.maxZ },
+    { x: footprint.minX, z: footprint.maxZ },
+  ];
+  if (corners.some((p) => !pointInPolygon(p, block.polygon))) {
+    return { ok: false, reason: 'Building must fit inside the block' };
+  }
+  for (const building of city.buildings) {
+    const bx = polygonBounds(building.polygon || []);
+    const pad = 1.1;
+    if (footprint.minX - pad < bx.maxX && footprint.maxX + pad > bx.minX
+      && footprint.minZ - pad < bx.maxZ && footprint.maxZ + pad > bx.minZ) {
+      return { ok: false, reason: 'Too close to an existing building' };
+    }
+  }
+  for (const corner of corners) {
+    const near = nearestSegmentForPoint(city, corner.x, corner.z);
+    if (near && near.distance < near.segment.width / 2 + near.segment.sidewalkW + 0.9) {
+      return { ok: false, reason: 'Building would overlap the street right-of-way' };
+    }
+  }
+
+  const stories = Math.round(spec.heights[0] + rng() * (spec.heights[1] - spec.heights[0]));
+  const height = stories * (buildingType === 'warehouse' ? 3.4 : buildingType === 'tower' ? 3.8 : 3.15) + (rng() < 0.35 ? 1.5 : 0);
+  const named = namedSegmentForPoint(city, x, z, 90);
+  const street = (named?.segment ? city.streets.find((s) => s.id === named.segment.streetId) : null)
+    || (nearStreet?.segment ? city.streets.find((s) => s.id === nearStreet.segment.streetId) : null);
+  const materialPool = buildingType === 'shop' || buildingType === 'rowhouse'
+    ? ['painted', 'painted', 'clapboard', 'brick', 'plaster', 'stone']
+    : ['painted', 'brick', 'concrete', 'glass', 'stone', 'plaster'];
+  const facade = buildingType === 'shop' ? 'shopfront'
+    : buildingType === 'rowhouse' ? (rng() < 0.5 ? 'bay-window' : 'edwardian')
+      : buildingType === 'tower' ? (rng() < 0.5 ? 'modern-grid' : 'loft')
+        : ['modern-grid', 'shopfront', 'loft', 'art-deco'][Math.floor(rng() * 4)];
+  const houseNumber = Math.max(1, Math.round(Math.abs(x + z) / 3) + 100);
+  const building = {
+    id: `user-${city.buildings.length}-${Math.floor(rng() * 1e6)}`,
+    blockId: block.id,
+    district,
+    type: buildingType,
+    typeLabel: spec.label,
+    usage: buildingType === 'tower' ? 'office'
+      : buildingType === 'rowhouse' ? 'residential'
+        : buildingType === 'civic' ? 'civic'
+          : buildingType === 'landmark' ? 'landmark'
+            : buildingType === 'warehouse' ? 'industrial' : 'retail',
+    name: '',
+    address: street ? `${houseNumber} ${street.name}` : `${houseNumber} Unknown St`,
+    polygon: rectPolygon(footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ),
+    stories,
+    height,
+    footprintArea: ringArea(rectPolygon(footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ)),
+    yearBuilt: 1890 + Math.floor(rng() * 130),
+    density: spec.density,
+    material: materialPool[Math.floor(rng() * materialPool.length)],
+    facade,
+    landmark: false,
+    facingStreet: street?.name || '',
+    userAdded: true,
+  };
+  return { ok: true, building, block, street };
+}
+
+export function proposeBuildingPlacement(city, x, z, options = {}) {
+  const result = planBuildingPlacement(city, x, z, options);
+  if (!result.ok) return result;
+  const { building, block } = result;
+  city.buildings.push(building);
+  block.buildings.push(building.id);
+  return result;
+}
+
+export function removeBuildingById(city, id) {
+  if (!city || !id) return false;
+  const index = city.buildings.findIndex((building) => building.id === id);
+  if (index < 0) return false;
+  const [building] = city.buildings.splice(index, 1);
+  const block = city.blocks.find((candidate) => candidate.id === building.blockId);
+  if (block) {
+    const blockIndex = block.buildings.indexOf(building.id);
+    if (blockIndex >= 0) block.buildings.splice(blockIndex, 1);
+  }
+  return true;
+}
+
+/**
+ * Serialize the full CityGen metadata model to plain JSON. This is the
+ * portable contract used by the Export button and by any downstream tool
+ * that needs block/street/building/signal metadata without loading the scene.
+ */
+export function exportCityMetadata(city) {
+  if (!city) return null;
+  const counts = describeCity(city);
+  return {
+    schemaVersion: city.schemaVersion || CITY_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    name: city.meta?.name,
+    generator: city.meta?.generator,
+    seed: city.meta?.seed,
+    style: city.meta?.style,
+    center: city.meta?.center,
+    bounds: city.meta?.bounds,
+    terrain: city.meta?.terrain,
+    streetDesign: city.meta?.streetDesign,
+    counts,
+    oneWayStreets: (city.streets || [])
+      .filter((street) => street.oneway !== 'both')
+      .map((street) => ({ id: street.id, name: street.name, oneway: street.oneway })),
+    blocks: (city.blocks || []).map((block) => ({
+      id: block.id,
+      district: block.district,
+      landUse: block.landUse || 'mixed',
+      buildings: block.buildings || [],
+      streets: block.streets || [],
+      polygon: block.polygon || [],
+    })),
+    buildings: (city.buildings || []).map((building) => ({
+      id: building.id,
+      name: building.name || '',
+      address: building.address || '',
+      blockId: building.blockId,
+      district: building.district,
+      type: building.type,
+      typeLabel: building.typeLabel,
+      usage: building.usage,
+      material: building.material,
+      facade: building.facade,
+      stories: building.stories,
+      height: building.height,
+      footprintArea: building.footprintArea,
+      yearBuilt: building.yearBuilt,
+      facingStreet: building.facingStreet || '',
+      landmark: Boolean(building.landmark),
+      userAdded: Boolean(building.userAdded),
+      roofShape: building.roofShape || '',
+      shop: building.shop || '',
+      amenity: building.amenity || '',
+      tourism: building.tourism || '',
+      polygon: building.polygon || [],
+    })),
+    streets: (city.streets || []).map((street) => ({
+      id: street.id,
+      name: street.name,
+      highway: street.highway,
+      lanes: street.lanes,
+      laneW: street.laneW,
+      sidewalkW: street.sidewalkW,
+      sidewalkLeft: street.sidewalkLeft ?? street.sidewalkW ?? 0,
+      sidewalkRight: street.sidewalkRight ?? street.sidewalkW ?? 0,
+      maxspeed: street.maxspeed || '',
+      maxspeedKmh: street.maxspeedKmh || 0,
+      maxspeedSource: street.maxspeedSource || 'zone-default',
+      cycleway: street.cycleway || '',
+      asphaltWidth: street.asphaltWidth,
+      oneway: street.oneway,
+      blocks: street.blocks || [],
+      signalIds: street.signalIds || [],
+      orientation: street.orientation,
+      axis: street.axis,
+      position: street.position,
+    })),
+    segments: (city.segments || []).map((segment) => ({
+      id: segment.id,
+      streetId: segment.streetId,
+      streetName: segment.streetName,
+      highway: segment.highway,
+      lanes: segment.lanes,
+      oneway: segment.oneway,
+      width: segment.width,
+      sidewalkW: segment.sidewalkW,
+      sidewalkLeft: segment.sidewalkLeft ?? segment.sidewalkW ?? 0,
+      sidewalkRight: segment.sidewalkRight ?? segment.sidewalkW ?? 0,
+      maxspeed: segment.maxspeed || '',
+      maxspeedKmh: segment.maxspeedKmh || 0,
+      cycleway: segment.cycleway || '',
+      signalId: segment.signalId || null,
+      intersectionId: segment.intersectionId || null,
+      points: segment.points || [],
+    })),
+    intersections: (city.intersections || []).map((intersection) => ({
+      id: intersection.id,
+      position: intersection.position,
+      streetIds: intersection.streetIds,
+      signalId: intersection.signalId || null,
+    })),
+    signals: (city.signals || []).map((signal) => ({
+      id: signal.id,
+      intersectionId: signal.intersectionId,
+      streetIds: signal.streetIds,
+      position: signal.position,
+      heading: signal.heading,
+      phaseOffset: signal.phaseOffset,
+      period: signal.period,
+    })),
+  };
+}
+
+/**
+ * Rebuild a CityGen city from an exported JSON payload. This is the offline
+ * path for regenerating a map without live OSM: export once, then import the
+ * same metadata into any CityGen session.
+ */
+export function importCityMetadata(payload) {
+  if (!payload || !Array.isArray(payload.buildings) || !Array.isArray(payload.streets)) {
+    return null;
+  }
+  const seedInt = Number(payload.seedInt)
+    || (payload.seed ? Math.abs(hashString(String(payload.seed)) % 2147483647) || 731 : 731);
+  const blocks = (payload.blocks || []).map((block) => ({
+    id: block.id,
+    district: block.district || 'Downtown',
+    landUse: block.landUse || 'mixed',
+    buildings: Array.isArray(block.buildings) ? [...block.buildings] : [],
+    streets: Array.isArray(block.streets) ? [...block.streets] : [],
+    polygon: Array.isArray(block.polygon) ? block.polygon.map((p) => ({ x: p.x, z: p.z })) : [],
+  }));
+  const buildings = payload.buildings.map((building) => ({
+    ...building,
+    polygon: Array.isArray(building.polygon) ? building.polygon.map((p) => ({ x: p.x, z: p.z })) : [],
+    userAdded: Boolean(building.userAdded),
+    landmark: Boolean(building.landmark),
+  }));
+  const streets = payload.streets.map((street) => ({
+    ...street,
+    blocks: Array.isArray(street.blocks) ? [...street.blocks] : [],
+    signalIds: Array.isArray(street.signalIds) ? [...street.signalIds] : [],
+  }));
+  const segments = (payload.segments || []).map((segment) => ({
+    ...segment,
+    points: Array.isArray(segment.points) ? segment.points.map((p) => ({ x: p.x, z: p.z })) : [],
+  }));
+  const intersections = (payload.intersections || []).map((intersection) => ({
+    id: intersection.id,
+    position: { ...intersection.position },
+    streetIds: Array.isArray(intersection.streetIds) ? [...intersection.streetIds] : [],
+    signalId: intersection.signalId || null,
+  }));
+  const signals = (payload.signals || []).map((signal) => ({
+    id: signal.id,
+    intersectionId: signal.intersectionId,
+    streetIds: Array.isArray(signal.streetIds) ? [...signal.streetIds] : [],
+    position: { ...signal.position },
+    heading: signal.heading,
+    phaseOffset: signal.phaseOffset,
+    period: signal.period,
+  }));
+  for (const block of blocks) {
+    if (!block.buildings.length) {
+      block.buildings = buildings.filter((building) => building.blockId === block.id).map((building) => building.id);
+    }
+  }
+  const generator = payload.generator === 'procedural' ? 'procedural'
+    : payload.generator === 'sf-builtin' ? 'sf-builtin'
+      : 'openstreetmap';
+  const terrainType = generator === 'procedural' ? 'soft-hills' : 'osm-flat';
+  return {
+    schemaVersion: payload.schemaVersion || CITY_SCHEMA_VERSION,
+    meta: {
+      name: payload.name || 'Imported City',
+      seed: payload.seed,
+      seedInt,
+      style: payload.style || 'osm',
+      generator,
+      imported: true,
+      center: payload.center || { x: 0, z: 0 },
+      bounds: payload.bounds || {
+        minX: -330, maxX: 330, minZ: -330, maxZ: 330,
+      },
+      terrain: { type: terrainType, flattenNearRoads: false },
+      streetDesign: payload.streetDesign || { streetScale: 1, sidewalkScale: 1, curbHeight: 0.16, roadLift: 0.45 },
+      generatedAt: new Date().toISOString(),
+    },
+    blocks,
+    buildings,
+    streets,
+    segments,
+    intersections,
+    signals,
+    terrain: {
+      type: terrainType,
+      seed: seedInt,
+      heightAt: (x, z) => terrainHeight(x, z, seedInt) * (generator === 'procedural' ? 0.16 : 0.05),
+    },
+  };
+}
+
+function nearestSegmentForPoint(city, x, z) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const segment of city.segments || []) {
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const d = distanceToSegment({ x, z }, a, b);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = segment;
+    }
+  }
+  return best ? { segment: best, distance: bestDistance } : null;
+}
+
+function namedSegmentForPoint(city, x, z, maxDistance = 90) {
+  const isSynthetic = (name) => /^(SF Rd |Unnamed Road)/.test(name || '');
+  let best = null;
+  let bestDistance = maxDistance;
+  for (const segment of city.segments || []) {
+    if (!segment.streetName || isSynthetic(segment.streetName)) continue;
+    const a = segment.points[0];
+    const b = segment.points[segment.points.length - 1];
+    const d = distanceToSegment({ x, z }, a, b);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = segment;
+    }
+  }
+  return best ? { segment: best, distance: bestDistance } : null;
+}
