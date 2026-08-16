@@ -65,8 +65,8 @@ const HERO_SIGNAGE_LABELS = Object.freeze(new Map([
 ]));
 
 const STOREFRONT_RENDER_BASELINE = Object.freeze({
-  hero: { drawCalls: 476, triangles: 505434, geometries: 401, textures: 258 },
-  elevated: { drawCalls: 252, triangles: 496070, geometries: 401, textures: 258 },
+  hero: { drawCalls: 476, triangles: 449146, geometries: 401, textures: 258 },
+  elevated: { drawCalls: 252, triangles: 439854, geometries: 401, textures: 258 },
   aerial: { drawCalls: 863, triangles: 522067, geometries: 401, textures: 258 },
 });
 

@@ -77,6 +77,12 @@ const GROUND_MATERIAL_ASSETS = Object.freeze({
   }),
 });
 const GROUND_MATERIAL_ANISOTROPY = 8;
+const BISTRO_PARTITION_PASS = 'sf-world-partition-bistro-v1';
+const BISTRO_PARTITION_CELL_SIZE = 140;
+const BISTRO_PARTITION_ENTER_RADIUS = 420;
+const BISTRO_PARTITION_EXIT_RADIUS = 520;
+const BISTRO_PARTITION_AERIAL_HEIGHT = 500;
+const BISTRO_PARTITION_UPDATE_INTERVAL = 8;
 const HERO_SIDEWALK_DONOR_RADIUS = 80;
 const HERO_CURB_RHYTHM = Object.freeze({
   id: 'market-street-curb-rhythm',
@@ -296,6 +302,53 @@ function createGroundMaterialDiagnostics(lifecycle = {}, enabled = false) {
       unchanged: false,
     },
     lifecycle: { ...lifecycle },
+  };
+}
+
+function createWorldPartitionDiagnostics() {
+  return {
+    schemaVersion: 1,
+    pass: BISTRO_PARTITION_PASS,
+    enabled: false,
+    failure: null,
+    focusSource: 'controls-target',
+    cellSizeMeters: BISTRO_PARTITION_CELL_SIZE,
+    source: {
+      instances: 0,
+      triangles: 0,
+      trianglesPerInstance: 0,
+      recordsChecksum: null,
+      recordsUnchanged: false,
+      inputChecksumBefore: null,
+      inputChecksumAfter: null,
+      unchanged: false,
+    },
+    cells: { total: 0, active: 0, ids: [] },
+    active: { instances: 0, hiddenInstances: 0, indices: [], aerial: false },
+    hysteresis: {
+      enterRadiusMeters: BISTRO_PARTITION_ENTER_RADIUS,
+      exitRadiusMeters: BISTRO_PARTITION_EXIT_RADIUS,
+      aerialHeightMeters: BISTRO_PARTITION_AERIAL_HEIGHT,
+      updateIntervalFrames: BISTRO_PARTITION_UPDATE_INTERVAL,
+      enters: 0,
+      exits: 0,
+    },
+    mesh: {
+      name: 'sf-partitioned-bistro-lights',
+      capacity: 0,
+      count: 0,
+      submittedTriangles: 0,
+      oneMesh: false,
+      matricesFinite: false,
+      colorsFinite: false,
+    },
+    updates: { checks: 0, compactions: 0, resets: 0 },
+    resources: {
+      drawGroups: 0,
+      geometries: 0,
+      materials: 0,
+      textures: 0,
+    },
   };
 }
 
@@ -1039,6 +1092,8 @@ export class CityRenderer {
     this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle);
     this.groundMaterialTextures = null;
     this.groundMaterialTexturesReady = null;
+    this.worldPartitionRuntime = null;
+    this.worldPartitionDiagnostics = createWorldPartitionDiagnostics();
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -1228,6 +1283,12 @@ export class CityRenderer {
     this.groundMaterialTexturesReady = null;
   }
 
+  disposeWorldPartitionRuntime() {
+    if (this.worldPartitionRuntime?.mesh) this.worldPartitionRuntime.mesh.dispose();
+    this.worldPartitionRuntime = null;
+    this.worldPartitionDiagnostics = createWorldPartitionDiagnostics();
+  }
+
   resize() {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
@@ -1239,6 +1300,7 @@ export class CityRenderer {
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
+    this.disposeWorldPartitionRuntime();
     for (const geometry of this.geometryCache) geometry.dispose();
     this.disposeGroundMaterialTextures();
     this.renderer.dispose();
@@ -1298,6 +1360,7 @@ export class CityRenderer {
     this.localLightPool = [];
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
+    this.disposeWorldPartitionRuntime();
     this.streetLampRecords = [];
     this.streetLampDiagnostics = {
       source: city?.meta?.generator || null,
@@ -1435,6 +1498,7 @@ export class CityRenderer {
     this.groundMaterialLifecycle.clearCount += 1;
     this.groundMaterialDiagnostics.enabled = false;
     this.syncGroundMaterialDiagnostics();
+    this.disposeWorldPartitionRuntime();
     if (this.root) {
       this.scene.remove(this.root);
       this.root.traverse((object) => {
@@ -5469,6 +5533,18 @@ export class CityRenderer {
   buildShopAwnings(root, city) {
     const random = mulberry32(Number(city.meta.seedInt || 1) + 401);
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const partitionSf = realMap && isSanFranciscoCity(city);
+    const snapshotPartitionSource = partitionSf
+      ? () => JSON.stringify({
+        meta: city.meta,
+        buildings: city.buildings,
+        streets: city.streets,
+        segments: city.segments,
+      })
+      : null;
+    const sourceInputChecksumBefore = snapshotPartitionSource
+      ? hashString(snapshotPartitionSource())
+      : null;
     const awningColors = ['#e04945', '#128f9e', '#e5a021', '#3d8f52', '#8a5fc0', '#d95f5f', '#3f8f9e'];
     const materials = [];
     const neonSigns = [];
@@ -5681,23 +5757,227 @@ export class CityRenderer {
       bistroMaterial.userData = { dayOpacity: 0.55, nightOpacity: 1 };
       this.neonGlowMaterials.push(bistroMaterial);
       const lights = new THREE.InstancedMesh(bistroGeometry, bistroMaterial, bistroLights.length);
+      lights.name = partitionSf ? 'sf-partitioned-bistro-lights' : 'bistro-lights';
+      lights.userData = partitionSf
+        ? { kind: 'sf-partitioned-bistro-lights', partition: BISTRO_PARTITION_PASS }
+        : { kind: 'bistro-lights' };
+      if (partitionSf) lights.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       const dummy = new THREE.Object3D();
       const color = new THREE.Color();
+      const records = [];
+      const cellMap = new Map();
+      const sourceSnapshot = JSON.stringify(bistroLights);
       for (let i = 0; i < bistroLights.length; i += 1) {
         const light = bistroLights[i];
         dummy.position.set(light.x, light.y, light.z);
         dummy.rotation.set(0, 0, 0);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        lights.setMatrixAt(i, dummy.matrix);
         color.set(light.color);
+        lights.setMatrixAt(i, dummy.matrix);
         lights.setColorAt(i, color);
+        const cellX = Math.floor(light.x / BISTRO_PARTITION_CELL_SIZE);
+        const cellZ = Math.floor(light.z / BISTRO_PARTITION_CELL_SIZE);
+        const cellId = `${cellX}:${cellZ}`;
+        const record = {
+          index: i,
+          cellId,
+          matrix: new Float32Array(dummy.matrix.elements),
+          color: new Float32Array([color.r, color.g, color.b]),
+        };
+        records.push(record);
+        let cell = cellMap.get(cellId);
+        if (!cell) {
+          cell = {
+            id: cellId,
+            x: (cellX + 0.5) * BISTRO_PARTITION_CELL_SIZE,
+            z: (cellZ + 0.5) * BISTRO_PARTITION_CELL_SIZE,
+            indices: [],
+          };
+          cellMap.set(cellId, cell);
+        }
+        cell.indices.push(i);
       }
-      lights.instanceMatrix.needsUpdate = true;
-      if (lights.instanceColor) lights.instanceColor.needsUpdate = true;
       root.add(lights);
       this.geometryCache.push(bistroGeometry);
+      if (!partitionSf) {
+        lights.instanceMatrix.needsUpdate = true;
+        if (lights.instanceColor) lights.instanceColor.needsUpdate = true;
+        return;
+      }
+      lights.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      const trianglesPerInstance = (bistroGeometry.index?.count
+        ?? bistroGeometry.getAttribute('position').count) / 3;
+      const sourceChecksum = hashString(sourceSnapshot);
+      this.worldPartitionRuntime = {
+        mesh: lights,
+        records,
+        cells: [...cellMap.values()].sort((left, right) => left.id.localeCompare(right.id)),
+        activeCellIds: new Set(),
+        activeMask: new Uint8Array(records.length),
+        frame: 0,
+        lastFocusCellX: null,
+        lastFocusCellZ: null,
+        lastAerial: null,
+        boundsCenter: new THREE.Vector3(),
+        sourceChecksum,
+        recordsChecksumVerified: hashString(sourceSnapshot) === sourceChecksum,
+        sourceInputChecksumBefore,
+        sourceInputChecksumAfter: hashString(snapshotPartitionSource()),
+        recordsFinite: records.every((record) => record.matrix.every(Number.isFinite)
+          && record.color.every(Number.isFinite)),
+        trianglesPerInstance,
+      };
+      this.updateWorldPartition(true);
     }
+  }
+
+  updateWorldPartition(force = false, resetHysteresis = false) {
+    const runtime = this.worldPartitionRuntime;
+    if (!runtime?.mesh) return false;
+    runtime.frame += 1;
+    if (!force && runtime.frame % BISTRO_PARTITION_UPDATE_INTERVAL !== 0) return false;
+    if (resetHysteresis) {
+      runtime.activeCellIds.clear();
+      runtime.lastFocusCellX = null;
+      runtime.lastFocusCellZ = null;
+      runtime.lastAerial = null;
+    }
+    const focus = this.controls.target;
+    const focusCellX = Math.floor(focus.x / BISTRO_PARTITION_CELL_SIZE);
+    const focusCellZ = Math.floor(focus.z / BISTRO_PARTITION_CELL_SIZE);
+    const aerial = Math.abs(this.camera.position.y - focus.y) >= BISTRO_PARTITION_AERIAL_HEIGHT;
+    this.worldPartitionDiagnostics.updates.checks += 1;
+
+    const nextActiveCellIds = new Set();
+    const activeIndices = [];
+    runtime.activeMask.fill(0);
+    let enters = 0;
+    let exits = 0;
+    for (const cell of runtime.cells) {
+      const wasActive = runtime.activeCellIds.has(cell.id);
+      const radius = wasActive ? BISTRO_PARTITION_EXIT_RADIUS : BISTRO_PARTITION_ENTER_RADIUS;
+      const edgeX = Math.max(0, Math.abs(cell.x - focus.x) - BISTRO_PARTITION_CELL_SIZE * 0.5);
+      const edgeZ = Math.max(0, Math.abs(cell.z - focus.z) - BISTRO_PARTITION_CELL_SIZE * 0.5);
+      const active = aerial || Math.hypot(edgeX, edgeZ) <= radius;
+      if (!active) {
+        if (wasActive) exits += 1;
+        continue;
+      }
+      if (!wasActive) enters += 1;
+      nextActiveCellIds.add(cell.id);
+      for (const index of cell.indices) runtime.activeMask[index] = 1;
+    }
+    for (let index = 0; index < runtime.activeMask.length; index += 1) {
+      if (runtime.activeMask[index]) activeIndices.push(index);
+    }
+    let membershipChanged = nextActiveCellIds.size !== runtime.activeCellIds.size;
+    if (!membershipChanged) {
+      for (const cellId of nextActiveCellIds) {
+        if (!runtime.activeCellIds.has(cellId)) {
+          membershipChanged = true;
+          break;
+        }
+      }
+    }
+    if (!force && !resetHysteresis && !membershipChanged) {
+      runtime.lastFocusCellX = focusCellX;
+      runtime.lastFocusCellZ = focusCellZ;
+      runtime.lastAerial = aerial;
+      return false;
+    }
+    const matrixArray = runtime.mesh.instanceMatrix.array;
+    const colorArray = runtime.mesh.instanceColor.array;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let targetIndex = 0; targetIndex < activeIndices.length; targetIndex += 1) {
+      const record = runtime.records[activeIndices[targetIndex]];
+      matrixArray.set(record.matrix, targetIndex * 16);
+      colorArray.set(record.color, targetIndex * 3);
+      const x = record.matrix[12];
+      const y = record.matrix[13];
+      const z = record.matrix[14];
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    runtime.mesh.count = activeIndices.length;
+    runtime.mesh.instanceMatrix.needsUpdate = true;
+    if (runtime.mesh.instanceColor) runtime.mesh.instanceColor.needsUpdate = true;
+    if (!runtime.mesh.boundingSphere) runtime.mesh.boundingSphere = new THREE.Sphere();
+    if (activeIndices.length) {
+      runtime.boundsCenter.set(
+        (minX + maxX) * 0.5,
+        (minY + maxY) * 0.5,
+        (minZ + maxZ) * 0.5,
+      );
+      const radius = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5 + 0.06;
+      runtime.mesh.boundingSphere.set(runtime.boundsCenter, radius);
+    } else {
+      runtime.mesh.boundingSphere.set(this.controls.target, 0);
+    }
+    runtime.activeCellIds = nextActiveCellIds;
+    runtime.lastFocusCellX = focusCellX;
+    runtime.lastFocusCellZ = focusCellZ;
+    runtime.lastAerial = aerial;
+
+    const diagnostics = createWorldPartitionDiagnostics();
+    diagnostics.enabled = true;
+    diagnostics.source = {
+      instances: runtime.records.length,
+      triangles: runtime.records.length * runtime.trianglesPerInstance,
+      trianglesPerInstance: runtime.trianglesPerInstance,
+      recordsChecksum: runtime.sourceChecksum,
+      recordsUnchanged: runtime.recordsChecksumVerified,
+      inputChecksumBefore: runtime.sourceInputChecksumBefore,
+      inputChecksumAfter: runtime.sourceInputChecksumAfter,
+      unchanged: runtime.sourceInputChecksumBefore === runtime.sourceInputChecksumAfter,
+    };
+    diagnostics.cells = {
+      total: runtime.cells.length,
+      active: nextActiveCellIds.size,
+      ids: [...nextActiveCellIds].sort(),
+    };
+    diagnostics.active = {
+      instances: activeIndices.length,
+      hiddenInstances: runtime.records.length - activeIndices.length,
+      indices: activeIndices,
+      aerial,
+    };
+    diagnostics.hysteresis.enters = this.worldPartitionDiagnostics.hysteresis.enters + enters;
+    diagnostics.hysteresis.exits = this.worldPartitionDiagnostics.hysteresis.exits + exits;
+    diagnostics.mesh = {
+      name: runtime.mesh.name,
+      capacity: runtime.records.length,
+      count: runtime.mesh.count,
+      submittedTriangles: runtime.mesh.count * runtime.trianglesPerInstance,
+      oneMesh: runtime.mesh.parent === this.root || runtime.mesh.parent?.name === 'city-root',
+      matricesFinite: runtime.recordsFinite,
+      colorsFinite: runtime.recordsFinite,
+    };
+    diagnostics.updates = {
+      checks: this.worldPartitionDiagnostics.updates.checks,
+      compactions: this.worldPartitionDiagnostics.updates.compactions + 1,
+      resets: (this.worldPartitionDiagnostics.updates.resets || 0) + (resetHysteresis ? 1 : 0),
+    };
+    diagnostics.failure = diagnostics.source.instances > 0
+      && diagnostics.source.unchanged
+      && diagnostics.source.recordsUnchanged
+      && diagnostics.mesh.oneMesh
+      && diagnostics.mesh.matricesFinite
+      && diagnostics.mesh.colorsFinite
+      && diagnostics.mesh.count <= diagnostics.mesh.capacity
+      ? null
+      : 'sf-world-partition-bistro-contract';
+    this.worldPartitionDiagnostics = diagnostics;
+    return true;
   }
 
   nearestRoadSegment(city, point) {
@@ -5806,6 +6086,7 @@ export class CityRenderer {
     this.controls.update();
     if (time != null) this.setTimeOfDay(time);
     this.updateLocalLightPool(delta);
+    this.updateWorldPartition();
     if (this.signalMeshes) {
       for (const entry of this.signalMeshes) {
         const offset = entry.signal.phaseOffset || 0;

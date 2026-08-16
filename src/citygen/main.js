@@ -746,7 +746,10 @@ async function buildCity(city, { reframe = true } = {}) {
     state.traffic.dispose();
   }
   state.traffic = new TrafficSim(state.renderer, city, { count: city.meta.generator === 'openstreetmap' ? 14 : 26 });
-  if (reframe) frameCityCamera(city);
+  if (reframe) {
+    frameCityCamera(city);
+    state.renderer.updateWorldPartition(true, true);
+  }
   updateReadout(city);
   document.querySelectorAll('.preset').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.preset === city.meta.style);
