@@ -19,6 +19,19 @@ const HERO_PORTAL_STYLES = Object.freeze([
   { panel: '#3e5963', frame: '#aebbc0' },
 ]);
 
+const HERO_STOREFRONT_PROFILES = Object.freeze([
+  { key: 'hearst-gallery', glass: '#315865', trim: '#dbb75f', displayWidth: 1.08, canopyWidth: 4.16, canopyDepth: 0.42 },
+  { key: 'bronze-market-bay', glass: '#285568', trim: '#ce8e43', displayWidth: 0.96, canopyWidth: 3.94, canopyDepth: 0.5 },
+  { key: 'central-deco-lobby', glass: '#3c5e68', trim: '#e2c77f', displayWidth: 1.12, canopyWidth: 4.22, canopyDepth: 0.38 },
+  { key: 'market-limestone-bay', glass: '#385d67', trim: '#91afbd', displayWidth: 1.04, canopyWidth: 4.04, canopyDepth: 0.44 },
+  { key: 'kearny-brick-shop', glass: '#36545d', trim: '#d89652', displayWidth: 0.92, canopyWidth: 3.9, canopyDepth: 0.4 },
+  { key: 'market-loft-display', glass: '#2f515d', trim: '#a7bbc2', displayWidth: 0.88, canopyWidth: 3.82, canopyDepth: 0.46 },
+]);
+
+const STOREFRONT_ROAD_CLASSES = new Set([
+  'primary', 'secondary', 'tertiary', 'residential', 'living_street', 'service', 'unclassified',
+]);
+
 const ROOM_PALETTES = Object.freeze({
   civic: { wall: '#d8d2c4', accent: '#3d6170', floor: '#827568' },
   hospitality: { wall: '#e1d1bd', accent: '#7f4b35', floor: '#715b4e' },
@@ -70,7 +83,40 @@ function seededUnit(text) {
   return (hash >>> 0) / 4294967295;
 }
 
-export function installBuildingPortals(renderer, portals) {
+function portalLocalPoint(portal, offsetX, offsetZ) {
+  const cos = Math.cos(portal.heading);
+  const sin = Math.sin(portal.heading);
+  return {
+    x: portal.position.x + offsetX * cos + offsetZ * sin,
+    z: portal.position.z - offsetX * sin + offsetZ * cos,
+  };
+}
+
+function pointSegmentDistance(point, a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= 1e-9) return Math.hypot(point.x - a.x, point.z - a.z);
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSq));
+  return Math.hypot(point.x - (a.x + dx * t), point.z - (a.z + dz * t));
+}
+
+function roadClearance(point, city) {
+  let minimum = Infinity;
+  for (const segment of city?.segments || []) {
+    if (!STOREFRONT_ROAD_CLASSES.has(segment.highway) || !Array.isArray(segment.points)) continue;
+    const halfWidth = Math.max(0, Number(segment.width || 0) / 2);
+    for (let index = 1; index < segment.points.length; index += 1) {
+      minimum = Math.min(
+        minimum,
+        pointSegmentDistance(point, segment.points[index - 1], segment.points[index]) - halfWidth,
+      );
+    }
+  }
+  return minimum;
+}
+
+export function installBuildingPortals(renderer, portals, city = null) {
   if (!renderer?.root || !portals.length) return null;
   const group = new THREE.Group();
   group.name = 'building-portals';
@@ -105,10 +151,40 @@ export function installBuildingPortals(renderer, portals) {
   const frameColor = new THREE.Color();
   const streetwall = renderer.heroFacadeDiagnostics?.streetwall || null;
   const heroById = new Map((renderer.heroFacadeDiagnostics?.heroes || []).map((entry) => [entry.id, entry]));
+  const heroPortalCount = portals.filter((portal) => heroById.has(portal.buildingId)).length;
+  const storefrontGlassGeometry = heroPortalCount ? new THREE.BoxGeometry(1, 1, 1) : null;
+  const storefrontGlassMaterial = heroPortalCount ? material('#ffffff', { roughness: 0.24, metalness: 0.2 }) : null;
+  const storefrontGlass = heroPortalCount
+    ? new THREE.InstancedMesh(storefrontGlassGeometry, storefrontGlassMaterial, heroPortalCount * 2)
+    : null;
+  if (storefrontGlass) {
+    storefrontGlass.name = 'hero-storefront-glazing';
+    storefrontGlass.castShadow = true;
+    storefrontGlass.receiveShadow = true;
+  }
+  const storefrontTrimGeometry = heroPortalCount ? new THREE.BoxGeometry(1, 1, 1) : null;
+  const storefrontTrimMaterial = heroPortalCount ? material('#ffffff', { roughness: 0.52, metalness: 0.12 }) : null;
+  const storefrontTrim = heroPortalCount
+    ? new THREE.InstancedMesh(storefrontTrimGeometry, storefrontTrimMaterial, heroPortalCount * 5)
+    : null;
+  if (storefrontTrim) {
+    storefrontTrim.name = 'hero-storefront-trim';
+    storefrontTrim.castShadow = true;
+    storefrontTrim.receiveShadow = true;
+  }
+  const buildingById = new Map((city?.buildings || []).map((building) => [building.id, building]));
   const portalStyledIds = [];
+  const storefrontEntries = [];
+  const storefrontBuiltIds = [];
+  let storefrontAbsoluteRoadOverlaps = 0;
+  let storefrontAdditionalRoadIntrusions = 0;
+  let minimumPortalClearance = Infinity;
+  let minimumEdgeClearance = Infinity;
   let portalPositionsUnchanged = true;
   let portalHeadingsUnchanged = true;
   let frameIndex = 0;
+  let storefrontGlassIndex = 0;
+  let storefrontTrimIndex = 0;
   portals.forEach((portal, index) => {
     const sourcePosition = [portal.position.x, portal.position.y, portal.position.z];
     const sourceHeading = portal.heading;
@@ -160,6 +236,78 @@ export function installBuildingPortals(renderer, portals) {
     lights.setMatrixAt(index, dummy.matrix);
 
     if (heroStyle) {
+      const storefront = HERO_STOREFRONT_PROFILES[hero.streetwall.atlasCell];
+      const displayOffset = 1.52;
+      const displayHeight = 2.08;
+      const displayDepth = 0.09;
+      const doorHalfWidth = 0.88;
+      for (const offsetX of [-displayOffset, displayOffset]) {
+        dummy.position.set(portal.position.x, portal.position.y + 1.18, portal.position.z);
+        dummy.rotation.set(0, portal.heading, 0);
+        dummy.translateX(offsetX);
+        dummy.translateZ(-0.34);
+        dummy.scale.set(storefront.displayWidth, displayHeight, displayDepth);
+        dummy.updateMatrix();
+        storefrontGlass.setMatrixAt(storefrontGlassIndex, dummy.matrix);
+        storefrontGlass.setColorAt(storefrontGlassIndex, color.set(storefront.glass));
+        storefrontGlassIndex += 1;
+        const componentClearance = roadClearance(
+          portalLocalPoint(portal, offsetX, -0.34 + displayDepth / 2),
+          city,
+        );
+        const portalPlaneClearance = roadClearance(portalLocalPoint(portal, offsetX, 0), city);
+        if (componentClearance < 0) storefrontAbsoluteRoadOverlaps += 1;
+        if (componentClearance < portalPlaneClearance - 0.02) storefrontAdditionalRoadIntrusions += 1;
+      }
+      const outerOffset = displayOffset + storefront.displayWidth / 2 + 0.1;
+      const trimParts = [
+        [-outerOffset, 1.18, 0.12, 2.32, 0.14],
+        [-0.82, 1.18, 0.12, 2.32, 0.14],
+        [0.82, 1.18, 0.12, 2.32, 0.14],
+        [outerOffset, 1.18, 0.12, 2.32, 0.14],
+        [0, 2.42, storefront.canopyWidth, 0.28, storefront.canopyDepth],
+      ];
+      for (const [offsetX, offsetY, scaleX, scaleY, scaleZ] of trimParts) {
+        dummy.position.set(portal.position.x, portal.position.y, portal.position.z);
+        dummy.rotation.set(0, portal.heading, 0);
+        dummy.translateX(offsetX);
+        dummy.translateY(offsetY);
+        dummy.translateZ(offsetY > 2 ? -0.3 : -0.29);
+        dummy.scale.set(scaleX, scaleY, scaleZ);
+        dummy.updateMatrix();
+        storefrontTrim.setMatrixAt(storefrontTrimIndex, dummy.matrix);
+        storefrontTrim.setColorAt(storefrontTrimIndex, frameColor.set(storefront.trim));
+        storefrontTrimIndex += 1;
+        const offsetZ = offsetY > 2 ? -0.3 : -0.29;
+        const componentClearance = roadClearance(
+          portalLocalPoint(portal, offsetX, offsetZ + scaleZ / 2),
+          city,
+        );
+        const portalPlaneClearance = roadClearance(portalLocalPoint(portal, offsetX, 0), city);
+        if (componentClearance < 0) storefrontAbsoluteRoadOverlaps += 1;
+        if (componentClearance < portalPlaneClearance - 0.02) storefrontAdditionalRoadIntrusions += 1;
+      }
+      const portalClearance = displayOffset - storefront.displayWidth / 2 - doorHalfWidth;
+      const building = buildingById.get(portal.buildingId);
+      const edgeIndex = Number(portal.sourceMetadata?.edgeIndex);
+      const edgeA = building?.polygon?.[edgeIndex];
+      const edgeB = building?.polygon?.[(edgeIndex + 1) % building?.polygon?.length];
+      const edgeLength = edgeA && edgeB ? Math.hypot(edgeB.x - edgeA.x, edgeB.z - edgeA.z) : NaN;
+      const edgeClearance = edgeLength / 2 - Math.max(outerOffset + 0.06, storefront.canopyWidth / 2);
+      minimumPortalClearance = Math.min(minimumPortalClearance, portalClearance);
+      minimumEdgeClearance = Math.min(minimumEdgeClearance, edgeClearance);
+      storefrontBuiltIds.push(portal.buildingId);
+      storefrontEntries.push({
+        id: portal.buildingId,
+        profile: storefront.key,
+        sourceEdgeIndex: edgeIndex,
+        sourceEdgeLength: edgeLength,
+        displayInstances: 2,
+        trimInstances: 5,
+        portalClearanceMeters: portalClearance,
+        edgeClearanceMeters: edgeClearance,
+        finite: [edgeIndex, edgeLength, portalClearance, edgeClearance].every(Number.isFinite),
+      });
       portalStyledIds.push(portal.buildingId);
       portalPositionsUnchanged = portalPositionsUnchanged
         && sourcePosition[0] === portal.position.x
@@ -182,7 +330,7 @@ export function installBuildingPortals(renderer, portals) {
       };
     }
   });
-  for (const mesh of [panels, frames, lights]) {
+  for (const mesh of [panels, frames, lights, storefrontGlass, storefrontTrim].filter(Boolean)) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere?.();
@@ -200,6 +348,29 @@ export function installBuildingPortals(renderer, portals) {
     streetwall.portalHeadingsUnchanged = exactPortalSet && portalHeadingsUnchanged;
     streetwall.sourcePortalsUnchanged = streetwall.portalPositionsUnchanged
       && streetwall.portalHeadingsUnchanged;
+    storefrontBuiltIds.sort();
+    storefrontEntries.sort((a, b) => a.id.localeCompare(b.id));
+    streetwall.storefront = {
+      pass: 'hero-storefronts-v1',
+      expectedIds: [...streetwall.expectedIds],
+      builtIds: storefrontBuiltIds,
+      skippedIds: streetwall.expectedIds.filter((id) => !storefrontBuiltIds.includes(id)),
+      entries: storefrontEntries,
+      displayInstances: storefrontGlassIndex,
+      trimInstances: storefrontTrimIndex,
+      drawGroups: heroPortalCount ? 2 : 0,
+      triangles: storefrontGlassIndex * 12 + storefrontTrimIndex * 12,
+      geometries: heroPortalCount ? 2 : 0,
+      textures: 0,
+      materialProfiles: new Set(storefrontEntries.map((entry) => entry.profile)).size,
+      minimumPortalClearanceMeters: minimumPortalClearance,
+      minimumEdgeClearanceMeters: minimumEdgeClearance,
+      absoluteRoadOverlaps: storefrontAbsoluteRoadOverlaps,
+      additionalRoadIntrusions: storefrontAdditionalRoadIntrusions,
+      sourcePortalsUnchanged: streetwall.sourcePortalsUnchanged,
+      finite: storefrontEntries.length === streetwall.expectedIds.length
+        && storefrontEntries.every((entry) => entry.finite),
+    };
   }
   renderer.root.add(group);
   return group;

@@ -59,9 +59,9 @@ const HERO_SOURCE_VERTEX_COUNTS = Object.freeze(new Map([
 // atlas baseline is 471 draws / 504,374 triangles on the canonical hero pose
 // and 858 / 521,007 aerial. Actual roof geometry gets only two draw groups and
 // 462 triangles; these caps retain a tiny scheduling/culling margin.
-const HERO_POSE_CAPS = Object.freeze({ drawCalls: 474, triangles: 504950 });
+const HERO_POSE_CAPS = Object.freeze({ drawCalls: 476, triangles: 505500 });
 const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 900, triangles: 530000 });
-const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 862, triangles: 521600 });
+const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 864, triangles: 522150 });
 
 const sampleRenderer = () => page.evaluate(() => {
   const renderer = window.__CITYGEN__.getRenderer();
@@ -181,6 +181,30 @@ try {
           portalPanelInstances: hero.streetwall.portalPanelInstances,
           portalFrameInstances: hero.streetwall.portalFrameInstances,
           portalCueInstances: hero.streetwall.portalCueInstances,
+          storefront: hero.streetwall.storefront ? {
+            pass: hero.streetwall.storefront.pass,
+            expectedIds: Array.isArray(hero.streetwall.storefront.expectedIds)
+              ? [...hero.streetwall.storefront.expectedIds] : null,
+            builtIds: Array.isArray(hero.streetwall.storefront.builtIds)
+              ? [...hero.streetwall.storefront.builtIds] : null,
+            skippedIds: Array.isArray(hero.streetwall.storefront.skippedIds)
+              ? [...hero.streetwall.storefront.skippedIds] : null,
+            entries: Array.isArray(hero.streetwall.storefront.entries)
+              ? hero.streetwall.storefront.entries.map((entry) => ({ ...entry })) : null,
+            displayInstances: hero.streetwall.storefront.displayInstances,
+            trimInstances: hero.streetwall.storefront.trimInstances,
+            drawGroups: hero.streetwall.storefront.drawGroups,
+            triangles: hero.streetwall.storefront.triangles,
+            geometries: hero.streetwall.storefront.geometries,
+            textures: hero.streetwall.storefront.textures,
+            materialProfiles: hero.streetwall.storefront.materialProfiles,
+            minimumPortalClearanceMeters: hero.streetwall.storefront.minimumPortalClearanceMeters,
+            minimumEdgeClearanceMeters: hero.streetwall.storefront.minimumEdgeClearanceMeters,
+            absoluteRoadOverlaps: hero.streetwall.storefront.absoluteRoadOverlaps,
+            additionalRoadIntrusions: hero.streetwall.storefront.additionalRoadIntrusions,
+            sourcePortalsUnchanged: hero.streetwall.storefront.sourcePortalsUnchanged,
+            finite: hero.streetwall.storefront.finite,
+          } : null,
           incremental: hero.streetwall.incremental ? { ...hero.streetwall.incremental } : null,
         } : null,
       } : null,
@@ -407,6 +431,50 @@ try {
     'hero entrance metadata contains no duplicate portal indices');
   assert.equal(new Set(portalIds).size, HERO_IDS.length,
     'hero entrance metadata contains no duplicate portal ids');
+
+  const storefront = streetwall.storefront;
+  assert.ok(storefront, 'hero streetwall exposes the authored storefront contract');
+  assert.equal(storefront.pass, 'hero-storefronts-v1', 'storefront contract version is explicit');
+  assert.deepEqual([...storefront.expectedIds].sort(), [...HERO_IDS].sort(),
+    'storefront diagnostics expect the exact six hero buildings');
+  assert.deepEqual([...storefront.builtIds].sort(), [...HERO_IDS].sort(),
+    'storefront presentation covers the exact six hero buildings');
+  assert.deepEqual(storefront.skippedIds, [], 'no hero storefront is skipped');
+  assert.equal(storefront.entries.length, 6, 'storefront diagnostics expose six entries');
+  const storefrontProfiles = new Set();
+  for (const entry of storefront.entries) {
+    assert.ok(HERO_IDS.includes(entry.id), `${entry.id}: storefront belongs to the audited hero set`);
+    assert.ok(Number.isInteger(entry.sourceEdgeIndex) && entry.sourceEdgeIndex >= 0,
+      `${entry.id}: storefront is attached to a concrete source edge`);
+    assert.ok(entry.sourceEdgeLength >= 7.8,
+      `${entry.id}: storefront source edge is wide enough (${entry.sourceEdgeLength}m)`);
+    assert.equal(entry.displayInstances, 2, `${entry.id}: storefront has two display bays`);
+    assert.equal(entry.trimInstances, 5, `${entry.id}: storefront has four jambs and one canopy`);
+    assert.ok(entry.portalClearanceMeters >= 0.075,
+      `${entry.id}: storefront clears the canonical portal (${entry.portalClearanceMeters}m)`);
+    assert.ok(entry.edgeClearanceMeters >= 1.7,
+      `${entry.id}: storefront remains inside its source frontage (${entry.edgeClearanceMeters}m)`);
+    assert.equal(entry.finite, true, `${entry.id}: storefront placement is finite`);
+    storefrontProfiles.add(entry.profile);
+  }
+  assert.equal(storefrontProfiles.size, 6, 'all six storefronts use distinct authored profiles');
+  assert.equal(storefront.displayInstances, 12, 'storefronts use exactly 12 display instances');
+  assert.equal(storefront.trimInstances, 30, 'storefronts use exactly 30 trim/canopy instances');
+  assert.equal(storefront.drawGroups, 2, 'storefronts use exactly two instanced draw groups');
+  assert.equal(storefront.triangles, 504, 'storefronts add exactly 504 rendered triangles');
+  assert.equal(storefront.geometries, 2, 'storefronts use exactly two geometries');
+  assert.equal(storefront.textures, 0, 'storefronts add no textures');
+  assert.equal(storefront.materialProfiles, 6, 'storefront diagnostics retain six material profiles');
+  assert.ok(storefront.minimumPortalClearanceMeters >= 0.075,
+    'storefront presentation preserves a traversable central portal gap');
+  assert.ok(storefront.minimumEdgeClearanceMeters >= 1.7,
+    'storefront presentation stays inside all source frontage edges');
+  assert.ok(Number.isInteger(storefront.absoluteRoadOverlaps) && storefront.absoluteRoadOverlaps >= 0,
+    'storefront diagnostics report source-level absolute road overlaps');
+  assert.equal(storefront.additionalRoadIntrusions, 0,
+    'storefront components are never closer to asphalt than their canonical portal plane');
+  assert.equal(storefront.sourcePortalsUnchanged, true, 'storefronts preserve canonical portal transforms');
+  assert.equal(storefront.finite, true, 'storefront geometry metadata is finite');
 
   assert.ok(Number.isFinite(runtime.hero.drawGroups), 'hero draw-group count is finite');
   assert.ok(runtime.hero.drawGroups <= 3,
