@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "route": "procedural-finish",
+  "exactness": "image-only",
+  "projectionRequired": false,
+  "decision": "Use the generated reference as non-survey evidence for visible form relationships, identity-feature placement, material zones, and review framing. Build procedural geometry and independent PBR materials so the landmark remains volumetric and relightable from multiple angles. Do not project the reference pixels because they contain studio illumination, single-view perspective, inferred architecture, and no exact authored surface pattern that must be preserved pixel-for-pixel.",
+  "referenceUse": [
+    "front-three-quarter silhouette and stepped mass proportions",
+    "relative placement of the embedded striped turret, tilted oculus, deep entry, brick wings, granite podium, and contiguous rippled expansion",
+    "visible red-brick, charcoal-stone, alternating striped-stone, blue-gray-glass, dark-metal, and pale-FRP material zones",
+    "brick-course, turret-band, oculus-mullion, curtain-wall, ripple, panel-joint, and podium-opening rhythms",
+    "fixed review-camera composition only; camera fit does not create dimensional authority"
+  ],
+  "notUsedAsTruth": [
+    "surveyed dimensions or manufacturing tolerances",
+    "rear, roof, camera-right, or interior geometry hidden by the single view",
+    "studio illumination, contact-shadow, highlight, or background pixels",
+    "exact brick module, FRP panel dimensions, or oculus angle",
+    "EPSG:26910 coordinates, footprint, ground elevation, collision, portal location, or gameplay state"
+  ],
+  "sourceTruthBoundary": {
+    "generatedReferenceRole": "presentation-only non-survey concept evidence",
+    "authoritativeWorldSource": "OSM feature sf-building-41692824 and its canonical runtime contracts",
+    "authoritativeWorldFields": [
+      "footprint",
+      "EPSG:26910 coordinates",
+      "runtime origin and scale",
+      "collision",
+      "portal identity and placement",
+      "gameplay and simulation state"
+    ],
+    "integrationRule": "A future presentation LOD may be aligned to the authoritative footprint, but the generated asset must never rewrite or be described as the source geometry."
+  },
+  "proceduralStrategy": {
+    "geometry": "Attached procedural Three.js components: stepped assembled brick solids, a cylindrical striped turret, a thick beveled elliptical oculus with radial mullions, recessed entry and window cavities, and one continuous curved expansion shell.",
+    "materials": "Separate WebGPU-compatible PBR channels for brick, granite, striped stone, glass, metal, and FRP. Geometry or displacement carries silhouette-relevant courses and ripples; local overrides carry mortar, panel seams, and controlled glazing gloss.",
+    "hiddenSurfaces": "Use restrained attached continuation with reduced confidence; label rear, roof, and camera-right elevations inferred and test them through orbit captures.",
+    "review": "Match the fixed reference view, then require right, rear, left, and elevated orbit views to prove volume, grounding, and attachment continuity."
+  },
+  "projectionTools": {
+    "solveCameraPose": "not required for texture projection; a review-only camera may still be fitted later",
+    "delightAlbedo": "not required because source pixels will not be baked into material albedo",
+    "bakeProjectedTexture": "not applicable to this procedural-finish route"
+  },
+  "approximationWarning": "This is a procedural reconstruction from one AI-generated concept reference. It can target recognizable presentation fidelity, but it cannot claim exact SFMOMA geometry, hidden elevations, construction dimensions, or surveyed placement."
+}

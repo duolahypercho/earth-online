@@ -1,0 +1,49 @@
+{
+  "query": "architectural hard surface brick facade cylindrical turret repeated bands glass curtain wall rippled panel PBR action ready",
+  "collection": "core_3d",
+  "index": {
+    "status": "hit",
+    "reason": "current",
+    "fingerprint": "6857e5ab528b42ac12f4f411f862610a0bffce8e47aee3610a7603c318072fe8"
+  },
+  "matches": [
+    {
+      "record_id": "core.uv-strategy",
+      "file_path": "grimoire/glossary/3d_vocabulary.md",
+      "score": 6.598195160406,
+      "snippets": ["UV strategy can use generated procedural coordinates, cylindrical projection, triplanar-like mapping, or atlas-ready unwrapped regions."],
+      "source_refs": [{"path": "grimoire/glossary/3d_vocabulary.md", "heading": "Geometry And Topology", "key_path": null}],
+      "evidence_refs": [{"kind": "source", "ref": "grimoire/glossary/3d_vocabulary.md"}]
+    },
+    {
+      "record_id": "core.pbr-hand-painted-vs-pbr-texture",
+      "file_path": "docs/raw/img2threejs-skill-dataset.json",
+      "score": 4.661903223664,
+      "snippets": ["Separate albedo from lighting response and use independent PBR channels for dynamic scene lighting."],
+      "source_refs": [{"path": "docs/raw/img2threejs-skill-dataset.json", "key_path": "categories.material_pbr[12]"}],
+      "evidence_refs": [{"kind": "source", "ref": "docs/raw/img2threejs-skill-dataset.json"}]
+    },
+    {
+      "record_id": "core.description-honest-uncertainty-single-image-limits-convention",
+      "file_path": "docs/raw/img2threejs-skill-dataset.json",
+      "score": 3.986222861816,
+      "snippets": ["Hidden surfaces remain undetermined rather than receiving invented detail without confidence labeling."],
+      "source_refs": [{"path": "docs/raw/img2threejs-skill-dataset.json", "key_path": "categories.description_conventions[6]"}],
+      "evidence_refs": [{"kind": "source", "ref": "docs/raw/img2threejs-skill-dataset.json"}]
+    },
+    {
+      "record_id": "core.shader-mapping-boxgeometry-slides-receivers-grips",
+      "file_path": "docs/raw/img2threejs-skill-dataset.json",
+      "score": 3.982060806801,
+      "snippets": ["Use BoxGeometry for genuinely flat-faced rectangular sub-assemblies."],
+      "source_refs": [{"path": "docs/raw/img2threejs-skill-dataset.json", "key_path": "categories.rendering_shader_mapping[5]"}],
+      "evidence_refs": [{"kind": "source", "ref": "docs/raw/img2threejs-skill-dataset.json"}]
+    }
+  ],
+  "application": [
+    "Use generated procedural UVs for rectilinear brick/granite masses and cylindrical UVs for the turret.",
+    "Keep albedo, roughness, height/normal, and AO independent.",
+    "Treat unseen elevations as explicitly inferred.",
+    "Use boxes only for true assembled solids; use lathe/extrude or curve-based surfaces for the turret, oculus, and rippled expansion."
+  ]
+}
