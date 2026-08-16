@@ -16,6 +16,11 @@ const MIN_BUMPER_GAP = 1.8; // required free space behind the leader bumper
 const STOP_LINE = 4.6;      // stop line distance before the node
 const SIGNAL_LOOKAHEAD = 42; // start reacting to a red below this distance
 const TURN_SIGNAL_DIST = 16; // blink before the intersection
+const LOCAL_LIFE_RADIUS = 120;
+const LOCAL_RECYCLE_RADIUS = 240;
+const LOCAL_FOCUS_SHIFT = 70;
+const LOCAL_CAR_TARGET = 16;
+const LOCAL_PEDESTRIAN_TARGET = 26;
 
 export class TrafficSim {
   constructor(renderer, city, { count = 26 } = {}) {
@@ -41,6 +46,22 @@ export class TrafficSim {
     this.random = random;
     const paint = ['#d94f4a', '#e8b23a', '#4f86c8', '#3f9e8f', '#8f74c8', '#d47a3f', '#f2e9d8', '#6fbf73'];
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    this.localLifeEnabled = realMap;
+    this.localLifeTimer = 0;
+    this.localLifeFocus = null;
+    this.localLifeDiagnostics = {
+      enabled: realMap,
+      radius: LOCAL_LIFE_RADIUS,
+      recycleRadius: LOCAL_RECYCLE_RADIUS,
+      carTarget: LOCAL_CAR_TARGET,
+      pedestrianTarget: LOCAL_PEDESTRIAN_TARGET,
+      carRecycles: 0,
+      pedestrianRecycles: 0,
+      focusUpdates: 0,
+      localCars: 0,
+      localPedestrians: 0,
+      events: [],
+    };
     const trafficCount = realMap ? 42 : count;
     for (let i = 0; i < trafficCount; i += 1) {
       if (!this.edges.length) break;
@@ -49,6 +70,7 @@ export class TrafficSim {
     }
     const pedestrianCount = realMap ? 48 : 26;
     const sidewalkPaths = this.buildSidewalkPaths(city);
+    this.sidewalkPaths = sidewalkPaths;
     this.pedestrianBatch = sidewalkPaths.length ? buildPedestrianBatch(pedestrianCount) : null;
     if (this.pedestrianBatch) this.group.add(this.pedestrianBatch.group);
     for (let i = 0; i < pedestrianCount; i += 1) {
@@ -218,7 +240,9 @@ export class TrafficSim {
   }
 
   update(delta) {
+    delta = Math.max(0, delta);
     this.phase += delta;
+    this.updateLocalLife(delta);
     this.updateCarSpacing();
     for (const car of this.cars) {
       if (car.controlled || !car.edge) continue;
@@ -229,6 +253,166 @@ export class TrafficSim {
       this.updatePedestrian(pedestrian, delta);
     }
     if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
+    if (this.localLifeFocus) this.updateLocalLifeCounts(this.localLifeFocus);
+  }
+
+  updateLocalLife(delta) {
+    if (!this.localLifeEnabled || !this.renderer?.camera) return;
+    this.localLifeTimer -= delta;
+    const anchor = this.renderer.controls?.target || this.renderer.camera.position;
+    const focus = { x: anchor.x, z: anchor.z };
+    const focusMoved = !this.localLifeFocus
+      || Math.hypot(focus.x - this.localLifeFocus.x, focus.z - this.localLifeFocus.z) >= LOCAL_FOCUS_SHIFT;
+    if (!focusMoved && this.localLifeTimer > 0) return;
+    this.localLifeTimer = 1;
+    this.localLifeFocus = focus;
+    this.localLifeDiagnostics.focusUpdates += 1;
+
+    const localCars = this.cars.filter((car) => this.actorDistance(car.group, focus) <= LOCAL_LIFE_RADIUS);
+    const localPedestrians = this.pedestrians
+      .filter((pedestrian) => this.actorDistance(pedestrian.group, focus) <= LOCAL_LIFE_RADIUS);
+    this.recycleCarsNearFocus(focus, Math.max(0, LOCAL_CAR_TARGET - localCars.length));
+    this.recyclePedestriansNearFocus(focus, Math.max(0, LOCAL_PEDESTRIAN_TARGET - localPedestrians.length));
+    this.updateLocalLifeCounts(focus);
+  }
+
+  actorDistance(group, focus) {
+    return Math.hypot(group.position.x - focus.x, group.position.z - focus.z);
+  }
+
+  actorIsVisible(group) {
+    return this.worldPointIsVisible(group.position.x, group.position.z, group.position.y + 1);
+  }
+
+  worldPointIsVisible(x, z, y = null) {
+    const camera = this.renderer?.camera;
+    if (!camera) return false;
+    const worldY = y ?? (this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 1 : 1);
+    const projected = new THREE.Vector3(x, worldY, z).project(camera);
+    return projected.z >= -1 && projected.z <= 1
+      && Math.abs(projected.x) <= 1.08 && Math.abs(projected.y) <= 1.08;
+  }
+
+  nearbyPlacements(paths, focus, maxDistance = LOCAL_LIFE_RADIUS - 8) {
+    return paths.map((path) => {
+      const points = path.points || path;
+      const cum = path.cum || cumulativeLengths(points);
+      const placement = nearestPointOnPath(points, cum, focus);
+      return { path, points, cum, ...placement };
+    }).filter((entry) => entry.distanceToFocus <= maxDistance)
+      .sort((a, b) => a.distanceToFocus - b.distanceToFocus || String(a.path.id || '').localeCompare(String(b.path.id || '')));
+  }
+
+  recycleCarsNearFocus(focus, needed) {
+    if (needed <= 0) return;
+    const placements = this.nearbyPlacements(
+      this.edges.filter((edge) => ['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'service'].includes(edge.highway)),
+      focus,
+    );
+    if (!placements.length) return;
+    const donors = this.cars.filter((car) => !car.controlled
+      && this.actorDistance(car.group, focus) >= LOCAL_RECYCLE_RADIUS
+      && !this.actorIsVisible(car.group))
+      .sort((a, b) => this.actorDistance(b.group, focus) - this.actorDistance(a.group, focus));
+    let placed = 0;
+    for (const car of donors) {
+      if (placed >= needed) break;
+      let selected = null;
+      for (let attempt = 0; attempt < placements.length; attempt += 1) {
+        const candidate = placements[(placed * 7 + attempt) % placements.length];
+        const jitter = ((placed % 5) - 2) * 5.5;
+        const arc = clamp(candidate.arc + jitter, 2, Math.max(2, candidate.cum.at(-1) - 2));
+        const clear = !this.cars.some((other) => other !== car && other.edge === candidate.path
+          && Math.abs(this.edgeArc(other) - arc) < 8);
+        const edgePosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
+        const visibleAfter = this.worldPointIsVisible(edgePosition.x, edgePosition.z);
+        if (clear && (this.localLifeDiagnostics.focusUpdates === 1 || !visibleAfter)) {
+          selected = { ...candidate, arc, edgePosition, visibleAfter };
+          break;
+        }
+      }
+      if (!selected) continue;
+      const fromDistance = this.actorDistance(car.group, focus);
+      const visibleBefore = this.actorIsVisible(car.group);
+      this.assignEdge(car, selected.path, selected.edgePosition.index, selected.edgePosition.distance);
+      car.speed = 2 + this.random() * 2.5;
+      car.stopped = false;
+      car.braking = false;
+      this.localLifeDiagnostics.carRecycles += 1;
+      const toDistance = Math.hypot(selected.edgePosition.x - focus.x, selected.edgePosition.z - focus.z);
+      this.recordLocalLifeEvent(
+        'car', this.cars.indexOf(car), fromDistance, toDistance, visibleBefore, selected.visibleAfter,
+      );
+      placed += 1;
+    }
+  }
+
+  recyclePedestriansNearFocus(focus, needed) {
+    if (needed <= 0 || !this.sidewalkPaths?.length) return;
+    const placements = this.nearbyPlacements(this.sidewalkPaths, focus);
+    if (!placements.length) return;
+    const donors = this.pedestrians.filter((pedestrian) => this.actorDistance(pedestrian.group, focus) >= LOCAL_RECYCLE_RADIUS
+      && !this.actorIsVisible(pedestrian.group))
+      .sort((a, b) => this.actorDistance(b.group, focus) - this.actorDistance(a.group, focus));
+    let placed = 0;
+    for (const pedestrian of donors) {
+      if (placed >= needed) break;
+      let selected = null;
+      for (let attempt = 0; attempt < placements.length; attempt += 1) {
+        const candidate = placements[(placed * 11 + attempt) % placements.length];
+        const total = candidate.cum.at(-1) || 0.01;
+        const jitter = ((placed % 7) - 3) * 2.4;
+        const arc = clamp(candidate.arc + jitter, 0.5, Math.max(0.5, total - 0.5));
+        const pathPosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
+        const visibleAfter = this.worldPointIsVisible(pathPosition.x, pathPosition.z);
+        if (this.localLifeDiagnostics.focusUpdates === 1 || !visibleAfter) {
+          selected = { ...candidate, total, arc, pathPosition, visibleAfter };
+          break;
+        }
+      }
+      if (!selected) continue;
+      const fromDistance = this.actorDistance(pedestrian.group, focus);
+      const visibleBefore = this.actorIsVisible(pedestrian.group);
+      pedestrian.points = selected.points;
+      pedestrian.cum = selected.cum;
+      pedestrian.total = selected.total;
+      pedestrian.s = selected.arc;
+      pedestrian.seg = selected.pathPosition.index;
+      this.localLifeDiagnostics.pedestrianRecycles += 1;
+      const toDistance = Math.hypot(selected.pathPosition.x - focus.x, selected.pathPosition.z - focus.z);
+      this.recordLocalLifeEvent(
+        'pedestrian', pedestrian.instanceIndex, fromDistance, toDistance, visibleBefore, selected.visibleAfter,
+      );
+      placed += 1;
+    }
+  }
+
+  recordLocalLifeEvent(type, index, fromDistance, toDistance, visibleBefore, visibleAfter) {
+    this.localLifeDiagnostics.events.push({
+      id: `${type}:${index}`,
+      fromDistance: Number(fromDistance.toFixed(2)),
+      toDistance: Number(toDistance.toFixed(2)),
+      visibleBefore,
+      visibleAfter,
+      bootstrap: this.localLifeDiagnostics.focusUpdates === 1,
+      phase: Number(this.phase.toFixed(3)),
+    });
+    if (this.localLifeDiagnostics.events.length > 128) this.localLifeDiagnostics.events.shift();
+  }
+
+  updateLocalLifeCounts(focus) {
+    this.localLifeDiagnostics.localCars = this.cars
+      .filter((car) => this.actorDistance(car.group, focus) <= LOCAL_LIFE_RADIUS).length;
+    this.localLifeDiagnostics.localPedestrians = this.pedestrians
+      .filter((pedestrian) => this.actorDistance(pedestrian.group, focus) <= LOCAL_LIFE_RADIUS).length;
+  }
+
+  getLocalLifeDiagnostics() {
+    return {
+      ...this.localLifeDiagnostics,
+      focus: this.localLifeFocus ? { ...this.localLifeFocus } : null,
+      events: this.localLifeDiagnostics.events.map((event) => ({ ...event })),
+    };
   }
 
   updateAiCar(car, delta) {
@@ -513,7 +697,7 @@ export class TrafficSim {
 
   chooseNextEdge(car, a, b) {
     const raw = car.edge.outgoing || [];
-    const outgoing = raw.filter((e) => e.streetId !== car.edge.streetId || Math.random() < 0.35);
+    const outgoing = raw.filter((e) => e.streetId !== car.edge.streetId || this.random() < 0.35);
     const pool = outgoing.length ? outgoing : raw;
     if (!pool.length) return null;
     const inDx = b.x - a.x;
@@ -535,7 +719,7 @@ export class TrafficSim {
       totalWeight += weight;
       return { edge, weight };
     });
-    let pick = Math.random() * totalWeight;
+    let pick = this.random() * totalWeight;
     for (const candidate of weighted) {
       pick -= candidate.weight;
       if (pick <= 0) return candidate.edge;
@@ -597,4 +781,43 @@ export class TrafficSim {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function cumulativeLengths(points) {
+  const cum = [0];
+  for (let i = 1; i < points.length; i += 1) {
+    cum.push(cum[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z));
+  }
+  return cum;
+}
+
+function nearestPointOnPath(points, cum, focus) {
+  let best = { arc: 0, distanceToFocus: Infinity };
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const lengthSq = dx * dx + dz * dz || 1;
+    const t = clamp(((focus.x - a.x) * dx + (focus.z - a.z) * dz) / lengthSq, 0, 1);
+    const x = a.x + dx * t;
+    const z = a.z + dz * t;
+    const distanceToFocus = Math.hypot(x - focus.x, z - focus.z);
+    if (distanceToFocus < best.distanceToFocus) {
+      const segmentLength = cum[i + 1] - cum[i] || Math.sqrt(lengthSq);
+      best = { arc: cum[i] + segmentLength * t, distanceToFocus };
+    }
+  }
+  return best;
+}
+
+function pathPositionAtArc(points, cum, arc) {
+  let index = 0;
+  while (index < points.length - 2 && arc > cum[index + 1]) index += 1;
+  const distance = clamp(arc - cum[index], 0, (cum[index + 1] - cum[index]) || 0);
+  const a = points[index];
+  const b = points[index + 1];
+  const segmentLength = (cum[index + 1] - cum[index]) || 0.01;
+  const t = clamp(distance / segmentLength, 0, 1);
+  return { index, distance, x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t };
 }
