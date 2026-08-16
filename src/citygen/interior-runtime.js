@@ -259,40 +259,108 @@ function createSignTexture(portal) {
   return texture;
 }
 
-function createSfArtTexture(seedText) {
+function createSfArtTexture(seedText, exteriorContext) {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 192;
+  canvas.width = 512;
+  canvas.height = 300;
   const context = canvas.getContext('2d');
   const warm = seededUnit(seedText) > 0.5;
   context.fillStyle = warm ? '#b44a35' : '#315d70';
-  context.fillRect(0, 0, 256, 192);
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#b9c7c9';
+  context.fillRect(0, 0, canvas.width, 116);
+  context.fillStyle = '#53636a';
+  context.beginPath();
+  context.moveTo(0, 116);
+  context.lineTo(215, 62);
+  context.lineTo(310, 84);
+  context.lineTo(512, 40);
+  context.lineTo(512, 150);
+  context.lineTo(0, 150);
+  context.fill();
   context.fillStyle = '#f0d4a1';
-  context.fillRect(0, 144, 256, 48);
+  context.fillRect(0, 224, canvas.width, 76);
+  context.fillStyle = '#4a4e50';
+  context.fillRect(0, 164, canvas.width, 62);
+  context.strokeStyle = '#ded1b9';
+  context.lineWidth = 4;
+  context.beginPath();
+  context.moveTo(0, 202);
+  context.lineTo(512, 202);
+  context.stroke();
   context.strokeStyle = '#f5e3bd';
   context.lineWidth = 7;
   context.beginPath();
-  context.moveTo(42, 150);
-  context.lineTo(42, 40);
-  context.moveTo(214, 150);
-  context.lineTo(214, 40);
-  context.moveTo(28, 74);
-  context.bezierCurveTo(84, 118, 172, 118, 228, 74);
+  context.moveTo(84, 182);
+  context.lineTo(84, 60);
+  context.moveTo(428, 182);
+  context.lineTo(428, 60);
+  context.moveTo(58, 98);
+  context.bezierCurveTo(168, 152, 344, 152, 454, 98);
   context.stroke();
   context.lineWidth = 3;
-  for (let x = 52; x < 214; x += 20) {
+  for (let x = 104; x < 428; x += 40) {
     context.beginPath();
-    context.moveTo(x, 94 + Math.abs(133 - x) * 0.18);
-    context.lineTo(x, 150);
+    context.moveTo(x, 124 + Math.abs(266 - x) * 0.18);
+    context.lineTo(x, 182);
     context.stroke();
   }
   context.fillStyle = '#172129';
-  context.font = '700 18px system-ui, sans-serif';
+  context.font = '700 26px system-ui, sans-serif';
   context.textAlign = 'center';
-  context.fillText('THE CITY BY THE BAY', 128, 177);
+  context.fillText('THE CITY BY THE BAY', 256, 274);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  const image = new Image();
+  let acceptsImage = true;
+  image.decoding = 'async';
+  image.onload = () => {
+    if (!acceptsImage) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    const sourceWidth = image.naturalWidth;
+    const sourceHeight = image.naturalHeight * 0.76;
+    context.drawImage(
+      image,
+      0,
+      0,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+    texture.needsUpdate = true;
+    exteriorContext.ready = true;
+  };
+  image.onerror = () => {
+    if (!acceptsImage) return;
+    exteriorContext.error = 'load-failed';
+  };
+  image.src = '/assets/sf-lobby-exterior-backdrop-generated-v1.png';
+  texture.userData.cancelPendingLoad = () => {
+    acceptsImage = false;
+    image.onload = null;
+    image.onerror = null;
+  };
+  return texture;
+}
+
+function createContactShadowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(64, 64, 4, 64, 64, 62);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.94)');
+  gradient.addColorStop(0.4, 'rgba(255,255,255,0.68)');
+  gradient.addColorStop(0.78, 'rgba(255,255,255,0.2)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
   return texture;
 }
 
@@ -309,6 +377,11 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   const group = new THREE.Group();
   group.name = 'active-building-interior';
   const materials = new Set();
+  const exteriorContext = {
+    source: 'generated-sf-soma-v1',
+    texture: '/assets/sf-lobby-exterior-backdrop-generated-v1.png',
+    ready: false,
+  };
   const textures = [
     createSurfaceTexture(portal.id, 'marble'),
     createSurfaceTexture(portal.id, 'plaster'),
@@ -317,7 +390,8 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     createSurfaceTexture(portal.id, 'stone'),
     createSurfaceTexture(portal.id, 'rug'),
     createSignTexture(portal),
-    createSfArtTexture(portal.id),
+    createSfArtTexture(portal.id, exteriorContext),
+    createContactShadowTexture(),
   ];
   const makeMaterial = (color, options = {}) => {
     const surface = material(color, options);
@@ -332,7 +406,13 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     trim: makeMaterial('#30383c', { roughness: 0.42, metalness: 0.38 }),
     wood: makeMaterial('#f4dfc9', { map: textures[2], bumpMap: textures[2], bumpScale: 0.025, roughness: 0.38, metalness: 0.04 }),
     stone: makeMaterial('#d8d3cb', { map: textures[4], bumpMap: textures[4], bumpScale: 0.018, roughness: 0.24, metalness: 0.08 }),
-    glass: makeMaterial('#e3f0ef', { transparent: true, opacity: 0.16, depthWrite: false, roughness: 0.06, metalness: 0.12 }),
+    glass: makeMaterial('#f6fbfa', {
+      transparent: true,
+      opacity: 0.075,
+      depthWrite: false,
+      roughness: 0.025,
+      metalness: 0.04,
+    }),
     brass: makeMaterial('#b68a49', { roughness: 0.26, metalness: 0.72 }),
     fabric: makeMaterial('#e0edf0', { map: textures[3], bumpMap: textures[3], bumpScale: 0.035, roughness: 0.92, metalness: 0 }),
     rug: makeMaterial('#f0d5d0', { map: textures[5], bumpMap: textures[5], bumpScale: 0.025, roughness: 0.96, metalness: 0 }),
@@ -385,10 +465,37 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   const openingZ = anchor.z + depth * 0.16;
   const segALength = depth * 0.66 - corridorHalf;
   const segBLength = depth * 0.34 - corridorHalf;
+  const streetGrade = (seededUnit(`${portal.id}:street-grade`) > 0.5 ? 1 : -1)
+    * (0.035 + seededUnit(`${portal.id}:street-grade-strength`) * 0.025);
+  const exteriorBackdropZ = frontZ + 7.1;
 
   addInstances('lobby-floor-marble', 'floor', surfaces.floor, [
     { position: [anchor.x, anchor.y - 0.09, anchor.z], size: [width, 0.18, depth] },
     { position: [rightX + corridorDepth / 2, anchor.y - 0.09, openingZ], size: [corridorDepth, 0.18, corridorHalf * 2] },
+    {
+      position: [anchor.x, anchor.y - 0.07, frontZ + 0.72],
+      size: [width + 7, 0.14, 1.45],
+      rotation: [0, 0, streetGrade],
+      color: '#aaa59b',
+    },
+    {
+      position: [anchor.x, anchor.y - 0.13, frontZ + 3.45],
+      size: [width + 10, 0.12, 4.0],
+      rotation: [0, 0, streetGrade],
+      color: '#343a3c',
+    },
+    {
+      position: [anchor.x, anchor.y - 0.07, frontZ + 5.85],
+      size: [width + 10, 0.14, 0.82],
+      rotation: [0, 0, streetGrade],
+      color: '#9a968d',
+    },
+    {
+      position: [anchor.x, anchor.y - 0.04, frontZ + 3.48],
+      size: [width + 9, 0.03, 0.07],
+      rotation: [0, 0, streetGrade],
+      color: '#d8c9a6',
+    },
   ]);
   add({ name: 'lobby-coffered-ceiling', category: 'ceiling', size: [width, 0.14, depth], position: [anchor.x, anchor.y + height, anchor.z], surface: surfaces.ceiling });
   const frontSection = Math.max(1.2, (width - 6.2) / 2);
@@ -404,6 +511,9 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight / 2, openingZ + corridorHalf], size: [corridorDepth, corridorHeight, 0.18] },
     { position: [rightX + corridorDepth, anchor.y + corridorHeight / 2, openingZ], size: [0.18, corridorHeight, corridorHalf * 2] },
     { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight + 0.07, openingZ], size: [corridorDepth, 0.14, corridorHalf * 2] },
+    { position: [anchor.x - 3.11, anchor.y + 2.0, frontZ - 0.48], size: [0.28, 4.0, 0.94], color: '#c6bcae' },
+    { position: [anchor.x + 3.11, anchor.y + 2.0, frontZ - 0.48], size: [0.28, 4.0, 0.94], color: '#c6bcae' },
+    { position: [anchor.x, anchor.y + 4.02, frontZ - 0.48], size: [6.5, 0.24, 0.94], color: '#c6bcae' },
   ]);
   addInstances('lobby-trim-baseboards', 'trim', surfaces.trim, [
     { position: [anchor.x, anchor.y + 0.09, backZ + 0.13], size: [width - 0.2, 0.18, 0.1] },
@@ -416,11 +526,32 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [rightX - 0.16, anchor.y + height - 0.12, openingZ + corridorHalf + segBLength / 2], size: [0.2, 0.24, Math.max(0.2, segBLength - 0.14)] },
     { position: [anchor.x - (width + 6.2) / 4, anchor.y + height - 0.12, frontZ - 0.16], size: [frontSection, 0.24, 0.2] },
     { position: [anchor.x + (width + 6.2) / 4, anchor.y + height - 0.12, frontZ - 0.16], size: [frontSection, 0.24, 0.2] },
+    {
+      position: [anchor.x, anchor.y + 0.035, frontZ + 1.45],
+      size: [width + 8, 0.07, 0.1],
+      rotation: [0, 0, streetGrade],
+      color: '#66625b',
+    },
+    {
+      position: [anchor.x, anchor.y - 0.045, frontZ + 2.8],
+      size: [width + 9, 0.035, 0.045],
+      rotation: [0, 0, streetGrade],
+      color: '#857259',
+    },
+    {
+      position: [anchor.x, anchor.y - 0.045, frontZ + 4.05],
+      size: [width + 9, 0.035, 0.045],
+      rotation: [0, 0, streetGrade],
+      color: '#857259',
+    },
   ]);
   addInstances('lobby-back-wall-pilasters', 'architecture', surfaces.brass, [
     { position: [anchor.x - width * 0.46, anchor.y + height / 2, backZ + 0.18], size: [0.18, height - 0.22, 0.18] },
     { position: [anchor.x + width * 0.08, anchor.y + height / 2, backZ + 0.18], size: [0.18, height - 0.22, 0.18] },
     { position: [anchor.x - width * 0.19, anchor.y + 3.48, backZ + 0.18], size: [width * 0.54, 0.16, 0.18] },
+    { position: [anchor.x - width * 0.43, anchor.y + 2.65, frontZ + 3.25], size: [0.08, 5.3, 0.08], color: '#293236' },
+    { position: [anchor.x + width * 0.43, anchor.y + 2.65, frontZ + 3.25], size: [0.08, 5.3, 0.08], color: '#293236' },
+    { position: [anchor.x, anchor.y + 5.05, frontZ + 3.25], size: [width + 5.5, 0.045, 0.045], rotation: [0, 0, streetGrade], color: '#293236' },
   ], INTERIOR_ROUNDED_GEOMETRY);
   const cofferHalfWidth = width * 0.38;
   const cofferHalfDepth = depth * 0.38;
@@ -452,6 +583,12 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [anchor.x - 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
     { position: [anchor.x + 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
     { position: [anchor.x, anchor.y + 0.06, doorZ - 0.015], size: [6.2, 0.12, 0.2] },
+    { position: [anchor.x, anchor.y + 0.09, doorZ - 0.4], size: [6.0, 0.1, 0.72], color: '#8c714b' },
+    { position: [anchor.x - 3.0, anchor.y + 1.95, doorZ - 0.42], size: [0.12, 3.86, 0.74], color: '#95774e' },
+    { position: [anchor.x + 3.0, anchor.y + 1.95, doorZ - 0.42], size: [0.12, 3.86, 0.74], color: '#95774e' },
+    { position: [anchor.x, anchor.y + 3.92, doorZ - 0.42], size: [6.12, 0.12, 0.74], color: '#95774e' },
+    { position: [anchor.x - 0.42, anchor.y + 1.36, doorZ - 0.12], size: [0.045, 0.72, 0.12], color: '#d6c08e' },
+    { position: [anchor.x + 0.42, anchor.y + 1.36, doorZ - 0.12], size: [0.045, 0.72, 0.12], color: '#d6c08e' },
   ], INTERIOR_ROUNDED_GEOMETRY);
 
   const deskX = anchor.x - width * 0.17;
@@ -560,9 +697,9 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   })), INTERIOR_SPHERE_GEOMETRY);
 
   const artOffset = (seededUnit(portal.id) - 0.5) * 0.6;
-  const art = new THREE.InstancedMesh(INTERIOR_PLANE_GEOMETRY, surfaces.art, 2);
-  art.name = 'lobby-san-francisco-art';
-  art.userData.category = 'decor';
+  const art = new THREE.InstancedMesh(INTERIOR_PLANE_GEOMETRY, surfaces.art, 3);
+  art.name = 'lobby-sf-exterior-context';
+  art.userData.category = 'exterior-context';
   const artDummy = new THREE.Object3D();
   [-1, 1].forEach((side, index) => {
     artDummy.position.set(anchor.x + side * (width / 2 - 0.11), anchor.y + 2.15, anchor.z - depth * (0.1 + artOffset * 0.02));
@@ -571,7 +708,13 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     artDummy.updateMatrix();
     art.setMatrixAt(index, artDummy.matrix);
   });
+  artDummy.position.set(anchor.x, anchor.y + 3.56, exteriorBackdropZ);
+  artDummy.rotation.set(0, Math.PI, 0);
+  artDummy.scale.set(width + 7.8, 7.12, 1);
+  artDummy.updateMatrix();
+  art.setMatrixAt(2, artDummy.matrix);
   art.instanceMatrix.needsUpdate = true;
+  art.computeBoundingSphere?.();
   group.add(art);
   add({ name: 'lobby-fire-safety', category: 'safety', size: [0.24, 0.7, 0.2], position: [leftX + 0.28, anchor.y + 0.65, anchor.z - depth * 0.05], surface: surfaces.safety, rounded: true });
 
@@ -622,7 +765,13 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [liftGuestX + 0.86, anchor.y + 0.61, liftGuestZ + 0.2], size: [0.2, 0.04, 0.05], color: '#3d4a54' },
   ], INTERIOR_ROUNDED_GEOMETRY);
 
-  const shadowMaterial = new THREE.MeshBasicMaterial({ color: '#17130f', transparent: true, opacity: 0.17, depthWrite: false });
+  const shadowMaterial = new THREE.MeshBasicMaterial({
+    color: '#21160f',
+    alphaMap: textures[8],
+    transparent: true,
+    opacity: 0.56,
+    depthWrite: false,
+  });
   materials.add(shadowMaterial);
   const shadowSpots = [
     [anchor.x - width * 0.29, sofaZ, 3.2, 1.35],
@@ -637,6 +786,8 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     [arrivalX, arrivalZ, 0.62, 0.62],
     [anchor.x - 2.7, frontZ - 1.6, 1.0, 1.0],
     [anchor.x + 2.7, frontZ - 1.6, 1.0, 1.0],
+    [anchor.x, frontZ - 0.34, 5.8, 0.82],
+    [anchor.x, frontZ + 0.48, 5.6, 0.72],
   ];
   const contactShadows = new THREE.InstancedMesh(INTERIOR_SHADOW_GEOMETRY, shadowMaterial, shadowSpots.length);
   contactShadows.name = 'lobby-contact-shadows';
@@ -689,9 +840,13 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     roomId: descriptor.id,
     archetype: portal.interior.archetype,
     propCategories,
+    exteriorContext,
     dispose: () => {
       for (const surface of materials) surface.dispose();
-      for (const texture of textures) texture.dispose();
+      for (const texture of textures) {
+        texture.userData.cancelPendingLoad?.();
+        texture.dispose();
+      }
     },
   };
   renderer.root.add(group);
