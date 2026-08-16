@@ -126,7 +126,7 @@ try {
       `${name} did not inspect the current ${expectedDescriptorCount}-tile runtime.`,
     );
     assert(capture.rejected.length === 0, `${name} rejected a source-locked tile: ${JSON.stringify(capture.rejected)}`);
-    assert(capture.presentation?.version === 'sf-map-render-depth-v1', `${name} changed the render-depth policy identity.`);
+    assert(capture.presentation?.version === 'sf-map-render-depth-v2', `${name} changed the render-depth policy identity.`);
     assert(capture.presentation?.lightingFill?.includes('non-shadow-casting'), `${name} did not expose the fill policy.`);
     assert(capture.presentation?.viewFill?.castShadow === false, `${name} view fill unexpectedly casts shadows.`);
     assert(tupleWithin(capture.presentation.viewFill.target, capture.camera.target), `${name} fill target drifted from camera target.`);

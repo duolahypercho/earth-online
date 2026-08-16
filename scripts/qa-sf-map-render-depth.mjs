@@ -107,7 +107,7 @@ try {
   for (const [name, capture, expectedResidents] of [['ferry', ferry, 10], ['district', district, 16]]) {
     assert(capture.residents.length === expectedResidents, `${name} resident count changed.`);
     assert(capture.rejected.length === 0, `${name} rejected a source-locked tile.`);
-    assert(capture.presentation?.version === 'sf-map-render-depth-v1', `${name} did not expose render-depth policy.`);
+    assert(capture.presentation?.version === 'sf-map-render-depth-v2', `${name} did not expose render-depth policy.`);
     assert(capture.presentation.buildingToneCount === 4, `${name} did not keep four deterministic building tones.`);
     assert(capture.presentation.activeViewShadowed, `${name} did not use the local shadow policy.`);
     assert(capture.metricContract?.runtimeUnitsPerMetre === 1 && capture.metricContract.sceneScale === 1 && capture.metricContract.originSubtractions === 1, `${name} changed metric placement.`);

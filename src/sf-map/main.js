@@ -139,10 +139,11 @@ const BUILDING_PALETTE = Object.freeze([
   new THREE.Color(0x8b6456), // weathered brick
 ]);
 const PRESENTATION_POLICY = Object.freeze({
-  version: 'sf-map-render-depth-v1',
+  version: 'sf-map-render-depth-v2',
   buildingToneCount: BUILDING_PALETTE.length,
   paletteWorldCellMetres: 62,
   roadColor: '#53615e',
+  waterNormalResponse: 'world-up-view-space-v1',
   shadows: 'local Ferry/District directional shadow frustum only; Plan retains readable unshadowed overview',
   lightingFill: 'camera-facing neutral daylight fill; non-shadow-casting and presentation-only',
   lightingFillIntensities: VIEW_FILL_INTENSITY,
@@ -207,6 +208,25 @@ function applyBuildingPresentation(material) {
     palette: BUILDING_PALETTE,
     paletteWorldCellMetres: PRESENTATION_POLICY.paletteWorldCellMetres,
   });
+}
+
+function applyWaterPresentation(material) {
+  if (material.userData.sfMapWaterNormalResponse === 'world-up-view-space-v1') return;
+  const compileMaterial = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, webglRenderer) => {
+    compileMaterial.call(material, shader, webglRenderer);
+    const normalMarker = '#include <normal_fragment_maps>';
+    if (!shader.fragmentShader.includes(normalMarker)) {
+      throw new Error('SF map water shader is missing Three normal_fragment_maps');
+    }
+    shader.fragmentShader = shader.fragmentShader.replace(
+      normalMarker,
+      `${normalMarker}\n  normal = normalize(mat3(viewMatrix) * vec3(0.0, 1.0, 0.0));`,
+    );
+  };
+  material.customProgramCacheKey = () => 'sf-map-water-world-up-v1';
+  material.userData.sfMapWaterNormalResponse = 'world-up-view-space-v1';
+  material.needsUpdate = true;
 }
 
 function copyView(view) {
@@ -630,6 +650,7 @@ async function loadTile(state) {
         node.material.color.setHex(0x0a5870);
         node.material.roughness = 0.22;
         node.material.metalness = 0.18;
+        applyWaterPresentation(node.material);
       }
       if (node.material?.name === 'coastline-osm-night') node.material.color.setHex(0x2f7f8c);
     });
@@ -857,6 +878,7 @@ async function initialiseStream() {
           materialPrograms: {
             buildings: 'sf-map-building-palette-v1',
             sourceToneBuildings: `sf-map-building-source-tone-v1:${SF_BUILDING_SOURCE_TONE_CONTRACT_V1.derivation.policySha256}`,
+            water: 'sf-map-water-world-up-v1',
             roads: 'single muted asphalt material',
           },
           performance: {
