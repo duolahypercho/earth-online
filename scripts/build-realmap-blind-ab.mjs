@@ -7,6 +7,7 @@ import { readFile, writeFile, access } from 'node:fs/promises';
 // Reports separate geography and art scores.
 const args = process.argv.slice(2);
 const outPath = args[args.indexOf('--out') + 1] || '.qa-realmap-blind-ab.html';
+const blindOrderSeed = 'sf-realmap-blind-ab-v2';
 
 const pairs = [
   {
@@ -129,13 +130,24 @@ const html = `<!doctype html>
   <script>
     const pairs = ${JSON.stringify(embedded.map(({ refData, gameData, ...rest }) => ({ ...rest, hasRef: true, hasGame: true })))};
     const data = ${JSON.stringify(embedded.map(({ id, refData, gameData, axis }) => ({ id, refData, gameData, axis })))};
-    const storageKey = 'sf-realmap-blind-ab-v1';
+    const blindOrderSeed = ${JSON.stringify(blindOrderSeed)};
+    const storageKey = blindOrderSeed;
     const saved = (() => { try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { return {}; } })();
     const choices = saved.choices || {};
     const order = saved.order || {};
     const main = document.querySelector('#main');
     const geoScoreEl = document.querySelector('#geo-score');
     const artScoreEl = document.querySelector('#art-score');
+
+    function deterministicOrder(pairId) {
+      let hash = 2166136261;
+      const value = blindOrderSeed + ':' + pairId;
+      for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0) % 2 === 0;
+    }
 
     function updateScoreboard() {
       let geoWins = 0;
@@ -162,7 +174,7 @@ const html = `<!doctype html>
       const removals = main.querySelectorAll('.pair, .results, .reveal');
       removals.forEach((el) => el.remove());
       for (const pair of pairs) {
-        if (typeof order[pair.id] !== 'boolean') order[pair.id] = Math.random() < 0.5;
+        if (typeof order[pair.id] !== 'boolean') order[pair.id] = deterministicOrder(pair.id);
         const d = data.find((entry) => entry.id === pair.id);
         const section = document.createElement('section');
         section.className = 'pair';
@@ -247,6 +259,7 @@ const html = `<!doctype html>
       const results = document.createElement('section');
       results.className = 'results';
       const report = {
+        blindOrderSeed,
         geography: {
           score: geoTotal ? geoWins + '/' + geoTotal + ' game-wins' : 'no votes',
           gameWins: geoWins,
@@ -300,6 +313,7 @@ const html = `<!doctype html>
 await writeFile(outPath, html);
 console.log('saved', outPath);
 console.log(JSON.stringify({
+  blindOrderSeed,
   pairs: pairs.map((p) => ({ id: p.id, label: p.label, axis: p.axis })),
   geographyPairs: pairs.filter((p) => p.axis === 'geography').length,
   artPairs: pairs.filter((p) => p.axis === 'art').length,

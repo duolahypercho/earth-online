@@ -65,6 +65,7 @@
     "qa:realmap": "node scripts/qa-realmap.mjs",
     "qa:realmap-critic": "node scripts/qa-realmap-critic.mjs",
     "qa:realmap-blind-ab": "node scripts/build-realmap-blind-ab.mjs",
+    "verify:realmap-blind-ab": "node scripts/verify-realmap-blind-ab.mjs",
     "verify:city": "node scripts/verify-city-simulation.mjs",
     "verify:gauntlet": "node scripts/verify-gauntlet-matrix.mjs",
     "verify:streaming": "node scripts/verify-streaming.mjs",
