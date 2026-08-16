@@ -18,7 +18,10 @@ page.on('pageerror', (error) => errors.push(error.message));
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(
-    () => window.__CITYGEN__?.getState().webgpu && window.__CITYGEN__?.getState().buildings >= 700,
+    () => window.__CITYGEN__?.getState().webgpu
+      && window.__CITYGEN__?.getState().buildings >= 700
+      && window.__CITYGEN__?.getRenderer()?.root
+      && window.__CITYGEN__?.getRenderer()?.streetLampRecords?.length === 240,
     { timeout: 30000 },
   );
   const report = await page.evaluate(() => {

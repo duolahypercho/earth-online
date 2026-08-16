@@ -24,6 +24,15 @@ const VEHICLE_BATCH_BASELINE = Object.freeze({
   night: { drawCalls: 559, triangles: 529064, geometries: 402, textures: 259 },
 });
 
+const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
+  // Four accent batches replace existing logical prop records. The pay
+  // station remains culled in the canonical life poses, while the reused
+  // trash batch submits its second instance without another draw call.
+  pass: 'hero-sidewalk-life-v5',
+  daylight: { drawCalls: 3, triangles: 448, geometries: 3, textures: 0 },
+  night: { drawCalls: 1, triangles: 280, geometries: 3, textures: 0 },
+});
+
 const VEHICLE_PRESENTATION = Object.freeze({
   version: 'sf-vehicle-materials-v2',
   paletteVersion: 'sf-civilian-traffic-paint-v2',
@@ -155,18 +164,14 @@ try {
   assert.ok(events.every((event) => event.visibleBefore === false));
   assert.ok(events.filter((event) => !event.intentionalRefresh).every((event) => event.visibleAfter === false));
   assert.ok(night.render.drawCalls <= 1200, `draw calls remain bounded: ${night.render.drawCalls}`);
-  for (const [label, sampleReport, baseline] of [
-    ['daylight', daylight, VEHICLE_BATCH_BASELINE.daylight],
-    ['night', night, VEHICLE_BATCH_BASELINE.night],
+  for (const [label, sampleReport, baseline, curbDelta] of [
+    ['daylight', daylight, VEHICLE_BATCH_BASELINE.daylight, HERO_CURB_PRESENTATION_DELTA.daylight],
+    ['night', night, VEHICLE_BATCH_BASELINE.night, HERO_CURB_PRESENTATION_DELTA.night],
   ]) {
-    assert.equal(sampleReport.render.drawCalls, baseline.drawCalls,
-      `${label}: vehicle identity keeps render draws unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
-    assert.equal(sampleReport.render.triangles, baseline.triangles,
-      `${label}: vehicle identity keeps render triangles unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
-    assert.equal(sampleReport.render.geometries, baseline.geometries,
-      `${label}: vehicle identity keeps render geometries unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
-    assert.equal(sampleReport.render.textures, baseline.textures,
-      `${label}: vehicle identity keeps textures unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
+    for (const field of ['drawCalls', 'triangles', 'geometries', 'textures']) {
+      assert.equal(sampleReport.render[field], baseline[field] + curbDelta[field],
+        `${label}: ${HERO_CURB_PRESENTATION_DELTA.pass} has only its exact ${field} delta`);
+    }
   }
   assert.deepEqual(errors, []);
 
@@ -195,6 +200,11 @@ try {
         geometries: night.render.geometries - VEHICLE_BATCH_BASELINE.night.geometries,
         textures: night.render.textures - VEHICLE_BATCH_BASELINE.night.textures,
       },
+    },
+    heroCurbPresentation: {
+      pass: HERO_CURB_PRESENTATION_DELTA.pass,
+      daylightDelta: HERO_CURB_PRESENTATION_DELTA.daylight,
+      nightDelta: HERO_CURB_PRESENTATION_DELTA.night,
     },
     diagnostics: {
       enabled: night.diagnostics.enabled,

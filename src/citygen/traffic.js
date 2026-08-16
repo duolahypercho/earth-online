@@ -26,6 +26,45 @@ const LOCAL_RECYCLE_RADIUS = 240;
 const LOCAL_FOCUS_SHIFT = 70;
 const LOCAL_CAR_TARGET = 16;
 const LOCAL_PEDESTRIAN_TARGET = 26;
+const HERO_CURB_LIFE_PASS = 'market-pedestrian-life-v3';
+const HERO_CURB_SOURCE = Object.freeze({
+  segmentId: 'sf-seg-308',
+  streetId: 'sf-street-228196396',
+  side: 1,
+  benchSourceT: 0.63,
+  benchLateralOffsetMeters: 4.38,
+  lampSourceT: 0.5,
+  lampLateralOffsetMeters: 4.544,
+});
+const HERO_CURB_WALKERS = Object.freeze([
+  Object.freeze({
+    role: 'destination-walker',
+    poseKind: 'walking-destination',
+    sourceTBounds: Object.freeze([0.36, 0.38]),
+    lateralOffsetMeters: 5.05,
+    inwardAttentionYawSign: 1,
+  }),
+  Object.freeze({
+    role: 'destination-walker',
+    poseKind: 'walking-destination',
+    sourceTBounds: Object.freeze([0.77, 0.79]),
+    lateralOffsetMeters: 5.05,
+    inwardAttentionYawSign: -1,
+  }),
+]);
+const HERO_CURB_WALK_SPEED = 0.72;
+const HERO_CURB_TURN_SECONDS = 0.85;
+const HERO_CURB_ATTENTION_YAW = 0.32;
+const HERO_CURB_RENDERED_SHOULDER_WIDTH_METERS = 0.78;
+const HERO_CURB_LAMP_POLE_RADIUS_METERS = 0.1;
+const HERO_CURB_EXPECTED_DONORS = Object.freeze([44, 25, 36]);
+const HERO_CURB_SEAT = Object.freeze({
+  role: 'bench-sitter',
+  poseKind: 'bench-seated',
+  benchLocalXMeters: 0.22,
+  benchLocalZMeters: 0.02,
+  seatSurfaceAbovePropMeters: 0.5,
+});
 
 export class TrafficSim {
   constructor(renderer, city, { count = 26 } = {}) {
@@ -38,6 +77,9 @@ export class TrafficSim {
     this.group.add(this.vehicleGroup);
     this.cars = [];
     this.pedestrians = [];
+    this.heroCurbActors = [];
+    this.heroCurbGround = null;
+    this.heroCurbLifeDiagnostics = createHeroCurbLifeDiagnostics();
     this.phase = 0;
     // Cumulative arc lengths let spacing and stop logic work in meters
     // instead of segment-progress units.
@@ -95,6 +137,7 @@ export class TrafficSim {
       if (!path?.length) continue;
       this.pedestrians.push(this.spawnPedestrian(path, random, this.pedestrians.length));
     }
+    this.stageHeroCurbLife();
     if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
     this.renderer.scene.add(this.group);
   }
@@ -231,6 +274,434 @@ export class TrafficSim {
       }
     }
     return paths;
+  }
+
+  stageHeroCurbLife() {
+    const diagnostics = createHeroCurbLifeDiagnostics();
+    this.heroCurbLifeDiagnostics = diagnostics;
+    const generator = this.city?.meta?.generator;
+    if (!['sf-builtin', 'openstreetmap'].includes(generator)) {
+      diagnostics.failure = { stage: 'source', details: 'unsupported-source' };
+      return false;
+    }
+
+    const segment = (this.city.segments || []).find((candidate) => candidate.id === HERO_CURB_SOURCE.segmentId);
+    const corridor = this.renderer?.sidewalkPropDiagnostics?.heroFrontages?.corridor;
+    const bench = corridor?.placements?.find((placement) => placement.kind === 'bench'
+      && Math.abs(placement.sourceT - HERO_CURB_SOURCE.benchSourceT) <= 1e-9);
+    const lamp = this.renderer?.streetLampRecords?.find((record) => (
+      record.segmentId === HERO_CURB_SOURCE.segmentId
+      && record.streetId === HERO_CURB_SOURCE.streetId
+      && record.side === HERO_CURB_SOURCE.side
+    ));
+    const sourcePoints = segment?.points;
+    const sourceFinite = sourcePoints?.length === 2
+      && sourcePoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.z));
+    if (!sourceFinite
+      || segment.streetId !== HERO_CURB_SOURCE.streetId
+      || !bench?.position
+      || ![
+        bench.position.x,
+        bench.position.y,
+        bench.position.z,
+        bench.rotation,
+        lamp?.x,
+        lamp?.z,
+        lamp?.lateralOffset,
+      ].every(Number.isFinite)) {
+      diagnostics.failure = { stage: 'source', details: 'exact-market-corridor-unavailable' };
+      return false;
+    }
+
+    const sourceSnapshot = JSON.stringify(segment);
+    const [a, b] = sourcePoints;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    const width = Number(segment.width);
+    const sidewalkWidth = Number(HERO_CURB_SOURCE.side > 0
+      ? segment.sidewalkLeft ?? segment.sidewalkW
+      : segment.sidewalkRight ?? segment.sidewalkW);
+    if (!Number.isFinite(length) || length <= 0
+      || !Number.isFinite(width) || width <= 0
+      || !Number.isFinite(sidewalkWidth) || sidewalkWidth <= 0
+      || this.pedestrians.length !== 48) {
+      diagnostics.failure = { stage: 'contract', details: 'invalid-source-metrics-or-population' };
+      return false;
+    }
+    const tx = dx / length;
+    const tz = dz / length;
+    const nx = -tz * HERO_CURB_SOURCE.side;
+    const nz = tx * HERO_CURB_SOURCE.side;
+    const midpoint = { x: (a.x + b.x) * 0.5, z: (a.z + b.z) * 0.5 };
+    const roadHalfWidthMeters = width * 0.5;
+    const sidewalkOuterOffsetMeters = roadHalfWidthMeters + sidewalkWidth;
+    const roadLiftMeters = Number(this.city.meta?.streetDesign?.roadLift ?? 0.5);
+    const terrainHeightAt = (point) => (this.renderer.terrain?.heightAt
+      ? this.renderer.terrain.heightAt(point.x, point.z)
+      : 0);
+    this.heroCurbGround = {
+      startY: terrainHeightAt(a) + roadLiftMeters + 0.045,
+      endY: terrainHeightAt(b) + roadLiftMeters + 0.045,
+    };
+    const pointAt = (sourceT, lateralOffsetMeters) => ({
+      x: a.x + dx * sourceT + nx * lateralOffsetMeters,
+      z: a.z + dz * sourceT + nz * lateralOffsetMeters,
+    });
+    const expectedBench = pointAt(HERO_CURB_SOURCE.benchSourceT, HERO_CURB_SOURCE.benchLateralOffsetMeters);
+    const expectedLamp = pointAt(HERO_CURB_SOURCE.lampSourceT, HERO_CURB_SOURCE.lampLateralOffsetMeters);
+    if (Math.hypot(bench.position.x - expectedBench.x, bench.position.z - expectedBench.z) > 1e-6
+      || Math.hypot(lamp.x - expectedLamp.x, lamp.z - expectedLamp.z) > 1e-6
+      || Math.abs(lamp.lateralOffset - HERO_CURB_SOURCE.lampLateralOffsetMeters) > 1e-9) {
+      diagnostics.failure = { stage: 'contract', details: 'hero-curb-anchor-placement-drift' };
+      return false;
+    }
+
+    const bounds = this.city.meta?.bounds;
+    const donorLandwardMaximumX = Number(bounds?.minX) + (Number(bounds?.maxX) - Number(bounds?.minX)) * 0.75;
+    if (!Number.isFinite(donorLandwardMaximumX)) {
+      diagnostics.failure = { stage: 'donor-selection', details: 'invalid-source-bounds' };
+      return false;
+    }
+    const donorCandidates = this.pedestrians.map((pedestrian) => {
+      const pose = pathPositionAtArc(pedestrian.points, pedestrian.cum, pedestrian.s);
+      return {
+        pedestrian,
+        distance: Math.max(...pedestrian.points.map((point) => (
+          Math.hypot(point.x - midpoint.x, point.z - midpoint.z)
+        ))),
+        origin: {
+          x: pose.x,
+          y: this.groundY(pose.x, pose.z),
+          z: pose.z,
+          pathArcMeters: pedestrian.s,
+          pathLengthMeters: pedestrian.total,
+        },
+      };
+    }).filter((candidate) => candidate.origin.x <= donorLandwardMaximumX)
+      .sort((left, right) => right.distance - left.distance
+      || left.pedestrian.instanceIndex - right.pedestrian.instanceIndex);
+    const donors = donorCandidates.slice(0, 3);
+    const donorIndices = donors.map(({ pedestrian }) => pedestrian.instanceIndex);
+    if (donors.length !== 3
+      || donorIndices.some((index, donorIndex) => index !== HERO_CURB_EXPECTED_DONORS[donorIndex])) {
+      diagnostics.failure = {
+        stage: 'donor-selection',
+        details: 'deterministic-donor-policy-drift',
+        actualIndices: donorIndices,
+      };
+      return false;
+    }
+
+    for (let index = 0; index < HERO_CURB_WALKERS.length; index += 1) {
+      const donor = donors[index];
+      const spec = HERO_CURB_WALKERS[index];
+      const path = spec.sourceTBounds.map((sourceT) => pointAt(sourceT, spec.lateralOffsetMeters));
+      const total = Math.hypot(path[1].x - path[0].x, path[1].z - path[0].z);
+      const travelSeconds = total / HERO_CURB_WALK_SPEED;
+      this.assignHeroCurbBehavior(donor.pedestrian, donor.origin, {
+        kind: 'hero-curb-life',
+        role: spec.role,
+        poseKind: spec.poseKind,
+        partnerId: null,
+        sourceTBounds: [...spec.sourceTBounds],
+        lateralOffsetMeters: spec.lateralOffsetMeters,
+        path,
+        total,
+        speedMetersPerSecond: HERO_CURB_WALK_SPEED,
+        travelSeconds,
+        turnSeconds: HERO_CURB_TURN_SECONDS,
+        phaseOffsetSeconds: travelSeconds * (5 / 12),
+        inwardAttentionYawSign: spec.inwardAttentionYawSign,
+      });
+    }
+
+    const sitterDonor = donors[2];
+    const benchRotationRadians = Number(bench.rotation);
+    const seatCos = Math.cos(benchRotationRadians);
+    const seatSin = Math.sin(benchRotationRadians);
+    const seatedRoot = {
+      x: bench.position.x
+        + HERO_CURB_SEAT.benchLocalXMeters * seatCos
+        + HERO_CURB_SEAT.benchLocalZMeters * seatSin,
+      y: 0,
+      z: bench.position.z
+        - HERO_CURB_SEAT.benchLocalXMeters * seatSin
+        + HERO_CURB_SEAT.benchLocalZMeters * seatCos,
+    };
+    const seatedRootFromSource = {
+      sourceT: (
+        (seatedRoot.x - a.x) * tx
+        + (seatedRoot.z - a.z) * tz
+      ) / length,
+      lateralOffsetMeters: (seatedRoot.x - a.x) * nx + (seatedRoot.z - a.z) * nz,
+    };
+    seatedRoot.y = this.heroCurbGroundY(seatedRootFromSource.sourceT);
+    const reconstructedSeatedRoot = pointAt(
+      seatedRootFromSource.sourceT,
+      seatedRootFromSource.lateralOffsetMeters,
+    );
+    const sourceProjectionErrorMeters = Math.hypot(
+      reconstructedSeatedRoot.x - seatedRoot.x,
+      reconstructedSeatedRoot.z - seatedRoot.z,
+    );
+    if (![seatedRootFromSource.sourceT, seatedRootFromSource.lateralOffsetMeters,
+      seatedRoot.y, sourceProjectionErrorMeters].every(Number.isFinite)
+      || seatedRootFromSource.sourceT < 0
+      || seatedRootFromSource.sourceT > 1
+      || seatedRootFromSource.lateralOffsetMeters < roadHalfWidthMeters
+      || seatedRootFromSource.lateralOffsetMeters > sidewalkOuterOffsetMeters
+      || sourceProjectionErrorMeters > 1e-9) {
+      diagnostics.failure = { stage: 'seated-pose', details: 'entity-root-source-projection-invalid' };
+      return false;
+    }
+    const seatSurfaceYMeters = bench.position.y + HERO_CURB_SEAT.seatSurfaceAbovePropMeters;
+    const torsoContactEnvelopeLocalMeters = {
+      minX: HERO_CURB_SEAT.benchLocalXMeters - 0.32,
+      maxX: HERO_CURB_SEAT.benchLocalXMeters + 0.32,
+      minZ: HERO_CURB_SEAT.benchLocalZMeters - 0.14,
+      maxZ: HERO_CURB_SEAT.benchLocalZMeters + 0.14,
+    };
+    const seatEnvelopeLocalMeters = { minX: -0.8, maxX: 0.8, minZ: -0.31, maxZ: 0.31 };
+    const torsoWithinSeatEnvelope = torsoContactEnvelopeLocalMeters.minX >= seatEnvelopeLocalMeters.minX
+      && torsoContactEnvelopeLocalMeters.maxX <= seatEnvelopeLocalMeters.maxX
+      && torsoContactEnvelopeLocalMeters.minZ >= seatEnvelopeLocalMeters.minZ
+      && torsoContactEnvelopeLocalMeters.maxZ <= seatEnvelopeLocalMeters.maxZ;
+    if (!torsoWithinSeatEnvelope) {
+      diagnostics.failure = { stage: 'seated-pose', details: 'torso-outside-bench-seat-envelope' };
+      return false;
+    }
+    const seatedAnchor = {
+      sourceSegmentId: segment.id,
+      sourceStreetId: segment.streetId,
+      sourceT: seatedRootFromSource.sourceT,
+      lateralOffsetMeters: seatedRootFromSource.lateralOffsetMeters,
+      sourceProjectionErrorMeters,
+      benchPosition: { x: bench.position.x, y: bench.position.y, z: bench.position.z },
+      benchRotationRadians,
+      localOffsetMeters: {
+        x: HERO_CURB_SEAT.benchLocalXMeters,
+        y: 0,
+        z: HERO_CURB_SEAT.benchLocalZMeters,
+      },
+      entityRootPosition: seatedRoot,
+      entityRootYawRadians: benchRotationRadians,
+      seatSurfaceYMeters,
+    };
+    const benchContact = {
+      mode: 'authored-seat-support-contact-v1',
+      collisionSemantics: 'single-entity-anchor-authored-bench-support-contact-only-v1',
+      entitySeatContactAuthored: true,
+      otherPropContactAllowed: false,
+      supportProp: {
+        kind: bench.kind,
+        ownerSegmentId: bench.ownerSegmentId,
+        ownerStreetId: bench.ownerStreetId,
+        sourceT: bench.sourceT,
+        lateralOffsetMeters: bench.lateralOffsetMeters,
+        position: { x: bench.position.x, y: bench.position.y, z: bench.position.z },
+      },
+      seatEnvelopeLocalMeters,
+      torsoContactEnvelopeLocalMeters,
+      torsoWithinSeatEnvelope,
+      torsoBottomYMeters: seatedRoot.y + 0.52,
+      verticalContactGapMeters: seatedRoot.y + 0.52 - seatSurfaceYMeters,
+    };
+    this.assignHeroCurbBehavior(sitterDonor.pedestrian, sitterDonor.origin, {
+      kind: 'hero-curb-life',
+      role: HERO_CURB_SEAT.role,
+      poseKind: HERO_CURB_SEAT.poseKind,
+      sourceTBounds: [seatedRootFromSource.sourceT, seatedRootFromSource.sourceT],
+      lateralOffsetMeters: seatedRootFromSource.lateralOffsetMeters,
+      path: [{ ...seatedRoot }, { ...seatedRoot }],
+      total: 0,
+      speedMetersPerSecond: 0,
+      phaseOffsetSeconds: 0,
+      benchPosition: { x: bench.position.x, y: bench.position.y, z: bench.position.z },
+      seatedAnchor,
+      benchContact,
+    });
+
+    const walkerMidpoints = this.heroCurbActors.slice(0, 2).map((pedestrian) => ({
+      x: (pedestrian.points[0].x + pedestrian.points[1].x) * 0.5,
+      z: (pedestrian.points[0].z + pedestrian.points[1].z) * 0.5,
+    }));
+    const walkerRangeToSitterCenterMeters = this.heroCurbActors.slice(0, 2).map((pedestrian) => (
+      pointToSegmentDistance2D(seatedRoot, pedestrian.points[0], pedestrian.points[1])
+    ));
+    const walkerRangeToLampCenterMeters = this.heroCurbActors.slice(0, 2).map((pedestrian) => (
+      pointToSegmentDistance2D(lamp, pedestrian.points[0], pedestrian.points[1])
+    ));
+    const minimumWalkerPairCenterDistanceMeters = Math.min(
+      ...this.heroCurbActors[0].points.flatMap((left) => (
+        this.heroCurbActors[1].points.map((right) => Math.hypot(left.x - right.x, left.z - right.z))
+      )),
+    );
+    const triangleAreaSquareMeters = Math.abs(
+      (walkerMidpoints[1].x - walkerMidpoints[0].x) * (seatedRoot.z - walkerMidpoints[0].z)
+      - (seatedRoot.x - walkerMidpoints[0].x) * (walkerMidpoints[1].z - walkerMidpoints[0].z),
+    ) * 0.5;
+    diagnostics.composition = {
+      contract: 'camera-independent-source-triangle-v1',
+      projectionVerification: 'external-matched-camera-48deg',
+      renderedShoulderWidthMeters: HERO_CURB_RENDERED_SHOULDER_WIDTH_METERS,
+      longitudinalOrder: [
+        `pedestrian:${donorIndices[0]}`,
+        `pedestrian:${sitterDonor.pedestrian.instanceIndex}`,
+        `pedestrian:${donorIndices[1]}`,
+      ],
+      lamp: {
+        segmentId: lamp.segmentId,
+        streetId: lamp.streetId,
+        side: lamp.side,
+        sourceT: HERO_CURB_SOURCE.lampSourceT,
+        lateralOffsetMeters: HERO_CURB_SOURCE.lampLateralOffsetMeters,
+        poleRadiusMeters: HERO_CURB_LAMP_POLE_RADIUS_METERS,
+        position: { x: lamp.x, z: lamp.z },
+      },
+      walkerRangeMeters: this.heroCurbActors.slice(0, 2).map((pedestrian) => pedestrian.total),
+      walkerRangeToSitterCenterMeters,
+      walkerRangeToLampCenterMeters,
+      walkerRangeToSitterShoulderClearanceMeters: walkerRangeToSitterCenterMeters.map((distance) => (
+        distance - HERO_CURB_RENDERED_SHOULDER_WIDTH_METERS
+      )),
+      walkerRangeToLampSilhouetteClearanceMeters: walkerRangeToLampCenterMeters.map((distance) => (
+        distance - HERO_CURB_RENDERED_SHOULDER_WIDTH_METERS * 0.5 - HERO_CURB_LAMP_POLE_RADIUS_METERS
+      )),
+      minimumWalkerPairCenterDistanceMeters,
+      minimumWalkerPairShoulderClearanceMeters: minimumWalkerPairCenterDistanceMeters
+        - HERO_CURB_RENDERED_SHOULDER_WIDTH_METERS,
+      triangleAreaSquareMeters,
+    };
+
+    const sourceSnapshotUnchanged = JSON.stringify(segment) === sourceSnapshot;
+    const actorRecords = this.heroCurbActors.map((pedestrian) => ({
+      id: `pedestrian:${pedestrian.instanceIndex}`,
+      instanceIndex: pedestrian.instanceIndex,
+      role: pedestrian.heroCurbBehavior.role,
+      partnerId: pedestrian.heroCurbBehavior.partnerId ?? null,
+      poseKind: pedestrian.heroCurbBehavior.poseKind,
+      sourceTBounds: [...pedestrian.heroCurbBehavior.sourceTBounds],
+      lateralOffsetMeters: pedestrian.heroCurbBehavior.lateralOffsetMeters,
+      speedMetersPerSecond: pedestrian.heroCurbBehavior.speedMetersPerSecond,
+      behavior: pedestrian.heroCurbBehavior.role === 'destination-walker'
+        ? 'shared-phase-destination-walk-loop'
+        : 'bench-seated-idle',
+      donorOrigin: { ...pedestrian.heroCurbBehavior.donorOrigin },
+      ...(pedestrian.heroCurbBehavior.seatedAnchor ? {
+        seatedAnchor: cloneSeatedAnchor(pedestrian.heroCurbBehavior.seatedAnchor),
+        benchContact: cloneBenchContact(pedestrian.heroCurbBehavior.benchContact),
+        seatedPoseMatrices: { ...pedestrian.heroCurbBehavior.seatedPoseMatrices },
+        entityPresentationAlignment: { ...pedestrian.heroCurbBehavior.entityPresentationAlignment },
+      } : {}),
+    }));
+    diagnostics.enabled = true;
+    diagnostics.source = {
+      segmentId: segment.id,
+      streetId: segment.streetId,
+      side: HERO_CURB_SOURCE.side,
+      lengthMeters: length,
+      roadHalfWidthMeters,
+      sidewalkOuterOffsetMeters,
+      sidewalkGroundStartYMeters: this.heroCurbGround.startY,
+      sidewalkGroundEndYMeters: this.heroCurbGround.endY,
+      benchRotationRadians,
+      snapshotUnchanged: sourceSnapshotUnchanged,
+    };
+    diagnostics.logicalPedestriansBefore = this.pedestrians.length;
+    diagnostics.logicalPedestriansAfter = this.pedestrians.length;
+    diagnostics.relocated = this.heroCurbActors.length;
+    diagnostics.roles = { destinationWalker: 2, benchSitter: 1 };
+    diagnostics.donorSelection = {
+      policy: 'farthest-from-corridor-midpoint-v1',
+      eligibility: 'preserve-eastern-quarter-v1',
+      landwardMaximumXMeters: donorLandwardMaximumX,
+      indices: donorIndices,
+      unique: new Set(donorIndices).size === donorIndices.length,
+      origins: donors.map(({ pedestrian, origin, distance }) => ({
+        id: `pedestrian:${pedestrian.instanceIndex}`,
+        instanceIndex: pedestrian.instanceIndex,
+        distanceFromCorridorMidpointMeters: distance,
+        position: { ...origin },
+      })),
+    };
+    diagnostics.actors = actorRecords;
+    diagnostics.finite = sourceSnapshotUnchanged
+      && diagnostics.donorSelection.unique
+      && [
+        diagnostics.composition.renderedShoulderWidthMeters,
+        diagnostics.composition.lamp.sourceT,
+        diagnostics.composition.lamp.lateralOffsetMeters,
+        diagnostics.composition.lamp.poleRadiusMeters,
+        ...Object.values(diagnostics.composition.lamp.position),
+        ...diagnostics.composition.walkerRangeMeters,
+        ...diagnostics.composition.walkerRangeToSitterCenterMeters,
+        ...diagnostics.composition.walkerRangeToLampCenterMeters,
+        ...diagnostics.composition.walkerRangeToSitterShoulderClearanceMeters,
+        ...diagnostics.composition.walkerRangeToLampSilhouetteClearanceMeters,
+        diagnostics.composition.minimumWalkerPairCenterDistanceMeters,
+        diagnostics.composition.minimumWalkerPairShoulderClearanceMeters,
+        diagnostics.composition.triangleAreaSquareMeters,
+      ].every(Number.isFinite)
+      && actorRecords.every((actor) => [
+        actor.instanceIndex,
+        ...actor.sourceTBounds,
+        actor.lateralOffsetMeters,
+        actor.speedMetersPerSecond,
+        actor.donorOrigin.x,
+        actor.donorOrigin.y,
+        actor.donorOrigin.z,
+      ].every(Number.isFinite)
+        && (!actor.seatedAnchor || (
+          actor.seatedPoseMatrices?.finite === true
+          && actor.entityPresentationAlignment?.finite === true
+          && actor.benchContact?.torsoWithinSeatEnvelope === true
+          && [
+            actor.seatedAnchor.sourceT,
+            actor.seatedAnchor.lateralOffsetMeters,
+            actor.seatedAnchor.sourceProjectionErrorMeters,
+            actor.seatedAnchor.benchRotationRadians,
+            actor.seatedAnchor.entityRootYawRadians,
+            actor.seatedAnchor.seatSurfaceYMeters,
+            ...Object.values(actor.seatedAnchor.entityRootPosition),
+            actor.benchContact.verticalContactGapMeters,
+            actor.entityPresentationAlignment.positionErrorMeters,
+            actor.entityPresentationAlignment.yawErrorRadians,
+          ].every(Number.isFinite)
+        )));
+    return diagnostics.finite;
+  }
+
+  assignHeroCurbBehavior(pedestrian, donorOrigin, behavior) {
+    pedestrian.points = behavior.path.map((point) => ({ ...point }));
+    pedestrian.cum = cumulativeLengths(pedestrian.points);
+    pedestrian.total = behavior.total;
+    pedestrian.s = 0;
+    pedestrian.seg = 0;
+    pedestrian.dir = 1;
+    pedestrian.speed = behavior.speedMetersPerSecond;
+    pedestrian.heroCurbBehavior = {
+      ...behavior,
+      path: pedestrian.points,
+      donorOrigin: { ...donorOrigin },
+      lastPosition: null,
+      lastYaw: null,
+    };
+    pedestrian.group.userData.life = {
+      pass: HERO_CURB_LIFE_PASS,
+      role: behavior.role,
+      poseKind: behavior.poseKind,
+      sourceSegmentId: HERO_CURB_SOURCE.segmentId,
+      sourceStreetId: HERO_CURB_SOURCE.streetId,
+      reservedFromLocalLifeRecycling: true,
+    };
+    this.heroCurbActors.push(pedestrian);
+    this.updateHeroCurbPedestrian(pedestrian, 0);
+  }
+
+  heroCurbGroundY(sourceT) {
+    return this.heroCurbGround.startY
+      + (this.heroCurbGround.endY - this.heroCurbGround.startY) * sourceT;
   }
 
   laneOffsetFor(edge) {
@@ -395,7 +866,8 @@ export class TrafficSim {
     if (needed <= 0 || !this.sidewalkPaths?.length) return;
     const placements = this.nearbyPlacements(this.sidewalkPaths, focus);
     if (!placements.length) return;
-    const donors = this.pedestrians.filter((pedestrian) => this.actorDistance(pedestrian.group, focus) >= LOCAL_RECYCLE_RADIUS
+    const donors = this.pedestrians.filter((pedestrian) => !pedestrian.heroCurbBehavior
+      && this.actorDistance(pedestrian.group, focus) >= LOCAL_RECYCLE_RADIUS
       && !this.actorIsVisible(pedestrian.group))
       .sort((a, b) => this.actorDistance(b.group, focus) - this.actorDistance(a.group, focus));
     let placed = 0;
@@ -457,6 +929,104 @@ export class TrafficSim {
       ...this.localLifeDiagnostics,
       focus: this.localLifeFocus ? { ...this.localLifeFocus } : null,
       events: this.localLifeDiagnostics.events.map((event) => ({ ...event })),
+    };
+  }
+
+  getHeroCurbLifeDiagnostics() {
+    const diagnostics = this.heroCurbLifeDiagnostics;
+    const actors = diagnostics.actors.map((record) => {
+      const pedestrian = this.pedestrians[record.instanceIndex];
+      const behavior = pedestrian?.heroCurbBehavior;
+      const walk = pedestrian?.group.userData.walk;
+      return {
+        ...record,
+        sourceTBounds: [...record.sourceTBounds],
+        donorOrigin: { ...record.donorOrigin },
+        ...(record.seatedAnchor ? {
+          seatedAnchor: cloneSeatedAnchor(record.seatedAnchor),
+          benchContact: cloneBenchContact(record.benchContact),
+          seatedPoseMatrices: { ...behavior.seatedPoseMatrices },
+          entityPresentationAlignment: { ...behavior.entityPresentationAlignment },
+        } : {}),
+        currentPose: pedestrian && behavior ? {
+          poseKind: behavior.poseKind,
+          position: {
+            x: pedestrian.group.position.x,
+            y: pedestrian.group.position.y,
+            z: pedestrian.group.position.z,
+          },
+          presentationPosition: {
+            x: pedestrian.group.position.x,
+            y: pedestrian.group.position.y,
+            z: pedestrian.group.position.z,
+          },
+          sidewalkGroundY: pedestrian.group.position.y - (walk.bobOffset || 0),
+          yawRadians: pedestrian.group.rotation.y,
+          presentationYawRadians: pedestrian.group.rotation.y,
+          entityPresentationPositionErrorMeters:
+            behavior.entityPresentationAlignment?.positionErrorMeters ?? 0,
+          entityPresentationYawErrorRadians:
+            behavior.entityPresentationAlignment?.yawErrorRadians ?? 0,
+          sourceT: behavior.currentSourceT,
+          direction: behavior.currentDirection,
+          state: behavior.currentState,
+          gait: walk.gait,
+          posePhase: behavior.poseKind === 'bench-seated'
+            ? positiveModulo(this.phase + behavior.phaseOffsetSeconds, Math.PI * 2)
+            : null,
+        } : null,
+      };
+    });
+    const finite = diagnostics.finite && actors.every((actor) => actor.currentPose
+      && [
+        actor.currentPose.position.x,
+        actor.currentPose.position.y,
+        actor.currentPose.position.z,
+        actor.currentPose.presentationPosition.x,
+        actor.currentPose.presentationPosition.y,
+        actor.currentPose.presentationPosition.z,
+        actor.currentPose.sidewalkGroundY,
+        actor.currentPose.yawRadians,
+        actor.currentPose.presentationYawRadians,
+        actor.currentPose.sourceT,
+        actor.currentPose.direction,
+        actor.currentPose.gait,
+      ].every(Number.isFinite)
+      && (actor.poseKind !== 'bench-seated' || actor.seatedPoseMatrices?.finite === true));
+    return {
+      ...diagnostics,
+      source: diagnostics.source ? { ...diagnostics.source } : null,
+      roles: { ...diagnostics.roles },
+      donorSelection: {
+        ...diagnostics.donorSelection,
+        indices: [...diagnostics.donorSelection.indices],
+        origins: diagnostics.donorSelection.origins.map((origin) => ({
+          ...origin,
+          position: { ...origin.position },
+        })),
+      },
+      composition: diagnostics.composition ? {
+        ...diagnostics.composition,
+        longitudinalOrder: [...diagnostics.composition.longitudinalOrder],
+        lamp: {
+          ...diagnostics.composition.lamp,
+          position: { ...diagnostics.composition.lamp.position },
+        },
+        walkerRangeMeters: [...diagnostics.composition.walkerRangeMeters],
+        walkerRangeToSitterCenterMeters: [...diagnostics.composition.walkerRangeToSitterCenterMeters],
+        walkerRangeToLampCenterMeters: [...diagnostics.composition.walkerRangeToLampCenterMeters],
+        walkerRangeToSitterShoulderClearanceMeters: [
+          ...diagnostics.composition.walkerRangeToSitterShoulderClearanceMeters,
+        ],
+        walkerRangeToLampSilhouetteClearanceMeters: [
+          ...diagnostics.composition.walkerRangeToLampSilhouetteClearanceMeters,
+        ],
+      } : null,
+      actors,
+      continuity: { ...diagnostics.continuity },
+      resources: { ...diagnostics.resources },
+      phaseSeconds: this.phase,
+      finite,
     };
   }
 
@@ -714,6 +1284,10 @@ export class TrafficSim {
   }
 
   updatePedestrian(pedestrian, delta) {
+    if (pedestrian.heroCurbBehavior) {
+      this.updateHeroCurbPedestrian(pedestrian, delta);
+      return;
+    }
     const walk = pedestrian.group.userData.walk;
     pedestrian.s += pedestrian.dir * pedestrian.speed * delta;
     if (pedestrian.s >= pedestrian.total) {
@@ -742,6 +1316,206 @@ export class TrafficSim {
     if (this.pedestrianBatch) {
       writePedestrianInstance(this.pedestrianBatch, pedestrian.instanceIndex, pedestrian);
     }
+  }
+
+  updateHeroCurbPedestrian(pedestrian, delta) {
+    const behavior = pedestrian.heroCurbBehavior;
+    const walk = pedestrian.group.userData.walk;
+    let x;
+    let y;
+    let z;
+    let yaw;
+    let sourceT;
+    let direction;
+    let state;
+
+    if (behavior.role === 'destination-walker') {
+      const travel = behavior.travelSeconds;
+      const turn = behavior.turnSeconds;
+      const cycle = travel * 2 + turn * 2;
+      const local = positiveModulo(this.phase + behavior.phaseOffsetSeconds, cycle);
+      const forwardYaw = Math.atan2(
+        behavior.path[1].x - behavior.path[0].x,
+        behavior.path[1].z - behavior.path[0].z,
+      );
+      const reverseYaw = normalizeAngle(forwardYaw + Math.PI);
+      const forwardAttentionYaw = normalizeAngle(
+        forwardYaw + behavior.inwardAttentionYawSign * HERO_CURB_ATTENTION_YAW,
+      );
+      const reverseAttentionYaw = normalizeAngle(
+        reverseYaw - behavior.inwardAttentionYawSign * HERO_CURB_ATTENTION_YAW,
+      );
+      let progress;
+      if (local < travel) {
+        progress = local / travel;
+        yaw = forwardAttentionYaw;
+        direction = 1;
+        state = 'walking-forward';
+      } else if (local < travel + turn) {
+        progress = 1;
+        const turnProgress = smoothstep01((local - travel) / turn);
+        yaw = lerpAngle(forwardAttentionYaw, reverseAttentionYaw, turnProgress);
+        direction = 0;
+        state = 'turning-reverse';
+      } else if (local < travel * 2 + turn) {
+        progress = 1 - (local - travel - turn) / travel;
+        yaw = reverseAttentionYaw;
+        direction = -1;
+        state = 'walking-reverse';
+      } else {
+        progress = 0;
+        const turnProgress = smoothstep01((local - travel * 2 - turn) / turn);
+        yaw = lerpAngle(reverseAttentionYaw, forwardAttentionYaw, turnProgress);
+        direction = 0;
+        state = 'turning-forward';
+      }
+      progress = clamp(progress, 0, 1);
+      x = behavior.path[0].x + (behavior.path[1].x - behavior.path[0].x) * progress;
+      z = behavior.path[0].z + (behavior.path[1].z - behavior.path[0].z) * progress;
+      sourceT = behavior.sourceTBounds[0]
+        + (behavior.sourceTBounds[1] - behavior.sourceTBounds[0]) * progress;
+      pedestrian.s = behavior.total * progress;
+      pedestrian.dir = direction || pedestrian.dir;
+      walk.gait = Math.sin(this.phase * walk.cadence + walk.time);
+      walk.bobOffset = Math.abs(walk.gait) * walk.bob;
+      y = this.heroCurbGroundY(sourceT) + walk.bobOffset;
+    } else {
+      x = behavior.seatedAnchor.entityRootPosition.x;
+      y = behavior.seatedAnchor.entityRootPosition.y;
+      z = behavior.seatedAnchor.entityRootPosition.z;
+      sourceT = behavior.sourceTBounds[0];
+      pedestrian.s = 0;
+      direction = 0;
+      pedestrian.dir = 1;
+      state = 'seated-at-bench';
+      yaw = behavior.seatedAnchor.entityRootYawRadians;
+      walk.gait = Math.sin(this.phase * 1.1 + walk.time) * 0.04;
+      walk.bobOffset = 0;
+    }
+
+    pedestrian.group.position.set(x, y, z);
+    pedestrian.group.rotation.y = yaw;
+    behavior.currentSourceT = sourceT;
+    behavior.currentDirection = direction;
+    behavior.currentState = state;
+    this.recordHeroCurbContinuity(pedestrian, delta);
+    if (this.pedestrianBatch) {
+      writePedestrianInstance(this.pedestrianBatch, pedestrian.instanceIndex, pedestrian);
+      if (behavior.poseKind === 'bench-seated') this.writeHeroCurbSeatedPose(pedestrian);
+    }
+  }
+
+  writeHeroCurbSeatedPose(pedestrian) {
+    const batch = this.pedestrianBatch;
+    const behavior = pedestrian.heroCurbBehavior;
+    const anchor = behavior?.seatedAnchor;
+    if (!batch || !anchor) return false;
+
+    const { appearance, walk } = pedestrian.group.userData;
+    const helper = batch.matrixHelper;
+    const root = batch.rootHelper;
+    root.position.copy(pedestrian.group.position);
+    root.rotation.set(0, pedestrian.group.rotation.y, 0);
+    root.scale.set(1, 1, 1);
+    root.updateMatrix();
+    batch.rootMatrix.copy(root.matrix);
+    const positionErrorMeters = root.position.distanceTo(pedestrian.group.position);
+    const yawErrorRadians = Math.abs(normalizeAngle(root.rotation.y - pedestrian.group.rotation.y));
+
+    const writePart = (part, instanceIndex, position, scale = [1, 1, 1], rotation = [0, 0, 0]) => {
+      helper.position.fromArray(position);
+      helper.rotation.set(rotation[0], rotation[1], rotation[2]);
+      helper.scale.fromArray(scale);
+      helper.updateMatrix();
+      batch.partMatrix.multiplyMatrices(batch.rootMatrix, helper.matrix);
+      batch.parts[part].setMatrixAt(instanceIndex, batch.partMatrix);
+    };
+    const writeSegment = (part, instanceIndex, start, end) => {
+      batch.start.fromArray(start);
+      batch.end.fromArray(end);
+      batch.direction.subVectors(batch.end, batch.start);
+      const segmentLength = Math.max(0.01, batch.direction.length());
+      batch.direction.multiplyScalar(1 / segmentLength);
+      helper.position.copy(batch.start).add(batch.end).multiplyScalar(0.5);
+      helper.quaternion.setFromUnitVectors(batch.up, batch.direction);
+      helper.scale.set(1, segmentLength, 1);
+      helper.updateMatrix();
+      batch.partMatrix.multiplyMatrices(batch.rootMatrix, helper.matrix);
+      batch.parts[part].setMatrixAt(instanceIndex, batch.partMatrix);
+    };
+
+    const index = pedestrian.instanceIndex;
+    const headTurn = Math.sin(this.phase * 0.7 + walk.time) * 0.05;
+    writePart('torso', index, [0, 0.78, -0.015], [1, 1, 1], [0.08, 0, 0]);
+    writePart('head', index, [headTurn, 1.2, 0.015]);
+    writePart('hair', index, [headTurn, 1.2, 0.015], [1, appearance.hairScale, 1]);
+    writePart('face', index, [headTurn, 1.19, 0.152], [1, 1, 1], [0, headTurn * 0.8, 0]);
+    writePart('shadow', index, [0, 0.008, 0.08], [1.2, 1, 0.95]);
+
+    for (const side of [-1, 1]) {
+      const pairIndex = index * 2 + (side > 0 ? 1 : 0);
+      const shoulder = [side * 0.31, 0.97, 0];
+      const elbow = [side * 0.34, 0.8, 0.18];
+      const hand = [side * 0.22, 0.67 + (side > 0 ? headTurn * 0.35 : 0), 0.38];
+      writeSegment('upperArms', pairIndex, shoulder, elbow);
+      writeSegment('forearms', pairIndex, elbow, hand);
+      writePart('hands', pairIndex, hand);
+
+      const hip = [side * 0.12, 0.62, 0.02];
+      const knee = [side * 0.14, 0.52, 0.44];
+      const ankle = [side * 0.14, 0.12, 0.48];
+      writeSegment('thighs', pairIndex, hip, knee);
+      writeSegment('shins', pairIndex, knee, ankle);
+      writePart('shoes', pairIndex, [side * 0.14, 0.06, 0.59]);
+    }
+
+    let finiteMatrices = true;
+    let matrixInstances = 0;
+    for (const mesh of Object.values(batch.parts)) {
+      const instancesPerPedestrian = mesh.userData.instancesPerPedestrian || 1;
+      for (let partIndex = 0; partIndex < instancesPerPedestrian; partIndex += 1) {
+        const instanceIndex = index * instancesPerPedestrian + partIndex;
+        mesh.getMatrixAt(instanceIndex, batch.partMatrix);
+        matrixInstances += 1;
+        finiteMatrices = finiteMatrices && batch.partMatrix.elements.every(Number.isFinite);
+      }
+    }
+    behavior.seatedPoseMatrices = {
+      postTransformedExistingInstances: true,
+      partBatches: Object.keys(batch.parts).length,
+      matrixInstances,
+      finite: finiteMatrices,
+    };
+    behavior.entityPresentationAlignment = {
+      positionErrorMeters,
+      yawErrorRadians,
+      finite: [positionErrorMeters, yawErrorRadians].every(Number.isFinite),
+    };
+    return finiteMatrices && behavior.entityPresentationAlignment.finite;
+  }
+
+  recordHeroCurbContinuity(pedestrian, delta) {
+    const behavior = pedestrian.heroCurbBehavior;
+    const continuity = this.heroCurbLifeDiagnostics.continuity;
+    const position = pedestrian.group.position;
+    const yaw = pedestrian.group.rotation.y;
+    if (behavior.lastPosition && behavior.lastYaw != null && delta > 0) {
+      const step = Math.hypot(
+        position.x - behavior.lastPosition.x,
+        position.y - behavior.lastPosition.y,
+        position.z - behavior.lastPosition.z,
+      );
+      const yawStep = Math.abs(shortestAngle(yaw - behavior.lastYaw));
+      continuity.maxStepMeters = Math.max(continuity.maxStepMeters, step);
+      continuity.maxYawStepRadians = Math.max(continuity.maxYawStepRadians, yawStep);
+      const linearLimit = (behavior.role === 'destination-walker' ? 1.5 : 0.4) * delta + 0.004;
+      const yawLimit = 4.2 * delta + 0.01;
+      if (step > linearLimit) continuity.teleportViolations += 1;
+      if (yawStep > yawLimit) continuity.yawPopViolations += 1;
+      continuity.samples += 1;
+    }
+    behavior.lastPosition = { x: position.x, y: position.y, z: position.z };
+    behavior.lastYaw = yaw;
   }
 
   updateCarSpacing() {
@@ -908,6 +1682,98 @@ export class TrafficSim {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function normalizeAngle(value) {
+  return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
+function shortestAngle(value) {
+  return normalizeAngle(value);
+}
+
+function lerpAngle(from, to, progress) {
+  return normalizeAngle(from + shortestAngle(to - from) * progress);
+}
+
+function smoothstep01(value) {
+  const progress = clamp(value, 0, 1);
+  return progress * progress * (3 - 2 * progress);
+}
+
+function pointToSegmentDistance2D(point, start, end) {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const lengthSquared = dx * dx + dz * dz;
+  const progress = lengthSquared > 0
+    ? clamp(((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSquared, 0, 1)
+    : 0;
+  return Math.hypot(
+    point.x - (start.x + dx * progress),
+    point.z - (start.z + dz * progress),
+  );
+}
+
+function cloneSeatedAnchor(anchor) {
+  return {
+    ...anchor,
+    benchPosition: { ...anchor.benchPosition },
+    localOffsetMeters: { ...anchor.localOffsetMeters },
+    entityRootPosition: { ...anchor.entityRootPosition },
+  };
+}
+
+function cloneBenchContact(contact) {
+  return {
+    ...contact,
+    supportProp: {
+      ...contact.supportProp,
+      position: { ...contact.supportProp.position },
+    },
+    seatEnvelopeLocalMeters: { ...contact.seatEnvelopeLocalMeters },
+    torsoContactEnvelopeLocalMeters: { ...contact.torsoContactEnvelopeLocalMeters },
+  };
+}
+
+function createHeroCurbLifeDiagnostics() {
+  return {
+    pass: HERO_CURB_LIFE_PASS,
+    schemaVersion: 3,
+    enabled: false,
+    source: null,
+    logicalPedestriansBefore: 0,
+    logicalPedestriansAfter: 0,
+    relocated: 0,
+    roles: { destinationWalker: 0, benchSitter: 0 },
+    donorSelection: {
+      policy: 'farthest-from-corridor-midpoint-v1',
+      indices: [],
+      unique: true,
+      origins: [],
+    },
+    actors: [],
+    composition: null,
+    continuity: {
+      teleportViolations: 0,
+      yawPopViolations: 0,
+      maxStepMeters: 0,
+      maxYawStepRadians: 0,
+      samples: 0,
+    },
+    resources: {
+      newSceneObjects: 0,
+      newMeshes: 0,
+      newGeometries: 0,
+      newMaterials: 0,
+      newTextures: 0,
+    },
+    failure: null,
+    finite: false,
+  };
 }
 
 function cumulativeLengths(points) {

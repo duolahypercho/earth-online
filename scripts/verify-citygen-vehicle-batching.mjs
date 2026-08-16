@@ -24,6 +24,8 @@ const BASELINE = Object.freeze({
   renderer: { drawCalls: 594, geometries: 402, textures: 259 },
 });
 
+const HERO_CURB_PRESENTATION_DELTA = Object.freeze({ geometries: 3, textures: 0 });
+
 const finiteArray = (array) => Array.from(array || []).every(Number.isFinite);
 
 const CLASS_CONTRACT = Object.freeze({
@@ -585,8 +587,12 @@ try {
     body: true, cab: true, taxiTopper: true, transitWindows: true,
     headlights: true, tires: true, hubs: true,
   });
-  assert.equal(before.rendererGeometries, 402, '82bdccf render geometry budget remains exact');
-  assert.equal(before.rendererTextures, 259, '82bdccf texture budget remains exact');
+  assert.equal(before.rendererGeometries,
+    BASELINE.renderer.geometries + HERO_CURB_PRESENTATION_DELTA.geometries,
+    'vehicle baseline plus the exact hero curb geometry delta remains exact');
+  assert.equal(before.rendererTextures,
+    BASELINE.renderer.textures + HERO_CURB_PRESENTATION_DELTA.textures,
+    'vehicle baseline plus the exact hero curb texture delta remains exact');
   assertVehicleClassIdentity(before, 'before-motion');
 
   const hull = hullGeometryReport({

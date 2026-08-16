@@ -621,6 +621,7 @@ function configureBuildingInteriors(city) {
     };
   }
   state.interiors.markers = installBuildingPortals(state.renderer, portals, city);
+  state.renderer.stageHeroSidewalkLife(portals, city);
 }
 
 function nearestBuildingPortal(force = false) {
