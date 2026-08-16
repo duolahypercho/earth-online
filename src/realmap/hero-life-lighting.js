@@ -4,7 +4,8 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { animatePlayerAvatar, createPlayerAvatar } from '../player.js';
+import { animatePlayerAvatar } from '../player.js';
+import { createHeroPlayerAvatar } from '../pedestrians.js';
 
 export const HERO_LIFE_LIGHTING_BUDGET = Object.freeze({
   maxPedestrians: 24,
@@ -75,6 +76,41 @@ const NIGHT_PRACTICAL_READABILITY_GAIN = 3.45;
 // the renderer freezes the map.  This slightly denser local contact is the
 // stable, source-safe grounding cue for the moving near-field rigs.
 const DETAILED_CONTACT_SHADOW_OPACITY = 0.66;
+const STORY_ROLE_PRESENTATION = Object.freeze({
+  Courier: Object.freeze({ jobId: 'courier', cue: 'parcel' }),
+  Barista: Object.freeze({ jobId: 'barista', cue: 'coffee' }),
+  Resident: Object.freeze({ jobId: 'commuter', cue: 'everyday-bag' }),
+  Tourist: Object.freeze({ jobId: 'tourist', cue: 'camera' }),
+  Worker: Object.freeze({ jobId: 'worker', cue: 'hi-vis-tool' }),
+  Cleaner: Object.freeze({ jobId: 'cleaner', cue: 'broom' }),
+});
+
+function storyRolePresentation(record) {
+  const storyRole = typeof record?.story?.role === 'string' ? record.story.role : 'Resident';
+  const presentation = STORY_ROLE_PRESENTATION[storyRole] || STORY_ROLE_PRESENTATION.Resident;
+  return { storyRole, ...presentation };
+}
+
+function createDetailedContactShadowTexture() {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const gradient = context.createRadialGradient(32, 32, 4, 32, 32, 30);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.92)');
+  gradient.addColorStop(0.55, 'rgba(255,255,255,0.28)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.NoColorSpace;
+  return texture;
+}
 
 function colorGeometry(geometry, color, centerColor = null) {
   const colors = new Float32Array(geometry.attributes.position.count * 3);
@@ -228,6 +264,17 @@ export function createHeroLifeLighting(options = {}) {
   const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.82 });
   const trouserMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.88 });
   const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x081015, transparent: true, opacity: 0.22, depthWrite: false });
+  const detailedShadowTexture = createDetailedContactShadowTexture();
+  const detailedShadowMaterial = new THREE.MeshBasicMaterial({
+    color: 0x081015,
+    alphaMap: detailedShadowTexture,
+    transparent: true,
+    opacity: DETAILED_CONTACT_SHADOW_OPACITY,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
   const vehicleMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.33, metalness: 0.22, clearcoat: 0.35, clearcoatRoughness: 0.15 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: 0x1c2e39, roughness: 0.18, metalness: 0.12, transparent: true, opacity: 0.84 });
   const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x151719, roughness: 0.93 });
@@ -271,10 +318,12 @@ export function createHeroLifeLighting(options = {}) {
   // A small player-grade pool carries the close read while the instanced
   // presentation remains responsible for the rest of the crowd. The rigs use
   // the existing pedestrian material cache; never dispose that cache here.
-  const detailedActors = Array.from({ length: maxDetailedActors }, (_, index) => {
-    const root = createPlayerAvatar({
+  function createDetailedActor(index, entry = {}) {
+    const role = storyRolePresentation(entry.record);
+    const root = createHeroPlayerAvatar({
       name: `Ferry civilian ${index + 1}`,
-      paletteIndex: index,
+      jobId: role.jobId,
+      variantSeed: index,
       scale: 1,
     });
     root.name = `Ferry detailed civilian ${index + 1}`;
@@ -296,18 +345,17 @@ export function createHeroLifeLighting(options = {}) {
       if (object.isMesh) {
         object.castShadow = false;
         object.receiveShadow = true;
+        object.frustumCulled = false;
       }
     });
-    const shadow = root.userData.shadow;
-    if (shadow) {
-      shadow.visible = true;
-      // The shared skinned shoe envelope terminates at the authored support
-      // surface (~y=0). Keep this existing soft contact cue just above that
-      // surface so the road cannot occlude it; no source/root transform is
-      // changed.
-      shadow.position.y = 0.008;
-      shadow.material.opacity = DETAILED_CONTACT_SHADOW_OPACITY;
-    }
+    const shadow = new THREE.Mesh(shadowGeometry, detailedShadowMaterial);
+    shadow.name = `Ferry civilian ${index + 1} contact shadow`;
+    shadow.position.y = 0.008;
+    shadow.scale.setScalar(0.58);
+    shadow.renderOrder = -1;
+    shadow.userData.heroLifeSharedContactShadow = true;
+    root.add(shadow);
+    root.userData.shadow = shadow;
     group.add(root);
     return {
       root,
@@ -318,8 +366,12 @@ export function createHeroLifeLighting(options = {}) {
       hasPreviousPosition: false,
       previousForward: new THREE.Vector3(),
       hasPreviousForward: false,
+      storyRole: role.storyRole,
+      roleJobId: role.jobId,
+      roleCue: role.cue,
     };
-  });
+  }
+  let detailedActors = [];
   const stats = {
     pedestriansAttached: 0, pedestriansActive: 0, pedestriansExcluded: 0, pedestriansDropped: 0,
     detailedActors: 0, fallbackActors: 0, swaps: 0, detailDrawCost: 0, detailMaterials: 0,
@@ -389,7 +441,14 @@ export function createHeroLifeLighting(options = {}) {
     stats[droppedKey] = Math.max(0, valid.length - maximum);
     valid.slice(0, maximum).forEach((record, index) => {
       const source = rootFor(record);
-      target.push({ source, color: colorFor(record, index, palette, fallbackKey), wasVisible: source.visible });
+      target.push({
+        source,
+        record,
+        ...storyRolePresentation(record),
+        detailOnly: Boolean(record.heroLifeDetailOnly),
+        color: colorFor(record, index, palette, fallbackKey),
+        wasVisible: source.visible,
+      });
       if (replaceSources) {
         source.visible = false;
         source.userData.heroLifeLightingReplacement = true;
@@ -418,7 +477,7 @@ export function createHeroLifeLighting(options = {}) {
       root.remove(tag);
     }
     const shadow = root.userData?.shadow;
-    if (shadow) {
+    if (shadow && !shadow.userData?.heroLifeSharedContactShadow) {
       shadow.material?.alphaMap?.dispose?.();
       shadow.material?.dispose?.();
       shadow.geometry?.dispose?.();
@@ -428,7 +487,9 @@ export function createHeroLifeLighting(options = {}) {
 
   function attachPedestrians(records = []) {
     attachRecords(pedestrians, records, maxPedestrians, PEDESTRIAN_PALETTE, 'topColor', 'pedestriansAttached', 'pedestriansDropped');
-    detailedActors.forEach(hideDetailedActor);
+    detailedActors.forEach((actor) => actor.root.removeFromParent());
+    detailedActors = pedestrians.slice(0, maxDetailedActors)
+      .map((entry, index) => createDetailedActor(index, entry));
     stats.swaps = 0;
     return api;
   }
@@ -525,7 +586,11 @@ export function createHeroLifeLighting(options = {}) {
     }
     for (const candidate of selected) {
       if (detailSourceSet.has(candidate.entry.source)) continue;
-      const actor = detailedActors.find((candidateActor) => !candidateActor.source);
+      const actor = detailedActors.find((candidateActor) => (
+        !candidateActor.source
+        && candidateActor.roleJobId === candidate.entry.jobId
+        && candidateActor.storyRole === candidate.entry.storyRole
+      )) || detailedActors.find((candidateActor) => !candidateActor.source);
       if (!actor) break;
       actor.source = candidate.entry.source;
       actor.root.userData.heroLifeSource = actor.source.uuid;
@@ -601,6 +666,11 @@ export function createHeroLifeLighting(options = {}) {
         silhouette: actor.presentationProfile.silhouette,
         gaitStyle: actor.presentationProfile.gaitStyle,
         paletteIndex: actor.paletteIndex,
+        storyRole: actor.storyRole,
+        roleJobId: actor.roleJobId,
+        roleCue: actor.roleCue,
+        rolePropVisible: Boolean(actor.root.userData.prop?.visible
+          && actor.root.userData.prop.children.some((child) => child.visible)),
         rigScale: actor.presentationProfile.scale,
         shoulderTilt: actor.presentationProfile.shoulderTilt,
         headBias: actor.presentationProfile.headBias,
@@ -621,6 +691,11 @@ export function createHeroLifeLighting(options = {}) {
       return;
     }
     if (detailSourceSet.has(entry.source)) return;
+    // The two authored crossing sources are intentionally attached for their
+    // close street-life beat only. When they are outside the detailed radius,
+    // keep them absent instead of reintroducing the generic fallback figures
+    // into the seven-person Ferry card composition.
+    if (entry.detailOnly) return;
     const cadence = 4.75 + (slot % 4) * 0.22;
     const stride = Math.sin(elapsedSeconds * cadence + slot * 1.71) * 0.16;
     const step = Math.sin(elapsedSeconds * cadence + slot * 1.71);
@@ -766,7 +841,8 @@ export function createHeroLifeLighting(options = {}) {
     });
     group.removeFromParent();
     [torsoGeometry, headGeometry, limbGeometry, shadowGeometry, vehicleBodyGeometry, vehicleCabinGeometry, wheelGeometry, practicalGeometry].forEach((geometry) => geometry.dispose());
-    [clothingMaterial, skinMaterial, trouserMaterial, shadowMaterial, vehicleMaterial, glassMaterial, tireMaterial, practicalMaterial].forEach((material) => material.dispose());
+    [clothingMaterial, skinMaterial, trouserMaterial, shadowMaterial, detailedShadowMaterial, vehicleMaterial, glassMaterial, tireMaterial, practicalMaterial].forEach((material) => material.dispose());
+    detailedShadowTexture?.dispose();
   }
 
   const api = Object.freeze({ attachPedestrians, attachVehicles, setPracticals, setConditions, update, getStats, dispose, group });
