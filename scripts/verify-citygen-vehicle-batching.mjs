@@ -24,6 +24,9 @@ const snapshot = () => page.evaluate(() => {
     .every((mesh) => [...mesh.instanceMatrix.array].every(Number.isFinite));
   const bodyColorsFinite = batch.parts.body.instanceColor
     && [...batch.parts.body.instanceColor.array].every(Number.isFinite);
+  const perPartColorsFinite = ['body', 'cab', 'taxiTopper', 'transitWindows']
+    .every((part) => batch.parts[part].instanceColor
+      && [...batch.parts[part].instanceColor.array].every(Number.isFinite));
   const movingCarIndex = traffic.cars.reduce(
     (best, car, index, cars) => (car.speed > cars[best].speed ? index : best), 0,
   );
@@ -34,8 +37,14 @@ const snapshot = () => page.evaluate(() => {
     diagnostics: traffic.getVehicleBatchDiagnostics(),
     allMatricesFinite,
     bodyColorsFinite,
+    perPartColorsFinite,
     bodyColorCount: batch.parts.body.instanceColor?.count || 0,
     stableIndices: traffic.cars.map((entry) => entry.instanceIndex),
+    busIndices: traffic.cars.flatMap((entry, index) => entry.kind === 'bus' ? [index] : []),
+    topperIndices: traffic.cars
+      .flatMap((entry) => entry.group.userData.rig.topperInstanceIndex >= 0
+        ? [entry.group.userData.rig.topperInstanceIndex]
+        : []),
     movingCarIndex,
     movingCarPosition: car.group.position.toArray(),
     movingBodyMatrix: batch.partMatrix.toArray(),
@@ -60,21 +69,39 @@ try {
   assert.equal(before.backend, 'webgpu');
   assert.equal(before.diagnostics.logicalCars, 42);
   assert.deepEqual(before.diagnostics.kinds, { sedan: 28, taxi: 6, truck: 4, bus: 4 });
-  assert.equal(before.diagnostics.meshes, 258);
-  assert.equal(before.diagnostics.instancedMeshes, 6);
+  assert.equal(before.diagnostics.meshes, 259);
+  assert.equal(before.diagnostics.instancedMeshes, 7);
   assert.equal(before.diagnostics.geometries, 3);
-  assert.equal(before.diagnostics.materials, 132);
+  assert.equal(before.diagnostics.materials, 133);
   assert.deepEqual(before.diagnostics.instances, {
     body: 42,
     cab: 42,
-    taxiTopper: 6,
+    taxiTopper: 10,
+    transitWindows: 4,
     headlights: 84,
     tires: 168,
     hubs: 168,
   });
+  assert.equal(before.diagnostics.sfTransit.logicalInstances, 4);
+  assert.deepEqual(before.diagnostics.sfTransit.styles, {
+    'muni-coach': 2,
+    'cable-car-inspired': 2,
+  });
+  assert.deepEqual(before.diagnostics.sfTransit.identities.map((entry) => entry.carIndex), before.busIndices);
+  assert.deepEqual(before.diagnostics.sfTransit.identities.map((entry) => entry.ordinal), [0, 1, 2, 3]);
+  assert.deepEqual(before.diagnostics.sfTransit.identities.map((entry) => entry.windowInstanceIndex), [0, 1, 2, 3]);
+  assert.deepEqual(before.diagnostics.sfTransit.identities.map((entry) => entry.id), [
+    'muni-red-silver-coach',
+    'muni-heritage-burgundy',
+    'muni-red-silver-coach',
+    'muni-heritage-burgundy',
+  ]);
+  assert.deepEqual(before.topperIndices.toSorted((a, b) => a - b), Array.from({ length: 10 }, (_, index) => index));
+  assert.equal(new Set(before.diagnostics.sfTransit.identities.map((entry) => entry.topperInstanceIndex)).size, 4);
   assert.equal(before.diagnostics.frustumSafe, true);
   assert.equal(before.allMatricesFinite, true);
   assert.equal(before.bodyColorsFinite, true);
+  assert.equal(before.perPartColorsFinite, true);
   assert.equal(before.bodyColorCount, 42);
   assert.deepEqual(before.stableIndices, expectedIndices);
 

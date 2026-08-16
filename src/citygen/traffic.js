@@ -470,6 +470,21 @@ export class TrafficSim {
     const instances = this.vehicleBatch
       ? Object.fromEntries(Object.entries(this.vehicleBatch.parts).map(([name, mesh]) => [name, mesh.count]))
       : {};
+    const sfTransit = this.cars.filter((car) => car.group.userData.rig?.sfTransit).map((car) => {
+      const identity = car.group.userData.rig.sfTransit;
+      return {
+        carIndex: this.cars.indexOf(car),
+        ordinal: identity.ordinal,
+        id: identity.id,
+        style: identity.style,
+        bodyColor: `#${identity.bodyColor.toString(16).padStart(6, '0')}`,
+        cabColor: `#${identity.cabColor.toString(16).padStart(6, '0')}`,
+        roofColor: `#${identity.roofColor.toString(16).padStart(6, '0')}`,
+        windowColor: `#${identity.windowColor.toString(16).padStart(6, '0')}`,
+        topperInstanceIndex: car.group.userData.rig.topperInstanceIndex,
+        windowInstanceIndex: car.group.userData.rig.transitInstanceIndex,
+      };
+    });
     return {
       logicalCars: this.cars.length,
       kinds: this.cars.reduce((counts, car) => ({ ...counts, [car.kind]: (counts[car.kind] || 0) + 1 }), {}),
@@ -478,6 +493,15 @@ export class TrafficSim {
       geometries: geometries.size,
       materials: materials.size,
       instances,
+      sfTransit: {
+        logicalInstances: sfTransit.length,
+        styles: sfTransit.reduce((counts, entry) => ({
+          ...counts,
+          [entry.style]: (counts[entry.style] || 0) + 1,
+        }), {}),
+        sharedBatchParts: ['body', 'cab', 'taxiTopper', 'transitWindows'],
+        identities: sfTransit,
+      },
       legacyMeshEstimate: this.cars.reduce((total, car) => total + (car.kind === 'taxi' ? 19 : 18), 0),
       frustumSafe: this.vehicleBatch
         ? Object.values(this.vehicleBatch.parts).every((mesh) => mesh.frustumCulled === false)
