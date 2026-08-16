@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 // Shared low-poly geometry keeps the whole moving fleet to three geometry
-// allocations. Invariant parts are drawn by six aggregate instance batches;
-// only the independently animated rear and turn lights remain per vehicle.
+// allocations. Invariant parts are drawn by aggregate instance batches; only
+// the independently animated rear and turn lights remain per vehicle.
 const GEO = {
   box: new THREE.BoxGeometry(1, 1, 1),
   wheel: new THREE.CylinderGeometry(0.3, 0.3, 0.24, 8),
@@ -32,14 +32,63 @@ function wheelPivot(x, z) {
   return pivot;
 }
 
+const DEFAULT_CAB_COLOR = 0xb9d3e0;
+const DEFAULT_TAXI_TOPPER_COLOR = 0x1c1c1c;
+
 const VEHICLE_MATERIALS = {
   body: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.55, flatShading: true }),
-  cab: new THREE.MeshStandardMaterial({ color: 0xb9d3e0, roughness: 0.2, metalness: 0.2, flatShading: true }),
-  taxiTopper: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.85 }),
+  cab: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2, metalness: 0.2, flatShading: true }),
+  taxiTopper: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 }),
+  transitWindows: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.28, flatShading: true }),
   headlights: new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffe9a8, emissiveIntensity: 0.4 }),
   tires: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 }),
   hubs: new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.55, metalness: 0.4, flatShading: true }),
 };
+
+const SF_TRANSIT_IDENTITIES = [
+  {
+    id: 'muni-red-silver-coach',
+    style: 'muni-coach',
+    bodyColor: 0xd8dcda,
+    cabColor: 0xb21f38,
+    roofColor: 0xf2eee3,
+    windowColor: 0x17343e,
+    body: { position: [0, 0.93, 0], scale: [2.35, 1.46, 7.8] },
+    cab: { position: [0, 1.14, 0], scale: [2.39, 0.25, 7.82] },
+    windows: { position: [0, 1.56, 0], scale: [2.32, 0.62, 7.48] },
+    topper: { position: [0, 2.0, -0.35], scale: [1.5, 0.16, 2.3] },
+  },
+  {
+    id: 'muni-heritage-burgundy',
+    style: 'cable-car-inspired',
+    bodyColor: 0x7d1d2f,
+    cabColor: 0xf0cf93,
+    roofColor: 0x171513,
+    windowColor: 0x24363a,
+    body: { position: [0, 0.86, 0], scale: [2.32, 1.3, 7.8] },
+    cab: { position: [0, 1.53, 0], scale: [2.08, 0.84, 6.7] },
+    windows: { position: [0, 1.58, 0], scale: [2.1, 0.46, 6.72] },
+    topper: { position: [0, 2.02, 0], scale: [2.2, 0.16, 7.15] },
+  },
+];
+
+function applySfTransitIdentity(rig, ordinal) {
+  const identity = SF_TRANSIT_IDENTITIES[ordinal % SF_TRANSIT_IDENTITIES.length];
+  rig.color = identity.bodyColor;
+  rig.layout.body = identity.body;
+  rig.layout.cab = identity.cab;
+  rig.layout.windows = identity.windows;
+  rig.layout.topper = identity.topper;
+  rig.sfTransit = {
+    ordinal,
+    id: identity.id,
+    style: identity.style,
+    bodyColor: identity.bodyColor,
+    cabColor: identity.cabColor,
+    roofColor: identity.roofColor,
+    windowColor: identity.windowColor,
+  };
+}
 
 function vehicleLayout(kind, dims) {
   const lightY = kind === 'bus' ? 1.0 : kind === 'truck' ? 1.25 : 0.55;
@@ -132,10 +181,10 @@ export function buildVehicle(kind, color) {
 }
 
 /**
- * Six scene-wide batches replace invariant vehicle meshes. Logical vehicle
- * groups remain separate for entry, driving, collision, camera, and stateful
- * lights. The aggregate bounds are intentionally disabled because cars move
- * across the full city and stale instance bounds can otherwise cull them.
+ * Scene-wide batches replace invariant vehicle meshes. Logical vehicle groups
+ * remain separate for entry, driving, collision, camera, and stateful lights.
+ * The aggregate bounds are intentionally disabled because cars move across the
+ * full city and stale instance bounds can otherwise cull them.
  */
 export function buildVehicleBatch(count) {
   const group = new THREE.Group();
@@ -144,6 +193,7 @@ export function buildVehicleBatch(count) {
     body: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.body, count),
     cab: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.cab, count),
     taxiTopper: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.taxiTopper, count),
+    transitWindows: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.transitWindows, count),
     headlights: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.headlights, count * 2),
     tires: new THREE.InstancedMesh(GEO.wheel, VEHICLE_MATERIALS.tires, count * 4),
     hubs: new THREE.InstancedMesh(GEO.hub, VEHICLE_MATERIALS.hubs, count * 4),
@@ -159,6 +209,8 @@ export function buildVehicleBatch(count) {
     parts,
     capacity: count,
     taxiCount: 0,
+    topperCount: 0,
+    transitCount: 0,
     colorsNeedUpdate: false,
     helper: new THREE.Object3D(),
     carMatrix: new THREE.Matrix4(),
@@ -170,8 +222,25 @@ export function buildVehicleBatch(count) {
 export function registerVehicleInstance(batch, car, index) {
   const rig = car.group.userData.rig;
   car.instanceIndex = index;
-  rig.taxiInstanceIndex = rig.layout.topper ? batch.taxiCount++ : -1;
+  if (rig.kind === 'bus') {
+    rig.transitInstanceIndex = batch.transitCount;
+    applySfTransitIdentity(rig, batch.transitCount++);
+  }
+  rig.topperInstanceIndex = rig.layout.topper ? batch.topperCount++ : -1;
+  rig.taxiInstanceIndex = rig.kind === 'taxi' ? rig.topperInstanceIndex : -1;
+  if (rig.kind === 'taxi') batch.taxiCount += 1;
+  car.color = rig.color;
   batch.parts.body.setColorAt(index, new THREE.Color(rig.color));
+  batch.parts.cab.setColorAt(index, new THREE.Color(rig.sfTransit?.cabColor ?? DEFAULT_CAB_COLOR));
+  if (rig.sfTransit) {
+    batch.parts.transitWindows.setColorAt(rig.transitInstanceIndex, new THREE.Color(rig.sfTransit.windowColor));
+  }
+  if (rig.layout.topper) {
+    batch.parts.taxiTopper.setColorAt(
+      rig.topperInstanceIndex,
+      new THREE.Color(rig.sfTransit?.roofColor ?? DEFAULT_TAXI_TOPPER_COLOR),
+    );
+  }
   batch.colorsNeedUpdate = true;
 }
 
@@ -195,8 +264,11 @@ export function writeVehicleInstance(batch, car) {
 
   writePartMatrix(batch, batch.parts.body, index, batch.bodyMatrix, rig.layout.body);
   writePartMatrix(batch, batch.parts.cab, index, batch.bodyMatrix, rig.layout.cab);
+  if (rig.sfTransit) {
+    writePartMatrix(batch, batch.parts.transitWindows, rig.transitInstanceIndex, batch.bodyMatrix, rig.layout.windows);
+  }
   if (rig.layout.topper) {
-    writePartMatrix(batch, batch.parts.taxiTopper, rig.taxiInstanceIndex, batch.bodyMatrix, rig.layout.topper);
+    writePartMatrix(batch, batch.parts.taxiTopper, rig.topperInstanceIndex, batch.bodyMatrix, rig.layout.topper);
   }
   for (let i = 0; i < rig.layout.headlights.length; i += 1) {
     writePartMatrix(batch, batch.parts.headlights, index * 2 + i, batch.bodyMatrix, rig.layout.headlights[i]);
@@ -214,7 +286,8 @@ export function commitVehicleBatch(batch, count) {
   const counts = {
     body: count,
     cab: count,
-    taxiTopper: batch.taxiCount,
+    taxiTopper: batch.topperCount,
+    transitWindows: batch.transitCount,
     headlights: count * 2,
     tires: count * 4,
     hubs: count * 4,
