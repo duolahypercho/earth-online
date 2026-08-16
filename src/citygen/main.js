@@ -1408,6 +1408,13 @@ async function boot() {
         controls.target.set(centerX, 12, centerZ);
       } else if (pose === 'night') {
         const city = state.city;
+        const lampRecords = state.renderer.streetLampRecords || [];
+        const lampsBySegment = new Map();
+        for (const record of lampRecords) {
+          if (!record.segmentId) continue;
+          if (!lampsBySegment.has(record.segmentId)) lampsBySegment.set(record.segmentId, []);
+          lampsBySegment.get(record.segmentId).push(record);
+        }
         // Derive the shot from real segment endpoints. OSM streets use an
         // `axis: osm` marker, so treating them like the legacy x/z grid can
         // place the camera behind a roof instead of inside the road corridor.
@@ -1422,11 +1429,19 @@ async function boot() {
                 : name.includes('mission') || name.includes('howard') ? 2 : 0;
           const roadClass = segment.highway === 'primary' || segment.highway === 'secondary' ? 3
             : segment.highway === 'tertiary' ? 2 : 1;
-          return { segment, length, score: identity * 10000 + roadClass * 1000 + length };
+          const lamps = lampsBySegment.get(segment.id) || [];
+          return {
+            segment,
+            lamps,
+            length,
+            score: identity * 10000 + roadClass * 1000 + lamps.length * 2500 + length,
+          };
         }).filter((entry) => entry.length >= 48
-          && !['pedestrian', 'footway', 'cycleway', 'motorway'].includes(entry.segment.highway))
+          && !['pedestrian', 'footway', 'cycleway', 'motorway'].includes(entry.segment.highway)
+          && (!lampRecords.length || entry.lamps.length > 0))
           .sort((a, b) => b.score - a.score);
-        const segment = candidates[0]?.segment;
+        const candidate = candidates[0];
+        const segment = candidate?.segment;
         if (segment) {
           const a = segment.points[0];
           const b = segment.points.at(-1);
@@ -1437,10 +1452,18 @@ async function boot() {
           const nz = dx / length;
           const side = (Math.round(a.x) + Math.round(a.z)) % 2 === 0 ? 1 : -1;
           const lateral = Math.min(1.1, (segment.width || 6) * 0.12) * side;
-          const eyeX = a.x + dx * 0.18 + nx * lateral;
-          const eyeZ = a.z + dz * 0.18 + nz * lateral;
-          const targetX = a.x + dx * 0.78;
-          const targetZ = a.z + dz * 0.78;
+          const heroLamp = [...(candidate.lamps || [])]
+            .sort((left, right) => left.distanceAlong - right.distanceAlong)[0];
+          const eyeT = heroLamp
+            ? clamp((heroLamp.distanceAlong - 18) / length, 0.05, 0.35)
+            : 0.18;
+          const targetT = heroLamp
+            ? clamp((heroLamp.distanceAlong + 42) / length, 0.65, 0.95)
+            : 0.78;
+          const eyeX = a.x + dx * eyeT + nx * lateral;
+          const eyeZ = a.z + dz * eyeT + nz * lateral;
+          const targetX = a.x + dx * targetT;
+          const targetZ = a.z + dz * targetT;
           const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 1.72;
           const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.55;
           setFov(46);
