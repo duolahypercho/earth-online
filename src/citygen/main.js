@@ -15,6 +15,7 @@ import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
 import { loadSfData } from './sf-data.js';
 import { TrafficSim } from './traffic.js';
+import { loadAuthoritativeFerryTiles } from './metric-tile-stream.js';
 import './styles.css';
 
 const app = document.querySelector('#app');
@@ -48,6 +49,7 @@ const osmCityInput = document.querySelector('#osm-city');
 const osmProgress = document.querySelector('#osm-progress');
 const osmFetchButton = document.querySelector('[data-action="osm-go"]');
 const osmSfButton = document.querySelector('[data-action="sf-builtin"]');
+const metricSfButton = document.querySelector('[data-action="sf-metric"]');
 const osmCancelButton = document.querySelector('[data-action="osm-cancel"]');
 const osmResult = document.querySelector('#osm-result');
 const osmResultTitle = document.querySelector('#osm-result-title');
@@ -89,6 +91,7 @@ const state = {
   },
   errors: [],
   busy: false,
+  metricMap: null,
 };
 
 let pillTimer = null;
@@ -422,7 +425,7 @@ function drawMinimap(city) {
 }
 
 function updateReadout(city) {
-  const stats = describeCity(city);
+  const stats = city.meta.metricCounts || describeCity(city);
   cityNameEl.textContent = city.meta.name;
   readoutBuildings.textContent = `${fmt(stats.buildings)} buildings`;
   readoutBlocks.textContent = `${fmt(stats.blocks)} blocks`;
@@ -435,7 +438,9 @@ function updateReadout(city) {
     ? `seed ${stats.seed}`
     : city.meta.generator === 'sf-builtin'
       ? 'real San Francisco OSM'
-      : 'real OSM';
+      : city.meta.generator === 'sf-metric-tiles'
+        ? `${fmt(city.meta.residentTileCount)} / ${fmt(city.meta.manifestTileCount)} metric tiles`
+        : 'real OSM';
 }
 
 function formatClock(hour) {
@@ -541,6 +546,7 @@ function buildCollisionGrid(city, cell = 2) {
 
 async function buildCity(city, { reframe = true } = {}) {
   state.city = city;
+  state.metricMap = null;
   MINIMAP.bitmap = null;
   if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
@@ -558,6 +564,7 @@ async function buildCity(city, { reframe = true } = {}) {
   drawMinimap(city);
   syncUndoButton();
   resetInspector(`Select a building, road, sidewalk, signal, or block in ${city.meta.name}.`);
+  document.querySelector('[data-action="place"]').disabled = false;
 }
 
 function makeGhost() {
@@ -1098,6 +1105,7 @@ function setOsmBusy(busy, statusText) {
   osmBusy = busy;
   osmFetchButton.disabled = busy;
   osmSfButton.disabled = busy;
+  metricSfButton.disabled = busy;
   osmCancelButton.disabled = busy;
   osmCityInput.disabled = busy;
   osmProgress.hidden = !busy;
@@ -1170,6 +1178,83 @@ async function loadBuiltinSf() {
   }
 }
 
+async function loadMetricSf() {
+  if (osmBusy || state.busy) return;
+  setOsmBusy(true, 'Verifying the authoritative San Francisco metric tiles…');
+  setExplorerBusy(true, 'Opening authoritative San Francisco…', 'Verifying receipts and GLB bytes before WebGPU rendering');
+  try {
+    const bundle = await loadAuthoritativeFerryTiles({
+      count: 10,
+      onProgress: ({ loaded, total, id }) => {
+        const suffix = id ? ` · ${id}` : '';
+        setOsmBusy(true, `Verified ${loaded} / ${total} metric tiles${suffix}`);
+        loadingDetail.textContent = `Source-locked EPSG:26910 tiles · ${loaded} / ${total}`;
+      },
+    });
+    if (state.vehicle) toggleVehicle(false);
+    if (state.traffic) state.traffic.dispose();
+    state.traffic = null;
+    state.renderer.clearCity();
+    state.renderer.installMetricTileRoot(bundle.root, bundle.bounds);
+    const city = {
+      meta: {
+        name: 'San Francisco · Metric Source',
+        generator: 'sf-metric-tiles',
+        bounds: bundle.bounds,
+        metricCounts: {
+          buildings: bundle.counts.buildings,
+          blocks: 0,
+          streets: bundle.counts.streets,
+          oneWayStreets: 0,
+          signals: 0,
+        },
+        residentTileCount: bundle.tileIds.length,
+        manifestTileCount: bundle.manifestTileCount,
+      },
+      buildings: [],
+      blocks: [],
+      streets: [],
+      segments: [],
+      signals: [],
+    };
+    state.city = city;
+    state.metricMap = {
+      anchorOriginEpsg26910: bundle.anchorOriginEpsg26910,
+      manifestTileCount: bundle.manifestTileCount,
+      tileIds: bundle.tileIds,
+      records: bundle.records.map(({ descriptor, integrity }) => ({ id: descriptor.id, ...integrity })),
+    };
+    state.collision = buildCollisionGrid(city);
+    state.addedBuildings = [];
+    state.sandboxStats.buildingsPlaced = 0;
+    state.sandboxStats.blocksTouched.clear();
+    MINIMAP.bitmap = null;
+    frameCityCamera(city);
+    updateReadout(city);
+    drawMinimap(city);
+    resetInspector('Authoritative metric geometry · EPSG:26910 · 1 unit = 1 metre.');
+    document.querySelector('[data-action="place"]').disabled = true;
+    document.querySelectorAll('.preset').forEach((button) => button.classList.remove('is-active'));
+    osmResultTitle.textContent = 'Authoritative San Francisco loaded';
+    osmResultDetail.textContent = `${fmt(bundle.tileIds.length)} verified tiles · ${fmt(bundle.counts.buildings)} buildings · ${fmt(bundle.counts.streets)} roads · 1 unit = 1 metre`;
+    osmForm.hidden = true;
+    osmResult.hidden = false;
+    setOsmBusy(false, '');
+    if (osmResultTimer) clearTimeout(osmResultTimer);
+    osmResultTimer = setTimeout(() => { osmOverlay.hidden = true; }, 3200);
+    showPill('Authoritative metric map loaded', 'info', 3000);
+    return state.metricMap;
+  } catch (error) {
+    reportError(`Metric SF failed: ${error.message}`, 'sf-metric');
+    setOsmBusy(false, '');
+    osmStatus.classList.add('is-error');
+    osmStatus.textContent = `Could not load authoritative San Francisco: ${error.message}`;
+    return null;
+  } finally {
+    setExplorerBusy(false);
+  }
+}
+
 function updatePlayer(delta) {
   const player = state.player;
   if (state.mode !== 'walk') return;
@@ -1209,9 +1294,9 @@ async function boot() {
     getRenderer: () => state.renderer,
     getTraffic: () => state.traffic,
     getState: () => ({
-      buildings: state.city?.buildings?.length || 0,
+      buildings: state.city?.meta?.metricCounts?.buildings ?? state.city?.buildings?.length ?? 0,
       blocks: state.city?.blocks?.length || 0,
-      streets: state.city?.streets?.length || 0,
+      streets: state.city?.meta?.metricCounts?.streets ?? state.city?.streets?.length ?? 0,
       signals: state.city?.signals?.length || 0,
       oneWayStreets: (state.city?.streets || []).filter((s) => s.oneway !== 'both').length,
       avgBuildingHeight: (() => {
@@ -1238,6 +1323,11 @@ async function boot() {
       blocksTouched: state.sandboxStats.blocksTouched.size,
       furniture: state.renderer?.streetFurniture || null,
       pedestrians: state.traffic?.pedestrians?.length || 0,
+      metricMap: state.metricMap ? {
+        anchorOriginEpsg26910: [...state.metricMap.anchorOriginEpsg26910],
+        tileIds: [...state.metricMap.tileIds],
+        verifiedTiles: state.metricMap.records.length,
+      } : null,
       errors: state.errors,
       mode: () => state.mode,
     }),
@@ -1457,6 +1547,8 @@ async function boot() {
     togglePlacement,
     enterVehicle: (force = false) => toggleVehicle(force),
     exitVehicle: () => toggleVehicle(false),
+    loadMetricSf,
+    getMetricMap: () => state.metricMap,
     exportMetadata,
     importMetadata: async (payload) => {
       const city = importCityMetadata(payload);
@@ -1623,6 +1715,9 @@ async function boot() {
   });
   osmSfButton.addEventListener('click', async () => {
     await loadBuiltinSf();
+  });
+  metricSfButton.addEventListener('click', async () => {
+    await loadMetricSf();
   });
   osmCancelButton.addEventListener('click', () => {
     if (osmBusy) return;

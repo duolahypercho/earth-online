@@ -554,19 +554,34 @@ export class CityRenderer {
     return root;
   }
 
+  installMetricTileRoot(root, bounds) {
+    for (const geometry of this.geometryCache) geometry.dispose();
+    this.geometryCache = [];
+    this.city = null;
+    this.root = root;
+    this.scene.add(root);
+    this.terrainVisualScale = 1;
+    this.terrain = { heightAt: () => 0 };
+    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+    if (this.scene.fog) {
+      this.scene.fog.near = Math.max(330, span * 0.55);
+      this.scene.fog.far = Math.max(1380, span * 1.5);
+    }
+    this.camera.near = 0.5;
+    this.camera.far = Math.max(2400, span * 2.2);
+    this.camera.updateProjectionMatrix();
+    return root;
+  }
+
   clearCity() {
     if (this.root) {
       this.scene.remove(this.root);
       this.root.traverse((object) => {
         if (object.geometry) this.geometryCache.push(object.geometry);
-        if (object.material && object.material.map) {
-          object.material.map.dispose();
-          object.material.dispose();
-        } else if (Array.isArray(object.material)) {
-          for (const material of object.material) {
-            if (material.map) material.map.dispose();
-            material.dispose();
-          }
+        const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+        for (const material of materials) {
+          material.map?.dispose();
+          material.dispose();
         }
       });
       for (const entry of this.nightEmissive) {
