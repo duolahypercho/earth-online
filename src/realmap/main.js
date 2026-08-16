@@ -10370,7 +10370,6 @@ function initializeHeroLifeLighting() {
   // their low-detail replacement silhouettes in the hero frame. Their
   // simulation records remain in `pedestrianState` and are still captured
   // below for exact visibility restoration on disposal.
-  const presentationLimit = stagedPeople.length || FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT;
   const stagedSet = new Set(stagedPeople);
   const cardCohortPeople = pedestrianState.filter(({ heroCardCohort }) => heroCardCohort);
   const cardCohortSet = new Set(cardCohortPeople);
@@ -10379,6 +10378,9 @@ function initializeHeroLifeLighting() {
   // existing hero renderer can show them when the player reaches the crossing.
   const streetLifePeople = isFerryBuildingHeroTile() && selection.mode === 'plaza' ? pedestrianState.slice(8, 10) : [];
   const streetLifeSet = new Set(streetLifePeople);
+  const presentationLimit = stagedPeople.length
+    ? stagedPeople.length + streetLifePeople.length
+    : FERRY_HERO_PEDESTRIAN_PRESENTATION_LIMIT;
   const priorityPeople = selection.mode === 'card02'
     ? stagedPeople
     : [...new Set([...stagedPeople, ...streetLifePeople, ...cardCohortPeople])];
@@ -10392,6 +10394,9 @@ function initializeHeroLifeLighting() {
         - Math.hypot(second.mesh.position.x - focusX, second.mesh.position.z - focusZ)
     ))
     .slice(0, presentationLimit);
+  const presentationPedestrians = pedestrians.map((person) => (
+    streetLifeSet.has(person) ? { ...person, heroLifeDetailOnly: true } : person
+  ));
   // Ferry staging deliberately owns the visible close crowd. The remaining
   // simulated pedestrians keep walking, but their primitive source meshes are
   // hidden while the bounded renderer prevents duplicates/thought UI nearby.
@@ -10401,16 +10406,16 @@ function initializeHeroLifeLighting() {
   heroLifeLighting = createHeroLifeLighting({
     scene: cityRoot,
     maxPedestrians: presentationLimit,
-    // The staged Ferry close pass is intentionally seven sources wide. Give
-    // each source a player-grade actor so no low-detail silhouette can split
-    // the composition; other hero callers retain the four-rig default.
-    maxDetailedActors: stagedPeople.length || undefined,
+    // The Ferry close pass carries seven staged plaza adults plus the two
+    // authored crossing sources. Give each a player-grade role rig when it is
+    // near; other hero callers retain the four-rig default.
+    maxDetailedActors: presentationLimit || undefined,
     pedestrianDetailDistance: isFerryBuildingHeroTile() ? 70 : undefined,
     cameraExclusionRadius: HERO_PEDESTRIAN_CAMERA_EXCLUSION_RADIUS,
     replaceSources: true,
     conditions: heroLifeLightingConditions(),
   });
-  heroLifeLighting.attachPedestrians(pedestrians);
+  heroLifeLighting.attachPedestrians(presentationPedestrians);
   heroLifeLighting.setPracticals(ferryHeroPracticalAnchors());
   const practicalLights = heroLifeLighting.group.children.filter((object) => object.isPointLight);
   practicalLights.slice(FERRY_HERO_PRACTICAL_POINT_LIGHTS).forEach((light) => light.removeFromParent());

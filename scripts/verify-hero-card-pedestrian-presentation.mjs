@@ -43,6 +43,14 @@ function card02SourceSnapshot(cohort) {
   }));
 }
 
+function roleCueSnapshot(life) {
+  return life.stats.detailAssignments
+    .map(({ sourceIdentity, storyRole, roleJobId, roleCue, rolePropVisible }) => ({
+      sourceIdentity, storyRole, roleJobId, roleCue, rolePropVisible,
+    }))
+    .sort((first, second) => String(first.sourceIdentity).localeCompare(String(second.sourceIdentity)));
+}
+
 function assertCard01Strict({ staging, life }) {
   assert.equal(life.presentation.mode, 'plaza', 'Card01 must retain the original seven-person Ferry plaza presentation');
   assert.equal(staging.stagedCount, 7, 'Card01 must retain all seven staged source records');
@@ -55,6 +63,18 @@ function assertCard01Strict({ staging, life }) {
   assert.equal(staging.activeLandRegionClear, true, 'Card01 sources cannot leave the active source land region');
   assert.equal(life.stats.detailedActors, 7, 'Card01 must retain seven detailed civilian rigs');
   assert.equal(life.stats.fallbackActors, 0, 'Card01 cannot add fallback silhouettes');
+  assert.deepEqual(
+    life.stats.detailAssignments.map(({ storyRole }) => storyRole).sort(),
+    ['Barista', 'Cleaner', 'Courier', 'Courier', 'Resident', 'Tourist', 'Worker'],
+    'Card01 must render the seven deterministic authored story roles',
+  );
+  const visibleRoleCues = life.stats.detailAssignments.filter(({ rolePropVisible }) => rolePropVisible);
+  assert.ok(visibleRoleCues.length >= 6, `Card01 needs at least six visible prop cues; got ${visibleRoleCues.length}`);
+  assert.deepEqual(
+    new Set(visibleRoleCues.map(({ roleCue }) => roleCue)),
+    new Set(['parcel', 'coffee', 'camera', 'hi-vis-tool', 'broom']),
+    'Card01 must expose five distinct deterministic authored role cues',
+  );
   const adults = staging.screenSpace.adults.filter(({ detailed, readable, fullyInside }) => detailed && readable && fullyInside);
   const inBand = adults.filter(({ screen }) => (
     screen.centerPx.x >= viewport.width * 0.25
@@ -74,7 +94,11 @@ function assertCard01Strict({ staging, life }) {
     )))) sixClique = subset;
   }
   assert.ok(sixClique.length >= 6, `Card01 needs a six-person 100px clique; got ${sixClique.length}`);
-  return { readableDetailedCount: adults.length, sixClique: sixClique.map(({ sourceIdentity }) => sourceIdentity) };
+  return {
+    readableDetailedCount: adults.length,
+    sixClique: sixClique.map(({ sourceIdentity }) => sourceIdentity),
+    roleCues: roleCueSnapshot(life),
+  };
 }
 
 function assertCard02Strict({ staging, life, cohort }) {
@@ -82,6 +106,13 @@ function assertCard02Strict({ staging, life, cohort }) {
   assert.equal(life.stats.pedestriansAttached, 3, 'Card02 must attach only its three existing source identities');
   assert.equal(life.stats.detailedActors, 3, 'Card02 needs three detailed civilian rigs');
   assert.equal(life.stats.fallbackActors, 0, 'Card02 cannot use a fallback silhouette');
+  assert.deepEqual(
+    life.stats.detailAssignments.map(({ storyRole }) => storyRole).sort(),
+    ['Cleaner', 'Courier', 'Worker'],
+    'Card02 must retain its deterministic authored role cohort',
+  );
+  assert.ok(life.stats.detailAssignments.every(({ rolePropVisible }) => rolePropVisible),
+    'Card02 worker, cleaner, and courier cues must all be visible');
   const sourceRecords = card02Sources(cohort);
   assert.equal(sourceRecords.length, 3, 'Card02 must retain exactly slots 10–12');
   assert.deepEqual(card02SourceSnapshot(cohort), card02ExpectedSources.map(({ id, initialS, initialPosition }) => ({
@@ -109,7 +140,11 @@ function assertCard02Strict({ staging, life, cohort }) {
   assert.ok(pairMetrics.every(({ passes, silhouetteGapPx, centerDistancePx, minCenterDistancePx }) => (
     passes && silhouetteGapPx >= 4 && centerDistancePx >= minCenterDistancePx
   )), `Card02 must pass unrounded >=4px silhouette and scale-aware center gaps: ${JSON.stringify(pairMetrics)}`);
-  return { identities: adults.map(({ sourceIdentity }) => sourceIdentity), pairMetrics };
+  return {
+    identities: adults.map(({ sourceIdentity }) => sourceIdentity),
+    pairMetrics,
+    roleCues: roleCueSnapshot(life),
+  };
 }
 
 async function waitForReady(page) {
@@ -268,9 +303,12 @@ try {
   freshPage.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
   await waitForReady(freshPage);
   const freshCard02 = await poseAndRead(freshPage, cards[1]);
+  assertCard02Strict(freshCard02);
   const freshAnchor = card02SourceSnapshot(freshCard02.cohort);
   assert.deepEqual(freshAnchor, immutableAnchor,
     'two fresh browser loads must retain exact Card02 identities, path/source, initial s, and metric launch positions');
+  assert.deepEqual(roleCueSnapshot(freshCard02.life), roleCueSnapshot(card02.life),
+    'two fresh browser loads must retain exact Card02 authored role cues');
   await freshPage.close();
   assert.ok(card01.perf.fps >= 60 && card02.perf.fps >= 60, 'locked cards must sustain >=60 FPS');
   assert.deepEqual(errors, [], `browser errors: ${errors.join('; ')}`);
