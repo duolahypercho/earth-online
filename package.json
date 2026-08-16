@@ -145,6 +145,7 @@
     "verify:citygen-vehicle-batching": "node scripts/verify-citygen-vehicle-batching.mjs",
     "verify:citygen-interiors": "node scripts/verify-citygen-interiors.mjs",
     "verify:citygen-building-footprints": "node scripts/verify-citygen-building-footprints.mjs",
+    "verify:citygen-hero-facades": "node scripts/verify-citygen-hero-facades.mjs",
     "verify:online-vehicle-ownership": "node scripts/verify-online-vehicle-ownership.mjs",
     "verify:online-gameplay": "node scripts/verify-online-gameplay.mjs",
     "verify:online-coop-shift": "node scripts/verify-online-coop-shift.mjs",
