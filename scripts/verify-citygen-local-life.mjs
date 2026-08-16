@@ -16,11 +16,12 @@ const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 
 const VEHICLE_BATCH_BASELINE = Object.freeze({
-  // Last committed baseline before the authored body/cab hull. Keep this
-  // explicit so the stale 520k cap cannot conceal a presentation regression.
-  commit: '3993385',
-  daylight: { drawCalls: 594, triangles: 533970, geometries: 401, textures: 259 },
-  night: { drawCalls: 559, triangles: 528392, geometries: 401, textures: 259 },
+  // The zero-draw vehicle identity contract is anchored to the current
+  // canonical world, not to an older pre-hull presentation. Any class-color
+  // or wheel-scale change must leave these render counters exactly unchanged.
+  commit: '82bdccf',
+  daylight: { drawCalls: 594, triangles: 534642, geometries: 402, textures: 259 },
+  night: { drawCalls: 559, triangles: 529064, geometries: 402, textures: 259 },
 });
 
 const sample = () => page.evaluate(() => {
@@ -132,15 +133,14 @@ try {
     ['daylight', daylight, VEHICLE_BATCH_BASELINE.daylight],
     ['night', night, VEHICLE_BATCH_BASELINE.night],
   ]) {
-    assert.equal(sampleReport.render.drawCalls - baseline.drawCalls, 0,
-      `${label}: vehicle silhouette draw delta must remain exact`);
-    assert.equal(sampleReport.render.geometries - baseline.geometries, 1,
-      `${label}: authored hull adds exactly one shared geometry`);
-    assert.equal(sampleReport.render.textures - baseline.textures, 0,
-      `${label}: authored hull adds no textures`);
-    const triangleDelta = sampleReport.render.triangles - baseline.triangles;
-    assert.ok(triangleDelta >= 0 && triangleDelta <= 1000,
-      `${label}: vehicle silhouette triangle delta ${triangleDelta} <= 1000`);
+    assert.equal(sampleReport.render.drawCalls, baseline.drawCalls,
+      `${label}: vehicle identity keeps render draws unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
+    assert.equal(sampleReport.render.triangles, baseline.triangles,
+      `${label}: vehicle identity keeps render triangles unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
+    assert.equal(sampleReport.render.geometries, baseline.geometries,
+      `${label}: vehicle identity keeps render geometries unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
+    assert.equal(sampleReport.render.textures, baseline.textures,
+      `${label}: vehicle identity keeps textures unchanged from ${VEHICLE_BATCH_BASELINE.commit}`);
   }
   assert.deepEqual(errors, []);
 

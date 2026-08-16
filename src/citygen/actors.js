@@ -91,6 +91,29 @@ function wheelPivot(x, z) {
 
 const DEFAULT_CAB_COLOR = 0xb9d3e0;
 const DEFAULT_TAXI_TOPPER_COLOR = 0x1c1c1c;
+const SF_TAXI_BODY_COLOR = 0xf3bd2f;
+const SF_TAXI_CAB_COLOR = 0xe5b139;
+const VEHICLE_WHEEL_SCALES = {
+  sedan: 1,
+  taxi: 1,
+  truck: 1.18,
+  bus: 1.34,
+};
+
+function vehicleClassIdentity(kind, color) {
+  const wheelScale = VEHICLE_WHEEL_SCALES[kind] ?? VEHICLE_WHEEL_SCALES.sedan;
+  const isTaxi = kind === 'taxi';
+  const bodyColor = isTaxi ? SF_TAXI_BODY_COLOR : new THREE.Color(color).getHex();
+  return {
+    id: isTaxi ? 'sf-yellow-taxi' : `sf-${kind}`,
+    kind,
+    bodyColor,
+    cabColor: isTaxi ? SF_TAXI_CAB_COLOR : DEFAULT_CAB_COLOR,
+    topperColor: isTaxi ? DEFAULT_TAXI_TOPPER_COLOR : null,
+    wheelScale,
+    wheelScalePolicy: 'uniform-pivot-scale-v1',
+  };
+}
 
 const VEHICLE_MATERIALS = {
   body: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.55, flatShading: true }),
@@ -145,6 +168,12 @@ function applySfTransitIdentity(rig, ordinal) {
     roofColor: identity.roofColor,
     windowColor: identity.windowColor,
   };
+  Object.assign(rig.classIdentity, {
+    bodyColor: identity.bodyColor,
+    cabColor: identity.cabColor,
+    transitId: identity.id,
+    transitStyle: identity.style,
+  });
 }
 
 function vehicleLayout(kind, dims) {
@@ -196,6 +225,7 @@ export function buildVehicle(kind, color) {
   const group = new THREE.Group();
   const dims = CAR_DIMENSIONS[kind] || CAR_DIMENSIONS.sedan;
   const layout = vehicleLayout(kind, dims);
+  const classIdentity = vehicleClassIdentity(kind, color);
   const bodyGroup = new THREE.Group();
   group.add(bodyGroup);
 
@@ -218,12 +248,19 @@ export function buildVehicle(kind, color) {
 
   // The wheel pivots preserve the existing animation contract without adding
   // scene nodes. Their matrices are copied into the tire/hub batches.
-  const wheels = layout.wheels.map(([x, z]) => wheelPivot(x, z));
+  const wheels = layout.wheels.map(([x, z]) => {
+    const pivot = wheelPivot(x, z);
+    // Uniform pivot scale keeps tire and hub sizes coupled while retaining
+    // their local center and the existing spin animation.
+    pivot.scale.setScalar(classIdentity.wheelScale);
+    return pivot;
+  });
 
   group.userData.rig = {
     kind,
     dims,
-    color,
+    color: classIdentity.bodyColor,
+    classIdentity,
     layout,
     body: bodyGroup,
     wheels,
@@ -288,14 +325,14 @@ export function registerVehicleInstance(batch, car, index) {
   if (rig.kind === 'taxi') batch.taxiCount += 1;
   car.color = rig.color;
   batch.parts.body.setColorAt(index, new THREE.Color(rig.color));
-  batch.parts.cab.setColorAt(index, new THREE.Color(rig.sfTransit?.cabColor ?? DEFAULT_CAB_COLOR));
+  batch.parts.cab.setColorAt(index, new THREE.Color(rig.sfTransit?.cabColor ?? rig.classIdentity.cabColor));
   if (rig.sfTransit) {
     batch.parts.transitWindows.setColorAt(rig.transitInstanceIndex, new THREE.Color(rig.sfTransit.windowColor));
   }
   if (rig.layout.topper) {
     batch.parts.taxiTopper.setColorAt(
       rig.topperInstanceIndex,
-      new THREE.Color(rig.sfTransit?.roofColor ?? DEFAULT_TAXI_TOPPER_COLOR),
+      new THREE.Color(rig.sfTransit?.roofColor ?? rig.classIdentity.topperColor ?? DEFAULT_TAXI_TOPPER_COLOR),
     );
   }
   batch.colorsNeedUpdate = true;
