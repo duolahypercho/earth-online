@@ -397,6 +397,10 @@ export class CityRenderer {
     this.lampLights = [];
     this.lightPools = [];
     this.neonLights = [];
+    this.localLightCandidates = [];
+    this.localLightPool = [];
+    this.localLightUpdateClock = 0;
+    this.localLightsNight = false;
     this.terrainVisualScale = 1;
 
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
@@ -494,8 +498,14 @@ export class CityRenderer {
     this.geometryCache = [];
     this.pickables = [];
     this.neonGlowMaterials = [];
+    this.lampBulbs = [];
+    this.lampLights = [];
     this.neonLights = [];
     this.lightPools = [];
+    this.localLightCandidates = [];
+    this.localLightPool = [];
+    this.localLightUpdateClock = 0;
+    this.localLightsNight = false;
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     const root = new THREE.Group();
     root.name = 'city-root';
@@ -544,6 +554,7 @@ export class CityRenderer {
     // Curbside cars: saturated paint anchors the street-level color story.
     this.buildParkedCars(root, city);
     this.buildShopAwnings(root, city);
+    this.installLocalLightPool(root);
 
     this.root = root;
     this.scene.add(root);
@@ -593,6 +604,10 @@ export class CityRenderer {
       this.lampLights = [];
       this.lightPools = [];
       this.neonLights = [];
+      this.localLightCandidates = [];
+      this.localLightPool = [];
+      this.localLightUpdateClock = 0;
+      this.localLightsNight = false;
       this.signalMeshes = [];
       this.root = null;
     }
@@ -1885,7 +1900,6 @@ export class CityRenderer {
       }
     }
     const group = new THREE.Group();
-    const lightPositions = [];
     for (const key of positions) {
       const [x, z] = key.split(',').map(Number);
       if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
@@ -1899,22 +1913,72 @@ export class CityRenderer {
       lamp.position.set(x, y, z);
       group.add(lamp);
       this.lampBulbs.push(bulb);
-    }
-    const maxLightPools = city.meta.generator === 'sf-builtin' || isSanFranciscoCity(city) ? 18 : 24;
-    for (const key of positions) {
-      if (lightPositions.length >= maxLightPools) break;
-      const [x, z] = key.split(',').map(Number);
-      if (Number.isFinite(x) && Number.isFinite(z)) lightPositions.push({ x, z });
-    }
-    for (const lp of lightPositions) {
-      const light = new THREE.PointLight(0xffc46a, 0, 28, 2.1);
-      const terrainY = this.terrain?.heightAt ? this.terrain.heightAt(lp.x, lp.z) : 0;
-      light.position.set(lp.x, terrainY + 4.8, lp.z);
-      group.add(light);
-      this.lampLights.push(light);
-      this.lightPools.push(light);
+      this.localLightCandidates.push({
+        x,
+        y: y + 4.8,
+        z,
+        color: 0xffc46a,
+        intensity: 0.72,
+        distance: 28,
+        decay: 2.1,
+      });
     }
     root.add(group);
+  }
+
+  installLocalLightPool(root) {
+    // WebGPU currently evaluates every PointLight against the scene. Keep all
+    // authored emissive fixtures, but reserve real illumination for a small
+    // camera-local pool so city density does not multiply frame cost.
+    const poolSize = Math.min(3, this.localLightCandidates.length);
+    for (let i = 0; i < poolSize; i += 1) {
+      const light = new THREE.PointLight(0xffffff, 0, 28, 2);
+      light.name = `local-night-light-${i + 1}`;
+      light.visible = false;
+      root.add(light);
+      this.localLightPool.push(light);
+    }
+    // Preserve the public diagnostics aliases while all local sources share
+    // one bounded pool.
+    this.lampLights = this.localLightPool;
+    this.lightPools = this.localLightPool;
+  }
+
+  updateLocalLightPool(delta, force = false) {
+    if (!this.localLightPool.length) return;
+    if (!this.localLightsNight) {
+      for (const light of this.localLightPool) {
+        light.intensity = 0;
+        light.visible = false;
+      }
+      return;
+    }
+    this.localLightUpdateClock += delta;
+    if (!force && this.localLightUpdateClock < 0.25) return;
+    this.localLightUpdateClock = 0;
+    const camera = this.camera.position;
+    const nearest = this.localLightCandidates
+      .map((candidate) => ({
+        candidate,
+        distanceSq: (candidate.x - camera.x) ** 2 + (candidate.z - camera.z) ** 2,
+      }))
+      .sort((a, b) => a.distanceSq - b.distanceSq)
+      .slice(0, this.localLightPool.length);
+    for (let i = 0; i < this.localLightPool.length; i += 1) {
+      const light = this.localLightPool[i];
+      const candidate = nearest[i]?.candidate;
+      if (!candidate) {
+        light.intensity = 0;
+        light.visible = false;
+        continue;
+      }
+      light.position.set(candidate.x, candidate.y, candidate.z);
+      light.color.set(candidate.color);
+      light.distance = candidate.distance;
+      light.decay = candidate.decay;
+      light.intensity = candidate.intensity;
+      light.visible = true;
+    }
   }
 
   buildStreetNeonTrim(root, city) {
@@ -2885,10 +2949,15 @@ export class CityRenderer {
       const lightCount = Math.min(96, neonSigns.length);
       for (let i = 0; i < lightCount; i += 1) {
         const sign = neonSigns[i];
-        const light = new THREE.PointLight(sign.color, 0, 20, 1.7);
-        light.position.set(sign.x, sign.y - 0.5, sign.z);
-        group.add(light);
-        this.neonLights.push(light);
+        this.localLightCandidates.push({
+          x: sign.x,
+          y: sign.y - 0.5,
+          z: sign.z,
+          color: sign.color,
+          intensity: 2.8,
+          distance: 20,
+          decay: 1.7,
+        });
       }
     }
     if (neonPanels.length) {
@@ -3007,11 +3076,9 @@ export class CityRenderer {
     for (const bulb of this.lampBulbs) {
       bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
     }
-    for (const light of this.lampLights) {
-      light.intensity = night ? 0.72 : 0;
-    }
-    for (const light of this.neonLights) {
-      light.intensity = night ? 2.8 : 0;
+    if (night !== this.localLightsNight) {
+      this.localLightsNight = night;
+      this.updateLocalLightPool(0, true);
     }
     if (this.water?.material) {
       this.water.material.color.set(night ? 0x1d5270 : 0x2f8fae);
@@ -3050,6 +3117,7 @@ export class CityRenderer {
     this.signalPhaseClock += delta;
     this.controls.update();
     if (time != null) this.setTimeOfDay(time);
+    this.updateLocalLightPool(delta);
     if (this.signalMeshes) {
       for (const entry of this.signalMeshes) {
         const offset = entry.signal.phaseOffset || 0;
