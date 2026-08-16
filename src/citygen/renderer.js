@@ -391,6 +391,8 @@ export class CityRenderer {
     this.terrain = null;
     this.city = null;
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
+    this.sidewalkPropRecords = [];
+    this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
     this.nightEmissive = [];
     this.neonGlowMaterials = [];
     this.lampBulbs = [];
@@ -507,6 +509,8 @@ export class CityRenderer {
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
+    this.sidewalkPropRecords = [];
+    this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
     const root = new THREE.Group();
     root.name = 'city-root';
 
@@ -608,6 +612,8 @@ export class CityRenderer {
       this.localLightPool = [];
       this.localLightUpdateClock = 0;
       this.localLightsNight = false;
+      this.sidewalkPropRecords = [];
+      this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
       this.signalMeshes = [];
       this.root = null;
     }
@@ -2526,11 +2532,12 @@ export class CityRenderer {
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     const maxProps = realMap ? 900 : 1000;
     const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
-    const pushProp = (x, z) => {
+    const pushProp = (x, z, placement = null) => {
       if (props.length >= maxProps) return;
       const y = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + roadLift + 0.04;
       const roll = random();
-      const rotation = random() * Math.PI;
+      const rotation = placement?.rotation ?? random() * Math.PI;
+      const base = { x, y, z, rotation, placement };
       if (roll < 0.45) {
         const flowerColors = ['#e84393', '#ff4f6d', '#ffd23f', '#7a5cff'];
         const flowers = [];
@@ -2541,25 +2548,55 @@ export class CityRenderer {
             color: flowerColors[Math.floor(random() * flowerColors.length)],
           });
         }
-        props.push({ kind: 'planter', x, y, z, rotation, flowers });
+        props.push({ kind: 'planter', ...base, flowers });
       } else if (roll < 0.62) {
-        props.push({ kind: 'bench', x, y, z, rotation });
+        props.push({ kind: 'bench', ...base });
       } else if (roll < 0.78) {
-        props.push({ kind: 'hydrant', x, y, z, rotation });
+        props.push({ kind: 'hydrant', ...base });
       } else if (roll < 0.9) {
-        props.push({ kind: 'cone', x, y, z, rotation });
+        props.push({ kind: 'cone', ...base });
       } else {
         props.push({
           kind: 'sign',
-          x,
-          y,
-          z,
-          rotation,
+          ...base,
           color: signBoardColors[Math.floor(random() * signBoardColors.length)],
         });
       }
     };
     if (realMap) {
+      const roadCellSize = 64;
+      const roadCells = new Map();
+      const cellKey = (x, z) => `${x}:${z}`;
+      for (const segment of city.segments || []) {
+        const points = segment.points || [];
+        if (points.length < 2) continue;
+        const halfWidth = Number(segment.width || 0) / 2 + 0.3;
+        const minX = Math.min(...points.map((point) => point.x)) - halfWidth;
+        const maxX = Math.max(...points.map((point) => point.x)) + halfWidth;
+        const minZ = Math.min(...points.map((point) => point.z)) - halfWidth;
+        const maxZ = Math.max(...points.map((point) => point.z)) + halfWidth;
+        for (let gx = Math.floor(minX / roadCellSize); gx <= Math.floor(maxX / roadCellSize); gx += 1) {
+          for (let gz = Math.floor(minZ / roadCellSize); gz <= Math.floor(maxZ / roadCellSize); gz += 1) {
+            const key = cellKey(gx, gz);
+            if (!roadCells.has(key)) roadCells.set(key, []);
+            roadCells.get(key).push(segment);
+          }
+        }
+      }
+      const distanceToSegmentPolyline = (point, segment) => {
+        let distance = Infinity;
+        for (let index = 1; index < segment.points.length; index += 1) {
+          distance = Math.min(distance, pointToSegmentDistance(point, segment.points[index - 1], segment.points[index]));
+        }
+        return distance;
+      };
+      const overlapsOtherAsphalt = (x, z, owner) => {
+        const nearby = roadCells.get(cellKey(Math.floor(x / roadCellSize), Math.floor(z / roadCellSize))) || [];
+        return nearby.some((segment) => segment !== owner
+          && segment.streetId !== owner.streetId
+          && !['pedestrian', 'footway', 'cycleway'].includes(segment.highway)
+          && distanceToSegmentPolyline({ x, z }, segment) < Number(segment.width || 0) / 2 + 0.3);
+      };
       for (const segment of city.segments || []) {
         if (props.length >= maxProps) break;
         if (segment.highway === 'pedestrian' || segment.highway === 'footway' || segment.highway === 'cycleway' || segment.highway === 'motorway') continue;
@@ -2577,9 +2614,27 @@ export class CityRenderer {
           if (random() < 0.25) continue;
           const t = (i + 0.5) / count;
           const side = i % 2 === 0 ? 1 : -1;
-          // Center of the sidewalk band, not the road edge.
-          const offset = segment.width / 2 + segment.sidewalkW * 0.55;
-          pushProp(a.x + dx * t + nx * offset * side, a.z + dz * t + nz * offset * side);
+          const sidewalkWidth = Number(side > 0
+            ? segment.sidewalkLeft ?? segment.sidewalkW
+            : segment.sidewalkRight ?? segment.sidewalkW) || 0;
+          if (sidewalkWidth < 0.8) continue;
+          const minOffset = Number(segment.width || 0) / 2 + 0.3;
+          const maxOffset = Number(segment.width || 0) / 2 + sidewalkWidth - 0.3;
+          if (maxOffset < minOffset) continue;
+          const offset = minOffset + (maxOffset - minOffset) * 0.58;
+          const x = a.x + dx * t + nx * offset * side;
+          const z = a.z + dz * t + nz * offset * side;
+          if (overlapsOtherAsphalt(x, z, segment)) continue;
+          pushProp(x, z, {
+            segmentId: segment.id,
+            streetId: segment.streetId,
+            side,
+            lateralOffset: offset,
+            minOffset,
+            maxOffset,
+            rotation: Math.atan2(dx, dz),
+            overlapsAsphalt: false,
+          });
         }
       }
     } else {
@@ -2679,6 +2734,17 @@ export class CityRenderer {
     addBatch({ name: 'street-sign-boards', geometry: geometries.signBoard, material: signBoardMaterial, records: signs, y: 1.55, colorFor: (prop) => prop.color });
     this.geometryCache.push(...Object.values(geometries));
     this.streetFurniture.props = props.length;
+    this.sidewalkPropRecords = props.map((prop) => ({
+      kind: prop.kind,
+      x: prop.x,
+      z: prop.z,
+      ...(prop.placement || {}),
+    }));
+    this.sidewalkPropDiagnostics = {
+      bandViolations: this.sidewalkPropRecords.filter((record) => record.segmentId
+        && (record.lateralOffset < record.minOffset - 1e-6 || record.lateralOffset > record.maxOffset + 1e-6)).length,
+      asphaltOverlaps: this.sidewalkPropRecords.filter((record) => record.overlapsAsphalt).length,
+    };
     root.add(group);
   }
 
