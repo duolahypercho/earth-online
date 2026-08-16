@@ -1202,6 +1202,7 @@ function updatePlayer(delta) {
 
 async function boot() {
   const renderer = new CityRenderer(canvasHost, { pixelRatioCap: 1.4 });
+  await renderer.initialize();
   state.renderer = renderer;
   window.__CITYGEN__ = {
     getCity: () => state.city,
@@ -1225,7 +1226,9 @@ async function boot() {
       streetMeta: (state.city?.streets || [])[0] || null,
       generator: state.city?.meta?.generator || null,
       placedBuildings: state.addedBuildings.length,
-      webgl2: Boolean(state.renderer?.renderer?.capabilities?.isWebGL2),
+      rendererBackend: state.renderer?.rendererBackend || 'unknown',
+      webgpu: state.renderer?.rendererBackend === 'webgpu',
+      webgl2: state.renderer?.rendererBackend === 'webgl2-fallback',
       vehicle: Boolean(state.vehicle),
       vehicleSpeed: Math.round(state.vehicleSpeed),
       clock: state.clock,
@@ -1746,9 +1749,8 @@ async function boot() {
         readoutClock.textContent = formatClock(state.clock);
       }
     }
-    requestAnimationFrame(loop);
   }
-  requestAnimationFrame(loop);
+  await state.renderer.renderer.setAnimationLoop(loop);
 }
 
 boot().catch((error) => {
