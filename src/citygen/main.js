@@ -620,7 +620,8 @@ function configureBuildingInteriors(city) {
       accessible: portals.filter((portal) => !state.collision.isBlocked(portal.approach.x, portal.approach.z)).length,
     };
   }
-  state.interiors.markers = installBuildingPortals(state.renderer, portals, city);
+  const portalSourceSnapshot = JSON.stringify(portals);
+  state.interiors.markers = installBuildingPortals(state.renderer, portals, city, portalSourceSnapshot);
   state.renderer.stageHeroSidewalkLife(portals, city);
 }
 
@@ -694,6 +695,7 @@ function exitBuilding(restorePlayer = true) {
     state.mode = 'walk';
     syncModePresentation();
     updatePlayer(0);
+    state.renderer.updatePortalPartition(true, true);
     showPill(`Exited ${active.portal.label || active.buildingId}`, 'info', 1400);
   }
   return true;
@@ -749,6 +751,7 @@ async function buildCity(city, { reframe = true } = {}) {
   if (reframe) {
     frameCityCamera(city);
     state.renderer.updateWorldPartition(true, true);
+    state.renderer.updatePortalPartition(true, true);
   }
   updateReadout(city);
   document.querySelectorAll('.preset').forEach((button) => {

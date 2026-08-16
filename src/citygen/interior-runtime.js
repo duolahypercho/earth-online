@@ -220,8 +220,9 @@ function createHeroSignageMesh(quads, texture) {
   return mesh;
 }
 
-export function installBuildingPortals(renderer, portals, city = null) {
+export function installBuildingPortals(renderer, portals, city = null, sourceSnapshot = null) {
   if (!renderer?.root || !portals.length) return null;
+  const portalSourceSnapshot = sourceSnapshot || JSON.stringify(portals);
   const group = new THREE.Group();
   group.name = 'building-portals';
   group.userData = { kind: 'building-portals', portalCount: portals.length };
@@ -297,6 +298,7 @@ export function installBuildingPortals(renderer, portals, city = null) {
   let frameIndex = 0;
   let storefrontGlassIndex = 0;
   let storefrontTrimIndex = 0;
+  const partitionRecords = [];
   portals.forEach((portal, index) => {
     const sourcePosition = [portal.position.x, portal.position.y, portal.position.z];
     const sourceHeading = portal.heading;
@@ -313,6 +315,19 @@ export function installBuildingPortals(renderer, portals, city = null) {
     panels.setMatrixAt(index, dummy.matrix);
     color.set(heroStyle?.panel || DOOR_COLORS[portal.interior.archetype] || DOOR_COLORS.residential);
     panels.setColorAt(index, color);
+    const partitionRecord = {
+      index,
+      portalId: portal.id,
+      buildingId: portal.buildingId,
+      x: portal.position.x,
+      z: portal.position.z,
+      pinned: Boolean(heroStyle),
+      panelMatrix: new Float32Array(dummy.matrix.elements),
+      panelColor: new Float32Array([color.r, color.g, color.b]),
+      frameMatrices: [],
+      frameColors: [],
+      lightMatrix: null,
+    };
 
     for (const [offsetX, offsetY, scaleX, scaleY, roleColor] of (heroStyle ? [
       [-0.79, -0.07, 0.18, 2.42, heroStyle.frame],
@@ -333,6 +348,8 @@ export function installBuildingPortals(renderer, portals, city = null) {
       frames.setMatrixAt(frameIndex, dummy.matrix);
       frameColor.set(roleColor || '#ffffff');
       frames.setColorAt(frameIndex, frameColor);
+      partitionRecord.frameMatrices.push(new Float32Array(dummy.matrix.elements));
+      partitionRecord.frameColors.push(new Float32Array([frameColor.r, frameColor.g, frameColor.b]));
       frameIndex += 1;
     }
 
@@ -346,6 +363,8 @@ export function installBuildingPortals(renderer, portals, city = null) {
     dummy.scale.set(heroStyle ? 3.15 : 1, heroStyle ? 2.2 : 1, heroStyle ? 1.15 : 1);
     dummy.updateMatrix();
     lights.setMatrixAt(index, dummy.matrix);
+    partitionRecord.lightMatrix = new Float32Array(dummy.matrix.elements);
+    partitionRecords.push(partitionRecord);
 
     if (heroStyle) {
       const storefront = HERO_STOREFRONT_PROFILES[hero.streetwall.atlasCell];
@@ -518,6 +537,10 @@ export function installBuildingPortals(renderer, portals, city = null) {
     }
   });
   const signage = createHeroSignageMesh(signageQuads, signageAtlas);
+  for (const mesh of [panels, frames, lights]) {
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (mesh.instanceColor) mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  }
   for (const mesh of [panels, frames, lights, storefrontGlass, storefrontTrim, signage].filter(Boolean)) {
     if (mesh.instanceMatrix) mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -606,6 +629,17 @@ export function installBuildingPortals(renderer, portals, city = null) {
     };
   }
   renderer.root.add(group);
+  renderer.registerPortalPartition?.({
+    group,
+    panels,
+    frames,
+    lights,
+    storefrontGlass,
+    storefrontTrim,
+    records: partitionRecords,
+    sourceSnapshotBefore: portalSourceSnapshot,
+    sourceSnapshotAfter: JSON.stringify(portals),
+  });
   return group;
 }
 

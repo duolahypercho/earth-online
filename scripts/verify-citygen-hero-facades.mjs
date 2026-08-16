@@ -131,8 +131,13 @@ function assertRenderDelta(sample, label) {
   };
   for (const field of ['drawCalls', 'triangles', 'geometries', 'textures']) {
     const delta = sample[field] - baseline[field];
-    assert.ok(Number.isFinite(delta) && delta >= 0 && delta <= maxima[field],
+    const allowsPartitionSavings = field === 'drawCalls' || field === 'triangles';
+    assert.ok(Number.isFinite(delta) && (allowsPartitionSavings || delta >= 0) && delta <= maxima[field],
       `${label}: signage ${field} delta stays within +${maxima[field]} (${delta})`);
+  }
+  if (label === 'hero' || label === 'elevated') {
+    assert.ok(sample.triangles <= baseline.triangles - 30000,
+      `${label}: portal partition saves at least 30k submitted triangles (${sample.triangles})`);
   }
 }
 

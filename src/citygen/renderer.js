@@ -83,6 +83,12 @@ const BISTRO_PARTITION_ENTER_RADIUS = 420;
 const BISTRO_PARTITION_EXIT_RADIUS = 520;
 const BISTRO_PARTITION_AERIAL_HEIGHT = 500;
 const BISTRO_PARTITION_UPDATE_INTERVAL = 8;
+const PORTAL_PARTITION_PASS = 'sf-world-partition-portals-v1';
+const PORTAL_PARTITION_CELL_SIZE = 140;
+const PORTAL_PARTITION_ENTER_RADIUS = 420;
+const PORTAL_PARTITION_EXIT_RADIUS = 520;
+const PORTAL_PARTITION_AERIAL_HEIGHT = 500;
+const PORTAL_PARTITION_UPDATE_INTERVAL = 8;
 const HERO_SIDEWALK_DONOR_RADIUS = 80;
 const HERO_CURB_RHYTHM = Object.freeze({
   id: 'market-street-curb-rhythm',
@@ -350,6 +356,67 @@ function createWorldPartitionDiagnostics() {
       textures: 0,
     },
   };
+}
+
+function createPortalPartitionDiagnostics() {
+  return {
+    schemaVersion: 1,
+    pass: PORTAL_PARTITION_PASS,
+    enabled: false,
+    failure: null,
+    focusSource: 'controls-target',
+    source: {
+      portals: 0,
+      cells: 0,
+      genericTriangles: 0,
+      trianglesPerPortal: 60,
+      recordsChecksum: null,
+      recordsUnchanged: false,
+      inputChecksumBefore: null,
+      inputChecksumAfter: null,
+      unchanged: false,
+    },
+    policy: {
+      cellSizeMeters: PORTAL_PARTITION_CELL_SIZE,
+      enterRadiusMeters: PORTAL_PARTITION_ENTER_RADIUS,
+      exitRadiusMeters: PORTAL_PARTITION_EXIT_RADIUS,
+      aerialHeightMeters: PORTAL_PARTITION_AERIAL_HEIGHT,
+      updateIntervalFrames: PORTAL_PARTITION_UPDATE_INTERVAL,
+    },
+    cells: { total: 0, active: 0, ids: [] },
+    active: {
+      portals: 0,
+      hiddenPortals: 0,
+      indices: [],
+      pinnedHeroIds: [],
+      aerial: false,
+    },
+    batches: {
+      panels: { name: 'building-portal-panels', capacity: 0, count: 0, submittedTriangles: 0 },
+      frames: { name: 'building-portal-frames', capacity: 0, count: 0, submittedTriangles: 0 },
+      lights: { name: 'building-portal-lights', capacity: 0, count: 0, submittedTriangles: 0 },
+    },
+    submittedTriangles: 0,
+    hysteresis: { enters: 0, exits: 0 },
+    updates: { checks: 0, compactions: 0, resets: 0 },
+    lifecycle: { registrations: 0, disposals: 0 },
+    resources: { drawGroups: 0, geometries: 0, materials: 0, textures: 0 },
+  };
+}
+
+function serializePortalPartitionRecords(records) {
+  return JSON.stringify(records.map((record) => ({
+    index: record.index,
+    portalId: record.portalId,
+    buildingId: record.buildingId,
+    cellId: record.cellId,
+    pinned: record.pinned,
+    panelMatrix: [...record.panelMatrix],
+    panelColor: [...record.panelColor],
+    frameMatrices: record.frameMatrices.map((matrix) => [...matrix]),
+    frameColors: record.frameColors.map((color) => [...color]),
+    lightMatrix: [...record.lightMatrix],
+  })));
 }
 
 function applyWorldXZUvs(geometry, metersPerRepeat) {
@@ -1094,6 +1161,8 @@ export class CityRenderer {
     this.groundMaterialTexturesReady = null;
     this.worldPartitionRuntime = null;
     this.worldPartitionDiagnostics = createWorldPartitionDiagnostics();
+    this.portalPartitionRuntime = null;
+    this.portalPartitionDiagnostics = createPortalPartitionDiagnostics();
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -1289,6 +1358,23 @@ export class CityRenderer {
     this.worldPartitionDiagnostics = createWorldPartitionDiagnostics();
   }
 
+  disposePortalPartitionRuntime() {
+    const runtime = this.portalPartitionRuntime;
+    if (runtime) {
+      for (const mesh of [
+        runtime.panels,
+        runtime.frames,
+        runtime.lights,
+        runtime.storefrontGlass,
+        runtime.storefrontTrim,
+      ]) mesh?.dispose();
+    }
+    const disposals = (this.portalPartitionDiagnostics.lifecycle?.disposals || 0) + (runtime ? 1 : 0);
+    this.portalPartitionRuntime = null;
+    this.portalPartitionDiagnostics = createPortalPartitionDiagnostics();
+    this.portalPartitionDiagnostics.lifecycle.disposals = disposals;
+  }
+
   resize() {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
@@ -1301,6 +1387,7 @@ export class CityRenderer {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
     this.disposeWorldPartitionRuntime();
+    this.disposePortalPartitionRuntime();
     for (const geometry of this.geometryCache) geometry.dispose();
     this.disposeGroundMaterialTextures();
     this.renderer.dispose();
@@ -1499,6 +1586,7 @@ export class CityRenderer {
     this.groundMaterialDiagnostics.enabled = false;
     this.syncGroundMaterialDiagnostics();
     this.disposeWorldPartitionRuntime();
+    this.disposePortalPartitionRuntime();
     if (this.root) {
       this.scene.remove(this.root);
       this.root.traverse((object) => {
@@ -5980,6 +6068,254 @@ export class CityRenderer {
     return true;
   }
 
+  registerPortalPartition({
+    group,
+    panels,
+    frames,
+    lights,
+    storefrontGlass,
+    storefrontTrim,
+    records,
+    sourceSnapshotBefore,
+    sourceSnapshotAfter,
+  }) {
+    this.disposePortalPartitionRuntime();
+    if (!group || !panels || !frames || !lights || !records?.length) return false;
+    const cells = new Map();
+    for (const record of records) {
+      const cellX = Math.floor(record.x / PORTAL_PARTITION_CELL_SIZE);
+      const cellZ = Math.floor(record.z / PORTAL_PARTITION_CELL_SIZE);
+      const cellId = `${cellX}:${cellZ}`;
+      record.cellId = cellId;
+      let cell = cells.get(cellId);
+      if (!cell) {
+        cell = {
+          id: cellId,
+          x: (cellX + 0.5) * PORTAL_PARTITION_CELL_SIZE,
+          z: (cellZ + 0.5) * PORTAL_PARTITION_CELL_SIZE,
+          indices: [],
+        };
+        cells.set(cellId, cell);
+      }
+      cell.indices.push(record.index);
+    }
+    const recordsSnapshot = serializePortalPartitionRecords(records);
+    for (const mesh of [panels, frames, lights]) {
+      mesh.frustumCulled = true;
+      mesh.userData.worldPartitionPass = PORTAL_PARTITION_PASS;
+    }
+    this.portalPartitionRuntime = {
+      group,
+      panels,
+      frames,
+      lights,
+      storefrontGlass,
+      storefrontTrim,
+      records,
+      cells: [...cells.values()].sort((left, right) => left.id.localeCompare(right.id)),
+      activeCellIds: new Set(),
+      activeMask: new Uint8Array(records.length),
+      frame: 0,
+      sourceInputChecksumBefore: hashString(sourceSnapshotBefore),
+      sourceInputChecksumAfter: hashString(sourceSnapshotAfter),
+      sourceInputUnchanged: sourceSnapshotBefore === sourceSnapshotAfter,
+      recordsChecksum: hashString(recordsSnapshot),
+      recordsFinite: records.every((record) => [
+        ...record.panelMatrix,
+        ...record.panelColor,
+        ...record.frameMatrices.flatMap((matrix) => [...matrix]),
+        ...record.frameColors.flatMap((color) => [...color]),
+        ...record.lightMatrix,
+      ].every(Number.isFinite)),
+      boundsCenter: new THREE.Vector3(),
+    };
+    this.updatePortalPartition(true, true);
+    return true;
+  }
+
+  updatePortalPartition(force = false, resetHysteresis = false, forceAll = false) {
+    const runtime = this.portalPartitionRuntime;
+    if (!runtime?.panels || !runtime?.frames || !runtime?.lights) return false;
+    runtime.frame += 1;
+    if (!force && runtime.frame % PORTAL_PARTITION_UPDATE_INTERVAL !== 0) return false;
+    if (resetHysteresis) runtime.activeCellIds.clear();
+    const focus = this.controls.target;
+    const aerial = forceAll
+      || Math.abs(this.camera.position.y - focus.y) >= PORTAL_PARTITION_AERIAL_HEIGHT;
+    const nextActiveCellIds = new Set();
+    runtime.activeMask.fill(0);
+    let enters = 0;
+    let exits = 0;
+    for (const cell of runtime.cells) {
+      const wasActive = runtime.activeCellIds.has(cell.id);
+      const radius = wasActive ? PORTAL_PARTITION_EXIT_RADIUS : PORTAL_PARTITION_ENTER_RADIUS;
+      const edgeX = Math.max(0, Math.abs(cell.x - focus.x) - PORTAL_PARTITION_CELL_SIZE * 0.5);
+      const edgeZ = Math.max(0, Math.abs(cell.z - focus.z) - PORTAL_PARTITION_CELL_SIZE * 0.5);
+      const active = aerial || Math.hypot(edgeX, edgeZ) <= radius;
+      if (!active) {
+        if (wasActive) exits += 1;
+        continue;
+      }
+      if (!wasActive) enters += 1;
+      nextActiveCellIds.add(cell.id);
+      for (const index of cell.indices) runtime.activeMask[index] = 1;
+    }
+    for (const record of runtime.records) {
+      if (record.pinned) runtime.activeMask[record.index] = 1;
+    }
+    let membershipChanged = nextActiveCellIds.size !== runtime.activeCellIds.size;
+    if (!membershipChanged) {
+      for (const cellId of nextActiveCellIds) {
+        if (!runtime.activeCellIds.has(cellId)) {
+          membershipChanged = true;
+          break;
+        }
+      }
+    }
+    if (!force && !resetHysteresis && !membershipChanged) return false;
+    const activeIndices = [];
+    for (let index = 0; index < runtime.activeMask.length; index += 1) {
+      if (runtime.activeMask[index]) activeIndices.push(index);
+    }
+    const panelMatrices = runtime.panels.instanceMatrix.array;
+    const panelColors = runtime.panels.instanceColor.array;
+    const frameMatrices = runtime.frames.instanceMatrix.array;
+    const frameColors = runtime.frames.instanceColor.array;
+    const lightMatrices = runtime.lights.instanceMatrix.array;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let targetIndex = 0; targetIndex < activeIndices.length; targetIndex += 1) {
+      const record = runtime.records[activeIndices[targetIndex]];
+      panelMatrices.set(record.panelMatrix, targetIndex * 16);
+      panelColors.set(record.panelColor, targetIndex * 3);
+      lightMatrices.set(record.lightMatrix, targetIndex * 16);
+      for (let framePart = 0; framePart < 3; framePart += 1) {
+        const frameTarget = targetIndex * 3 + framePart;
+        frameMatrices.set(record.frameMatrices[framePart], frameTarget * 16);
+        frameColors.set(record.frameColors[framePart], frameTarget * 3);
+      }
+      const x = record.panelMatrix[12];
+      const y = record.panelMatrix[13];
+      const z = record.panelMatrix[14];
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      maxZ = Math.max(maxZ, z);
+    }
+    runtime.panels.count = activeIndices.length;
+    runtime.frames.count = activeIndices.length * 3;
+    runtime.lights.count = activeIndices.length;
+    for (const mesh of [runtime.panels, runtime.frames, runtime.lights]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (!mesh.boundingSphere) mesh.boundingSphere = new THREE.Sphere();
+      if (activeIndices.length) {
+        runtime.boundsCenter.set(
+          (minX + maxX) * 0.5,
+          (minY + maxY) * 0.5,
+          (minZ + maxZ) * 0.5,
+        );
+        mesh.boundingSphere.set(
+          runtime.boundsCenter,
+          Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5 + 4,
+        );
+      } else {
+        mesh.boundingSphere.set(focus, 0);
+      }
+    }
+    runtime.activeCellIds = nextActiveCellIds;
+    const previous = this.portalPartitionDiagnostics;
+    const recordsChecksumVerified = force
+      ? hashString(serializePortalPartitionRecords(runtime.records)) === runtime.recordsChecksum
+      : previous.source?.recordsUnchanged === true;
+    const pinnedHeroIds = runtime.records
+      .filter((record) => record.pinned)
+      .map((record) => record.buildingId)
+      .sort();
+    const diagnostics = createPortalPartitionDiagnostics();
+    diagnostics.enabled = true;
+    diagnostics.source = {
+      portals: runtime.records.length,
+      cells: runtime.cells.length,
+      genericTriangles: runtime.records.length * 60,
+      trianglesPerPortal: 60,
+      recordsChecksum: runtime.recordsChecksum,
+      recordsUnchanged: recordsChecksumVerified,
+      inputChecksumBefore: runtime.sourceInputChecksumBefore,
+      inputChecksumAfter: runtime.sourceInputChecksumAfter,
+      unchanged: runtime.sourceInputUnchanged
+        && runtime.sourceInputChecksumBefore === runtime.sourceInputChecksumAfter,
+    };
+    diagnostics.cells = {
+      total: runtime.cells.length,
+      active: nextActiveCellIds.size,
+      ids: [...nextActiveCellIds].sort(),
+    };
+    diagnostics.active = {
+      portals: activeIndices.length,
+      hiddenPortals: runtime.records.length - activeIndices.length,
+      indices: activeIndices,
+      pinnedHeroIds,
+      aerial,
+      forceAll,
+    };
+    diagnostics.batches = {
+      panels: {
+        name: runtime.panels.name,
+        capacity: runtime.records.length,
+        count: runtime.panels.count,
+        submittedTriangles: runtime.panels.count * 12,
+      },
+      frames: {
+        name: runtime.frames.name,
+        capacity: runtime.records.length * 3,
+        count: runtime.frames.count,
+        submittedTriangles: runtime.frames.count * 12,
+      },
+      lights: {
+        name: runtime.lights.name,
+        capacity: runtime.records.length,
+        count: runtime.lights.count,
+        submittedTriangles: runtime.lights.count * 12,
+      },
+    };
+    diagnostics.submittedTriangles = activeIndices.length * 60;
+    diagnostics.hysteresis = {
+      enters: (previous.hysteresis?.enters || 0) + enters,
+      exits: (previous.hysteresis?.exits || 0) + exits,
+    };
+    diagnostics.updates = {
+      checks: (previous.updates?.checks || 0) + 1,
+      compactions: (previous.updates?.compactions || 0) + 1,
+      resets: (previous.updates?.resets || 0) + (resetHysteresis ? 1 : 0),
+    };
+    diagnostics.lifecycle = {
+      registrations: (previous.lifecycle?.registrations || 0) + (previous.enabled ? 0 : 1),
+      disposals: previous.lifecycle?.disposals || 0,
+    };
+    const oneGroup = runtime.group.parent === this.root
+      && [runtime.panels, runtime.frames, runtime.lights].every((mesh) => mesh.parent === runtime.group);
+    diagnostics.failure = diagnostics.source.portals === 700
+      && diagnostics.source.unchanged
+      && diagnostics.source.recordsUnchanged
+      && runtime.recordsFinite
+      && pinnedHeroIds.length === HERO_FACADE_IDS.size
+      && oneGroup
+      && runtime.panels.count <= diagnostics.batches.panels.capacity
+      && runtime.frames.count <= diagnostics.batches.frames.capacity
+      && runtime.lights.count <= diagnostics.batches.lights.capacity
+      ? null
+      : 'sf-world-partition-portals-contract';
+    this.portalPartitionDiagnostics = diagnostics;
+    return true;
+  }
+
   nearestRoadSegment(city, point) {
     let best = null;
     let bestDistance = Infinity;
@@ -6087,6 +6423,7 @@ export class CityRenderer {
     if (time != null) this.setTimeOfDay(time);
     this.updateLocalLightPool(delta);
     this.updateWorldPartition();
+    this.updatePortalPartition();
     if (this.signalMeshes) {
       for (const entry of this.signalMeshes) {
         const offset = entry.signal.phaseOffset || 0;
