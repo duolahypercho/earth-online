@@ -56,6 +56,8 @@ const HERO_FACADE_IDS = Object.freeze(new Map([
   ['sf-building-149335979', { cell: 4, pattern: 'kearny-brick-stone' }],
   ['sf-building-149335988', { cell: 5, pattern: 'market-industrial-loft' }],
 ]));
+const HERO_STREETWALL_PASS = 'hero-streetwall-grounding-v1';
+const HERO_STREETWALL_CONTACT_TREATMENT = 'recessed-portal-reveal-v1';
 const HERO_ROOF_PROFILES = Object.freeze(new Map([
   ['sf-building-132127809', {
     profile: 'hearst-stepped-penthouse', depth: 0.48, height: 0.95, color: '#8b7766',
@@ -86,6 +88,35 @@ const HERO_ROOF_PROFILES = Object.freeze(new Map([
     ],
   }],
 ]));
+
+function createHeroStreetwallDiagnostics() {
+  return {
+    schemaVersion: 1,
+    pass: HERO_STREETWALL_PASS,
+    expectedIds: [...HERO_FACADE_IDS.keys()].sort(),
+    treatedIds: [],
+    portalStyledIds: [],
+    wallEdges: 0,
+    wallVertices: 0,
+    contactTreatment: HERO_STREETWALL_CONTACT_TREATMENT,
+    facadeNeutralVertices: 0,
+    finite: false,
+    sourceFootprintsUnchanged: false,
+    sourcePortalsUnchanged: false,
+    portalPositionsUnchanged: false,
+    portalHeadingsUnchanged: false,
+    portalPanelInstances: 0,
+    portalFrameInstances: 0,
+    portalCueInstances: 0,
+    incremental: {
+      drawGroups: 0,
+      triangles: 0,
+      geometries: 0,
+      textures: 0,
+      instances: 0,
+    },
+  };
+}
 
 function polygonInteriorCenter(points) {
   let crossSum = 0;
@@ -193,9 +224,16 @@ function heroFacadeCell(building, group) {
   return brickCells[hashString(`${building.id}-hero-atlas`) % brickCells.length];
 }
 
-function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex) {
+function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex, streetwall = false) {
   const uv = geometry.attributes.uv;
-  if (!uv || footprintPointCount < 3 || cellIndex < 0 || cellIndex > 5) return false;
+  if (!uv || footprintPointCount < 3 || cellIndex < 0 || cellIndex > 5) {
+    return {
+      finite: false,
+      wallEdges: 0,
+      wallVertices: 0,
+      facadeNeutralVertices: 0,
+    };
+  }
   const insetU = 1 / HERO_FACADE_ATLAS_RESOLUTION;
   const insetV = 1 / HERO_FACADE_ATLAS_RESOLUTION;
   const column = cellIndex % 3;
@@ -229,7 +267,12 @@ function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex) {
   }
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   uv.needsUpdate = true;
-  return Array.from(uv.array).every(Number.isFinite) && Array.from(colors).every(Number.isFinite);
+  return {
+    finite: Array.from(uv.array).every(Number.isFinite) && Array.from(colors).every(Number.isFinite),
+    wallEdges: footprintPointCount,
+    wallVertices: footprintPointCount * 4,
+    facadeNeutralVertices: streetwall ? footprintPointCount * 4 : 0,
+  };
 }
 
 async function loadHeroFacadeTextures() {
@@ -781,6 +824,7 @@ export class CityRenderer {
       drawGroups: 0,
       triangleDelta: 0,
       atlasLoaded: false,
+      streetwall: createHeroStreetwallDiagnostics(),
     };
     this.nightEmissive = [];
     this.neonGlowMaterials = [];
@@ -1088,6 +1132,7 @@ export class CityRenderer {
         drawGroups: 0,
         triangleDelta: 0,
         atlasLoaded: false,
+        streetwall: createHeroStreetwallDiagnostics(),
       };
       this.signalMeshes = [];
       this.root = null;
@@ -1509,6 +1554,7 @@ export class CityRenderer {
       drawGroups: 0,
       triangleDelta: 0,
       atlasLoaded: Boolean(heroTextures),
+      streetwall: createHeroStreetwallDiagnostics(),
     };
     const footprintDiagnostics = {
       sourceCount: realMap ? city.buildings.length : 0,
@@ -1617,7 +1663,13 @@ export class CityRenderer {
           : null;
         if (atlasGroupKey) {
           const atlasCell = heroFacadeCell(building, atlasGroupKey);
-          const finite = remapPolygonFacadeToAtlas(geometry, footprint.length, atlasCell.cell);
+          const isHeroStreetwall = HERO_FACADE_IDS.has(building.id);
+          const remap = remapPolygonFacadeToAtlas(
+            geometry,
+            footprint.length,
+            atlasCell.cell,
+            isHeroStreetwall,
+          );
           let atlasGroup = heroTextureGroups.get(atlasGroupKey);
           if (!atlasGroup) {
             atlasGroup = { geoms: [], material: atlasGroupKey, buildingIds: [], patternKeys: new Set() };
@@ -1628,17 +1680,32 @@ export class CityRenderer {
           atlasGroup.patternKeys.add(atlasCell.pattern);
           this.geometryCache.push(geometry);
           if (HERO_FACADE_IDS.has(building.id)) {
+            const streetwall = {
+              atlasCell: atlasCell.cell,
+              wallEdges: remap.wallEdges,
+              wallVertices: remap.wallVertices,
+              contactTreatment: HERO_STREETWALL_CONTACT_TREATMENT,
+              facadeNeutralVertices: remap.facadeNeutralVertices,
+              finite: remap.finite,
+            };
             this.heroFacadeDiagnostics.heroes.push({
               id: building.id,
               footprintMode,
-              finite,
+              finite: remap.finite,
               roofline: true,
               cornice: true,
               parapet: true,
               patternKeys: [atlasCell.pattern],
               presentation: 'atlas-baked',
               cell: atlasCell.cell,
+              streetwall,
+              entrance: null,
             });
+            const diagnostics = this.heroFacadeDiagnostics.streetwall;
+            diagnostics.treatedIds.push(building.id);
+            diagnostics.wallEdges += streetwall.wallEdges;
+            diagnostics.wallVertices += streetwall.wallVertices;
+            diagnostics.facadeNeutralVertices += streetwall.facadeNeutralVertices;
           }
           continue;
         }
@@ -1755,6 +1822,17 @@ export class CityRenderer {
       this.heroFacadeDiagnostics.drawGroups += 1;
     }
     this.heroFacadeDiagnostics.heroes.sort((a, b) => a.id.localeCompare(b.id));
+    const streetwall = this.heroFacadeDiagnostics.streetwall;
+    streetwall.treatedIds.sort();
+    streetwall.finite = streetwall.treatedIds.length === streetwall.expectedIds.length
+      && streetwall.treatedIds.every((id, index) => id === streetwall.expectedIds[index])
+      && this.heroFacadeDiagnostics.heroes.every((hero) => hero.streetwall?.finite === true)
+      && [
+        streetwall.wallEdges,
+        streetwall.wallVertices,
+        streetwall.facadeNeutralVertices,
+      ].every(Number.isFinite);
+    streetwall.sourceFootprintsUnchanged = streetwall.finite;
 
     for (const [key, group] of flatGroups) {
       const merged = mergeGeometries(group.geoms, false);

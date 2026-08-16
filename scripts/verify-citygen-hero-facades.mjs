@@ -38,6 +38,22 @@ const HERO_IDS = Object.freeze([
   'sf-building-149335988',
   'sf-building-151183777',
 ]);
+const HERO_ATLAS_CELLS = Object.freeze(new Map([
+  ['sf-building-132127809', 0],
+  ['sf-building-151183777', 1],
+  ['sf-building-132127810', 2],
+  ['sf-building-149335987', 3],
+  ['sf-building-149335979', 4],
+  ['sf-building-149335988', 5],
+]));
+const HERO_SOURCE_VERTEX_COUNTS = Object.freeze(new Map([
+  ['sf-building-132127809', 17],
+  ['sf-building-151183777', 4],
+  ['sf-building-132127810', 5],
+  ['sf-building-149335987', 5],
+  ['sf-building-149335979', 9],
+  ['sf-building-149335988', 11],
+]));
 
 // Traffic is hidden for deterministic facade/roof isolation. The 642a296
 // atlas baseline is 471 draws / 504,374 triangles on the canonical hero pose
@@ -121,9 +137,51 @@ try {
           cornice: entry?.cornice,
           parapet: entry?.parapet,
           patternKeys: Array.isArray(entry?.patternKeys) ? [...entry.patternKeys] : null,
+          streetwall: entry?.streetwall ? {
+            atlasCell: entry.streetwall.atlasCell,
+            wallEdges: entry.streetwall.wallEdges,
+            wallVertices: entry.streetwall.wallVertices,
+            contactTreatment: entry.streetwall.contactTreatment,
+            facadeNeutralVertices: entry.streetwall.facadeNeutralVertices,
+            finite: entry.streetwall.finite,
+          } : null,
+          entrance: entry?.entrance ? {
+            portalId: entry.entrance.portalId,
+            portalIndex: entry.entrance.portalIndex,
+            panelInstances: entry.entrance.panelInstances,
+            frameInstances: entry.entrance.frameInstances,
+            cueInstances: entry.entrance.cueInstances,
+            recessedMeters: entry.entrance.recessedMeters,
+            revealDepthMeters: entry.entrance.revealDepthMeters,
+            thresholdGapMeters: entry.entrance.thresholdGapMeters,
+            transomCue: entry.entrance.transomCue,
+            positionUnchanged: entry.entrance.positionUnchanged,
+            headingUnchanged: entry.entrance.headingUnchanged,
+            finite: entry.entrance.finite,
+          } : null,
         })) : null,
         drawGroups: hero.drawGroups,
         triangleDelta: hero.triangleDelta,
+        streetwall: hero.streetwall ? {
+          schemaVersion: hero.streetwall.schemaVersion,
+          pass: hero.streetwall.pass,
+          expectedIds: Array.isArray(hero.streetwall.expectedIds) ? [...hero.streetwall.expectedIds] : null,
+          treatedIds: Array.isArray(hero.streetwall.treatedIds) ? [...hero.streetwall.treatedIds] : null,
+          portalStyledIds: Array.isArray(hero.streetwall.portalStyledIds) ? [...hero.streetwall.portalStyledIds] : null,
+          wallEdges: hero.streetwall.wallEdges,
+          wallVertices: hero.streetwall.wallVertices,
+          contactTreatment: hero.streetwall.contactTreatment,
+          facadeNeutralVertices: hero.streetwall.facadeNeutralVertices,
+          finite: hero.streetwall.finite,
+          sourceFootprintsUnchanged: hero.streetwall.sourceFootprintsUnchanged,
+          sourcePortalsUnchanged: hero.streetwall.sourcePortalsUnchanged,
+          portalPositionsUnchanged: hero.streetwall.portalPositionsUnchanged,
+          portalHeadingsUnchanged: hero.streetwall.portalHeadingsUnchanged,
+          portalPanelInstances: hero.streetwall.portalPanelInstances,
+          portalFrameInstances: hero.streetwall.portalFrameInstances,
+          portalCueInstances: hero.streetwall.portalCueInstances,
+          incremental: hero.streetwall.incremental ? { ...hero.streetwall.incremental } : null,
+        } : null,
       } : null,
       roof: roof ? {
         expectedIds: Array.isArray(roof.expectedIds) ? [...roof.expectedIds] : null,
@@ -225,6 +283,106 @@ try {
   }
   assert.ok(patternKeyUnion.size >= 3,
     `hero facades use at least three distinct pattern keys (${patternKeyUnion.size})`);
+
+  const streetwall = runtime.hero.streetwall;
+  assert.ok(streetwall,
+    'heroFacadeDiagnostics.streetwall is required; streetwall grounding contract is absent');
+  assert.equal(streetwall.schemaVersion, 1,
+    'streetwall diagnostics schema version is 1');
+  assert.equal(streetwall.pass, 'hero-streetwall-grounding-v1',
+    'streetwall grounding contract version is explicit');
+  for (const field of ['expectedIds', 'treatedIds', 'portalStyledIds']) {
+    assert.ok(Array.isArray(streetwall[field]),
+      `streetwall diagnostics expose ${field}`);
+    assert.equal(streetwall[field].length, HERO_IDS.length,
+      `streetwall ${field} cover exactly six buildings`);
+    assert.equal(new Set(streetwall[field]).size, HERO_IDS.length,
+      `streetwall ${field} contain no duplicate ids`);
+    assert.deepEqual([...streetwall[field]].sort(), [...HERO_IDS].sort(),
+      `streetwall ${field} cover the exact audited building id set`);
+  }
+  assert.equal(streetwall.wallEdges, 51,
+    'streetwall presentation consumes all 51 source polygon edges');
+  assert.equal(streetwall.wallVertices, 204,
+    'streetwall presentation exposes exactly 204 wall vertices');
+  assert.equal(streetwall.contactTreatment, 'recessed-portal-reveal-v1',
+    'streetwall contact treatment uses the existing portal reveal batches');
+  assert.equal(streetwall.facadeNeutralVertices, 204,
+    'streetwall treatment preserves all facade vertices at neutral atlas color');
+  assert.equal(streetwall.finite, true,
+    'streetwall geometry and metadata are finite');
+  assert.equal(streetwall.sourceFootprintsUnchanged, true,
+    'streetwall pass preserves source building footprints');
+  assert.equal(streetwall.sourcePortalsUnchanged, true,
+    'streetwall pass preserves canonical source portals');
+  assert.equal(streetwall.portalPositionsUnchanged, true,
+    'streetwall pass preserves canonical portal positions');
+  assert.equal(streetwall.portalHeadingsUnchanged, true,
+    'streetwall pass preserves canonical portal headings');
+  assert.equal(streetwall.portalPanelInstances, 6,
+    'streetwall pass reuses one portal panel instance per hero');
+  assert.equal(streetwall.portalFrameInstances, 18,
+    'streetwall pass reuses three portal frame instances per hero');
+  assert.equal(streetwall.portalCueInstances, 6,
+    'streetwall pass reuses one portal cue instance per hero');
+  assert.deepEqual(streetwall.incremental,
+    { drawGroups: 0, triangles: 0, geometries: 0, textures: 0, instances: 0 },
+    'streetwall grounding adds no structural render cost');
+
+  const portalIndices = [];
+  const portalIds = [];
+  for (const entry of runtime.hero.heroes) {
+    const label = entry.id;
+    const expectedEdges = HERO_SOURCE_VERTEX_COUNTS.get(label);
+    const expectedCell = HERO_ATLAS_CELLS.get(label);
+    assert.ok(entry.streetwall,
+      `${label}: per-hero streetwall metadata is required`);
+    assert.equal(entry.streetwall.atlasCell, expectedCell,
+      `${label}: streetwall metadata remains in its canonical atlas cell`);
+    assert.equal(entry.streetwall.wallEdges, expectedEdges,
+      `${label}: streetwall wall edges match the unchanged source footprint`);
+    assert.equal(entry.streetwall.wallVertices, expectedEdges * 4,
+      `${label}: streetwall wall vertices equal four per source edge`);
+    assert.equal(entry.streetwall.contactTreatment, 'recessed-portal-reveal-v1',
+      `${label}: streetwall contact treatment uses its canonical portal reveal`);
+    assert.equal(entry.streetwall.facadeNeutralVertices, expectedEdges * 4,
+      `${label}: facade vertices remain neutral and preserve atlas detail`);
+    assert.equal(entry.streetwall.finite, true,
+      `${label}: streetwall geometry and metadata are finite`);
+
+    assert.ok(entry.entrance,
+      `${label}: per-hero entrance metadata is required`);
+    assert.equal(entry.entrance.portalId, `sf-portal:${label}`,
+      `${label}: streetwall entrance is linked to its canonical portal`);
+    assert.ok(Number.isInteger(entry.entrance.portalIndex) && entry.entrance.portalIndex >= 0,
+      `${label}: portal index is a finite non-negative integer`);
+    assert.equal(entry.entrance.panelInstances, 1,
+      `${label}: entrance reuses one portal panel instance`);
+    assert.equal(entry.entrance.frameInstances, 3,
+      `${label}: entrance reuses three portal frame instances`);
+    assert.equal(entry.entrance.cueInstances, 1,
+      `${label}: entrance reuses one portal cue instance`);
+    assert.equal(entry.entrance.recessedMeters, 0.31,
+      `${label}: entrance panel is recessed 0.31 metres into its frontage`);
+    assert.equal(entry.entrance.revealDepthMeters, 0.04,
+      `${label}: entrance exposes a shallow reveal in front of the recessed panel`);
+    assert.equal(entry.entrance.thresholdGapMeters, 0.1,
+      `${label}: raised entrance panel exposes a grounded threshold gap`);
+    assert.equal(entry.entrance.transomCue, true,
+      `${label}: entrance reuses its cue instance as a warm transom`);
+    assert.equal(entry.entrance.positionUnchanged, true,
+      `${label}: portal position remains unchanged`);
+    assert.equal(entry.entrance.headingUnchanged, true,
+      `${label}: portal heading remains unchanged`);
+    assert.equal(entry.entrance.finite, true,
+      `${label}: entrance metadata is finite`);
+    portalIndices.push(entry.entrance.portalIndex);
+    portalIds.push(entry.entrance.portalId);
+  }
+  assert.equal(new Set(portalIndices).size, HERO_IDS.length,
+    'hero entrance metadata contains no duplicate portal indices');
+  assert.equal(new Set(portalIds).size, HERO_IDS.length,
+    'hero entrance metadata contains no duplicate portal ids');
 
   assert.ok(Number.isFinite(runtime.hero.drawGroups), 'hero draw-group count is finite');
   assert.ok(runtime.hero.drawGroups <= 3,

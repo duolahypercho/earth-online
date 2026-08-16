@@ -10,6 +10,15 @@ const DOOR_COLORS = Object.freeze({
   retail: '#7a3f34',
 });
 
+const HERO_PORTAL_STYLES = Object.freeze([
+  { panel: '#45636d', frame: '#e2cda7' },
+  { panel: '#385d69', frame: '#d8b879' },
+  { panel: '#4b646c', frame: '#e0d2b5' },
+  { panel: '#48636b', frame: '#d8cbb1' },
+  { panel: '#485d65', frame: '#d3ac78' },
+  { panel: '#3e5963', frame: '#aebbc0' },
+]);
+
 const ROOM_PALETTES = Object.freeze({
   civic: { wall: '#d8d2c4', accent: '#3d6170', floor: '#827568' },
   hospitality: { wall: '#e1d1bd', accent: '#7f4b35', floor: '#715b4e' },
@@ -68,7 +77,7 @@ export function installBuildingPortals(renderer, portals) {
   group.userData = { kind: 'building-portals', portalCount: portals.length };
 
   const panelGeometry = new THREE.BoxGeometry(1, 2.05, 0.12);
-  const panelMaterial = material('#ffffff', { roughness: 0.54, metalness: 0.08 });
+  const panelMaterial = material('#ffffff', { roughness: 0.38, metalness: 0.16 });
   const panels = new THREE.InstancedMesh(panelGeometry, panelMaterial, portals.length);
   panels.name = 'building-portal-panels';
   panels.castShadow = true;
@@ -93,45 +102,104 @@ export function installBuildingPortals(renderer, portals) {
 
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
+  const frameColor = new THREE.Color();
+  const streetwall = renderer.heroFacadeDiagnostics?.streetwall || null;
+  const heroById = new Map((renderer.heroFacadeDiagnostics?.heroes || []).map((entry) => [entry.id, entry]));
+  const portalStyledIds = [];
+  let portalPositionsUnchanged = true;
+  let portalHeadingsUnchanged = true;
   let frameIndex = 0;
   portals.forEach((portal, index) => {
-    const y = portal.position.y + 1.04;
+    const sourcePosition = [portal.position.x, portal.position.y, portal.position.z];
+    const sourceHeading = portal.heading;
+    const hero = heroById.get(portal.buildingId) || null;
+    const heroStyle = hero?.streetwall
+      ? HERO_PORTAL_STYLES[hero.streetwall.atlasCell]
+      : null;
+    const y = portal.position.y + (heroStyle ? 1.24 : 1.04);
     dummy.position.set(portal.position.x, y, portal.position.z);
     dummy.rotation.set(0, portal.heading, 0);
-    dummy.scale.set(1, 1, 1);
+    if (heroStyle) dummy.translateZ(-0.31);
+    dummy.scale.set(heroStyle ? 1.42 : 1, heroStyle ? 1.1 : 1, heroStyle ? 0.7 : 1);
     dummy.updateMatrix();
     panels.setMatrixAt(index, dummy.matrix);
-    color.set(DOOR_COLORS[portal.interior.archetype] || DOOR_COLORS.residential);
+    color.set(heroStyle?.panel || DOOR_COLORS[portal.interior.archetype] || DOOR_COLORS.residential);
     panels.setColorAt(index, color);
 
-    for (const [offsetX, offsetY, scaleX, scaleY] of [
+    for (const [offsetX, offsetY, scaleX, scaleY, roleColor] of (heroStyle ? [
+      [-0.79, -0.07, 0.18, 2.42, heroStyle.frame],
+      [0.79, -0.07, 0.18, 2.42, heroStyle.frame],
+      [0, 1.12, 1.76, 0.14, heroStyle.frame],
+    ] : [
       [-0.59, 0, 0.12, 2.24],
       [0.59, 0, 0.12, 2.24],
       [0, 1.075, 1.3, 0.11],
-    ]) {
+    ])) {
       dummy.position.set(portal.position.x, y, portal.position.z);
       dummy.rotation.set(0, portal.heading, 0);
       dummy.translateX(offsetX);
       dummy.translateY(offsetY);
-      dummy.translateZ(-0.025);
+      dummy.translateZ(heroStyle ? -0.27 : -0.025);
       dummy.scale.set(scaleX, scaleY, 0.18);
       dummy.updateMatrix();
       frames.setMatrixAt(frameIndex, dummy.matrix);
+      frameColor.set(roleColor || '#ffffff');
+      frames.setColorAt(frameIndex, frameColor);
       frameIndex += 1;
     }
 
-    dummy.position.set(portal.position.x, y + 1.38, portal.position.z);
+    dummy.position.set(
+      portal.position.x,
+      heroStyle ? portal.position.y + 2.12 : y + 1.38,
+      portal.position.z,
+    );
     dummy.rotation.set(0, portal.heading, 0);
-    dummy.translateZ(-0.1);
-    dummy.scale.set(1, 1, 1);
+    dummy.translateZ(heroStyle ? -0.255 : -0.1);
+    dummy.scale.set(heroStyle ? 3.15 : 1, heroStyle ? 2.2 : 1, heroStyle ? 1.15 : 1);
     dummy.updateMatrix();
     lights.setMatrixAt(index, dummy.matrix);
+
+    if (heroStyle) {
+      portalStyledIds.push(portal.buildingId);
+      portalPositionsUnchanged = portalPositionsUnchanged
+        && sourcePosition[0] === portal.position.x
+        && sourcePosition[1] === portal.position.y
+        && sourcePosition[2] === portal.position.z;
+      portalHeadingsUnchanged = portalHeadingsUnchanged && sourceHeading === portal.heading;
+      hero.entrance = {
+        portalId: portal.id,
+        portalIndex: index,
+        panelInstances: 1,
+        frameInstances: 3,
+        cueInstances: 1,
+        recessedMeters: 0.31,
+        revealDepthMeters: 0.04,
+        thresholdGapMeters: 0.1,
+        transomCue: true,
+        positionUnchanged: portalPositionsUnchanged,
+        headingUnchanged: portalHeadingsUnchanged,
+        finite: [...sourcePosition, sourceHeading, index].every(Number.isFinite),
+      };
+    }
   });
   for (const mesh of [panels, frames, lights]) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere?.();
     group.add(mesh);
+  }
+  if (streetwall) {
+    portalStyledIds.sort();
+    const exactPortalSet = portalStyledIds.length === streetwall.expectedIds.length
+      && portalStyledIds.every((id, index) => id === streetwall.expectedIds[index]);
+    streetwall.portalStyledIds = portalStyledIds;
+    streetwall.portalPanelInstances = portalStyledIds.length;
+    streetwall.portalFrameInstances = portalStyledIds.length * 3;
+    streetwall.portalCueInstances = portalStyledIds.length;
+    streetwall.portalPositionsUnchanged = exactPortalSet && portalPositionsUnchanged;
+    streetwall.portalHeadingsUnchanged = exactPortalSet && portalHeadingsUnchanged;
+    streetwall.sourcePortalsUnchanged = streetwall.portalPositionsUnchanged
+      && streetwall.portalHeadingsUnchanged;
   }
   renderer.root.add(group);
   return group;
