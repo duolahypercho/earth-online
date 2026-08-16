@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Verify · SF building interiors</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      body { margin: 0; background: radial-gradient(circle at top, #382b22, #100c09 62%); color: #fff5e7; }
+      main { width: min(760px, calc(100% - 40px)); margin: 8vh auto; }
+      h1 { max-width: 650px; margin: 8px 0 18px; font: 700 clamp(30px, 5vw, 54px)/1 system-ui, sans-serif; }
+      p { color: #cbb9a6; line-height: 1.6; }
+      button { margin: 20px 0; padding: 13px 18px; border: 0; border-radius: 8px; background: #ffcb8a; color: #27170b; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; }
+      pre { min-height: 180px; overflow: auto; padding: 18px; border: 1px solid #71513a; border-radius: 10px; background: #1b120d; color: #ffcb8a; white-space: pre-wrap; }
+      a { color: #ffcb8a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="/plugins/index.html">PLUGIN QA</a> / WORLD FEATURE</p>
+      <h1>SF building interiors</h1>
+      <p>This page invokes the registered production portal loader against a deterministic fixture. It creates no renderer, scene, clock, or animation loop.</p>
+      <button id="run" type="button">Verify portal and room contracts</button>
+      <pre id="result" role="status">Contract ready.</pre>
+    </main>
+    <script type="module" src="./verify.js"></script>
+  </body>
+</html>

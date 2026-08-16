@@ -15,10 +15,16 @@ import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
 import { loadSfData } from './sf-data.js';
 import { TrafficSim } from './traffic.js';
+import {
+  createStreamedInterior,
+  disposeStreamedInterior,
+  installBuildingPortals,
+} from './interior-runtime.js';
 import { getWorldPlugin } from '../plugins/registry.js';
 import './styles.css';
 
 const authoritativeMetricMapPlugin = getWorldPlugin('sf-authoritative-metric-map');
+const buildingInteriorsPlugin = getWorldPlugin('sf-building-interiors');
 
 const app = document.querySelector('#app');
 const canvasHost = app;
@@ -94,6 +100,13 @@ const state = {
   errors: [],
   busy: false,
   metricMap: null,
+  interiors: {
+    portals: [],
+    byBuildingId: new Map(),
+    coverage: { registered: 0, functional: 0, missing: 0, support: 'render-only' },
+    markers: null,
+    active: null,
+  },
 };
 
 let pillTimer = null;
@@ -546,13 +559,124 @@ function buildCollisionGrid(city, cell = 2) {
   } };
 }
 
+function syncModePresentation() {
+  const modeButton = document.querySelector('[data-action="mode"]');
+  if (modeButton) {
+    modeButton.textContent = state.mode === 'drive'
+      ? 'Drive'
+      : state.mode === 'orbit'
+        ? 'Orbit'
+        : state.mode === 'interior'
+          ? 'Interior'
+          : 'Walk';
+  }
+  state.renderer?.setWalkMode(state.mode !== 'orbit');
+  syncPlacementState();
+}
+
+function configureBuildingInteriors(city) {
+  const { portals, coverage } = buildingInteriorsPlugin.load({ city });
+  state.interiors.portals = portals;
+  state.interiors.byBuildingId = new Map(portals.map((portal) => [portal.buildingId, portal]));
+  state.interiors.coverage = coverage;
+  state.interiors.markers = installBuildingPortals(state.renderer, portals);
+}
+
+function nearestBuildingPortal(force = false) {
+  let nearest = null;
+  let bestDistance = force ? Infinity : 3.2;
+  for (const portal of state.interiors.portals) {
+    const distance = Math.hypot(portal.approach.x - state.player.x, portal.approach.z - state.player.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = portal;
+    }
+  }
+  return nearest;
+}
+
+function enterBuilding(buildingId = null, force = true) {
+  const portal = buildingId
+    ? state.interiors.byBuildingId.get(buildingId)
+      || state.interiors.portals.find((candidate) => candidate.id === buildingId)
+    : nearestBuildingPortal(force);
+  if (!portal || !state.renderer?.root || !state.city) return false;
+  if (!force && Math.hypot(portal.approach.x - state.player.x, portal.approach.z - state.player.z) > 3.2) return false;
+  if (state.vehicle) toggleVehicle(false);
+  if (state.interiors.active) exitBuilding(false);
+  const exterior = {
+    x: state.player.x,
+    z: state.player.z,
+    yaw: state.player.yaw,
+    pitch: state.player.pitch,
+  };
+  const streamed = createStreamedInterior(state.renderer, portal, state.city.meta.bounds);
+  const hiddenCityChildren = state.renderer.root.children.filter((child) => child !== streamed.group && child.visible);
+  for (const child of hiddenCityChildren) child.visible = false;
+  const trafficWasVisible = Boolean(state.traffic?.group?.visible);
+  if (state.traffic?.group) state.traffic.group.visible = false;
+  state.interiors.active = {
+    ...streamed,
+    buildingId: portal.buildingId,
+    portal,
+    exterior,
+    hiddenCityChildren,
+    trafficWasVisible,
+  };
+  state.mode = 'interior';
+  state.player.x = streamed.spawn.x;
+  state.player.z = streamed.spawn.z;
+  state.player.yaw = streamed.spawn.yaw;
+  state.player.pitch = streamed.spawn.pitch;
+  state.player.keys.clear();
+  syncModePresentation();
+  updatePlayer(0);
+  showPill(`Entered ${portal.label || portal.buildingId}`, 'info', 1600);
+  return true;
+}
+
+function exitBuilding(restorePlayer = true) {
+  const active = state.interiors.active;
+  if (!active) return false;
+  disposeStreamedInterior(state.renderer, active);
+  for (const child of active.hiddenCityChildren) child.visible = true;
+  if (state.traffic?.group) state.traffic.group.visible = active.trafficWasVisible;
+  state.interiors.active = null;
+  state.player.keys.clear();
+  if (restorePlayer) {
+    const { approach, normal } = active.portal;
+    state.player.x = approach.x;
+    state.player.z = approach.z;
+    state.player.yaw = Math.atan2(-normal.x, -normal.z);
+    state.player.pitch = active.exterior.pitch;
+    state.mode = 'walk';
+    syncModePresentation();
+    updatePlayer(0);
+    showPill(`Exited ${active.portal.label || active.buildingId}`, 'info', 1400);
+  }
+  return true;
+}
+
+function resetBuildingInteriors() {
+  if (state.interiors.active) {
+    exitBuilding(false);
+    state.mode = 'walk';
+  }
+  state.interiors.portals = [];
+  state.interiors.byBuildingId = new Map();
+  state.interiors.coverage = { registered: 0, functional: 0, missing: 0, support: 'render-only' };
+  state.interiors.markers = null;
+}
+
 async function buildCity(city, { reframe = true } = {}) {
+  resetBuildingInteriors();
   state.city = city;
   state.metricMap = null;
   MINIMAP.bitmap = null;
   if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
   await state.renderer.buildCity(city, { day: state.day });
+  configureBuildingInteriors(city);
   if (state.traffic) {
     state.traffic.dispose();
   }
@@ -658,9 +782,11 @@ function syncPlacementState() {
     ? 'Drive mode · W throttle · S brake · A/D steer · E exit'
     : state.placement
       ? 'Add mode · click a block to build · drag orbit · Esc to exit'
+      : state.mode === 'interior'
+        ? 'Interior · WASD explore · E or Esc exit'
       : state.mode === 'walk'
-        ? 'Walk mode · WASD move · E enter a car · M orbit'
-        : 'Drag orbit · click inspect · WASD walk · E enter a car · Esc exit';
+        ? 'Walk mode · WASD move · E enter a door or car · M orbit'
+        : 'Drag orbit · click inspect · WASD walk · E enter a door or car · Esc exit';
 }
 
 function syncUndoButton() {
@@ -720,8 +846,8 @@ async function importMetadataFile(file) {
 }
 
 function setMode(mode) {
+  if (state.interiors.active && mode !== 'interior') exitBuilding(false);
   state.mode = mode;
-  document.querySelector('[data-action="mode"]').textContent = mode === 'drive' ? 'Drive' : mode === 'orbit' ? 'Orbit' : 'Walk';
   if (mode === 'walk' && state.placement) togglePlacement(false);
   if (mode === 'orbit') {
     state.renderer.setWalkMode(false);
@@ -747,7 +873,7 @@ function setMode(mode) {
     updatePlayer(0);
     state.traffic?.requestLocalLifeRefresh({ allowVisible: true });
   }
-  syncPlacementState();
+  syncModePresentation();
 }
 
 function nearestVehicle(force = false) {
@@ -779,6 +905,7 @@ function nearestVehicle(force = false) {
 }
 
 function toggleVehicle(force = null) {
+  if (state.interiors.active) return false;
   const enter = force == null ? !state.vehicle : Boolean(force);
   if (enter && !state.vehicle) {
     const car = nearestVehicle(force === true);
@@ -1208,6 +1335,7 @@ async function loadMetricSf() {
     if (state.vehicle) toggleVehicle(false);
     if (state.traffic) state.traffic.dispose();
     state.traffic = null;
+    resetBuildingInteriors();
     state.renderer.clearCity();
     state.renderer.installMetricTileRoot(bundle.root, bundle.bounds);
     const city = {
@@ -1232,6 +1360,7 @@ async function loadMetricSf() {
       signals: [],
     };
     state.city = city;
+    configureBuildingInteriors(city);
     state.metricMap = {
       anchorOriginEpsg26910: bundle.anchorOriginEpsg26910,
       manifestTileCount: bundle.manifestTileCount,
@@ -1271,7 +1400,8 @@ async function loadMetricSf() {
 
 function updatePlayer(delta) {
   const player = state.player;
-  if (state.mode !== 'walk') return;
+  const activeInterior = state.interiors.active;
+  if (state.mode !== 'walk' && state.mode !== 'interior') return;
   const speed = 5.6 * delta;
   let dx = 0;
   let dz = 0;
@@ -1285,10 +1415,19 @@ function updatePlayer(delta) {
     dz = (dz / length) * speed;
     const nextX = player.x + dx;
     const nextZ = player.z + dz;
-    if (!state.collision.isBlocked(nextX, player.z)) player.x = nextX;
-    if (!state.collision.isBlocked(player.x, nextZ)) player.z = nextZ;
+    if (activeInterior) {
+      player.x = clamp(nextX, activeInterior.bounds.minX, activeInterior.bounds.maxX);
+      player.z = clamp(nextZ, activeInterior.bounds.minZ, activeInterior.bounds.maxZ);
+    } else if (state.collision) {
+      if (!state.collision.isBlocked(nextX, player.z)) player.x = nextX;
+      if (!state.collision.isBlocked(player.x, nextZ)) player.z = nextZ;
+    }
   }
-  const y = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(player.x, player.z) : 0;
+  const y = activeInterior
+    ? activeInterior.floorY
+    : state.renderer.terrain?.heightAt
+      ? state.renderer.terrain.heightAt(player.x, player.z)
+      : 0;
   const camera = state.renderer.camera;
   camera.position.set(
     player.x - Math.sin(player.yaw) * Math.cos(player.pitch) * 4.2,
@@ -1345,6 +1484,14 @@ async function boot() {
       } : null,
       errors: state.errors,
       mode: () => state.mode,
+      interior: Boolean(state.interiors.active),
+      interiorBuildingId: state.interiors.active?.buildingId || null,
+      playerPosition: {
+        x: state.player.x,
+        y: state.interiors.active?.floorY
+          ?? (state.renderer?.terrain?.heightAt ? state.renderer.terrain.heightAt(state.player.x, state.player.z) : 0),
+        z: state.player.z,
+      },
     }),
     generate,
     setTime: (hour) => {
@@ -1584,6 +1731,25 @@ async function boot() {
     togglePlacement,
     enterVehicle: (force = false) => toggleVehicle(force),
     exitVehicle: () => toggleVehicle(false),
+    getBuildingPortals: () => JSON.parse(JSON.stringify(state.interiors.portals)),
+    getInteriorCoverage: () => JSON.parse(JSON.stringify(state.interiors.coverage)),
+    getInteriorState: () => ({
+      activeBuildingId: state.interiors.active?.buildingId || null,
+      active: state.interiors.active ? {
+        buildingId: state.interiors.active.buildingId,
+        portalId: state.interiors.active.portal.id,
+        roomId: state.interiors.active.group.userData.roomId,
+      } : null,
+      playerPosition: {
+        x: state.player.x,
+        y: state.interiors.active?.floorY
+          ?? (state.renderer?.terrain?.heightAt ? state.renderer.terrain.heightAt(state.player.x, state.player.z) : 0),
+        z: state.player.z,
+      },
+    }),
+    enterBuilding: (buildingId) => enterBuilding(buildingId, true),
+    enterNearestBuilding: () => enterBuilding(null, false),
+    exitBuilding: () => exitBuilding(true),
     loadBuiltinSf,
     loadMetricSf,
     getMetricMap: () => state.metricMap,
@@ -1856,13 +2022,18 @@ async function boot() {
         if (!osmBusy) osmOverlay.hidden = true;
         return;
       }
-      if (state.placement) togglePlacement(false);
+      if (state.interiors.active) exitBuilding(true);
+      else if (state.placement) togglePlacement(false);
       else if (state.vehicle) toggleVehicle(false);
       else inspector.hidden = true;
     }
-    if (key === 'e') toggleVehicle();
+    if (key === 'e') {
+      if (state.interiors.active) exitBuilding(true);
+      else if (state.mode !== 'walk' || !enterBuilding(null, false)) toggleVehicle();
+    }
     if (key === 'm') {
-      if (state.vehicle) toggleVehicle(false);
+      if (state.interiors.active) exitBuilding(true);
+      else if (state.vehicle) toggleVehicle(false);
       else setMode(state.mode === 'orbit' ? 'walk' : 'orbit');
     }
     state.player.keys.add(key);

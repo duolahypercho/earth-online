@@ -358,7 +358,12 @@ export class CityRenderer {
     this.scene.fog = new THREE.Fog(0xe2e8e2, 330, 1380);
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.5, 4200);
     this.camera.position.set(180, 150, 260);
-    this.renderer = new WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
+    const sceneCanvas = container.querySelector('#scene-canvas');
+    this.renderer = new WebGPURenderer({
+      antialias: true,
+      powerPreference: 'high-performance',
+      ...(sceneCanvas ? { canvas: sceneCanvas } : {}),
+    });
     this.rendererBackend = 'initializing';
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -366,7 +371,7 @@ export class CityRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
-    container.appendChild(this.renderer.domElement);
+    if (!sceneCanvas) container.appendChild(this.renderer.domElement);
     // A restrained filmic grade keeps the pastel material palette intact and
     // avoids turning large real-map facades into neon color fields.
     this.renderer.domElement.style.filter = 'saturate(1.16) contrast(1.04) brightness(1.01)';
