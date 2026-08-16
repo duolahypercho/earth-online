@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "verdict": "pass",
+  "confidence": 0.86,
+  "estimatedFidelity": 0.86,
+  "targetThreshold": 0.7,
+  "materialId": "sfmoma-concept-reference",
+  "sourceImage": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+  "outDir": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence",
+  "palette": [
+    "#57595B",
+    "#A6A3A4",
+    "#2F2B2C",
+    "#F1E8DF",
+    "#7B2D2C",
+    "#D0584A"
+  ],
+  "maps": {
+    "albedo": {
+      "path": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_albedo.png",
+      "url": "sfmoma-concept-reference_albedo.png",
+      "channel": "albedo",
+      "source": "reference-pixel-extraction"
+    },
+    "roughness": {
+      "path": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_roughness.png",
+      "url": "sfmoma-concept-reference_roughness.png",
+      "channel": "roughness",
+      "source": "reference-pixel-extraction"
+    },
+    "height": {
+      "path": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_height.png",
+      "url": "sfmoma-concept-reference_height.png",
+      "channel": "height",
+      "source": "reference-pixel-extraction"
+    },
+    "normal": {
+      "path": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_normal.png",
+      "url": "sfmoma-concept-reference_normal.png",
+      "channel": "normal",
+      "source": "reference-pixel-extraction"
+    },
+    "ao": {
+      "path": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/.img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_ao.png",
+      "url": "sfmoma-concept-reference_ao.png",
+      "channel": "ao",
+      "source": "reference-pixel-extraction"
+    }
+  },
+  "diagnostics": {
+    "sourceWidth": 1536,
+    "sourceHeight": 1024,
+    "mapSize": 512,
+    "cropBBoxPixels": {
+      "x": 91,
+      "y": 34,
+      "width": 1378,
+      "height": 946
+    },
+    "mask": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundNoise": 0.0,
+      "transparentPixelFraction": 0.4288,
+      "foregroundCoverage": 0.5778
+    },
+    "mapStats": {
+      "valueRange": 0.8007,
+      "heightP90Gradient": 0.09528,
+      "roughnessBase": 0.724,
+      "roughnessVariation": 0.18,
+      "normalStrength": 0.268,
+      "blurRadius": 10
+    },
+    "palette": [
+      "#57595B",
+      "#A6A3A4",
+      "#2F2B2C",
+      "#F1E8DF",
+      "#7B2D2C",
+      "#D0584A"
+    ]
+  },
+  "warnings": [
+    "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+  ],
+  "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+}

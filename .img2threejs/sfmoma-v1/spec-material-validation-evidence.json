@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "scope": "spec-authoring, material-evidence, material-spec-wiring, and strict-validation only",
+  "createdAt": "2026-08-16",
+  "python": "python3.12",
+  "inputs": {
+    "assessment": {
+      "path": ".img2threejs/sfmoma-v1/assessment.json",
+      "sha256": "c957278d4d47558604fe2e55d08bc3f26aa5040dd3e8b1ec5014bc3840f398c5"
+    },
+    "spec": {
+      "path": ".img2threejs/sfmoma-v1/object-sculpt-spec.json",
+      "sha256": "7c085860890e8612a34a5e5abe61a80d87d81cc90890687e4e835685dda29277"
+    },
+    "reference": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+    "pbrReport": {
+      "path": ".img2threejs/sfmoma-v1/pbr-evidence-report.json",
+      "sha256": "8c2ba4d7cf87c7274fb4bfaed968bcf61077ac617572b41e0c62264022364b79",
+      "verdict": "pass",
+      "confidence": 0.86,
+      "targetThreshold": 0.7,
+      "hardLimit": "Reference-wide single-image inference spans multiple facade materials. It is not exact inverse rendering, surveyed material truth, or proof that the material pass visually matches."
+    }
+  },
+  "requiredDocsReadCompletely": [
+    "/Users/ziwenxu/.codex/skills/img2threejs/SKILL.md",
+    "grimoire/intake/image_analysis.md",
+    "grimoire/intake/validation_rubric.md",
+    "grimoire/intake/quality_contract.md",
+    "grimoire/intake/detail_inventory.md",
+    "grimoire/intake/local_spec_search.md",
+    "grimoire/intake/surface_topology.md",
+    "grimoire/glossary/3d_vocabulary.md",
+    "grimoire/build/geometry_patterns.md",
+    "grimoire/build/threejs_texture_reference.md",
+    "grimoire/feedback/shading_realism.md",
+    "grimoire/readiness/action_rigging.md",
+    "grimoire/readiness/joint_attachment.md"
+  ],
+  "stateGateBeforeEdit": {
+    "command": "python3.12 forge/next.py --state .img2threejs/sfmoma-v1/state.json .img2threejs/sfmoma-v1/object-sculpt-spec.json",
+    "exitCode": 0,
+    "status": "active",
+    "step": "spec-authoring",
+    "pass": "blockout",
+    "loop": "0/3",
+    "total": "0/6"
+  },
+  "specEvidence": {
+    "qualityBar": "complex",
+    "complexityScores": {
+      "silhouetteComplexity": 3,
+      "componentCount": 3,
+      "hierarchyDepth": 3,
+      "repetitionDensity": 3,
+      "materialLayerCount": 3,
+      "localDetailDensity": 3,
+      "occlusionRisk": 2,
+      "actionReadinessNeed": 3
+    },
+    "counts": {
+      "components": 19,
+      "macroComponents": 6,
+      "mesoComponents": 13,
+      "microFeatureGroups": 15,
+      "materials": 6,
+      "repetitionSystems": 5,
+      "lightingContractEntries": 7,
+      "objectSpecificFeatureReviewTargets": 7
+    },
+    "detailInventoryNormalization": [
+      {"id": "red-tower-vertical-ribs", "kind": "ridge", "mapsTo": "redTower/ribArray"},
+      {"id": "red-tower-glazed-slot", "kind": "hole", "mapsTo": "redTower/glazedSlot"},
+      {"id": "white-gallery-cantilevers", "kind": "contour", "mapsTo": "galleryStack/cantileverHierarchy"},
+      {"id": "concrete-panel-seams", "kind": "seam", "mapsTo": "paleConcrete/panelJointLines"},
+      {"id": "midlevel-curtain-wall", "kind": "linework", "mapsTo": "glassSystems/mullionGrid"},
+      {"id": "entry-door-grid", "kind": "seam", "mapsTo": "glassSystems/doorGrid"},
+      {"id": "entry-stair", "kind": "contour", "mapsTo": "glassSystems/interiorStair"},
+      {"id": "dark-louver-band", "kind": "ridge", "mapsTo": "architecturalDetails/louverBand"},
+      {"id": "glass-balustrades", "kind": "gloss", "mapsTo": "architecturalDetails/glassGuards"},
+      {"id": "roof-parapets", "kind": "contour", "mapsTo": "galleryStack/roofParapets"},
+      {"id": "glass-interior-warmth", "kind": "emissive", "mapsTo": "blueGrayGlass/interiorWarmth"},
+      {"id": "deep-entry-reveal", "kind": "groove", "mapsTo": "darkPodium/entryReveal"}
+    ],
+    "acceptedApproximationPolicy": {
+      "unresolvedUnknowns": 0,
+      "hiddenElevationConfidence": 0.55,
+      "claimBoundary": "Hidden elevations use restrained visible-grammar continuation only. Dimensions remain normalized proportions and are not survey, CRS, or map truth."
+    },
+    "committedFactoryGroupParity": {
+      "source": "src/citygen/landmarks/sfmoma-generated-v1.js",
+      "root": "SFMOMA generated landmark v1",
+      "groups": [
+        "sfmoma.darkPodium",
+        "sfmoma.galleryStack",
+        "sfmoma.redTower",
+        "sfmoma.glassSystems",
+        "sfmoma.architecturalDetails"
+      ],
+      "claimBoundary": "Names were checked against the committed factory. This does not prove sculptRuntime, clickability, exploded layout, or part coverage."
+    }
+  },
+  "materialEvidence": {
+    "wiredHeroMaterials": [
+      "paleConcrete",
+      "redCladding"
+    ],
+    "confidence": 0.86,
+    "channelsIndependent": true,
+    "maps": {
+      "albedo": {
+        "path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_albedo.png",
+        "sha256": "a778dcd20eac547c6fdada18eb73ec52d4def8e0736b901fec65e8f4fd8f4c71",
+        "colorSpace": "sRGB"
+      },
+      "roughness": {
+        "path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_roughness.png",
+        "sha256": "973a833587072a1d30c7f810ad389ee06456830a22f8953e0b1ea66427e1c18a",
+        "colorSpace": "linear-data"
+      },
+      "height": {
+        "path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_height.png",
+        "sha256": "fc25ef7559f5dc66935e31c2e708bc167e7014dcb3e9d64e98398985184e52af",
+        "colorSpace": "linear-data"
+      },
+      "normal": {
+        "path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_normal.png",
+        "sha256": "49a8a499b0bc8cd67a9863668f4028058cbb0a811e48acfb9b7616a24f80d2f8",
+        "colorSpace": "linear-data",
+        "derivation": "independent height-derived tangent-space evidence"
+      },
+      "ao": {
+        "path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_ao.png",
+        "sha256": "26c259e3ac96baeb3208791845a479e715ff3dea63624a5cec71eed9fae73345",
+        "colorSpace": "linear-data"
+      }
+    }
+  },
+  "validators": {
+    "normal": {
+      "command": "python3.12 forge/stage2_spec/validate_sculpt_spec.py .img2threejs/sfmoma-v1/object-sculpt-spec.json --json",
+      "exitCode": 0,
+      "output": {
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "summary": {
+          "targetName": "SFMOMA Generated Landmark V1",
+          "suitability": "conditional",
+          "components": 19,
+          "materials": 6
+        }
+      }
+    },
+    "strictQuality": {
+      "command": "python3.12 forge/stage2_spec/validate_sculpt_spec.py .img2threejs/sfmoma-v1/object-sculpt-spec.json --strict-quality --json",
+      "exitCode": 0,
+      "output": {
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "summary": {
+          "targetName": "SFMOMA Generated Landmark V1",
+          "suitability": "conditional",
+          "components": 19,
+          "materials": 6
+        }
+      }
+    }
+  },
+  "provenStateSteps": [
+    "spec-authoring",
+    "material-evidence",
+    "material-spec-wiring",
+    "strict-validation"
+  ],
+  "explicitlyNotProven": [
+    "build-current-pass",
+    "render-capture",
+    "review-contract-read",
+    "tier1-diagnostics",
+    "multi-angle-review",
+    "pass-gate-check",
+    "ai-review-recorded",
+    "pipeline-sync",
+    "part-coverage",
+    "action-ready"
+  ]
+}

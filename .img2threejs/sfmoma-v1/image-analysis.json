@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "reference": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+  "sha256": "067efbeedede53a8d4db629729587505137b529370f50fe89af187a05b4a6908",
+  "dimensions": { "width": 1536, "height": 1024, "hasAlpha": true },
+  "subject": {
+    "name": "SFMOMA-inspired contemporary museum",
+    "domain": "object",
+    "subtype": "hard-surface architectural landmark",
+    "primaryAxis": "+Y",
+    "frontAxis": "+Z",
+    "complexity": "complex"
+  },
+  "camera": {
+    "view": "front-three-quarter",
+    "projection": "mild perspective approaching orthographic",
+    "elevation": "slightly above street level",
+    "visibleSides": ["front", "camera-left side", "roof masses"],
+    "hiddenSides": ["rear", "camera-right side", "underside"]
+  },
+  "boundingBoxNormalized": {
+    "width": 1.0,
+    "height": 0.72,
+    "depth": 0.58
+  },
+  "macroComponents": [
+    { "id": "dark-podium", "shape": "rectilinear stepped podium", "importance": "critical" },
+    { "id": "white-gallery-stack", "shape": "overlapping pale concrete boxes", "importance": "critical" },
+    { "id": "red-ribbed-tower", "shape": "tall tapered/folded tower volume", "importance": "critical" },
+    { "id": "glass-bands", "shape": "horizontal curtain-wall ribbons and entry glazing", "importance": "critical" },
+    { "id": "terraces-and-recesses", "shape": "setbacks, overhangs, balconies, deep entry reveal", "importance": "high" }
+  ],
+  "materials": [
+    { "id": "pale-concrete", "response": "warm off-white, high roughness, subtle panel seams" },
+    { "id": "red-ribbed-cladding", "response": "warm red, directional vertical ribs, medium roughness" },
+    { "id": "dark-metal", "response": "charcoal, medium roughness, restrained metalness" },
+    { "id": "blue-gray-glass", "response": "dark translucent/reflective glazing, low roughness" }
+  ],
+  "lighting": {
+    "keyDirection": "upper camera-left/front",
+    "environment": "soft neutral studio daylight",
+    "shadow": "broad contact and self-shadow",
+    "background": "transparent alpha with a soft halo in RGB"
+  },
+  "identityFeatures": [
+    "red ribbed tower rising above the pale gallery boxes",
+    "diagonal red fold framing a tall glazed slot",
+    "long horizontal glass band across the middle floors",
+    "dark podium with a recessed central entry",
+    "asymmetric stacked and cantilevered gallery volumes"
+  ],
+  "inferenceRisks": [
+    "single view cannot establish rear elevation",
+    "generated concept is SFMOMA-inspired rather than a surveyed architectural record",
+    "transparent source contains a dark RGB halo that must not become geometry",
+    "exact dimensions and facade module spacing are not authoritative"
+  ]
+}
