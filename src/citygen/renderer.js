@@ -95,7 +95,7 @@ const PARKED_CAR_PARTITION_ENTER_RADIUS = 420;
 const PARKED_CAR_PARTITION_EXIT_RADIUS = 520;
 const PARKED_CAR_PARTITION_AERIAL_HEIGHT = 500;
 const PARKED_CAR_PARTITION_UPDATE_INTERVAL = 8;
-const PARKED_CAR_DETAIL_PASS = 'sf-parked-car-wheel-glass-detail-v1';
+const PARKED_CAR_DETAIL_PASS = 'sf-parked-car-wheel-depth-v2';
 const PARKED_CAR_PALETTE = Object.freeze([
   0x7d4d4c,
   0x9a7a3e,
@@ -424,7 +424,7 @@ function createPortalPartitionDiagnostics() {
 
 function createParkedCarPartitionDiagnostics() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     pass: PARKED_CAR_PARTITION_PASS,
     enabled: false,
     failure: null,
@@ -435,15 +435,18 @@ function createParkedCarPartitionDiagnostics() {
     source: {
       spots: 0,
       cells: 0,
-      bodyTrianglesPerSpot: 92,
+      bodyTrianglesPerSpot: 156,
       cabTrianglesPerSpot: 20,
-      trianglesPerSpot: 112,
+      trianglesPerSpot: 176,
       totalTriangles: 0,
       recordsChecksum: null,
       recordsUnchanged: false,
       inputChecksumBefore: null,
       inputChecksumAfter: null,
       unchanged: false,
+      roadYSource: 'terrain.heightAt+roadLift',
+      roadLiftMeters: 0,
+      roadYExcludedFromRecordsChecksum: true,
     },
     policy: {
       cellSizeMeters: PARKED_CAR_PARTITION_CELL_SIZE,
@@ -474,21 +477,72 @@ function createParkedCarPartitionDiagnostics() {
     },
     topology: {
       body: {
-        vertexCount: 276,
+        vertexCount: 468,
         indexCount: 0,
-        triangleCount: 92,
+        triangleCount: 156,
         indexed: false,
         finiteTriangleAreas: false,
         minTriangleArea: 0,
         minOutwardNormalDot: 0,
         vertexColors: true,
-        roles: { paintHull: 20, wheelSideDiscs: 64, lamps: 8 },
+        roles: { paintHull: 20, wheelSideDiscs: 64, wheelTreads: 64, lamps: 8 },
+        triangleRanges: {
+          paintHull: { start: 0, count: 20 },
+          wheelSideDiscs: { start: 20, count: 64 },
+          wheelTreads: { start: 84, count: 64 },
+          lamps: { start: 148, count: 8 },
+        },
+        vertexRanges: {
+          paintHull: { start: 0, count: 60 },
+          wheelSideDiscs: { start: 60, count: 192 },
+          wheelTreads: { start: 252, count: 192 },
+          lamps: { start: 444, count: 24 },
+        },
         wheels: {
           count: 4,
           facesPerWheel: 2,
           segmentsPerFace: 8,
           triangleCount: 64,
+          treadSegmentsPerWheel: 8,
+          treadTrianglesPerWheel: 16,
+          treadTriangleCount: 64,
+          totalTriangleCount: 128,
           minOutwardNormalDot: 0,
+          minTreadOutwardNormalDot: 0,
+          outerFacePaintModulatedHubHighlight: true,
+          colors: {
+            composition: 'raw-geometry-tone-times-instance-paint-linear',
+            rawGeometryTones: {
+              paintModulatedHubHighlight: [1.18, 1.25, 1.3],
+              outerFaceRadial: [0.18, 0.18, 0.19],
+              innerFace: [0.12, 0.12, 0.13],
+              tread: [0.1, 0.1, 0.11],
+            },
+            effectivePaletteProducts: [],
+            productBounds: [0, 1],
+            productsFinite: false,
+            productsBounded: false,
+            vertexColorSpace: 'linear-srgb',
+            emissive: false,
+          },
+          contact: {
+            normalizedLowestY: 0,
+            bodyScaleYMeters: 0.58,
+            bodyCenterAboveRoadMeters: 0.32,
+            toleranceMeters: 0.000001,
+            roadYSource: 'terrain.heightAt+roadLift',
+            roadLiftMeters: 0,
+            roadYExcludedFromRecordsChecksum: true,
+            sourceSpotsChecked: 0,
+            sourceRoadYFinite: false,
+            minSourceRoadYMeters: 0,
+            maxSourceRoadYMeters: 0,
+            finite: false,
+            minClearanceMeters: 0,
+            maxClearanceMeters: 0,
+            maxAbsClearanceMeters: 0,
+            allOnRoadPlane: false,
+          },
         },
       },
       cab: {
@@ -515,10 +569,17 @@ function createParkedCarPartitionDiagnostics() {
       wheelCount: 4,
       wheelFacesPerWheel: 2,
       wheelSegmentsPerFace: 8,
+      wheelTreadSegmentsPerWheel: 8,
+      wheelTreadTrianglesPerWheel: 16,
+      wheelTreadTriangleCount: 64,
+      wheelTotalTriangleCount: 128,
       wheelRadiusMeters: 0.26,
       wheelContactClearanceMeters: 0,
       wheelLateralProtrusionMeters: 0.09,
+      wheelThicknessMeters: 0.144,
       wheelAxleOffsetMeters: 1.248,
+      wheelPaintModulatedHubHighlight: true,
+      wheelEmissive: false,
       cabSurfaceTones: {},
       cabUniqueToneCount: 0,
     },
@@ -579,7 +640,7 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
   let geometryWheelMetadata = null;
   const roles = segmentedCab
     ? { sideWindows: 0, rearWindow: 0, roof: 0, windshield: 0, lowerSills: 0 }
-    : { paintHull: 0, wheelSideDiscs: 0, lamps: 0 };
+    : { paintHull: 0, wheelSideDiscs: 0, wheelTreads: 0, lamps: 0 };
   const cabSurfaceTones = Object.freeze({
     sideWindows: [0.72, 0.88, 0.96],
     rearWindow: [0.52, 0.67, 0.75],
@@ -594,9 +655,14 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
     color = [1, 1, 1],
     role = 'paintHull',
     outwardOrigin = [0, 0, 0],
+    cornerColors = null,
   ) => {
     positions.push(...vertices[a], ...vertices[b], ...vertices[c]);
-    colors.push(...color, ...color, ...color);
+    if (cornerColors) {
+      colors.push(...cornerColors[0], ...cornerColors[1], ...cornerColors[2]);
+    } else {
+      colors.push(...color, ...color, ...color);
+    }
     triangleOrigins.push(outwardOrigin);
     triangleRoles.push(role);
     roles[role] = (roles[role] || 0) + 1;
@@ -617,14 +683,41 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
     appendTriangle(6 + index, next, 6 + next, color, role);
   }
   if (compositeBody) {
-    const tireColor = [0.16, 0.16, 0.17];
+    // Vertex tones are multiplied by each InstancedMesh paint color in linear space.
+    // The center tone is therefore a paint-modulated highlight, not a neutral silver hub.
+    const rawWheelTones = Object.freeze({
+      paintModulatedHubHighlight: Object.freeze([1.18, 1.25, 1.3]),
+      outerFaceRadial: Object.freeze([0.18, 0.18, 0.19]),
+      innerFace: Object.freeze([0.12, 0.12, 0.13]),
+      tread: Object.freeze([0.1, 0.1, 0.11]),
+    });
+    const effectivePaletteProducts = PARKED_CAR_PALETTE.map((paintHex, paletteIndex) => {
+      const instancePaint = new THREE.Color(paintHex);
+      const instancePaintLinear = [instancePaint.r, instancePaint.g, instancePaint.b];
+      const multiplyTone = (tone) => tone.map((channel, index) => (
+        channel * instancePaintLinear[index]
+      ));
+      const hubHighlight = multiplyTone(rawWheelTones.paintModulatedHubHighlight);
+      const tread = multiplyTone(rawWheelTones.tread);
+      const products = [...instancePaintLinear, ...hubHighlight, ...tread];
+      return {
+        paletteIndex,
+        paintHex,
+        instancePaintLinear,
+        hubHighlight,
+        tread,
+        finite: products.every(Number.isFinite),
+        bounded: products.every((channel) => channel >= 0 && channel <= 1),
+      };
+    });
     const wheelCenterY = -0.1034482759;
     const wheelRadiusY = 0.4482758621;
     const wheelRadiusZ = 0.0666666667;
     const wheelInnerX = 0.47;
     const wheelOuterX = 0.55;
     const wheelSegments = 8;
-    const appendWheelFace = (x, centerZ, outwardSign, wheelCenterX) => {
+    const wheelRings = [];
+    const appendWheelFace = (x, centerZ, outwardSign, wheelCenterX, outerFace) => {
       const centerIndex = vertices.length;
       const origin = [wheelCenterX, wheelCenterY, centerZ];
       vertices.push([x, wheelCenterY, centerZ]);
@@ -637,21 +730,93 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
         ]);
       }
       const radialStart = centerIndex + 1;
+      const radialIndices = [];
       for (let segment = 0; segment < wheelSegments; segment += 1) {
         const current = radialStart + segment;
         const next = radialStart + ((segment + 1) % wheelSegments);
+        radialIndices.push(current);
+        const cornerColors = outerFace
+          ? [
+            rawWheelTones.paintModulatedHubHighlight,
+            rawWheelTones.outerFaceRadial,
+            rawWheelTones.outerFaceRadial,
+          ]
+          : [rawWheelTones.innerFace, rawWheelTones.innerFace, rawWheelTones.innerFace];
         if (outwardSign > 0) {
-          appendTriangle(centerIndex, current, next, tireColor, 'wheelSideDiscs', origin);
+          appendTriangle(
+            centerIndex,
+            current,
+            next,
+            rawWheelTones.innerFace,
+            'wheelSideDiscs',
+            origin,
+            cornerColors,
+          );
         } else {
-          appendTriangle(centerIndex, next, current, tireColor, 'wheelSideDiscs', origin);
+          appendTriangle(
+            centerIndex,
+            next,
+            current,
+            rawWheelTones.innerFace,
+            'wheelSideDiscs',
+            origin,
+            [cornerColors[0], cornerColors[2], cornerColors[1]],
+          );
         }
       }
+      return radialIndices;
     };
     for (const side of [-1, 1]) {
       for (const centerZ of [-0.32, 0.32]) {
         const wheelCenterX = side * ((wheelInnerX + wheelOuterX) * 0.5);
-        appendWheelFace(side * wheelOuterX, centerZ, side, wheelCenterX);
-        appendWheelFace(side * wheelInnerX, centerZ, -side, wheelCenterX);
+        const outerRing = appendWheelFace(side * wheelOuterX, centerZ, side, wheelCenterX, true);
+        const innerRing = appendWheelFace(side * wheelInnerX, centerZ, -side, wheelCenterX, false);
+        wheelRings.push({ side, centerZ, wheelCenterX, outerRing, innerRing });
+      }
+    }
+    for (const wheel of wheelRings) {
+      const origin = [wheel.wheelCenterX, wheelCenterY, wheel.centerZ];
+      for (let segment = 0; segment < wheelSegments; segment += 1) {
+        const next = (segment + 1) % wheelSegments;
+        const outerCurrent = wheel.outerRing[segment];
+        const outerNext = wheel.outerRing[next];
+        const innerCurrent = wheel.innerRing[segment];
+        const innerNext = wheel.innerRing[next];
+        if (wheel.side > 0) {
+          appendTriangle(
+            outerCurrent,
+            innerCurrent,
+            innerNext,
+            rawWheelTones.tread,
+            'wheelTreads',
+            origin,
+          );
+          appendTriangle(
+            outerCurrent,
+            innerNext,
+            outerNext,
+            rawWheelTones.tread,
+            'wheelTreads',
+            origin,
+          );
+        } else {
+          appendTriangle(
+            outerCurrent,
+            innerNext,
+            innerCurrent,
+            rawWheelTones.tread,
+            'wheelTreads',
+            origin,
+          );
+          appendTriangle(
+            outerCurrent,
+            outerNext,
+            innerNext,
+            rawWheelTones.tread,
+            'wheelTreads',
+            origin,
+          );
+        }
       }
     }
     const appendLamp = (x, rear) => {
@@ -683,12 +848,36 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
       facesPerWheel: 2,
       segmentsPerFace: wheelSegments,
       triangleCount: roles.wheelSideDiscs,
+      treadSegmentsPerWheel: wheelSegments,
+      treadTrianglesPerWheel: wheelSegments * 2,
+      treadTriangleCount: roles.wheelTreads,
+      totalTriangleCount: roles.wheelSideDiscs + roles.wheelTreads,
       normalizedRadiusY: wheelRadiusY,
       normalizedRadiusZ: wheelRadiusZ,
       normalizedCenterY: wheelCenterY,
       normalizedOuterX: wheelOuterX,
       normalizedInnerX: wheelInnerX,
       minOutwardNormalDot: 0,
+      minTreadOutwardNormalDot: 0,
+      outerFacePaintModulatedHubHighlight: true,
+      colors: {
+        composition: 'raw-geometry-tone-times-instance-paint-linear',
+        rawGeometryTones: Object.fromEntries(Object.entries(rawWheelTones).map(
+          ([key, value]) => [key, [...value]],
+        )),
+        effectivePaletteProducts,
+        productBounds: [0, 1],
+        productsFinite: effectivePaletteProducts.every((entry) => entry.finite),
+        productsBounded: effectivePaletteProducts.every((entry) => entry.bounded),
+        vertexColorSpace: 'linear-srgb',
+        emissive: false,
+      },
+      contact: {
+        normalizedLowestY: wheelCenterY - wheelRadiusY,
+        bodyScaleYMeters: 0.58,
+        bodyCenterAboveRoadMeters: 0.32,
+        toleranceMeters: 0.000001,
+      },
     };
   }
   const geometry = new THREE.BufferGeometry();
@@ -697,9 +886,13 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
+  if (geometryWheelMetadata) {
+    geometryWheelMetadata.contact.normalizedLowestY = geometry.boundingBox.min.y;
+  }
   let minTriangleArea = Infinity;
   let minOutwardNormalDot = Infinity;
   let wheelMinOutwardNormalDot = Infinity;
+  let wheelTreadMinOutwardNormalDot = Infinity;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
@@ -723,11 +916,29 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
     minOutwardNormalDot = Math.min(minOutwardNormalDot, outwardNormalDot);
     if (triangleRoles[offset / 9] === 'wheelSideDiscs') {
       wheelMinOutwardNormalDot = Math.min(wheelMinOutwardNormalDot, outwardNormalDot);
+    } else if (triangleRoles[offset / 9] === 'wheelTreads') {
+      wheelTreadMinOutwardNormalDot = Math.min(wheelTreadMinOutwardNormalDot, outwardNormalDot);
     }
   }
   if (geometryWheelMetadata) {
     geometryWheelMetadata.minOutwardNormalDot = wheelMinOutwardNormalDot;
+    geometryWheelMetadata.minTreadOutwardNormalDot = wheelTreadMinOutwardNormalDot;
   }
+  const triangleRanges = compositeBody ? {
+    paintHull: { start: 0, count: roles.paintHull },
+    wheelSideDiscs: { start: roles.paintHull, count: roles.wheelSideDiscs },
+    wheelTreads: {
+      start: roles.paintHull + roles.wheelSideDiscs,
+      count: roles.wheelTreads,
+    },
+    lamps: {
+      start: roles.paintHull + roles.wheelSideDiscs + roles.wheelTreads,
+      count: roles.lamps,
+    },
+  } : null;
+  const vertexRanges = triangleRanges ? Object.fromEntries(Object.entries(triangleRanges).map(
+    ([role, range]) => [role, { start: range.start * 3, count: range.count * 3 }],
+  )) : null;
   geometry.userData.parkedCarHull = {
     triangleCount: positions.length / 9,
     vertexCount: positions.length / 3,
@@ -738,6 +949,8 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
     minOutwardNormalDot,
     vertexColors: true,
     roles,
+    triangleRanges,
+    vertexRanges,
     wheels: geometryWheelMetadata,
     surfaceTones: segmentedCab ? cabSurfaceTones : null,
   };
@@ -5925,6 +6138,8 @@ export class CityRenderer {
       color: 0xffffff,
       roughness: 0.46,
       metalness: 0.34,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
       flatShading: true,
       vertexColors: true,
     });
@@ -5977,6 +6192,9 @@ export class CityRenderer {
         z: spot.z,
         heading: spot.heading,
         cellId,
+        // Presentation contact truth is source-derived and intentionally excluded
+        // from serializeParkedCarPartitionRecords so the established checksum stays stable.
+        roadY,
         bodyMatrix: new Float32Array(bodyMatrix.elements),
         bodyColor: new Float32Array([bodyColor.r, bodyColor.g, bodyColor.b]),
         cabMatrix: new Float32Array(cabMatrix.elements),
@@ -6022,16 +6240,18 @@ export class CityRenderer {
       frame: 0,
       sourceGenerator: city.meta.generator,
       goldenMode: city.meta.generator === 'sf-builtin',
+      roadLiftMeters: roadLift,
       sourceInputChecksumBefore: hashString(sourceSnapshotBefore),
       sourceInputChecksumAfter: hashString(sourceSnapshotAfter),
       sourceInputUnchanged: sourceSnapshotBefore === sourceSnapshotAfter,
       recordsChecksum: hashString(recordsSnapshot),
-      recordsFinite: records.every((record) => [
-        ...record.bodyMatrix,
-        ...record.bodyColor,
-        ...record.cabMatrix,
-        ...record.cabColor,
-      ].every(Number.isFinite)),
+      recordsFinite: records.every((record) => Number.isFinite(record.roadY)
+        && [
+          ...record.bodyMatrix,
+          ...record.bodyColor,
+          ...record.cabMatrix,
+          ...record.cabColor,
+        ].every(Number.isFinite)),
       bodyTrianglesPerSpot: (bodyGeometry.index?.count
         ?? bodyGeometry.getAttribute('position').count) / 3,
       cabTrianglesPerSpot: (cabGeometry.index?.count
@@ -6135,6 +6355,36 @@ export class CityRenderer {
     const bodyTriangles = runtime.bodyTrianglesPerSpot;
     const cabTriangles = runtime.cabTrianglesPerSpot;
     const trianglesPerSpot = bodyTriangles + cabTriangles;
+    const wheelContact = runtime.bodyHull.wheels.contact;
+    const contactClearances = runtime.records.map((record) => {
+      const bodyCenterY = record.bodyMatrix[13];
+      const bodyScaleY = record.bodyMatrix[5];
+      return bodyCenterY + wheelContact.normalizedLowestY * bodyScaleY - record.roadY;
+    });
+    const sourceRoadYs = runtime.records.map((record) => record.roadY);
+    const minContactClearance = Math.min(...contactClearances);
+    const maxContactClearance = Math.max(...contactClearances);
+    const maxAbsContactClearance = Math.max(...contactClearances.map(Math.abs));
+    const contactFinite = contactClearances.length === runtime.records.length
+      && contactClearances.every(Number.isFinite);
+    const sourceRoadYFinite = sourceRoadYs.length === runtime.records.length
+      && sourceRoadYs.every(Number.isFinite);
+    const contactDiagnostics = {
+      ...wheelContact,
+      roadYSource: 'terrain.heightAt+roadLift',
+      roadLiftMeters: runtime.roadLiftMeters,
+      roadYExcludedFromRecordsChecksum: true,
+      sourceSpotsChecked: contactClearances.length,
+      sourceRoadYFinite,
+      minSourceRoadYMeters: Math.min(...sourceRoadYs),
+      maxSourceRoadYMeters: Math.max(...sourceRoadYs),
+      finite: contactFinite && sourceRoadYFinite,
+      minClearanceMeters: minContactClearance,
+      maxClearanceMeters: maxContactClearance,
+      maxAbsClearanceMeters: maxAbsContactClearance,
+      allOnRoadPlane: contactFinite && sourceRoadYFinite
+        && maxAbsContactClearance <= wheelContact.toleranceMeters,
+    };
     const recordsUnchanged = force || resetHysteresis
       ? hashString(serializeParkedCarPartitionRecords(runtime.records)) === runtime.recordsChecksum
       : previous.source.recordsUnchanged === true;
@@ -6159,6 +6409,9 @@ export class CityRenderer {
       inputChecksumBefore: runtime.sourceInputChecksumBefore,
       inputChecksumAfter: runtime.sourceInputChecksumAfter,
       unchanged: runtime.sourceInputUnchanged,
+      roadYSource: 'terrain.heightAt+roadLift',
+      roadLiftMeters: runtime.roadLiftMeters,
+      roadYExcludedFromRecordsChecksum: true,
     };
     diagnostics.cells = {
       total: runtime.cells.length,
@@ -6201,7 +6454,31 @@ export class CityRenderer {
         minOutwardNormalDot: runtime.bodyHull.minOutwardNormalDot,
         vertexColors: runtime.bodyHull.vertexColors,
         roles: { ...runtime.bodyHull.roles },
-        wheels: { ...runtime.bodyHull.wheels },
+        triangleRanges: Object.fromEntries(Object.entries(runtime.bodyHull.triangleRanges || {}).map(
+          ([role, range]) => [role, { ...range }],
+        )),
+        vertexRanges: Object.fromEntries(Object.entries(runtime.bodyHull.vertexRanges || {}).map(
+          ([role, range]) => [role, { ...range }],
+        )),
+        wheels: {
+          ...runtime.bodyHull.wheels,
+          colors: {
+            ...runtime.bodyHull.wheels.colors,
+            rawGeometryTones: Object.fromEntries(Object.entries(
+              runtime.bodyHull.wheels.colors.rawGeometryTones,
+            ).map(([role, tone]) => [role, [...tone]])),
+            effectivePaletteProducts: runtime.bodyHull.wheels.colors.effectivePaletteProducts.map(
+              (entry) => ({
+                ...entry,
+                instancePaintLinear: [...entry.instancePaintLinear],
+                hubHighlight: [...entry.hubHighlight],
+                tread: [...entry.tread],
+              }),
+            ),
+            productBounds: [...runtime.bodyHull.wheels.colors.productBounds],
+          },
+          contact: contactDiagnostics,
+        },
       },
       cab: {
         vertexCount: runtime.cabHull.vertexCount,
@@ -6230,16 +6507,27 @@ export class CityRenderer {
     diagnostics.visual.wheelCount = runtime.bodyHull.wheels.count;
     diagnostics.visual.wheelFacesPerWheel = runtime.bodyHull.wheels.facesPerWheel;
     diagnostics.visual.wheelSegmentsPerFace = runtime.bodyHull.wheels.segmentsPerFace;
+    diagnostics.visual.wheelTreadSegmentsPerWheel = runtime.bodyHull.wheels.treadSegmentsPerWheel;
+    diagnostics.visual.wheelTreadTrianglesPerWheel = runtime.bodyHull.wheels.treadTrianglesPerWheel;
+    diagnostics.visual.wheelTreadTriangleCount = runtime.bodyHull.wheels.treadTriangleCount;
+    diagnostics.visual.wheelTotalTriangleCount = runtime.bodyHull.wheels.totalTriangleCount;
     diagnostics.visual.wheelRadiusMeters = Number(
       (runtime.bodyHull.wheels.normalizedRadiusY * 0.58).toFixed(6),
     );
-    diagnostics.visual.wheelContactClearanceMeters = Number((0.32
-      + (runtime.bodyHull.wheels.normalizedCenterY - runtime.bodyHull.wheels.normalizedRadiusY) * 0.58
-    ).toFixed(6)) || 0;
+    diagnostics.visual.wheelContactClearanceMeters = Number(
+      contactDiagnostics.maxAbsClearanceMeters.toFixed(6),
+    ) || 0;
     diagnostics.visual.wheelLateralProtrusionMeters = Number(
       ((runtime.bodyHull.wheels.normalizedOuterX - 0.5) * 1.8).toFixed(6),
     );
+    diagnostics.visual.wheelThicknessMeters = Number(
+      ((runtime.bodyHull.wheels.normalizedOuterX - runtime.bodyHull.wheels.normalizedInnerX) * 1.8)
+        .toFixed(6),
+    );
     diagnostics.visual.wheelAxleOffsetMeters = Number((0.32 * 3.9).toFixed(6));
+    diagnostics.visual.wheelPaintModulatedHubHighlight =
+      runtime.bodyHull.wheels.outerFacePaintModulatedHubHighlight;
+    diagnostics.visual.wheelEmissive = runtime.bodyHull.wheels.colors.emissive;
     diagnostics.submittedTriangles = activeIndices.length * trianglesPerSpot;
     diagnostics.hysteresis = {
       enters: previous.hysteresis.enters + enters,
@@ -6261,15 +6549,47 @@ export class CityRenderer {
         && diagnostics.source.spots <= 520
         && diagnostics.source.cells > 0
         && diagnostics.source.cells <= diagnostics.source.spots;
+    const wheelColorDiagnostics = diagnostics.topology.body.wheels.colors;
+    const rawWheelTones = wheelColorDiagnostics.rawGeometryTones;
+    const effectiveColorProductsContract =
+      wheelColorDiagnostics.composition === 'raw-geometry-tone-times-instance-paint-linear'
+      && wheelColorDiagnostics.vertexColorSpace === 'linear-srgb'
+      && wheelColorDiagnostics.emissive === false
+      && wheelColorDiagnostics.productsFinite
+      && wheelColorDiagnostics.productsBounded
+      && wheelColorDiagnostics.productBounds[0] === 0
+      && wheelColorDiagnostics.productBounds[1] === 1
+      && wheelColorDiagnostics.effectivePaletteProducts.length === PARKED_CAR_PALETTE.length
+      && wheelColorDiagnostics.effectivePaletteProducts.every((entry, paletteIndex) => (
+        entry.paletteIndex === paletteIndex
+        && entry.paintHex === PARKED_CAR_PALETTE[paletteIndex]
+        && entry.finite
+        && entry.bounded
+        && [
+          ...entry.instancePaintLinear,
+          ...entry.hubHighlight,
+          ...entry.tread,
+        ].every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)
+        && entry.hubHighlight.every((channel, index) => Math.abs(
+          channel - rawWheelTones.paintModulatedHubHighlight[index]
+            * entry.instancePaintLinear[index]
+        ) < 1e-12)
+        && entry.tread.every((channel, index) => Math.abs(
+          channel - rawWheelTones.tread[index] * entry.instancePaintLinear[index]
+        ) < 1e-12)
+      ));
     diagnostics.failure = sourceCountContract
       && diagnostics.source.unchanged
       && diagnostics.source.recordsUnchanged
+      && diagnostics.source.roadYSource === 'terrain.heightAt+roadLift'
+      && diagnostics.source.roadLiftMeters === runtime.roadLiftMeters
+      && diagnostics.source.roadYExcludedFromRecordsChecksum
       && diagnostics.source.totalTriangles
         === diagnostics.source.spots * diagnostics.source.trianglesPerSpot
-      && diagnostics.source.bodyTrianglesPerSpot === 92
+      && diagnostics.source.bodyTrianglesPerSpot === 156
       && diagnostics.source.cabTrianglesPerSpot === 20
-      && diagnostics.source.trianglesPerSpot === 112
-      && diagnostics.source.trianglesPerSpot <= 120
+      && diagnostics.source.trianglesPerSpot === 176
+      && diagnostics.source.trianglesPerSpot <= 176
       && diagnostics.topology.body.finiteTriangleAreas
       && diagnostics.topology.cab.finiteTriangleAreas
       && diagnostics.topology.body.minOutwardNormalDot > 0
@@ -6277,12 +6597,44 @@ export class CityRenderer {
       && diagnostics.topology.body.vertexColors
       && diagnostics.topology.body.roles.paintHull === 20
       && diagnostics.topology.body.roles.wheelSideDiscs === 64
+      && diagnostics.topology.body.roles.wheelTreads === 64
       && diagnostics.topology.body.roles.lamps === 8
+      && diagnostics.topology.body.triangleRanges.paintHull.start === 0
+      && diagnostics.topology.body.triangleRanges.paintHull.count === 20
+      && diagnostics.topology.body.triangleRanges.wheelSideDiscs.start === 20
+      && diagnostics.topology.body.triangleRanges.wheelSideDiscs.count === 64
+      && diagnostics.topology.body.triangleRanges.wheelTreads.start === 84
+      && diagnostics.topology.body.triangleRanges.wheelTreads.count === 64
+      && diagnostics.topology.body.triangleRanges.lamps.start === 148
+      && diagnostics.topology.body.triangleRanges.lamps.count === 8
+      && diagnostics.topology.body.vertexRanges.paintHull.start === 0
+      && diagnostics.topology.body.vertexRanges.paintHull.count === 60
+      && diagnostics.topology.body.vertexRanges.wheelSideDiscs.start === 60
+      && diagnostics.topology.body.vertexRanges.wheelSideDiscs.count === 192
+      && diagnostics.topology.body.vertexRanges.wheelTreads.start === 252
+      && diagnostics.topology.body.vertexRanges.wheelTreads.count === 192
+      && diagnostics.topology.body.vertexRanges.lamps.start === 444
+      && diagnostics.topology.body.vertexRanges.lamps.count === 24
       && diagnostics.topology.body.wheels.count === 4
       && diagnostics.topology.body.wheels.facesPerWheel === 2
       && diagnostics.topology.body.wheels.segmentsPerFace === 8
       && diagnostics.topology.body.wheels.triangleCount === 64
+      && diagnostics.topology.body.wheels.treadSegmentsPerWheel === 8
+      && diagnostics.topology.body.wheels.treadTrianglesPerWheel === 16
+      && diagnostics.topology.body.wheels.treadTriangleCount === 64
+      && diagnostics.topology.body.wheels.totalTriangleCount === 128
       && diagnostics.topology.body.wheels.minOutwardNormalDot > 0
+      && diagnostics.topology.body.wheels.minTreadOutwardNormalDot > 0
+      && diagnostics.topology.body.wheels.outerFacePaintModulatedHubHighlight
+      && effectiveColorProductsContract
+      && diagnostics.topology.body.wheels.contact.sourceSpotsChecked === diagnostics.source.spots
+      && diagnostics.topology.body.wheels.contact.roadYSource === 'terrain.heightAt+roadLift'
+      && diagnostics.topology.body.wheels.contact.roadLiftMeters === runtime.roadLiftMeters
+      && diagnostics.topology.body.wheels.contact.roadYExcludedFromRecordsChecksum
+      && diagnostics.topology.body.wheels.contact.sourceRoadYFinite
+      && diagnostics.topology.body.wheels.contact.finite
+      && diagnostics.topology.body.wheels.contact.allOnRoadPlane
+      && diagnostics.topology.body.wheels.contact.maxAbsClearanceMeters <= 0.000001
       && diagnostics.topology.cab.vertexColors
       && diagnostics.topology.cab.roles.sideWindows === 8
       && diagnostics.topology.cab.roles.rearWindow === 2
@@ -6293,11 +6645,20 @@ export class CityRenderer {
       && diagnostics.visual.wheelCount === 4
       && diagnostics.visual.wheelFacesPerWheel === 2
       && diagnostics.visual.wheelSegmentsPerFace === 8
+      && diagnostics.visual.wheelTreadSegmentsPerWheel === 8
+      && diagnostics.visual.wheelTreadTrianglesPerWheel === 16
+      && diagnostics.visual.wheelTreadTriangleCount === 64
+      && diagnostics.visual.wheelTotalTriangleCount === 128
       && Math.abs(diagnostics.visual.wheelRadiusMeters - 0.26) < 1e-9
       && Math.abs(diagnostics.visual.wheelContactClearanceMeters) < 1e-9
       && diagnostics.visual.wheelLateralProtrusionMeters >= 0.09 - 1e-9
+      && Math.abs(diagnostics.visual.wheelThicknessMeters - 0.144) < 1e-9
+      && diagnostics.visual.wheelPaintModulatedHubHighlight
+      && diagnostics.visual.wheelEmissive === false
       && diagnostics.visual.cabUniqueToneCount === 5
       && runtime.bodies.material.vertexColors === true
+      && runtime.bodies.material.emissive.getHex() === 0
+      && runtime.bodies.material.emissiveIntensity === 0
       && runtime.cabs.material.vertexColors === true
       && diagnostics.cells.total === diagnostics.source.cells
       && diagnostics.active.spots + diagnostics.active.hiddenSpots === diagnostics.source.spots

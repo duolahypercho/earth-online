@@ -19,22 +19,22 @@ const PASS = 'sf-world-partition-parked-cars-v1';
 const EXPECTED_RECORDS_CHECKSUM = 3449863488;
 const EXPECTED_INPUT_CHECKSUM = 3863393818;
 const EXPECTED_POSES = Object.freeze({
-  sf: { spots: 94, cells: 17, triangles: 10528 },
-  night: { spots: 99, cells: 18, triangles: 11088 },
-  aerial: { spots: 520, cells: 93, triangles: 58240 },
+  sf: { spots: 94, cells: 17, triangles: 16544 },
+  night: { spots: 99, cells: 18, triangles: 17424 },
+  aerial: { spots: 520, cells: 93, triangles: 91520 },
 });
 const EXPECTED_BODY_PALETTE = Object.freeze([
   '#7d4d4c', '#9a7a3e', '#46647a', '#4f7168', '#62586c', '#805c45', '#d7d3c8', '#718164',
 ]);
 const EXPECTED_GLASS_PALETTE = Object.freeze(['#516a73', '#47636c', '#5c747b']);
-const HEAD_3186370_RENDER_BASELINE = Object.freeze({
+const HEAD_C9FC541_RENDER_BASELINE = Object.freeze({
   drawGroups: 2,
   geometries: 2,
   materials: 2,
   textures: 0,
-  bodyTrianglesPerSpot: 76,
+  bodyTrianglesPerSpot: 92,
   cabTrianglesPerSpot: 20,
-  trianglesPerSpot: 96,
+  trianglesPerSpot: 112,
 });
 const percentile = (values, p) => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) * p)];
 
@@ -85,7 +85,7 @@ async function comparePngs(left, right) {
   }, { leftBase64: left.toString('base64'), rightBase64: right.toString('base64') });
 }
 
-async function captureHead3186370Baseline(setup, hour) {
+async function captureHeadC9fc541Baseline(setup, hour) {
   const proof = await page.evaluate(({ setup, hour }) => {
     const api = window.__CITYGEN__;
     const renderer = api.getRenderer();
@@ -100,41 +100,27 @@ async function captureHead3186370Baseline(setup, hour) {
     const bodyPosition = bodies.geometry.getAttribute('position');
     const bodyColor = bodies.geometry.getAttribute('color');
     const cabPosition = cabs.geometry.getAttribute('position');
-    const cabColor = cabs.geometry.getAttribute('color');
     const positions = [];
     const colors = [];
-    const appendSourceTriangle = (triangleIndex, sourcePosition, sourceColor) => {
+    const appendSourceTriangle = (triangleIndex, sourcePosition, sourceColor, overrideColor = null) => {
       const positionOffset = triangleIndex * 9;
       const colorOffset = triangleIndex * 9;
       for (let index = 0; index < 9; index += 1) positions.push(sourcePosition.array[positionOffset + index]);
-      for (let index = 0; index < 9; index += 1) colors.push(sourceColor.array[colorOffset + index]);
-    };
-    // HEAD 3186370 body retained the 20 paint-hull triangles and 8 lamp
-    // triangles, with 48 twelve-triangle box-tire triangles between them.
-    for (let triangle = 0; triangle < 20; triangle += 1) {
-      appendSourceTriangle(triangle, bodyPosition, bodyColor);
-    }
-    const appendBox = (minX, minY, minZ, maxX, maxY, maxZ) => {
-      const vertices = [
-        [minX, minY, minZ], [maxX, minY, minZ], [maxX, maxY, minZ], [minX, maxY, minZ],
-        [minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ],
-      ];
-      for (const [a, b, c] of [
-        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-        [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5],
-        [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2],
-      ]) {
-        for (const vertex of [vertices[a], vertices[b], vertices[c]]) positions.push(...vertex);
-        for (let index = 0; index < 9; index += 1) colors.push(0.16);
+      if (overrideColor) {
+        for (let index = 0; index < 3; index += 1) colors.push(...overrideColor);
+      } else {
+        for (let index = 0; index < 9; index += 1) colors.push(sourceColor.array[colorOffset + index]);
       }
     };
-    for (const x of [-0.53, 0.53]) {
-      for (const z of [-0.31, 0.31]) {
-        appendBox(x - 0.075, -0.59, z - 0.09, x + 0.075, -0.2, z + 0.09);
-      }
+    // HEAD c9fc541 is the immediately preceding presentation: the same
+    // 20-triangle paint hull and 64 radial wheel-face triangles, followed by
+    // the same eight lamp triangles. The candidate inserts 64 tread-ring
+    // triangles between the wheel faces and lamps.
+    for (let triangle = 0; triangle < 84; triangle += 1) {
+      appendSourceTriangle(triangle, bodyPosition, bodyColor,
+        triangle >= 20 ? [0.16, 0.16, 0.17] : null);
     }
-    // New detail geometry keeps the same final eight lamp triangles.
-    for (let triangle = 84; triangle < 92; triangle += 1) {
+    for (let triangle = 148; triangle < 156; triangle += 1) {
       appendSourceTriangle(triangle, bodyPosition, bodyColor);
     }
     const oldBodyGeometry = bodies.geometry.clone();
@@ -145,13 +131,8 @@ async function captureHead3186370Baseline(setup, hour) {
     oldBodyGeometry.computeBoundingBox();
     oldBodyGeometry.computeBoundingSphere();
     const oldCabGeometry = cabs.geometry.clone();
-    oldCabGeometry.setAttribute('color', new cabColor.constructor(
-      new Float32Array(cabPosition.count * 3).fill(1), 3,
-    ));
     oldCabGeometry.computeVertexNormals();
     const oldCabMaterial = cabs.material.clone();
-    oldCabMaterial.vertexColors = false;
-    oldCabMaterial.needsUpdate = true;
     bodies.geometry = oldBodyGeometry;
     cabs.geometry = oldCabGeometry;
     cabs.material = oldCabMaterial;
@@ -164,11 +145,19 @@ async function captureHead3186370Baseline(setup, hour) {
       cabVertices: oldCabGeometry.getAttribute('position').count,
       setup,
       hour,
+      wheelFaceColorsExact: colors.slice(20 * 9, 84 * 9).every((value, index) => (
+        Math.abs(value - [0.16, 0.16, 0.17][index % 3]) <= 1e-7
+      )),
+      wheelFaceColorSample: [...colors.slice(20 * 9, 20 * 9 + 3)],
     };
   }, { setup, hour });
   const baselinePath = setup === 'close'
     ? '.qa-citygen-parked-car-details-baseline.png'
-    : '.qa-citygen-parked-car-details-night-baseline.png';
+    : setup === 'wheel-depth'
+      ? '.qa-citygen-parked-car-wheel-depth-baseline.png'
+      : setup === 'wheel-depth-night'
+        ? '.qa-citygen-parked-car-wheel-depth-night-baseline.png'
+        : '.qa-citygen-parked-car-details-night-baseline.png';
   const baseline = await page.screenshot({ path: baselinePath });
   const restored = await page.evaluate(() => {
     const api = window.__CITYGEN__;
@@ -233,7 +222,7 @@ async function samplePose(name, hour) {
 
 function assertCore(snapshot, label) {
   const diagnostics = snapshot.diagnostics;
-  assert.equal(diagnostics.schemaVersion, 1, `${label}: schema version`);
+  assert.equal(diagnostics.schemaVersion, 3, `${label}: schema version`);
   assert.equal(diagnostics.pass, PASS, `${label}: pass identity`);
   assert.equal(diagnostics.enabled, true, `${label}: partition enabled`);
   assert.equal(diagnostics.failure, null, `${label}: no partition failure`);
@@ -245,15 +234,18 @@ function assertCore(snapshot, label) {
   assert.deepEqual(diagnostics.source, {
     spots: 520,
     cells: 93,
-    bodyTrianglesPerSpot: 92,
+    bodyTrianglesPerSpot: 156,
     cabTrianglesPerSpot: 20,
-    trianglesPerSpot: 112,
-    totalTriangles: 58240,
+    trianglesPerSpot: 176,
+    totalTriangles: 91520,
     recordsChecksum: diagnostics.source.recordsChecksum,
     recordsUnchanged: true,
     inputChecksumBefore: diagnostics.source.inputChecksumBefore,
     inputChecksumAfter: diagnostics.source.inputChecksumBefore,
     unchanged: true,
+    roadYSource: 'terrain.heightAt+roadLift',
+    roadLiftMeters: diagnostics.source.roadLiftMeters,
+    roadYExcludedFromRecordsChecksum: true,
   }, `${label}: exact immutable 520-car source contract`);
   assert.equal(Number.isInteger(diagnostics.source.recordsChecksum), true, `${label}: records checksum is an integer`);
   assert.equal(Number.isInteger(diagnostics.source.inputChecksumBefore), true, `${label}: input checksum is an integer`);
@@ -285,29 +277,104 @@ function assertCore(snapshot, label) {
     vertexColors: diagnostics.topology.body.vertexColors,
     roles: diagnostics.topology.body.roles,
   }, {
-    vertexCount: 276,
+    vertexCount: 468,
     indexCount: 0,
-    triangleCount: 92,
+    triangleCount: 156,
     indexed: false,
     finiteTriangleAreas: true,
     vertexColors: true,
-    roles: { paintHull: 20, wheelSideDiscs: 64, lamps: 8 },
-  }, `${label}: exact composite body hull, radial wheel discs, and lamp roles`);
-  assert.deepEqual(diagnostics.topology.body.wheels, {
+    roles: { paintHull: 20, wheelSideDiscs: 64, wheelTreads: 64, lamps: 8 },
+  }, `${label}: exact composite body hull, radial wheel discs, tread rings, and lamp roles`);
+  assert.deepEqual(diagnostics.topology.body.triangleRanges, {
+    paintHull: { start: 0, count: 20 },
+    wheelSideDiscs: { start: 20, count: 64 },
+    wheelTreads: { start: 84, count: 64 },
+    lamps: { start: 148, count: 8 },
+  }, `${label}: exact body triangle role ranges`);
+  assert.deepEqual(diagnostics.topology.body.vertexRanges, {
+    paintHull: { start: 0, count: 60 },
+    wheelSideDiscs: { start: 60, count: 192 },
+    wheelTreads: { start: 252, count: 192 },
+    lamps: { start: 444, count: 24 },
+  }, `${label}: exact body vertex role ranges`);
+  const {
+    minOutwardNormalDot,
+    minTreadOutwardNormalDot,
+    outerFacePaintModulatedHubHighlight,
+    contact,
+    colors,
+    ...wheelTopology
+  } = diagnostics.topology.body.wheels;
+  assert.deepEqual(wheelTopology, {
     count: 4,
     facesPerWheel: 2,
     segmentsPerFace: 8,
     triangleCount: 64,
+    treadSegmentsPerWheel: 8,
+    treadTrianglesPerWheel: 16,
+    treadTriangleCount: 64,
+    totalTriangleCount: 128,
     normalizedRadiusY: 0.4482758621,
     normalizedRadiusZ: 0.0666666667,
     normalizedCenterY: -0.1034482759,
     normalizedOuterX: 0.55,
     normalizedInnerX: 0.47,
-    minOutwardNormalDot: diagnostics.topology.body.wheels.minOutwardNormalDot,
-  }, `${label}: exact radial wheel-disc topology contract`);
-  assert.ok(Number.isFinite(diagnostics.topology.body.wheels.minOutwardNormalDot)
-    && diagnostics.topology.body.wheels.minOutwardNormalDot > 0,
-  `${label}: wheel-disc normals face outward`);
+  }, `${label}: exact radial wheel-disc and tread-ring topology contract`);
+  assert.ok(Number.isFinite(minOutwardNormalDot) && minOutwardNormalDot > 0,
+    `${label}: wheel-disc normals face outward`);
+  assert.ok(Number.isFinite(minTreadOutwardNormalDot) && minTreadOutwardNormalDot > 0,
+    `${label}: tread-ring normals face outward`);
+  assert.equal(colors.composition, 'raw-geometry-tone-times-instance-paint-linear',
+    `${label}: wheel tones declare linear paint multiplication`);
+  assert.deepEqual(colors.rawGeometryTones, {
+    paintModulatedHubHighlight: [1.18, 1.25, 1.3],
+    outerFaceRadial: [0.18, 0.18, 0.19],
+    innerFace: [0.12, 0.12, 0.13],
+    tread: [0.1, 0.1, 0.11],
+  }, `${label}: exact raw wheel geometry tones`);
+  assert.deepEqual({
+    vertexColorSpace: 'linear-srgb',
+    emissive: false,
+  }, { vertexColorSpace: colors.vertexColorSpace, emissive: colors.emissive },
+  `${label}: exact non-emissive wheel tones`);
+  assert.equal(colors.effectivePaletteProducts.length, 8,
+    `${label}: effective wheel products cover all eight paint palette entries`);
+  for (const product of colors.effectivePaletteProducts) {
+    assert.ok(product.finite && product.bounded, `${label}: palette product ${product.paletteIndex} is finite/bounded`);
+    assert.deepEqual(product.hubHighlight,
+      product.instancePaintLinear.map((value, index) => value * colors.rawGeometryTones.paintModulatedHubHighlight[index]),
+      `${label}: hub highlight is paint-modulated, not neutral silver`);
+    assert.deepEqual(product.tread,
+      product.instancePaintLinear.map((value, index) => value * colors.rawGeometryTones.tread[index]),
+      `${label}: tread is paint-modulated and dark`);
+  }
+  assert.deepEqual(colors.productBounds, [0, 1], `${label}: effective wheel product bounds`);
+  assert.equal(colors.productsFinite, true, `${label}: effective wheel products finite`);
+  assert.equal(colors.productsBounded, true, `${label}: effective wheel products bounded`);
+  assert.equal(outerFacePaintModulatedHubHighlight, true,
+    `${label}: paint-modulated hub highlight is restricted to outer wheel faces`);
+  assert.deepEqual(contact, {
+    normalizedLowestY: diagnostics.topology.body.wheels.contact.normalizedLowestY,
+    bodyScaleYMeters: 0.58,
+    bodyCenterAboveRoadMeters: 0.32,
+    toleranceMeters: 1e-6,
+    roadYSource: 'terrain.heightAt+roadLift',
+    roadLiftMeters: contact.roadLiftMeters,
+    roadYExcludedFromRecordsChecksum: true,
+    sourceSpotsChecked: 520,
+    sourceRoadYFinite: true,
+    minSourceRoadYMeters: contact.minSourceRoadYMeters,
+    maxSourceRoadYMeters: contact.maxSourceRoadYMeters,
+    finite: true,
+    minClearanceMeters: contact.minClearanceMeters,
+    maxClearanceMeters: contact.maxClearanceMeters,
+    maxAbsClearanceMeters: contact.maxAbsClearanceMeters,
+    allOnRoadPlane: true,
+  }, `${label}: exact all-source wheel contact contract`);
+  assert.ok(Math.abs(contact.normalizedLowestY - (-0.1034482759 - 0.4482758621)) <= 5e-9,
+    `${label}: wheel/tread lowest normalized Y is exact (${contact.normalizedLowestY})`);
+  assert.ok(contact.maxAbsClearanceMeters <= contact.toleranceMeters,
+    `${label}: wheel contact clearance remains within tolerance`);
   assert.deepEqual({
     vertexCount: diagnostics.topology.cab.vertexCount,
     indexCount: diagnostics.topology.cab.indexCount,
@@ -354,10 +421,10 @@ function assertCore(snapshot, label) {
     cabLongitudinalOffsetMeters: -0.18,
     distinctBodyCabMatrices: true,
   }, `${label}: exact body/cab separation`);
-  assert.ok(diagnostics.source.trianglesPerSpot <= 120,
-    `${label}: detailed parked car stays within 120 triangles (${diagnostics.source.trianglesPerSpot})`);
+  assert.equal(diagnostics.source.trianglesPerSpot, 176,
+    `${label}: detailed parked car uses the exact 176-triangle authored budget`);
   assert.deepEqual(diagnostics.visual, {
-    pass: 'sf-parked-car-wheel-glass-detail-v1',
+    pass: 'sf-parked-car-wheel-depth-v2',
     bodyPalette: [...EXPECTED_BODY_PALETTE],
     glassPalette: [...EXPECTED_GLASS_PALETTE],
     hardEdgedHull: true,
@@ -369,6 +436,13 @@ function assertCore(snapshot, label) {
     wheelContactClearanceMeters: 0,
     wheelLateralProtrusionMeters: 0.09,
     wheelAxleOffsetMeters: 1.248,
+    wheelTreadSegmentsPerWheel: 8,
+    wheelTreadTrianglesPerWheel: 16,
+    wheelTreadTriangleCount: 64,
+    wheelTotalTriangleCount: 128,
+    wheelThicknessMeters: 0.144,
+    wheelPaintModulatedHubHighlight: true,
+    wheelEmissive: false,
     cabSurfaceTones: {
       sideWindows: [0.72, 0.88, 0.96],
       rearWindow: [0.52, 0.67, 0.75],
@@ -382,20 +456,20 @@ function assertCore(snapshot, label) {
     { drawGroups: 2, geometries: 2, materials: 2, textures: 0 },
     `${label}: exact two-batch source resources`);
   assert.deepEqual(diagnostics.resources, {
-    drawGroups: HEAD_3186370_RENDER_BASELINE.drawGroups,
-    geometries: HEAD_3186370_RENDER_BASELINE.geometries,
-    materials: HEAD_3186370_RENDER_BASELINE.materials,
-    textures: HEAD_3186370_RENDER_BASELINE.textures,
-  }, `${label}: candidate preserves HEAD 3186370 resource/draw baseline`);
+    drawGroups: HEAD_C9FC541_RENDER_BASELINE.drawGroups,
+    geometries: HEAD_C9FC541_RENDER_BASELINE.geometries,
+    materials: HEAD_C9FC541_RENDER_BASELINE.materials,
+    textures: HEAD_C9FC541_RENDER_BASELINE.textures,
+  }, `${label}: candidate preserves HEAD c9fc541 resource/draw baseline`);
   assert.equal(diagnostics.source.bodyTrianglesPerSpot
-    - HEAD_3186370_RENDER_BASELINE.bodyTrianglesPerSpot, 16,
-  `${label}: wheel/glass detail adds exactly 16 body triangles per spot over HEAD 3186370`);
+    - HEAD_C9FC541_RENDER_BASELINE.bodyTrianglesPerSpot, 64,
+  `${label}: wheel-depth detail adds exactly 64 body triangles per spot over HEAD c9fc541`);
   assert.equal(diagnostics.source.cabTrianglesPerSpot
-    - HEAD_3186370_RENDER_BASELINE.cabTrianglesPerSpot, 0,
-  `${label}: cab triangle cost remains unchanged from HEAD 3186370`);
+    - HEAD_C9FC541_RENDER_BASELINE.cabTrianglesPerSpot, 0,
+  `${label}: cab triangle cost remains unchanged from HEAD c9fc541`);
   assert.equal(diagnostics.source.trianglesPerSpot
-    - HEAD_3186370_RENDER_BASELINE.trianglesPerSpot, 16,
-  `${label}: total detail delta is exactly 16 triangles per parked spot`);
+    - HEAD_C9FC541_RENDER_BASELINE.trianglesPerSpot, 64,
+  `${label}: wheel-depth detail delta is exactly 64 triangles per parked spot`);
   for (const [key, name] of [
     ['bodies', 'sf-partitioned-parked-car-bodies'],
     ['cabs', 'sf-partitioned-parked-car-cabs'],
@@ -404,13 +478,13 @@ function assertCore(snapshot, label) {
     assert.equal(batch.name, name, `${label}: ${key} mesh name`);
     assert.equal(batch.capacity, 520, `${label}: ${key} capacity`);
     assert.equal(batch.count, diagnostics.active.spots, `${label}: ${key} compacted count`);
-    const trianglesPerInstance = key === 'bodies' ? 92 : 20;
+    const trianglesPerInstance = key === 'bodies' ? 156 : 20;
     assert.equal(batch.submittedTriangles, diagnostics.active.spots * trianglesPerInstance,
       `${label}: ${key} submitted triangles`);
     assert.equal(batch.matricesFinite, true, `${label}: ${key} matrices finite`);
     assert.equal(batch.colorsFinite, true, `${label}: ${key} colors finite`);
   }
-  assert.equal(diagnostics.submittedTriangles, diagnostics.active.spots * 112,
+  assert.equal(diagnostics.submittedTriangles, diagnostics.active.spots * 176,
     `${label}: combined submitted triangles`);
   assert.deepEqual(snapshot.identity,
     { renderer: true, scene: true, canvas: true, roots: 1, sceneCanvas: 1, loop: true },
@@ -438,7 +512,7 @@ function assertCore(snapshot, label) {
     finite: snapshot.wheelContactProof?.finite,
   }, {
     records: 520,
-    wheelVertices: 192,
+    wheelVertices: 384,
     finite: true,
   }, `${label}: every source record has finite wheel contact/normal proof`);
   assert.ok(snapshot.wheelContactProof.maxAbsRoadPlaneErrorMeters <= 2e-5,
@@ -446,11 +520,31 @@ function assertCore(snapshot, label) {
   assert.ok(snapshot.wheelContactProof.minClearanceMeters >= -2e-5
     && snapshot.wheelContactProof.maxClearanceMeters <= 2e-5,
   `${label}: no wheel is below or floating above its road plane`);
+  assert.equal(snapshot.wheelContactProof.sourceRoadY?.roadYSource,
+    'terrain.heightAt+roadLift', `${label}: contact proof uses independent source road-Y`);
+  assert.equal(snapshot.wheelContactProof.sourceRoadY?.roadYExcludedFromRecordsChecksum, true,
+    `${label}: derived source road-Y never mutates record identity/checksum`);
+  assert.equal(snapshot.wheelContactProof.sourceRoadY?.finite, true,
+    `${label}: all independent source road-Y samples are finite`);
   assert.ok(snapshot.wheelContactProof.minOutwardFaceNormalDot > 0.99,
     `${label}: wheel-disc winding produces outward-facing unit normals`);
   assert.ok(Math.abs(diagnostics.topology.body.wheels.minOutwardNormalDot
     - snapshot.wheelContactProof.minOutwardCentroidDotMeters) <= 1e-6,
   `${label}: production wheel minOutwardNormalDot matches independent centroid-origin geometry proof`);
+  assert.ok(snapshot.wheelContactProof.minOutwardTreadNormalDot > 0.2,
+    `${label}: tread sidewall winding produces outward radial normals (${snapshot.wheelContactProof.minOutwardTreadNormalDot})`);
+  assert.equal(snapshot.wheelContactProof.treadContinuity, true,
+    `${label}: every tread segment has continuous inner/outer ring vertices`);
+  assert.equal(snapshot.wheelContactProof.faceRimContinuity, true,
+    `${label}: face rims and tread rims share exact coordinates and multiplicity`);
+  assert.equal(snapshot.wheelContactProof.colorProof, true,
+    `${label}: hub cue is outer-face-only and tread colors are dark/non-emissive`);
+  assert.deepEqual(snapshot.wheelContactProof.effectiveColorProof, {
+    entries: 8,
+    finite: true,
+    bounded: true,
+    productsMatchSourcePaint: true,
+  }, `${label}: effective hub/tread tones match each source paint instance`);
   assert.deepEqual(snapshot.partitionMeshes.map((mesh) => mesh.name).sort(), [
     'sf-partitioned-parked-car-bodies',
     'sf-partitioned-parked-car-cabs',
@@ -467,11 +561,11 @@ function assertCore(snapshot, label) {
     materialVertexColors: bodyMesh?.materialVertexColors,
     triangles: bodyMesh?.triangles,
   }, {
-    colorVertices: 276,
-    positionVertices: 276,
-    normalVertices: 276,
+    colorVertices: 468,
+    positionVertices: 468,
+    normalVertices: 468,
     materialVertexColors: true,
-    triangles: 92,
+    triangles: 156,
   },
   `${label}: composite body uses one vertex-colored geometry/material batch`);
   assert.deepEqual({
@@ -497,13 +591,13 @@ function assertCore(snapshot, label) {
 }
 
 async function captureMatchedPair(label, setup, hour) {
-  const closeComposition = setup === 'close' || setup === 'close-night';
-  const staged = await page.evaluate(({ setup, hour }) => {
+  const closeComposition = ['close', 'close-night', 'wheel-depth', 'wheel-depth-night'].includes(setup);
+  const staged = await page.evaluate(({ setup, hour, closeComposition }) => {
     const api = window.__CITYGEN__;
     const renderer = api.getRenderer();
     let hiddenTreeMeshes = 0;
     api.setTime(hour);
-    if (setup !== 'close' && setup !== 'close-night') {
+    if (!['close', 'close-night', 'wheel-depth', 'wheel-depth-night'].includes(setup)) {
       api.setCameraPose(setup);
       renderer.controls.update();
     } else {
@@ -522,12 +616,15 @@ async function captureMatchedPair(label, setup, hour) {
       const sideX = forwardZ;
       const sideZ = -forwardX;
       renderer.controls.target.set(centerX, centerY + 0.42, centerZ);
+      const depthShot = setup === 'wheel-depth' || setup === 'wheel-depth-night';
+      const rearDistance = depthShot ? 4.5 : 12;
+      const sideDistance = depthShot ? 8 : 24;
       renderer.camera.position.set(
-        centerX - forwardX * 12 + sideX * 24,
-        centerY + 5,
-        centerZ - forwardZ * 12 + sideZ * 24,
+        centerX - forwardX * rearDistance + sideX * sideDistance,
+        centerY + (depthShot ? 2.8 : 5),
+        centerZ - forwardZ * rearDistance + sideZ * sideDistance,
       );
-      renderer.camera.fov = 44;
+      renderer.camera.fov = depthShot ? 42 : 44;
       renderer.camera.updateProjectionMatrix();
       renderer.camera.lookAt(renderer.controls.target);
       renderer.controls.update();
@@ -548,7 +645,7 @@ async function captureMatchedPair(label, setup, hour) {
     window.__PARKED_CAR_FROZEN_UPDATE__ = renderer.update;
     window.__PARKED_CAR_FORCE_UPDATE__ = renderer.updateParkedCarPartition.bind(renderer);
     renderer.update = () => {};
-    const closeVisible = (setup === 'close' || setup === 'close-night')
+    const closeVisible = closeComposition
       ? renderer.parkedCarPartitionRuntime.records.filter((record) => {
         const body = renderer.camera.position.clone().set(
           record.bodyMatrix[12], record.bodyMatrix[13], record.bodyMatrix[14],
@@ -560,25 +657,52 @@ async function captureMatchedPair(label, setup, hour) {
           && Math.abs(cab.x) <= 0.92 && Math.abs(cab.y) <= 0.88 && cab.z >= -1 && cab.z <= 1;
       }).length
       : null;
+    const viewportWidth = renderer.renderer.domElement.width || 1280;
+    const projectedWidths = closeComposition
+      ? renderer.parkedCarPartitionRuntime.records.map((record) => {
+        const center = renderer.camera.position.clone().set(
+          record.bodyMatrix[12], record.bodyMatrix[13], record.bodyMatrix[14],
+        );
+        const forwardX = Math.sin(record.heading);
+        const forwardZ = Math.cos(record.heading);
+        const sideX = forwardZ;
+        const sideZ = -forwardX;
+        const left = center.clone().set(
+          center.x - sideX * 2.2, center.y, center.z - sideZ * 2.2,
+        ).project(renderer.camera);
+        const right = center.clone().set(
+          center.x + sideX * 2.2, center.y, center.z + sideZ * 2.2,
+        ).project(renderer.camera);
+        const projectedCenter = center.clone().project(renderer.camera);
+        if (projectedCenter.z < -1 || projectedCenter.z > 1
+          || Math.abs(projectedCenter.x) > 1 || Math.abs(projectedCenter.y) > 1) return null;
+        return Math.abs(right.x - left.x) * viewportWidth * 0.5;
+      }).filter((width) => Number.isFinite(width))
+      : [];
     return {
       active: renderer.parkedCarPartitionDiagnostics.active.spots,
       closeVisible,
+      maxProjectedCarWidthPixels: Math.max(0, ...projectedWidths),
       hiddenTreeMeshes,
     };
-  }, { setup, hour });
+  }, { setup, hour, closeComposition });
   await page.waitForTimeout(180);
   const candidatePath = setup === 'close'
     ? '.qa-citygen-parked-car-details.png'
     : setup === 'close-night'
       ? '.qa-citygen-parked-car-details-night.png'
-    : `.qa-citygen-parked-car-partition-${label}-candidate.png`;
+      : setup === 'wheel-depth'
+        ? '.qa-citygen-parked-car-wheel-depth.png'
+        : setup === 'wheel-depth-night'
+          ? '.qa-citygen-parked-car-wheel-depth-night.png'
+          : `.qa-citygen-parked-car-partition-${label}-candidate.png`;
   const candidate = await page.screenshot({ path: candidatePath });
   if (setup === 'close') {
     await page.screenshot({ path: '.qa-citygen-parked-cars.png' });
     await page.screenshot({ path: '.qa-citygen-parked-cars-clean.png' });
   }
-  const historicalBaseline = closeComposition
-    ? await captureHead3186370Baseline(setup, hour)
+    const historicalBaseline = closeComposition
+      ? await captureHeadC9fc541Baseline(setup, hour)
     : null;
   await page.evaluate(() => window.__PARKED_CAR_FORCE_UPDATE__(true, true, true));
   await page.waitForTimeout(180);
@@ -808,6 +932,8 @@ try {
     night: await captureMatchedPair('night', 'night', 22),
     close: await captureMatchedPair('close', 'close', 14),
     closeNight: await captureMatchedPair('close-night', 'close-night', 22),
+    wheelDepth: await captureMatchedPair('wheel-depth', 'wheel-depth', 14),
+    wheelDepthNight: await captureMatchedPair('wheel-depth-night', 'wheel-depth-night', 22),
   };
   for (const [label, evidence] of Object.entries(visualParity)) {
     assert.equal(evidence.diff.width, 1280, `${label}: matched capture width`);
@@ -831,15 +957,40 @@ try {
     `night close 3/4 composition projects at least four complete body/cab pairs (${visualParity.closeNight.staged.closeVisible})`);
   assert.ok(visualParity.closeNight.staged.hiddenTreeMeshes >= 3,
     `night close 3/4 composition hides the three tree instancers (${visualParity.closeNight.staged.hiddenTreeMeshes})`);
+  for (const [label, evidence] of [
+    ['wheel-depth', visualParity.wheelDepth],
+    ['wheel-depth-night', visualParity.wheelDepthNight],
+  ]) {
+    assert.equal(evidence.candidatePath, label === 'wheel-depth'
+      ? '.qa-citygen-parked-car-wheel-depth.png'
+      : '.qa-citygen-parked-car-wheel-depth-night.png',
+    `${label}: deterministic natural curb depth shot path`);
+    assert.ok(evidence.staged.closeVisible >= 2,
+      `${label}: depth shot retains at least two complete parked cars (${evidence.staged.closeVisible})`);
+    assert.ok(evidence.staged.maxProjectedCarWidthPixels >= 300
+      && evidence.staged.maxProjectedCarWidthPixels <= 450,
+    `${label}: foreground car occupies 300–450px for wheel/hub review (${evidence.staged.maxProjectedCarWidthPixels.toFixed(2)}px)`);
+    assert.ok(evidence.staged.hiddenTreeMeshes >= 3,
+      `${label}: depth shot is free of tree instancer obstruction (${evidence.staged.hiddenTreeMeshes})`);
+    assert.ok(evidence.historicalBaseline?.path.endsWith(
+      label === 'wheel-depth' ? 'wheel-depth-baseline.png' : 'wheel-depth-night-baseline.png',
+    ), `${label}: c9fc541 baseline retained beside candidate`);
+    assert.equal(evidence.historicalBaseline.proof.wheelFaceColorsExact, true,
+      `${label}: c9fc541 baseline raw wheel-face colors are exact paint-neutral tire tones`);
+    assert.ok(evidence.historicalBaseline.diff.changedPixels > 0,
+      `${label}: tread-depth candidate differs from c9fc541 baseline`);
+  }
   for (const [label, evidence] of [['day', visualParity.close], ['night', visualParity.closeNight]]) {
     assert.deepEqual(evidence.historicalBaseline.proof, {
-      bodyTriangles: 76,
+      bodyTriangles: 92,
       cabTriangles: 20,
-      bodyVertices: 228,
+      bodyVertices: 276,
       cabVertices: 60,
       setup: label === 'day' ? 'close' : 'close-night',
       hour: label === 'day' ? 14 : 22,
-    }, `${label}: exact HEAD3186370 76/20 baseline topology`);
+      wheelFaceColorsExact: true,
+      wheelFaceColorSample: [0.16, 0.16, 0.17],
+    }, `${label}: exact HEAD c9fc541 92/20 baseline topology with segmented cab`);
     assert.deepEqual(evidence.historicalBaseline.restored, {
       bodyGeometry: true,
       cabGeometry: true,
@@ -847,7 +998,7 @@ try {
       resourceProof: { meshes: 2, geometries: 2, materials: 2, maps: 0 },
     }, `${label}: current presentation/resources restored after baseline capture`);
     assert.ok(evidence.historicalBaseline.diff.changedPixels > 0,
-      `${label}: detailed candidate changes pixels against the retained HEAD3186370 baseline`);
+      `${label}: detailed candidate changes pixels against the retained HEAD c9fc541 baseline`);
     assert.ok(evidence.historicalBaseline.diff.changedPixels < 600000,
       `${label}: candidate/baseline comparison remains bounded (${evidence.historicalBaseline.diff.changedPixels})`);
   }
@@ -1084,8 +1235,8 @@ try {
     `live OSM structural spot count stays bounded (${osmDiagnostics.source.spots})`);
   assert.ok(osmDiagnostics.source.cells > 0 && osmDiagnostics.source.cells <= osmDiagnostics.source.spots,
     `live OSM structural cell count stays bounded (${osmDiagnostics.source.cells})`);
-  assert.equal(osmDiagnostics.source.trianglesPerSpot, 112, 'live OSM keeps exact authored topology cost');
-  assert.equal(osmDiagnostics.source.totalTriangles, osmDiagnostics.source.spots * 112,
+  assert.equal(osmDiagnostics.source.trianglesPerSpot, 176, 'live OSM keeps exact authored topology cost');
+  assert.equal(osmDiagnostics.source.totalTriangles, osmDiagnostics.source.spots * 176,
     'live OSM total triangles derive from its structural source count');
   assert.equal(osmDiagnostics.source.recordsUnchanged, true, 'live OSM records checksum stays unchanged');
   assert.equal(osmDiagnostics.source.unchanged, true, 'live OSM input checksum stays unchanged');
@@ -1134,7 +1285,7 @@ try {
       maxVisibleCulledDiameterPixels: hysteresis.maxVisibleCulledDiameterPixels,
     },
     visualParity: Object.fromEntries(Object.entries(visualParity).map(([name, evidence]) => [name, evidence.diff])),
-    baselineComparison: Object.fromEntries(['close', 'closeNight'].map((name) => [name, {
+    baselineComparison: Object.fromEntries(['close', 'closeNight', 'wheelDepth', 'wheelDepthNight'].map((name) => [name, {
       path: visualParity[name].historicalBaseline.path,
       bodyTriangles: visualParity[name].historicalBaseline.proof.bodyTriangles,
       cabTriangles: visualParity[name].historicalBaseline.proof.cabTriangles,
@@ -1142,6 +1293,12 @@ try {
       channelDelta: visualParity[name].historicalBaseline.diff.channelDelta,
       restored: visualParity[name].historicalBaseline.restored,
     }])),
+    depthDayNightDiff: {
+      day: visualParity.wheelDepth.diff,
+      night: visualParity.wheelDepthNight.diff,
+      dayBaseline: visualParity.wheelDepth.historicalBaseline.diff,
+      nightBaseline: visualParity.wheelDepthNight.historicalBaseline.diff,
+    },
     closeComposition: visualParity.close.staged,
     cpu: { offP95, onP95, p95DeltaMs, compactions: cpu.on.compactions, activeCounts: cpu.on.activeCounts },
     liveOsmStructural: {
@@ -1208,22 +1365,25 @@ function snapshot() {
     ? Math.hypot(firstBodyMatrix[4], firstBodyMatrix[5], firstBodyMatrix[6])
     : NaN;
   const wheelPositionStart = 20 * 9;
-  const wheelPositionEnd = 84 * 9;
-  const wheelPositions = bodyPosition?.array?.slice(wheelPositionStart * 1, wheelPositionEnd * 1) || [];
+  const wheelDiscEnd = 84 * 9;
+  const wheelTreadEnd = 148 * 9;
+  const wheelDiscPositions = bodyPosition?.array?.slice(wheelPositionStart, wheelDiscEnd) || [];
+  const wheelTreadPositions = bodyPosition?.array?.slice(wheelDiscEnd, wheelTreadEnd) || [];
+  const wheelPositions = bodyPosition?.array?.slice(wheelPositionStart, wheelTreadEnd) || [];
   let wheelNormalMinOutwardDot = Infinity;
   let wheelCentroidMinOutwardDot = Infinity;
-  let wheelNormalFinite = wheelPositions.length === 64 * 9;
-  for (let offset = 0; offset < wheelPositions.length; offset += 9) {
+  let wheelNormalFinite = wheelDiscPositions.length === 64 * 9;
+  for (let offset = 0; offset < wheelDiscPositions.length; offset += 9) {
     const triangleIndex = offset / 9;
-    const ax = wheelPositions[offset];
-    const ay = wheelPositions[offset + 1];
-    const az = wheelPositions[offset + 2];
-    const bx = wheelPositions[offset + 3];
-    const by = wheelPositions[offset + 4];
-    const bz = wheelPositions[offset + 5];
-    const cx = wheelPositions[offset + 6];
-    const cy = wheelPositions[offset + 7];
-    const cz = wheelPositions[offset + 8];
+    const ax = wheelDiscPositions[offset];
+    const ay = wheelDiscPositions[offset + 1];
+    const az = wheelDiscPositions[offset + 2];
+    const bx = wheelDiscPositions[offset + 3];
+    const by = wheelDiscPositions[offset + 4];
+    const bz = wheelDiscPositions[offset + 5];
+    const cx = wheelDiscPositions[offset + 6];
+    const cy = wheelDiscPositions[offset + 7];
+    const cz = wheelDiscPositions[offset + 8];
     const abx = bx - ax;
     const aby = by - ay;
     const abz = bz - az;
@@ -1254,10 +1414,161 @@ function snapshot() {
     wheelNormalFinite = wheelNormalFinite && [ax, ay, az, bx, by, bz, cx, cy, cz, length, dot]
       .every(Number.isFinite);
   }
+  let treadNormalMinOutwardDot = Infinity;
+  let treadNormalFinite = wheelTreadPositions.length === 64 * 9;
+  let treadContinuity = true;
+  for (let wheelIndex = 0; wheelIndex < 4; wheelIndex += 1) {
+    const side = wheelIndex >= 2 ? 1 : -1;
+    const centerZ = wheelIndex % 2 === 0 ? -0.32 : 0.32;
+    const outer = new Map();
+    const inner = new Map();
+    const faceOuter = new Map();
+    const faceInner = new Map();
+    let rimCoordinatesFinite = true;
+    for (let localTriangle = 0; localTriangle < 16; localTriangle += 1) {
+      const offset = (wheelIndex * 16 + localTriangle) * 9;
+      const faceOuterSide = localTriangle < 8;
+      for (let vertex = 0; vertex < 3; vertex += 1) {
+        const x = wheelDiscPositions[offset + vertex * 3];
+        const y = wheelDiscPositions[offset + vertex * 3 + 1];
+        const z = wheelDiscPositions[offset + vertex * 3 + 2];
+        if (Math.abs(y + 0.1034482759) < 1e-6 && Math.abs(z - centerZ) < 1e-6) continue;
+        const expectedX = side * (faceOuterSide ? 0.55 : 0.47);
+        rimCoordinatesFinite = rimCoordinatesFinite && Math.abs(x - expectedX) <= 1e-5;
+        const key = `${x.toFixed(6)}:${y.toFixed(6)}:${z.toFixed(6)}`;
+        const target = faceOuterSide ? faceOuter : faceInner;
+        target.set(key, (target.get(key) || 0) + 1);
+      }
+    }
+    for (let localTriangle = 0; localTriangle < 16; localTriangle += 1) {
+      const offset = (wheelIndex * 16 + localTriangle) * 9;
+      const points = [
+        [wheelTreadPositions[offset], wheelTreadPositions[offset + 1], wheelTreadPositions[offset + 2]],
+        [wheelTreadPositions[offset + 3], wheelTreadPositions[offset + 4], wheelTreadPositions[offset + 5]],
+        [wheelTreadPositions[offset + 6], wheelTreadPositions[offset + 7], wheelTreadPositions[offset + 8]],
+      ];
+      const [a, b, c] = points;
+      const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const normal = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+      ];
+      const length = Math.hypot(...normal);
+      const centroid = points.reduce((sum, point) => [
+        sum[0] + point[0] / 3, sum[1] + point[1] / 3, sum[2] + point[2] / 3,
+      ], [0, 0, 0]);
+      const radial = [0, centroid[1] + 0.1034482759, centroid[2] - centerZ];
+      const radialLength = Math.hypot(radial[1], radial[2]);
+      const radialDot = length > 0 && radialLength > 0
+        ? (normal[1] * radial[1] + normal[2] * radial[2]) / (length * radialLength)
+        : -Infinity;
+      treadNormalMinOutwardDot = Math.min(treadNormalMinOutwardDot, radialDot);
+      treadNormalFinite = treadNormalFinite && points.flat().every(Number.isFinite)
+        && Number.isFinite(length) && Number.isFinite(radialDot);
+      for (const [x, y, z] of points) {
+        const isOuter = Math.abs(Math.abs(x) - 0.55) < 1e-5;
+        const expectedX = side * (isOuter ? 0.55 : 0.47);
+        rimCoordinatesFinite = rimCoordinatesFinite && Math.abs(x - expectedX) <= 1e-5;
+        const key = `${x.toFixed(6)}:${y.toFixed(6)}:${z.toFixed(6)}`;
+        const target = isOuter ? outer : inner;
+        target.set(key, (target.get(key) || 0) + 1);
+      }
+    }
+    const outerKeys = [...outer.keys()].sort();
+    const innerKeys = [...inner.keys()].sort();
+    const profileKey = (key) => key.split(':').slice(1).join(':');
+    const outerProfiles = outerKeys.map(profileKey).sort();
+    const innerProfiles = innerKeys.map(profileKey).sort();
+    const faceOuterProfiles = [...faceOuter.keys()].map(profileKey).sort();
+    const faceInnerProfiles = [...faceInner.keys()].map(profileKey).sort();
+    treadContinuity = treadContinuity
+      && outer.size === 8
+      && inner.size === 8
+      && outerProfiles.every((key, index) => key === innerProfiles[index])
+      && faceOuter.size === 8
+      && faceInner.size === 8
+      && outerProfiles.every((key, index) => key === faceOuterProfiles[index])
+      && innerProfiles.every((key, index) => key === faceInnerProfiles[index])
+      && [...faceOuter.values()].every((count) => count === 2)
+      && [...faceInner.values()].every((count) => count === 2)
+      && [...outer.values()].every((count) => count >= 2)
+      && [...inner.values()].every((count) => count >= 2)
+      && rimCoordinatesFinite
+      && side !== 0;
+  }
+  const bodyColor = runtime.bodies.geometry?.getAttribute?.('color');
+  const approxColor = (offset, expected) => expected.every((value, index) => (
+    Math.abs(bodyColor.array[offset + index] - value) <= 1e-6
+  ));
+  let wheelColorProof = Boolean(bodyColor && bodyColor.count >= 468);
+  let outerHubCueCount = 0;
+  let hubCueOutsideOuter = false;
+  if (wheelColorProof) {
+    for (let triangle = 0; triangle < 128; triangle += 1) {
+      const triangleStart = (20 + triangle) * 9;
+      const local = triangle % 16;
+      const role = triangle < 64 ? 'face' : 'tread';
+      const expected = role === 'tread'
+        ? [0.1, 0.1, 0.11]
+        : triangle % 16 < 8
+          ? null
+          : [0.12, 0.12, 0.13];
+      if (expected && !approxColor(triangleStart, expected)) wheelColorProof = false;
+      if (role === 'tread') {
+        for (let vertex = 0; vertex < 3; vertex += 1) {
+          if (!approxColor(triangleStart + vertex * 3, [0.1, 0.1, 0.11])) wheelColorProof = false;
+          if (approxColor(triangleStart + vertex * 3, [1.18, 1.25, 1.3])) hubCueOutsideOuter = true;
+        }
+      } else if (local < 8) {
+        if (approxColor(triangleStart, [1.18, 1.25, 1.3])) outerHubCueCount += 1;
+        if (!approxColor(triangleStart + 3, [0.18, 0.18, 0.19])
+          || !approxColor(triangleStart + 6, [0.18, 0.18, 0.19])) wheelColorProof = false;
+      } else {
+        for (let vertex = 0; vertex < 3; vertex += 1) {
+          if (!approxColor(triangleStart + vertex * 3, [0.12, 0.12, 0.13])) wheelColorProof = false;
+          if (approxColor(triangleStart + vertex * 3, [1.18, 1.25, 1.3])) hubCueOutsideOuter = true;
+        }
+      }
+    }
+  }
+  const wheelDiagnosticsColors = renderer.parkedCarPartitionDiagnostics.topology.body.wheels.colors;
+  const effectiveProducts = wheelDiagnosticsColors?.effectivePaletteProducts || [];
+  const effectiveColorProof = {
+    entries: effectiveProducts.length,
+    finite: true,
+    bounded: true,
+    productsMatchSourcePaint: true,
+  };
+  for (const product of effectiveProducts) {
+    const sourcePaint = runtime.records.find((record) => record.bodyColor.every((value, index) => (
+      Math.abs(value - product.instancePaintLinear[index]) <= 1e-6
+    )))?.bodyColor;
+    const hub = sourcePaint?.map((value, index) => (
+      value * wheelDiagnosticsColors.rawGeometryTones.paintModulatedHubHighlight[index]
+    )) || [];
+    const tread = sourcePaint?.map((value, index) => (
+      value * wheelDiagnosticsColors.rawGeometryTones.tread[index]
+    )) || [];
+    effectiveColorProof.finite = effectiveColorProof.finite
+      && product.finite && hub.every(Number.isFinite) && tread.every(Number.isFinite);
+    effectiveColorProof.bounded = effectiveColorProof.bounded
+      && product.bounded && [...hub, ...tread].every((value) => value >= 0 && value <= 1);
+    effectiveColorProof.productsMatchSourcePaint = effectiveColorProof.productsMatchSourcePaint
+      && sourcePaint?.length === 3
+      && product.hubHighlight.every((value, index) => Math.abs(value - hub[index]) <= 1e-6)
+      && product.tread.every((value, index) => Math.abs(value - tread[index]) <= 1e-6);
+  }
   let wheelContactFinite = true;
   let wheelContactMaxAbsError = 0;
   let wheelContactMinClearance = Infinity;
   let wheelContactMaxClearance = -Infinity;
+  const city = api.getCity();
+  const roadLiftMeters = Number(city?.meta?.streetDesign?.roadLift ?? 0.5);
+  let sourceRoadYFinite = true;
+  let minSourceRoadY = Infinity;
+  let maxSourceRoadY = -Infinity;
   for (const record of runtime.records) {
     const matrix = record.bodyMatrix;
     let minWorldY = Infinity;
@@ -1269,7 +1580,11 @@ function snapshot() {
       minWorldY = Math.min(minWorldY, worldY);
       wheelContactFinite = wheelContactFinite && Number.isFinite(worldY);
     }
-    const roadPlaneY = matrix[13] - 0.32;
+    const terrainHeight = renderer.terrain?.heightAt ? renderer.terrain.heightAt(record.x, record.z) : 0;
+    const roadPlaneY = terrainHeight + roadLiftMeters;
+    sourceRoadYFinite = sourceRoadYFinite && Number.isFinite(terrainHeight) && Number.isFinite(roadPlaneY);
+    minSourceRoadY = Math.min(minSourceRoadY, roadPlaneY);
+    maxSourceRoadY = Math.max(maxSourceRoadY, roadPlaneY);
     const clearance = minWorldY - roadPlaneY;
     wheelContactMaxAbsError = Math.max(wheelContactMaxAbsError, Math.abs(clearance));
     wheelContactMinClearance = Math.min(wheelContactMinClearance, clearance);
@@ -1305,13 +1620,27 @@ function snapshot() {
     },
     wheelContactProof: {
       records: runtime.records.length,
-      finite: wheelContactFinite && wheelNormalFinite,
+      finite: wheelContactFinite && wheelNormalFinite && treadNormalFinite && sourceRoadYFinite,
       wheelVertices: wheelPositions.length / 3,
       maxAbsRoadPlaneErrorMeters: wheelContactMaxAbsError,
       minClearanceMeters: wheelContactMinClearance,
       maxClearanceMeters: wheelContactMaxClearance,
       minOutwardFaceNormalDot: wheelNormalMinOutwardDot,
       minOutwardCentroidDotMeters: wheelCentroidMinOutwardDot,
+      minOutwardTreadNormalDot: treadNormalMinOutwardDot,
+      treadContinuity,
+      faceRimContinuity: treadContinuity,
+      colorProof: wheelColorProof && outerHubCueCount === 32 && !hubCueOutsideOuter,
+      effectiveColorProof,
+      sourceRoadY: {
+        roadYSource: 'terrain.heightAt+roadLift',
+        roadLiftMeters,
+        finite: sourceRoadYFinite,
+        sourceRoadYFinite,
+        minSourceRoadYMeters: minSourceRoadY,
+        maxSourceRoadYMeters: maxSourceRoadY,
+        roadYExcludedFromRecordsChecksum: true,
+      },
     },
     sourceMode: {
       stateGenerator: api.getState().generator,
