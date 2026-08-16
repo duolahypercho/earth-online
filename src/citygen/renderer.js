@@ -48,6 +48,108 @@ const HERO_FACADE_IDS = Object.freeze(new Map([
   ['sf-building-149335979', { cell: 4, pattern: 'kearny-brick-stone' }],
   ['sf-building-149335988', { cell: 5, pattern: 'market-industrial-loft' }],
 ]));
+const HERO_ROOF_PROFILES = Object.freeze(new Map([
+  ['sf-building-132127809', {
+    profile: 'hearst-stepped-penthouse', depth: 0.48, height: 0.95, color: '#8b7766',
+    boxes: [{ w: 8, d: 5, h: 1.8 }, { w: 5, d: 3, h: 1.2, stack: true }],
+  }],
+  ['sf-building-151183777', {
+    profile: 'market-metal-core', depth: 0.28, height: 0.45, color: '#38434a',
+    boxes: [{ w: 3, d: 2, h: 1.5 }],
+  }],
+  ['sf-building-132127810', {
+    profile: 'central-art-deco-crown', depth: 0.45, height: 1.1, color: '#b7aa91',
+    boxes: [{ w: 8, d: 8, h: 2.2 }, { w: 5.5, d: 5.5, h: 1.8, stack: true }, { w: 3, d: 3, h: 1.4, stack: true }],
+  }],
+  ['sf-building-149335987', {
+    profile: 'market-limestone-services', depth: 0.35, height: 0.65, color: '#a79d8b',
+    boxes: [{ w: 7, d: 4, h: 1.6, dx: -1.2 }, { w: 2, d: 2, h: 1.2, dx: 3.2 }],
+  }],
+  ['sf-building-149335979', {
+    profile: 'kearny-brick-stairhead', depth: 0.4, height: 0.8, color: '#765246',
+    boxes: [{ w: 5, d: 3, h: 1.5 }, { w: 3, d: 2, h: 1.2, dx: 3.1 }],
+  }],
+  ['sf-building-149335988', {
+    profile: 'market-loft-mechanical-row', depth: 0.35, height: 0.55, color: '#69514a',
+    boxes: [
+      { w: 8, d: 4, h: 1.2, dx: -8 },
+      { w: 8, d: 4, h: 1.2 },
+      { w: 8, d: 4, h: 1.2, dx: 8 },
+    ],
+  }],
+]));
+
+function polygonInteriorCenter(points) {
+  let crossSum = 0;
+  let centerX = 0;
+  let centerZ = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const cross = a.x * b.z - b.x * a.z;
+    crossSum += cross;
+    centerX += (a.x + b.x) * cross;
+    centerZ += (a.z + b.z) * cross;
+  }
+  if (Math.abs(crossSum) > BUILDING_FOOTPRINT_EPSILON) {
+    const center = { x: centerX / (3 * crossSum), z: centerZ / (3 * crossSum) };
+    if (pointInPolygon(center, points)) return center;
+  }
+  const triangles = THREE.ShapeUtils.triangulateShape(
+    points.map((point) => new THREE.Vector2(point.x, point.z)),
+    [],
+  );
+  let best = null;
+  for (const triangle of triangles) {
+    const a = points[triangle[0]];
+    const b = points[triangle[1]];
+    const c = points[triangle[2]];
+    const area = Math.abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z));
+    if (!best || area > best.area) {
+      best = { area, x: (a.x + b.x + c.x) / 3, z: (a.z + b.z + c.z) / 3 };
+    }
+  }
+  return best ? { x: best.x, z: best.z } : { ...points[0] };
+}
+
+function longestPolygonEdgeHeading(points) {
+  let longest = { length: 0, heading: 0 };
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length > longest.length) longest = { length, heading: Math.atan2(dz, dx) };
+  }
+  return longest.heading;
+}
+
+function boxFootprintCorners(center, width, depth, heading, dx = 0, dz = 0) {
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const offsetX = dx * cos - dz * sin;
+  const offsetZ = dx * sin + dz * cos;
+  const cx = center.x + offsetX;
+  const cz = center.z + offsetZ;
+  return [
+    [-width / 2, -depth / 2],
+    [width / 2, -depth / 2],
+    [width / 2, depth / 2],
+    [-width / 2, depth / 2],
+  ].map(([x, z]) => ({ x: cx + x * cos - z * sin, z: cz + x * sin + z * cos }));
+}
+
+function colorizeGeometry(geometry, hex) {
+  const color = new THREE.Color(hex);
+  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  for (let i = 0; i < geometry.attributes.position.count; i += 1) {
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+}
 
 function heroFacadeMaterialGroup(building) {
   const facade = building.facade || 'modern-grid';
@@ -1359,6 +1461,7 @@ export class CityRenderer {
     // and merge into one mesh per bucket instead of one mesh per building.
     const textureGroups = new Map();
     const heroTextureGroups = new Map();
+    const heroRoofEntries = [];
     const facadeSeed = Number(city.meta.seedInt || 1);
     const random = mulberry32(facadeSeed);
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
@@ -1466,6 +1569,15 @@ export class CityRenderer {
           && Number.isFinite(renderedArea)
           && Number.isFinite(relativeError)
           && Array.from(geometry.attributes.position.array).every(Number.isFinite);
+      }
+      if (footprint && HERO_ROOF_PROFILES.has(building.id)) {
+        heroRoofEntries.push({
+          id: building.id,
+          points: footprint.map((point) => ({ ...point })),
+          baseY,
+          height,
+          profile: HERO_ROOF_PROFILES.get(building.id),
+        });
       }
 
       if (useTexture) {
@@ -1677,6 +1789,229 @@ export class CityRenderer {
       this.pickables.push(mesh);
       this.geometryCache.push(merged);
     }
+    this.buildHeroRoofBatches(root, heroRoofEntries);
+  }
+
+  buildHeroRoofBatches(root, sourceEntries) {
+    const expectedIds = [...HERO_ROOF_PROFILES.keys()].sort();
+    const diagnostics = {
+      expectedIds,
+      builtIds: [],
+      skippedIds: [],
+      entries: [],
+      sourceEdges: 0,
+      parapetTriangles: 0,
+      mechanicalBoxes: 0,
+      mechanicalTriangles: 0,
+      triangleDelta: 0,
+      drawGroups: 0,
+      geometries: 0,
+      textures: 0,
+      finite: true,
+      normalsFinite: true,
+      minNormalLength: Infinity,
+      maxNormalLength: 0,
+      maxFootprintOvershootMeters: 0,
+      minRoofClearanceMeters: Infinity,
+    };
+    const byId = new Map(sourceEntries.map((entry) => [entry.id, entry]));
+    const parapetPositions = [];
+    const parapetNormals = [];
+    const parapetColors = [];
+    const mechanicalGeometries = [];
+    const clearance = 0.025;
+
+    const appendTriangle = (a, b, c, expectedNormal, color) => {
+      const ab = new THREE.Vector3(b.x - a.x, b.y - a.y, b.z - a.z);
+      const ac = new THREE.Vector3(c.x - a.x, c.y - a.y, c.z - a.z);
+      const normal = ab.cross(ac).normalize();
+      let vertices = [a, b, c];
+      if (normal.dot(expectedNormal) < 0) {
+        vertices = [a, c, b];
+        normal.multiplyScalar(-1);
+      }
+      for (const vertex of vertices) {
+        parapetPositions.push(vertex.x, vertex.y, vertex.z);
+        parapetNormals.push(normal.x, normal.y, normal.z);
+        parapetColors.push(color.r, color.g, color.b);
+      }
+      const normalLength = normal.length();
+      diagnostics.minNormalLength = Math.min(diagnostics.minNormalLength, normalLength);
+      diagnostics.maxNormalLength = Math.max(diagnostics.maxNormalLength, normalLength);
+    };
+    const appendQuad = (a, b, c, d, expectedNormal, color) => {
+      appendTriangle(a, b, c, expectedNormal, color);
+      appendTriangle(a, c, d, expectedNormal, color);
+    };
+
+    for (const id of expectedIds) {
+      const entry = byId.get(id);
+      if (!entry) {
+        diagnostics.skippedIds.push(id);
+        continue;
+      }
+      const { points, baseY, height, profile } = entry;
+      const signedArea = signedFootprintArea(points);
+      const center = polygonInteriorCenter(points);
+      const heading = longestPolygonEdgeHeading(points);
+      const roofY = baseY + height;
+      const parapetBaseY = roofY + clearance;
+      const parapetTopY = parapetBaseY + profile.height;
+      const color = new THREE.Color(profile.color);
+      let contained = true;
+
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const edgeLength = Math.hypot(dx, dz);
+        const unitX = dx / edgeLength;
+        const unitZ = dz / edgeLength;
+        const outwardX = signedArea > 0 ? dz / edgeLength : -dz / edgeLength;
+        const outwardZ = signedArea > 0 ? -dx / edgeLength : dx / edgeLength;
+        const inwardX = -outwardX;
+        const inwardZ = -outwardZ;
+        let depth = profile.depth;
+        let along = Math.min(Math.max(depth * 0.16, 0.025), edgeLength * 0.12);
+        let innerA;
+        let innerB;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          innerA = { x: a.x + unitX * along + inwardX * depth, z: a.z + unitZ * along + inwardZ * depth };
+          innerB = { x: b.x - unitX * along + inwardX * depth, z: b.z - unitZ * along + inwardZ * depth };
+          if (pointInPolygon(innerA, points) && pointInPolygon(innerB, points)) break;
+          depth *= 0.66;
+          along *= 1.08;
+        }
+        if (!pointInPolygon(innerA, points) || !pointInPolygon(innerB, points)) contained = false;
+
+        const outerBottomA = { x: a.x, y: parapetBaseY, z: a.z };
+        const outerBottomB = { x: b.x, y: parapetBaseY, z: b.z };
+        const outerTopA = { x: a.x, y: parapetTopY, z: a.z };
+        const outerTopB = { x: b.x, y: parapetTopY, z: b.z };
+        const innerBottomA = { x: innerA.x, y: parapetBaseY, z: innerA.z };
+        const innerBottomB = { x: innerB.x, y: parapetBaseY, z: innerB.z };
+        const innerTopA = { x: innerA.x, y: parapetTopY, z: innerA.z };
+        const innerTopB = { x: innerB.x, y: parapetTopY, z: innerB.z };
+        const outward = new THREE.Vector3(outwardX, 0, outwardZ);
+        const inward = outward.clone().multiplyScalar(-1);
+        appendQuad(outerBottomA, outerBottomB, outerTopB, outerTopA, outward, color);
+        appendQuad(innerBottomB, innerBottomA, innerTopA, innerTopB, inward, color);
+        appendQuad(outerTopA, outerTopB, innerTopB, innerTopA, new THREE.Vector3(0, 1, 0), color);
+      }
+
+      let stackTop = roofY + clearance;
+      let highestTop = parapetTopY;
+      for (let index = 0; index < profile.boxes.length; index += 1) {
+        const spec = profile.boxes[index];
+        let width = spec.w;
+        let depth = spec.d;
+        let offsetX = spec.dx || 0;
+        let offsetZ = spec.dz || 0;
+        let corners = [];
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          corners = boxFootprintCorners(center, width, depth, heading, offsetX, offsetZ);
+          if (corners.every((corner) => pointInPolygon(corner, points))) break;
+          width *= 0.78;
+          depth *= 0.78;
+          offsetX *= 0.72;
+          offsetZ *= 0.72;
+        }
+        if (!corners.every((corner) => pointInPolygon(corner, points))) contained = false;
+        const cos = Math.cos(heading);
+        const sin = Math.sin(heading);
+        const boxX = center.x + offsetX * cos - offsetZ * sin;
+        const boxZ = center.z + offsetX * sin + offsetZ * cos;
+        const base = spec.stack ? stackTop : roofY + clearance;
+        const geometry = new THREE.BoxGeometry(width, spec.h, depth);
+        geometry.rotateY(-heading);
+        geometry.translate(boxX, base + spec.h / 2, boxZ);
+        colorizeGeometry(geometry, index % 2 === 0 ? profile.color : color.clone().offsetHSL(0, -0.04, 0.08));
+        mechanicalGeometries.push(geometry);
+        stackTop = Math.max(stackTop, base + spec.h);
+        highestTop = Math.max(highestTop, base + spec.h);
+      }
+
+      diagnostics.sourceEdges += points.length;
+      diagnostics.parapetTriangles += points.length * 6;
+      diagnostics.mechanicalBoxes += profile.boxes.length;
+      diagnostics.mechanicalTriangles += profile.boxes.length * 12;
+      diagnostics.minRoofClearanceMeters = Math.min(diagnostics.minRoofClearanceMeters, clearance);
+      diagnostics.maxFootprintOvershootMeters = contained ? diagnostics.maxFootprintOvershootMeters : Infinity;
+      diagnostics.builtIds.push(id);
+      diagnostics.entries.push({
+        id,
+        sourceVertexCount: points.length,
+        profile: profile.profile,
+        parapetDepth: profile.depth,
+        parapetHeight: profile.height,
+        mechanicalBoxCount: profile.boxes.length,
+        centroid: { x: center.x, y: highestTop, z: center.z },
+      });
+    }
+
+    if (parapetPositions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(parapetPositions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(parapetNormals, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(parapetColors, 3));
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      const material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.72,
+        metalness: 0.08,
+        flatShading: true,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = 'hero-roof-parapets';
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = { kind: 'hero-roof-parapets', buildingIds: diagnostics.builtIds };
+      root.add(mesh);
+      this.geometryCache.push(geometry, material);
+      diagnostics.drawGroups += 1;
+      diagnostics.geometries += 1;
+    }
+
+    if (mechanicalGeometries.length) {
+      const geometry = mergeGeometries(mechanicalGeometries, false);
+      for (const source of mechanicalGeometries) source.dispose();
+      if (geometry) {
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+        const material = new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.62,
+          metalness: 0.18,
+          flatShading: true,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = 'hero-roof-mechanical';
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData = { kind: 'hero-roof-mechanical', buildingIds: diagnostics.builtIds };
+        root.add(mesh);
+        this.geometryCache.push(geometry, material);
+        diagnostics.drawGroups += 1;
+        diagnostics.geometries += 1;
+        const normal = geometry.attributes.normal;
+        for (let i = 0; i < normal.count; i += 1) {
+          const length = Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i));
+          diagnostics.minNormalLength = Math.min(diagnostics.minNormalLength, length);
+          diagnostics.maxNormalLength = Math.max(diagnostics.maxNormalLength, length);
+        }
+      }
+    }
+
+    diagnostics.triangleDelta = diagnostics.parapetTriangles + diagnostics.mechanicalTriangles;
+    diagnostics.finite = [parapetPositions, parapetNormals, parapetColors]
+      .every((values) => values.every(Number.isFinite))
+      && Number.isFinite(diagnostics.maxFootprintOvershootMeters);
+    diagnostics.normalsFinite = parapetNormals.every(Number.isFinite)
+      && Number.isFinite(diagnostics.minNormalLength)
+      && Number.isFinite(diagnostics.maxNormalLength);
+    this.heroRoofDiagnostics = diagnostics;
   }
 
   buildLandmark(root, kind, building, width, depth, height, baseY, minX, minZ) {
