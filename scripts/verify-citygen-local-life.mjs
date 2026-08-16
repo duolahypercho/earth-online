@@ -24,13 +24,10 @@ const VEHICLE_BATCH_BASELINE = Object.freeze({
   night: { drawCalls: 559, triangles: 529064, geometries: 402, textures: 259 },
 });
 
-const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
-  // Four accent batches replace existing logical prop records. The pay
-  // station remains culled in the canonical life poses, while the reused
-  // trash batch submits its second instance without another draw call.
-  pass: 'hero-sidewalk-life-v5',
-  daylight: { drawCalls: 3, triangles: 448, geometries: 3, textures: 0 },
-  night: { drawCalls: 1, triangles: 280, geometries: 3, textures: 0 },
+const GROUND_MATERIAL_RENDER = Object.freeze({
+  pass: 'sf-ground-materials-v1',
+  daylight: { drawCalls: 597, triangles: 535090, geometries: 405, textures: 261 },
+  night: { drawCalls: 560, triangles: 529344, geometries: 405, textures: 261 },
 });
 
 const VEHICLE_PRESENTATION = Object.freeze({
@@ -77,6 +74,7 @@ const sample = () => page.evaluate(() => {
     },
     diagnostics: traffic.getLocalLifeDiagnostics(),
     vehiclePresentation: traffic.getVehicleBatchDiagnostics().presentation,
+    groundMaterials: structuredClone(renderer.groundMaterialDiagnostics),
     render: {
       drawCalls: renderer.renderer.info.render.drawCalls,
       triangles: renderer.renderer.info.render.triangles,
@@ -135,6 +133,12 @@ try {
   const daylight = await sample();
   assertDensity(daylight, 'sf-daylight');
   assertVehiclePresentation(daylight, 'sf-daylight');
+  assert.equal(daylight.groundMaterials?.pass, GROUND_MATERIAL_RENDER.pass, 'daylight: ground material pass identity');
+  assert.equal(daylight.groundMaterials?.enabled, true, 'daylight: ground material pass remains enabled');
+  assert.equal(daylight.groundMaterials?.failure, null, 'daylight: ground material pass has no failure');
+  assert.deepEqual(daylight.groundMaterials?.resourceDelta,
+    { drawGroups: 0, triangles: 0, geometries: 0, materials: 0, textures: 2, uvAttributes: 2 },
+    'daylight: ground material resource delta remains exact');
 
   const beforeMotion = await sample();
   await page.waitForTimeout(750);
@@ -164,13 +168,13 @@ try {
   assert.ok(events.every((event) => event.visibleBefore === false));
   assert.ok(events.filter((event) => !event.intentionalRefresh).every((event) => event.visibleAfter === false));
   assert.ok(night.render.drawCalls <= 1200, `draw calls remain bounded: ${night.render.drawCalls}`);
-  for (const [label, sampleReport, baseline, curbDelta] of [
-    ['daylight', daylight, VEHICLE_BATCH_BASELINE.daylight, HERO_CURB_PRESENTATION_DELTA.daylight],
-    ['night', night, VEHICLE_BATCH_BASELINE.night, HERO_CURB_PRESENTATION_DELTA.night],
+  for (const [label, sampleReport, expected] of [
+    ['daylight', daylight, GROUND_MATERIAL_RENDER.daylight],
+    ['night', night, GROUND_MATERIAL_RENDER.night],
   ]) {
     for (const field of ['drawCalls', 'triangles', 'geometries', 'textures']) {
-      assert.equal(sampleReport.render[field], baseline[field] + curbDelta[field],
-        `${label}: ${HERO_CURB_PRESENTATION_DELTA.pass} has only its exact ${field} delta`);
+      assert.equal(sampleReport.render[field], expected[field],
+        `${label}: ${GROUND_MATERIAL_RENDER.pass} retains the exact ${field} budget`);
     }
   }
   assert.deepEqual(errors, []);
@@ -201,10 +205,10 @@ try {
         textures: night.render.textures - VEHICLE_BATCH_BASELINE.night.textures,
       },
     },
-    heroCurbPresentation: {
-      pass: HERO_CURB_PRESENTATION_DELTA.pass,
-      daylightDelta: HERO_CURB_PRESENTATION_DELTA.daylight,
-      nightDelta: HERO_CURB_PRESENTATION_DELTA.night,
+    groundMaterials: {
+      pass: GROUND_MATERIAL_RENDER.pass,
+      daylight: GROUND_MATERIAL_RENDER.daylight,
+      night: GROUND_MATERIAL_RENDER.night,
     },
     diagnostics: {
       enabled: night.diagnostics.enabled,
