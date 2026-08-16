@@ -110,37 +110,112 @@ export function buildVehicle(kind, color) {
 const SKIN_TONES = [0xc99a74, 0xa9744f, 0x8a5a3b, 0xe0b392, 0x6f4a33];
 const HAIR_COLORS = [0x2e241f, 0x6b4a2f, 0xd9c9a0, 0x191919, 0x9c9c9c, 0x5a3a5e];
 const OUTFIT_COLORS = [0x79a8c9, 0xd09a6f, 0xc75d8e, 0x6fbf73, 0x8f74c8, 0xd94f4a, 0x3f9e8f, 0xf2e9d8, 0xe8b23a];
+const PEDESTRIAN_GEOMETRY = {
+  body: new THREE.CapsuleGeometry(0.22, 0.68, 4, 6),
+  head: new THREE.SphereGeometry(0.16, 8, 6),
+  hair: new THREE.SphereGeometry(0.17, 8, 6),
+};
 
 /**
  * Build a sidewalk pedestrian with a distinct skin/hair/outfit and its own
  * walking-bob phase so crowds do not step in unison.
  */
 export function buildPedestrian(random = Math.random) {
-  const group = new THREE.Group();
+  const group = new THREE.Object3D();
   const outfit = OUTFIT_COLORS[Math.floor(random() * OUTFIT_COLORS.length)];
   const skin = SKIN_TONES[Math.floor(random() * SKIN_TONES.length)];
   const hairColor = HAIR_COLORS[Math.floor(random() * HAIR_COLORS.length)];
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.22, 0.68, 4, 6),
-    new THREE.MeshStandardMaterial({ color: outfit, roughness: 0.85, flatShading: true }),
-  );
-  body.position.y = 0.82;
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.16, 8, 6),
-    new THREE.MeshStandardMaterial({ color: skin, roughness: 0.9 }),
-  );
-  head.position.y = 1.42;
-  const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(0.17, 8, 6),
-    new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.9 }),
-  );
-  hair.position.y = 1.52;
-  hair.scale.y = random() < 0.35 ? 0.5 : 0.72;
-  group.add(body, head, hair);
+  const hairScale = random() < 0.35 ? 0.5 : 0.72;
   group.userData.walk = {
     time: random() * 10,
     cadence: 2.6 + random() * 1.6,
     bob: 0.09 + random() * 0.05,
   };
+  group.userData.appearance = {
+    outfit,
+    skin,
+    hairColor,
+    hairScale,
+  };
   return group;
+}
+
+/**
+ * Three shared body-part batches replace the per-person meshes. Logical
+ * pedestrian Object3Ds remain separate so simulation and QA keep stable
+ * identity, position, and yaw without adding them to the scene graph.
+ */
+export function buildPedestrianBatch(count) {
+  const group = new THREE.Group();
+  group.name = 'pedestrian-batch';
+  const parts = {
+    body: new THREE.InstancedMesh(
+      PEDESTRIAN_GEOMETRY.body,
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, flatShading: true }),
+      count,
+    ),
+    head: new THREE.InstancedMesh(
+      PEDESTRIAN_GEOMETRY.head,
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
+      count,
+    ),
+    hair: new THREE.InstancedMesh(
+      PEDESTRIAN_GEOMETRY.hair,
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
+      count,
+    ),
+  };
+  for (const [name, mesh] of Object.entries(parts)) {
+    mesh.name = `pedestrian-${name}-instances`;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // The crowd spans the whole streamed city and moves continuously. A
+    // stale aggregate instance bound must not make nearby walkers disappear.
+    mesh.frustumCulled = false;
+    group.add(mesh);
+  }
+  return {
+    group,
+    parts,
+    count,
+    matrixHelper: new THREE.Object3D(),
+    colorsNeedUpdate: false,
+  };
+}
+
+export function writePedestrianInstance(batch, index, pedestrian) {
+  const { group } = pedestrian;
+  const { appearance } = group.userData;
+  const helper = batch.matrixHelper;
+
+  if (!pedestrian.instanceColorInitialized) {
+    batch.parts.body.setColorAt(index, new THREE.Color(appearance.outfit));
+    batch.parts.head.setColorAt(index, new THREE.Color(appearance.skin));
+    batch.parts.hair.setColorAt(index, new THREE.Color(appearance.hairColor));
+    batch.colorsNeedUpdate = true;
+    pedestrian.instanceColorInitialized = true;
+  }
+
+  helper.rotation.set(0, group.rotation.y, 0);
+  helper.scale.set(1, 1, 1);
+  helper.position.set(group.position.x, group.position.y + 0.82, group.position.z);
+  helper.updateMatrix();
+  batch.parts.body.setMatrixAt(index, helper.matrix);
+
+  helper.position.y = group.position.y + 1.42;
+  helper.updateMatrix();
+  batch.parts.head.setMatrixAt(index, helper.matrix);
+
+  helper.position.y = group.position.y + 1.52;
+  helper.scale.set(1, appearance.hairScale, 1);
+  helper.updateMatrix();
+  batch.parts.hair.setMatrixAt(index, helper.matrix);
+}
+
+export function commitPedestrianBatch(batch, count = batch.count) {
+  for (const mesh of Object.values(batch.parts)) {
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (batch.colorsNeedUpdate && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+  batch.colorsNeedUpdate = false;
 }

@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { buildTrafficGraph, mulberry32 } from './core.js';
-import { buildVehicle, buildPedestrian } from './actors.js';
+import {
+  buildVehicle,
+  buildPedestrian,
+  buildPedestrianBatch,
+  writePedestrianInstance,
+  commitPedestrianBatch,
+} from './actors.js';
 
 // Driving model constants (meters, seconds).
 const ACCEL = 2.6;          // gentle throttle
@@ -43,11 +49,14 @@ export class TrafficSim {
     }
     const pedestrianCount = realMap ? 48 : 26;
     const sidewalkPaths = this.buildSidewalkPaths(city);
+    this.pedestrianBatch = sidewalkPaths.length ? buildPedestrianBatch(pedestrianCount) : null;
+    if (this.pedestrianBatch) this.group.add(this.pedestrianBatch.group);
     for (let i = 0; i < pedestrianCount; i += 1) {
       const path = sidewalkPaths[Math.floor(random() * sidewalkPaths.length)];
       if (!path?.length) continue;
-      this.pedestrians.push(this.spawnPedestrian(path, random));
+      this.pedestrians.push(this.spawnPedestrian(path, random, this.pedestrians.length));
     }
+    if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
     this.renderer.scene.add(this.group);
   }
 
@@ -132,7 +141,7 @@ export class TrafficSim {
     }
   }
 
-  spawnPedestrian(path, random = Math.random) {
+  spawnPedestrian(path, random = Math.random, instanceIndex = this.pedestrians.length) {
     const group = buildPedestrian(random);
     const cum = [0];
     for (let i = 1; i < path.length; i += 1) {
@@ -140,9 +149,9 @@ export class TrafficSim {
     }
     const total = cum[cum.length - 1] || 0.01;
     group.position.set(path[0].x, 0, path[0].z);
-    this.group.add(group);
-    return {
+    const pedestrian = {
       group,
+      instanceIndex,
       points: path,
       cum,
       total,
@@ -151,6 +160,8 @@ export class TrafficSim {
       dir: random() < 0.5 ? 1 : -1,
       speed: 1.3 + random() * 0.9,
     };
+    if (this.pedestrianBatch) writePedestrianInstance(this.pedestrianBatch, instanceIndex, pedestrian);
+    return pedestrian;
   }
 
   buildSidewalkPaths(city) {
@@ -217,6 +228,7 @@ export class TrafficSim {
     for (const pedestrian of this.pedestrians) {
       this.updatePedestrian(pedestrian, delta);
     }
+    if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
   }
 
   updateAiCar(car, delta) {
@@ -416,6 +428,9 @@ export class TrafficSim {
     const fx = pedestrian.dir > 0 ? b.x - a.x : a.x - b.x;
     const fz = pedestrian.dir > 0 ? b.z - a.z : a.z - b.z;
     pedestrian.group.rotation.y = Math.atan2(fx, fz);
+    if (this.pedestrianBatch) {
+      writePedestrianInstance(this.pedestrianBatch, pedestrian.instanceIndex, pedestrian);
+    }
   }
 
   updateCarSpacing() {
