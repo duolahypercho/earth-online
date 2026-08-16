@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { buildDataSfBuildingFootprintExtracts } from './build-sf-datasf-building-footprint-extract-v1.mjs';
@@ -9,15 +10,18 @@ const ROOT = process.cwd();
 const LOCK_PATH = path.join(ROOT, 'public/data/world/source-locks/sf-datasf-building-footprints-2023-v1.lock.json');
 const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-datasf-building-footprints-v1');
 const MANIFEST_PATH = path.join(OUTPUT_ROOT, 'sf-datasf-building-footprints-v1.manifest.json');
+const METHODOLOGY_PATH = path.join(ROOT, 'Data/raw/datasf/SF_BldgFoot_2017-05_description.pdf');
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-function sourcePathFromArguments() {
+function sourcePathFromArguments(lock) {
   const index = process.argv.indexOf('--source');
   if (index >= 0) {
     assert(process.argv[index + 1], '--source requires a literal CSV path');
     return path.resolve(process.argv[index + 1]);
   }
-  return process.env.SF_DATASF_BUILDING_FOOTPRINTS_CSV ? path.resolve(process.env.SF_DATASF_BUILDING_FOOTPRINTS_CSV) : null;
+  if (process.env.SF_DATASF_BUILDING_FOOTPRINTS_CSV) return path.resolve(process.env.SF_DATASF_BUILDING_FOOTPRINTS_CSV);
+  const lockedLocalPath = path.join(ROOT, lock.source.snapshot.localPath);
+  return existsSync(lockedLocalPath) ? lockedLocalPath : null;
 }
 
 function intersects(left, right) {
@@ -36,6 +40,13 @@ assert.equal(lock.source.coordinateReference.vertical.gnd_min_m.includes('NAVD 1
 assert.equal(lock.source.coordinateReference.vertical.hgt_median_m.includes('does not declare this field as an absolute elevation'), true);
 assert(lock.approvedScope.prohibited.includes('claiming facade materials, windows, doors, floor plans, occupancy, or current building use'));
 assert(lock.approvedScope.prohibited.includes('combining NAVD 1988 absolute elevations with current production terrain before vertical reconciliation is implemented and verified'));
+let methodologySnapshotVerified = null;
+if (existsSync(METHODOLOGY_PATH)) {
+  const methodologyBytes = await readFile(METHODOLOGY_PATH);
+  assert.equal(methodologyBytes.length, lock.source.methodologySnapshot.bytes, 'DataSF methodology byte count drifted');
+  assert.equal(sha256(methodologyBytes), lock.source.methodologySnapshot.sha256, 'DataSF methodology SHA-256 drifted');
+  methodologySnapshotVerified = { path: path.relative(ROOT, METHODOLOGY_PATH), bytes: methodologyBytes.length, sha256: `sha256:${sha256(methodologyBytes)}` };
+}
 
 assert.equal(manifest.kind, 'sf-datasf-building-footprint-extract-manifest');
 assert.equal(manifest.status, 'preview-source-evidence-only-not-production');
@@ -92,7 +103,7 @@ for (const descriptor of manifest.extracts) {
 }
 assert.equal(expected.size, verified.length); assert.deepEqual(seenExtractIds, new Set(expected.keys()));
 
-const sourcePath = sourcePathFromArguments();
+const sourcePath = sourcePathFromArguments(lock);
 let deterministicRebuild = null;
 if (sourcePath) {
   const first = await buildDataSfBuildingFootprintExtracts({ sourcePath, write: false });
@@ -106,4 +117,4 @@ if (sourcePath) {
   deterministicRebuild = { sourcePath, twoBuildBytesExact: true, checkedInBytesExact: true };
 }
 
-process.stdout.write(`${JSON.stringify({ result: 'SF DataSF building footprint extracts passed', status: manifest.status, source: manifest.source, verified, deterministicRebuild }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ result: 'SF DataSF building footprint extracts passed', status: manifest.status, source: manifest.source, methodologySnapshotVerified, verified, deterministicRebuild }, null, 2)}\n`);
