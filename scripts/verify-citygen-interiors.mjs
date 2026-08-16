@@ -185,7 +185,9 @@ try {
   await page.waitForFunction(
     () => window.__CITYGEN__?.getState?.().webgpu
       && window.__CITYGEN__?.getState?.().generator === 'sf-builtin'
-      && window.__CITYGEN__?.getState?.().buildings === 700,
+      && window.__CITYGEN__?.getState?.().buildings === 700
+      && window.__CITYGEN__?.getState?.().busy === false
+      && window.__CITYGEN__?.getInteriorCoverage?.().registered === 700,
     { timeout: 30000 },
   );
 
@@ -294,6 +296,9 @@ try {
     samples.push({
       buildingId: portal.buildingId,
       exitDistance: Number(exitDistance.toFixed(3)),
+      activeMeshes: entered.activeInterior.meshNodes,
+      activeDrawCalls: entered.drawCalls,
+      renderedCategories: entered.activeInterior.categories.length,
       drawDelta: exited.drawCalls - before.drawCalls,
       meshDelta: exited.objects.meshes - before.objects.meshes,
       rafCallbacks: raf.raf.callbacks,

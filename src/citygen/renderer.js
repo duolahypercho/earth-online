@@ -390,6 +390,25 @@ export class CityRenderer {
     this.pickables = [];
     this.geometryCache = [];
     this.timeOfDay = 15;
+    this.appliedTimeOfDay = null;
+    this.appliedNightState = null;
+    this.lightingPipelinesRendered = false;
+    this.timeColors = {
+      skyTopDay: new THREE.Color('#5f9fd1'),
+      skyMidDay: new THREE.Color('#93c8e0'),
+      skyBottomDay: new THREE.Color('#f6e7c9'),
+      skyTopNight: new THREE.Color('#1e2450'),
+      skyMidNight: new THREE.Color('#33396b'),
+      skyBottomNight: new THREE.Color('#5b4a7d'),
+      hemiDay: new THREE.Color('#e8f4ff'),
+      hemiNight: new THREE.Color('#7c8cf2'),
+      fogNight: new THREE.Color('#2a2e58'),
+      fogDay: new THREE.Color('#cfe3ea'),
+      fogDistant: new THREE.Color('#8a9fb8'),
+      fogWarm: new THREE.Color('#ead9bd'),
+      work: new THREE.Color(),
+      sun: new THREE.Color(),
+    };
     this.skyMesh = null;
     this.signalPhaseClock = 0;
     this.phaseClock = 0;
@@ -511,6 +530,8 @@ export class CityRenderer {
   async buildCity(city, { focus = null, day = true } = {}) {
     this.setCity(city);
     this.day = day;
+    this.appliedTimeOfDay = null;
+    this.appliedNightState = null;
     // Dispose old dynamic geometry only; static materials persist for rebuilds.
     for (const geometry of this.geometryCache) geometry.dispose();
     this.geometryCache = [];
@@ -593,7 +614,29 @@ export class CityRenderer {
     this.camera.far = 4200;
     this.camera.updateProjectionMatrix();
     this.signalPhaseClock = 0;
+    await this.prewarmLightingPipelines();
     return root;
+  }
+
+  async prewarmLightingPipelines() {
+    if (typeof this.renderer.compileAsync !== 'function') return;
+    const renderWarmup = !this.lightingPipelinesRendered
+      && typeof this.renderer.renderAsync === 'function';
+    const restoreHour = this.timeOfDay;
+    this.appliedTimeOfDay = null;
+    this.appliedNightState = null;
+    this.setTimeOfDay(14);
+    await this.renderer.compileAsync(this.scene, this.camera);
+    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+    this.setTimeOfDay(22);
+    await this.renderer.compileAsync(this.scene, this.camera);
+    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+    this.setTimeOfDay(restoreHour);
+    await this.renderer.compileAsync(this.scene, this.camera);
+    if (renderWarmup) {
+      await this.renderer.renderAsync(this.scene, this.camera);
+      this.lightingPipelinesRendered = true;
+    }
   }
 
   installMetricTileRoot(root, bounds) {
@@ -1971,13 +2014,18 @@ export class CityRenderer {
     // authored emissive fixtures, but reserve real illumination for a small
     // camera-local pool so city density does not multiply frame cost.
     const poolSize = Math.min(3, this.localLightCandidates.length);
+    const group = new THREE.Group();
+    group.name = 'local-light-pool';
     for (let i = 0; i < poolSize; i += 1) {
       const light = new THREE.PointLight(0xffffff, 0, 28, 2);
       light.name = `local-night-light-${i + 1}`;
-      light.visible = false;
-      root.add(light);
+      // Keep the three-light layout resident across day/night transitions so
+      // WebGPU does not rebuild the lighting pipeline when dusk begins.
+      light.visible = true;
+      group.add(light);
       this.localLightPool.push(light);
     }
+    root.add(group);
     // Preserve the public diagnostics aliases while all local sources share
     // one bounded pool.
     this.lampLights = this.localLightPool;
@@ -1992,7 +2040,7 @@ export class CityRenderer {
     if (!this.localLightsNight) {
       for (const light of this.localLightPool) {
         light.intensity = 0;
-        light.visible = false;
+        light.visible = true;
       }
       return;
     }
@@ -2012,7 +2060,7 @@ export class CityRenderer {
       const candidate = nearest[i]?.candidate;
       if (!candidate) {
         light.intensity = 0;
-        light.visible = false;
+        light.visible = true;
         continue;
       }
       light.position.set(candidate.x, candidate.y, candidate.z);
@@ -3140,16 +3188,25 @@ export class CityRenderer {
 
   setTimeOfDay(hour) {
     this.timeOfDay = hour;
-    const nightFactor = clamp((hour - 6) / 4, 0, 1) * clamp((20 - hour) / 4, 0, 1);
     const night = hour >= 19.5 || hour <= 6;
+    const previousHour = this.appliedTimeOfDay;
+    const previousNight = this.appliedNightState;
+    const wrappedDelta = previousHour == null
+      ? Infinity
+      : Math.min(Math.abs(hour - previousHour), 24 - Math.abs(hour - previousHour));
+    if (previousNight === night && wrappedDelta < 0.02) return;
+    this.appliedTimeOfDay = hour;
+    this.appliedNightState = night;
+
+    const nightFactor = clamp((hour - 6) / 4, 0, 1) * clamp((20 - hour) / 4, 0, 1);
     const golden = Math.max(0, 1 - Math.abs(hour - 8.2) / 3.5) * 0.7;
-    if (this.skyMesh) {
+    if (this.skyMesh && previousNight !== night) {
       const positions = this.skyMesh.geometry.attributes.position.array;
       const colors = this.skyMesh.geometry.attributes.color.array;
-      const top = night ? new THREE.Color('#1e2450') : new THREE.Color('#5f9fd1');
-      const mid = night ? new THREE.Color('#33396b') : new THREE.Color('#93c8e0');
-      const bottom = night ? new THREE.Color('#5b4a7d') : new THREE.Color('#f6e7c9');
-      const c = new THREE.Color();
+      const top = night ? this.timeColors.skyTopNight : this.timeColors.skyTopDay;
+      const mid = night ? this.timeColors.skyMidNight : this.timeColors.skyMidDay;
+      const bottom = night ? this.timeColors.skyBottomNight : this.timeColors.skyBottomDay;
+      const c = this.timeColors.work;
       for (let i = 0; i < positions.length; i += 3) {
         const y = positions[i + 1] / 1900;
         if (y > 0.08) c.copy(top).lerp(mid, clamp(y, 0, 1));
@@ -3162,24 +3219,23 @@ export class CityRenderer {
     }
     this.sun.intensity = 0.3 + nightFactor * 2.7 + golden * 0.7;
     this.sun.position.set(-180 - nightFactor * 80, 260 + nightFactor * 120, 110);
-    const sunColor = new THREE.Color().setHSL(0.09 + (1 - nightFactor) * 0.02, 0.55, 0.82);
-    this.sun.color.copy(sunColor);
-    this.hemi.color.copy(new THREE.Color('#e8f4ff').lerp(new THREE.Color('#7c8cf2'), 1 - nightFactor));
+    this.sun.color.copy(this.timeColors.sun.setHSL(0.09 + (1 - nightFactor) * 0.02, 0.55, 0.82));
+    this.hemi.color.copy(this.timeColors.hemiDay).lerp(this.timeColors.hemiNight, 1 - nightFactor);
     this.hemi.intensity = 0.55 + nightFactor * 0.8;
     this.ambient.intensity = 0.08 + nightFactor * 0.26;
     this.rim.intensity = 0.1 + nightFactor * 0.55;
-    for (const entry of this.nightEmissive) {
-      entry.material.emissiveIntensity = night
-        ? (entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9))
-        : 0;
-    }
-    for (const material of this.neonGlowMaterials) {
-      material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
-    }
-    for (const bulb of this.lampBulbs) {
-      bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
-    }
-    if (night !== this.localLightsNight) {
+    if (previousNight !== night) {
+      for (const entry of this.nightEmissive) {
+        entry.material.emissiveIntensity = night
+          ? (entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9))
+          : 0;
+      }
+      for (const material of this.neonGlowMaterials) {
+        material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
+      }
+      for (const bulb of this.lampBulbs) {
+        bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
+      }
       this.localLightsNight = night;
       this.updateLocalLightPool(0, true);
     }
@@ -3188,20 +3244,19 @@ export class CityRenderer {
       this.water.material.emissive.set(night ? 0x07192d : 0x062b35);
       this.water.material.emissiveIntensity = night ? 0.42 : 0.08;
     }
-    const fogColor = nightFactor < 0.28
-      ? new THREE.Color('#2a2e58')
-      : new THREE.Color('#cfe3ea').lerp(new THREE.Color('#8a9fb8'), 1 - nightFactor);
+    const fogColor = this.timeColors.work;
+    if (nightFactor < 0.28) fogColor.copy(this.timeColors.fogNight);
+    else fogColor.copy(this.timeColors.fogDay).lerp(this.timeColors.fogDistant, 1 - nightFactor);
     // Daylight haze leans warm to match the key light.
     if (nightFactor >= 0.28) {
-      fogColor.copy(new THREE.Color('#ead9bd').lerp(new THREE.Color('#cfe3ea'), nightFactor * 0.4));
+      fogColor.copy(this.timeColors.fogWarm).lerp(this.timeColors.fogDay, nightFactor * 0.4);
     }
     this.scene.fog.color.copy(fogColor);
     if (this.scene.background) this.scene.background.copy(fogColor);
-    const isNight = hour >= 19.5 || hour <= 6;
-    if (isNight) {
+    if (night && previousNight !== night) {
       this.nightBoost = { remaining: 1.2 };
       this.renderer.toneMappingExposure = 0.88;
-    } else {
+    } else if (!night) {
       this.nightBoost = null;
       this.renderer.toneMappingExposure = 0.82;
     }
