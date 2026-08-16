@@ -58,6 +58,14 @@ const HERO_FACADE_IDS = Object.freeze(new Map([
 ]));
 const HERO_STREETWALL_PASS = 'hero-streetwall-grounding-v1';
 const HERO_STREETWALL_CONTACT_TREATMENT = 'recessed-portal-reveal-v1';
+const HERO_BASE_COLORS = Object.freeze([
+  '#756d61',
+  '#33454d',
+  '#827c70',
+  '#7c776d',
+  '#604a43',
+  '#523f3a',
+]);
 const HERO_ROOF_PROFILES = Object.freeze(new Map([
   ['sf-building-132127809', {
     profile: 'hearst-stepped-penthouse', depth: 0.48, height: 0.95, color: '#8b7766',
@@ -1898,7 +1906,138 @@ export class CityRenderer {
       this.pickables.push(mesh);
       this.geometryCache.push(merged);
     }
+    this.buildHeroGroundingBatch(root, heroRoofEntries, city);
     this.buildHeroRoofBatches(root, heroRoofEntries, heroTextures);
+  }
+
+  buildHeroGroundingBatch(root, sourceEntries, city) {
+    const expectedIds = [...HERO_FACADE_IDS.keys()].sort();
+    const diagnostics = {
+      pass: 'hero-base-occlusion-v1',
+      expectedIds,
+      builtIds: [],
+      skippedIds: [],
+      entries: [],
+      sourceEdges: 0,
+      renderedEdges: 0,
+      skippedRoadEdges: 0,
+      vertices: 0,
+      triangles: 0,
+      drawGroups: 0,
+      geometries: 0,
+      textures: 0,
+      bandHeightMeters: 0.12,
+      outwardOffsetMeters: 0.012,
+      finite: true,
+      roadChecks: 0,
+      roadIntrusions: 0,
+      sourceFootprintsUnchanged: true,
+      sourcePortalsUnchanged: true,
+      incremental: { drawGroups: 1, triangles: 94, geometries: 1, textures: 0 },
+    };
+    const byId = new Map(sourceEntries.map((entry) => [entry.id, entry]));
+    const positions = [];
+    const normals = [];
+    const colors = [];
+    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
+
+    const overlapsAsphalt = (point) => city.segments.some((segment) => {
+      if (!Array.isArray(segment.points) || segment.points.length < 2) return false;
+      const halfWidth = Math.max(0, Number(segment.width || 0) / 2);
+      if (halfWidth <= 0) return false;
+      for (let index = 1; index < segment.points.length; index += 1) {
+        if (pointToSegmentDistance(point, segment.points[index - 1], segment.points[index]) < halfWidth) return true;
+      }
+      return false;
+    });
+    const pushVertex = (point, normal, color) => {
+      positions.push(point.x, point.y, point.z);
+      normals.push(normal.x, normal.y, normal.z);
+      colors.push(color.r, color.g, color.b);
+    };
+
+    for (const id of expectedIds) {
+      const entry = byId.get(id);
+      if (!entry?.points?.length) {
+        diagnostics.skippedIds.push(id);
+        continue;
+      }
+      const signedArea = signedFootprintArea(entry.points);
+      const cellIndex = HERO_FACADE_IDS.get(id).cell;
+      const topColor = new THREE.Color(HERO_BASE_COLORS[cellIndex]);
+      const bottomColor = topColor.clone().offsetHSL(0, -0.03, -0.14);
+      let entryFinite = Number.isFinite(signedArea) && Math.abs(signedArea) > BUILDING_FOOTPRINT_EPSILON;
+      for (let index = 0; index < entry.points.length; index += 1) {
+        const a = entry.points[index];
+        const b = entry.points[(index + 1) % entry.points.length];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (!Number.isFinite(length) || length <= BUILDING_FOOTPRINT_EPSILON) {
+          entryFinite = false;
+          continue;
+        }
+        const outwardX = signedArea > 0 ? dz / length : -dz / length;
+        const outwardZ = signedArea > 0 ? -dx / length : dx / length;
+        const normal = { x: outwardX, y: 0, z: outwardZ };
+        const offset = diagnostics.outwardOffsetMeters;
+        const heightAt = (point) => (this.terrain?.heightAt ? this.terrain.heightAt(point.x, point.z) : entry.baseY);
+        const aBottom = { x: a.x + outwardX * offset, y: heightAt(a) + roadLift + 0.018, z: a.z + outwardZ * offset };
+        const bBottom = { x: b.x + outwardX * offset, y: heightAt(b) + roadLift + 0.018, z: b.z + outwardZ * offset };
+        const aTop = { ...aBottom, y: aBottom.y + diagnostics.bandHeightMeters };
+        const bTop = { ...bBottom, y: bBottom.y + diagnostics.bandHeightMeters };
+        const midpoint = { x: (aBottom.x + bBottom.x) / 2, z: (aBottom.z + bBottom.z) / 2 };
+        diagnostics.roadChecks += 1;
+        if (overlapsAsphalt(midpoint)) {
+          diagnostics.skippedRoadEdges += 1;
+          continue;
+        }
+        pushVertex(aBottom, normal, bottomColor);
+        pushVertex(bTop, normal, topColor);
+        pushVertex(bBottom, normal, bottomColor);
+        pushVertex(aBottom, normal, bottomColor);
+        pushVertex(aTop, normal, topColor);
+        pushVertex(bTop, normal, topColor);
+        diagnostics.renderedEdges += 1;
+      }
+      diagnostics.sourceEdges += entry.points.length;
+      diagnostics.builtIds.push(id);
+      diagnostics.entries.push({ id, sourceVertexCount: entry.points.length, finite: entryFinite });
+      diagnostics.finite = diagnostics.finite && entryFinite;
+    }
+
+    diagnostics.vertices = positions.length / 3;
+    diagnostics.triangles = diagnostics.vertices / 3;
+    diagnostics.finite = diagnostics.finite
+      && expectedIds.length === diagnostics.builtIds.length
+      && diagnostics.skippedIds.length === 0
+      && [...positions, ...normals, ...colors].every(Number.isFinite);
+    if (positions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      const material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.94,
+        metalness: 0,
+        flatShading: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = 'hero-building-base-occlusion';
+      mesh.receiveShadow = true;
+      mesh.userData = { kind: 'hero-building-base-occlusion', buildingIds: diagnostics.builtIds };
+      root.add(mesh);
+      this.geometryCache.push(geometry, material);
+      diagnostics.drawGroups = 1;
+      diagnostics.geometries = 1;
+    }
+    this.heroGroundDiagnostics = diagnostics;
   }
 
   buildHeroRoofBatches(root, sourceEntries, heroTextures) {

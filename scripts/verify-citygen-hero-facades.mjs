@@ -124,6 +124,7 @@ try {
     if (traffic?.group) traffic.group.visible = false;
     const hero = renderer.heroFacadeDiagnostics || null;
     const roof = renderer.heroRoofDiagnostics || null;
+    const ground = renderer.heroGroundDiagnostics || null;
     const footprint = renderer.buildingFootprintDiagnostics || null;
     return {
       backend: renderer.rendererBackend,
@@ -222,6 +223,29 @@ try {
         materialCount: roof.materialCount,
         incremental: roof.incremental ? { ...roof.incremental } : null,
         pbr: roof.pbr ? JSON.parse(JSON.stringify(roof.pbr)) : null,
+      } : null,
+      ground: ground ? {
+        pass: ground.pass,
+        expectedIds: Array.isArray(ground.expectedIds) ? [...ground.expectedIds] : null,
+        builtIds: Array.isArray(ground.builtIds) ? [...ground.builtIds] : null,
+        skippedIds: Array.isArray(ground.skippedIds) ? [...ground.skippedIds] : null,
+        entries: Array.isArray(ground.entries) ? ground.entries.map((entry) => ({ ...entry })) : null,
+        sourceEdges: ground.sourceEdges,
+        renderedEdges: ground.renderedEdges,
+        skippedRoadEdges: ground.skippedRoadEdges,
+        vertices: ground.vertices,
+        triangles: ground.triangles,
+        drawGroups: ground.drawGroups,
+        geometries: ground.geometries,
+        textures: ground.textures,
+        bandHeightMeters: ground.bandHeightMeters,
+        outwardOffsetMeters: ground.outwardOffsetMeters,
+        finite: ground.finite,
+        roadChecks: ground.roadChecks,
+        roadIntrusions: ground.roadIntrusions,
+        sourceFootprintsUnchanged: ground.sourceFootprintsUnchanged,
+        sourcePortalsUnchanged: ground.sourcePortalsUnchanged,
+        incremental: ground.incremental ? { ...ground.incremental } : null,
       } : null,
       footprint: footprint ? {
         sourceCount: footprint.sourceCount,
@@ -463,6 +487,41 @@ try {
     parapet: { roughness: 0.84, metalness: 0.02 },
     mechanical: { roughness: 0.7, metalness: 0.14 },
   }, 'roof PBR values match the grounded material contract');
+
+  assert.ok(runtime.ground,
+    'getRenderer().heroGroundDiagnostics is required; base-occlusion contract is absent');
+  assert.equal(runtime.ground.pass, 'hero-base-occlusion-v1',
+    'hero base-occlusion contract version is explicit');
+  assert.deepEqual([...runtime.ground.expectedIds].sort(), [...HERO_IDS].sort(),
+    'base-occlusion diagnostics expect the exact audited six buildings');
+  assert.deepEqual([...runtime.ground.builtIds].sort(), [...HERO_IDS].sort(),
+    'base-occlusion geometry covers the exact audited six buildings');
+  assert.deepEqual(runtime.ground.skippedIds, [], 'no hero base-occlusion geometry was skipped');
+  assert.equal(runtime.ground.entries.length, 6, 'base-occlusion diagnostics expose six entries');
+  for (const entry of runtime.ground.entries) {
+    assert.equal(entry.sourceVertexCount, HERO_SOURCE_VERTEX_COUNTS.get(entry.id),
+      `${entry.id}: base band follows the unchanged source edge count`);
+    assert.equal(entry.finite, true, `${entry.id}: base band is finite`);
+  }
+  assert.equal(runtime.ground.sourceEdges, 51, 'base-band gate considers all 51 source edges');
+  assert.equal(runtime.ground.renderedEdges, 47, 'base bands render the 47 non-road source edges');
+  assert.equal(runtime.ground.skippedRoadEdges, 4, 'four asphalt-overlapping source edges are culled');
+  assert.equal(runtime.ground.vertices, 282, 'base bands contain exactly 282 vertices');
+  assert.equal(runtime.ground.triangles, 94, 'base bands add exactly 94 triangles');
+  assert.equal(runtime.ground.drawGroups, 1, 'base bands merge into exactly one draw group');
+  assert.equal(runtime.ground.geometries, 1, 'base bands use exactly one live geometry');
+  assert.equal(runtime.ground.textures, 0, 'base bands add no textures');
+  assert.equal(runtime.ground.bandHeightMeters, 0.12, 'base band height is restrained to 0.12m');
+  assert.equal(runtime.ground.outwardOffsetMeters, 0.012,
+    'base band clears facade z-fighting by only 0.012m');
+  assert.equal(runtime.ground.finite, true, 'base band positions, normals, and colors are finite');
+  assert.equal(runtime.ground.roadChecks, 51, 'every source edge is checked against asphalt');
+  assert.equal(runtime.ground.roadIntrusions, 0, 'base bands do not intrude into road asphalt');
+  assert.equal(runtime.ground.sourceFootprintsUnchanged, true, 'base bands preserve source footprints');
+  assert.equal(runtime.ground.sourcePortalsUnchanged, true, 'base bands preserve source portals');
+  assert.deepEqual(runtime.ground.incremental,
+    { drawGroups: 1, triangles: 94, geometries: 1, textures: 0 },
+    'base-occlusion cost is exact and bounded');
 
   await page.addStyleTag({
     content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill,.osm-overlay{display:none!important}',
