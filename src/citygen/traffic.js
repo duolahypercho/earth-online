@@ -10,6 +10,7 @@ import {
   buildPedestrianBatch,
   writePedestrianInstance,
   commitPedestrianBatch,
+  SF_VEHICLE_PRESENTATION,
 } from './actors.js';
 
 // Driving model constants (meters, seconds).
@@ -51,7 +52,9 @@ export class TrafficSim {
     this.signalById = new Map((city.signals || []).map((signal) => [signal.id, signal]));
     const random = mulberry32(Number(city.meta.seedInt || 1) + 77);
     this.random = random;
-    const paint = ['#d94f4a', '#e8b23a', '#4f86c8', '#3f9e8f', '#8f74c8', '#d47a3f', '#f2e9d8', '#6fbf73'];
+    // Keep this array lookup in the existing seeded call site so vehicle
+    // class selection and placement consume precisely the same RNG sequence.
+    const paint = SF_VEHICLE_PRESENTATION.civilianPaint.map((color) => `#${color.toString(16).padStart(6, '0')}`);
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     this.localLifeEnabled = realMap;
     this.localLifeTimer = 0;
@@ -501,6 +504,34 @@ export class TrafficSim {
         }), {}),
         sharedBatchParts: ['body', 'cab', 'taxiTopper', 'transitWindows'],
         identities: sfTransit,
+      },
+      presentation: {
+        version: this.vehicleBatch?.presentation?.version ?? null,
+        paletteVersion: this.vehicleBatch?.presentation?.paletteVersion ?? null,
+        materialVersion: this.vehicleBatch?.presentation?.materialVersion ?? null,
+        civilianPaint: this.vehicleBatch?.presentation?.civilianPaint?.map((color) => `#${color.toString(16).padStart(6, '0')}`) ?? [],
+        tintedCabColor: this.vehicleBatch?.presentation?.tintedCabColor != null
+          ? `#${this.vehicleBatch.presentation.tintedCabColor.toString(16).padStart(6, '0')}`
+          : null,
+        taxiCabColor: this.vehicleBatch?.presentation?.taxiCabColor != null
+          ? `#${this.vehicleBatch.presentation.taxiCabColor.toString(16).padStart(6, '0')}`
+          : null,
+        truckCabPolicy: this.vehicleBatch?.presentation?.truckCabPolicy ?? null,
+        materials: this.vehicleBatch
+          ? Object.fromEntries(Object.entries(this.vehicleBatch.parts).map(([part, mesh]) => {
+            const material = mesh.material;
+            return [part, {
+              name: material.name,
+              color: `#${material.color.getHexString()}`,
+              roughness: material.roughness,
+              metalness: material.metalness,
+              emissive: material.emissive ? `#${material.emissive.getHexString()}` : null,
+              emissiveIntensity: material.emissiveIntensity ?? 0,
+              flatShading: Boolean(material.flatShading),
+              metadata: { ...material.userData.sfVehiclePresentation },
+            }];
+          }))
+          : {},
       },
       legacyMeshEstimate: this.cars.reduce((total, car) => total + (car.kind === 'taxi' ? 19 : 18), 0),
       frustumSafe: this.vehicleBatch

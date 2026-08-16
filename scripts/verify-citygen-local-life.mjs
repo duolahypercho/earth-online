@@ -19,9 +19,19 @@ const VEHICLE_BATCH_BASELINE = Object.freeze({
   // The zero-draw vehicle identity contract is anchored to the current
   // canonical world, not to an older pre-hull presentation. Any class-color
   // or wheel-scale change must leave these render counters exactly unchanged.
-  commit: '82bdccf',
+  commit: 'ebc08de',
   daylight: { drawCalls: 594, triangles: 534642, geometries: 402, textures: 259 },
   night: { drawCalls: 559, triangles: 529064, geometries: 402, textures: 259 },
+});
+
+const VEHICLE_PRESENTATION = Object.freeze({
+  version: 'sf-vehicle-materials-v2',
+  paletteVersion: 'sf-civilian-traffic-paint-v2',
+  materialVersion: 'sf-vehicle-pbr-v2',
+  civilianPaint: ['#7d4d4c', '#9a7a3e', '#46647a', '#4f7168', '#62586c', '#805c45', '#d7d3c8', '#718164'],
+  tintedCabColor: '#20343b',
+  taxiCabColor: '#263a38',
+  truckCabPolicy: 'match-body-paint-v1',
 });
 
 const sample = () => page.evaluate(() => {
@@ -57,6 +67,7 @@ const sample = () => page.evaluate(() => {
       pedestrians: counts(traffic.pedestrians),
     },
     diagnostics: traffic.getLocalLifeDiagnostics(),
+    vehiclePresentation: traffic.getVehicleBatchDiagnostics().presentation,
     render: {
       drawCalls: renderer.renderer.info.render.drawCalls,
       triangles: renderer.renderer.info.render.triangles,
@@ -85,6 +96,19 @@ function assertDensity(report, pose) {
     && [actor.x, actor.y, actor.z, actor.speed].every(Number.isFinite)));
 }
 
+function assertVehiclePresentation(report, pose) {
+  const presentation = report.vehiclePresentation;
+  assert.ok(presentation && typeof presentation === 'object', `${pose}: vehicle presentation diagnostics`);
+  for (const key of ['version', 'paletteVersion', 'materialVersion', 'tintedCabColor', 'taxiCabColor', 'truckCabPolicy']) {
+    assert.equal(presentation[key], VEHICLE_PRESENTATION[key], `${pose}: vehicle ${key}`);
+  }
+  assert.deepEqual(presentation.civilianPaint, VEHICLE_PRESENTATION.civilianPaint,
+    `${pose}: civilian palette remains exact`);
+  assert.deepEqual(Object.keys(presentation.materials || {}).sort(), [
+    'body', 'cab', 'headlights', 'hubs', 'taxiTopper', 'tires', 'transitWindows',
+  ], `${pose}: exactly seven vehicle material identities`);
+}
+
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(
@@ -101,6 +125,7 @@ try {
   await page.waitForTimeout(1400);
   const daylight = await sample();
   assertDensity(daylight, 'sf-daylight');
+  assertVehiclePresentation(daylight, 'sf-daylight');
 
   const beforeMotion = await sample();
   await page.waitForTimeout(750);
@@ -121,6 +146,7 @@ try {
   await page.waitForTimeout(1400);
   const night = await sample();
   assertDensity(night, 'night');
+  assertVehiclePresentation(night, 'night');
 
   const events = night.diagnostics.events;
   assert.ok(events.length >= 1, 'local-life recycling emits diagnostics');
