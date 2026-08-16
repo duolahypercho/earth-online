@@ -17,7 +17,7 @@
   "heightComparison": {
     "absoluteElevationComparison": false,
     "dataSf": "hgt_median_m retained from the locked DataSF source",
-    "osm": "existing production extrusion height policy",
+    "osm": "existing production extrusion height policy verified against byte-locked raw OSM tags",
     "use": "report-only source disagreement diagnostic",
     "verticalReconciliationComplete": false
   },
@@ -29,6 +29,12 @@
     "sourceLock": "public/data/world/source-locks/sf-ferry-3dep-2023-horizontal-crs-v1.lock.json"
   },
   "kind": "sf-datasf-osm-building-match-proof-receipt",
+  "osmTagAuthority": {
+    "bytes": 32742133,
+    "path": "public/data/sf/SanFrancisco.osm.pbf",
+    "policy": "OSM height tag when finite within 2–500m, else building:levels times 3.2m, else deterministic 9.6m fallback",
+    "sha256": "sha256:dda3821dd92f8d8bf34abe503ac81f20a439ee02a210a9d68d2c7c5d66fb0cae"
+  },
   "regions": [
     {
       "counts": {
@@ -63,7 +69,7 @@
           "dataSfBuildingId": "201006.0001038",
           "dataSfMedianHeightMetres": 9.8,
           "osmHeightMetres": 15,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 5.2,
           "osmSourceFeatureId": "way/104599975"
         },
@@ -151,7 +157,7 @@
           "dataSfBuildingId": "201006.0017562",
           "dataSfMedianHeightMetres": 4.45,
           "osmHeightMetres": 4,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.45,
           "osmSourceFeatureId": "way/260290226"
         },
@@ -173,7 +179,7 @@
           "dataSfBuildingId": "201006.0000121",
           "dataSfMedianHeightMetres": 25.12,
           "osmHeightMetres": 33,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 7.88,
           "osmSourceFeatureId": "way/44106213"
         }
@@ -187,8 +193,9 @@
         "independenceQualification": "OSM comparison includes derived or default extrusion heights and is not an independent validation of DataSF height accuracy",
         "matchRateAgainstOsmPct": 45.8,
         "matchedOsmHeightPolicyCounts": {
-          "deterministic-9.6m-fallback": 4,
-          "osm-building-levels-times-3.2m": 7
+          "deterministic-9.6m-fallback": 1,
+          "osm-building-levels-times-3.2m": 7,
+          "osm-height": 3
         },
         "osmMinusDataSfHeightMedianMetres": -0.67
       },
@@ -249,7 +256,7 @@
           "dataSfBuildingId": "201006.0093032",
           "dataSfMedianHeightMetres": 10.61,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.39,
           "osmSourceFeatureId": "way/264360881"
         },
@@ -260,7 +267,7 @@
           "dataSfBuildingId": "201006.0103259",
           "dataSfMedianHeightMetres": 5.5,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.5,
           "osmSourceFeatureId": "way/264360882"
         },
@@ -271,7 +278,7 @@
           "dataSfBuildingId": "201006.0112609",
           "dataSfMedianHeightMetres": 10.48,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.48,
           "osmSourceFeatureId": "way/264360883"
         },
@@ -282,7 +289,7 @@
           "dataSfBuildingId": "201006.0109012",
           "dataSfMedianHeightMetres": 7.55,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.45,
           "osmSourceFeatureId": "way/264360884"
         },
@@ -293,7 +300,7 @@
           "dataSfBuildingId": "201006.0107334",
           "dataSfMedianHeightMetres": 6.22,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.22,
           "osmSourceFeatureId": "way/264360885"
         },
@@ -304,7 +311,7 @@
           "dataSfBuildingId": "201006.0156997",
           "dataSfMedianHeightMetres": 9.62,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.38,
           "osmSourceFeatureId": "way/264360886"
         },
@@ -315,7 +322,7 @@
           "dataSfBuildingId": "201006.0092902",
           "dataSfMedianHeightMetres": 9.7,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.3,
           "osmSourceFeatureId": "way/264360887"
         },
@@ -326,7 +333,7 @@
           "dataSfBuildingId": "201006.0144304",
           "dataSfMedianHeightMetres": 10.46,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/264360888"
         },
@@ -337,7 +344,7 @@
           "dataSfBuildingId": "201006.0142282",
           "dataSfMedianHeightMetres": 9.51,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.49,
           "osmSourceFeatureId": "way/264360889"
         },
@@ -348,7 +355,7 @@
           "dataSfBuildingId": "201006.0046807",
           "dataSfMedianHeightMetres": 12.14,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.14,
           "osmSourceFeatureId": "way/264360890"
         },
@@ -359,7 +366,7 @@
           "dataSfBuildingId": "201006.0126500",
           "dataSfMedianHeightMetres": 9.84,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.16,
           "osmSourceFeatureId": "way/264360891"
         },
@@ -370,7 +377,7 @@
           "dataSfBuildingId": "201006.0112801",
           "dataSfMedianHeightMetres": 7.74,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.26,
           "osmSourceFeatureId": "way/264360892"
         },
@@ -381,7 +388,7 @@
           "dataSfBuildingId": "201006.0075255",
           "dataSfMedianHeightMetres": 7.58,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.42,
           "osmSourceFeatureId": "way/264360894"
         },
@@ -392,7 +399,7 @@
           "dataSfBuildingId": "201006.0073000",
           "dataSfMedianHeightMetres": 8.8,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.2,
           "osmSourceFeatureId": "way/264360895"
         },
@@ -403,7 +410,7 @@
           "dataSfBuildingId": "201006.0020513",
           "dataSfMedianHeightMetres": 8.3,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.3,
           "osmSourceFeatureId": "way/264360896"
         },
@@ -414,7 +421,7 @@
           "dataSfBuildingId": "201006.0117368",
           "dataSfMedianHeightMetres": 10.29,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.29,
           "osmSourceFeatureId": "way/264360897"
         },
@@ -425,7 +432,7 @@
           "dataSfBuildingId": "201006.0145016",
           "dataSfMedianHeightMetres": 10.1,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/264360898"
         },
@@ -436,7 +443,7 @@
           "dataSfBuildingId": "201006.0068811",
           "dataSfMedianHeightMetres": 11.16,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.16,
           "osmSourceFeatureId": "way/264360899"
         },
@@ -447,7 +454,7 @@
           "dataSfBuildingId": "201006.0068612",
           "dataSfMedianHeightMetres": 8.46,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/264360900"
         },
@@ -458,7 +465,7 @@
           "dataSfBuildingId": "201006.0113401",
           "dataSfMedianHeightMetres": 10.76,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.24,
           "osmSourceFeatureId": "way/264360901"
         },
@@ -469,7 +476,7 @@
           "dataSfBuildingId": "201006.0041568",
           "dataSfMedianHeightMetres": 6.61,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.39,
           "osmSourceFeatureId": "way/264360902"
         },
@@ -480,7 +487,7 @@
           "dataSfBuildingId": "201006.0100492",
           "dataSfMedianHeightMetres": 9.29,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.29,
           "osmSourceFeatureId": "way/264360903"
         },
@@ -491,7 +498,7 @@
           "dataSfBuildingId": "201006.0073802",
           "dataSfMedianHeightMetres": 8.41,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.41,
           "osmSourceFeatureId": "way/264360904"
         },
@@ -502,7 +509,7 @@
           "dataSfBuildingId": "201006.0137624",
           "dataSfMedianHeightMetres": 7.67,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.33,
           "osmSourceFeatureId": "way/264360905"
         },
@@ -513,7 +520,7 @@
           "dataSfBuildingId": "201006.0097450",
           "dataSfMedianHeightMetres": 8.54,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.46,
           "osmSourceFeatureId": "way/264360906"
         },
@@ -524,7 +531,7 @@
           "dataSfBuildingId": "201006.0092984",
           "dataSfMedianHeightMetres": 8.1,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/264360907"
         },
@@ -535,7 +542,7 @@
           "dataSfBuildingId": "201006.0039278",
           "dataSfMedianHeightMetres": 13.37,
           "osmHeightMetres": 13,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/264360908"
         },
@@ -546,7 +553,7 @@
           "dataSfBuildingId": "201006.0057310",
           "dataSfMedianHeightMetres": 9.02,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.02,
           "osmSourceFeatureId": "way/264360909"
         },
@@ -557,7 +564,7 @@
           "dataSfBuildingId": "201006.0142741",
           "dataSfMedianHeightMetres": 7.66,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.34,
           "osmSourceFeatureId": "way/264360914"
         },
@@ -568,7 +575,7 @@
           "dataSfBuildingId": "201006.0150786",
           "dataSfMedianHeightMetres": 7.04,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.04,
           "osmSourceFeatureId": "way/264360915"
         },
@@ -579,7 +586,7 @@
           "dataSfBuildingId": "201006.0100248",
           "dataSfMedianHeightMetres": 6.74,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.26,
           "osmSourceFeatureId": "way/264360917"
         },
@@ -590,7 +597,7 @@
           "dataSfBuildingId": "201006.0030272",
           "dataSfMedianHeightMetres": 8.99,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.01,
           "osmSourceFeatureId": "way/264360918"
         },
@@ -601,7 +608,7 @@
           "dataSfBuildingId": "201006.0088958",
           "dataSfMedianHeightMetres": 10.32,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/264360923"
         },
@@ -612,7 +619,7 @@
           "dataSfBuildingId": "201006.0136342",
           "dataSfMedianHeightMetres": 9.37,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/264360926"
         },
@@ -623,7 +630,7 @@
           "dataSfBuildingId": "201006.0069233",
           "dataSfMedianHeightMetres": 12.16,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.16,
           "osmSourceFeatureId": "way/264360927"
         },
@@ -634,7 +641,7 @@
           "dataSfBuildingId": "201006.0079339",
           "dataSfMedianHeightMetres": 7.78,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/264360929"
         },
@@ -645,7 +652,7 @@
           "dataSfBuildingId": "201006.0130232",
           "dataSfMedianHeightMetres": 6.71,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.29,
           "osmSourceFeatureId": "way/264360931"
         },
@@ -656,7 +663,7 @@
           "dataSfBuildingId": "201006.0144279",
           "dataSfMedianHeightMetres": 10.46,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/264360933"
         },
@@ -667,7 +674,7 @@
           "dataSfBuildingId": "201006.0098705",
           "dataSfMedianHeightMetres": 9.22,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.22,
           "osmSourceFeatureId": "way/264360938"
         },
@@ -678,7 +685,7 @@
           "dataSfBuildingId": "201006.0151979",
           "dataSfMedianHeightMetres": 6.37,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/264360939"
         },
@@ -689,7 +696,7 @@
           "dataSfBuildingId": "201006.0023232",
           "dataSfMedianHeightMetres": 9.16,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.16,
           "osmSourceFeatureId": "way/264360940"
         },
@@ -700,7 +707,7 @@
           "dataSfBuildingId": "201006.0082035",
           "dataSfMedianHeightMetres": 6.73,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.27,
           "osmSourceFeatureId": "way/264360941"
         },
@@ -711,7 +718,7 @@
           "dataSfBuildingId": "201006.0070409",
           "dataSfMedianHeightMetres": 10.01,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.01,
           "osmSourceFeatureId": "way/264459122"
         },
@@ -722,7 +729,7 @@
           "dataSfBuildingId": "201006.0035524",
           "dataSfMedianHeightMetres": 6.23,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/264459131"
         },
@@ -733,7 +740,7 @@
           "dataSfBuildingId": "201006.0034135",
           "dataSfMedianHeightMetres": 6.5,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.5,
           "osmSourceFeatureId": "way/264459132"
         },
@@ -744,7 +751,7 @@
           "dataSfBuildingId": "201006.0029786",
           "dataSfMedianHeightMetres": 5.87,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.13,
           "osmSourceFeatureId": "way/264459135"
         },
@@ -755,7 +762,7 @@
           "dataSfBuildingId": "201006.0038843",
           "dataSfMedianHeightMetres": 7.2,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.2,
           "osmSourceFeatureId": "way/264459140"
         },
@@ -766,7 +773,7 @@
           "dataSfBuildingId": "201006.0047817",
           "dataSfMedianHeightMetres": 5.67,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.33,
           "osmSourceFeatureId": "way/264459144"
         },
@@ -777,7 +784,7 @@
           "dataSfBuildingId": "201006.0147332",
           "dataSfMedianHeightMetres": 9.93,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.07,
           "osmSourceFeatureId": "way/264461902"
         },
@@ -788,7 +795,7 @@
           "dataSfBuildingId": "201006.0111776",
           "dataSfMedianHeightMetres": 8.09,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.09,
           "osmSourceFeatureId": "way/264461904"
         },
@@ -799,7 +806,7 @@
           "dataSfBuildingId": "201006.0158604",
           "dataSfMedianHeightMetres": 10.09,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.09,
           "osmSourceFeatureId": "way/264461907"
         },
@@ -810,7 +817,7 @@
           "dataSfBuildingId": "201006.0154657",
           "dataSfMedianHeightMetres": 5.8,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.2,
           "osmSourceFeatureId": "way/264461908"
         },
@@ -821,7 +828,7 @@
           "dataSfBuildingId": "201006.0149126",
           "dataSfMedianHeightMetres": 8.13,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/264461909"
         },
@@ -832,7 +839,7 @@
           "dataSfBuildingId": "201006.0138730",
           "dataSfMedianHeightMetres": 8.1,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/264461910"
         },
@@ -843,7 +850,7 @@
           "dataSfBuildingId": "201006.0133708",
           "dataSfMedianHeightMetres": 5.23,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/264461912"
         },
@@ -854,7 +861,7 @@
           "dataSfBuildingId": "201006.0156281",
           "dataSfMedianHeightMetres": 9.2,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.2,
           "osmSourceFeatureId": "way/264461913"
         },
@@ -865,7 +872,7 @@
           "dataSfBuildingId": "201006.0144647",
           "dataSfMedianHeightMetres": 11.63,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.37,
           "osmSourceFeatureId": "way/264461914"
         },
@@ -876,7 +883,7 @@
           "dataSfBuildingId": "201006.0148738",
           "dataSfMedianHeightMetres": 8,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0,
           "osmSourceFeatureId": "way/264461916"
         },
@@ -887,7 +894,7 @@
           "dataSfBuildingId": "201006.0150753",
           "dataSfMedianHeightMetres": 5.01,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.01,
           "osmSourceFeatureId": "way/264461918"
         },
@@ -898,7 +905,7 @@
           "dataSfBuildingId": "201006.0149891",
           "dataSfMedianHeightMetres": 6.39,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.39,
           "osmSourceFeatureId": "way/264461919"
         },
@@ -909,7 +916,7 @@
           "dataSfBuildingId": "201006.0067121",
           "dataSfMedianHeightMetres": 6.63,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.37,
           "osmSourceFeatureId": "way/264461920"
         },
@@ -920,7 +927,7 @@
           "dataSfBuildingId": "201006.0059368",
           "dataSfMedianHeightMetres": 10.72,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.28,
           "osmSourceFeatureId": "way/264463115"
         },
@@ -931,7 +938,7 @@
           "dataSfBuildingId": "201006.0047228",
           "dataSfMedianHeightMetres": 9.77,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.23,
           "osmSourceFeatureId": "way/264463117"
         },
@@ -942,7 +949,7 @@
           "dataSfBuildingId": "201006.0100524",
           "dataSfMedianHeightMetres": 9.6,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.4,
           "osmSourceFeatureId": "way/264463118"
         },
@@ -964,7 +971,7 @@
           "dataSfBuildingId": "201006.0049585",
           "dataSfMedianHeightMetres": 9.55,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.45,
           "osmSourceFeatureId": "way/264463120"
         },
@@ -975,7 +982,7 @@
           "dataSfBuildingId": "201006.0087920",
           "dataSfMedianHeightMetres": 9.32,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/264463123"
         },
@@ -986,7 +993,7 @@
           "dataSfBuildingId": "201006.0106370",
           "dataSfMedianHeightMetres": 9.93,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.07,
           "osmSourceFeatureId": "way/264463124"
         },
@@ -997,7 +1004,7 @@
           "dataSfBuildingId": "201006.0058252",
           "dataSfMedianHeightMetres": 10.13,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/264463125"
         },
@@ -1008,7 +1015,7 @@
           "dataSfBuildingId": "201006.0058315",
           "dataSfMedianHeightMetres": 10.53,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.47,
           "osmSourceFeatureId": "way/264463126"
         },
@@ -1019,7 +1026,7 @@
           "dataSfBuildingId": "201006.0051709",
           "dataSfMedianHeightMetres": 8.05,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.05,
           "osmSourceFeatureId": "way/264466313"
         },
@@ -1030,7 +1037,7 @@
           "dataSfBuildingId": "201006.0096158",
           "dataSfMedianHeightMetres": 9.63,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.37,
           "osmSourceFeatureId": "way/264466314"
         },
@@ -1041,7 +1048,7 @@
           "dataSfBuildingId": "201006.0036728",
           "dataSfMedianHeightMetres": 4.03,
           "osmHeightMetres": 4,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.03,
           "osmSourceFeatureId": "way/264466315"
         },
@@ -1052,7 +1059,7 @@
           "dataSfBuildingId": "201006.0144857",
           "dataSfMedianHeightMetres": 8.12,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.12,
           "osmSourceFeatureId": "way/264466316"
         },
@@ -1063,7 +1070,7 @@
           "dataSfBuildingId": "201006.0059304",
           "dataSfMedianHeightMetres": 7.69,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.31,
           "osmSourceFeatureId": "way/264466317"
         },
@@ -1074,7 +1081,7 @@
           "dataSfBuildingId": "201006.0096995",
           "dataSfMedianHeightMetres": 6.85,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.15,
           "osmSourceFeatureId": "way/264466318"
         },
@@ -1085,7 +1092,7 @@
           "dataSfBuildingId": "201006.0065200",
           "dataSfMedianHeightMetres": 6.31,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.31,
           "osmSourceFeatureId": "way/264466319"
         },
@@ -1096,7 +1103,7 @@
           "dataSfBuildingId": "201006.0129533",
           "dataSfMedianHeightMetres": 10.32,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/264466320"
         },
@@ -1107,7 +1114,7 @@
           "dataSfBuildingId": "201006.0053724",
           "dataSfMedianHeightMetres": 6.36,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.36,
           "osmSourceFeatureId": "way/264466321"
         },
@@ -1118,7 +1125,7 @@
           "dataSfBuildingId": "201006.0127628",
           "dataSfMedianHeightMetres": 7.98,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.02,
           "osmSourceFeatureId": "way/264466322"
         },
@@ -1129,7 +1136,7 @@
           "dataSfBuildingId": "201006.0043209",
           "dataSfMedianHeightMetres": 7.18,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.18,
           "osmSourceFeatureId": "way/264466323"
         },
@@ -1140,7 +1147,7 @@
           "dataSfBuildingId": "201006.0051713",
           "dataSfMedianHeightMetres": 9.24,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.24,
           "osmSourceFeatureId": "way/264466324"
         },
@@ -1151,7 +1158,7 @@
           "dataSfBuildingId": "201006.0009883",
           "dataSfMedianHeightMetres": 12.14,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.14,
           "osmSourceFeatureId": "way/264466325"
         },
@@ -1162,7 +1169,7 @@
           "dataSfBuildingId": "201006.0100358",
           "dataSfMedianHeightMetres": 8.85,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.15,
           "osmSourceFeatureId": "way/264466326"
         },
@@ -1173,7 +1180,7 @@
           "dataSfBuildingId": "201006.0018987",
           "dataSfMedianHeightMetres": 8.2,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.2,
           "osmSourceFeatureId": "way/264469950"
         },
@@ -1184,7 +1191,7 @@
           "dataSfBuildingId": "201006.0009498",
           "dataSfMedianHeightMetres": 10.58,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.42,
           "osmSourceFeatureId": "way/264469951"
         },
@@ -1195,7 +1202,7 @@
           "dataSfBuildingId": "201006.0072060",
           "dataSfMedianHeightMetres": 11.18,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.18,
           "osmSourceFeatureId": "way/264469952"
         },
@@ -1206,7 +1213,7 @@
           "dataSfBuildingId": "201006.0026987",
           "dataSfMedianHeightMetres": 7.78,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/264469953"
         },
@@ -1217,7 +1224,7 @@
           "dataSfBuildingId": "201006.0019876",
           "dataSfMedianHeightMetres": 10.32,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/264469955"
         },
@@ -1228,7 +1235,7 @@
           "dataSfBuildingId": "201006.0015820",
           "dataSfMedianHeightMetres": 15.91,
           "osmHeightMetres": 16,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.09,
           "osmSourceFeatureId": "way/264469956"
         },
@@ -1239,7 +1246,7 @@
           "dataSfBuildingId": "201006.0064401",
           "dataSfMedianHeightMetres": 6.3,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.3,
           "osmSourceFeatureId": "way/264469958"
         },
@@ -1250,7 +1257,7 @@
           "dataSfBuildingId": "201006.0095119",
           "dataSfMedianHeightMetres": 12.04,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.04,
           "osmSourceFeatureId": "way/264469959"
         },
@@ -1261,7 +1268,7 @@
           "dataSfBuildingId": "201006.0130695",
           "dataSfMedianHeightMetres": 10.23,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/264469961"
         },
@@ -1272,7 +1279,7 @@
           "dataSfBuildingId": "201006.0114020",
           "dataSfMedianHeightMetres": 9.83,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.17,
           "osmSourceFeatureId": "way/264469962"
         },
@@ -1283,7 +1290,7 @@
           "dataSfBuildingId": "201006.0006401",
           "dataSfMedianHeightMetres": 7.88,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.12,
           "osmSourceFeatureId": "way/264469963"
         },
@@ -1294,7 +1301,7 @@
           "dataSfBuildingId": "201006.0126640",
           "dataSfMedianHeightMetres": 10.37,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/264469964"
         },
@@ -1305,7 +1312,7 @@
           "dataSfBuildingId": "201006.0131672",
           "dataSfMedianHeightMetres": 9.94,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.06,
           "osmSourceFeatureId": "way/264469965"
         },
@@ -1316,7 +1323,7 @@
           "dataSfBuildingId": "201006.0137462",
           "dataSfMedianHeightMetres": 10.47,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.47,
           "osmSourceFeatureId": "way/264469966"
         },
@@ -1327,7 +1334,7 @@
           "dataSfBuildingId": "201006.0132801",
           "dataSfMedianHeightMetres": 10.11,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.11,
           "osmSourceFeatureId": "way/264469967"
         },
@@ -1338,7 +1345,7 @@
           "dataSfBuildingId": "201006.0026379",
           "dataSfMedianHeightMetres": 6.28,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.28,
           "osmSourceFeatureId": "way/264469968"
         },
@@ -1349,7 +1356,7 @@
           "dataSfBuildingId": "201006.0154447",
           "dataSfMedianHeightMetres": 6.71,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.29,
           "osmSourceFeatureId": "way/264471904"
         },
@@ -1360,7 +1367,7 @@
           "dataSfBuildingId": "201006.0105996",
           "dataSfMedianHeightMetres": 8.25,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.25,
           "osmSourceFeatureId": "way/264471905"
         },
@@ -1371,7 +1378,7 @@
           "dataSfBuildingId": "201006.0070732",
           "dataSfMedianHeightMetres": 6.38,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.38,
           "osmSourceFeatureId": "way/264471906"
         },
@@ -1382,7 +1389,7 @@
           "dataSfBuildingId": "201006.0008818",
           "dataSfMedianHeightMetres": 8.73,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.27,
           "osmSourceFeatureId": "way/264471907"
         },
@@ -1393,7 +1400,7 @@
           "dataSfBuildingId": "201006.0077585",
           "dataSfMedianHeightMetres": 6.51,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.49,
           "osmSourceFeatureId": "way/264471908"
         },
@@ -1404,7 +1411,7 @@
           "dataSfBuildingId": "201006.0111927",
           "dataSfMedianHeightMetres": 5.64,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.36,
           "osmSourceFeatureId": "way/264471909"
         },
@@ -1415,7 +1422,7 @@
           "dataSfBuildingId": "201006.0036169",
           "dataSfMedianHeightMetres": 6.86,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.14,
           "osmSourceFeatureId": "way/264471910"
         },
@@ -1426,7 +1433,7 @@
           "dataSfBuildingId": "201006.0046465",
           "dataSfMedianHeightMetres": 5.35,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.35,
           "osmSourceFeatureId": "way/264471911"
         },
@@ -1437,7 +1444,7 @@
           "dataSfBuildingId": "201006.0088910",
           "dataSfMedianHeightMetres": 6.1,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/264471912"
         },
@@ -1448,7 +1455,7 @@
           "dataSfBuildingId": "201006.0117423",
           "dataSfMedianHeightMetres": 6.25,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.25,
           "osmSourceFeatureId": "way/264471913"
         },
@@ -1459,7 +1466,7 @@
           "dataSfBuildingId": "201006.0089254",
           "dataSfMedianHeightMetres": 5.9,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.1,
           "osmSourceFeatureId": "way/264471914"
         },
@@ -1470,7 +1477,7 @@
           "dataSfBuildingId": "201006.0110314",
           "dataSfMedianHeightMetres": 6.25,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.25,
           "osmSourceFeatureId": "way/264471915"
         },
@@ -1481,7 +1488,7 @@
           "dataSfBuildingId": "201006.0111809",
           "dataSfMedianHeightMetres": 6.59,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.41,
           "osmSourceFeatureId": "way/264471916"
         },
@@ -1492,7 +1499,7 @@
           "dataSfBuildingId": "201006.0140436",
           "dataSfMedianHeightMetres": 4.13,
           "osmHeightMetres": 4,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/264471917"
         },
@@ -1503,7 +1510,7 @@
           "dataSfBuildingId": "201006.0114135",
           "dataSfMedianHeightMetres": 8.6,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.4,
           "osmSourceFeatureId": "way/264471918"
         },
@@ -1514,7 +1521,7 @@
           "dataSfBuildingId": "201006.0030601",
           "dataSfMedianHeightMetres": 6.92,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.08,
           "osmSourceFeatureId": "way/264471919"
         },
@@ -1525,7 +1532,7 @@
           "dataSfBuildingId": "201006.0028622",
           "dataSfMedianHeightMetres": 10.84,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.16,
           "osmSourceFeatureId": "way/264473642"
         },
@@ -1536,7 +1543,7 @@
           "dataSfBuildingId": "201006.0005153",
           "dataSfMedianHeightMetres": 11.71,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.29,
           "osmSourceFeatureId": "way/264473643"
         },
@@ -1558,7 +1565,7 @@
           "dataSfBuildingId": "201006.0040415",
           "dataSfMedianHeightMetres": 9.64,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.36,
           "osmSourceFeatureId": "way/264473645"
         },
@@ -1569,7 +1576,7 @@
           "dataSfBuildingId": "201006.0083070",
           "dataSfMedianHeightMetres": 6.86,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.14,
           "osmSourceFeatureId": "way/264473648"
         },
@@ -1580,7 +1587,7 @@
           "dataSfBuildingId": "201006.0097979",
           "dataSfMedianHeightMetres": 7.78,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/264902409"
         },
@@ -1591,7 +1598,7 @@
           "dataSfBuildingId": "201006.0132505",
           "dataSfMedianHeightMetres": 9.89,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.11,
           "osmSourceFeatureId": "way/264902411"
         },
@@ -1602,7 +1609,7 @@
           "dataSfBuildingId": "201006.0085981",
           "dataSfMedianHeightMetres": 6.38,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.38,
           "osmSourceFeatureId": "way/264902412"
         },
@@ -1613,7 +1620,7 @@
           "dataSfBuildingId": "201006.0040528",
           "dataSfMedianHeightMetres": 11.89,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.11,
           "osmSourceFeatureId": "way/264902413"
         },
@@ -1624,7 +1631,7 @@
           "dataSfBuildingId": "201006.0069506",
           "dataSfMedianHeightMetres": 9.14,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.14,
           "osmSourceFeatureId": "way/264902414"
         },
@@ -1635,7 +1642,7 @@
           "dataSfBuildingId": "201006.0096339",
           "dataSfMedianHeightMetres": 8.17,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.17,
           "osmSourceFeatureId": "way/264902415"
         },
@@ -1646,7 +1653,7 @@
           "dataSfBuildingId": "201006.0094935",
           "dataSfMedianHeightMetres": 9.97,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.03,
           "osmSourceFeatureId": "way/264902416"
         },
@@ -1657,7 +1664,7 @@
           "dataSfBuildingId": "201006.0106583",
           "dataSfMedianHeightMetres": 9.45,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.45,
           "osmSourceFeatureId": "way/264902420"
         },
@@ -1668,7 +1675,7 @@
           "dataSfBuildingId": "201006.0054466",
           "dataSfMedianHeightMetres": 8.02,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.02,
           "osmSourceFeatureId": "way/264902422"
         },
@@ -1679,7 +1686,7 @@
           "dataSfBuildingId": "201006.0076140",
           "dataSfMedianHeightMetres": 9.17,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.17,
           "osmSourceFeatureId": "way/264902423"
         },
@@ -1690,7 +1697,7 @@
           "dataSfBuildingId": "201006.0100078",
           "dataSfMedianHeightMetres": 8.5,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.5,
           "osmSourceFeatureId": "way/264902425"
         },
@@ -1701,7 +1708,7 @@
           "dataSfBuildingId": "201006.0056570",
           "dataSfMedianHeightMetres": 8.46,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/264902426"
         },
@@ -1712,7 +1719,7 @@
           "dataSfBuildingId": "201006.0149530",
           "dataSfMedianHeightMetres": 7.85,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.15,
           "osmSourceFeatureId": "way/264902427"
         },
@@ -1723,7 +1730,7 @@
           "dataSfBuildingId": "201006.0075214",
           "dataSfMedianHeightMetres": 9.53,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.47,
           "osmSourceFeatureId": "way/264902429"
         },
@@ -1734,7 +1741,7 @@
           "dataSfBuildingId": "201006.0019552",
           "dataSfMedianHeightMetres": 10.15,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.15,
           "osmSourceFeatureId": "way/264902432"
         },
@@ -1745,7 +1752,7 @@
           "dataSfBuildingId": "201006.0076976",
           "dataSfMedianHeightMetres": 5.77,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.23,
           "osmSourceFeatureId": "way/264902433"
         },
@@ -1756,7 +1763,7 @@
           "dataSfBuildingId": "201006.0051808",
           "dataSfMedianHeightMetres": 10.59,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.41,
           "osmSourceFeatureId": "way/264902434"
         },
@@ -1767,7 +1774,7 @@
           "dataSfBuildingId": "201006.0073088",
           "dataSfMedianHeightMetres": 5.86,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.14,
           "osmSourceFeatureId": "way/264902435"
         },
@@ -1778,7 +1785,7 @@
           "dataSfBuildingId": "201006.0102274",
           "dataSfMedianHeightMetres": 9.25,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.25,
           "osmSourceFeatureId": "way/264902438"
         },
@@ -1789,7 +1796,7 @@
           "dataSfBuildingId": "201006.0142737",
           "dataSfMedianHeightMetres": 6.12,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.12,
           "osmSourceFeatureId": "way/264902442"
         },
@@ -1800,7 +1807,7 @@
           "dataSfBuildingId": "201006.0143719",
           "dataSfMedianHeightMetres": 7.26,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.26,
           "osmSourceFeatureId": "way/264902443"
         },
@@ -1811,7 +1818,7 @@
           "dataSfBuildingId": "201006.0143826",
           "dataSfMedianHeightMetres": 9.23,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/264902444"
         },
@@ -1822,7 +1829,7 @@
           "dataSfBuildingId": "201006.0107914",
           "dataSfMedianHeightMetres": 7.9,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.1,
           "osmSourceFeatureId": "way/264902445"
         },
@@ -1833,7 +1840,7 @@
           "dataSfBuildingId": "201006.0100935",
           "dataSfMedianHeightMetres": 7.62,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.38,
           "osmSourceFeatureId": "way/265419619"
         },
@@ -1844,7 +1851,7 @@
           "dataSfBuildingId": "201006.0109495",
           "dataSfMedianHeightMetres": 7.13,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/265419621"
         },
@@ -1855,7 +1862,7 @@
           "dataSfBuildingId": "201006.0101030",
           "dataSfMedianHeightMetres": 5.26,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.26,
           "osmSourceFeatureId": "way/265419622"
         },
@@ -1866,7 +1873,7 @@
           "dataSfBuildingId": "201006.0128579",
           "dataSfMedianHeightMetres": 9.09,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.09,
           "osmSourceFeatureId": "way/265419624"
         },
@@ -1877,7 +1884,7 @@
           "dataSfBuildingId": "201006.0156030",
           "dataSfMedianHeightMetres": 6.81,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.19,
           "osmSourceFeatureId": "way/265419625"
         },
@@ -1888,7 +1895,7 @@
           "dataSfBuildingId": "201006.0109487",
           "dataSfMedianHeightMetres": 6.7,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.3,
           "osmSourceFeatureId": "way/265419627"
         },
@@ -1899,7 +1906,7 @@
           "dataSfBuildingId": "201006.0063323",
           "dataSfMedianHeightMetres": 8.04,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.04,
           "osmSourceFeatureId": "way/265419628"
         },
@@ -1910,7 +1917,7 @@
           "dataSfBuildingId": "201006.0100903",
           "dataSfMedianHeightMetres": 6.92,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.08,
           "osmSourceFeatureId": "way/265419629"
         },
@@ -1921,7 +1928,7 @@
           "dataSfBuildingId": "201006.0095934",
           "dataSfMedianHeightMetres": 6.09,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.09,
           "osmSourceFeatureId": "way/265419630"
         },
@@ -1932,7 +1939,7 @@
           "dataSfBuildingId": "201006.0111892",
           "dataSfMedianHeightMetres": 5.09,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.09,
           "osmSourceFeatureId": "way/265419631"
         },
@@ -1943,7 +1950,7 @@
           "dataSfBuildingId": "201006.0114627",
           "dataSfMedianHeightMetres": 7.08,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.08,
           "osmSourceFeatureId": "way/265419632"
         },
@@ -1954,7 +1961,7 @@
           "dataSfBuildingId": "201006.0087110",
           "dataSfMedianHeightMetres": 5.88,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.12,
           "osmSourceFeatureId": "way/265419633"
         },
@@ -1965,7 +1972,7 @@
           "dataSfBuildingId": "201006.0077723",
           "dataSfMedianHeightMetres": 8.65,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.35,
           "osmSourceFeatureId": "way/265419634"
         },
@@ -1976,7 +1983,7 @@
           "dataSfBuildingId": "201006.0118735",
           "dataSfMedianHeightMetres": 5.32,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/265419635"
         },
@@ -1987,7 +1994,7 @@
           "dataSfBuildingId": "201006.0096323",
           "dataSfMedianHeightMetres": 4.4,
           "osmHeightMetres": 4,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.4,
           "osmSourceFeatureId": "way/265419636"
         },
@@ -1998,7 +2005,7 @@
           "dataSfBuildingId": "201006.0095302",
           "dataSfMedianHeightMetres": 6.03,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.03,
           "osmSourceFeatureId": "way/265419637"
         },
@@ -2009,7 +2016,7 @@
           "dataSfBuildingId": "201006.0111793",
           "dataSfMedianHeightMetres": 5.99,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.01,
           "osmSourceFeatureId": "way/265419638"
         },
@@ -2020,7 +2027,7 @@
           "dataSfBuildingId": "201006.0071541",
           "dataSfMedianHeightMetres": 6.45,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.45,
           "osmSourceFeatureId": "way/265419639"
         },
@@ -2031,7 +2038,7 @@
           "dataSfBuildingId": "201006.0072780",
           "dataSfMedianHeightMetres": 5.07,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.07,
           "osmSourceFeatureId": "way/265419640"
         },
@@ -2042,7 +2049,7 @@
           "dataSfBuildingId": "201006.0058612",
           "dataSfMedianHeightMetres": 6.81,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.19,
           "osmSourceFeatureId": "way/265419641"
         },
@@ -2053,7 +2060,7 @@
           "dataSfBuildingId": "201006.0123492",
           "dataSfMedianHeightMetres": 5.01,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.01,
           "osmSourceFeatureId": "way/265419642"
         },
@@ -2064,7 +2071,7 @@
           "dataSfBuildingId": "201006.0060480",
           "dataSfMedianHeightMetres": 7.15,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.15,
           "osmSourceFeatureId": "way/265419643"
         },
@@ -2075,7 +2082,7 @@
           "dataSfBuildingId": "201006.0121984",
           "dataSfMedianHeightMetres": 7.83,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.17,
           "osmSourceFeatureId": "way/265419644"
         },
@@ -2086,7 +2093,7 @@
           "dataSfBuildingId": "201006.0158113",
           "dataSfMedianHeightMetres": 5.92,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.08,
           "osmSourceFeatureId": "way/265419645"
         },
@@ -2097,7 +2104,7 @@
           "dataSfBuildingId": "201006.0154948",
           "dataSfMedianHeightMetres": 7.49,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.49,
           "osmSourceFeatureId": "way/265419646"
         },
@@ -2108,7 +2115,7 @@
           "dataSfBuildingId": "201006.0146824",
           "dataSfMedianHeightMetres": 5.31,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.31,
           "osmSourceFeatureId": "way/265419647"
         },
@@ -2119,7 +2126,7 @@
           "dataSfBuildingId": "201006.0146306",
           "dataSfMedianHeightMetres": 8.37,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/265419648"
         },
@@ -2130,7 +2137,7 @@
           "dataSfBuildingId": "201006.0151412",
           "dataSfMedianHeightMetres": 5.52,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.48,
           "osmSourceFeatureId": "way/265419649"
         },
@@ -2141,7 +2148,7 @@
           "dataSfBuildingId": "201006.0100481",
           "dataSfMedianHeightMetres": 6.9,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.1,
           "osmSourceFeatureId": "way/265419650"
         },
@@ -2152,7 +2159,7 @@
           "dataSfBuildingId": "201006.0140220",
           "dataSfMedianHeightMetres": 8.54,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.46,
           "osmSourceFeatureId": "way/265419651"
         },
@@ -2163,7 +2170,7 @@
           "dataSfBuildingId": "201006.0080609",
           "dataSfMedianHeightMetres": 7.69,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.31,
           "osmSourceFeatureId": "way/265419652"
         },
@@ -2174,7 +2181,7 @@
           "dataSfBuildingId": "201006.0081851",
           "dataSfMedianHeightMetres": 6.37,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/265419653"
         },
@@ -2185,7 +2192,7 @@
           "dataSfBuildingId": "201006.0145638",
           "dataSfMedianHeightMetres": 8.36,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.36,
           "osmSourceFeatureId": "way/265419654"
         },
@@ -2196,7 +2203,7 @@
           "dataSfBuildingId": "201006.0143427",
           "dataSfMedianHeightMetres": 5.29,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.29,
           "osmSourceFeatureId": "way/265419655"
         },
@@ -2207,7 +2214,7 @@
           "dataSfBuildingId": "201006.0088124",
           "dataSfMedianHeightMetres": 7.26,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.26,
           "osmSourceFeatureId": "way/265419656"
         },
@@ -2218,7 +2225,7 @@
           "dataSfBuildingId": "201006.0109996",
           "dataSfMedianHeightMetres": 8.67,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.33,
           "osmSourceFeatureId": "way/265419657"
         },
@@ -2229,7 +2236,7 @@
           "dataSfBuildingId": "201006.0149555",
           "dataSfMedianHeightMetres": 5.89,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.11,
           "osmSourceFeatureId": "way/265419658"
         },
@@ -2240,7 +2247,7 @@
           "dataSfBuildingId": "201006.0044460",
           "dataSfMedianHeightMetres": 10.78,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/265419659"
         },
@@ -2251,7 +2258,7 @@
           "dataSfBuildingId": "201006.0073231",
           "dataSfMedianHeightMetres": 8.85,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.15,
           "osmSourceFeatureId": "way/265419660"
         },
@@ -2262,7 +2269,7 @@
           "dataSfBuildingId": "201006.0138535",
           "dataSfMedianHeightMetres": 8.27,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.27,
           "osmSourceFeatureId": "way/265422753"
         },
@@ -2273,7 +2280,7 @@
           "dataSfBuildingId": "201006.0109936",
           "dataSfMedianHeightMetres": 9.1,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/265422754"
         },
@@ -2284,7 +2291,7 @@
           "dataSfBuildingId": "201006.0128510",
           "dataSfMedianHeightMetres": 7.03,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.03,
           "osmSourceFeatureId": "way/265422755"
         },
@@ -2295,7 +2302,7 @@
           "dataSfBuildingId": "201006.0091223",
           "dataSfMedianHeightMetres": 5.91,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.09,
           "osmSourceFeatureId": "way/265422756"
         },
@@ -2306,7 +2313,7 @@
           "dataSfBuildingId": "201006.0020054",
           "dataSfMedianHeightMetres": 9.95,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.05,
           "osmSourceFeatureId": "way/265422757"
         },
@@ -2317,7 +2324,7 @@
           "dataSfBuildingId": "201006.0061893",
           "dataSfMedianHeightMetres": 7.58,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.42,
           "osmSourceFeatureId": "way/265422758"
         },
@@ -2328,7 +2335,7 @@
           "dataSfBuildingId": "201006.0119506",
           "dataSfMedianHeightMetres": 8.54,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.46,
           "osmSourceFeatureId": "way/265422759"
         },
@@ -2339,7 +2346,7 @@
           "dataSfBuildingId": "201006.0082718",
           "dataSfMedianHeightMetres": 8.98,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.02,
           "osmSourceFeatureId": "way/265422760"
         },
@@ -2350,7 +2357,7 @@
           "dataSfBuildingId": "201006.0074447",
           "dataSfMedianHeightMetres": 6.68,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.32,
           "osmSourceFeatureId": "way/265422761"
         },
@@ -2361,7 +2368,7 @@
           "dataSfBuildingId": "201006.0086160",
           "dataSfMedianHeightMetres": 5.61,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.39,
           "osmSourceFeatureId": "way/265422762"
         },
@@ -2372,7 +2379,7 @@
           "dataSfBuildingId": "201006.0087426",
           "dataSfMedianHeightMetres": 6.05,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.05,
           "osmSourceFeatureId": "way/265422763"
         },
@@ -2383,7 +2390,7 @@
           "dataSfBuildingId": "201006.0084868",
           "dataSfMedianHeightMetres": 8.63,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.37,
           "osmSourceFeatureId": "way/265422764"
         },
@@ -2394,7 +2401,7 @@
           "dataSfBuildingId": "201006.0122135",
           "dataSfMedianHeightMetres": 8.16,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.16,
           "osmSourceFeatureId": "way/265422766"
         },
@@ -2405,7 +2412,7 @@
           "dataSfBuildingId": "201006.0073580",
           "dataSfMedianHeightMetres": 7.56,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.44,
           "osmSourceFeatureId": "way/265422767"
         },
@@ -2416,7 +2423,7 @@
           "dataSfBuildingId": "201006.0066965",
           "dataSfMedianHeightMetres": 7.37,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.37,
           "osmSourceFeatureId": "way/265422768"
         },
@@ -2427,7 +2434,7 @@
           "dataSfBuildingId": "201006.0105342",
           "dataSfMedianHeightMetres": 9.61,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.39,
           "osmSourceFeatureId": "way/265422769"
         },
@@ -2438,7 +2445,7 @@
           "dataSfBuildingId": "201006.0096355",
           "dataSfMedianHeightMetres": 5.45,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.45,
           "osmSourceFeatureId": "way/265422770"
         },
@@ -2449,7 +2456,7 @@
           "dataSfBuildingId": "201006.0035297",
           "dataSfMedianHeightMetres": 6.68,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.32,
           "osmSourceFeatureId": "way/265422771"
         },
@@ -2460,7 +2467,7 @@
           "dataSfBuildingId": "201006.0019068",
           "dataSfMedianHeightMetres": 9.48,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.48,
           "osmSourceFeatureId": "way/265422772"
         },
@@ -2471,7 +2478,7 @@
           "dataSfBuildingId": "201006.0030030",
           "dataSfMedianHeightMetres": 9.07,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.07,
           "osmSourceFeatureId": "way/265422773"
         },
@@ -2482,7 +2489,7 @@
           "dataSfBuildingId": "201006.0108748",
           "dataSfMedianHeightMetres": 6.32,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/265422774"
         },
@@ -2493,7 +2500,7 @@
           "dataSfBuildingId": "201006.0090137",
           "dataSfMedianHeightMetres": 8.93,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.07,
           "osmSourceFeatureId": "way/265422775"
         },
@@ -2504,7 +2511,7 @@
           "dataSfBuildingId": "201006.0123238",
           "dataSfMedianHeightMetres": 6.57,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.43,
           "osmSourceFeatureId": "way/265422776"
         },
@@ -2515,7 +2522,7 @@
           "dataSfBuildingId": "201006.0107355",
           "dataSfMedianHeightMetres": 9.13,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/265422777"
         },
@@ -2526,7 +2533,7 @@
           "dataSfBuildingId": "201006.0040349",
           "dataSfMedianHeightMetres": 6.66,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.34,
           "osmSourceFeatureId": "way/265422778"
         },
@@ -2537,7 +2544,7 @@
           "dataSfBuildingId": "201006.0071851",
           "dataSfMedianHeightMetres": 6.05,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.05,
           "osmSourceFeatureId": "way/265422779"
         },
@@ -2548,7 +2555,7 @@
           "dataSfBuildingId": "201006.0147787",
           "dataSfMedianHeightMetres": 8.08,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.08,
           "osmSourceFeatureId": "way/265422780"
         },
@@ -2559,7 +2566,7 @@
           "dataSfBuildingId": "201006.0136282",
           "dataSfMedianHeightMetres": 8.22,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.22,
           "osmSourceFeatureId": "way/265422781"
         },
@@ -2570,7 +2577,7 @@
           "dataSfBuildingId": "201006.0131328",
           "dataSfMedianHeightMetres": 9.43,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.43,
           "osmSourceFeatureId": "way/265422782"
         },
@@ -2581,7 +2588,7 @@
           "dataSfBuildingId": "201006.0147468",
           "dataSfMedianHeightMetres": 6.6,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "osm-building-levels-times-3.2m",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.4,
           "osmSourceFeatureId": "way/265425481"
         },
@@ -2592,7 +2599,7 @@
           "dataSfBuildingId": "201006.0131493",
           "dataSfMedianHeightMetres": 5.73,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.27,
           "osmSourceFeatureId": "way/265425482"
         },
@@ -2603,7 +2610,7 @@
           "dataSfBuildingId": "201006.0143989",
           "dataSfMedianHeightMetres": 8.46,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/265425483"
         },
@@ -2614,7 +2621,7 @@
           "dataSfBuildingId": "201006.0061418",
           "dataSfMedianHeightMetres": 8.36,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.36,
           "osmSourceFeatureId": "way/265425484"
         },
@@ -2625,7 +2632,7 @@
           "dataSfBuildingId": "201006.0147017",
           "dataSfMedianHeightMetres": 8.48,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.48,
           "osmSourceFeatureId": "way/265425485"
         },
@@ -2636,7 +2643,7 @@
           "dataSfBuildingId": "201006.0097175",
           "dataSfMedianHeightMetres": 7.79,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.21,
           "osmSourceFeatureId": "way/265425486"
         },
@@ -2647,7 +2654,7 @@
           "dataSfBuildingId": "201006.0147685",
           "dataSfMedianHeightMetres": 8.08,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.08,
           "osmSourceFeatureId": "way/265425487"
         },
@@ -2658,7 +2665,7 @@
           "dataSfBuildingId": "201006.0124893",
           "dataSfMedianHeightMetres": 6.49,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.49,
           "osmSourceFeatureId": "way/265425488"
         },
@@ -2669,7 +2676,7 @@
           "dataSfBuildingId": "201006.0154660",
           "dataSfMedianHeightMetres": 7.11,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.11,
           "osmSourceFeatureId": "way/265425489"
         },
@@ -2680,7 +2687,7 @@
           "dataSfBuildingId": "201006.0097130",
           "dataSfMedianHeightMetres": 7.1,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/265425490"
         },
@@ -2691,7 +2698,7 @@
           "dataSfBuildingId": "201006.0127347",
           "dataSfMedianHeightMetres": 7.17,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.17,
           "osmSourceFeatureId": "way/265425491"
         },
@@ -2702,7 +2709,7 @@
           "dataSfBuildingId": "201006.0082823",
           "dataSfMedianHeightMetres": 8.15,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.15,
           "osmSourceFeatureId": "way/265425492"
         },
@@ -2713,7 +2720,7 @@
           "dataSfBuildingId": "201006.0147474",
           "dataSfMedianHeightMetres": 6.65,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.35,
           "osmSourceFeatureId": "way/265425493"
         },
@@ -2724,7 +2731,7 @@
           "dataSfBuildingId": "201006.0142430",
           "dataSfMedianHeightMetres": 7.57,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.43,
           "osmSourceFeatureId": "way/265425494"
         },
@@ -2735,7 +2742,7 @@
           "dataSfBuildingId": "201006.0037222",
           "dataSfMedianHeightMetres": 9.92,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.08,
           "osmSourceFeatureId": "way/265425495"
         },
@@ -2746,7 +2753,7 @@
           "dataSfBuildingId": "201006.0123021",
           "dataSfMedianHeightMetres": 8.11,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.11,
           "osmSourceFeatureId": "way/265425496"
         },
@@ -2757,7 +2764,7 @@
           "dataSfBuildingId": "201006.0094922",
           "dataSfMedianHeightMetres": 8.39,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.39,
           "osmSourceFeatureId": "way/265425497"
         },
@@ -2768,7 +2775,7 @@
           "dataSfBuildingId": "201006.0138687",
           "dataSfMedianHeightMetres": 8.3,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.3,
           "osmSourceFeatureId": "way/265425499"
         },
@@ -2779,7 +2786,7 @@
           "dataSfBuildingId": "201006.0106471",
           "dataSfMedianHeightMetres": 5.3,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.3,
           "osmSourceFeatureId": "way/265425500"
         },
@@ -2790,7 +2797,7 @@
           "dataSfBuildingId": "201006.0146429",
           "dataSfMedianHeightMetres": 7.64,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.36,
           "osmSourceFeatureId": "way/265425501"
         },
@@ -2801,7 +2808,7 @@
           "dataSfBuildingId": "201006.0121288",
           "dataSfMedianHeightMetres": 7.55,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.45,
           "osmSourceFeatureId": "way/265425502"
         },
@@ -2812,7 +2819,7 @@
           "dataSfBuildingId": "201006.0149352",
           "dataSfMedianHeightMetres": 8.86,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.14,
           "osmSourceFeatureId": "way/265425503"
         },
@@ -2823,7 +2830,7 @@
           "dataSfBuildingId": "201006.0108818",
           "dataSfMedianHeightMetres": 8.35,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.35,
           "osmSourceFeatureId": "way/265425504"
         },
@@ -2834,7 +2841,7 @@
           "dataSfBuildingId": "201006.0144902",
           "dataSfMedianHeightMetres": 8.67,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.33,
           "osmSourceFeatureId": "way/265425505"
         },
@@ -2845,7 +2852,7 @@
           "dataSfBuildingId": "201006.0048999",
           "dataSfMedianHeightMetres": 7.87,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.13,
           "osmSourceFeatureId": "way/265470617"
         },
@@ -2856,7 +2863,7 @@
           "dataSfBuildingId": "201006.0036792",
           "dataSfMedianHeightMetres": 7.51,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.49,
           "osmSourceFeatureId": "way/265470621"
         },
@@ -2878,7 +2885,7 @@
           "dataSfBuildingId": "201006.0047413",
           "dataSfMedianHeightMetres": 10.03,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.03,
           "osmSourceFeatureId": "way/265470627"
         },
@@ -2889,7 +2896,7 @@
           "dataSfBuildingId": "201006.0052855",
           "dataSfMedianHeightMetres": 9.52,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.48,
           "osmSourceFeatureId": "way/265470628"
         },
@@ -2900,7 +2907,7 @@
           "dataSfBuildingId": "201006.0078747",
           "dataSfMedianHeightMetres": 7.94,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.06,
           "osmSourceFeatureId": "way/265470629"
         },
@@ -2911,7 +2918,7 @@
           "dataSfBuildingId": "201006.0069705",
           "dataSfMedianHeightMetres": 7.42,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.42,
           "osmSourceFeatureId": "way/265470632"
         },
@@ -2922,7 +2929,7 @@
           "dataSfBuildingId": "201006.0062385",
           "dataSfMedianHeightMetres": 12.56,
           "osmHeightMetres": 13,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.44,
           "osmSourceFeatureId": "way/265470635"
         },
@@ -2933,7 +2940,7 @@
           "dataSfBuildingId": "201006.0015620",
           "dataSfMedianHeightMetres": 13.46,
           "osmHeightMetres": 13,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.46,
           "osmSourceFeatureId": "way/265470638"
         },
@@ -2944,7 +2951,7 @@
           "dataSfBuildingId": "201006.0089003",
           "dataSfMedianHeightMetres": 7.85,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.15,
           "osmSourceFeatureId": "way/265470640"
         },
@@ -2955,7 +2962,7 @@
           "dataSfBuildingId": "201006.0002819",
           "dataSfMedianHeightMetres": 12.14,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.14,
           "osmSourceFeatureId": "way/265470641"
         },
@@ -2966,7 +2973,7 @@
           "dataSfBuildingId": "201006.0112677",
           "dataSfMedianHeightMetres": 9.49,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.49,
           "osmSourceFeatureId": "way/265470643"
         },
@@ -2977,7 +2984,7 @@
           "dataSfBuildingId": "201006.0062663",
           "dataSfMedianHeightMetres": 9.56,
           "osmHeightMetres": 10,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.44,
           "osmSourceFeatureId": "way/265470645"
         },
@@ -2988,7 +2995,7 @@
           "dataSfBuildingId": "201006.0044489",
           "dataSfMedianHeightMetres": 15.41,
           "osmHeightMetres": 15,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.41,
           "osmSourceFeatureId": "way/265470646"
         },
@@ -2999,7 +3006,7 @@
           "dataSfBuildingId": "201006.0113805",
           "dataSfMedianHeightMetres": 6.83,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.17,
           "osmSourceFeatureId": "way/265470648"
         },
@@ -3010,7 +3017,7 @@
           "dataSfBuildingId": "201006.0045793",
           "dataSfMedianHeightMetres": 11.39,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.39,
           "osmSourceFeatureId": "way/265470650"
         },
@@ -3021,7 +3028,7 @@
           "dataSfBuildingId": "201006.0014197",
           "dataSfMedianHeightMetres": 12.78,
           "osmHeightMetres": 13,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/265470653"
         },
@@ -3032,7 +3039,7 @@
           "dataSfBuildingId": "201006.0080421",
           "dataSfMedianHeightMetres": 9.04,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.04,
           "osmSourceFeatureId": "way/265470654"
         },
@@ -3043,7 +3050,7 @@
           "dataSfBuildingId": "201006.0073938",
           "dataSfMedianHeightMetres": 12.38,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.38,
           "osmSourceFeatureId": "way/265470655"
         },
@@ -3054,7 +3061,7 @@
           "dataSfBuildingId": "201006.0026452",
           "dataSfMedianHeightMetres": 6.98,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.02,
           "osmSourceFeatureId": "way/265480104"
         },
@@ -3065,7 +3072,7 @@
           "dataSfBuildingId": "201006.0106973",
           "dataSfMedianHeightMetres": 9.35,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.35,
           "osmSourceFeatureId": "way/265480106"
         },
@@ -3076,7 +3083,7 @@
           "dataSfBuildingId": "201006.0132166",
           "dataSfMedianHeightMetres": 5.12,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.12,
           "osmSourceFeatureId": "way/265480107"
         },
@@ -3087,7 +3094,7 @@
           "dataSfBuildingId": "201006.0067845",
           "dataSfMedianHeightMetres": 8.12,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.12,
           "osmSourceFeatureId": "way/265480108"
         },
@@ -3098,7 +3105,7 @@
           "dataSfBuildingId": "201006.0091430",
           "dataSfMedianHeightMetres": 7.98,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.02,
           "osmSourceFeatureId": "way/265480109"
         },
@@ -3109,7 +3116,7 @@
           "dataSfBuildingId": "201006.0084687",
           "dataSfMedianHeightMetres": 5.2,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.2,
           "osmSourceFeatureId": "way/265480110"
         },
@@ -3120,7 +3127,7 @@
           "dataSfBuildingId": "201006.0084644",
           "dataSfMedianHeightMetres": 6.74,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.26,
           "osmSourceFeatureId": "way/265480111"
         },
@@ -3131,7 +3138,7 @@
           "dataSfBuildingId": "201006.0060553",
           "dataSfMedianHeightMetres": 4.91,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.09,
           "osmSourceFeatureId": "way/265495005"
         },
@@ -3142,7 +3149,7 @@
           "dataSfBuildingId": "201006.0069738",
           "dataSfMedianHeightMetres": 6.96,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.04,
           "osmSourceFeatureId": "way/265495006"
         },
@@ -3153,7 +3160,7 @@
           "dataSfBuildingId": "201006.0097705",
           "dataSfMedianHeightMetres": 5.5,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.5,
           "osmSourceFeatureId": "way/265495007"
         },
@@ -3164,7 +3171,7 @@
           "dataSfBuildingId": "201006.0055834",
           "dataSfMedianHeightMetres": 3.91,
           "osmHeightMetres": 4,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.09,
           "osmSourceFeatureId": "way/265495008"
         },
@@ -3175,7 +3182,7 @@
           "dataSfBuildingId": "201006.0123274",
           "dataSfMedianHeightMetres": 5.2,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.2,
           "osmSourceFeatureId": "way/265495009"
         },
@@ -3186,7 +3193,7 @@
           "dataSfBuildingId": "201006.0124203",
           "dataSfMedianHeightMetres": 9.31,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.31,
           "osmSourceFeatureId": "way/265495010"
         },
@@ -3197,7 +3204,7 @@
           "dataSfBuildingId": "201006.0054570",
           "dataSfMedianHeightMetres": 6.03,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.03,
           "osmSourceFeatureId": "way/265495011"
         },
@@ -3208,7 +3215,7 @@
           "dataSfBuildingId": "201006.0077800",
           "dataSfMedianHeightMetres": 5.34,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.34,
           "osmSourceFeatureId": "way/265495012"
         },
@@ -3219,7 +3226,7 @@
           "dataSfBuildingId": "201006.0013772",
           "dataSfMedianHeightMetres": 6.11,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.11,
           "osmSourceFeatureId": "way/265495013"
         },
@@ -3230,7 +3237,7 @@
           "dataSfBuildingId": "201006.0119177",
           "dataSfMedianHeightMetres": 8.73,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.27,
           "osmSourceFeatureId": "way/265495014"
         },
@@ -3241,7 +3248,7 @@
           "dataSfBuildingId": "201006.0015957",
           "dataSfMedianHeightMetres": 8.17,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.17,
           "osmSourceFeatureId": "way/265495015"
         },
@@ -3252,7 +3259,7 @@
           "dataSfBuildingId": "201006.0129261",
           "dataSfMedianHeightMetres": 5.05,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.05,
           "osmSourceFeatureId": "way/265495016"
         },
@@ -3263,7 +3270,7 @@
           "dataSfBuildingId": "201006.0091585",
           "dataSfMedianHeightMetres": 11.24,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.24,
           "osmSourceFeatureId": "way/265497904"
         },
@@ -3274,7 +3281,7 @@
           "dataSfBuildingId": "201006.0129812",
           "dataSfMedianHeightMetres": 8.59,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.41,
           "osmSourceFeatureId": "way/265497907"
         },
@@ -3285,7 +3292,7 @@
           "dataSfBuildingId": "201006.0104432",
           "dataSfMedianHeightMetres": 7.17,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.17,
           "osmSourceFeatureId": "way/265497913"
         },
@@ -3296,7 +3303,7 @@
           "dataSfBuildingId": "201006.0084955",
           "dataSfMedianHeightMetres": 11.25,
           "osmHeightMetres": 11,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.25,
           "osmSourceFeatureId": "way/265497915"
         },
@@ -3307,7 +3314,7 @@
           "dataSfBuildingId": "201006.0083072",
           "dataSfMedianHeightMetres": 9.12,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.12,
           "osmSourceFeatureId": "way/265497917"
         },
@@ -3318,7 +3325,7 @@
           "dataSfBuildingId": "201006.0157106",
           "dataSfMedianHeightMetres": 8.44,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.44,
           "osmSourceFeatureId": "way/268027012"
         },
@@ -3329,7 +3336,7 @@
           "dataSfBuildingId": "201006.0070183",
           "dataSfMedianHeightMetres": 4.81,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.19,
           "osmSourceFeatureId": "way/268027014"
         },
@@ -3340,7 +3347,7 @@
           "dataSfBuildingId": "201006.0087133",
           "dataSfMedianHeightMetres": 7.4,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.4,
           "osmSourceFeatureId": "way/268658127"
         },
@@ -3351,7 +3358,7 @@
           "dataSfBuildingId": "201006.0081477",
           "dataSfMedianHeightMetres": 7.78,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.22,
           "osmSourceFeatureId": "way/268658135"
         },
@@ -3362,7 +3369,7 @@
           "dataSfBuildingId": "201006.0032028",
           "dataSfMedianHeightMetres": 6.05,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.05,
           "osmSourceFeatureId": "way/268658160"
         },
@@ -3373,7 +3380,7 @@
           "dataSfBuildingId": "201006.0008527",
           "dataSfMedianHeightMetres": 12.21,
           "osmHeightMetres": 12,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.21,
           "osmSourceFeatureId": "way/268668273"
         },
@@ -3384,7 +3391,7 @@
           "dataSfBuildingId": "201006.0010246",
           "dataSfMedianHeightMetres": 6.55,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.45,
           "osmSourceFeatureId": "way/268668282"
         },
@@ -3395,7 +3402,7 @@
           "dataSfBuildingId": "201006.0050912",
           "dataSfMedianHeightMetres": 9.23,
           "osmHeightMetres": 9,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/268668287"
         },
@@ -3406,7 +3413,7 @@
           "dataSfBuildingId": "201006.0012599",
           "dataSfMedianHeightMetres": 7.55,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.45,
           "osmSourceFeatureId": "way/268668289"
         },
@@ -3417,7 +3424,7 @@
           "dataSfBuildingId": "201006.0114914",
           "dataSfMedianHeightMetres": 5.79,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.21,
           "osmSourceFeatureId": "way/268684150"
         },
@@ -3428,7 +3435,7 @@
           "dataSfBuildingId": "201006.0040241",
           "dataSfMedianHeightMetres": 7.68,
           "osmHeightMetres": 8,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": 0.32,
           "osmSourceFeatureId": "way/268684152"
         },
@@ -3439,7 +3446,7 @@
           "dataSfBuildingId": "201006.0098703",
           "dataSfMedianHeightMetres": 5.13,
           "osmHeightMetres": 5,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.13,
           "osmSourceFeatureId": "way/268684159"
         },
@@ -3450,7 +3457,7 @@
           "dataSfBuildingId": "201006.0072899",
           "dataSfMedianHeightMetres": 7.23,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.23,
           "osmSourceFeatureId": "way/268684161"
         },
@@ -3461,7 +3468,7 @@
           "dataSfBuildingId": "201006.0004896",
           "dataSfMedianHeightMetres": 7.1,
           "osmHeightMetres": 7,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.1,
           "osmSourceFeatureId": "way/268684164"
         },
@@ -3472,7 +3479,7 @@
           "dataSfBuildingId": "201006.0075422",
           "dataSfMedianHeightMetres": 6.32,
           "osmHeightMetres": 6,
-          "osmHeightPolicy": "deterministic-9.6m-fallback",
+          "osmHeightPolicy": "osm-height",
           "osmMinusDataSfMedianHeightMetres": -0.32,
           "osmSourceFeatureId": "way/268684168"
         },
@@ -3497,8 +3504,8 @@
         "independenceQualification": "OSM comparison includes derived or default extrusion heights and is not an independent validation of DataSF height accuracy",
         "matchRateAgainstOsmPct": 76.2,
         "matchedOsmHeightPolicyCounts": {
-          "deterministic-9.6m-fallback": 296,
-          "osm-building-levels-times-3.2m": 1
+          "deterministic-9.6m-fallback": 6,
+          "osm-height": 291
         },
         "osmMinusDataSfHeightMedianMetres": -0.03
       },
