@@ -39,14 +39,13 @@ const HERO_IDS = Object.freeze([
   'sf-building-151183777',
 ]);
 
-// Render budget caps are grounded in the f90aac3 baseline measured on the
-// canonical `sf` pose at time 14 (608-609 draw calls, ~530,940 triangles,
-// 413 geometries, 298 textures; aerial 1,143 / 549,402). The hero slice may
-// add at most its bounded triangle delta (<=5,000, enforced via diagnostics)
-// plus a small headroom for hero draw groups and frame jitter; anything above
-// these caps is a regression, not an accepted cost.
-const HERO_POSE_CAPS = Object.freeze({ drawCalls: 621, triangles: 537000 });
-const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 1149, triangles: 550000 });
+// Traffic is hidden for deterministic facade/roof isolation. The 642a296
+// atlas baseline is 471 draws / 504,374 triangles on the canonical hero pose
+// and 858 / 521,007 aerial. Actual roof geometry gets only two draw groups and
+// 462 triangles; these caps retain a tiny scheduling/culling margin.
+const HERO_POSE_CAPS = Object.freeze({ drawCalls: 474, triangles: 504950 });
+const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 900, triangles: 530000 });
+const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 862, triangles: 521600 });
 
 const sampleRenderer = () => page.evaluate(() => {
   const renderer = window.__CITYGEN__.getRenderer();
@@ -108,6 +107,7 @@ try {
     const traffic = api.getTraffic?.();
     if (traffic?.group) traffic.group.visible = false;
     const hero = renderer.heroFacadeDiagnostics || null;
+    const roof = renderer.heroRoofDiagnostics || null;
     const footprint = renderer.buildingFootprintDiagnostics || null;
     return {
       backend: renderer.rendererBackend,
@@ -124,6 +124,34 @@ try {
         })) : null,
         drawGroups: hero.drawGroups,
         triangleDelta: hero.triangleDelta,
+      } : null,
+      roof: roof ? {
+        expectedIds: Array.isArray(roof.expectedIds) ? [...roof.expectedIds] : null,
+        builtIds: Array.isArray(roof.builtIds) ? [...roof.builtIds] : null,
+        skippedIds: Array.isArray(roof.skippedIds) ? [...roof.skippedIds] : null,
+        entries: Array.isArray(roof.entries) ? roof.entries.map((entry) => ({
+          id: entry?.id,
+          sourceVertexCount: entry?.sourceVertexCount,
+          profile: entry?.profile,
+          parapetDepth: entry?.parapetDepth,
+          parapetHeight: entry?.parapetHeight,
+          mechanicalBoxCount: entry?.mechanicalBoxCount,
+          centroid: entry?.centroid ? { ...entry.centroid } : null,
+        })) : null,
+        sourceEdges: roof.sourceEdges,
+        parapetTriangles: roof.parapetTriangles,
+        mechanicalBoxes: roof.mechanicalBoxes,
+        mechanicalTriangles: roof.mechanicalTriangles,
+        triangleDelta: roof.triangleDelta,
+        drawGroups: roof.drawGroups,
+        geometries: roof.geometries,
+        textures: roof.textures,
+        finite: roof.finite,
+        normalsFinite: roof.normalsFinite,
+        minNormalLength: roof.minNormalLength,
+        maxNormalLength: roof.maxNormalLength,
+        maxFootprintOvershootMeters: roof.maxFootprintOvershootMeters,
+        minRoofClearanceMeters: roof.minRoofClearanceMeters,
       } : null,
       footprint: footprint ? {
         sourceCount: footprint.sourceCount,
@@ -196,6 +224,55 @@ try {
     `hero facade triangle delta <=5000 (${runtime.hero.triangleDelta})`);
   report.zeroNewTriangles = runtime.hero.triangleDelta === 0;
 
+  assert.ok(runtime.roof,
+    'getRenderer().heroRoofDiagnostics is required; actual hero roof contract is absent');
+  assert.deepEqual([...runtime.roof.expectedIds].sort(), [...HERO_IDS].sort(),
+    'roof diagnostics expect the exact audited six buildings');
+  assert.deepEqual([...runtime.roof.builtIds].sort(), [...HERO_IDS].sort(),
+    'actual roof geometry was built for the exact audited six buildings');
+  assert.deepEqual(runtime.roof.skippedIds, [], 'no hero roof geometry was skipped');
+  assert.equal(new Set(runtime.roof.builtIds).size, 6, 'roof diagnostics contain no duplicate ids');
+  assert.equal(runtime.roof.entries.length, 6, 'roof diagnostics expose six per-building entries');
+  const expectedVertices = new Map([
+    ['sf-building-132127809', 17],
+    ['sf-building-151183777', 4],
+    ['sf-building-132127810', 5],
+    ['sf-building-149335987', 5],
+    ['sf-building-149335979', 9],
+    ['sf-building-149335988', 11],
+  ]);
+  for (const entry of runtime.roof.entries) {
+    assert.equal(entry.sourceVertexCount, expectedVertices.get(entry.id),
+      `${entry.id}: roof consumes the unchanged source polygon vertex count`);
+    assert.ok(typeof entry.profile === 'string' && entry.profile.length > 0,
+      `${entry.id}: roof reports a source-inspired profile key`);
+    assert.ok(entry.parapetDepth > 0 && entry.parapetHeight > 0,
+      `${entry.id}: parapet dimensions are positive`);
+    assert.ok(Number.isInteger(entry.mechanicalBoxCount) && entry.mechanicalBoxCount > 0,
+      `${entry.id}: mechanical presentation is represented`);
+    assert.ok(entry.centroid && [entry.centroid.x, entry.centroid.y, entry.centroid.z].every(Number.isFinite),
+      `${entry.id}: roof centroid is finite`);
+  }
+  assert.equal(runtime.roof.sourceEdges, 51, 'roof batches consume all 51 source polygon edges');
+  assert.equal(runtime.roof.parapetTriangles, 306, 'parapet ring triangle count is exact');
+  assert.equal(runtime.roof.mechanicalBoxes, 13, 'mechanical presentation uses exactly 13 boxes');
+  assert.equal(runtime.roof.mechanicalTriangles, 156, 'mechanical triangle count is exact');
+  assert.equal(runtime.roof.triangleDelta, 462, 'roof presentation adds exactly 462 triangles');
+  assert.ok(runtime.roof.drawGroups <= 2,
+    `roof presentation uses <=2 draw groups (${runtime.roof.drawGroups})`);
+  assert.equal(runtime.roof.geometries, 2, 'roof presentation uses exactly two live geometries');
+  assert.equal(runtime.roof.textures, 0, 'roof presentation adds no textures');
+  assert.equal(runtime.roof.finite, true, 'roof positions and indices are finite');
+  assert.equal(runtime.roof.normalsFinite, true, 'roof normals are finite');
+  assert.ok(runtime.roof.minNormalLength >= 0.999,
+    `minimum roof normal length >=0.999 (${runtime.roof.minNormalLength})`);
+  assert.ok(runtime.roof.maxNormalLength <= 1.001,
+    `maximum roof normal length <=1.001 (${runtime.roof.maxNormalLength})`);
+  assert.ok(runtime.roof.maxFootprintOvershootMeters <= 0.01,
+    `roof geometry stays inside/on source footprint (${runtime.roof.maxFootprintOvershootMeters}m)`);
+  assert.ok(runtime.roof.minRoofClearanceMeters >= 0.02,
+    `roof geometry clears source cap by >=0.02m (${runtime.roof.minRoofClearanceMeters}m)`);
+
   await page.addStyleTag({
     content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill,.osm-overlay{display:none!important}',
   });
@@ -205,6 +282,32 @@ try {
   await page.screenshot({ path: '.qa-citygen-hero-facades.png' });
   report.render.hero = hero;
   assertRenderBudget(hero, 'hero', HERO_POSE_CAPS);
+
+  const elevatedVisibility = await page.evaluate(() => {
+    const renderer = window.__CITYGEN__.getRenderer();
+    renderer.camera.position.set(1470, 180, 1160);
+    renderer.controls.target.set(1375, 25, 1045);
+    renderer.camera.fov = 50;
+    renderer.camera.updateProjectionMatrix();
+    renderer.controls.update();
+    renderer.camera.updateMatrixWorld(true);
+    return renderer.heroRoofDiagnostics.entries.map((entry) => {
+      const projected = renderer.camera.position.clone()
+        .set(entry.centroid.x, entry.centroid.y, entry.centroid.z)
+        .project(renderer.camera);
+      return { id: entry.id, x: projected.x, y: projected.y, z: projected.z };
+    });
+  });
+  report.elevatedVisibility = elevatedVisibility;
+  for (const entry of elevatedVisibility) {
+    assert.ok(Math.abs(entry.x) <= 0.92 && Math.abs(entry.y) <= 0.92 && entry.z >= -1 && entry.z <= 1,
+      `${entry.id}: roof centroid is visible in the matched elevated frame`);
+  }
+  await page.waitForTimeout(600);
+  const elevated = await sampleRenderer();
+  await page.screenshot({ path: '.qa-citygen-hero-roofs.png' });
+  report.render.elevated = elevated;
+  assertRenderBudget(elevated, 'elevated', ELEVATED_POSE_CAPS);
 
   await page.evaluate(() => window.__CITYGEN__.setCameraPose('aerial'));
   await page.waitForTimeout(500);
@@ -218,7 +321,7 @@ try {
     result: 'PASS',
     url,
     ...report,
-    screenshots: ['.qa-citygen-hero-facades.png'],
+    screenshots: ['.qa-citygen-hero-facades.png', '.qa-citygen-hero-roofs.png'],
     errors,
   }, null, 2));
 } catch (error) {
