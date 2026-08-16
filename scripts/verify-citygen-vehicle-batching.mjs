@@ -26,6 +26,71 @@ const BASELINE = Object.freeze({
 
 const finiteArray = (array) => Array.from(array || []).every(Number.isFinite);
 
+const CLASS_CONTRACT = Object.freeze({
+  kinds: { sedan: 28, taxi: 6, truck: 4, bus: 4 },
+  taxi: {
+    id: 'sf-yellow-taxi',
+    bodyColor: 0xf3bd2f,
+    cabColor: 0xe5b139,
+    topperColor: 0x1c1c1c,
+    wheelScale: 1,
+  },
+  wheelScale: { sedan: 1, taxi: 1, truck: 1.18, bus: 1.34 },
+  palette: [0xd94f4a, 0xe8b23a, 0x4f86c8, 0x3f9e8f, 0x8f74c8, 0xd47a3f, 0xf2e9d8, 0x6fbf73],
+  defaultCabColor: 0xb9d3e0,
+});
+
+const normalizeHex = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value >>> 0;
+  if (typeof value === 'string' && /^#?[0-9a-f]{6}$/i.test(value)) return parseInt(value.replace('#', ''), 16) >>> 0;
+  return null;
+};
+
+const srgbToLinear = (channel) => {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+};
+
+const hexToLinear = (hex) => [
+  srgbToLinear((hex >>> 16) & 0xff),
+  srgbToLinear((hex >>> 8) & 0xff),
+  srgbToLinear(hex & 0xff),
+];
+
+const colorArrayCloseToHex = (actual, hex, tolerance = 2e-5) => {
+  const expected = hexToLinear(hex);
+  return actual.length === 3 && actual.every((value, index) => Number.isFinite(value)
+    && Math.abs(value - expected[index]) <= tolerance);
+};
+
+const matrixTranslation = (matrix) => [matrix[12], matrix[13], matrix[14]];
+const matrixScale = (matrix) => [
+  Math.hypot(matrix[0], matrix[1], matrix[2]),
+  Math.hypot(matrix[4], matrix[5], matrix[6]),
+  Math.hypot(matrix[8], matrix[9], matrix[10]),
+];
+
+const closeEnough = (actual, expected, tolerance = 1e-5) => Math.abs(actual - expected) <= tolerance;
+const vectorsClose = (actual, expected, tolerance = 1e-5) => actual.length === expected.length
+  && actual.every((value, index) => closeEnough(value, expected[index], tolerance));
+
+function expectedWheelCenters(car) {
+  const wheelLayouts = {
+    sedan: [[-0.7, 0.3, 1.1], [0.7, 0.3, 1.1], [-0.7, 0.3, -1.1], [0.7, 0.3, -1.1]],
+    taxi: [[-0.7, 0.3, 1.1], [0.7, 0.3, 1.1], [-0.7, 0.3, -1.1], [0.7, 0.3, -1.1]],
+    truck: [[-0.98, 0.3, 1.6], [0.98, 0.3, 1.6], [-0.98, 0.3, -1.7], [0.98, 0.3, -1.7]],
+    bus: [[-1.05, 0.3, 2.45], [1.05, 0.3, 2.45], [-1.05, 0.3, -2.45], [1.05, 0.3, -2.45]],
+  }[car.kind];
+  const yaw = car.rotationY;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return wheelLayouts.map(([x, y, z]) => [
+    car.position[0] + x * cos + z * sin,
+    car.position[1] + y,
+    car.position[2] - x * sin + z * cos,
+  ]);
+}
+
 function hullGeometryReport(geometry) {
   const position = geometry?.attributes?.position;
   const normal = geometry?.attributes?.normal;
@@ -80,11 +145,116 @@ function hullGeometryReport(geometry) {
   };
 }
 
+function assertVehicleClassIdentity(report, label) {
+  const identities = report.vehicleIdentities;
+  assert.equal(identities.length, 42, `${label}: identity rows`);
+  const kinds = identities.reduce((counts, vehicle) => ({
+    ...counts,
+    [vehicle.kind]: (counts[vehicle.kind] || 0) + 1,
+  }), {});
+  assert.deepEqual(kinds, CLASS_CONTRACT.kinds, `${label}: exact vehicle class counts`);
+
+  const expectedLocalWheels = {
+    sedan: [[-0.7, 0.3, 1.1], [0.7, 0.3, 1.1], [-0.7, 0.3, -1.1], [0.7, 0.3, -1.1]],
+    taxi: [[-0.7, 0.3, 1.1], [0.7, 0.3, 1.1], [-0.7, 0.3, -1.1], [0.7, 0.3, -1.1]],
+    truck: [[-0.98, 0.3, 1.6], [0.98, 0.3, 1.6], [-0.98, 0.3, -1.7], [0.98, 0.3, -1.7]],
+    bus: [[-1.05, 0.3, 2.45], [1.05, 0.3, 2.45], [-1.05, 0.3, -2.45], [1.05, 0.3, -2.45]],
+  };
+
+  for (const vehicle of identities) {
+    const identity = vehicle.classIdentity;
+    assert.ok(identity && typeof identity === 'object', `${label}: ${vehicle.index} has class identity`);
+    assert.equal(identity.kind, vehicle.kind, `${label}: ${vehicle.index} identity kind`);
+    assert.equal(vehicle.instanceIndex, vehicle.index, `${label}: ${vehicle.index} stable instance index`);
+    assert.ok(vehicle.edgeId, `${label}: ${vehicle.index} remains assigned to a street edge`);
+    assert.ok(Number.isInteger(vehicle.pathIndex) && Number.isFinite(vehicle.distance),
+      `${label}: ${vehicle.index} path/entry state finite`);
+    assert.equal(vehicle.controlled, false, `${label}: ${vehicle.index} is not hijacked by presentation`);
+    assert.equal(identity.wheelScalePolicy, 'uniform-pivot-scale-v1', `${label}: ${vehicle.index} wheel policy`);
+
+    const expectedScale = CLASS_CONTRACT.wheelScale[vehicle.kind];
+    assert.ok(Number.isFinite(identity.wheelScale), `${label}: ${vehicle.index} wheel scale finite`);
+    assert.equal(identity.wheelScale, expectedScale, `${label}: ${vehicle.index} exact wheel scale`);
+    if (vehicle.kind === 'truck') {
+      assert.ok(identity.wheelScale >= 1.15 && identity.wheelScale <= 1.2,
+        `${label}: truck wheel scale in authored range`);
+    }
+    if (vehicle.kind === 'bus') {
+      assert.ok(identity.wheelScale >= 1.3 && identity.wheelScale <= 1.35,
+        `${label}: bus wheel scale in authored range`);
+    }
+
+    const bodyHex = normalizeHex(identity.bodyColor);
+    const cabHex = normalizeHex(identity.cabColor);
+    assert.notEqual(bodyHex, null, `${label}: ${vehicle.index} body identity is a color`);
+    assert.notEqual(cabHex, null, `${label}: ${vehicle.index} cab identity is a color`);
+    assert.equal(normalizeHex(vehicle.color), bodyHex, `${label}: ${vehicle.index} logical paint matches identity`);
+    assert.ok(colorArrayCloseToHex(vehicle.bodyColor, bodyHex), `${label}: ${vehicle.index} batch body color`);
+    assert.ok(colorArrayCloseToHex(vehicle.cabColor, cabHex), `${label}: ${vehicle.index} batch cab color`);
+
+    if (vehicle.kind === 'taxi') {
+      assert.equal(identity.id, CLASS_CONTRACT.taxi.id, `${label}: taxi identity id`);
+      assert.equal(bodyHex, CLASS_CONTRACT.taxi.bodyColor, `${label}: authored SF taxi yellow body`);
+      assert.equal(cabHex, CLASS_CONTRACT.taxi.cabColor, `${label}: coherent SF taxi cab tint`);
+      assert.equal(normalizeHex(identity.topperColor), CLASS_CONTRACT.taxi.topperColor,
+        `${label}: taxi topper identity is black`);
+      assert.ok(colorArrayCloseToHex(vehicle.topperColor, CLASS_CONTRACT.taxi.topperColor),
+        `${label}: taxi topper batch color is black`);
+    } else {
+      assert.equal(identity.id, `sf-${vehicle.kind}`, `${label}: ${vehicle.index} stable class id`);
+      if (vehicle.kind === 'bus') {
+        assert.equal(cabHex, normalizeHex(vehicle.sfTransit?.cabColor), `${label}: transit cab identity`);
+        assert.equal(bodyHex, normalizeHex(vehicle.sfTransit?.bodyColor), `${label}: transit body identity`);
+        assert.equal(identity.transitId, vehicle.sfTransit?.id, `${label}: transit id mirrored once`);
+        assert.equal(identity.transitStyle, vehicle.sfTransit?.style, `${label}: transit style mirrored once`);
+        assert.ok(colorArrayCloseToHex(vehicle.topperColor, normalizeHex(vehicle.sfTransit?.roofColor)),
+          `${label}: transit roof identity remains unchanged`);
+      } else {
+        assert.ok(CLASS_CONTRACT.palette.includes(bodyHex), `${label}: ${vehicle.index} preserves source paint palette`);
+        assert.equal(cabHex, CLASS_CONTRACT.defaultCabColor, `${label}: default cab tint remains unchanged`);
+        assert.equal(identity.topperColor, null, `${label}: ${vehicle.kind} has no topper identity`);
+        assert.equal(vehicle.topperColor, null, `${label}: ${vehicle.kind} has no topper instance`);
+      }
+    }
+
+    const localLayout = expectedLocalWheels[vehicle.kind];
+    assert.equal(vehicle.wheelMatrices.length, 4, `${label}: ${vehicle.index} four logical wheels`);
+    const expectedCenters = expectedWheelCenters(vehicle);
+    for (const [wheelIndex, wheel] of vehicle.wheelMatrices.entries()) {
+      assert.ok(vectorsClose(wheel.localPosition, localLayout[wheelIndex]),
+        `${label}: ${vehicle.index} wheel ${wheelIndex} center unchanged`);
+      assert.ok(vectorsClose(wheel.localScale, [expectedScale, expectedScale, expectedScale]),
+        `${label}: ${vehicle.index} wheel ${wheelIndex} pivot scale uniform`);
+      assert.ok(closeEnough(wheel.localRotation[0], vehicle.spin, 1e-5)
+        && closeEnough(wheel.localRotation[1], 0, 1e-5)
+        && closeEnough(wheel.localRotation[2], 0, 1e-5),
+      `${label}: ${vehicle.index} wheel ${wheelIndex} spin contract`);
+
+      const tireCenter = matrixTranslation(wheel.tire);
+      const hubCenter = matrixTranslation(wheel.hub);
+      assert.ok(vectorsClose(tireCenter, hubCenter, 2e-4),
+        `${label}: ${vehicle.index} wheel ${wheelIndex} tire/hub centers coincide`);
+      assert.ok(vectorsClose(tireCenter, expectedCenters[wheelIndex], 2e-4),
+        `${label}: ${vehicle.index} wheel ${wheelIndex} center follows control transform`);
+      assert.ok(vectorsClose(matrixScale(wheel.tire), [expectedScale, expectedScale, expectedScale], 2e-4),
+        `${label}: ${vehicle.index} tire matrix scale`);
+      assert.ok(vectorsClose(matrixScale(wheel.hub), [expectedScale, expectedScale, expectedScale], 2e-4),
+        `${label}: ${vehicle.index} hub matrix scale`);
+      assert.ok([...wheel.tire, ...wheel.hub].every(Number.isFinite),
+        `${label}: ${vehicle.index} wheel ${wheelIndex} matrices finite`);
+    }
+  }
+}
+
 const snapshot = () => page.evaluate(() => {
   const api = window.__CITYGEN__;
   const traffic = api.getTraffic();
   const renderer = api.getRenderer();
   const batch = traffic.vehicleBatch;
+  const matrixArray = (mesh, index) => Array.from(mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16));
+  const colorArray = (mesh, index) => mesh.instanceColor
+    ? Array.from(mesh.instanceColor.array.slice(index * 3, index * 3 + 3))
+    : null;
   const allMatricesFinite = Object.values(batch.parts)
     .every((mesh) => [...mesh.instanceMatrix.array].every(Number.isFinite));
   const bodyColorsFinite = batch.parts.body.instanceColor
@@ -106,6 +276,40 @@ const snapshot = () => page.evaluate(() => {
     .map(([name, mesh]) => [name, [...mesh.instanceMatrix.array].every(Number.isFinite)]));
   const instanceColorsFinite = Object.fromEntries(Object.entries(batch.parts)
     .map(([name, mesh]) => [name, !mesh.instanceColor || [...mesh.instanceColor.array].every(Number.isFinite)]));
+  const vehicleIdentities = traffic.cars.map((car, index) => {
+    const rig = car.group.userData.rig;
+    const identity = rig.classIdentity || null;
+    const wheelMatrices = rig.wheels.map((wheel, wheelIndex) => ({
+      localPosition: wheel.position.toArray(),
+      localScale: wheel.scale.toArray(),
+      localRotation: wheel.rotation.toArray(),
+      tire: matrixArray(batch.parts.tires, index * 4 + wheelIndex),
+      hub: matrixArray(batch.parts.hubs, index * 4 + wheelIndex),
+    }));
+    return {
+      index,
+      kind: car.kind,
+      color: car.color,
+      instanceIndex: car.instanceIndex,
+      position: car.group.position.toArray(),
+      rotationY: car.group.rotation.y,
+      edgeId: car.edge?.id || null,
+      pathIndex: car.pathIndex,
+      distance: car.distance,
+      turnSide: car.turnSide,
+      controlled: Boolean(car.controlled),
+      parentName: car.group.parent?.name || null,
+      spin: rig.spin,
+      classIdentity: identity ? { ...identity } : null,
+      sfTransit: rig.sfTransit ? { ...rig.sfTransit } : null,
+      bodyColor: colorArray(batch.parts.body, index),
+      cabColor: colorArray(batch.parts.cab, index),
+      topperColor: rig.topperInstanceIndex >= 0
+        ? colorArray(batch.parts.taxiTopper, rig.topperInstanceIndex)
+        : null,
+      wheelMatrices,
+    };
+  });
   return {
     backend: renderer.rendererBackend,
     diagnostics: traffic.getVehicleBatchDiagnostics(),
@@ -149,6 +353,7 @@ const snapshot = () => page.evaluate(() => {
     rendererTextures: renderer.renderer.info.memory.textures,
     instanceMatrixFinite,
     instanceColorsFinite,
+    vehicleIdentities,
   };
 });
 
@@ -167,7 +372,7 @@ try {
   const expectedIndices = Array.from({ length: 42 }, (_, index) => index);
   assert.equal(before.backend, 'webgpu');
   assert.equal(before.diagnostics.logicalCars, 42);
-  assert.deepEqual(before.diagnostics.kinds, { sedan: 28, taxi: 6, truck: 4, bus: 4 });
+  assert.deepEqual(before.diagnostics.kinds, CLASS_CONTRACT.kinds);
   assert.equal(before.diagnostics.meshes, 259);
   assert.equal(before.diagnostics.instancedMeshes, 7);
   assert.equal(before.diagnostics.geometries, 4);
@@ -221,6 +426,9 @@ try {
     body: true, cab: true, taxiTopper: true, transitWindows: true,
     headlights: true, tires: true, hubs: true,
   });
+  assert.equal(before.rendererGeometries, 402, '82bdccf render geometry budget remains exact');
+  assert.equal(before.rendererTextures, 259, '82bdccf texture budget remains exact');
+  assertVehicleClassIdentity(before, 'before-motion');
 
   const hull = hullGeometryReport({
     name: before.geometryReports.body.name,
@@ -267,6 +475,24 @@ try {
   assert.ok(movedDistance >= 0.2, `sampled logical car moved ${movedDistance.toFixed(3)}m`);
   assert.ok(matrixDelta >= 0.01, `batched body matrix changed by ${matrixDelta.toFixed(4)}`);
   assert.deepEqual(after.stableIndices, expectedIndices);
+  assertVehicleClassIdentity(after, 'after-motion');
+  assert.deepEqual(after.vehicleIdentities.map((vehicle) => ({
+    kind: vehicle.kind,
+    instanceIndex: vehicle.instanceIndex,
+    classIdentity: vehicle.classIdentity,
+    wheels: vehicle.wheelMatrices.map((wheel) => ({
+      localPosition: wheel.localPosition,
+      localScale: wheel.localScale,
+    })),
+  })), before.vehicleIdentities.map((vehicle) => ({
+    kind: vehicle.kind,
+    instanceIndex: vehicle.instanceIndex,
+    classIdentity: vehicle.classIdentity,
+    wheels: vehicle.wheelMatrices.map((wheel) => ({
+      localPosition: wheel.localPosition,
+      localScale: wheel.localScale,
+    })),
+  })), 'identity, wheel centers, and control slots remain stable while moving');
 
   const animation = await page.evaluate(() => {
     const traffic = window.__CITYGEN__.getTraffic();
@@ -341,6 +567,12 @@ try {
 
   assert.ok(after.drawCalls <= 1200, `full SF draw calls ${after.drawCalls}`);
   assert.ok(after.rendererGeometries <= 450, `renderer geometries ${after.rendererGeometries}`);
+  // Draw visibility can change while the live camera/traffic sample advances;
+  // the exact 82bdccf draw contract is asserted at stable daylight/night
+  // poses by verify-citygen-local-life.mjs. This snapshot still fail-closes
+  // geometry and texture allocations, which cannot vary with visibility.
+  assert.equal(after.rendererGeometries, before.rendererGeometries, 'vehicle identity adds zero geometries');
+  assert.equal(after.rendererTextures, before.rendererTextures, 'vehicle identity adds zero textures');
   assert.equal(after.vehicleTriangles - BASELINE.vehicleTriangles, 672);
   assert.ok(after.vehicleTriangles - BASELINE.vehicleTriangles <= 1000,
     `vehicle triangle delta ${after.vehicleTriangles - BASELINE.vehicleTriangles}`);
@@ -359,8 +591,18 @@ try {
     const length = Math.hypot(dx, dz) || 1;
     const forward = { x: dx / length, z: dz / length };
     const right = { x: -forward.z, z: forward.x };
-    const offsets = [[-5, 6], [0, 9], [5, 12], [-8, 16], [8, 20], [-3, 25], [4, 30], [0, 36]];
-    const staged = traffic.cars.slice(0, offsets.length);
+    const wantedKinds = ['taxi', 'taxi', 'truck', 'bus', 'sedan', 'sedan'];
+    const used = new Set();
+    const staged = wantedKinds.map((kind) => {
+      const index = traffic.cars.findIndex((car, carIndex) => car.kind === kind && !used.has(carIndex));
+      if (index < 0) return null;
+      used.add(index);
+      return traffic.cars[index];
+    }).filter(Boolean);
+    if (staged.length !== wantedKinds.length) {
+      throw new Error(`identity evidence staging expected ${wantedKinds.length} vehicles, got ${staged.length}`);
+    }
+    const offsets = [[-7, 8], [7, 8], [-7, 19], [7, 19], [-7, 31], [7, 31]];
     staged.forEach((car, index) => {
       const [lateral, distance] = offsets[index];
       const x = target.x + forward.x * distance + right.x * lateral;
@@ -376,10 +618,15 @@ try {
     renderer.controls.update();
     document.querySelectorAll('.brand, .toolbar, .readout, .hint, .inspector, .minimap, .place-chip, .status-pill, .field-guide, .loading-hud, #osm-overlay')
       .forEach((element) => { element.style.display = 'none'; });
-    return { stagedTraffic: staged.length, camera: camera.position.toArray(), target: target.toArray() };
+    return {
+      stagedTraffic: staged.length,
+      stagedKinds: staged.map((car) => car.kind),
+      camera: camera.position.toArray(),
+      target: target.toArray(),
+    };
   });
   await page.waitForTimeout(300);
-  await page.screenshot({ path: '.qa-citygen-vehicle-silhouettes.png' });
+  await page.screenshot({ path: '.qa-citygen-vehicle-identities.png' });
   console.log(JSON.stringify({
     result: 'PASS',
     url,
@@ -399,7 +646,7 @@ try {
       baselineCommit: BASELINE.commit,
       vehicleTriangleDelta: after.vehicleTriangles - BASELINE.vehicleTriangles,
     },
-    screenshot: { path: '.qa-citygen-vehicle-silhouettes.png', ...screenshotState },
+    screenshot: { path: '.qa-citygen-vehicle-identities.png', ...screenshotState },
     errors,
   }, null, 2));
 } catch (error) {
