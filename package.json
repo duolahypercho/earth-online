@@ -140,6 +140,7 @@
     "verify:citygen-local-lights": "node scripts/verify-citygen-local-lights.mjs",
     "verify:citygen-world-partition": "node scripts/verify-citygen-world-partition.mjs",
     "verify:citygen-world-partition-portals": "node scripts/verify-citygen-world-partition-portals.mjs",
+    "verify:citygen-parked-car-partition": "node scripts/verify-citygen-parked-car-partition.mjs",
     "verify:citygen-actors": "node scripts/verify-citygen-actors.mjs",
     "verify:citygen-hero-curb-life": "node scripts/verify-citygen-hero-curb-life.mjs",
     "verify:citygen-sidewalk-props": "node scripts/verify-citygen-sidewalk-props.mjs",

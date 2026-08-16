@@ -26,8 +26,8 @@ const VEHICLE_BATCH_BASELINE = Object.freeze({
 
 const GROUND_MATERIAL_RENDER = Object.freeze({
   pass: 'sf-ground-materials-v1',
-  daylight: { drawCalls: 595, triangles: 412294, geometries: 405, textures: 261 },
-  night: { drawCalls: 558, triangles: 407568, geometries: 405, textures: 261 },
+  daylight: { drawCalls: 593, triangles: 396358, geometries: 405, textures: 261 },
+  night: { drawCalls: 556, triangles: 392688, geometries: 405, textures: 261 },
 });
 
 const VEHICLE_PRESENTATION = Object.freeze({
