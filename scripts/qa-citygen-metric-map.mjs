@@ -18,7 +18,10 @@ page.on('console', (message) => {
 
 try {
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-  await page.waitForFunction(() => window.__CITYGEN__?.getState?.().webgpu === true, { timeout: 60000 });
+  await page.waitForFunction(() => {
+    const state = window.__CITYGEN__?.getState?.();
+    return state?.webgpu === true && state?.generator === 'sf-builtin' && state?.busy === false;
+  }, { timeout: 60000 });
   const result = await page.evaluate(() => window.__CITYGEN__.loadMetricSf());
   if (!result) throw new Error('Metric map loader rejected the candidate');
   await page.waitForFunction(() => window.__CITYGEN__?.getState?.().metricMap?.verifiedTiles === 10, { timeout: 120000 });
@@ -77,8 +80,8 @@ try {
     && report.errors.length === 0
     && errors.length === 0;
   await page.screenshot({ path: screenshot });
-  await page.evaluate(() => window.__CITYGEN__.generate('sanfrancisco', 731));
-  await page.waitForFunction(() => window.__CITYGEN__?.getState?.().generator === 'procedural', { timeout: 60000 });
+  await page.evaluate(() => window.__CITYGEN__.loadBuiltinSf());
+  await page.waitForFunction(() => window.__CITYGEN__?.getState?.().generator === 'sf-builtin', { timeout: 60000 });
   report.returnToDefault = await page.evaluate(() => ({
     generator: window.__CITYGEN__.getState().generator,
     rootName: window.__CITYGEN__.getRenderer().root?.name || null,
@@ -86,7 +89,7 @@ try {
   }));
   report.browserErrors = errors;
   report.pass = report.pass
-    && report.returnToDefault.generator === 'procedural'
+    && report.returnToDefault.generator === 'sf-builtin'
     && report.returnToDefault.rootName === 'city-root'
     && report.returnToDefault.errors.length === 0
     && errors.length === 0;
