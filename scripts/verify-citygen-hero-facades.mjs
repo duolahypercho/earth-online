@@ -152,6 +152,18 @@ try {
         maxNormalLength: roof.maxNormalLength,
         maxFootprintOvershootMeters: roof.maxFootprintOvershootMeters,
         minRoofClearanceMeters: roof.minRoofClearanceMeters,
+        materialPass: roof.materialPass,
+        atlasUrl: roof.atlasUrl,
+        atlasTextureShared: roof.atlasTextureShared,
+        uvFinite: roof.uvFinite,
+        uvWithinAssignedCell: roof.uvWithinAssignedCell,
+        parapetFaceTriangles: roof.parapetFaceTriangles ? { ...roof.parapetFaceTriangles } : null,
+        mechanicalColorVertices: roof.mechanicalColorVertices,
+        shadowCasters: roof.shadowCasters,
+        shadowReceivers: roof.shadowReceivers,
+        materialCount: roof.materialCount,
+        incremental: roof.incremental ? { ...roof.incremental } : null,
+        pbr: roof.pbr ? JSON.parse(JSON.stringify(roof.pbr)) : null,
       } : null,
       footprint: footprint ? {
         sourceCount: footprint.sourceCount,
@@ -272,6 +284,27 @@ try {
     `roof geometry stays inside/on source footprint (${runtime.roof.maxFootprintOvershootMeters}m)`);
   assert.ok(runtime.roof.minRoofClearanceMeters >= 0.02,
     `roof geometry clears source cap by >=0.02m (${runtime.roof.minRoofClearanceMeters}m)`);
+  assert.equal(runtime.roof.materialPass, 'hero-roof-grounding-v1',
+    'roof material grounding contract version is explicit');
+  assert.equal(runtime.roof.atlasUrl, '/assets/sf-market-kearny-hero-atlas-v1.png',
+    'roof presentation reuses the canonical hero atlas');
+  assert.equal(runtime.roof.atlasTextureShared, true,
+    'parapets share the exact loaded facade atlas texture object');
+  assert.equal(runtime.roof.uvFinite, true, 'parapet atlas UVs are finite');
+  assert.equal(runtime.roof.uvWithinAssignedCell, true, 'parapet UVs stay inside assigned atlas cells');
+  assert.deepEqual(runtime.roof.parapetFaceTriangles, { outer: 102, inner: 102, top: 102 },
+    'parapet face roles retain the exact 306-triangle split');
+  assert.equal(runtime.roof.mechanicalColorVertices, 312,
+    'all 13 HVAC/crown boxes receive grounded face colors');
+  assert.equal(runtime.roof.shadowCasters, 2, 'both roof batches cast shadows');
+  assert.equal(runtime.roof.shadowReceivers, 2, 'both roof batches receive shadows');
+  assert.equal(runtime.roof.materialCount, 2, 'roof presentation retains two materials');
+  assert.deepEqual(runtime.roof.incremental, { drawGroups: 0, triangles: 0, geometries: 0, textures: 0 },
+    'material grounding adds no structural render cost');
+  assert.deepEqual(runtime.roof.pbr, {
+    parapet: { roughness: 0.84, metalness: 0.02 },
+    mechanical: { roughness: 0.7, metalness: 0.14 },
+  }, 'roof PBR values match the grounded material contract');
 
   await page.addStyleTag({
     content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill,.osm-overlay{display:none!important}',

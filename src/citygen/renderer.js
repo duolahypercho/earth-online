@@ -40,6 +40,14 @@ const BUILDING_UV_METRES_Y = 4.6;
 const BUILDING_FOOTPRINT_EPSILON = 1e-4;
 const HERO_FACADE_ATLAS_URL = '/assets/sf-market-kearny-hero-atlas-v1.png';
 const HERO_FACADE_ATLAS_RESOLUTION = 1254;
+const HERO_ROOF_CAP_STYLES = Object.freeze([
+  { sampleU: 0.1, sampleV: 0.24, color: '#a89b85' },
+  { sampleU: 0.08, sampleV: 0.28, color: '#52636b' },
+  { sampleU: 0.12, sampleV: 0.25, color: '#b9b09e' },
+  { sampleU: 0.16, sampleV: 0.28, color: '#aaa394' },
+  { sampleU: 0.12, sampleV: 0.28, color: '#815e50' },
+  { sampleU: 0.12, sampleV: 0.3, color: '#76584f' },
+]);
 const HERO_FACADE_IDS = Object.freeze(new Map([
   ['sf-building-132127809', { cell: 0, pattern: 'hearst-stone' }],
   ['sf-building-151183777', { cell: 1, pattern: 'market-bronze-glass' }],
@@ -140,10 +148,19 @@ function boxFootprintCorners(center, width, depth, heading, dx = 0, dz = 0) {
   ].map(([x, z]) => ({ x: cx + x * cos - z * sin, z: cz + x * sin + z * cos }));
 }
 
-function colorizeGeometry(geometry, hex) {
-  const color = new THREE.Color(hex);
+function colorizeGeometry(geometry, hex, baseY = 0, topY = 1) {
+  const baseColor = new THREE.Color(hex);
+  const normals = geometry.attributes.normal;
+  const positions = geometry.attributes.position;
   const colors = new Float32Array(geometry.attributes.position.count * 3);
   for (let i = 0; i < geometry.attributes.position.count; i += 1) {
+    const normalY = normals?.getY(i) || 0;
+    const sideDirection = normals ? normals.getX(i) * 0.7 + normals.getZ(i) * 0.3 : 0;
+    const heightRatio = clamp((positions.getY(i) - baseY) / Math.max(0.001, topY - baseY), 0, 1);
+    const lightness = normalY > 0.5
+      ? 0.1
+      : normalY < -0.5 ? -0.2 : -0.16 + heightRatio * 0.13 + sideDirection * 0.025;
+    const color = baseColor.clone().offsetHSL(0, normalY > 0.5 ? -0.05 : 0, lightness);
     colors[i * 3] = color.r;
     colors[i * 3 + 1] = color.g;
     colors[i * 3 + 2] = color.b;
@@ -188,8 +205,9 @@ function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex) {
   // Texture UVs use a bottom-left origin after the image loader's Y flip.
   const vMin = visualRow === 0 ? 0.5 + insetV : insetV;
   const vMax = visualRow === 0 ? 1 - insetV : 0.5 - insetV;
-  const roofU = (uMin + uMax) / 2;
-  const roofV = vMax - 0.012;
+  const roofStyle = HERO_ROOF_CAP_STYLES[cellIndex];
+  const roofU = uMin + (uMax - uMin) * roofStyle.sampleU;
+  const roofV = vMax - (vMax - vMin) * roofStyle.sampleV;
   for (let i = 0; i < footprintPointCount; i += 1) uv.setXY(i, roofU, roofV);
   for (let edge = 0; edge < footprintPointCount; edge += 1) {
     const start = footprintPointCount + edge * 4;
@@ -198,8 +216,20 @@ function remapPolygonFacadeToAtlas(geometry, footprintPointCount, cellIndex) {
     uv.setXY(start + 2, uMax, vMax);
     uv.setXY(start + 3, uMin, vMax);
   }
+  const roofColor = new THREE.Color(roofStyle.color);
+  const white = new THREE.Color(0xffffff);
+  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  for (let i = 0; i < geometry.attributes.position.count; i += 1) {
+    const color = i < footprintPointCount
+      ? roofColor.clone().offsetHSL(0, 0, ((i * 17 + cellIndex * 7) % 5 - 2) * 0.012)
+      : white;
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   uv.needsUpdate = true;
-  return Array.from(uv.array).every(Number.isFinite);
+  return Array.from(uv.array).every(Number.isFinite) && Array.from(colors).every(Number.isFinite);
 }
 
 async function loadHeroFacadeTextures() {
@@ -1695,6 +1725,7 @@ export class CityRenderer {
       merged.computeVertexNormals();
       const material = new THREE.MeshStandardMaterial({
         map: heroTextures.texture,
+        vertexColors: true,
         emissive: 0xffd29a,
         emissiveMap: heroTextures.nightTexture,
         emissiveIntensity: 0,
@@ -1789,10 +1820,10 @@ export class CityRenderer {
       this.pickables.push(mesh);
       this.geometryCache.push(merged);
     }
-    this.buildHeroRoofBatches(root, heroRoofEntries);
+    this.buildHeroRoofBatches(root, heroRoofEntries, heroTextures);
   }
 
-  buildHeroRoofBatches(root, sourceEntries) {
+  buildHeroRoofBatches(root, sourceEntries, heroTextures) {
     const expectedIds = [...HERO_ROOF_PROFILES.keys()].sort();
     const diagnostics = {
       expectedIds,
@@ -1813,35 +1844,55 @@ export class CityRenderer {
       maxNormalLength: 0,
       maxFootprintOvershootMeters: 0,
       minRoofClearanceMeters: Infinity,
+      materialPass: 'hero-roof-grounding-v1',
+      atlasUrl: HERO_FACADE_ATLAS_URL,
+      atlasTextureShared: false,
+      uvFinite: true,
+      uvWithinAssignedCell: true,
+      parapetFaceTriangles: { outer: 0, inner: 0, top: 0 },
+      mechanicalColorVertices: 0,
+      shadowCasters: 0,
+      shadowReceivers: 0,
+      materialCount: 0,
+      incremental: { drawGroups: 0, triangles: 0, geometries: 0, textures: 0 },
+      pbr: {
+        parapet: { roughness: 0.84, metalness: 0.02 },
+        mechanical: { roughness: 0.7, metalness: 0.14 },
+      },
     };
     const byId = new Map(sourceEntries.map((entry) => [entry.id, entry]));
     const parapetPositions = [];
     const parapetNormals = [];
     const parapetColors = [];
+    const parapetUvs = [];
     const mechanicalGeometries = [];
     const clearance = 0.025;
 
-    const appendTriangle = (a, b, c, expectedNormal, color) => {
+    const appendTriangle = (a, b, c, expectedNormal, color, triangleUvs) => {
       const ab = new THREE.Vector3(b.x - a.x, b.y - a.y, b.z - a.z);
       const ac = new THREE.Vector3(c.x - a.x, c.y - a.y, c.z - a.z);
       const normal = ab.cross(ac).normalize();
       let vertices = [a, b, c];
+      let uvs = triangleUvs;
       if (normal.dot(expectedNormal) < 0) {
         vertices = [a, c, b];
+        uvs = [triangleUvs[0], triangleUvs[2], triangleUvs[1]];
         normal.multiplyScalar(-1);
       }
-      for (const vertex of vertices) {
+      for (let index = 0; index < vertices.length; index += 1) {
+        const vertex = vertices[index];
         parapetPositions.push(vertex.x, vertex.y, vertex.z);
         parapetNormals.push(normal.x, normal.y, normal.z);
         parapetColors.push(color.r, color.g, color.b);
+        parapetUvs.push(uvs[index].u, uvs[index].v);
       }
       const normalLength = normal.length();
       diagnostics.minNormalLength = Math.min(diagnostics.minNormalLength, normalLength);
       diagnostics.maxNormalLength = Math.max(diagnostics.maxNormalLength, normalLength);
     };
-    const appendQuad = (a, b, c, d, expectedNormal, color) => {
-      appendTriangle(a, b, c, expectedNormal, color);
-      appendTriangle(a, c, d, expectedNormal, color);
+    const appendQuad = (a, b, c, d, expectedNormal, color, quadUvs) => {
+      appendTriangle(a, b, c, expectedNormal, color, [quadUvs[0], quadUvs[1], quadUvs[2]]);
+      appendTriangle(a, c, d, expectedNormal, color, [quadUvs[0], quadUvs[2], quadUvs[3]]);
     };
 
     for (const id of expectedIds) {
@@ -1858,6 +1909,36 @@ export class CityRenderer {
       const parapetBaseY = roofY + clearance;
       const parapetTopY = parapetBaseY + profile.height;
       const color = new THREE.Color(profile.color);
+      const innerColor = color.clone().offsetHSL(0, -0.02, -0.12);
+      const topColor = color.clone().offsetHSL(0, -0.05, 0.1);
+      const cellIndex = HERO_FACADE_IDS.get(id).cell;
+      const cellColumn = cellIndex % 3;
+      const visualRow = Math.floor(cellIndex / 3);
+      const cellUMin = cellColumn / 3 + 1 / HERO_FACADE_ATLAS_RESOLUTION;
+      const cellUMax = (cellColumn + 1) / 3 - 1 / HERO_FACADE_ATLAS_RESOLUTION;
+      const cellVMin = visualRow === 0 ? 0.5 + 1 / HERO_FACADE_ATLAS_RESOLUTION : 1 / HERO_FACADE_ATLAS_RESOLUTION;
+      const cellVMax = visualRow === 0 ? 1 - 1 / HERO_FACADE_ATLAS_RESOLUTION : 0.5 - 1 / HERO_FACADE_ATLAS_RESOLUTION;
+      const roofStyle = HERO_ROOF_CAP_STYLES[cellIndex];
+      const roofU = cellUMin + (cellUMax - cellUMin) * roofStyle.sampleU;
+      const roofV = cellVMax - (cellVMax - cellVMin) * roofStyle.sampleV;
+      const patchHalfU = Math.min(0.012, (roofU - cellUMin) * 0.75, (cellUMax - roofU) * 0.75);
+      const patchHalfV = Math.min(0.006, (roofV - cellVMin) * 0.75, (cellVMax - roofV) * 0.75);
+      const outerUvs = [
+        { u: cellUMin, v: cellVMax - 0.05 },
+        { u: cellUMax, v: cellVMax - 0.05 },
+        { u: cellUMax, v: cellVMax - 0.008 },
+        { u: cellUMin, v: cellVMax - 0.008 },
+      ];
+      const patchUvs = [
+        { u: roofU - patchHalfU, v: roofV - patchHalfV },
+        { u: roofU + patchHalfU, v: roofV - patchHalfV },
+        { u: roofU + patchHalfU, v: roofV + patchHalfV },
+        { u: roofU - patchHalfU, v: roofV + patchHalfV },
+      ];
+      diagnostics.uvWithinAssignedCell = diagnostics.uvWithinAssignedCell
+        && [...outerUvs, ...patchUvs].every((uv) => (
+          uv.u >= cellUMin && uv.u <= cellUMax && uv.v >= cellVMin && uv.v <= cellVMax
+        ));
       let contained = true;
 
       for (let i = 0; i < points.length; i += 1) {
@@ -1895,9 +1976,12 @@ export class CityRenderer {
         const innerTopB = { x: innerB.x, y: parapetTopY, z: innerB.z };
         const outward = new THREE.Vector3(outwardX, 0, outwardZ);
         const inward = outward.clone().multiplyScalar(-1);
-        appendQuad(outerBottomA, outerBottomB, outerTopB, outerTopA, outward, color);
-        appendQuad(innerBottomB, innerBottomA, innerTopA, innerTopB, inward, color);
-        appendQuad(outerTopA, outerTopB, innerTopB, innerTopA, new THREE.Vector3(0, 1, 0), color);
+        appendQuad(outerBottomA, outerBottomB, outerTopB, outerTopA, outward, color, outerUvs);
+        appendQuad(innerBottomB, innerBottomA, innerTopA, innerTopB, inward, innerColor, patchUvs);
+        appendQuad(outerTopA, outerTopB, innerTopB, innerTopA, new THREE.Vector3(0, 1, 0), topColor, patchUvs);
+        diagnostics.parapetFaceTriangles.outer += 2;
+        diagnostics.parapetFaceTriangles.inner += 2;
+        diagnostics.parapetFaceTriangles.top += 2;
       }
 
       let stackTop = roofY + clearance;
@@ -1926,8 +2010,14 @@ export class CityRenderer {
         const geometry = new THREE.BoxGeometry(width, spec.h, depth);
         geometry.rotateY(-heading);
         geometry.translate(boxX, base + spec.h / 2, boxZ);
-        colorizeGeometry(geometry, index % 2 === 0 ? profile.color : color.clone().offsetHSL(0, -0.04, 0.08));
+        colorizeGeometry(
+          geometry,
+          index % 2 === 0 ? profile.color : color.clone().offsetHSL(0, -0.04, 0.08),
+          base,
+          base + spec.h,
+        );
         mechanicalGeometries.push(geometry);
+        diagnostics.mechanicalColorVertices += geometry.attributes.color.count;
         stackTop = Math.max(stackTop, base + spec.h);
         highestTop = Math.max(highestTop, base + spec.h);
       }
@@ -1955,12 +2045,14 @@ export class CityRenderer {
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(parapetPositions, 3));
       geometry.setAttribute('normal', new THREE.Float32BufferAttribute(parapetNormals, 3));
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(parapetColors, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(parapetUvs, 2));
       geometry.computeBoundingBox();
       geometry.computeBoundingSphere();
       const material = new THREE.MeshStandardMaterial({
+        map: heroTextures?.texture || null,
         vertexColors: true,
-        roughness: 0.72,
-        metalness: 0.08,
+        roughness: 0.84,
+        metalness: 0.02,
         flatShading: true,
       });
       const mesh = new THREE.Mesh(geometry, material);
@@ -1972,6 +2064,10 @@ export class CityRenderer {
       this.geometryCache.push(geometry, material);
       diagnostics.drawGroups += 1;
       diagnostics.geometries += 1;
+      diagnostics.shadowCasters += mesh.castShadow ? 1 : 0;
+      diagnostics.shadowReceivers += mesh.receiveShadow ? 1 : 0;
+      diagnostics.materialCount += 1;
+      diagnostics.atlasTextureShared = material.map === heroTextures?.texture;
     }
 
     if (mechanicalGeometries.length) {
@@ -1982,8 +2078,8 @@ export class CityRenderer {
         geometry.computeBoundingSphere();
         const material = new THREE.MeshStandardMaterial({
           vertexColors: true,
-          roughness: 0.62,
-          metalness: 0.18,
+          roughness: 0.7,
+          metalness: 0.14,
           flatShading: true,
         });
         const mesh = new THREE.Mesh(geometry, material);
@@ -1995,6 +2091,9 @@ export class CityRenderer {
         this.geometryCache.push(geometry, material);
         diagnostics.drawGroups += 1;
         diagnostics.geometries += 1;
+        diagnostics.shadowCasters += mesh.castShadow ? 1 : 0;
+        diagnostics.shadowReceivers += mesh.receiveShadow ? 1 : 0;
+        diagnostics.materialCount += 1;
         const normal = geometry.attributes.normal;
         for (let i = 0; i < normal.count; i += 1) {
           const length = Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i));
@@ -2005,7 +2104,8 @@ export class CityRenderer {
     }
 
     diagnostics.triangleDelta = diagnostics.parapetTriangles + diagnostics.mechanicalTriangles;
-    diagnostics.finite = [parapetPositions, parapetNormals, parapetColors]
+    diagnostics.uvFinite = parapetUvs.every(Number.isFinite);
+    diagnostics.finite = [parapetPositions, parapetNormals, parapetColors, parapetUvs]
       .every((values) => values.every(Number.isFinite))
       && Number.isFinite(diagnostics.maxFootprintOvershootMeters);
     diagnostics.normalsFinite = parapetNormals.every(Number.isFinite)
