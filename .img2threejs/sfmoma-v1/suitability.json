@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "verdict": "conditional",
+  "scores": {
+    "targetClarity": 0.97,
+    "frameCoverage": 0.92,
+    "silhouetteStrength": 0.91,
+    "materialVisibility": 0.9,
+    "hiddenSideConfidence": 0.55,
+    "proceduralPrimitiveFit": 0.88
+  },
+  "acceptedConditions": [
+    "hidden and rear faces are explicitly approximate",
+    "result is a render-only landmark presentation, not map/source truth",
+    "quality is judged from the reference camera and at least two orbit views",
+    "no manufacturing-grade or surveyed-dimension claim"
+  ],
+  "reason": "The isolated, alpha-backed subject has a strong silhouette and separable hard-surface materials, but only one architectural view is available."
+}
