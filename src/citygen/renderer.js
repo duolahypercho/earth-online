@@ -58,6 +58,78 @@ const HERO_FACADE_IDS = Object.freeze(new Map([
 ]));
 const HERO_STREETWALL_PASS = 'hero-streetwall-grounding-v1';
 const HERO_STREETWALL_CONTACT_TREATMENT = 'recessed-portal-reveal-v1';
+const HERO_SIDEWALK_LIFE_PASS = 'hero-sidewalk-life-v5';
+const HERO_SIDEWALK_DONOR_RADIUS = 80;
+const HERO_CURB_RHYTHM = Object.freeze({
+  id: 'market-street-curb-rhythm',
+  segmentId: 'sf-seg-308',
+  streetId: 'sf-street-228196396',
+  side: 1,
+  t: Object.freeze([0.34, 0.39, 0.47, 0.63, 0.7, 0.75, 0.84]),
+  kinds: Object.freeze(['planter', 'sign', 'cone', 'bench', 'hydrant', 'planter', 'cone']),
+  presentationKinds: Object.freeze(['trash-can', 'sign', 'bike-rack', 'bench', 'hydrant', 'newspaper-box', 'cone']),
+  lateralOffsets: Object.freeze([4.1, 3.96, 4.15, 4.38, 3.9, 4.1, 3.84]),
+  presentationScales: Object.freeze([1, 1.15, 1, 1, 1.15, 1, 1.1]),
+  rotationOffsets: Object.freeze([0.18, -Math.PI / 2, -Math.PI / 2, -Math.PI / 2, 0.12, -Math.PI / 2, -0.34]),
+  clusters: Object.freeze(['entrance', 'entrance', 'entrance', 'intersection', 'intersection', 'intersection', 'intersection']),
+});
+const HERO_CURB_PRESENTATION_PROFILES = Object.freeze({
+  'trash-can': Object.freeze({ collisionRadius: 0.46, halfExtents: Object.freeze({ x: 0.32, z: 0.32 }), circular: true }),
+  'bike-rack': Object.freeze({ collisionRadius: 0.6, halfExtents: Object.freeze({ x: 0.54, z: 0.12 }), circular: false }),
+  'newspaper-box': Object.freeze({ collisionRadius: 0.42, halfExtents: Object.freeze({ x: 0.28, z: 0.23 }), circular: false }),
+  'pay-station': Object.freeze({ collisionRadius: 0.3, halfExtents: Object.freeze({ x: 0.22, z: 0.15 }), circular: false }),
+});
+const HERO_CURB_PRESENTATION_RESOURCES = Object.freeze({
+  logicalProps: 0,
+  drawGroups: 4,
+  triangles: 520,
+  geometries: 4,
+  materials: 0,
+  textures: 0,
+  gpuInstances: 5,
+  hiddenBaseInstances: 22,
+  visibleAccentInstances: 5,
+});
+const HERO_CORRIDOR_PRESENTATION_RESOURCES = Object.freeze({
+  logicalProps: 0,
+  drawGroups: 3,
+  triangles: 308,
+  geometries: 3,
+  materials: 0,
+  textures: 0,
+  gpuInstances: 3,
+  hiddenBaseInstances: 12,
+  visibleAccentInstances: 3,
+});
+const HERO_FRONTAGE_PRESENTATION_RESOURCES = Object.freeze({
+  logicalProps: 0,
+  drawGroups: 1,
+  triangles: 212,
+  geometries: 1,
+  materials: 0,
+  textures: 0,
+  gpuInstances: 2,
+  hiddenBaseInstances: 10,
+  visibleAccentInstances: 2,
+});
+const HERO_FRONTAGE_PRESENTATION_OVERRIDES = Object.freeze(new Map([
+  ['sf-building-149335979:planter-left', Object.freeze({
+    id: 'market-pay-station-north',
+    presentationKind: 'pay-station',
+  })],
+  ['sf-building-149335987:planter-right', Object.freeze({
+    id: 'market-trash-can-south',
+    presentationKind: 'trash-can',
+  })],
+]));
+const HERO_SIDEWALK_ROLES = Object.freeze(new Map([
+  ['sf-building-132127809', ['planter-left', 'planter-right', 'bench', 'sign']],
+  ['sf-building-151183777', ['planter-left', 'planter-right', 'bench', 'hydrant']],
+  ['sf-building-132127810', ['planter-left', 'planter-right', 'bench', 'sign']],
+  ['sf-building-149335987', ['planter-left', 'planter-right', 'bench', 'hydrant']],
+  ['sf-building-149335979', ['planter-left', 'planter-right', 'sign']],
+  ['sf-building-149335988', ['planter-left', 'planter-right', 'sign', 'hydrant']],
+]));
 const HERO_BASE_COLORS = Object.freeze([
   '#756d61',
   '#33454d',
@@ -122,6 +194,41 @@ function createHeroStreetwallDiagnostics() {
       geometries: 0,
       textures: 0,
       instances: 0,
+    },
+  };
+}
+
+function createHeroSidewalkDiagnostics(logicalProps = 0) {
+  return {
+    schemaVersion: 5,
+    pass: HERO_SIDEWALK_LIFE_PASS,
+    expectedIds: [...HERO_FACADE_IDS.keys()].sort(),
+    treatedIds: [],
+    donorRecords: 0,
+    logicalPropsBefore: logicalProps,
+    logicalPropsAfter: logicalProps,
+    roles: { planter: 0, bench: 0, sign: 0, hydrant: 0, cone: 0 },
+    entries: [],
+    corridor: null,
+    donorSelection: null,
+    frontagePresentationOverrides: [],
+    frontagePresentationResources: null,
+    frontagePresentationTopologies: [],
+    asphaltOverlaps: 0,
+    absoluteAsphaltOverlaps: 0,
+    additionalAsphaltIntrusions: 0,
+    buildingOverlaps: 0,
+    portalCorridorIntrusions: 0,
+    sourceFootprintsUnchanged: false,
+    sourcePortalsUnchanged: false,
+    finite: false,
+    incremental: {
+      instances: 0,
+      drawGroups: 0,
+      triangles: 0,
+      geometries: 0,
+      materials: 0,
+      textures: 0,
     },
   };
 }
@@ -814,7 +921,12 @@ export class CityRenderer {
     this.city = null;
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.sidewalkPropRecords = [];
-    this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+    this.sidewalkPropRuntime = null;
+    this.sidewalkPropDiagnostics = {
+      bandViolations: 0,
+      asphaltOverlaps: 0,
+      heroFrontages: createHeroSidewalkDiagnostics(),
+    };
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -975,7 +1087,12 @@ export class CityRenderer {
     };
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.sidewalkPropRecords = [];
-    this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+    this.sidewalkPropRuntime = null;
+    this.sidewalkPropDiagnostics = {
+      bandViolations: 0,
+      asphaltOverlaps: 0,
+      heroFrontages: createHeroSidewalkDiagnostics(),
+    };
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -1122,7 +1239,12 @@ export class CityRenderer {
         pointLightPoolSize: 0,
       };
       this.sidewalkPropRecords = [];
-      this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+      this.sidewalkPropRuntime = null;
+      this.sidewalkPropDiagnostics = {
+        bandViolations: 0,
+        asphaltOverlaps: 0,
+        heroFrontages: createHeroSidewalkDiagnostics(),
+      };
       this.buildingFootprintDiagnostics = {
         sourceCount: 0,
         polygonShells: 0,
@@ -3828,6 +3950,48 @@ export class CityRenderer {
     }
     const group = new THREE.Group();
     group.name = 'sidewalk-props';
+    const mergePropGeometry = (sources) => {
+      const merged = mergeGeometries(sources, false);
+      for (const source of sources) source.dispose();
+      return merged;
+    };
+    const trashCanGeometry = mergePropGeometry([
+      new THREE.CylinderGeometry(0.28, 0.3, 0.86, 8).translate(0, 0.43, 0),
+      new THREE.TorusGeometry(0.275, 0.03, 4, 8).rotateX(Math.PI / 2).translate(0, 0.88, 0),
+      new THREE.CylinderGeometry(0.3, 0.3, 0.08, 8).translate(0, 0.9, 0),
+      new THREE.BoxGeometry(0.28, 0.24, 0.025).translate(0, 0.62, 0.3025),
+    ]);
+    trashCanGeometry.name = 'sf-trash-can-140t';
+    const rackPath = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.48, 0.06, 0),
+      new THREE.Vector3(-0.48, 0.48, 0),
+      new THREE.Vector3(-0.36, 0.78, 0),
+      new THREE.Vector3(0, 0.9, 0),
+      new THREE.Vector3(0.36, 0.78, 0),
+      new THREE.Vector3(0.48, 0.48, 0),
+      new THREE.Vector3(0.48, 0.06, 0),
+    ]);
+    const bikeRackGeometry = mergePropGeometry([
+      new THREE.TubeGeometry(rackPath, 8, 0.06, 6, false),
+      new THREE.BoxGeometry(0.2, 0.04, 0.16).translate(-0.48, 0.02, 0),
+      new THREE.BoxGeometry(0.2, 0.04, 0.16).translate(0.48, 0.02, 0),
+    ]);
+    bikeRackGeometry.name = 'sf-bike-rack-120t';
+    const newspaperBoxGeometry = mergePropGeometry([
+      new THREE.BoxGeometry(0.3, 0.38, 0.24).translate(0, 0.19, 0),
+      new THREE.BoxGeometry(0.52, 0.72, 0.42).translate(0, 0.74, 0),
+      new THREE.BoxGeometry(0.56, 0.1, 0.46).translate(0, 1.15, 0),
+      new THREE.BoxGeometry(0.38, 0.28, 0.03).translate(0, 0.78, 0.225),
+    ]);
+    newspaperBoxGeometry.name = 'sf-newspaper-box-48t';
+    const payStationGeometry = mergePropGeometry([
+      new THREE.BoxGeometry(0.34, 0.08, 0.3).translate(0, 0.04, 0),
+      new THREE.CylinderGeometry(0.1, 0.12, 0.78, 6).translate(0, 0.47, 0),
+      new THREE.BoxGeometry(0.34, 0.48, 0.18).translate(0, 0.94, 0),
+      new THREE.BoxGeometry(0.4, 0.06, 0.23).translate(0, 1.2, 0.025),
+      new THREE.BoxGeometry(0.18, 0.22, 0.015).translate(0, 0.96, 0.098),
+    ]);
+    payStationGeometry.name = 'sf-pay-station-72t';
     const geometries = {
       planter: new THREE.BoxGeometry(0.8, 0.55, 0.8),
       leaf: new THREE.SphereGeometry(0.55, 6, 5),
@@ -3839,6 +4003,10 @@ export class CityRenderer {
       coneBand: new THREE.CylinderGeometry(0.13, 0.16, 0.1, 6),
       signPole: new THREE.BoxGeometry(0.08, 1.5, 0.08),
       signBoard: new THREE.BoxGeometry(0.62, 0.42, 0.06),
+      trashCan: trashCanGeometry,
+      bikeRack: bikeRackGeometry,
+      newspaperBox: newspaperBoxGeometry,
+      payStation: payStationGeometry,
     };
     const flowerMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
     const matrix = new THREE.Matrix4();
@@ -3847,15 +4015,26 @@ export class CityRenderer {
     const scale = new THREE.Vector3(1, 1, 1);
     const color = new THREE.Color();
     const up = new THREE.Vector3(0, 1, 0);
+    const batches = [];
+    const presentationOwner = (prop) => prop.parent || prop;
     const matrixFor = (prop, yOffset, xOffset = 0, zOffset = 0) => {
+      const requestedScale = Number(prop.presentationScale
+        ?? prop.placement?.presentationScale
+        ?? prop.parent?.presentationScale
+        ?? prop.parent?.placement?.presentationScale
+        ?? 1);
+      const presentationScale = Number.isFinite(requestedScale) && requestedScale > 0 ? requestedScale : 1;
       const sin = Math.sin(prop.rotation);
       const cos = Math.cos(prop.rotation);
       position.set(
-        prop.x + xOffset * cos + zOffset * sin,
-        prop.y + yOffset,
-        prop.z - xOffset * sin + zOffset * cos,
+        prop.x + (xOffset * cos + zOffset * sin) * presentationScale,
+        prop.y + yOffset * presentationScale,
+        prop.z + (-xOffset * sin + zOffset * cos) * presentationScale,
       );
       quaternion.setFromAxisAngle(up, prop.rotation);
+      const owner = presentationOwner(prop);
+      const baseHidden = owner.presentationKind && owner.presentationKind !== owner.kind;
+      scale.setScalar(baseHidden ? 0 : presentationScale);
       return matrix.compose(position, quaternion, scale);
     };
     const addBatch = ({ name, geometry, material, records, y, x = 0, z = 0, colorFor = null, castShadow = true }) => {
@@ -3872,6 +4051,7 @@ export class CityRenderer {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       group.add(mesh);
+      batches.push({ mesh, records, y, x, z, colorFor });
     };
     const planters = props.filter((prop) => prop.kind === 'planter');
     const benches = props.filter((prop) => prop.kind === 'bench');
@@ -3880,6 +4060,7 @@ export class CityRenderer {
     const signs = props.filter((prop) => prop.kind === 'sign');
     const flowers = planters.flatMap((prop) => prop.flowers.map((flower) => ({
       ...prop,
+      parent: prop,
       flowerX: flower.x,
       flowerZ: flower.z,
       color: flower.color,
@@ -3894,6 +4075,72 @@ export class CityRenderer {
       }
       flowerMesh.instanceMatrix.needsUpdate = true;
     }
+    const accentSpecs = Object.freeze([
+      { kind: 'trash-can', name: 'sf-trash-cans', geometry: trashCanGeometry, color: '#3f514b', capacity: 2 },
+      { kind: 'bike-rack', name: 'sf-bike-racks', geometry: bikeRackGeometry, color: '#8d9699' },
+      { kind: 'newspaper-box', name: 'sf-newspaper-boxes', geometry: newspaperBoxGeometry, color: '#d5a22d' },
+      { kind: 'pay-station', name: 'sf-pay-stations', geometry: payStationGeometry, color: '#506b73' },
+    ]);
+    const accentMeshes = new Map();
+    for (const spec of accentSpecs) {
+      const capacity = spec.capacity || 1;
+      const mesh = new THREE.InstancedMesh(spec.geometry, signBoardMaterial, capacity);
+      mesh.name = spec.name;
+      mesh.count = 0;
+      mesh.visible = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      for (let index = 0; index < capacity; index += 1) mesh.setColorAt(index, color.set(spec.color));
+      mesh.instanceColor.needsUpdate = true;
+      group.add(mesh);
+      accentMeshes.set(spec.kind, { mesh, color: spec.color });
+    }
+    const refreshAccentMatrices = () => {
+      for (const [kind, accent] of accentMeshes) {
+        const records = props.filter((prop) => prop.presentationKind === kind);
+        accent.mesh.count = Math.min(records.length, accent.mesh.instanceMatrix.count);
+        accent.mesh.visible = accent.mesh.count > 0;
+        if (!accent.mesh.count) continue;
+        for (let index = 0; index < accent.mesh.count; index += 1) {
+          const prop = records[index];
+          const requestedScale = Number(prop.presentationScale ?? prop.placement?.presentationScale ?? 1);
+          const presentationScale = Number.isFinite(requestedScale) && requestedScale > 0 ? requestedScale : 1;
+          position.set(prop.x, prop.y, prop.z);
+          quaternion.setFromAxisAngle(up, prop.rotation);
+          scale.setScalar(presentationScale);
+          accent.mesh.setMatrixAt(index, matrix.compose(position, quaternion, scale));
+          accent.mesh.setColorAt(index, color.set(accent.color));
+        }
+        accent.mesh.instanceMatrix.needsUpdate = true;
+        accent.mesh.instanceColor.needsUpdate = true;
+        accent.mesh.computeBoundingBox();
+        accent.mesh.computeBoundingSphere();
+      }
+    };
+    const refreshMatrices = (movedProps) => {
+      const moved = new Set(movedProps);
+      for (const flower of flowers) {
+        if (!moved.has(flower.parent)) continue;
+        flower.x = flower.parent.x;
+        flower.y = flower.parent.y;
+        flower.z = flower.parent.z;
+        flower.rotation = flower.parent.rotation;
+        flower.placement = flower.parent.placement;
+      }
+      for (const batch of batches) {
+        let updated = false;
+        for (let i = 0; i < batch.records.length; i += 1) {
+          const record = batch.records[i];
+          if (!moved.has(record) && !moved.has(record.parent)) continue;
+          batch.mesh.setMatrixAt(i, matrixFor(record, batch.y, batch.x, batch.z));
+          if (batch.colorFor) batch.mesh.setColorAt(i, color.set(batch.colorFor(record)));
+          updated = true;
+        }
+        if (updated) batch.mesh.instanceMatrix.needsUpdate = true;
+        if (updated && batch.mesh.instanceColor) batch.mesh.instanceColor.needsUpdate = true;
+      }
+      refreshAccentMatrices();
+    };
     addBatch({ name: 'bench-seats', geometry: geometries.bench, material: benchColor, records: benches, y: 0.45 });
     addBatch({ name: 'bench-backs', geometry: geometries.benchBack, material: benchColor, records: benches, y: 0.8, z: -0.28 });
     addBatch({ name: 'hydrants', geometry: geometries.hydrant, material: hydrantColor, records: hydrants, y: 0.4 });
@@ -3913,8 +4160,904 @@ export class CityRenderer {
       bandViolations: this.sidewalkPropRecords.filter((record) => record.segmentId
         && (record.lateralOffset < record.minOffset - 1e-6 || record.lateralOffset > record.maxOffset + 1e-6)).length,
       asphaltOverlaps: this.sidewalkPropRecords.filter((record) => record.overlapsAsphalt).length,
+      heroFrontages: createHeroSidewalkDiagnostics(props.length),
+    };
+    this.sidewalkPropRuntime = {
+      props,
+      refreshMatrices,
+      accentMeshes,
+      presentationResources: { ...HERO_CURB_PRESENTATION_RESOURCES },
     };
     root.add(group);
+  }
+
+  stageHeroSidewalkLife(portals, city) {
+    const runtime = this.sidewalkPropRuntime;
+    const logicalPropsBefore = runtime?.props?.length || 0;
+    const diagnostics = createHeroSidewalkDiagnostics(logicalPropsBefore);
+    this.sidewalkPropDiagnostics.heroFrontages = diagnostics;
+    const reject = (stage, details = null) => {
+      diagnostics.failure = { stage, details };
+      return false;
+    };
+    if (!runtime || logicalPropsBefore !== 900 || !Array.isArray(portals) || !Array.isArray(city?.buildings)) {
+      return reject('runtime-contract');
+    }
+
+    const expectedIds = diagnostics.expectedIds;
+    const heroPortals = expectedIds.map((id) => portals.find((portal) => portal.buildingId === id));
+    const heroBuildings = expectedIds.map((id) => city.buildings.find((building) => building.id === id));
+    if (heroPortals.some((portal) => !portal) || heroBuildings.some((building) => !building)) {
+      return reject('hero-source-contract');
+    }
+
+    const propRadius = Object.freeze({ planter: 0.57, bench: 0.86, sign: 0.35, hydrant: 0.3, cone: 0.21 });
+    const vehicleRoads = [];
+    const sourceRoads = [];
+    for (const segment of city.segments || []) {
+      const points = Array.isArray(segment?.points) ? segment.points : [];
+      if (points.length < 2) continue;
+      sourceRoads.push(segment);
+      if (['pedestrian', 'footway', 'cycleway', 'motorway'].includes(segment.highway)) continue;
+      for (let index = 1; index < points.length; index += 1) {
+        const a = points[index - 1];
+        const b = points[index];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.hypot(dx, dz);
+        if (length <= 1e-6) continue;
+        vehicleRoads.push({
+          segment,
+          a,
+          b,
+          dx,
+          dz,
+          length,
+          tx: dx / length,
+          tz: dz / length,
+          nx: -dz / length,
+          nz: dx / length,
+          halfWidth: Number(segment.width || 0) / 2,
+        });
+      }
+    }
+
+    const closestPoint = (point, a, b) => {
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lengthSq = dx * dx + dz * dz;
+      const t = lengthSq > 0
+        ? clamp(((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSq, 0, 1)
+        : 0;
+      const x = a.x + dx * t;
+      const z = a.z + dz * t;
+      return { x, z, t, distance: Math.hypot(point.x - x, point.z - z) };
+    };
+    const boundaryDistance = (point, polygon) => {
+      if (!Array.isArray(polygon) || polygon.length < 3) return Infinity;
+      let distance = Infinity;
+      for (let index = 0; index < polygon.length; index += 1) {
+        distance = Math.min(distance, pointToSegmentDistance(point, polygon[index], polygon[(index + 1) % polygon.length]));
+      }
+      return pointInPolygon(point, polygon) ? -distance : distance;
+    };
+    const sidewalkWidthFor = (segment, side) => Number(side > 0
+      ? segment.sidewalkLeft ?? segment.sidewalkW
+      : segment.sidewalkRight ?? segment.sidewalkW) || 0;
+    const roleKind = (role) => role.startsWith('planter') ? 'planter' : role;
+    const edgeFor = (building, portal) => {
+      const polygon = building.polygon || [];
+      const edgeIndex = Number(portal.sourceMetadata?.edgeIndex);
+      const a = polygon[edgeIndex];
+      const b = polygon[(edgeIndex + 1) % polygon.length];
+      if (!a || !b) return null;
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (!Number.isFinite(length) || length <= 1e-6) return null;
+      return {
+        a,
+        b,
+        length,
+        tx: dx / length,
+        tz: dz / length,
+        midpoint: { x: (a.x + b.x) * 0.5, z: (a.z + b.z) * 0.5 },
+      };
+    };
+    const ownerFor = (edge) => {
+      let best = null;
+      for (const road of vehicleRoads) {
+        for (const side of [-1, 1]) {
+          const sidewalkWidth = sidewalkWidthFor(road.segment, side);
+          const radius = propRadius.bench;
+          const minOffset = road.halfWidth + 0.3 + radius;
+          const maxOffset = road.halfWidth + sidewalkWidth - 0.3 - radius;
+          if (maxOffset < minOffset) continue;
+          const projection = closestPoint(edge.midpoint, road.a, road.b);
+          const lateralOffset = (minOffset + maxOffset) * 0.5;
+          const point = {
+            x: projection.x + road.nx * lateralOffset * side,
+            z: projection.z + road.nz * lateralOffset * side,
+          };
+          const distance = pointToSegmentDistance(point, edge.a, edge.b);
+          const endpointClearance = Math.min(projection.t * road.length, (1 - projection.t) * road.length) - radius;
+          const score = distance + (endpointClearance < 0.3 ? 1000 : 0);
+          if (!best || score < best.score) best = { road, side, distance, score };
+        }
+      }
+      return best;
+    };
+    const sourceSegmentFor = (portal, edge) => {
+      const streetId = portal.sourceMetadata?.street?.id;
+      const candidates = sourceRoads.filter((segment) => String(segment.streetId) === String(streetId));
+      const pool = candidates.length ? candidates : sourceRoads;
+      return pool.map((segment) => ({
+        segment,
+        distance: Math.min(...segment.points.slice(1).map((point, index) => (
+          pointToSegmentDistance(edge.midpoint, segment.points[index], point)
+        ))),
+      })).sort((left, right) => left.distance - right.distance || String(left.segment.id).localeCompare(String(right.segment.id)))[0]?.segment || null;
+    };
+    const sourceOffsetLayout = (roles, edgeLength) => {
+      const half = edgeLength * 0.5;
+      const extras = roles.filter((role) => !role.startsWith('planter'));
+      const extraOffsets = new Map();
+      if (extras.length === 1) {
+        const radius = propRadius[roleKind(extras[0])];
+        extraOffsets.set(extras[0], half - radius - 0.22);
+      } else if (extras.length === 2) {
+        extraOffsets.set(extras[0], -half + propRadius[roleKind(extras[0])] + 0.22);
+        extraOffsets.set(extras[1], half - propRadius[roleKind(extras[1])] - 0.22);
+      }
+      let planterOffset = Math.min(2.55, half * 0.32);
+      for (const [role, offset] of extraOffsets) {
+        const radius = propRadius[roleKind(role)];
+        const available = Math.abs(offset) - radius - propRadius.planter - 0.28;
+        planterOffset = Math.min(planterOffset, available);
+      }
+      planterOffset = Math.max(0.76, planterOffset);
+      return new Map([
+        ['planter-left', -planterOffset],
+        ['planter-right', planterOffset],
+        ...extraOffsets,
+      ]);
+    };
+
+    const footprintSnapshot = JSON.stringify(heroBuildings.map((building) => ({ id: building.id, polygon: building.polygon })));
+    const portalSnapshot = JSON.stringify(heroPortals.map((portal) => ({
+      id: portal.id,
+      buildingId: portal.buildingId,
+      position: portal.position,
+      approach: portal.approach,
+      heading: portal.heading,
+      sourceMetadata: portal.sourceMetadata,
+    })));
+    const heroEdges = heroBuildings.map((building, index) => edgeFor(building, heroPortals[index]));
+    if (heroEdges.some((edge) => !edge)) return reject('hero-edge-contract');
+    const corridorSegment = (city.segments || []).find((segment) => segment.id === HERO_CURB_RHYTHM.segmentId);
+    const corridorRoad = vehicleRoads.find((road) => road.segment === corridorSegment);
+    const corridorSidewalkWidth = sidewalkWidthFor(corridorSegment, HERO_CURB_RHYTHM.side);
+    if (!corridorRoad
+      || corridorSegment.streetId !== HERO_CURB_RHYTHM.streetId
+      || corridorSegment.points?.length !== 2
+      || Number(corridorSegment.width) !== 6.4
+      || corridorSidewalkWidth !== 2.4) return reject('corridor-source-contract');
+    const corridorSourceRecord = () => ({
+      id: corridorSegment.id,
+      streetId: corridorSegment.streetId,
+      endpoints: corridorSegment.points.map((point) => ({ x: point.x, z: point.z })),
+      widthMeters: Number(corridorSegment.width),
+      sidewalkWidthMeters: corridorSidewalkWidth,
+    });
+    const corridorSourceSnapshot = JSON.stringify(corridorSourceRecord());
+    const selected = [];
+    const occupied = runtime.props.map((prop) => ({
+      x: prop.x,
+      z: prop.z,
+      radius: propRadius[prop.kind] || 0.25,
+    }));
+    const portalCapsuleRadius = 0.6;
+    const minimumPortalClearance = 1.2;
+    const minimumInterPropClearance = 0.2;
+
+    const measureCandidate = (candidate, radius, ownerStreetId) => {
+      let asphaltClearance = Infinity;
+      let absoluteAsphaltClearance = Infinity;
+      let asphaltOverlap = false;
+      for (const road of vehicleRoads) {
+        const clearance = pointToSegmentDistance(candidate, road.a, road.b) - road.halfWidth - radius;
+        absoluteAsphaltClearance = Math.min(absoluteAsphaltClearance, clearance);
+        if (String(road.segment.streetId) === String(ownerStreetId)) continue;
+        if (clearance < 0.3) asphaltOverlap = true;
+        asphaltClearance = Math.min(asphaltClearance, clearance);
+      }
+      let buildingClearance = Infinity;
+      for (const building of city.buildings) {
+        buildingClearance = Math.min(buildingClearance, boundaryDistance(candidate, building.polygon) - radius);
+      }
+      let portalCorridorClearance = Infinity;
+      for (const portal of heroPortals) {
+        portalCorridorClearance = Math.min(
+          portalCorridorClearance,
+          pointToSegmentDistance(candidate, portal.position, portal.approach) - radius - portalCapsuleRadius,
+        );
+      }
+      let interPropClearance = Infinity;
+      for (const prop of occupied) {
+        interPropClearance = Math.min(interPropClearance, Math.hypot(candidate.x - prop.x, candidate.z - prop.z) - radius - prop.radius);
+      }
+      return {
+        asphaltClearance,
+        absoluteAsphaltClearance,
+        asphaltOverlap,
+        buildingClearance,
+        portalCorridorClearance,
+        interPropClearance,
+      };
+    };
+
+    for (let heroIndex = 0; heroIndex < expectedIds.length; heroIndex += 1) {
+      const id = expectedIds[heroIndex];
+      const portal = heroPortals[heroIndex];
+      const building = heroBuildings[heroIndex];
+      const edge = heroEdges[heroIndex];
+      const roles = HERO_SIDEWALK_ROLES.get(id);
+      const offsets = sourceOffsetLayout(roles, edge.length);
+      const vehicleOwner = ownerFor(edge);
+      const preferredPlacementMode = vehicleOwner?.distance <= 6 ? 'vehicle-sidewalk-band' : 'source-frontage-ribbon';
+      const sourceOwner = sourceSegmentFor(portal, edge);
+      const entryPlacements = [];
+
+      for (const role of roles) {
+        const kind = roleKind(role);
+        const presentationOverride = HERO_FRONTAGE_PRESENTATION_OVERRIDES.get(`${id}:${role}`) || null;
+        const presentationKind = presentationOverride?.presentationKind || kind;
+        const radius = propRadius[kind];
+        const baseOffset = offsets.get(role);
+        const baselineAsphaltClearance = Math.min(
+          measureCandidate(portal.position, radius, null).absoluteAsphaltClearance,
+          measureCandidate(portal.approach, radius, null).absoluteAsphaltClearance,
+        );
+        const minimumAbsoluteAsphaltClearance = baselineAsphaltClearance < 0.3
+          ? baselineAsphaltClearance - 1e-6
+          : 0.3;
+        let accepted = null;
+        const alongAdjustments = [
+          0, 0.18, -0.18, 0.36, -0.36, 0.54, -0.54,
+          0.9, -0.9, 1.5, -1.5, 2.1, -2.1, 2.7, -2.7, 3.3, -3.3,
+        ];
+        const ribbonOffsets = [1.65, 1.9, 1.4, 2.1, 1.15];
+        const bandFractions = [0.18, 0.5, 0.82];
+        const placementModes = preferredPlacementMode === 'vehicle-sidewalk-band'
+          ? ['vehicle-sidewalk-band', 'source-frontage-ribbon']
+          : ['source-frontage-ribbon'];
+        for (const placementMode of placementModes) {
+          if (accepted) break;
+          for (const alongAdjustment of alongAdjustments) {
+            if (accepted) break;
+            const sourceOffset = baseOffset + alongAdjustment;
+            const sourcePoint = {
+              x: edge.midpoint.x + edge.tx * sourceOffset,
+              z: edge.midpoint.z + edge.tz * sourceOffset,
+            };
+            const sourceEndpointClearance = edge.length * 0.5 - Math.abs(sourceOffset) - radius;
+            if (sourceEndpointClearance < 0.15) continue;
+            const attempts = placementMode === 'vehicle-sidewalk-band' ? bandFractions : ribbonOffsets;
+            for (const attempt of attempts) {
+            let point;
+            let rotation;
+            let ownerSegment;
+            let side;
+            let lateralOffset;
+            let minOffset;
+            let maxOffset;
+            let sidewalkWidth;
+            let roadEndpointClearance = Infinity;
+            if (placementMode === 'vehicle-sidewalk-band') {
+              const { road } = vehicleOwner;
+              ownerSegment = road.segment;
+              side = vehicleOwner.side;
+              sidewalkWidth = sidewalkWidthFor(ownerSegment, side);
+              minOffset = road.halfWidth + 0.3 + radius;
+              maxOffset = road.halfWidth + sidewalkWidth - 0.3 - radius;
+              if (maxOffset < minOffset) continue;
+              lateralOffset = minOffset + (maxOffset - minOffset) * attempt;
+              const projection = closestPoint(sourcePoint, road.a, road.b);
+              roadEndpointClearance = Math.min(projection.t * road.length, (1 - projection.t) * road.length) - radius;
+              if (roadEndpointClearance < 0.3) continue;
+              point = {
+                x: projection.x + road.nx * lateralOffset * side,
+                z: projection.z + road.nz * lateralOffset * side,
+              };
+              rotation = Math.atan2(road.dx, road.dz);
+            } else {
+              ownerSegment = sourceOwner;
+              side = 1;
+              sidewalkWidth = 1.2;
+              minOffset = 1;
+              maxOffset = 2.2;
+              lateralOffset = attempt;
+              point = {
+                x: sourcePoint.x + portal.normal.x * lateralOffset,
+                z: sourcePoint.z + portal.normal.z * lateralOffset,
+              };
+              rotation = Math.atan2(edge.tx, edge.tz);
+            }
+            const measure = measureCandidate(point, radius, ownerSegment?.streetId);
+            if (measure.asphaltOverlap
+              || measure.asphaltClearance < 0.3
+              || measure.absoluteAsphaltClearance < minimumAbsoluteAsphaltClearance
+              || measure.buildingClearance < 0.15
+              || measure.portalCorridorClearance < minimumPortalClearance
+              || measure.interPropClearance < minimumInterPropClearance) continue;
+            const terrainHeightMeters = this.terrain?.heightAt ? this.terrain.heightAt(point.x, point.z) : 0;
+            const roadLiftMeters = Number(city.meta.streetDesign?.roadLift ?? 0.5);
+            const y = terrainHeightMeters + roadLiftMeters + 0.04;
+            accepted = {
+              kind,
+              presentationKind,
+              presentationOverrideId: presentationOverride?.id || null,
+              presentationScale: 1,
+              role,
+              x: point.x,
+              y,
+              z: point.z,
+              rotation,
+              radius,
+              placement: {
+                heroFrontageId: id,
+                role,
+                placementMode,
+                segmentId: ownerSegment?.id || null,
+                streetId: ownerSegment?.streetId || null,
+                side,
+                lateralOffset,
+                minOffset,
+                maxOffset,
+                overlapsAsphalt: measure.absoluteAsphaltClearance < 0.3,
+              },
+              report: {
+                kind,
+                logicalKind: kind,
+                presentationKind,
+                presentationOverrideId: presentationOverride?.id || null,
+                geometryProfile: presentationOverride ? `sf-${presentationKind}-v1` : `base-${kind}`,
+                groundPivoted: true,
+                baseInstanceHidden: presentationKind !== kind,
+                role,
+                placementMode,
+                position: { x: point.x, y, z: point.z },
+                rotation,
+                ownerSegmentId: ownerSegment?.id || null,
+                ownerStreetId: ownerSegment?.streetId || null,
+                sourceEdgeOffsetMeters: sourceOffset,
+                sourceEndpointClearanceMeters: sourceEndpointClearance,
+                roadEndpointClearanceMeters: roadEndpointClearance,
+                band: {
+                  side,
+                  lateralOffsetMeters: lateralOffset,
+                  minimumOffsetMeters: minOffset,
+                  maximumOffsetMeters: maxOffset,
+                  sidewalkWidthMeters: sidewalkWidth,
+                  fullyContained: lateralOffset >= minOffset - 1e-6 && lateralOffset <= maxOffset + 1e-6,
+                },
+                terrain: {
+                  heightMeters: terrainHeightMeters,
+                  roadLiftMeters,
+                  groundedY: y,
+                  finite: Number.isFinite(terrainHeightMeters) && Number.isFinite(y),
+                },
+                asphaltClearanceMeters: measure.asphaltClearance,
+                asphaltClearanceScope: 'non-owner-street',
+                absoluteAsphaltClearanceMeters: measure.absoluteAsphaltClearance,
+                baselineAsphaltClearanceMeters: baselineAsphaltClearance,
+                inheritedSourceAsphaltOverlap: baselineAsphaltClearance < 0.3,
+                additionalAsphaltIntrusion: measure.absoluteAsphaltClearance < minimumAbsoluteAsphaltClearance,
+                buildingClearanceMeters: measure.buildingClearance,
+                portalCorridorClearanceMeters: measure.portalCorridorClearance,
+                interPropClearanceMeters: measure.interPropClearance,
+              },
+            };
+              break;
+            }
+          }
+        }
+        if (!accepted) return reject('hero-placement', { id, role });
+        selected.push(accepted);
+        entryPlacements.push(accepted.report);
+        if (presentationOverride) {
+          diagnostics.frontagePresentationOverrides.push({
+            id: presentationOverride.id,
+            heroFrontageId: id,
+            role,
+            logicalKind: kind,
+            presentationKind,
+            position: { x: accepted.x, y: accepted.y, z: accepted.z },
+            groundPivoted: true,
+            baseInstanceHidden: true,
+            hiddenBaseComponents: {
+              'planter-pots': 1,
+              'planter-leaves': 1,
+              'planter-flowers': 3,
+            },
+          });
+        }
+        occupied.push({ x: accepted.x, z: accepted.z, radius });
+      }
+
+      const finiteValues = entryPlacements.flatMap((placement) => [
+        placement.position.x,
+        placement.position.y,
+        placement.position.z,
+        placement.rotation,
+        placement.sourceEdgeOffsetMeters,
+        placement.sourceEndpointClearanceMeters,
+        placement.band.lateralOffsetMeters,
+        placement.band.minimumOffsetMeters,
+        placement.band.maximumOffsetMeters,
+        placement.terrain.heightMeters,
+        placement.terrain.groundedY,
+        placement.asphaltClearanceMeters,
+        placement.absoluteAsphaltClearanceMeters,
+        placement.baselineAsphaltClearanceMeters,
+        placement.buildingClearanceMeters,
+        placement.portalCorridorClearanceMeters,
+        placement.interPropClearanceMeters,
+      ]).filter((value) => value !== Infinity);
+      diagnostics.entries.push({
+        id,
+        sourceEdgeIndex: portal.sourceMetadata.edgeIndex,
+        sourceEdgeLength: edge.length,
+        ownerSegmentIds: [...new Set(entryPlacements.map((placement) => placement.ownerSegmentId).filter(Boolean))].sort(),
+        placements: entryPlacements,
+        minimumAsphaltClearanceMeters: Math.min(...entryPlacements.map((placement) => placement.asphaltClearanceMeters)),
+        minimumAbsoluteAsphaltClearanceMeters: Math.min(...entryPlacements.map((placement) => placement.absoluteAsphaltClearanceMeters)),
+        minimumBuildingClearanceMeters: Math.min(...entryPlacements.map((placement) => placement.buildingClearanceMeters)),
+        minimumPortalCorridorClearanceMeters: Math.min(...entryPlacements.map((placement) => placement.portalCorridorClearanceMeters)),
+        minimumInterPropClearanceMeters: Math.min(...entryPlacements.map((placement) => placement.interPropClearanceMeters)),
+        finite: finiteValues.every(Number.isFinite) && entryPlacements.every((placement) => placement.terrain.finite),
+      });
+    }
+
+    if (selected.length !== 23) return reject('hero-placement-count', {
+      expected: 23,
+      actual: selected.length,
+    });
+    const footprintHalfExtents = Object.freeze({
+      planter: { x: propRadius.planter, z: propRadius.planter },
+      bench: { x: 0.8, z: 0.31 },
+      sign: { x: 0.31, z: 0.04 },
+      hydrant: { x: 0.22, z: 0.22 },
+      cone: { x: 0.2, z: 0.2 },
+    });
+    const corridorPlacements = [];
+    for (let index = 0; index < HERO_CURB_RHYTHM.t.length; index += 1) {
+      const sourceT = HERO_CURB_RHYTHM.t[index];
+      const kind = HERO_CURB_RHYTHM.kinds[index];
+      const presentationKind = HERO_CURB_RHYTHM.presentationKinds[index];
+      const presentationProfile = HERO_CURB_PRESENTATION_PROFILES[presentationKind] || null;
+      const baseRadius = presentationProfile?.collisionRadius ?? propRadius[kind];
+      const lateralOffset = HERO_CURB_RHYTHM.lateralOffsets[index];
+      const presentationScale = HERO_CURB_RHYTHM.presentationScales[index];
+      const rotationOffset = HERO_CURB_RHYTHM.rotationOffsets[index];
+      const cluster = HERO_CURB_RHYTHM.clusters[index];
+      const effectiveRadius = baseRadius * presentationScale;
+      const halfExtents = presentationProfile?.halfExtents ?? footprintHalfExtents[kind];
+      const circularFootprint = presentationProfile?.circular
+        ?? ['planter', 'hydrant', 'cone'].includes(kind);
+      const footprintLateralRadius = circularFootprint
+        ? halfExtents.x * presentationScale
+        : (
+          Math.abs(Math.cos(rotationOffset)) * halfExtents.x
+          + Math.abs(Math.sin(rotationOffset)) * halfExtents.z
+        ) * presentationScale;
+      const pedestrianLaneMeters = corridorRoad.halfWidth + corridorSidewalkWidth
+        - lateralOffset - footprintLateralRadius;
+      const minOffset = corridorRoad.halfWidth + 0.3 + effectiveRadius;
+      const maxOffset = corridorRoad.halfWidth + corridorSidewalkWidth - 0.3 - effectiveRadius;
+      const sourceEndpointClearance = Math.min(
+        sourceT * corridorRoad.length,
+        (1 - sourceT) * corridorRoad.length,
+      ) - effectiveRadius;
+      const point = {
+        x: corridorRoad.a.x + corridorRoad.dx * sourceT
+          + corridorRoad.nx * lateralOffset * HERO_CURB_RHYTHM.side,
+        z: corridorRoad.a.z + corridorRoad.dz * sourceT
+          + corridorRoad.nz * lateralOffset * HERO_CURB_RHYTHM.side,
+      };
+      const measure = measureCandidate(point, effectiveRadius, HERO_CURB_RHYTHM.streetId);
+      const ownerAsphaltClearance = pointToSegmentDistance(point, corridorRoad.a, corridorRoad.b)
+        - corridorRoad.halfWidth - effectiveRadius;
+      const failedGate = [
+        ['minimum-band-offset', lateralOffset - minOffset],
+        ['maximum-band-offset', maxOffset - lateralOffset],
+        ['pedestrian-lane', pedestrianLaneMeters - 0.9],
+        ['source-endpoint', sourceEndpointClearance - 0.3],
+        ['owner-asphalt', ownerAsphaltClearance - 0.3],
+        ['other-asphalt-overlap', measure.asphaltOverlap ? -1 : 0],
+        ['other-asphalt', measure.asphaltClearance - 0.3],
+        ['absolute-asphalt', measure.absoluteAsphaltClearance - 0.3],
+        ['building', measure.buildingClearance - 0.15],
+        ['portal-corridor', measure.portalCorridorClearance - minimumPortalClearance],
+        ['inter-prop', measure.interPropClearance - minimumInterPropClearance],
+      ].find(([, margin]) => margin < -1e-6);
+      if (failedGate) {
+        diagnostics.corridor = {
+          id: HERO_CURB_RHYTHM.id,
+          finite: false,
+          failure: { index, kind, gate: failedGate[0], marginMeters: failedGate[1] },
+        };
+        return reject('corridor-placement-gate', diagnostics.corridor.failure);
+      }
+      const terrainHeightMeters = this.terrain?.heightAt ? this.terrain.heightAt(point.x, point.z) : 0;
+      const roadLiftMeters = Number(city.meta.streetDesign?.roadLift ?? 0.5);
+      const y = terrainHeightMeters + roadLiftMeters + 0.04;
+      if (![point.x, point.z, y, terrainHeightMeters].every(Number.isFinite)) {
+        return reject('corridor-non-finite-terrain', { index, kind, point, y, terrainHeightMeters });
+      }
+      const report = {
+        kind,
+        logicalKind: kind,
+        presentationKind,
+        geometryProfile: presentationProfile ? `sf-${presentationKind}-v1` : `base-${kind}`,
+        groundPivoted: true,
+        baseInstanceHidden: presentationKind !== kind,
+        role: kind,
+        placementMode: 'vehicle-sidewalk-band',
+        position: { x: point.x, y, z: point.z },
+        rotation: Math.atan2(corridorRoad.dx, corridorRoad.dz) + rotationOffset,
+        presentationScale,
+        rotationOffsetRadians: rotationOffset,
+        cluster,
+        baseCollisionRadiusMeters: baseRadius,
+        effectiveCollisionRadiusMeters: effectiveRadius,
+        footprintLateralRadiusMeters: footprintLateralRadius,
+        pedestrianLaneMeters,
+        sourceT,
+        lateralOffsetMeters: lateralOffset,
+        sourceEndpointClearanceMeters: sourceEndpointClearance,
+        roadEndpointClearanceMeters: sourceEndpointClearance,
+        ownerSegmentId: corridorSegment.id,
+        ownerStreetId: corridorSegment.streetId,
+        band: {
+          side: HERO_CURB_RHYTHM.side,
+          lateralOffsetMeters: lateralOffset,
+          minimumOffsetMeters: minOffset,
+          maximumOffsetMeters: maxOffset,
+          sidewalkWidthMeters: corridorSidewalkWidth,
+          fullyContained: true,
+        },
+        terrain: {
+          heightMeters: terrainHeightMeters,
+          roadLiftMeters,
+          groundedY: y,
+          finite: true,
+        },
+        ownerAsphaltClearanceMeters: ownerAsphaltClearance,
+        otherAsphaltClearanceMeters: measure.asphaltClearance,
+        asphaltClearanceMeters: measure.asphaltClearance,
+        asphaltClearanceScope: 'non-owner-street',
+        absoluteAsphaltClearanceMeters: measure.absoluteAsphaltClearance,
+        baselineAsphaltClearanceMeters: measure.absoluteAsphaltClearance,
+        inheritedSourceAsphaltOverlap: false,
+        additionalAsphaltIntrusion: false,
+        buildingClearanceMeters: measure.buildingClearance,
+        portalCorridorClearanceMeters: measure.portalCorridorClearance,
+        interPropClearanceMeters: measure.interPropClearance,
+      };
+      selected.push({
+        kind,
+        presentationKind,
+        role: kind,
+        x: point.x,
+        y,
+        z: point.z,
+        rotation: report.rotation,
+        radius: effectiveRadius,
+        presentationScale,
+        placement: {
+          corridorId: HERO_CURB_RHYTHM.id,
+          role: kind,
+          logicalKind: kind,
+          presentationKind,
+          presentationScale,
+          rotationOffsetRadians: rotationOffset,
+          cluster,
+          effectiveCollisionRadiusMeters: effectiveRadius,
+          pedestrianLaneMeters,
+          sourceT,
+          placementMode: 'vehicle-sidewalk-band',
+          segmentId: corridorSegment.id,
+          streetId: corridorSegment.streetId,
+          side: HERO_CURB_RHYTHM.side,
+          lateralOffset,
+          minOffset,
+          maxOffset,
+          overlapsAsphalt: false,
+        },
+        report,
+      });
+      corridorPlacements.push(report);
+      occupied.push({ x: point.x, z: point.z, radius: effectiveRadius });
+    }
+    if (selected.length !== 30 || corridorPlacements.length !== 7) {
+      return reject('corridor-placement-count', {
+        expectedSelected: 30,
+        actualSelected: selected.length,
+        expectedCorridor: 7,
+        actualCorridor: corridorPlacements.length,
+      });
+    }
+    const corridorRoles = corridorPlacements.reduce((counts, placement) => {
+      counts[placement.kind] += 1;
+      return counts;
+    }, { planter: 0, bench: 0, sign: 0, hydrant: 0, cone: 0 });
+    const corridorPresentationRoles = corridorPlacements.reduce((counts, placement) => {
+      counts[placement.presentationKind] = (counts[placement.presentationKind] || 0) + 1;
+      return counts;
+    }, {});
+    const corridorSpacing = corridorPlacements.slice(1).map((placement, index) => Math.hypot(
+      placement.position.x - corridorPlacements[index].position.x,
+      placement.position.z - corridorPlacements[index].position.z,
+    ));
+    diagnostics.corridor = {
+      id: HERO_CURB_RHYTHM.id,
+      segmentId: corridorSegment.id,
+      streetId: corridorSegment.streetId,
+      side: HERO_CURB_RHYTHM.side,
+      t: [...HERO_CURB_RHYTHM.t],
+      logicalKinds: [...HERO_CURB_RHYTHM.kinds],
+      visualKinds: [...HERO_CURB_RHYTHM.presentationKinds],
+      lateralOffsetsMeters: [...HERO_CURB_RHYTHM.lateralOffsets],
+      presentationScales: [...HERO_CURB_RHYTHM.presentationScales],
+      rotationOffsetsRadians: [...HERO_CURB_RHYTHM.rotationOffsets],
+      clusters: [...HERO_CURB_RHYTHM.clusters],
+      donorRecords: corridorPlacements.length,
+      roles: corridorRoles,
+      presentationRoles: corridorPresentationRoles,
+      presentationReplacementCount: corridorPlacements.filter((placement) => placement.baseInstanceHidden).length,
+      hiddenBaseInstances: HERO_CORRIDOR_PRESENTATION_RESOURCES.hiddenBaseInstances,
+      visibleAccentInstances: HERO_CORRIDOR_PRESENTATION_RESOURCES.visibleAccentInstances,
+      presentationResources: { ...HERO_CORRIDOR_PRESENTATION_RESOURCES },
+      source: { ...corridorSourceRecord(), unchanged: false },
+      sourceSnapshotUnchanged: false,
+      placements: corridorPlacements,
+      minimumSpacingMeters: Math.min(...corridorSpacing),
+      minimumSourceEndpointClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.sourceEndpointClearanceMeters)),
+      minimumOwnerAsphaltClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.ownerAsphaltClearanceMeters)),
+      minimumOtherAsphaltClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.otherAsphaltClearanceMeters)),
+      minimumAbsoluteAsphaltClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.absoluteAsphaltClearanceMeters)),
+      minimumBuildingClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.buildingClearanceMeters)),
+      minimumPortalCorridorClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.portalCorridorClearanceMeters)),
+      minimumInterPropClearanceMeters: Math.min(...corridorPlacements.map((placement) => placement.interPropClearanceMeters)),
+      minimumPedestrianLaneMeters: Math.min(...corridorPlacements.map((placement) => placement.pedestrianLaneMeters)),
+      finite: corridorPlacements.every((placement) => placement.terrain.finite
+        && placement.pedestrianLaneMeters >= 0.9
+        && [
+          placement.position.x,
+          placement.position.y,
+          placement.position.z,
+          placement.rotation,
+          placement.rotationOffsetRadians,
+          placement.presentationScale,
+          placement.effectiveCollisionRadiusMeters,
+          placement.footprintLateralRadiusMeters,
+          placement.pedestrianLaneMeters,
+        ].every(Number.isFinite))
+        && corridorSpacing.every(Number.isFinite),
+    };
+    const donorPools = new Map(['planter', 'bench', 'sign', 'hydrant', 'cone'].map((kind) => [kind, []]));
+    for (let index = 0; index < runtime.props.length; index += 1) {
+      const prop = runtime.props[index];
+      if (!donorPools.has(prop.kind) || prop.placement?.heroFrontageId || prop.placement?.corridorId) continue;
+      const distanceToHeroEdges = Math.min(...heroEdges.map((edge) => (
+        pointToSegmentDistance(prop, edge.a, edge.b)
+      )));
+      const distanceToCorridor = pointToSegmentDistance(prop, corridorRoad.a, corridorRoad.b);
+      const donorDistance = Math.min(distanceToHeroEdges, distanceToCorridor);
+      if (distanceToHeroEdges < HERO_SIDEWALK_DONOR_RADIUS
+        || distanceToCorridor < HERO_SIDEWALK_DONOR_RADIUS) continue;
+      donorPools.get(prop.kind).push({
+        prop,
+        index,
+        donorDistance,
+        distanceToHeroEdges,
+        distanceToCorridor,
+      });
+    }
+    for (const pool of donorPools.values()) pool.sort((left, right) => (
+      right.donorDistance - left.donorDistance
+      || right.distanceToHeroEdges - left.distanceToHeroEdges
+      || right.distanceToCorridor - left.distanceToCorridor
+      || left.index - right.index
+    ));
+    const requiredByKind = selected.reduce((counts, placement) => {
+      counts[placement.kind] += 1;
+      return counts;
+    }, { planter: 0, bench: 0, sign: 0, hydrant: 0, cone: 0 });
+    const insufficientDonorPool = [...donorPools]
+      .find(([kind, pool]) => pool.length < requiredByKind[kind]);
+    if (insufficientDonorPool) {
+      const [kind, pool] = insufficientDonorPool;
+      return reject('donor-pool-capacity', {
+        kind,
+        available: pool.length,
+        required: requiredByKind[kind],
+      });
+    }
+
+    const donorOffsets = { planter: 0, bench: 0, sign: 0, hydrant: 0, cone: 0 };
+    const movedDonors = [];
+    const donorOrigins = [];
+    for (const placement of selected) {
+      const donorRecord = donorPools.get(placement.kind)[donorOffsets[placement.kind]++];
+      const donor = donorRecord.prop;
+      const donorOrigin = {
+        index: donorRecord.index,
+        position: { x: donor.x, z: donor.z },
+        alreadyStaged: false,
+        distanceToHeroEdgesMeters: donorRecord.distanceToHeroEdges,
+        distanceToCorridorMeters: donorRecord.distanceToCorridor,
+        minimumDistanceMeters: donorRecord.donorDistance,
+      };
+      placement.report.donorOrigin = donorOrigin;
+      donorOrigins.push(donorOrigin);
+      donor.x = placement.x;
+      donor.y = placement.y;
+      donor.z = placement.z;
+      donor.rotation = placement.rotation;
+      donor.presentationScale = placement.presentationScale || 1;
+      donor.presentationKind = placement.presentationKind || donor.kind;
+      donor.placement = placement.placement;
+      movedDonors.push(donor);
+    }
+    runtime.refreshMatrices(movedDonors);
+    const accentPresentationCounts = runtime.props.reduce((counts, prop) => {
+      if (!HERO_CURB_PRESENTATION_PROFILES[prop.presentationKind]) return counts;
+      counts[prop.presentationKind] = (counts[prop.presentationKind] || 0) + 1;
+      return counts;
+    }, {});
+    const accentRuntimeValid = runtime.accentMeshes?.size === 4
+      && [...runtime.accentMeshes].every(([kind, accent]) => (
+        HERO_CURB_PRESENTATION_PROFILES[kind]
+        && accent.mesh.count === accentPresentationCounts[kind]
+        && accent.mesh.visible === (accent.mesh.count > 0)
+        && accent.mesh.instanceMatrix
+      ))
+      && Object.keys(accentPresentationCounts).length === runtime.accentMeshes.size
+      && accentPresentationCounts['trash-can'] === 2
+      && accentPresentationCounts['bike-rack'] === 1
+      && accentPresentationCounts['newspaper-box'] === 1
+      && accentPresentationCounts['pay-station'] === 1;
+    this.sidewalkPropRecords = runtime.props.map((prop) => ({
+      kind: prop.kind,
+      x: prop.x,
+      z: prop.z,
+      ...(prop.placement || {}),
+    }));
+    this.sidewalkPropDiagnostics.asphaltOverlaps = this.sidewalkPropRecords
+      .filter((record) => record.overlapsAsphalt).length;
+    const footprintAfter = JSON.stringify(heroBuildings.map((building) => ({ id: building.id, polygon: building.polygon })));
+    const portalAfter = JSON.stringify(heroPortals.map((portal) => ({
+      id: portal.id,
+      buildingId: portal.buildingId,
+      position: portal.position,
+      approach: portal.approach,
+      heading: portal.heading,
+      sourceMetadata: portal.sourceMetadata,
+    })));
+    const corridorSourceAfter = JSON.stringify(corridorSourceRecord());
+    diagnostics.corridor.sourceSnapshotUnchanged = corridorSourceSnapshot === corridorSourceAfter;
+    diagnostics.corridor.source.unchanged = diagnostics.corridor.sourceSnapshotUnchanged;
+    diagnostics.treatedIds = diagnostics.entries.map((entry) => entry.id).sort();
+    diagnostics.donorRecords = selected.length;
+    diagnostics.logicalPropsAfter = runtime.props.length;
+    diagnostics.roles = requiredByKind;
+    diagnostics.frontagePresentationOverrides = diagnostics.frontagePresentationOverrides
+      .sort((left, right) => left.id.localeCompare(right.id));
+    diagnostics.frontagePresentationResources = { ...HERO_FRONTAGE_PRESENTATION_RESOURCES };
+    diagnostics.frontagePresentationTopologies = [...new Set(
+      diagnostics.frontagePresentationOverrides.map((override) => override.presentationKind),
+    )].sort().map((kind) => {
+      const mesh = runtime.accentMeshes?.get(kind)?.mesh || null;
+      return {
+        kind,
+        meshName: mesh?.name || null,
+        indexCount: mesh?.geometry?.index?.count || 0,
+        triangleCount: (mesh?.geometry?.index?.count || 0) / 3,
+        vertexCount: mesh?.geometry?.getAttribute('position')?.count || 0,
+        instanceCapacity: mesh?.instanceMatrix?.count || 0,
+        visibleInstances: mesh?.count || 0,
+      };
+    });
+    diagnostics.incremental = {
+      instances: HERO_CURB_PRESENTATION_RESOURCES.gpuInstances,
+      drawGroups: HERO_CURB_PRESENTATION_RESOURCES.drawGroups,
+      triangles: HERO_CURB_PRESENTATION_RESOURCES.triangles,
+      geometries: HERO_CURB_PRESENTATION_RESOURCES.geometries,
+      materials: HERO_CURB_PRESENTATION_RESOURCES.materials,
+      textures: HERO_CURB_PRESENTATION_RESOURCES.textures,
+    };
+    diagnostics.donorSelection = {
+      strategy: 'same-kind-farthest-v3',
+      alreadyStagedExcluded: true,
+      distanceScope: 'hero-edges-and-corridor-segment',
+      minimumRequiredDistanceMeters: HERO_SIDEWALK_DONOR_RADIUS,
+      selectedRecords: donorOrigins.length,
+      poolKinds: [...donorPools.keys()].sort(),
+      availableByKind: Object.fromEntries([...donorPools].map(([kind, pool]) => [kind, pool.length])),
+      requiredByKind: { ...requiredByKind },
+      selectedByKind: { ...requiredByKind },
+      minimumHeroEdgeDistanceMeters: Math.min(...donorOrigins.map((origin) => origin.distanceToHeroEdgesMeters)),
+      minimumCorridorDistanceMeters: Math.min(...donorOrigins.map((origin) => origin.distanceToCorridorMeters)),
+      finite: donorOrigins.every((origin) => [
+        origin.position.x,
+        origin.position.z,
+        origin.distanceToHeroEdgesMeters,
+        origin.distanceToCorridorMeters,
+        origin.minimumDistanceMeters,
+      ].every(Number.isFinite)),
+    };
+    const allPlacementReports = [
+      ...diagnostics.entries.flatMap((entry) => entry.placements),
+      ...diagnostics.corridor.placements,
+    ];
+    diagnostics.absoluteAsphaltOverlaps = allPlacementReports.filter((placement) => (
+      placement.absoluteAsphaltClearanceMeters < 0.3
+    )).length;
+    diagnostics.additionalAsphaltIntrusions = allPlacementReports.filter((placement) => (
+      placement.additionalAsphaltIntrusion
+    )).length;
+    diagnostics.asphaltOverlaps = diagnostics.absoluteAsphaltOverlaps;
+    diagnostics.buildingOverlaps = allPlacementReports.filter((placement) => (
+      placement.buildingClearanceMeters < 0.15
+    )).length;
+    diagnostics.portalCorridorIntrusions = allPlacementReports.filter((placement) => (
+      placement.portalCorridorClearanceMeters < minimumPortalClearance
+    )).length;
+    diagnostics.sourceFootprintsUnchanged = footprintSnapshot === footprintAfter;
+    diagnostics.sourcePortalsUnchanged = portalSnapshot === portalAfter;
+    diagnostics.finite = diagnostics.entries.every((entry) => entry.finite)
+      && diagnostics.corridor.finite
+      && diagnostics.corridor.sourceSnapshotUnchanged
+      && accentRuntimeValid
+      && diagnostics.frontagePresentationOverrides.length === HERO_FRONTAGE_PRESENTATION_OVERRIDES.size
+      && diagnostics.frontagePresentationOverrides.every((override) => (
+        HERO_FRONTAGE_PRESENTATION_OVERRIDES.get(`${override.heroFrontageId}:${override.role}`)?.id === override.id
+        && override.logicalKind === 'planter'
+        && HERO_FRONTAGE_PRESENTATION_OVERRIDES.get(`${override.heroFrontageId}:${override.role}`)?.presentationKind
+          === override.presentationKind
+        && override.groundPivoted
+        && override.baseInstanceHidden
+        && override.hiddenBaseComponents['planter-pots'] === 1
+        && override.hiddenBaseComponents['planter-leaves'] === 1
+        && override.hiddenBaseComponents['planter-flowers'] === 3
+      ))
+      && diagnostics.frontagePresentationTopologies.length === 2
+      && diagnostics.frontagePresentationTopologies.some((topology) => (
+        topology.kind === 'pay-station'
+        && topology.meshName === 'sf-pay-stations'
+        && topology.indexCount === 216
+        && topology.triangleCount === 72
+        && topology.vertexCount === 136
+        && topology.instanceCapacity === 1
+        && topology.visibleInstances === 1
+      ))
+      && diagnostics.frontagePresentationTopologies.some((topology) => (
+        topology.kind === 'trash-can'
+        && topology.meshName === 'sf-trash-cans'
+        && topology.indexCount === 420
+        && topology.triangleCount === 140
+        && topology.instanceCapacity === 2
+        && topology.visibleInstances === 2
+      ))
+      && diagnostics.donorSelection.finite
+      && diagnostics.donorSelection.minimumHeroEdgeDistanceMeters >= HERO_SIDEWALK_DONOR_RADIUS
+      && diagnostics.donorSelection.minimumCorridorDistanceMeters >= HERO_SIDEWALK_DONOR_RADIUS
+      && diagnostics.additionalAsphaltIntrusions === 0
+      && diagnostics.buildingOverlaps === 0
+      && diagnostics.portalCorridorIntrusions === 0;
+    return diagnostics.finite;
   }
 
   buildParkedCars(root, city) {

@@ -41,6 +41,7 @@ try {
         const end = positions[index];
         return distance + Math.hypot(end[0] - start[0], end[1] - start[1], end[2] - start[2]);
       }, 0));
+    const heroCurbLife = traffic.getHeroCurbLifeDiagnostics?.();
     const shoeGroundErrors = traffic.pedestrians.flatMap((pedestrian, index) => [0, 1].map((side) => {
       const matrixOffset = (index * 2 + side) * 16;
       const soleY = batch.parts.shoes.instanceMatrix.array[matrixOffset + 13] - 0.05;
@@ -65,6 +66,11 @@ try {
       matricesFinite,
       colorsFinite,
       movedPedestrians: moved.filter((distance) => distance > 0.1).length,
+      stationaryIndices: moved
+        .map((distance, index) => ({ distance, index }))
+        .filter(({ distance }) => distance <= 0.1)
+        .map(({ index }) => index),
+      heroCurbSitter: heroCurbLife?.actors?.find((actor) => actor.role === 'bench-sitter') || null,
       maxMovement: Number(Math.max(...moved).toFixed(3)),
       finiteGaits: traffic.pedestrians.every((pedestrian) => Number.isFinite(pedestrian.group.userData.walk.gait)),
       articulatedGaits: traffic.pedestrians
@@ -91,7 +97,11 @@ try {
   assert.ok(report.articulatedGaits >= 36, `articulated gaits ${report.articulatedGaits}`);
   assert.ok(report.maxShoeGroundError <= 0.01, `shoe grounding error ${report.maxShoeGroundError}`);
   assert.ok(report.appearanceVariants >= 6, `appearance variants ${report.appearanceVariants}`);
-  assert.equal(report.movedPedestrians, 48);
+  assert.equal(report.movedPedestrians, 47);
+  assert.deepEqual(report.stationaryIndices, [36]);
+  assert.equal(report.heroCurbSitter?.instanceIndex, 36);
+  assert.equal(report.heroCurbSitter?.poseKind, 'bench-seated');
+  assert.equal(report.heroCurbSitter?.seatedPoseMatrices?.finite, true);
   assert.deepEqual(errors, []);
   await page.evaluate(async () => {
     const api = window.__CITYGEN__;
