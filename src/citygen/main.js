@@ -15,8 +15,10 @@ import { CityRenderer } from './renderer.js';
 import { fetchOsmCity } from './osm.js';
 import { loadSfData } from './sf-data.js';
 import { TrafficSim } from './traffic.js';
-import { loadAuthoritativeFerryTiles } from './metric-tile-stream.js';
+import { getWorldPlugin } from '../plugins/registry.js';
 import './styles.css';
+
+const authoritativeMetricMapPlugin = getWorldPlugin('sf-authoritative-metric-map');
 
 const app = document.querySelector('#app');
 const canvasHost = app;
@@ -1194,7 +1196,7 @@ async function loadMetricSf() {
   setOsmBusy(true, 'Verifying the authoritative San Francisco metric tiles…');
   setExplorerBusy(true, 'Opening authoritative San Francisco…', 'Verifying receipts and GLB bytes before WebGPU rendering');
   try {
-    const bundle = await loadAuthoritativeFerryTiles({
+    const bundle = await authoritativeMetricMapPlugin.load({
       count: 10,
       onProgress: ({ loaded, total, id }) => {
         const suffix = id ? ` · ${id}` : '';
