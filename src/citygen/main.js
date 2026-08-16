@@ -1407,49 +1407,47 @@ async function boot() {
         camera.lookAt(centerX, 12, centerZ);
         controls.target.set(centerX, 12, centerZ);
       } else if (pose === 'night') {
-        setFov(52);
         const city = state.city;
-        // Street-corridor night shot: stand on the facing street centerline,
-        // 30-45m down-street, and look along the avenue so shopfronts,
-        // lamps, signals, and traffic fill the frame.
-        const avenue = city.streets.find((street) => street.highway === 'primary' || street.highway === 'secondary' || street.highway === 'tertiary');
-        const shops = city.buildings
-          .filter((building) => building.type === 'shop' || building.facade === 'shopfront')
-          .map((building) => {
-            const xs = building.polygon.map((p) => p.x);
-            const zs = building.polygon.map((p) => p.z);
-            const width = Math.max(...xs) - Math.min(...xs);
-            const depth = Math.max(...zs) - Math.min(...zs);
-            return { building, width, depth, area: width * depth };
-          })
-          .sort((a, b) => b.area - a.area);
-        const shop = shops.find((entry) => entry.width >= 7 || entry.depth >= 7)?.building
-          || shops[0]?.building
-          || city.buildings[0];
-        const xs = shop.polygon.map((p) => p.x);
-        const zs = shop.polygon.map((p) => p.z);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minZ = Math.min(...zs);
-        const maxZ = Math.max(...zs);
-        const centerX = (minX + maxX) / 2;
-        const centerZ = (minZ + maxZ) / 2;
-        const street = city.streets.find((s) => s.name === shop.facingStreet) || avenue;
-        const faceAxis = street?.axis || 'x';
-        const baseY = state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(centerX, centerZ) : 0;
-        const side = faceAxis === 'x'
-          ? ((street?.position ?? 0) > centerX ? 1 : -1)
-          : ((street?.position ?? 0) > centerZ ? 1 : -1);
-        const downStreet = faceAxis === 'x'
-          ? { x: centerX, z: centerZ - 34 * side }
-          : { x: centerX - 34 * side, z: centerZ };
-        const eye = faceAxis === 'x'
-          ? { x: centerX + (street?.position ?? centerX) - centerX + 8 * side, z: centerZ - 34 * side }
-          : { x: centerX - 34 * side, z: centerZ + (street?.position ?? centerZ) - centerZ + 8 * side };
-        const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eye.x, eye.z) : 0) + 5.6;
-        camera.position.set(eye.x, eyeY, eye.z);
-        camera.lookAt(downStreet.x, baseY + 2.6, downStreet.z);
-        controls.target.set(downStreet.x, baseY + 2.6, downStreet.z);
+        // Derive the shot from real segment endpoints. OSM streets use an
+        // `axis: osm` marker, so treating them like the legacy x/z grid can
+        // place the camera behind a roof instead of inside the road corridor.
+        const candidates = (city.segments || []).map((segment) => {
+          const a = segment.points?.[0];
+          const b = segment.points?.at(-1);
+          const length = a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0;
+          const name = String(segment.streetName || '').toLowerCase();
+          const identity = name.includes('market') ? 5
+            : name.includes('powell') ? 4
+              : name.includes('embarcadero') ? 3
+                : name.includes('mission') || name.includes('howard') ? 2 : 0;
+          const roadClass = segment.highway === 'primary' || segment.highway === 'secondary' ? 3
+            : segment.highway === 'tertiary' ? 2 : 1;
+          return { segment, length, score: identity * 10000 + roadClass * 1000 + length };
+        }).filter((entry) => entry.length >= 48
+          && !['pedestrian', 'footway', 'cycleway', 'motorway'].includes(entry.segment.highway))
+          .sort((a, b) => b.score - a.score);
+        const segment = candidates[0]?.segment;
+        if (segment) {
+          const a = segment.points[0];
+          const b = segment.points.at(-1);
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const length = Math.hypot(dx, dz) || 1;
+          const nx = -dz / length;
+          const nz = dx / length;
+          const side = (Math.round(a.x) + Math.round(a.z)) % 2 === 0 ? 1 : -1;
+          const lateral = Math.min(1.1, (segment.width || 6) * 0.12) * side;
+          const eyeX = a.x + dx * 0.18 + nx * lateral;
+          const eyeZ = a.z + dz * 0.18 + nz * lateral;
+          const targetX = a.x + dx * 0.78;
+          const targetZ = a.z + dz * 0.78;
+          const eyeY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(eyeX, eyeZ) : 0) + 1.72;
+          const targetY = (state.renderer.terrain?.heightAt ? state.renderer.terrain.heightAt(targetX, targetZ) : 0) + 1.55;
+          setFov(46);
+          camera.position.set(eyeX, eyeY, eyeZ);
+          camera.lookAt(targetX, targetY, targetZ);
+          controls.target.set(targetX, targetY, targetZ);
+        }
       } else if (pose === 'sf') {
         const city = state.renderer.city || state.city;
         const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
