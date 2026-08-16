@@ -89,6 +89,23 @@ const PORTAL_PARTITION_ENTER_RADIUS = 420;
 const PORTAL_PARTITION_EXIT_RADIUS = 520;
 const PORTAL_PARTITION_AERIAL_HEIGHT = 500;
 const PORTAL_PARTITION_UPDATE_INTERVAL = 8;
+const PARKED_CAR_PARTITION_PASS = 'sf-world-partition-parked-cars-v1';
+const PARKED_CAR_PARTITION_CELL_SIZE = 140;
+const PARKED_CAR_PARTITION_ENTER_RADIUS = 420;
+const PARKED_CAR_PARTITION_EXIT_RADIUS = 520;
+const PARKED_CAR_PARTITION_AERIAL_HEIGHT = 500;
+const PARKED_CAR_PARTITION_UPDATE_INTERVAL = 8;
+const PARKED_CAR_PALETTE = Object.freeze([
+  0x7d4d4c,
+  0x9a7a3e,
+  0x46647a,
+  0x4f7168,
+  0x62586c,
+  0x805c45,
+  0xd7d3c8,
+  0x718164,
+]);
+const PARKED_CAR_GLASS_PALETTE = Object.freeze([0x516a73, 0x47636c, 0x5c747b]);
 const HERO_SIDEWALK_DONOR_RADIUS = 80;
 const HERO_CURB_RHYTHM = Object.freeze({
   id: 'market-street-curb-rhythm',
@@ -404,6 +421,95 @@ function createPortalPartitionDiagnostics() {
   };
 }
 
+function createParkedCarPartitionDiagnostics() {
+  return {
+    schemaVersion: 1,
+    pass: PARKED_CAR_PARTITION_PASS,
+    enabled: false,
+    failure: null,
+    focusSource: 'controls-target',
+    sourceGenerator: null,
+    validationMode: null,
+    expectedGolden: { enabled: false, spots: null, cells: null },
+    source: {
+      spots: 0,
+      cells: 0,
+      bodyTrianglesPerSpot: 76,
+      cabTrianglesPerSpot: 20,
+      trianglesPerSpot: 96,
+      totalTriangles: 0,
+      recordsChecksum: null,
+      recordsUnchanged: false,
+      inputChecksumBefore: null,
+      inputChecksumAfter: null,
+      unchanged: false,
+    },
+    policy: {
+      cellSizeMeters: PARKED_CAR_PARTITION_CELL_SIZE,
+      enterRadiusMeters: PARKED_CAR_PARTITION_ENTER_RADIUS,
+      exitRadiusMeters: PARKED_CAR_PARTITION_EXIT_RADIUS,
+      aerialHeightMeters: PARKED_CAR_PARTITION_AERIAL_HEIGHT,
+      updateIntervalFrames: PARKED_CAR_PARTITION_UPDATE_INTERVAL,
+    },
+    cells: { total: 0, active: 0, ids: [] },
+    active: { spots: 0, hiddenSpots: 0, indices: [], aerial: false, forceAll: false },
+    batches: {
+      bodies: {
+        name: 'sf-partitioned-parked-car-bodies',
+        capacity: 0,
+        count: 0,
+        submittedTriangles: 0,
+        matricesFinite: false,
+        colorsFinite: false,
+      },
+      cabs: {
+        name: 'sf-partitioned-parked-car-cabs',
+        capacity: 0,
+        count: 0,
+        submittedTriangles: 0,
+        matricesFinite: false,
+        colorsFinite: false,
+      },
+    },
+    topology: {
+      body: {
+        vertexCount: 228,
+        indexCount: 0,
+        triangleCount: 76,
+        indexed: false,
+        finiteTriangleAreas: false,
+        minTriangleArea: 0,
+        minOutwardNormalDot: 0,
+        vertexColors: true,
+        roles: { paintHull: 20, tires: 48, lamps: 8 },
+      },
+      cab: {
+        vertexCount: 60,
+        indexCount: 0,
+        triangleCount: 20,
+        indexed: false,
+        finiteTriangleAreas: false,
+        minTriangleArea: 0,
+        minOutwardNormalDot: 0,
+      },
+      cabVerticalOffsetMeters: 0.46,
+      cabLongitudinalOffsetMeters: -0.18,
+      distinctBodyCabMatrices: true,
+    },
+    visual: {
+      bodyPalette: PARKED_CAR_PALETTE.map((value) => `#${value.toString(16).padStart(6, '0')}`),
+      glassPalette: PARKED_CAR_GLASS_PALETTE.map((value) => `#${value.toString(16).padStart(6, '0')}`),
+      hardEdgedHull: true,
+      darkGlass: true,
+    },
+    submittedTriangles: 0,
+    hysteresis: { enters: 0, exits: 0 },
+    updates: { checks: 0, compactions: 0, resets: 0 },
+    lifecycle: { registrations: 0, disposals: 0 },
+    resources: { drawGroups: 0, geometries: 0, materials: 0, textures: 0 },
+  };
+}
+
 function serializePortalPartitionRecords(records) {
   return JSON.stringify(records.map((record) => ({
     index: record.index,
@@ -417,6 +523,149 @@ function serializePortalPartitionRecords(records) {
     frameColors: record.frameColors.map((color) => [...color]),
     lightMatrix: [...record.lightMatrix],
   })));
+}
+
+function serializeParkedCarPartitionRecords(records) {
+  return JSON.stringify(records.map((record) => ({
+    index: record.index,
+    x: record.x,
+    z: record.z,
+    heading: record.heading,
+    cellId: record.cellId,
+    bodyMatrix: [...record.bodyMatrix],
+    bodyColor: [...record.bodyColor],
+    cabMatrix: [...record.cabMatrix],
+    cabColor: [...record.cabColor],
+  })));
+}
+
+function createParkedCarHullGeometry({ compositeBody = false } = {}) {
+  const profile = [
+    [-0.5, -0.5],
+    [0.18, -0.5],
+    [0.48, -0.32],
+    [0.42, 0.18],
+    [0.05, 0.5],
+    [-0.5, 0.5],
+  ];
+  const vertices = [
+    ...profile.map(([y, z]) => [-0.5, y, z]),
+    ...profile.map(([y, z]) => [0.5, y, z]),
+  ];
+  const positions = [];
+  const colors = [];
+  const triangleOrigins = [];
+  const roles = { paintHull: 0, tires: 0, lamps: 0 };
+  const appendTriangle = (
+    a,
+    b,
+    c,
+    color = [1, 1, 1],
+    role = 'paintHull',
+    outwardOrigin = [0, 0, 0],
+  ) => {
+    positions.push(...vertices[a], ...vertices[b], ...vertices[c]);
+    colors.push(...color, ...color, ...color);
+    triangleOrigins.push(outwardOrigin);
+    roles[role] += 1;
+  };
+  for (let index = 1; index < profile.length - 1; index += 1) {
+    appendTriangle(6, 6 + index, 6 + index + 1);
+    appendTriangle(0, index + 1, index);
+  }
+  for (let index = 0; index < profile.length; index += 1) {
+    const next = (index + 1) % profile.length;
+    appendTriangle(6 + index, index, next);
+    appendTriangle(6 + index, next, 6 + next);
+  }
+  if (compositeBody) {
+    const tireColor = [0.16, 0.16, 0.17];
+    const appendBox = (minX, minY, minZ, maxX, maxY, maxZ) => {
+      const start = vertices.length;
+      const center = [(minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5];
+      vertices.push(
+        [minX, minY, minZ], [maxX, minY, minZ],
+        [maxX, maxY, minZ], [minX, maxY, minZ],
+        [minX, minY, maxZ], [maxX, minY, maxZ],
+        [maxX, maxY, maxZ], [minX, maxY, maxZ],
+      );
+      for (const [a, b, c] of [
+        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+        [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5],
+        [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2],
+      ]) appendTriangle(start + a, start + b, start + c, tireColor, 'tires', center);
+    };
+    for (const x of [-0.53, 0.53]) {
+      for (const z of [-0.31, 0.31]) {
+        appendBox(x - 0.075, -0.59, z - 0.09, x + 0.075, -0.2, z + 0.09);
+      }
+    }
+    const appendLamp = (x, rear) => {
+      const z = rear ? -0.501 : 0.501;
+      const minX = x - 0.075;
+      const maxX = x + 0.075;
+      const minY = -0.12;
+      const maxY = 0.05;
+      const color = rear ? [1.8, 0.12, 0.08] : [1.55, 1.42, 1.05];
+      const start = vertices.length;
+      vertices.push(
+        [minX, minY, z], [maxX, minY, z],
+        [maxX, maxY, z], [minX, maxY, z],
+      );
+      if (rear) {
+        appendTriangle(start, start + 2, start + 1, color, 'lamps');
+        appendTriangle(start, start + 3, start + 2, color, 'lamps');
+      } else {
+        appendTriangle(start, start + 1, start + 2, color, 'lamps');
+        appendTriangle(start, start + 2, start + 3, color, 'lamps');
+      }
+    };
+    for (const x of [-0.31, 0.31]) {
+      appendLamp(x, false);
+      appendLamp(x, true);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  let minTriangleArea = Infinity;
+  let minOutwardNormalDot = Infinity;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const centroid = new THREE.Vector3();
+  for (let offset = 0; offset < positions.length; offset += 9) {
+    a.fromArray(positions, offset);
+    b.fromArray(positions, offset + 3);
+    c.fromArray(positions, offset + 6);
+    ab.subVectors(b, a);
+    ac.subVectors(c, a);
+    normal.crossVectors(ab, ac);
+    const twiceArea = normal.length();
+    minTriangleArea = Math.min(minTriangleArea, twiceArea * 0.5);
+    normal.normalize();
+    centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3)
+      .sub(new THREE.Vector3().fromArray(triangleOrigins[offset / 9]));
+    minOutwardNormalDot = Math.min(minOutwardNormalDot, normal.dot(centroid));
+  }
+  geometry.userData.parkedCarHull = {
+    triangleCount: positions.length / 9,
+    vertexCount: positions.length / 3,
+    indexed: false,
+    hardEdged: true,
+    finiteTriangleAreas: Number.isFinite(minTriangleArea) && minTriangleArea > 0,
+    minTriangleArea,
+    minOutwardNormalDot,
+    vertexColors: true,
+    roles,
+  };
+  return geometry;
 }
 
 function applyWorldXZUvs(geometry, metersPerRepeat) {
@@ -1163,6 +1412,8 @@ export class CityRenderer {
     this.worldPartitionDiagnostics = createWorldPartitionDiagnostics();
     this.portalPartitionRuntime = null;
     this.portalPartitionDiagnostics = createPortalPartitionDiagnostics();
+    this.parkedCarPartitionRuntime = null;
+    this.parkedCarPartitionDiagnostics = createParkedCarPartitionDiagnostics();
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -1375,6 +1626,18 @@ export class CityRenderer {
     this.portalPartitionDiagnostics.lifecycle.disposals = disposals;
   }
 
+  disposeParkedCarPartitionRuntime() {
+    const runtime = this.parkedCarPartitionRuntime;
+    if (runtime) {
+      runtime.bodies?.dispose();
+      runtime.cabs?.dispose();
+    }
+    const disposals = (this.parkedCarPartitionDiagnostics.lifecycle?.disposals || 0) + (runtime ? 1 : 0);
+    this.parkedCarPartitionRuntime = null;
+    this.parkedCarPartitionDiagnostics = createParkedCarPartitionDiagnostics();
+    this.parkedCarPartitionDiagnostics.lifecycle.disposals = disposals;
+  }
+
   resize() {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
@@ -1388,7 +1651,8 @@ export class CityRenderer {
     this.controls.dispose();
     this.disposeWorldPartitionRuntime();
     this.disposePortalPartitionRuntime();
-    for (const geometry of this.geometryCache) geometry.dispose();
+    this.disposeParkedCarPartitionRuntime();
+    for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.disposeGroundMaterialTextures();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -1435,7 +1699,7 @@ export class CityRenderer {
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     // Dispose old dynamic geometry only; static materials persist for rebuilds.
-    for (const geometry of this.geometryCache) geometry.dispose();
+    for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.geometryCache = [];
     this.pickables = [];
     this.neonGlowMaterials = [];
@@ -1448,6 +1712,7 @@ export class CityRenderer {
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
     this.disposeWorldPartitionRuntime();
+    this.disposeParkedCarPartitionRuntime();
     this.streetLampRecords = [];
     this.streetLampDiagnostics = {
       source: city?.meta?.generator || null,
@@ -1563,7 +1828,7 @@ export class CityRenderer {
   }
 
   installMetricTileRoot(root, bounds) {
-    for (const geometry of this.geometryCache) geometry.dispose();
+    for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.geometryCache = [];
     this.city = null;
     this.root = root;
@@ -1587,6 +1852,7 @@ export class CityRenderer {
     this.syncGroundMaterialDiagnostics();
     this.disposeWorldPartitionRuntime();
     this.disposePortalPartitionRuntime();
+    this.disposeParkedCarPartitionRuntime();
     if (this.root) {
       this.scene.remove(this.root);
       this.root.traverse((object) => {
@@ -5575,47 +5841,359 @@ export class CityRenderer {
     }
     if (!spots.length) return;
     this.streetFurniture.cars = spots.length;
-    const bodyGeometry = new THREE.BoxGeometry(1.8, 0.58, 3.9);
-    const cabGeometry = new THREE.BoxGeometry(1.5, 0.5, 1.7);
+    const sourceSnapshotBefore = JSON.stringify(spots.map(({ x, z, heading }) => ({ x, z, heading })));
+    const partitionSf = realMap && isSanFranciscoCity(city);
+    const bodyGeometry = createParkedCarHullGeometry({ compositeBody: true });
+    const cabGeometry = createParkedCarHullGeometry();
     const bodyMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      roughness: 0.38,
-      metalness: 0.5,
+      roughness: 0.46,
+      metalness: 0.34,
       flatShading: true,
+      vertexColors: true,
     });
     const cabMaterial = new THREE.MeshStandardMaterial({
-      color: 0xb9d3e0,
-      roughness: 0.22,
-      metalness: 0.2,
+      color: 0xffffff,
+      roughness: 0.18,
+      metalness: 0.42,
       flatShading: true,
     });
     const bodies = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, spots.length);
     const cabs = new THREE.InstancedMesh(cabGeometry, cabMaterial, spots.length);
-    const paints = [0xd94f4a, 0xe8b23a, 0x4f86c8, 0x3f9e8f, 0x8f74c8, 0xd47a3f, 0xf2e9d8, 0x6fbf73];
-    const matrix = new THREE.Matrix4();
+    bodies.name = partitionSf ? 'sf-partitioned-parked-car-bodies' : 'parked-car-bodies';
+    cabs.name = partitionSf ? 'sf-partitioned-parked-car-cabs' : 'parked-car-cabs';
+    bodies.userData.worldPartitionPass = partitionSf ? PARKED_CAR_PARTITION_PASS : null;
+    cabs.userData.worldPartitionPass = partitionSf ? PARKED_CAR_PARTITION_PASS : null;
+    const bodyMatrix = new THREE.Matrix4();
+    const cabMatrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
-    const scale = new THREE.Vector3(1, 1, 1);
-    const position = new THREE.Vector3();
-    const color = new THREE.Color();
+    const bodyScale = new THREE.Vector3(1.8, 0.58, 3.9);
+    const cabScale = new THREE.Vector3(1.5, 0.5, 1.7);
+    const bodyPosition = new THREE.Vector3();
+    const cabPosition = new THREE.Vector3();
+    const cabOffset = new THREE.Vector3();
+    const bodyColor = new THREE.Color();
+    const cabColor = new THREE.Color();
+    const records = [];
+    const cellMap = new Map();
     for (let i = 0; i < spots.length; i += 1) {
       const spot = spots[i];
-      const y = (this.terrain?.heightAt ? this.terrain.heightAt(spot.x, spot.z) : 0) + roadLift + 0.3;
-      position.set(spot.x, y, spot.z);
+      const roadY = (this.terrain?.heightAt ? this.terrain.heightAt(spot.x, spot.z) : 0) + roadLift;
       quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), spot.heading);
-      matrix.compose(position, quaternion, scale);
-      bodies.setMatrixAt(i, matrix);
-      cabs.setMatrixAt(i, matrix);
-      color.set(paints[Math.floor(random() * paints.length)]);
-      bodies.setColorAt(i, color);
+      bodyPosition.set(spot.x, roadY + 0.32, spot.z);
+      cabOffset.set(0, 0, -0.18).applyQuaternion(quaternion);
+      cabPosition.set(spot.x + cabOffset.x, roadY + 0.78, spot.z + cabOffset.z);
+      bodyMatrix.compose(bodyPosition, quaternion, bodyScale);
+      cabMatrix.compose(cabPosition, quaternion, cabScale);
+      bodyColor.set(PARKED_CAR_PALETTE[Math.floor(random() * PARKED_CAR_PALETTE.length)]);
+      cabColor.set(PARKED_CAR_GLASS_PALETTE[Math.floor(random() * PARKED_CAR_GLASS_PALETTE.length)]);
+      bodies.setMatrixAt(i, bodyMatrix);
+      cabs.setMatrixAt(i, cabMatrix);
+      bodies.setColorAt(i, bodyColor);
+      cabs.setColorAt(i, cabColor);
+      const cellX = Math.floor(spot.x / PARKED_CAR_PARTITION_CELL_SIZE);
+      const cellZ = Math.floor(spot.z / PARKED_CAR_PARTITION_CELL_SIZE);
+      const cellId = `${cellX}:${cellZ}`;
+      records.push({
+        index: i,
+        x: spot.x,
+        z: spot.z,
+        heading: spot.heading,
+        cellId,
+        bodyMatrix: new Float32Array(bodyMatrix.elements),
+        bodyColor: new Float32Array([bodyColor.r, bodyColor.g, bodyColor.b]),
+        cabMatrix: new Float32Array(cabMatrix.elements),
+        cabColor: new Float32Array([cabColor.r, cabColor.g, cabColor.b]),
+      });
+      let cell = cellMap.get(cellId);
+      if (!cell) {
+        cell = {
+          id: cellId,
+          x: (cellX + 0.5) * PARKED_CAR_PARTITION_CELL_SIZE,
+          z: (cellZ + 0.5) * PARKED_CAR_PARTITION_CELL_SIZE,
+          indices: [],
+        };
+        cellMap.set(cellId, cell);
+      }
+      cell.indices.push(i);
     }
     bodies.instanceMatrix.needsUpdate = true;
     cabs.instanceMatrix.needsUpdate = true;
     if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
+    if (cabs.instanceColor) cabs.instanceColor.needsUpdate = true;
     bodies.castShadow = true;
     bodies.receiveShadow = true;
     cabs.castShadow = true;
+    cabs.receiveShadow = true;
     root.add(bodies, cabs);
     this.geometryCache.push(bodyGeometry, cabGeometry);
+    if (!partitionSf) return;
+    bodies.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    cabs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    bodies.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    cabs.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    const recordsSnapshot = serializeParkedCarPartitionRecords(records);
+    const sourceSnapshotAfter = JSON.stringify(spots.map(({ x, z, heading }) => ({ x, z, heading })));
+    this.parkedCarPartitionRuntime = {
+      root,
+      bodies,
+      cabs,
+      records,
+      cells: [...cellMap.values()].sort((left, right) => left.id.localeCompare(right.id)),
+      activeCellIds: new Set(),
+      activeMask: new Uint8Array(records.length),
+      frame: 0,
+      sourceGenerator: city.meta.generator,
+      goldenMode: city.meta.generator === 'sf-builtin',
+      sourceInputChecksumBefore: hashString(sourceSnapshotBefore),
+      sourceInputChecksumAfter: hashString(sourceSnapshotAfter),
+      sourceInputUnchanged: sourceSnapshotBefore === sourceSnapshotAfter,
+      recordsChecksum: hashString(recordsSnapshot),
+      recordsFinite: records.every((record) => [
+        ...record.bodyMatrix,
+        ...record.bodyColor,
+        ...record.cabMatrix,
+        ...record.cabColor,
+      ].every(Number.isFinite)),
+      bodyTrianglesPerSpot: (bodyGeometry.index?.count
+        ?? bodyGeometry.getAttribute('position').count) / 3,
+      cabTrianglesPerSpot: (cabGeometry.index?.count
+        ?? cabGeometry.getAttribute('position').count) / 3,
+      bodyHull: { ...bodyGeometry.userData.parkedCarHull },
+      cabHull: { ...cabGeometry.userData.parkedCarHull },
+      boundsCenter: new THREE.Vector3(),
+    };
+    this.updateParkedCarPartition(true, true);
+  }
+
+  updateParkedCarPartition(force = false, resetHysteresis = false, forceAll = false) {
+    const runtime = this.parkedCarPartitionRuntime;
+    if (!runtime?.bodies || !runtime?.cabs) return false;
+    runtime.frame += 1;
+    if (!force && runtime.frame % PARKED_CAR_PARTITION_UPDATE_INTERVAL !== 0) return false;
+    if (resetHysteresis) runtime.activeCellIds.clear();
+    const focus = this.controls.target;
+    const aerial = forceAll
+      || Math.abs(this.camera.position.y - focus.y) >= PARKED_CAR_PARTITION_AERIAL_HEIGHT;
+    const nextActiveCellIds = new Set();
+    runtime.activeMask.fill(0);
+    let enters = 0;
+    let exits = 0;
+    for (const cell of runtime.cells) {
+      const wasActive = runtime.activeCellIds.has(cell.id);
+      const radius = wasActive ? PARKED_CAR_PARTITION_EXIT_RADIUS : PARKED_CAR_PARTITION_ENTER_RADIUS;
+      const edgeX = Math.max(0, Math.abs(cell.x - focus.x) - PARKED_CAR_PARTITION_CELL_SIZE * 0.5);
+      const edgeZ = Math.max(0, Math.abs(cell.z - focus.z) - PARKED_CAR_PARTITION_CELL_SIZE * 0.5);
+      const active = aerial || Math.hypot(edgeX, edgeZ) <= radius;
+      if (!active) {
+        if (wasActive) exits += 1;
+        continue;
+      }
+      if (!wasActive) enters += 1;
+      nextActiveCellIds.add(cell.id);
+      for (const index of cell.indices) runtime.activeMask[index] = 1;
+    }
+    let membershipChanged = nextActiveCellIds.size !== runtime.activeCellIds.size;
+    if (!membershipChanged) {
+      for (const cellId of nextActiveCellIds) {
+        if (!runtime.activeCellIds.has(cellId)) {
+          membershipChanged = true;
+          break;
+        }
+      }
+    }
+    if (!force && !resetHysteresis && !membershipChanged) return false;
+    const activeIndices = [];
+    for (let index = 0; index < runtime.activeMask.length; index += 1) {
+      if (runtime.activeMask[index]) activeIndices.push(index);
+    }
+    const bodyMatrixArray = runtime.bodies.instanceMatrix.array;
+    const bodyColorArray = runtime.bodies.instanceColor.array;
+    const cabMatrixArray = runtime.cabs.instanceMatrix.array;
+    const cabColorArray = runtime.cabs.instanceColor.array;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let targetIndex = 0; targetIndex < activeIndices.length; targetIndex += 1) {
+      const record = runtime.records[activeIndices[targetIndex]];
+      bodyMatrixArray.set(record.bodyMatrix, targetIndex * 16);
+      bodyColorArray.set(record.bodyColor, targetIndex * 3);
+      cabMatrixArray.set(record.cabMatrix, targetIndex * 16);
+      cabColorArray.set(record.cabColor, targetIndex * 3);
+      for (const matrix of [record.bodyMatrix, record.cabMatrix]) {
+        const x = matrix[12];
+        const y = matrix[13];
+        const z = matrix[14];
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (z < minZ) minZ = z;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+        if (z > maxZ) maxZ = z;
+      }
+    }
+    for (const mesh of [runtime.bodies, runtime.cabs]) {
+      mesh.count = activeIndices.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (!mesh.boundingSphere) mesh.boundingSphere = new THREE.Sphere();
+      if (activeIndices.length) {
+        runtime.boundsCenter.set(
+          (minX + maxX) * 0.5,
+          (minY + maxY) * 0.5,
+          (minZ + maxZ) * 0.5,
+        );
+        const radius = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5 + 2.2;
+        mesh.boundingSphere.set(runtime.boundsCenter, radius);
+      } else {
+        mesh.boundingSphere.set(this.controls.target, 0);
+      }
+    }
+    runtime.activeCellIds = nextActiveCellIds;
+
+    const previous = this.parkedCarPartitionDiagnostics;
+    const bodyTriangles = runtime.bodyTrianglesPerSpot;
+    const cabTriangles = runtime.cabTrianglesPerSpot;
+    const trianglesPerSpot = bodyTriangles + cabTriangles;
+    const recordsUnchanged = force || resetHysteresis
+      ? hashString(serializeParkedCarPartitionRecords(runtime.records)) === runtime.recordsChecksum
+      : previous.source.recordsUnchanged === true;
+    const diagnostics = createParkedCarPartitionDiagnostics();
+    diagnostics.enabled = true;
+    diagnostics.sourceGenerator = runtime.sourceGenerator;
+    diagnostics.validationMode = runtime.goldenMode ? 'sf-builtin-golden' : 'live-osm-structural';
+    diagnostics.expectedGolden = {
+      enabled: runtime.goldenMode,
+      spots: runtime.goldenMode ? 520 : null,
+      cells: runtime.goldenMode ? 93 : null,
+    };
+    diagnostics.source = {
+      spots: runtime.records.length,
+      cells: runtime.cells.length,
+      bodyTrianglesPerSpot: bodyTriangles,
+      cabTrianglesPerSpot: cabTriangles,
+      trianglesPerSpot,
+      totalTriangles: runtime.records.length * trianglesPerSpot,
+      recordsChecksum: runtime.recordsChecksum,
+      recordsUnchanged,
+      inputChecksumBefore: runtime.sourceInputChecksumBefore,
+      inputChecksumAfter: runtime.sourceInputChecksumAfter,
+      unchanged: runtime.sourceInputUnchanged,
+    };
+    diagnostics.cells = {
+      total: runtime.cells.length,
+      active: nextActiveCellIds.size,
+      ids: [...nextActiveCellIds].sort(),
+    };
+    diagnostics.active = {
+      spots: activeIndices.length,
+      hiddenSpots: runtime.records.length - activeIndices.length,
+      indices: activeIndices,
+      aerial,
+      forceAll,
+    };
+    diagnostics.batches = {
+      bodies: {
+        name: runtime.bodies.name,
+        capacity: runtime.records.length,
+        count: runtime.bodies.count,
+        submittedTriangles: runtime.bodies.count * bodyTriangles,
+        matricesFinite: runtime.recordsFinite,
+        colorsFinite: runtime.recordsFinite,
+      },
+      cabs: {
+        name: runtime.cabs.name,
+        capacity: runtime.records.length,
+        count: runtime.cabs.count,
+        submittedTriangles: runtime.cabs.count * cabTriangles,
+        matricesFinite: runtime.recordsFinite,
+        colorsFinite: runtime.recordsFinite,
+      },
+    };
+    diagnostics.topology = {
+      body: {
+        vertexCount: runtime.bodyHull.vertexCount,
+        indexCount: 0,
+        triangleCount: runtime.bodyHull.triangleCount,
+        indexed: runtime.bodyHull.indexed,
+        finiteTriangleAreas: runtime.bodyHull.finiteTriangleAreas,
+        minTriangleArea: runtime.bodyHull.minTriangleArea,
+        minOutwardNormalDot: runtime.bodyHull.minOutwardNormalDot,
+        vertexColors: runtime.bodyHull.vertexColors,
+        roles: { ...runtime.bodyHull.roles },
+      },
+      cab: {
+        vertexCount: runtime.cabHull.vertexCount,
+        indexCount: 0,
+        triangleCount: runtime.cabHull.triangleCount,
+        indexed: runtime.cabHull.indexed,
+        finiteTriangleAreas: runtime.cabHull.finiteTriangleAreas,
+        minTriangleArea: runtime.cabHull.minTriangleArea,
+        minOutwardNormalDot: runtime.cabHull.minOutwardNormalDot,
+      },
+      cabVerticalOffsetMeters: 0.46,
+      cabLongitudinalOffsetMeters: -0.18,
+      distinctBodyCabMatrices: true,
+    };
+    diagnostics.submittedTriangles = activeIndices.length * trianglesPerSpot;
+    diagnostics.hysteresis = {
+      enters: previous.hysteresis.enters + enters,
+      exits: previous.hysteresis.exits + exits,
+    };
+    diagnostics.updates = {
+      checks: previous.updates.checks + 1,
+      compactions: previous.updates.compactions + 1,
+      resets: previous.updates.resets + (resetHysteresis ? 1 : 0),
+    };
+    diagnostics.lifecycle = {
+      registrations: previous.lifecycle.registrations || 1,
+      disposals: previous.lifecycle.disposals,
+    };
+    diagnostics.resources = { drawGroups: 2, geometries: 2, materials: 2, textures: 0 };
+    const sourceCountContract = runtime.goldenMode
+      ? diagnostics.source.spots === 520 && diagnostics.source.cells === 93
+      : diagnostics.source.spots > 0
+        && diagnostics.source.spots <= 520
+        && diagnostics.source.cells > 0
+        && diagnostics.source.cells <= diagnostics.source.spots;
+    diagnostics.failure = sourceCountContract
+      && diagnostics.source.unchanged
+      && diagnostics.source.recordsUnchanged
+      && diagnostics.source.totalTriangles
+        === diagnostics.source.spots * diagnostics.source.trianglesPerSpot
+      && diagnostics.source.bodyTrianglesPerSpot === 76
+      && diagnostics.source.cabTrianglesPerSpot === 20
+      && diagnostics.topology.body.finiteTriangleAreas
+      && diagnostics.topology.cab.finiteTriangleAreas
+      && diagnostics.topology.body.minOutwardNormalDot > 0
+      && diagnostics.topology.cab.minOutwardNormalDot > 0
+      && diagnostics.topology.body.vertexColors
+      && diagnostics.topology.body.roles.paintHull === 20
+      && diagnostics.topology.body.roles.tires === 48
+      && diagnostics.topology.body.roles.lamps === 8
+      && diagnostics.cells.total === diagnostics.source.cells
+      && diagnostics.active.spots + diagnostics.active.hiddenSpots === diagnostics.source.spots
+      && diagnostics.active.indices.length === diagnostics.active.spots
+      && diagnostics.active.indices.every((index) => Number.isInteger(index)
+        && index >= 0 && index < diagnostics.source.spots)
+      && diagnostics.batches.bodies.capacity === diagnostics.source.spots
+      && diagnostics.batches.cabs.capacity === diagnostics.source.spots
+      && diagnostics.batches.bodies.count === diagnostics.batches.cabs.count
+      && diagnostics.batches.bodies.count === diagnostics.active.spots
+      && diagnostics.batches.bodies.count <= diagnostics.batches.bodies.capacity
+      && diagnostics.batches.bodies.matricesFinite
+      && diagnostics.batches.bodies.colorsFinite
+      && diagnostics.batches.cabs.matricesFinite
+      && diagnostics.batches.cabs.colorsFinite
+      && runtime.bodies.parent === runtime.root
+      && runtime.cabs.parent === runtime.root
+      ? null
+      : 'sf-world-partition-parked-cars-contract';
+    this.parkedCarPartitionDiagnostics = diagnostics;
+    return true;
   }
 
   buildShopAwnings(root, city) {
@@ -6424,6 +7002,7 @@ export class CityRenderer {
     this.updateLocalLightPool(delta);
     this.updateWorldPartition();
     this.updatePortalPartition();
+    this.updateParkedCarPartition();
     if (this.signalMeshes) {
       for (const entry of this.signalMeshes) {
         const offset = entry.signal.phaseOffset || 0;
