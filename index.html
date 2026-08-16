@@ -3,83 +3,110 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0c131d" />
-    <meta
-      name="description"
-      content="Earth Online — start in San Francisco, then grow toward California, the US, and North America. Everyone is welcome to add their own towns."
-    />
+    <meta name="theme-color" content="#16303d" />
+    <meta name="description" content="Earth Online — a living Three.js WebGPU city simulation starting in San Francisco." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Earth Online · San Francisco</title>
   </head>
   <body>
-    <main id="app" aria-label="Earth Online San Francisco chapter">
-      <canvas
-        id="scene-canvas"
-        tabindex="0"
-        inert
-        aria-label="Interactive San Francisco city scene"
-        aria-describedby="scene-instructions"
-      ></canvas>
-      <div id="hud-root" inert></div>
-      <section
-        id="boot-overlay"
-        class="boot-overlay"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="boot-title"
-        aria-describedby="boot-description"
-        aria-live="polite"
-      >
-        <div class="boot-panel">
-          <div class="boot-mark">EO<span>/</span>SF</div>
-          <p class="boot-kicker">EARTH ONLINE · CHAPTER 01</p>
-          <h1 id="boot-title">San Francisco,<br /><em>first.</em></h1>
-          <p class="boot-copy" id="boot-description">
-            A living open world starting here — then California, the US, and North America.
-            Everyone is welcome to add their own towns.
-          </p>
-          <div class="boot-guide" id="scene-instructions">
-            <span><kbd>DRAG</kbd> orbit</span>
-            <span><kbd>W A S D</kbd> roam</span>
-            <span><kbd>E</kbd> drive / talk</span>
-            <span><kbd>T</kbd> eat</span>
-            <span><kbd>F</kbd> work</span>
-            <span><kbd>X</kbd> rest</span>
-            <span><kbd>V</kbd> voice</span>
-            <span><kbd>R</kbd> weather</span>
-            <span><kbd>H</kbd> beauty</span>
-            <span><kbd>C</kbd> quality</span>
-            <span><kbd>M</kbd> map</span>
-          </div>
-          <label class="boot-name-label" for="player-name">PLAY AS</label>
-          <input
-            id="player-name"
-            class="boot-name-input"
-            type="text"
-            maxlength="18"
-            value="Traveler"
-            autocomplete="nickname"
-            aria-label="Player name"
-          />
-          <button id="launch-button" class="boot-action" type="button" disabled>
-            <span>Preparing the city</span><b aria-hidden="true">↗</b>
-          </button>
-          <p class="boot-status" id="boot-status">Warming up the avenue…</p>
-          <div class="boot-secondary-actions">
-            <a class="boot-secondary" href="./about.html">About Earth Online</a>
-            <a class="boot-secondary" href="./realmap.html?play=1">Real SF streets (prebuilt)</a>
-            <a
-              class="boot-secondary"
-              href="https://github.com/duolahypercho/earth-online"
-              rel="noopener noreferrer"
-              >Add a town</a
-            >
-          </div>
-          <p class="boot-online-note">Run the multiplayer relay with <code>npm run net</code> and open the city in a second tab to meet someone on the street. Voice chat uses your microphone and plays with 3D spatial audio.</p>
+    <main id="app">
+      <canvas id="scene-canvas" aria-label="Earth Online San Francisco city"></canvas>
+
+      <header class="brand">
+        <span class="brand-mark">EO</span>
+        <div>
+          <h1>Earth Online</h1>
+          <p id="city-name">San Francisco</p>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="City tools">
+        <div class="tool-group" data-toolbar="styles">
+          <button type="button" class="preset is-active" data-preset="sanfrancisco">SF Style</button>
+          <button type="button" class="preset" data-preset="gridiron">Gridiron</button>
+          <button type="button" class="preset" data-preset="garden">Garden</button>
+        </div>
+        <div class="tool-group" data-toolbar="actions">
+          <button type="button" class="action" data-action="regenerate" title="New seeded city">Regenerate</button>
+          <button type="button" class="action" data-action="seed" title="Copy seed">Seed</button>
+          <button type="button" class="action" data-action="export" title="Download city metadata JSON">Export</button>
+          <button type="button" class="action" data-action="import" title="Import city metadata JSON">Import</button>
+          <input id="import-file" type="file" accept="application/json,.json" hidden />
+          <button type="button" class="action" data-action="place" title="Place a new building on a block">Add</button>
+          <button type="button" class="action" data-action="undo" title="Remove the last building you placed">Undo</button>
+          <button type="button" class="action" data-action="osm" title="Load a real map from OpenStreetMap">Real Map</button>
+          <button type="button" class="action" data-action="mode" title="Orbit or walk">Orbit</button>
+          <button type="button" class="action" data-action="time" title="Toggle day / night">Day</button>
         </div>
       </section>
-      <noscript>This experience requires JavaScript and WebGL2.</noscript>
+
+      <section class="readout" aria-label="City readout">
+        <span id="readout-buildings">0 buildings</span>
+        <span id="readout-blocks">0 blocks</span>
+        <span id="readout-streets">0 streets</span>
+        <span id="readout-oneway">0 one-way</span>
+        <span id="readout-signals">0 signals</span>
+        <span id="readout-clock">9:00 AM</span>
+        <span id="readout-cash">$1,250</span>
+        <span id="readout-seed">seed —</span>
+      </section>
+
+      <section class="hint" aria-label="Controls"><span></span></section>
+
+      <div id="place-chip" class="place-chip" aria-live="polite" hidden>
+        <span class="place-dot" aria-hidden="true"></span>
+        <strong>Add mode</strong>
+        <span class="place-msg">Hover a block to preview a footprint</span>
+      </div>
+
+      <aside id="inspector" class="inspector" aria-label="Feature inspector">
+        <header class="inspector-head">
+          <h2 id="inspector-title">Inspector</h2>
+          <div class="inspector-tools">
+            <button type="button" id="inspector-copy" class="inspector-copy" aria-label="Copy inspector data to clipboard">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy</span>
+            </button>
+            <button type="button" id="inspector-close" class="inspector-close" aria-label="Close inspector">×</button>
+          </div>
+        </header>
+        <p id="inspector-empty" class="inspector-empty">Nothing selected. Click a building, street, signal, or block.</p>
+        <dl id="inspector-fields"></dl>
+      </aside>
+
+      <section id="minimap" class="minimap" aria-label="City minimap">
+        <canvas id="minimap-canvas" width="220" height="220"></canvas>
+      </section>
+
+      <div id="osm-overlay" class="osm-overlay" hidden>
+        <div class="osm-panel" role="dialog" aria-modal="true" aria-labelledby="osm-title">
+          <p class="boot-kicker">OPENSTREETMAP</p>
+          <h2 id="osm-title">Build a real city</h2>
+          <p>Fetch roads and building footprints from OSM. Defaults to San Francisco. Enter a city name or lat,lon[,radius].</p>
+          <form id="osm-form">
+            <label for="osm-city">City name or lat,lon[,radius]</label>
+            <input id="osm-city" value="San Francisco, CA" spellcheck="false" autocomplete="off" />
+            <div class="osm-progress" id="osm-progress" hidden><div class="osm-progress-bar" id="osm-progress-bar"></div></div>
+            <div class="osm-actions">
+              <button type="submit" class="action is-primary" data-action="osm-go">Fetch</button>
+              <button type="button" class="action" data-action="sf-builtin">SF Built-in</button>
+              <button type="button" class="action" data-action="osm-cancel">Cancel</button>
+            </div>
+          </form>
+          <div class="osm-result" id="osm-result" hidden>
+            <p class="osm-result-title" id="osm-result-title"></p>
+            <p class="osm-result-detail" id="osm-result-detail"></p>
+            <div class="osm-actions">
+              <button type="button" class="action is-primary" data-action="osm-done">Done</button>
+              <button type="button" class="action" data-action="osm-retry">Fetch another</button>
+            </div>
+          </div>
+          <p class="osm-status" id="osm-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <div id="status-pill" class="status-pill" role="status" aria-live="polite" hidden><span id="status-pill-text"></span></div>
+      <noscript>This experience requires JavaScript and a browser with WebGPU or WebGL2.</noscript>
     </main>
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/citygen/main.js"></script>
   </body>
 </html>
