@@ -2466,58 +2466,34 @@ export class CityRenderer {
       if (props.length >= maxProps) return;
       const y = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + roadLift + 0.04;
       const roll = random();
-      const group = new THREE.Group();
+      const rotation = random() * Math.PI;
       if (roll < 0.45) {
-        const planter = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.8), planterColor);
-        planter.position.y = 0.28;
-        const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 5), leafColor);
-        leaf.position.y = 1.05;
-        group.add(planter, leaf);
         const flowerColors = ['#e84393', '#ff4f6d', '#ffd23f', '#7a5cff'];
-        const flowerMaterial = new THREE.MeshBasicMaterial({ color: flowerColors[Math.floor(random() * flowerColors.length)], fog: false });
+        const flowers = [];
         for (let f = 0; f < 3; f += 1) {
-          const flower = new THREE.Mesh(new THREE.SphereGeometry(0.09, 5, 4), flowerMaterial);
-          flower.position.set((random() - 0.5) * 0.7, 1.32, (random() - 0.5) * 0.7);
-          group.add(flower);
+          flowers.push({
+            x: (random() - 0.5) * 0.7,
+            z: (random() - 0.5) * 0.7,
+            color: flowerColors[Math.floor(random() * flowerColors.length)],
+          });
         }
-        this.geometryCache.push(flowerMaterial);
-        this.geometryCache.push(planter.geometry, leaf.geometry);
+        props.push({ kind: 'planter', x, y, z, rotation, flowers });
       } else if (roll < 0.62) {
-        const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.62), benchColor);
-        bench.position.y = 0.45;
-        const back = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.08), benchColor);
-        back.position.set(0, 0.8, -0.28);
-        group.add(bench, back);
-        this.geometryCache.push(bench.geometry, back.geometry);
+        props.push({ kind: 'bench', x, y, z, rotation });
       } else if (roll < 0.78) {
-        const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6), hydrantColor);
-        hydrant.position.y = 0.4;
-        group.add(hydrant);
-        this.geometryCache.push(hydrant.geometry);
+        props.push({ kind: 'hydrant', x, y, z, rotation });
       } else if (roll < 0.9) {
-        const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.2, 0.55, 6), coneColor);
-        cone.position.y = 0.28;
-        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.1, 6), signPoleColor);
-        band.position.y = 0.24;
-        group.add(cone, band);
-        this.geometryCache.push(cone.geometry, band.geometry);
+        props.push({ kind: 'cone', x, y, z, rotation });
       } else {
-        const pole = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), signPoleColor);
-        pole.position.y = 0.75;
-        const board = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.42, 0.06), signBoardMaterial);
-        board.position.y = 1.55;
-        board.material = new THREE.MeshStandardMaterial({
+        props.push({
+          kind: 'sign',
+          x,
+          y,
+          z,
+          rotation,
           color: signBoardColors[Math.floor(random() * signBoardColors.length)],
-          roughness: 0.65,
-          flatShading: true,
         });
-        group.add(pole, board);
-        this.geometryCache.push(pole.geometry, board.geometry, board.material);
       }
-      group.position.set(x, y, z);
-      group.rotation.y = random() * Math.PI;
-      group.userData = { kind: 'street-prop' };
-      props.push(group);
     };
     if (realMap) {
       for (const segment of city.segments || []) {
@@ -2564,7 +2540,80 @@ export class CityRenderer {
     }
     const group = new THREE.Group();
     group.name = 'sidewalk-props';
-    for (const prop of props) group.add(prop);
+    const geometries = {
+      planter: new THREE.BoxGeometry(0.8, 0.55, 0.8),
+      leaf: new THREE.SphereGeometry(0.55, 6, 5),
+      flower: new THREE.SphereGeometry(0.09, 5, 4),
+      bench: new THREE.BoxGeometry(1.6, 0.1, 0.62),
+      benchBack: new THREE.BoxGeometry(1.6, 0.55, 0.08),
+      hydrant: new THREE.CylinderGeometry(0.18, 0.22, 0.75, 6),
+      cone: new THREE.CylinderGeometry(0.02, 0.2, 0.55, 6),
+      coneBand: new THREE.CylinderGeometry(0.13, 0.16, 0.1, 6),
+      signPole: new THREE.BoxGeometry(0.08, 1.5, 0.08),
+      signBoard: new THREE.BoxGeometry(0.62, 0.42, 0.06),
+    };
+    const flowerMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3(1, 1, 1);
+    const color = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const matrixFor = (prop, yOffset, xOffset = 0, zOffset = 0) => {
+      const sin = Math.sin(prop.rotation);
+      const cos = Math.cos(prop.rotation);
+      position.set(
+        prop.x + xOffset * cos + zOffset * sin,
+        prop.y + yOffset,
+        prop.z - xOffset * sin + zOffset * cos,
+      );
+      quaternion.setFromAxisAngle(up, prop.rotation);
+      return matrix.compose(position, quaternion, scale);
+    };
+    const addBatch = ({ name, geometry, material, records, y, x = 0, z = 0, colorFor = null, castShadow = true }) => {
+      if (!records.length) return;
+      const mesh = new THREE.InstancedMesh(geometry, material, records.length);
+      mesh.name = name;
+      mesh.castShadow = castShadow;
+      mesh.receiveShadow = castShadow;
+      for (let i = 0; i < records.length; i += 1) {
+        const record = records[i];
+        mesh.setMatrixAt(i, matrixFor(record, y, x, z));
+        if (colorFor) mesh.setColorAt(i, color.set(colorFor(record)));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      group.add(mesh);
+    };
+    const planters = props.filter((prop) => prop.kind === 'planter');
+    const benches = props.filter((prop) => prop.kind === 'bench');
+    const hydrants = props.filter((prop) => prop.kind === 'hydrant');
+    const cones = props.filter((prop) => prop.kind === 'cone');
+    const signs = props.filter((prop) => prop.kind === 'sign');
+    const flowers = planters.flatMap((prop) => prop.flowers.map((flower) => ({
+      ...prop,
+      flowerX: flower.x,
+      flowerZ: flower.z,
+      color: flower.color,
+    })));
+    addBatch({ name: 'planter-pots', geometry: geometries.planter, material: planterColor, records: planters, y: 0.28 });
+    addBatch({ name: 'planter-leaves', geometry: geometries.leaf, material: leafColor, records: planters, y: 1.05 });
+    addBatch({ name: 'planter-flowers', geometry: geometries.flower, material: flowerMaterial, records: flowers, y: 1.32, x: 0, z: 0, colorFor: (prop) => prop.color, castShadow: false });
+    if (flowers.length) {
+      const flowerMesh = group.getObjectByName('planter-flowers');
+      for (let i = 0; i < flowers.length; i += 1) {
+        flowerMesh.setMatrixAt(i, matrixFor(flowers[i], 1.32, flowers[i].flowerX, flowers[i].flowerZ));
+      }
+      flowerMesh.instanceMatrix.needsUpdate = true;
+    }
+    addBatch({ name: 'bench-seats', geometry: geometries.bench, material: benchColor, records: benches, y: 0.45 });
+    addBatch({ name: 'bench-backs', geometry: geometries.benchBack, material: benchColor, records: benches, y: 0.8, z: -0.28 });
+    addBatch({ name: 'hydrants', geometry: geometries.hydrant, material: hydrantColor, records: hydrants, y: 0.4 });
+    addBatch({ name: 'traffic-cones', geometry: geometries.cone, material: coneColor, records: cones, y: 0.28 });
+    addBatch({ name: 'traffic-cone-bands', geometry: geometries.coneBand, material: signPoleColor, records: cones, y: 0.24 });
+    addBatch({ name: 'street-sign-poles', geometry: geometries.signPole, material: signPoleColor, records: signs, y: 0.75 });
+    addBatch({ name: 'street-sign-boards', geometry: geometries.signBoard, material: signBoardMaterial, records: signs, y: 1.55, colorFor: (prop) => prop.color });
+    this.geometryCache.push(...Object.values(geometries));
     this.streetFurniture.props = props.length;
     root.add(group);
   }
