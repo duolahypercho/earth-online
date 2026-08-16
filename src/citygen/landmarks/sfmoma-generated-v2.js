@@ -58,38 +58,38 @@ const FEATURE_IDS = Object.freeze(['oculusAssembly', 'oculusGlazing']);
 
 export const SFMOMA_V2_BLOCKOUT_COMPONENT_CONTRACT = Object.freeze({
   granitePodium: Object.freeze({
-    dimensions: Object.freeze([1, 0.16, 0.42]),
-    position: Object.freeze([0, 0.08, 0]),
+    dimensions: Object.freeze([1.7, 0.13, 0.28]),
+    position: Object.freeze([-0.02, 0.065, 0.01]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'granite',
   }),
   brickWings: Object.freeze({
-    dimensions: Object.freeze([0.96, 0.64, 0.3]),
-    position: Object.freeze([-0.02, 0.4, 0.03]),
+    dimensions: Object.freeze([1.55, 0.68, 0.31]),
+    position: Object.freeze([-0.04, 0.4, 0.04]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'brick',
   }),
   brickCentralTower: Object.freeze({
-    dimensions: Object.freeze([0.25, 0.86, 0.28]),
-    position: Object.freeze([-0.14, 0.51, -0.02]),
+    dimensions: Object.freeze([0.26, 0.86, 0.28]),
+    position: Object.freeze([-0.3, 0.51, -0.02]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'brick',
   }),
   stripedTurret: Object.freeze({
-    dimensions: Object.freeze([0.27, 0.74, 0.27]),
-    position: Object.freeze([0.02, 0.53, 0.09]),
+    dimensions: Object.freeze([0.29, 0.74, 0.27]),
+    position: Object.freeze([0, 0.53, 0.09]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'stripedStone',
   }),
   rippledExpansion: Object.freeze({
-    dimensions: Object.freeze([0.58, 0.7, 0.24]),
-    position: Object.freeze([0.24, 0.51, -0.03]),
+    dimensions: Object.freeze([0.68, 0.72, 0.22]),
+    position: Object.freeze([0.42, 0.52, -0.02]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'frp',
   }),
   glassAtriumCore: Object.freeze({
     dimensions: Object.freeze([0.14, 0.56, 0.1]),
-    position: Object.freeze([0.17, 0.44, 0.18]),
+    position: Object.freeze([0.23, 0.44, 0.18]),
     rotation: Object.freeze([0, 0, 0]),
     material: 'glass',
   }),
@@ -99,21 +99,21 @@ export const SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT = Object.freeze({
   assembly: Object.freeze({
     parentId: 'stripedTurret',
     position: Object.freeze([0, 0.16, 0.13]),
-    rotation: Object.freeze([0.24, 0, -0.28]),
-    dimensions: Object.freeze([0.23, 0.28, 0.07]),
+    rotation: Object.freeze([0.24, 0, 0.24]),
+    dimensions: Object.freeze([0.3, 0.24, 0.065]),
     contactType: 'embedded-seam',
   }),
   ring: Object.freeze({
     parentId: 'oculusAssembly',
     position: Object.freeze([0, 0, 0]),
     rotation: Object.freeze([0, 0, 0]),
-    dimensions: Object.freeze([0.23, 0.28, 0.07]),
+    dimensions: Object.freeze([0.3, 0.24, 0.065]),
   }),
   glazing: Object.freeze({
     parentId: 'oculusAssembly',
-    position: Object.freeze([0, 0, 0.035]),
+    position: Object.freeze([0, 0, 0.03]),
     rotation: Object.freeze([0, 0, 0]),
-    dimensions: Object.freeze([0.17, 0.22, 0.025]),
+    dimensions: Object.freeze([0.22, 0.17, 0.022]),
     contactType: 'embedded-seam',
   }),
 });
@@ -213,9 +213,10 @@ function makeBoxPart(size, position) {
 
 function makeBrickWingsGeometry(dimensions) {
   const geometry = mergeNonIndexedGeometries([
-    makeBoxPart([0.34, 0.74, 0.38], [-0.33, 0, 0]),
-    makeBoxPart([0.27, 0.57, 0.38], [0.365, -0.085, 0]),
-    makeBoxPart([0.2, 0.26, 0.38], [0.04, -0.24, 0]),
+    makeBoxPart([1, 0.3, 0.3], [0, -0.17, 0]),
+    makeBoxPart([0.48, 0.45, 0.3], [-0.26, -0.035, 0]),
+    makeBoxPart([0.25, 0.64, 0.28], [-0.375, 0, -0.01]),
+    makeBoxPart([0.38, 0.43, 0.3], [0.31, -0.075, 0]),
   ]);
   return fitGeometryToDimensions(geometry, dimensions);
 }
@@ -223,11 +224,13 @@ function makeBrickWingsGeometry(dimensions) {
 function makeExpansionGeometry(dimensions) {
   const shape = new THREE.Shape();
   shape.moveTo(-0.5, -0.5);
-  shape.lineTo(0.42, -0.5);
-  shape.lineTo(0.42, 0.03);
-  shape.bezierCurveTo(0.49, 0.12, 0.47, 0.25, 0.35, 0.33);
-  shape.bezierCurveTo(0.2, 0.44, 0.02, 0.5, -0.18, 0.5);
-  shape.bezierCurveTo(-0.36, 0.5, -0.48, 0.43, -0.5, 0.31);
+  shape.lineTo(0.3, -0.5);
+  shape.bezierCurveTo(0.39, -0.45, 0.41, -0.36, 0.35, -0.28);
+  shape.bezierCurveTo(0.31, -0.2, 0.34, -0.12, 0.38, -0.04);
+  shape.bezierCurveTo(0.42, 0.05, 0.4, 0.14, 0.34, 0.21);
+  shape.bezierCurveTo(0.3, 0.29, 0.34, 0.39, 0.27, 0.46);
+  shape.bezierCurveTo(0.22, 0.5, 0.12, 0.5, 0.04, 0.5);
+  shape.lineTo(-0.5, 0.5);
   shape.closePath();
   return fitGeometryToDimensions(new THREE.ExtrudeGeometry(shape, {
     depth: 1,
@@ -237,17 +240,17 @@ function makeExpansionGeometry(dimensions) {
   }), dimensions);
 }
 
-function makeOculusRingGeometry() {
+function makeOculusRingGeometry(dimensions) {
   return fitGeometryToDimensions(
     new THREE.TorusGeometry(0.43, 0.07, 12, 48),
-    [0.23, 0.28, 0.07],
+    dimensions,
   );
 }
 
-function makeOculusGlazingGeometry() {
+function makeOculusGlazingGeometry(dimensions) {
   const geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 1, false);
   geometry.rotateX(Math.PI * 0.5);
-  return fitGeometryToDimensions(geometry, [0.17, 0.22, 0.025]);
+  return fitGeometryToDimensions(geometry, dimensions);
 }
 
 function addComponent(root, nodes, meshes, id, geometry, material) {
@@ -477,13 +480,9 @@ export function createSfmomaGeneratedV2Blockout({ scale = 1 } = {}) {
     nodes,
     meshes,
     'stripedTurret',
-    new THREE.CylinderGeometry(
-      stripedTurret.dimensions[0] * 0.5,
-      stripedTurret.dimensions[0] * 0.5,
-      stripedTurret.dimensions[1],
-      48,
-      1,
-      false,
+    fitGeometryToDimensions(
+      new THREE.CylinderGeometry(0.5, 0.5, 1, 48, 1, false),
+      stripedTurret.dimensions,
     ),
     materials.get(stripedTurret.material),
   );
@@ -510,8 +509,8 @@ export function createSfmomaGeneratedV2Blockout({ scale = 1 } = {}) {
 
   const oculusAssembly = new THREE.Group();
   oculusAssembly.name = 'sfmoma.v2.feature.oculusAssembly';
-  oculusAssembly.position.set(0, 0.16, 0.13);
-  oculusAssembly.rotation.set(0.24, 0, -0.28);
+  oculusAssembly.position.set(...SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.assembly.position);
+  oculusAssembly.rotation.set(...SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.assembly.rotation);
   oculusAssembly.userData.componentId = 'oculusAssembly';
   oculusAssembly.userData.pass = PASS_ID;
   oculusAssembly.userData.transformSpace = 'parent-local';
@@ -519,7 +518,10 @@ export function createSfmomaGeneratedV2Blockout({ scale = 1 } = {}) {
   stripedTurretNode.add(oculusAssembly);
   nodes.set('oculusAssembly', oculusAssembly);
 
-  const oculusRing = new THREE.Mesh(makeOculusRingGeometry(), materials.get('stripedStone'));
+  const oculusRing = new THREE.Mesh(
+    makeOculusRingGeometry(SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.ring.dimensions),
+    materials.get('stripedStone'),
+  );
   oculusRing.name = 'sfmoma.v2.mesh.oculusRing';
   oculusRing.castShadow = true;
   oculusRing.receiveShadow = true;
@@ -529,9 +531,12 @@ export function createSfmomaGeneratedV2Blockout({ scale = 1 } = {}) {
   oculusAssembly.add(oculusRing);
   meshes.set('oculusRing', oculusRing);
 
-  const oculusGlazing = new THREE.Mesh(makeOculusGlazingGeometry(), materials.get('glass'));
+  const oculusGlazing = new THREE.Mesh(
+    makeOculusGlazingGeometry(SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.glazing.dimensions),
+    materials.get('glass'),
+  );
   oculusGlazing.name = 'sfmoma.v2.mesh.oculusGlazing';
-  oculusGlazing.position.set(0, 0, 0.035);
+  oculusGlazing.position.set(...SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.glazing.position);
   oculusGlazing.castShadow = false;
   oculusGlazing.receiveShadow = true;
   oculusGlazing.userData.componentId = 'oculusGlazing';
@@ -558,13 +563,13 @@ export function createSfmomaGeneratedV2Blockout({ scale = 1 } = {}) {
   const sockets = new Map([
     ['stripedTurret.oculusSeat', Object.freeze({
       parentId: 'stripedTurret',
-      localPosition: Object.freeze([0, 0.16, 0.13]),
-      localRotation: Object.freeze([0.24, 0, -0.28]),
+      localPosition: SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.assembly.position,
+      localRotation: SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.assembly.rotation,
       contactType: 'embedded-seam',
     })],
     ['oculusAssembly.glazingSeat', Object.freeze({
       parentId: 'oculusAssembly',
-      localPosition: Object.freeze([0, 0, 0.035]),
+      localPosition: SFMOMA_V2_BLOCKOUT_OCULUS_CONTRACT.glazing.position,
       localRotation: Object.freeze([0, 0, 0]),
       contactType: 'embedded-seam',
     })],
