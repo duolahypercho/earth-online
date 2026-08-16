@@ -620,7 +620,7 @@ function configureBuildingInteriors(city) {
       accessible: portals.filter((portal) => !state.collision.isBlocked(portal.approach.x, portal.approach.z)).length,
     };
   }
-  state.interiors.markers = installBuildingPortals(state.renderer, portals);
+  state.interiors.markers = installBuildingPortals(state.renderer, portals, city);
 }
 
 function nearestBuildingPortal(force = false) {
