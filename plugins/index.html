@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Earth Online · Plugin verification</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      body { margin: 0; background: #091311; color: #d9f7dc; }
+      main { width: min(760px, calc(100% - 40px)); margin: 8vh auto; }
+      h1 { margin-bottom: 8px; font: 700 clamp(28px, 5vw, 48px)/1 system-ui, sans-serif; }
+      p { color: #9fb9ae; line-height: 1.6; }
+      ul { display: grid; gap: 12px; padding: 0; list-style: none; }
+      a { display: block; padding: 18px; border: 1px solid #315d4c; border-radius: 10px; color: #baff8d; text-decoration: none; background: #10241e; }
+      a:hover { border-color: #baff8d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>EARTH ONLINE / QA ONLY</p>
+      <h1>Plugin verification</h1>
+      <p>These pages exercise the same plugin modules registered in the canonical San Francisco world.</p>
+      <ul id="plugin-list"><li>Loading registry…</li></ul>
+    </main>
+    <script type="module">
+      import { listWorldPlugins } from '/src/plugins/registry.js';
+
+      const list = document.querySelector('#plugin-list');
+      list.replaceChildren(...listWorldPlugins().map((plugin) => {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = `/${plugin.verificationPage}`;
+        link.textContent = `${plugin.name} · ${plugin.id}`;
+        item.append(link);
+        return item;
+      }));
+    </script>
+  </body>
+</html>

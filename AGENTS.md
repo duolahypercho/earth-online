@@ -71,6 +71,12 @@ The destination tree is introduced incrementally. Until migration finishes, a ta
 
 Plugins assist the owning subsystem; they never decide architecture or source truth.
 
+Runtime plugins live in `plugins/<plugin-id>/`, are registered exactly once in
+`plugins/manifest.json` and `src/plugins/registry.js`, and expose an individual
+`verify.html` that imports the same module used by `/`. A plugin must not create
+its own renderer, animation loop, scene/world root, clock, or map application.
+Run `npm run verify:plugins` after adding or changing a plugin.
+
 | Plugin/tool | Route work to | Allowed | Never allowed |
 | --- | --- | --- | --- |
 | In-app Browser / Computer Use | QA | canonical `/` interaction, screenshots, console inspection | source edits through DevTools, visual approval without repeatable QA |
