@@ -35,6 +35,122 @@ function landmarkKind(building) {
   return null;
 }
 
+const BUILDING_UV_METRES_X = 12;
+const BUILDING_UV_METRES_Y = 4.6;
+const BUILDING_FOOTPRINT_EPSILON = 1e-4;
+
+function signedFootprintArea(points) {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.z - b.x * a.z;
+  }
+  return area / 2;
+}
+
+function normalizeBuildingFootprint(sourcePoints) {
+  if (!Array.isArray(sourcePoints)) return null;
+  const points = [];
+  for (const point of sourcePoints) {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.z)) return null;
+    const previous = points.at(-1);
+    if (!previous || Math.hypot(point.x - previous.x, point.z - previous.z) > BUILDING_FOOTPRINT_EPSILON) {
+      points.push({ x: point.x, z: point.z });
+    }
+  }
+  if (points.length > 2) {
+    const first = points[0];
+    const last = points.at(-1);
+    if (Math.hypot(first.x - last.x, first.z - last.z) <= BUILDING_FOOTPRINT_EPSILON) points.pop();
+  }
+  if (points.length < 3 || Math.abs(signedFootprintArea(points)) < BUILDING_FOOTPRINT_EPSILON) return null;
+  return points;
+}
+
+function polygonExtrusionGeometry(points, height, baseY) {
+  const signedArea = signedFootprintArea(points);
+  const roofTriangles = THREE.ShapeUtils.triangulateShape(
+    points.map((point) => new THREE.Vector2(point.x, point.z)),
+    [],
+  );
+  if (roofTriangles.length !== points.length - 2) return null;
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const topY = baseY + height;
+  // Roof vertices are separate from walls so the cap normal stays hard after
+  // material-bucket merging. A stable facade-background texel keeps windows
+  // and murals off horizontal roofs. The terrain-hidden bottom cap is omitted.
+  for (const point of points) {
+    positions.push(point.x, topY, point.z);
+    normals.push(0, 1, 0);
+    uvs.push(0.02, 0.2);
+  }
+
+  let renderedArea = 0;
+  for (const triangle of roofTriangles) {
+    const [a, b, c] = triangle;
+    const pa = points[a];
+    const pb = points[b];
+    const pc = points[c];
+    const triangleSignedArea = ((pb.x - pa.x) * (pc.z - pa.z) - (pc.x - pa.x) * (pb.z - pa.z)) / 2;
+    renderedArea += Math.abs(triangleSignedArea);
+    // In X/Y/Z space, positive X/Z winding points downward, hence the swap.
+    if (triangleSignedArea > 0) {
+      indices.push(a, c, b);
+    } else {
+      indices.push(a, b, c);
+    }
+  }
+
+  let perimeter = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const edgeLength = Math.hypot(dx, dz);
+    const wallStart = positions.length / 3;
+    const outwardX = signedArea > 0 ? dz / edgeLength : -dz / edgeLength;
+    const outwardZ = signedArea > 0 ? -dx / edgeLength : dx / edgeLength;
+    const u0 = perimeter / BUILDING_UV_METRES_X;
+    const u1 = (perimeter + edgeLength) / BUILDING_UV_METRES_X;
+    positions.push(
+      a.x, baseY, a.z,
+      b.x, baseY, b.z,
+      b.x, topY, b.z,
+      a.x, topY, a.z,
+    );
+    for (let vertex = 0; vertex < 4; vertex += 1) normals.push(outwardX, 0, outwardZ);
+    uvs.push(
+      u0, 0,
+      u1, 0,
+      u1, height / BUILDING_UV_METRES_Y,
+      u0, height / BUILDING_UV_METRES_Y,
+    );
+    if (signedArea > 0) {
+      indices.push(wallStart, wallStart + 2, wallStart + 1, wallStart, wallStart + 3, wallStart + 2);
+    } else {
+      indices.push(wallStart, wallStart + 1, wallStart + 2, wallStart, wallStart + 2, wallStart + 3);
+    }
+    perimeter += edgeLength;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  return {
+    geometry,
+    renderedArea,
+    triangleCount: indices.length / 3,
+  };
+}
+
 function seededTexture(seed, draw, width = 128, height = 128) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -417,6 +533,17 @@ export class CityRenderer {
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.sidewalkPropRecords = [];
     this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+    this.buildingFootprintDiagnostics = {
+      sourceCount: 0,
+      polygonShells: 0,
+      fallbacks: 0,
+      finite: true,
+      sourceArea: 0,
+      renderedArea: 0,
+      maxAreaRelativeError: 0,
+      triangleCount: 0,
+      triangleDelta: 0,
+    };
     this.nightEmissive = [];
     this.neonGlowMaterials = [];
     this.lampBulbs = [];
@@ -559,6 +686,17 @@ export class CityRenderer {
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.sidewalkPropRecords = [];
     this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+    this.buildingFootprintDiagnostics = {
+      sourceCount: 0,
+      polygonShells: 0,
+      fallbacks: 0,
+      finite: true,
+      sourceArea: 0,
+      renderedArea: 0,
+      maxAreaRelativeError: 0,
+      triangleCount: 0,
+      triangleDelta: 0,
+    };
     const root = new THREE.Group();
     root.name = 'city-root';
 
@@ -695,6 +833,17 @@ export class CityRenderer {
       };
       this.sidewalkPropRecords = [];
       this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
+      this.buildingFootprintDiagnostics = {
+        sourceCount: 0,
+        polygonShells: 0,
+        fallbacks: 0,
+        finite: true,
+        sourceArea: 0,
+        renderedArea: 0,
+        maxAreaRelativeError: 0,
+        triangleCount: 0,
+        triangleDelta: 0,
+      };
       this.signalMeshes = [];
       this.root = null;
     }
@@ -1099,12 +1248,31 @@ export class CityRenderer {
     const facadeSeed = Number(city.meta.seedInt || 1);
     const random = mulberry32(facadeSeed);
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const footprintDiagnostics = {
+      sourceCount: realMap ? city.buildings.length : 0,
+      polygonShells: 0,
+      fallbacks: 0,
+      finite: true,
+      sourceArea: 0,
+      renderedArea: 0,
+      maxAreaRelativeError: 0,
+      triangleCount: 0,
+      triangleDelta: 0,
+    };
 
     for (const building of city.buildings) {
-      const points = building.polygon;
-      if (points.length < 4) continue;
+      const sourcePoints = Array.isArray(building.polygon) ? building.polygon : [];
+      const footprint = realMap ? normalizeBuildingFootprint(sourcePoints) : null;
+      const points = footprint || sourcePoints;
+      if (points.length < 3) {
+        if (realMap) {
+          footprintDiagnostics.fallbacks += 1;
+          footprintDiagnostics.finite = false;
+        }
+        continue;
+      }
       const landmarkKey = landmarkKind(building);
-      if (landmarkKey) {
+      if (landmarkKey && !realMap) {
         const minX = Math.min(...points.map((p) => p.x));
         const maxX = Math.max(...points.map((p) => p.x));
         const minZ = Math.min(...points.map((p) => p.z));
@@ -1129,6 +1297,46 @@ export class CityRenderer {
       const isFlat = building.type === 'warehouse' || building.type === 'civic' || building.type === 'park';
       const useTexture = !isFlat && random() < 0.88;
       const materialKey = building.material;
+      const sourceArea = footprint ? Math.abs(signedFootprintArea(footprint)) : ringArea(points);
+      let shell = footprint ? polygonExtrusionGeometry(footprint, height, baseY) : null;
+      const shellAreaError = shell && sourceArea > BUILDING_FOOTPRINT_EPSILON
+        ? Math.abs(shell.renderedArea - sourceArea) / sourceArea
+        : Infinity;
+      if (shell && (!Number.isFinite(shellAreaError) || shellAreaError > 0.001)) {
+        shell.geometry.dispose();
+        shell = null;
+      }
+      const footprintMode = realMap && shell ? 'polygon-footprint' : 'legacy-aabb';
+      let geometry;
+      let renderedArea;
+      let triangleCount;
+      if (shell) {
+        geometry = shell.geometry;
+        renderedArea = shell.renderedArea;
+        triangleCount = shell.triangleCount;
+        footprintDiagnostics.polygonShells += 1;
+      } else {
+        geometry = new THREE.BoxGeometry(width, height, depth);
+        geometry.translate(center.x, baseY + height / 2, center.z);
+        renderedArea = width * depth;
+        triangleCount = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+        if (realMap) footprintDiagnostics.fallbacks += 1;
+      }
+      if (realMap) {
+        const relativeError = sourceArea > BUILDING_FOOTPRINT_EPSILON
+          ? Math.abs(renderedArea - sourceArea) / sourceArea
+          : renderedArea > BUILDING_FOOTPRINT_EPSILON ? 1 : 0;
+        footprintDiagnostics.sourceArea += sourceArea;
+        footprintDiagnostics.renderedArea += renderedArea;
+        footprintDiagnostics.maxAreaRelativeError = Math.max(footprintDiagnostics.maxAreaRelativeError, relativeError);
+        footprintDiagnostics.triangleCount += triangleCount;
+        footprintDiagnostics.triangleDelta += triangleCount - 12;
+        footprintDiagnostics.finite = footprintDiagnostics.finite
+          && Number.isFinite(sourceArea)
+          && Number.isFinite(renderedArea)
+          && Number.isFinite(relativeError)
+          && Array.from(geometry.attributes.position.array).every(Number.isFinite);
+      }
 
       if (useTexture) {
         const facadeStyle = building.facade || 'modern-grid';
@@ -1136,58 +1344,78 @@ export class CityRenderer {
         const variety = Math.floor(hashString(`${facadeStyle}-${building.material}-${building.id}`) % varietyCount);
         const vividFacade = building.type === 'shop' || facadeStyle === 'shopfront';
         const key = `${facadeStyle}|${building.material}|${vividFacade ? 1 : 0}|${variety}`;
-        let group = textureGroups.get(key);
+        const bucketKey = `${key}|${footprintMode}`;
+        let group = textureGroups.get(bucketKey);
         if (!group) {
-          group = { geoms: [], facadeStyle, material: building.material, vivid: vividFacade, variety };
-          textureGroups.set(key, group);
+          group = {
+            geoms: [],
+            facadeStyle,
+            material: building.material,
+            vivid: vividFacade,
+            variety,
+            textureKey: key,
+            footprintMode,
+          };
+          textureGroups.set(bucketKey, group);
         }
-        const repeatY = Math.max(1, Math.round(height / 4.6));
-        const repeatX = Math.max(1, Math.round(width / 12));
-        const geometry = new THREE.BoxGeometry(width, height, depth);
-        // Bake the per-face repeat into UVs so merged buildings sharing one
-        // texture keep their own story and window counts.
-        const uv = geometry.attributes.uv;
-        for (let i = 0; i < uv.count; i += 1) {
-          uv.setX(i, uv.getX(i) * repeatX);
-          uv.setY(i, uv.getY(i) * repeatY);
+        if (footprintMode === 'legacy-aabb') {
+          const repeatY = Math.max(1, Math.round(height / BUILDING_UV_METRES_Y));
+          const repeatX = Math.max(1, Math.round(width / BUILDING_UV_METRES_X));
+          // Preserve the legacy per-face repeat for procedural and malformed
+          // source fallbacks; polygon shells already carry metric wall UVs.
+          const uv = geometry.attributes.uv;
+          for (let i = 0; i < uv.count; i += 1) {
+            uv.setX(i, uv.getX(i) * repeatX);
+            uv.setY(i, uv.getY(i) * repeatY);
+          }
         }
-        geometry.translate(center.x, baseY, center.z);
-        geometry.translate(0, height / 2, 0);
         group.geoms.push(geometry);
         this.geometryCache.push(geometry);
-        this.addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, building.material, random);
+        // Legacy rooftop props are placed from the AABB and can float outside
+        // a corrected polygon shell. Keep them only on the box fallback until
+        // roof details consume the source polygon contract directly.
+        if (footprintMode === 'legacy-aabb') {
+          this.addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, building.material, random);
+        }
         continue;
       }
 
       // Flat-shaded vertex-color building, merged by material.
-      let group = flatGroups.get(materialKey);
+      const bucketKey = `${materialKey}|${footprintMode}`;
+      let group = flatGroups.get(bucketKey);
       if (!group) {
         group = {
           geoms: [],
           colors: PALETTES[materialKey] || PALETTES.plaster,
           buildingIds: [],
+          material: materialKey,
+          footprintMode,
         };
-        flatGroups.set(materialKey, group);
+        flatGroups.set(bucketKey, group);
       }
-      const box = new THREE.BoxGeometry(width, height, depth);
-      box.translate(center.x, baseY + height / 2, center.z);
       // Per-face jitter + roof tone.
-      const positions = box.attributes.position.array;
+      const positions = geometry.attributes.position.array;
+      const normals = geometry.attributes.normal.array;
       const faceColors = [];
       const colorList = group.colors;
-      for (let i = 0; i < positions.length / 9; i += 1) {
+      for (let i = 0; i < geometry.attributes.position.count; i += 1) {
         const r = mulberry32(facadeSeed + building.id.length + i);
         const baseColor = colorList[Math.floor(r() * colorList.length)];
-        const isTop = Math.abs(positions[i * 9 + 1] - (baseY + height)) < 0.01;
+        const isTop = normals[i * 3 + 1] > 0.5
+          || Math.abs(positions[i * 3 + 1] - (baseY + height)) < 0.01;
         const c = isTop ? shade(colorFromHex(baseColor), -0.34) : shade(colorFromHex(baseColor), (r() - 0.5) * 0.14);
-        for (let j = 0; j < 9; j += 1) faceColors.push(c.r, c.g, c.b);
+        faceColors.push(c.r, c.g, c.b);
       }
-      box.setAttribute('color', new THREE.Float32BufferAttribute(faceColors, 3));
-      group.geoms.push(box);
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(faceColors, 3));
+      group.geoms.push(geometry);
       group.buildingIds.push(building.id);
-      this.geometryCache.push(box);
-      this.addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, building.material, random);
+      this.geometryCache.push(geometry);
+      if (footprintMode === 'legacy-aabb') {
+        this.addRoofDetails(root, building, width, depth, height, baseY, minX, minZ, building.material, random);
+      }
     }
+
+    this.buildingFootprintDiagnostics = footprintDiagnostics;
 
     for (const [key, group] of flatGroups) {
       const merged = mergeGeometries(group.geoms, false);
@@ -1202,7 +1430,11 @@ export class CityRenderer {
       const mesh = new THREE.Mesh(merged, material);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.userData = { kind: 'buildings-flat', material: key };
+      mesh.userData = {
+        kind: 'buildings-flat',
+        material: group.material,
+        footprintMode: group.footprintMode,
+      };
       root.add(mesh);
       this.pickables.push(mesh);
       // Per-building pick metadata via spatial map in main.
@@ -1212,7 +1444,7 @@ export class CityRenderer {
       const merged = mergeGeometries(group.geoms, false);
       if (!merged) continue;
       merged.computeVertexNormals();
-      const textureSeed = facadeSeed + hashString(key) * 17;
+      const textureSeed = facadeSeed + hashString(group.textureKey) * 17;
       const dayRnd = mulberry32(textureSeed);
       const texture = seededTexture(textureSeed, (context, w, h) => {
         drawFacade(context, w, h, dayRnd, group.facadeStyle, group.material, { day: true, vivid: group.vivid });
@@ -1235,12 +1467,16 @@ export class CityRenderer {
         flatShading: true,
       });
       const nightIntensity = (group.material === 'glass' ? 0.26 : 0.34)
-        + (hashString(`${key}-night`) % 18) / 100;
+        + (hashString(`${group.textureKey}-night`) % 18) / 100;
       this.nightEmissive.push({ material, texture, nightTexture, nightIntensity });
       const mesh = new THREE.Mesh(merged, material);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.userData = { kind: 'buildings-textured', facade: key };
+      mesh.userData = {
+        kind: 'buildings-textured',
+        facade: group.textureKey,
+        footprintMode: group.footprintMode,
+      };
       root.add(mesh);
       this.pickables.push(mesh);
       this.geometryCache.push(merged);
