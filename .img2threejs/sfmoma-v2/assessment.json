@@ -1,6 +1,6 @@
 {
   "targetName": "SFMOMA Source-Honest Landmark V2",
-  "sourceImage": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+  "sourceImage": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
   "preSpecAssessment": {
     "objectClass": {
       "primaryType": "architectural landmark facade assembly",
@@ -81,52 +81,394 @@
       "targetMinDetails": 16,
       "note": "Eighteen observed details are linked to exact future component.localFeatures or material.localOverrides keys. Spec authoring must create those keys or revise both artifacts together.",
       "details": [
-        {"id": "turret-horizontal-bands", "kind": "ridge", "description": "Alternating pale and charcoal horizontal stone courses wrap the cylindrical turret and converge around the oculus neck.", "region": {"x": 0.35, "y": 0.22, "width": 0.22, "height": 0.47, "units": "normalized"}, "scale": "meso, repeated courses approximately 1/24 of visible turret height", "affects": "turret identity, cylindrical depth, highlight rhythm, and long-range recognizability", "mapsTo": {"type": "component.localFeatures", "ref": "stripedTurret.bandedCourses"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png", "confidence": 0.96},
-        {"id": "oculus-annular-bevel", "kind": "bevel", "description": "The tilted elliptical oculus has a thick annular stone rim whose inner and outer chamfers catch separate highlight bands.", "region": {"x": 0.37, "y": 0.2, "width": 0.19, "height": 0.23, "units": "normalized"}, "scale": "meso annulus with bevel radius approximately 2 percent of oculus major axis", "affects": "oculus silhouette, rim thickness, attachment depth, and grazing-light readability", "mapsTo": {"type": "component.localFeatures", "ref": "oculusAssembly.annularBevel"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png", "confidence": 0.94},
-        {"id": "oculus-radial-mullions", "kind": "linework", "description": "Dark radial and chord mullions subdivide the tilted elliptical glazing and visibly meet at the lower-central spine.", "region": {"x": 0.39, "y": 0.24, "width": 0.16, "height": 0.18, "units": "normalized"}, "scale": "micro-to-meso structural lines, legible at the fixed 1280 by 720 review view", "affects": "oculus identity, glass scale, and radial construction logic", "mapsTo": {"type": "component.localFeatures", "ref": "oculusGlazing.radialMullions"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png", "confidence": 0.93},
-        {"id": "brick-course-relief", "kind": "ridge", "description": "Fine horizontal brick courses and recessed mortar lines repeat across every red facade mass without becoming a flat color fill.", "region": {"x": 0.04, "y": 0.24, "width": 0.86, "height": 0.62, "units": "normalized"}, "scale": "micro relief with course spacing approximately 1/110 of visible facade height", "affects": "material scale, surface depth, contact shading, and rejection of monolithic red boxes", "mapsTo": {"type": "component.localFeatures", "ref": "brickFacade.brickCourses"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png", "confidence": 0.95},
-        {"id": "brick-stack-steps", "kind": "contour", "description": "The red facade resolves into multiple attached stepped wings and tower setbacks with distinct parapet heights rather than one rectangular slab.", "region": {"x": 0.03, "y": 0.22, "width": 0.87, "height": 0.63, "units": "normalized"}, "scale": "macro silhouette system", "affects": "overall facade silhouette, depth ordering, and Botta massing identity", "mapsTo": {"type": "component.localFeatures", "ref": "brickWings.steppedSilhouette"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png", "confidence": 0.96},
-        {"id": "granite-panel-seams", "kind": "seam", "description": "Large rectangular joints subdivide the charcoal granite podium into stone panels with darker crevice response.", "region": {"x": 0.02, "y": 0.75, "width": 0.92, "height": 0.16, "units": "normalized"}, "scale": "meso panel grid", "affects": "podium scale, stone construction, and cavity shading", "mapsTo": {"type": "material.localOverrides", "ref": "granite.panelJoints"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c0.png", "confidence": 0.91},
-        {"id": "recessed-entry", "kind": "contour", "description": "The public entrance is a deep central void beneath projecting brick bars, with visible side reveals and contact shadow.", "region": {"x": 0.43, "y": 0.68, "width": 0.18, "height": 0.21, "units": "normalized"}, "scale": "human-scale meso negative space", "affects": "grounding, public-entry readability, human scale, and front facade depth", "mapsTo": {"type": "component.localFeatures", "ref": "entryAssembly.recessedEntry"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png", "confidence": 0.94},
-        {"id": "entry-door-grid", "kind": "linework", "description": "Multiple dark-framed glass door leaves and transoms subdivide the central entrance opening.", "region": {"x": 0.45, "y": 0.76, "width": 0.1, "height": 0.12, "units": "normalized"}, "scale": "human-scale meso mullion grid", "affects": "entrance scale, glazing depth, and walk-up readability", "mapsTo": {"type": "component.localFeatures", "ref": "entryGlazing.doorGrid"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png", "confidence": 0.91},
-        {"id": "vertical-glass-slots", "kind": "linework", "description": "Narrow vertical glazed slots separate brick masses and use regular horizontal transoms to expose facade depth.", "region": {"x": 0.16, "y": 0.35, "width": 0.7, "height": 0.52, "units": "normalized"}, "scale": "meso repeated curtain-wall bays", "affects": "brick-mass separation, vertical rhythm, and interior-depth cues", "mapsTo": {"type": "component.localFeatures", "ref": "curtainWalls.verticalSlotMullions"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png", "confidence": 0.88},
-        {"id": "white-ripple-ridges", "kind": "ridge", "description": "Closely spaced horizontal ripples follow the expansion's continuous convex, concave, and rounded corner profile.", "region": {"x": 0.61, "y": 0.17, "width": 0.34, "height": 0.54, "units": "normalized"}, "scale": "micro-to-meso repeated relief, approximately 1/90 of visible expansion height", "affects": "Snøhetta expansion identity, curved surface shading, and non-boxy continuity", "mapsTo": {"type": "component.localFeatures", "ref": "rippledExpansion.horizontalRippleProfile"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png", "confidence": 0.96},
-        {"id": "expansion-glass-ribbon", "kind": "linework", "description": "A continuous blue-gray glazed ribbon with vertical mullions cuts horizontally through the white rippled expansion.", "region": {"x": 0.63, "y": 0.3, "width": 0.31, "height": 0.23, "units": "normalized"}, "scale": "macro horizontal aperture with meso mullion repetition", "affects": "expansion proportion, floor-scale cue, and continuity around rounded corners", "mapsTo": {"type": "component.localFeatures", "ref": "expansionGlazing.continuousMullionRibbon"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png", "confidence": 0.92},
-        {"id": "roof-parapet-steps", "kind": "contour", "description": "Thin dark parapet caps trace the staggered upper edges of the brick wings and expose their separate depth planes.", "region": {"x": 0.07, "y": 0.23, "width": 0.58, "height": 0.35, "units": "normalized"}, "scale": "meso edge treatment", "affects": "roofline silhouette, facade depth, and elevated-view legibility", "mapsTo": {"type": "component.localFeatures", "ref": "roofline.parapetSteps"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c0.png", "confidence": 0.86},
-        {"id": "brick-recess-joints", "kind": "groove", "description": "Deeper horizontal shadow joints divide large brick bars and tower stages beyond the fine mortar-course relief.", "region": {"x": 0.06, "y": 0.24, "width": 0.78, "height": 0.57, "units": "normalized"}, "scale": "meso recessed bands", "affects": "stepped volume readability and long-range horizontal cadence", "mapsTo": {"type": "component.localFeatures", "ref": "brickWings.recessedStageJoints"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png", "confidence": 0.9},
-        {"id": "turret-neck-groove", "kind": "groove", "description": "A strong vertical dark channel descends from the oculus to the entry and interrupts the horizontal turret banding.", "region": {"x": 0.47, "y": 0.35, "width": 0.045, "height": 0.4, "units": "normalized"}, "scale": "meso vertical channel", "affects": "turret orientation, oculus-to-entry alignment, and cylindrical band termination", "mapsTo": {"type": "component.localFeatures", "ref": "stripedTurret.centralNeckGroove"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png", "confidence": 0.91},
-        {"id": "granite-punched-windows", "kind": "hole", "description": "Rows of small recessed rectangular window openings puncture the granite podium and reveal dark interior cavities.", "region": {"x": 0.22, "y": 0.8, "width": 0.71, "height": 0.085, "units": "normalized"}, "scale": "human-scale repeated openings", "affects": "podium topology, facade cadence, and base-level depth", "mapsTo": {"type": "component.localFeatures", "ref": "granitePodium.punchedWindowVoids"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c2.png", "confidence": 0.94},
-        {"id": "glazing-specular-response", "kind": "gloss", "description": "Cool glazing carries restrained low-roughness sky highlights while mullions and recessed interiors remain independently readable.", "region": {"x": 0.17, "y": 0.27, "width": 0.73, "height": 0.61, "units": "normalized"}, "scale": "material-zone response", "affects": "glass-versus-stone separation, depth, and response under canonical daylight", "mapsTo": {"type": "material.localOverrides", "ref": "glass.controlledSpecular"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png", "confidence": 0.84},
-        {"id": "brick-mortar-joints", "kind": "seam", "description": "Dark, shallow mortar joints separate individual brick units within each course without changing the macro silhouette.", "region": {"x": 0.04, "y": 0.25, "width": 0.86, "height": 0.58, "units": "normalized"}, "scale": "micro module seam", "affects": "brick unit scale, cavity contrast, and close-view tactile response", "mapsTo": {"type": "material.localOverrides", "ref": "brick.mortarJoints"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png", "confidence": 0.93},
-        {"id": "expansion-panel-seams", "kind": "seam", "description": "Fine vertical and horizontal construction seams subdivide the pale rippled skin while preserving one contiguous curved facade.", "region": {"x": 0.61, "y": 0.17, "width": 0.34, "height": 0.56, "units": "normalized"}, "scale": "micro-to-meso panel seam", "affects": "FRP construction scale, curvature continuity, and relief organization", "mapsTo": {"type": "material.localOverrides", "ref": "frp.panelSeams"}, "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c2.png", "confidence": 0.83}
+        {
+          "id": "turret-horizontal-bands",
+          "kind": "ridge",
+          "description": "Alternating pale and charcoal horizontal stone courses wrap the cylindrical turret and converge around the oculus neck.",
+          "region": {
+            "x": 0.35,
+            "y": 0.22,
+            "width": 0.22,
+            "height": 0.47,
+            "units": "normalized"
+          },
+          "scale": "meso, repeated courses approximately 1/24 of visible turret height",
+          "affects": "turret identity, cylindrical depth, highlight rhythm, and long-range recognizability",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "stripedTurret.bandedCourses"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png",
+          "confidence": 0.96
+        },
+        {
+          "id": "oculus-annular-bevel",
+          "kind": "bevel",
+          "description": "The tilted elliptical oculus has a thick annular stone rim whose inner and outer chamfers catch separate highlight bands.",
+          "region": {
+            "x": 0.37,
+            "y": 0.2,
+            "width": 0.19,
+            "height": 0.23,
+            "units": "normalized"
+          },
+          "scale": "meso annulus with bevel radius approximately 2 percent of oculus major axis",
+          "affects": "oculus silhouette, rim thickness, attachment depth, and grazing-light readability",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "oculusAssembly.annularBevel"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png",
+          "confidence": 0.94
+        },
+        {
+          "id": "oculus-radial-mullions",
+          "kind": "linework",
+          "description": "Dark radial and chord mullions subdivide the tilted elliptical glazing and visibly meet at the lower-central spine.",
+          "region": {
+            "x": 0.39,
+            "y": 0.24,
+            "width": 0.16,
+            "height": 0.18,
+            "units": "normalized"
+          },
+          "scale": "micro-to-meso structural lines, legible at the fixed 1280 by 720 review view",
+          "affects": "oculus identity, glass scale, and radial construction logic",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "oculusGlazing.radialMullions"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c1.png",
+          "confidence": 0.93
+        },
+        {
+          "id": "brick-course-relief",
+          "kind": "ridge",
+          "description": "Fine horizontal brick courses and recessed mortar lines repeat across every red facade mass without becoming a flat color fill.",
+          "region": {
+            "x": 0.04,
+            "y": 0.24,
+            "width": 0.86,
+            "height": 0.62,
+            "units": "normalized"
+          },
+          "scale": "micro relief with course spacing approximately 1/110 of visible facade height",
+          "affects": "material scale, surface depth, contact shading, and rejection of monolithic red boxes",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "brickFacade.brickCourses"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+          "confidence": 0.95
+        },
+        {
+          "id": "brick-stack-steps",
+          "kind": "contour",
+          "description": "The red facade resolves into multiple attached stepped wings and tower setbacks with distinct parapet heights rather than one rectangular slab.",
+          "region": {
+            "x": 0.03,
+            "y": 0.22,
+            "width": 0.87,
+            "height": 0.63,
+            "units": "normalized"
+          },
+          "scale": "macro silhouette system",
+          "affects": "overall facade silhouette, depth ordering, and Botta massing identity",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "brickWings.steppedSilhouette"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+          "confidence": 0.96
+        },
+        {
+          "id": "granite-panel-seams",
+          "kind": "seam",
+          "description": "Large rectangular joints subdivide the charcoal granite podium into stone panels with darker crevice response.",
+          "region": {
+            "x": 0.02,
+            "y": 0.75,
+            "width": 0.92,
+            "height": 0.16,
+            "units": "normalized"
+          },
+          "scale": "meso panel grid",
+          "affects": "podium scale, stone construction, and cavity shading",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "granite.panelJoints"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c0.png",
+          "confidence": 0.91
+        },
+        {
+          "id": "recessed-entry",
+          "kind": "contour",
+          "description": "The public entrance is a deep central void beneath projecting brick bars, with visible side reveals and contact shadow.",
+          "region": {
+            "x": 0.43,
+            "y": 0.68,
+            "width": 0.18,
+            "height": 0.21,
+            "units": "normalized"
+          },
+          "scale": "human-scale meso negative space",
+          "affects": "grounding, public-entry readability, human scale, and front facade depth",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "entryAssembly.recessedEntry"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png",
+          "confidence": 0.94
+        },
+        {
+          "id": "entry-door-grid",
+          "kind": "linework",
+          "description": "Multiple dark-framed glass door leaves and transoms subdivide the central entrance opening.",
+          "region": {
+            "x": 0.45,
+            "y": 0.76,
+            "width": 0.1,
+            "height": 0.12,
+            "units": "normalized"
+          },
+          "scale": "human-scale meso mullion grid",
+          "affects": "entrance scale, glazing depth, and walk-up readability",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "entryGlazing.doorGrid"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png",
+          "confidence": 0.91
+        },
+        {
+          "id": "vertical-glass-slots",
+          "kind": "linework",
+          "description": "Narrow vertical glazed slots separate brick masses and use regular horizontal transoms to expose facade depth.",
+          "region": {
+            "x": 0.16,
+            "y": 0.35,
+            "width": 0.7,
+            "height": 0.52,
+            "units": "normalized"
+          },
+          "scale": "meso repeated curtain-wall bays",
+          "affects": "brick-mass separation, vertical rhythm, and interior-depth cues",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "curtainWalls.verticalSlotMullions"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+          "confidence": 0.88
+        },
+        {
+          "id": "white-ripple-ridges",
+          "kind": "ridge",
+          "description": "Closely spaced horizontal ripples follow the expansion's continuous convex, concave, and rounded corner profile.",
+          "region": {
+            "x": 0.61,
+            "y": 0.17,
+            "width": 0.34,
+            "height": 0.54,
+            "units": "normalized"
+          },
+          "scale": "micro-to-meso repeated relief, approximately 1/90 of visible expansion height",
+          "affects": "Snøhetta expansion identity, curved surface shading, and non-boxy continuity",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "rippledExpansion.horizontalRippleProfile"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png",
+          "confidence": 0.96
+        },
+        {
+          "id": "expansion-glass-ribbon",
+          "kind": "linework",
+          "description": "A continuous blue-gray glazed ribbon with vertical mullions cuts horizontally through the white rippled expansion.",
+          "region": {
+            "x": 0.63,
+            "y": 0.3,
+            "width": 0.31,
+            "height": 0.23,
+            "units": "normalized"
+          },
+          "scale": "macro horizontal aperture with meso mullion repetition",
+          "affects": "expansion proportion, floor-scale cue, and continuity around rounded corners",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "expansionGlazing.continuousMullionRibbon"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png",
+          "confidence": 0.92
+        },
+        {
+          "id": "roof-parapet-steps",
+          "kind": "contour",
+          "description": "Thin dark parapet caps trace the staggered upper edges of the brick wings and expose their separate depth planes.",
+          "region": {
+            "x": 0.07,
+            "y": 0.23,
+            "width": 0.58,
+            "height": 0.35,
+            "units": "normalized"
+          },
+          "scale": "meso edge treatment",
+          "affects": "roofline silhouette, facade depth, and elevated-view legibility",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "roofline.parapetSteps"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c0.png",
+          "confidence": 0.86
+        },
+        {
+          "id": "brick-recess-joints",
+          "kind": "groove",
+          "description": "Deeper horizontal shadow joints divide large brick bars and tower stages beyond the fine mortar-course relief.",
+          "region": {
+            "x": 0.06,
+            "y": 0.24,
+            "width": 0.78,
+            "height": 0.57,
+            "units": "normalized"
+          },
+          "scale": "meso recessed bands",
+          "affects": "stepped volume readability and long-range horizontal cadence",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "brickWings.recessedStageJoints"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+          "confidence": 0.9
+        },
+        {
+          "id": "turret-neck-groove",
+          "kind": "groove",
+          "description": "A strong vertical dark channel descends from the oculus to the entry and interrupts the horizontal turret banding.",
+          "region": {
+            "x": 0.47,
+            "y": 0.35,
+            "width": 0.045,
+            "height": 0.4,
+            "units": "normalized"
+          },
+          "scale": "meso vertical channel",
+          "affects": "turret orientation, oculus-to-entry alignment, and cylindrical band termination",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "stripedTurret.centralNeckGroove"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png",
+          "confidence": 0.91
+        },
+        {
+          "id": "granite-punched-windows",
+          "kind": "hole",
+          "description": "Rows of small recessed rectangular window openings puncture the granite podium and reveal dark interior cavities.",
+          "region": {
+            "x": 0.22,
+            "y": 0.8,
+            "width": 0.71,
+            "height": 0.085,
+            "units": "normalized"
+          },
+          "scale": "human-scale repeated openings",
+          "affects": "podium topology, facade cadence, and base-level depth",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "granitePodium.punchedWindowVoids"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c2.png",
+          "confidence": 0.94
+        },
+        {
+          "id": "glazing-specular-response",
+          "kind": "gloss",
+          "description": "Cool glazing carries restrained low-roughness sky highlights while mullions and recessed interiors remain independently readable.",
+          "region": {
+            "x": 0.17,
+            "y": 0.27,
+            "width": 0.73,
+            "height": 0.61,
+            "units": "normalized"
+          },
+          "scale": "material-zone response",
+          "affects": "glass-versus-stone separation, depth, and response under canonical daylight",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "glass.controlledSpecular"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c1.png",
+          "confidence": 0.84
+        },
+        {
+          "id": "brick-mortar-joints",
+          "kind": "seam",
+          "description": "Dark, shallow mortar joints separate individual brick units within each course without changing the macro silhouette.",
+          "region": {
+            "x": 0.04,
+            "y": 0.25,
+            "width": 0.86,
+            "height": 0.58,
+            "units": "normalized"
+          },
+          "scale": "micro module seam",
+          "affects": "brick unit scale, cavity contrast, and close-view tactile response",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "brick.mortarJoints"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+          "confidence": 0.93
+        },
+        {
+          "id": "expansion-panel-seams",
+          "kind": "seam",
+          "description": "Fine vertical and horizontal construction seams subdivide the pale rippled skin while preserving one contiguous curved facade.",
+          "region": {
+            "x": 0.61,
+            "y": 0.17,
+            "width": 0.34,
+            "height": 0.56,
+            "units": "normalized"
+          },
+          "scale": "micro-to-meso panel seam",
+          "affects": "FRP construction scale, curvature continuity, and relief organization",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "frp.panelSeams"
+          },
+          "evidenceRef": ".img2threejs/sfmoma-v2/detail-inventory/zone-r0c2.png",
+          "confidence": 0.83
+        }
       ]
     },
     "anatomy": {
       "applies": false,
-      "styleHeads": 0.0,
+      "styleHeads": 0,
       "proportions": {
-        "headUnit": 0.0,
-        "torso": 0.0,
-        "legs": 0.0,
-        "shoulderWidth": 0.0,
-        "hipWidth": 0.0
+        "headUnit": 0,
+        "torso": 0,
+        "legs": 0,
+        "shoulderWidth": 0,
+        "hipWidth": 0
       },
       "pose": {
         "type": "unassessed",
         "jointAngles": {}
       },
       "faceLandmarks": {
-        "eyeLine": 0.0,
-        "eyeSpacing": 0.0,
-        "noseBase": 0.0,
-        "mouthLine": 0.0,
-        "hairline": 0.0
+        "eyeLine": 0,
+        "eyeSpacing": 0,
+        "noseBase": 0,
+        "mouthLine": 0,
+        "hairline": 0
       },
       "features": [],
-      "confidence": 0.0,
+      "confidence": 0,
       "note": "Only meaningful when objectClass.primaryDomain is character or hybrid. Set applies=true and fill from forge/stage1_intake/extract_landmarks.py. See grimoire/character/reconstruction.md and grimoire/character/likeness_maximization.md."
     },
-    "sourceImage": "/Volumes/OWC 2TB EXternal SSD/Code/San Fransisco/public/assets/hero/sfmoma-img2threejs-v2/reference.png"
+    "sourceImage": "public/assets/hero/sfmoma-img2threejs-v2/reference.png"
   },
   "qualityContract": {
     "qualityBar": "ultra-complex",

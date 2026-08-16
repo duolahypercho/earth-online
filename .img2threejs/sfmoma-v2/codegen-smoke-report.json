@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.codegen-smoke-report",
+  "generatedAt": "2026-08-16T22:27:28Z",
+  "spec": ".img2threejs/sfmoma-v2/object-sculpt-spec.json",
+  "specSha256": "1e38281be6f71ecc8e9c1ecdec205a944b12fdd4c5b466517fe7b2533f2bf7d8",
+  "scope": "Temporary structural-pass generator and Node runtime smoke; this is massing/hierarchy evidence, not a completed build or visual acceptance result.",
+  "generation": {
+    "engine": "skill://img2threejs/forge/stage3_build/generate_threejs_factory.py",
+    "engineSha256": "8ab208c927d3284a2cd0e0b6da5dad567548333fd521fefec5af4fc785938ef9",
+    "passId": "structural-pass",
+    "route": "Direct internal generate(spec, 'structural-pass') to a temporary directory because the normal CLI correctly keeps structural-pass locked until blockout review.",
+    "commandTemplate": "/opt/homebrew/bin/python3.12 -c \"import generate_threejs_factory; generate(spec, 'structural-pass')\" && <repo>/node_modules/.bin/esbuild <temporary-dir>/sfmoma-v2-structural-smoke.ts --bundle --platform=node --format=esm --outfile=<temporary-dir>/sfmoma-v2-structural-smoke.mjs --alias:three=<repo>/node_modules/three",
+    "temporarySource": "<temporary-dir>/sfmoma-v2-structural-smoke.ts",
+    "temporaryBundle": "<temporary-dir>/sfmoma-v2-structural-smoke.mjs",
+    "fixturePolicy": "Temporary source, bundle, and texture stub are uncommitted and reproducible from the hashed spec and generator engine.",
+    "stateChanged": false,
+    "buildGateMarked": false,
+    "browserTextureStub": "The temporary Node copy replaces only texture construction with undefined so hierarchy and geometry can instantiate without document/Image. The generated geometry, transforms, attachments, and repetition logic are unchanged."
+  },
+  "sourceAssertions": {
+    "sourceBytes": 355958,
+    "repetitionBlocks": 0,
+    "blockedRepetitionIdsAbsent": [
+      "brickCourseRelief",
+      "brickMortarJointGrid",
+      "turretBandCourses",
+      "oculusMullionRadials",
+      "curtainWallMullionGrid",
+      "frpRippleCourses",
+      "podiumWindowArray",
+      "oculusAnnulusLightStripes",
+      "oculusAnnulusDarkStripes"
+    ],
+    "componentScaleAssertions": {
+      "granitePodium": [1.0, 0.16, 0.42],
+      "brickWings": [0.96, 0.74, 0.38],
+      "westSetback": [0.34, 0.57, 0.35],
+      "roofline": [0.94, 0.03, 0.4],
+      "oculusGlazing": [0.17, 0.22, 0.025]
+    },
+    "transformScaleFieldsInSpec": 0
+  },
+  "runtimeAssertions": {
+    "directRootMeshes": 0,
+    "runtimeNodeCountIncludingImplicitRoot": 25,
+    "componentMeshRegistryCount": 24,
+    "instancedMeshCount": 0,
+    "cylinderGeometryComponents": [
+      "stripedTurret"
+    ],
+    "attachmentCylinderSubstitutions": 0,
+    "attachmentProof": "The only CylinderGeometry belongs to the intentional stripedTurret primitive. All 18 child attachments use equal endpoints, makeAttachmentEndpoint returns null, and each authored primitive/dimensions path executes.",
+    "keyGeometryTypes": {
+      "brickWings": "ExtrudeGeometry",
+      "rippledExpansion": "ExtrudeGeometry",
+      "entryAssembly": "ExtrudeGeometry",
+      "oculusAssembly": "TorusGeometry",
+      "oculusGlazing": "ExtrudeGeometry",
+      "turretBandRelief": "TorusGeometry",
+      "expansionGlazing": "ExtrudeGeometry",
+      "expansionRippleSkin": "ExtrudeGeometry"
+    }
+  },
+  "parentLocalTransformProof": {
+    "transformSpace": "parent-local",
+    "socketChildEquality": {
+      "mappedChildren": 18,
+      "exactMatches": 18,
+      "mismatches": 0
+    },
+    "worldCenters": {
+      "westSetback": [-0.31, 0.37, 0.01],
+      "eastSetback": [0.31, 0.34, 0.02],
+      "centralBrickBar": [-0.06, 0.43, 0.08],
+      "brickFacade": [0, 0.45, 0.2],
+      "roofline": [0, 0.82, 0],
+      "entryAssembly": [0.02, 0.13, 0.22],
+      "graniteWindowBanks": [0, 0.07, 0.22]
+    },
+    "worldYBounds": {
+      "brickWings": [0.08, 0.82],
+      "westSetback": [0.085, 0.655],
+      "eastSetback": [0.1, 0.58],
+      "centralBrickBar": [0.34, 0.52],
+      "brickFacade": [0.09, 0.81],
+      "roofline": [0.805, 0.835],
+      "granitePodium": [0, 0.16],
+      "entryAssembly": [0.02, 0.24],
+      "graniteWindowBanks": [0.04, 0.1]
+    },
+    "oculusTilt": {
+      "assemblyLocalRotation": [0.24, 0, -0.28],
+      "glazingLocalRotation": [0, 0, 0],
+      "result": "Glazing inherits the assembly tilt exactly once and remains coplanar with the rim."
+    }
+  },
+  "productionBoundary": {
+    "genericModuleUse": "massing and geometry-descriptor evidence only",
+    "requiredNextImplementation": "A subject-specific WebGPU-safe custom factory must implement all nine facade, course, ripple, bay, mullion, and elliptical annulus systems before visual acceptance.",
+    "forbiddenIntegration": "Do not import any generated WebGL composer, controls, lights, renderer, canvas, animation loop, or scene shell into the canonical world."
+  },
+  "result": {
+    "ok": true,
+    "warnings": [],
+    "nextExpectedState": "build-current-pass"
+  }
+}

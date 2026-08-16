@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.codegen-contract-correction",
+  "reason": "Strict validation alone did not prove generator semantics. The final correction preserves massing geometry while fail-closing every repetition system that the generic circular radial emitter cannot place truthfully.",
+  "generatorBoundary": {
+    "evidenceUse": "massing and geometry-descriptor smoke only",
+    "repetitionUse": "none; all executable counts are zero",
+    "productionRequirement": "Implement a subject-specific WebGPU-safe custom factory for all identity repetitions.",
+    "canonicalRuntimeRule": "Import only the subject factory/module into the existing canonical world. Never import the generator's WebGL composer, controls, lights, renderer, canvas, animation loop, or scene shell."
+  },
+  "rootPolicy": {
+    "removeComponentId": "root",
+    "container": "implicit Group returned by createSFMOMASourceHonestLandmarkV2Model",
+    "topLevelComponents": [
+      "granitePodium",
+      "brickWings",
+      "brickCentralTower",
+      "stripedTurret",
+      "rippledExpansion",
+      "glassAtriumCore"
+    ]
+  },
+  "attachmentPolicy": {
+    "mode": "static-socketed",
+    "localStart": [0, 0, 0],
+    "localEnd": [0, 0, 0],
+    "endpointRole": "generator-compatibility-zero-length-placeholder",
+    "measuredTopology": false,
+    "socketAlignment": "All 18 parent sockets exactly match the associated child parent-local position and rotation.",
+    "reason": "Equal endpoints ensure makeAttachmentEndpoint returns null, so the generator uses each component primitive and dimensions instead of substituting a cylinder. Parent socket metadata, not the zero-length endpoint pair, records the static hierarchy seat."
+  },
+  "scalePolicy": {
+    "removeTransformScale": true,
+    "reason": "generate_threejs_factory.scale_vector prioritizes transform.scale; removing the placeholder [1,1,1] makes declared component dimensions drive emitted geometry scale."
+  },
+  "transformPolicy": {
+    "transformSpace": "parent-local",
+    "brickWingsWorldOrigin": [-0.02, 0.45, 0.02],
+    "granitePodiumWorldOrigin": [0, 0.08, 0],
+    "normalizedChildren": {
+      "westSetback": [-0.29, -0.08, -0.01],
+      "eastSetback": [0.33, -0.11, 0],
+      "centralBrickBar": [-0.04, -0.02, 0.06],
+      "brickFacade": [0.02, 0, 0.18],
+      "roofline": [0.02, 0.37, -0.02]
+    },
+    "normalizedPodiumChildren": {
+      "entryAssembly": [0.02, 0.05, 0.22],
+      "graniteWindowBanks": [0, -0.01, 0.22]
+    },
+    "oculusTilt": {
+      "oculusAssemblyLocalRotation": [0.24, 0, -0.28],
+      "oculusGlazingLocalRotation": [0, 0, 0],
+      "contract": "The glazing and its future mullions inherit the assembly tilt exactly once."
+    }
+  },
+  "componentGeometry": {
+    "brickWings": {
+      "profile2D": {
+        "points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.12], [0.34, 0.12], [0.34, 0.31], [0.13, 0.31], [0.13, 0.5], [-0.14, 0.5], [-0.14, 0.35], [-0.34, 0.35], [-0.34, 0.14], [-0.5, 0.14]],
+        "depth": 1.0
+      }
+    },
+    "entryAssembly": {
+      "profile2D": {
+        "points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]],
+        "holes": [[[-0.29, -0.34], [0.29, -0.34], [0.29, 0.27], [-0.29, 0.27]]],
+        "depth": 1.0
+      }
+    },
+    "oculusGlazing": {
+      "profile2D": {
+        "points": [[0.5, 0], [0.462, 0.191], [0.354, 0.354], [0.191, 0.462], [0, 0.5], [-0.191, 0.462], [-0.354, 0.354], [-0.462, 0.191], [-0.5, 0], [-0.462, -0.191], [-0.354, -0.354], [-0.191, -0.462], [0, -0.5], [0.191, -0.462], [0.354, -0.354], [0.462, -0.191]],
+        "depth": 1.0
+      }
+    },
+    "turretNeck": {
+      "profile2D": {
+        "points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]],
+        "depth": 1.0
+      }
+    },
+    "rippledExpansion": {
+      "curveSweep": {
+        "spine": [[-0.5, -0.18, 0], [-0.28, 0.04, 0.06], [0, 0.18, 0.1], [0.28, 0.15, 0.06], [0.5, -0.05, -0.02]],
+        "crossSection": {"points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]},
+        "closed": false
+      }
+    },
+    "expansionGlazing": {
+      "curveSweep": {
+        "spine": [[-0.5, -0.08, 0], [-0.25, 0.02, 0.04], [0, 0.08, 0.07], [0.27, 0.06, 0.04], [0.5, -0.04, 0]],
+        "crossSection": {"points": [[-0.5, -0.08], [0.5, -0.08], [0.5, 0.08], [-0.5, 0.08]]},
+        "closed": false
+      }
+    },
+    "expansionRippleSkin": {
+      "curveSweep": {
+        "spine": [[-0.5, -0.17, 0], [-0.28, 0.04, 0.06], [0, 0.18, 0.1], [0.28, 0.15, 0.06], [0.5, -0.05, -0.02]],
+        "crossSection": {"points": [[-0.5, -0.025], [0.5, -0.025], [0.5, 0.025], [-0.5, 0.025]]},
+        "closed": false
+      }
+    },
+    "brickFacade": {"baseGeometry": "box"},
+    "roofline": {"baseGeometry": "box"},
+    "curtainWalls": {"baseGeometry": "box"},
+    "graniteWindowBanks": {"baseGeometry": "box"},
+    "turretBandRelief": {"baseGeometry": "torus", "torusTubeRatio": 0.12},
+    "expansionPanelGrid": {"baseGeometry": "plane-card"}
+  },
+  "componentRotations": {
+    "oculusAssembly": [0.24, 0, -0.28],
+    "oculusGlazing": [0, 0, 0]
+  },
+  "repetitionSystems": [
+    {"id":"brickCourseRelief","parent":"brickFacade","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":160,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"facade-course-surface-grid","blockedReason":"Generic circular radial placement cannot represent stepped facade courses."},
+    {"id":"brickMortarJointGrid","parent":"brickFacade","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":320,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"facade-running-bond-grid","blockedReason":"Generic circular radial placement cannot represent staggered running-bond mortar."},
+    {"id":"turretBandCourses","parent":"turretBandRelief","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":18,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"stacked-axis-courses","blockedReason":"Generic circular radial placement overlaps torus courses at one elevation."},
+    {"id":"oculusMullionRadials","parent":"oculusGlazing","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":13,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"ellipse-clipped-radial-and-chord","blockedReason":"Generic circular placement cannot reach and clip to the elliptical glazing boundary."},
+    {"id":"curtainWallMullionGrid","parent":"curtainWalls","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":46,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"facade-rectilinear-grid","blockedReason":"Generic circular radial placement cannot represent rectilinear curtain-wall bays."},
+    {"id":"frpRippleCourses","parent":"expansionRippleSkin","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":72,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"curve-following-shell-ridges","blockedReason":"Generic circular radial placement cannot follow the continuous expansion shell."},
+    {"id":"podiumWindowArray","parent":"graniteWindowBanks","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":28,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"linear-bay-array","blockedReason":"Generic circular radial placement cannot represent linear podium bays."},
+    {"id":"oculusAnnulusLightStripes","parent":"oculusAssembly","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":12,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"elliptical-annulus-alternating-stripes","blockedReason":"Generic circular radial placement cannot conform to unequal oculus radii."},
+    {"id":"oculusAnnulusDarkStripes","parent":"oculusAssembly","count":0,"codegenEnabled":false,"productionFactoryRequired":true,"instances":12,"placement":{"mode":"custom-factory-required"},"requiredCustomPlacement":"elliptical-annulus-alternating-stripes","blockedReason":"Generic circular radial placement cannot conform to unequal oculus radii."}
+  ],
+  "scoreMapping": {
+    "source": ".img2threejs/sfmoma-v2/suitability.json",
+    "scale": "rounded suitability score multiplied by three; occlusion risk is separately inferred from single-view coverage",
+    "scores": {"object_isolation":3,"silhouette_readability":3,"depth_inference":2,"primitive_decomposition":3,"material_procedurality":3,"occlusion_risk":2,"interaction_fit":2}
+  },
+  "materialRuntimeContract": {
+    "declaredRuntimeTextureResolution": 1024,
+    "referencePbrMapDimensions": [512, 512],
+    "referencePbrUsage": "probe-only look-development evidence",
+    "runtimeMaps": "future independent procedural 1024x1024 or greater albedo, roughness, height, normal, and AO maps",
+    "glass": {"roughness":0.18,"transmission":0.42,"hardLimit":"bounded visual inference from isolated glass crop; not measured optical data"},
+    "darkMetal": {"roughness":0.32,"metalness":0.68,"hardLimit":"bounded visual inference from isolated canopy crop; not measured alloy data"}
+  }
+}
