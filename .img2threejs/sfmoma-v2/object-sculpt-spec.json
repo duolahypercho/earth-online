@@ -1238,17 +1238,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 1,
-        "height": 0.16,
-        "depth": 0.42,
+        "width": 1.7,
+        "height": 0.13,
+        "depth": 0.28,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0,
-          0.08,
-          0
+          -0.02,
+          0.065,
+          0.01
         ],
         "rotation": [
           0,
@@ -1321,9 +1321,9 @@
             0
           ],
           "scale": [
-            1,
-            0.16,
-            0.42
+            1.7,
+            0.13,
+            0.28
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -1503,17 +1503,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.96,
-        "height": 0.64,
-        "depth": 0.3,
+        "width": 1.55,
+        "height": 0.68,
+        "depth": 0.31,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          -0.02,
+          -0.04,
           0.4,
-          0.03
+          0.04
         ],
         "rotation": [
           0,
@@ -1628,9 +1628,9 @@
             0
           ],
           "scale": [
-            0.96,
-            0.64,
-            0.3
+            1.55,
+            0.68,
+            0.31
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -1712,7 +1712,7 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.25,
+        "width": 0.26,
         "height": 0.86,
         "depth": 0.28,
         "units": "reference-relative",
@@ -1720,7 +1720,7 @@
       },
       "transform": {
         "position": [
-          -0.14,
+          -0.3,
           0.51,
           -0.02
         ],
@@ -1766,7 +1766,7 @@
             0
           ],
           "scale": [
-            0.25,
+            0.26,
             0.86,
             0.28
           ],
@@ -1848,7 +1848,7 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.27,
+        "width": 0.29,
         "height": 0.74,
         "depth": 0.27,
         "units": "reference-relative",
@@ -1856,7 +1856,7 @@
       },
       "transform": {
         "position": [
-          0.02,
+          0,
           0.53,
           0.09
         ],
@@ -1904,7 +1904,7 @@
             "localRotation": [
               0.24,
               0,
-              -0.28
+              0.24
             ],
             "notes": "Reference-relative presentation attachment; not canonical collision or survey geometry."
           },
@@ -1945,7 +1945,7 @@
             0
           ],
           "scale": [
-            0.27,
+            0.29,
             0.74,
             0.27
           ],
@@ -2083,24 +2083,24 @@
               0
             ],
             [
-              -0.28,
-              0.04,
-              0.06
+              -0.26,
+              -0.04,
+              0.03
             ],
             [
               0,
-              0.18,
-              0.1
+              0.1,
+              0.04
             ],
             [
-              0.28,
-              0.15,
-              0.06
+              0.25,
+              0.08,
+              0.03
             ],
             [
               0.5,
-              -0.05,
-              -0.02
+              -0.04,
+              0
             ]
           ],
           "crossSection": {
@@ -2110,11 +2110,23 @@
                 -0.5
               ],
               [
-                0.5,
+                0.3,
                 -0.5
               ],
               [
-                0.5,
+                0.38,
+                -0.04
+              ],
+              [
+                0.34,
+                0.21
+              ],
+              [
+                0.27,
+                0.46
+              ],
+              [
+                0.04,
                 0.5
               ],
               [
@@ -2129,17 +2141,17 @@
       "parent": null,
       "attachment": null,
       "dimensions": {
-        "width": 0.58,
-        "height": 0.7,
-        "depth": 0.24,
+        "width": 0.68,
+        "height": 0.72,
+        "depth": 0.22,
         "units": "reference-relative",
         "confidence": 0.55
       },
       "transform": {
         "position": [
-          0.24,
-          0.51,
-          -0.03
+          0.42,
+          0.52,
+          -0.02
         ],
         "rotation": [
           0,
@@ -2226,9 +2238,9 @@
             0
           ],
           "scale": [
-            0.58,
-            0.7,
-            0.24
+            0.68,
+            0.72,
+            0.22
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -2363,7 +2375,7 @@
       },
       "transform": {
         "position": [
-          0.17,
+          0.23,
           0.44,
           0.18
         ],
@@ -4306,9 +4318,9 @@
         ]
       },
       "dimensions": {
-        "width": 0.23,
-        "height": 0.28,
-        "depth": 0.07,
+        "width": 0.3,
+        "height": 0.24,
+        "depth": 0.065,
         "units": "reference-relative",
         "confidence": 0.55
       },
@@ -4321,7 +4333,7 @@
         "rotation": [
           0.24,
           0,
-          -0.28
+          0.24
         ]
       },
       "actionProfile": {
@@ -4357,7 +4369,7 @@
             "localPosition": [
               0,
               0,
-              0.035
+              0.03
             ],
             "localRotation": [
               0,
@@ -4375,9 +4387,9 @@
             0
           ],
           "scale": [
-            0.23,
-            0.28,
-            0.07
+            0.3,
+            0.24,
+            0.065
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -4550,9 +4562,9 @@
         ]
       },
       "dimensions": {
-        "width": 0.17,
-        "height": 0.22,
-        "depth": 0.025,
+        "width": 0.22,
+        "height": 0.17,
+        "depth": 0.022,
         "units": "reference-relative",
         "confidence": 0.55
       },
@@ -4560,7 +4572,7 @@
         "position": [
           0,
           0,
-          0.035
+          0.03
         ],
         "rotation": [
           0,
@@ -4570,7 +4582,7 @@
         "inheritedWorldTilt": [
           0.24,
           0,
-          -0.28
+          0.24
         ],
         "inheritedFrom": "oculusAssembly"
       },
@@ -4610,9 +4622,9 @@
             0
           ],
           "scale": [
-            0.17,
             0.22,
-            0.025
+            0.17,
+            0.022
           ],
           "isTrigger": true,
           "notes": "Non-authoritative selection proxy only; canonical world collision remains owned by OSM sf-building-41692824."
@@ -8422,6 +8434,101 @@
         "cameraView": "front-three-quarter",
         "notes": "Canonical world remains visible; QA root is intentionally elevated, so this evidence does not prove terrain contact or canonical integration.",
         "aiVisionNotes": "Ultra-depth independent critic scored the exact SHA 64f5f5bb... at 5.2/10. Bounded blockout legibility passes narrowly; reference fidelity and all critical feature thresholds fail. AAA open-world readiness is 1.4/10."
+      }
+    },
+    {
+      "timestamp": "2026-08-16T23:51:50+00:00",
+      "passId": "blockout",
+      "estimatedFidelity": 0.49,
+      "aiVisionScore": 0.49,
+      "visualAcceptanceThreshold": 0.7,
+      "layerScores": {
+        "silhouetteProportion": 0.55,
+        "componentStructure": 0.6,
+        "formDetail": 0.3,
+        "materialSurface": 0.2,
+        "lightingCamera": 0.47
+      },
+      "featureReviews": [
+        {
+          "id": "bottaMassing",
+          "score": 0.55,
+          "visible": true,
+          "notes": "The footprint is broader and the brick hierarchy is clearer, but the mass remains too tall and insufficiently stepped."
+        },
+        {
+          "id": "sixMacroLegibility",
+          "score": 0.6,
+          "visible": true,
+          "notes": "All six macro IDs are findable in front and elevated views, though only about four read semantically without labels."
+        },
+        {
+          "id": "turretOculusIdentity",
+          "score": 0.45,
+          "visible": true,
+          "notes": "The oculus is recognizable and embedded, but too small, front-facing, weakly elliptical, and unstriped."
+        },
+        {
+          "id": "rippledExpansionContinuity",
+          "score": 0.5,
+          "visible": true,
+          "notes": "The B-shaped double lobe is gone, but the shell remains a blank cap without the defining glass ribbon."
+        }
+      ],
+      "action": "refine-spec",
+      "summary": "The broader stepped base and shallow single-wave expansion produce a bounded +0.08 refinement, but the exact reviewed candidate remains below the 0.70 visual threshold and is not promoted.",
+      "matched": [
+        "six macro IDs remain present and finite",
+        "broad massing improved",
+        "double-lobe expansion artifact removed",
+        "actual expansion depth ratios pass independent transformed-vertex gates",
+        "two fresh browser contexts produce exact decoded RGB hashes"
+      ],
+      "mismatches": [
+        "reference remains decisive winner",
+        "brick base remains too tall and insufficiently stepped",
+        "turret is unstriped and oculus remains too small and front-facing",
+        "continuous expansion glazing ribbon is absent",
+        "canonical terrain contact remains unproven",
+        "official Tier-1 foreground masks are invalid as subject evidence"
+      ],
+      "specFixes": [
+        "add subject-specific turret band and oculus annulus repetitions",
+        "add the expansion glazing ribbon and facade rhythm without a second runtime",
+        "add podium openings and entry hierarchy",
+        "preserve OSM source authority"
+      ],
+      "codeFixes": [
+        "implement only WebGPU-safe geometry or instancing under the existing blockout root"
+      ],
+      "evidence": [
+        ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+        ".qa-sfmoma-v2-blockout-front-three-quarter-roi.png",
+        ".qa-sfmoma-v2-blockout-right.png",
+        ".qa-sfmoma-v2-blockout-rear.png",
+        ".qa-sfmoma-v2-blockout-left.png",
+        ".qa-sfmoma-v2-blockout-elevated.png",
+        ".qa-sfmoma-v2-blockout-comparison.png",
+        ".qa-sfmoma-v2-blockout-metrics.json",
+        ".img2threejs/sfmoma-v2/blockout-feature-review-v2.json"
+      ],
+      "mapStrippedRender": null,
+      "reviewViewpoints": [
+        "front-three-quarter",
+        "right-three-quarter",
+        "rear",
+        "left-three-quarter",
+        "elevated-three-quarter"
+      ],
+      "visualEvidence": {
+        "referenceScreenshot": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+        "renderScreenshot": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+        "fixedRoiScreenshot": ".qa-sfmoma-v2-blockout-front-three-quarter-roi.png",
+        "comparisonImage": ".qa-sfmoma-v2-blockout-comparison.png",
+        "comparisonSha256": "afe6dc703cb0d8d314bf9c70267cb9a8190a032f7800593e073cb22e54603071",
+        "cameraView": "front-three-quarter",
+        "notes": "Canonical world remains visible; QA root remains elevated and presentation-only, so terrain contact and integration are not claimed.",
+        "aiVisionNotes": "Independent harsh critic scored the exact current comparison 4.9/10. This is a bounded +0.8 improvement over the prior rejected blockout, but 0.49 remains below the 0.70 acceptance threshold and AAA readiness is 1.3/10."
       }
     }
   ],

@@ -16,6 +16,8 @@ const QA_URL = process.env.SF_QA_URL || 'http://127.0.0.1:5173/';
 const FIXED_TIME = 15;
 const QA_ROOT_Y = 500;
 const VIEWPORT = Object.freeze({ width: 1280, height: 720 });
+const FIXED_EVIDENCE_ROI = Object.freeze({ x: 100, y: 0, width: 1080, height: 720 });
+const WORLD_SEED = Object.freeze({ seed: 'sf-builtin', seedInt: 3612162500 });
 const PASS_ID = 'sfmoma-v2-blockout-v1';
 const CANONICAL_BUILDING_ID = 'sf-building-41692824';
 const REFERENCE_SHA256 = 'a5fc2bf43c65fc5ac065b1f8a7b5f0f27101e2339653cd4d20521f695460b4e6';
@@ -43,12 +45,12 @@ const REPETITION_IDS = Object.freeze([
   'oculusAnnulusDarkStripes',
 ]);
 const COMPONENT_TRANSFORMS = Object.freeze({
-  granitePodium: { position: [0, 0.08, 0], dimensions: [1, 0.16, 0.42] },
-  brickWings: { position: [-0.02, 0.4, 0.03], dimensions: [0.96, 0.64, 0.3] },
-  brickCentralTower: { position: [-0.14, 0.51, -0.02], dimensions: [0.25, 0.86, 0.28] },
-  stripedTurret: { position: [0.02, 0.53, 0.09], dimensions: [0.27, 0.74, 0.27] },
-  rippledExpansion: { position: [0.24, 0.51, -0.03], dimensions: [0.58, 0.7, 0.24] },
-  glassAtriumCore: { position: [0.17, 0.44, 0.18], dimensions: [0.14, 0.56, 0.1] },
+  granitePodium: { position: [-0.02, 0.065, 0.01], dimensions: [1.7, 0.13, 0.28] },
+  brickWings: { position: [-0.04, 0.4, 0.04], dimensions: [1.55, 0.68, 0.31] },
+  brickCentralTower: { position: [-0.3, 0.51, -0.02], dimensions: [0.26, 0.86, 0.28] },
+  stripedTurret: { position: [0, 0.53, 0.09], dimensions: [0.29, 0.74, 0.27] },
+  rippledExpansion: { position: [0.42, 0.52, -0.02], dimensions: [0.68, 0.72, 0.22] },
+  glassAtriumCore: { position: [0.23, 0.44, 0.18], dimensions: [0.14, 0.56, 0.1] },
 });
 const COMPONENT_MATERIALS = Object.freeze({
   granitePodium: 'granite',
@@ -93,14 +95,15 @@ const OUTPUTS = Object.freeze({
   rear: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-rear.png'),
   left: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-left.png'),
   elevated: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-elevated.png'),
+  frontThreeQuarterRoi: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-front-three-quarter-roi.png'),
   comparison: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-comparison.png'),
   metrics: path.join(REPO_ROOT, '.qa-sfmoma-v2-blockout-metrics.json'),
 });
 const VIEWS = Object.freeze([
   { id: 'frontThreeQuarter', label: 'Front three-quarter', positionOffset: [58, 33, 72], targetOffset: [0, 18, 0], fov: 38 },
-  { id: 'right', label: 'Right', positionOffset: [84, 27, 0], targetOffset: [0, 18, 0], fov: 38 },
+  { id: 'right', label: 'Right three-quarter', positionOffset: [92, 29, 29], targetOffset: [0, 18, 0], fov: 38 },
   { id: 'rear', label: 'Rear', positionOffset: [-52, 31, -74], targetOffset: [0, 18, 0], fov: 38 },
-  { id: 'left', label: 'Left', positionOffset: [-84, 27, 0], targetOffset: [0, 18, 0], fov: 38 },
+  { id: 'left', label: 'Left three-quarter', positionOffset: [-94, 29, 30], targetOffset: [0, 18, 0], fov: 38 },
   { id: 'elevated', label: 'Elevated orbit', positionOffset: [57, 72, 64], targetOffset: [0, 18, 0], fov: 40 },
 ]);
 
@@ -191,6 +194,34 @@ function assertGeometryIntegrity(mesh, aggregate) {
   aggregate.vertices += position.count;
 }
 
+function measureTransformedVertexBounds(mesh) {
+  assert.ok(mesh?.isMesh, 'transformed-vertex measurement requires a Mesh');
+  const position = mesh.geometry?.getAttribute('position');
+  assert.ok(position && position.itemSize === 3 && position.count > 0,
+    `${mesh.name} transformed-vertex positions`);
+  mesh.updateWorldMatrix(true, false);
+  const bounds = new THREE.Box3().makeEmpty();
+  const vertex = new THREE.Vector3();
+  for (let index = 0; index < position.count; index += 1) {
+    vertex.fromBufferAttribute(position, index).applyMatrix4(mesh.matrixWorld);
+    assert.ok(vertex.toArray().every(Number.isFinite), `${mesh.name} finite transformed vertex ${index}`);
+    bounds.expandByPoint(vertex);
+  }
+  assert.equal(bounds.isEmpty(), false, `${mesh.name} transformed-vertex bounds are non-empty`);
+  const size = bounds.getSize(new THREE.Vector3());
+  assert.ok(size.toArray().every((value) => Number.isFinite(value) && value > 0),
+    `${mesh.name} positive transformed-vertex extents`);
+  return {
+    source: 'actual-position-attribute-vertices-transformed-by-matrixWorld',
+    vertexCount: position.count,
+    min: roundArray(bounds.min.toArray()),
+    max: roundArray(bounds.max.toArray()),
+    size: roundArray(size.toArray()),
+    depthToWidth: size.z / size.x,
+    depthToHeight: size.z / size.y,
+  };
+}
+
 function modelSnapshot(asset) {
   const materialKeys = new Map([...asset.materials].map(([key, material]) => [material, key]));
   return {
@@ -251,21 +282,21 @@ function assertFactoryContract(module, asset) {
     assembly: {
       parentId: 'stripedTurret',
       position: [0, 0.16, 0.13],
-      rotation: [0.24, 0, -0.28],
-      dimensions: [0.23, 0.28, 0.07],
+      rotation: [0.24, 0, 0.24],
+      dimensions: [0.3, 0.24, 0.065],
       contactType: 'embedded-seam',
     },
     ring: {
       parentId: 'oculusAssembly',
       position: [0, 0, 0],
       rotation: [0, 0, 0],
-      dimensions: [0.23, 0.28, 0.07],
+      dimensions: [0.3, 0.24, 0.065],
     },
     glazing: {
       parentId: 'oculusAssembly',
-      position: [0, 0, 0.035],
+      position: [0, 0, 0.03],
       rotation: [0, 0, 0],
-      dimensions: [0.17, 0.22, 0.025],
+      dimensions: [0.22, 0.17, 0.022],
       contactType: 'embedded-seam',
     },
   });
@@ -326,13 +357,13 @@ function assertFactoryContract(module, asset) {
   assert.equal(oculusAssembly.name, 'sfmoma.v2.feature.oculusAssembly');
   assert.equal(oculusAssembly.parent, turret, 'oculus assembly nested under turret');
   assertVector(oculusAssembly.position.toArray(), [0, 0.16, 0.13], 'oculus assembly position');
-  assertVector(oculusAssembly.rotation.toArray().slice(0, 3), [0.24, 0, -0.28], 'oculus assembly rotation');
+  assertVector(oculusAssembly.rotation.toArray().slice(0, 3), [0.24, 0, 0.24], 'oculus assembly rotation');
   assert.equal(oculusRing?.name, 'sfmoma.v2.mesh.oculusRing');
   assert.equal(oculusRing?.parent, oculusAssembly);
   assert.equal(oculusGlazing?.name, 'sfmoma.v2.mesh.oculusGlazing');
   assert.equal(oculusGlazing?.parent, oculusAssembly);
   assert.equal(asset.nodes.get('oculusGlazing'), oculusGlazing, 'oculus glazing stable node identity');
-  assertVector(oculusGlazing.position.toArray(), [0, 0, 0.035], 'oculus glazing position');
+  assertVector(oculusGlazing.position.toArray(), [0, 0, 0.03], 'oculus glazing position');
 
   const aggregate = { triangles: 0, vertices: 0 };
   const geometries = new Set();
@@ -391,22 +422,22 @@ function assertFactoryContract(module, asset) {
   assert.equal(diagnostics.oculusContact.assembly.parentId, 'stripedTurret');
   assertVector(diagnostics.oculusContact.assembly.localPosition, [0, 0.16, 0.13],
     'oculus contact assembly position');
-  assertVector(diagnostics.oculusContact.assembly.localRotation, [0.24, 0, -0.28],
+  assertVector(diagnostics.oculusContact.assembly.localRotation, [0.24, 0, 0.24],
     'oculus contact assembly rotation');
   assert.equal(diagnostics.oculusContact.assembly.contactType, 'embedded-seam');
   assert.deepEqual(diagnostics.oculusContact.ring.parentChainIds,
     ['root', 'stripedTurret', 'oculusAssembly', 'oculusRing']);
   assert.equal(diagnostics.oculusContact.ring.parentId, 'oculusAssembly');
-  assertVector(diagnostics.oculusContact.ring.actualLocalBounds.size, [0.23, 0.28, 0.07],
+  assertVector(diagnostics.oculusContact.ring.actualLocalBounds.size, [0.3, 0.24, 0.065],
     'oculus ring actual local size', 1e-6);
   assert.deepEqual(diagnostics.oculusContact.glazing.parentChainIds,
     ['root', 'stripedTurret', 'oculusAssembly', 'oculusGlazing']);
   assert.equal(diagnostics.oculusContact.glazing.parentId, 'oculusAssembly');
-  assertVector(diagnostics.oculusContact.glazing.localPosition, [0, 0, 0.035],
+  assertVector(diagnostics.oculusContact.glazing.localPosition, [0, 0, 0.03],
     'oculus contact glazing position');
   assertVector(diagnostics.oculusContact.glazing.localRotation, [0, 0, 0],
     'oculus contact glazing rotation');
-  assertVector(diagnostics.oculusContact.glazing.actualLocalBounds.size, [0.17, 0.22, 0.025],
+  assertVector(diagnostics.oculusContact.glazing.actualLocalBounds.size, [0.22, 0.17, 0.022],
     'oculus glazing actual local size', 1e-6);
   assert.equal(diagnostics.oculusContact.glazing.contactType, 'embedded-seam');
   assert.equal(diagnostics.oculusContact.ringIntersectsTurret, true, 'oculus ring contacts turret');
@@ -430,7 +461,12 @@ function assertFactoryContract(module, asset) {
   assert.ok(asset.stats.materials <= BUDGET.maxMaterials, `materials ${asset.stats.materials}`);
   assert.equal(asset.stats.textures, BUDGET.maxTextures);
   assert.deepEqual(diagnostics.stats, asset.stats);
-  return { aggregate, diagnostics, snapshot: modelSnapshot(asset) };
+  const expansionProportions = measureTransformedVertexBounds(asset.meshes.get('rippledExpansion'));
+  assert.ok(expansionProportions.depthToWidth <= 0.45,
+    `rippledExpansion actual transformed depth/width ${expansionProportions.depthToWidth} <= 0.45`);
+  assert.ok(expansionProportions.depthToHeight <= 0.35,
+    `rippledExpansion actual transformed depth/height ${expansionProportions.depthToHeight} <= 0.35`);
+  return { aggregate, diagnostics, expansionProportions, snapshot: modelSnapshot(asset) };
 }
 
 function assertIdempotentDisposal(asset) {
@@ -470,7 +506,7 @@ function imageDataUrl(buffer) {
   return `data:image/png;base64,${buffer.toString('base64')}`;
 }
 
-function decodeScreenshotPixels(buffer) {
+function decodeScreenshotPixels(buffer, expectedDimensions = VIEWPORT) {
   assert.ok(buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
     'capture is a PNG');
   let offset = 8;
@@ -505,7 +541,8 @@ function decodeScreenshotPixels(buffer) {
     filter: header.filter,
     interlace: header.interlace,
   }, { bitDepth: 8, colorType: 2, compression: 0, filter: 0, interlace: 0 }, 'RGB8 capture format');
-  assert.deepEqual([header.width, header.height], [VIEWPORT.width, VIEWPORT.height], 'capture dimensions');
+  assert.deepEqual([header.width, header.height], [expectedDimensions.width, expectedDimensions.height],
+    'capture dimensions');
   const bytesPerPixel = 3;
   const stride = header.width * bytesPerPixel;
   const filtered = inflateSync(Buffer.concat(dataChunks));
@@ -609,6 +646,197 @@ async function makeComparisonSheet(browser, outputs) {
   await comparisonPage.close();
 }
 
+function collectPageErrors(page) {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error' && !message.text().includes('Failed to load resource')) {
+      errors.push(message.text());
+    }
+  });
+  return errors;
+}
+
+async function initializeQaAssetPage(page) {
+  await page.goto(QA_URL, { waitUntil: 'load', timeout: 60000 });
+  await page.waitForFunction(() => {
+    const state = window.__CITYGEN__?.getState?.();
+    return state?.webgpu && state?.buildings >= 700 && !state?.busy;
+  }, null, { timeout: 90000 });
+  await page.addStyleTag({
+    content: `
+      #app > :not(#scene-canvas) { display: none !important; }
+      #scene-canvas { position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; }
+      html, body, #app { margin: 0 !important; width: 100% !important; height: 100% !important; overflow: hidden !important; }
+    `,
+  });
+
+  return page.evaluate(async ({ passId, componentIds, featureIds, sourceBoundary, rootY, worldSeed }) => {
+    const api = window.__CITYGEN__;
+    const cityRenderer = api.getRenderer();
+    const city = api.getCity();
+    const cityBounds = city.meta.bounds;
+    const qaAnchor = [
+      (cityBounds.minX + cityBounds.maxX) * 0.5,
+      rootY,
+      (cityBounds.minZ + cityBounds.maxZ) * 0.5,
+    ];
+    const module = await import('/src/citygen/landmarks/sfmoma-generated-v2.js');
+    const asset = module.createSfmomaGeneratedV2Blockout({ scale: 40 });
+    const canonicalChildren = cityRenderer.root.children.map((child) => ({
+      object: child,
+      visible: child.visible,
+      name: child.name,
+    }));
+    window.__SFMOMA_V2_BLOCKOUT_QA__ = { asset, canonicalChildren };
+    asset.root.position.set(...qaAnchor);
+    cityRenderer.root.add(asset.root);
+    cityRenderer.controls.enabled = false;
+    api.setClock(15);
+    await cityRenderer.renderer.setAnimationLoop(null);
+    return {
+      backend: cityRenderer.rendererBackend,
+      canvasCountBefore: document.querySelectorAll('canvas').length,
+      sceneCanvasCount: document.querySelectorAll('#scene-canvas').length,
+      rendererCanvasIdentity: cityRenderer.renderer.domElement === document.querySelector('#scene-canvas'),
+      canonicalRootVisible: cityRenderer.root.visible,
+      canonicalChildCount: canonicalChildren.length,
+      canonicalChildrenStillVisible: canonicalChildren.every((entry) => entry.object.visible === entry.visible),
+      qaRootParent: asset.root.parent === cityRenderer.root,
+      qaRootCount: cityRenderer.root.children.filter((child) => child.name === 'sfmoma.v2.blockout').length,
+      canonicalLoopPausedForDeterministicEvidence: true,
+      qaAnchor,
+      worldSeed: { seed: city.meta.seed, seedInt: city.meta.seedInt },
+      pass: asset.root.userData.pass,
+      componentIds: asset.root.userData.componentIds,
+      featureIds: asset.root.userData.featureIds,
+      sourceBoundary: asset.root.userData.sourceBoundary,
+      diagnostics: asset.getDiagnostics(),
+      expected: { passId, componentIds, featureIds, sourceBoundary, worldSeed },
+    };
+  }, {
+    passId: PASS_ID,
+    componentIds: COMPONENT_IDS,
+    featureIds: FEATURE_IDS,
+    sourceBoundary: SOURCE_BOUNDARY,
+    rootY: QA_ROOT_Y,
+    worldSeed: WORLD_SEED,
+  });
+}
+
+async function warmFixedView(page, setup, view) {
+  const position = view.positionOffset.map((value, index) => value + setup.qaAnchor[index]);
+  const target = view.targetOffset.map((value, index) => value + setup.qaAnchor[index]);
+  await page.evaluate(async ({ position: cameraPosition, target: cameraTarget, fov, fixedTime }) => {
+    const api = window.__CITYGEN__;
+    const cityRenderer = api.getRenderer();
+    cityRenderer.camera.position.set(...cameraPosition);
+    cityRenderer.camera.fov = fov;
+    cityRenderer.camera.near = 0.1;
+    cityRenderer.camera.far = 1500;
+    cityRenderer.camera.lookAt(...cameraTarget);
+    cityRenderer.camera.updateProjectionMatrix();
+    cityRenderer.controls.target.set(...cameraTarget);
+    cityRenderer.controls.update();
+    api.setClock(fixedTime);
+    cityRenderer.updateWorldPartition(true, true);
+    cityRenderer.updatePortalPartition(true, true);
+    cityRenderer.updateParkedCarPartition(true, true);
+    for (let warmup = 0; warmup < 3; warmup += 1) {
+      await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
+    }
+    cityRenderer.renderer.shadowMap.autoUpdate = false;
+    await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
+  }, { position, target, fov: view.fov, fixedTime: FIXED_TIME });
+  await page.waitForTimeout(100);
+  for (let compositorWarmup = 0; compositorWarmup < 3; compositorWarmup += 1) {
+    await page.evaluate(async () => {
+      const cityRenderer = window.__CITYGEN__.getRenderer();
+      await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot();
+  }
+  return { position, target };
+}
+
+async function captureFreshFrontContext(browser, id, expectedAnchor) {
+  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const errors = collectPageErrors(page);
+  try {
+    const setup = await initializeQaAssetPage(page);
+    assert.equal(setup.backend, 'webgpu', `${id} canonical WebGPU backend`);
+    assert.equal(setup.sceneCanvasCount, 1, `${id} one canonical scene canvas`);
+    assert.equal(setup.rendererCanvasIdentity, true, `${id} canonical renderer canvas identity`);
+    assert.equal(setup.canonicalRootVisible, true, `${id} canonical world remains visible`);
+    assert.equal(setup.canonicalChildrenStillVisible, true, `${id} canonical child visibility unchanged`);
+    assert.equal(setup.qaRootCount, 1, `${id} one QA blockout root`);
+    assert.deepEqual(setup.worldSeed, WORLD_SEED, `${id} fixed world seed`);
+    assertVector(setup.qaAnchor, expectedAnchor, `${id} fixed QA anchor`, 1e-8);
+
+    const view = VIEWS[0];
+    const { position, target } = await warmFixedView(page, setup, view);
+    const captureContract = await page.evaluate(() => {
+      const api = window.__CITYGEN__;
+      const cityRenderer = api.getRenderer();
+      const city = api.getCity();
+      const qa = window.__SFMOMA_V2_BLOCKOUT_QA__;
+      return {
+        canvasCount: document.querySelectorAll('canvas').length,
+        worldSeed: { seed: city.meta.seed, seedInt: city.meta.seedInt },
+        time: api.getState().clock,
+        camera: {
+          position: cityRenderer.camera.position.toArray(),
+          quaternion: cityRenderer.camera.quaternion.toArray(),
+          fov: cityRenderer.camera.fov,
+          near: cityRenderer.camera.near,
+          far: cityRenderer.camera.far,
+          target: cityRenderer.controls.target.toArray(),
+        },
+        canonicalRootVisible: cityRenderer.root.visible,
+        canonicalChildVisibilityUnchanged: qa.canonicalChildren.every(
+          (entry) => entry.object.visible === entry.visible,
+        ),
+        qaRootCount: cityRenderer.root.children.filter(
+          (child) => child.name === 'sfmoma.v2.blockout',
+        ).length,
+        rendererCanvasIdentity: cityRenderer.renderer.domElement === document.querySelector('#scene-canvas'),
+      };
+    });
+    assert.equal(captureContract.canvasCount, setup.canvasCountBefore, `${id} canvas count remains stable`);
+    assert.deepEqual(captureContract.worldSeed, WORLD_SEED, `${id} capture world seed`);
+    assert.equal(captureContract.time, FIXED_TIME, `${id} fixed time`);
+    assertVector(captureContract.camera.position, position, `${id} fixed front camera position`, 1e-6);
+    assertVector(captureContract.camera.target, target, `${id} fixed front camera target`, 1e-6);
+    assert.equal(captureContract.camera.fov, view.fov, `${id} fixed front camera fov`);
+    assert.equal(captureContract.canonicalRootVisible, true, `${id} canonical root visible at capture`);
+    assert.equal(captureContract.canonicalChildVisibilityUnchanged, true,
+      `${id} canonical child visibility unchanged at capture`);
+    assert.equal(captureContract.qaRootCount, 1, `${id} one QA root at capture`);
+    assert.equal(captureContract.rendererCanvasIdentity, true, `${id} canonical canvas at capture`);
+
+    const buffer = await page.screenshot();
+    const decoded = decodeScreenshotPixels(buffer);
+    assert.deepEqual(errors, [], `${id} browser errors`);
+    return {
+      decoded,
+      metrics: {
+        id,
+        isolation: 'fresh-browser-context',
+        worldSeed: captureContract.worldSeed,
+        camera: captureContract.camera,
+        time: captureContract.time,
+        prewarm: 'fixed-partition-refresh-plus-4-render-warmup-plus-3-compositor-readbacks',
+        pixelSha256: decoded.pixelSha256,
+        encodedPngSha256: sha256(buffer),
+      },
+    };
+  } finally {
+    await context.close();
+  }
+}
+
 async function runBrowserCapture(structuralMetrics) {
   const systemChrome = process.env.SF_QA_EXECUTABLE
     || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -619,74 +847,10 @@ async function runBrowserCapture(structuralMetrics) {
     ...(executablePath ? { executablePath } : {}),
   });
   const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 1 });
-  const errors = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => {
-    if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
-  });
+  const errors = collectPageErrors(page);
 
   try {
-    await page.goto(QA_URL, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForFunction(() => {
-      const state = window.__CITYGEN__?.getState?.();
-      return state?.webgpu && state?.buildings >= 700 && !state?.busy;
-    }, null, { timeout: 90000 });
-    await page.addStyleTag({
-      content: `
-        #app > :not(#scene-canvas) { display: none !important; }
-        #scene-canvas { position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; }
-        html, body, #app { margin: 0 !important; width: 100% !important; height: 100% !important; overflow: hidden !important; }
-      `,
-    });
-
-    const setup = await page.evaluate(async ({ passId, componentIds, featureIds, sourceBoundary, rootY }) => {
-      const api = window.__CITYGEN__;
-      const cityRenderer = api.getRenderer();
-      const cityBounds = api.getCity().meta.bounds;
-      const qaAnchor = [
-        (cityBounds.minX + cityBounds.maxX) * 0.5,
-        rootY,
-        (cityBounds.minZ + cityBounds.maxZ) * 0.5,
-      ];
-      const module = await import('/src/citygen/landmarks/sfmoma-generated-v2.js');
-      const asset = module.createSfmomaGeneratedV2Blockout({ scale: 40 });
-      const canonicalChildren = cityRenderer.root.children.map((child) => ({
-        object: child,
-        visible: child.visible,
-        name: child.name,
-      }));
-      window.__SFMOMA_V2_BLOCKOUT_QA__ = { asset, canonicalChildren };
-      asset.root.position.set(...qaAnchor);
-      cityRenderer.root.add(asset.root);
-      cityRenderer.controls.enabled = false;
-      api.setClock(15);
-      await cityRenderer.renderer.setAnimationLoop(null);
-      return {
-        backend: cityRenderer.rendererBackend,
-        canvasCountBefore: document.querySelectorAll('canvas').length,
-        sceneCanvasCount: document.querySelectorAll('#scene-canvas').length,
-        rendererCanvasIdentity: cityRenderer.renderer.domElement === document.querySelector('#scene-canvas'),
-        canonicalRootVisible: cityRenderer.root.visible,
-        canonicalChildCount: canonicalChildren.length,
-        canonicalChildrenStillVisible: canonicalChildren.every((entry) => entry.object.visible === entry.visible),
-        qaRootParent: asset.root.parent === cityRenderer.root,
-        qaRootCount: cityRenderer.root.children.filter((child) => child.name === 'sfmoma.v2.blockout').length,
-        canonicalLoopPausedForDeterministicEvidence: true,
-        qaAnchor,
-        pass: asset.root.userData.pass,
-        componentIds: asset.root.userData.componentIds,
-        featureIds: asset.root.userData.featureIds,
-        sourceBoundary: asset.root.userData.sourceBoundary,
-        diagnostics: asset.getDiagnostics(),
-        expected: { passId, componentIds, featureIds, sourceBoundary },
-      };
-    }, {
-      passId: PASS_ID,
-      componentIds: COMPONENT_IDS,
-      featureIds: FEATURE_IDS,
-      sourceBoundary: SOURCE_BOUNDARY,
-      rootY: QA_ROOT_Y,
-    });
+    const setup = await initializeQaAssetPage(page);
 
     assert.equal(setup.backend, 'webgpu', 'canonical WebGPU backend');
     assert.equal(setup.sceneCanvasCount, 1, 'one canonical scene canvas');
@@ -695,6 +859,7 @@ async function runBrowserCapture(structuralMetrics) {
     assert.equal(setup.canonicalChildrenStillVisible, true, 'canonical source child visibility unchanged');
     assert.equal(setup.qaRootParent, true, 'QA asset is an isolated canonical city-root child');
     assert.equal(setup.qaRootCount, 1, 'one QA blockout root');
+    assert.deepEqual(setup.worldSeed, WORLD_SEED, 'fixed canonical world seed');
     assert.equal(setup.pass, PASS_ID);
     assert.deepEqual(setup.componentIds, COMPONENT_IDS);
     assert.deepEqual(setup.featureIds, FEATURE_IDS);
@@ -714,39 +879,9 @@ async function runBrowserCapture(structuralMetrics) {
 
     const viewMetrics = [];
     let lockedEnvironment = null;
+    let fixedEvidenceRoi = null;
     for (const view of VIEWS) {
-      const position = view.positionOffset.map((value, index) => value + setup.qaAnchor[index]);
-      const target = view.targetOffset.map((value, index) => value + setup.qaAnchor[index]);
-      await page.evaluate(async ({ position, target, fov, fixedTime }) => {
-        const api = window.__CITYGEN__;
-        const cityRenderer = api.getRenderer();
-        cityRenderer.camera.position.set(...position);
-        cityRenderer.camera.fov = fov;
-        cityRenderer.camera.near = 0.1;
-        cityRenderer.camera.far = 1500;
-        cityRenderer.camera.lookAt(...target);
-        cityRenderer.camera.updateProjectionMatrix();
-        cityRenderer.controls.target.set(...target);
-        cityRenderer.controls.update();
-        api.setClock(fixedTime);
-        cityRenderer.updateWorldPartition(true, true);
-        cityRenderer.updatePortalPartition(true, true);
-        cityRenderer.updateParkedCarPartition(true, true);
-        for (let warmup = 0; warmup < 3; warmup += 1) {
-          await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
-        }
-        cityRenderer.renderer.shadowMap.autoUpdate = false;
-        await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
-      }, { position, target, fov: view.fov, fixedTime: FIXED_TIME });
-      await page.waitForTimeout(100);
-      for (let compositorWarmup = 0; compositorWarmup < 3; compositorWarmup += 1) {
-        await page.evaluate(async () => {
-          const cityRenderer = window.__CITYGEN__.getRenderer();
-          await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
-        });
-        await page.waitForTimeout(100);
-        await page.screenshot();
-      }
+      const { position, target } = await warmFixedView(page, setup, view);
       const beforeCapture = await page.evaluate(() => {
         const api = window.__CITYGEN__;
         const cityRenderer = api.getRenderer();
@@ -850,6 +985,29 @@ async function runBrowserCapture(structuralMetrics) {
       assert.equal(alternateParityCapturePixels.pixelSha256, consecutiveCapturePixels.pixelSha256,
         `${view.id} deterministic B/D WebGPU presentation state: ${JSON.stringify(alternateParityDiff)}`);
       await writeFile(OUTPUTS[view.id], captureBuffer);
+      if (view.id === 'frontThreeQuarter') {
+        await page.evaluate(async () => {
+          const cityRenderer = window.__CITYGEN__.getRenderer();
+          await cityRenderer.renderer.renderAsync(cityRenderer.scene, cityRenderer.camera);
+        });
+        await page.waitForTimeout(100);
+        const roiBuffer = await page.screenshot({ clip: FIXED_EVIDENCE_ROI });
+        const roiPixels = decodeScreenshotPixels(roiBuffer, FIXED_EVIDENCE_ROI);
+        await writeFile(OUTPUTS.frontThreeQuarterRoi, roiBuffer);
+        fixedEvidenceRoi = {
+          contract: {
+            viewport: VIEWPORT,
+            clip: FIXED_EVIDENCE_ROI,
+            inclusiveXRange: [100, 1179],
+            cameraViewId: 'frontThreeQuarter',
+            autoFit: false,
+            scaleOrTranslationAlignment: false,
+            captureMethod: 'literal-playwright-viewport-clip-after-fixed-camera-prewarm',
+          },
+          pixelSha256: roiPixels.pixelSha256,
+          evidence: await fileEvidence(OUTPUTS.frontThreeQuarterRoi),
+        };
+      }
       viewMetrics.push({
         id: view.id,
         label: view.label,
@@ -875,6 +1033,36 @@ async function runBrowserCapture(structuralMetrics) {
         evidence: await fileEvidence(OUTPUTS[view.id]),
       });
     }
+    assert.ok(fixedEvidenceRoi, 'fixed front evidence ROI was captured');
+
+    const freshContextA = await captureFreshFrontContext(browser, 'fresh-context-a', setup.qaAnchor);
+    const freshContextB = await captureFreshFrontContext(browser, 'fresh-context-b', setup.qaAnchor);
+    assert.deepEqual(freshContextB.metrics.worldSeed, freshContextA.metrics.worldSeed,
+      'fresh contexts use the identical fixed world seed');
+    assert.deepEqual(freshContextB.metrics.camera, freshContextA.metrics.camera,
+      'fresh contexts use the identical fixed front camera');
+    assert.equal(freshContextB.metrics.time, freshContextA.metrics.time,
+      'fresh contexts use the identical fixed time');
+    const freshContextPixelDiff = compareCapturePixels(freshContextA.decoded, freshContextB.decoded);
+    assert.equal(freshContextB.decoded.pixelSha256, freshContextA.decoded.pixelSha256,
+      `fresh browser contexts have exact decoded RGB pixels: ${JSON.stringify(freshContextPixelDiff)}`);
+    assert.equal(freshContextPixelDiff.changedPixels, 0,
+      `fresh browser contexts have no changed pixels: ${JSON.stringify(freshContextPixelDiff)}`);
+    const freshContextDeterminism = {
+      contract: {
+        contexts: 2,
+        isolation: 'two-sequential-fresh-browser-contexts',
+        viewport: VIEWPORT,
+        viewId: 'frontThreeQuarter',
+        fixedTime: FIXED_TIME,
+        fixedWorldSeed: WORLD_SEED,
+        comparison: 'exact-decoded-rgb-sha256-no-tolerance',
+      },
+      contextA: freshContextA.metrics,
+      contextB: freshContextB.metrics,
+      pixelDiff: freshContextPixelDiff,
+      exactDecodedRgbMatch: true,
+    };
 
     const finalRuntime = await page.evaluate(() => {
       const cityRenderer = window.__CITYGEN__.getRenderer();
@@ -909,6 +1097,8 @@ async function runBrowserCapture(structuralMetrics) {
       baseline,
       finalRuntime,
       views: viewMetrics,
+      fixedEvidenceRoi,
+      freshContextDeterminism,
       comparison: await fileEvidence(OUTPUTS.comparison),
     };
     await writeFile(OUTPUTS.metrics, `${JSON.stringify(metrics, null, 2)}\n`);
@@ -984,6 +1174,11 @@ const structuralMetrics = {
   sourceBoundary: SOURCE_BOUNDARY,
   stats: first.snapshot.stats,
   geometry: first.aggregate,
+  expansionProportions: {
+    ...first.expansionProportions,
+    thresholds: { maxDepthToWidth: 0.45, maxDepthToHeight: 0.35 },
+    passed: true,
+  },
   stableFactorySnapshotSha256: sha256(Buffer.from(JSON.stringify(first.snapshot))),
   idempotentDisposal: true,
 };

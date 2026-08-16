@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "img2threejs.spec-validation-evidence",
-  "generatedAt": "2026-08-16T23:27:10Z",
+  "generatedAt": "2026-08-16T23:51:50Z",
   "spec": ".img2threejs/sfmoma-v2/object-sculpt-spec.json",
-  "specSha256": "b7e74f801c9bd2ee5b28272987de3e022f2b753b9fc71b15b9cc1973a934bc2c",
+  "specSha256": "5cca08c9e74b1a763c62d919ba714ea96d62b0914bb6956bf5cffde6c05e6181",
   "materialAnalysis": ".img2threejs/sfmoma-v2/material-analysis.json",
   "materialAnalysisSha256": "2fa2fb0a010cdcae409bc300ba8956a887fd836406bf63c3c8a49392324cef58",
   "blueprint": ".img2threejs/sfmoma-v2/spec-authoring-blueprint.json",
@@ -17,7 +17,7 @@
   "codegenSmoke": ".img2threejs/sfmoma-v2/codegen-smoke-report.json",
   "codegenSmokeSha256": "d9452c33d066aea2f2edc9f8dc704ba76b1bf838f5fff02cb842c5f71c4fc1ed",
   "state": ".img2threejs/sfmoma-v2/state.json",
-  "stateSha256": "f6ad9102c8e839f35117409bffc4af4eeb40e4c47988c3627fb07b405bc2c2e1",
+  "stateSha256": "68bb46f5a3e3d55a63c1e49ce93413d19cebd0bcb4edf76e164f89a630653317",
   "pathPolicy": {
     "workspaceArtifacts": "repository-relative paths rooted at .img2threejs/sfmoma-v2 or public/assets",
     "skillRegistry": "skill://img2threejs/docs/materials/material-reference.json",
@@ -191,36 +191,63 @@
     },
     "componentDimensionsDriveScale": true,
     "socketChildTransformEquality": "18/18 exact parent-local matches",
-    "oculusTilt": "assembly [0.24,0,-0.28]; glazing local [0,0,0], inherited once",
+    "oculusTilt": "assembly [0.24,0,0.24]; glazing local [0,0,0], inherited once",
+    "subjectSpecificBlockout": {
+      "module": "src/citygen/landmarks/sfmoma-generated-v2.js",
+      "moduleSha256": "ecd7d93a187a69e68b8c650934b5594233fb61b68bd3571be2a29b6facee940a",
+      "drawCalls": 8,
+      "triangles": 1724,
+      "vertices": 1845,
+      "geometries": 8,
+      "materials": 5,
+      "textures": 0,
+      "canonicalRuntimeImported": false
+    },
     "productionRequirement": "Subject-specific WebGPU-safe factory required for all nine repetitions; never import a generated renderer/composer/controls/lights into the canonical world.",
     "buildGateMarked": false,
     "finalActionReadyGate": "pending"
   },
   "blockoutReview": {
     "status": "refine-spec",
-    "boundedAssemblyGate": "pass-narrowly",
-    "aiVisionScore": 0.52,
+    "boundedAssemblyGate": "pass-refinement-only",
+    "boundedGain": 0.08,
+    "aiVisionScore": 0.49,
     "visualAcceptanceThreshold": 0.7,
-    "aaaReadinessScore": 0.14,
+    "aaaReadinessScore": 0.13,
     "referenceWinner": true,
     "tier1": {
       "passed": false,
       "silhouetteIoU": 0.4999,
       "aspectRatioDelta": 0.1741,
-      "scaleDelta": 0.2108
+      "scaleDelta": 0.2108,
+      "evidenceValidity": "rejected-as-subject-measurement",
+      "reason": "Reference mask includes floor/full-width background, render mask includes the canonical background, and the 3:2 reference and 16:9 render were independently stretched to square. The official failed result is retained but not promoted."
+    },
+    "independentEvidence": {
+      "fixedRoi": {
+        "path": ".qa-sfmoma-v2-blockout-front-three-quarter-roi.png",
+        "sha256": "5c2e87a1e1a1e78b1e0dde5d887bc0fea1e968e541bf33c98a1a2b747d8feb4c",
+        "clip": [100, 0, 1080, 720],
+        "autoFit": false
+      },
+      "expansionDepthWidthRatio": 0.3235294066,
+      "expansionDepthHeightRatio": 0.3055555418,
+      "freshContextDecodedRgbSha256": "e2bc7aa1c63557892cd0196038a7a3ff634258abb385a70ee2aafe411f93e03d",
+      "freshContextChangedPixels": 0
     },
     "evidence": {
       "render": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
-      "renderSha256": "b1525cd08f357b5bbe0f078eceda021f44cce7e00eca81edf160af0fb7f04057",
+      "renderSha256": "a5b09ca23a9cd3d6940d7d3f28f8e58be9bb1a68daf18d7b576f2876dc83cb9a",
       "comparison": ".qa-sfmoma-v2-blockout-comparison.png",
-      "comparisonSha256": "639bb2530eae742d9f6788fcc13861d15a06402c45ce5989d14753da82024e16",
+      "comparisonSha256": "afe6dc703cb0d8d314bf9c70267cb9a8190a032f7800593e073cb22e54603071",
       "metrics": ".qa-sfmoma-v2-blockout-metrics.json",
-      "metricsSha256": "058abb517f9d0fca3f8ddc2cc61fc949d6b649fb8e34f53a7e52da2ab210b15f",
-      "featureReview": ".img2threejs/sfmoma-v2/blockout-feature-review-v1.json",
-      "featureReviewSha256": "fcf568a2476ee8a23cf75c844853a868c286ee877fe8fe9293f9d1d706b174f5"
+      "metricsSha256": "d657705eee85b1b392e3972b9ecfef31f4b53d57bec26d81714413ab2e136d06",
+      "featureReview": ".img2threejs/sfmoma-v2/blockout-feature-review-v2.json",
+      "featureReviewSha256": "4b80b1cd3c741666c3f5b6996f3ba89eca843161b67ee842d751613fd7ca3895"
     },
     "limitations": [
       "Canonical terrain contact and placement are not proven by the elevated QA root.",
+      "The fixed ROI has no hand-reviewed reference matte, so official Tier-1 IoU remains unpassed.",
       "The blockout remains below critical identity thresholds and is not cleared for structural-pass.",
       "AAA open-world parity is explicitly rejected."
     ]
