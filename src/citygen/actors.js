@@ -1,10 +1,67 @@
 import * as THREE from 'three';
 
-// Shared low-poly geometry keeps the whole moving fleet to three geometry
+function vehicleHullGeometry() {
+  // A six-point side profile gives the shared body and cab a readable rear
+  // rake, roof shoulder, and low nose without changing their normalized
+  // placement contract. Triangles are deliberately unindexed so computed
+  // normals remain hard at every authored facet.
+  const profile = [
+    [-0.5, -0.5],
+    [0.18, -0.5],
+    [0.48, -0.32],
+    [0.42, 0.18],
+    [0.05, 0.5],
+    [-0.5, 0.5],
+  ];
+  const vertices = [
+    ...profile.map(([y, z]) => [-0.5, y, z]),
+    ...profile.map(([y, z]) => [0.5, y, z]),
+  ];
+  const positions = [];
+  const appendTriangle = (a, b, c) => positions.push(...vertices[a], ...vertices[b], ...vertices[c]);
+
+  // Side caps. The profile winds counter-clockwise in yz when viewed from +x.
+  for (let index = 1; index < profile.length - 1; index += 1) {
+    appendTriangle(6, 6 + index, 6 + index + 1);
+    appendTriangle(0, index + 1, index);
+  }
+  // Join corresponding profile edges around the hull's perimeter.
+  for (let index = 0; index < profile.length; index += 1) {
+    const next = (index + 1) % profile.length;
+    appendTriangle(6 + index, index, next);
+    appendTriangle(6 + index, next, 6 + next);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.name = 'sf-low-poly-vehicle-hull-v1';
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  geometry.userData.vehicleHull = {
+    id: geometry.name,
+    version: 1,
+    triangleCount: positions.length / 9,
+    vertexCount: positions.length / 3,
+    profilePointCount: profile.length,
+    indexed: false,
+    hardEdged: true,
+    frontAxis: '+z',
+    normalizedBounds: {
+      min: geometry.boundingBox.min.toArray(),
+      max: geometry.boundingBox.max.toArray(),
+    },
+    features: ['sloped-nose', 'roof-shoulder', 'rear-rake'],
+  };
+  return geometry;
+}
+
+// Shared low-poly geometry keeps the whole moving fleet to four geometry
 // allocations. Invariant parts are drawn by aggregate instance batches; only
 // the independently animated rear and turn lights remain per vehicle.
 const GEO = {
   box: new THREE.BoxGeometry(1, 1, 1),
+  vehicleHull: vehicleHullGeometry(),
   wheel: new THREE.CylinderGeometry(0.3, 0.3, 0.24, 8),
   hub: new THREE.CylinderGeometry(0.13, 0.13, 0.26, 8),
 };
@@ -190,8 +247,8 @@ export function buildVehicleBatch(count) {
   const group = new THREE.Group();
   group.name = 'vehicle-presentation-batch';
   const parts = {
-    body: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.body, count),
-    cab: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.cab, count),
+    body: new THREE.InstancedMesh(GEO.vehicleHull, VEHICLE_MATERIALS.body, count),
+    cab: new THREE.InstancedMesh(GEO.vehicleHull, VEHICLE_MATERIALS.cab, count),
     taxiTopper: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.taxiTopper, count),
     transitWindows: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.transitWindows, count),
     headlights: new THREE.InstancedMesh(GEO.box, VEHICLE_MATERIALS.headlights, count * 2),

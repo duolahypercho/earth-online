@@ -15,6 +15,14 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 
+const VEHICLE_BATCH_BASELINE = Object.freeze({
+  // Last committed baseline before the authored body/cab hull. Keep this
+  // explicit so the stale 520k cap cannot conceal a presentation regression.
+  commit: '3993385',
+  daylight: { drawCalls: 594, triangles: 533970, geometries: 401, textures: 259 },
+  night: { drawCalls: 559, triangles: 528392, geometries: 401, textures: 259 },
+});
+
 const sample = () => page.evaluate(() => {
   const api = window.__CITYGEN__;
   const traffic = api.getTraffic();
@@ -120,7 +128,20 @@ try {
   assert.ok(events.every((event) => event.visibleBefore === false));
   assert.ok(events.filter((event) => !event.intentionalRefresh).every((event) => event.visibleAfter === false));
   assert.ok(night.render.drawCalls <= 1200, `draw calls remain bounded: ${night.render.drawCalls}`);
-  assert.ok(night.render.triangles <= 520000, `triangles remain bounded: ${night.render.triangles}`);
+  for (const [label, sampleReport, baseline] of [
+    ['daylight', daylight, VEHICLE_BATCH_BASELINE.daylight],
+    ['night', night, VEHICLE_BATCH_BASELINE.night],
+  ]) {
+    assert.equal(sampleReport.render.drawCalls - baseline.drawCalls, 0,
+      `${label}: vehicle silhouette draw delta must remain exact`);
+    assert.equal(sampleReport.render.geometries - baseline.geometries, 1,
+      `${label}: authored hull adds exactly one shared geometry`);
+    assert.equal(sampleReport.render.textures - baseline.textures, 0,
+      `${label}: authored hull adds no textures`);
+    const triangleDelta = sampleReport.render.triangles - baseline.triangles;
+    assert.ok(triangleDelta >= 0 && triangleDelta <= 1000,
+      `${label}: vehicle silhouette triangle delta ${triangleDelta} <= 1000`);
+  }
   assert.deepEqual(errors, []);
 
   console.log(JSON.stringify({
@@ -134,6 +155,21 @@ try {
       worldClockDelta: Number((afterMotion.state.clock - beforeMotion.state.clock).toFixed(3)),
     },
     night: { density: night.density, render: night.render },
+    vehiclePresentation: {
+      baselineCommit: VEHICLE_BATCH_BASELINE.commit,
+      daylightDelta: {
+        drawCalls: daylight.render.drawCalls - VEHICLE_BATCH_BASELINE.daylight.drawCalls,
+        triangles: daylight.render.triangles - VEHICLE_BATCH_BASELINE.daylight.triangles,
+        geometries: daylight.render.geometries - VEHICLE_BATCH_BASELINE.daylight.geometries,
+        textures: daylight.render.textures - VEHICLE_BATCH_BASELINE.daylight.textures,
+      },
+      nightDelta: {
+        drawCalls: night.render.drawCalls - VEHICLE_BATCH_BASELINE.night.drawCalls,
+        triangles: night.render.triangles - VEHICLE_BATCH_BASELINE.night.triangles,
+        geometries: night.render.geometries - VEHICLE_BATCH_BASELINE.night.geometries,
+        textures: night.render.textures - VEHICLE_BATCH_BASELINE.night.textures,
+      },
+    },
     diagnostics: {
       enabled: night.diagnostics.enabled,
       radius: night.diagnostics.radius,
