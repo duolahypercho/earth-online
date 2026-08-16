@@ -198,11 +198,11 @@ function createSurfaceTexture(seedText, kind) {
       context.stroke();
     }
   } else if (kind === 'stone') {
-    context.fillStyle = '#3d3b38';
+    context.fillStyle = '#a8a19a';
     context.fillRect(0, 0, 128, 128);
     for (let index = 0; index < 850; index += 1) {
-      const shade = 74 + Math.floor(random() * 42);
-      context.fillStyle = `rgba(${shade},${shade - 2},${shade - 5},0.24)`;
+      const shade = 136 + Math.floor(random() * 46);
+      context.fillStyle = `rgba(${shade},${shade - 2},${shade - 5},0.2)`;
       context.fillRect(random() * 128, random() * 128, 1.2, 1.2);
     }
   } else if (kind === 'rug') {
@@ -332,7 +332,7 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     trim: makeMaterial('#30383c', { roughness: 0.42, metalness: 0.38 }),
     wood: makeMaterial('#f4dfc9', { map: textures[2], bumpMap: textures[2], bumpScale: 0.025, roughness: 0.38, metalness: 0.04 }),
     stone: makeMaterial('#d8d3cb', { map: textures[4], bumpMap: textures[4], bumpScale: 0.018, roughness: 0.24, metalness: 0.08 }),
-    glass: makeMaterial('#8fc1ca', { transparent: true, opacity: 0.28, depthWrite: false, roughness: 0.08, metalness: 0.08 }),
+    glass: makeMaterial('#e3f0ef', { transparent: true, opacity: 0.16, depthWrite: false, roughness: 0.06, metalness: 0.12 }),
     brass: makeMaterial('#b68a49', { roughness: 0.26, metalness: 0.72 }),
     fabric: makeMaterial('#e0edf0', { map: textures[3], bumpMap: textures[3], bumpScale: 0.035, roughness: 0.92, metalness: 0 }),
     rug: makeMaterial('#f0d5d0', { map: textures[5], bumpMap: textures[5], bumpScale: 0.025, roughness: 0.96, metalness: 0 }),
@@ -410,16 +410,29 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [leftX + 0.13, anchor.y + 0.09, anchor.z], size: [0.1, 0.18, depth - 0.2] },
     { position: [rightX - 0.13, anchor.y + 0.09, anchor.z - depth / 2 + segALength / 2], size: [0.1, 0.18, Math.max(0.2, segALength - 0.1)] },
     { position: [rightX - 0.13, anchor.y + 0.09, openingZ + corridorHalf + segBLength / 2], size: [0.1, 0.18, Math.max(0.2, segBLength - 0.1)] },
+    { position: [anchor.x, anchor.y + height - 0.12, backZ + 0.16], size: [width - 0.24, 0.24, 0.2] },
+    { position: [leftX + 0.16, anchor.y + height - 0.12, anchor.z], size: [0.2, 0.24, depth - 0.24] },
+    { position: [rightX - 0.16, anchor.y + height - 0.12, anchor.z - depth / 2 + segALength / 2], size: [0.2, 0.24, Math.max(0.2, segALength - 0.14)] },
+    { position: [rightX - 0.16, anchor.y + height - 0.12, openingZ + corridorHalf + segBLength / 2], size: [0.2, 0.24, Math.max(0.2, segBLength - 0.14)] },
+    { position: [anchor.x - (width + 6.2) / 4, anchor.y + height - 0.12, frontZ - 0.16], size: [frontSection, 0.24, 0.2] },
+    { position: [anchor.x + (width + 6.2) / 4, anchor.y + height - 0.12, frontZ - 0.16], size: [frontSection, 0.24, 0.2] },
   ]);
   addInstances('lobby-back-wall-pilasters', 'architecture', surfaces.brass, [
-    { position: [leftX + 0.7, anchor.y + height / 2, backZ + 0.18], size: [0.16, height - 0.22, 0.16] },
-    { position: [anchor.x + 1.1, anchor.y + height / 2, backZ + 0.18], size: [0.16, height - 0.22, 0.16] },
+    { position: [anchor.x - width * 0.46, anchor.y + height / 2, backZ + 0.18], size: [0.18, height - 0.22, 0.18] },
+    { position: [anchor.x + width * 0.08, anchor.y + height / 2, backZ + 0.18], size: [0.18, height - 0.22, 0.18] },
+    { position: [anchor.x - width * 0.19, anchor.y + 3.48, backZ + 0.18], size: [width * 0.54, 0.16, 0.18] },
   ], INTERIOR_ROUNDED_GEOMETRY);
+  const cofferHalfWidth = width * 0.38;
+  const cofferHalfDepth = depth * 0.38;
   addInstances('lobby-ceiling-coffers', 'ceiling', surfaces.wood, [
-    { position: [anchor.x - width * 0.28, anchor.y + height - 0.08, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
-    { position: [anchor.x + width * 0.28, anchor.y + height - 0.08, anchor.z - depth * 0.1], size: [0.075, 0.1, depth * 0.56] },
-    { position: [anchor.x, anchor.y + height - 0.08, anchor.z - depth * 0.28], size: [width * 0.62, 0.1, 0.075] },
-    { position: [anchor.x, anchor.y + height - 0.08, anchor.z + depth * 0.08], size: [width * 0.62, 0.1, 0.075] },
+    ...[-1, 0, 1].map((column) => ({
+      position: [anchor.x + column * cofferHalfWidth, anchor.y + height - 0.14, anchor.z],
+      size: [0.22, 0.28, cofferHalfDepth * 2],
+    })),
+    ...[-1, 0, 1].map((row) => ({
+      position: [anchor.x, anchor.y + height - 0.14, anchor.z + row * cofferHalfDepth],
+      size: [cofferHalfWidth * 2, 0.28, 0.22],
+    })),
   ], INTERIOR_ROUNDED_GEOMETRY);
 
   const doorZ = frontZ - 0.08;
@@ -428,8 +441,18 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     { position: [anchor.x + 2.25, anchor.y + 1.48, doorZ], size: [1.45, 2.9, 0.06] },
     { position: [anchor.x - 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
     { position: [anchor.x + 0.7, anchor.y + 1.34, doorZ], size: [1.35, 2.65, 0.08] },
+    { position: [anchor.x, anchor.y + 3.55, doorZ], size: [6.02, 0.86, 0.06] },
   ]);
-  add({ name: 'lobby-door-transom', category: 'door', size: [6.2, 0.14, 0.13], position: [anchor.x, anchor.y + 3.0, doorZ], surface: surfaces.brass, rounded: true });
+  addInstances('lobby-door-framing', 'door', surfaces.brass, [
+    { position: [anchor.x, anchor.y + 3.02, doorZ - 0.015], size: [6.2, 0.18, 0.18] },
+    { position: [anchor.x, anchor.y + 4.0, doorZ - 0.015], size: [6.2, 0.18, 0.18] },
+    { position: [anchor.x - 3.02, anchor.y + 1.52, doorZ - 0.015], size: [0.18, 3.16, 0.18] },
+    { position: [anchor.x + 3.02, anchor.y + 1.52, doorZ - 0.015], size: [0.18, 3.16, 0.18] },
+    { position: [anchor.x, anchor.y + 1.45, doorZ - 0.015], size: [0.14, 2.96, 0.18] },
+    { position: [anchor.x - 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
+    { position: [anchor.x + 1.42, anchor.y + 1.45, doorZ - 0.015], size: [0.1, 2.96, 0.16] },
+    { position: [anchor.x, anchor.y + 0.06, doorZ - 0.015], size: [6.2, 0.12, 0.2] },
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
   const deskX = anchor.x - width * 0.17;
   const deskZ = anchor.z - depth * 0.25;
@@ -460,8 +483,11 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   addInstances('lobby-elevator-surround', 'elevator', surfaces.stone, [
     { position: [liftLeftX - 1.0, anchor.y + 1.65, backZ + 0.25], size: [0.24, 3.3, 0.5] },
     { position: [liftRightX + 1.0, anchor.y + 1.65, backZ + 0.25], size: [0.24, 3.3, 0.5] },
+    { position: [liftCenterX, anchor.y + 1.65, backZ + 0.25], size: [0.24, 3.3, 0.5] },
     { position: [liftCenterX, anchor.y + 3.12, backZ + 0.25], size: [liftBankWidth - 0.24, 0.44, 0.5] },
     { position: [liftCenterX, anchor.y + 0.08, backZ + 0.28], size: [liftBankWidth, 0.16, 0.56] },
+    { position: [liftLeftX, anchor.y + 3.22, backZ + 0.26], size: [1.82, 0.18, 0.54] },
+    { position: [liftRightX, anchor.y + 3.22, backZ + 0.26], size: [1.82, 0.18, 0.54] },
   ], INTERIOR_ROUNDED_GEOMETRY);
   addInstances('lobby-elevator-indicators', 'elevator', surfaces.indicator, [
     { position: [liftLeftX, anchor.y + 2.86, backZ + 0.52], size: [0.44, 0.18, 0.06] },
@@ -484,12 +510,19 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     position: [anchor.x + side * 2.7, anchor.y + (height - 0.34) / 2, frontZ - 1.6],
     size: [0.55, height - 0.34, 0.55],
   })), INTERIOR_CYLINDER_GEOMETRY);
+  const queueNearZ = anchor.z + depth * 0.12;
+  const queueFarZ = anchor.z + depth * 0.3;
   addInstances('lobby-queue-stanchions', 'vestibule', surfaces.brass, [
-    [-1.7, 0.12], [1.7, 0.12], [-1.7, 0.3], [1.7, 0.3],
-  ].map(([offsetX, offsetZ]) => ({
-    position: [anchor.x + offsetX, anchor.y + 0.48, anchor.z + depth * offsetZ],
-    size: [0.07, 0.96, 0.07],
-  })), INTERIOR_ROUNDED_GEOMETRY);
+    ...[-1.7, 1.7].flatMap((offsetX) => [queueNearZ, queueFarZ].flatMap((z) => [
+      { position: [anchor.x + offsetX, anchor.y + 0.48, z], size: [0.07, 0.96, 0.07] },
+      { position: [anchor.x + offsetX, anchor.y + 0.05, z], size: [0.34, 0.1, 0.34] },
+    ])),
+    ...[-1.7, 1.7].map((offsetX) => ({
+      position: [anchor.x + offsetX, anchor.y + 0.82, (queueNearZ + queueFarZ) / 2],
+      size: [0.08, 0.08, queueFarZ - queueNearZ],
+      color: '#8f2637',
+    })),
+  ], INTERIOR_ROUNDED_GEOMETRY);
 
   const sofaZ = anchor.z + depth * 0.06;
   const sofaCenters = [-1, 1].map((side) => anchor.x + side * width * 0.29);
@@ -622,7 +655,7 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
 
   const fixtureRecords = [
     ...Array.from({ length: 4 }, (_, index) => ({
-      position: [anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.1, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2)],
+      position: [anchor.x + (index % 2 ? cofferHalfWidth / 2 : -cofferHalfWidth / 2), anchor.y + height - 0.3, anchor.z + (index < 2 ? cofferHalfDepth / 2 : -cofferHalfDepth / 2)],
       size: [1.82, 0.08, 0.68],
     })),
     { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight - 0.09, openingZ], size: [0.62, 0.08, 1.5] },
@@ -630,7 +663,7 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
   addInstances('lobby-fixture-bezels', 'lighting', surfaces.trim, fixtureRecords, INTERIOR_ROUNDED_GEOMETRY);
   const panelRecords = [
     ...Array.from({ length: 4 }, (_, index) => ({
-      position: [anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.12, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2)],
+      position: [anchor.x + (index % 2 ? cofferHalfWidth / 2 : -cofferHalfWidth / 2), anchor.y + height - 0.32, anchor.z + (index < 2 ? cofferHalfDepth / 2 : -cofferHalfDepth / 2)],
       size: [1, 1, 1],
     })),
     { position: [rightX + corridorDepth / 2, anchor.y + corridorHeight - 0.11, openingZ], size: [0.42, 1, 1.55] },
@@ -640,7 +673,7 @@ export function createStreamedInterior(renderer, portal, cityBounds) {
     const light = new THREE.PointLight(0xffd7a2, 2.4, 10, 2);
     light.name = 'lobby-fixture-light';
     light.userData.category = 'lighting';
-    light.position.set(anchor.x + (index % 2 ? width * 0.22 : -width * 0.22), anchor.y + height - 0.32, anchor.z + (index < 2 ? depth * 0.2 : -depth * 0.2));
+    light.position.set(anchor.x + (index % 2 ? cofferHalfWidth / 2 : -cofferHalfWidth / 2), anchor.y + height - 0.48, anchor.z + (index < 2 ? cofferHalfDepth / 2 : -cofferHalfDepth / 2));
     group.add(light);
   }
   const interiorFill = new THREE.HemisphereLight(0xfff4e7, 0x685a4b, 0.72);
