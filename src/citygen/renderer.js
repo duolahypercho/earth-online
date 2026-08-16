@@ -95,6 +95,7 @@ const PARKED_CAR_PARTITION_ENTER_RADIUS = 420;
 const PARKED_CAR_PARTITION_EXIT_RADIUS = 520;
 const PARKED_CAR_PARTITION_AERIAL_HEIGHT = 500;
 const PARKED_CAR_PARTITION_UPDATE_INTERVAL = 8;
+const PARKED_CAR_DETAIL_PASS = 'sf-parked-car-wheel-glass-detail-v1';
 const PARKED_CAR_PALETTE = Object.freeze([
   0x7d4d4c,
   0x9a7a3e,
@@ -434,9 +435,9 @@ function createParkedCarPartitionDiagnostics() {
     source: {
       spots: 0,
       cells: 0,
-      bodyTrianglesPerSpot: 76,
+      bodyTrianglesPerSpot: 92,
       cabTrianglesPerSpot: 20,
-      trianglesPerSpot: 96,
+      trianglesPerSpot: 112,
       totalTriangles: 0,
       recordsChecksum: null,
       recordsUnchanged: false,
@@ -473,15 +474,22 @@ function createParkedCarPartitionDiagnostics() {
     },
     topology: {
       body: {
-        vertexCount: 228,
+        vertexCount: 276,
         indexCount: 0,
-        triangleCount: 76,
+        triangleCount: 92,
         indexed: false,
         finiteTriangleAreas: false,
         minTriangleArea: 0,
         minOutwardNormalDot: 0,
         vertexColors: true,
-        roles: { paintHull: 20, tires: 48, lamps: 8 },
+        roles: { paintHull: 20, wheelSideDiscs: 64, lamps: 8 },
+        wheels: {
+          count: 4,
+          facesPerWheel: 2,
+          segmentsPerFace: 8,
+          triangleCount: 64,
+          minOutwardNormalDot: 0,
+        },
       },
       cab: {
         vertexCount: 60,
@@ -491,16 +499,28 @@ function createParkedCarPartitionDiagnostics() {
         finiteTriangleAreas: false,
         minTriangleArea: 0,
         minOutwardNormalDot: 0,
+        vertexColors: true,
+        roles: { sideWindows: 8, rearWindow: 2, roof: 2, windshield: 2, lowerSills: 6 },
       },
       cabVerticalOffsetMeters: 0.46,
       cabLongitudinalOffsetMeters: -0.18,
       distinctBodyCabMatrices: true,
     },
     visual: {
+      pass: PARKED_CAR_DETAIL_PASS,
       bodyPalette: PARKED_CAR_PALETTE.map((value) => `#${value.toString(16).padStart(6, '0')}`),
       glassPalette: PARKED_CAR_GLASS_PALETTE.map((value) => `#${value.toString(16).padStart(6, '0')}`),
       hardEdgedHull: true,
       darkGlass: true,
+      wheelCount: 4,
+      wheelFacesPerWheel: 2,
+      wheelSegmentsPerFace: 8,
+      wheelRadiusMeters: 0.26,
+      wheelContactClearanceMeters: 0,
+      wheelLateralProtrusionMeters: 0.09,
+      wheelAxleOffsetMeters: 1.248,
+      cabSurfaceTones: {},
+      cabUniqueToneCount: 0,
     },
     submittedTriangles: 0,
     hysteresis: { enters: 0, exits: 0 },
@@ -539,7 +559,7 @@ function serializeParkedCarPartitionRecords(records) {
   })));
 }
 
-function createParkedCarHullGeometry({ compositeBody = false } = {}) {
+function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = false } = {}) {
   const profile = [
     [-0.5, -0.5],
     [0.18, -0.5],
@@ -555,7 +575,18 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
   const positions = [];
   const colors = [];
   const triangleOrigins = [];
-  const roles = { paintHull: 0, tires: 0, lamps: 0 };
+  const triangleRoles = [];
+  let geometryWheelMetadata = null;
+  const roles = segmentedCab
+    ? { sideWindows: 0, rearWindow: 0, roof: 0, windshield: 0, lowerSills: 0 }
+    : { paintHull: 0, wheelSideDiscs: 0, lamps: 0 };
+  const cabSurfaceTones = Object.freeze({
+    sideWindows: [0.72, 0.88, 0.96],
+    rearWindow: [0.52, 0.67, 0.75],
+    roof: [0.34, 0.42, 0.46],
+    windshield: [1.18, 1.38, 1.48],
+    lowerSills: [0.43, 0.52, 0.56],
+  });
   const appendTriangle = (
     a,
     b,
@@ -567,37 +598,60 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
     positions.push(...vertices[a], ...vertices[b], ...vertices[c]);
     colors.push(...color, ...color, ...color);
     triangleOrigins.push(outwardOrigin);
-    roles[role] += 1;
+    triangleRoles.push(role);
+    roles[role] = (roles[role] || 0) + 1;
   };
   for (let index = 1; index < profile.length - 1; index += 1) {
-    appendTriangle(6, 6 + index, 6 + index + 1);
-    appendTriangle(0, index + 1, index);
+    const role = segmentedCab ? 'sideWindows' : 'paintHull';
+    const color = segmentedCab ? cabSurfaceTones.sideWindows : [1, 1, 1];
+    appendTriangle(6, 6 + index, 6 + index + 1, color, role);
+    appendTriangle(0, index + 1, index, color, role);
   }
   for (let index = 0; index < profile.length; index += 1) {
     const next = (index + 1) % profile.length;
-    appendTriangle(6 + index, index, next);
-    appendTriangle(6 + index, next, 6 + next);
+    const role = segmentedCab
+      ? ['lowerSills', 'rearWindow', 'roof', 'windshield', 'lowerSills', 'lowerSills'][index]
+      : 'paintHull';
+    const color = segmentedCab ? cabSurfaceTones[role] : [1, 1, 1];
+    appendTriangle(6 + index, index, next, color, role);
+    appendTriangle(6 + index, next, 6 + next, color, role);
   }
   if (compositeBody) {
     const tireColor = [0.16, 0.16, 0.17];
-    const appendBox = (minX, minY, minZ, maxX, maxY, maxZ) => {
-      const start = vertices.length;
-      const center = [(minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5];
-      vertices.push(
-        [minX, minY, minZ], [maxX, minY, minZ],
-        [maxX, maxY, minZ], [minX, maxY, minZ],
-        [minX, minY, maxZ], [maxX, minY, maxZ],
-        [maxX, maxY, maxZ], [minX, maxY, maxZ],
-      );
-      for (const [a, b, c] of [
-        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-        [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5],
-        [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2],
-      ]) appendTriangle(start + a, start + b, start + c, tireColor, 'tires', center);
+    const wheelCenterY = -0.1034482759;
+    const wheelRadiusY = 0.4482758621;
+    const wheelRadiusZ = 0.0666666667;
+    const wheelInnerX = 0.47;
+    const wheelOuterX = 0.55;
+    const wheelSegments = 8;
+    const appendWheelFace = (x, centerZ, outwardSign, wheelCenterX) => {
+      const centerIndex = vertices.length;
+      const origin = [wheelCenterX, wheelCenterY, centerZ];
+      vertices.push([x, wheelCenterY, centerZ]);
+      for (let segment = 0; segment < wheelSegments; segment += 1) {
+        const angle = (segment / wheelSegments) * Math.PI * 2;
+        vertices.push([
+          x,
+          wheelCenterY + Math.cos(angle) * wheelRadiusY,
+          centerZ + Math.sin(angle) * wheelRadiusZ,
+        ]);
+      }
+      const radialStart = centerIndex + 1;
+      for (let segment = 0; segment < wheelSegments; segment += 1) {
+        const current = radialStart + segment;
+        const next = radialStart + ((segment + 1) % wheelSegments);
+        if (outwardSign > 0) {
+          appendTriangle(centerIndex, current, next, tireColor, 'wheelSideDiscs', origin);
+        } else {
+          appendTriangle(centerIndex, next, current, tireColor, 'wheelSideDiscs', origin);
+        }
+      }
     };
-    for (const x of [-0.53, 0.53]) {
-      for (const z of [-0.31, 0.31]) {
-        appendBox(x - 0.075, -0.59, z - 0.09, x + 0.075, -0.2, z + 0.09);
+    for (const side of [-1, 1]) {
+      for (const centerZ of [-0.32, 0.32]) {
+        const wheelCenterX = side * ((wheelInnerX + wheelOuterX) * 0.5);
+        appendWheelFace(side * wheelOuterX, centerZ, side, wheelCenterX);
+        appendWheelFace(side * wheelInnerX, centerZ, -side, wheelCenterX);
       }
     }
     const appendLamp = (x, rear) => {
@@ -624,6 +678,18 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
       appendLamp(x, false);
       appendLamp(x, true);
     }
+    geometryWheelMetadata = {
+      count: 4,
+      facesPerWheel: 2,
+      segmentsPerFace: wheelSegments,
+      triangleCount: roles.wheelSideDiscs,
+      normalizedRadiusY: wheelRadiusY,
+      normalizedRadiusZ: wheelRadiusZ,
+      normalizedCenterY: wheelCenterY,
+      normalizedOuterX: wheelOuterX,
+      normalizedInnerX: wheelInnerX,
+      minOutwardNormalDot: 0,
+    };
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -633,6 +699,7 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
   geometry.computeBoundingSphere();
   let minTriangleArea = Infinity;
   let minOutwardNormalDot = Infinity;
+  let wheelMinOutwardNormalDot = Infinity;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
@@ -652,7 +719,14 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
     normal.normalize();
     centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3)
       .sub(new THREE.Vector3().fromArray(triangleOrigins[offset / 9]));
-    minOutwardNormalDot = Math.min(minOutwardNormalDot, normal.dot(centroid));
+    const outwardNormalDot = normal.dot(centroid);
+    minOutwardNormalDot = Math.min(minOutwardNormalDot, outwardNormalDot);
+    if (triangleRoles[offset / 9] === 'wheelSideDiscs') {
+      wheelMinOutwardNormalDot = Math.min(wheelMinOutwardNormalDot, outwardNormalDot);
+    }
+  }
+  if (geometryWheelMetadata) {
+    geometryWheelMetadata.minOutwardNormalDot = wheelMinOutwardNormalDot;
   }
   geometry.userData.parkedCarHull = {
     triangleCount: positions.length / 9,
@@ -664,6 +738,8 @@ function createParkedCarHullGeometry({ compositeBody = false } = {}) {
     minOutwardNormalDot,
     vertexColors: true,
     roles,
+    wheels: geometryWheelMetadata,
+    surfaceTones: segmentedCab ? cabSurfaceTones : null,
   };
   return geometry;
 }
@@ -5844,7 +5920,7 @@ export class CityRenderer {
     const sourceSnapshotBefore = JSON.stringify(spots.map(({ x, z, heading }) => ({ x, z, heading })));
     const partitionSf = realMap && isSanFranciscoCity(city);
     const bodyGeometry = createParkedCarHullGeometry({ compositeBody: true });
-    const cabGeometry = createParkedCarHullGeometry();
+    const cabGeometry = createParkedCarHullGeometry({ segmentedCab: true });
     const bodyMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.46,
@@ -5857,6 +5933,7 @@ export class CityRenderer {
       roughness: 0.18,
       metalness: 0.42,
       flatShading: true,
+      vertexColors: true,
     });
     const bodies = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, spots.length);
     const cabs = new THREE.InstancedMesh(cabGeometry, cabMaterial, spots.length);
@@ -6124,6 +6201,7 @@ export class CityRenderer {
         minOutwardNormalDot: runtime.bodyHull.minOutwardNormalDot,
         vertexColors: runtime.bodyHull.vertexColors,
         roles: { ...runtime.bodyHull.roles },
+        wheels: { ...runtime.bodyHull.wheels },
       },
       cab: {
         vertexCount: runtime.cabHull.vertexCount,
@@ -6133,11 +6211,35 @@ export class CityRenderer {
         finiteTriangleAreas: runtime.cabHull.finiteTriangleAreas,
         minTriangleArea: runtime.cabHull.minTriangleArea,
         minOutwardNormalDot: runtime.cabHull.minOutwardNormalDot,
+        vertexColors: runtime.cabHull.vertexColors,
+        roles: { ...runtime.cabHull.roles },
+        surfaceTones: Object.fromEntries(Object.entries(runtime.cabHull.surfaceTones || {}).map(
+          ([role, tone]) => [role, [...tone]],
+        )),
       },
       cabVerticalOffsetMeters: 0.46,
       cabLongitudinalOffsetMeters: -0.18,
       distinctBodyCabMatrices: true,
     };
+    diagnostics.visual.cabSurfaceTones = Object.fromEntries(Object.entries(runtime.cabHull.surfaceTones || {}).map(
+      ([role, tone]) => [role, [...tone]],
+    ));
+    diagnostics.visual.cabUniqueToneCount = new Set(
+      Object.values(diagnostics.visual.cabSurfaceTones).map((tone) => tone.join(',')),
+    ).size;
+    diagnostics.visual.wheelCount = runtime.bodyHull.wheels.count;
+    diagnostics.visual.wheelFacesPerWheel = runtime.bodyHull.wheels.facesPerWheel;
+    diagnostics.visual.wheelSegmentsPerFace = runtime.bodyHull.wheels.segmentsPerFace;
+    diagnostics.visual.wheelRadiusMeters = Number(
+      (runtime.bodyHull.wheels.normalizedRadiusY * 0.58).toFixed(6),
+    );
+    diagnostics.visual.wheelContactClearanceMeters = Number((0.32
+      + (runtime.bodyHull.wheels.normalizedCenterY - runtime.bodyHull.wheels.normalizedRadiusY) * 0.58
+    ).toFixed(6)) || 0;
+    diagnostics.visual.wheelLateralProtrusionMeters = Number(
+      ((runtime.bodyHull.wheels.normalizedOuterX - 0.5) * 1.8).toFixed(6),
+    );
+    diagnostics.visual.wheelAxleOffsetMeters = Number((0.32 * 3.9).toFixed(6));
     diagnostics.submittedTriangles = activeIndices.length * trianglesPerSpot;
     diagnostics.hysteresis = {
       enters: previous.hysteresis.enters + enters,
@@ -6164,16 +6266,39 @@ export class CityRenderer {
       && diagnostics.source.recordsUnchanged
       && diagnostics.source.totalTriangles
         === diagnostics.source.spots * diagnostics.source.trianglesPerSpot
-      && diagnostics.source.bodyTrianglesPerSpot === 76
+      && diagnostics.source.bodyTrianglesPerSpot === 92
       && diagnostics.source.cabTrianglesPerSpot === 20
+      && diagnostics.source.trianglesPerSpot === 112
+      && diagnostics.source.trianglesPerSpot <= 120
       && diagnostics.topology.body.finiteTriangleAreas
       && diagnostics.topology.cab.finiteTriangleAreas
       && diagnostics.topology.body.minOutwardNormalDot > 0
       && diagnostics.topology.cab.minOutwardNormalDot > 0
       && diagnostics.topology.body.vertexColors
       && diagnostics.topology.body.roles.paintHull === 20
-      && diagnostics.topology.body.roles.tires === 48
+      && diagnostics.topology.body.roles.wheelSideDiscs === 64
       && diagnostics.topology.body.roles.lamps === 8
+      && diagnostics.topology.body.wheels.count === 4
+      && diagnostics.topology.body.wheels.facesPerWheel === 2
+      && diagnostics.topology.body.wheels.segmentsPerFace === 8
+      && diagnostics.topology.body.wheels.triangleCount === 64
+      && diagnostics.topology.body.wheels.minOutwardNormalDot > 0
+      && diagnostics.topology.cab.vertexColors
+      && diagnostics.topology.cab.roles.sideWindows === 8
+      && diagnostics.topology.cab.roles.rearWindow === 2
+      && diagnostics.topology.cab.roles.roof === 2
+      && diagnostics.topology.cab.roles.windshield === 2
+      && diagnostics.topology.cab.roles.lowerSills === 6
+      && diagnostics.visual.pass === PARKED_CAR_DETAIL_PASS
+      && diagnostics.visual.wheelCount === 4
+      && diagnostics.visual.wheelFacesPerWheel === 2
+      && diagnostics.visual.wheelSegmentsPerFace === 8
+      && Math.abs(diagnostics.visual.wheelRadiusMeters - 0.26) < 1e-9
+      && Math.abs(diagnostics.visual.wheelContactClearanceMeters) < 1e-9
+      && diagnostics.visual.wheelLateralProtrusionMeters >= 0.09 - 1e-9
+      && diagnostics.visual.cabUniqueToneCount === 5
+      && runtime.bodies.material.vertexColors === true
+      && runtime.cabs.material.vertexColors === true
       && diagnostics.cells.total === diagnostics.source.cells
       && diagnostics.active.spots + diagnostics.active.hiddenSpots === diagnostics.source.spots
       && diagnostics.active.indices.length === diagnostics.active.spots
