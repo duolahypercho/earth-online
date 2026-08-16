@@ -303,10 +303,34 @@ export function commitVehicleBatch(batch, count) {
 const SKIN_TONES = [0xc99a74, 0xa9744f, 0x8a5a3b, 0xe0b392, 0x6f4a33];
 const HAIR_COLORS = [0x2e241f, 0x6b4a2f, 0xd9c9a0, 0x191919, 0x9c9c9c, 0x5a3a5e];
 const OUTFIT_COLORS = [0x79a8c9, 0xd09a6f, 0xc75d8e, 0x6fbf73, 0x8f74c8, 0xd94f4a, 0x3f9e8f, 0xf2e9d8, 0xe8b23a];
+
+function taperedTorsoGeometry() {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.2, -0.26, 0.12, 0.2, -0.26, 0.12, 0.2, -0.26, -0.12, -0.2, -0.26, -0.12,
+    -0.32, 0.26, 0.14, 0.32, 0.26, 0.14, 0.32, 0.26, -0.14, -0.32, 0.26, -0.14,
+  ], 3));
+  geometry.setIndex([
+    0, 1, 5, 0, 5, 4,
+    1, 2, 6, 1, 6, 5,
+    2, 3, 7, 2, 7, 6,
+    3, 0, 4, 3, 4, 7,
+    4, 5, 6, 4, 6, 7,
+    3, 2, 1, 3, 1, 0,
+  ]);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 const PEDESTRIAN_GEOMETRY = {
-  body: new THREE.CapsuleGeometry(0.22, 0.68, 4, 6),
-  head: new THREE.SphereGeometry(0.16, 8, 6),
-  hair: new THREE.SphereGeometry(0.17, 8, 6),
+  torso: taperedTorsoGeometry(),
+  limb: new THREE.CylinderGeometry(0.052, 0.062, 1, 5, 1),
+  head: new THREE.SphereGeometry(0.14, 6, 4),
+  hair: new THREE.SphereGeometry(0.146, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2),
+  face: new THREE.BoxGeometry(0.12, 0.08, 0.018),
+  hand: new THREE.OctahedronGeometry(0.065, 0),
+  shoe: new THREE.BoxGeometry(0.16, 0.1, 0.27),
+  shadow: new THREE.CircleGeometry(0.24, 10).rotateX(-Math.PI / 2),
 };
 
 /**
@@ -323,9 +347,13 @@ export function buildPedestrian(random = Math.random) {
     time: random() * 10,
     cadence: 2.6 + random() * 1.6,
     bob: 0.09 + random() * 0.05,
+    gait: 0,
   };
   group.userData.appearance = {
     outfit,
+    trousers: new THREE.Color(outfit).multiplyScalar(0.5).getHex(),
+    shoes: new THREE.Color(hairColor).multiplyScalar(0.38).getHex(),
+    face: new THREE.Color(skin).lerp(new THREE.Color(0xffffff), 0.08).getHex(),
     skin,
     hairColor,
     hairScale,
@@ -334,32 +362,43 @@ export function buildPedestrian(random = Math.random) {
 }
 
 /**
- * Three shared body-part batches replace the per-person meshes. Logical
+ * Eleven shared body-part batches replace the per-person meshes. Bilateral parts
+ * use two instances per pedestrian, keeping elbows, knees, hands, and shoes
+ * readable without adding per-person scene nodes. Logical
  * pedestrian Object3Ds remain separate so simulation and QA keep stable
  * identity, position, and yaw without adding them to the scene graph.
  */
 export function buildPedestrianBatch(count) {
   const group = new THREE.Group();
   group.name = 'pedestrian-batch';
+  const outfitMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, flatShading: true });
+  const trouserMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88, flatShading: true });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86 });
+  const shoeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, flatShading: true });
   const parts = {
-    body: new THREE.InstancedMesh(
-      PEDESTRIAN_GEOMETRY.body,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, flatShading: true }),
-      count,
-    ),
-    head: new THREE.InstancedMesh(
-      PEDESTRIAN_GEOMETRY.head,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
-      count,
-    ),
+    torso: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.torso, outfitMaterial, count),
+    head: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.head, skinMaterial, count),
     hair: new THREE.InstancedMesh(
       PEDESTRIAN_GEOMETRY.hair,
       new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
       count,
     ),
+    face: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.face, skinMaterial, count),
+    upperArms: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.limb, outfitMaterial, count * 2),
+    forearms: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.limb, skinMaterial, count * 2),
+    hands: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.hand, skinMaterial, count * 2),
+    thighs: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.limb, trouserMaterial, count * 2),
+    shins: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.limb, trouserMaterial, count * 2),
+    shoes: new THREE.InstancedMesh(PEDESTRIAN_GEOMETRY.shoe, shoeMaterial, count * 2),
+    shadow: new THREE.InstancedMesh(
+      PEDESTRIAN_GEOMETRY.shadow,
+      new THREE.MeshBasicMaterial({ color: 0x17221c, transparent: true, opacity: 0.22, depthWrite: false }),
+      count,
+    ),
   };
   for (const [name, mesh] of Object.entries(parts)) {
     mesh.name = `pedestrian-${name}-instances`;
+    mesh.userData.instancesPerPedestrian = ['upperArms', 'forearms', 'hands', 'thighs', 'shins', 'shoes'].includes(name) ? 2 : 1;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     // The crowd spans the whole streamed city and moves continuously. A
     // stale aggregate instance bound must not make nearby walkers disappear.
@@ -371,42 +410,104 @@ export function buildPedestrianBatch(count) {
     parts,
     count,
     matrixHelper: new THREE.Object3D(),
+    rootHelper: new THREE.Object3D(),
+    rootMatrix: new THREE.Matrix4(),
+    partMatrix: new THREE.Matrix4(),
+    up: new THREE.Vector3(0, 1, 0),
+    start: new THREE.Vector3(),
+    end: new THREE.Vector3(),
+    direction: new THREE.Vector3(),
     colorsNeedUpdate: false,
   };
 }
 
 export function writePedestrianInstance(batch, index, pedestrian) {
   const { group } = pedestrian;
+  const { walk } = group.userData;
   const { appearance } = group.userData;
   const helper = batch.matrixHelper;
 
   if (!pedestrian.instanceColorInitialized) {
-    batch.parts.body.setColorAt(index, new THREE.Color(appearance.outfit));
-    batch.parts.head.setColorAt(index, new THREE.Color(appearance.skin));
+    const outfit = new THREE.Color(appearance.outfit);
+    const trousers = new THREE.Color(appearance.trousers);
+    const skin = new THREE.Color(appearance.skin);
+    const shoes = new THREE.Color(appearance.shoes);
+    batch.parts.torso.setColorAt(index, outfit);
+    batch.parts.head.setColorAt(index, skin);
     batch.parts.hair.setColorAt(index, new THREE.Color(appearance.hairColor));
+    batch.parts.face.setColorAt(index, new THREE.Color(appearance.face));
+    for (let side = 0; side < 2; side += 1) {
+      const pairIndex = index * 2 + side;
+      batch.parts.upperArms.setColorAt(pairIndex, outfit);
+      batch.parts.forearms.setColorAt(pairIndex, skin);
+      batch.parts.hands.setColorAt(pairIndex, skin);
+      batch.parts.thighs.setColorAt(pairIndex, trousers);
+      batch.parts.shins.setColorAt(pairIndex, trousers);
+      batch.parts.shoes.setColorAt(pairIndex, shoes);
+    }
     batch.colorsNeedUpdate = true;
     pedestrian.instanceColorInitialized = true;
   }
 
-  helper.rotation.set(0, group.rotation.y, 0);
-  helper.scale.set(1, 1, 1);
-  helper.position.set(group.position.x, group.position.y + 0.82, group.position.z);
-  helper.updateMatrix();
-  batch.parts.body.setMatrixAt(index, helper.matrix);
+  const root = batch.rootHelper;
+  root.position.set(group.position.x, group.position.y - (walk.bobOffset || 0), group.position.z);
+  root.rotation.set(0, group.rotation.y, 0);
+  root.scale.set(1, 1, 1);
+  root.updateMatrix();
+  batch.rootMatrix.copy(root.matrix);
+  const writePart = (part, instanceIndex, position, scale = [1, 1, 1]) => {
+    helper.position.fromArray(position);
+    helper.rotation.set(0, 0, 0);
+    helper.quaternion.identity();
+    helper.scale.fromArray(scale);
+    helper.updateMatrix();
+    batch.partMatrix.multiplyMatrices(batch.rootMatrix, helper.matrix);
+    batch.parts[part].setMatrixAt(instanceIndex, batch.partMatrix);
+  };
+  const writeSegment = (part, instanceIndex, start, end) => {
+    batch.start.fromArray(start);
+    batch.end.fromArray(end);
+    batch.direction.subVectors(batch.end, batch.start);
+    const length = Math.max(0.01, batch.direction.length());
+    batch.direction.multiplyScalar(1 / length);
+    helper.position.copy(batch.start).add(batch.end).multiplyScalar(0.5);
+    helper.quaternion.setFromUnitVectors(batch.up, batch.direction);
+    helper.scale.set(1, length, 1);
+    helper.updateMatrix();
+    batch.partMatrix.multiplyMatrices(batch.rootMatrix, helper.matrix);
+    batch.parts[part].setMatrixAt(instanceIndex, batch.partMatrix);
+  };
 
-  helper.position.y = group.position.y + 1.42;
-  helper.updateMatrix();
-  batch.parts.head.setMatrixAt(index, helper.matrix);
+  const bounce = Math.abs(walk.gait) * 0.018;
+  writePart('torso', index, [0, 1.17 + bounce, 0]);
+  writePart('head', index, [0, 1.58 + bounce, 0]);
+  writePart('hair', index, [0, 1.58 + bounce, 0], [1, appearance.hairScale, 1]);
+  writePart('face', index, [0, 1.57 + bounce, 0.137]);
+  writePart('shadow', index, [0, 0.008, 0], [1 + Math.abs(walk.gait) * 0.12, 1, 1]);
 
-  helper.position.y = group.position.y + 1.52;
-  helper.scale.set(1, appearance.hairScale, 1);
-  helper.updateMatrix();
-  batch.parts.hair.setMatrixAt(index, helper.matrix);
+  for (const side of [-1, 1]) {
+    const pairIndex = index * 2 + (side > 0 ? 1 : 0);
+    const phase = walk.gait * side;
+    const shoulder = [side * 0.32, 1.36 + bounce, 0];
+    const hand = [side * 0.37, 0.86 + bounce, -phase * 0.17];
+    const elbow = [side * 0.39, 1.1 + bounce, -phase * 0.1 + 0.045];
+    writeSegment('upperArms', pairIndex, shoulder, elbow);
+    writeSegment('forearms', pairIndex, elbow, hand);
+    writePart('hands', pairIndex, hand);
+
+    const hip = [side * 0.12, 0.93 + bounce, 0];
+    const shoeZ = phase * 0.16;
+    const ankle = [side * 0.12, 0.12, shoeZ];
+    const knee = [side * 0.12, 0.53 + bounce * 0.45, shoeZ * 0.42 + Math.max(0, -phase) * 0.12 + 0.035];
+    writeSegment('thighs', pairIndex, hip, knee);
+    writeSegment('shins', pairIndex, knee, ankle);
+    writePart('shoes', pairIndex, [side * 0.12, 0.05, shoeZ + 0.055]);
+  }
 }
 
 export function commitPedestrianBatch(batch, count = batch.count) {
   for (const mesh of Object.values(batch.parts)) {
-    mesh.count = count;
+    mesh.count = count * (mesh.userData.instancesPerPedestrian || 1);
     mesh.instanceMatrix.needsUpdate = true;
     if (batch.colorsNeedUpdate && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
