@@ -71,8 +71,11 @@ const STOREFRONT_RENDER_BASELINE = Object.freeze({
 });
 
 const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
-  drawCalls: 4,
-  triangles: 520,
+  // The Market curb-surface pass adds exactly two merged submissions and
+  // 94 triangles to the pre-existing curb-life envelope; matched facade
+  // poses may cull either surface mesh, so this remains a hard upper bound.
+  drawCalls: 6,
+  triangles: 614,
   geometries: 4,
   textures: 0,
 });
@@ -83,9 +86,9 @@ const HERO_CURB_PRESENTATION_DELTA = Object.freeze({
 // 462 triangles; these caps retain a tiny scheduling/culling margin.
 // f23fd16 keeps the exact hero budgets while retaining the shared authored
 // vehicle hull geometry introduced by the independently verified vehicle pass.
-const HERO_POSE_CAPS = Object.freeze({ drawCalls: 481, triangles: 505966, geometries: 406, textures: 259 });
-const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 257, triangles: 496602, geometries: 406, textures: 259 });
-const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 868, triangles: 522599, geometries: 406, textures: 259 });
+const HERO_POSE_CAPS = Object.freeze({ drawCalls: 480, triangles: 505894, geometries: 405, textures: 261 });
+const ELEVATED_POSE_CAPS = Object.freeze({ drawCalls: 259, triangles: 496696, geometries: 406, textures: 261 });
+const AERIAL_POSE_CAPS = Object.freeze({ drawCalls: 870, triangles: 522693, geometries: 406, textures: 261 });
 
 const sampleRenderer = () => page.evaluate(() => {
   const renderer = window.__CITYGEN__.getRenderer();
@@ -124,7 +127,7 @@ function assertRenderDelta(sample, label) {
     drawCalls: 1 + HERO_CURB_PRESENTATION_DELTA.drawCalls,
     triangles: 12 + HERO_CURB_PRESENTATION_DELTA.triangles,
     geometries: 1 + HERO_CURB_PRESENTATION_DELTA.geometries,
-    textures: 1 + HERO_CURB_PRESENTATION_DELTA.textures,
+    textures: 3 + HERO_CURB_PRESENTATION_DELTA.textures,
   };
   for (const field of ['drawCalls', 'triangles', 'geometries', 'textures']) {
     const delta = sample[field] - baseline[field];
@@ -167,6 +170,7 @@ try {
     const hero = renderer.heroFacadeDiagnostics || null;
     const roof = renderer.heroRoofDiagnostics || null;
     const ground = renderer.heroGroundDiagnostics || null;
+    const groundMaterials = renderer.groundMaterialDiagnostics || null;
     const footprint = renderer.buildingFootprintDiagnostics || null;
     const signageMeshes = [];
     renderer.root.traverse((object) => {
@@ -377,6 +381,7 @@ try {
         sourcePortalsUnchanged: ground.sourcePortalsUnchanged,
         incremental: ground.incremental ? { ...ground.incremental } : null,
       } : null,
+      groundMaterials: groundMaterials ? structuredClone(groundMaterials) : null,
       footprint: footprint ? {
         sourceCount: footprint.sourceCount,
         polygonShells: footprint.polygonShells,
@@ -420,6 +425,13 @@ try {
   report.runtime = runtime;
 
   assert.equal(runtime.backend, 'webgpu', 'canonical renderer uses WebGPU');
+  assert.ok(runtime.groundMaterials, 'ground material diagnostics are present on the canonical renderer');
+  assert.equal(runtime.groundMaterials.pass, 'sf-ground-materials-v1', 'ground material pass is explicit');
+  assert.equal(runtime.groundMaterials.enabled, true, 'SF ground material pass remains enabled');
+  assert.equal(runtime.groundMaterials.failure, null, 'SF ground material pass has no failure');
+  assert.deepEqual(runtime.groundMaterials.resourceDelta,
+    { drawGroups: 0, triangles: 0, geometries: 0, materials: 0, textures: 2, uvAttributes: 2 },
+    'facade slice retains the exact ground material resource delta');
   assert.equal(runtime.sceneCanvases, 1, 'exactly one canonical scene canvas exists');
   assert.ok(runtime.canvases <= 2, 'canonical scene and minimap are the only canvases');
   assert.equal(runtime.rootOccurrences, 1, 'world root is attached to the scene exactly once');

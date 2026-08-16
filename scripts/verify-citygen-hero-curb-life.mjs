@@ -22,6 +22,15 @@ const SOURCE = Object.freeze({
   roadHalfWidthMeters: 3.2,
   sidewalkOuterOffsetMeters: 5.6,
 });
+const GROUND_MATERIALS = Object.freeze({
+  pass: 'sf-ground-materials-v1',
+  schemaVersion: 1,
+  assets: Object.freeze({
+    asphalt: Object.freeze({ url: '/assets/sf-asphalt-surface-albedo-v1.png', metersPerRepeat: 4, bumpScale: 0.032 }),
+    sidewalk: Object.freeze({ url: '/assets/sf-sidewalk-concrete-albedo-v1.png', metersPerRepeat: 2.6, bumpScale: 0.018 }),
+  }),
+  resourceDelta: Object.freeze({ drawGroups: 0, triangles: 0, geometries: 0, materials: 0, textures: 2, uvAttributes: 2 }),
+});
 const ACTOR_RADIUS_METERS = 0.455;
 const EXPECTED_SITTER_SOURCE_T = 0.6339332587628481;
 const EXPECTED_SITTER_LATERAL_OFFSET_METERS = 4.4;
@@ -158,7 +167,8 @@ async function openCanonicalPage() {
   await page.waitForFunction(
     () => window.__CITYGEN__?.getState().webgpu
       && window.__CITYGEN__?.getState().pedestrians === 48
-      && window.__CITYGEN__?.getTraffic()?.getHeroCurbLifeDiagnostics().enabled === true,
+      && window.__CITYGEN__?.getTraffic()?.getHeroCurbLifeDiagnostics().enabled === true
+      && window.__CITYGEN__?.getRenderer()?.groundMaterialDiagnostics?.enabled === true,
     { timeout: 30000 },
   );
   return { page, errors };
@@ -194,6 +204,45 @@ try {
       diagnostics: traffic.getHeroCurbLifeDiagnostics(),
       sourceSegment: structuredClone(city.segments.find((segment) => segment.id === 'sf-seg-308')),
       sourceSnapshot: JSON.stringify(city.segments.find((segment) => segment.id === 'sf-seg-308')),
+      groundMaterials: (() => {
+        const roadMeshes = [];
+        const staleOverlays = [];
+        renderer.root.traverse((object) => {
+          if (object?.userData?.marketCurbSurfaceKind || /market.*(?:surface|overlay)/i.test(object?.name || '')) {
+            staleOverlays.push(object.name || object.userData.marketCurbSurfaceKind);
+          }
+          if (!object.isMesh || !['roads', 'sidewalks'].includes(object?.userData?.kind)) return;
+          const geometry = object.geometry;
+          const uv = geometry?.getAttribute?.('uv');
+          const material = object.material;
+          const texture = material?.map;
+          roadMeshes.push({
+            kind: object.userData.kind,
+            geometryUuid: geometry?.uuid || null,
+            materialUuid: material?.uuid || null,
+            mapUuid: texture?.uuid || null,
+            bumpMapUuid: material?.bumpMap?.uuid || null,
+            mapEqualsBumpMap: material?.map === material?.bumpMap,
+            bumpScale: material?.bumpScale,
+            uv: uv ? {
+              itemSize: uv.itemSize,
+              count: uv.count,
+              finite: Array.from(uv.array).every(Number.isFinite),
+              values: Array.from(uv.array),
+            } : null,
+            texture: texture ? {
+              colorSpace: texture.colorSpace,
+              wrapS: texture.wrapS,
+              wrapT: texture.wrapT,
+              minFilter: texture.minFilter,
+              magFilter: texture.magFilter,
+              generateMipmaps: texture.generateMipmaps,
+              anisotropy: texture.anisotropy,
+            } : null,
+          });
+        });
+        return { diagnostics: structuredClone(renderer.groundMaterialDiagnostics), roadMeshes, staleOverlays };
+      })(),
       corridor: structuredClone(renderer.sidewalkPropDiagnostics?.heroFrontages?.corridor),
       population: traffic.pedestrians.length,
       uniqueIdentities: new Set(traffic.pedestrians.map((pedestrian) => pedestrian.instanceIndex)).size,
@@ -206,6 +255,7 @@ try {
       },
       rendererCanvasCount: document.querySelectorAll('#scene-canvas').length,
       rendererCanvasIdentity: renderer.renderer.domElement === document.querySelector('#scene-canvas'),
+      rootOccurrences: renderer.scene.children.filter((child) => child === renderer.root).length,
       minimapCanvasCount: document.querySelectorAll('#minimap-canvas').length,
       resources: {
         sceneMeshes,
@@ -220,6 +270,7 @@ try {
   assert.equal(first.state.rendererBackend, 'webgpu', 'canonical renderer uses WebGPU');
   assert.equal(first.rendererCanvasCount, 1, 'canonical world owns one Three renderer canvas');
   assert.equal(first.rendererCanvasIdentity, true, 'WebGPU renderer owns the canonical scene canvas');
+  assert.equal(first.rootOccurrences, 1, 'canonical scene retains exactly one world root');
   assert.equal(first.minimapCanvasCount, 1, 'the separate UI minimap canvas remains singular');
   assert.equal(first.population, 48, 'logical pedestrian population remains 48');
   assert.equal(first.uniqueIdentities, 48, 'all logical pedestrian identities remain unique');
@@ -241,6 +292,45 @@ try {
   ), SOURCE.lengthMeters, 'source segment length', 1e-9);
   assertApprox(segment.width / 2, SOURCE.roadHalfWidthMeters, 'source road half-width');
   assertApprox(segment.sidewalkLeft, 2.4, 'source left sidewalk width');
+
+  const ground = first.groundMaterials;
+  const groundDiagnostics = ground.diagnostics;
+  assert.equal(groundDiagnostics.pass, GROUND_MATERIALS.pass, 'ground material contract identity');
+  assert.equal(groundDiagnostics.schemaVersion, GROUND_MATERIALS.schemaVersion, 'ground material schema');
+  assert.equal(groundDiagnostics.enabled, true, 'SF material pass is enabled');
+  assert.equal(groundDiagnostics.failure, null, 'SF material pass reports no contract failure');
+  assert.deepEqual(groundDiagnostics.resourceDelta, GROUND_MATERIALS.resourceDelta,
+    'ground material pass has the exact zero-geometry resource delta');
+  assert.equal(groundDiagnostics.source.unchanged, true, 'ground material pass leaves source segments unchanged');
+  assert.equal(groundDiagnostics.uvAttributes.count, 2, 'only road and sidewalk gain UV attributes');
+  assert.equal(groundDiagnostics.uvAttributes.finite, true, 'world XZ UVs are finite');
+  assert.equal(groundDiagnostics.materialBindings.anisotropy, 8, 'shared texture anisotropy is exact');
+  assert.equal(groundDiagnostics.lifecycle.textureLoadCount, 2, 'exactly two ground textures load');
+  assert.equal(groundDiagnostics.lifecycle.textureLoadedCount, 2, 'both ground textures complete loading');
+  assert.equal(groundDiagnostics.lifecycle.textureDisposeCount, 0, 'shared textures are not prematurely disposed');
+  assert.deepEqual(ground.staleOverlays, [], 'no obsolete Market overlay meshes or symbols remain');
+  assert.deepEqual(ground.roadMeshes.map((mesh) => mesh.kind).sort(), ['roads', 'sidewalks'],
+    'only the canonical asphalt and sidewalk meshes are materialized');
+  for (const [kind, key] of [['roads', 'asphalt'], ['sidewalks', 'sidewalk']]) {
+    const mesh = ground.roadMeshes.find((entry) => entry.kind === kind);
+    const asset = GROUND_MATERIALS.assets[key];
+    assert.ok(mesh?.geometryUuid && mesh.materialUuid && mesh.mapUuid, `${kind}: canonical resources exist`);
+    assert.equal(mesh.mapUuid, mesh.bumpMapUuid, `${kind}: one shared albedo and bump texture identity`);
+    assert.equal(mesh.mapEqualsBumpMap, true, `${kind}: map and bump map are identical`);
+    assertApprox(mesh.bumpScale, asset.bumpScale, `${kind}: exact bump scale`, 1e-12);
+    assert.deepEqual(mesh.uv?.itemSize, 2, `${kind}: UV uses vec2`);
+    assert.ok(mesh.uv?.count > 0 && mesh.uv.finite, `${kind}: every UV is finite`);
+    assert.ok(mesh.uv.values.some((value) => Math.abs(value) > 1), `${kind}: UV derives from world XZ rather than normalized local space`);
+    assert.equal(mesh.texture?.colorSpace, 'srgb', `${kind}: texture is sRGB`);
+    assert.equal(mesh.texture?.wrapS, 1000, `${kind}: repeat wrapS`);
+    assert.equal(mesh.texture?.wrapT, 1000, `${kind}: repeat wrapT`);
+    assert.equal(mesh.texture?.minFilter, 1008, `${kind}: mipmapped minification filter`);
+    assert.equal(mesh.texture?.magFilter, 1006, `${kind}: linear magnification filter`);
+    assert.equal(mesh.texture?.generateMipmaps, true, `${kind}: mipmaps are enabled`);
+    assert.equal(mesh.texture?.anisotropy, 8, `${kind}: anisotropy is exact`);
+    assert.equal(groundDiagnostics.assets[key].url, asset.url, `${kind}: deterministic asset URL`);
+    assert.equal(groundDiagnostics.assets[key].loaded, true, `${kind}: expected asset dimensions loaded`);
+  }
 
   const diagnostics = first.diagnostics;
   assert.equal(diagnostics.pass, 'market-pedestrian-life-v3');
@@ -542,6 +632,136 @@ try {
   });
   await page.waitForTimeout(120);
   await page.screenshot({ path: '.qa-citygen-hero-curb-life.png' });
+  const captureGroundMaterialPair = async (shot) => {
+    const hidden = await page.evaluate(() => {
+      const renderer = window.__CITYGEN__.getRenderer();
+      const records = [];
+      const linear = (channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      };
+      const color = (hex) => [1, 3, 5].map((offset) => linear(Number.parseInt(hex.slice(offset, offset + 2), 16)));
+      const asphaltPairs = [
+        ['#c9d0d6', '#5d6570'], ['#cdd3d8', '#626a74'], ['#d2d7db', '#6b737d'],
+        ['#d6dadd', '#747c84'], ['#d9dcde', '#7d848b'], ['#dde0e1', '#858b90'], ['#e2e3e1', '#8d9294'],
+      ].map(([next, previous]) => ({ next: color(next), previous: color(previous) }));
+      renderer.root.traverse((object) => {
+        if (!object.isMesh || !['roads', 'sidewalks'].includes(object?.userData?.kind)) return;
+        const material = object.material;
+        const colorAttribute = object.geometry.getAttribute('color');
+        const colors = colorAttribute.array.slice();
+        records.push({ kind: object.userData.kind, map: material.map, bumpMap: material.bumpMap, colorAttribute, colors });
+        material.map = null;
+        material.bumpMap = null;
+        material.needsUpdate = true;
+        for (let vertex = 0; vertex < colorAttribute.count; vertex += 1) {
+          const offset = vertex * colorAttribute.itemSize;
+          if (object.userData.kind === 'sidewalks') {
+            colorAttribute.setXYZ(vertex, ...color('#e2c79a'));
+            continue;
+          }
+          const current = [colorAttribute.getX(vertex), colorAttribute.getY(vertex), colorAttribute.getZ(vertex)];
+          const nearest = asphaltPairs.find(({ next }) => next.every((value, index) => Math.abs(value - current[index]) < 1e-5));
+          if (nearest) colorAttribute.setXYZ(vertex, ...nearest.previous);
+        }
+        colorAttribute.needsUpdate = true;
+      });
+      window.__CITYGEN_GROUND_CAPTURE__ = records;
+      renderer.renderFrame();
+      return records.map(({ kind, map, bumpMap }) => ({ kind, mapUuid: map?.uuid || null, bumpMapUuid: bumpMap?.uuid || null }));
+    });
+    assert.deepEqual(hidden.map((entry) => entry.kind).sort(), ['roads', 'sidewalks'],
+      `${shot}: baseline disables only the canonical asphalt and sidewalk map/bump bindings`);
+    assert.ok(hidden.every((entry) => entry.mapUuid && entry.mapUuid === entry.bumpMapUuid),
+      `${shot}: baseline retains the exact shared texture identities for restoration`);
+    const baseline = await page.screenshot({ path: `.qa-ground-materials-baseline-${shot}.png` });
+    const restored = await page.evaluate(() => {
+      const renderer = window.__CITYGEN__.getRenderer();
+      const records = window.__CITYGEN_GROUND_CAPTURE__ || [];
+      const restored = [];
+      for (const { kind, map, bumpMap, colorAttribute, colors } of records) {
+        let mesh = null;
+        renderer.root.traverse((object) => {
+          if (!mesh && object.isMesh && object?.userData?.kind === kind) mesh = object;
+        });
+        if (!mesh) return { ok: false, kind };
+        mesh.material.map = map;
+        mesh.material.bumpMap = bumpMap;
+        mesh.material.needsUpdate = true;
+        colorAttribute.array.set(colors);
+        colorAttribute.needsUpdate = true;
+        restored.push({ kind, mapUuid: map.uuid, colorsRestored: colors.every((value, index) => value === colorAttribute.array[index]) });
+      }
+      renderer.renderFrame();
+      return { ok: true, restored };
+    });
+    assert.equal(restored.ok, true, `${shot}: canonical map/bump bindings restore`);
+    assert.deepEqual(restored.restored.map((entry) => entry.kind).sort(), ['roads', 'sidewalks'],
+      `${shot}: candidate restores precisely two ground textures`);
+    assert.ok(restored.restored.every((entry) => entry.colorsRestored),
+      `${shot}: candidate restores every original vertex-color byte exactly`);
+    const candidate = await page.screenshot({ path: `.qa-ground-materials-${shot}.png` });
+    const pixelDelta = await page.evaluate(async ([baselineBase64, candidateBase64]) => {
+      const decode = async (base64) => createImageBitmap(await (await fetch(`data:image/png;base64,${base64}`)).blob());
+      const [baselineImage, candidateImage] = await Promise.all([decode(baselineBase64), decode(candidateBase64)]);
+      const canvas = document.createElement('canvas');
+      canvas.width = baselineImage.width;
+      canvas.height = baselineImage.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(baselineImage, 0, 0);
+      const baselinePixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(candidateImage, 0, 0);
+      const candidatePixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let changedPixels = 0;
+      let channelDelta = 0;
+      for (let index = 0; index < baselinePixels.length; index += 4) {
+        const delta = Math.abs(baselinePixels[index] - candidatePixels[index])
+          + Math.abs(baselinePixels[index + 1] - candidatePixels[index + 1])
+          + Math.abs(baselinePixels[index + 2] - candidatePixels[index + 2]);
+        channelDelta += delta;
+        if (delta > 0) changedPixels += 1;
+      }
+      return { width: canvas.width, height: canvas.height, changedPixels, channelDelta };
+    }, [baseline.toString('base64'), candidate.toString('base64')]);
+    assert.equal(pixelDelta.width, 1280, `${shot}: matched baseline/candidate width`);
+    assert.equal(pixelDelta.height, 720, `${shot}: matched baseline/candidate height`);
+    const minimum = {
+      hero: { changedPixels: 150000, channelDelta: 20000000 },
+      'eye-level': { changedPixels: 350000, channelDelta: 60000000 },
+      'shallow-road': { changedPixels: 350000, channelDelta: 60000000 },
+    }[shot];
+    assert.ok(pixelDelta.changedPixels >= minimum.changedPixels,
+      `${shot}: material capture changes >=${minimum.changedPixels} pixels (${pixelDelta.changedPixels})`);
+    assert.ok(pixelDelta.channelDelta >= minimum.channelDelta,
+      `${shot}: material capture channel delta >=${minimum.channelDelta} (${pixelDelta.channelDelta})`);
+    return pixelDelta;
+  };
+  const setGroundMaterialCamera = async (shot) => page.evaluate((kind) => {
+    const renderer = window.__CITYGEN__.getRenderer();
+    const segment = window.__CITYGEN__.getCity().segments.find((entry) => entry.id === 'sf-seg-308');
+    const [a, b] = segment.points;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    const nx = -dz / length;
+    const nz = dx / length;
+    const point = (sourceT, lateral) => ({ x: a.x + dx * sourceT + nx * lateral, z: a.z + dz * sourceT + nz * lateral });
+    const eyeSpec = kind === 'eye-level'
+      ? { sourceT: 0.11, lateral: -1.6, y: 1.74, targetT: 0.58, targetLateral: 3.9, targetY: 0.34 }
+      : { sourceT: 0.16, lateral: -2.2, y: 2.1, targetT: 0.56, targetLateral: 3.7, targetY: 0.14 };
+    const eye = point(eyeSpec.sourceT, eyeSpec.lateral);
+    const target = point(eyeSpec.targetT, eyeSpec.targetLateral);
+    const heightAt = renderer.terrain?.heightAt || (() => 0);
+    renderer.camera.fov = kind === 'eye-level' ? 46 : 52;
+    renderer.camera.updateProjectionMatrix();
+    renderer.camera.position.set(eye.x, heightAt(eye.x, eye.z) + eyeSpec.y, eye.z);
+    renderer.camera.lookAt(target.x, heightAt(target.x, target.z) + eyeSpec.targetY, target.z);
+    renderer.controls.target.set(target.x, heightAt(target.x, target.z) + eyeSpec.targetY, target.z);
+    renderer.controls.update();
+    renderer.camera.updateMatrixWorld(true);
+    return { kind, eye, target, fov: renderer.camera.fov };
+  }, shot);
   await page.waitForTimeout(750);
   const motionReport = await page.evaluate(() => {
     const traffic = window.__CITYGEN__.getTraffic();
@@ -1309,6 +1529,39 @@ try {
   assert.ok(cycle.diagnostics.continuity.maxYawStepRadians <= 0.13,
     `maximum continuous yaw step ${cycle.diagnostics.continuity.maxYawStepRadians}`);
 
+  const groundCaptureRestore = await page.evaluate(() => {
+    const renderer = window.__CITYGEN__.getRenderer();
+    const traffic = window.__CITYGEN__.getTraffic();
+    window.__CITYGEN_GROUND_CAPTURE_TRAFFIC_UPDATE__ = traffic.update;
+    traffic.update = () => {};
+    return {
+      camera: {
+        eye: renderer.camera.position.toArray(),
+        target: renderer.controls.target.toArray(),
+        fov: renderer.camera.fov,
+      },
+    };
+  });
+  const surfaceCaptureDeltas = { hero: await captureGroundMaterialPair('hero') };
+  const eyeLevelShot = await setGroundMaterialCamera('eye-level');
+  assert.equal(eyeLevelShot.fov, 46, 'eye-level ground material capture uses a fixed FOV');
+  surfaceCaptureDeltas['eye-level'] = await captureGroundMaterialPair('eye-level');
+  const roadShot = await setGroundMaterialCamera('shallow-road');
+  assert.equal(roadShot.fov, 52, 'shallow-road ground material capture uses a fixed FOV');
+  surfaceCaptureDeltas['shallow-road'] = await captureGroundMaterialPair('shallow-road');
+  await page.evaluate((restore) => {
+    const renderer = window.__CITYGEN__.getRenderer();
+    const traffic = window.__CITYGEN__.getTraffic();
+    renderer.camera.fov = restore.camera.fov;
+    renderer.camera.updateProjectionMatrix();
+    renderer.camera.position.fromArray(restore.camera.eye);
+    renderer.controls.target.fromArray(restore.camera.target);
+    renderer.controls.update();
+    renderer.camera.updateMatrixWorld(true);
+    traffic.update = window.__CITYGEN_GROUND_CAPTURE_TRAFFIC_UPDATE__;
+    delete window.__CITYGEN_GROUND_CAPTURE_TRAFFIC_UPDATE__;
+  }, groundCaptureRestore);
+
   const secondDocument = await openCanonicalPage();
   const second = await secondDocument.page.evaluate(() => ({
     diagnostics: window.__CITYGEN__.getTraffic().getHeroCurbLifeDiagnostics(),
@@ -1318,7 +1571,201 @@ try {
     'two fresh documents produce identical static behavior diagnostics');
   assert.equal(second.sourceSnapshot, first.sourceSnapshot, 'two fresh documents preserve identical source geometry');
   assert.deepEqual(secondDocument.errors, [], 'second fresh document has no page errors');
+  const textureUuidsBeforeRebuild = await secondDocument.page.evaluate(() => {
+    const textures = {};
+    window.__CITYGEN__.getRenderer().root.traverse((object) => {
+      if (object.isMesh && ['roads', 'sidewalks'].includes(object?.userData?.kind)) textures[object.userData.kind] = object.material.map?.uuid || null;
+    });
+    return textures;
+  });
+  await secondDocument.page.evaluate(() => window.__CITYGEN__.loadBuiltinSf());
+  await secondDocument.page.waitForFunction(() => window.__CITYGEN__?.getRenderer?.().groundMaterialDiagnostics?.lifecycle?.buildCount >= 2,
+    { timeout: 60000 });
+  const rebuild = await secondDocument.page.evaluate(() => {
+    const renderer = window.__CITYGEN__.getRenderer();
+    const textures = {};
+    renderer.root.traverse((object) => {
+      if (object.isMesh && ['roads', 'sidewalks'].includes(object?.userData?.kind)) textures[object.userData.kind] = object.material.map?.uuid || null;
+    });
+    return { diagnostics: structuredClone(renderer.groundMaterialDiagnostics), textures };
+  });
+  assert.deepEqual(rebuild.textures, textureUuidsBeforeRebuild,
+    'isolated SF clear/rebuild retains the two shared texture UUIDs');
+  assert.equal(rebuild.diagnostics.lifecycle.textureLoadCount, 2, 'isolated rebuild does not reload textures');
+  assert.equal(rebuild.diagnostics.lifecycle.textureLoadedCount, 2, 'isolated rebuild retains both loaded textures');
+  assert.equal(rebuild.diagnostics.lifecycle.textureDisposeCount, 0, 'isolated rebuild does not prematurely dispose textures');
+  assert.equal(rebuild.diagnostics.lifecycle.disposed, false, 'isolated rebuild keeps shared textures live');
+  assert.ok(rebuild.diagnostics.lifecycle.clearCount >= 2, 'isolated rebuild records a second clear without leakage');
   await secondDocument.page.close();
+
+  const proceduralPage = await browser.newPage({ viewport: { width: 320, height: 240 } });
+  const proceduralErrors = [];
+  proceduralPage.on('pageerror', (error) => proceduralErrors.push(error.message));
+  await proceduralPage.goto(new URL('about.html', url).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const proceduralTransition = await proceduralPage.evaluate(async () => {
+    const { CityRenderer } = await import('/src/citygen/renderer.js');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;width:1px;height:1px;overflow:hidden;pointer-events:none';
+    document.body.append(host);
+    const renderer = new CityRenderer(host, { pixelRatioCap: 1 });
+    await renderer.initialize();
+    const makeCity = (generator) => ({
+      meta: {
+        generator,
+        name: generator === 'sf-builtin' ? 'San Francisco QA' : 'Procedural QA',
+        seed: generator === 'sf-builtin' ? 'sf-ground-qa' : 'gridiron-qa',
+        bounds: { minX: -24, maxX: 24, minZ: -24, maxZ: 24 },
+        streetDesign: { roadLift: 0.5, curbHeight: 0.16 },
+      },
+      segments: [{
+        id: 'qa-road', streetId: 'qa-street', streetName: 'QA Street', highway: 'residential',
+        width: 10, sidewalkW: 2.4, sidewalkLeft: 2.4, lanes: 2,
+        points: [{ x: -20, z: 0 }, { x: 20, z: 0 }],
+      }],
+      intersections: [], streets: [], signals: [], buildings: [], blocks: [],
+    });
+    const snapshotRoads = () => {
+      const entries = Object.entries(renderer.roadMeshes).filter(([kind]) => ['asphalt', 'sidewalk'].includes(kind));
+      return Object.fromEntries(entries.map(([kind, mesh]) => {
+        const material = mesh.material;
+        return [kind, {
+          map: material.map?.uuid || null,
+          bumpMap: material.bumpMap?.uuid || null,
+          uv: (() => {
+            const attribute = mesh.geometry.getAttribute('uv');
+            const position = mesh.geometry.getAttribute('position');
+            return attribute ? {
+              values: Array.from({ length: Math.min(3, attribute.count) }, (_, index) => ({
+                x: position.getX(index), z: position.getZ(index), u: attribute.getX(index), v: attribute.getY(index),
+              })),
+            } : null;
+          })(),
+          colors: Array.from(mesh.geometry.getAttribute('color').array),
+        }];
+      }));
+    };
+    const proceduralCity = makeCity('gridiron');
+    const proceduralRoot = new renderer.scene.constructor();
+    renderer.scene.add(proceduralRoot);
+    renderer.setCity(proceduralCity);
+    renderer.buildRoadNetwork(proceduralRoot, proceduralCity);
+    const procedural = { diagnostics: structuredClone(renderer.groundMaterialDiagnostics), roads: snapshotRoads() };
+    const sfCity = makeCity('sf-builtin');
+    const sfRoot = new renderer.scene.constructor();
+    renderer.scene.add(sfRoot);
+    renderer.setCity(sfCity);
+    await renderer.ensureGroundMaterialTextures();
+    renderer.buildRoadNetwork(sfRoot, sfCity);
+    const sf = { diagnostics: structuredClone(renderer.groundMaterialDiagnostics), roads: snapshotRoads() };
+    const textureUuids = Object.values(sf.roads).map((road) => road.map);
+    renderer.dispose();
+    const disposed = {
+      lifecycle: structuredClone(renderer.groundMaterialDiagnostics.lifecycle),
+      textures: renderer.groundMaterialTextures
+        ? Object.values(renderer.groundMaterialTextures).map((texture) => texture.uuid)
+        : [],
+    };
+    host.remove();
+    return { procedural, sf, textureUuids, disposed };
+  });
+  assert.equal(proceduralTransition.procedural.diagnostics.enabled, false,
+    'fresh procedural renderer leaves SF ground materials disabled');
+  assert.equal(proceduralTransition.procedural.diagnostics.lifecycle.textureLoadCount, 0,
+    'fresh procedural renderer does not request ground textures');
+  assert.equal(proceduralTransition.procedural.diagnostics.lifecycle.textureLoadedCount, 0,
+    'fresh procedural renderer does not complete ground texture loads');
+  assert.deepEqual(proceduralTransition.procedural.diagnostics.resourceDelta,
+    { drawGroups: 0, triangles: 0, geometries: 0, materials: 0, textures: 0, uvAttributes: 0 },
+    'fresh procedural renderer has the exact all-zero ground resource delta');
+  for (const [kind, road] of Object.entries(proceduralTransition.procedural.roads)) {
+    assert.equal(road.map, null, `procedural ${kind} has no albedo map`);
+    assert.equal(road.bumpMap, null, `procedural ${kind} has no bump map`);
+    assert.equal(road.uv, null, `procedural ${kind} retains its original no-UV geometry`);
+    assert.ok(road.colors.every(Number.isFinite), `procedural ${kind} retains finite original vertex colors`);
+  }
+  assert.equal(proceduralTransition.sf.diagnostics.enabled, true, 'same fresh renderer enables materials for SF');
+  assert.equal(proceduralTransition.sf.diagnostics.lifecycle.textureLoadCount, 2,
+    'SF transition requests exactly two textures');
+  assert.equal(proceduralTransition.sf.diagnostics.lifecycle.textureLoadedCount, 2,
+    'SF transition completes exactly two textures');
+  for (const [kind, road] of Object.entries(proceduralTransition.sf.roads)) {
+    assert.ok(road.map && road.map === road.bumpMap, `SF ${kind} shares its albedo and bump texture`);
+    assert.ok(road.uv, `SF ${kind} adds world-space UVs`);
+    const metersPerRepeat = kind === 'asphalt' ? 4 : 2.6;
+    for (const sample of road.uv.values) {
+      assertApprox(sample.u, sample.x / metersPerRepeat, `${kind}: sampled world X UV`, 1e-5);
+      assertApprox(sample.v, sample.z / metersPerRepeat, `${kind}: sampled world Z UV`, 1e-5);
+    }
+  }
+  assert.equal(proceduralTransition.disposed.lifecycle.textureDisposeCount, 2,
+    'isolated renderer disposal disposes exactly two ground textures');
+  assert.equal(proceduralTransition.disposed.lifecycle.disposed, true,
+    'isolated renderer records completed ground texture disposal');
+  assert.deepEqual(proceduralTransition.disposed.textures, [],
+    'disposed renderer retains no reachable ground texture UUIDs');
+  assert.deepEqual(proceduralErrors, [], 'isolated procedural-to-SF renderer emits no page errors');
+  await proceduralPage.close();
+
+  const retryPage = await browser.newPage({ viewport: { width: 64, height: 64 } });
+  const retryErrors = [];
+  retryPage.on('pageerror', (error) => retryErrors.push(error.message));
+  const failedAssetPattern = '**/assets/sf-sidewalk-concrete-albedo-v1.png';
+  await retryPage.route(failedAssetPattern, (route) => route.abort('failed'));
+  await retryPage.goto(new URL('about.html', url).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const failedLoad = await retryPage.evaluate(async () => {
+    const { CityRenderer } = await import('/src/citygen/renderer.js');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;width:1px;height:1px;overflow:hidden;pointer-events:none';
+    document.body.append(host);
+    const renderer = new CityRenderer(host, { pixelRatioCap: 1 });
+    await renderer.initialize();
+    window.__GROUND_RETRY_RENDERER__ = renderer;
+    window.__GROUND_RETRY_HOST__ = host;
+    let message = null;
+    try {
+      await renderer.ensureGroundMaterialTextures();
+    } catch (error) {
+      message = error?.message || String(error);
+    }
+    return {
+      message,
+      lifecycle: structuredClone(renderer.groundMaterialDiagnostics.lifecycle),
+      readyCleared: renderer.groundMaterialTexturesReady === null,
+      texturesCleared: renderer.groundMaterialTextures === null,
+    };
+  });
+  assert.ok(failedLoad.message, 'aborted sidewalk texture rejects the first isolated load');
+  assert.equal(failedLoad.readyCleared, true, 'failed load clears the cached promise for retry');
+  assert.equal(failedLoad.texturesCleared, true, 'failed load retains no texture bundle');
+  assert.equal(failedLoad.lifecycle.textureAttemptCount, 1, 'failed load records one bundle attempt');
+  assert.equal(failedLoad.lifecycle.textureFailureCount, 1, 'failed load records one bundle failure');
+  assert.equal(failedLoad.lifecycle.textureLoadCount, 0, 'failed load resets the resident request count');
+  assert.equal(failedLoad.lifecycle.textureLoadedCount, 0, 'failed load retains no resident textures');
+  assert.ok(failedLoad.lifecycle.failedLoadTextureDisposeCount >= 1,
+    'failed bundle disposes every texture that loaded successfully');
+  await retryPage.unroute(failedAssetPattern);
+  const retriedLoad = await retryPage.evaluate(async () => {
+    const renderer = window.__GROUND_RETRY_RENDERER__;
+    const textures = await renderer.ensureGroundMaterialTextures();
+    const report = {
+      textureCount: Object.keys(textures).length,
+      lifecycle: structuredClone(renderer.groundMaterialDiagnostics.lifecycle),
+      ready: renderer.groundMaterialTexturesReady instanceof Promise,
+    };
+    renderer.dispose();
+    window.__GROUND_RETRY_HOST__.remove();
+    delete window.__GROUND_RETRY_RENDERER__;
+    delete window.__GROUND_RETRY_HOST__;
+    return report;
+  });
+  assert.equal(retriedLoad.textureCount, 2, 'same renderer retries and loads both ground textures');
+  assert.equal(retriedLoad.lifecycle.textureAttemptCount, 2, 'retry records a second bundle attempt');
+  assert.equal(retriedLoad.lifecycle.textureFailureCount, 1, 'successful retry preserves failure history');
+  assert.equal(retriedLoad.lifecycle.textureLoadCount, 2, 'successful retry owns exactly two requests');
+  assert.equal(retriedLoad.lifecycle.textureLoadedCount, 2, 'successful retry owns exactly two loaded textures');
+  assert.equal(retriedLoad.ready, true, 'successful retry caches the live promise until disposal');
+  assert.deepEqual(retryErrors, [], 'failure/retry harness emits no unhandled page errors');
+  await retryPage.close();
 
   assert.deepEqual(errors, [], 'canonical behavior document has no page errors');
   console.log(JSON.stringify({
@@ -1370,7 +1817,19 @@ try {
       states: cycle.states,
       continuity: cycle.diagnostics.continuity,
     },
-    screenshots: ['.qa-citygen-hero-curb-life.png', '.qa-citygen-hero-curb-life-motion.png'],
+    screenshots: [
+      '.qa-citygen-hero-curb-life.png',
+      '.qa-citygen-hero-curb-life-motion.png',
+      '.qa-ground-materials-hero.png',
+      '.qa-ground-materials-eye-level.png',
+      '.qa-ground-materials-shallow-road.png',
+    ],
+    surfaceCaptureDeltas,
+    groundMaterialLifecycle: rebuild.diagnostics.lifecycle,
+    proceduralGroundTransition: {
+      beforeSf: proceduralTransition.procedural.diagnostics.lifecycle,
+      afterSf: proceduralTransition.sf.diagnostics.lifecycle,
+    },
     errors,
   }, null, 2));
 } catch (error) {

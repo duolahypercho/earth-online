@@ -59,6 +59,24 @@ const HERO_FACADE_IDS = Object.freeze(new Map([
 const HERO_STREETWALL_PASS = 'hero-streetwall-grounding-v1';
 const HERO_STREETWALL_CONTACT_TREATMENT = 'recessed-portal-reveal-v1';
 const HERO_SIDEWALK_LIFE_PASS = 'hero-sidewalk-life-v5';
+const GROUND_MATERIAL_PASS = 'sf-ground-materials-v1';
+const GROUND_MATERIAL_ASSETS = Object.freeze({
+  asphalt: Object.freeze({
+    url: `${import.meta.env.BASE_URL}assets/sf-asphalt-surface-albedo-v1.png`,
+    width: 1254,
+    height: 1254,
+    metersPerRepeat: 4,
+    bumpScale: 0.032,
+  }),
+  sidewalk: Object.freeze({
+    url: `${import.meta.env.BASE_URL}assets/sf-sidewalk-concrete-albedo-v1.png`,
+    width: 1254,
+    height: 1254,
+    metersPerRepeat: 2.6,
+    bumpScale: 0.018,
+  }),
+});
+const GROUND_MATERIAL_ANISOTROPY = 8;
 const HERO_SIDEWALK_DONOR_RADIUS = 80;
 const HERO_CURB_RHYTHM = Object.freeze({
   id: 'market-street-curb-rhythm',
@@ -230,6 +248,85 @@ function createHeroSidewalkDiagnostics(logicalProps = 0) {
       materials: 0,
       textures: 0,
     },
+  };
+}
+
+function createGroundMaterialDiagnostics(lifecycle = {}, enabled = false) {
+  return {
+    schemaVersion: 1,
+    pass: GROUND_MATERIAL_PASS,
+    enabled: false,
+    failure: null,
+    assets: Object.fromEntries(Object.entries(GROUND_MATERIAL_ASSETS).map(([key, asset]) => [key, {
+      url: asset.url,
+      width: asset.width,
+      height: asset.height,
+      actualWidth: null,
+      actualHeight: null,
+      loaded: false,
+    }])),
+    worldUvScale: {
+      axis: 'world-xz',
+      asphaltMetersPerRepeat: GROUND_MATERIAL_ASSETS.asphalt.metersPerRepeat,
+      sidewalkMetersPerRepeat: GROUND_MATERIAL_ASSETS.sidewalk.metersPerRepeat,
+    },
+    uvAttributes: {
+      count: 0,
+      finite: false,
+      asphalt: null,
+      sidewalk: null,
+    },
+    materialBindings: {
+      anisotropy: GROUND_MATERIAL_ANISOTROPY,
+      asphalt: { mapEqualsBumpMap: false, bumpScale: GROUND_MATERIAL_ASSETS.asphalt.bumpScale },
+      sidewalk: { mapEqualsBumpMap: false, bumpScale: GROUND_MATERIAL_ASSETS.sidewalk.bumpScale },
+    },
+    resourceDelta: {
+      drawGroups: 0,
+      triangles: 0,
+      geometries: 0,
+      materials: 0,
+      textures: enabled ? 2 : 0,
+      uvAttributes: enabled ? 2 : 0,
+    },
+    source: {
+      segmentCount: 0,
+      checksumBefore: null,
+      checksumAfter: null,
+      unchanged: false,
+    },
+    lifecycle: { ...lifecycle },
+  };
+}
+
+function applyWorldXZUvs(geometry, metersPerRepeat) {
+  const position = geometry.getAttribute('position');
+  const uv = new Float32Array(position.count * 2);
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  let finite = position.count > 0 && Number.isFinite(metersPerRepeat) && metersPerRepeat > 0;
+  for (let index = 0; index < position.count; index += 1) {
+    const u = position.getX(index) / metersPerRepeat;
+    const v = position.getZ(index) / metersPerRepeat;
+    uv[index * 2] = u;
+    uv[index * 2 + 1] = v;
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    minV = Math.min(minV, v);
+    maxV = Math.max(maxV, v);
+    finite = finite && Number.isFinite(u) && Number.isFinite(v);
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geometry.userData.worldUv = { axis: 'xz', metersPerRepeat };
+  return {
+    itemSize: 2,
+    vertexCount: position.count,
+    metersPerRepeat,
+    range: position.count > 0 ? { minU, maxU, minV, maxV } : null,
+    repeat: position.count > 0 ? { u: maxU - minU, v: maxV - minV } : null,
+    finite,
   };
 }
 
@@ -927,6 +1024,21 @@ export class CityRenderer {
       asphaltOverlaps: 0,
       heroFrontages: createHeroSidewalkDiagnostics(),
     };
+    this.groundMaterialLifecycle = {
+      textureAttemptCount: 0,
+      textureFailureCount: 0,
+      textureLoadCount: 0,
+      textureLoadedCount: 0,
+      buildCount: 0,
+      clearCount: 0,
+      disposeRequested: false,
+      textureDisposeCount: 0,
+      failedLoadTextureDisposeCount: 0,
+      disposed: false,
+    };
+    this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle);
+    this.groundMaterialTextures = null;
+    this.groundMaterialTexturesReady = null;
     this.buildingFootprintDiagnostics = {
       sourceCount: 0,
       polygonShells: 0,
@@ -1005,6 +1117,117 @@ export class CityRenderer {
     return this.rendererBackend;
   }
 
+  async loadGroundMaterialTextures() {
+    const loader = new THREE.TextureLoader();
+    this.groundMaterialLifecycle.textureAttemptCount += 1;
+    const loadTexture = async (key) => {
+      const asset = GROUND_MATERIAL_ASSETS[key];
+      this.groundMaterialLifecycle.textureLoadCount += 1;
+      const texture = await loader.loadAsync(asset.url);
+      const image = texture.image;
+      const actualWidth = Number(image?.naturalWidth || image?.videoWidth || image?.width || 0);
+      const actualHeight = Number(image?.naturalHeight || image?.videoHeight || image?.height || 0);
+      texture.name = `sf-ground-${key}-v1`;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.anisotropy = GROUND_MATERIAL_ANISOTROPY;
+      texture.needsUpdate = true;
+      return { key, texture, actualWidth, actualHeight };
+    };
+    const results = await Promise.allSettled([
+        loadTexture('asphalt'),
+        loadTexture('sidewalk'),
+    ]);
+    const rejected = results.find((result) => result.status === 'rejected');
+    const invalid = results.find((result) => result.status === 'fulfilled'
+      && (result.value.actualWidth !== GROUND_MATERIAL_ASSETS[result.value.key].width
+        || result.value.actualHeight !== GROUND_MATERIAL_ASSETS[result.value.key].height));
+    if (rejected || invalid) {
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        result.value.texture.dispose();
+        this.groundMaterialLifecycle.failedLoadTextureDisposeCount += 1;
+      }
+      this.groundMaterialLifecycle.textureLoadCount = 0;
+      this.groundMaterialLifecycle.textureLoadedCount = 0;
+      this.groundMaterialLifecycle.textureFailureCount += 1;
+      this.groundMaterialTexturesReady = null;
+      const error = rejected?.reason || new Error(
+        `${invalid.value.key}-dimensions:${invalid.value.actualWidth}x${invalid.value.actualHeight}`,
+      );
+      this.groundMaterialDiagnostics.failure = `texture-load:${error?.message || 'unknown'}`;
+      this.syncGroundMaterialDiagnostics();
+      throw error;
+    }
+    try {
+      const [asphalt, sidewalk] = results.map((result) => result.value.texture);
+      this.groundMaterialLifecycle.textureLoadedCount += 2;
+      this.groundMaterialTextures = Object.freeze({ asphalt, sidewalk });
+      this.groundMaterialDiagnostics.failure = null;
+      this.syncGroundMaterialDiagnostics();
+      if (this.groundMaterialLifecycle.disposeRequested) {
+        this.disposeGroundMaterialTextures();
+        throw new Error('renderer-disposed-during-ground-texture-load');
+      }
+      return this.groundMaterialTextures;
+    } catch (error) {
+      this.groundMaterialTexturesReady = null;
+      this.groundMaterialLifecycle.textureFailureCount += 1;
+      this.groundMaterialDiagnostics.failure = `texture-load:${error?.message || 'unknown'}`;
+      this.syncGroundMaterialDiagnostics();
+      throw error;
+    }
+  }
+
+  ensureGroundMaterialTextures() {
+    if (this.groundMaterialTextures) return Promise.resolve(this.groundMaterialTextures);
+    if (!this.groundMaterialTexturesReady) {
+      this.groundMaterialTexturesReady = this.loadGroundMaterialTextures();
+    }
+    return this.groundMaterialTexturesReady;
+  }
+
+  syncGroundMaterialDiagnostics() {
+    this.groundMaterialDiagnostics.lifecycle = { ...this.groundMaterialLifecycle };
+    if (!this.groundMaterialTextures) return;
+    for (const [key, texture] of Object.entries(this.groundMaterialTextures)) {
+      const image = texture.image;
+      const actualWidth = Number(image?.naturalWidth || image?.videoWidth || image?.width || 0) || null;
+      const actualHeight = Number(image?.naturalHeight || image?.videoHeight || image?.height || 0) || null;
+      Object.assign(this.groundMaterialDiagnostics.assets[key], {
+        actualWidth,
+        actualHeight,
+        loaded: actualWidth === GROUND_MATERIAL_ASSETS[key].width
+          && actualHeight === GROUND_MATERIAL_ASSETS[key].height,
+      });
+    }
+  }
+
+  isGroundMaterialTexture(texture) {
+    return Boolean(texture && this.groundMaterialTextures
+      && Object.values(this.groundMaterialTextures).includes(texture));
+  }
+
+  disposeGroundMaterialTextures() {
+    this.groundMaterialLifecycle.disposeRequested = true;
+    if (!this.groundMaterialTextures || this.groundMaterialLifecycle.disposed) {
+      this.syncGroundMaterialDiagnostics();
+      return;
+    }
+    for (const texture of Object.values(this.groundMaterialTextures)) {
+      texture.dispose();
+      this.groundMaterialLifecycle.textureDisposeCount += 1;
+    }
+    this.groundMaterialLifecycle.disposed = true;
+    this.syncGroundMaterialDiagnostics();
+    this.groundMaterialTextures = null;
+    this.groundMaterialTexturesReady = null;
+  }
+
   resize() {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
@@ -1017,6 +1240,7 @@ export class CityRenderer {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
     for (const geometry of this.geometryCache) geometry.dispose();
+    this.disposeGroundMaterialTextures();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -1133,7 +1357,11 @@ export class CityRenderer {
     this.flushRoofDetails(root);
     // Soft contact shadows ground the buildings.
     this.buildContactShadows(root, city);
-    // Roads, sidewalks, curbs, markings, crosswalks.
+    // Roads, sidewalks, curbs, markings, crosswalks. SF surface assets stay
+    // lazy so procedural verification worlds never fetch or allocate them.
+    const usesSfGroundMaterials = (city.meta.generator === 'sf-builtin'
+      || city.meta.generator === 'openstreetmap') && isSanFranciscoCity(city);
+    if (usesSfGroundMaterials) await this.ensureGroundMaterialTextures();
     this.buildRoadNetwork(root, city);
     // Night neon trim along major avenues.
     this.buildStreetNeonTrim(root, city);
@@ -1204,13 +1432,16 @@ export class CityRenderer {
   }
 
   clearCity() {
+    this.groundMaterialLifecycle.clearCount += 1;
+    this.groundMaterialDiagnostics.enabled = false;
+    this.syncGroundMaterialDiagnostics();
     if (this.root) {
       this.scene.remove(this.root);
       this.root.traverse((object) => {
         if (object.geometry) this.geometryCache.push(object.geometry);
         const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
         for (const material of materials) {
-          material.map?.dispose();
+          if (material.map && !this.isGroundMaterialTexture(material.map)) material.map.dispose();
           material.dispose();
         }
       });
@@ -2717,6 +2948,8 @@ export class CityRenderer {
 
   buildRoadNetwork(root, city) {
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
+    const sfGroundMaterials = realMap && isSanFranciscoCity(city);
+    const sourceSegmentsBefore = sfGroundMaterials ? JSON.stringify(city.segments) : null;
     const hiddenPathClasses = new Set(['footway', 'path', 'steps', 'cycleway', 'pedestrian', 'corridor', 'platform']);
     const renderSegments = realMap
       ? city.segments.filter((segment) => !hiddenPathClasses.has(segment.highway))
@@ -2755,7 +2988,15 @@ export class CityRenderer {
     const stopAttrs = dynQuadAttrs();
     const jointAttrs = dynQuadAttrs();
     const patchAttrs = dynQuadAttrs();
-    const asphaltColors = {
+    const asphaltColors = sfGroundMaterials ? {
+      motorway: new THREE.Color('#c9d0d6'),
+      trunk: new THREE.Color('#cdd3d8'),
+      primary: new THREE.Color('#d2d7db'),
+      secondary: new THREE.Color('#d6dadd'),
+      tertiary: new THREE.Color('#d9dcde'),
+      residential: new THREE.Color('#dde0e1'),
+      service: new THREE.Color('#e2e3e1'),
+    } : {
       motorway: new THREE.Color('#5d6570'),
       trunk: new THREE.Color('#626a74'),
       primary: new THREE.Color('#6b737d'),
@@ -2764,7 +3005,7 @@ export class CityRenderer {
       residential: new THREE.Color('#858b90'),
       service: new THREE.Color('#8d9294'),
     };
-    const sidewalkColor = new THREE.Color('#e2c79a');
+    const sidewalkColor = new THREE.Color(sfGroundMaterials ? '#eee7da' : '#e2c79a');
     const curbColor = new THREE.Color('#c0936b');
     const crosswalkColor = new THREE.Color('#fff4dc');
     const laneWhite = new THREE.Color('#efe8d4');
@@ -3043,13 +3284,26 @@ export class CityRenderer {
     finalizeAttrs(sidewalkAttrs, sidewalkVertex);
     finalizeAttrs(curbAttrs, curbVertex);
 
+    const asphaltGeometry = buildAttrGeometry(asphaltAttrs);
+    const sidewalkGeometry = buildAttrGeometry(sidewalkAttrs);
+    const asphaltUvDiagnostics = sfGroundMaterials
+      ? applyWorldXZUvs(asphaltGeometry, GROUND_MATERIAL_ASSETS.asphalt.metersPerRepeat)
+      : null;
+    const sidewalkUvDiagnostics = sfGroundMaterials
+      ? applyWorldXZUvs(sidewalkGeometry, GROUND_MATERIAL_ASSETS.sidewalk.metersPerRepeat)
+      : null;
+    const asphaltTexture = sfGroundMaterials ? this.groundMaterialTextures.asphalt : null;
+    const sidewalkTexture = sfGroundMaterials ? this.groundMaterialTextures.sidewalk : null;
     const asphaltMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.92,
+      map: asphaltTexture,
+      bumpMap: asphaltTexture,
+      bumpScale: sfGroundMaterials ? GROUND_MATERIAL_ASSETS.asphalt.bumpScale : 1,
+      roughness: sfGroundMaterials ? 0.94 : 0.92,
       metalness: 0,
       flatShading: true,
     });
-    const asphaltMesh = new THREE.Mesh(buildAttrGeometry(asphaltAttrs), asphaltMaterial);
+    const asphaltMesh = new THREE.Mesh(asphaltGeometry, asphaltMaterial);
     asphaltMesh.receiveShadow = true;
     asphaltMesh.userData = { kind: 'roads', roads: 'all' };
     root.add(asphaltMesh);
@@ -3057,11 +3311,14 @@ export class CityRenderer {
 
     const sidewalkMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.9,
+      map: sidewalkTexture,
+      bumpMap: sidewalkTexture,
+      bumpScale: sfGroundMaterials ? GROUND_MATERIAL_ASSETS.sidewalk.bumpScale : 1,
+      roughness: sfGroundMaterials ? 0.96 : 0.9,
       metalness: 0,
       flatShading: true,
     });
-    const sidewalkMesh = new THREE.Mesh(buildAttrGeometry(sidewalkAttrs), sidewalkMaterial);
+    const sidewalkMesh = new THREE.Mesh(sidewalkGeometry, sidewalkMaterial);
     sidewalkMesh.receiveShadow = true;
     sidewalkMesh.userData = { kind: 'sidewalks' };
     root.add(sidewalkMesh);
@@ -3113,6 +3370,52 @@ export class CityRenderer {
 
     // Keep pickable geometry references for click metadata.
     this.roadMeshes = { asphalt: asphaltMesh, sidewalk: sidewalkMesh, curbs: curbMesh, crosswalks: crosswalkMesh, markings: laneMesh };
+    if (!sfGroundMaterials) {
+      this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle);
+      this.syncGroundMaterialDiagnostics();
+      return;
+    }
+    this.groundMaterialLifecycle.buildCount += 1;
+    this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle, true);
+    this.groundMaterialDiagnostics.enabled = true;
+    this.groundMaterialDiagnostics.uvAttributes = {
+      count: 2,
+      finite: asphaltUvDiagnostics.finite && sidewalkUvDiagnostics.finite,
+      asphalt: asphaltUvDiagnostics,
+      sidewalk: sidewalkUvDiagnostics,
+    };
+    this.groundMaterialDiagnostics.materialBindings = {
+      anisotropy: GROUND_MATERIAL_ANISOTROPY,
+      asphalt: {
+        mapEqualsBumpMap: asphaltMaterial.map === asphaltMaterial.bumpMap,
+        bumpScale: asphaltMaterial.bumpScale,
+      },
+      sidewalk: {
+        mapEqualsBumpMap: sidewalkMaterial.map === sidewalkMaterial.bumpMap,
+        bumpScale: sidewalkMaterial.bumpScale,
+      },
+    };
+    const sourceSegmentsAfter = JSON.stringify(city.segments);
+    this.groundMaterialDiagnostics.source = {
+      segmentCount: city.segments.length,
+      checksumBefore: hashString(sourceSegmentsBefore),
+      checksumAfter: hashString(sourceSegmentsAfter),
+      unchanged: sourceSegmentsBefore === sourceSegmentsAfter,
+    };
+    this.syncGroundMaterialDiagnostics();
+    const diagnostics = this.groundMaterialDiagnostics;
+    diagnostics.failure = diagnostics.assets.asphalt.loaded
+      && diagnostics.assets.sidewalk.loaded
+      && diagnostics.uvAttributes.count === 2
+      && diagnostics.uvAttributes.finite
+      && diagnostics.materialBindings.asphalt.mapEqualsBumpMap
+      && diagnostics.materialBindings.sidewalk.mapEqualsBumpMap
+      && diagnostics.source.unchanged
+      && diagnostics.lifecycle.textureLoadCount === 2
+      && diagnostics.lifecycle.textureLoadedCount === 2
+      && diagnostics.lifecycle.textureDisposeCount === 0
+      ? null
+      : 'sf-ground-materials-contract';
   }
 
   buildSignals(root, city) {
