@@ -403,6 +403,17 @@ export class CityRenderer {
     this.localLightPool = [];
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
+    this.streetLampRecords = [];
+    this.streetLampDiagnostics = {
+      source: null,
+      fixtureCount: 0,
+      candidateCount: 0,
+      maxLamps: 0,
+      sourceOwnedCount: 0,
+      bandViolations: 0,
+      asphaltOverlaps: 0,
+      pointLightPoolSize: 0,
+    };
     this.terrainVisualScale = 1;
 
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
@@ -508,6 +519,17 @@ export class CityRenderer {
     this.localLightPool = [];
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
+    this.streetLampRecords = [];
+    this.streetLampDiagnostics = {
+      source: city?.meta?.generator || null,
+      fixtureCount: 0,
+      candidateCount: 0,
+      maxLamps: 0,
+      sourceOwnedCount: 0,
+      bandViolations: 0,
+      asphaltOverlaps: 0,
+      pointLightPoolSize: 0,
+    };
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
     this.sidewalkPropRecords = [];
     this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
@@ -612,6 +634,17 @@ export class CityRenderer {
       this.localLightPool = [];
       this.localLightUpdateClock = 0;
       this.localLightsNight = false;
+      this.streetLampRecords = [];
+      this.streetLampDiagnostics = {
+        source: null,
+        fixtureCount: 0,
+        candidateCount: 0,
+        maxLamps: 0,
+        sourceOwnedCount: 0,
+        bandViolations: 0,
+        asphaltOverlaps: 0,
+        pointLightPoolSize: 0,
+      };
       this.sidewalkPropRecords = [];
       this.sidewalkPropDiagnostics = { bandViolations: 0, asphaltOverlaps: 0 };
       this.signalMeshes = [];
@@ -1883,40 +1916,35 @@ export class CityRenderer {
       roughness: 0.4,
     });
     this.geometryCache.push(poleGeometry, bulbGeometry);
-    const positions = new Set();
-    for (const signal of city.signals) {
-      positions.add(`${signal.position.x.toFixed(0)},${signal.position.z.toFixed(0)}`);
-    }
-    const bounds = city.meta.bounds;
     const maxLamps = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 240 : 900;
-    for (const street of city.streets) {
-      if (positions.size >= maxLamps) break;
-      if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
-      const axis = street.axis;
-      const position = street.position;
-      const count = 6;
-      for (let i = 1; i < count; i += 1) {
-        const t = i / count;
-        const x = axis === 'x' ? position : bounds.minX + (bounds.maxX - bounds.minX) * t;
-        const z = axis === 'z' ? position : bounds.minZ + (bounds.maxZ - bounds.minZ) * t;
-        const side = (i % 2 === 0 ? 1 : -1) * (street.sidewalkW + street.asphaltWidth / 2 + 0.9);
-        const lampX = axis === 'x' ? position + side : x;
-        const lampZ = axis === 'z' ? position + side : z;
-        positions.add(`${lampX.toFixed(0)},${lampZ.toFixed(0)}`);
-      }
-    }
+    const placement = collectStreetLampRecords(city, { maxLamps });
+    this.streetLampRecords = placement.records;
+    this.streetLampDiagnostics = {
+      source: city.meta.generator || null,
+      maxLamps,
+      ...placement.diagnostics,
+      pointLightPoolSize: 0,
+    };
     const group = new THREE.Group();
-    for (const key of positions) {
-      const [x, z] = key.split(',').map(Number);
-      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
+    for (const record of this.streetLampRecords) {
+      const { x, z } = record;
       const pole = new THREE.Mesh(poleGeometry, poleMaterial);
       pole.position.y = 2.7;
       const bulb = new THREE.Mesh(bulbGeometry, bulbMaterial);
       bulb.position.y = 5.5;
       const lamp = new THREE.Group();
       lamp.add(pole, bulb);
-      const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0;
+      const y = (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0) + roadLift + 0.04;
       lamp.position.set(x, y, z);
+      lamp.rotation.y = record.rotation;
+      lamp.userData = {
+        kind: 'street-lamp',
+        source: 'segment-polyline',
+        segmentId: record.segmentId,
+        streetId: record.streetId,
+        side: record.side,
+      };
       group.add(lamp);
       this.lampBulbs.push(bulb);
       this.localLightCandidates.push({
@@ -1929,6 +1957,7 @@ export class CityRenderer {
         decay: 2.1,
       });
     }
+    group.name = 'street-lamps';
     root.add(group);
   }
 
@@ -1948,6 +1977,9 @@ export class CityRenderer {
     // one bounded pool.
     this.lampLights = this.localLightPool;
     this.lightPools = this.localLightPool;
+    if (this.streetLampDiagnostics) {
+      this.streetLampDiagnostics.pointLightPoolSize = this.localLightPool.length;
+    }
   }
 
   updateLocalLightPool(delta, force = false) {
@@ -3224,6 +3256,207 @@ export class CityRenderer {
   }
 }
 
+const STREET_LAMP_CLASSES = Object.freeze(['primary', 'secondary', 'tertiary', 'residential']);
+const STREET_LAMP_SPACING = Object.freeze({
+  primary: 32,
+  secondary: 34,
+  tertiary: 42,
+  residential: 50,
+});
+
+/**
+ * Derive authored lamp fixtures from the active street contract. Real maps
+ * must follow source polylines; the old axis/position shortcut silently
+ * collapsed OSM roads onto z=0 because OSM streets intentionally have no
+ * grid axis. Records carry their source segment and measured sidewalk band
+ * so QA can reject presentation-only or asphalt placements.
+ */
+function collectStreetLampRecords(city, { maxLamps = 240 } = {}) {
+  const generator = city?.meta?.generator || 'unknown';
+  const realMap = generator === 'sf-builtin' || generator === 'openstreetmap';
+  if (!realMap) return collectProceduralLampRecords(city, maxLamps);
+
+  const segments = Array.isArray(city?.segments) ? city.segments : [];
+  const eligible = segments.filter((segment) => STREET_LAMP_CLASSES.includes(segment.highway)
+    && Array.isArray(segment.points) && segment.points.length >= 2);
+  const byClass = new Map(STREET_LAMP_CLASSES.map((highway) => [highway, []]));
+  const seen = new Set();
+  let generatedCount = 0;
+  let culledAsphaltOverlaps = 0;
+  let polylineSegments = 0;
+
+  const distanceToPolyline = (point, points) => {
+    let distance = Infinity;
+    for (let index = 1; index < points.length; index += 1) {
+      distance = Math.min(distance, pointToSegmentDistance(point, points[index - 1], points[index]));
+    }
+    return distance;
+  };
+  const overlapsOtherAsphalt = (point, owner) => eligible.some((segment) => {
+    if (segment === owner || segment.streetId === owner.streetId) return false;
+    const width = Number(segment.width || 0);
+    return width > 0 && distanceToPolyline(point, segment.points) < width / 2 + 0.3;
+  });
+
+  for (const segment of eligible) {
+    const points = segment.points.filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.z));
+    if (points.length < 2) continue;
+    if (points.length > 2) polylineSegments += 1;
+    const length = polylineLength(points);
+    if (!Number.isFinite(length) || length < 18) continue;
+    const leftWidth = Math.max(0, Number(segment.sidewalkLeft ?? segment.sidewalkW ?? 0));
+    const rightWidth = Math.max(0, Number(segment.sidewalkRight ?? segment.sidewalkW ?? 0));
+    const sides = [];
+    if (leftWidth >= 0.8) sides.push({ side: 1, width: leftWidth });
+    if (rightWidth >= 0.8) sides.push({ side: -1, width: rightWidth });
+    if (!sides.length) continue;
+    const spacingMeters = STREET_LAMP_SPACING[segment.highway] || 42;
+    const count = Math.max(1, Math.round(length / spacingMeters));
+    const queue = byClass.get(segment.highway);
+    for (let index = 0; index < count; index += 1) {
+      const along = ((index + 0.5) / count) * length;
+      const point = pointAlongPolyline(points, along);
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.z)) continue;
+      const placement = sides[index % sides.length];
+      const minOffset = Number(segment.width || 0) / 2 + 0.3;
+      const maxOffset = Number(segment.width || 0) / 2 + placement.width - 0.3;
+      if (maxOffset < minOffset) continue;
+      const lateralOffset = minOffset + (maxOffset - minOffset) * 0.58;
+      const x = point.x + point.nx * lateralOffset * placement.side;
+      const z = point.z + point.nz * lateralOffset * placement.side;
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      generatedCount += 1;
+      const key = `${Math.round(x * 10)}:${Math.round(z * 10)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (overlapsOtherAsphalt({ x, z }, segment)) {
+        culledAsphaltOverlaps += 1;
+        continue;
+      }
+      queue.push({
+        x,
+        z,
+        rotation: Math.atan2(point.tx, point.tz),
+        segmentId: segment.id,
+        streetId: segment.streetId,
+        streetName: segment.streetName || '',
+        highway: segment.highway,
+        side: placement.side,
+        sidewalkWidth: placement.width,
+        lateralOffset,
+        minOffset,
+        maxOffset,
+        distanceAlong: Number(along.toFixed(3)),
+        spacingMeters,
+        source: 'segment-polyline',
+        overlapsAsphalt: false,
+      });
+    }
+  }
+
+  // Interleave classes before applying the global cap. This keeps the
+  // bounded population representative of primary through residential roads,
+  // independent of source element ordering.
+  const cursors = new Map(STREET_LAMP_CLASSES.map((highway) => [highway, 0]));
+  const records = [];
+  let added = true;
+  while (records.length < maxLamps && added) {
+    added = false;
+    for (const highway of STREET_LAMP_CLASSES) {
+      if (records.length >= maxLamps) break;
+      const queue = byClass.get(highway);
+      const cursor = cursors.get(highway);
+      if (cursor >= queue.length) continue;
+      records.push(queue[cursor]);
+      cursors.set(highway, cursor + 1);
+      added = true;
+    }
+  }
+
+  const classCounts = Object.fromEntries(STREET_LAMP_CLASSES.map((highway) => [
+    highway,
+    records.filter((record) => record.highway === highway).length,
+  ]));
+  const sideCounts = {
+    left: records.filter((record) => record.side === 1).length,
+    right: records.filter((record) => record.side === -1).length,
+  };
+  return {
+    records,
+    diagnostics: {
+      fixtureCount: records.length,
+      candidateCount: records.length,
+      generatedCount,
+      culledAsphaltOverlaps,
+      polylineSegments,
+      sourceOwnedCount: records.filter((record) => record.segmentId && record.streetId).length,
+      bandViolations: records.filter((record) => (
+        record.lateralOffset < record.minOffset - 1e-6
+        || record.lateralOffset > record.maxOffset + 1e-6
+      )).length,
+      asphaltOverlaps: records.filter((record) => record.overlapsAsphalt).length,
+      classCounts,
+      sideCounts,
+    },
+  };
+}
+
+function collectProceduralLampRecords(city, maxLamps) {
+  const positions = new Map();
+  const bounds = city?.meta?.bounds || {};
+  for (const signal of city?.signals || []) {
+    const x = Number(signal.position?.x);
+    const z = Number(signal.position?.z);
+    if (Number.isFinite(x) && Number.isFinite(z)) positions.set(`${x.toFixed(1)},${z.toFixed(1)}`, {
+      x,
+      z,
+      rotation: 0,
+      source: 'signal',
+    });
+  }
+  for (const street of city?.streets || []) {
+    if (positions.size >= maxLamps) break;
+    if (street.highway !== 'primary' && street.highway !== 'secondary') continue;
+    const axis = street.axis;
+    if (axis !== 'x' && axis !== 'z') continue;
+    const position = Number(street.position);
+    const count = 6;
+    for (let index = 1; index < count; index += 1) {
+      if (positions.size >= maxLamps) break;
+      const t = index / count;
+      const x = axis === 'x' ? position : bounds.minX + (bounds.maxX - bounds.minX) * t;
+      const z = axis === 'z' ? position : bounds.minZ + (bounds.maxZ - bounds.minZ) * t;
+      const lateral = street.sidewalkW + street.asphaltWidth / 2 + 0.9;
+      const side = index % 2 === 0 ? 1 : -1;
+      const lampX = axis === 'x' ? position + side * lateral : x;
+      const lampZ = axis === 'z' ? position + side * lateral : z;
+      if (!Number.isFinite(lampX) || !Number.isFinite(lampZ)) continue;
+      positions.set(`${lampX.toFixed(1)},${lampZ.toFixed(1)}`, {
+        x: lampX,
+        z: lampZ,
+        rotation: axis === 'x' ? Math.PI / 2 : 0,
+        source: 'procedural-grid',
+      });
+    }
+  }
+  const records = [...positions.values()].slice(0, maxLamps);
+  return {
+    records,
+    diagnostics: {
+      fixtureCount: records.length,
+      candidateCount: records.length,
+      generatedCount: records.length,
+      culledAsphaltOverlaps: 0,
+      polylineSegments: 0,
+      sourceOwnedCount: 0,
+      bandViolations: 0,
+      asphaltOverlaps: 0,
+      classCounts: {},
+      sideCounts: {},
+    },
+  };
+}
+
 function smoothstep(a, b, x) {
   const t = clamp((x - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
@@ -3246,37 +3479,40 @@ function pointToSegmentDistance(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
 }
 
- function polylineLength(points) {
-   let length = 0;
-   for (let i = 0; i < points.length - 1; i += 1) {
-     length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
-   }
-   return length;
- }
+function polylineLength(points) {
+  let length = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    length += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z);
+  }
+  return length;
+}
 
- function pointAlongPolyline(points, distance) {
-   let remaining = distance;
-   for (let i = 0; i < points.length - 1; i += 1) {
-     const a = points[i];
-     const b = points[i + 1];
-     const dx = b.x - a.x;
-     const dz = b.z - a.z;
-     const segLength = Math.hypot(dx, dz);
-     if (segLength <= 0) continue;
-     if (remaining <= segLength) {
-       const t = remaining / segLength;
-       return {
-         x: a.x + dx * t,
-         z: a.z + dz * t,
-         tx: dx / segLength,
-         tz: dz / segLength,
-         nx: -dz / segLength,
-         nz: dx / segLength,
-       };
-     }
-     remaining -= segLength;
-   }
-   const last = points[points.length - 2] || points[0];
-   const end = points[points.length - 1];
-   return { x: end.x, z: end.z, tx: end.x - last.x, tz: end.z - last.z, nx: -(end.z - last.z), nz: end.x - last.x };
- }
+function pointAlongPolyline(points, distance) {
+  let remaining = distance;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const segLength = Math.hypot(dx, dz);
+    if (segLength <= 0) continue;
+    if (remaining <= segLength) {
+      const t = remaining / segLength;
+      return {
+        x: a.x + dx * t,
+        z: a.z + dz * t,
+        tx: dx / segLength,
+        tz: dz / segLength,
+        nx: -dz / segLength,
+        nz: dx / segLength,
+      };
+    }
+    remaining -= segLength;
+  }
+  const last = points[points.length - 2] || points[0];
+  const end = points[points.length - 1];
+  const dx = end.x - last.x;
+  const dz = end.z - last.z;
+  const length = Math.hypot(dx, dz) || 1;
+  return { x: end.x, z: end.z, tx: dx / length, tz: dz / length, nx: -dz / length, nz: dx / length };
+}
