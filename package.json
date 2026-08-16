@@ -39,6 +39,7 @@
     "qa:sf-building-source-palette": "node scripts/qa-sf-building-source-palette-v1.mjs",
     "qa:sf-map-source-tone-runtime": "node scripts/qa-sf-map-source-tone-runtime-i51.mjs",
     "qa:sf-map-ferry-boundary-mask": "node scripts/qa-sf-map-ferry-boundary-mask-i53.mjs",
+    "qa:sf-map-water-normal": "node scripts/qa-sf-map-water-normal-i60.mjs",
     "build:sf-datasf-building-footprints": "node scripts/world-tiles/build-sf-datasf-building-footprint-extract-v1.mjs",
     "verify:sf-datasf-building-footprints": "node scripts/world-tiles/verify-sf-datasf-building-footprint-extract-v1.mjs",
     "build:sf-datasf-osm-building-match": "node scripts/world-tiles/build-sf-datasf-osm-building-match-proof-v1.mjs",
