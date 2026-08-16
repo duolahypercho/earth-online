@@ -21,21 +21,26 @@ try {
     () => window.__CITYGEN__?.getState().webgpu && window.__CITYGEN__?.getState().pedestrians === 48,
     { timeout: 30000 },
   );
-  const before = await page.evaluate(() => window.__CITYGEN__.getTraffic().pedestrians
-    .map((pedestrian) => pedestrian.group.position.toArray()));
-  await page.waitForTimeout(750);
-  const report = await page.evaluate((startPositions) => {
+  const positionSamples = [await page.evaluate(() => window.__CITYGEN__.getTraffic().pedestrians
+    .map((pedestrian) => pedestrian.group.position.toArray()))];
+  for (let sample = 0; sample < 3; sample += 1) {
+    await page.waitForTimeout(250);
+    positionSamples.push(await page.evaluate(() => window.__CITYGEN__.getTraffic().pedestrians
+      .map((pedestrian) => pedestrian.group.position.toArray())));
+  }
+  const report = await page.evaluate((samples) => {
     const traffic = window.__CITYGEN__.getTraffic();
     const batch = traffic.pedestrianBatch;
     const parts = Object.values(batch?.parts || {});
     const matricesFinite = parts.every((mesh) => [...mesh.instanceMatrix.array].every(Number.isFinite));
     const colorsFinite = parts.every((mesh) => mesh.instanceColor
       && [...mesh.instanceColor.array].every(Number.isFinite));
-    const moved = traffic.pedestrians.map((pedestrian, index) => {
-      const start = startPositions[index];
-      const end = pedestrian.group.position;
-      return Math.hypot(end.x - start[0], end.y - start[1], end.z - start[2]);
-    });
+    const moved = traffic.pedestrians.map((pedestrian, index) => samples.slice(1)
+      .reduce((distance, positions, sampleIndex) => {
+        const start = samples[sampleIndex][index];
+        const end = positions[index];
+        return distance + Math.hypot(end[0] - start[0], end[1] - start[1], end[2] - start[2]);
+      }, 0));
     let pedestrianSceneMeshes = 0;
     traffic.group.traverse((object) => {
       if (object.isMesh && object.name.startsWith('pedestrian-')) pedestrianSceneMeshes += 1;
@@ -53,7 +58,7 @@ try {
       movedPedestrians: moved.filter((distance) => distance > 0.1).length,
       maxMovement: Number(Math.max(...moved).toFixed(3)),
     };
-  }, before);
+  }, positionSamples);
   assert.equal(report.backend, 'webgpu');
   assert.equal(report.pedestrians, 48);
   assert.equal(report.batchParts, 3);
