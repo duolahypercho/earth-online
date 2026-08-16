@@ -89,10 +89,34 @@ function wheelPivot(x, z) {
   return pivot;
 }
 
-const DEFAULT_CAB_COLOR = 0xb9d3e0;
-const DEFAULT_TAXI_TOPPER_COLOR = 0x1c1c1c;
-const SF_TAXI_BODY_COLOR = 0xf3bd2f;
-const SF_TAXI_CAB_COLOR = 0xe5b139;
+// Civic traffic needs a subdued paint range: the paint is readable against SF
+// concrete and fog without looking like a row of toy primaries. Glass is kept
+// separately dark so its response stays legible even under the night grade.
+export const SF_VEHICLE_PRESENTATION = Object.freeze({
+  version: 'sf-vehicle-materials-v2',
+  paletteVersion: 'sf-civilian-traffic-paint-v2',
+  materialVersion: 'sf-vehicle-pbr-v2',
+  civilianPaint: [
+    0x7d4d4c, // restrained red
+    0x9a7a3e, // muted ochre
+    0x46647a, // marine blue
+    0x4f7168, // bay green
+    0x62586c, // softened violet-gray
+    0x805c45, // warm brown
+    0xd7d3c8, // fog white
+    0x718164, // sage
+  ],
+  tintedCabColor: 0x20343b,
+  taxiCabColor: 0x263a38,
+  taxiBodyColor: 0xf3bd2f,
+  taxiTopperColor: 0x1c1c1c,
+  truckCabPolicy: 'match-body-paint-v1',
+});
+
+const DEFAULT_CAB_COLOR = SF_VEHICLE_PRESENTATION.tintedCabColor;
+const DEFAULT_TAXI_TOPPER_COLOR = SF_VEHICLE_PRESENTATION.taxiTopperColor;
+const SF_TAXI_BODY_COLOR = SF_VEHICLE_PRESENTATION.taxiBodyColor;
+const SF_TAXI_CAB_COLOR = SF_VEHICLE_PRESENTATION.taxiCabColor;
 const VEHICLE_WHEEL_SCALES = {
   sedan: 1,
   taxi: 1,
@@ -104,11 +128,16 @@ function vehicleClassIdentity(kind, color) {
   const wheelScale = VEHICLE_WHEEL_SCALES[kind] ?? VEHICLE_WHEEL_SCALES.sedan;
   const isTaxi = kind === 'taxi';
   const bodyColor = isTaxi ? SF_TAXI_BODY_COLOR : new THREE.Color(color).getHex();
+  const cabColor = isTaxi
+    ? SF_TAXI_CAB_COLOR
+    : kind === 'truck'
+      ? bodyColor
+      : DEFAULT_CAB_COLOR;
   return {
     id: isTaxi ? 'sf-yellow-taxi' : `sf-${kind}`,
     kind,
     bodyColor,
-    cabColor: isTaxi ? SF_TAXI_CAB_COLOR : DEFAULT_CAB_COLOR,
+    cabColor,
     topperColor: isTaxi ? DEFAULT_TAXI_TOPPER_COLOR : null,
     wheelScale,
     wheelScalePolicy: 'uniform-pivot-scale-v1',
@@ -116,14 +145,22 @@ function vehicleClassIdentity(kind, color) {
 }
 
 const VEHICLE_MATERIALS = {
-  body: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.55, flatShading: true }),
-  cab: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2, metalness: 0.2, flatShading: true }),
-  taxiTopper: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 }),
-  transitWindows: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.28, flatShading: true }),
-  headlights: new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffe9a8, emissiveIntensity: 0.4 }),
-  tires: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 }),
-  hubs: new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.55, metalness: 0.4, flatShading: true }),
+  body: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.44, metalness: 0.28, flatShading: true }),
+  cab: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0.1, flatShading: true }),
+  taxiTopper: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.58, metalness: 0.08 }),
+  transitWindows: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0.12, flatShading: true }),
+  headlights: new THREE.MeshStandardMaterial({ color: 0xfff7d8, emissive: 0xffe7a1, emissiveIntensity: 0.72 }),
+  tires: new THREE.MeshStandardMaterial({ color: 0x101112, roughness: 0.96, metalness: 0 }),
+  hubs: new THREE.MeshStandardMaterial({ color: 0xc7cdd2, roughness: 0.28, metalness: 0.78, flatShading: true }),
 };
+
+for (const [part, material] of Object.entries(VEHICLE_MATERIALS)) {
+  material.name = `sf-vehicle-${part}-${SF_VEHICLE_PRESENTATION.materialVersion}`;
+  material.userData.sfVehiclePresentation = {
+    version: SF_VEHICLE_PRESENTATION.version,
+    part,
+  };
+}
 
 const SF_TRANSIT_IDENTITIES = [
   {
@@ -261,6 +298,7 @@ export function buildVehicle(kind, color) {
     dims,
     color: classIdentity.bodyColor,
     classIdentity,
+    presentation: SF_VEHICLE_PRESENTATION.version,
     layout,
     body: bodyGroup,
     wheels,
@@ -310,6 +348,7 @@ export function buildVehicleBatch(count) {
     carMatrix: new THREE.Matrix4(),
     bodyMatrix: new THREE.Matrix4(),
     partMatrix: new THREE.Matrix4(),
+    presentation: SF_VEHICLE_PRESENTATION,
   };
 }
 
