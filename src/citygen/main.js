@@ -101,8 +101,8 @@ function installExplorerUi() {
   const inspectorHead = document.querySelector('.inspector-head');
   const inspectorHeading = inspectorHead.querySelector('h2');
 
-  brand.querySelector('.brand-mark').textContent = '37°';
-  brand.querySelector('h1').textContent = 'CITYGEN / FIELD MAP';
+  brand.querySelector('.brand-mark').textContent = 'EO';
+  brand.querySelector('h1').textContent = 'EARTH ONLINE';
   brand.insertAdjacentHTML('afterbegin', '<span class="brand-pulse" aria-hidden="true"></span>');
 
   styleTools.setAttribute('aria-label', 'Procedural city styles');
