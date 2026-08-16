@@ -36,8 +36,10 @@ try {
     ['no fatal page errors', !(results.errors || []).some((error) => error.includes('Uncaught') || error.includes('TypeError') || error.includes('ReferenceError'))],
     ['no NaN geometry warnings', !(results.errors || []).some((error) => error.includes('NaN'))],
     ['Three.js r180 package active', results.capture?.threeRevision === 180],
-    ['Three WebGLRenderer active', results.runtime?.rendererType === 'WebGLRenderer'],
-    ['WebGL2 renderer active', results.state?.webgl2 === true && /^WebGL 2\.0/.test(results.runtime?.webglVersion || '')],
+    ['Three WebGPURenderer active', results.runtime?.rendererType === 'WebGPURenderer'],
+    ['WebGPU-first backend contract active', ['webgpu', 'webgl2-fallback'].includes(results.state?.rendererBackend)
+      && results.runtime?.rendererBackend === results.state?.rendererBackend
+      && (results.runtime?.webgpuBackend === true || results.runtime?.webglFallbackBackend === true)],
     ['procedural UI text fits without clipping', results.uiText?.procedural?.pass === true],
     ['camera and geometry diagnostics are clean', Object.values(results.sceneDiagnostics || {}).length >= 4
       && Object.values(results.sceneDiagnostics || {}).every((entry) => entry?.pass === true)],

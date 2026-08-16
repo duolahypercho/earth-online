@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp, hashString } from './core.js';
@@ -357,7 +358,8 @@ export class CityRenderer {
     this.scene.fog = new THREE.Fog(0xe2e8e2, 330, 1380);
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.5, 4200);
     this.camera.position.set(180, 150, 260);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.rendererBackend = 'initializing';
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.86;
@@ -421,6 +423,16 @@ export class CityRenderer {
     this.onResize = this.resize.bind(this);
     window.addEventListener('resize', this.onResize);
     this.resize();
+  }
+
+  async initialize() {
+    await this.renderer.init();
+    this.rendererBackend = this.renderer.backend?.isWebGPUBackend === true
+      ? 'webgpu'
+      : this.renderer.backend?.isWebGLBackend === true
+        ? 'webgl2-fallback'
+        : 'unknown';
+    return this.rendererBackend;
   }
 
   resize() {

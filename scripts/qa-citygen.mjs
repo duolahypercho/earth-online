@@ -198,7 +198,8 @@ async function auditScene(stage) {
       camera.near,
       camera.far,
     ];
-    const glError = renderer.renderer.getContext().getError();
+    const renderContext = renderer.renderer.getContext?.();
+    const glError = typeof renderContext?.getError === 'function' ? renderContext.getError() : 0;
     return {
       stage: auditStage,
       pass: cameraValues.every(Number.isFinite)
@@ -277,12 +278,17 @@ try {
     return api.getState();
   });
   results.runtime = await page.evaluate(() => {
-    const renderer = window.__CITYGEN__.getRenderer()?.renderer;
+    const cityRenderer = window.__CITYGEN__.getRenderer();
+    const renderer = cityRenderer?.renderer;
     const gl = renderer?.getContext?.();
+    const canInspectWebGl = typeof gl?.getParameter === 'function';
     return {
       rendererType: renderer?.constructor?.name || null,
-      webglVersion: gl?.getParameter(gl.VERSION) || null,
-      shadingLanguageVersion: gl?.getParameter(gl.SHADING_LANGUAGE_VERSION) || null,
+      rendererBackend: cityRenderer?.rendererBackend || null,
+      webgpuBackend: renderer?.backend?.isWebGPUBackend === true,
+      webglFallbackBackend: renderer?.backend?.isWebGLBackend === true,
+      webglVersion: canInspectWebGl ? gl.getParameter(gl.VERSION) : null,
+      shadingLanguageVersion: canInspectWebGl ? gl.getParameter(gl.SHADING_LANGUAGE_VERSION) : null,
     };
   });
   results.export = await page.evaluate(() => {
