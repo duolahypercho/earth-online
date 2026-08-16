@@ -22,15 +22,20 @@ assert.deepEqual(receipt.associationPolicy, {
   identityClaim: false,
 });
 assert.equal(receipt.heightComparison.use, 'report-only source disagreement diagnostic'); assert.equal(receipt.heightComparison.absoluteElevationComparison, false); assert.equal(receipt.heightComparison.verticalReconciliationComplete, false);
+assert.equal(receipt.heightComparison.osm, 'existing production extrusion height policy verified against byte-locked raw OSM tags');
+assert.equal(receipt.osmTagAuthority.policy, 'OSM height tag when finite within 2–500m, else building:levels times 3.2m, else deterministic 9.6m fallback');
 assert.deepEqual(receipt.claims, { productionGeometryChanged: false, runtimeChanged: false, gameplayChanged: false, facadeSemanticsSupplied: false, unmatchedBuildingsRejectedFromComparison: true, highConfidenceAssociationIsNotIdentity: true });
 assert(!productionManifestBytes.includes(Buffer.from('sf-datasf-building-footprints')), 'DataSF preview evidence leaked into the production manifest');
 assert(!productionManifestBytes.includes(Buffer.from('sf-datasf-osm-building-match-proof')), 'DataSF/OSM comparison proof leaked into the production manifest');
 
 const horizontalLockBytes = await readFile(path.join(ROOT, receipt.horizontalOperation.sourceLock));
 assert.equal(`sha256:${sha256(horizontalLockBytes)}`, receipt.horizontalOperation.sha256, 'Horizontal lock bytes drifted');
+const osmPbfBytes = await readFile(path.join(ROOT, receipt.osmTagAuthority.path));
+assert.equal(osmPbfBytes.length, receipt.osmTagAuthority.bytes, 'OSM PBF byte count drifted');
+assert.equal(`sha256:${sha256(osmPbfBytes)}`, receipt.osmTagAuthority.sha256, 'OSM PBF hash drifted');
 const expected = new Map([
-  ['ferry', { tileId: 'epsg26910-1441-10893', osm: 24, dataSf: 21, candidates: 11, matches: 11, rate: 45.8, medianIou: 0.89505627, medianDistance: 1.679694, medianAbsHeight: 4.42, p90AbsHeight: 7.9, maxAbsHeight: 10.04, heightPolicies: { 'deterministic-9.6m-fallback': 4, 'osm-building-levels-times-3.2m': 7 } }],
-  ['district', { tileId: 'epsg26910-1430-10882', osm: 390, dataSf: 419, candidates: 297, matches: 297, rate: 76.2, medianIou: 0.916626545, medianDistance: 0.396019, medianAbsHeight: 0.24, p90AbsHeight: 0.46, maxAbsHeight: 4.02, heightPolicies: { 'deterministic-9.6m-fallback': 296, 'osm-building-levels-times-3.2m': 1 } }],
+  ['ferry', { tileId: 'epsg26910-1441-10893', osm: 24, dataSf: 21, candidates: 11, matches: 11, rate: 45.8, medianIou: 0.89505627, medianDistance: 1.679694, medianAbsHeight: 4.42, p90AbsHeight: 7.9, maxAbsHeight: 10.04, heightPolicies: { 'deterministic-9.6m-fallback': 1, 'osm-building-levels-times-3.2m': 7, 'osm-height': 3 } }],
+  ['district', { tileId: 'epsg26910-1430-10882', osm: 390, dataSf: 419, candidates: 297, matches: 297, rate: 76.2, medianIou: 0.916626545, medianDistance: 0.396019, medianAbsHeight: 0.24, p90AbsHeight: 0.46, maxAbsHeight: 4.02, heightPolicies: { 'deterministic-9.6m-fallback': 6, 'osm-height': 291 } }],
 ]);
 assert.equal(receipt.regions.length, expected.size); const seenRegions = new Set(); const verified = [];
 for (const region of receipt.regions) {
@@ -50,6 +55,7 @@ for (const region of receipt.regions) {
     assert(!dataSfIds.has(match.dataSfBuildingId), `${region.id} DataSF source is matched twice`); dataSfIds.add(match.dataSfBuildingId);
     assert(previousOsm <= match.osmSourceFeatureId, `${region.id} match order drifted`); previousOsm = match.osmSourceFeatureId;
     assert.equal(match.absoluteHeightDifferenceMetres, Math.abs(match.osmMinusDataSfMedianHeightMetres)); assert(['osm-height', 'osm-building-levels-times-3.2m', 'deterministic-9.6m-fallback'].includes(match.osmHeightPolicy));
+    if (match.osmHeightPolicy === 'deterministic-9.6m-fallback') assert.equal(match.osmHeightMetres, 9.6);
   }
   assert.equal(osmIds.size, expectation.matches); assert.equal(dataSfIds.size, expectation.matches);
   if (region.id === 'ferry') assert(!osmIds.has('way/32862406'), 'The known 68.05 m weak Ferry false match was not rejected');

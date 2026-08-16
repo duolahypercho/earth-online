@@ -168,9 +168,9 @@
       "sha256": "sha256:3311a4ef3ec8434d07bddd3c4290c7ab672d02ef16b467e7e3528a6873f06fcf"
     },
     "matchProof": {
-      "bytes": 139382,
+      "bytes": 134747,
       "path": "public/data/world/preview-artifacts/sf-datasf-osm-building-match-proof-v1/sf-datasf-osm-building-match-proof-v1.receipt.json",
-      "sha256": "sha256:190032d34c126f5aec688409cb6156e4a3b62e2ffc6e3eb114b69ece2d74fe8f"
+      "sha256": "sha256:20bc9931b2749072c864e2febdd201bcb9666453cff92dbf90fd7b1727f23456"
     }
   },
   "status": "preview-source-height-comparison-only-not-production",

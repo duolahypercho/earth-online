@@ -1,0 +1,327 @@
+{
+  "claims": {
+    "absoluteVerticalPlacement": false,
+    "current2026BuildingHeights": false,
+    "relativeMassingComparisonOnly": true,
+    "sourceIdentity": false,
+    "verticalDatumReconciled": false
+  },
+  "comparisonPreview": {
+    "artifact": {
+      "bytes": 24588,
+      "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1441-10893.datasf-height-preview.glb",
+      "sha256": "sha256:8ef8977c3c07d046d1e5a4b8ca453079f1bb9c67a47f0bd30749e965b3280919"
+    },
+    "bottomVertexPolicy": "exact source proof retained",
+    "horizontalGeometryPolicy": "exact source proof X/Z retained",
+    "manifest": {
+      "bytes": 1831,
+      "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/sf-datasf-building-height-preview-v1.manifest.json",
+      "sha256": "sha256:b03bcdc1c80ad981091578fe087200979c4b99948ba5848778d0b752a823d4e6"
+    },
+    "productionPromotionAuthorized": false,
+    "receipt": {
+      "bytes": 5700,
+      "path": "public/data/world/preview-artifacts/sf-datasf-building-height-preview-v1/epsg26910-1441-10893.datasf-height-preview.receipt.json",
+      "sha256": "sha256:3ff3356f4a070e9e8b961107b066342105a923edcc408dde14cc0b04b15a8d3c"
+    },
+    "status": "preview-source-height-comparison-only-not-production",
+    "unmatchedBuildingPolicy": "exact source proof retained",
+    "verifier": "scripts/world-tiles/verify-sf-datasf-building-height-preview-v1.mjs"
+  },
+  "coverage": {
+    "highConfidenceMatches": 11,
+    "productionSourceBuildings": 24,
+    "topVerticesIfApplied": 111,
+    "unmatchedSourceBuildings": 13
+  },
+  "deltaSummaryMetres": {
+    "absoluteMedian": 4.42,
+    "max": 10.04,
+    "median": 0.67,
+    "min": -7.88
+  },
+  "invariants": {
+    "bottomVerticesUnchanged": true,
+    "everyMatchMapsToCurrentSourceRecord": true,
+    "everyRecordMatchesHeightPreview": true,
+    "horizontalCoordinatesUnchanged": true,
+    "productionArtifactUnmodified": true,
+    "productionManifestUnmodified": true,
+    "productionReceiptAndPackageUnmodified": true,
+    "sourceTonePresentationBound": true,
+    "triangleIndicesUnchanged": true,
+    "unmatchedBuildingsUnchanged": true
+  },
+  "kind": "sf-datasf-ferry-height-sidecar-receipt",
+  "productionPromotionAuthorized": false,
+  "productionReference": {
+    "glb": {
+      "bytes": 3645408,
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.lod0.glb",
+      "sha256": "sha256:c5e1736abf966f0d93a109bd73f7bce89245648b79decbaefe94cb36a72a1500"
+    },
+    "manifest": {
+      "bytes": 562272,
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json",
+      "sha256": "sha256:4018246fb13d633e9181c3b820d956a9156955539c3b335135bbbf5f73e3cefd",
+      "tileCount": 803
+    },
+    "metricReceipt": {
+      "bytes": 15298,
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.receipt.json",
+      "sha256": "sha256:eab7233f79c124bb6f4b075a921ba6ac9f58e63754c5d5e5c6397da70e8484f7"
+    },
+    "package": {
+      "bytes": 471850,
+      "path": "public/data/world/production-artifacts/sf-metric-tiles-v1/epsg26910-1441-10893/epsg26910-1441-10893.package.json",
+      "sha256": "sha256:1cf9dce4176e31701791eaad3b94f935afc3e50d71a9785cfa9680b0c08d75b9"
+    },
+    "presentation": {
+      "authorization": {
+        "id": "sf-ferry-source-tone-production-authorization-v1",
+        "path": "public/data/world/source-locks/sf-ferry-source-tone-production-authorization-v1.lock.json",
+        "sha256": "sha256:12c8948324e27b540bfb3757acd081c1043766d42aae9a5427821f1c4aaac37f"
+      },
+      "contractSha256": "sha256:bb73511cba751485555f40f69e19bf6bea5d7ba104fb97d80db1fe17c7f7b13e",
+      "geometryLedgerSha256": "sha256:e3dc9ead20f4742446f063f84a3582ea9c42be40f1940427ec5926bcf90d2954",
+      "mode": "source-tone-v1",
+      "sourceRecordsSha256": "sha256:ba537bbcd58a12f8b5fe9924960ec2462abe0df054b043dadb4daf0ca0a46d91",
+      "sourceToneAttributeSha256": "sha256:85c6fbc8e2fe0ef597f987fea718af85579fd909bf018be58b2a77e9516cfc59"
+    }
+  },
+  "productionWriteEnabled": false,
+  "records": [
+    {
+      "bboxIou": 0.89505627,
+      "centroidDistanceMetres": 1.871841,
+      "currentOsmHeightMetres": 25.6,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0002369",
+      "dataSfMedianHeightSurfaceMetres": 25.69,
+      "osmSourceFeatureId": "way/32862467",
+      "relativeHeightDeltaMetres": 0.09,
+      "sourceTagsSha256": "sha256:58919612a9f2ca44719db96ae40d78605a9fb0a79f7b93faec86d3ed2107f24d",
+      "sourceToneV1": 3,
+      "topVerticesIfApplied": 14,
+      "vertexCount": 28,
+      "vertexStart": 56
+    },
+    {
+      "bboxIou": 0.921593473,
+      "centroidDistanceMetres": 3.54042,
+      "currentOsmHeightMetres": 33,
+      "currentOsmHeightPolicy": "osm-height",
+      "dataSfBuildingId": "201006.0000121",
+      "dataSfMedianHeightSurfaceMetres": 25.12,
+      "osmSourceFeatureId": "way/44106213",
+      "relativeHeightDeltaMetres": -7.88,
+      "sourceTagsSha256": "sha256:d91ad230cbe7b29898031f2decb834c395e4992ad98a39b3878d1bf75f280539",
+      "sourceToneV1": 1,
+      "topVerticesIfApplied": 15,
+      "vertexCount": 30,
+      "vertexStart": 116
+    },
+    {
+      "bboxIou": 0.867792793,
+      "centroidDistanceMetres": 2.305188,
+      "currentOsmHeightMetres": 15,
+      "currentOsmHeightPolicy": "osm-height",
+      "dataSfBuildingId": "201006.0001038",
+      "dataSfMedianHeightSurfaceMetres": 9.8,
+      "osmSourceFeatureId": "way/104599975",
+      "relativeHeightDeltaMetres": -5.2,
+      "sourceTagsSha256": "sha256:1004e56492b1650f21ba54c249e65fa0fa3d140c576f619dde75d8f7e625be7f",
+      "sourceToneV1": 3,
+      "topVerticesIfApplied": 6,
+      "vertexCount": 12,
+      "vertexStart": 146
+    },
+    {
+      "bboxIou": 0.920703917,
+      "centroidDistanceMetres": 1.22286,
+      "currentOsmHeightMetres": 22.4,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0005385",
+      "dataSfMedianHeightSurfaceMetres": 23.07,
+      "osmSourceFeatureId": "way/193054132",
+      "relativeHeightDeltaMetres": 0.67,
+      "sourceTagsSha256": "sha256:26ac55edfa008cfaaed8a4ab3e7ae4d060d7e87d35cacf3b5274a47e17e99b48",
+      "sourceToneV1": 0,
+      "topVerticesIfApplied": 4,
+      "vertexCount": 8,
+      "vertexStart": 216
+    },
+    {
+      "bboxIou": 0.902869142,
+      "centroidDistanceMetres": 1.493687,
+      "currentOsmHeightMetres": 16,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0005906",
+      "dataSfMedianHeightSurfaceMetres": 18.07,
+      "osmSourceFeatureId": "way/193054133",
+      "relativeHeightDeltaMetres": 2.07,
+      "sourceTagsSha256": "sha256:d3f83d4d3c8a9a4c5d5777bbd16da08267085b65db7b3afaff7b2cb8a0a5b7f1",
+      "sourceToneV1": 1,
+      "topVerticesIfApplied": 6,
+      "vertexCount": 12,
+      "vertexStart": 224
+    },
+    {
+      "bboxIou": 0.942463631,
+      "centroidDistanceMetres": 1.331505,
+      "currentOsmHeightMetres": 9.6,
+      "currentOsmHeightPolicy": "deterministic-9.6m-fallback",
+      "dataSfBuildingId": "201006.0001079",
+      "dataSfMedianHeightSurfaceMetres": 19.64,
+      "osmSourceFeatureId": "way/193054134",
+      "relativeHeightDeltaMetres": 10.04,
+      "sourceTagsSha256": "sha256:ecc72616282abaa375da352312e4ea471a9ea9e1e3a80ae3c4e861554c5d84e2",
+      "sourceToneV1": 2,
+      "topVerticesIfApplied": 36,
+      "vertexCount": 72,
+      "vertexStart": 236
+    },
+    {
+      "bboxIou": 0.899649622,
+      "centroidDistanceMetres": 1.601261,
+      "currentOsmHeightMetres": 22.4,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0005323",
+      "dataSfMedianHeightSurfaceMetres": 26.82,
+      "osmSourceFeatureId": "way/193054135",
+      "relativeHeightDeltaMetres": 4.42,
+      "sourceTagsSha256": "sha256:b643cba2a20e35961a3740c35a34c1805901583d0ed5869056fdb5e7192c58a7",
+      "sourceToneV1": 3,
+      "topVerticesIfApplied": 6,
+      "vertexCount": 12,
+      "vertexStart": 308
+    },
+    {
+      "bboxIou": 0.873392976,
+      "centroidDistanceMetres": 1.971948,
+      "currentOsmHeightMetres": 9.6,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0006070",
+      "dataSfMedianHeightSurfaceMetres": 15.36,
+      "osmSourceFeatureId": "way/193054136",
+      "relativeHeightDeltaMetres": 5.76,
+      "sourceTagsSha256": "sha256:bc29e72f81ac9e3c52993fc2940fad8598ac625e35aa2721afe4956f9faa9a31",
+      "sourceToneV1": 0,
+      "topVerticesIfApplied": 4,
+      "vertexCount": 8,
+      "vertexStart": 320
+    },
+    {
+      "bboxIou": 0.867676439,
+      "centroidDistanceMetres": 1.679694,
+      "currentOsmHeightMetres": 9.6,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0006618",
+      "dataSfMedianHeightSurfaceMetres": 17.5,
+      "osmSourceFeatureId": "way/193054137",
+      "relativeHeightDeltaMetres": 7.9,
+      "sourceTagsSha256": "sha256:71e4ad49c34dc7e3ab062ccf36531ff511819cd5302aad254093488c42b4bad7",
+      "sourceToneV1": 1,
+      "topVerticesIfApplied": 4,
+      "vertexCount": 8,
+      "vertexStart": 328
+    },
+    {
+      "bboxIou": 0.879788604,
+      "centroidDistanceMetres": 1.875779,
+      "currentOsmHeightMetres": 12.8,
+      "currentOsmHeightPolicy": "osm-building-levels-times-3.2m",
+      "dataSfBuildingId": "201006.0005244",
+      "dataSfMedianHeightSurfaceMetres": 10.33,
+      "osmSourceFeatureId": "way/256969674",
+      "relativeHeightDeltaMetres": -2.47,
+      "sourceTagsSha256": "sha256:82ea9fceb9a6f5090ba67058d4079baed1bff711b0a9caab702c89866c2e829f",
+      "sourceToneV1": 2,
+      "topVerticesIfApplied": 4,
+      "vertexCount": 8,
+      "vertexStart": 358
+    },
+    {
+      "bboxIou": 0.859252965,
+      "centroidDistanceMetres": 1.127606,
+      "currentOsmHeightMetres": 4,
+      "currentOsmHeightPolicy": "osm-height",
+      "dataSfBuildingId": "201006.0017562",
+      "dataSfMedianHeightSurfaceMetres": 4.45,
+      "osmSourceFeatureId": "way/260290226",
+      "relativeHeightDeltaMetres": 0.45,
+      "sourceTagsSha256": "sha256:9a17fcd1ea2182fa9a293fb464892a080be5e4395cce877127fb621152fd459d",
+      "sourceToneV1": 2,
+      "topVerticesIfApplied": 12,
+      "vertexCount": 24,
+      "vertexStart": 366
+    }
+  ],
+  "recordsSha256": "sha256:b80522f6f6703cd64d98313ac154b1883c5e0efa055f4efe090edd6fdbe52c0c",
+  "runtimeIntegrationEnabled": false,
+  "schemaVersion": 1,
+  "sources": {
+    "dataSfLock": {
+      "bytes": 4085,
+      "id": "sf-datasf-building-footprints-2023-v1",
+      "path": "public/data/world/source-locks/sf-datasf-building-footprints-2023-v1.lock.json",
+      "sha256": "sha256:ac72820ddbdcec313081bdabd7f6fcd9b90bd626b498b791dad80d36fb9eec56",
+      "status": "preview-source-authorized-not-production"
+    },
+    "field": {
+      "id": "hgt_median_m",
+      "semantics": "zonal median height-surface value, metres; the source description does not declare this field as an absolute elevation"
+    },
+    "matchProof": {
+      "associationPolicy": {
+        "assignment": "deterministic greedy one-to-one by descending IoU, ascending centroid distance, then lexical source IDs",
+        "geometry": "axis-aligned EPSG:26910 bounding boxes of exact source footprint coordinates",
+        "identityClaim": false,
+        "maximumCentroidDistanceMetres": 4,
+        "minimumBboxIou": 0.8
+      },
+      "bytes": 134747,
+      "path": "public/data/world/preview-artifacts/sf-datasf-osm-building-match-proof-v1/sf-datasf-osm-building-match-proof-v1.receipt.json",
+      "sha256": "sha256:20bc9931b2749072c864e2febdd201bcb9666453cff92dbf90fd7b1727f23456"
+    },
+    "methodologySnapshot": {
+      "bytes": 1283528,
+      "sha256": "1fa6af3167ac0935883bff2b3e79fefb8118827e158289f3cbf458769bdf6ad2"
+    },
+    "offlineRebuildQualification": {
+      "checkedInEvidenceVerifiableWithoutRawSnapshot": true,
+      "fullSourceRebuildRequiresLockedRawCsvAndMethodology": true,
+      "rawCsvPath": "Data/raw/datasf/datasf-building-footprints-ynuv-fyni-2026-08-14.csv"
+    },
+    "rawSnapshot": {
+      "bytes": 178760486,
+      "columns": 45,
+      "dataAsOfSourceString": "2023/09/11 12:00:00 PM",
+      "dataLoadedAtSourceString": "2026/08/14 10:21:32 AM",
+      "etag": "\"Z29sZi4yNTI1Nl8zXzEwMTdxc2NZcGVjX05kOUZ4Wk1fSW9JOS1uUWY4VlU---gziqe0BXWsMIccaAJ8uKNbTffHrcUxw--gzip\"",
+      "identity": "byte-locked DataSF Building Footprints bulk CSV export",
+      "localPath": "Data/raw/datasf/datasf-building-footprints-ynuv-fyni-2026-08-14.csv",
+      "retrievedAt": "2026-08-15",
+      "rowsExcludingHeader": 177023,
+      "sha256": "7128b9d3d0f350cde3d2f6571ad791beacd71f5d581f6fde6fc7811529ff22d2",
+      "upstreamLastModified": "2026-08-14T17:22:28Z"
+    }
+  },
+  "status": "preview-source-height-sidecar-only-not-production",
+  "tile": {
+    "gridIndex": [
+      1441,
+      10893
+    ],
+    "horizontalCrs": "EPSG:26910",
+    "id": "epsg26910-1441-10893",
+    "originEpsg26910VerticalMetres": [
+      553344,
+      4182912,
+      0
+    ],
+    "runtimeUnitsPerMetre": 1,
+    "verticalCertification": "source-declared-navd88-unrealized"
+  }
+}

@@ -46,6 +46,8 @@
     "build:sf-datasf-building-height-preview": "node scripts/world-tiles/build-sf-datasf-building-height-preview-v1.mjs",
     "verify:sf-datasf-building-height-preview": "node scripts/world-tiles/verify-sf-datasf-building-height-preview-v1.mjs",
     "qa:sf-datasf-building-height-preview": "node scripts/qa-sf-datasf-building-height-preview.mjs",
+    "build:sf-datasf-ferry-height-sidecar": "node scripts/world-tiles/build-sf-datasf-ferry-height-sidecar-v1.mjs",
+    "verify:sf-datasf-ferry-height-sidecar": "node scripts/world-tiles/verify-sf-datasf-ferry-height-sidecar-v1.mjs",
     "verify:sf-native-pixel-fallback-proof": "node scripts/world-tiles/verify-sf-native-pixel-fallback-proof-v1.mjs",
     "verify:sf-native-pixel-fallback-authorization": "node scripts/world-tiles/verify-sf-native-pixel-fallback-authorization-v1.mjs",
     "verify:sf-native-pixel-fallback-production-parity": "node scripts/world-tiles/verify-sf-native-pixel-fallback-production-parity-v1.mjs",

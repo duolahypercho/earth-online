@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { loadSfMetricSharedInputs } from './build-ferry-production-tile-v1.mjs';
 
 const ROOT = process.cwd();
 const OUTPUT_ROOT = path.join(ROOT, 'public/data/world/preview-artifacts/sf-datasf-osm-building-match-proof-v1');
@@ -84,7 +85,7 @@ function distance(left, right) { return Math.hypot(left[0] - right[0], left[1] -
 function quantile(sorted, fraction) { if (!sorted.length) return null; return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)]; }
 function rounded(value, digits = 6) { return Number(value.toFixed(digits)); }
 
-async function loadRegion(region, horizontalLock, forward) {
+async function loadRegion(region, horizontalLock, forward, osmTagsByWayId) {
   const dataSfPath = path.join(ROOT, `public/data/world/preview-artifacts/sf-datasf-building-footprints-v1/${region.tileId}.datasf-building-footprints.json`);
   const proofRoot = path.join(ROOT, `public/data/world/preview-artifacts/sf-building-presentation-proof-v1/${region.tileId}`);
   const proofPath = path.join(proofRoot, `${region.tileId}.building-presentation-proof.glb`);
@@ -100,7 +101,23 @@ async function loadRegion(region, horizontalLock, forward) {
       const x = positions[vertex * 3]; const z = positions[vertex * 3 + 2];
       bounds[0] = Math.min(bounds[0], x); bounds[1] = Math.min(bounds[1], z); bounds[2] = Math.max(bounds[2], x); bounds[3] = Math.max(bounds[3], z);
     }
-    return { sourceFeatureId: record.sourceFeatureId, bounds, centre: centroid(bounds), heightMetres: record.heightMetres, heightPolicy: record.sourceTags.height ? 'osm-height' : record.sourceTags['building:levels'] ? 'osm-building-levels-times-3.2m' : 'deterministic-9.6m-fallback' };
+    const sourceWayId = Number(record.sourceFeatureId.slice('way/'.length));
+    const sourceTags = osmTagsByWayId.get(sourceWayId);
+    assert(sourceTags?.building, `${record.sourceFeatureId} is absent from the byte-locked OSM building tag authority`);
+    const explicitHeight = Number.parseFloat(sourceTags.height);
+    const levels = Number.parseFloat(sourceTags['building:levels']);
+    const expectedHeightMetres = Number.isFinite(explicitHeight) && explicitHeight >= 2 && explicitHeight <= 500
+      ? explicitHeight
+      : Number.isFinite(levels) && levels > 0
+        ? Math.min(500, levels * 3.2)
+        : 9.6;
+    assert.equal(rounded(record.heightMetres), rounded(expectedHeightMetres), `${record.sourceFeatureId} production extrusion differs from the byte-locked OSM height policy`);
+    const heightPolicy = Number.isFinite(explicitHeight) && explicitHeight >= 2 && explicitHeight <= 500
+      ? 'osm-height'
+      : Number.isFinite(levels) && levels > 0
+        ? 'osm-building-levels-times-3.2m'
+        : 'deterministic-9.6m-fallback';
+    return { sourceFeatureId: record.sourceFeatureId, bounds, centre: centroid(bounds), heightMetres: record.heightMetres, heightPolicy };
   });
   const dataSfProjected = dataSf.features.map((feature) => {
     const bounds = projectedWktBounds(feature.source.shape, forward, region.origin);
@@ -158,18 +175,20 @@ async function loadRegion(region, horizontalLock, forward) {
 }
 
 export async function buildDataSfOsmBuildingMatchProof({ write = true } = {}) {
-  const horizontalLockBytes = await readFile(HORIZONTAL_LOCK_PATH); const horizontalLock = JSON.parse(horizontalLockBytes); const forward = makeForwardProjection(horizontalLock);
+  const [horizontalLockBytes, sharedInputs] = await Promise.all([readFile(HORIZONTAL_LOCK_PATH), loadSfMetricSharedInputs()]); const horizontalLock = JSON.parse(horizontalLockBytes); const forward = makeForwardProjection(horizontalLock);
   for (const vector of horizontalLock.testVectors) {
     const actual = forward(...vector.inputLonLatDegrees); assert(Math.abs(actual[0] - vector.forwardEnMetres[0]) <= 0.0002 && Math.abs(actual[1] - vector.forwardEnMetres[1]) <= 0.0002, `${vector.id} projection drifted`);
   }
-  const regions = []; for (const region of REGIONS) regions.push(await loadRegion(region, horizontalLock, forward));
+  const osmTagsByWayId = new Map(sharedInputs.osmFeatureCache.filter(({ tags }) => tags.building).map(({ id, tags }) => [id, tags]));
+  const regions = []; for (const region of REGIONS) regions.push(await loadRegion(region, horizontalLock, forward, osmTagsByWayId));
   const receipt = {
     schemaVersion: 1,
     kind: 'sf-datasf-osm-building-match-proof-receipt',
     status: 'preview-comparison-only-not-production',
     horizontalOperation: { sourceLock: path.relative(ROOT, HORIZONTAL_LOCK_PATH), sha256: `sha256:${sha256(horizontalLockBytes)}`, accuracyFloorMetres: horizontalLock.claims.operation.combinedAccuracyMetres, realization: 'not-claimed', coordinateEpoch: 'not-claimed' },
     associationPolicy: { geometry: 'axis-aligned EPSG:26910 bounding boxes of exact source footprint coordinates', minimumBboxIou: MIN_BBOX_IOU, maximumCentroidDistanceMetres: MAX_CENTROID_DISTANCE_METRES, assignment: 'deterministic greedy one-to-one by descending IoU, ascending centroid distance, then lexical source IDs', identityClaim: false },
-    heightComparison: { osm: 'existing production extrusion height policy', dataSf: 'hgt_median_m retained from the locked DataSF source', use: 'report-only source disagreement diagnostic', absoluteElevationComparison: false, verticalReconciliationComplete: false },
+    osmTagAuthority: { path: 'public/data/sf/SanFrancisco.osm.pbf', bytes: sharedInputs.pbfHash.bytes, sha256: `sha256:${sharedInputs.pbfHash.sha256}`, policy: 'OSM height tag when finite within 2–500m, else building:levels times 3.2m, else deterministic 9.6m fallback' },
+    heightComparison: { osm: 'existing production extrusion height policy verified against byte-locked raw OSM tags', dataSf: 'hgt_median_m retained from the locked DataSF source', use: 'report-only source disagreement diagnostic', absoluteElevationComparison: false, verticalReconciliationComplete: false },
     claims: { productionGeometryChanged: false, runtimeChanged: false, gameplayChanged: false, facadeSemanticsSupplied: false, unmatchedBuildingsRejectedFromComparison: true, highConfidenceAssociationIsNotIdentity: true },
     regions,
   };
