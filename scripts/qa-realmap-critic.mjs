@@ -4,13 +4,18 @@ const qaPrefix = process.env.SF_QA_PREFIX ? `-${process.env.SF_QA_PREFIX}` : '';
 const METRICS_PATH = `.qa${qaPrefix}-visual-critic.json`;
 const QA_PATH = `.qa${qaPrefix}-realmap-results.json`;
 const OUT_PATH = `.qa${qaPrefix}-realmap-critic.md`;
-const REFERENCE_EDGE_DENSITY = 40.2061;
+const DAY_REFERENCE = { edgeDensity: 40.2061, meanLuma: 117.429 };
+const NIGHT_REFERENCE = { edgeDensity: 23.5157, meanLuma: 55.317 };
 
-function scoreFrame(metrics) {
+function referenceForFrame(frame) {
+  return frame.path.includes('night') ? NIGHT_REFERENCE : DAY_REFERENCE;
+}
+
+function scoreFrame(metrics, reference = DAY_REFERENCE) {
   if (!metrics) return 1;
-  const edgeRatio = Math.min(1, metrics.edgeDensity / REFERENCE_EDGE_DENSITY);
+  const edgeRatio = Math.min(1, metrics.edgeDensity / reference.edgeDensity);
   const colorScore = Math.min(1, (metrics.quantizedColors || 0) / 64);
-  const lumaBalance = Math.min(1, Math.abs(metrics.meanLuma - 117) / 70);
+  const lumaBalance = Math.min(1, Math.abs(metrics.meanLuma - reference.meanLuma) / 70);
   const raw = edgeRatio * 6.5 + colorScore * 2.5 + (1 - lumaBalance) * 1;
   return Math.max(0.5, Math.min(9.5, raw));
 }
@@ -33,7 +38,8 @@ function frameLabel(path) {
 const metrics = JSON.parse(fs.readFileSync(METRICS_PATH, 'utf8'));
 const qa = JSON.parse(fs.readFileSync(QA_PATH, 'utf8'));
 const rows = metrics.frames.map((frame) => {
-  const score = scoreFrame(frame.metrics);
+  const reference = referenceForFrame(frame);
+  const score = scoreFrame(frame.metrics, reference);
   return {
     label: frameLabel(frame.path),
     path: frame.path,
@@ -48,8 +54,8 @@ const rows = metrics.frames.map((frame) => {
   };
 });
 
-// Review set: drop duplicate hero (identical to city-beauty).
-const reviewRows = rows.filter((row) => row.path !== '.qa-realmap-hero-beauty.png');
+// Review set: every captured beauty frame, including the hero skyline.
+const reviewRows = rows;
 const average = reviewRows.reduce((sum, row) => sum + row.score, 0) / Math.max(1, reviewRows.length);
 const rejected = reviewRows.filter((row) => row.verdict === 'REJECT').length;
 const approved = reviewRows.filter((row) => row.verdict === 'APPROVE');
@@ -71,7 +77,7 @@ const worst = [...reviewRows].sort((a, b) => a.score - b.score)[0];
 const lines = [];
 lines.push('# Real Map Sandbox / Harsh Visual Critic');
 lines.push('');
-lines.push('Date: 2026-08-02');
+lines.push(`Date: ${new Date().toISOString().slice(0, 10)}`);
 lines.push('Scope: beauty frames from Real Map Lab vs `public/data/reference-sf.jpg`.');
 lines.push('');
 lines.push(`## Verdict: ${overallVerdict} — ${average.toFixed(1)}/10`);

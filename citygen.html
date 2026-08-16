@@ -4,23 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#16303d" />
-    <meta name="description" content="Earth Online — a living Three.js WebGPU city simulation starting in San Francisco." />
+    <meta name="description" content="CityGen — arbitrary low-poly city generator with rich street, block, building, and signal metadata." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Earth Online · San Francisco</title>
+    <title>CityGen / Low-Poly Map Sandbox</title>
   </head>
   <body>
     <main id="app">
-      <canvas id="scene-canvas" aria-label="Earth Online San Francisco city"></canvas>
+      <canvas id="scene-canvas" aria-label="Generated city"></canvas>
 
       <header class="brand">
-        <span class="brand-mark">EO</span>
+        <span class="brand-mark">CG</span>
         <div>
-          <h1>Earth Online</h1>
+          <h1>CityGen</h1>
           <p id="city-name">San Francisco</p>
         </div>
       </header>
 
-      <section class="toolbar" aria-label="City tools">
+      <section class="toolbar" aria-label="City generator tools">
         <div class="tool-group" data-toolbar="styles">
           <button type="button" class="preset is-active" data-preset="sanfrancisco">SF Style</button>
           <button type="button" class="preset" data-preset="gridiron">Gridiron</button>
@@ -34,7 +34,7 @@
           <input id="import-file" type="file" accept="application/json,.json" hidden />
           <button type="button" class="action" data-action="place" title="Place a new building on a block">Add</button>
           <button type="button" class="action" data-action="undo" title="Remove the last building you placed">Undo</button>
-          <button type="button" class="action" data-action="osm" title="Load a real map from OpenStreetMap">Real Map</button>
+          <button type="button" class="action" data-action="osm" title="Fetch real map from OpenStreetMap">Real Map</button>
           <button type="button" class="action" data-action="mode" title="Orbit or walk">Orbit</button>
           <button type="button" class="action" data-action="time" title="Toggle day / night">Day</button>
         </div>
@@ -51,7 +51,9 @@
         <span id="readout-seed">seed —</span>
       </section>
 
-      <section class="hint" aria-label="Controls"><span></span></section>
+      <section class="hint" aria-label="Controls">
+        <span></span>
+      </section>
 
       <div id="place-chip" class="place-chip" aria-live="polite" hidden>
         <span class="place-dot" aria-hidden="true"></span>
@@ -86,7 +88,9 @@
           <form id="osm-form">
             <label for="osm-city">City name or lat,lon[,radius]</label>
             <input id="osm-city" value="San Francisco, CA" spellcheck="false" autocomplete="off" />
-            <div class="osm-progress" id="osm-progress" hidden><div class="osm-progress-bar" id="osm-progress-bar"></div></div>
+            <div class="osm-progress" id="osm-progress" hidden>
+              <div class="osm-progress-bar" id="osm-progress-bar"></div>
+            </div>
             <div class="osm-actions">
               <button type="submit" class="action is-primary" data-action="osm-go">Fetch</button>
               <button type="button" class="action" data-action="sf-metric">Metric SF</button>
@@ -105,8 +109,10 @@
           <p class="osm-status" id="osm-status" role="status" aria-live="polite"></p>
         </div>
       </div>
-      <div id="status-pill" class="status-pill" role="status" aria-live="polite" hidden><span id="status-pill-text"></span></div>
-      <noscript>This experience requires JavaScript and a browser with WebGPU or WebGL2.</noscript>
+      <div id="status-pill" class="status-pill" role="status" aria-live="polite" hidden>
+        <span id="status-pill-text"></span>
+      </div>
+      <noscript>This experience requires JavaScript and WebGL2.</noscript>
     </main>
     <script type="module" src="/src/citygen/main.js"></script>
   </body>
