@@ -113,6 +113,7 @@ const runtimeSnapshot = () => page.evaluate(() => {
       meshNodes: activeMeshes.length,
       categories,
       declaredCategories: activeGroup.userData?.propCategories || [],
+      exteriorContext: activeGroup.userData?.exteriorContext || null,
       materialFingerprint,
       exteriorVisibleChildren: root.children.filter((child) => child !== activeGroup && child.visible).length,
     } : null,
@@ -245,6 +246,11 @@ try {
     await page.evaluate(async (buildingId) => {
       await window.__CITYGEN__.enterBuilding(buildingId);
     }, portal.buildingId);
+    await page.waitForFunction(() => {
+      const active = window.__CITYGEN__.getRenderer().root.getObjectByName('active-building-interior');
+      const context = active?.userData?.exteriorContext;
+      return context?.ready === true || Boolean(context?.error);
+    }, { timeout: 5000 });
     await page.waitForTimeout(120);
     const entered = await runtimeSnapshot();
     assertNoRuntimeReplacement(entered, `entry ${portal.buildingId}`);
@@ -255,12 +261,17 @@ try {
     assert.ok(entered.drawCalls <= 40, `entry ${portal.buildingId}: <=40 active draw calls`);
     assert.equal(entered.activeInterior.exteriorVisibleChildren, 0, `entry ${portal.buildingId}: exterior partition is hidden`);
     assert.equal(entered.trafficVisible, false, `entry ${portal.buildingId}: traffic is hidden`);
-    const requiredCategories = ['ceiling', 'door', 'floor', 'glass', 'greenery', 'grounding', 'lighting', 'reception', 'seating', 'signage', 'trim', 'wall'];
+    const requiredCategories = ['ceiling', 'door', 'exterior-context', 'floor', 'glass', 'greenery', 'grounding', 'lighting', 'reception', 'seating', 'signage', 'trim', 'wall'];
     assert.ok(entered.activeInterior.categories.length >= 12, `entry ${portal.buildingId}: at least 12 rendered prop categories`);
     assert.deepEqual(entered.activeInterior.declaredCategories, entered.activeInterior.categories,
       `entry ${portal.buildingId}: declared categories match rendered categories`);
     requiredCategories.forEach((category) => assert.ok(entered.activeInterior.categories.includes(category),
       `entry ${portal.buildingId}: rendered ${category} category`));
+    assert.deepEqual(entered.activeInterior.exteriorContext, {
+      source: 'generated-sf-soma-v1',
+      texture: '/assets/sf-lobby-exterior-backdrop-generated-v1.png',
+      ready: true,
+    }, `entry ${portal.buildingId}: generated SF exterior context is loaded`);
     if (!firstMaterialFingerprint) firstMaterialFingerprint = entered.activeInterior.materialFingerprint;
     if (index === sampleIndexes[0]) {
       await page.addStyleTag({ content: '.brand,.toolbar,.readout,.hint,.minimap,.inspector,.status-pill{display:none!important}' });
