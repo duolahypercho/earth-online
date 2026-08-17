@@ -197,6 +197,10 @@ Completed:
 - Deterministic Ferry OSM semantic-coverage verifier added for the full approved
   source window; it proves source presence while explicitly rejecting runtime
   readiness without a production semantic authorization.
+- Exact-tile source-graph feasibility verifier added for the Ferry core. It
+  proves 46 vehicle and 175 pedestrian ways can form deterministic clipped
+  graphs with 63 boundary portals, while pinning unresolved semantic coverage
+  and explicitly rejecting runtime promotion.
 - A source-aligned authored landmark candidate was implemented and independently
   judged, then removed after failing the strict hero-block gate. It was not
   committed or promoted to production.
