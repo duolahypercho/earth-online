@@ -194,6 +194,9 @@ Completed:
   legacy RealMap now imports that module instead of owning it.
 - One-tile Ferry QA baseline locked with exact source, renderer, geometry,
   camera, error, frame-time, load-time, and repeated-source-switch evidence.
+- Deterministic Ferry OSM semantic-coverage verifier added for the full approved
+  source window; it proves source presence while explicitly rejecting runtime
+  readiness without a production semantic authorization.
 - A source-aligned authored landmark candidate was implemented and independently
   judged, then removed after failing the strict hero-block gate. It was not
   committed or promoted to production.
@@ -201,7 +204,8 @@ Completed:
 Active:
 
 - Await source authorization for the bounded Ferry simulation, surface, and
-  vertical-presentation contracts described below.
+  vertical-presentation contracts described in
+  `Docs/FERRY-RUNTIME-CONTRACT-AUTHORIZATION-REQUEST.md`.
 
 Blocked:
 
