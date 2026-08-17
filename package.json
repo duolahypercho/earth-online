@@ -163,6 +163,7 @@
     "qa:blind-ab": "node scripts/build-blind-ab.mjs",
     "qa:citygen": "node scripts/qa-citygen.mjs",
     "qa:citygen-metric": "node scripts/qa-citygen-metric-map.mjs",
+    "qa:canonical-ferry-metric": "node scripts/qa-canonical-ferry-metric.mjs",
     "qa:citygen-critic": "node scripts/qa-citygen-critic.mjs",
     "qa:citygen-schedule-critic": "node scripts/qa-citygen-schedule-critic.mjs",
     "qa:citygen-blind-verdict": "node scripts/qa-citygen-blind-verdict.mjs",
