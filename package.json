@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "verify:plugins": "node scripts/verify-plugin-architecture.mjs",
     "verify:canonical-ferry-source-scope": "node scripts/verify/verify-canonical-ferry-source-scope.mjs",
+    "verify:ferry-osm-semantic-coverage": "node scripts/verify/verify-ferry-osm-semantic-coverage.mjs",
     "build:realmap-assets": "node scripts/build-realmap-assets.mjs",
     "embed:street-design": "node scripts/embed-street-design.mjs",
     "build:sf-atlas": "node scripts/build-sf-atlas.mjs",
