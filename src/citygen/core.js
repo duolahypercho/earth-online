@@ -741,33 +741,31 @@ export function buildTrafficGraph(city) {
       // Edges enter and leave intersections on the street centerline so the
       // graph is connected at every crossing. The lane offset only applies
       // along the straight portion of the block.
-      const vertical = segment.streetId.startsWith('v');
       let points = segment.points.map((p, index, list) => {
         const atEnd = index === 0 || index === list.length - 1;
-        // Right-hand traffic: on a vertical street (+x forward) the driver
-        // sits at -z; on a horizontal street (+z forward) the driver sits at
-        // +x. The old code applied the same sign to both axes, so horizontal
-        // streets drove on the wrong side.
-        const lane = vertical
-          ? (dir > 0 ? -offset : offset)
-          : (dir > 0 ? offset : -offset);
+        if (atEnd) return { x: p.x, z: p.z };
+        const previous = list[index - 1];
+        const next = list[index + 1];
+        const dx = next.x - previous.x;
+        const dz = next.z - previous.z;
+        const length = Math.hypot(dx, dz) || 1;
         return {
-          x: p.x + (vertical && !atEnd ? lane : 0),
-          z: p.z + (!vertical && !atEnd ? lane : 0),
+          x: p.x - (dz / length) * offset * dir,
+          z: p.z + (dx / length) * offset * dir,
         };
       });
       // Grid segments are exactly two vertices, which would put every car on
       // the centerline. Insert a mid-block vertex with the real lane offset
       // so traffic visibly drives on the correct side of the road.
       if (points.length === 2) {
-        const lane = vertical
-          ? (dir > 0 ? -offset : offset)
-          : (dir > 0 ? offset : -offset);
+        const dx = points[1].x - points[0].x;
+        const dz = points[1].z - points[0].z;
+        const length = Math.hypot(dx, dz) || 1;
         points = [
           points[0],
           {
-            x: (points[0].x + points[1].x) / 2 + (vertical ? 0 : lane),
-            z: (points[0].z + points[1].z) / 2 + (vertical ? lane : 0),
+            x: (points[0].x + points[1].x) / 2 - (dz / length) * offset * dir,
+            z: (points[0].z + points[1].z) / 2 + (dx / length) * offset * dir,
           },
           points[1],
         ];
@@ -785,18 +783,31 @@ export function buildTrafficGraph(city) {
       });
     }
   }
-  // Connection map by endpoint coordinates.
-  const byEnd = new Map();
-  for (const edge of edges) {
-    const last = edge.points[edge.points.length - 1];
-    const key = `${Math.round(last.x / 2) * 2}-${Math.round(last.z / 2) * 2}`;
-    if (!byEnd.has(key)) byEnd.set(key, []);
-    byEnd.get(key).push(edge);
-  }
+  // Index edge starts in tolerance-sized cells, then query neighboring cells
+  // from each edge end. This keeps graph construction linear-ish while
+  // accepting minor source-coordinate drift without linking nearby corners.
+  const connectionTolerance = 0.25;
+  const cellKey = (point, dx = 0, dz = 0) => `${Math.floor(point.x / connectionTolerance) + dx}-${Math.floor(point.z / connectionTolerance) + dz}`;
+  const byStart = new Map();
   for (const edge of edges) {
     const first = edge.points[0];
-    const key = `${Math.round(first.x / 2) * 2}-${Math.round(first.z / 2) * 2}`;
-    edge.outgoing = (byEnd.get(key) || []).filter((e) => e.id !== edge.id);
+    const key = cellKey(first);
+    if (!byStart.has(key)) byStart.set(key, []);
+    byStart.get(key).push(edge);
+  }
+  for (const edge of edges) {
+    const last = edge.points[edge.points.length - 1];
+    const candidates = [];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        candidates.push(...(byStart.get(cellKey(last, dx, dz)) || []));
+      }
+    }
+    edge.outgoing = candidates.filter((candidate) => {
+      if (candidate.id === edge.id) return false;
+      const first = candidate.points[0];
+      return Math.hypot(first.x - last.x, first.z - last.z) <= connectionTolerance;
+    });
   }
   return edges;
 }
