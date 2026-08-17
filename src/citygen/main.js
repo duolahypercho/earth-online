@@ -109,6 +109,51 @@ const state = {
   },
 };
 
+const PERFORMANCE_SAMPLE_LIMIT = 900;
+const performanceTelemetry = {
+  appFrameMs: [],
+  frameIntervalMs: [],
+  startedAt: performance.now(),
+};
+
+function recordPerformanceSample(samples, value) {
+  if (!Number.isFinite(value) || value < 0) return;
+  samples.push(value);
+  if (samples.length > PERFORMANCE_SAMPLE_LIMIT + 60) {
+    samples.splice(0, samples.length - PERFORMANCE_SAMPLE_LIMIT);
+  }
+}
+
+function summarizePerformanceSamples(samples) {
+  if (samples.length === 0) {
+    return { count: 0, p50: null, p95: null, p99: null, max: null };
+  }
+  const sorted = [...samples].sort((left, right) => left - right);
+  const percentile = (fraction) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+  return {
+    count: sorted.length,
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    p99: percentile(0.99),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+function resetPerformanceTelemetry() {
+  performanceTelemetry.appFrameMs.length = 0;
+  performanceTelemetry.frameIntervalMs.length = 0;
+  performanceTelemetry.startedAt = performance.now();
+}
+
+function getPerformanceTelemetry() {
+  return {
+    generator: state.city?.meta?.generator || null,
+    durationMs: performance.now() - performanceTelemetry.startedAt,
+    appFrameMs: summarizePerformanceSamples(performanceTelemetry.appFrameMs),
+    frameIntervalMs: summarizePerformanceSamples(performanceTelemetry.frameIntervalMs),
+  };
+}
+
 let pillTimer = null;
 
 function installExplorerUi() {
@@ -1831,6 +1876,8 @@ async function boot() {
     loadBuiltinSf,
     loadMetricSf,
     getMetricMap: () => state.metricMap,
+    getPerformanceTelemetry,
+    resetPerformanceTelemetry,
     exportMetadata,
     importMetadata: async (payload) => {
       const city = importCityMetadata(payload);
@@ -2128,7 +2175,9 @@ async function boot() {
   let last = performance.now();
   let lastMinimapSecond = -1;
   function loop(now) {
-    const delta = Math.min(0.05, (now - last) / 1000);
+    const frameStartedAt = performance.now();
+    const frameIntervalMs = now - last;
+    const delta = Math.min(0.05, frameIntervalMs / 1000);
     last = now;
     state.clock = (state.clock + delta * 0.6) % 24;
     updatePlayer(delta);
@@ -2146,6 +2195,8 @@ async function boot() {
         readoutClock.textContent = formatClock(state.clock);
       }
     }
+    recordPerformanceSample(performanceTelemetry.frameIntervalMs, frameIntervalMs);
+    recordPerformanceSample(performanceTelemetry.appFrameMs, performance.now() - frameStartedAt);
   }
   await state.renderer.renderer.setAnimationLoop(loop);
 }
