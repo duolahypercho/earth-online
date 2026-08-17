@@ -51,7 +51,7 @@ import { createHeroCharacter } from './hero-character.js';
 import { createHeroCamera } from './hero-camera.js';
 import { createFerryBuildingStreetscape } from './hero-streetscape.js';
 import { createHeroTrafficVisuals } from './hero-traffic-visuals.js';
-import { createFerryBuildingLandmark } from './hero-landmark.js';
+import { createFerryBuildingLandmark } from '../world/buildings/ferry-building-landmark.js';
 import { createHeroLifeLighting, HERO_LIFE_LIGHTING_BUDGET } from './hero-life-lighting.js';
 import {
   collectHeroRenderStats,

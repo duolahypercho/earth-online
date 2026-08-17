@@ -8,7 +8,7 @@ import {
   FERRY_SANDSTONE_ALBEDO_URL,
   FERRY_SANDSTONE_NORMAL_URL,
   FERRY_SANDSTONE_ORM_URL,
-} from '../src/realmap/hero-landmark.js';
+} from '../src/world/buildings/ferry-building-landmark.js';
 
 const building = {
   id: 558731934,
