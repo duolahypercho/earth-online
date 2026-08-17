@@ -3,6 +3,11 @@ import { chromium } from 'playwright';
 
 const FERRY_TILE_ID = 'epsg26910-1441-10893';
 const EXPECTED_MANIFEST_TILE_COUNT = 803;
+const PERFORMANCE_BUDGET = Object.freeze({
+  appFrameP99Ms: 12,
+  frameIntervalP99Ms: 33,
+  hardFrameIntervalMs: 100,
+});
 const url = process.env.SF_QA_URL || 'http://127.0.0.1:5173/';
 const output = process.env.SF_QA_OUTPUT || '.qa-canonical-ferry-metric.json';
 const screenshots = {
@@ -33,6 +38,7 @@ const report = {
     residentTileCount: 1,
     manifestTileCount: EXPECTED_MANIFEST_TILE_COUNT,
   },
+  performanceBudget: PERFORMANCE_BUDGET,
   screenshots,
 };
 
@@ -83,6 +89,7 @@ try {
     };
   });
 
+  const loadStartedAt = performance.now();
   const loadResult = await page.evaluate(() => window.__CITYGEN__.loadMetricSf());
   report.loadAccepted = Boolean(loadResult);
   await page.waitForFunction((tileId) => {
@@ -93,6 +100,7 @@ try {
       && state.metricMap.tileIds?.length === 1
       && state.metricMap.tileIds[0] === tileId;
   }, FERRY_TILE_ID, { timeout: 120000 });
+  report.metricLoadMs = performance.now() - loadStartedAt;
 
   await page.addStyleTag({
     content: `
@@ -143,7 +151,7 @@ try {
     report.evidence.duskAerial.camera,
   );
 
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(2500);
   report.runtime = await page.evaluate(() => {
     const api = window.__CITYGEN__;
     const state = api.getState();
@@ -249,6 +257,66 @@ try {
     };
   });
 
+  await page.evaluate(() => {
+    window.__CITYGEN__.setTime(14);
+    window.__CITYGEN__.resetPerformanceTelemetry();
+  });
+  await page.waitForTimeout(5000);
+  report.performance = await page.evaluate(() => window.__CITYGEN__.getPerformanceTelemetry());
+
+  await page.evaluate(() => {
+    const api = window.__CITYGEN__;
+    const cityRenderer = api.getRenderer();
+    window.__CANONICAL_FERRY_RELOAD_QA__ = {
+      scene: cityRenderer.scene,
+      renderer: cityRenderer.renderer,
+      canvas: cityRenderer.renderer.domElement,
+      loop: cityRenderer.renderer._animation?._animationLoop || null,
+      root: cityRenderer.root,
+    };
+  });
+  await page.evaluate(() => window.__CITYGEN__.loadBuiltinSf());
+  await page.waitForFunction(() => {
+    const state = window.__CITYGEN__?.getState?.();
+    return state?.busy === false && state?.generator === 'sf-builtin';
+  }, null, { timeout: 120000 });
+  const reloadStartedAt = performance.now();
+  await page.evaluate(() => window.__CITYGEN__.loadMetricSf());
+  await page.waitForFunction((tileId) => {
+    const state = window.__CITYGEN__?.getState?.();
+    return state?.busy === false
+      && state?.generator === 'sf-metric-tiles'
+      && state?.metricMap?.tileIds?.length === 1
+      && state.metricMap.tileIds[0] === tileId;
+  }, FERRY_TILE_ID, { timeout: 120000 });
+  await page.waitForTimeout(2500);
+  report.reloadStability = await page.evaluate(() => {
+    const api = window.__CITYGEN__;
+    const cityRenderer = api.getRenderer();
+    const renderer = cityRenderer.renderer;
+    const prior = window.__CANONICAL_FERRY_RELOAD_QA__;
+    return {
+      reloadMs: performance.now(),
+      generator: api.getState().generator,
+      sceneIdentityPreserved: prior.scene === cityRenderer.scene,
+      rendererIdentityPreserved: prior.renderer === renderer,
+      canvasIdentityPreserved: prior.canvas === renderer.domElement,
+      animationLoopIdentityPreserved: prior.loop === renderer._animation?._animationLoop,
+      priorRootDetached: prior.root?.parent == null,
+      rootReplaced: prior.root !== cityRenderer.root,
+      rootInstalledInScene: cityRenderer.root?.parent === cityRenderer.scene,
+      namedWorldRootCount: cityRenderer.scene.children.filter((child) => (
+        child.name === 'city-root' || child.name === 'authoritative-sf-metric-root'
+      )).length,
+      drawCalls: renderer.info?.render?.drawCalls ?? renderer.info?.render?.calls ?? null,
+      triangles: renderer.info?.render?.triangles ?? null,
+      geometries: renderer.info?.memory?.geometries ?? null,
+      textures: renderer.info?.memory?.textures ?? null,
+      stateErrors: [...api.getState().errors],
+    };
+  });
+  report.reloadStability.reloadMs = performance.now() - reloadStartedAt;
+
   const { runtime } = report;
   const records = runtime.metric.records;
   const counters = [
@@ -297,6 +365,23 @@ try {
       && runtime.geometry.nonFiniteValueCount === 0,
     metreScalePreserved: runtime.geometry.tileScaleOne,
     matchedAerialEvidence: report.evidence.matchedCamera,
+    appFrameP99Budget: report.performance.appFrameMs.count >= 120
+      && report.performance.appFrameMs.p99 <= PERFORMANCE_BUDGET.appFrameP99Ms,
+    frameIntervalP99Budget: report.performance.frameIntervalMs.count >= 120
+      && report.performance.frameIntervalMs.p99 <= PERFORMANCE_BUDGET.frameIntervalP99Ms,
+    noHardFrameStall: report.performance.frameIntervalMs.max < PERFORMANCE_BUDGET.hardFrameIntervalMs,
+    repeatedSourceSwitchStable: report.reloadStability.generator === 'sf-metric-tiles'
+      && report.reloadStability.sceneIdentityPreserved
+      && report.reloadStability.rendererIdentityPreserved
+      && report.reloadStability.canvasIdentityPreserved
+      && report.reloadStability.animationLoopIdentityPreserved
+      && report.reloadStability.priorRootDetached
+      && report.reloadStability.rootReplaced
+      && report.reloadStability.rootInstalledInScene
+      && report.reloadStability.namedWorldRootCount === 1
+      && report.reloadStability.geometries <= runtime.renderer.geometries
+      && report.reloadStability.textures <= runtime.renderer.textures
+      && report.reloadStability.stateErrors.length === 0,
     noStateErrors: Array.isArray(runtime.stateErrors) && runtime.stateErrors.length === 0,
     noPageErrors: pageErrors.length === 0,
     noConsoleErrors: consoleErrors.length === 0,
