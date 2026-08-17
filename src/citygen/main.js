@@ -1395,7 +1395,11 @@ async function loadMetricSf() {
   setExplorerBusy(true, 'Opening authoritative San Francisco…', 'Verifying receipts and GLB bytes before WebGPU rendering');
   try {
     const bundle = await authoritativeMetricMapPlugin.load({
-      count: 10,
+      // The current production authorization is spatially bounded to the
+      // Ferry source-tone tile. Neighbouring manifest entries remain
+      // unavailable here until a matching citywide geometry authorization
+      // exists; byte-valid artifacts alone are not sufficient authority.
+      count: 1,
       onProgress: ({ loaded, total, id }) => {
         const suffix = id ? ` · ${id}` : '';
         setOsmBusy(true, `Verified ${loaded} / ${total} metric tiles${suffix}`);

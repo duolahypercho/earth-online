@@ -14,7 +14,10 @@ const BASE_URL = import.meta.env.BASE_URL;
 const MANIFEST_PATH = 'data/world/production-artifacts/sf-metric-tiles-v1/sf-metric-tiles-v1.manifest.json';
 const FERRY_TILE_ID = 'epsg26910-1441-10893';
 const FERRY_LOCAL_FOCUS = Object.freeze([98.056, 336.015]);
-const DEFAULT_TILE_COUNT = 10;
+// Only the Ferry tile is covered by the current production presentation and
+// horizontal-geometry authorization. Keep the loader fail-closed by default;
+// callers must not infer citywide authority from the wider byte-valid manifest.
+const DEFAULT_TILE_COUNT = 1;
 
 function publicPath(value) {
   return String(value || '').replace(/^\.?\/?public\//, '').replace(/^\//, '');
