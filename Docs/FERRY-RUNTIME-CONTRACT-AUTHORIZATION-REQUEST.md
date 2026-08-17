@@ -51,6 +51,34 @@ unknown widths and surfaces without separately authorized gameplay policy. The
 verifier intentionally reports `playableContractReady: false` because source
 presence is not runtime authorization.
 
+## Exact-tile feasibility proof
+
+Run `npm run verify:ferry-osm-contract-feasibility` to rebuild a read-only,
+in-memory graph proof for tile `epsg26910-1441-10893`. The verifier reads only
+the byte-validated OSM ways, ordered node references, tags, and EPSG:26910
+coordinates used by the production tile builder. It does not read render
+meshes, terrain, receipts as topology, or runtime state, and it writes no
+artifact.
+
+The current locked proof reports:
+
+- 221 admitted highway ways: 46 vehicle and 175 pedestrian;
+- a vehicle graph with 182 nodes, 260 directed edges, and one 182-node weak
+  component;
+- a pedestrian graph with 442 nodes, 481 source-connectivity edges, and six
+  components sized 3, 4, 6, 7, 11, and 411 nodes;
+- 35 explicit crossing ways, 41 shared pedestrian/vehicle source-node
+  intersections, and 63 exact tile-boundary portals;
+- unresolved source semantics on 13 vehicle ways for lanes, 16 for speed, 5
+  for surface, and 6 for sidewalk; no unsupported explicit direction value.
+
+The command pins those counts and the relevant source/lock hashes so an empty,
+degraded, or source-drifted graph fails instead of appearing successful. Its
+output remains `proofOnly: true`, `writesArtifacts: false`, and
+`runtimePromotionReady: false`. Standalone signal nodes, turn-restriction
+relations, terrain, vertical data, artifact generation, and runtime promotion
+remain outside the proof.
+
 ## Requested source-neutral contract
 
 The builder may emit only source-present semantics or explicitly authorized
