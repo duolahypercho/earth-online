@@ -11,6 +11,9 @@ for (const segment of city.segments) bySegment.set(segment.id, segment);
 
 const failures = [];
 const oneWayEdges = new Set();
+let successorLinks = 0;
+let edgesWithUsefulSuccessors = 0;
+let maxCornerJump = 0;
 for (const edge of edges) {
   const segment = bySegment.get(edge.segmentId);
   if (!segment) {
@@ -32,8 +35,56 @@ for (const edge of edges) {
     const count = edges.filter((e) => e.segmentId === segment.id).length;
     if (count !== 1) failures.push(`${segment.id} one-way has ${count} directions`);
   }
+  const last = edge.points[edge.points.length - 1];
+  let hasUsefulSuccessor = false;
+  for (const successor of edge.outgoing || []) {
+    successorLinks += 1;
+    const first = successor.points[0];
+    const cornerJump = Math.hypot(first.x - last.x, first.z - last.z);
+    maxCornerJump = Math.max(maxCornerJump, cornerJump);
+    if (cornerJump > 0.25) {
+      failures.push(`${edge.id} -> ${successor.id} jumps ${cornerJump.toFixed(3)}m at the corner`);
+    }
+    if (successor.segmentId !== edge.segmentId) hasUsefulSuccessor = true;
+  }
+  if (hasUsefulSuccessor) edgesWithUsefulSuccessors += 1;
 }
 if (oneWayEdges.size === 0) failures.push('no one-way streets found');
+if (successorLinks === 0) failures.push('traffic graph has no successor links');
+if (edgesWithUsefulSuccessors < edges.length / 2) {
+  failures.push(`only ${edgesWithUsefulSuccessors}/${edges.length} edges have useful successors`);
+}
+if (maxCornerJump > 0.25) failures.push(`maximum corner jump is ${maxCornerJump.toFixed(3)}m`);
+
+// Real-SF street IDs do not encode an axis. Lane placement must use the
+// segment's source direction, including diagonals, rather than ID prefixes.
+const osmSegment = {
+  id: 'osm-seg-direction-check',
+  streetId: 'osm-way-123456',
+  streetName: 'Direction Check',
+  highway: 'residential',
+  lanes: 2,
+  oneway: 'increasing',
+  width: 8,
+  points: [{ x: 2, z: 3 }, { x: 14, z: 8 }],
+};
+const [osmEdge] = buildTrafficGraph({ segments: [osmSegment] });
+const sourceMidpoint = {
+  x: (osmSegment.points[0].x + osmSegment.points[1].x) / 2,
+  z: (osmSegment.points[0].z + osmSegment.points[1].z) / 2,
+};
+const sourceDx = osmSegment.points[1].x - osmSegment.points[0].x;
+const sourceDz = osmSegment.points[1].z - osmSegment.points[0].z;
+const sourceLength = Math.hypot(sourceDx, sourceDz);
+const expectedOffset = Math.max(1.15, osmSegment.width / 2 - 1.45);
+const expectedMidpoint = {
+  x: sourceMidpoint.x - (sourceDz / sourceLength) * expectedOffset,
+  z: sourceMidpoint.z + (sourceDx / sourceLength) * expectedOffset,
+};
+const laneMidpoint = osmEdge?.points?.[1];
+if (!laneMidpoint || Math.hypot(laneMidpoint.x - expectedMidpoint.x, laneMidpoint.z - expectedMidpoint.z) > 1e-9) {
+  failures.push('OSM-style segment lane offset does not follow source direction');
+}
 
 // Runtime signal behavior: emulate TrafficSim's phase math at every signal.
 const fakeRenderer = { terrain: { heightAt: () => 0 }, scene: { add() {}, remove() {} } };
@@ -62,6 +113,9 @@ const result = {
   city: describe(city),
   edges: edges.length,
   oneWayStreets: city.streets.filter((street) => street.oneway !== 'both').length,
+  successorLinks,
+  edgesWithUsefulSuccessors,
+  maxCornerJump,
   signalEdgesChecked,
   failures,
 };
