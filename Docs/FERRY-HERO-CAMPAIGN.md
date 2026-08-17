@@ -40,9 +40,13 @@ geometry, receipts, and simulation contracts remain authoritative.
 - Latest canonical CityGen hero counters recorded by the existing verifier:
   476 draws, 449,146 triangles, 401 geometries, 258 textures. Those counters
   describe Market/Kearny, not the one-tile Ferry metric core.
-- Canonical frame-time, GPU-time, byte-memory, cold-load, streaming-time, and
-  genuine soak telemetry do not yet exist. Legacy WebGL baselines are not valid
-  evidence for `/`.
+- Canonical application-frame and presented-interval telemetry now runs inside
+  the existing animation loop. The locked one-tile QA baseline records 9 draws,
+  300,447 submitted triangles, 20 geometries, 6 textures, 0.8 ms application-
+  frame p99, 26.2 ms presented-interval p99, and stable resources after a
+  Metric -> built-in SF -> Metric cycle. GPU duration, byte memory, admission-
+  stage timing, and long soak telemetry remain unavailable. Legacy WebGL
+  baselines are not valid evidence for `/`.
 
 ### Visual baseline score
 
@@ -66,9 +70,9 @@ failing baseline, not an accepted hero milestone.
 
 ### Simulation baseline
 
-- `buildTrafficGraph` currently assigns predecessor edges as `outgoing`.
-  The live default slice showed 1,668 invalid successor links and a maximum
-  endpoint jump of 1,031.43 metres.
+- `buildTrafficGraph` now links the current endpoint to valid successor starts.
+  The deterministic verifier covers 315 edges, 1,061 successor links, 313
+  useful edges, and a maximum endpoint jump of 0 metres.
 - Signals have duplicated clocks and no opposing movement groups.
 - Pedestrians use isolated shuttle paths; source footways, crossings,
   destinations, schedules, and signal consumption are absent.
@@ -159,7 +163,7 @@ Until then, the candidate delta limits are:
 
 | District family | Foundation | District kit | Hero content | Status |
 | --- | --- | --- | --- | --- |
-| Ferry Building / Embarcadero | One authorized tile | Legacy kit available | Target campaign active | Active |
+| Ferry Building / Embarcadero | One authorized tile | Legacy kit available | Candidate rejected | Blocked on simulation/surface authorization |
 | Market Street | Preview OSM slice | Six-building atlas, provenance incomplete | Market/Kearny pass exists | Blocked on provenance/source policy |
 | Downtown / Financial District | Preview/manifest geometry | Generic only | None canonical | Pending |
 | Chinatown | Preview/manifest geometry | Legacy profile only | None | Pending |
@@ -184,11 +188,20 @@ Completed:
 - Initial visual/simulation/performance/source gap analysis and budgets.
 - Canonical Metric SF constrained to the one authorized Ferry tile; browser
   evidence reports 24 buildings, 221 road ways, and `1 / 803 metric tiles`.
+- Canonical traffic successor topology corrected and guarded by endpoint and
+  lane-direction checks.
+- Ferry landmark implementation moved into the canonical building subsystem;
+  legacy RealMap now imports that module instead of owning it.
+- One-tile Ferry QA baseline locked with exact source, renderer, geometry,
+  camera, error, frame-time, load-time, and repeated-source-switch evidence.
+- A source-aligned authored landmark candidate was implemented and independently
+  judged, then removed after failing the strict hero-block gate. It was not
+  committed or promoted to production.
 
 Active:
 
-- Capture a fresh one-tile baseline and lock its counters.
-- Correct the canonical traffic successor topology and add a rejecting gate.
+- Await source authorization for the bounded Ferry simulation, surface, and
+  vertical-presentation contracts described below.
 
 Blocked:
 
@@ -196,22 +209,35 @@ Blocked:
 - Certified terrain: current canonical elevation source lock prohibits runtime
   use; Ferry vertical data is provisional.
 - Production use of current Market/ground/interior textures: provenance missing.
+- Playable Ferry hero block: the authorized tile exposes merged render geometry
+  and receipt counts, but no source-neutral directed lanes, sidewalk graph,
+  crossings, signals, curb/surface roles, terrain-height query, or spawn zones.
+- Ferry landmark vertical presentation: no receipt-backed tower anchor/height
+  envelope authorizes the authored 74 metre presentation used by the rejected
+  candidate.
 
 Next:
 
-1. Correct traffic successor topology and add a rejecting continuity gate.
-2. Establish the playable Ferry street/collision contract without importing a
+1. Authorize a deterministic bounded rebuild from approved source data that
+   emits lanes, sidewalks, crossings, signals, surface roles, terrain sampling,
+   and spawn/recycle zones without inferring topology from render meshes.
+2. Add a receipt-backed Ferry tower anchor and vertical-presentation envelope,
+   retaining provisional vertical status until a certified source exists.
+3. Establish the playable Ferry street/collision contract without importing a
    legacy renderer or loop.
-3. Port the source-aligned Ferry facade module to the canonical building
-   subsystem, then verify day/dusk matched captures.
-4. Add connected sidewalk/crossing behavior and simulation-owned signals.
-5. Commission independent visual, authenticity, gameplay, simulation,
-   performance, and blind A/B judgment.
+4. Reapply the source-aligned facade only after the new receipt validates its
+   horizontal and vertical presentation inputs; capture matched day/dusk views.
+5. Add fixed-step traffic and pedestrian behavior, then repeat all independent
+   visual, authenticity, gameplay, simulation, performance, and blind A/B gates.
 
 Known risks:
 
-- The exact authorized metric tile is currently geometry-only in canonical `/`.
+- The exact authorized metric tile is geometry-only in canonical `/`; its 221
+  road ways are receipt counts, not a simulation or walkability contract.
 - The richer Ferry modules remain coupled to legacy RealMap and require
   source-neutral extraction.
 - Existing automated visual gates can pass colorful/edge-dense but materially
   flat images; matched human/perceptual review remains required.
+- The rejected candidate scored 1.6/10 visual, 4/10 authenticity, 2/10 gameplay,
+  and 0/10 for both traffic and pedestrians. Its static render budget passed,
+  but final performance and integrity acceptance did not.
