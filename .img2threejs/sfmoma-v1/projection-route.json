@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "route": "procedural-finish",
+  "exactness": "image-only",
+  "decision": "The generated reference supplies form, proportion, and material-zone evidence rather than an exact authored texture. Procedural materials and geometry preserve multi-angle response and avoid baking the studio halo or key-light direction into the building.",
+  "referenceUse": [
+    "front-three-quarter silhouette and proportions",
+    "visible material palette",
+    "identity-feature placement",
+    "mullion, rib, louver, door, and panel-joint rhythm"
+  ],
+  "notUsedAsTruth": [
+    "hidden-side geometry",
+    "surveyed dimensions",
+    "lighting/shadow pixels",
+    "background halo",
+    "map coordinates or collision"
+  ],
+  "approximationWarning": "This is a procedural single-view reconstruction. Rear and camera-right elevations are inferred and cannot be claimed as an exact SFMOMA survey."
+}

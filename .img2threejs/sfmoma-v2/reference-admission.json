@@ -1,0 +1,14 @@
+{
+  "admitted": true,
+  "reasons": [],
+  "provenance": {
+    "viewpoint": "front-three-quarter",
+    "sourcePath": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+    "width": 1536,
+    "height": 1024,
+    "foregroundCoverage": 0.5708,
+    "largestComponentFraction": 0.9246,
+    "pHash": 17202323215169654916,
+    "duplicateOfHash": null
+  }
+}

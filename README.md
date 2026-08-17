@@ -64,6 +64,49 @@ inspectable metadata. See `Docs/REAL_MAP_SANDBOX.md`.
 This lab is also the seed for future towns — draw a place, generate it, then
 bring it into the world.
 
+Real Map alignment is enforced from one shared right-of-way contract: every
+road, curb, sidewalk, junction pad, and building footprint reads the same OSM
+centerline plus `streetDesign` section. The QA gate samples building facades
+and fails on any facade that overlaps the road ROW (`getAlignmentDiagnostics`
+on `window.__SF_REALMAP__`).
+
+### CityGen Lab
+
+Open `/citygen.html` for the low-poly arbitrary-city generator. It can produce
+a seeded SF-style, gridiron, or garden city on demand, or attempt a real map
+fetch from OpenStreetMap for any city. Every block, building, street, one-way
+rule, lane, sidewalk, intersection, and signal is inspectable at runtime.
+Add mode lets you click any buildable block to place a new building with live
+footprint validation and full block/street/type/facade metadata; Undo restores
+the previous city state. In Walk mode press `E` to enter the nearest car and
+drive the same one-way traffic graph and signal phases used by AI traffic.
+The HUD readout shows building, block, street, one-way, and signal counts and
+labels real OSM maps as real map data instead of a procedural seed.
+CityGen runs a live day-cycle clock that drives Day/Night lighting, and
+placing sandbox buildings earns cash while tracking blocks touched.
+**Export** downloads the full city metadata model as JSON, including bounds,
+blocks, buildings, streets, segments, intersections, and signal phases.
+The **SF Built-in** option loads the repo's real San
+Francisco OSM data as a playable district slice without depending on the
+public Overpass service.
+
+Visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh` (currently
+100/100). `npm run qa:citygen-blind-ab` builds a shuffled side-by-side page of
+the latest CityGen frames against real San Francisco reference photos and
+official Schedule I screenshots for a human blind comparison, and
+`npm run qa:citygen-blind-verdict` records an automated per-pair verdict.
+The latest verdict is 5 GAME / 2 TIE / 1 REFERENCE across the eight recorded
+pairs. The softer final grade holds mean saturation around 41-46 across hero,
+street, aerial, night, and the real SF built-in slice.
+`npm run verify:citygen-any-city` proves the OSM importer also converts a
+non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
+add/undo metadata. `SF_QA_SF_BUILTIN=1 npm run qa:citygen` also verifies the
+real San Francisco built-in map through the UI, including placing and undoing
+a building with real street metadata on Brannan Street.
+`npm run verify:citygen-simulation` gates one-way traffic direction legality
+and red/green signal behavior, and CityGen browser QA asserts WebGL2 plus
+keyboard-driven walk physics.
+
 ## Add your own town
 
 Fork the repo, build a place that feels like home, and open a pull request.

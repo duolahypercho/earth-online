@@ -1,0 +1,1537 @@
+{
+  "targetName": "SFMOMA Generated Landmark V1",
+  "targetId": "sfmoma-generated-landmark-v1",
+  "schemaVersion": "2.1",
+  "terminologyProfile": {
+    "domain": "real-time procedural Three.js asset",
+    "geometryTerms": [
+      "silhouette",
+      "topology",
+      "primitive",
+      "bevel",
+      "chamfer",
+      "taper",
+      "bend",
+      "boolean cut",
+      "edge loop",
+      "surface normal",
+      "displacement"
+    ],
+    "materialTerms": [
+      "albedo",
+      "baseColor",
+      "roughness",
+      "metalness",
+      "normal map",
+      "bump map",
+      "ambient occlusion",
+      "cavity dirt",
+      "edge wear",
+      "clearcoat"
+    ],
+    "lightingTerms": [
+      "key light",
+      "fill light",
+      "rim light",
+      "HDRI/environment reflection",
+      "contact shadow"
+    ],
+    "descriptionRule": "Use measurable 3D graphics terms. Avoid vague words unless they are paired with concrete geometry/material/shader parameters."
+  },
+  "sourceImage": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+  "referenceCamera": {
+    "solved": false,
+    "fovDegrees": 40.0,
+    "aspect": 1.0,
+    "orientation": {
+      "yaw": 0.0,
+      "pitch": 0.0,
+      "roll": 0.0
+    },
+    "positionHint": [
+      0.0,
+      0.0,
+      3.0
+    ],
+    "note": "For likeness work, solve the reference camera (forge/stage1_intake/solve_camera_pose.py) so the review render aligns with the photo and the reference can be projected. Confirm by overlay review."
+  },
+  "suitability": "conditional",
+  "scores": {
+    "object_isolation": 0,
+    "silhouette_readability": 0,
+    "depth_inference": 0,
+    "primitive_decomposition": 0,
+    "material_procedurality": 0,
+    "occlusion_risk": 0,
+    "interaction_fit": 0
+  },
+  "preSpecAssessment": {
+    "objectClass": {
+      "primaryType": "architectural-landmark",
+      "primaryDomain": "object",
+      "formLanguage": [
+        "asymmetric rectilinear gallery stack",
+        "cantilevered boxes and recessed voids",
+        "folded red ribbed tower",
+        "horizontal curtain-wall bands"
+      ],
+      "structureKind": [
+        "rigid multi-volume assembly",
+        "facade repetition systems",
+        "thin-shell guards and mullions"
+      ],
+      "motionPotential": [
+        "exploded component inspection",
+        "clickable facade and massing groups"
+      ],
+      "materialFamilies": [
+        "pale precast concrete",
+        "red ribbed cladding",
+        "charcoal metal",
+        "blue-gray glass",
+        "warm interior glazing"
+      ],
+      "notes": "Treat as an object-scale render asset. Hidden elevations are explicit approximations; map coordinates and collision remain external source truth."
+    },
+    "complexity": {
+      "tier": "complex",
+      "scores": {
+        "silhouetteComplexity": 3,
+        "componentCount": 3,
+        "hierarchyDepth": 3,
+        "repetitionDensity": 3,
+        "materialLayerCount": 3,
+        "localDetailDensity": 3,
+        "occlusionRisk": 2,
+        "actionReadinessNeed": 3
+      },
+      "estimatedCounts": {
+        "macroComponents": 6,
+        "mesoComponents": 13,
+        "microFeatureGroups": 12,
+        "materialLayers": 6,
+        "repetitionSystems": 5
+      },
+      "reasoning": [
+        "The identity depends on five interlocking macro masses rather than one building box.",
+        "The red folded tower and white gallery cantilevers must remain separate clickable/explodable parts.",
+        "Repeated ribs, mullions, louvers, doors, and panel seams require deterministic repetition systems.",
+        "Single-view occlusion makes the rear and camera-right elevations approximate."
+      ]
+    },
+    "specDepthDecision": {
+      "requiredDepth": "complex",
+      "minimumComponentLevels": [
+        "macro",
+        "meso",
+        "micro"
+      ],
+      "needsRepetitionSystems": true,
+      "needsMaterialLocalOverrides": true,
+      "needsMultipleReviewViews": true,
+      "needsActionReadyHierarchy": true,
+      "rationale": "Choose simple/moderate/complex/ultra-complex from observed structure, not from a hardcoded domain."
+    },
+    "resolvedUnknowns": [
+      {
+        "id": "hidden-elevations",
+        "resolution": "accepted-approximation",
+        "decision": "Rear and camera-right elevations may continue only the visible massing and material-band grammar; they are presentation approximations, not surveyed architecture.",
+        "confidence": 0.55,
+        "evidence": ".img2threejs/sfmoma-v1/suitability.json"
+      },
+      {
+        "id": "building-dimensions",
+        "resolution": "accepted-approximation",
+        "decision": "All dimensions are normalized image-derived proportions. World placement may apply one uniform scale, but this evidence makes no measured-dimension or map-truth claim.",
+        "confidence": 0.5,
+        "evidence": ".img2threejs/sfmoma-v1/image-analysis.json"
+      },
+      {
+        "id": "tower-roof-termination",
+        "resolution": "accepted-approximation",
+        "decision": "Use the visible crown silhouette as the termination and keep hidden roof detail deliberately plain; no unseen plant or facade modules are invented.",
+        "confidence": 0.52,
+        "evidence": "full-object"
+      },
+      {
+        "id": "transparent-rgb-halo",
+        "resolution": "resolved",
+        "decision": "Treat the RGB halo outside the admitted alpha silhouette as source presentation lighting only; exclude it from geometry and albedo evidence.",
+        "confidence": 0.95,
+        "evidence": ".img2threejs/sfmoma-v1/reference-admission.json"
+      }
+    ],
+    "unknownsToResolveBeforeImplementation": [],
+    "detailInventory": {
+      "scanMethod": "grid-3x3-plus-identity-pass",
+      "targetMinDetails": 10,
+      "note": "The original grid scan remains in .img2threejs/sfmoma-v1/detail-inventory.json. This embedded normalized inventory translates its observations into validator-allowed kinds and slash-qualified component/material targets; build realization is not claimed.",
+      "details": [
+        {
+          "id": "red-tower-vertical-ribs",
+          "kind": "ridge",
+          "description": "Dense vertical red ribs.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "redTower/ribArray"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "red-tower-glazed-slot",
+          "kind": "hole",
+          "description": "Tall glazed slot inside the red fold.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "redTower/glazedSlot"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "white-gallery-cantilevers",
+          "kind": "contour",
+          "description": "Asymmetric stacked gallery cantilevers.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "galleryStack/cantileverHierarchy"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "concrete-panel-seams",
+          "kind": "seam",
+          "description": "Pale concrete panel joints.",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "paleConcrete/panelJointLines"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "midlevel-curtain-wall",
+          "kind": "linework",
+          "description": "Horizontal glass band with mullions.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "glassSystems/mullionGrid"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "entry-door-grid",
+          "kind": "seam",
+          "description": "Framed glass entry doors.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "glassSystems/doorGrid"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "entry-stair",
+          "kind": "contour",
+          "description": "Interior stair behind glazing.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "glassSystems/interiorStair"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "dark-louver-band",
+          "kind": "ridge",
+          "description": "Horizontal black louvers.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "architecturalDetails/louverBand"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "glass-balustrades",
+          "kind": "gloss",
+          "description": "Terrace glass guards.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "architecturalDetails/glassGuards"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "roof-parapets",
+          "kind": "contour",
+          "description": "Stepped roof parapets.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "galleryStack/roofParapets"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "glass-interior-warmth",
+          "kind": "emissive",
+          "description": "Warm values behind cool glass.",
+          "mapsTo": {
+            "type": "material.localOverrides",
+            "ref": "blueGrayGlass/interiorWarmth"
+          },
+          "realization": "spec-authored; build review not claimed"
+        },
+        {
+          "id": "deep-entry-reveal",
+          "kind": "groove",
+          "description": "Deep central entry recess.",
+          "mapsTo": {
+            "type": "component.localFeatures",
+            "ref": "darkPodium/entryReveal"
+          },
+          "realization": "spec-authored; build review not claimed"
+        }
+      ]
+    },
+    "anatomy": {
+      "applies": false,
+      "styleHeads": 0.0,
+      "proportions": {
+        "headUnit": 0.0,
+        "torso": 0.0,
+        "legs": 0.0,
+        "shoulderWidth": 0.0,
+        "hipWidth": 0.0
+      },
+      "pose": {
+        "type": "unassessed",
+        "jointAngles": {}
+      },
+      "faceLandmarks": {
+        "eyeLine": 0.0,
+        "eyeSpacing": 0.0,
+        "noseBase": 0.0,
+        "mouthLine": 0.0,
+        "hairline": 0.0
+      },
+      "features": [],
+      "confidence": 0.0,
+      "note": "Only meaningful when objectClass.primaryDomain is character or hybrid. Set applies=true and fill from forge/stage1_intake/extract_landmarks.py. See grimoire/character/reconstruction.md and grimoire/character/likeness_maximization.md."
+    },
+    "sourceImage": "public/assets/hero/sfmoma-img2threejs-v1/reference.png"
+  },
+  "qualityContract": {
+    "qualityBar": "complex",
+    "definitionOfDone": [
+      "The five committed runtime groups remain independently named and selectable: sfmoma.darkPodium, sfmoma.galleryStack, sfmoma.redTower, sfmoma.glassSystems, and sfmoma.architecturalDetails.",
+      "The reference view preserves the asymmetric gallery stack, recessed podium entry, red folded tower with glazed slot, and horizontal curtain-wall bands without claiming surveyed dimensions.",
+      "Ribs, mullions, door frames, louvers, panel seams, stair treads, guards, and parapets use deterministic repetition or named feature groups rather than prose-only intent.",
+      "Pale concrete and red cladding expose independent albedo, roughness, height/normal, and AO evidence channels; the evidence remains explicitly single-image inference.",
+      "Neutral, grazing, reference, side, and rear-orbit captures remain required before any visual completion claim; hidden elevations are accepted approximations."
+    ],
+    "minimumSpecDepth": {
+      "macroComponents": 6,
+      "mesoComponents": 13,
+      "microFeatureGroups": 12,
+      "materialLayers": 6,
+      "repetitionSystems": 5,
+      "reviewViewpoints": 5
+    },
+    "featureGroups": [
+      {
+        "id": "overall-silhouette",
+        "name": "Overall silhouette and proportions",
+        "required": true,
+        "qualityCriteria": [
+          "Bounding shape, dominant curves, negative spaces, and scale relationships are explicitly described."
+        ],
+        "evidenceRefs": [
+          "full-object"
+        ],
+        "failureModes": [
+          "model reads as a generic placeholder instead of the reference object",
+          "major proportions are guessed without evidence"
+        ]
+      },
+      {
+        "id": "primary-structure",
+        "name": "Primary structure and hierarchy",
+        "required": true,
+        "qualityCriteria": [
+          "Major parts, joints, seams, contact points, and parent-child relationships are named before code generation."
+        ],
+        "evidenceRefs": [
+          "full-object"
+        ],
+        "failureModes": [
+          "large visible parts are merged into one mesh",
+          "component hierarchy is too shallow for the observed complexity"
+        ]
+      },
+      {
+        "id": "attachment-joint-correctness",
+        "name": "Attachment and joint correctness",
+        "required": true,
+        "qualityCriteria": [
+          "Every visible child appendage, branch, limb, handle, connector, tube, cable, horn, wing, leg, or hinged part has an attachment contract with parent socket, localStart/localEnd, contact type, embed/overlap, and gap tolerance."
+        ],
+        "evidenceRefs": [
+          "full-object"
+        ],
+        "failureModes": [
+          "child part root floats away from the parent",
+          "branch/limb/tube is centered in space instead of pivoting from its root",
+          "parent-child transform mixes world and local coordinates"
+        ]
+      },
+      {
+        "id": "surface-material-response",
+        "name": "Surface material response",
+        "required": true,
+        "qualityCriteria": [
+          "Albedo zones, roughness, normal/bump/displacement intent, cavity dirt, edge wear, and local overrides are specified where visible.",
+          "Important materials define independent albedo, roughness, height/normal, and AO responses instead of reusing one texture for unrelated PBR channels.",
+          "Surface response is decomposed into macro, meso, and micro frequency bands with scale and amplitude tied to object scale."
+        ],
+        "evidenceRefs": [
+          "full-object"
+        ],
+        "failureModes": [
+          "surface looks like flat plastic",
+          "local material variation is missing or not tied to image evidence"
+        ]
+      },
+      {
+        "id": "reference-lookdev",
+        "name": "Reference color, material, and lighting response",
+        "required": true,
+        "qualityCriteria": [
+          "Material-pass names the reference-derived albedo palette, roughness variation, tactile normal/bump/displacement response, and local masks.",
+          "When a source image is available, run reference PBR extraction and require confidence >= 0.7 before treating maps as implementation-ready.",
+          "Lighting-pass names key/fill/rim or environment light, exposure, tone mapping, background, and contact shadow behavior.",
+          "Neutral, grazing-angle, and reference-matched renders prove that surface relief survives relighting and is not painted into albedo."
+        ],
+        "evidenceRefs": [
+          "full-object"
+        ],
+        "failureModes": [
+          "model has acceptable shape but reads as flat shaded or plastic",
+          "colors are a generic average instead of reference-observed local color zones",
+          "lighting is evenly ambient and cannot reproduce the source value range"
+        ]
+      }
+    ],
+    "visualDeltaChecks": [
+      "silhouette and negative-space delta",
+      "component hierarchy depth delta",
+      "repetition density and distribution delta",
+      "material albedo/roughness/normal response delta",
+      "local feature placement and scale delta"
+    ],
+    "antiShallowSpecRules": [
+      "Do not proceed to code if qualityContract.qualityBar is unassessed.",
+      "Do not proceed to code if the spec only contains a root component for a moderate or complex object.",
+      "Do not proceed to code if required featureGroups are not represented by componentTree, materials, or repetitionSystems.",
+      "Do not proceed to code if visible local features are described only in prose and not attached to components/materials/evidenceRefs.",
+      "Do not proceed past structural-pass if attached child parts lack attachment.parentSocket, localStart, localEnd, embedDepth/overlap, and gapTolerance.",
+      "Do not pass material look-dev when albedo is reused as roughness, height, normal, or AO.",
+      "Do not pass material look-dev without macro, meso, and micro surface frequency bands for close-up materials.",
+      "Do not pass reference-fidelity material look-dev from a source image without usable referencePbr maps or an explicit documented limitation.",
+      "Do not patch a spec with extracted PBR maps when extraction confidence is below the target threshold unless the user explicitly accepts lower fidelity.",
+      "Do not place adjacent separate-geometry parts below 0.02 world-unit seam overlap (source: grimoire/build/geometry_patterns.md).",
+      "Do not satisfy raised or recessed relief, fasteners, or grip structure with a map alone when the feature affects form; use geometry or displacement (source: grimoire/build/geometry_patterns.md).",
+      "Adjacent components must overlap by at least 0.02 world units at shared seams (source: grimoire/build/geometry_patterns.md).",
+      "Raised or recessed relief and fasteners must be geometry, instanced micro-parts, or displacement; a map alone is an approximation (source: grimoire/build/geometry_patterns.md)."
+    ],
+    "mustNotDo": [
+      "Do not proceed to code if qualityContract.qualityBar is unassessed.",
+      "Do not proceed to code if the spec only contains a root component for a moderate or complex object.",
+      "Do not proceed to code if required featureGroups are not represented by componentTree, materials, or repetitionSystems.",
+      "Do not proceed to code if visible local features are described only in prose and not attached to components/materials/evidenceRefs.",
+      "Do not proceed past structural-pass if attached child parts lack attachment.parentSocket, localStart, localEnd, embedDepth/overlap, and gapTolerance.",
+      "Do not pass material look-dev when albedo is reused as roughness, height, normal, or AO.",
+      "Do not pass material look-dev without macro, meso, and micro surface frequency bands for close-up materials.",
+      "Do not pass reference-fidelity material look-dev from a source image without usable referencePbr maps or an explicit documented limitation.",
+      "Do not patch a spec with extracted PBR maps when extraction confidence is below the target threshold unless the user explicitly accepts lower fidelity.",
+      "Do not place adjacent separate-geometry parts below 0.02 world-unit seam overlap (source: grimoire/build/geometry_patterns.md).",
+      "Do not satisfy raised or recessed relief, fasteners, or grip structure with a map alone when the feature affects form; use geometry or displacement (source: grimoire/build/geometry_patterns.md).",
+      "Adjacent components must overlap by at least 0.02 world units at shared seams (source: grimoire/build/geometry_patterns.md).",
+      "Raised or recessed relief and fasteners must be geometry, instanced micro-parts, or displacement; a map alone is an approximation (source: grimoire/build/geometry_patterns.md)."
+    ]
+  },
+  "qualityTargets": {
+    "targetFidelity": 0.7,
+    "mustMatch": [
+      "macro silhouette and proportions",
+      "primary material albedo/roughness response",
+      "reference-derived PBR material response at or above 0.7 confidence when source pixels are usable",
+      "most recognizable local features"
+    ],
+    "niceToHave": [
+      "micro scratches, stains, chips, and dirt masks",
+      "secondary lighting match"
+    ],
+    "fpsTarget": 60,
+    "reviewViewpoints": [
+      "front",
+      "three-quarter",
+      "side",
+      "thickness-axis",
+      "long-axis"
+    ]
+  },
+  "selfCorrectLoop": {
+    "enabled": true,
+    "visualAcceptance": {
+      "reviewer": "ai-vision",
+      "threshold": 0.7,
+      "comparisonArtifactRequired": true,
+      "layerScoresRequired": true,
+      "codePixelDiffIsAcceptanceAuthority": false,
+      "scoringRule": "AI vision must inspect a side-by-side reference/render sheet and score the current pass from 0 to 1. Pixel-diff code may assist diagnostics but cannot approve a pass.",
+      "requiredLayerScores": [
+        "silhouetteProportion",
+        "componentStructure",
+        "formDetail",
+        "materialSurface",
+        "lightingCamera"
+      ],
+      "featureReviewPolicy": {
+        "enabled": true,
+        "reviewUnit": "semantic-subsystem",
+        "maxCriticalFeaturesPerPass": 5,
+        "maxImportantFeaturesPerPass": 3,
+        "criticalDefaultThreshold": 0.8,
+        "importantAverageThreshold": 0.65,
+        "adaptiveEscalation": true,
+        "singleImagePairOnly": true,
+        "selectionRule": "Choose only the most visually salient, identity-defining, user-prioritized, or high-risk semantic systems. Group repeated parts instead of reviewing every mesh. AI vision scores every selected feature from the same full reference/render pair."
+      }
+    },
+    "reviewAfterPasses": [
+      "blockout",
+      "structural-pass",
+      "form-refinement",
+      "material-pass",
+      "surface-pass",
+      "lighting-pass",
+      "interaction-pass",
+      "optimization-pass"
+    ],
+    "allowedActions": [
+      "continue",
+      "refine-spec",
+      "refine-code",
+      "request-input",
+      "stop"
+    ],
+    "specRefineTriggers": [
+      "missing component",
+      "wrong primitive family",
+      "wrong proportions",
+      "material layer under-specified",
+      "local feature not traceable to viewEvidence",
+      "reference ambiguity discovered during implementation"
+    ],
+    "codeRefineTriggers": [
+      "spec is adequate but generated geometry/material does not match",
+      "browser render differs from reference",
+      "performance budget exceeded",
+      "lighting hides geometry or material response"
+    ],
+    "stopCriteria": [
+      "target fidelity reached or user accepts current approximation",
+      "remaining gaps require new reference images or manual art"
+    ],
+    "screenshotPolicy": {
+      "requiredForPasses": [
+        "blockout",
+        "structural-pass",
+        "form-refinement",
+        "material-pass",
+        "surface-pass",
+        "lighting-pass",
+        "interaction-pass"
+      ],
+      "preferredCapture": "in-app-browser-screenshot",
+      "fallbackCapture": "user-supplied-screenshot-path",
+      "minimumEvidence": "Each visual pass needs a reference image, rendered screenshot, side-by-side comparison sheet, AI vision score, layer scores, and critique before choosing continue.",
+      "reviewPairRule": "Compare the same camera/viewpoint whenever possible; do not judge a front reference against a random render angle.",
+      "acceptanceAuthority": "AI vision review of the comparison sheet. Code-generated pixel similarity is not sufficient evidence."
+    }
+  },
+  "featureReviewTargets": [
+    {
+      "id": "sfmoma-asymmetric-massing-silhouette",
+      "name": "Asymmetric pale gallery stack against the tall red tower",
+      "tier": "critical",
+      "passIds": [
+        "blockout"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": true,
+      "componentRefs": [
+        "galleryStack",
+        "redTower",
+        "darkPodium"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "red-fold-slot-and-fin-rhythm",
+      "name": "Red folded tower profile, glazed vertical slot, and dense facade-fin rhythm",
+      "tier": "critical",
+      "passIds": [
+        "structural-pass",
+        "form-refinement"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": true,
+      "componentRefs": [
+        "redTower",
+        "towerFold",
+        "towerFacadeFins"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "gallery-cantilever-and-entry-depth",
+      "name": "Stepped gallery cantilevers, roof setbacks, and deeply recessed central entry",
+      "tier": "critical",
+      "passIds": [
+        "structural-pass",
+        "form-refinement"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": true,
+      "componentRefs": [
+        "galleryStack",
+        "darkPodium",
+        "galleryLowerVolumes",
+        "galleryUpperVolumes",
+        "podiumEntry"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "curtain-wall-horizontal-bands",
+      "name": "Blue-gray curtain-wall bands, mullion spacing, and framed entry doors",
+      "tier": "important",
+      "passIds": [
+        "structural-pass",
+        "material-pass"
+      ],
+      "minimumScore": 0.75,
+      "mustPass": false,
+      "componentRefs": [
+        "glassSystems",
+        "curtainWallBands",
+        "entryGlazing"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "concrete-red-glass-lookdev",
+      "name": "Off-white concrete, warm red cladding, charcoal metal, and cool glass response",
+      "tier": "critical",
+      "passIds": [
+        "material-pass",
+        "surface-pass"
+      ],
+      "minimumScore": 0.75,
+      "mustPass": true,
+      "componentRefs": [
+        "galleryStack",
+        "redTower",
+        "glassSystems"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "architectural-detail-scale-cues",
+      "name": "Panel seams, louvers, stair treads, guards, parapets, and door-grid scale cues",
+      "tier": "important",
+      "passIds": [
+        "form-refinement",
+        "surface-pass"
+      ],
+      "minimumScore": 0.7,
+      "mustPass": false,
+      "componentRefs": [
+        "architecturalDetails",
+        "panelSeamRelief",
+        "podiumLouvers",
+        "terraceGuards",
+        "roofParapets"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    },
+    {
+      "id": "committed-runtime-group-parity",
+      "name": "Selectable root and five committed factory group names remain stable",
+      "tier": "important",
+      "passIds": [
+        "interaction-pass"
+      ],
+      "minimumScore": 0.8,
+      "mustPass": false,
+      "componentRefs": [
+        "root",
+        "darkPodium",
+        "galleryStack",
+        "redTower",
+        "glassSystems",
+        "architecturalDetails"
+      ],
+      "evidenceRefs": [
+        "full-object"
+      ]
+    }
+  ],
+  "sculptPipeline": {
+    "passGateMode": "locked-sequential",
+    "passOrder": [
+      "blockout",
+      "structural-pass",
+      "form-refinement",
+      "material-pass",
+      "surface-pass",
+      "lighting-pass",
+      "interaction-pass",
+      "optimization-pass"
+    ],
+    "currentPass": "blockout",
+    "completedPasses": [],
+    "lastCompletedPass": "",
+    "blockedReason": "blockout requires a browser screenshot and self-correction review before structural-pass unlocks",
+    "nextRequiredEvidence": [
+      "blockout browser render screenshot from your agent's browser/screenshot tool",
+      "side-by-side reference/render comparison sheet",
+      "AI vision score >= 0.7 with layer scores and mismatch critique",
+      "critical semantic feature scores from the same image pair meeting their individual thresholds",
+      "reviewHistory entry for blockout with action=continue"
+    ]
+  },
+  "lookDevTargets": {
+    "qualityPriority": "reference-fidelity",
+    "materialPass": {
+      "albedoPaletteRequired": true,
+      "roughnessVariationRequired": true,
+      "normalOrBumpRequired": true,
+      "localOverridesRequired": true,
+      "minimumTextureResolution": 1024,
+      "preferredTextureResolution": 2048,
+      "independentMapChannels": [
+        "albedo",
+        "roughness",
+        "height",
+        "normal",
+        "ambient-occlusion"
+      ],
+      "requiredSurfaceFrequencyBands": [
+        "macro",
+        "meso",
+        "micro"
+      ],
+      "geometryReliefRequiredWhenSilhouetteAffected": true,
+      "referencePbrExtraction": {
+        "requiredWhenSourceImagePresent": true,
+        "targetThreshold": 0.7,
+        "stopOnLowConfidence": true,
+        "script": "forge/stage1_intake/extract_pbr_evidence.py",
+        "acceptedLimitation": "single-image extraction is reference-derived inference, not exact photogrammetry"
+      },
+      "mustAvoid": [
+        "single flat albedo per material",
+        "uniform roughness",
+        "albedo texture reused as roughness/height/normal/AO",
+        "single-frequency random noise",
+        "plastic-looking smooth bark, stone, cloth, foliage, or aged material",
+        "local color/detail described only in prose without material masks",
+        "claiming exact PBR recovery when confidence is below the target threshold"
+      ]
+    },
+    "lightingPass": {
+      "requiredTerms": [
+        "key light",
+        "fill light",
+        "rim or environment light",
+        "exposure",
+        "tone mapping",
+        "background",
+        "contact shadow"
+      ],
+      "mustAvoid": [
+        "ambient-only lighting",
+        "flat value range",
+        "missing contact shadow",
+        "reference lighting copied without separating material readability"
+      ]
+    },
+    "screenshotReview": [
+      "Compare albedo palette and local color zones.",
+      "Compare roughness/normal/bump response under light.",
+      "Compare cavity dirt, edge wear, stains, moss, scratches, or other local masks.",
+      "Compare key/fill/rim structure, exposure, tone mapping, background, and contact shadows.",
+      "Capture a neutral-light render to verify material readability without reference lighting.",
+      "Capture a grazing-light close-up to expose flat normals, uniform roughness, tiling, and plastic highlights.",
+      "Capture a reference-matched render from the same camera framing as the source."
+    ]
+  },
+  "actionReadiness": {
+    "contract": "The spec targets the committed SFMOMA factory hierarchy by exact runtime node name. This records intended targeting metadata only; build, part-coverage, clickability, explodability, and sculptRuntime remain unproven gates.",
+    "defaultRigType": "action-ready-static-rig",
+    "rootMotionNode": "root",
+    "factoryRootName": "SFMOMA generated landmark v1",
+    "factoryGroupMapping": [
+      { "componentId": "darkPodium", "runtimeNodeName": "sfmoma.darkPodium" },
+      { "componentId": "galleryStack", "runtimeNodeName": "sfmoma.galleryStack" },
+      { "componentId": "redTower", "runtimeNodeName": "sfmoma.redTower" },
+      { "componentId": "glassSystems", "runtimeNodeName": "sfmoma.glassSystems" },
+      { "componentId": "architecturalDetails", "runtimeNodeName": "sfmoma.architecturalDetails" }
+    ],
+    "requiredComponentFields": [
+      "id",
+      "parent",
+      "transform",
+      "attachment for child appendages, connectors, limbs, tubes, handles, legs, horns, wings, branches, or cables",
+      "actionProfile.animationRole",
+      "actionProfile.pivot",
+      "actionProfile.collider",
+      "actionProfile.destruction"
+    ],
+    "transformChannels": [
+      "translate",
+      "rotate",
+      "scale",
+      "bend",
+      "twist",
+      "detach",
+      "visibility",
+      "material-state"
+    ],
+    "authoringRules": [
+      "Preserve exactly one root named SFMOMA generated landmark v1.",
+      "Preserve the five committed child-group names sfmoma.darkPodium, sfmoma.galleryStack, sfmoma.redTower, sfmoma.glassSystems, and sfmoma.architecturalDetails.",
+      "Keep transforms on named component groups so a later picker or explode system can target semantic groups without traversing anonymous meshes.",
+      "Treat all five architectural groups as static and non-breakable until part-coverage and action-ready gates provide runtime evidence.",
+      "Use compound box colliders as future intent only; this spec does not certify collision geometry or map coordinates."
+    ],
+    "destructionPolicy": {
+      "defaultBreakable": false,
+      "fractureGroupNaming": "Use stable semantic names such as body-shell, left-hinge, glass-panel, branch-segment.",
+      "debrisStrategy": "Prefer detachable component groups and a small number of procedural fragments over random mesh explosion."
+    }
+  },
+  "assumptions": [
+    "The admitted source is a single isolated concept view; rear and camera-right elevations are accepted presentation approximations with confidence 0.55.",
+    "All component dimensions are normalized proportions inferred from the reference and are not surveyed SFMOMA dimensions, EPSG:26910 coordinates, or source truth.",
+    "The committed factory's top-level node names are read from src/citygen/landmarks/sfmoma-generated-v1.js; this spec records parity but does not claim the factory was generated from this repaired spec.",
+    "The reference-wide PBR extraction is single-image evidence capped at 0.86 confidence; material-specific values remain bounded inference and require neutral/grazing render review.",
+    "The transparent RGB halo is excluded from albedo and geometry because reference admission identifies it as presentation background."
+  ],
+  "coordinateFrame": {
+    "front": "+Z faces the admitted reference camera",
+    "up": "+Y is architectural vertical",
+    "right": "+X follows the facade width in object-local space",
+    "scaleReference": "Normalized object-local proportions only; one later uniform world scale is allowed and is not evidence of surveyed dimensions."
+  },
+  "silhouette": {
+    "boundingShape": "A broad stepped rectilinear gallery stack is interrupted by a narrow red tower rising above the camera-right half; the dark podium grounds both masses.",
+    "aspectRatios": [
+      "overall width:height approximately 1.39:1 from the admitted alpha silhouette",
+      "red tower height is approximately 1.4 times the pale roof-gallery height",
+      "podium depth remains an inferred three-quarter proportion and is not measured"
+    ],
+    "symmetry": "",
+    "dominantCurves": [],
+    "negativeSpaces": [],
+    "landmarks": []
+  },
+  "viewEvidence": [
+    {
+      "id": "full-object",
+      "view": "primary",
+      "imageRegion": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1.0,
+        "height": 1.0,
+        "units": "normalized"
+      },
+      "observations": [],
+      "confidence": 0.5
+    }
+  ],
+  "componentTree": [
+    {
+      "id": "root",
+      "name": "SFMOMA generated landmark v1",
+      "level": "macro",
+      "role": "runtime-root",
+      "importance": 1.0,
+      "confidence": 1.0,
+      "primitive": "box",
+      "topologyClass": "material-only",
+      "topologyRationale": "The committed root is a transform and metadata group with no independent visible surface.",
+      "parent": null,
+      "attachment": null,
+      "dimensions": {
+        "width": 38.0,
+        "height": 38.9,
+        "depth": 16.0,
+        "units": "normalized-factory-units-not-survey-metres",
+        "confidence": 0.6
+      },
+      "transform": {
+        "position": [0, 0, 0],
+        "rotation": [0, 0, 0],
+        "scale": [1, 1, 1]
+      },
+      "actionProfile": {
+        "animationRole": "root",
+        "runtimeNodeName": "SFMOMA generated landmark v1",
+        "pivot": {
+          "mode": "ground-base",
+          "localPosition": [0, 0, 0],
+          "axis": [0, 1, 0],
+          "confidence": 1.0
+        },
+        "transformChannels": {
+          "translate": true,
+          "rotate": true,
+          "scale": true,
+          "bend": false,
+          "twist": false,
+          "detach": false,
+          "visibility": true,
+          "materialState": true
+        },
+        "sockets": [],
+        "collider": {
+          "type": "compound-box-intent-unverified",
+          "offset": [0, 19.45, 0],
+          "scale": [38, 38.9, 16],
+          "isTrigger": false,
+          "notes": "Future intent only; no collision or map-truth gate is claimed."
+        },
+        "constraints": [],
+        "destruction": {
+          "breakable": false,
+          "fractureGroup": "root",
+          "seamRefs": [],
+          "detachableFragments": [],
+          "breakImpulse": 0.0,
+          "debrisMaterial": "charcoalMetal"
+        }
+      },
+      "material": "charcoalMetal",
+      "materialLayers": ["charcoalMetal"],
+      "localFeatures": [],
+      "evidenceRefs": ["full-object"]
+    },
+    {
+      "id": "darkPodium",
+      "name": "Dark podium group",
+      "level": "macro",
+      "role": "architectural-volume",
+      "importance": 0.92,
+      "confidence": 0.94,
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "topologyRationale": "The reference shows a rigid rectilinear base with countable faces and a recessed entry cut.",
+      "parent": "root",
+      "attachment": null,
+      "dimensions": {"width": 38, "height": 5.3, "depth": 14.4, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.78},
+      "transform": {"position": [0, 2.65, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+      "actionProfile": {
+        "animationRole": "static-group",
+        "runtimeNodeName": "sfmoma.darkPodium",
+        "pivot": {"mode": "ground-base", "localPosition": [0, -2.65, 0], "axis": [0, 1, 0], "confidence": 0.9},
+        "transformChannels": {"translate": false, "rotate": false, "scale": false, "detach": false, "visibility": true, "materialState": true},
+        "sockets": [],
+        "collider": {"type": "box-intent-unverified", "offset": [0, 0, 0], "scale": [38, 5.3, 14.4], "isTrigger": false},
+        "constraints": [],
+        "destruction": {"breakable": false, "fractureGroup": "dark-podium", "seamRefs": [], "detachableFragments": [], "breakImpulse": 0, "debrisMaterial": "charcoalMetal"}
+      },
+      "material": "charcoalMetal",
+      "materialLayers": ["charcoalMetal", "paleConcrete", "warmInterior"],
+      "localFeatures": [
+        {"id": "entryReveal", "kind": "recessed groove", "implementation": "real inset volume and dark reveal, not a painted patch", "evidenceRefs": ["full-object"]},
+        {"id": "floatingCanopy", "kind": "cantilevered slab", "implementation": "thin pale slab projects from the podium face", "evidenceRefs": ["full-object"]}
+      ],
+      "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(226, 224, 215, 1)", "materialClass": "metal", "materialClassConfidence": 0.72},
+      "evidenceRefs": ["full-object"]
+    },
+    {
+      "id": "galleryStack",
+      "name": "Gallery stack group",
+      "level": "macro",
+      "role": "architectural-volume",
+      "importance": 1.0,
+      "confidence": 0.97,
+      "primitive": "box",
+      "topologyClass": "assembled-solid",
+      "topologyRationale": "The visible gallery hierarchy is a set of discrete rigid boxes with deep offsets and countable faces.",
+      "parent": "root",
+      "attachment": null,
+      "dimensions": {"width": 38, "height": 23.5, "depth": 12.4, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.74},
+      "transform": {"position": [0, 16, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+      "actionProfile": {
+        "animationRole": "static-group",
+        "runtimeNodeName": "sfmoma.galleryStack",
+        "pivot": {"mode": "ground-base", "localPosition": [0, -11.75, 0], "axis": [0, 1, 0], "confidence": 0.88},
+        "transformChannels": {"translate": false, "rotate": false, "scale": false, "detach": false, "visibility": true, "materialState": true},
+        "sockets": [],
+        "collider": {"type": "compound-box-intent-unverified", "offset": [0, 0, 0], "scale": [38, 23.5, 12.4], "isTrigger": false},
+        "constraints": [],
+        "destruction": {"breakable": false, "fractureGroup": "gallery-stack", "seamRefs": [], "detachableFragments": [], "breakImpulse": 0, "debrisMaterial": "paleConcrete"}
+      },
+      "material": "paleConcrete",
+      "materialLayers": ["paleConcrete", "blueGrayGlass"],
+      "localFeatures": [
+        {"id": "cantileverHierarchy", "kind": "silhouette contour", "implementation": "six independently proportioned stepped boxes with asymmetric offsets", "evidenceRefs": ["full-object"]},
+        {"id": "roofParapets", "kind": "raised contour", "implementation": "low parapet volumes on visible upper gallery roofs", "evidenceRefs": ["full-object"]},
+        {"id": "panelSetbacks", "kind": "depth hierarchy", "implementation": "front planes alternate in depth to retain reference self-shadow", "evidenceRefs": ["full-object"]}
+      ],
+      "colorMaterialRecipe": {"dominantAlbedo": "rgba(226, 224, 215, 1)", "secondaryAlbedo": "rgba(166, 163, 164, 1)", "materialClass": "stone", "materialClassConfidence": 0.78},
+      "evidenceRefs": ["full-object"]
+    },
+    {
+      "id": "redTower",
+      "name": "Red folded tower group",
+      "level": "macro",
+      "role": "architectural-volume",
+      "importance": 1.0,
+      "confidence": 0.95,
+      "primitive": "extrude",
+      "topologyClass": "assembled-solid",
+      "topologyRationale": "A hard-edged folded facade profile extruded through depth matches the visible tapered tower better than a generic box.",
+      "geometryDescriptor": {"topologyIntent": "closed folded facade profile with a separate wing and crown", "edgeTreatment": {"type": "bevel", "bevelRadius": 0.09, "segments": 3}, "deformationStack": [], "uvStrategy": "generated planar facade coordinates", "normalStrategy": "computed vertex normals"},
+      "parent": "root",
+      "attachment": null,
+      "dimensions": {"width": 10, "height": 34.2, "depth": 5.7, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.7},
+      "transform": {"position": [5.45, 4.7, 0.4], "rotation": [0, -0.035, 0], "scale": [1, 1, 1]},
+      "actionProfile": {
+        "animationRole": "static-group",
+        "runtimeNodeName": "sfmoma.redTower",
+        "pivot": {"mode": "ground-base", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.9},
+        "transformChannels": {"translate": false, "rotate": false, "scale": false, "detach": false, "visibility": true, "materialState": true},
+        "sockets": [],
+        "collider": {"type": "compound-box-intent-unverified", "offset": [0, 17.1, 0], "scale": [10, 34.2, 5.7], "isTrigger": false},
+        "constraints": [],
+        "destruction": {"breakable": false, "fractureGroup": "red-tower", "seamRefs": [], "detachableFragments": [], "breakImpulse": 0, "debrisMaterial": "redCladding"}
+      },
+      "material": "redCladding",
+      "materialLayers": ["redCladding", "redRibs", "blueGrayGlass"],
+      "localFeatures": [
+        {"id": "ribArray", "kind": "raised ridge array", "implementation": "40 instanced vertical facade elements split across front and rear faces", "evidenceRefs": ["full-object"]},
+        {"id": "glazedSlot", "kind": "real aperture", "implementation": "tall glazed inset is bounded by the folded red profile rather than painted on", "evidenceRefs": ["full-object"]},
+        {"id": "foldedWing", "kind": "asymmetric extruded profile", "implementation": "camera-left diagonal wing overlaps the primary tower volume", "evidenceRefs": ["full-object"]}
+      ],
+      "colorMaterialRecipe": {"dominantAlbedo": "rgba(142, 35, 28, 1)", "secondaryAlbedo": "rgba(208, 88, 74, 1)", "materialClass": "metal", "materialClassConfidence": 0.7},
+      "evidenceRefs": ["full-object"]
+    },
+    {
+      "id": "glassSystems",
+      "name": "Glass systems group",
+      "level": "macro",
+      "role": "facade-system",
+      "importance": 0.9,
+      "confidence": 0.86,
+      "primitive": "plane-card",
+      "topologyClass": "conforming-shell",
+      "topologyRationale": "The visible glazing reads as thin curtain-wall surfaces following the gallery faces rather than solid volumes.",
+      "parent": "root",
+      "attachment": null,
+      "dimensions": {"width": 30.5, "height": 23, "depth": 0.2, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.68},
+      "transform": {"position": [0, 12, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+      "actionProfile": {
+        "animationRole": "static-group",
+        "runtimeNodeName": "sfmoma.glassSystems",
+        "pivot": {"mode": "ground-base", "localPosition": [0, -12, 0], "axis": [0, 1, 0], "confidence": 0.82},
+        "transformChannels": {"translate": false, "rotate": false, "scale": false, "detach": false, "visibility": true, "materialState": true},
+        "sockets": [],
+        "collider": {"type": "none-presentation-only", "offset": [0, 0, 0], "scale": [1, 1, 1], "isTrigger": false},
+        "constraints": [],
+        "destruction": {"breakable": false, "fractureGroup": "glass-systems", "seamRefs": [], "detachableFragments": [], "breakImpulse": 0, "debrisMaterial": "blueGrayGlass"}
+      },
+      "material": "blueGrayGlass",
+      "materialLayers": ["blueGrayGlass", "warmInterior", "charcoalMetal"],
+      "localFeatures": [
+        {"id": "mullionGrid", "kind": "facade linework", "implementation": "regular vertical mullions plus horizontal rails aligned to each glass band", "evidenceRefs": ["full-object"]},
+        {"id": "doorGrid", "kind": "framed seam grid", "implementation": "four glass door leaves with five vertical frame members and a head rail", "evidenceRefs": ["full-object"]},
+        {"id": "interiorStair", "kind": "interior contour", "implementation": "eight repeated stair treads remain behind the glass plane", "evidenceRefs": ["full-object"]},
+        {"id": "bandContinuity", "kind": "horizontal facade contour", "implementation": "seven bands preserve visible front and explicitly approximate rear continuity", "evidenceRefs": ["full-object"]}
+      ],
+      "colorMaterialRecipe": {"dominantAlbedo": "rgba(87, 118, 132, 0.72)", "secondaryAlbedo": "rgba(47, 43, 44, 0.88)", "materialClass": "glass", "materialClassConfidence": 0.74},
+      "evidenceRefs": ["full-object"]
+    },
+    {
+      "id": "architecturalDetails",
+      "name": "Architectural details group",
+      "level": "macro",
+      "role": "facade-detail-system",
+      "importance": 0.83,
+      "confidence": 0.82,
+      "primitive": "instanced-cluster",
+      "topologyClass": "surface-relief",
+      "topologyRationale": "Panel seams, louvers, guards, and parapets are repeated relief or thin edge elements attached to the main volumes.",
+      "parent": "root",
+      "attachment": null,
+      "dimensions": {"width": 38, "height": 28.8, "depth": 0.5, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.66},
+      "transform": {"position": [0, 14.4, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+      "actionProfile": {
+        "animationRole": "static-group",
+        "runtimeNodeName": "sfmoma.architecturalDetails",
+        "pivot": {"mode": "ground-base", "localPosition": [0, -14.4, 0], "axis": [0, 1, 0], "confidence": 0.8},
+        "transformChannels": {"translate": false, "rotate": false, "scale": false, "detach": false, "visibility": true, "materialState": true},
+        "sockets": [],
+        "collider": {"type": "none-presentation-only", "offset": [0, 0, 0], "scale": [1, 1, 1], "isTrigger": false},
+        "constraints": [],
+        "destruction": {"breakable": false, "fractureGroup": "architectural-details", "seamRefs": [], "detachableFragments": [], "breakImpulse": 0, "debrisMaterial": "charcoalMetal"}
+      },
+      "material": "charcoalMetal",
+      "materialLayers": ["charcoalMetal", "paleConcrete", "blueGrayGlass"],
+      "localFeatures": [
+        {"id": "louverBand", "kind": "raised ridge array", "implementation": "12 horizontal slats on the lower camera-right facade", "evidenceRefs": ["full-object"]},
+        {"id": "glassGuards", "kind": "low-roughness edge shells", "implementation": "three thin glass guards align to terrace edges", "evidenceRefs": ["full-object"]},
+        {"id": "panelSeams", "kind": "recessed seam relief", "implementation": "instanced horizontal and vertical lines follow gallery panel divisions", "evidenceRefs": ["full-object"]}
+      ],
+      "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(87, 118, 132, 0.72)", "materialClass": "metal", "materialClassConfidence": 0.72},
+      "evidenceRefs": ["full-object"]
+    },
+    {"id": "podiumShell", "name": "Podium shell volume", "level": "meso", "role": "facade-volume", "importance": 0.86, "confidence": 0.92, "primitive": "box", "topologyClass": "assembled-solid", "topologyRationale": "Rigid dark rectilinear shell with countable faces.", "parent": "darkPodium", "attachment": null, "dimensions": {"width": 38, "height": 5.3, "depth": 14.4, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.78}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA podium shell", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.8}}, "material": "charcoalMetal", "materialLayers": ["charcoalMetal"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(47, 43, 44, 1)", "materialClass": "metal", "materialClassConfidence": 0.72}, "evidenceRefs": ["full-object"]},
+    {"id": "podiumEntry", "name": "Deep entry reveal volume", "level": "meso", "role": "facade-reveal", "importance": 0.9, "confidence": 0.95, "primitive": "box", "topologyClass": "assembled-solid", "topologyRationale": "The entry is a real inset bounded by rigid frame planes and a warm back plane.", "parent": "darkPodium", "attachment": null, "dimensions": {"width": 7.2, "height": 3.75, "depth": 0.36, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.8}, "transform": {"position": [-2.7, -0.5, 7.28], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA deep entry reveal", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.8}}, "material": "charcoalMetal", "materialLayers": ["charcoalMetal", "warmInterior"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(111, 75, 43, 1)", "materialClass": "metal", "materialClassConfidence": 0.7}, "evidenceRefs": ["full-object"]},
+    {"id": "galleryLowerVolumes", "name": "Lower gallery volume set", "level": "meso", "role": "facade-volume", "importance": 0.9, "confidence": 0.93, "primitive": "instanced-cluster", "topologyClass": "assembled-solid", "topologyRationale": "Two rigid lower gallery boxes establish the broad reference silhouette.", "parent": "galleryStack", "attachment": null, "dimensions": {"width": 36.6, "height": 6.4, "depth": 12.4, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.74}, "transform": {"position": [0, -8, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA gallery lower-left + lower-right", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.78}}, "material": "paleConcrete", "materialLayers": ["paleConcrete"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(226, 224, 215, 1)", "secondaryAlbedo": "rgba(166, 163, 164, 1)", "materialClass": "stone", "materialClassConfidence": 0.78}, "evidenceRefs": ["full-object"]},
+    {"id": "galleryUpperVolumes", "name": "Upper gallery volume set", "level": "meso", "role": "facade-volume", "importance": 0.9, "confidence": 0.9, "primitive": "instanced-cluster", "topologyClass": "assembled-solid", "topologyRationale": "Four discrete upper boxes create stepped setbacks and cantilever shadows.", "parent": "galleryStack", "attachment": null, "dimensions": {"width": 32.5, "height": 16.9, "depth": 10.6, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.7}, "transform": {"position": [0, 5, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA gallery middle-left + middle-bridge + upper-gallery + roof-gallery", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.76}}, "material": "paleConcrete", "materialLayers": ["paleConcrete"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(226, 224, 215, 1)", "secondaryAlbedo": "rgba(241, 232, 223, 1)", "materialClass": "stone", "materialClassConfidence": 0.78}, "evidenceRefs": ["full-object"]},
+    {"id": "towerFold", "name": "Folded tower mass volume", "level": "meso", "role": "facade-volume", "importance": 1.0, "confidence": 0.94, "primitive": "extrude", "topologyClass": "assembled-solid", "topologyRationale": "A closed hard-edged profile produces the visible taper and diagonal fold through depth.", "parent": "redTower", "attachment": null, "dimensions": {"width": 4.8, "height": 34.2, "depth": 5.4, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.7}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA red folded tower mass", "pivot": {"mode": "ground-base", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.82}}, "material": "redCladding", "materialLayers": ["redCladding"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(142, 35, 28, 1)", "secondaryAlbedo": "rgba(208, 88, 74, 1)", "materialClass": "metal", "materialClassConfidence": 0.7}, "evidenceRefs": ["full-object"]},
+    {"id": "towerFacadeFins", "name": "Vertical facade rhythm array", "level": "meso", "role": "surface-relief-array", "importance": 0.92, "confidence": 0.96, "primitive": "instanced-cluster", "topologyClass": "surface-relief", "topologyRationale": "Repeated narrow raised elements catch directional highlights without changing the tower's primary volume.", "parent": "redTower", "attachment": null, "dimensions": {"width": 4, "height": 31.4, "depth": 0.17, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.72}, "transform": {"position": [0, 17, 2.83], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA red tower vertical ribs", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.78}}, "material": "redRibs", "materialLayers": ["redRibs"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(143, 37, 31, 1)", "secondaryAlbedo": "rgba(123, 45, 44, 1)", "materialClass": "metal", "materialClassConfidence": 0.7}, "evidenceRefs": ["full-object"]},
+    {"id": "curtainWallBands", "name": "Curtain wall band set", "level": "meso", "role": "facade-shell", "importance": 0.88, "confidence": 0.88, "primitive": "instanced-cluster", "topologyClass": "conforming-shell", "topologyRationale": "Thin glass bands sit flush to front and approximate rear facade planes.", "parent": "glassSystems", "attachment": null, "dimensions": {"width": 30.5, "height": 1.55, "depth": 0.18, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.7}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA curtain wall {entry|lower|middle|upper|rear-*}", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.7}}, "material": "blueGrayGlass", "materialLayers": ["blueGrayGlass", "warmInterior"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(87, 118, 132, 0.72)", "secondaryAlbedo": "rgba(111, 75, 43, 0.82)", "materialClass": "glass", "materialClassConfidence": 0.74}, "evidenceRefs": ["full-object"]},
+    {"id": "entryGlazing", "name": "Entry glazing grid", "level": "meso", "role": "facade-shell", "importance": 0.82, "confidence": 0.91, "primitive": "instanced-cluster", "topologyClass": "conforming-shell", "topologyRationale": "Four thin door panes and their frame grid sit within the recessed entry plane.", "parent": "glassSystems", "attachment": null, "dimensions": {"width": 6.3, "height": 3, "depth": 0.15, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.76}, "transform": {"position": [-2.7, -9.85, 7.58], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA entry door glazing", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.76}}, "material": "blueGrayGlass", "materialLayers": ["blueGrayGlass", "charcoalMetal"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(87, 118, 132, 0.72)", "secondaryAlbedo": "rgba(43, 48, 51, 1)", "materialClass": "glass", "materialClassConfidence": 0.74}, "evidenceRefs": ["full-object"]},
+    {"id": "interiorStairVolumes", "name": "Visible interior stair tread set", "level": "meso", "role": "interior-scale-cue", "importance": 0.7, "confidence": 0.76, "primitive": "instanced-cluster", "topologyClass": "assembled-solid", "topologyRationale": "The reference shows repeated rigid treads behind glazing as a human-scale depth cue.", "parent": "glassSystems", "attachment": null, "dimensions": {"width": 4.64, "height": 1.52, "depth": 1.25, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.62}, "transform": {"position": [-2.5, -10.5, 7.05], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA visible interior stair", "pivot": {"mode": "base", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.68}}, "material": "paleConcrete", "materialLayers": ["paleConcrete"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(226, 224, 215, 1)", "secondaryAlbedo": "rgba(166, 163, 164, 1)", "materialClass": "stone", "materialClassConfidence": 0.7}, "evidenceRefs": ["full-object"]},
+    {"id": "panelSeamRelief", "name": "Concrete panel seam relief set", "level": "meso", "role": "surface-relief-array", "importance": 0.72, "confidence": 0.82, "primitive": "instanced-cluster", "topologyClass": "surface-relief", "topologyRationale": "Thin repeated lines create visible joint relief on pale gallery faces.", "parent": "architecturalDetails", "attachment": null, "dimensions": {"width": 36, "height": 21, "depth": 0.025, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.62}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA concrete panel seam relief", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.65}}, "material": "charcoalMetal", "materialLayers": ["charcoalMetal"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(87, 89, 91, 1)", "materialClass": "metal", "materialClassConfidence": 0.65}, "evidenceRefs": ["full-object"]},
+    {"id": "podiumLouvers", "name": "Dark podium louver band set", "level": "meso", "role": "surface-relief-array", "importance": 0.78, "confidence": 0.94, "primitive": "instanced-cluster", "topologyClass": "surface-relief", "topologyRationale": "Twelve repeated raised horizontal slats are visible on the lower facade.", "parent": "architecturalDetails", "attachment": null, "dimensions": {"width": 5.4, "height": 2.83, "depth": 0.11, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.74}, "transform": {"position": [2.2, -12.3, 7.43], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA dark podium louver band", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.7}}, "material": "charcoalMetal", "materialLayers": ["charcoalMetal"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(43, 48, 51, 1)", "secondaryAlbedo": "rgba(47, 43, 44, 1)", "materialClass": "metal", "materialClassConfidence": 0.72}, "evidenceRefs": ["full-object"]},
+    {"id": "terraceGuards", "name": "Terrace glass guard set", "level": "meso", "role": "facade-shell", "importance": 0.68, "confidence": 0.8, "primitive": "instanced-cluster", "topologyClass": "conforming-shell", "topologyRationale": "Three thin transparent guard panels follow visible terrace edges.", "parent": "architecturalDetails", "attachment": null, "dimensions": {"width": 17.3, "height": 1.05, "depth": 0.12, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.64}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA terrace glass guards", "pivot": {"mode": "center", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.65}}, "material": "blueGrayGlass", "materialLayers": ["blueGrayGlass"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(87, 118, 132, 0.58)", "secondaryAlbedo": "rgba(166, 163, 164, 0.32)", "materialClass": "glass", "materialClassConfidence": 0.72}, "evidenceRefs": ["full-object"]},
+    {"id": "roofParapets", "name": "Stepped roof parapet set", "level": "meso", "role": "facade-volume", "importance": 0.68, "confidence": 0.83, "primitive": "instanced-cluster", "topologyClass": "assembled-solid", "topologyRationale": "Four low rigid parapet volumes interrupt the elevated roof silhouette.", "parent": "architecturalDetails", "attachment": null, "dimensions": {"width": 35, "height": 0.48, "depth": 0.22, "units": "normalized-factory-units-not-survey-metres", "confidence": 0.62}, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}, "actionProfile": {"animationRole": "static", "runtimeNodeName": "SFMOMA stepped roof parapets", "pivot": {"mode": "base", "localPosition": [0, 0, 0], "axis": [0, 1, 0], "confidence": 0.65}}, "material": "paleConcrete", "materialLayers": ["paleConcrete"], "localFeatures": [], "colorMaterialRecipe": {"dominantAlbedo": "rgba(226, 224, 215, 1)", "secondaryAlbedo": "rgba(166, 163, 164, 1)", "materialClass": "stone", "materialClassConfidence": 0.75}, "evidenceRefs": ["full-object"]}
+  ],
+  "materials": [
+    {
+      "id": "paleConcrete",
+      "name": "SFMOMA pale precast concrete",
+      "type": "standard",
+      "shaderModel": "MeshStandardMaterial",
+      "qualityTier": "hero",
+      "baseColor": "#E2E0D7",
+      "color": "#E2E0D7",
+      "albedo": {
+        "dominant": "#E2E0D7",
+        "secondary": ["#F1E8DF", "#A6A3A4"],
+        "samplingNotes": "Warm off-white visible gallery faces; do not include the transparent RGB halo."
+      },
+      "colorVariation": {"palette": ["#E2E0D7", "#F1E8DF", "#A6A3A4"], "pattern": "low-amplitude mineral mottle", "amplitude": 0.06, "heightCorrelation": 0.18},
+      "textureResolution": 2048,
+      "textureProjection": {"mode": "generated object-space planar per facade", "repeat": [3, 5], "anisotropy": 8, "texelDensityIntent": "Keep panel-scale meso marks stable across differently sized gallery boxes."},
+      "surfaceFrequencyBands": [
+        {"id": "macro", "frequency": 1.5, "amplitude": 0.04, "role": "broad warm-to-neutral facade value drift"},
+        {"id": "meso", "frequency": 9, "amplitude": 0.035, "role": "panel rhythm and shallow joint cavities"},
+        {"id": "micro", "frequency": 56, "amplitude": 0.012, "role": "fine precast grain under grazing light"}
+      ],
+      "roughness": {"base": 0.78, "variation": 0.12, "map": "sfmoma-concept-reference_roughness.png independent linear channel", "localResponse": "joint cavities remain rougher than broad faces"},
+      "metalness": {"base": 0.02, "variation": 0},
+      "normal": {"pattern": "sfmoma-concept-reference_normal.png independent tangent-space evidence", "strength": 0.22, "scale": 48, "space": "tangent"},
+      "bump": {"pattern": "independent height evidence", "amplitude": 0.045, "scale": 42},
+      "ambientOcclusion": {"map": "sfmoma-concept-reference_ao.png independent linear channel", "cavityStrength": 0.22, "contactShadowBias": 0.3, "notes": "Only joints, recesses, and contacts darken; no key-light direction is baked."},
+      "dirt": {"amount": 0.02, "cavityBias": 0.65, "color": "#8F8C84"},
+      "localOverrides": [
+        {"id": "panelJointLines", "region": "visible horizontal and vertical panel divisions", "roughness": 0.86, "aoStrength": 0.38, "kind": "seam", "evidenceRefs": ["full-object"]},
+        {"id": "cantileverContactShade", "region": "gallery undersides and wall contacts", "roughness": 0.82, "aoStrength": 0.42, "kind": "stain", "evidenceRefs": ["full-object"]}
+      ],
+      "referencePbr": {
+        "version": "1",
+        "sourceImage": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+        "extractor": "forge/stage1_intake/extract_pbr_evidence.py",
+        "method": "reference-wide alpha-masked single-image inference",
+        "verdict": "pass-with-explicit-limit",
+        "usable": true,
+        "confidence": 0.86,
+        "estimatedFidelity": 0.86,
+        "targetThreshold": 0.7,
+        "hardLimit": "The crop spans multiple facade materials; channels are independent reference evidence, not exact concrete inverse rendering or surveyed material truth.",
+        "maps": {
+          "albedo": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_albedo.png", "channel": "albedo", "source": "reference-pixel-extraction-srgb"},
+          "roughness": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_roughness.png", "channel": "roughness", "source": "independent-reference-inference-linear"},
+          "height": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_height.png", "channel": "height", "source": "independent-reference-inference-linear"},
+          "normal": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_normal.png", "channel": "normal", "source": "height-derived-independent-tangent-space"},
+          "ao": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_ao.png", "channel": "ao", "source": "independent-reference-inference-linear"}
+        }
+      }
+    },
+    {
+      "id": "redCladding",
+      "name": "SFMOMA warm red folded cladding",
+      "type": "standard",
+      "shaderModel": "MeshStandardMaterial",
+      "qualityTier": "hero",
+      "baseColor": "#8E231C",
+      "albedo": {"dominant": "#8E231C", "secondary": ["#7B2D2C", "#D0584A"], "samplingNotes": "Reference-visible tower only; hidden sides use restrained continuation."},
+      "colorVariation": {"palette": ["#8E231C", "#7B2D2C", "#D0584A"], "pattern": "vertical low-amplitude cladding drift", "amplitude": 0.08, "heightCorrelation": 0.16},
+      "textureResolution": 2048,
+      "textureProjection": {"mode": "generated planar along tower height", "repeat": [3, 5], "anisotropy": 8, "texelDensityIntent": "Keep vertical relief scale stable across folded mass, wing, and crown."},
+      "surfaceFrequencyBands": [
+        {"id": "macro", "frequency": 1.2, "amplitude": 0.05, "role": "warm red value drift across folded planes"},
+        {"id": "meso", "frequency": 20, "amplitude": 0.04, "role": "vertical facade-element rhythm and fold adjacency"},
+        {"id": "micro", "frequency": 64, "amplitude": 0.012, "role": "painted metal highlight breakup"}
+      ],
+      "roughness": {"base": 0.62, "variation": 0.13, "map": "sfmoma-concept-reference_roughness.png independent linear channel", "localResponse": "facade-element creases rougher; exposed fold edges slightly smoother"},
+      "metalness": {"base": 0.12, "variation": 0.04},
+      "normal": {"pattern": "sfmoma-concept-reference_normal.png independent tangent-space evidence", "strength": 0.2, "scale": 52, "space": "tangent"},
+      "bump": {"pattern": "independent cladding height evidence", "amplitude": 0.035, "scale": 48},
+      "ambientOcclusion": {"map": "sfmoma-concept-reference_ao.png independent linear channel", "cavityStrength": 0.28, "contactShadowBias": 0.26, "notes": "Concentrate AO between repeated facade elements and at fold contacts."},
+      "localOverrides": [
+        {"id": "foldEdgeResponse", "region": "visible diagonal fold crests", "roughness": 0.52, "aoStrength": 0.08, "kind": "gloss", "evidenceRefs": ["full-object"]},
+        {"id": "facadeElementCavities", "region": "between vertical repeated facade elements", "roughness": 0.7, "aoStrength": 0.44, "kind": "stain", "evidenceRefs": ["full-object"]}
+      ],
+      "referencePbr": {
+        "version": "1",
+        "sourceImage": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+        "extractor": "forge/stage1_intake/extract_pbr_evidence.py",
+        "method": "reference-wide alpha-masked single-image inference",
+        "verdict": "pass-with-explicit-limit",
+        "usable": true,
+        "confidence": 0.86,
+        "estimatedFidelity": 0.86,
+        "targetThreshold": 0.7,
+        "hardLimit": "The crop spans multiple facade materials; channels are independent reference evidence, not exact red-cladding inverse rendering or surveyed material truth.",
+        "maps": {
+          "albedo": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_albedo.png", "channel": "albedo", "source": "reference-pixel-extraction-srgb"},
+          "roughness": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_roughness.png", "channel": "roughness", "source": "independent-reference-inference-linear"},
+          "height": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_height.png", "channel": "height", "source": "independent-reference-inference-linear"},
+          "normal": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_normal.png", "channel": "normal", "source": "height-derived-independent-tangent-space"},
+          "ao": {"path": ".img2threejs/sfmoma-v1/pbr-evidence/sfmoma-concept-reference_ao.png", "channel": "ao", "source": "independent-reference-inference-linear"}
+        }
+      }
+    },
+    {"id": "redRibs", "name": "SFMOMA red tower facade elements", "type": "standard", "shaderModel": "MeshStandardMaterial", "qualityTier": "utility", "baseColor": "#8F251F", "albedo": {"dominant": "#8F251F", "secondary": ["#7B2D2C"]}, "colorVariation": {"palette": ["#8F251F", "#7B2D2C"], "pattern": "instance-stable value variation", "amplitude": 0.04}, "roughness": {"base": 0.48, "variation": 0.08, "map": "independent procedural roughness"}, "metalness": {"base": 0.22, "variation": 0.03}, "normal": {"pattern": "fine painted-metal grain", "strength": 0.12, "scale": 60}, "ambientOcclusion": {"cavityStrength": 0.32, "notes": "Contact AO only between repeated elements and tower face."}, "localOverrides": [{"id": "ribCrestHighlights", "region": "camera-facing facade-element crests", "roughness": 0.42, "kind": "gloss", "evidenceRefs": ["full-object"]}]},
+    {"id": "charcoalMetal", "name": "SFMOMA charcoal metal", "type": "standard", "shaderModel": "MeshStandardMaterial", "qualityTier": "utility", "baseColor": "#2B3033", "albedo": {"dominant": "#2B3033", "secondary": ["#2F2B2C", "#57595B"]}, "colorVariation": {"palette": ["#2B3033", "#2F2B2C", "#57595B"], "pattern": "restrained panel value breakup", "amplitude": 0.04}, "roughness": {"base": 0.48, "variation": 0.1, "map": "independent procedural roughness"}, "metalness": {"base": 0.38, "variation": 0.05}, "normal": {"pattern": "fine coated-metal grain", "strength": 0.1, "scale": 54}, "ambientOcclusion": {"cavityStrength": 0.3, "notes": "Recesses and louver contacts only."}, "localOverrides": [{"id": "entryCavityShade", "region": "deep podium entry reveal", "roughness": 0.58, "aoStrength": 0.48, "kind": "stain", "evidenceRefs": ["full-object"]}]},
+    {"id": "blueGrayGlass", "name": "SFMOMA blue-gray architectural glass", "type": "physical", "shaderModel": "MeshPhysicalMaterial", "qualityTier": "utility", "baseColor": "#577684", "albedo": {"dominant": "#577684", "secondary": ["#2F2B2C", "#6F4B2B"]}, "colorVariation": {"palette": ["#577684", "#2F2B2C", "#6F4B2B"], "pattern": "band-local value and interior backing", "amplitude": 0.1}, "roughness": {"base": 0.16, "variation": 0.06, "map": "independent procedural roughness"}, "metalness": {"base": 0.08, "variation": 0.02}, "clearcoat": 0.82, "clearcoatRoughness": 0.12, "normal": {"pattern": "flat glazing normal with frame-separated planes", "strength": 0.02, "scale": 1}, "ambientOcclusion": {"cavityStrength": 0.12, "notes": "AO only at mullions and deep facade contacts; glass panes remain clean."}, "localOverrides": [{"id": "interiorWarmth", "region": "back planes visible behind front and approximate rear bands", "emissive": "#D18B45", "emissiveIntensity": 0.52, "roughness": 0.7, "kind": "emissive", "evidenceRefs": ["full-object"]}]},
+    {"id": "warmInterior", "name": "SFMOMA warm interior backing", "type": "standard", "shaderModel": "MeshStandardMaterial", "qualityTier": "utility", "baseColor": "#6F4B2B", "albedo": {"dominant": "#6F4B2B", "secondary": ["#D18B45"]}, "colorVariation": {"palette": ["#6F4B2B", "#D18B45"], "pattern": "restrained depth backing", "amplitude": 0.05}, "roughness": {"base": 0.7, "variation": 0.06, "map": "independent procedural roughness"}, "metalness": {"base": 0, "variation": 0}, "normal": {"pattern": "flat interior backing", "strength": 0.01, "scale": 1}, "ambientOcclusion": {"cavityStrength": 0.18, "notes": "Only interior frame contacts."}, "emissive": "#D18B45", "emissiveIntensity": 0.52, "localOverrides": [{"id": "entryWarmBacking", "region": "recessed entry and curtain-wall back planes", "emissive": "#D18B45", "emissiveIntensity": 0.52, "kind": "emissive", "evidenceRefs": ["full-object"]}]}
+  ],
+  "repetitionSystems": [
+    {"id": "redTowerFacadeElements", "owner": "towerFacadeFins", "instances": 40, "distribution": "20 evenly spaced vertical elements on each modeled tower face; height follows the visible sinusoidal crown envelope", "geometry": "InstancedMesh narrow box", "buildsGeometry": true, "realization": "instanced-geometry", "evidenceRefs": ["full-object"]},
+    {"id": "curtainWallMullions", "owner": "curtainWallBands", "instances": 123, "distribution": "approximately 1.05 normalized factory units per vertical bay plus one horizontal rail per band", "geometry": "InstancedMesh narrow box", "buildsGeometry": true, "realization": "instanced-geometry", "evidenceRefs": ["full-object"]},
+    {"id": "entryDoorGrid", "owner": "entryGlazing", "instances": 10, "distribution": "four equal door panes, five vertical frame members, and one head rail", "geometry": "InstancedMesh pane/frame boxes", "buildsGeometry": true, "realization": "instanced-geometry", "evidenceRefs": ["full-object"]},
+    {"id": "podiumLouverSlats", "owner": "podiumLouvers", "instances": 12, "distribution": "horizontal array at 0.25 normalized factory-unit spacing on the lower camera-right facade", "geometry": "InstancedMesh narrow box", "buildsGeometry": true, "realization": "instanced-geometry", "evidenceRefs": ["full-object"]},
+    {"id": "panelSeamNetwork", "owner": "panelSeamRelief", "instances": 42, "distribution": "each visible gallery volume receives floor-aligned horizontal relief and 3.2-unit facade module divisions", "geometry": "InstancedMesh narrow box relief", "buildsGeometry": true, "realization": "instanced-geometry", "evidenceRefs": ["full-object"]}
+  ],
+  "buildPasses": [
+    {
+      "id": "blockout",
+      "goal": "Match macro silhouette and proportions.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Silhouette reads correctly without materials.",
+        "Quality contract has named all required macro feature groups before code generation.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "structural-pass",
+      "goal": "Build the component hierarchy implied by the pre-spec complexity assessment.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Macro, meso, and repeated structures meet qualityContract.minimumSpecDepth.",
+        "Parent-child relations, joints, seams, sockets, and contact points are explicit.",
+        "Every attached child appendage/connector has parentSocket, localStart/localEnd, contactType, embedDepth or overlap, and gapTolerance.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "form-refinement",
+      "goal": "Refine shape, deformation, bevels, tapers, curves, asymmetry, and visible local geometry.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Important visible forms are represented in component geometryDescriptor, deformations, localFeatures, or repetitionSystems.",
+        "Endpoint-based child parts are rooted at their attachment sockets and do not visibly float away from parents.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "material-pass",
+      "goal": "Match material color, roughness, bump, and local variation.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Reference-derived albedo palette records dominant, secondary, and accent colors per visible material.",
+        "Each important material defines roughness variation and at least one normal/bump/displacement response.",
+        "Local material overrides, dirt/wear/stains/moss/chips/scratches or equivalent masks are tied to evidenceRefs.",
+        "Thin, transparent, reflective, wet, or fibrous materials document alpha/transmission/clearcoat/metalness/fiber response when relevant.",
+        "Generated preview uses procedural albedo/roughness/bump texture or vertex color variation instead of one flat color.",
+        "Generated preview uses independent PBR maps at 1024px or higher for the quality-first tier.",
+        "If source pixels are available, referencePbr extraction passed at confidence >= 0.7 or the pass is stopped/requesting better references.",
+        "Macro, meso, and micro surface frequency bands are visible at the intended review distance without obvious tiling.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "surface-pass",
+      "goal": "Add procedural surface locality such as normal/bump/displacement, AO, dirt, stains, chips, grain, moss, scratches, and wear.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Every required material feature group has local overrides or surfaceDetail tied to evidenceRefs.",
+        "A grazing-angle close-up proves that normal/height detail breaks highlights naturally and does not read as smooth plastic.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "lighting-pass",
+      "goal": "Make material and form readable under neutral turntable lighting plus optional reference lighting.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "lightingFromPhoto identifies key light direction/color/intensity, fill light, rim or environment light, and ambient color.",
+        "Exposure, tone mapping, background color/gradient, shadow softness, and contact shadow behavior are specified.",
+        "Lighting does not hide geometry/material gaps and screenshots can be compared fairly to the reference.",
+        "Neutral, grazing, and reference-matched lighting checks distinguish material errors from lighting errors.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "interaction-pass",
+      "goal": "Make the model ready for future animation, transformation, physics, or destruction.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Macro and movable meso components have stable pivot nodes.",
+        "Sockets, collider proxies, and destruction metadata are present for future runtime actions.",
+        "AI vision comparison score meets selfCorrectLoop.visualAcceptance.threshold."
+      ]
+    },
+    {
+      "id": "optimization-pass",
+      "goal": "Protect runtime performance after visual fidelity is accepted.",
+      "componentRefs": [
+        "root"
+      ],
+      "acceptance": [
+        "Triangle count, draw calls, instancing, LOD strategy, and FPS target are documented or verified.",
+        "Repeated detail is instanced or simplified where possible without breaking silhouette/material believability."
+      ]
+    }
+  ],
+  "visualEvidence": [],
+  "reviewHistory": [],
+  "lodPlan": [
+    {
+      "tier": "near",
+      "distance": 0,
+      "strategy": "full component tree and material layers"
+    },
+    {
+      "tier": "far",
+      "distance": 30,
+      "strategy": "merge static components and reduce local feature geometry"
+    }
+  ],
+  "performanceBudget": {
+    "qualityPriority": "reference-fidelity",
+    "targetTriangles": 250000,
+    "maxDrawCalls": 160,
+    "textureSize": 2048,
+    "fpsTarget": 30,
+    "optimizationPolicy": "Reach accepted visual fidelity first, then optimize without removing reference-critical geometry or surface layers."
+  },
+  "lightingFromPhoto": [
+    {
+      "id": "reference-key",
+      "type": "key light",
+      "direction": [-0.6, -1.0, 0.45],
+      "colorTemperatureKelvin": 5600,
+      "color": "#FFF4E6",
+      "intensityLuxEquivalent": 52000,
+      "shadowSoftness": "broad penumbra, target source radius 3 normalized factory units",
+      "evidenceStatus": "inferred from upper camera-left facade highlights; not measured"
+    },
+    {
+      "id": "neutral-fill",
+      "type": "fill light",
+      "direction": [0.45, -0.35, 0.2],
+      "colorTemperatureKelvin": 7200,
+      "color": "#DCEBFF",
+      "intensityRatioToKey": 0.28,
+      "shadowSoftness": "shadowless broad fill",
+      "evidenceStatus": "authoring target that preserves dark-entry readability without flattening self-shadow"
+    },
+    {
+      "id": "cool-rim-environment",
+      "type": "rim or environment light",
+      "direction": [0.25, -0.15, -1.0],
+      "colorTemperatureKelvin": 8000,
+      "color": "#C8DBFF",
+      "intensityRatioToKey": 0.16,
+      "environmentIntensity": 0.7,
+      "evidenceStatus": "bounded silhouette-separation target; not source-light measurement"
+    },
+    {
+      "id": "ambient-hemisphere",
+      "type": "ambient hemisphere",
+      "skyColor": "#E8EEF3",
+      "groundColor": "#6B7073",
+      "intensityRatioToKey": 0.12,
+      "evidenceStatus": "neutral look-dev rig contract"
+    },
+    {
+      "id": "exposure-tone",
+      "type": "exposure and tone mapping",
+      "exposure": 1.0,
+      "toneMapping": "ACES Filmic",
+      "outputColorSpace": "sRGB",
+      "workingColorSpace": "linear-sRGB",
+      "highlightIntent": "retain concrete and red-cladding highlight detail without clipping"
+    },
+    {
+      "id": "background-contract",
+      "type": "background",
+      "color": "#DDE3E7",
+      "gradient": "subtle vertical #EEF2F4 to #CAD3D9",
+      "alphaReview": "also capture transparent alpha to prove the source RGB halo was not modeled"
+    },
+    {
+      "id": "ground-contact",
+      "type": "contact shadow and ground shadow",
+      "groundColor": "#C9CDD0",
+      "contactShadowOpacity": 0.18,
+      "shadowRadius": 4.0,
+      "biasIntent": "tight at podium/plaza contact and softer under cantilevers; no uniformly dark AO wash"
+    }
+  ],
+  "proceduralStrategy": [
+    "Keep one root plus the five exact committed factory groups; model gallery volumes as independent rounded boxes and the red tower as closed extruded folded profiles.",
+    "Use deterministic InstancedMesh arrays for 40 tower facade elements, curtain-wall mullions, four entry doors, 12 louvers, and concrete seam relief.",
+    "Separate pale concrete, red cladding, red facade elements, charcoal metal, blue-gray glass, and warm interior backing into six material contracts.",
+    "Keep albedo, roughness, height, normal, and AO paths independent; reference-wide extraction is bounded single-image evidence, never exact physical recovery.",
+    "Treat hidden elevations as plain continuation approximations and require side/rear orbit review before any build-completion claim.",
+    "Do not generate, regenerate, or claim build/review gates in this spec-repair stage."
+  ],
+  "animationAnchors": [
+    "root pivot node supports whole-object translation, rotation, scale, and visibility changes",
+    "component pivot groups support later local transforms without rebuilding geometry"
+  ],
+  "destructionAnchors": [
+    "actionProfile.destruction.fractureGroup marks detachable or breakable component sets",
+    "component seams and sockets define plausible break points instead of random explosions"
+  ],
+  "risks": [
+    "Single-view hidden elevations remain approximate and may differ substantially from the real museum.",
+    "Normalized factory dimensions are presentation proportions, not surveyed dimensions or EPSG:26910 map truth.",
+    "Reference-wide PBR evidence spans multiple facade materials; per-material crops would be required before exact material matching could be claimed.",
+    "The committed factory exposes named groups but the action-ready and part-coverage runtime gates remain pending until sculptRuntime, clickability, and exploded-layout evidence exist."
+  ],
+  "localSpecSearch": {
+    "collection": "core_3d",
+    "query": "SFMOMA Generated Landmark V1 museum architecture stacked galleries ribbed tower curtain wall",
+    "index": {
+      "status": "hit",
+      "reason": "current",
+      "fingerprint": "6857e5ab528b42ac12f4f411f862610a0bffce8e47aee3610a7603c318072fe8"
+    },
+    "matches": [
+      {
+        "record_id": "core.description-controlled-vocabulary-aat-facets",
+        "file_path": "docs/raw/img2threejs-skill-dataset.json",
+        "heading": null,
+        "key_path": "categories.description_conventions[5]",
+        "score": 4.441703167424,
+        "snippets": [
+          "Standardized terminology (Getty Art & Architecture Thesaurus facets for materials, activities, physical attributes) replacing vague or inconsistent free-text terms. Thuật ngữ chuẩn hóa (các facet của Getty Art & Architecture Thesaurus cho vật ..."
+        ],
+        "source_refs": [
+          {
+            "path": "docs/raw/img2threejs-skill-dataset.json",
+            "heading": null,
+            "key_path": "categories.description_conventions[5]"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "kind": "source",
+            "ref": "docs/raw/img2threejs-skill-dataset.json",
+            "note": "img2threejs NotebookLM research distillation"
+          }
+        ]
+      },
+      {
+        "record_id": "core.uv-strategy",
+        "file_path": "grimoire/glossary/3d_vocabulary.md",
+        "heading": "Geometry And Topology",
+        "key_path": null,
+        "score": 4.011652417667,
+        "snippets": [
+          "UV strategy can use generated procedural coordinates, cylindrical projection, triplanar-like mapping, or atlas-ready unwrapped regions."
+        ],
+        "source_refs": [
+          {
+            "path": "grimoire/glossary/3d_vocabulary.md",
+            "heading": "Geometry And Topology",
+            "key_path": null
+          }
+        ],
+        "evidence_refs": [
+          {
+            "kind": "source",
+            "ref": "grimoire/glossary/3d_vocabulary.md"
+          },
+          {
+            "kind": "notebooklm-research",
+            "ref": "notebooklm:4b03c2f9-8393-411f-b5b4-039ab9532843",
+            "note": "Validated generic schema vocabulary; numeric claims remain backed by local source_refs."
+          }
+        ]
+      },
+      {
+        "record_id": "core.shader-mapping-lathegeometry-turnedradially-symmetric-parts",
+        "file_path": "docs/raw/img2threejs-skill-dataset.json",
+        "heading": null,
+        "key_path": "categories.rendering_shader_mapping[9]",
+        "score": 2.662326710191,
+        "snippets": [
+          "Maps to parts generated by revolving a 2D profile around an axis. Ánh xạ tới các bộ phận tạo ra bằng cách xoay một biên dạng 2D quanh một trục. Recognition cues: Contoured, fully radially-symmetric part — turned wood/metal handle, some muzzle ..."
+        ],
+        "source_refs": [
+          {
+            "path": "docs/raw/img2threejs-skill-dataset.json",
+            "heading": null,
+            "key_path": "categories.rendering_shader_mapping[9]"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "kind": "source",
+            "ref": "docs/raw/img2threejs-skill-dataset.json",
+            "note": "img2threejs NotebookLM research distillation"
+          }
+        ]
+      }
+    ]
+  }
+}

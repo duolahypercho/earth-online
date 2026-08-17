@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "referenceId": "sfmoma-v2-generated-concept-material-regions",
+  "regions": [
+    {
+      "componentId": "brickFacade",
+      "regionId": "brick",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 300, "y": 500, "width": 330, "height": 120 },
+      "family": "stone",
+      "subtype": "natural",
+      "finish": "rough-or-polished",
+      "materialSpecId": "brick",
+      "confidence": 0.84,
+      "source": "generated-reference-visible-region"
+    },
+    {
+      "componentId": "granitePodium",
+      "regionId": "granite",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 1040, "y": 805, "width": 150, "height": 50 },
+      "family": "stone",
+      "subtype": "natural",
+      "finish": "rough-or-polished",
+      "materialSpecId": "granite",
+      "confidence": 0.82,
+      "source": "generated-reference-visible-region"
+    },
+    {
+      "componentId": "stripedTurret",
+      "regionId": "striped-stone",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 710, "y": 475, "width": 32, "height": 135 },
+      "family": "stone",
+      "subtype": "natural",
+      "finish": "rough-or-polished",
+      "materialSpecId": "stripedStone",
+      "confidence": 0.82,
+      "source": "generated-reference-visible-region"
+    },
+    {
+      "componentId": "expansionGlazing",
+      "regionId": "glass",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 1080, "y": 330, "width": 140, "height": 30 },
+      "family": "glass",
+      "subtype": "clear",
+      "finish": "polished",
+      "materialSpecId": "glass",
+      "confidence": 0.78,
+      "source": "generated-reference-visible-region"
+    },
+    {
+      "componentId": "entryAssembly",
+      "regionId": "dark-metal",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 815, "y": 688, "width": 55, "height": 15 },
+      "family": "metal",
+      "subtype": "aluminum",
+      "finish": "satin",
+      "materialSpecId": "darkMetal",
+      "confidence": 0.80,
+      "source": "generated-reference-visible-region"
+    },
+    {
+      "componentId": "rippledExpansion",
+      "regionId": "frp",
+      "sourceImage": "../../public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+      "bbox": { "x": 930, "y": 250, "width": 180, "height": 50 },
+      "family": "plastic",
+      "subtype": "generic-polymer",
+      "finish": "matte",
+      "materialSpecId": "frp",
+      "confidence": 0.78,
+      "source": "generated-reference-visible-region"
+    }
+  ],
+  "notObservedMaterials": [
+    {
+      "id": "hidden-elevation-finishes",
+      "status": "accepted-limitation",
+      "reason": "The single generated front-three-quarter concept does not show rear or service-elevation finishes; those surfaces must reuse the nearest visible family without an exactness claim."
+    }
+  ],
+  "limitations": [
+    "The reference is AI-generated concept art, not a surveyed photograph or calibrated material capture.",
+    "Bounding boxes isolate visible material-dominant regions but may retain lighting and adjacent-material contamination.",
+    "Extracted channels are procedural look-development evidence only and require future neutral and grazing-light render review."
+  ]
+}

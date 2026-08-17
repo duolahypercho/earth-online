@@ -1,0 +1,20 @@
+[
+  {
+    "id": "bottaMassing",
+    "score": 0.52,
+    "visible": true,
+    "notes": "Six masses read, but the lower stepped base is too narrow and vertical."
+  },
+  {
+    "id": "turretOculusIdentity",
+    "score": 0.58,
+    "visible": true,
+    "notes": "Embedded and readable, but too circular and front-facing."
+  },
+  {
+    "id": "rippledExpansionContinuity",
+    "score": 0.5,
+    "visible": true,
+    "notes": "Contiguous and shallow enough for blockout, but still reads as a barrel-like arch."
+  }
+]

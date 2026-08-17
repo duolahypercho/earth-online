@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.blockout-feature-review",
+  "passId": "blockout",
+  "iteration": 2,
+  "action": "refine-spec",
+  "comparison": ".qa-sfmoma-v2-blockout-comparison.png",
+  "reviewedComparisonSha256": "afe6dc703cb0d8d314bf9c70267cb9a8190a032f7800593e073cb22e54603071",
+  "overallScore": 0.49,
+  "visualAcceptanceThreshold": 0.7,
+  "accepted": false,
+  "boundedRefinement": {
+    "status": "pass",
+    "priorScore": 0.41,
+    "gain": 0.08,
+    "minimumGain": 0.05
+  },
+  "features": [
+    {
+      "id": "bottaMassing",
+      "score": 0.55,
+      "visible": true,
+      "notes": "The footprint is broader and the brick hierarchy is clearer, but the mass remains too tall and insufficiently stepped relative to the reference."
+    },
+    {
+      "id": "sixMacroLegibility",
+      "score": 0.6,
+      "visible": true,
+      "notes": "All six macro IDs are findable in the front and elevated views, though only about four read semantically without labels."
+    },
+    {
+      "id": "turretOculusIdentity",
+      "score": 0.45,
+      "visible": true,
+      "notes": "The oculus is recognizable and embedded, but it remains too small, front-facing, weakly elliptical, and lacks the striped surround."
+    },
+    {
+      "id": "rippledExpansionContinuity",
+      "score": 0.5,
+      "visible": true,
+      "notes": "The damaging B-shaped double lobe is gone and the shell is contiguous, but it remains a large blank cap without the defining continuous glass ribbon."
+    },
+    {
+      "id": "grounding",
+      "score": 0.39,
+      "visible": true,
+      "notes": "The isolated QA root still reads as a display stand; canonical terrain seating remains explicitly unproven."
+    }
+  ],
+  "aaaReadinessScore": 0.13,
+  "referenceWinner": true,
+  "nextAction": "Add subject-specific stripe, glazing-ribbon, facade-opening, and podium rhythm systems before any canonical integration claim.",
+  "limitations": [
+    "The official Tier-1 result remains rejected because its foreground masks and aspect handling measured background and framing rather than the subject.",
+    "No reference matte or official Tier-1 IoU pass exists yet.",
+    "Canonical terrain contact, portals, collision, LOD, partition behavior, and performance are not proven by this elevated presentation blockout.",
+    "AAA open-world parity is explicitly rejected."
+  ]
+}

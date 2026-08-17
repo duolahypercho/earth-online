@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "reference": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+  "verdict": "conditional",
+  "scores": {
+    "objectIsolation": 1.0,
+    "silhouetteReadability": 0.94,
+    "depthInference": 0.78,
+    "primitiveDecomposition": 0.9,
+    "materialReadability": 0.86,
+    "interactionFit": 0.82
+  },
+  "strengths": [
+    "single isolated target with uncropped silhouette",
+    "macro facade hierarchy and five material families are legible",
+    "front three-quarter view supports procedural hard-surface decomposition",
+    "no exact logo or text fidelity is required"
+  ],
+  "conditions": [
+    "Treat the image as a source-honest concept and never as surveyed architecture.",
+    "Preserve OSM geometry/collision/portal records outside the presentation asset.",
+    "Require front, side, rear, and orbit review before accepting hidden geometry.",
+    "Report the generated reference and inferred elevations as approximations."
+  ],
+  "rejectReasons": [],
+  "nextAction": "proceed-with-explicit-approximation"
+}

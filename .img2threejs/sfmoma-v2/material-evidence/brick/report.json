@@ -1,0 +1,85 @@
+{
+  "ok": true,
+  "verdict": "pass",
+  "confidence": 0.86,
+  "estimatedFidelity": 0.86,
+  "targetThreshold": 0.7,
+  "materialId": "brick",
+  "sourceImage": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c0.png",
+  "outDir": ".img2threejs/sfmoma-v2/material-evidence/brick",
+  "palette": [
+    "#784E40",
+    "#935A46",
+    "#623C31",
+    "#A96E57",
+    "#352119"
+  ],
+  "maps": {
+    "albedo": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/brick/brick_albedo.png",
+      "url": "brick_albedo.png",
+      "channel": "albedo",
+      "source": "reference-pixel-extraction"
+    },
+    "roughness": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/brick/brick_roughness.png",
+      "url": "brick_roughness.png",
+      "channel": "roughness",
+      "source": "reference-pixel-extraction"
+    },
+    "height": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/brick/brick_height.png",
+      "url": "brick_height.png",
+      "channel": "height",
+      "source": "reference-pixel-extraction"
+    },
+    "normal": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/brick/brick_normal.png",
+      "url": "brick_normal.png",
+      "channel": "normal",
+      "source": "reference-pixel-extraction"
+    },
+    "ao": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/brick/brick_ao.png",
+      "url": "brick_ao.png",
+      "channel": "ao",
+      "source": "reference-pixel-extraction"
+    }
+  },
+  "diagnostics": {
+    "sourceWidth": 512,
+    "sourceHeight": 341,
+    "mapSize": 1024,
+    "cropBBoxPixels": {
+      "x": 62,
+      "y": 0,
+      "width": 450,
+      "height": 341
+    },
+    "mask": {
+      "backgroundColor": "#AEB0B5",
+      "backgroundNoise": 134.216,
+      "transparentPixelFraction": 0,
+      "foregroundCoverage": 0.7243
+    },
+    "mapStats": {
+      "valueRange": 0.3241,
+      "heightP90Gradient": 0.0882,
+      "roughnessBase": 0.736,
+      "roughnessVariation": 0.181,
+      "normalStrength": 0.26,
+      "blurRadius": 21
+    },
+    "palette": [
+      "#784E40",
+      "#935A46",
+      "#623C31",
+      "#A96E57",
+      "#352119"
+    ]
+  },
+  "warnings": [
+    "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+  ],
+  "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+}

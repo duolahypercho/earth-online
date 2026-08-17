@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "target": "SFMOMA source-honest concept v2",
+  "reference": "public/assets/hero/sfmoma-img2threejs-v2/reference.png",
+  "classification": {
+    "workType": "architectural landmark facade assembly",
+    "primaryDomain": "object",
+    "confidence": 0.93,
+    "evidence": "One isolated museum building fills the frame against a neutral cyclorama."
+  },
+  "overallForm": {
+    "symmetry": "asymmetric stepped composition organized around a near-central radial turret",
+    "boundingVolume": "broad rectilinear brick mass with a taller cylindrical/annular turret and a contiguous white curved rear expansion",
+    "proportions": {
+      "widthToHeight": 1.62,
+      "brickMassFrameShare": "approximately 70 percent of visible facade width",
+      "turretHeightToWidth": "approximately 1.45 for the striped cylindrical body below the oculus"
+    },
+    "negativeSpaces": [
+      "deep recessed ground-floor entrance beneath the turret",
+      "vertical glazed slots between brick wings",
+      "horizontal glass cuts separating stepped brick volumes"
+    ]
+  },
+  "hierarchy": {
+    "macro": [
+      "dark granite podium/base",
+      "stepped red-brick west wing",
+      "stepped red-brick east wing",
+      "striped cylindrical turret and elliptical oculus",
+      "contiguous pale rippled expansion"
+    ],
+    "meso": [
+      "central recessed entry bay",
+      "lower left and lower right brick bars",
+      "upper brick towers",
+      "turret neck and oculus ring",
+      "oculus glazing and radial mullions",
+      "white expansion glass ribbon",
+      "vertical curtain-wall slots",
+      "granite window-punch bands"
+    ],
+    "micro": [
+      "brick course rhythm",
+      "turret black-white bands",
+      "oculus radial segments",
+      "glass mullion grids",
+      "rippled white panel relief",
+      "granite joints",
+      "entry door frames"
+    ]
+  },
+  "spatialRelationships": [
+    "The turret is embedded between and overlaps both stepped brick wings.",
+    "The elliptical oculus is socketed into the upper cylindrical turret, not floating in front of it.",
+    "The dark granite base is flush with and supports every front brick mass.",
+    "The pale expansion rises behind the brick facade and remains one attached continuous shell.",
+    "The entry glazing is recessed behind a brick and granite reveal beneath the turret."
+  ],
+  "materials": [
+    {"id": "brick", "albedo": "warm low-saturation red-orange", "metalness": 0, "roughness": "0.72-0.88", "relief": "small modular brick and mortar courses"},
+    {"id": "granite", "albedo": "dark neutral charcoal", "metalness": 0.05, "roughness": "0.46-0.62", "relief": "large rectangular stone joints"},
+    {"id": "striped-stone", "albedo": "alternating near-black and pale stone", "metalness": 0, "roughness": "0.55-0.72", "relief": "horizontal annular bands"},
+    {"id": "glass", "albedo": "cool blue-gray", "metalness": 0.05, "roughness": "0.12-0.24", "relief": "none; depth comes from mullions and interior backing"},
+    {"id": "rippled-frp", "albedo": "warm off-white", "metalness": 0, "roughness": "0.48-0.68", "relief": "continuous horizontal ripple profile"}
+  ],
+  "identityFeatures": [
+    "broad stepped red-brick Third Street facade",
+    "centered cylindrical black-white banded turret",
+    "large tilted elliptical oculus with radial glazing",
+    "deep central public entrance",
+    "contiguous pale rippled expansion behind the Botta facade"
+  ],
+  "uncertainty": [
+    "This is a generated concept informed by public architectural facts, not a measured survey or licensed facade photograph.",
+    "Rear, roof, and camera-right hidden elevations are inferred and require restrained continuation rather than exactness claims.",
+    "The image combines the Botta facade and Snøhetta expansion for recognizability; their precise overlap is approximate.",
+    "Exact brick module, panel dimensions, oculus angle, and building dimensions are not manufacturing evidence."
+  ],
+  "implementationIntent": "Real-time procedural Three.js landmark presentation. Preserve external OSM footprint, collision, and portal data as source truth."
+}

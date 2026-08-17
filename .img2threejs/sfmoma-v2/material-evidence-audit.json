@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.material-evidence-audit",
+  "visualIsolation": {
+    "status": "accepted",
+    "regions": [
+      {
+        "material": "granite",
+        "crop": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+        "bbox": {
+          "x": 1040,
+          "y": 805,
+          "width": 150,
+          "height": 50
+        },
+        "finding": "Dark granite panel field only; prior brick, glazing, and mullion contamination was removed."
+      },
+      {
+        "material": "stripedStone",
+        "crop": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+        "bbox": { "x": 710, "y": 475, "width": 32, "height": 135 },
+        "finding": "Alternating pale and dark stone courses only; prior red-brick contamination was removed."
+      },
+      {
+        "material": "glass",
+        "crop": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+        "bbox": { "x": 1080, "y": 330, "width": 140, "height": 30 },
+        "finding": "Expansion glazing and mullions only; prior white-FRP contamination was removed."
+      },
+      {
+        "material": "darkMetal",
+        "crop": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+        "bbox": { "x": 815, "y": 688, "width": 55, "height": 15 },
+        "finding": "Dark canopy slab only; prior brick, glazing, and shadow mixture was removed."
+      },
+      {
+        "material": "frp",
+        "crop": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+        "bbox": {
+          "x": 930,
+          "y": 250,
+          "width": 180,
+          "height": 50
+        },
+        "finding": "White rippled FRP panel field with a real seam only; prior sky contamination was removed."
+      }
+    ],
+    "rejectedHistoricalReports": [
+      ".img2threejs/sfmoma-v2/material-evidence/stripedStone/report.json",
+      ".img2threejs/sfmoma-v2/material-evidence/glass/report.json",
+      ".img2threejs/sfmoma-v2/material-evidence/darkMetal/report.json",
+      ".img2threejs/sfmoma-v2/material-evidence/granite/report.json",
+      ".img2threejs/sfmoma-v2/material-evidence/frp/report.json"
+    ],
+    "limitation": "Visual crop isolation does not upgrade single-image inference to measured physical material data."
+  },
+  "mapDimensions": {
+    "inspectionMethod": "PNG IHDR width/height read directly from every referencePbr map path",
+    "materials": ["brick", "granite", "stripedStone", "glass", "darkMetal", "frp"],
+    "channelsPerMaterial": ["albedo", "roughness", "height", "normal", "ao"],
+    "mapCount": 30,
+    "observedWidth": 512,
+    "observedHeight": 512,
+    "allMatch": true,
+    "usage": "probe-only look-development evidence",
+    "runtimeTexture": false
+  },
+  "runtimeMapPlan": {
+    "minimumWidth": 1024,
+    "minimumHeight": 1024,
+    "channels": ["albedo", "roughness", "height", "normal", "ambient-occlusion"],
+    "independentChannels": true,
+    "source": "future procedural runtime fields; the 512x512 evidence maps are not promoted as runtime textures"
+  },
+  "boundedInference": {
+    "glass": {
+      "roughness": 0.18,
+      "transmission": 0.42,
+      "limit": "Visual hypothesis from the isolated glass crop, not measured optical data."
+    },
+    "darkMetal": {
+      "roughness": 0.32,
+      "metalness": 0.68,
+      "limit": "Visual hypothesis from the isolated canopy crop, not measured alloy data."
+    }
+  }
+}

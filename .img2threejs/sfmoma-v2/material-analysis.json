@@ -1,0 +1,2708 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.material-analysis",
+  "referenceId": "sfmoma-v2-generated-concept-material-regions",
+  "manifest": ".img2threejs/sfmoma-v2/material-regions.json",
+  "registry": "skill://img2threejs/docs/materials/material-reference.json",
+  "targetThreshold": 0.7,
+  "notObservedMaterials": [
+    {
+      "id": "hidden-elevation-finishes",
+      "status": "accepted-limitation",
+      "reason": "The single generated front-three-quarter concept does not show rear or service-elevation finishes; those surfaces must reuse the nearest visible family without an exactness claim."
+    }
+  ],
+  "unresolvedNotObservedMaterials": [],
+  "regions": [
+    {
+      "componentId": "brickFacade",
+      "regionId": "brick",
+      "materialSpecId": "brick",
+      "hypothesis": {
+        "componentId": "brickFacade",
+        "regionId": "brick",
+        "materialId": null,
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "aliases": [],
+        "confidence": 0.776,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "stone.natural",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.776,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/00-brick.png",
+            "bbox": {
+              "x": 300,
+              "y": 500,
+              "width": 330,
+              "height": 120
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0252
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.776,
+            "estimatedFidelity": 0.776,
+            "targetThreshold": 0.7,
+            "materialId": "brick",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/00-brick.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick",
+            "palette": [
+              "#8E533F",
+              "#9C5F49",
+              "#764535",
+              "#AA6C54",
+              "#522B1E"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_albedo.png",
+                "url": "brick_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_roughness.png",
+                "url": "brick_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_height.png",
+                "url": "brick_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_normal.png",
+                "url": "brick_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_ao.png",
+                "url": "brick_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 330,
+              "sourceHeight": 120,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 0,
+                "width": 330,
+                "height": 120
+              },
+              "mask": {
+                "backgroundColor": "#8F5643",
+                "backgroundNoise": 39.256,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 1.0
+              },
+              "mapStats": {
+                "valueRange": 0.2658,
+                "heightP90Gradient": 0.23556,
+                "roughnessBase": 0.882,
+                "roughnessVariation": 0.127,
+                "normalStrength": 0.432,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#8E533F",
+                "#9C5F49",
+                "#764535",
+                "#AA6C54",
+                "#522B1E"
+              ]
+            },
+            "warnings": [
+              "image is not clearly isolated from background; using most pixels as material evidence",
+              "object/background separation is weak",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "painted-metal",
+            "recipe": {
+              "metalness": 0.0,
+              "roughness": 0.5,
+              "clearcoat": 1.0,
+              "clearcoatRoughness": 0.05,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 1.0,
+              "anisotropy": 0.0,
+              "procedural": "flat-clearcoat"
+            },
+            "palette": [
+              "#6C4438",
+              "#8D523E",
+              "#8C513D",
+              "#905642",
+              "#88533F"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "horizontal",
+            "stats": {
+              "meanLum": 98.4,
+              "meanSaturation": 0.549,
+              "gradientStrength": 0.116,
+              "mottle": 0.045,
+              "streakRatio": 0.53,
+              "hueSpread": 0.0,
+              "specularFraction": 0.0
+            }
+          }
+        },
+        "profileId": "stone.natural",
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "renderPrior": {
+          "metalness": 0.0,
+          "roughness": 0.78,
+          "clearcoat": 0.0
+        },
+        "requiredMaps": [
+          "map",
+          "roughnessMap",
+          "normalMap"
+        ],
+        "optionalMaps": [
+          "aoMap",
+          "displacementMap",
+          "clearcoatMap"
+        ],
+        "validationViews": [
+          "albedo-unlit",
+          "neutral-studio",
+          "grazing",
+          "reference-beauty"
+        ],
+        "sourceRefs": [
+          "three.mesh-standard",
+          "three.mesh-physical",
+          "adobe.pbr-guide-1",
+          "mit.material-recognition"
+        ],
+        "visualCues": [
+          "multi-scale mineral pattern",
+          "fracture or pore relief",
+          "polished stone retains dielectric reflection"
+        ]
+      },
+      "observations": [
+        "chromatic base-colour response",
+        "visible meso/micro variation",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/00-brick.png",
+        "bbox": {
+          "x": 300,
+          "y": 500,
+          "width": 330,
+          "height": 120
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0252
+      },
+      "textureAnalysis": {
+        "finishClass": "painted-metal",
+        "recipe": {
+          "metalness": 0.0,
+          "roughness": 0.5,
+          "clearcoat": 1.0,
+          "clearcoatRoughness": 0.05,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 1.0,
+          "anisotropy": 0.0,
+          "procedural": "flat-clearcoat"
+        },
+        "palette": [
+          "#6C4438",
+          "#8D523E",
+          "#8C513D",
+          "#905642",
+          "#88533F"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "horizontal",
+        "stats": {
+          "meanLum": 98.4,
+          "meanSaturation": 0.549,
+          "gradientStrength": 0.116,
+          "mottle": 0.045,
+          "streakRatio": 0.53,
+          "hueSpread": 0.0,
+          "specularFraction": 0.0
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.776,
+        "estimatedFidelity": 0.776,
+        "targetThreshold": 0.7,
+        "materialId": "brick",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/00-brick.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick",
+        "palette": [
+          "#8E533F",
+          "#9C5F49",
+          "#764535",
+          "#AA6C54",
+          "#522B1E"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_albedo.png",
+            "url": "brick_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_roughness.png",
+            "url": "brick_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_height.png",
+            "url": "brick_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_normal.png",
+            "url": "brick_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_ao.png",
+            "url": "brick_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 330,
+          "sourceHeight": 120,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 330,
+            "height": 120
+          },
+          "mask": {
+            "backgroundColor": "#8F5643",
+            "backgroundNoise": 39.256,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.2658,
+            "heightP90Gradient": 0.23556,
+            "roughnessBase": 0.882,
+            "roughnessVariation": 0.127,
+            "normalStrength": 0.432,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#8E533F",
+            "#9C5F49",
+            "#764535",
+            "#AA6C54",
+            "#522B1E"
+          ]
+        },
+        "warnings": [
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/00-brick.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.776,
+        "estimatedFidelity": 0.776,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_albedo.png",
+            "url": "brick_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_roughness.png",
+            "url": "brick_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_height.png",
+            "url": "brick_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_normal.png",
+            "url": "brick_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_ao.png",
+            "url": "brick_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 330,
+          "sourceHeight": 120,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 330,
+            "height": 120
+          },
+          "mask": {
+            "backgroundColor": "#8F5643",
+            "backgroundNoise": 39.256,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.2658,
+            "heightP90Gradient": 0.23556,
+            "roughnessBase": 0.882,
+            "roughnessVariation": 0.127,
+            "normalStrength": 0.432,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#8E533F",
+            "#9C5F49",
+            "#764535",
+            "#AA6C54",
+            "#522B1E"
+          ]
+        },
+        "warnings": [
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_albedo.png",
+          "url": "brick_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_roughness.png",
+          "url": "brick_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_height.png",
+          "url": "brick_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_normal.png",
+          "url": "brick_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-00-brick/brick_ao.png",
+          "url": "brick_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    },
+    {
+      "componentId": "granitePodium",
+      "regionId": "granite",
+      "materialSpecId": "granite",
+      "hypothesis": {
+        "componentId": "granitePodium",
+        "regionId": "granite",
+        "materialId": null,
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "aliases": [],
+        "confidence": 0.776,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "stone.natural",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.776,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+            "bbox": {
+              "x": 1040,
+              "y": 805,
+              "width": 150,
+              "height": 50
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0048
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.776,
+            "estimatedFidelity": 0.776,
+            "targetThreshold": 0.7,
+            "materialId": "granite",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite",
+            "palette": [
+              "#4E5255",
+              "#2D3136",
+              "#25282D",
+              "#33373D",
+              "#575B5E"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_albedo.png",
+                "url": "granite_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_roughness.png",
+                "url": "granite_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_height.png",
+                "url": "granite_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_normal.png",
+                "url": "granite_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_ao.png",
+                "url": "granite_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 150,
+              "sourceHeight": 50,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 0,
+                "width": 150,
+                "height": 50
+              },
+              "mask": {
+                "backgroundColor": "#343739",
+                "backgroundNoise": 17.378,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 0.0441
+              },
+              "mapStats": {
+                "valueRange": 0.1986,
+                "heightP90Gradient": 0.02908,
+                "roughnessBase": 0.68,
+                "roughnessVariation": 0.05,
+                "normalStrength": 0.19,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#4E5255",
+                "#2D3136",
+                "#25282D",
+                "#33373D",
+                "#575B5E"
+              ]
+            },
+            "warnings": [
+              "foreground mask is very small",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+              "low value range weakens height/roughness inference"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "worn-composite",
+            "recipe": {
+              "metalness": 0.0,
+              "roughness": 0.9,
+              "clearcoat": 0.0,
+              "clearcoatRoughness": 0.0,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 0.5,
+              "anisotropy": 0.0,
+              "procedural": "mottle"
+            },
+            "palette": [
+              "#373A3E",
+              "#3F4246",
+              "#33363A",
+              "#313437",
+              "#323638"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "vertical",
+            "stats": {
+              "meanLum": 57.4,
+              "meanSaturation": 0.109,
+              "gradientStrength": 0.088,
+              "mottle": 0.027,
+              "streakRatio": 1.24,
+              "hueSpread": 0.0,
+              "specularFraction": 0.0
+            }
+          }
+        },
+        "profileId": "stone.natural",
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "renderPrior": {
+          "metalness": 0.0,
+          "roughness": 0.78,
+          "clearcoat": 0.0
+        },
+        "requiredMaps": [
+          "map",
+          "roughnessMap",
+          "normalMap"
+        ],
+        "optionalMaps": [
+          "aoMap",
+          "displacementMap",
+          "clearcoatMap"
+        ],
+        "validationViews": [
+          "albedo-unlit",
+          "neutral-studio",
+          "grazing",
+          "reference-beauty"
+        ],
+        "sourceRefs": [
+          "three.mesh-standard",
+          "three.mesh-physical",
+          "adobe.pbr-guide-1",
+          "mit.material-recognition"
+        ],
+        "visualCues": [
+          "multi-scale mineral pattern",
+          "fracture or pore relief",
+          "polished stone retains dielectric reflection"
+        ]
+      },
+      "observations": [
+        "near-neutral colour response",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+        "bbox": {
+          "x": 1040,
+          "y": 805,
+          "width": 150,
+          "height": 50
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0048
+      },
+      "textureAnalysis": {
+        "finishClass": "worn-composite",
+        "recipe": {
+          "metalness": 0.0,
+          "roughness": 0.9,
+          "clearcoat": 0.0,
+          "clearcoatRoughness": 0.0,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 0.5,
+          "anisotropy": 0.0,
+          "procedural": "mottle"
+        },
+        "palette": [
+          "#373A3E",
+          "#3F4246",
+          "#33363A",
+          "#313437",
+          "#323638"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "vertical",
+        "stats": {
+          "meanLum": 57.4,
+          "meanSaturation": 0.109,
+          "gradientStrength": 0.088,
+          "mottle": 0.027,
+          "streakRatio": 1.24,
+          "hueSpread": 0.0,
+          "specularFraction": 0.0
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.776,
+        "estimatedFidelity": 0.776,
+        "targetThreshold": 0.7,
+        "materialId": "granite",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite",
+        "palette": [
+          "#4E5255",
+          "#2D3136",
+          "#25282D",
+          "#33373D",
+          "#575B5E"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_albedo.png",
+            "url": "granite_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_roughness.png",
+            "url": "granite_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_height.png",
+            "url": "granite_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_normal.png",
+            "url": "granite_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_ao.png",
+            "url": "granite_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 150,
+          "sourceHeight": 50,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 150,
+            "height": 50
+          },
+          "mask": {
+            "backgroundColor": "#343739",
+            "backgroundNoise": 17.378,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0441
+          },
+          "mapStats": {
+            "valueRange": 0.1986,
+            "heightP90Gradient": 0.02908,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.19,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#4E5255",
+            "#2D3136",
+            "#25282D",
+            "#33373D",
+            "#575B5E"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/01-granite.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.776,
+        "estimatedFidelity": 0.776,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_albedo.png",
+            "url": "granite_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_roughness.png",
+            "url": "granite_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_height.png",
+            "url": "granite_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_normal.png",
+            "url": "granite_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_ao.png",
+            "url": "granite_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 150,
+          "sourceHeight": 50,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 150,
+            "height": 50
+          },
+          "mask": {
+            "backgroundColor": "#343739",
+            "backgroundNoise": 17.378,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0441
+          },
+          "mapStats": {
+            "valueRange": 0.1986,
+            "heightP90Gradient": 0.02908,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.19,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#4E5255",
+            "#2D3136",
+            "#25282D",
+            "#33373D",
+            "#575B5E"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_albedo.png",
+          "url": "granite_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_roughness.png",
+          "url": "granite_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_height.png",
+          "url": "granite_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_normal.png",
+          "url": "granite_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-01-granite/granite_ao.png",
+          "url": "granite_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    },
+    {
+      "componentId": "stripedTurret",
+      "regionId": "striped-stone",
+      "materialSpecId": "stripedStone",
+      "hypothesis": {
+        "componentId": "stripedTurret",
+        "regionId": "striped-stone",
+        "materialId": null,
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "aliases": [],
+        "confidence": 0.794,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "stone.natural",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.794,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+            "bbox": {
+              "x": 710,
+              "y": 475,
+              "width": 32,
+              "height": 135
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0027
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.794,
+            "estimatedFidelity": 0.794,
+            "targetThreshold": 0.7,
+            "materialId": "stripedStone",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone",
+            "palette": [
+              "#646362",
+              "#D2CBC5",
+              "#C3BAB3",
+              "#4D4C4B",
+              "#948F8B"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_albedo.png",
+                "url": "stripedstone_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_roughness.png",
+                "url": "stripedstone_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_height.png",
+                "url": "stripedstone_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_normal.png",
+                "url": "stripedstone_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_ao.png",
+                "url": "stripedstone_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 32,
+              "sourceHeight": 135,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 0,
+                "width": 32,
+                "height": 135
+              },
+              "mask": {
+                "backgroundColor": "#BFB8B3",
+                "backgroundNoise": 111.476,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 1.0
+              },
+              "mapStats": {
+                "valueRange": 0.5425,
+                "heightP90Gradient": 0.19546,
+                "roughnessBase": 0.812,
+                "roughnessVariation": 0.206,
+                "normalStrength": 0.385,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#646362",
+                "#D2CBC5",
+                "#C3BAB3",
+                "#4D4C4B",
+                "#948F8B"
+              ]
+            },
+            "warnings": [
+              "foreground mask is tiny; material extraction is likely unreliable",
+              "image is not clearly isolated from background; using most pixels as material evidence",
+              "object/background separation is weak",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "brushed-steel",
+            "recipe": {
+              "metalness": 1.0,
+              "roughness": 0.35,
+              "clearcoat": 0.0,
+              "clearcoatRoughness": 0.0,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 1.0,
+              "anisotropy": 1.0,
+              "procedural": "brushed"
+            },
+            "palette": [
+              "#D1CAC4",
+              "#52504F",
+              "#565453",
+              "#5F5B57",
+              "#46413F"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "vertical",
+            "stats": {
+              "meanLum": 142.2,
+              "meanSaturation": 0.057,
+              "gradientStrength": 0.598,
+              "mottle": 0.009,
+              "streakRatio": 0.06,
+              "hueSpread": 0.0,
+              "specularFraction": 0.002
+            }
+          }
+        },
+        "profileId": "stone.natural",
+        "family": "stone",
+        "subtype": "natural",
+        "finish": "rough-or-polished",
+        "renderPrior": {
+          "metalness": 0.0,
+          "roughness": 0.78,
+          "clearcoat": 0.0
+        },
+        "requiredMaps": [
+          "map",
+          "roughnessMap",
+          "normalMap"
+        ],
+        "optionalMaps": [
+          "aoMap",
+          "displacementMap",
+          "clearcoatMap"
+        ],
+        "validationViews": [
+          "albedo-unlit",
+          "neutral-studio",
+          "grazing",
+          "reference-beauty"
+        ],
+        "sourceRefs": [
+          "three.mesh-standard",
+          "three.mesh-physical",
+          "adobe.pbr-guide-1",
+          "mit.material-recognition"
+        ],
+        "visualCues": [
+          "multi-scale mineral pattern",
+          "fracture or pore relief",
+          "polished stone retains dielectric reflection"
+        ]
+      },
+      "observations": [
+        "near-neutral colour response",
+        "directional surface frequency",
+        "strong image-space gradient; verify it is material pattern, not lighting",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+        "bbox": {
+          "x": 710,
+          "y": 475,
+          "width": 32,
+          "height": 135
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0027
+      },
+      "textureAnalysis": {
+        "finishClass": "brushed-steel",
+        "recipe": {
+          "metalness": 1.0,
+          "roughness": 0.35,
+          "clearcoat": 0.0,
+          "clearcoatRoughness": 0.0,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 1.0,
+          "anisotropy": 1.0,
+          "procedural": "brushed"
+        },
+        "palette": [
+          "#D1CAC4",
+          "#52504F",
+          "#565453",
+          "#5F5B57",
+          "#46413F"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "vertical",
+        "stats": {
+          "meanLum": 142.2,
+          "meanSaturation": 0.057,
+          "gradientStrength": 0.598,
+          "mottle": 0.009,
+          "streakRatio": 0.06,
+          "hueSpread": 0.0,
+          "specularFraction": 0.002
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.794,
+        "estimatedFidelity": 0.794,
+        "targetThreshold": 0.7,
+        "materialId": "stripedStone",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone",
+        "palette": [
+          "#646362",
+          "#D2CBC5",
+          "#C3BAB3",
+          "#4D4C4B",
+          "#948F8B"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_albedo.png",
+            "url": "stripedstone_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_roughness.png",
+            "url": "stripedstone_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_height.png",
+            "url": "stripedstone_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_normal.png",
+            "url": "stripedstone_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_ao.png",
+            "url": "stripedstone_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 32,
+          "sourceHeight": 135,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 32,
+            "height": 135
+          },
+          "mask": {
+            "backgroundColor": "#BFB8B3",
+            "backgroundNoise": 111.476,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.5425,
+            "heightP90Gradient": 0.19546,
+            "roughnessBase": 0.812,
+            "roughnessVariation": 0.206,
+            "normalStrength": 0.385,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#646362",
+            "#D2CBC5",
+            "#C3BAB3",
+            "#4D4C4B",
+            "#948F8B"
+          ]
+        },
+        "warnings": [
+          "foreground mask is tiny; material extraction is likely unreliable",
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/02-striped-stone.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.794,
+        "estimatedFidelity": 0.794,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_albedo.png",
+            "url": "stripedstone_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_roughness.png",
+            "url": "stripedstone_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_height.png",
+            "url": "stripedstone_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_normal.png",
+            "url": "stripedstone_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_ao.png",
+            "url": "stripedstone_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 32,
+          "sourceHeight": 135,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 32,
+            "height": 135
+          },
+          "mask": {
+            "backgroundColor": "#BFB8B3",
+            "backgroundNoise": 111.476,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.5425,
+            "heightP90Gradient": 0.19546,
+            "roughnessBase": 0.812,
+            "roughnessVariation": 0.206,
+            "normalStrength": 0.385,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#646362",
+            "#D2CBC5",
+            "#C3BAB3",
+            "#4D4C4B",
+            "#948F8B"
+          ]
+        },
+        "warnings": [
+          "foreground mask is tiny; material extraction is likely unreliable",
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_albedo.png",
+          "url": "stripedstone_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_roughness.png",
+          "url": "stripedstone_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_height.png",
+          "url": "stripedstone_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_normal.png",
+          "url": "stripedstone_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-02-striped-stone/stripedstone_ao.png",
+          "url": "stripedstone_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    },
+    {
+      "componentId": "expansionGlazing",
+      "regionId": "glass",
+      "materialSpecId": "glass",
+      "hypothesis": {
+        "componentId": "expansionGlazing",
+        "regionId": "glass",
+        "materialId": null,
+        "family": "glass",
+        "subtype": "clear",
+        "finish": "polished",
+        "aliases": [],
+        "confidence": 0.78,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "glass.clear",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.78,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+            "bbox": {
+              "x": 1080,
+              "y": 330,
+              "width": 140,
+              "height": 30
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0027
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.799,
+            "estimatedFidelity": 0.799,
+            "targetThreshold": 0.7,
+            "materialId": "glass",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass",
+            "palette": [
+              "#1B2422",
+              "#2A3232",
+              "#222B28",
+              "#444E52",
+              "#5E6970"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_albedo.png",
+                "url": "glass_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_roughness.png",
+                "url": "glass_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_height.png",
+                "url": "glass_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_normal.png",
+                "url": "glass_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_ao.png",
+                "url": "glass_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 140,
+              "sourceHeight": 30,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 0,
+                "width": 102,
+                "height": 30
+              },
+              "mask": {
+                "backgroundColor": "#9FA4A3",
+                "backgroundNoise": 123.604,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 0.0457
+              },
+              "mapStats": {
+                "valueRange": 0.2922,
+                "heightP90Gradient": 0.02557,
+                "roughnessBase": 0.68,
+                "roughnessVariation": 0.05,
+                "normalStrength": 0.186,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#1B2422",
+                "#2A3232",
+                "#222B28",
+                "#444E52",
+                "#5E6970"
+              ]
+            },
+            "warnings": [
+              "foreground mask is very small",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "brushed-steel",
+            "recipe": {
+              "metalness": 1.0,
+              "roughness": 0.35,
+              "clearcoat": 0.0,
+              "clearcoatRoughness": 0.0,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 1.0,
+              "anisotropy": 1.0,
+              "procedural": "brushed"
+            },
+            "palette": [
+              "#353D3B",
+              "#4E5A5C",
+              "#778187",
+              "#73787B",
+              "#353E3A"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "horizontal",
+            "stats": {
+              "meanLum": 105.4,
+              "meanSaturation": 0.115,
+              "gradientStrength": 0.447,
+              "mottle": 0.049,
+              "streakRatio": 6.58,
+              "hueSpread": 0.015,
+              "specularFraction": 0.0
+            }
+          }
+        },
+        "profileId": "glass.clear",
+        "family": "glass",
+        "subtype": "clear",
+        "finish": "polished",
+        "renderPrior": {
+          "metalness": 0.0,
+          "roughness": 0.05,
+          "transmission": 1.0,
+          "ior": 1.5
+        },
+        "requiredMaps": [
+          "roughnessMap",
+          "thicknessMap"
+        ],
+        "optionalMaps": [
+          "map",
+          "normalMap",
+          "transmissionMap"
+        ],
+        "validationViews": [
+          "neutral-studio",
+          "environment-reflection",
+          "backlight-transmission",
+          "reference-beauty"
+        ],
+        "sourceRefs": [
+          "three.mesh-physical",
+          "three.pmrem",
+          "gltf.2",
+          "khronos.transmission",
+          "khronos.volume",
+          "google.filament-pbr"
+        ],
+        "visualCues": [
+          "background distortion",
+          "bright interface reflection",
+          "visible thickness or absorption"
+        ]
+      },
+      "observations": [
+        "near-neutral colour response",
+        "directional surface frequency",
+        "visible meso/micro variation",
+        "strong image-space gradient; verify it is material pattern, not lighting",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+        "bbox": {
+          "x": 1080,
+          "y": 330,
+          "width": 140,
+          "height": 30
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0027
+      },
+      "textureAnalysis": {
+        "finishClass": "brushed-steel",
+        "recipe": {
+          "metalness": 1.0,
+          "roughness": 0.35,
+          "clearcoat": 0.0,
+          "clearcoatRoughness": 0.0,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 1.0,
+          "anisotropy": 1.0,
+          "procedural": "brushed"
+        },
+        "palette": [
+          "#353D3B",
+          "#4E5A5C",
+          "#778187",
+          "#73787B",
+          "#353E3A"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "horizontal",
+        "stats": {
+          "meanLum": 105.4,
+          "meanSaturation": 0.115,
+          "gradientStrength": 0.447,
+          "mottle": 0.049,
+          "streakRatio": 6.58,
+          "hueSpread": 0.015,
+          "specularFraction": 0.0
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.799,
+        "estimatedFidelity": 0.799,
+        "targetThreshold": 0.7,
+        "materialId": "glass",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass",
+        "palette": [
+          "#1B2422",
+          "#2A3232",
+          "#222B28",
+          "#444E52",
+          "#5E6970"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_albedo.png",
+            "url": "glass_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_roughness.png",
+            "url": "glass_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_height.png",
+            "url": "glass_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_normal.png",
+            "url": "glass_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_ao.png",
+            "url": "glass_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 140,
+          "sourceHeight": 30,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 102,
+            "height": 30
+          },
+          "mask": {
+            "backgroundColor": "#9FA4A3",
+            "backgroundNoise": 123.604,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0457
+          },
+          "mapStats": {
+            "valueRange": 0.2922,
+            "heightP90Gradient": 0.02557,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.186,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#1B2422",
+            "#2A3232",
+            "#222B28",
+            "#444E52",
+            "#5E6970"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/03-glass.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.799,
+        "estimatedFidelity": 0.799,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_albedo.png",
+            "url": "glass_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_roughness.png",
+            "url": "glass_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_height.png",
+            "url": "glass_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_normal.png",
+            "url": "glass_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_ao.png",
+            "url": "glass_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 140,
+          "sourceHeight": 30,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 102,
+            "height": 30
+          },
+          "mask": {
+            "backgroundColor": "#9FA4A3",
+            "backgroundNoise": 123.604,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0457
+          },
+          "mapStats": {
+            "valueRange": 0.2922,
+            "heightP90Gradient": 0.02557,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.186,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#1B2422",
+            "#2A3232",
+            "#222B28",
+            "#444E52",
+            "#5E6970"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_albedo.png",
+          "url": "glass_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_roughness.png",
+          "url": "glass_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_height.png",
+          "url": "glass_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_normal.png",
+          "url": "glass_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-03-glass/glass_ao.png",
+          "url": "glass_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    },
+    {
+      "componentId": "entryAssembly",
+      "regionId": "dark-metal",
+      "materialSpecId": "darkMetal",
+      "hypothesis": {
+        "componentId": "entryAssembly",
+        "regionId": "dark-metal",
+        "materialId": null,
+        "family": "metal",
+        "subtype": "aluminum",
+        "finish": "satin",
+        "aliases": [],
+        "confidence": 0.773,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "metal.aluminum",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.773,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+            "bbox": {
+              "x": 815,
+              "y": 688,
+              "width": 55,
+              "height": 15
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0005
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.773,
+            "estimatedFidelity": 0.773,
+            "targetThreshold": 0.7,
+            "materialId": "darkMetal",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal",
+            "palette": [
+              "#1C1A16",
+              "#3E3930",
+              "#0E0D0C",
+              "#26231E",
+              "#161412"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_albedo.png",
+                "url": "darkmetal_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_roughness.png",
+                "url": "darkmetal_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_height.png",
+                "url": "darkmetal_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_normal.png",
+                "url": "darkmetal_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_ao.png",
+                "url": "darkmetal_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 55,
+              "sourceHeight": 15,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 11,
+                "width": 43,
+                "height": 4
+              },
+              "mask": {
+                "backgroundColor": "#3B3937",
+                "backgroundNoise": 22.694,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 0.0521
+              },
+              "mapStats": {
+                "valueRange": 0.1885,
+                "heightP90Gradient": 0.02713,
+                "roughnessBase": 0.68,
+                "roughnessVariation": 0.05,
+                "normalStrength": 0.188,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#1C1A16",
+                "#3E3930",
+                "#0E0D0C",
+                "#26231E",
+                "#161412"
+              ]
+            },
+            "warnings": [
+              "foreground mask is very small",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+              "low value range weakens height/roughness inference"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "worn-composite",
+            "recipe": {
+              "metalness": 0.0,
+              "roughness": 0.9,
+              "clearcoat": 0.0,
+              "clearcoatRoughness": 0.0,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 0.5,
+              "anisotropy": 0.0,
+              "procedural": "mottle"
+            },
+            "palette": [
+              "#0B0A08",
+              "#332F26",
+              "#222120",
+              "#2C2B2A",
+              "#3D3A37"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "horizontal",
+            "stats": {
+              "meanLum": 42.0,
+              "meanSaturation": 0.13,
+              "gradientStrength": 0.19,
+              "mottle": 0.014,
+              "streakRatio": 7.82,
+              "hueSpread": 0.01,
+              "specularFraction": 0.0
+            }
+          }
+        },
+        "profileId": "metal.aluminum",
+        "family": "metal",
+        "subtype": "aluminum",
+        "finish": "satin",
+        "renderPrior": {
+          "metalness": 1.0,
+          "roughness": 0.3,
+          "anisotropy": 0.2
+        },
+        "requiredMaps": [
+          "map",
+          "roughnessMap"
+        ],
+        "optionalMaps": [
+          "normalMap",
+          "anisotropyMap"
+        ],
+        "validationViews": [
+          "neutral-studio",
+          "environment-reflection",
+          "grazing"
+        ],
+        "sourceRefs": [
+          "three.mesh-standard",
+          "three.pmrem",
+          "gltf.2",
+          "khronos.gltf-pbr",
+          "adobe.pbr-guide-2",
+          "google.filament-pbr"
+        ],
+        "visualCues": [
+          "bright neutral conductor",
+          "soft satin highlight unless polished",
+          "often fine machining direction"
+        ]
+      },
+      "observations": [
+        "near-neutral colour response",
+        "directional surface frequency",
+        "strong image-space gradient; verify it is material pattern, not lighting",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+        "bbox": {
+          "x": 815,
+          "y": 688,
+          "width": 55,
+          "height": 15
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0005
+      },
+      "textureAnalysis": {
+        "finishClass": "worn-composite",
+        "recipe": {
+          "metalness": 0.0,
+          "roughness": 0.9,
+          "clearcoat": 0.0,
+          "clearcoatRoughness": 0.0,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 0.5,
+          "anisotropy": 0.0,
+          "procedural": "mottle"
+        },
+        "palette": [
+          "#0B0A08",
+          "#332F26",
+          "#222120",
+          "#2C2B2A",
+          "#3D3A37"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "horizontal",
+        "stats": {
+          "meanLum": 42.0,
+          "meanSaturation": 0.13,
+          "gradientStrength": 0.19,
+          "mottle": 0.014,
+          "streakRatio": 7.82,
+          "hueSpread": 0.01,
+          "specularFraction": 0.0
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.773,
+        "estimatedFidelity": 0.773,
+        "targetThreshold": 0.7,
+        "materialId": "darkMetal",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal",
+        "palette": [
+          "#1C1A16",
+          "#3E3930",
+          "#0E0D0C",
+          "#26231E",
+          "#161412"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_albedo.png",
+            "url": "darkmetal_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_roughness.png",
+            "url": "darkmetal_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_height.png",
+            "url": "darkmetal_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_normal.png",
+            "url": "darkmetal_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_ao.png",
+            "url": "darkmetal_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 55,
+          "sourceHeight": 15,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 11,
+            "width": 43,
+            "height": 4
+          },
+          "mask": {
+            "backgroundColor": "#3B3937",
+            "backgroundNoise": 22.694,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0521
+          },
+          "mapStats": {
+            "valueRange": 0.1885,
+            "heightP90Gradient": 0.02713,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.188,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#1C1A16",
+            "#3E3930",
+            "#0E0D0C",
+            "#26231E",
+            "#161412"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/04-dark-metal.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.773,
+        "estimatedFidelity": 0.773,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_albedo.png",
+            "url": "darkmetal_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_roughness.png",
+            "url": "darkmetal_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_height.png",
+            "url": "darkmetal_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_normal.png",
+            "url": "darkmetal_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_ao.png",
+            "url": "darkmetal_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 55,
+          "sourceHeight": 15,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 11,
+            "width": 43,
+            "height": 4
+          },
+          "mask": {
+            "backgroundColor": "#3B3937",
+            "backgroundNoise": 22.694,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 0.0521
+          },
+          "mapStats": {
+            "valueRange": 0.1885,
+            "heightP90Gradient": 0.02713,
+            "roughnessBase": 0.68,
+            "roughnessVariation": 0.05,
+            "normalStrength": 0.188,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#1C1A16",
+            "#3E3930",
+            "#0E0D0C",
+            "#26231E",
+            "#161412"
+          ]
+        },
+        "warnings": [
+          "foreground mask is very small",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_albedo.png",
+          "url": "darkmetal_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_roughness.png",
+          "url": "darkmetal_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_height.png",
+          "url": "darkmetal_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_normal.png",
+          "url": "darkmetal_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-04-dark-metal/darkmetal_ao.png",
+          "url": "darkmetal_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    },
+    {
+      "componentId": "rippledExpansion",
+      "regionId": "frp",
+      "materialSpecId": "frp",
+      "hypothesis": {
+        "componentId": "rippledExpansion",
+        "regionId": "frp",
+        "materialId": null,
+        "family": "plastic",
+        "subtype": "generic-polymer",
+        "finish": "matte",
+        "aliases": [],
+        "confidence": 0.716,
+        "source": "generated-reference-visible-region"
+      },
+      "assignment": {
+        "materialId": "plastic.matte",
+        "status": "proceed",
+        "source": "generated-reference-visible-region",
+        "confidence": 0.716,
+        "method": "family-subtype-finish",
+        "alternatives": [],
+        "evidence": {
+          "crop": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+            "bbox": {
+              "x": 930,
+              "y": 250,
+              "width": 180,
+              "height": 50
+            },
+            "sourceWidth": 1536,
+            "sourceHeight": 1024,
+            "loaderWarnings": [],
+            "coverage": 0.0057
+          },
+          "pbr": {
+            "ok": true,
+            "verdict": "pass",
+            "confidence": 0.716,
+            "estimatedFidelity": 0.716,
+            "targetThreshold": 0.7,
+            "materialId": "frp",
+            "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+            "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp",
+            "palette": [
+              "#CCCBCD",
+              "#D3D2D3",
+              "#C3C2C4",
+              "#DCDADB",
+              "#B5B3B4"
+            ],
+            "maps": {
+              "albedo": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_albedo.png",
+                "url": "frp_albedo.png",
+                "channel": "albedo",
+                "source": "reference-pixel-extraction"
+              },
+              "roughness": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_roughness.png",
+                "url": "frp_roughness.png",
+                "channel": "roughness",
+                "source": "reference-pixel-extraction"
+              },
+              "height": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_height.png",
+                "url": "frp_height.png",
+                "channel": "height",
+                "source": "reference-pixel-extraction"
+              },
+              "normal": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_normal.png",
+                "url": "frp_normal.png",
+                "channel": "normal",
+                "source": "reference-pixel-extraction"
+              },
+              "ao": {
+                "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_ao.png",
+                "url": "frp_ao.png",
+                "channel": "ao",
+                "source": "reference-pixel-extraction"
+              }
+            },
+            "diagnostics": {
+              "sourceWidth": 180,
+              "sourceHeight": 50,
+              "mapSize": 512,
+              "cropBBoxPixels": {
+                "x": 0,
+                "y": 0,
+                "width": 180,
+                "height": 50
+              },
+              "mask": {
+                "backgroundColor": "#C8C8C8",
+                "backgroundNoise": 26.019,
+                "transparentPixelFraction": 0.0,
+                "foregroundCoverage": 1.0
+              },
+              "mapStats": {
+                "valueRange": 0.1403,
+                "heightP90Gradient": 0.1845,
+                "roughnessBase": 0.855,
+                "roughnessVariation": 0.15,
+                "normalStrength": 0.372,
+                "blurRadius": 10
+              },
+              "palette": [
+                "#CCCBCD",
+                "#D3D2D3",
+                "#C3C2C4",
+                "#DCDADB",
+                "#B5B3B4"
+              ]
+            },
+            "warnings": [
+              "foreground mask is tiny; material extraction is likely unreliable",
+              "image is not clearly isolated from background; using most pixels as material evidence",
+              "object/background separation is weak",
+              "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+              "low value range weakens height/roughness inference"
+            ],
+            "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+          },
+          "texture": {
+            "finishClass": "worn-composite",
+            "recipe": {
+              "metalness": 0.0,
+              "roughness": 0.9,
+              "clearcoat": 0.0,
+              "clearcoatRoughness": 0.0,
+              "transmission": 0.0,
+              "ior": 1.5,
+              "envMapIntensity": 0.5,
+              "anisotropy": 0.0,
+              "procedural": "mottle"
+            },
+            "palette": [
+              "#C9C9CC",
+              "#C7C6C9",
+              "#CDCBCC",
+              "#D0CFCF",
+              "#CCCACA"
+            ],
+            "paletteHueRisk": [],
+            "gradientAxis": "horizontal",
+            "stats": {
+              "meanLum": 202.9,
+              "meanSaturation": 0.013,
+              "gradientStrength": 0.036,
+              "mottle": 0.03,
+              "streakRatio": 0.83,
+              "hueSpread": 0.0,
+              "specularFraction": 0.0
+            }
+          }
+        },
+        "profileId": "plastic.matte",
+        "family": "plastic",
+        "subtype": "generic-polymer",
+        "finish": "matte",
+        "renderPrior": {
+          "metalness": 0.0,
+          "roughness": 0.68,
+          "ior": 1.5
+        },
+        "requiredMaps": [
+          "map",
+          "roughnessMap"
+        ],
+        "optionalMaps": [
+          "normalMap",
+          "aoMap"
+        ],
+        "validationViews": [
+          "albedo-unlit",
+          "neutral-studio",
+          "grazing"
+        ],
+        "sourceRefs": [
+          "three.mesh-standard",
+          "adobe.pbr-guide-1",
+          "google.filament-pbr",
+          "mit.material-recognition"
+        ],
+        "visualCues": [
+          "coloured diffuse body",
+          "broad neutral highlight",
+          "mold seams or fine stipple"
+        ]
+      },
+      "observations": [
+        "near-neutral colour response",
+        "single-image PBR inference requires controlled render validation"
+      ],
+      "crop": {
+        "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+        "bbox": {
+          "x": 930,
+          "y": 250,
+          "width": 180,
+          "height": 50
+        },
+        "sourceWidth": 1536,
+        "sourceHeight": 1024,
+        "loaderWarnings": [],
+        "coverage": 0.0057
+      },
+      "textureAnalysis": {
+        "finishClass": "worn-composite",
+        "recipe": {
+          "metalness": 0.0,
+          "roughness": 0.9,
+          "clearcoat": 0.0,
+          "clearcoatRoughness": 0.0,
+          "transmission": 0.0,
+          "ior": 1.5,
+          "envMapIntensity": 0.5,
+          "anisotropy": 0.0,
+          "procedural": "mottle"
+        },
+        "palette": [
+          "#C9C9CC",
+          "#C7C6C9",
+          "#CDCBCC",
+          "#D0CFCF",
+          "#CCCACA"
+        ],
+        "paletteHueRisk": [],
+        "gradientAxis": "horizontal",
+        "stats": {
+          "meanLum": 202.9,
+          "meanSaturation": 0.013,
+          "gradientStrength": 0.036,
+          "mottle": 0.03,
+          "streakRatio": 0.83,
+          "hueSpread": 0.0,
+          "specularFraction": 0.0
+        }
+      },
+      "pbrReport": {
+        "ok": true,
+        "verdict": "pass",
+        "confidence": 0.716,
+        "estimatedFidelity": 0.716,
+        "targetThreshold": 0.7,
+        "materialId": "frp",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+        "outDir": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp",
+        "palette": [
+          "#CCCBCD",
+          "#D3D2D3",
+          "#C3C2C4",
+          "#DCDADB",
+          "#B5B3B4"
+        ],
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_albedo.png",
+            "url": "frp_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_roughness.png",
+            "url": "frp_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_height.png",
+            "url": "frp_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_normal.png",
+            "url": "frp_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_ao.png",
+            "url": "frp_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 180,
+          "sourceHeight": 50,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 180,
+            "height": 50
+          },
+          "mask": {
+            "backgroundColor": "#C8C8C8",
+            "backgroundNoise": 26.019,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.1403,
+            "heightP90Gradient": 0.1845,
+            "roughnessBase": 0.855,
+            "roughnessVariation": 0.15,
+            "normalStrength": 0.372,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#CCCBCD",
+            "#D3D2D3",
+            "#C3C2C4",
+            "#DCDADB",
+            "#B5B3B4"
+          ]
+        },
+        "warnings": [
+          "foreground mask is tiny; material extraction is likely unreliable",
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ],
+        "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+      },
+      "referencePbr": {
+        "version": "1.0",
+        "sourceImage": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/05-frp.png",
+        "extractor": "stage1_intake/extract_pbr_evidence.py",
+        "method": "single-image pixel evidence with de-lighting estimate; not photogrammetry",
+        "usable": true,
+        "verdict": "pass",
+        "confidence": 0.716,
+        "estimatedFidelity": 0.716,
+        "targetThreshold": 0.7,
+        "hardLimit": "A single image cannot uniquely recover true albedo/roughness/normal/AO; maps are reference-derived estimates.",
+        "maps": {
+          "albedo": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_albedo.png",
+            "url": "frp_albedo.png",
+            "channel": "albedo",
+            "source": "reference-pixel-extraction"
+          },
+          "roughness": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_roughness.png",
+            "url": "frp_roughness.png",
+            "channel": "roughness",
+            "source": "reference-pixel-extraction"
+          },
+          "height": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_height.png",
+            "url": "frp_height.png",
+            "channel": "height",
+            "source": "reference-pixel-extraction"
+          },
+          "normal": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_normal.png",
+            "url": "frp_normal.png",
+            "channel": "normal",
+            "source": "reference-pixel-extraction"
+          },
+          "ao": {
+            "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_ao.png",
+            "url": "frp_ao.png",
+            "channel": "ao",
+            "source": "reference-pixel-extraction"
+          }
+        },
+        "diagnostics": {
+          "sourceWidth": 180,
+          "sourceHeight": 50,
+          "mapSize": 512,
+          "cropBBoxPixels": {
+            "x": 0,
+            "y": 0,
+            "width": 180,
+            "height": 50
+          },
+          "mask": {
+            "backgroundColor": "#C8C8C8",
+            "backgroundNoise": 26.019,
+            "transparentPixelFraction": 0.0,
+            "foregroundCoverage": 1.0
+          },
+          "mapStats": {
+            "valueRange": 0.1403,
+            "heightP90Gradient": 0.1845,
+            "roughnessBase": 0.855,
+            "roughnessVariation": 0.15,
+            "normalStrength": 0.372,
+            "blurRadius": 10
+          },
+          "palette": [
+            "#CCCBCD",
+            "#D3D2D3",
+            "#C3C2C4",
+            "#DCDADB",
+            "#B5B3B4"
+          ]
+        },
+        "warnings": [
+          "foreground mask is tiny; material extraction is likely unreliable",
+          "image is not clearly isolated from background; using most pixels as material evidence",
+          "object/background separation is weak",
+          "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+          "low value range weakens height/roughness inference"
+        ]
+      },
+      "maps": {
+        "albedo": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_albedo.png",
+          "url": "frp_albedo.png",
+          "channel": "albedo",
+          "source": "reference-pixel-extraction"
+        },
+        "roughness": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_roughness.png",
+          "url": "frp_roughness.png",
+          "channel": "roughness",
+          "source": "reference-pixel-extraction"
+        },
+        "height": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_height.png",
+          "url": "frp_height.png",
+          "channel": "height",
+          "source": "reference-pixel-extraction"
+        },
+        "normal": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_normal.png",
+          "url": "frp_normal.png",
+          "channel": "normal",
+          "source": "reference-pixel-extraction"
+        },
+        "ao": {
+          "path": ".img2threejs/sfmoma-v2/material-evidence/verified-regions/pbr-05-frp/frp_ao.png",
+          "url": "frp_ao.png",
+          "channel": "ao",
+          "source": "reference-pixel-extraction"
+        }
+      }
+    }
+  ],
+  "status": "proceed",
+  "limitations": [
+    "PBR extraction is reference-derived inference, not inverse rendering.",
+    "A crop must be checked against the component visible footprint before accepting material scores.",
+    "All 30 extracted maps are 512x512 probe evidence only; future runtime maps are independent procedural fields at 1024x1024 or greater."
+  ],
+  "artifact": ".img2threejs/sfmoma-v2/material-analysis.json",
+  "visualCropReview": {
+    "status": "accepted-with-single-image-limitations",
+    "inspectedAt": "2026-08-16T22:27:28Z",
+    "regions": [
+      {"material":"brick","bbox":{"x":300,"y":500,"width":330,"height":120},"finding":"Brick facade field only; accepted as probe evidence."},
+      {"material":"granite","bbox":{"x":1040,"y":805,"width":150,"height":50},"finding":"Dark granite panel field only; prior brick/glazing contamination removed."},
+      {"material":"stripedStone","bbox":{"x":710,"y":475,"width":32,"height":135},"finding":"Alternating turret stone bands only; accepted as probe evidence."},
+      {"material":"glass","bbox":{"x":1080,"y":330,"width":140,"height":30},"finding":"Expansion glazing with its real mullions; accepted as probe evidence."},
+      {"material":"darkMetal","bbox":{"x":815,"y":688,"width":55,"height":15},"finding":"Dark canopy slab only; accepted as a small bounded probe."},
+      {"material":"frp","bbox":{"x":930,"y":250,"width":180,"height":50},"finding":"White rippled FRP panel field with a real seam; prior sky contamination removed."}
+    ],
+    "hardLimit": "Visual isolation does not make these crops measured PBR or runtime-ready textures."
+  }
+}

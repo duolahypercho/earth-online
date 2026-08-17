@@ -1,0 +1,85 @@
+{
+  "ok": true,
+  "verdict": "pass",
+  "confidence": 0.86,
+  "estimatedFidelity": 0.86,
+  "targetThreshold": 0.7,
+  "materialId": "frp",
+  "sourceImage": ".img2threejs/sfmoma-v2/detail-inventory/zone-r1c2.png",
+  "outDir": ".img2threejs/sfmoma-v2/material-evidence/frp",
+  "palette": [
+    "#935C48",
+    "#83503E",
+    "#55382D",
+    "#A16A54",
+    "#1F211E"
+  ],
+  "maps": {
+    "albedo": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/frp/frp_albedo.png",
+      "url": "frp_albedo.png",
+      "channel": "albedo",
+      "source": "reference-pixel-extraction"
+    },
+    "roughness": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/frp/frp_roughness.png",
+      "url": "frp_roughness.png",
+      "channel": "roughness",
+      "source": "reference-pixel-extraction"
+    },
+    "height": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/frp/frp_height.png",
+      "url": "frp_height.png",
+      "channel": "height",
+      "source": "reference-pixel-extraction"
+    },
+    "normal": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/frp/frp_normal.png",
+      "url": "frp_normal.png",
+      "channel": "normal",
+      "source": "reference-pixel-extraction"
+    },
+    "ao": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/frp/frp_ao.png",
+      "url": "frp_ao.png",
+      "channel": "ao",
+      "source": "reference-pixel-extraction"
+    }
+  },
+  "diagnostics": {
+    "sourceWidth": 512,
+    "sourceHeight": 341,
+    "mapSize": 1024,
+    "cropBBoxPixels": {
+      "x": 0,
+      "y": 0,
+      "width": 419,
+      "height": 341
+    },
+    "mask": {
+      "backgroundColor": "#ABADB2",
+      "backgroundNoise": 135.915,
+      "transparentPixelFraction": 0,
+      "foregroundCoverage": 0.2823
+    },
+    "mapStats": {
+      "valueRange": 0.3342,
+      "heightP90Gradient": 0.07398,
+      "roughnessBase": 0.682,
+      "roughnessVariation": 0.138,
+      "normalStrength": 0.243,
+      "blurRadius": 21
+    },
+    "palette": [
+      "#935C48",
+      "#83503E",
+      "#55382D",
+      "#A16A54",
+      "#1F211E"
+    ]
+  },
+  "warnings": [
+    "single-image inverse rendering cannot prove true physical PBR; confidence is capped"
+  ],
+  "limitation": "single-image PBR extraction is an estimate; 70%+ extraction confidence still needs render screenshot review"
+}

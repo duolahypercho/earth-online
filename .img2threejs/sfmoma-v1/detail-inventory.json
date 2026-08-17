@@ -1,0 +1,143 @@
+{
+  "sourceImage": "public/assets/hero/sfmoma-img2threejs-v1/reference.png",
+  "zonesDir": ".img2threejs/sfmoma-v1/detail-inventory",
+  "detailInventory": {
+    "scanMethod": "grid-3x3-plus-identity-pass",
+    "targetMinDetails": 10,
+    "details": [
+      {
+        "id": "red-tower-vertical-ribs",
+        "kind": "repetition-system",
+        "description": "Dense vertical ribs across the red tower and diagonal folded volume.",
+        "region": { "x": 0.47, "y": 0.03, "width": 0.3, "height": 0.5, "units": "normalized" },
+        "scale": "meso, approximately 0.3m rhythm at building scale",
+        "affects": "silhouette shading, directional roughness, landmark identity",
+        "mapsTo": { "type": "component.localFeatures", "ref": "redTower.ribArray" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r0c1.png",
+        "confidence": 0.96
+      },
+      {
+        "id": "red-tower-glazed-slot",
+        "kind": "negative-space",
+        "description": "Tall dark glazed slot framed by the diagonal red fold.",
+        "region": { "x": 0.55, "y": 0.17, "width": 0.09, "height": 0.35, "units": "normalized" },
+        "scale": "macro vertical aperture",
+        "affects": "tower silhouette and front-three-quarter identity",
+        "mapsTo": { "type": "component.localFeatures", "ref": "redTower.glazedSlot" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r0c1.png",
+        "confidence": 0.94
+      },
+      {
+        "id": "white-gallery-cantilevers",
+        "kind": "hard-surface-form",
+        "description": "Stacked white gallery boxes with asymmetric setbacks and deep cantilevers.",
+        "region": { "x": 0.07, "y": 0.23, "width": 0.84, "height": 0.54, "units": "normalized" },
+        "scale": "macro",
+        "affects": "overall silhouette, depth, and contact shadow",
+        "mapsTo": { "type": "component.localFeatures", "ref": "galleryStack.cantileverHierarchy" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r1c1.png",
+        "confidence": 0.97
+      },
+      {
+        "id": "concrete-panel-seams",
+        "kind": "surface-relief",
+        "description": "Subtle horizontal and vertical panel joints on pale concrete faces.",
+        "region": { "x": 0.08, "y": 0.28, "width": 0.83, "height": 0.48, "units": "normalized" },
+        "scale": "micro-to-meso",
+        "affects": "material scale and facade readability",
+        "mapsTo": { "type": "material.localOverrides", "ref": "paleConcrete.panelJointLines" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r1c0.png",
+        "confidence": 0.82
+      },
+      {
+        "id": "midlevel-curtain-wall",
+        "kind": "repetition-system",
+        "description": "Long horizontal blue-gray curtain-wall band with regular dark mullions.",
+        "region": { "x": 0.27, "y": 0.5, "width": 0.65, "height": 0.12, "units": "normalized" },
+        "scale": "meso repeated bays",
+        "affects": "horizontal proportion and material breakup",
+        "mapsTo": { "type": "component.localFeatures", "ref": "midCurtainWall.mullionGrid" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r1c2.png",
+        "confidence": 0.95
+      },
+      {
+        "id": "entry-door-grid",
+        "kind": "repetition-system",
+        "description": "Recessed central entrance with multiple framed glass door leaves.",
+        "region": { "x": 0.43, "y": 0.75, "width": 0.18, "height": 0.17, "units": "normalized" },
+        "scale": "human-scale meso",
+        "affects": "entrance readability and scale cue",
+        "mapsTo": { "type": "component.localFeatures", "ref": "entryGlazing.doorGrid" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r2c1.png",
+        "confidence": 0.91
+      },
+      {
+        "id": "entry-stair",
+        "kind": "hard-surface-form",
+        "description": "Visible interior stair or escalator behind the left entry glazing.",
+        "region": { "x": 0.21, "y": 0.68, "width": 0.18, "height": 0.2, "units": "normalized" },
+        "scale": "human-scale meso",
+        "affects": "interior depth behind glass",
+        "mapsTo": { "type": "component.localFeatures", "ref": "entryGlazing.interiorStair" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r2c0.png",
+        "confidence": 0.76
+      },
+      {
+        "id": "dark-louver-band",
+        "kind": "repetition-system",
+        "description": "Wide black horizontal louver band on the lower right facade.",
+        "region": { "x": 0.66, "y": 0.69, "width": 0.26, "height": 0.09, "units": "normalized" },
+        "scale": "meso repeated slats",
+        "affects": "podium identity and horizontal contrast",
+        "mapsTo": { "type": "component.localFeatures", "ref": "darkPodium.louverBand" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r2c2.png",
+        "confidence": 0.94
+      },
+      {
+        "id": "glass-balustrades",
+        "kind": "thin-shell",
+        "description": "Transparent balustrades along stepped terraces and balcony edges.",
+        "region": { "x": 0.18, "y": 0.55, "width": 0.42, "height": 0.14, "units": "normalized" },
+        "scale": "human-scale micro/meso",
+        "affects": "terrace edge readability and depth",
+        "mapsTo": { "type": "component.localFeatures", "ref": "terraces.glassGuards" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r1c0.png",
+        "confidence": 0.8
+      },
+      {
+        "id": "roof-parapets",
+        "kind": "hard-surface-form",
+        "description": "Low parapet and service ledges on stepped pale roof masses.",
+        "region": { "x": 0.18, "y": 0.19, "width": 0.67, "height": 0.18, "units": "normalized" },
+        "scale": "meso",
+        "affects": "roofline silhouette from elevated views",
+        "mapsTo": { "type": "component.localFeatures", "ref": "galleryStack.roofParapets" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r0c0.png",
+        "confidence": 0.83
+      },
+      {
+        "id": "glass-interior-warmth",
+        "kind": "material-response",
+        "description": "Restrained warm interior values behind otherwise cool blue-gray glazing.",
+        "region": { "x": 0.2, "y": 0.45, "width": 0.72, "height": 0.48, "units": "normalized" },
+        "scale": "macro material zone",
+        "affects": "glass depth and night readability",
+        "mapsTo": { "type": "material.localOverrides", "ref": "blueGrayGlass.interiorWarmth" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r2c1.png",
+        "confidence": 0.78
+      },
+      {
+        "id": "deep-entry-reveal",
+        "kind": "negative-space",
+        "description": "Deeply recessed central ground-floor entry between dark podium masses.",
+        "region": { "x": 0.37, "y": 0.69, "width": 0.27, "height": 0.23, "units": "normalized" },
+        "scale": "macro/meso",
+        "affects": "grounding, entrance shadow, and human-scale composition",
+        "mapsTo": { "type": "component.localFeatures", "ref": "darkPodium.entryReveal" },
+        "evidenceRef": ".img2threejs/sfmoma-v1/detail-inventory/zone-r2c1.png",
+        "confidence": 0.95
+      }
+    ]
+  },
+  "authoringInstruction": "Every entry is linked to a concrete component.localFeatures or material.localOverrides target in the final spec."
+}

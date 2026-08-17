@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "kind": "img2threejs.spec-validation-evidence",
+  "generatedAt": "2026-08-16T23:51:50Z",
+  "spec": ".img2threejs/sfmoma-v2/object-sculpt-spec.json",
+  "specSha256": "5cca08c9e74b1a763c62d919ba714ea96d62b0914bb6956bf5cffde6c05e6181",
+  "materialAnalysis": ".img2threejs/sfmoma-v2/material-analysis.json",
+  "materialAnalysisSha256": "2fa2fb0a010cdcae409bc300ba8956a887fd836406bf63c3c8a49392324cef58",
+  "blueprint": ".img2threejs/sfmoma-v2/spec-authoring-blueprint.json",
+  "blueprintSha256": "f5c057f9fef001429b9eb44346307c27da97af495427c0c62b88cf41a1646303",
+  "assessment": ".img2threejs/sfmoma-v2/assessment.json",
+  "assessmentSha256": "44bd17437df7964d41e33c6791924694a4dd57795f0aa84f7034002ff15edd53",
+  "codegenCorrection": ".img2threejs/sfmoma-v2/codegen-contract-correction.json",
+  "codegenCorrectionSha256": "b69c55996a59555b51a3a2f5f4c2653450c051232a90110c941431c6c3679460",
+  "materialEvidenceAudit": ".img2threejs/sfmoma-v2/material-evidence-audit.json",
+  "materialEvidenceAuditSha256": "b55f1ffadf768aab4296967271fdb758f124660807137fe61b6f9399659f2dbb",
+  "codegenSmoke": ".img2threejs/sfmoma-v2/codegen-smoke-report.json",
+  "codegenSmokeSha256": "d9452c33d066aea2f2edc9f8dc704ba76b1bf838f5fff02cb842c5f71c4fc1ed",
+  "state": ".img2threejs/sfmoma-v2/state.json",
+  "stateSha256": "68bb46f5a3e3d55a63c1e49ce93413d19cebd0bcb4edf76e164f89a630653317",
+  "pathPolicy": {
+    "workspaceArtifacts": "repository-relative paths rooted at .img2threejs/sfmoma-v2 or public/assets",
+    "skillRegistry": "skill://img2threejs/docs/materials/material-reference.json",
+    "absoluteWorkspacePaths": 0
+  },
+  "sourceBoundary": {
+    "referenceClass": "AI-generated source-honest modeling concept",
+    "exactness": "image-only presentation approximation",
+    "notClaimed": [
+      "surveyed dimensions",
+      "exact hidden elevations",
+      "exact inverse-rendered PBR",
+      "authoritative footprint",
+      "authoritative EPSG:26910 placement",
+      "authoritative collision",
+      "authoritative portal identity"
+    ],
+    "canonicalOwner": "OSM sf-building-41692824"
+  },
+  "counts": {
+    "components": 24,
+    "macroComponents": 6,
+    "mesoComponents": 18,
+    "componentLocalFeatures": 33,
+    "materials": 6,
+    "materialsWithUsableProbeReferencePbr": 6,
+    "repetitionSystems": 9,
+    "executableGenericRepetitionSystems": 0,
+    "productionFactoryRequiredRepetitionSystems": 9,
+    "descriptiveRepetitionInstances": 681,
+    "reviewViewpoints": 5,
+    "detailInventory": 18,
+    "mappedInventoryDetails": 18,
+    "topLevelComponents": 6,
+    "childComponents": 18,
+    "completeChildAttachments": 18,
+    "socketChildTransformExactMatches": 18,
+    "actionProfiles": 24,
+    "componentTransformScaleFields": 0
+  },
+  "materialEvidence": {
+    "status": "proceed",
+    "regions": [
+      {
+        "id": "brick",
+        "profile": "stone.natural",
+        "assignmentConfidence": 0.776,
+        "pbrConfidence": 0.776,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      },
+      {
+        "id": "granite",
+        "profile": "stone.natural",
+        "assignmentConfidence": 0.776,
+        "pbrConfidence": 0.776,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      },
+      {
+        "id": "stripedStone",
+        "profile": "stone.natural",
+        "assignmentConfidence": 0.794,
+        "pbrConfidence": 0.794,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      },
+      {
+        "id": "glass",
+        "profile": "glass.clear",
+        "assignmentConfidence": 0.78,
+        "pbrConfidence": 0.799,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      },
+      {
+        "id": "darkMetal",
+        "profile": "metal.aluminum",
+        "assignmentConfidence": 0.773,
+        "pbrConfidence": 0.773,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      },
+      {
+        "id": "frp",
+        "profile": "plastic.matte",
+        "assignmentConfidence": 0.716,
+        "pbrConfidence": 0.716,
+        "usableAsProbe": true,
+        "runtimeTexture": false
+      }
+    ],
+    "verifiedRecrops": {
+      "granite": {
+        "bbox": {
+          "x": 1040,
+          "y": 805,
+          "width": 150,
+          "height": 50
+        },
+        "finding": "clean isolated granite panel field"
+      },
+      "frp": {
+        "bbox": {
+          "x": 930,
+          "y": 250,
+          "width": 180,
+          "height": 50
+        },
+        "finding": "clean isolated rippled FRP field"
+      }
+    },
+    "requiredChannelsPerRegion": [
+      "albedo",
+      "roughness",
+      "height",
+      "normal",
+      "ao"
+    ],
+    "actualReferenceMapDimensions": [
+      512,
+      512
+    ],
+    "referenceMapCount": 30,
+    "referenceMapUsage": "probe-only look-development evidence; runtimeTexture=false",
+    "runtimeMapPlan": "Future independent procedural maps at 1024x1024 or greater.",
+    "limitation": "Single generated-concept crops are bounded look-development evidence, not measured physical PBR; neutral and grazing-light review remains mandatory."
+  },
+  "normalValidation": {
+    "command": "/opt/homebrew/bin/python3.12 <skill-root>/forge/stage2_spec/validate_sculpt_spec.py <spec> --json",
+    "exitCode": 0,
+    "result": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "summary": {
+        "targetName": "SFMOMA Source-Honest Landmark V2",
+        "suitability": "conditional",
+        "components": 24,
+        "materials": 6
+      }
+    }
+  },
+  "strictValidation": {
+    "command": "/opt/homebrew/bin/python3.12 <skill-root>/forge/stage2_spec/validate_sculpt_spec.py <spec> --strict-quality --json",
+    "exitCode": 0,
+    "result": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "summary": {
+        "targetName": "SFMOMA Source-Honest Landmark V2",
+        "suitability": "conditional",
+        "components": 24,
+        "materials": 6
+      }
+    }
+  },
+  "codegenContract": {
+    "genericGeneratedModule": "massing and geometry-descriptor evidence only",
+    "temporaryStructuralFixture": {
+      "repetitionBlocks": 0,
+      "directRootMeshes": 0,
+      "runtimeNodeCountIncludingImplicitRoot": 25,
+      "componentMeshes": 24,
+      "runtimeInstancedMeshes": 0,
+      "attachmentCylinderSubstitutions": 0,
+      "intentionalCylinderComponents": [
+        "stripedTurret"
+      ]
+    },
+    "componentDimensionsDriveScale": true,
+    "socketChildTransformEquality": "18/18 exact parent-local matches",
+    "oculusTilt": "assembly [0.24,0,0.24]; glazing local [0,0,0], inherited once",
+    "subjectSpecificBlockout": {
+      "module": "src/citygen/landmarks/sfmoma-generated-v2.js",
+      "moduleSha256": "ecd7d93a187a69e68b8c650934b5594233fb61b68bd3571be2a29b6facee940a",
+      "drawCalls": 8,
+      "triangles": 1724,
+      "vertices": 1845,
+      "geometries": 8,
+      "materials": 5,
+      "textures": 0,
+      "canonicalRuntimeImported": false
+    },
+    "productionRequirement": "Subject-specific WebGPU-safe factory required for all nine repetitions; never import a generated renderer/composer/controls/lights into the canonical world.",
+    "buildGateMarked": false,
+    "finalActionReadyGate": "pending"
+  },
+  "blockoutReview": {
+    "status": "refine-spec",
+    "boundedAssemblyGate": "pass-refinement-only",
+    "boundedGain": 0.08,
+    "aiVisionScore": 0.49,
+    "visualAcceptanceThreshold": 0.7,
+    "aaaReadinessScore": 0.13,
+    "referenceWinner": true,
+    "tier1": {
+      "passed": false,
+      "silhouetteIoU": 0.4999,
+      "aspectRatioDelta": 0.1741,
+      "scaleDelta": 0.2108,
+      "evidenceValidity": "rejected-as-subject-measurement",
+      "reason": "Reference mask includes floor/full-width background, render mask includes the canonical background, and the 3:2 reference and 16:9 render were independently stretched to square. The official failed result is retained but not promoted."
+    },
+    "independentEvidence": {
+      "fixedRoi": {
+        "path": ".qa-sfmoma-v2-blockout-front-three-quarter-roi.png",
+        "sha256": "5c2e87a1e1a1e78b1e0dde5d887bc0fea1e968e541bf33c98a1a2b747d8feb4c",
+        "clip": [100, 0, 1080, 720],
+        "autoFit": false
+      },
+      "expansionDepthWidthRatio": 0.3235294066,
+      "expansionDepthHeightRatio": 0.3055555418,
+      "freshContextDecodedRgbSha256": "e2bc7aa1c63557892cd0196038a7a3ff634258abb385a70ee2aafe411f93e03d",
+      "freshContextChangedPixels": 0
+    },
+    "evidence": {
+      "render": ".qa-sfmoma-v2-blockout-front-three-quarter.png",
+      "renderSha256": "a5b09ca23a9cd3d6940d7d3f28f8e58be9bb1a68daf18d7b576f2876dc83cb9a",
+      "comparison": ".qa-sfmoma-v2-blockout-comparison.png",
+      "comparisonSha256": "afe6dc703cb0d8d314bf9c70267cb9a8190a032f7800593e073cb22e54603071",
+      "metrics": ".qa-sfmoma-v2-blockout-metrics.json",
+      "metricsSha256": "d657705eee85b1b392e3972b9ecfef31f4b53d57bec26d81714413ab2e136d06",
+      "featureReview": ".img2threejs/sfmoma-v2/blockout-feature-review-v2.json",
+      "featureReviewSha256": "4b80b1cd3c741666c3f5b6996f3ba89eca843161b67ee842d751613fd7ca3895"
+    },
+    "limitations": [
+      "Canonical terrain contact and placement are not proven by the elevated QA root.",
+      "The fixed ROI has no hand-reviewed reference matte, so official Tier-1 IoU remains unpassed.",
+      "The blockout remains below critical identity thresholds and is not cleared for structural-pass.",
+      "AAA open-world parity is explicitly rejected."
+    ]
+  },
+  "nextExpectedState": "build-current-pass"
+}

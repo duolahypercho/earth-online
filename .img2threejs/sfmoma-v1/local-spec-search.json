@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "collection": "core_3d",
+  "query": "museum architectural landmark stacked concrete gallery red ribbed tower curtain wall cantilever",
+  "indexFingerprint": "6857e5ab528b42ac12f4f411f862610a0bffce8e47aee3610a7603c318072fe8",
+  "matches": [
+    {
+      "recordId": "core.pbr-ambient-occlusion-ao",
+      "score": 3.314396431839,
+      "use": "Apply non-directional AO at facade recesses and joints; do not bake key-light direction into the material."
+    }
+  ],
+  "limitations": [
+    "The local collection contains no architecture-specific museum reconstruction spec.",
+    "Geometry and proportions therefore come from the admitted reference image and explicit approximation notes."
+  ]
+}

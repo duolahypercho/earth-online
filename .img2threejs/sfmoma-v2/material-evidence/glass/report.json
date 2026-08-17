@@ -1,0 +1,87 @@
+{
+  "ok": false,
+  "verdict": "rejected-contaminated-crop",
+  "confidence": 0,
+  "estimatedFidelity": 0,
+  "targetThreshold": 0.7,
+  "materialId": "glass",
+  "sourceImage": ".img2threejs/sfmoma-v2/detail-inventory/zone-r2c1.png",
+  "outDir": ".img2threejs/sfmoma-v2/material-evidence/glass",
+  "palette": [
+    "#A0634C",
+    "#0E0E0B",
+    "#89503C",
+    "#563224",
+    "#2B211A"
+  ],
+  "maps": {
+    "albedo": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/glass/glass_albedo.png",
+      "url": "glass_albedo.png",
+      "channel": "albedo",
+      "source": "reference-pixel-extraction"
+    },
+    "roughness": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/glass/glass_roughness.png",
+      "url": "glass_roughness.png",
+      "channel": "roughness",
+      "source": "reference-pixel-extraction"
+    },
+    "height": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/glass/glass_height.png",
+      "url": "glass_height.png",
+      "channel": "height",
+      "source": "reference-pixel-extraction"
+    },
+    "normal": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/glass/glass_normal.png",
+      "url": "glass_normal.png",
+      "channel": "normal",
+      "source": "reference-pixel-extraction"
+    },
+    "ao": {
+      "path": ".img2threejs/sfmoma-v2/material-evidence/glass/glass_ao.png",
+      "url": "glass_ao.png",
+      "channel": "ao",
+      "source": "reference-pixel-extraction"
+    }
+  },
+  "diagnostics": {
+    "sourceWidth": 512,
+    "sourceHeight": 341,
+    "mapSize": 1024,
+    "cropBBoxPixels": {
+      "x": 0,
+      "y": 0,
+      "width": 512,
+      "height": 237
+    },
+    "mask": {
+      "backgroundColor": "#C0C0C4",
+      "backgroundNoise": 163.469,
+      "transparentPixelFraction": 0,
+      "foregroundCoverage": 0.4746
+    },
+    "mapStats": {
+      "valueRange": 0.4241,
+      "heightP90Gradient": 0.06045,
+      "roughnessBase": 0.725,
+      "roughnessVariation": 0.126,
+      "normalStrength": 0.227,
+      "blurRadius": 21
+    },
+    "palette": [
+      "#A0634C",
+      "#0E0E0B",
+      "#89503C",
+      "#563224",
+      "#2B211A"
+    ]
+  },
+  "warnings": [
+    "single-image inverse rendering cannot prove true physical PBR; confidence is capped",
+    "Rejected: grid-zone crop contained adjacent materials and cannot support material-specific PBR claims."
+  ],
+  "limitation": "Historical coarse extraction only; not wired into the spec. See material-analysis.json for the visually isolated replacement crop.",
+  "rejectedByVisualInspection": true
+}
