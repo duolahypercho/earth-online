@@ -468,7 +468,7 @@ const boxTruck = makeSpec({
     { z: 1.42, top: 2.58, half: 1.12 },
     { z: 2.34, top: 1.56, half: 1.10 },
   ],
-  glazing: { sidePanes: [[1.20, 2.06]], paneDrop: 0.12, paneRise: 0.09 },
+  glazing: { sidePanes: [[1.20, 2.06]], paneDrop: 0.12, paneRise: 0.09, backlight: false },
   features: {
     doorLines: [1.14], handles: [[0.92, 1.78]],
     panelRibs: [-3.30, -2.80, -2.30, -1.80], exhaust: 'stack', chassisRails: true,

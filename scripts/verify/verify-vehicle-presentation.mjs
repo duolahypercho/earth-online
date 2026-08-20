@@ -66,11 +66,14 @@ import {
 } from '../../src/vehicles/vehicle-geometry.js';
 import {
   createVehicleMaterials,
+  createMaterialAnchor,
   applyVehicleEnvironment,
   nightnessFor,
   wetnessFor,
+  VEHICLE_ENV_CLASS,
 } from '../../src/vehicles/vehicle-fleet.js';
 import { carriagewaySurfaceY } from '../../src/world/streets/street-surface-v2.js';
+import { MATERIAL_CLASSES, envMapIntensityFor } from '../../src/render/environment-ibl.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -702,10 +705,14 @@ section('9. night lamps and wet weather follow the runtime clock');
   assert(nightPlate > dayPlate, `the plate is retro-reflective at night (${dayPlate} -> ${nightPlate})`);
   assert(materials.lamps.brake.emissiveIntensity > materials.lamps.tail.emissiveIntensity,
     'a brake lamp is brighter than the tail lamp it sits beside');
-  applyVehicleEnvironment(materials, { hour: 12, weather: 'rain' });
-  assert(materials.paint.roughness < dayPaintRoughness,
-    `wet paint is smoother than dry paint (${dayPaintRoughness} -> ${materials.paint.roughness})`);
-  assert(materials.tyre.roughness < 0.93, 'wet rubber picks up a sheen');
+  applyVehicleEnvironment(materials, { hour: 12, weather: 'drizzle' });
+  // Wetness is the RENDERER's grader's job now, because it owns roughness and
+  // colour for every classified material. This pass must not touch either, or
+  // it poisons the `dryRoughness` the grader caches on first sight.
+  assert(materials.paint.roughness === dayPaintRoughness,
+    `the pass never writes roughness itself (${dayPaintRoughness} unchanged)`);
+  assert(materials.tyre.roughness === 0.93, 'the pass never writes tyre roughness itself');
+  assert(materials.contact.opacity < 0.42, 'the unlit contact patch, which no grader can reach, does follow the weather');
   assert(materials.glass !== materials.paint && materials.trim !== materials.paint
     && materials.tyre !== materials.paint && materials.rim !== materials.paint,
     'paint, glass, trim, rubber and rim are separate materials with separate responses');
@@ -727,6 +734,113 @@ section('9. night lamps and wet weather follow the runtime clock');
   assert(nightBuild.materials.lamps.head.emissiveIntensity === 0,
     'moving the runtime clock to midday switches the lamps off again');
   disposeVehiclePresentation(nightBuild.state);
+}
+
+// ---------------------------------------------------------------------------
+section('9b. every material is eligible for the environment map');
+// ---------------------------------------------------------------------------
+//
+// This is the check that would have caught round 2. The renderer's
+// `applyEnvironmentGrading` only hands the prefiltered environment texture to
+// materials that declare `userData.envClass`, and the shipped light rig
+// delivers most of its fill through that texture (measured on the 11:00 card:
+// sun 6.48, hemi 0.27, ambient 0.06, environmentIntensity 0.8). An undeclared
+// vehicle material is lit by almost nothing in daylight and by nothing after
+// dark - the round-2 night card measured rgb (0,0,0) across a whole vehicle.
+{
+  const materials = createVehicleMaterials();
+  const classified = [];
+  for (const material of materials.all) {
+    if (material === materials.contact) continue;
+    const envClass = material.userData?.envClass;
+    assert(typeof envClass === 'string' && MATERIAL_CLASSES.includes(envClass),
+      `${material.name} declares a known environment class (${envClass || 'NONE'})`);
+    assert('envMapIntensity' in material,
+      `${material.name} carries envMapIntensity, which the grader requires`);
+    if (envClass) classified.push([material.name, envClass]);
+  }
+  assert(classified.length >= 10, `every vehicle material is classified (${classified.length})`);
+  assert(materials.contact.userData?.envClass === undefined,
+    'the unlit contact patch is deliberately unclassified: an envMap would break it');
+  for (const [, envClass] of classified) {
+    let ok = true;
+    try { envMapIntensityFor(envClass, { hour: 21.5, weather: 'clear' }); } catch { ok = false; }
+    assert(ok, `the environment table accepts ${envClass} at night`);
+  }
+  assert(VEHICLE_ENV_CLASS.paint === 'painted-metal' && VEHICLE_ENV_CLASS.glass === 'facade-glass',
+    'paint grades as painted metal and glass as glass');
+  const nightPaint = envMapIntensityFor('painted-metal', { hour: 21.5, weather: 'clear' });
+  assert(nightPaint > 0.4,
+    `a classified vehicle still receives environment light after dark (${nightPaint})`);
+
+  // The anchor is what guarantees the grader SEES those materials: it caches
+  // its buckets from one traverse, and the traffic fleet is built later.
+  const anchor = createMaterialAnchor(materials);
+  const anchorClasses = new Set(anchor.material.map((m) => m.userData?.envClass));
+  assert(anchor.material.length >= 10 && anchorClasses.size >= 3,
+    `the material anchor exposes every class to one traverse (${anchor.material.length} materials, ${anchorClasses.size} classes)`);
+
+  // A built world must expose them from the root the grader walks.
+  const built = buildVehiclePresentation(makeCtx(gridCity()));
+  const seen = new Set();
+  built.object.traverse((node) => {
+    const list = Array.isArray(node.material) ? node.material : node.material ? [node.material] : [];
+    for (const material of list) {
+      if (material?.userData?.envClass) seen.add(material.userData.envClass);
+    }
+  });
+  assert(seen.size >= 3 && seen.has('painted-metal') && seen.has('facade-glass'),
+    `a built world exposes ${seen.size} environment classes on the city root`);
+  disposeVehiclePresentation(built.state);
+}
+
+// ---------------------------------------------------------------------------
+section('9c. glazing is visible from outside the bodywork');
+// ---------------------------------------------------------------------------
+//
+// The other round-2 defect. Panes were inset 14-16 mm INTO an opaque shell on
+// the reasoning that a window is a recess, so the whole catalogue rendered with
+// no glass at all. A corner being proud is not enough either: a flat quad
+// between two proud corners still sank 23 mm into a curved greenhouse.
+{
+  const raycaster = new THREE.Raycaster();
+  raycaster.far = 40;
+  for (const spec of VEHICLE_SPECS) {
+    const built = buildVehicleGeometry(spec, 0, TRIM);
+    const paintMesh = new THREE.Mesh(built.paint, new THREE.MeshBasicMaterial());
+    const glassMesh = new THREE.Mesh(built.glass, new THREE.MeshBasicMaterial());
+    paintMesh.updateMatrixWorld(true);
+    glassMesh.updateMatrixWorld(true);
+    const position = built.glass.getAttribute('position');
+    const index = built.glass.getIndex();
+    const a = new THREE.Vector3(); const b = new THREE.Vector3(); const c = new THREE.Vector3();
+    const centroid = new THREE.Vector3(); const normal = new THREE.Vector3();
+    const e0 = new THREE.Vector3(); const e1 = new THREE.Vector3();
+    const from = new THREE.Vector3(); const dir = new THREE.Vector3();
+    const axis = new THREE.Vector3(); const away = new THREE.Vector3();
+    let triangles = 0;
+    let visible = 0;
+    for (let i = 0; i < index.count; i += 3) {
+      a.fromBufferAttribute(position, index.getX(i));
+      b.fromBufferAttribute(position, index.getX(i + 1));
+      c.fromBufferAttribute(position, index.getX(i + 2));
+      centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+      e0.subVectors(b, a); e1.subVectors(c, a);
+      normal.crossVectors(e0, e1).normalize();
+      axis.set(0, spec.height * 0.45, centroid.z);
+      if (normal.dot(away.subVectors(centroid, axis)) < 0) normal.negate();
+      from.copy(centroid).addScaledVector(normal, 6);
+      dir.copy(normal).negate();
+      raycaster.set(from, dir);
+      const hits = raycaster.intersectObjects([paintMesh, glassMesh], false);
+      triangles += 1;
+      if (hits.length && hits[0].object === glassMesh) visible += 1;
+    }
+    const share = triangles ? visible / triangles : 0;
+    assert(triangles >= 12, `${spec.id}: carries real glazing (${triangles} glass triangles)`);
+    assert(share >= 0.95,
+      `${spec.id}: ${(share * 100).toFixed(0)}% of its glass is in front of the bodywork, not buried in it (${visible}/${triangles})`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +979,11 @@ section('11. budgets at a stated real city size');
       }
     } else if (node.isMesh) plain += 1;
   });
-  assert(instanced > 0 && plain === 0, `every vehicle is instanced (${instanced} instanced meshes, ${plain} plain)`);
+  assert(instanced > 0 && plain === 1,
+    `every vehicle is instanced; the only plain mesh is the material anchor (${instanced} instanced, ${plain} plain)`);
+  const anchor = built.object.getObjectByName('vehicle-material-anchor');
+  assert(!!anchor && anchor.visible === false && Array.isArray(anchor.material),
+    'the material anchor is present, invisible, and carries the material list');
   assert(nonFinite === 0, `no NaN/Inf in any instance matrix (${nonFinite})`);
   assert(d.meshes.every((m) => m.instances > 0 && m.trianglesEach > 0),
     'every emitted mesh carries real instances and real geometry');

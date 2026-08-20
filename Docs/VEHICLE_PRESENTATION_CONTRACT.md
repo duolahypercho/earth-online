@@ -9,7 +9,7 @@ subsystems must not break silently. It is not a design document; the reasoning
 lives in the module headers.
 
 Verified by `node scripts/verify/verify-vehicle-presentation.mjs`
-(710 assertions) and `node scripts/verify/verify-pass-registry.mjs`.
+(768 assertions) and `node scripts/verify/verify-pass-registry.mjs`.
 
 ## 1. The pass owns every vehicle a reviewer can see
 
@@ -123,10 +123,33 @@ carrying `{ z, sill, top, half }`. Three things fall out of that:
   whose top falls to the belt line at the cowl and at the rear deck;
   interpolating between the cowl and the roof header *is* the rake (25–35° from
   horizontal on the cars).
-- **Glazing follows the body.** The greenhouse section is analytic, so panes are
-  projected onto it exactly and follow the tumblehome. One-box bodies (transit
-  coach, panel van) carry a window *band* in the body side instead
-  (`glazing.bandY`), because that is where their glass actually is.
+- **Glazing follows the body, and stands PROUD of it.** The greenhouse section
+  is analytic, so panes are projected onto it exactly and follow the
+  tumblehome. One-box bodies (transit coach, panel van) carry a window *band*
+  in the body side instead (`glazing.bandY`), because that is where their glass
+  actually is.
+
+  Round 2 shipped the panes inset 14–16 mm *into* the shell, on the reasoning
+  that a window is a recess. The shell is opaque, so the entire catalogue
+  rendered with no glass at all. The rules that replaced it:
+
+  1. a pane stands `GLASS_PROUD = 34 mm` outside the shell (18 mm on a flat end
+     face, which has no chord error to clear and must stay inside the declared
+     length);
+  2. proud *corners are not enough* — a flat quad between two proud corners
+     still sank 23 mm into a sedan greenhouse, so a pane is a strip of rows
+     that follows the surface;
+  3. the windscreen and backlight are built from `greenhousePoint`, the exact
+     inverse of the section the loft is swept on, and pushed out **radially
+     within their own cross-section** (every section is star-shaped about its
+     bottom-centre, so radial always leaves the shell — a finite-difference
+     normal does not, at a patch edge);
+  4. a screen starts only where the greenhouse has at least 140 mm of rise, or
+     it degenerates into a pane lying on the boot lid;
+  5. the box truck has no backlight: its cab's rear window faces the cargo box.
+
+  Verified by ray-casting every glass triangle from outside: **96–100% of each
+  class's glazing is in front of the bodywork** (was 17% before the fix).
 
 Every class also carries: bumper valance and rocker panel, grille with a chrome
 surround and a lower intake, mirrors on stalks, wipers, door shut lines, door
@@ -140,6 +163,50 @@ One shared unit wheel (tyre + a rim built for each side), one shared unit lens,
 one shared unit plate and one shared quad serve the whole city, scaled into
 place by the instance matrix. That is what keeps the draw-call count flat, and
 it is also what makes a wheel able to steer and spin and a lamp able to switch.
+
+## 5a. The environment contract (round-2 regression)
+
+**Every vehicle material must declare `userData.envClass`.** `CityRenderer`'s
+`applyEnvironmentGrading` walks the city root once, buckets materials by that
+field, and hands the prefiltered environment texture *only* to the ones it
+found. A material without a class gets no `envMap` at all.
+
+That is fatal here, because the shipped light rig delivers most of its fill
+through the environment. Measured on the 11:00 clear card: sun 6.48, hemi 0.27,
+ambient 0.06, `environmentIntensity` 0.80. Round 2 shipped without the
+declaration and the night card measured **rgb (0,0,0) across a whole vehicle**,
+while another vehicle of the same material in the same frame measured (60,58,58)
+because a local point light happened to reach it — point lights do not need an
+envMap, the environment does.
+
+| material | class | night `envMapIntensity` |
+| --- | --- | ---: |
+| paint | `painted-metal` | 0.648 |
+| glass, all four lamps | `facade-glass` | 1.021 |
+| trim, rim | `chrome` | 0.900 |
+| tyre | `asphalt` | 0.468 |
+| plate | `painted-metal` | 0.648 |
+| contact patch | *(deliberately none)* | — |
+
+Rubber has no class of its own; `asphalt` is the closest response in the table
+(dark, dry roughness 0.93 — exactly the tyre roughness — and a large wet gain).
+The contact patch is an unlit `MeshBasicMaterial`: an envMap would break it.
+
+Two consequences:
+
+- **This pass must never write `roughness`, `color` or `envMapIntensity`.** The
+  grader owns all three for a classified material and caches `dryRoughness` on
+  first sight, so a second writer permanently poisons the wet grade. Verified
+  dry-case no-op: `wetSurfaceGrade` returns `roughnessScale: 1, colorScale: 1`
+  in clear weather, so the constructor values survive. What the pass still owns
+  is the part no grader can know: **which lamps are lit**, and the opacity of
+  the unlit contact patch.
+- **The grader caches its buckets from ONE traverse.** The parked fleet exists
+  during that traverse, but the mirrored-traffic fleet is built lazily when the
+  simulation is first found, and a city with no kerb parking would have no mesh
+  carrying these materials at all. `createMaterialAnchor` therefore adds one
+  invisible zero-area `Mesh` to the pass group carrying every vehicle material
+  in a material array, so all ten are reachable from the root at build time.
 
 ## 6. Materials
 
@@ -163,8 +230,9 @@ silver. The verifier asserts the achromatic share stays between 45% and 92%.
 The pass owns **no clock**. `ctx.hour` and `ctx.weather` are read every update
 and mapped by `nightnessFor` / `wetnessFor`:
 
-- head and tail lamps are `emissiveIntensity = 0` by day and 2.6 / 0.55 at
-  night, ramping through civil twilight (17:30–19:30 and 05:00–07:00);
+- head and tail lamps are `emissiveIntensity = 0` by day and 3.0 / 1.5 at
+  night, ramping through civil twilight (17:30–19:30 and 05:00–07:00). The tail
+  figure was 0.55 in round 2, which was not legible against unlit bodywork;
 - brake and indicator lamps stay legible in daylight, because a lit brake light
   is; their **per-vehicle** state is the instance matrix collapsed to zero
   scale, so no per-vehicle material is needed;
@@ -179,7 +247,9 @@ stopped, and indicators driven by its own yaw rate.
 ## 8. The traffic mirror
 
 `src/citygen/traffic.js` owns identity, path, speed and collision. The pass
-finds `logical-vehicles-and-batched-presentation` in the scene, reads the
+prefers `ctx.traffic` when the renderer supplies it (reading `traffic.cars[i].group`
+and hiding `traffic.vehicleBatch.group`), and otherwise falls back to finding
+`logical-vehicles-and-batched-presentation` in the scene. It reads the
 `position` / `rotation.y` of every child carrying `userData.rig`, and derives
 **presentation only** from the motion it observes:
 
@@ -220,8 +290,12 @@ call stops paying past 110 m (the panes are baked into the trim buffer beyond
 it); past 320 m a parked vehicle is not worth a triangle.
 
 **Measured** on the stated real slice (SF centre `[1435, 993]`, radius 720 m,
-1136 paved segments, 54 km of street): 440 vehicles, **160 962 triangles, 60
-draw calls, 214 ms** build, 306 distinct appearances.
+1136 paved segments, 54 km of street): 440 vehicles, **158 072 triangles, 60
+draw calls, 190–314 ms** build. The shipped round-2 capture recorded the pass at
+180 426 triangles / 60 draw calls / 131 ms on the live runtime.
+
+Glazing rows are level-of-detail aware: three rows near, one at mid, and no
+glazing geometry at all past 110 m, where a vehicle is under 30 px wide.
 
 Shadow policy: only the near ring's paint meshes cast, plus mid-ring vans,
 trucks, buses and pickups — the bodies with enough bulk for the shadow map to

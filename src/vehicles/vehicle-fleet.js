@@ -42,11 +42,52 @@ export const VEHICLE_FLEET_VERSION = 'vehicle-fleet-v1';
 export const LAMP_KINDS = Object.freeze(['head', 'tail', 'brake', 'indicator']);
 
 const LAMP_COLOUR = Object.freeze({
-  head: { base: 0xd6dbe0, emissive: 0xfff2d2, night: 2.6, day: 0.0 },
-  tail: { base: 0x7e1a14, emissive: 0xff2a16, night: 0.55, day: 0.0 },
-  brake: { base: 0x8e1c16, emissive: 0xff2410, night: 3.2, day: 1.6 },
-  indicator: { base: 0xa8641a, emissive: 0xff9a20, night: 3.0, day: 1.7 },
+  head: { base: 0xd6dbe0, emissive: 0xfff2d2, night: 3.0, day: 0.0 },
+  tail: { base: 0x7e1a14, emissive: 0xff2a16, night: 1.5, day: 0.0 },
+  brake: { base: 0x8e1c16, emissive: 0xff2410, night: 3.6, day: 1.8 },
+  indicator: { base: 0xa8641a, emissive: 0xff9a20, night: 3.2, day: 1.9 },
 });
+
+/**
+ * Environment classes, from `MATERIAL_CLASSES` in src/render/environment-ibl.js.
+ *
+ * THIS IS THE CONTRACT THAT MAKES A VEHICLE VISIBLE. `CityRenderer`'s
+ * `applyEnvironmentGrading` walks the city root once, buckets every material
+ * that declares `userData.envClass`, and only those materials are given the
+ * prefiltered environment texture. A material without a class gets NO envMap at
+ * all - and the shipped light rig delivers most of its fill through the
+ * environment (measured on the 11:00 card: sun 6.48, hemi 0.27, ambient 0.06,
+ * environmentIntensity 0.8). Undeclared paint is therefore lit by almost
+ * nothing in daylight and by literally nothing after dark, which is exactly
+ * what the round-2 night card measured: rgb (0,0,0) across the whole vehicle.
+ *
+ * The class also hands the renderer's grader ownership of `roughness` and
+ * `color` for wet weather, so this module must NOT write either of those per
+ * frame; two writers on one field, with the grader caching `dryRoughness` on
+ * first sight, is how a material ends up permanently wet.
+ */
+export const VEHICLE_ENV_CLASS = Object.freeze({
+  paint: 'painted-metal',
+  glass: 'facade-glass',
+  trim: 'chrome',
+  // Rubber has no class of its own. `asphalt` is the closest response in the
+  // table: dark, rough (dry 0.93, which is exactly the tyre roughness) and with
+  // a large wet gain, which is what a tyre does in the rain.
+  tyre: 'asphalt',
+  rim: 'chrome',
+  plate: 'painted-metal',
+  lampHead: 'facade-glass',
+  lampTail: 'facade-glass',
+  lampBrake: 'facade-glass',
+  lampIndicator: 'facade-glass',
+});
+
+function declareEnvClass(material, key) {
+  material.userData = material.userData || {};
+  material.userData.envClass = VEHICLE_ENV_CLASS[key];
+  material.userData.vehiclePart = key;
+  return material;
+}
 
 // ---------------------------------------------------------------------------
 // materials
@@ -67,6 +108,7 @@ export function createVehicleMaterials() {
     envMapIntensity: 1.15,
   });
   paint.name = 'vehicle-paint';
+  declareEnvClass(paint, 'paint');
 
   const glass = new THREE.MeshPhysicalMaterial({
     color: 0x0b1015,
@@ -81,6 +123,7 @@ export function createVehicleMaterials() {
     depthWrite: true,
   });
   glass.name = 'vehicle-glass';
+  declareEnvClass(glass, 'glass');
 
   const trim = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -90,6 +133,7 @@ export function createVehicleMaterials() {
     envMapIntensity: 1.0,
   });
   trim.name = 'vehicle-trim';
+  declareEnvClass(trim, 'trim');
 
   const tyre = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -99,6 +143,7 @@ export function createVehicleMaterials() {
     envMapIntensity: 0.35,
   });
   tyre.name = 'vehicle-tyre';
+  declareEnvClass(tyre, 'tyre');
 
   const rim = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -108,6 +153,7 @@ export function createVehicleMaterials() {
     envMapIntensity: 1.25,
   });
   rim.name = 'vehicle-rim';
+  declareEnvClass(rim, 'rim');
 
   const plate = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -119,6 +165,7 @@ export function createVehicleMaterials() {
     envMapIntensity: 1.6,
   });
   plate.name = 'vehicle-plate';
+  declareEnvClass(plate, 'plate');
 
   const contactTexture = buildContactTexture();
   const contact = new THREE.MeshBasicMaterial({
@@ -145,6 +192,7 @@ export function createVehicleMaterials() {
       envMapIntensity: 1.3,
     });
     material.name = `vehicle-lamp-${kind}`;
+    declareEnvClass(material, `lamp${kind[0].toUpperCase()}${kind.slice(1)}`);
     lamps[kind] = material;
   }
 
@@ -189,26 +237,51 @@ export function applyVehicleEnvironment(materials, { hour, weather } = {}) {
   state.nightness = nightness;
   state.wetness = wetness;
 
-  // Wet paint is smoother and reflects more; wet glass more still.
-  materials.paint.roughness = 0.34 - 0.16 * wetness;
-  materials.paint.clearcoatRoughness = 0.10 - 0.06 * wetness;
-  materials.paint.envMapIntensity = 1.15 + 0.55 * wetness;
-  materials.glass.roughness = 0.055 - 0.03 * wetness;
-  materials.glass.envMapIntensity = 1.9 + 0.5 * wetness;
-  materials.trim.roughness = 0.38 - 0.12 * wetness;
-  materials.tyre.roughness = 0.93 - 0.30 * wetness;
-  materials.tyre.envMapIntensity = 0.35 + 0.65 * wetness;
-
-  // Lamps. Head and tail are off by day and on at night; brake and indicator
-  // stay legible in daylight because a lit brake light is visible in the sun,
-  // and their per-vehicle on/off is done with the instance matrix instead.
+  // NOTE: roughness, colour and envMapIntensity are deliberately NOT written
+  // here. Every vehicle material declares `userData.envClass`, so the
+  // renderer's `applyEnvironmentGrading` owns those three fields and drives
+  // them from one sky model for the whole city. Writing them here as well
+  // would fight it, and would poison the `dryRoughness` it caches on first
+  // sight. What this pass owns is the part no grader can know: which lamps are
+  // lit.
   for (const kind of LAMP_KINDS) {
     const spec = LAMP_COLOUR[kind];
     materials.lamps[kind].emissiveIntensity = spec.day + (spec.night - spec.day) * nightness;
   }
   // A retro-reflective plate reads as a bright patch under a headlamp.
-  materials.plate.emissiveIntensity = 0.16 * nightness;
+  materials.plate.emissiveIntensity = 0.18 * nightness;
+  // Wet asphalt at night throws light back up under a car; a dry night does
+  // not. The contact patch is unlit geometry, so this is the only place its
+  // strength can follow the weather.
+  materials.contact.opacity = 0.42 - 0.10 * wetness;
   return true;
+}
+
+/**
+ * A single invisible mesh that carries every vehicle material.
+ *
+ * `applyEnvironmentGrading` caches its material buckets from ONE traverse of
+ * the city root. The parked fleet is built during that traverse, but the
+ * mirrored-traffic fleet is created lazily when the simulation is first found,
+ * and a city with no kerb parking would have no mesh carrying these materials
+ * at all. The anchor guarantees every vehicle material is reachable from the
+ * root at build time, whatever the fleets end up being.
+ */
+export function createMaterialAnchor(materials) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
+  const list = [
+    materials.paint, materials.glass, materials.trim, materials.tyre,
+    materials.rim, materials.plate, ...LAMP_KINDS.map((k) => materials.lamps[k]),
+  ];
+  const mesh = new THREE.Mesh(geometry, list);
+  mesh.name = 'vehicle-material-anchor';
+  mesh.visible = false;
+  mesh.frustumCulled = false;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.userData = { pass: 'vehicle-presentation', group: 'material-anchor' };
+  return mesh;
 }
 
 export function disposeVehicleMaterials(materials) {

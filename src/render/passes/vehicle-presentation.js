@@ -65,10 +65,12 @@ import {
   createVehicleAssets,
   createVehicleMaterials,
   createVehicleFleet,
+  createMaterialAnchor,
   applyVehicleEnvironment,
   disposeVehicleMaterials,
   nightnessFor,
   wetnessFor,
+  VEHICLE_ENV_CLASS,
 } from '../../vehicles/vehicle-fleet.js';
 
 export const VEHICLE_PRESENTATION_ID = 'vehicle-presentation';
@@ -650,7 +652,23 @@ const TRAFFIC_GROUP_NAMES = [
  * `visible` flag of the simulation's placeholder batch, which is presentation,
  * not simulation state, and is restored on dispose.
  */
-export function findTrafficMirror(scene) {
+export function findTrafficMirror(scene, traffic = null) {
+  // Preferred path: the renderer hands the live simulation over on the pass
+  // context. Reading `traffic.cars` is O(cars) and needs no scene scan.
+  const simCars = Array.isArray(traffic?.cars) ? traffic.cars : null;
+  if (simCars) {
+    const groups = [];
+    for (const car of simCars) {
+      const group = car?.group;
+      if (group && group.userData?.rig) groups.push(group);
+    }
+    if (groups.length) {
+      const placeholders = [];
+      const batch = traffic.vehicleBatch?.group;
+      if (batch) placeholders.push(batch);
+      return { container: traffic.vehicleGroup || traffic.group || batch || groups[0].parent, placeholders, cars: groups, source: 'ctx.traffic' };
+    }
+  }
   if (!scene || typeof scene.traverse !== 'function') return null;
   let container = null;
   const placeholders = [];
@@ -666,7 +684,7 @@ export function findTrafficMirror(scene) {
     if (!rig || typeof rig.kind !== 'string') continue;
     cars.push(child);
   }
-  return { container, placeholders, cars };
+  return { container, placeholders, cars, source: 'scene-scan' };
 }
 
 function trafficTypeFor(kind, salt) {
@@ -770,6 +788,13 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   group.name = VEHICLE_PRESENTATION_ID;
   group.userData = { kind: 'vehicle-presentation', version: VEHICLE_PRESENTATION_VERSION };
 
+  // The environment grader caches its material buckets from ONE traverse of the
+  // city root. Anchor every vehicle material to the root now, so the lazily
+  // built traffic fleet - and a city with no kerb parking at all - still get an
+  // environment map. See `createMaterialAnchor`.
+  const anchor = createMaterialAnchor(materials);
+  group.add(anchor);
+
   const parked = parkedCapacity.size
     ? createVehicleFleet({ name: 'vehicle-parked', assets, materials, capacity: parkedCapacity })
     : null;
@@ -797,6 +822,7 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   // in the scene, with the exact per-type capacity that simulation asked for.
   // Allocating all ten classes up front would leave dead meshes in the render
   // list on every city that never spawns a bus.
+  applyVehicleEnvironment(materials, { hour: ctx?.hour, weather: ctx?.weather });
   const parkedStats = parked ? parked.stats() : { triangles: 0, drawCalls: 0, meshes: [] };
   const trafficStats = { triangles: 0, drawCalls: 0, meshes: [] };
 
@@ -857,8 +883,6 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     },
   };
 
-  applyVehicleEnvironment(materials, { hour: ctx?.hour, weather: ctx?.weather });
-
   const diagnostics = {
     version: VEHICLE_PRESENTATION_VERSION,
     catalogue: VEHICLE_CATALOGUE_VERSION,
@@ -896,12 +920,19 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
       perTypeCapacity: TRAFFIC_MIRROR.perTypeCapacity,
       mirrored: 0,
       bound: false,
+      source: null,
     },
     night: {
       nightness: nightnessFor(ctx?.hour),
       wetness: wetnessFor(ctx?.weather),
-      lampsLit: false,
+      lampsLit: nightnessFor(ctx?.hour) > 0.35,
+      headEmissive: materials.lamps.head.emissiveIntensity,
+      tailEmissive: materials.lamps.tail.emissiveIntensity,
     },
+    // Declared so a reviewer can see, without opening the renderer, that these
+    // materials are eligible for the environment map and the wet grade.
+    envClasses: { ...VEHICLE_ENV_CLASS },
+    materialAnchor: anchor.name,
     meshes: [...parkedStats.meshes, ...trafficStats.meshes],
     totals: {
       vehicles: kept.length,
@@ -1041,12 +1072,13 @@ export function updateVehiclePresentation(state, ctx, delta) {
   state.mirrorScan -= step;
   if (!state.mirror || state.mirrorScan <= 0) {
     state.mirrorScan = MIRROR_RESCAN_SECONDS;
-    const found = findTrafficMirror(ctx?.scene || ctx?.root);
+    const found = findTrafficMirror(ctx?.scene || ctx?.root, ctx?.traffic || null);
     if (found && found.cars.length) {
       const changed = !state.mirror || state.mirror.container !== found.container
         || state.mirror.cars.length !== found.cars.length;
       state.mirror = found;
       state.diagnostics.traffic.bound = true;
+      state.diagnostics.traffic.source = found.source;
       if (changed) bindTrafficFleet(state, found);
       for (const placeholder of found.placeholders) {
         if (placeholder.visible !== false) {

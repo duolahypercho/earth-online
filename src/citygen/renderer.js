@@ -2156,6 +2156,11 @@ export class CityRenderer {
   buildPresentationPasses(root, city) {
     this.passContext = this.createPassContext(root, city);
     const diagnostics = this.passRuntime.build(this.passContext);
+    // Passes add their own materials to the root. `applyEnvironmentGrading`
+    // caches its buckets from one traverse, so drop the cache and let the next
+    // grade re-scan, exactly as the lazily built crowd does. Two subsystems have
+    // already shipped unlit content through this hole.
+    this.envMaterialGroups = null;
     if (diagnostics.errors.length) {
       for (const error of diagnostics.errors) {
         console.warn(`[pass:${error.id}] ${error.phase} failed: ${error.message}`);

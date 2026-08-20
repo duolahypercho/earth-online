@@ -72,13 +72,36 @@ const ARCH_GAP = 0.055;          // suspension gap above the tyre
 const ARCH_HEADROOM = 0.10;      // body left above the arch crown
 const ARCH_LENGTH_FACTOR = 1.55; // arch half-length as a multiple of the wheel radius
 
+/**
+ * How far a window pane stands PROUD of the body surface, metres.
+ *
+ * The first cut of this builder inset the panes 14-16 mm INTO the shell, on the
+ * reasoning that a window is a recess. The shell is opaque, so every pane was
+ * either buried or z-fighting a chord of the polygonal section, and the whole
+ * catalogue rendered with no glass at all. A pane must be outside the surface,
+ * and by more than the sagitta of one facet: a 9-point half section at a 0.8 m
+ * radius cuts up to 15 mm inside the analytic curve it samples.
+ */
+const GLASS_PROUD = 0.034;
+
+/**
+ * Stand-off for a flat panel on a flat end face (transit coach front and rear,
+ * van rear doors). A flat quad on a flat face has no chord error to clear, so
+ * it uses a smaller offset and stays inside the declared overall length.
+ */
+const END_GLASS_PROUD = 0.018;
+
 // Vertex-colour multipliers applied to the *paint* buffer. The instance tint is
 // the paint colour, so these read as the same paint in shadow or in gloss.
+// Vertex-colour multipliers on the paint buffer. `under` and `archInner` used
+// to be 0.10 / 0.07: with no environment light reaching the underbody that read
+// as a hole under the car rather than as a shaded inner fender, and the whole
+// catalogue looked like it was standing on stilts.
 const PAINT_SHADE = Object.freeze({
   body: 1.0,
-  under: 0.10,
-  archInner: 0.07,
-  lowerBand: 0.78,
+  under: 0.30,
+  archInner: 0.18,
+  lowerBand: 0.82,
 });
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -354,6 +377,58 @@ function greenhouseXAt(spec, z, y) {
   return half * (1 - uy ** P_ROOF) ** (1 / P_ROOF);
 }
 
+/**
+ * A point ON the greenhouse shell, exactly where the loft puts it.
+ *
+ * `ux` in [-1, 1] is the normalised lateral parameter of the arch section, so
+ * `ux = 0` is the crown and `|ux| = 1` is the belt line. This is the inverse of
+ * `greenhouseXAt` and uses the same exponent, so a patch built from it lies on
+ * the shell rather than near it.
+ */
+function greenhousePoint(spec, z, ux) {
+  const bottom = sampleStations(spec.profile, z, 'top') - 0.03;
+  const top = Math.min(spec.height, Math.max(bottom + 0.004, sampleStations(spec.roof, z, 'top')));
+  const half = sampleStations(spec.roof, z, 'half');
+  const a = Math.min(1, Math.abs(ux));
+  const uy = (1 - a ** P_ROOF) ** (1 / P_ROOF);
+  return [ux * half, bottom + uy * (top - bottom), z];
+}
+
+/**
+ * Emit a glazed patch that lies on the greenhouse shell and is pushed out along
+ * the shell's own normal. Used for the windscreen and the backlight, where the
+ * shell curves in BOTH directions and a flat quad sinks into it: on a compact
+ * hatchback the roof profile between the cowl and the header bulges 70 mm above
+ * the straight chord, which buried the whole screen.
+ */
+function addShellPatch(buf, spec, z0, z1, uxSpan, rgb, zSteps = 3, uSteps = 4) {
+  const pt = (t, u) => greenhousePoint(spec, z0 + (z1 - z0) * t, -uxSpan + 2 * uxSpan * u);
+  // Push each vertex RADIALLY out of its own cross-section, from the section's
+  // bottom-centre. Every section here is star-shaped about that point, so a
+  // radial displacement is guaranteed to leave the shell - which a surface
+  // normal estimated by finite differences is not, at the edges of a patch.
+  const push = (t, u) => {
+    const z = z0 + (z1 - z0) * t;
+    const p = pt(t, u);
+    const bottom = sampleStations(spec.profile, z, 'top') - 0.03;
+    const dx = p[0];
+    const dy = p[1] - bottom;
+    const len = Math.hypot(dx, dy);
+    if (!(len > 1e-6)) return p;
+    return [p[0] + (dx / len) * GLASS_PROUD, p[1] + (dy / len) * GLASS_PROUD, p[2]];
+  };
+  for (let i = 0; i < zSteps; i += 1) {
+    for (let j = 0; j < uSteps; j += 1) {
+      const ta = i / zSteps;
+      const tb = (i + 1) / zSteps;
+      const ua = j / uSteps;
+      const ub = (j + 1) / uSteps;
+      addQuad(buf, push(ta, ua), push(ta, ub), push(tb, ub), push(tb, ua), rgb,
+        [0, greenhousePoint(spec, z0, 0)[1] - 2, (z0 + z1) / 2]);
+    }
+  }
+}
+
 /** Analytic half-width of the body section at height `y`. */
 function bodyXAt(spec, z, y) {
   const bottom = sillAt(spec, z);
@@ -411,19 +486,31 @@ function loftStations(spec, config) {
 // detail parts
 // ---------------------------------------------------------------------------
 
-function addGlassPane(buf, spec, corners, rgb, outward) {
-  // corners: [[z,y], ...] four corners in the side plane, already ordered.
-  const ref = [0, corners[0][1], corners[0][0]];
+/**
+ * Emit one window pane as a strip that FOLLOWS the shell it sits on.
+ *
+ * A pane cannot be a single flat quad. Its corners can be correctly proud of a
+ * curved section and its middle still be inside it: on a sedan greenhouse the
+ * chord between the belt line and the roof rail cuts 23 mm inside the surface,
+ * which is more than the stand-off, so the pane's interior disappeared into the
+ * bodywork while its edges did not. Subdividing into rows drops that sagitta by
+ * the square of the row count.
+ *
+ * `halfAt(z, y)` returns the shell's half-width at that point.
+ */
+function addSurfacePane(buf, spec, z0, z1, y0, y1, rgb, halfAt, rows = 3) {
+  if (!(y1 - y0 > 0.05) || !(Math.abs(z1 - z0) > 0.05)) return 0;
+  let emitted = 0;
   for (const side of [1, -1]) {
-    const pts = corners.map(([z, y]) => {
-      const x = greenhouseXAt(spec, z, y);
-      return [side * Math.max(0.02, x - 0.014), y, z];
-    });
-    const centre = [side * 0.001, 0, 0];
-    addQuad(buf, pts[0], pts[1], pts[2], pts[3], rgb, centre);
+    for (let r = 0; r < rows; r += 1) {
+      const ya = y0 + ((y1 - y0) * r) / rows;
+      const yb = y0 + ((y1 - y0) * (r + 1)) / rows;
+      const p = (z, y) => [side * Math.max(0.02, halfAt(z, y) + GLASS_PROUD), y, z];
+      addQuad(buf, p(z0, ya), p(z1, ya), p(z1, yb), p(z0, yb), rgb, [side * 0.001, (ya + yb) / 2, (z0 + z1) / 2]);
+      emitted += 2;
+    }
   }
-  void ref;
-  void outward;
+  return emitted;
 }
 
 /** The roof station index that carries the roof crown nearest one end. */
@@ -439,29 +526,28 @@ function headerStation(spec, rear) {
   return spec.roof[spec.roof.length - 1];
 }
 
-function addWindscreen(buf, spec, rgb, rear) {
+function addWindscreen(buf, spec, rgb, rear, rows = 3) {
   const cowl = rear ? spec.roof[0] : spec.roof[spec.roof.length - 1];
   const header = headerStation(spec, rear);
-  const cowlZ = cowl.z;
-  const headerZ = header.z;
-  if (Math.abs(headerZ - cowlZ) < 0.12) return;
-  const bodyTop = sampleStations(spec.profile, cowlZ, 'top');
-  const baseY = bodyTop + 0.02;
-  const headerY = header.top - 0.035;
-  if (!(headerY - baseY > 0.10)) return;
-  const inset = 0.016;
-  const baseHalf = Math.max(0.05, bodyXAt(spec, cowlZ, bodyTop - 0.05) * 0.90 - inset);
-  const headHalf = Math.max(0.05, greenhouseXAt(spec, headerZ, headerY - 0.08) * 0.94 - inset);
-  const dz = rear ? -0.014 : 0.014;
-  addQuad(
-    buf,
-    [-baseHalf, baseY, cowlZ + dz],
-    [baseHalf, baseY, cowlZ + dz],
-    [headHalf, headerY, headerZ + dz * 0.35],
-    [-headHalf, headerY, headerZ + dz * 0.35],
-    rgb,
-    [0, baseY - 1.4, (cowlZ + headerZ) / 2],
-  );
+  if (Math.abs(header.z - cowl.z) < 0.12) return;
+  const bodyTop = sampleStations(spec.profile, cowl.z, 'top');
+  if (!(header.top - bodyTop > 0.12)) return;
+  // Start where the glasshouse actually HAS a glasshouse. Near the cowl (or a
+  // hatchback's tailgate) the greenhouse section collapses onto the body top,
+  // and a pane placed there is a pane lying on the boot lid: on the estate the
+  // whole rear screen was hidden under the tail deck.
+  const minRise = 0.14;
+  let z0 = cowl.z;
+  for (let i = 1; i <= 12; i += 1) {
+    const t = i / 12;
+    const z = cowl.z + (header.z - cowl.z) * t;
+    const rise = sampleStations(spec.roof, z, 'top') - sampleStations(spec.profile, z, 'top');
+    if (rise >= minRise) { z0 = z; break; }
+    z0 = z;
+  }
+  const z1 = cowl.z + (header.z - cowl.z) * 0.94;
+  if (!(Math.abs(z1 - z0) > 0.10)) return;
+  addShellPatch(buf, spec, z0, z1, 0.80, rgb, rows, rows + 1);
 }
 
 /** A flat glazed panel on the front or rear face of a one-box body. */
@@ -469,7 +555,7 @@ function addEndGlass(buf, spec, rgb) {
   for (const panel of spec.features.endGlass || []) {
     const midY = (panel.y0 + panel.y1) / 2;
     const endZ = panel.facing > 0 ? spec.zFront : spec.zRear;
-    const z = bodySurfaceZ(spec, endZ, midY) + panel.facing * 0.016;
+    const z = bodySurfaceZ(spec, endZ, midY) + panel.facing * END_GLASS_PROUD;
     const x = Math.max(0.05, bodyXAt(spec, z, midY) * (panel.halfF ?? 0.9));
     addQuad(
       buf,
@@ -479,31 +565,35 @@ function addEndGlass(buf, spec, rgb) {
   }
 }
 
-function addSidePanes(buf, spec, rgb) {
+function addSidePanes(buf, spec, rgb, rows = 3) {
   // Two glazing models, because a car and a bus do not carry glass in the same
   // place. A car's side windows sit on the GREENHOUSE, above the belt line. A
   // one-box body - transit coach, panel van - carries a window BAND in the body
   // side itself, at absolute heights, so `glazing.bandY` selects that model.
   const band = spec.glazing.bandY;
   for (const [z0, z1] of spec.glazing.sidePanes) {
-    const mid = (z0 + z1) / 2;
     if (band) {
       const [y0, y1] = band;
-      const top = sampleStations(spec.profile, mid, 'top');
-      if (!(y1 - y0 > 0.06) || !(y1 < top - 0.04)) continue;
-      for (const side of [1, -1]) {
-        const pts = [[z0 + 0.03, y0], [z1 - 0.03, y0], [z1 - 0.03, y1], [z0 + 0.03, y1]]
-          .map(([z, y]) => [side * Math.max(0.02, bodyXAt(spec, z, y) - 0.016), y, z]);
-        addQuad(buf, pts[0], pts[1], pts[2], pts[3], rgb, [side * 0.001, 0, 0]);
-      }
+      const topA = sampleStations(spec.profile, z0, 'top');
+      const topB = sampleStations(spec.profile, z1, 'top');
+      const ceiling = Math.min(topA, topB) - 0.06;
+      const yTop = Math.min(y1, ceiling);
+      if (!(yTop - y0 > 0.06)) continue;
+      addSurfacePane(buf, spec, z0 + 0.03, z1 - 0.03, y0, yTop, rgb,
+        (z, y) => bodyXAt(spec, z, y), rows);
       continue;
     }
-    const roofTop = sampleStations(spec.roof, mid, 'top');
-    const belt = sampleStations(spec.profile, mid, 'top');
+    // Greenhouse model. The pane must stay under the roof line at BOTH ends,
+    // or its forward corner slides past the A-pillar and collapses onto the
+    // centreline where the greenhouse section has closed.
+    const belt = sampleStations(spec.profile, (z0 + z1) / 2, 'top');
+    const roofA = sampleStations(spec.roof, z0, 'top');
+    const roofB = sampleStations(spec.roof, z1, 'top');
     const y0 = belt + spec.glazing.paneRise;
-    const y1 = roofTop - spec.glazing.paneDrop;
-    if (!(y1 - y0 > 0.06)) continue;
-    addGlassPane(buf, spec, [[z0 + 0.02, y0], [z1 - 0.02, y0], [z1 - 0.02, y1], [z0 + 0.02, y1]], rgb);
+    const yTop = Math.min(roofA, roofB) - spec.glazing.paneDrop;
+    if (!(yTop - y0 > 0.06)) continue;
+    addSurfacePane(buf, spec, z0 + 0.02, z1 - 0.02, y0, yTop, rgb,
+      (z, y) => greenhouseXAt(spec, z, y), rows);
   }
 }
 
@@ -571,11 +661,15 @@ export function buildVehicleGeometry(spec, lod, palette) {
   if (roofRings.length >= 2) addLoft(paint, roofRings, roofSection, roofColour, { caps: false });
 
   // --- glazing ------------------------------------------------------------
-  {
+  // Rows exist to stop a flat pane sinking into a curved shell. At the far
+  // level of detail there is no shell curvature worth resolving and the whole
+  // vehicle is ten pixels wide, so the glazing is dropped entirely.
+  if (config.lod < 2) {
     const paneColour = L(T.glassSeal);
-    if (spec.glazing.windscreen) addWindscreen(glass, spec, paneColour, false);
-    if (spec.glazing.backlight) addWindscreen(glass, spec, paneColour, true);
-    addSidePanes(glass, spec, paneColour);
+    const rows = config.lod === 0 ? 3 : 1;
+    if (spec.glazing.windscreen) addWindscreen(glass, spec, paneColour, false, rows);
+    if (spec.glazing.backlight) addWindscreen(glass, spec, paneColour, true, rows);
+    addSidePanes(glass, spec, paneColour, rows);
     addEndGlass(glass, spec, paneColour);
   }
 
@@ -693,8 +787,8 @@ function liveryColourFn(spec, livery, T, L) {
   const transitBody = L(T.transitSilver);
   const transitSkirt = L(T.transitRed);
   return (ux, uy, z, y) => {
-    if (uy < 0.06) return arch;
-    if (uy < 0.16) return under;
+    if (uy < 0.05) return arch;
+    if (uy < 0.11) return under;
     if (livery === 'taxi') return y < belt * 0.62 ? taxiLower : taxiBody;
     if (livery === 'patrol') {
       const doorZone = z > spec.rearAxleZ - 0.1 && z < spec.frontAxleZ - 0.2 && y < belt && Math.abs(ux) > 0.55;
@@ -1048,8 +1142,8 @@ function addTransitDoors(glassBuf, trimBuf, spec, T, L) {
       );
       addQuad(
         glassBuf,
-        [side * (xa + 0.018), y0 + 0.30, z0 + 0.06], [side * (xb + 0.018), y0 + 0.30, z1 - 0.06],
-        [side * (xb + 0.018), y1 - 0.10, z1 - 0.06], [side * (xa + 0.018), y1 - 0.10, z0 + 0.06],
+        [side * (xa + 0.028), y0 + 0.30, z0 + 0.06], [side * (xb + 0.028), y0 + 0.30, z1 - 0.06],
+        [side * (xb + 0.028), y1 - 0.10, z1 - 0.06], [side * (xa + 0.028), y1 - 0.10, z0 + 0.06],
         paneColour, [0, (y0 + y1) / 2, (z0 + z1) / 2],
       );
     }
