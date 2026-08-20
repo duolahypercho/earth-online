@@ -55,10 +55,15 @@ page.on('console', (m) => {
 const report = { url: URL_BASE, viewport: { w: W, h: H }, cards: [], errors: [] };
 
 await page.goto(URL_BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
+// NOTE: waitForFunction is (pageFunction, arg, options) - passing the options
+// object as the second argument silently leaves the 30s default in place.
+const bootStartedAt = Date.now();
 await page.waitForFunction(() => {
   const api = window.__CITYGEN__;
   return typeof api?.getState === 'function' && (api.getCity()?.buildings?.length || 0) > 50;
-}, { timeout: BOOT_MS });
+}, null, { timeout: BOOT_MS });
+report.bootMs = Date.now() - bootStartedAt;
+console.log(`world ready in ${(report.bootMs / 1000).toFixed(1)}s`);
 
 // The canonical route silently falls back to a procedurally generated city
 // when the real OSM dataset fails to load. Frames from the fallback are not

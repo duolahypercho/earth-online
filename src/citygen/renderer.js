@@ -3,6 +3,21 @@ import { WebGPURenderer } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp, hashString } from './core.js';
+import {
+  createEnvironmentRig,
+  classifyMaterialClass,
+  envMapIntensityFor,
+} from '../render/environment-ibl.js';
+import {
+  applyDetailMaps,
+  applyRendererCapabilities,
+  preloadDetailMaps,
+  disposeAllDetailMaps,
+  detailMapCacheStats,
+  uvScalePerMetre,
+} from '../render/detail-maps.js';
+import { buildFacadeDepthBatch, FACADE_DEPTH_UV_METRES } from '../world/buildings/facade-depth.js';
+import { buildStreetSurfaceV2, STREET_SURFACE_V2_DEFAULTS } from '../world/streets/street-surface-v2.js';
 
 const PALETTES = Object.freeze({
   painted: ['#c96b66', '#5f93a2', '#d4ad61', '#7486a8', '#c88455', '#89a876', '#b87892'],
@@ -77,6 +92,92 @@ const GROUND_MATERIAL_ASSETS = Object.freeze({
   }),
 });
 const GROUND_MATERIAL_ANISOTROPY = 8;
+
+// --- Presentation upgrade passes --------------------------------------------
+// Procedural detail maps are baked once at load and shared by every mesh that
+// uses a surface class. 256 px per tile keeps the whole bake under half a
+// second while still resolving above one texel per centimetre at the tile
+// sizes these classes declare.
+const DETAIL_MAP_PASS = 'detail-maps-v1';
+const DETAIL_MAP_OPTIONS = Object.freeze({ resolution: 256 });
+const DETAIL_MAP_CLASSES = Object.freeze([
+  'brick', 'stucco', 'painted-concrete', 'glass-curtain', 'asphalt', 'sidewalk-concrete',
+]);
+// Building albedo already paints windows, courses and shadows at its own
+// frequency, so a structured detail map on top of it would fight the painting.
+// Textured facades therefore only take the fine plaster grain, while the
+// untextured vertex-colour groups (which have no albedo at all) take the full
+// class-specific relief.
+const FACADE_DETAIL_BY_MATERIAL = Object.freeze({
+  brick: 'brick',
+  stone: 'painted-concrete',
+  concrete: 'painted-concrete',
+  plaster: 'stucco',
+  painted: 'stucco',
+  clapboard: 'stucco',
+  glass: 'glass-curtain',
+});
+const TEXTURED_FACADE_DETAIL_CLASS = 'stucco';
+// Mean of each class's baked roughness channel, measured from the module's own
+// field. three multiplies `material.roughness` by the map, so a call site can
+// keep its authored roughness and still gain per-texel variation.
+const DETAIL_ROUGHNESS_MEAN = Object.freeze({
+  brick: 0.816,
+  stucco: 0.882,
+  'painted-concrete': 0.685,
+  'glass-curtain': 0.115,
+  asphalt: 0.925,
+  'sidewalk-concrete': 0.875,
+  'dirty-metal': 0.415,
+});
+// Additive facade relief. The module caps itself per building and per scene;
+// this is the scene allowance the renderer grants it.
+const FACADE_DEPTH_PASS = 'facade-depth-1';
+const FACADE_DEPTH_SCENE_BUDGET = 120000;
+const FACADE_DEPTH_SURFACES = Object.freeze({
+  edwardian: Object.freeze({ detail: 'painted-concrete', color: '#e7ddcd' }),
+  'modern-grid': Object.freeze({ detail: 'painted-concrete', color: '#d6d2c8' }),
+  'bay-window': Object.freeze({ detail: 'painted-concrete', color: '#efe4d3' }),
+  shopfront: Object.freeze({ detail: 'painted-concrete', color: '#dcd5c6' }),
+  loft: Object.freeze({ detail: 'brick', color: '#c78a63' }),
+  'art-deco': Object.freeze({ detail: 'stucco', color: '#e2d8c5' }),
+});
+const FACADE_DEPTH_GLASS = Object.freeze({ color: '#3f5a68', roughness: 0.16, metalness: 0.42 });
+// Two vertical planes are pinned by subsystems this pass does not own, and the
+// curb has to be built between them:
+//
+//   carriageway datum  = terrain + city.meta.streetDesign.roadLift
+//       Curbside cars are placed on exactly this plane and the parked-car
+//       partition contract re-derives it from source to within 2e-5 m.
+//   footway surface    = carriageway datum + 0.045
+//       Street lamps, sidewalk props and the hero bench are grounded here, and
+//       the traffic simulation seats its hero actors on the same offset.
+//
+// So the exposed curb face is whatever fits: 45 mm above the datum plus the
+// depth of the gutter pan cut below it. That is a real curb with a real gutter
+// rather than the flat ribbon it replaces, but it is 77 mm, not the module's
+// designed 150 mm. Raising it further means re-basing the footway offset in the
+// traffic simulation and in the prop placements at the same time.
+const LEGACY_SIDEWALK_LIFT = 0.045;
+const STREET_GUTTER_DEPTH = 0.04;
+const STREET_SURFACE_PASS = 'street-surface-v2';
+
+/** Detail-map `repeat` for UVs measured in tiles of `metresX` x `metresY`. */
+function detailRepeatForUvTile(className, metresX, metresY) {
+  const scale = uvScalePerMetre(className);
+  return { x: metresX * scale.x, y: metresY * scale.y };
+}
+
+/** Surface class for a building shell that carries no albedo texture. */
+function facadeDetailClass(materialKey) {
+  return FACADE_DETAIL_BY_MATERIAL[materialKey] || 'stucco';
+}
+
+/** `material.roughness` that reproduces `target` through a class's ORM map. */
+function detailRoughnessScale(className, target) {
+  const mean = DETAIL_ROUGHNESS_MEAN[className] || 1;
+  return clamp(target / mean, 0, 1);
+}
 const BISTRO_PARTITION_PASS = 'sf-world-partition-bistro-v1';
 const BISTRO_PARTITION_CELL_SIZE = 140;
 const BISTRO_PARTITION_ENTER_RADIUS = 420;
@@ -957,6 +1058,42 @@ function createParkedCarHullGeometry({ compositeBody = false, segmentedCab = fal
   return geometry;
 }
 
+/**
+ * Report the same shape `applyWorldXZUvs` returns for a geometry that already
+ * carries world-XZ UVs (street-surface-v2 bakes them during construction), so
+ * the SF ground-material contract keeps its evidence without rewriting the
+ * attribute a second time.
+ */
+function describeWorldXZUvs(geometry, metersPerRepeat) {
+  const uv = geometry?.getAttribute?.('uv');
+  if (!uv) {
+    return { itemSize: 0, vertexCount: 0, metersPerRepeat, range: null, repeat: null, finite: false };
+  }
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  let finite = uv.count > 0 && Number.isFinite(metersPerRepeat) && metersPerRepeat > 0;
+  for (let index = 0; index < uv.count; index += 1) {
+    const u = uv.getX(index);
+    const v = uv.getY(index);
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    minV = Math.min(minV, v);
+    maxV = Math.max(maxV, v);
+    finite = finite && Number.isFinite(u) && Number.isFinite(v);
+  }
+  geometry.userData.worldUv = { axis: 'xz', metersPerRepeat };
+  return {
+    itemSize: uv.itemSize,
+    vertexCount: uv.count,
+    metersPerRepeat,
+    range: uv.count > 0 ? { minU, maxU, minV, maxV } : null,
+    repeat: uv.count > 0 ? { u: maxU - minU, v: maxV - minV } : null,
+    finite,
+  };
+}
+
 function applyWorldXZUvs(geometry, metersPerRepeat) {
   const position = geometry.getAttribute('position');
   const uv = new Float32Array(position.count * 2);
@@ -1744,6 +1881,31 @@ export class CityRenderer {
       pointLightPoolSize: 0,
     };
     this.terrainVisualScale = 1;
+    // Image-based lighting rig (owns a PMREMGenerator and an LRU of prefiltered
+    // targets). Created in initialize(), after renderer.init().
+    this.envRig = null;
+    this.envWeather = 'clear';
+    this.envMaterialGroups = null;
+    this.environmentDiagnostics = {
+      pass: null,
+      weather: 'clear',
+      gradedMaterials: 0,
+      envMapIntensity: null,
+      lightRig: null,
+      textureReady: false,
+    };
+    this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy: null, ...detailMapCacheStats() };
+    this.facadeDepthDiagnostics = {
+      pass: FACADE_DEPTH_PASS,
+      drawCalls: 0,
+      triangles: 0,
+      buildings: 0,
+      skipped: 0,
+      styles: [],
+    };
+    this.streetSurface = null;
+    this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
+    this.buildFocus = null;
 
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
     this.sun.position.set(-260, 380, 120);
@@ -1778,7 +1940,87 @@ export class CityRenderer {
       : this.renderer.backend?.isWebGLBackend === true
         ? 'webgl2-fallback'
         : 'unknown';
+    // Bake the shared detail maps at load rather than on the first frame, and
+    // clamp their sampler anisotropy to what this backend really supports.
+    const anisotropy = applyRendererCapabilities(this.renderer);
+    preloadDetailMaps(DETAIL_MAP_CLASSES, DETAIL_MAP_OPTIONS);
+    this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy, ...detailMapCacheStats() };
+    // One environment rig for the one renderer. PBR materials with no IBL have
+    // no specular response at all, which is the single biggest reason the old
+    // frames read as flat painted card.
+    this.envRig = createEnvironmentRig(this.renderer, { scene: this.scene });
+    await this.envRig.updateAsync({ hour: this.timeOfDay, weather: this.envWeather });
     return this.rendererBackend;
+  }
+
+  /** Weather bucket driving the sky/IBL model: 'clear' | 'fog' | 'drizzle'. */
+  setWeather(kind) {
+    const next = typeof kind === 'string' ? kind : 'clear';
+    if (next === this.envWeather) return this.envWeather;
+    this.envWeather = next;
+    this.appliedTimeOfDay = null;
+    this.appliedNightState = null;
+    this.setTimeOfDay(this.timeOfDay);
+    return this.envWeather;
+  }
+
+  /**
+   * Push the recommended per-class `envMapIntensity` onto every material that
+   * declared a class.
+   *
+   * On the node/WebGPU path `material.envMapIntensity` is only consulted when
+   * the material owns an `envMap`; a material lit purely by `scene.environment`
+   * shares the single global `scene.environmentIntensity` instead. Each graded
+   * material is therefore pointed at the same prefiltered target the scene
+   * uses, which costs no extra texture and makes per-class grading reach the
+   * shader on both backends.
+   */
+  applyEnvironmentGrading(model, texture) {
+    if (!model) return 0;
+    if (!this.envMaterialGroups) {
+      if (!this.root) return 0;
+      const groups = new Map();
+      this.root.traverse((object) => {
+        const list = Array.isArray(object.material)
+          ? object.material
+          : object.material ? [object.material] : [];
+        for (const material of list) {
+          const envClass = material?.userData?.envClass;
+          if (!envClass || !('envMapIntensity' in material)) continue;
+          let bucket = groups.get(envClass);
+          if (!bucket) {
+            bucket = new Set();
+            groups.set(envClass, bucket);
+          }
+          bucket.add(material);
+        }
+      });
+      this.envMaterialGroups = groups;
+    }
+    const table = {};
+    let graded = 0;
+    for (const [envClass, materials] of this.envMaterialGroups) {
+      const intensity = envMapIntensityFor(envClass, model);
+      table[envClass] = intensity;
+      for (const material of materials) {
+        if (texture && material.envMap !== texture) {
+          // Introducing an envMap where there was none changes the program.
+          if (!material.envMap) material.needsUpdate = true;
+          material.envMap = texture;
+        }
+        material.envMapIntensity = intensity;
+        graded += 1;
+      }
+    }
+    this.environmentDiagnostics = {
+      pass: model.version || null,
+      weather: this.envWeather,
+      gradedMaterials: graded,
+      envMapIntensity: table,
+      lightRig: model.lightRig ? { ...model.lightRig.scales } : null,
+      textureReady: Boolean(texture),
+    };
+    return graded;
   }
 
   async loadGroundMaterialTextures() {
@@ -1943,6 +2185,11 @@ export class CityRenderer {
     this.disposeParkedCarPartitionRuntime();
     for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.disposeGroundMaterialTextures();
+    this.scene.environment = null;
+    this.envRig?.dispose();
+    this.envRig = null;
+    this.envMaterialGroups = null;
+    disposeAllDetailMaps();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -1985,6 +2232,10 @@ export class CityRenderer {
   async buildCity(city, { focus = null, day = true } = {}) {
     this.setCity(city);
     this.day = day;
+    // Facade relief picks its LOD ring from where the player will actually be.
+    this.buildFocus = focus && Number.isFinite(focus.x) && Number.isFinite(focus.z)
+      ? { x: focus.x, z: focus.z }
+      : { x: this.camera.position.x, z: this.camera.position.z };
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     // Dispose old dynamic geometry only; static materials persist for rebuilds.
@@ -2014,6 +2265,17 @@ export class CityRenderer {
       pointLightPoolSize: 0,
     };
     this.streetFurniture = { props: 0, cars: 0, awnings: 0, bunting: 0 };
+    this.envMaterialGroups = null;
+    this.streetSurface = null;
+    this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
+    this.facadeDepthDiagnostics = {
+      pass: FACADE_DEPTH_PASS,
+      drawCalls: 0,
+      triangles: 0,
+      buildings: 0,
+      skipped: 0,
+      styles: [],
+    };
     this.sidewalkPropRecords = [];
     this.sidewalkPropRuntime = null;
     this.sidewalkPropDiagnostics = {
@@ -2203,6 +2465,17 @@ export class CityRenderer {
         streetwall: createHeroStreetwallDiagnostics(),
       };
       this.signalMeshes = [];
+      this.envMaterialGroups = null;
+      this.streetSurface = null;
+      this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
+      this.facadeDepthDiagnostics = {
+        pass: FACADE_DEPTH_PASS,
+        drawCalls: 0,
+        triangles: 0,
+        buildings: 0,
+        skipped: 0,
+        styles: [],
+      };
       this.root = null;
     }
   }
@@ -2599,6 +2872,11 @@ export class CityRenderer {
 
   async buildBuildings(root, city) {
     const flatGroups = new Map();
+    // Buildings that ended up with a true polygon shell are the only ones that
+    // get additive facade relief: the module works from `building.polygon`, and
+    // on an AABB fallback shell the trim would not sit on the rendered wall.
+    const depthCandidates = [];
+    const depthBaseY = new Map();
     // Textured facades are bucketed by (facade, material, vivid, variety) so
     // hundreds of real-map buildings share ~90 cached day/night texture pairs
     // and merge into one mesh per bucket instead of one mesh per building.
@@ -2684,6 +2962,10 @@ export class CityRenderer {
         shell = null;
       }
       const footprintMode = realMap && shell ? 'polygon-footprint' : 'legacy-aabb';
+      if (footprintMode === 'polygon-footprint') {
+        depthCandidates.push(building);
+        depthBaseY.set(building.id, baseY);
+      }
       let geometry;
       let renderedArea;
       let triangleCount;
@@ -2858,16 +3140,29 @@ export class CityRenderer {
       const merged = mergeGeometries(group.geoms, false);
       if (!merged) continue;
       merged.computeVertexNormals();
+      const heroRoughness = key === 'glass' ? 0.32 : key === 'concrete' ? 0.64 : 0.72;
       const material = new THREE.MeshStandardMaterial({
         map: heroTextures.texture,
         vertexColors: true,
         emissive: 0xffd29a,
         emissiveMap: heroTextures.nightTexture,
         emissiveIntensity: 0,
-        roughness: key === 'glass' ? 0.32 : key === 'concrete' ? 0.64 : 0.72,
+        roughness: heroRoughness,
         metalness: key === 'glass' ? 0.22 : 0.04,
         flatShading: true,
       });
+      // The atlas already paints the openings, so these facades only take the
+      // fine plaster grain: a structured relief map would fight the painting.
+      if (key !== 'glass') {
+        this.applyFacadeDetail(material, TEXTURED_FACADE_DETAIL_CLASS, {
+          useAoMap: false,
+          normalScale: 0.45,
+          roughnessScale: detailRoughnessScale(TEXTURED_FACADE_DETAIL_CLASS, heroRoughness),
+        });
+      }
+      material.userData.envClass = classifyMaterialClass(
+        key === 'glass' ? { kind: 'glass' } : { material: key },
+      );
       this.nightEmissive.push({
         material,
         texture: heroTextures.texture,
@@ -2912,6 +3207,14 @@ export class CityRenderer {
         metalness: 0.04,
         flatShading: true,
       });
+      // No albedo texture here, so this group can carry the full class relief:
+      // brick courses, plaster grain, cavity occlusion.
+      const flatDetailClass = facadeDetailClass(group.material);
+      this.applyFacadeDetail(material, flatDetailClass, {
+        aoMapIntensity: 0.8,
+        roughnessScale: detailRoughnessScale(flatDetailClass, 0.72),
+      });
+      material.userData.envClass = classifyMaterialClass({ material: group.material });
       const mesh = new THREE.Mesh(merged, material);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -2951,6 +3254,15 @@ export class CityRenderer {
         metalness: 0.06,
         flatShading: true,
       });
+      this.applyFacadeDetail(material, TEXTURED_FACADE_DETAIL_CLASS, {
+        useAoMap: false,
+        normalScale: 0.5,
+        roughnessScale: detailRoughnessScale(TEXTURED_FACADE_DETAIL_CLASS, 0.68),
+      });
+      material.userData.envClass = classifyMaterialClass({
+        material: group.material,
+        facade: group.facadeStyle,
+      });
       const nightIntensity = (group.material === 'glass' ? 0.26 : 0.34)
         + (hashString(`${group.textureKey}-night`) % 18) / 100;
       this.nightEmissive.push({ material, texture, nightTexture, nightIntensity });
@@ -2968,6 +3280,111 @@ export class CityRenderer {
     }
     this.buildHeroGroundingBatch(root, heroRoofEntries, city);
     this.buildHeroRoofBatches(root, heroRoofEntries, heroTextures);
+    this.buildFacadeRelief(root, depthCandidates, depthBaseY);
+  }
+
+  /**
+   * Attach the shared detail maps to a facade material. Building shells carry
+   * metric wall UVs (one unit per BUILDING_UV_METRES_X/Y), so the repeat is
+   * derived from that tile and is identical for every mesh in a merged batch.
+   */
+  applyFacadeDetail(material, className, options = {}) {
+    return applyDetailMaps(material, className, {
+      ...DETAIL_MAP_OPTIONS,
+      repeat: detailRepeatForUvTile(className, BUILDING_UV_METRES_X, BUILDING_UV_METRES_Y),
+      useMetalnessMap: false,
+      ...options,
+    });
+  }
+
+  /** Shared material for one facade-relief (style, role) batch. */
+  facadeReliefMaterial(style, role) {
+    this.facadeReliefMaterials = this.facadeReliefMaterials || new Map();
+    const key = `${style}:${role}`;
+    const cached = this.facadeReliefMaterials.get(key);
+    if (cached) return cached;
+    let material;
+    if (role === 'glass') {
+      // Recessed panes: dark, smooth, and almost entirely carried by the
+      // environment. This is where IBL earns its place.
+      material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(FACADE_DEPTH_GLASS.color),
+        roughness: FACADE_DEPTH_GLASS.roughness,
+        metalness: FACADE_DEPTH_GLASS.metalness,
+      });
+      material.userData.envClass = 'facade-glass';
+    } else {
+      const surface = FACADE_DEPTH_SURFACES[style] || FACADE_DEPTH_SURFACES['modern-grid'];
+      material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(surface.color),
+        roughness: 0.74,
+        metalness: 0.03,
+      });
+      // Real geometry with no albedo of its own: take the full class relief.
+      this.applyFacadeDetail(material, surface.detail, {
+        aoMapIntensity: 0.75,
+        roughnessScale: detailRoughnessScale(surface.detail, 0.74),
+      });
+      material.userData.envClass = 'facade-masonry';
+    }
+    material.name = `facade-relief-${key}`;
+    this.facadeReliefMaterials.set(key, material);
+    return material;
+  }
+
+  /**
+   * Additive facade relief: cornices, plinths, string courses, window reveals,
+   * sills, pilasters and recessed shopfront glazing. The module merges every
+   * building into one geometry per (style, role), so the whole city costs at
+   * most twelve extra draw calls.
+   */
+  buildFacadeRelief(root, buildings, baseYById) {
+    this.facadeReliefMaterials = new Map();
+    const diagnostics = {
+      pass: FACADE_DEPTH_PASS,
+      drawCalls: 0,
+      triangles: 0,
+      buildings: 0,
+      skipped: 0,
+      styles: [],
+    };
+    if (!buildings.length) {
+      this.facadeDepthDiagnostics = diagnostics;
+      return null;
+    }
+    const view = this.buildFocus || this.camera.position;
+    const batch = buildFacadeDepthBatch(buildings, {
+      viewPoint: { x: view.x, z: view.z },
+      baseYFor: (building) => baseYById.get(building.id) ?? 0,
+      sceneTriangleBudget: FACADE_DEPTH_SCENE_BUDGET,
+    });
+    for (const group of batch.groups) {
+      const mesh = new THREE.Mesh(group.geometry, this.facadeReliefMaterial(group.style, group.role));
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      mesh.name = `facade-relief-${group.key}`;
+      mesh.userData = {
+        kind: 'buildings-facade-relief',
+        style: group.style,
+        role: group.role,
+        buildingIds: group.buildingIds,
+      };
+      root.add(mesh);
+      this.geometryCache.push(group.geometry);
+      diagnostics.styles.push({
+        key: group.key,
+        triangles: group.triangles,
+        buildings: group.buildingIds.length,
+      });
+    }
+    diagnostics.drawCalls = batch.drawCalls;
+    diagnostics.triangles = batch.triangles;
+    diagnostics.buildings = batch.buildings.length;
+    diagnostics.skipped = batch.skipped;
+    this.facadeDepthDiagnostics = diagnostics;
+    return batch;
   }
 
   buildHeroGroundingBatch(root, sourceEntries, city) {
@@ -3653,435 +4070,134 @@ export class CityRenderer {
     }
   }
 
+  /**
+   * Solve the street cross-section against the two vertical planes the rest of
+   * the runtime already pins (see LEGACY_SIDEWALK_LIFT above).
+   *
+   * The carriageway datum is left exactly where the legacy flat ribbon was, so
+   * curbside cars keep contacting it. The curb face is then sized so the curb
+   * top - and therefore the footway - lands exactly on the legacy pavement
+   * plane, so every lamp, bench, sign and seated actor keeps standing on the
+   * surface it was placed against. Nothing in the scene moves vertically; the
+   * curb and the gutter appear in the space between the two planes.
+   */
+  streetSurfaceLift(city) {
+    const defaults = STREET_SURFACE_V2_DEFAULTS;
+    const datum = Number(city?.meta?.streetDesign?.roadLift ?? defaults.roadLift);
+    const gutterDepth = STREET_GUTTER_DEPTH;
+    // curbTop = (datum - gutterDepth) + curbFaceHeight - curbTopFall
+    const curbFaceHeight = LEGACY_SIDEWALK_LIFT + gutterDepth + defaults.curbTopFall;
+    const footway = datum + LEGACY_SIDEWALK_LIFT;
+    return { datum, gutterDepth, curbFaceHeight, footway, exposedCurbFace: curbFaceHeight };
+  }
+
   buildRoadNetwork(root, city) {
     const realMap = city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap';
     const sfGroundMaterials = realMap && isSanFranciscoCity(city);
     const sourceSegmentsBefore = sfGroundMaterials ? JSON.stringify(city.segments) : null;
-    const hiddenPathClasses = new Set(['footway', 'path', 'steps', 'cycleway', 'pedestrian', 'corridor', 'platform']);
-    const renderSegments = realMap
-      ? city.segments.filter((segment) => !hiddenPathClasses.has(segment.highway))
-      : city.segments;
-    const crossingAt = (position) => renderSegments.filter((segment) => {
-      for (const point of [segment.points[0], segment.points[segment.points.length - 1]]) {
-        if (Math.hypot(point.x - position.x, point.z - position.z) < 0.5) return true;
-      }
-      return false;
-    });
-    const renderIntersections = city.intersections
-      .map((intersection) => ({ intersection, crossing: crossingAt(intersection.position) }))
-      .filter((entry) => entry.crossing.length >= 2);
-    // Pre-count vertices: 4 per quad, 6 indices per quad.
-    const quads = { asphalt: 0, sidewalk: 0, curb: 0, crosswalk: 0 };
-    for (const segment of renderSegments) {
-      for (let i = 0; i < segment.points.length - 1; i += 1) {
-        quads.asphalt += 1;
-        if (segment.sidewalkW > 0) {
-          quads.sidewalk += 2;
-          quads.curb += 2;
-        }
-      }
-    }
-    quads.asphalt += renderIntersections.length;
-    const asphaltAttrs = lineQuadAttrs(quads.asphalt);
-    const sidewalkAttrs = lineQuadAttrs(quads.sidewalk);
-    const curbAttrs = lineQuadAttrs(quads.curb);
-    // Crosswalk stripe count depends on approach widths, so use a dynamic buffer.
-    const crosswalkAttrs = dynQuadAttrs();
-    // Merged marking ribbons replace thousands of THREE.Line objects:
-    // one draw call for lane dashes, one for edge lines, one for stop bars,
-    // and one for sidewalk expansion joints.
-    const laneAttrs = dynQuadAttrs();
-    const edgeAttrs = dynQuadAttrs();
-    const stopAttrs = dynQuadAttrs();
-    const jointAttrs = dynQuadAttrs();
-    const patchAttrs = dynQuadAttrs();
-    const asphaltColors = sfGroundMaterials ? {
-      motorway: new THREE.Color('#c9d0d6'),
-      trunk: new THREE.Color('#cdd3d8'),
-      primary: new THREE.Color('#d2d7db'),
-      secondary: new THREE.Color('#d6dadd'),
-      tertiary: new THREE.Color('#d9dcde'),
-      residential: new THREE.Color('#dde0e1'),
-      service: new THREE.Color('#e2e3e1'),
-    } : {
-      motorway: new THREE.Color('#5d6570'),
-      trunk: new THREE.Color('#626a74'),
-      primary: new THREE.Color('#6b737d'),
-      secondary: new THREE.Color('#747c84'),
-      tertiary: new THREE.Color('#7d848b'),
-      residential: new THREE.Color('#858b90'),
-      service: new THREE.Color('#8d9294'),
-    };
-    const sidewalkColor = new THREE.Color(sfGroundMaterials ? '#eee7da' : '#e2c79a');
-    const curbColor = new THREE.Color('#c0936b');
-    const crosswalkColor = new THREE.Color('#fff4dc');
-    const laneWhite = new THREE.Color('#efe8d4');
-    const laneYellow = new THREE.Color('#e6b93f');
-    const edgeWhite = new THREE.Color('#f2ead8');
-    const jointColor = new THREE.Color('#8d7a5e');
-    const patchDark = new THREE.Color('#4c4b48');
-    const patchMid = new THREE.Color('#9c8f7d');
-    const manholeColor = new THREE.Color('#3a3a38');
-    let asphaltVertex = 0;
-    let sidewalkVertex = 0;
-    let curbVertex = 0;
-    const roadLift = Number(city.meta.streetDesign?.roadLift ?? 0.5);
-    const curbHeight = Number(city.meta.streetDesign?.curbHeight ?? 0.16);
-    const yAt = (x, z, lift = 0.075) => roadLift + lift + (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0);
-
-    for (const segment of renderSegments) {
-      const pts = segment.points;
-      for (let i = 0; i < pts.length - 1; i += 1) {
-      const a = pts[i];
-      const b = pts[i + 1];
-      if (!Number.isFinite(a.x) || !Number.isFinite(a.z) || !Number.isFinite(b.x) || !Number.isFinite(b.z)) continue;
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const len = Math.hypot(dx, dz);
-        if (len < 0.01) continue;
-        const nx = -dz / len;
-        const nz = dx / len;
-        const half = segment.width / 2;
-        const sidewalkHalf = half + segment.sidewalkW;
-        const ya = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(a.x, a.z) : 0);
-        const yb = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(b.x, b.z) : 0);
-        const color = asphaltColors[segment.highway] || asphaltColors.residential;
-        const c = shade(color, 0);
-        const c2 = shade(color, 0.04);
-        pushQuad(asphaltAttrs, asphaltVertex,
-          { x: a.x + nx * half, y: ya, z: a.z + nz * half },
-          { x: b.x + nx * half, y: yb, z: b.z + nz * half },
-          { x: b.x - nx * half, y: yb, z: b.z - nz * half },
-          { x: a.x - nx * half, y: ya, z: a.z - nz * half },
-          c,
-        );
-        asphaltVertex += 4;
-        if (segment.sidewalkW > 0) {
-          pushQuad(sidewalkAttrs, sidewalkVertex,
-            { x: a.x + nx * sidewalkHalf, y: ya + 0.045, z: a.z + nz * sidewalkHalf },
-            { x: b.x + nx * sidewalkHalf, y: yb + 0.045, z: b.z + nz * sidewalkHalf },
-            { x: b.x + nx * half, y: yb + 0.045, z: b.z + nz * half },
-            { x: a.x + nx * half, y: ya + 0.045, z: a.z + nz * half },
-            sidewalkColor,
-          );
-          sidewalkVertex += 4;
-          pushQuad(sidewalkAttrs, sidewalkVertex,
-            { x: a.x - nx * half, y: ya + 0.045, z: a.z - nz * half },
-            { x: b.x - nx * half, y: yb + 0.045, z: b.z - nz * half },
-            { x: b.x - nx * sidewalkHalf, y: yb + 0.045, z: b.z - nz * sidewalkHalf },
-            { x: a.x - nx * sidewalkHalf, y: ya + 0.045, z: a.z - nz * sidewalkHalf },
-            sidewalkColor,
-          );
-          sidewalkVertex += 4;
-          // Expansion joints: tight dark seams every ~2.8m give sidewalks a
-          // paved, walkable texture at street level.
-          if (!realMap) {
-            const jointStep = 2.8;
-            const joints = Math.floor(len / jointStep);
-            for (let j = 1; j <= joints; j += 1) {
-              const t = j * jointStep / len;
-              const jx = a.x + dx * t;
-              const jz = a.z + dz * t;
-              const jy = yAt(jx, jz, 0.05);
-              for (const side of [1, -1]) {
-                const inner = { x: jx + nx * half * side, z: jz + nz * half * side };
-                const outer = { x: jx + nx * (sidewalkHalf - 0.12) * side, z: jz + nz * (sidewalkHalf - 0.12) * side };
-                pushStripDyn(jointAttrs, inner, outer, 0.13, () => jy, jointColor);
-              }
-            }
-          }
-          // Curb lips.
-          pushQuad(curbAttrs, curbVertex,
-            { x: a.x + nx * (half + 0.08), y: ya + 0.045, z: a.z + nz * (half + 0.08) },
-            { x: b.x + nx * (half + 0.08), y: yb + 0.045, z: b.z + nz * (half + 0.08) },
-            { x: b.x + nx * (half + 0.08), y: yb + curbHeight, z: b.z + nz * (half + 0.08) },
-            { x: a.x + nx * (half + 0.08), y: ya + curbHeight, z: a.z + nz * (half + 0.08) },
-            curbColor,
-          );
-          curbVertex += 4;
-          pushQuad(curbAttrs, curbVertex,
-            { x: a.x - nx * (half + 0.08), y: ya + 0.045, z: a.z - nz * (half + 0.08) },
-            { x: b.x - nx * (half + 0.08), y: yb + 0.045, z: b.z - nz * (half + 0.08) },
-            { x: b.x - nx * (half + 0.08), y: yb + curbHeight, z: b.z - nz * (half + 0.08) },
-            { x: a.x - nx * (half + 0.08), y: ya + curbHeight, z: a.z - nz * (half + 0.08) },
-            curbColor,
-          );
-          curbVertex += 4;
-        }
-        // Markings.
-        if (segment.lanes >= 2 && segment.highway !== 'service') {
-          const dash = segment.highway === 'primary' || segment.highway === 'secondary' ? 5.5 : 3.6;
-          const dashLen = dash * 0.52;
-          const major = segment.highway === 'primary' || segment.highway === 'secondary';
-          const laneColor = segment.lanes >= 3 ? laneWhite : laneYellow;
-          // Solid double-yellow spine on major avenues.
-          if (major && segment.lanes >= 3) {
-            const midY = (x, z) => yAt(x, z, 0.075);
-            pushStripDyn(laneAttrs, a, b, 0.11, midY, laneYellow);
-            pushStripDyn(laneAttrs,
-              { x: a.x + nx * 0.28, z: a.z + nz * 0.28 },
-              { x: b.x + nx * 0.28, z: b.z + nz * 0.28 },
-              0.11, midY, laneYellow);
-            // Dashed white lane separators.
-            const lanes = Math.max(2, segment.lanes - 2);
-            for (let li = 1; li <= lanes; li += 1) {
-              const off = (li - (lanes + 1) / 2) * (segment.width / (lanes + 1)) * 0.5;
-              const pa = { x: a.x + nx * off, z: a.z + nz * off };
-              const pb = { x: b.x + nx * off, z: b.z + nz * off };
-              const steps = Math.max(1, Math.floor(len / (dash * 2)));
-              for (let s = 0; s < steps; s += 1) {
-                const t0 = (s * dash * 2) / len;
-                const t1 = Math.min(1, (s * dash * 2 + dashLen) / len);
-                pushStripDyn(laneAttrs,
-                  { x: pa.x + (pb.x - pa.x) * t0, z: pa.z + (pb.z - pa.z) * t0 },
-                  { x: pa.x + (pb.x - pa.x) * t1, z: pa.z + (pb.z - pa.z) * t1 },
-                  0.12, (x, z) => yAt(x, z, 0.075), laneWhite);
-              }
-            }
-          } else {
-            const steps = Math.max(1, Math.floor(len / dash));
-            for (let s = 0; s < steps; s += 1) {
-              const t0 = (s * dash) / len;
-              const t1 = Math.min(1, (s * dash + dashLen) / len);
-              pushStripDyn(laneAttrs,
-                { x: a.x + dx * t0, z: a.z + dz * t0 },
-                { x: a.x + dx * t1, z: a.z + dz * t1 },
-                0.14, (x, z) => yAt(x, z, 0.075), laneColor);
-            }
-          }
-        }
-        const edgeWidth = segment.highway === 'primary' || segment.highway === 'secondary' ? 0.14 : 0.1;
-        pushStripDyn(edgeAttrs,
-          { x: a.x + nx * (half - 0.35), z: a.z + nz * (half - 0.35) },
-          { x: b.x + nx * (half - 0.35), z: b.z + nz * (half - 0.35) },
-          edgeWidth, (x, z) => yAt(x, z, 0.075), edgeWhite);
-        pushStripDyn(edgeAttrs,
-          { x: a.x - nx * (half - 0.35), z: a.z - nz * (half - 0.35) },
-          { x: b.x - nx * (half - 0.35), z: b.z - nz * (half - 0.35) },
-          edgeWidth, (x, z) => yAt(x, z, 0.075), edgeWhite);
-        // Parking stall stripes along curbs: short white ticks that break up
-        // large asphalt planes at street level.
-        if (!realMap && segment.sidewalkW > 0 && segment.highway !== 'motorway') {
-          const stallStep = 5.2;
-          const stalls = Math.floor(len / stallStep);
-          for (let sIdx = 1; sIdx < stalls; sIdx += 1) {
-            const t = (sIdx * stallStep) / len;
-            const sx = a.x + dx * t;
-            const sz = a.z + dz * t;
-            const sy = yAt(sx, sz, 0.06);
-            for (const side of [1, -1]) {
-              const inner = { x: sx + nx * (half - 0.18) * side, z: sz + nz * (half - 0.18) * side };
-              const outer = { x: sx + nx * (half - 2.3) * side, z: sz + nz * (half - 2.3) * side };
-              pushStripDyn(laneAttrs, inner, outer, 0.14, () => sy, edgeWhite);
-            }
-          }
-        }
-        // Tar patches and manholes: dark quads on the asphalt plane give the
-        // road surface a worn, detailed read at street level.
-        const patchStep = 8;
-        const patches = realMap ? 0 : Math.floor(len / patchStep);
-        for (let pi = 0; pi < patches; pi += 1) {
-          const t = ((pi + 0.5) * patchStep) / len;
-          const px = a.x + dx * t;
-          const pz = a.z + dz * t;
-          const lateral = (((pi * 37) % 7) - 3) * 0.14 * half;
-          const cxp = px + nx * lateral;
-          const czp = pz + nz * lateral;
-          const py = yAt(cxp, czp, 0.045);
-          const pw = 1.3 + ((pi * 13) % 5) * 0.34;
-          const pd = 0.9 + ((pi * 7) % 4) * 0.26;
-          pushQuadDyn(patchAttrs,
-            { x: cxp - nx * pw - (dx / len) * pd, y: py, z: czp - nz * pw - (dz / len) * pd },
-            { x: cxp + nx * pw - (dx / len) * pd, y: py, z: czp + nz * pw - (dz / len) * pd },
-            { x: cxp + nx * pw + (dx / len) * pd, y: py, z: czp + nz * pw + (dz / len) * pd },
-            { x: cxp - nx * pw + (dx / len) * pd, y: py, z: czp - nz * pw + (dz / len) * pd },
-            pi % 2 === 0 ? patchMid : patchDark,
-          );
-          if (pi % 4 === 2) {
-            const mx = px - nx * lateral * 0.5;
-            const mz = pz - nz * lateral * 0.5;
-            const my = yAt(mx, mz, 0.05);
-            pushQuadDyn(patchAttrs,
-              { x: mx - 0.45, y: my, z: mz - 0.45 },
-              { x: mx + 0.45, y: my, z: mz - 0.45 },
-              { x: mx + 0.45, y: my, z: mz + 0.45 },
-              { x: mx - 0.45, y: my, z: mz + 0.45 },
-              manholeColor,
-            );
-          }
-        }
-      }
-    }
-
-    // Asphalt patches close the gaps where streets cross.
-    for (const { intersection, crossing } of renderIntersections) {
-      const p = intersection.position;
-      const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
-      if (!Number.isFinite(half)) continue;
-      const y = roadLift + (this.terrain?.heightAt ? this.terrain.heightAt(p.x, p.z) : 0);
-      pushQuad(asphaltAttrs, asphaltVertex,
-        { x: p.x - half, y, z: p.z - half },
-        { x: p.x + half, y, z: p.z - half },
-        { x: p.x + half, y, z: p.z + half },
-        { x: p.x - half, y, z: p.z + half },
-        new THREE.Color('#5d5c5a'),
-      );
-      asphaltVertex += 4;
-    }
-
-    // Crosswalks at intersections.
-    for (const { intersection, crossing } of renderIntersections) {
-      const p = intersection.position;
-      const half = Math.max(1.2, ...crossing.map((s) => s.width / 2 + Math.min(0.5, s.sidewalkW)));
-      // Zebra crosswalks: one striped band per approach, stripes parallel to
-      // the road axis so they read as paint from street level.
-      const approaches = [];
-      for (const segment of crossing) {
-        const other = segment.points.find((pt) => Math.hypot(pt.x - p.x, pt.z - p.z) >= 0.5) || segment.points[0];
-        const adx = other.x - p.x;
-        const adz = other.z - p.z;
-        const alen = Math.hypot(adx, adz) || 1;
-        approaches.push({
-          ux: adx / alen,
-          uz: adz / alen,
-          roadHalf: segment.width / 2,
-        });
-      }
-      const bands = approaches.length ? approaches : [
-        { ux: 1, uz: 0, roadHalf: half },
-        { ux: -1, uz: 0, roadHalf: half },
-        { ux: 0, uz: 1, roadHalf: half },
-        { ux: 0, uz: -1, roadHalf: half },
-      ];
-      for (const approach of bands) {
-        const bandCenter = 3.1;
-        const stripePitch = 0.78;
-        const stripes = Math.max(2, Math.floor((approach.roadHalf * 2) / stripePitch));
-        const px = -approach.uz;
-        const pz = approach.ux;
-        for (let i = 0; i < stripes; i += 1) {
-          const off = (i - (stripes - 1) / 2) * stripePitch;
-          const cx = p.x + approach.ux * bandCenter + px * off;
-          const cz = p.z + approach.uz * bandCenter + pz * off;
-          const stripeHalf = stripePitch * 0.3;
-          const alongHalf = 0.95;
-          pushQuadDyn(crosswalkAttrs,
-            { x: cx - px * stripeHalf - approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz - pz * stripeHalf - approach.uz * alongHalf },
-            { x: cx - px * stripeHalf + approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz - pz * stripeHalf + approach.uz * alongHalf },
-            { x: cx + px * stripeHalf + approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz + pz * stripeHalf + approach.uz * alongHalf },
-            { x: cx + px * stripeHalf - approach.ux * alongHalf, y: yAt(cx, cz, 0.03), z: cz + pz * stripeHalf - approach.uz * alongHalf },
-            crosswalkColor,
-          );
-        }
-        // Stop bar just behind the band.
-        const barCenter = bandCenter + 1.5;
-        const bx = p.x + approach.ux * barCenter;
-        const bz = p.z + approach.uz * barCenter;
-        pushQuadDyn(stopAttrs,
-          { x: bx - px * approach.roadHalf - approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz - pz * approach.roadHalf - approach.uz * 0.2 },
-          { x: bx + px * approach.roadHalf - approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz + pz * approach.roadHalf - approach.uz * 0.2 },
-          { x: bx + px * approach.roadHalf + approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz + pz * approach.roadHalf + approach.uz * 0.2 },
-          { x: bx - px * approach.roadHalf + approach.ux * 0.2, y: yAt(bx, bz, 0.02), z: bz - pz * approach.roadHalf + approach.uz * 0.2 },
-          new THREE.Color('#f4f0e2'),
-        );
-      }
-    }
-
-    finalizeAttrs(asphaltAttrs, asphaltVertex);
-    finalizeAttrs(sidewalkAttrs, sidewalkVertex);
-    finalizeAttrs(curbAttrs, curbVertex);
-
-    const asphaltGeometry = buildAttrGeometry(asphaltAttrs);
-    const sidewalkGeometry = buildAttrGeometry(sidewalkAttrs);
-    const asphaltUvDiagnostics = sfGroundMaterials
-      ? applyWorldXZUvs(asphaltGeometry, GROUND_MATERIAL_ASSETS.asphalt.metersPerRepeat)
-      : null;
-    const sidewalkUvDiagnostics = sfGroundMaterials
-      ? applyWorldXZUvs(sidewalkGeometry, GROUND_MATERIAL_ASSETS.sidewalk.metersPerRepeat)
-      : null;
     const asphaltTexture = sfGroundMaterials ? this.groundMaterialTextures.asphalt : null;
     const sidewalkTexture = sfGroundMaterials ? this.groundMaterialTextures.sidewalk : null;
-    const asphaltMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      map: asphaltTexture,
-      bumpMap: asphaltTexture,
-      bumpScale: sfGroundMaterials ? GROUND_MATERIAL_ASSETS.asphalt.bumpScale : 1,
-      roughness: sfGroundMaterials ? 0.94 : 0.92,
-      metalness: 0,
-      flatShading: true,
-    });
-    const asphaltMesh = new THREE.Mesh(asphaltGeometry, asphaltMaterial);
-    asphaltMesh.receiveShadow = true;
-    asphaltMesh.userData = { kind: 'roads', roads: 'all' };
-    root.add(asphaltMesh);
-    this.pickables.push(asphaltMesh);
+    const lift = this.streetSurfaceLift(city);
 
-    const sidewalkMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      map: sidewalkTexture,
-      bumpMap: sidewalkTexture,
-      bumpScale: sfGroundMaterials ? GROUND_MATERIAL_ASSETS.sidewalk.bumpScale : 1,
-      roughness: sfGroundMaterials ? 0.96 : 0.9,
-      metalness: 0,
-      flatShading: true,
+    // One pass builds the whole street surface: cambered carriageway, gutter
+    // pan, vertical curb face, curb top, cross-falling footway, mitred bends,
+    // filleted junction pads, kerb ramps, and paint (edge lines, centre lines,
+    // dashed dividers, stop bars, zebra bands). It replaces every legacy road
+    // ribbon - running both would double coplanar geometry.
+    const street = buildStreetSurfaceV2(city, {
+      roadLift: lift.datum,
+      gutterDepth: lift.gutterDepth,
+      curbFaceHeight: lift.curbFaceHeight,
+      heightAt: this.terrain?.heightAt ? (x, z) => this.terrain.heightAt(x, z) : null,
+      palette: sfGroundMaterials ? 'sf' : 'stylised',
+      inferNodes: realMap,
+      maps: { carriageway: asphaltTexture, concrete: sidewalkTexture },
     });
-    const sidewalkMesh = new THREE.Mesh(sidewalkGeometry, sidewalkMaterial);
-    sidewalkMesh.receiveShadow = true;
-    sidewalkMesh.userData = { kind: 'sidewalks' };
-    root.add(sidewalkMesh);
-    this.pickables.push(sidewalkMesh);
+    this.streetSurface = street;
+    root.add(street.group);
 
-    const curbMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.8,
-      flatShading: true,
-    });
-    const curbMesh = new THREE.Mesh(buildAttrGeometry(curbAttrs), curbMaterial);
-    curbMesh.receiveShadow = true;
-    root.add(curbMesh);
-
-    const crosswalkMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.7,
-      flatShading: true,
-    });
-    const crosswalkMesh = new THREE.Mesh(buildDynGeometry(crosswalkAttrs), crosswalkMaterial);
-    crosswalkMesh.renderOrder = 2;
-    root.add(crosswalkMesh);
-
-    // Merged marking ribbons: lane dashes, edge lines, stop bars, joints.
-    const markingMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.62,
-      metalness: 0,
-      flatShading: true,
-    });
-    const jointMaterial = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.95,
-      metalness: 0,
-      flatShading: true,
-    });
-    const laneMesh = new THREE.Mesh(buildDynGeometry(laneAttrs), markingMaterial);
-    const edgeMesh = new THREE.Mesh(buildDynGeometry(edgeAttrs), markingMaterial);
-    const stopMesh = new THREE.Mesh(buildDynGeometry(stopAttrs), markingMaterial);
-    const jointMesh = new THREE.Mesh(buildDynGeometry(jointAttrs), jointMaterial);
-    const patchMesh = new THREE.Mesh(buildDynGeometry(patchAttrs), jointMaterial);
-    for (const mesh of [laneMesh, edgeMesh, stopMesh, jointMesh, patchMesh]) {
-      mesh.renderOrder = 2;
-      mesh.receiveShadow = true;
-      root.add(mesh);
-      this.geometryCache.push(mesh.geometry);
+    // Detail maps. The module bakes world-XZ UVs over its own metres-per-repeat
+    // per mesh group, so the detail repeat is derived from that same tile.
+    const uvMetres = street.data.options.uvMetersPerRepeat;
+    if (street.materials.carriageway) {
+      const material = street.materials.carriageway;
+      applyDetailMaps(material, 'asphalt', {
+        ...DETAIL_MAP_OPTIONS,
+        repeat: detailRepeatForUvTile('asphalt', uvMetres.carriageway, uvMetres.carriageway),
+        useMetalnessMap: false,
+        normalScale: 0.9,
+        aoMapIntensity: 0.55,
+        roughnessScale: detailRoughnessScale('asphalt', 0.94),
+      });
+      material.metalness = 0;
+      material.userData.envClass = classifyMaterialClass({ kind: 'asphalt' });
     }
-    this.geometryCache.push(laneMesh.material, jointMesh.material, crosswalkMaterial, markingMaterial);
+    if (street.materials.concrete) {
+      const material = street.materials.concrete;
+      applyDetailMaps(material, 'sidewalk-concrete', {
+        ...DETAIL_MAP_OPTIONS,
+        repeat: detailRepeatForUvTile('sidewalk-concrete', uvMetres.concrete, uvMetres.concrete),
+        useMetalnessMap: false,
+        normalScale: 0.85,
+        aoMapIntensity: 0.6,
+        roughnessScale: detailRoughnessScale('sidewalk-concrete', 0.94),
+      });
+      material.metalness = 0;
+      material.userData.envClass = classifyMaterialClass({ kind: 'sidewalk' });
+    }
+    if (street.materials.markings) {
+      // Paint is not a tiled surface: it keeps its authored roughness and only
+      // takes the environment grading.
+      street.materials.markings.userData.envClass = classifyMaterialClass({ kind: 'sidewalk' });
+    }
 
-    // Keep pickable geometry references for click metadata.
-    this.roadMeshes = { asphalt: asphaltMesh, sidewalk: sidewalkMesh, curbs: curbMesh, crosswalks: crosswalkMesh, markings: laneMesh };
+    for (const mesh of Object.values(street.meshes)) {
+      if (mesh.userData.kind === 'roads' || mesh.userData.kind === 'sidewalks') this.pickables.push(mesh);
+    }
+    for (const geometry of Object.values(street.geometries)) this.geometryCache.push(geometry);
+
+    // Keep pickable geometry references for click metadata. `curbs` and
+    // `crosswalks` are no longer separate meshes: the curb is part of the
+    // concrete group and the zebra bands are part of the marking group.
+    this.roadMeshes = {
+      asphalt: street.meshes.carriageway || null,
+      sidewalk: street.meshes.concrete || null,
+      curbs: street.meshes.concrete || null,
+      crosswalks: street.meshes.markings || null,
+      markings: street.meshes.markings || null,
+    };
+    this.streetSurfaceDiagnostics = {
+      pass: STREET_SURFACE_PASS,
+      drawCalls: street.drawCalls,
+      triangles: street.stats.trianglesTotal,
+      trianglesPer100m: street.stats.trianglesPer100m,
+      trianglesPerIntersection: street.stats.trianglesPerIntersection,
+      nodes: street.stats.nodes,
+      segments: street.stats.segments,
+      nonFinite: street.stats.nonFinite,
+      budget: street.stats.budget,
+      datumRoadLift: lift.datum,
+      footwayLift: lift.footway,
+      exposedCurbFace: lift.exposedCurbFace,
+      gutterDepth: lift.gutterDepth,
+      stats: street.stats,
+    };
+
     if (!sfGroundMaterials) {
       this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle);
       this.syncGroundMaterialDiagnostics();
       return;
     }
+    const asphaltUvDiagnostics = describeWorldXZUvs(
+      street.geometries.carriageway,
+      GROUND_MATERIAL_ASSETS.asphalt.metersPerRepeat,
+    );
+    const sidewalkUvDiagnostics = describeWorldXZUvs(
+      street.geometries.concrete,
+      GROUND_MATERIAL_ASSETS.sidewalk.metersPerRepeat,
+    );
+    const asphaltMaterial = street.materials.carriageway;
+    const sidewalkMaterial = street.materials.concrete;
     this.groundMaterialLifecycle.buildCount += 1;
     this.groundMaterialDiagnostics = createGroundMaterialDiagnostics(this.groundMaterialLifecycle, true);
     this.groundMaterialDiagnostics.enabled = true;
@@ -7434,6 +7550,24 @@ export class CityRenderer {
     this.hemi.intensity = 0.55 + nightFactor * 0.8;
     this.ambient.intensity = 0.08 + nightFactor * 0.26;
     this.rim.intensity = 0.1 + nightFactor * 0.55;
+    // Image-based lighting. The rig re-prefilters only when the quantised hour
+    // or the weather bucket changes; every other call is a Map lookup, and this
+    // path is already gated to hour moves of at least 0.02 h.
+    const environment = this.envRig
+      ? this.envRig.update({ hour, weather: this.envWeather, scene: this.scene })
+      : null;
+    if (environment?.texture) {
+      // The hemisphere/ambient pair was faking a sky bounce. The environment
+      // now delivers that fill with correct directionality, so both are scaled
+      // back hard in daylight or the scene is lit twice and contact shadows
+      // wash out. The key light is barely trimmed: IBL supplements it.
+      const scales = environment.lightRig.scales;
+      this.sun.intensity *= scales.sun;
+      this.hemi.intensity *= scales.hemi;
+      this.ambient.intensity *= scales.ambient;
+      this.rim.intensity *= scales.rim;
+      this.applyEnvironmentGrading(environment.model, environment.texture);
+    }
     if (previousNight !== night) {
       for (const entry of this.nightEmissive) {
         entry.material.emissiveIntensity = night
