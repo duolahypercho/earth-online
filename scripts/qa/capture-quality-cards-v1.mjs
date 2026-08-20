@@ -54,28 +54,54 @@ page.on('console', (m) => {
 
 const report = { url: URL_BASE, viewport: { w: W, h: H }, cards: [], errors: [] };
 
-await page.goto(URL_BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
+// A software-GL city build is heavy enough that the renderer process can be
+// killed under memory pressure, or the page can reload underneath us. Either
+// way `page.evaluate` fails with "Execution context was destroyed" and the run
+// used to die *after* paying the five-minute boot. Report it, and re-boot once
+// instead of throwing away the whole round.
+let crashes = 0;
+page.on('crash', () => { crashes += 1; consoleErrors.push('renderer process crashed'); });
+
+async function bootWorld() {
+  await page.goto(URL_BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.waitForFunction(() => {
+    const api = window.__CITYGEN__;
+    return typeof api?.getState === 'function' && (api.getCity()?.buildings?.length || 0) > 50;
+  }, null, { timeout: BOOT_MS });
+  // The city object exists before TrafficSim is constructed, so reading runtime
+  // state here reported pedestrians: 0 on a world that actually spawns 48 of
+  // them. Wait for the simulation too, or every report understates the city.
+  await page.waitForFunction(() => {
+    const t = window.__CITYGEN__?.getTraffic?.();
+    return !!t && (t.pedestrians?.length || 0) > 0 && (t.cars?.length || 0) > 0;
+  }, null, { timeout: BOOT_MS }).catch(() => {});
+}
+
+/** Evaluate against the live world, re-booting once if the context is lost. */
+async function evaluateInWorld(fn, arg = null) {
+  try {
+    return await page.evaluate(fn, arg);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (!/Execution context was destroyed|Target closed|Target crashed/i.test(message)) throw error;
+    consoleErrors.push(`context lost, re-booting once: ${message.slice(0, 160)}`);
+    console.warn(`context lost, re-booting once: ${message.slice(0, 160)}`);
+    await bootWorld();
+    return page.evaluate(fn, arg);
+  }
+}
+
 // NOTE: waitForFunction is (pageFunction, arg, options) - passing the options
 // object as the second argument silently leaves the 30s default in place.
 const bootStartedAt = Date.now();
-await page.waitForFunction(() => {
-  const api = window.__CITYGEN__;
-  return typeof api?.getState === 'function' && (api.getCity()?.buildings?.length || 0) > 50;
-}, null, { timeout: BOOT_MS });
-// The city object exists before TrafficSim is constructed, so reading runtime
-// state here reported pedestrians: 0 on a world that actually spawns 48 of
-// them. Wait for the simulation too, or every report understates the city.
-await page.waitForFunction(() => {
-  const t = window.__CITYGEN__?.getTraffic?.();
-  return !!t && (t.pedestrians?.length || 0) > 0 && (t.cars?.length || 0) > 0;
-}, null, { timeout: BOOT_MS }).catch(() => {});
+await bootWorld();
 report.bootMs = Date.now() - bootStartedAt;
 console.log(`world ready in ${(report.bootMs / 1000).toFixed(1)}s`);
 
 // The canonical route silently falls back to a procedurally generated city
 // when the real OSM dataset fails to load. Frames from the fallback are not
 // evidence about San Francisco, so refuse to produce them.
-report.world = await page.evaluate(() => {
+report.world = await evaluateInWorld(() => {
   const c = window.__CITYGEN__.getCity();
   const blds = c.buildings || [];
   const osm = blds.filter((b) => String(b.id).startsWith('sf-building-')).length;
@@ -98,7 +124,7 @@ if (report.world.osmShare < 0.9) {
   process.exit(3);
 }
 
-report.state = await page.evaluate(() => {
+report.state = await evaluateInWorld(() => {
   const s = window.__CITYGEN__.getState();
   return {
     generator: s.generator, buildings: s.buildings, streets: s.streets,
@@ -110,16 +136,19 @@ report.state = await page.evaluate(() => {
 });
 
 // Hide HUD so the frames show the world, not the interface.
-await page.keyboard.press('h').catch(() => {});
-await page.waitForTimeout(400);
-await page.evaluate(() => {
-  for (const el of document.querySelectorAll('body > *:not(#scene-canvas)')) {
-    const cs = getComputedStyle(el);
-    if (cs.position === 'fixed' || cs.position === 'absolute') el.style.visibility = 'hidden';
-  }
-  const c = document.getElementById('scene-canvas');
-  if (c) { c.style.visibility = 'visible'; c.style.zIndex = '9999'; }
-});
+async function hideInterface() {
+  await page.keyboard.press('h').catch(() => {});
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('body > *:not(#scene-canvas)')) {
+      const cs = getComputedStyle(el);
+      if (cs.position === 'fixed' || cs.position === 'absolute') el.style.visibility = 'hidden';
+    }
+    const c = document.getElementById('scene-canvas');
+    if (c) { c.style.visibility = 'visible'; c.style.zIndex = '9999'; }
+  });
+}
+await hideInterface();
 
 // The runtime re-frames the camera every frame in orbit mode and advances
 // state.clock at 0.6h per second, so a card would otherwise drift through half
@@ -405,6 +434,18 @@ for (const card of cards) {
     });
   } catch (e) {
     entry.error = String(e).slice(0, 300);
+    if (/Execution context was destroyed|Target closed|Target crashed/i.test(entry.error)) {
+      // Recover capture conditions so the remaining cards still produce evidence.
+      consoleErrors.push(`card ${card.id} lost its context; re-booting`);
+      try {
+        await bootWorld();
+        await hideInterface();
+        report.pin = await installPin();
+        entry.recovered = true;
+      } catch (bootError) {
+        entry.recoveryError = String(bootError).slice(0, 200);
+      }
+    }
   }
   report.cards.push(entry);
   console.log(`${card.id}: ${entry.error ? `FAILED ${entry.error}` : `ok ${entry.shotMs}ms`}`);
@@ -426,6 +467,7 @@ if (report.coverageSummary) {
   }
 }
 
+report.rendererCrashes = crashes;
 report.errors = consoleErrors.slice(0, 40);
 await writeFile(path.join(OUT, 'capture-report.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report.state, null, 2));
