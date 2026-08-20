@@ -9,6 +9,11 @@ import {
   envMapIntensityFor,
   computeSunShadowCamera,
   applySunShadowFit,
+  keyFillBalance,
+  recommendedExposure,
+  wetSurfaceGrade,
+  nightPracticalProfile,
+  blackBodyColor,
   SHADOW_FIT_DEFAULTS,
   SHADOW_TEXEL_DENSITY_RANGE,
 } from '../render/environment-ibl.js';
@@ -2197,6 +2202,17 @@ export class CityRenderer {
     for (const [envClass, materials] of this.envMaterialGroups) {
       const intensity = envMapIntensityFor(envClass, model);
       table[envClass] = intensity;
+      // Roughness and albedo, not just reflection strength. A wet surface
+      // narrows its specular lobe because water fills the micro-relief, and it
+      // darkens because light entering the film is internally reflected rather
+      // than scattered back out. `envMapIntensity` alone reads as dry paint
+      // with a sheen, which is what the drizzle bucket looked like.
+      let wet;
+      try {
+        wet = wetSurfaceGrade(envClass, model);
+      } catch {
+        wet = { roughnessScale: 1, colorScale: 1 };
+      }
       for (const material of materials) {
         if (texture && material.envMap !== texture) {
           // Introducing an envMap where there was none changes the program.
@@ -2204,6 +2220,16 @@ export class CityRenderer {
           material.envMap = texture;
         }
         material.envMapIntensity = intensity;
+        if ('roughness' in material) {
+          if (!Number.isFinite(material.userData.dryRoughness)) {
+            material.userData.dryRoughness = material.roughness;
+          }
+          material.roughness = clamp(material.userData.dryRoughness * wet.roughnessScale, 0, 1);
+        }
+        if (material.color) {
+          if (!material.userData.dryColor) material.userData.dryColor = material.color.clone();
+          material.color.copy(material.userData.dryColor).multiplyScalar(wet.colorScale);
+        }
         graded += 1;
       }
     }
@@ -7943,11 +7969,19 @@ export class CityRenderer {
       // now delivers that fill with correct directionality, so both are scaled
       // back hard in daylight or the scene is lit twice and contact shadows
       // wash out. The key light is barely trimmed: IBL supplements it.
+      //
+      // `keyFillBalance` then fixes the *ratio*. Measured on the 11:00 clear
+      // card the rig above delivers key 1.13 against fill 1.61 - a key/fill of
+      // 0.70, so a cast shadow can only be a hue shift, never a value change.
+      // The correction preserves key+fill (the frame does not get darker) and
+      // fades to 1 through civil twilight.
       const scales = environment.lightRig.scales;
-      this.sun.intensity *= scales.sun;
-      this.hemi.intensity *= scales.hemi;
-      this.ambient.intensity *= scales.ambient;
-      this.rim.intensity *= scales.rim;
+      const balance = keyFillBalance(environment.model);
+      this.sun.intensity *= scales.sun * balance.apply.sunScale;
+      this.hemi.intensity *= balance.apply.hemiScale;
+      this.ambient.intensity *= balance.apply.ambientScale;
+      this.rim.intensity *= balance.apply.rimScale;
+      this.scene.environmentIntensity = balance.apply.environmentIntensity;
       this.applyEnvironmentGrading(environment.model, environment.texture);
       // The key light now stands where the sky says the sun is. The hand-rolled
       // placement it replaces sat at a fixed azimuth, so the shadows in the
@@ -7982,10 +8016,25 @@ export class CityRenderer {
     // hour moves, not only when the camera does.
     this.updateSunShadow({ force: true });
     if (previousNight !== night) {
+      // Occupancy, intensity and colour temperature per emissive group instead
+      // of one shared intensity for every window in the city. The quality gate
+      // rejects a night frame carried solely by uniformly emissive windows, and
+      // a single value is exactly that. Deterministic in the group index, so a
+      // pinned capture hour reproduces the same lit pattern.
+      const practicals = nightPracticalProfile({ hour, weather: this.envWeather });
+      let emissiveIndex = 0;
       for (const entry of this.nightEmissive) {
-        entry.material.emissiveIntensity = night
-          ? (entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9))
-          : 0;
+        emissiveIndex += 1;
+        const base = entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9);
+        const roll = ((Math.imul(emissiveIndex, 2654435761) >>> 8) % 1000) / 1000;
+        const lit = night && roll < practicals.windows.occupancy;
+        const [lo, hi] = practicals.windows.intensityRange;
+        entry.material.emissiveIntensity = lit ? base * (lo + (hi - lo) * roll) : 0;
+        if (lit && entry.material.emissive) {
+          const kelvin = roll > 1 - practicals.windows.coolShare ? 4900 : 2650;
+          const [r, g, b] = blackBodyColor(kelvin);
+          entry.material.emissive.setRGB(r * 0.42, g * 0.42, b * 0.42, THREE.LinearSRGBColorSpace);
+        }
       }
       for (const material of this.neonGlowMaterials) {
         material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
@@ -8010,13 +8059,16 @@ export class CityRenderer {
     }
     this.scene.fog.color.copy(fogColor);
     if (this.scene.background) this.scene.background.copy(fogColor);
-    if (night && previousNight !== night) {
-      this.nightBoost = { remaining: 1.2 };
-      this.renderer.toneMappingExposure = 0.88;
-    } else if (!night) {
-      this.nightBoost = null;
-      this.renderer.toneMappingExposure = 0.82;
-    }
+    // Exposure follows measured scene illuminance instead of a two-state switch.
+    // Between clear noon and 21:30 the illuminance this rig delivers falls 87x;
+    // 0.82 -> 0.88 cannot carry that, which is why the night card crushed and
+    // golden hour muddied. The curve is partial adaptation clamped to
+    // 0.68..1.24: monotone in illuminance, and still compressed enough that
+    // night does not render as day.
+    this.nightBoost = null;
+    this.renderer.toneMappingExposure = environment
+      ? recommendedExposure(environment.model).exposure
+      : (night ? 0.88 : 0.82);
   }
 
   /**
@@ -8452,11 +8504,8 @@ export class CityRenderer {
       const wave = Math.sin(this.phaseClock * 0.6) * 0.05;
       this.water.position.y = 0.45 + wave;
     }
-    if (this.nightBoost && this.nightBoost.remaining > 0) {
-      this.nightBoost.remaining -= delta;
-      const boost = Math.min(1, this.nightBoost.remaining / 0.8);
-      this.renderer.toneMappingExposure = 0.82 + boost * 0.14;
-    }
+    // The night exposure ramp is gone: `recommendedExposure` is already a
+    // continuous function of the clock, so a separate 1.2 s fade would fight it.
     // Track the camera. The box is 220 m across, so it has to follow the
     // player; a fixed box aimed at the world origin is what made the shadow map
     // invisible on a two-kilometre map.

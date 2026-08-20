@@ -181,7 +181,8 @@
     "qa:npc-anim": "node scripts/qa-npc-animation.mjs",
     "qa:junction-sbs": "node scripts/qa-junction-sbs.mjs",
     "probe:realmap-drive": "node scripts/probe-realmap-drive.mjs",
-    "verify:passes": "node scripts/verify/verify-pass-registry.mjs"
+    "verify:passes": "node scripts/verify/verify-pass-registry.mjs",
+    "verify:sky-atmosphere": "node scripts/verify/verify-sky-atmosphere.mjs"
   },
   "dependencies": {
     "three": "0.180.0",
