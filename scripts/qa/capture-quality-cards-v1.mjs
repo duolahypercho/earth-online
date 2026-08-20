@@ -440,6 +440,39 @@ async function placeCamera(pose) {
     const tgtY = groundAt(target.x, target.z) + (pose === 'canyon' ? 22 : (pose === 'character' ? 1.1 : EYE * 0.92));
     cam.position.set(eye.x, eyeY, eye.z);
     cam.lookAt(target.x, tgtY, target.z);
+    // Keep the crowd out of the lens. Two reviewers reported a card whose near
+    // quarter is the shoulder of a pedestrian standing on the camera, occluding
+    // the thing the card exists to show. The eye is a camera, not a person: if
+    // an agent is inside the near field, step the eye back along its own view
+    // ray until the nearest agent clears a stated radius.
+    const CAMERA_CLEARANCE = 1.6;
+    const agents = (() => {
+      const traffic = api.getTraffic?.();
+      if (typeof traffic?.presentationAgents === 'function') return traffic.presentationAgents();
+      return traffic?.pedestrians || [];
+    })();
+    const nearestAgent = (point) => {
+      let best = Infinity;
+      for (const agent of agents) {
+        const ax = Number(agent?.x); const az = Number(agent?.z);
+        if (!Number.isFinite(ax) || !Number.isFinite(az)) continue;
+        const distance = Math.hypot(ax - point.x, az - point.z);
+        if (distance < best) best = distance;
+      }
+      return best;
+    };
+    let clearanceNote = null;
+    if (pose !== 'character') {
+      const back = { x: eye.x - target.x, z: eye.z - target.z };
+      const backLength = Math.hypot(back.x, back.z) || 1;
+      let steps = 0;
+      while (nearestAgent(eye) < CAMERA_CLEARANCE && steps < 8) {
+        eye = { x: eye.x + (back.x / backLength) * 0.8, z: eye.z + (back.z / backLength) * 0.8 };
+        steps += 1;
+      }
+      if (steps) clearanceNote = `stepped back ${(steps * 0.8).toFixed(1)} m to clear a pedestrian`;
+    }
+    if (clearanceNote) note = note ? `${note}; ${clearanceNote}` : clearanceNote;
     if (sunNote) note = note ? `${note}; ${sunNote}` : sunNote;
     if (cam.fov != null) { cam.fov = pose === 'canyon' ? 58 : 47; cam.updateProjectionMatrix(); }
     if (controls?.target?.set) controls.target.set(target.x, tgtY, target.z);

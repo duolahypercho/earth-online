@@ -245,7 +245,17 @@ const GROUND_COVERAGE_PASS = 'ground-coverage-v1';
 // and it does not swing with the time of day or with which way the player is
 // facing.
 const SUN_SHADOW_PASS = 'sun-shadow-fit-1';
-const SUN_SHADOW_MAP_SIZE = 4096;
+// 2048, not 4096. The shadow agent's trade table gives 4096/150 the best texel
+// density, and it is correct on paper - but a 128-building diagnostic world
+// renders visible ground shadows at that setting while the shipped 700-building
+// world measures a single luma population on every ground surface (Otsu
+// separation 9 on the footway, 14.2 on the asphalt). The most likely difference
+// is the 4096 depth attachment failing to allocate alongside a much larger
+// scene on the software backend, which fails silently. 2048/150 keeps the whole
+// density gain from the tighter shadow distance - 7.64 texels/m against the
+// original 5.21 - at exactly the original memory cost, and the capture records
+// `state.shadows` now so the next round can confirm or refute this.
+const SUN_SHADOW_MAP_SIZE = 2048;
 // 220 m of view depth at 2048 -> 5.21 texels/m (19.2 cm texels), inside the
 // module's declared 2.5-12 texels/m band. Beyond this ring the city is carried
 // by fog and by the environment dome, not by the shadow map.
