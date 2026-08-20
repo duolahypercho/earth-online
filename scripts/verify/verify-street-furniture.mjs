@@ -51,8 +51,15 @@ import pass, {
   buildStreetFurniture,
   lateralFor,
   onPavedRoadway,
+  STREET_TREE_SPECIES,
+  STREET_TREE_BUDGET,
+  STREET_TREE_OPENNESS,
+  STREET_TREE_MAX_HALF_CROWN,
+  streetTreeVariantCount,
+  buildStreetTreeGeometry,
 } from '../../src/render/passes/street-furniture.js';
 import { sidewalkBand, sidewalkSurfaceY } from '../../src/world/streets/street-surface-v2.js';
+import { MATERIAL_CLASSES } from '../../src/render/environment-ibl.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -856,6 +863,342 @@ section('11. a wrong focus cannot empty the city');
     assert(ring.triangles <= ring.maxTriangles && ring.items <= ring.maxItems,
       `ring ${ring.id} still holds its caps with the wrong focus (${ring.items} items, ${ring.triangles} tri)`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// silhouette measurement for section 12
+// ---------------------------------------------------------------------------
+
+/**
+ * Rasterise the SIDE silhouette of a crown and report how solid it is.
+ *
+ * `hullFill` is covered cells divided by the cells inside the convex hull of
+ * the covered set. A convex solid - a cone, a sphere, a stack of either - is
+ * its own convex hull, so it measures 1.0 whatever its texture; a crown made
+ * of separated leaf clusters measures well below that.
+ *
+ * `brokenScanlines` counts horizontal lines across the crown whose covered
+ * span is split into two or more runs. Those are lines of sight that pass
+ * straight through the crown. A convex solid has exactly zero of them.
+ *
+ * Measured on the geometry that ships, from its triangles, with no reference
+ * to the parameters it was built from.
+ *
+ * @param {import('three').BufferGeometry} geometry
+ * @param {number} crownBottom  y below which triangles are trunk, not crown
+ * @param {'x'|'z'} axis        which side view
+ */
+function crownSilhouette(geometry, crownBottom, axis = 'x', N = 140) {
+  const position = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  const count = index ? index.count / 3 : position.count / 3;
+  const tris = [];
+  let minA = Infinity; let maxA = -Infinity; let minY = Infinity; let maxY = -Infinity;
+  for (let t = 0; t < count; t += 1) {
+    const ids = [0, 1, 2].map((k) => (index ? index.getX(t * 3 + k) : t * 3 + k));
+    const points = ids.map((i) => ({
+      a: axis === 'x' ? position.getX(i) : position.getZ(i),
+      y: position.getY(i),
+    }));
+    if (points.every((p) => p.y < crownBottom)) continue;
+    tris.push(points);
+    for (const p of points) {
+      if (p.a < minA) minA = p.a;
+      if (p.a > maxA) maxA = p.a;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  minY = Math.max(minY, crownBottom);
+  if (!(maxA > minA) || !(maxY > minY)) return { hullFill: 1, brokenScanlines: 0, scanlines: 0 };
+  const covered = new Uint8Array(N * N);
+  const sa = (maxA - minA) / N;
+  const sy = (maxY - minY) / N;
+  for (const points of tris) {
+    const px = points.map((p) => ({ x: (p.a - minA) / sa, y: (p.y - minY) / sy }));
+    const x0 = Math.max(0, Math.floor(Math.min(...px.map((p) => p.x))));
+    const x1 = Math.min(N - 1, Math.ceil(Math.max(...px.map((p) => p.x))));
+    const y0 = Math.max(0, Math.floor(Math.min(...px.map((p) => p.y))));
+    const y1 = Math.min(N - 1, Math.ceil(Math.max(...px.map((p) => p.y))));
+    const [a, b, c] = px;
+    const den = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+    if (Math.abs(den) < 1e-12) continue;
+    for (let y = y0; y <= y1; y += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        const l1 = ((b.y - c.y) * (x + 0.5 - c.x) + (c.x - b.x) * (y + 0.5 - c.y)) / den;
+        const l2 = ((c.y - a.y) * (x + 0.5 - c.x) + (a.x - c.x) * (y + 0.5 - c.y)) / den;
+        if (l1 >= 0 && l2 >= 0 && l1 + l2 <= 1) covered[y * N + x] = 1;
+      }
+    }
+  }
+  const points = [];
+  for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) if (covered[y * N + x]) points.push([x + 0.5, y + 0.5]);
+  if (points.length < 3) return { hullFill: 1, brokenScanlines: 0, scanlines: 0 };
+  points.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const turn = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of points) {
+    while (lower.length >= 2 && turn(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const p = points[i];
+    while (upper.length >= 2 && turn(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  const inHull = (x, y) => {
+    for (let i = 0; i < hull.length; i += 1) {
+      const a = hull[i];
+      const b = hull[(i + 1) % hull.length];
+      if ((b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]) < -1e-9) return false;
+    }
+    return true;
+  };
+  let filled = 0;
+  let hullCells = 0;
+  for (let y = 0; y < N; y += 1) {
+    for (let x = 0; x < N; x += 1) {
+      if (covered[y * N + x]) filled += 1;
+      if (inHull(x + 0.5, y + 0.5)) hullCells += 1;
+    }
+  }
+  let broken = 0;
+  let scanlines = 0;
+  for (let y = 0; y < N; y += 1) {
+    let runs = 0;
+    let prev = 0;
+    let span = 0;
+    for (let x = 0; x < N; x += 1) {
+      const c = covered[y * N + x];
+      if (c && !prev) runs += 1;
+      if (c) span += 1;
+      prev = c;
+    }
+    if (span > N * 0.15) { scanlines += 1; if (runs >= 2) broken += 1; }
+  }
+  return { hullFill: filled / Math.max(1, hullCells), brokenScanlines: broken, scanlines };
+}
+
+// ---------------------------------------------------------------------------
+section('12. street trees are broadleaf geometry, not a cone');
+// ---------------------------------------------------------------------------
+{
+  // The shape this replaces, measured the same way, so the metric is shown to
+  // discriminate rather than merely to pass. This is exactly the round-2
+  // canopy: ConeGeometry(1.45, 2.6, 7) with its base at y = 2.6.
+  const cone = new THREE.ConeGeometry(1.45, 2.6, 7).translate(0, 3.9, 0);
+  const coneSide = crownSilhouette(cone, 2.6, 'x');
+  console.log(`  the round-2 cone canopy measures hullFill ${coneSide.hullFill.toFixed(3)}, `
+    + `${coneSide.brokenScanlines} broken scanlines of ${coneSide.scanlines}`);
+  assert(coneSide.hullFill > 0.95,
+    `a convex cone canopy measures as a solid shell (hullFill ${coneSide.hullFill.toFixed(3)} > 0.95)`);
+  assert(coneSide.brokenScanlines === 0,
+    `no line of sight passes through a convex cone canopy (${coneSide.brokenScanlines} broken scanlines)`);
+  cone.dispose();
+
+  assert(STREET_TREE_SPECIES.length >= 3,
+    `the near tier carries several species, so a block is not one stamp (${STREET_TREE_SPECIES.length})`);
+  assert(streetTreeVariantCount(0) === STREET_TREE_SPECIES.length && streetTreeVariantCount(1) === 1,
+    'the near tier carries every species and the window tier carries one');
+
+  for (const coarse of [false, true]) {
+    const tier = coarse ? 'window' : 'near';
+    for (let variant = 0; variant < streetTreeVariantCount(coarse ? 1 : 0); variant += 1) {
+      const geometry = buildStreetTreeGeometry(variant, coarse);
+      const skeleton = geometry.userData.treeSkeleton;
+      const index = geometry.getIndex();
+      const triangles = Math.floor(
+        (index ? index.count : geometry.getAttribute('position').count) / 3,
+      );
+      const cap = coarse
+        ? STREET_TREE_BUDGET.maxTrianglesPerTreeCoarse
+        : STREET_TREE_BUDGET.maxTrianglesPerTree;
+      const sideX = crownSilhouette(geometry, skeleton.crownBottom, 'x');
+      const sideZ = crownSilhouette(geometry, skeleton.crownBottom, 'z');
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      const halfCrown = Math.max(
+        Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z),
+      );
+      console.log(`  ${tier}/${skeleton.species}: ${triangles} tri, ${skeleton.clusters.length} clusters, `
+        + `hullFill x ${sideX.hullFill.toFixed(3)} z ${sideZ.hullFill.toFixed(3)}, `
+        + `broken ${sideX.brokenScanlines}/${sideX.scanlines} and ${sideZ.brokenScanlines}/${sideZ.scanlines}, `
+        + `${skeleton.height.toFixed(2)} m tall, half-crown ${halfCrown.toFixed(2)} m`);
+
+      // 1. not a solid shell
+      const minClusters = coarse
+        ? STREET_TREE_OPENNESS.minClustersCoarse
+        : STREET_TREE_OPENNESS.minClusters;
+      assert(skeleton.clusters.length >= minClusters,
+        `${tier}/${skeleton.species}: the crown is built from separate leaf clusters (${skeleton.clusters.length} >= ${minClusters})`);
+      assert(sideX.hullFill <= STREET_TREE_OPENNESS.maxHullFill
+        && sideZ.hullFill <= STREET_TREE_OPENNESS.maxHullFill,
+        `${tier}/${skeleton.species}: the crown silhouette is lobed, not convex `
+        + `(hullFill ${sideX.hullFill.toFixed(3)} / ${sideZ.hullFill.toFixed(3)} <= ${STREET_TREE_OPENNESS.maxHullFill})`);
+      assert(sideX.brokenScanlines >= STREET_TREE_OPENNESS.minBrokenScanlines
+        && sideZ.brokenScanlines >= STREET_TREE_OPENNESS.minBrokenScanlines,
+        `${tier}/${skeleton.species}: light passes through the crown `
+        + `(${sideX.brokenScanlines} / ${sideZ.brokenScanlines} broken scanlines >= ${STREET_TREE_OPENNESS.minBrokenScanlines})`);
+
+      // 2. the clusters are really separate, not one blob with a dented hull
+      let separated = 0;
+      for (let i = 0; i < skeleton.clusters.length; i += 1) {
+        for (let j = i + 1; j < skeleton.clusters.length; j += 1) {
+          const a = skeleton.clusters[i];
+          const b = skeleton.clusters[j];
+          if (Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) > (a.r + b.r) * 0.62) separated += 1;
+        }
+      }
+      const pairs = (skeleton.clusters.length * (skeleton.clusters.length - 1)) / 2;
+      assert(separated > pairs * 0.6,
+        `${tier}/${skeleton.species}: most cluster pairs stand clear of each other (${separated}/${pairs})`);
+
+      // 3. trunk tapers and branches
+      assert(skeleton.taperRatio < 0.75 && skeleton.taperRatio > 0.25,
+        `${tier}/${skeleton.species}: the trunk tapers (top radius is ${(skeleton.taperRatio * 100).toFixed(0)}% of the base)`);
+      assert(skeleton.trunk.length >= 2,
+        `${tier}/${skeleton.species}: the trunk is built in sections, not one cylinder (${skeleton.trunk.length})`);
+      for (let i = 1; i < skeleton.trunk.length; i += 1) {
+        assert(skeleton.trunk[i].r0 <= skeleton.trunk[i - 1].r0 + 1e-9,
+          `${tier}/${skeleton.species}: trunk section ${i} is no thicker than the one below it`);
+      }
+      assert(skeleton.limbs.length >= 2,
+        `${tier}/${skeleton.species}: the trunk branches into limbs (${skeleton.limbs.length})`);
+      const crotchY = skeleton.limbs[0].a.y;
+      assert(crotchY > 0.5 && crotchY < skeleton.trunkHeight + 1e-9,
+        `${tier}/${skeleton.species}: the limbs leave the trunk at a crotch below the crown (${crotchY.toFixed(2)} m)`);
+      for (const branch of skeleton.limbs) {
+        assert(branch.r1 < branch.r0,
+          `${tier}/${skeleton.species}: every limb tapers toward its tip`);
+      }
+
+      // 4. no cone survives anywhere in the tree: every leaf cluster is a
+      //    closed polyhedron with more than one face direction, and the crown
+      //    is not one connected convex hull. Checked structurally above; here
+      //    just assert the geometry is finite and coloured.
+      const position = geometry.getAttribute('position');
+      const colour = geometry.getAttribute('color');
+      let nonFinite = 0;
+      for (let i = 0; i < position.array.length; i += 1) if (!Number.isFinite(position.array[i])) nonFinite += 1;
+      assert(nonFinite === 0, `${tier}/${skeleton.species}: no NaN/Inf vertex (${nonFinite})`);
+      assert(colour && colour.count === position.count,
+        `${tier}/${skeleton.species}: every vertex carries a baked colour`);
+      // Internal form: the crown is not one flat green.
+      let minLuma = 1;
+      let maxLuma = 0;
+      for (let i = 0; i < colour.count; i += 1) {
+        const y = position.getY(i);
+        if (y < skeleton.crownBottom) continue;
+        const l = 0.2126 * colour.getX(i) + 0.7152 * colour.getY(i) + 0.0722 * colour.getZ(i);
+        if (l < minLuma) minLuma = l;
+        if (l > maxLuma) maxLuma = l;
+      }
+      assert(maxLuma > minLuma * 1.5,
+        `${tier}/${skeleton.species}: the crown is shaded from sunlit top to shaded underside `
+        + `(${minLuma.toFixed(4)} .. ${maxLuma.toFixed(4)} linear luma)`);
+
+      // 5. budget and fit
+      assert(triangles <= cap, `${tier}/${skeleton.species}: within the per-tree triangle budget (${triangles} <= ${cap})`);
+      assert(halfCrown <= STREET_TREE_MAX_HALF_CROWN,
+        `${tier}/${skeleton.species}: the crown cannot reach a facade across the footway `
+        + `(${halfCrown.toFixed(2)} m <= ${STREET_TREE_MAX_HALF_CROWN} m)`);
+      assert(skeleton.height > 4.5 && skeleton.height < 9,
+        `${tier}/${skeleton.species}: the tree is a street tree, not a sapling or a redwood (${skeleton.height.toFixed(2)} m)`);
+      // It stands in the pit the pass builds: the trunk base has to fit inside
+      // it at the largest instance scale the placement can choose.
+      const maxInstanceScale = 1.32;
+      assert(skeleton.trunkBaseRadius * maxInstanceScale < 1.06 / 2,
+        `${tier}/${skeleton.species}: the trunk fits inside its 1.06 m pit at the largest instance scale `
+        + `(${(skeleton.trunkBaseRadius * maxInstanceScale).toFixed(3)} m < 0.53 m)`);
+      assert(Math.abs(skeleton.trunk[0].a.x) < 1e-9 && Math.abs(skeleton.trunk[0].a.z) < 1e-9
+        && Math.abs(skeleton.trunk[0].a.y) < 1e-9,
+        `${tier}/${skeleton.species}: the trunk starts at the pit centre, not floating beside it`);
+      geometry.dispose();
+    }
+  }
+
+  // Deterministic per species, and the three species really are different.
+  const a = buildStreetTreeGeometry(0, false);
+  const b = buildStreetTreeGeometry(0, false);
+  const same = a.getAttribute('position').array.length === b.getAttribute('position').array.length
+    && a.getAttribute('position').array.every((v, i) => v === b.getAttribute('position').array[i]);
+  assert(same, 'the same species rebuilds bit-identical geometry');
+  const forms = new Set();
+  for (let v = 0; v < STREET_TREE_SPECIES.length; v += 1) {
+    const g = buildStreetTreeGeometry(v, false);
+    g.computeBoundingBox();
+    forms.add(`${g.boundingBox.max.y.toFixed(3)}|${(g.boundingBox.max.x - g.boundingBox.min.x).toFixed(3)}`);
+    g.dispose();
+  }
+  assert(forms.size === STREET_TREE_SPECIES.length,
+    `every species has a distinct height and spread (${forms.size} distinct of ${STREET_TREE_SPECIES.length})`);
+  a.dispose();
+  b.dispose();
+}
+
+// ---------------------------------------------------------------------------
+section('13. a block of trees varies, and every lit material declares a class');
+// ---------------------------------------------------------------------------
+{
+  const city = gridCity();
+  const built = buildStreetFurniture(makeCtx(city, { focus: { x: 0, z: 0 } }));
+  const trees = built.items.filter((item) => item.kind === 'tree');
+  assert(trees.length > 8, `the fixture city plants trees (${trees.length})`);
+  // Variation ALONG ONE BLOCK, not just across the city: the round-2 defect
+  // was that every tree in a frame was the same stamp at the same size.
+  const bySegment = new Map();
+  for (const tree of trees) {
+    const list = bySegment.get(tree.segmentId) || [];
+    list.push(tree);
+    bySegment.set(tree.segmentId, list);
+  }
+  let bestRun = [];
+  for (const list of bySegment.values()) if (list.length > bestRun.length) bestRun = list;
+  assert(bestRun.length >= 4, `at least one block carries a run of trees (${bestRun.length})`);
+  const nearRun = bestRun.filter((t) => t.lod === 0);
+  const runVariants = new Set(bestRun.map((t) => t.variant));
+  const runScales = new Set(bestRun.map((t) => t.scale.toFixed(3)));
+  console.log(`  longest block run: ${bestRun.length} trees, ${runVariants.size} species, ${runScales.size} distinct scales`);
+  assert(runScales.size >= Math.min(4, bestRun.length),
+    `no two trees on the block are the same size (${runScales.size} distinct scales of ${bestRun.length})`);
+  if (nearRun.length >= 4) {
+    assert(new Set(nearRun.map((t) => t.variant)).size >= 2,
+      `the near tier mixes species along one block (${new Set(nearRun.map((t) => t.variant)).size})`);
+  }
+  assert(trees.every((t) => Number.isInteger(t.variant)
+    && t.variant < streetTreeVariantCount(t.lod)),
+    'every tree carries a species index its level of detail actually has geometry for');
+  // Determinism: same seed, same species mix.
+  const again = buildStreetFurniture(makeCtx(city, { focus: { x: 0, z: 0 } }));
+  const signature = (b) => b.items.map((i) => `${i.kind}:${i.variant}:${i.x.toFixed(3)}`).join('|');
+  assert(signature(built) === signature(again), 'the species mix is deterministic for a seed');
+
+  // Every lit material this pass creates declares an environment class the
+  // grader knows. Two other subsystems have shipped unlit content through this
+  // hole; making it structural here means a new material cannot repeat it.
+  const materials = new Map();
+  built.object.traverse((node) => {
+    for (const material of Array.isArray(node.material) ? node.material : node.material ? [node.material] : []) {
+      materials.set(material.uuid, material);
+    }
+  });
+  assert(materials.size >= 2, `the pass creates lit materials (${materials.size})`);
+  let unclassified = 0;
+  let unknown = 0;
+  for (const material of materials.values()) {
+    const envClass = material.userData?.envClass;
+    if (!envClass) { unclassified += 1; continue; }
+    if (!MATERIAL_CLASSES.includes(envClass)) unknown += 1;
+  }
+  assert(unclassified === 0,
+    `every lit material declares userData.envClass, so the environment and wet-weather grader reaches it (${unclassified} missing)`);
+  assert(unknown === 0,
+    `every declared class is a member of MATERIAL_CLASSES (${unknown} unknown)`);
+  const foliage = [...materials.values()].find((m) => m.name?.endsWith(':foliage'));
+  assert(foliage?.userData.envClass === 'foliage',
+    `the tree canopy is graded as foliage, not left ungraded (${foliage?.userData.envClass})`);
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);

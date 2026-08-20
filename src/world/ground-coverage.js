@@ -123,7 +123,23 @@ export const GROUND_COVERAGE_DEFAULTS = Object.freeze({
   palette: 'sf',
   corridorMargin: 2.5,  // metres beyond the paved edge still read as corridor
   lotRadius: 46,        // beyond this, land grades from urban lot to open field
-  toneJitter: 0.025,
+  // Per-vertex break-up. Small on purpose: at 0.045 it DOMINATED the mottling
+  // field and the carpet measured as noise rather than as patches - adjacent
+  // vertices differed by 4.89 luma while vertices seven cells apart differed
+  // by 5.07, i.e. no spatial structure at all. The verifier asserts the ratio.
+  toneJitter: 0.012,
+  // Two-octave tonal mottling, in metres of wavelength. Both octaves are well
+  // above twice the 24 m grid pitch: a wavelength near the Nyquist limit of
+  // the vertex grid aliases into exactly the per-vertex noise this is meant to
+  // replace. Anything finer than the grid comes from the detail maps, not from
+  // here.
+  toneCoarseMetres: 260,
+  toneFineMetres: 95,
+  toneFineWeight: 0.38,
+  // How far the carpet is shaded down where it meets the paved edge, and over
+  // how many metres. Ground next to a kerb is dirtier than ground in the open.
+  edgeShade: 0.12,
+  edgeShadeMetres: 3.5,
   uvMetersPerRepeat: 8,
   // sources
   heightAt: null,       // null -> city.terrain.heightAt
@@ -132,21 +148,95 @@ export const GROUND_COVERAGE_DEFAULTS = Object.freeze({
   parkPolygons: null,   // null -> city.parks polygons
 });
 
+/**
+ * TONE POLICY (round 3) - READ THIS BEFORE CHANGING A HEX.
+ *
+ * The round-2 capture set measured this carpet as the brightest large surface
+ * in three of five cards. In `01-street-day` the strip behind the footway
+ * measured mean luma 209.6 against a footway at 184.5; in `06-night-street`
+ * the same strip measured 80.5 against a footway at 62.1, i.e. it was the
+ * brightest ground in a night frame; and in `03-canyon-golden` it was 16.5%
+ * of the frame with NO paved surface anywhere in the lower half, so the whole
+ * ground of that card was this carpet and nothing else.
+ *
+ * The cause was not lighting. The old `lot` tone `#c3bcac` has a relative
+ * luminance of 188/255 - brighter than most real paving - and the carpet is
+ * the ONE surface in the world that the renderer deliberately gives no albedo
+ * texture (see `installGroundCoverage`), so nothing multiplied it back down
+ * and nothing broke it up. A ground plane cannot be lighter than the concrete
+ * footway beside it and still read as ground.
+ *
+ * The rule this palette now obeys, asserted by
+ * `scripts/verify/verify-ground-coverage.mjs` against the street palette
+ * itself rather than against a copied number:
+ *
+ *   every ground tone's relative luminance <= the street FOOTWAY tone's, and
+ *   every ground tone's relative luminance <= the street VERGE tone's.
+ *
+ * The verge is the graded bank that runs from the back of the footway down to
+ * this carpet, so tying the ceiling to it means the two surfaces meet without
+ * a tonal step in the wrong direction: the bank is never darker than the land
+ * it grades into.
+ *
+ * Each land class carries TWO tones. `toneAt` mixes between them with a
+ * deterministic two-octave value-noise field, so the carpet has block-scale
+ * tonal variation instead of one flat colour. That variation is at the scale
+ * the 24 m grid can carry; everything finer comes from the detail maps the
+ * street-surface-detail pass applies to `material` (normal / roughness / AO).
+ */
 const PALETTES = Object.freeze({
   sf: Object.freeze({
-    corridor: '#b9b6ae', // under the carriageway: never seen, kept neutral
-    lot: '#c3bcac',      // yards, alleys, service lots between walk and wall
-    open: '#9fb184',     // undeveloped land at the edge of the slice
-    park: '#93b878',
-    water: '#5d7f8c',
+    corridor: '#7a756d', // under the carriageway: never seen, kept neutral
+    // The wet/dry pair of each land class is deliberately far apart in
+    // luminance - 25 of 255 for the lot pair - because the mottling field is
+    // the ONLY tonal structure a 24 m vertex grid can carry, and a pair only
+    // a few levels apart measures as noise rather than as patches.
+    lot: '#7c7666',      // yards, alleys, service lots between walk and wall
+    lotDry: '#968f7e',   // sun-bleached patches of the same
+    open: '#6c7852',     // undeveloped land at the edge of the slice
+    openDry: '#8a8f6c',
+    park: '#6f8f58',
+    water: '#4c6a77',
   }),
   stylised: Object.freeze({
-    corridor: '#6f6f6d',
-    lot: '#8b8272',
-    open: '#7f9a66',
-    park: '#79a15f',
-    water: '#3f6472',
+    corridor: '#54514a',
+    lot: '#57534a',
+    lotDry: '#736c60',
+    open: '#525c3d',
+    openDry: '#69734f',
+    park: '#5f7a4a',
+    water: '#365a68',
   }),
+});
+
+/** The land classes a carpet vertex can be given, in tone order. */
+export const GROUND_COVERAGE_LAND_CLASSES = Object.freeze([
+  'corridor', 'lot', 'lotDry', 'open', 'openDry', 'park', 'water',
+]);
+
+/** Read-only view of the palettes, so a verifier asserts the shipped values. */
+export const GROUND_COVERAGE_PALETTES = PALETTES;
+
+/**
+ * Identity of the one mesh this module builds. A future change that quietly
+ * swaps the carpet for something else, or drops the detail-map declaration,
+ * has to change this too - and the verifier asserts every field.
+ */
+export const GROUND_COVERAGE_MATERIAL = Object.freeze({
+  source: GROUND_COVERAGE_ID,
+  layer: 'ground-carpet',
+  // The surface class `street-surface-detail` dresses this material with. It
+  // is a data-map class name from src/render/detail-maps.js; the world module
+  // never imports the render module, it only declares what it wants.
+  detailClass: 'sidewalk-concrete',
+  tonePolicy: 'never-lighter-than-footway-or-verge',
+  // Member of `MATERIAL_CLASSES` in src/render/environment-ibl.js. The
+  // renderer's environment grading and the wet-weather response only reach
+  // materials that declare one, and this carpet is 8-17% of a captured frame,
+  // so without it that share of the world gets no environment map and no rain
+  // response at all. Written literally because a world module must not import
+  // a render module; the verifier asserts it against that module's own list.
+  envClass: 'sidewalk',
 });
 
 // ---------------------------------------------------------------------------
@@ -169,6 +259,32 @@ function clamp(value, min, max) {
 
 function finite(value) {
   return Number.isFinite(value);
+}
+
+/**
+ * Deterministic 2D value noise on a lattice of `wavelength` metres, in 0..1.
+ *
+ * Pure integer hashing plus a smoothstep fade, so it is bit-identical on any
+ * engine and needs no table, no Math.random and no allocation. Two octaves of
+ * this are what give the carpet block-scale tonal variation; it is NOT a
+ * substitute for a detail map, because the carpet's vertex grid cannot carry
+ * anything finer than its own cell.
+ */
+function valueNoise(x, z, wavelength, seed) {
+  const u = x / wavelength;
+  const v = z / wavelength;
+  const i0 = Math.floor(u);
+  const j0 = Math.floor(v);
+  const fu = u - i0;
+  const fv = v - j0;
+  const su = fu * fu * (3 - 2 * fu);
+  const sv = fv * fv * (3 - 2 * fv);
+  const corner = (i, j) => (hash32(`${seed}:${i}:${j}`) % 100000) / 100000;
+  const a = corner(i0, j0);
+  const b = corner(i0 + 1, j0);
+  const c = corner(i0, j0 + 1);
+  const d = corner(i0 + 1, j0 + 1);
+  return (a + (b - a) * su) + ((c + (d - c) * su) - (a + (b - a) * su)) * sv;
 }
 
 function hexToSrgb(hex) {
@@ -339,6 +455,12 @@ export function resolveGroundCoverageOptions(city, overrides = {}) {
     apronGrowth: Math.max(1.05, Number(o.apronGrowth) || 2.4),
     horizonRadius: Math.max(0, Number(o.horizonRadius) || 0),
     sink: Number(o.sink) || 0,
+    toneJitter: clamp(Number(o.toneJitter) || 0, 0, 0.5),
+    toneCoarseMetres: Math.max(8, Number(o.toneCoarseMetres) || 165),
+    toneFineMetres: Math.max(4, Number(o.toneFineMetres) || 47),
+    toneFineWeight: clamp(Number(o.toneFineWeight) || 0, 0, 1),
+    edgeShade: clamp(Number(o.edgeShade) || 0, 0, 0.6),
+    edgeShadeMetres: Math.max(0.1, Number(o.edgeShadeMetres) || 3.5),
     roadLift: finite(roadLift) ? roadLift : 0.45,
     gutterDepth: Number(o.gutterDepth) || 0,
     heightAt,
@@ -406,7 +528,9 @@ export function buildGroundCoverageData(city, overrides = {}) {
   const palette = PALETTES[o.palette];
   const corridorTone = hexToSrgb(palette.corridor);
   const lotTone = hexToSrgb(palette.lot);
+  const lotDryTone = hexToSrgb(palette.lotDry || palette.lot);
   const openTone = hexToSrgb(palette.open);
+  const openDryTone = hexToSrgb(palette.openDry || palette.open);
   const parkTone = hexToSrgb(palette.park);
   const waterTone = hexToSrgb(palette.water);
 
@@ -469,27 +593,54 @@ export function buildGroundCoverageData(city, overrides = {}) {
       // Tone by context. Under the carriageway nothing is ever seen, so the
       // interesting range is the strip between the back of the walk and the
       // building line (urban lot) grading out to open land at the map edge.
+      //
+      // Each land class has a wet/dry pair and the two-octave mottling field
+      // decides where each vertex sits between them, so a block of yard is a
+      // field of tones rather than one flat fill. `mottle` is the same field
+      // for every class, which keeps the patches continuous across a class
+      // boundary instead of stopping dead on it.
+      const mottle = clamp(
+        (1 - o.toneFineWeight) * valueNoise(x, z, o.toneCoarseMetres, `${o.seed}:c`)
+        + o.toneFineWeight * valueNoise(x, z, o.toneFineMetres, `${o.seed}:f`),
+        0, 1,
+      );
       const near = corridor.query(x, z);
       const outside = near.distance - (near.half + o.corridorMargin);
+      const lotBlend = mixColor(lotTone, lotDryTone, mottle);
+      const openBlend = mixColor(openTone, openDryTone, mottle);
       let tone;
+      let landClass;
       if (!finite(outside) || outside >= o.lotRadius) {
-        tone = openTone;
+        tone = openBlend;
+        landClass = 'open';
       } else if (outside <= 0) {
         tone = corridorTone;
+        landClass = 'corridor';
       } else {
-        tone = mixColor(lotTone, openTone, clamp(outside / o.lotRadius, 0, 1));
+        tone = mixColor(lotBlend, openBlend, clamp(outside / o.lotRadius, 0, 1));
+        landClass = 'lot';
       }
       for (const polygon of o.parkPolygons) {
-        if (pointInPolygon(x, z, polygon)) { tone = parkTone; break; }
+        if (pointInPolygon(x, z, polygon)) { tone = parkTone; landClass = 'park'; break; }
       }
-      for (const polygon of o.waterPolygons) {
-        if (pointInPolygon(x, z, polygon)) { tone = waterTone; break; }
+      if (landClass !== 'park') {
+        for (const polygon of o.waterPolygons) {
+          if (pointInPolygon(x, z, polygon)) { tone = waterTone; landClass = 'water'; break; }
+        }
+      }
+      // Ground against a kerb is grimier than ground in the open. Only the
+      // land classes that can actually touch pavement are shaded.
+      let shade = 1;
+      if ((landClass === 'lot' || landClass === 'open') && finite(outside) && outside > 0
+        && outside < o.edgeShadeMetres) {
+        shade = 1 - o.edgeShade * (1 - outside / o.edgeShadeMetres);
       }
       const jitter = 1 + ((hash32(`${o.seed}:${Math.round(x)}:${Math.round(z)}`) % 1000) / 1000 - 0.5)
         * 2 * o.toneJitter;
-      colors[k * 3] = clamp(tone[0] * jitter, 0, 1);
-      colors[k * 3 + 1] = clamp(tone[1] * jitter, 0, 1);
-      colors[k * 3 + 2] = clamp(tone[2] * jitter, 0, 1);
+      const scale = jitter * shade;
+      colors[k * 3] = clamp(tone[0] * scale, 0, 1);
+      colors[k * 3 + 1] = clamp(tone[1] * scale, 0, 1);
+      colors[k * 3 + 2] = clamp(tone[2] * scale, 0, 1);
     }
   }
 
@@ -557,9 +708,34 @@ export function buildGroundCoverageData(city, overrides = {}) {
   }
   if (!clearanceSamples) minRoadClearance = invertLift + o.sink;
 
+  // Tone statistics, measured on the buffer that ships rather than on the
+  // palette, so a regression in the mixing shows up as well as one in a hex.
+  let maxToneLuma = 0;
+  let minToneLuma = 1;
+  let sumToneLuma = 0;
+  for (let k = 0; k < nx * nz; k += 1) {
+    const l = 0.2126 * colors[k * 3] + 0.7152 * colors[k * 3 + 1] + 0.0722 * colors[k * 3 + 2];
+    if (l > maxToneLuma) maxToneLuma = l;
+    if (l < minToneLuma) minToneLuma = l;
+    sumToneLuma += l;
+  }
+  const meanToneLuma = nx * nz ? sumToneLuma / (nx * nz) : 0;
+
   const triangles = (nx - 1) * (nz - 1) * 2;
   const stats = {
     id: GROUND_COVERAGE_ID,
+    palette: o.palette,
+    tone: {
+      // sRGB relative luminance of the emitted vertex colours, 0..1.
+      maxLuma: +maxToneLuma.toFixed(4),
+      minLuma: +minToneLuma.toFixed(4),
+      meanLuma: +meanToneLuma.toFixed(4),
+      spread: +(maxToneLuma - minToneLuma).toFixed(4),
+      jitter: o.toneJitter,
+      coarseMetres: o.toneCoarseMetres,
+      fineMetres: o.toneFineMetres,
+      edgeShade: o.edgeShade,
+    },
     vertices: nx * nz,
     quads: (nx - 1) * (nz - 1),
     triangles,
@@ -681,6 +857,16 @@ export function buildGroundCoverage(city, overrides = {}) {
     metalness: 0,
   });
   material.name = `${GROUND_COVERAGE_ID}:material`;
+  // Identity and dressing request. `street-surface-detail` looks this up by
+  // name in the scene and applies the declared detail-map class; a world
+  // module must not import a render module, so the request is data, not a
+  // call. The tone policy is recorded here too, so the material carries the
+  // rule its palette was chosen under.
+  material.userData = {
+    ...GROUND_COVERAGE_MATERIAL,
+    uvMetersPerRepeat: Number(data.options.uvMetersPerRepeat) || 8,
+    detailApplied: false,
+  };
 
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = GROUND_COVERAGE_ID;

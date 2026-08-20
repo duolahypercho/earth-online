@@ -50,6 +50,7 @@ import pass, {
   surfaceOptionsFor,
 } from '../../src/render/passes/street-surface-detail.js';
 import { buildStreetscapePlan, sidewalkBand } from '../../src/world/streets/street-surface-v2.js';
+import { MATERIAL_CLASSES } from '../../src/render/environment-ibl.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -845,6 +846,194 @@ section('11. a wrong focus cannot empty the city');
     assert(ring.triangles <= ring.maxTriangles,
       `ring ${ring.id} holds its budget with the wrong focus (${ring.triangles} <= ${ring.maxTriangles})`);
   }
+}
+
+// ---------------------------------------------------------------------------
+section('12. carriageway paint stays on the carriageway');
+// ---------------------------------------------------------------------------
+{
+  // ROUND 2 DEFECT. Section 3's containment test accepts anything within
+  // `half + footway + 2 m` of a centreline, which INCLUDES THE FOOTWAY - so a
+  // road marking stamped on the sidewalk passed it. Carriageway paint has a
+  // tighter rule than "somewhere on the pavement": it may only touch the
+  // driving surface, i.e. a segment's own carriageway band or a junction pad.
+  //
+  // Measured on the shipped slice before the fix: 279 of 22 269 junction-paint
+  // vertices sat outside every carriageway band and every junction pad, all of
+  // them 1.05 m past the kerb - the fixed overshoot of a turn arrow's barb and
+  // head on a narrow approach (`sf-seg-456`, half 3.2 m, one stopping lane
+  // centred at -1.6 m, near-turn head at -4.25 m).
+  const { readFile } = await import('node:fs/promises');
+  globalThis.fetch = async (url) => {
+    const rel = String(url).replace(/^https?:\/\/[^/]+/, '');
+    if (rel.endsWith('.gz')) return { ok: false, status: 415 };
+    try {
+      const text = await readFile(join(REPO, 'public', rel), 'utf8');
+      return { ok: true, status: 200, json: async () => JSON.parse(text) };
+    } catch { return { ok: false, status: 404 }; }
+  };
+  const { loadSfData } = await import(join(REPO, 'src/citygen/sf-data.js'));
+  const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+  const built = buildStreetSurfaceDetail(makeCtx(city, {
+    focus: { x: 1447.11, z: 1003.77 },
+    heightAt: (x, z) => city.terrain.heightAt(x, z),
+    seed: city.meta.seed,
+  }));
+  const plan = built.plan;
+
+  const cell = 24;
+  const index = new Map();
+  for (const segment of plan.segments) {
+    for (let i = 0; i < segment.points.length - 1; i += 1) {
+      const a = segment.points[i];
+      const b = segment.points[i + 1];
+      const entry = { a, b, half: segment.half };
+      for (let gx = Math.floor((Math.min(a.x, b.x) - segment.half) / cell);
+        gx <= Math.floor((Math.max(a.x, b.x) + segment.half) / cell); gx += 1) {
+        for (let gz = Math.floor((Math.min(a.z, b.z) - segment.half) / cell);
+          gz <= Math.floor((Math.max(a.z, b.z) + segment.half) / cell); gz += 1) {
+          const key = `${gx}|${gz}`;
+          const bucket = index.get(key);
+          if (bucket) bucket.push(entry); else index.set(key, [entry]);
+        }
+      }
+    }
+  }
+  // A junction pad reaches the fillet tangents, so its radius is the widest
+  // approach half plus a metre of pad.
+  const pads = plan.nodes.map((node) => ({
+    x: node.position.x,
+    z: node.position.z,
+    r: Math.max(...node.approaches.map((a) => a.half)) + 1,
+  }));
+  const onCarriageway = (x, z) => {
+    const gx = Math.floor(x / cell);
+    const gz = Math.floor(z / cell);
+    for (let i = -1; i <= 1; i += 1) {
+      for (let j = -1; j <= 1; j += 1) {
+        for (const e of index.get(`${gx + i}|${gz + j}`) || []) {
+          const dx = e.b.x - e.a.x;
+          const dz = e.b.z - e.a.z;
+          const len2 = dx * dx + dz * dz;
+          let t = len2 > 1e-9 ? ((x - e.a.x) * dx + (z - e.a.z) * dz) / len2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          if (Math.hypot(x - (e.a.x + dx * t), z - (e.a.z + dz * t)) <= e.half + 0.02) return true;
+        }
+      }
+    }
+    for (const p of pads) if (Math.hypot(x - p.x, z - p.z) <= p.r) return true;
+    return false;
+  };
+
+  const paint = built.state.buffers.paint;
+  let vertices = 0;
+  let escaped = 0;
+  for (let i = 0; i < paint.positions.length; i += 3) {
+    vertices += 1;
+    if (!onCarriageway(paint.positions[i], paint.positions[i + 2])) escaped += 1;
+  }
+  console.log(`  checked ${vertices} junction-paint vertices against carriageway bands and junction pads`);
+  assert(vertices > 10000, `the real slice produced enough paint to be evidence (${vertices} vertices)`);
+  assert(escaped === 0,
+    `no carriageway marking touches a footway anywhere in the real city (${escaped} escaped)`);
+
+  // The same rule stated on the records, so the cause is asserted as well as
+  // the symptom: an arrow's own lateral extent must fit inside its kerb line.
+  const arrows = built.records.laneArrows;
+  assert(arrows.length > 200, `the real city carries lane arrows (${arrows.length})`);
+  let overKerb = 0;
+  let worst = 0;
+  for (const arrow of arrows) {
+    const over = arrow.maxLateral - arrow.half;
+    if (over > worst) worst = over;
+    if (over > 0) overKerb += 1;
+  }
+  console.log(`  widest lane arrow reaches ${worst <= 0 ? `${(-worst).toFixed(2)} m inside` : `${worst.toFixed(2)} m past`} the kerb line`);
+  assert(overKerb === 0,
+    `every lane arrow fits inside the carriageway it is painted on (${overKerb} of ${arrows.length} over)`);
+  assert(arrows.every((a) => Number.isFinite(a.maxLateral)),
+    'every lane-arrow record carries its measured lateral extent');
+
+  // A ring may set detail; it may not decide that a structural item exists.
+  // Round 2 gated ramp pads and kerb inlets on `midRadius + 40` while their
+  // features are declared in every ring, so with the shipped build focus no
+  // corner in the captured window had a detectable-warning pad on its ramp.
+  const far = buildStreetSurfaceDetail(makeCtx(city, {
+    focus: { x: 1447.11, z: 1003.77 },
+    heightAt: (x, z) => city.terrain.heightAt(x, z),
+    seed: city.meta.seed,
+  }));
+  const padsNearCard = far.records.rampPads.filter(
+    (p) => Math.hypot(p.x - 1447.11, p.z - 1003.77) < 900,
+  ).length;
+  console.log(`  ramp pads: ${far.records.rampPads.length} city-wide, ${padsNearCard} within 900 m of the street card`);
+  assert(far.records.rampPads.length > 400,
+    `every corner in the loaded window gets its detectable-warning pad (${far.records.rampPads.length})`);
+  assert(far.records.inlets.length > 400,
+    `every junction in the loaded window gets its kerb inlets (${far.records.inlets.length})`);
+}
+
+// ---------------------------------------------------------------------------
+section('13. the ground carpet is dressed, and every lit material is graded');
+// ---------------------------------------------------------------------------
+{
+  // The renderer deliberately hands `src/world/ground-coverage.js` no albedo
+  // texture, so the carpet was the only large surface in the world with no map
+  // of any kind: a flat card measuring mean luma 209.6 against a footway at
+  // 184.5 in `01-street-day`, and 16.5% of `03-canyon-golden`. A world module
+  // must not import a render module, so the carpet DECLARES the detail-map
+  // class it wants and this pass applies it.
+  const { buildGroundCoverage, disposeGroundCoverage } = await import(
+    join(REPO, 'src/world/ground-coverage.js'),
+  );
+  const city = junctionCity({ signalId: null });
+  const carpet = buildGroundCoverage(city, { heightAt: () => 0 });
+  const root = new THREE.Group();
+  root.add(carpet.group);
+
+  assert(carpet.material.normalMap == null && carpet.material.roughnessMap == null,
+    'the carpet starts undressed, exactly as the renderer builds it');
+  const built = buildStreetSurfaceDetail(makeCtx(city, { root }));
+  const dressing = built.diagnostics.groundDressing;
+  assert(dressing && dressing.applied === true,
+    `the pass finds the carpet by its declared identity and dresses it (${JSON.stringify(dressing)})`);
+  assert(carpet.material.normalMap && carpet.material.roughnessMap && carpet.material.aoMap,
+    'the carpet now carries normal, roughness and AO maps');
+  assert(carpet.material.normalMap.repeat.x > 0.5 && carpet.material.normalMap.repeat.x < 8,
+    `the detail tile is a plausible size for open ground (repeat ${carpet.material.normalMap.repeat.x.toFixed(3)} `
+    + `over ${dressing.uvMetersPerRepeat} m UV, target ${dressing.metresPerRepeat} m)`);
+  assert(carpet.material.userData.detailApplied === true,
+    'the material records that it has been dressed');
+  const again = buildStreetSurfaceDetail(makeCtx(city, { root }));
+  assert(again.diagnostics.groundDressing.applied === false
+    && again.diagnostics.groundDressing.reason === 'already-dressed',
+    'dressing is idempotent: a rebuild does not re-apply it');
+
+  // A missing carpet is not an error: the pass says so and carries on.
+  const noCarpet = buildStreetSurfaceDetail(makeCtx(city, { root: new THREE.Group() }));
+  assert(noCarpet.diagnostics.groundDressing.applied === false
+    && noCarpet.diagnostics.groundDressing.reason === 'no-carpet',
+    'a world with no carpet is reported, not thrown');
+  disposeGroundCoverage(carpet);
+
+  // Every lit material this pass creates declares a class the grader knows.
+  const materials = new Map();
+  built.object?.traverse?.((node) => {
+    for (const material of Array.isArray(node.material) ? node.material : node.material ? [node.material] : []) {
+      materials.set(material.uuid, material);
+    }
+  });
+  assert(materials.size > 0, `the pass creates lit materials (${materials.size})`);
+  let missing = 0;
+  let unknown = 0;
+  for (const material of materials.values()) {
+    const envClass = material.userData?.envClass;
+    if (!envClass) { missing += 1; continue; }
+    if (!MATERIAL_CLASSES.includes(envClass)) unknown += 1;
+  }
+  assert(missing === 0,
+    `every lit material declares userData.envClass, so the environment and wet-weather grader reaches it (${missing} missing)`);
+  assert(unknown === 0, `every declared class is a member of MATERIAL_CLASSES (${unknown} unknown)`);
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);

@@ -4629,11 +4629,12 @@ export class CityRenderer {
       material.metalness = 0;
       material.userData.envClass = classifyMaterialClass({ kind: 'sidewalk' });
     }
-    if (street.materials.markings) {
-      // Paint is not a tiled surface: it keeps its authored roughness and only
-      // takes the environment grading.
-      street.materials.markings.userData.envClass = classifyMaterialClass({ kind: 'sidewalk' });
-    }
+    // street-surface-v2 declares its own environment class for every material it
+    // builds (STREET_SURFACE_V2_ENV_CLASSES: asphalt / sidewalk /
+    // painted-metal), so it no longer depends on this call site to be graded.
+    // This override is removed because it disagreed: it re-classified road paint
+    // as 'sidewalk' after the module had classified it as 'painted-metal', and
+    // it ran last.
 
     for (const mesh of Object.values(street.meshes)) {
       if (mesh.userData.kind === 'roads' || mesh.userData.kind === 'sidewalks') this.pickables.push(mesh);

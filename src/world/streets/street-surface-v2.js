@@ -109,6 +109,7 @@ export const STREET_SURFACE_V2_LAYERS = Object.freeze([
   'curbTop',     // curb top surface
   'sidewalk',    // footway from the back of curb outward
   'verge',       // graded bank from the back of the footway down to open ground
+  'path',        // standalone pedestrian ways: plazas, alleys, mid-block walks
   'ramp',        // kerb ramps at corners
   'marking',     // edge / centre / lane / stop-bar paint
   'crosswalk',   // zebra bands
@@ -117,7 +118,7 @@ export const STREET_SURFACE_V2_LAYERS = Object.freeze([
 /** Which mesh (and therefore which material and draw call) each layer lands in. */
 export const STREET_SURFACE_V2_MESH_GROUPS = Object.freeze({
   carriageway: ['carriageway'],
-  concrete: ['curbFace', 'curbTop', 'sidewalk', 'verge', 'ramp'],
+  concrete: ['curbFace', 'curbTop', 'sidewalk', 'verge', 'path', 'ramp'],
   markings: ['marking', 'crosswalk'],
 });
 
@@ -172,6 +173,40 @@ export const STREET_SURFACE_V2_DEFAULTS = Object.freeze({
   vergeReach: 2.2,         // lateral metres of bank beyond the footway edge
   groundSink: 0.26,        // ground-coverage GROUND_COVERAGE_DEFAULTS.sink
   vergeMaxDrop: 1.6,       // never model a bank taller than this
+  // STANDALONE PEDESTRIAN WAYS (round 3).
+  //
+  // `excludeHighways` keeps footway / pedestrian / path / cycleway ways out of
+  // the ROAD build, and correctly so: they carry no carriageway, no kerb and
+  // no markings, and most of them are the OSM tracing of a sidewalk that the
+  // adjacent street's own footway ribbon already paves. But they are 2167 of
+  // the 3399 ways on the shipped slice, and the ones that are NOT beside a
+  // road - plazas, mid-block passages, transit forecourts - were left with no
+  // paved surface at all.
+  //
+  // Measured on the round-2 capture, card `03-canyon-golden` stands on one of
+  // them (`sf-seg-301`, highway=footway, width 3.2 m). Rasterising this
+  // module's own output into that camera gives: carriageway 0.0% of the frame,
+  // sidewalk 0.2%, and the ground-coverage carpet 16.5% - i.e. the entire
+  // lower half of that card is bare backstop carpet with no pavement anywhere.
+  //
+  // This paves them: a flat ribbon at footway level with the same graded bank
+  // at each edge, no kerb and no paint, and a suppression test so a way that
+  // merely retraces a street's own footway adds nothing.
+  pavePedestrianWays: true,
+  pedestrianHighways: Object.freeze(['footway', 'pedestrian', 'path', 'corridor', 'platform', 'cycleway']),
+  pathMinWidth: 1.4,
+  pathMaxWidth: 14,
+  // How far past a road corridor's paved edge a pedestrian way still counts as
+  // "already paved by that street".
+  // Measured on the shipped slice: of 4001 pedestrian-way vertices, 28% fall
+  // INSIDE a road corridor, and a further 37% within 4 m of its paved edge.
+  // Those are OSM tracings of the sidewalk the street's own footway ribbon
+  // already paves - the authored `sidewalkW` is nominal, so the real walk is
+  // usually wider than the ribbon and the tracing sits just past its edge.
+  // Paving them would lay a second ribbon alongside the first. 3 m past the
+  // paved edge is where a way stops being a duplicate and starts being a real
+  // separate surface.
+  pathSuppressMargin: 3.0,
   // sampling
   maxStep: 6,              // max metres between cross-sections (terrain follow)
   nodeSnap: 0.6,           // endpoint-to-intersection match radius (renderer uses 0.5)
@@ -244,6 +279,10 @@ const PALETTES = Object.freeze({
     curbTop: '#cfcabe',
     sidewalk: '#eee7da',
     ramp: '#e6dfce',
+    // Plaza / passage paving. Deliberately a shade below the street footway:
+    // it is a different pour, it is walked on from every direction, and a
+    // large flat area at the footway's own tone reads as a light box.
+    path: '#ded5c4',
     verge: '#9a9384',
     markingWhite: '#f4efe2',
     markingYellow: '#e6b93f',
@@ -260,11 +299,31 @@ const PALETTES = Object.freeze({
     curbTop: '#b0855f',
     sidewalk: '#e2c79a',
     ramp: '#d8bd90',
+    path: '#d2b78c',
     verge: '#7d7256',
     markingWhite: '#efe8d4',
     markingYellow: '#e6b93f',
     crosswalk: '#fff4dc',
   }),
+});
+
+/**
+ * Read-only view of the street palettes. `src/world/ground-coverage.js` picks
+ * its ground tones against the FOOTWAY and VERGE tones here, and its verifier
+ * asserts the relationship against these values rather than against a copy, so
+ * changing a hex there without changing this one fails the check.
+ */
+export const STREET_SURFACE_V2_PALETTES = PALETTES;
+
+/**
+ * The environment classes this module stamps on its three lit materials, by
+ * mesh group. Members of `MATERIAL_CLASSES` in src/render/environment-ibl.js.
+ * Exported so a verifier can assert them against that module's own list.
+ */
+export const STREET_SURFACE_V2_ENV_CLASSES = Object.freeze({
+  carriageway: 'asphalt',
+  concrete: 'sidewalk',
+  markings: 'painted-metal',
 });
 
 // ---------------------------------------------------------------------------
@@ -995,10 +1054,32 @@ function emitSegment(entry, layers, o, ctx, stats) {
   const gutterColor = hexToSrgb(palette.gutter);
   const curbFaceColor = hexToSrgb(palette.curbFace);
   const curbTopColor = hexToSrgb(palette.curbTop);
-  const sidewalkColor = hexToSrgb(palette.sidewalk);
   const vergeColor = hexToSrgb(palette.verge || palette.sidewalk);
-  // The top of the bank is the cut edge of the concrete slab, not soil.
-  const slabEdgeColor = mixColor(sidewalkColor, vergeColor, 0.35);
+  // FOOTWAY TONE (round 3). The scored joints the detail pass adds read well,
+  // but the slab BETWEEN them was one constant colour over the whole city:
+  // measured on `01-street-day`, the footway region [850,700,1150,880] has an
+  // Otsu separation of 9.0, i.e. a single population with no tonal life at all
+  // across 54 000 pixels. Concrete is poured in lots, cures at different rates
+  // and weathers unevenly, so the tone varies by street and along a street.
+  //
+  // Two deterministic scales, both hashes of source ids:
+  //   * per STREET, +/-3.5%: two adjacent blocks are different pours;
+  //   * per STATION, +/-2.5%: variation at the ~6 m station pitch, which is
+  //     the scale a panel run of slabs actually varies at.
+  // The 12 mm-lift paint and the detail-pass decals sit on top of this
+  // unchanged, so nothing that already reads is disturbed.
+  const sidewalkStreetJitter = 1
+    + (((hash32(`walk:${entry.segment.streetId || entry.segment.id}`) % 71) - 35) / 1000);
+  const sidewalkColor = scaleColor(hexToSrgb(palette.sidewalk), sidewalkStreetJitter);
+  // The top of the bank is the cut edge of the concrete slab, not soil. Round 2
+  // mixed only 35% of the way to the bank tone, which left the top of the bank
+  // brighter than the ground it grades into; half-way keeps the bank reading as
+  // a bank rather than as more footway.
+  const slabEdgeColor = mixColor(sidewalkColor, vergeColor, 0.5);
+  const walkToneAt = (index) => scaleColor(
+    sidewalkColor,
+    1 + (((hash32(`walk:${entry.segment.id}:${index}`) % 51) - 25) / 1000),
+  );
 
   const offs = sectionOffsets(half, o);
   const datums = stations.map((st) => ctx.datum(st.x, st.z));
@@ -1054,12 +1135,18 @@ function emitSegment(entry, layers, o, ctx, stats) {
         const rise = o.sidewalkCrossSlope * (walk - o.curbTopWidth);
         const edgeYA = topA + o.curbTopFall + rise;
         const edgeYB = topB + o.curbTopFall + rise;
+        // Per-station tone, and a slight film against the kerb where the
+        // traffic side of the walk always dirties first.
+        const walkA = walkToneAt(i);
+        const walkB = walkToneAt(i + 1);
+        const kerbA = scaleColor(walkA, 0.965);
+        const kerbB = scaleColor(walkB, 0.965);
         pushQuad(layers.sidewalk,
           offsetPoint(A, backU, topA + o.curbTopFall),
           offsetPoint(B, backU, topB + o.curbTopFall),
           offsetPoint(B, outU, edgeYB),
           offsetPoint(A, outU, edgeYA),
-          sidewalkColor, UP);
+          [kerbA, kerbB, walkB, walkA], UP);
         // The bank at the back of the footway. It starts on the SAME two
         // vertices the footway ends on, so the two surfaces cannot part.
         if (o.vergeReach > 0.05) {
@@ -1650,7 +1737,34 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const bandStart = app.trim + o.crosswalkClearance;
   const bandEnd = bandStart + o.crosswalkBandDepth;
   if (bandEnd + 0.4 > available) return;
-  const at = (d, v) => ({ x: node.position.x + u.x * d + m.x * v, z: node.position.z + u.z * d + m.z * v });
+  // JUNCTION PAINT FOLLOWS THE CENTRELINE, NOT A RAY (round 3).
+  //
+  // Rounds 1 and 2 placed every zebra band and stop bar with a straight
+  // extrapolation from the node position along the approach direction. That is
+  // exact only while the approach is straight: on a bent polyline the paint
+  // drifts sideways at the rate the centreline turns, and a band 3-6 m from
+  // the node on a curving approach walks off the carriageway and onto the
+  // footway. Measured across the real slice, 279 of 22 269 junction-paint
+  // vertices (1.25%) landed outside every carriageway band and every junction
+  // pad before this change.
+  //
+  // The paint is now laid on the approach's OWN station frame, the same one
+  // the carriageway cross-sections are built on, so it follows the road it is
+  // painted on by construction. `v` is measured on the approach axis, so it
+  // flips sign at an end approach, where u is the reversed tangent.
+  const lateralSign = app.atStart ? 1 : -1;
+  const stationFor = (d) => (app.atStart ? d : app.entry.length - d);
+  const straightAt = (d, v) => ({
+    x: node.position.x + u.x * d + m.x * v,
+    z: node.position.z + u.z * d + m.z * v,
+  });
+  const at = (d, v) => {
+    const entry = app.entry;
+    if (!entry || !entry.points || entry.points.length < 2) return straightAt(d, v);
+    const st = frameAt(entry.points, entry.cum, clamp(stationFor(d), 0, entry.length), true);
+    const lat = v * lateralSign;
+    return { x: st.x + st.nx * lat * st.miter, z: st.z + st.nz * lat * st.miter };
+  };
   const yAt = (p, v) => crossSectionY(ctx.datum(p.x, p.z), v, half, o) + o.junctionPaintLift;
 
   // Zebra band, stripes parallel to the approach axis, aligned to the approach.
@@ -1719,6 +1833,11 @@ function emptyStats() {
     dashedLines: 0,
     markingQuads: 0,
     streetLengthMeters: 0,
+    paths: 0,
+    pathRuns: 0,
+    pathSuppressedStations: 0,
+    pathLengthMeters: 0,
+    pathTriangles: 0,
     nonFinite: 0,
     triangles: {},
     trianglesTotal: 0,
@@ -1751,6 +1870,185 @@ function auditLayer(layer) {
  * @returns {{ id, layers, stats, options }} layers hold plain number arrays
  *        (positions/normals/colors/uvs/indices) in metres and sRGB 0..1.
  */
+
+// ---------------------------------------------------------------------------
+// standalone pedestrian ways
+// ---------------------------------------------------------------------------
+
+/**
+ * Uniform XZ index of paved corridors, so "is this point already paved?" is a
+ * bucket lookup rather than a scan. Deterministic: insertion order only
+ * affects performance, never the answer.
+ */
+function makeCorridorIndex(cell = 24) {
+  const buckets = new Map();
+  const edges = [];
+  const add = (ax, az, bx, bz, half) => {
+    const index = edges.length;
+    edges.push({ ax, az, bx, bz, half });
+    const minX = Math.min(ax, bx) - half;
+    const maxX = Math.max(ax, bx) + half;
+    const minZ = Math.min(az, bz) - half;
+    const maxZ = Math.max(az, bz) + half;
+    for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+      for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+        const key = `${gx}:${gz}`;
+        const list = buckets.get(key);
+        if (list) list.push(index); else buckets.set(key, [index]);
+      }
+    }
+  };
+  const covers = (x, z, extra = 0) => {
+    const gx = Math.floor(x / cell);
+    const gz = Math.floor(z / cell);
+    for (let j = -1; j <= 1; j += 1) {
+      for (let i = -1; i <= 1; i += 1) {
+        for (const index of buckets.get(`${gx + i}:${gz + j}`) || []) {
+          const e = edges[index];
+          const dx = e.bx - e.ax;
+          const dz = e.bz - e.az;
+          const len2 = dx * dx + dz * dz;
+          let t = len2 > 1e-9 ? ((x - e.ax) * dx + (z - e.az) * dz) / len2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const qx = e.ax + dx * t;
+          const qz = e.az + dz * t;
+          if (Math.hypot(x - qx, z - qz) <= e.half + extra) return true;
+        }
+      }
+    }
+    return false;
+  };
+  return { add, covers, get count() { return edges.length; } };
+}
+
+/**
+ * Pave every pedestrian way that is not already under a street's own paving.
+ *
+ * Construction, deliberately minimal: a flat ribbon at the SAME level the
+ * adjacent footway sits at (curb top plus the curb-top fall), with the same
+ * graded bank at each edge that `emitSegment` gives the back of a footway, so
+ * a plaza never ends in a cliff onto the ground carpet. No kerb, no camber, no
+ * gutter and no paint: a pedestrian way has none of those.
+ *
+ * SUPPRESSION. Two ways a ribbon here would be wrong:
+ *   1. an OSM footway that traces a street's own sidewalk - the street already
+ *      paved it, and a second ribbon at the same height is a z-fight;
+ *   2. two pedestrian ways that cross or run together - the same problem
+ *      between two ribbons of this pass.
+ * Both are handled the same way: a station is dropped when it falls inside an
+ * already-paved corridor, roads first and then previously emitted paths, and
+ * only runs of two or more surviving stations are emitted. Paths are processed
+ * in sorted id order so the result does not depend on source ordering.
+ *
+ * @returns {void} writes into `layers` and `stats`
+ */
+function emitPedestrianWays(city, entries, layers, o, ctx, stats) {
+  if (!o.pavePedestrianWays) return;
+  const paved = makeCorridorIndex(24);
+  for (const entry of entries) {
+    const reach = entry.half + Math.max(entry.walks.left, entry.walks.right);
+    for (let i = 0; i < entry.points.length - 1; i += 1) {
+      const a = entry.points[i];
+      const b = entry.points[i + 1];
+      paved.add(a.x, a.z, b.x, b.z, reach);
+    }
+  }
+  const pathSet = new Set(o.pedestrianHighways || []);
+  const candidates = [];
+  for (const segment of city?.segments || []) {
+    if (!pathSet.has(segment?.highway)) continue;
+    const points = dedupePoints(segment.points);
+    if (points.length < 2) continue;
+    const width = Number(segment.width);
+    if (!finite(width) || width < o.pathMinWidth) continue;
+    const cum = arcTable(points);
+    const length = cum[cum.length - 1];
+    if (!(length > 1.0)) continue;
+    candidates.push({ segment, points, cum, length, half: clamp(width, o.pathMinWidth, o.pathMaxWidth) / 2 });
+  }
+  candidates.sort((a, b) => String(a.segment.id).localeCompare(String(b.segment.id)));
+
+  const palette = o.colors;
+  const pathBase = hexToSrgb(palette.path || palette.sidewalk);
+  const vergeColor = hexToSrgb(palette.verge || palette.sidewalk);
+  const trianglesBefore = layers.path.triangles + layers.verge.triangles;
+
+  for (const candidate of candidates) {
+    const { points, cum, length, half } = candidate;
+    const stations = buildStations(points, cum, 0, length, o.maxStep);
+    if (stations.length < 2) continue;
+    const keep = stations.map((st) => !paved.covers(st.x, st.z, o.pathSuppressMargin));
+    stats.pathSuppressedStations += keep.filter((k) => !k).length;
+    // Per-way tone, deterministic: two adjacent plaza slabs are never the
+    // same pour.
+    const jitter = 1 + (((hash32(`path:${candidate.segment.id}`) % 61) - 30) / 1000);
+    const tone = scaleColor(pathBase, jitter);
+    const slabEdge = mixColor(tone, vergeColor, 0.5);
+    let emittedRun = false;
+    let runStart = -1;
+    const runs = [];
+    for (let i = 0; i <= keep.length; i += 1) {
+      if (i < keep.length && keep[i]) {
+        if (runStart < 0) runStart = i;
+      } else if (runStart >= 0) {
+        if (i - runStart >= 2) runs.push([runStart, i - 1]);
+        runStart = -1;
+      }
+    }
+    for (const [lo, hi] of runs) {
+      for (let i = lo; i < hi; i += 1) {
+        const A = stations[i];
+        const B = stations[i + 1];
+        const dA = ctx.datum(A.x, A.z);
+        const dB = ctx.datum(B.x, B.z);
+        const yA = curbTopY(dA, o) + o.curbTopFall;
+        const yB = curbTopY(dB, o) + o.curbTopFall;
+        // Slight cross tone drift along the way, so a long plaza is not one
+        // flat fill. Same magnitude as the footway's.
+        const step = 1 + (((hash32(`path:${candidate.segment.id}:${i}`) % 41) - 20) / 1200);
+        const slab = scaleColor(tone, step);
+        pushQuad(layers.path,
+          offsetPoint(A, -half, yA),
+          offsetPoint(B, -half, yB),
+          offsetPoint(B, half, yB),
+          offsetPoint(A, half, yA),
+          slab, UP);
+        stats.pathLengthMeters += Math.hypot(B.x - A.x, B.z - A.z);
+        emittedRun = true;
+        if (o.vergeReach > 0.05) {
+          const groundA = dA - o.roadLift - o.groundSink;
+          const groundB = dB - o.roadLift - o.groundSink;
+          const footA = Math.max(groundA, yA - o.vergeMaxDrop);
+          const footB = Math.max(groundB, yB - o.vergeMaxDrop);
+          if (yA - footA > 0.02 || yB - footB > 0.02) {
+            for (const side of [1, -1]) {
+              const edgeU = side * half;
+              const bankU = side * (half + o.vergeReach);
+              pushQuad(layers.verge,
+                offsetPoint(A, edgeU, yA),
+                offsetPoint(B, edgeU, yB),
+                offsetPoint(B, bankU, footB),
+                offsetPoint(A, bankU, footA),
+                [slabEdge, slabEdge, vergeColor, vergeColor], UP);
+            }
+          }
+        }
+      }
+      stats.pathRuns += 1;
+    }
+    if (!emittedRun) continue;
+    stats.paths += 1;
+    // Only now does this way become "already paved", so a way cannot suppress
+    // its own stations.
+    for (const [lo, hi] of runs) {
+      for (let i = lo; i < hi; i += 1) {
+        paved.add(stations[i].x, stations[i].z, stations[i + 1].x, stations[i + 1].z, half);
+      }
+    }
+  }
+  stats.pathTriangles = (layers.path.triangles + layers.verge.triangles) - trianglesBefore;
+}
+
 export function buildStreetSurfaceData(city, overrides = {}) {
   const o = resolveStreetSurfaceOptions(city, overrides);
   const layers = {};
@@ -1789,6 +2087,10 @@ export function buildStreetSurfaceData(city, overrides = {}) {
 
   for (const entry of entries) emitSegment(entry, layers, o, ctx, stats);
 
+  // Pedestrian ways last: they need every road corridor to exist first so the
+  // suppression test knows what is already paved.
+  emitPedestrianWays(city, entries, layers, o, ctx, stats);
+
   let total = 0;
   for (const name of STREET_SURFACE_V2_LAYERS) {
     stats.triangles[name] = layers[name].triangles;
@@ -1796,7 +2098,10 @@ export function buildStreetSurfaceData(city, overrides = {}) {
     stats.nonFinite += auditLayer(layers[name]);
   }
   stats.trianglesTotal = total;
-  stats.segmentTriangles = total - stats.intersectionTriangles;
+  // Pedestrian-way triangles are not street triangles: they are not measured
+  // against `streetLengthMeters` and must not move `trianglesPer100m`, which
+  // is the number the road budget is stated in.
+  stats.segmentTriangles = total - stats.intersectionTriangles - stats.pathTriangles;
   stats.trianglesPer100m = stats.streetLengthMeters > 0
     ? (stats.segmentTriangles / stats.streetLengthMeters) * 100
     : 0;
@@ -1893,6 +2198,28 @@ export function buildStreetSurfaceV2(city, overrides = {}) {
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -8,
   });
+
+  // ENVIRONMENT CLASS (round 3). THIS IS NOT DECORATION.
+  //
+  // `CityRenderer.applyEnvironmentGrading` and the wet-weather grade only
+  // touch materials that declare `userData.envClass`. Rounds 1 and 2 shipped
+  // these three without one, so the largest surface in every frame received no
+  // environment map, no `envMapIntensity`, and none of the rain response: on
+  // `05-wet-street.png` the lower-left road measures an Otsu separation of 8.7
+  // - one flat tone, no reflection, no darkening - on a card where drizzle was
+  // genuinely applied and the sky and fog did change.
+  //
+  // The names come from `MATERIAL_CLASSES` in src/render/environment-ibl.js
+  // via `classifyMaterialClass`; they are written literally here because a
+  // world module must not import a render module, and
+  // `scripts/verify/verify-street-surface-v2.mjs` asserts every one of them
+  // against that module's own exported list, so a rename there fails here
+  // rather than silently dropping the road out of the grader's set again.
+  for (const [key, envClass] of Object.entries(STREET_SURFACE_V2_ENV_CLASSES)) {
+    if (!materials[key]) continue;
+    materials[key].name = `${STREET_SURFACE_V2_ID}:${key}`;
+    materials[key].userData = { ...materials[key].userData, envClass };
+  }
 
   for (const key of Object.keys(STREET_SURFACE_V2_MESH_GROUPS)) {
     const parts = concatLayers(data.layers, STREET_SURFACE_V2_MESH_GROUPS[key]);

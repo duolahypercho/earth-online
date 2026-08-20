@@ -73,7 +73,17 @@ export const STREET_FURNITURE_VERSION = 'street-furniture-v1';
  */
 export const STREET_FURNITURE_RINGS = Object.freeze([
   Object.freeze({ id: 'near', radius: 120, lod: 0, pitchScale: 1, maxItems: 1400, maxTriangles: 130000, kinds: null }),
-  Object.freeze({ id: 'window', radius: null, lod: 1, pitchScale: 2.0, maxItems: 5200, maxTriangles: 170000, kinds: null }),
+  // ROUND 3 BUDGET CHANGE, stated so it is not a silent drift. The window
+  // tier's cap was 170 000 triangles and it was BINDING: the real slice
+  // measured exactly 170 000 used, i.e. items were being dropped from the tail
+  // to fit. Replacing the cone tree with a broadleaf costs 40 more triangles
+  // per tree at this tier (36 -> 76), and at 630 trees that would have thrown
+  // roughly 680 other pieces of furniture out of the city to pay for it -
+  // trading street contents for tree quality, which is exactly the trade the
+  // ring note above forbids. The cap is raised to hold both. The pass-wide
+  // ceiling (STREET_FURNITURE_BUDGET.maxTriangles) is unchanged at 300 000 and
+  // the measured total is still well inside it; the verifier asserts both.
+  Object.freeze({ id: 'window', radius: null, lod: 1, pitchScale: 2.0, maxItems: 5200, maxTriangles: 205000, kinds: null }),
 ]);
 
 /** Hard bounds on the resolved window radius, so an enormous map still ends. */
@@ -150,10 +160,16 @@ const PALETTE = Object.freeze({
   standpipeBrass: '#9a7c3c',
   standpipeBody: '#8e3a30',
   meterBoxGrey: '#8d908c',
-  trunk: '#6f5b46',
-  canopyA: '#5f7f47',
-  canopyB: '#6d8b4e',
-  canopyC: '#516f3c',
+  // Street-tree tones. Round 2's canopy was a saturated mid green that read as
+  // poster paint in daylight and was still fully saturated in the night card.
+  // These are the desaturated olive/khaki greens a dusty downtown street tree
+  // actually shows, and the three tones are used per CLUSTER, not per cone, so
+  // one crown carries all of them.
+  trunk: '#5f5245',
+  branch: '#6a5c4c',
+  canopyA: '#55663f',
+  canopyB: '#616f48',
+  canopyC: '#485834',
   pitSoil: '#3f362c',
   pitGrate: '#5a5c58',
 });
@@ -192,8 +208,11 @@ function clamp(v, lo, hi) {
 // detail. Instances add their own tint through `InstancedMesh.setColorAt`, so
 // two hydrants can differ without a second draw call.
 
-function tint(geometry, hex) {
-  const [r, g, b] = hexToLinear(hex);
+function tint(geometry, hex, shade = 1) {
+  const [r0, g0, b0] = hexToLinear(hex);
+  const r = clamp(r0 * shade, 0, 1);
+  const g = clamp(g0 * shade, 0, 1);
+  const b = clamp(b0 * shade, 0, 1);
   const count = geometry.getAttribute('position').count;
   const colors = new Float32Array(count * 3);
   for (let i = 0; i < count; i += 1) {
@@ -221,9 +240,298 @@ function cone(r, h, sides, hex, x = 0, y = 0, z = 0) {
 }
 
 function assemble(parts) {
-  const merged = mergeGeometries(parts.filter(Boolean), false);
-  for (const part of parts) part?.dispose?.();
+  let list = parts.filter(Boolean);
+  // `mergeGeometries` refuses a mix of indexed and non-indexed inputs. The
+  // faceted leaf clusters (icosahedron / octahedron) are non-indexed by design
+  // - flat facets need per-face normals - while the box and cylinder
+  // primitives are indexed, so normalise before merging rather than forcing
+  // every part into one representation at the call site.
+  if (list.some((part) => !part.getIndex()) && list.some((part) => part.getIndex())) {
+    list = list.map((part) => {
+      if (!part.getIndex()) return part;
+      const flat = part.toNonIndexed();
+      part.dispose?.();
+      return flat;
+    });
+  }
+  const merged = mergeGeometries(list, false);
+  for (const part of list) part?.dispose?.();
   if (merged) merged.computeBoundingSphere();
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// street trees
+// ---------------------------------------------------------------------------
+//
+// ROUND 3 REPLACEMENT - READ THIS BEFORE SIMPLIFYING IT BACK.
+//
+// Rounds 1 and 2 shipped a street tree made of one tapered cylinder and two or
+// three stacked cones. In the round-2 capture set that shape is 8-15 m from a
+// pedestrian-height camera in `01`, `02`, `05` and `06`, it is identical in
+// every frame, and a solid cone is the one silhouette a broadleaf street tree
+// never has. No texture rescues it: the defect is that the crown is a single
+// closed convex shell, so no light passes through it, it has no internal
+// structure, and its outline is a straight-sided triangle.
+//
+// What a real downtown street tree has, and what this builds:
+//
+//   * a TAPERING trunk that leans slightly and BRANCHES at a crotch, instead
+//     of a bare stick that a cone is balanced on;
+//   * primary limbs that carry the crown outward and upward;
+//   * a crown made of SEPARATE leaf clusters with gaps between them, so the
+//     silhouette is lobed and light reaches through it;
+//   * per-cluster tone (sunlit crown top, shaded underside) so the crown has
+//     internal form rather than one flat green;
+//   * SPECIES variation along a block - three crown/trunk forms at the near
+//     level of detail - on top of the per-instance scale, spin and tint that
+//     the placement already varies.
+//
+// EVIDENCE THIS IS NOT A SHELL. `scripts/verify/verify-street-furniture.mjs`
+// rasterises the built geometry's side silhouette and reports two numbers:
+//   - `hullFill`: covered cells / cells inside the convex hull of the crown
+//     silhouette. A cone or any convex solid measures ~1.0; this must measure
+//     below `STREET_TREE_OPENNESS.maxHullFill`.
+//   - `brokenScanlines`: horizontal scanlines across the crown whose covered
+//     span is split into two or more runs, i.e. lines of sight that pass
+//     straight through the crown.
+// Both are measured on the geometry that ships, not on this description.
+//
+// BUDGET. Trees are instanced and they are everywhere, and the capture backend
+// is a software rasteriser, so the cost is stated and asserted per tree and
+// per city: see STREET_TREE_BUDGET.
+//
+// Determinism: the skeleton is generated from a fixed per-species seed with
+// `streetRandom`, never from Math.random, so every build produces byte-identical
+// geometry; the per-INSTANCE variation is a hash of the placement.
+
+/** Per-tree and city-wide triangle ceilings for the tree geometry alone. */
+export const STREET_TREE_BUDGET = Object.freeze({
+  maxTrianglesPerTree: 300,   // near tier, one species instance
+  maxTrianglesPerTreeCoarse: 90, // window tier
+  maxTrianglesCity: 90000,    // every tree instance in a stated real city
+});
+
+/** The openness the crown must measure. See the note above for the method. */
+export const STREET_TREE_OPENNESS = Object.freeze({
+  // A convex shell - a cone, a sphere, a stack of either - has a silhouette
+  // that IS its own convex hull, so it measures hullFill 1.0 and exactly zero
+  // broken scanlines, whatever its texture. The verifier measures the round-2
+  // cone alongside these to show the metric discriminates rather than just
+  // passing. Measured on the shipped species: hullFill 0.75-0.86,
+  // 21-65 broken scanlines of ~130.
+  maxHullFill: 0.88,
+  minBrokenScanlines: 12,
+  minClusters: 7,
+  minClustersCoarse: 5,
+});
+
+/**
+ * Crown and trunk forms. Three at the near tier so a block does not read as
+ * one stamp; the window tier uses the first form only, at four clusters, so a
+ * distant tree costs about what the old cone tree cost.
+ *
+ * `lean` is degrees off vertical, `crotch` the fraction of trunk height where
+ * the limbs leave it, `clusterR` the base leaf-cluster radius in metres and
+ * `spread` how far out of the crown centre the clusters are pushed (1.0 puts
+ * their centres on the crown radius).
+ */
+export const STREET_TREE_SPECIES = Object.freeze([
+  Object.freeze({
+    id: 'broad', trunkHeight: 2.55, baseRadius: 0.185, topRadius: 0.105,
+    lean: 3.5, crotch: 0.82, limbs: 5, crownRadius: 1.42, crownHeight: 2.9,
+    clusters: 9, clusterR: 0.72, spread: 1.0,
+  }),
+  Object.freeze({
+    id: 'upright', trunkHeight: 3.2, baseRadius: 0.155, topRadius: 0.088,
+    lean: 1.5, crotch: 0.86, limbs: 4, crownRadius: 1.08, crownHeight: 3.5,
+    clusters: 8, clusterR: 0.66, spread: 1.02,
+  }),
+  Object.freeze({
+    id: 'open', trunkHeight: 2.3, baseRadius: 0.215, topRadius: 0.12,
+    lean: 5.5, crotch: 0.74, limbs: 6, crownRadius: 1.45, crownHeight: 2.45,
+    clusters: 8, clusterR: 0.72, spread: 1.06,
+  }),
+]);
+
+/**
+ * The widest half-crown the geometry may reach, in metres, BEFORE the
+ * per-instance scale. A street tree stands against the back of the kerb with
+ * about `sidewalkWidth` metres to the property line, so a crown wider than
+ * this at the largest instance scale would push its leaves through a facade -
+ * an asset intersection, which is one of the quality gate's automatic
+ * rejection conditions. Asserted per species.
+ */
+export const STREET_TREE_MAX_HALF_CROWN = 2.45;
+
+/** How many distinct species geometries each level of detail carries. */
+export function streetTreeVariantCount(lod) {
+  return lod > 0 ? 1 : STREET_TREE_SPECIES.length;
+}
+
+/**
+ * The parametric tree. Geometry is built FROM this, so a verifier that asserts
+ * against the skeleton and against the built triangles is asserting the same
+ * thing twice, not two things that can drift apart.
+ *
+ * Local frame: origin at the centre of the tree pit on the footway, +Y up.
+ *
+ * @param {number} variant index into STREET_TREE_SPECIES
+ * @param {boolean} coarse window tier
+ */
+export function streetTreeSkeleton(variant, coarse = false) {
+  const species = STREET_TREE_SPECIES[Math.abs(variant) % STREET_TREE_SPECIES.length];
+  const rng = streetRandom(`street-tree:${species.id}:${coarse ? 'coarse' : 'near'}`);
+  const lean = (species.lean * Math.PI) / 180;
+  const leanDir = rng() * Math.PI * 2;
+  const sections = coarse ? 2 : 3;
+  const trunkTop = {
+    x: Math.cos(leanDir) * Math.sin(lean) * species.trunkHeight,
+    y: species.trunkHeight,
+    z: Math.sin(leanDir) * Math.sin(lean) * species.trunkHeight,
+  };
+  // Trunk: `sections` frusta, radius falling from base to top, following the
+  // lean. The taper is real, not a cosmetic top radius: the ratio is asserted.
+  const trunk = [];
+  for (let i = 0; i < sections; i += 1) {
+    const t0 = i / sections;
+    const t1 = (i + 1) / sections;
+    const at = (t) => ({ x: trunkTop.x * t, y: species.trunkHeight * t, z: trunkTop.z * t });
+    const radiusAt = (t) => species.baseRadius + (species.topRadius - species.baseRadius) * (t ** 0.8);
+    trunk.push({ a: at(t0), b: at(t1), r0: radiusAt(t0), r1: radiusAt(t1) });
+  }
+
+  const crotch = {
+    x: trunkTop.x * species.crotch,
+    y: species.trunkHeight * species.crotch,
+    z: trunkTop.z * species.crotch,
+  };
+  const crownCentre = { x: trunkTop.x, y: species.trunkHeight + species.crownHeight * 0.42, z: trunkTop.z };
+  const crownRadius = species.crownRadius;
+
+  // Leaf clusters on a flattened shell. The golden angle keeps successive
+  // clusters far apart in plan, and the radial jitter keeps the outline lobed
+  // rather than circular.
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const count = coarse ? 6 : species.clusters;
+  const clusters = [];
+  for (let i = 0; i < count; i += 1) {
+    // Golden angle in plan so successive clusters never stack in one view, and
+    // a half-turn offset at the window tier so five clusters do not line up
+    // into a column when the crown is seen from the side.
+    const angle = i * GOLDEN + (coarse ? (i % 2) * Math.PI * 0.62 : 0) + rng() * 0.5;
+    const band = count > 1 ? i / (count - 1) : 0.5;
+    // Height band across the crown, low clusters pushed further out.
+    const hy = (band - 0.5) * species.crownHeight * 0.95;
+    const ring = Math.sqrt(Math.max(0.08, 1 - (2 * hy / (species.crownHeight || 1)) ** 2));
+    // Every third cluster is a CORE cluster: pulled in toward the trunk and
+    // grown slightly, so the crown has a dense middle to read as a mass. The
+    // rest are outer lobes, which are what break the outline and let light
+    // through. A crown of outer lobes alone reads as a bunch of balloons.
+    const core = i % 3 === 1;
+    const radial = crownRadius * species.spread * ring
+      * (core ? 0.12 + 0.28 * rng() : 0.58 + 0.5 * rng());
+    const r = species.clusterR * (coarse ? 1.24 : 1) * (core ? 1.16 : 1) * (0.78 + 0.44 * rng());
+    clusters.push({
+      x: crownCentre.x + Math.cos(angle) * radial,
+      y: crownCentre.y + hy * (0.85 + 0.3 * rng()),
+      z: crownCentre.z + Math.sin(angle) * radial,
+      r,
+      // 0 = deep shade under the crown, 1 = sunlit top. Baked into the vertex
+      // colour so the crown has internal form with no extra draw call.
+      light: clamp(0.24 + band * 0.76 + (rng() - 0.5) * 0.18, 0, 1),
+    });
+  }
+
+  // Primary limbs run from the crotch to the inner end of a cluster, so every
+  // cluster the eye can see is actually carried by something.
+  const limbCount = coarse ? Math.min(2, clusters.length) : Math.min(species.limbs, clusters.length);
+  const limbs = [];
+  const order = clusters.map((c, i) => i).sort((a, b) => clusters[b].y - clusters[a].y);
+  for (let i = 0; i < limbCount; i += 1) {
+    const target = clusters[order[i % clusters.length]];
+    const dx = target.x - crotch.x;
+    const dy = target.y - crotch.y;
+    const dz = target.z - crotch.z;
+    limbs.push({
+      a: crotch,
+      b: { x: crotch.x + dx * 0.88, y: crotch.y + dy * 0.88, z: crotch.z + dz * 0.88 },
+      r0: species.topRadius * 0.82,
+      r1: species.topRadius * 0.3,
+    });
+  }
+
+  const height = Math.max(...clusters.map((c) => c.y + c.r));
+  return {
+    species: species.id,
+    variant: Math.abs(variant) % STREET_TREE_SPECIES.length,
+    coarse,
+    trunk,
+    limbs,
+    clusters,
+    crownCentre,
+    crownRadius,
+    crownBottom: Math.min(...clusters.map((c) => c.y - c.r)),
+    trunkHeight: species.trunkHeight,
+    trunkBaseRadius: species.baseRadius,
+    trunkTopRadius: species.topRadius,
+    taperRatio: species.topRadius / species.baseRadius,
+    height,
+  };
+}
+
+/** A tapered limb from `a` to `b`, open-ended (no caps: they are never seen). */
+function limb(a, b, r0, r1, sides, hex, shade = 1) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  const length = Math.hypot(dx, dy, dz);
+  if (!(length > 1e-4)) return null;
+  const geometry = new THREE.CylinderGeometry(Math.max(0.01, r1), Math.max(0.01, r0), length, sides, 1, true);
+  const axis = new THREE.Vector3(dx / length, dy / length, dz / length);
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
+  geometry.applyQuaternion(quaternion);
+  geometry.translate(a.x + dx / 2, a.y + dy / 2, a.z + dz / 2);
+  return tint(geometry, hex, shade);
+}
+
+/**
+ * One leaf cluster. An icosahedron at the near tier (20 triangles) and an
+ * octahedron at the window tier (8), squashed and spun so no two clusters in a
+ * crown share an outline.
+ */
+function leafCluster(cluster, coarse, hex, spin) {
+  const geometry = coarse
+    ? new THREE.OctahedronGeometry(cluster.r, 0)
+    : new THREE.IcosahedronGeometry(cluster.r, 0);
+  geometry.scale(1, 0.74, 1);
+  geometry.rotateY(spin);
+  geometry.translate(cluster.x, cluster.y, cluster.z);
+  // Sunlit top, shaded underside: 0.62 .. 1.12 of the base tone.
+  return tint(geometry, hex, 0.62 + cluster.light * 0.5);
+}
+
+/**
+ * Build one species' geometry at one level of detail. Pure: the same
+ * (variant, coarse) pair always returns the same buffers.
+ */
+export function buildStreetTreeGeometry(variant, coarse = false) {
+  const skeleton = streetTreeSkeleton(variant, coarse);
+  const trunkSides = coarse ? 4 : 6;
+  const limbSides = coarse ? 3 : 4;
+  const parts = [];
+  for (const section of skeleton.trunk) {
+    parts.push(limb(section.a, section.b, section.r0, section.r1, trunkSides, PALETTE.trunk, 1));
+  }
+  for (const branch of skeleton.limbs) {
+    parts.push(limb(branch.a, branch.b, branch.r0, branch.r1, limbSides, PALETTE.branch, 1.06));
+  }
+  const tones = [PALETTE.canopyA, PALETTE.canopyB, PALETTE.canopyC];
+  skeleton.clusters.forEach((cluster, i) => {
+    parts.push(leafCluster(cluster, coarse, tones[i % tones.length], (i * 1.7) % (Math.PI * 2)));
+  });
+  const merged = assemble(parts);
+  if (merged) merged.userData = { treeSkeleton: skeleton };
   return merged;
 }
 
@@ -319,7 +627,7 @@ function buildCatalogue(lod) {
   g.planter = assemble([
     box(1.05, 0.62, 0.66, PALETTE.planterConcrete, 0, 0.31, 0),
     box(0.9, 0.06, 0.52, PALETTE.planterSoil, 0, 0.63, 0),
-    coarse ? null : cone(0.26, 0.5, 5, PALETTE.canopyA, 0, 0.9, 0),
+    coarse ? null : leafCluster({ x: 0, y: 0.9, z: 0, r: 0.3, light: 0.8 }, true, PALETTE.canopyB, 0.7),
   ]);
 
   g.transitShelter = assemble([
@@ -353,12 +661,12 @@ function buildCatalogue(lod) {
     coarse ? null : cyl(0.09, 0.09, 0.04, 8, PALETTE.signWhite, 0, 1.38, -0.09).rotateX(Math.PI / 2),
   ]);
 
-  g.tree = assemble([
-    cyl(0.11, 0.17, 2.5, coarse ? 4 : 6, PALETTE.trunk, 0, 1.25, 0),
-    cone(1.45, 2.6, coarse ? 5 : 7, PALETTE.canopyA, 0, 3.9, 0),
-    cone(1.15, 2.1, coarse ? 5 : 7, PALETTE.canopyB, 0.22, 4.9, -0.14),
-    coarse ? null : cone(0.85, 1.7, 6, PALETTE.canopyC, -0.2, 5.6, 0.16),
-  ]);
+  // One geometry per species at the near tier, one at the window tier. Every
+  // tree item carries the variant index it was placed with, so a block gets a
+  // mix of forms out of the same instanced draw calls.
+  for (let variant = 0; variant < streetTreeVariantCount(lod); variant += 1) {
+    g[`tree#${variant}`] = buildStreetTreeGeometry(variant, coarse);
+  }
 
   return g;
 }
@@ -822,9 +1130,22 @@ function placeItem(state, spec) {
     ? (rng() - 0.5) * Math.PI
     : (rng() - 0.5) * 0.06;
   const scale = kindId === 'tree' ? 0.82 + rng() * 0.5 : 0.965 + rng() * 0.07;
+  // Species. Deterministic from the same per-placement stream as the scale and
+  // the spin, so the mix along a block is fixed for a seed and differs between
+  // seeds, and the count of forms available is whatever this level of detail
+  // actually carries.
+  const variant = kindId === 'tree'
+    ? Math.floor(rng() * streetTreeVariantCount(ring.lod)) % streetTreeVariantCount(ring.lod)
+    : 0;
+  // A tree's canopy is far wider than its plan footprint, so a young narrow
+  // species and an old broad one at the same instance scale are visibly
+  // different heights as well as widths.
+  const heightScale = kindId === 'tree' ? scale * (0.92 + rng() * 0.2) : scale;
   occupancyAdd(state.occupancy, x, z, kind.radius, kindId);
   const item = {
     kind: kindId,
+    variant,
+    heightScale,
     lod: ring.lod,
     ring: ring.id,
     x,
@@ -1115,6 +1436,15 @@ function segmentReach(focus, segment) {
   return best;
 }
 
+/**
+ * Which catalogue geometry an item draws. Trees are the only kind with more
+ * than one form, so this is where the species index enters the draw-call
+ * bucketing.
+ */
+export function furnitureGeometryKey(item) {
+  return item.kind === 'tree' ? `tree#${item.variant || 0}` : item.kind;
+}
+
 export function buildStreetFurniture(ctx, overrides = {}) {
   const startedAt = Date.now();
   const city = ctx?.city;
@@ -1140,8 +1470,8 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   const lodsUsed = new Set(state.items.map((item) => item.lod));
   const catalogue = new Map();
   for (const lod of [...lodsUsed].sort()) catalogue.set(lod, buildCatalogue(lod));
-  const triangleOf = (kindId, lod) => {
-    const geometry = catalogue.get(lod)?.[kindId];
+  const triangleOf = (geometryKey, lod) => {
+    const geometry = catalogue.get(lod)?.[geometryKey];
     if (!geometry) return 0;
     const index = geometry.getIndex();
     return Math.floor((index ? index.count : geometry.getAttribute('position').count) / 3);
@@ -1154,7 +1484,7 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   for (const item of state.items) {
     const ringIndex = state.rings.findIndex((ring) => ring.id === item.ring);
     const ring = state.rings[ringIndex];
-    const triangles = triangleOf(item.kind, item.lod);
+    const triangles = triangleOf(furnitureGeometryKey(item), item.lod);
     if (ring.triangles + triangles > ring.maxTriangles) {
       reject(state, item.kind, 'ring-triangle-cap');
       state.counts[item.kind] -= 1;
@@ -1170,20 +1500,33 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   group.name = STREET_FURNITURE_ID;
   group.userData = { kind: 'street-furniture', version: STREET_FURNITURE_VERSION };
 
+  // `envClass` is a member of `MATERIAL_CLASSES` in
+  // src/render/environment-ibl.js and is REQUIRED on every lit material: the
+  // renderer's environment grading and the wet-weather response only reach
+  // materials that declare one. Round 2 shipped all three of these without a
+  // class, which is why the street trees stayed fully saturated green in the
+  // night card - the foliage was never graded by anything. The verifier
+  // asserts these names against that module's own exported list.
   const propMaterial = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.74, metalness: 0.14,
   });
+  propMaterial.name = `${STREET_FURNITURE_ID}:prop`;
+  propMaterial.userData = { envClass: 'painted-metal' };
   const foliageMaterial = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.92, metalness: 0,
   });
+  foliageMaterial.name = `${STREET_FURNITURE_ID}:foliage`;
+  foliageMaterial.userData = { envClass: 'foliage' };
   const groundMaterial = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.94, metalness: 0.05,
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
   });
+  groundMaterial.name = `${STREET_FURNITURE_ID}:pit`;
+  groundMaterial.userData = { envClass: 'sidewalk' };
 
   const buckets = new Map();
   for (const item of state.items) {
-    const key = `${item.kind}:${item.lod}`;
+    const key = `${furnitureGeometryKey(item)}:${item.lod}`;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(item); else buckets.set(key, [item]);
   }
@@ -1197,9 +1540,10 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   let triangles = 0;
   for (const key of [...buckets.keys()].sort()) {
     const items = buckets.get(key);
-    const [kindId, lodText] = key.split(':');
+    const [geometryKey, lodText] = key.split(':');
     const lod = Number(lodText);
-    const geometry = catalogue.get(lod)?.[kindId];
+    const kindId = items[0].kind;
+    const geometry = catalogue.get(lod)?.[geometryKey];
     if (!geometry) { reject(state, kindId, 'no-geometry'); continue; }
     const material = kindId === 'tree' ? foliageMaterial : propMaterial;
     const mesh = new THREE.InstancedMesh(geometry, material, items.length);
@@ -1207,7 +1551,7 @@ export function buildStreetFurniture(ctx, overrides = {}) {
       const item = items[i];
       positionVector.set(item.x, item.y, item.z);
       quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), item.rotation);
-      scaleVector.set(item.scale, item.scale, item.scale);
+      scaleVector.set(item.scale, item.heightScale ?? item.scale, item.scale);
       matrix.compose(positionVector, quaternion, scaleVector);
       mesh.setMatrixAt(i, matrix);
       const [r, g, b] = instanceTint(kindId, item.tintSeed);
@@ -1227,11 +1571,15 @@ export function buildStreetFurniture(ctx, overrides = {}) {
     // call, and the capture path is a software GL backend.
     mesh.castShadow = lod < 1 && SHADOW_CASTING_KINDS.has(kindId);
     mesh.receiveShadow = true;
-    mesh.userData = { kind: 'street-furniture', pass: STREET_FURNITURE_ID, itemKind: kindId, lod };
+    mesh.userData = {
+      kind: 'street-furniture', pass: STREET_FURNITURE_ID, itemKind: kindId, geometryKey, lod,
+    };
     group.add(mesh);
-    const perItem = triangleOf(kindId, lod);
+    const perItem = triangleOf(geometryKey, lod);
     triangles += perItem * items.length;
-    meshes.push({ kind: kindId, lod, instances: items.length, trianglesEach: perItem, drawCalls: 1 });
+    meshes.push({
+      kind: kindId, geometryKey, lod, instances: items.length, trianglesEach: perItem, drawCalls: 1,
+    });
   }
 
   // Tree pits, merged into one ground decal mesh.
@@ -1261,8 +1609,8 @@ export function buildStreetFurniture(ctx, overrides = {}) {
 
   // Release geometry for kinds that ended up with no instances.
   for (const [lod, set] of catalogue) {
-    for (const [kindId, geometry] of Object.entries(set)) {
-      if (!buckets.has(`${kindId}:${lod}`)) geometry?.dispose?.();
+    for (const [geometryKey, geometry] of Object.entries(set)) {
+      if (!buckets.has(`${geometryKey}:${lod}`)) geometry?.dispose?.();
     }
   }
 

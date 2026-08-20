@@ -56,7 +56,10 @@ const {
   buildStreetSurfaceData,
   buildStreetSurfaceV2,
   disposeStreetSurfaceV2,
+  STREET_SURFACE_V2_PALETTES,
+  STREET_SURFACE_V2_ENV_CLASSES,
 } = mod;
+const { MATERIAL_CLASSES } = await import('../../src/render/environment-ibl.js');
 
 let checks = 0;
 const failures = [];
@@ -436,12 +439,16 @@ function triangleFrame(layer, i) {
 section('1. module contract');
 assert(STREET_SURFACE_V2_ID === 'street-surface-v2', 'module id is street-surface-v2');
 // Round 2 added `verge`: the graded bank at the back of the footway that closes
-// the 0.82 m cliff between the paved surface and the ground carpet. It is a
-// deliberate addition to the layer contract, not a relaxation of it - the
+// the 0.82 m cliff between the paved surface and the ground carpet. Round 3
+// added `path`: the paved surface of a standalone pedestrian way. Both are
+// deliberate additions to the layer contract, not relaxations of it - the
 // assertions below still require every layer to belong to exactly one mesh
 // group and the draw-call budget to hold.
-assert(STREET_SURFACE_V2_LAYERS.length === 8, 'eight geometry layers are declared');
+assert(STREET_SURFACE_V2_LAYERS.length === 9, 'nine geometry layers are declared');
 assert(STREET_SURFACE_V2_LAYERS.includes('verge'), 'the footway bank is a declared layer');
+assert(STREET_SURFACE_V2_LAYERS.includes('path'), 'the pedestrian-way surface is a declared layer');
+assert(STREET_SURFACE_V2_MESH_GROUPS.concrete.includes('path'),
+  'the pedestrian-way surface shares the concrete mesh, so it costs no extra draw call');
 {
   const grouped = Object.values(STREET_SURFACE_V2_MESH_GROUPS).flat().sort();
   assert(JSON.stringify(grouped) === JSON.stringify([...STREET_SURFACE_V2_LAYERS].sort()),
@@ -917,10 +924,21 @@ section('17. REAL-DATASET coverage: the shipped San Francisco slice');
     const v = Number(realCity.terrain.heightAt(x, z));
     return Number.isFinite(v) ? v * 1.12 : 0;
   };
+  // The renderer's coupling constants, read from the module that mirrors them
+  // rather than copied. Round 2's copy here was stale - it still used the old
+  // 0.045 m sidewalk lift, so this section measured a 0.093 m exposed kerb
+  // while the shipped world builds a 0.150 m one. A stale copy makes the
+  // real-slice numbers describe a world nobody renders.
+  const { STREET_SURFACE_COUPLING } = await import(
+    nodePath.join(REPO, 'src/render/passes/street-surface-detail.js'),
+  );
+  const realCurbFace = STREET_SURFACE_COUPLING.sidewalkLift
+    + STREET_SURFACE_COUPLING.gutterDepth
+    + STREET_SURFACE_COUPLING.curbTopFall;
   const real = buildStreetSurfaceData(realCity, {
     roadLift: Number(realCity.meta.streetDesign?.roadLift ?? 0.45),
-    gutterDepth: 0.04,
-    curbFaceHeight: 0.045 + 0.04 + 0.008,
+    gutterDepth: STREET_SURFACE_COUPLING.gutterDepth,
+    curbFaceHeight: realCurbFace,
     heightAt: realHeightAt,
     palette: 'sf',
     inferNodes: true,
@@ -1058,6 +1076,426 @@ section('17. REAL-DATASET coverage: the shipped San Francisco slice');
   assert(detached === 0,
     `no uncovered sample is detached from the pavement - every residual has real `
     + `pavement within 4 m (worst ${maxDetachedM} m, ${detached} detached)`);
+
+  // ---------------------------------------------------------------------
+  // The kerb exists everywhere on the real slice, at the height the renderer
+  // asked for. The round-2 reviewer read the near corner of `02-intersection`
+  // as "the sidewalk is coplanar with the asphalt - zero kerb height at the
+  // corner", so this measures every curb face in the city rather than a
+  // fixture, and separately measures the ones near that camera.
+  // ---------------------------------------------------------------------
+  {
+    const face = real.layers.curbFace;
+    let minHeight = Infinity;
+    let maxHeight = 0;
+    let flat = 0;
+    let total = 0;
+    let nearCamera = 0;
+    let nearMin = Infinity;
+    const card02 = { x: 1668.84, z: -0.05 };
+    for (let i = 0; i < face.indices.length; i += 3) {
+      // The face is vertical, so its height is the y difference between the
+      // two vertices that share an (x, z). Using the triangle's whole vertical
+      // extent instead would fold the along-street terrain slope into the
+      // number - that is what made this read 0.1597 m on a 0.150 m kerb.
+      const v = [0, 1, 2].map((k) => {
+        const b = face.indices[i + k] * 3;
+        return { x: face.positions[b], y: face.positions[b + 1], z: face.positions[b + 2] };
+      });
+      let height = 0;
+      for (let a = 0; a < 3; a += 1) {
+        for (let b = a + 1; b < 3; b += 1) {
+          if (Math.hypot(v[a].x - v[b].x, v[a].z - v[b].z) < 1e-6) {
+            height = Math.max(height, Math.abs(v[a].y - v[b].y));
+          }
+        }
+      }
+      if (height === 0) continue;
+      total += 1;
+      if (height < minHeight) minHeight = height;
+      if (height > maxHeight) maxHeight = height;
+      if (height < realCurbFace * 0.5) flat += 1;
+      const x = face.positions[face.indices[i] * 3];
+      const z = face.positions[face.indices[i] * 3 + 2];
+      if (Math.hypot(x - card02.x, z - card02.z) <= 25) {
+        nearCamera += 1;
+        if (height < nearMin) nearMin = height;
+      }
+    }
+    console.log(`  real-slice exposed kerb face: ${minHeight.toFixed(4)} .. ${maxHeight.toFixed(4)} m `
+      + `over ${total} triangles (renderer asks for ${realCurbFace.toFixed(3)} m)`);
+    console.log(`  within 25 m of the 02-intersection camera: ${nearCamera} kerb-face triangles, `
+      + `shortest ${Number.isFinite(nearMin) ? nearMin.toFixed(4) : 'n/a'} m`);
+    assert(Math.abs(maxHeight - realCurbFace) < 1e-3,
+      `the kerb is built at the height the renderer asks for (${maxHeight.toFixed(4)} m)`);
+    assert(flat === 0,
+      `no kerb face anywhere in the real city collapses to less than half its height (${flat} of ${total})`);
+    assert(nearCamera > 0 && nearMin > realCurbFace * 0.5,
+      `the corner the intersection card looks at has a real kerb `
+      + `(${nearCamera} faces, shortest ${nearMin.toFixed(4)} m)`);
+  }
+
+  // ---------------------------------------------------------------------
+  // Paint stays on the driving surface. The round-2 reviewer read the zebra in
+  // `02-intersection` as overrunning the kerb line. This module lays junction
+  // paint on the approach's own station frame (round 3; it used to use a
+  // straight ray from the node position), so the check is whether every
+  // marking and crosswalk vertex in the real city sits on a carriageway band
+  // or a junction pad - the driving surface only, never the footway.
+  // ---------------------------------------------------------------------
+  {
+    const plan = mod.buildStreetscapePlan(realCity, {
+      roadLift: Number(realCity.meta.streetDesign?.roadLift ?? 0.45),
+      gutterDepth: STREET_SURFACE_COUPLING.gutterDepth,
+      curbFaceHeight: realCurbFace,
+      heightAt: realHeightAt,
+      palette: 'sf',
+      inferNodes: true,
+    });
+    const cell = 24;
+    const bands = new Map();
+    for (const segment of plan.segments) {
+      for (let i = 0; i < segment.points.length - 1; i += 1) {
+        const a = segment.points[i];
+        const b = segment.points[i + 1];
+        const e = { a, b, half: segment.half };
+        for (let gx = Math.floor((Math.min(a.x, b.x) - segment.half) / cell);
+          gx <= Math.floor((Math.max(a.x, b.x) + segment.half) / cell); gx += 1) {
+          for (let gz = Math.floor((Math.min(a.z, b.z) - segment.half) / cell);
+            gz <= Math.floor((Math.max(a.z, b.z) + segment.half) / cell); gz += 1) {
+            const key = `${gx}|${gz}`;
+            const bucket = bands.get(key);
+            if (bucket) bucket.push(e); else bands.set(key, [e]);
+          }
+        }
+      }
+    }
+    const pads = plan.nodes.map((n) => ({
+      x: n.position.x,
+      z: n.position.z,
+      r: Math.max(...n.approaches.map((a) => a.half)) + 1,
+    }));
+    const onDrivingSurface = (x, z) => {
+      const gx = Math.floor(x / cell);
+      const gz = Math.floor(z / cell);
+      for (let i = -1; i <= 1; i += 1) {
+        for (let j = -1; j <= 1; j += 1) {
+          for (const e of bands.get(`${gx + i}|${gz + j}`) || []) {
+            const dx = e.b.x - e.a.x;
+            const dz = e.b.z - e.a.z;
+            const len2 = dx * dx + dz * dz;
+            let t = len2 > 1e-9 ? ((x - e.a.x) * dx + (z - e.a.z) * dz) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            if (Math.hypot(x - (e.a.x + dx * t), z - (e.a.z + dz * t)) <= e.half + 0.02) return true;
+          }
+        }
+      }
+      for (const p of pads) if (Math.hypot(x - p.x, z - p.z) <= p.r) return true;
+      return false;
+    };
+    for (const name of ['crosswalk', 'marking']) {
+      const layer = real.layers[name];
+      let total = 0;
+      let escaped = 0;
+      for (let i = 0; i < layer.positions.length; i += 3) {
+        total += 1;
+        if (!onDrivingSurface(layer.positions[i], layer.positions[i + 2])) escaped += 1;
+      }
+      assert(total > 1000, `${name}: enough real-city vertices to be evidence (${total})`);
+      assert(escaped === 0,
+        `${name}: no paint vertex leaves the driving surface for the footway (${escaped} of ${total})`);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Standalone pedestrian ways. The round-2 canyon card stands on one and had
+  // no paved surface anywhere in its lower half.
+  // ---------------------------------------------------------------------
+  {
+    const st = real.stats;
+    console.log(`  pedestrian ways: ${st.paths} paved in ${st.pathRuns} runs, `
+      + `${st.pathLengthMeters.toFixed(0)} m, ${st.pathTriangles} triangles, `
+      + `${st.pathSuppressedStations} stations suppressed as already paved`);
+    assert(st.paths > 100, `standalone pedestrian ways are paved city-wide (${st.paths})`);
+    assert(st.pathSuppressedStations > st.paths,
+      `the suppression test bites - most traced sidewalks add nothing `
+      + `(${st.pathSuppressedStations} stations dropped)`);
+    assert(real.layers.path.triangles > 0, `the path layer carries geometry (${real.layers.path.triangles})`);
+    assert(real.stats.budget.withinTrianglesPer100m,
+      `pedestrian-way triangles are excluded from the street budget, which still holds `
+      + `(${real.stats.trianglesPer100m.toFixed(0)} tri/100 m)`);
+
+    // Every path surface sits at footway level relative to its own road datum,
+    // never at carriageway level and never floating.
+    const layer = real.layers.path;
+    let offLevel = 0;
+    for (let i = 0; i < layer.positions.length; i += 3) {
+      const x = layer.positions[i];
+      const y = layer.positions[i + 1];
+      const z = layer.positions[i + 2];
+      const datum = Number(realCity.meta.streetDesign?.roadLift ?? 0.45) + realHeightAt(x, z);
+      const expected = (datum - STREET_SURFACE_COUPLING.gutterDepth) + realCurbFace;
+      if (Math.abs(y - expected) > 0.02) offLevel += 1;
+    }
+    assert(offLevel === 0,
+      `every pedestrian-way vertex sits at footway level above its own terrain (${offLevel} off)`);
+
+    // No path ribbon lies inside a road corridor: that is what the suppression
+    // is for, and a duplicate ribbon at the same height is a z-fight.
+    const roadCell = 24;
+    const roadIndex = new Map();
+    for (const segment of realCity.segments) {
+      const highway = segment.highway;
+      if (STREET_SURFACE_V2_DEFAULTS.pedestrianHighways.includes(highway)) continue;
+      if (STREET_SURFACE_V2_DEFAULTS.excludeHighways.includes(highway)) continue;
+      const halfWidth = (Number(segment.width) || 7) / 2
+        + Math.max(Number(segment.sidewalkLeft ?? segment.sidewalkW ?? 0),
+          Number(segment.sidewalkRight ?? segment.sidewalkW ?? 0));
+      const pts = segment.points || [];
+      for (let i = 0; i < pts.length - 1; i += 1) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        if (!a || !b) continue;
+        const entry = { a, b, halfWidth };
+        for (let gx = Math.floor((Math.min(a.x, b.x) - halfWidth) / roadCell);
+          gx <= Math.floor((Math.max(a.x, b.x) + halfWidth) / roadCell); gx += 1) {
+          for (let gz = Math.floor((Math.min(a.z, b.z) - halfWidth) / roadCell);
+            gz <= Math.floor((Math.max(a.z, b.z) + halfWidth) / roadCell); gz += 1) {
+            const key = `${gx}|${gz}`;
+            const bucket = roadIndex.get(key);
+            if (bucket) bucket.push(entry); else roadIndex.set(key, [entry]);
+          }
+        }
+      }
+    }
+    const insideRoad = (x, z) => {
+      const gx = Math.floor(x / roadCell);
+      const gz = Math.floor(z / roadCell);
+      for (let i = -1; i <= 1; i += 1) {
+        for (let j = -1; j <= 1; j += 1) {
+          for (const e of roadIndex.get(`${gx + i}|${gz + j}`) || []) {
+            const dx = e.b.x - e.a.x;
+            const dz = e.b.z - e.a.z;
+            const len2 = dx * dx + dz * dz;
+            let t = len2 > 1e-9 ? ((x - e.a.x) * dx + (z - e.a.z) * dz) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            if (Math.hypot(x - (e.a.x + dx * t), z - (e.a.z + dz * t)) < e.halfWidth) return true;
+          }
+        }
+      }
+      return false;
+    };
+    let onRoad = 0;
+    let sampled = 0;
+    for (let i = 0; i < layer.positions.length; i += 3) {
+      sampled += 1;
+      if (insideRoad(layer.positions[i], layer.positions[i + 2])) onRoad += 1;
+    }
+    assert(sampled > 1000, `sampled ${sampled} pedestrian-way vertices against the road corridors`);
+    assert(onRoad / sampled < 0.01,
+      `pedestrian-way paving does not lie on top of a street's own paving `
+      + `(${onRoad} of ${sampled} vertices, ${((onRoad / sampled) * 100).toFixed(2)}%)`);
+
+    // The card the defect was measured on. `03-canyon-golden` stands at
+    // (1450.24, 912.59) looking toward (1381.24, 854.78), on sf-seg-301, which
+    // is highway=footway width 3.2 m - a pedestrian way, so the road build
+    // correctly emits nothing for it. Rasterising this module's output into
+    // that camera measured carriageway 0.0% of the frame and sidewalk 0.2%,
+    // with the ground-coverage carpet filling 16.5%: the whole lower half of
+    // the card was bare backstop.
+    //
+    // A/B on the same data, since "it is better now" is only evidence with a
+    // before: sample the ground the camera actually looks at, with the
+    // pedestrian-way paving off and on.
+    const eye = { x: 1450.24, z: 912.59 };
+    const target = { x: 1381.24, z: 854.78 };
+    const dir = (() => {
+      const dx = target.x - eye.x;
+      const dz = target.z - eye.z;
+      const len = Math.hypot(dx, dz) || 1;
+      return { x: dx / len, z: dz / len };
+    })();
+    const side = { x: -dir.z, z: dir.x };
+    const probePoints = [];
+    for (let ahead = 2; ahead <= 34; ahead += 2) {
+      // A 5 m half-corridor: the ground a walking camera is actually on. A
+      // wider box would mostly sample building footprints and open lot, which
+      // no pedestrian way is supposed to pave.
+      for (let across = -5; across <= 5; across += 0.5) {
+        probePoints.push({
+          x: eye.x + dir.x * ahead + side.x * across,
+          z: eye.z + dir.z * ahead + side.z * across,
+        });
+      }
+    }
+    const withoutPaths = buildStreetSurfaceData(realCity, {
+      roadLift: Number(realCity.meta.streetDesign?.roadLift ?? 0.45),
+      gutterDepth: STREET_SURFACE_COUPLING.gutterDepth,
+      curbFaceHeight: realCurbFace,
+      heightAt: realHeightAt,
+      palette: 'sf',
+      inferNodes: true,
+      pavePedestrianWays: false,
+    });
+    const pavedLayers = ['carriageway', 'curbTop', 'sidewalk', 'ramp', 'path'];
+    const before = buildCoverageIndex(withoutPaths, pavedLayers);
+    const after = buildCoverageIndex(real, pavedLayers);
+    const share = (index) => probePoints.filter((p) => isCovered(index, p.x, p.z)).length / probePoints.length;
+    const beforeShare = share(before);
+    const afterShare = share(after);
+    console.log(`  ground the canyon card looks at (${probePoints.length} probes over the 34 m `
+      + `in front of the camera, 5 m either side): paved ${(beforeShare * 100).toFixed(1)}% before, `
+      + `${(afterShare * 100).toFixed(1)}% after`);
+    assert(beforeShare < 0.1,
+      `the round-2 defect is reproduced: that pose had almost no pavement in front of it `
+      + `(${(beforeShare * 100).toFixed(1)}%)`);
+    assert(afterShare > beforeShare + 0.2,
+      `pedestrian-way paving puts real surface under the canyon card `
+      + `(${(beforeShare * 100).toFixed(1)}% -> ${(afterShare * 100).toFixed(1)}%)`);
+  }
+}
+
+section('18. every lit material declares an environment class the grader knows');
+{
+  // WHY THIS IS STRUCTURAL AND NOT A ONE-LINE FIX.
+  //
+  // `CityRenderer.applyEnvironmentGrading` and the wet-weather grade only
+  // reach materials that declare `userData.envClass`. Rounds 1 and 2 shipped
+  // these three without one, so the largest surface in every frame got no
+  // environment map, no `envMapIntensity` and no rain response: card
+  // `05-wet-street.png` measures an Otsu separation of 8.7 over region
+  // [0,700,600,899] - one flat tone, no reflection, no darkening - on a card
+  // where drizzle was genuinely applied and the sky and fog did change.
+  //
+  // The class names are asserted against environment-ibl's OWN exported list,
+  // so renaming a class there fails here instead of silently dropping the road
+  // out of the grader's set again.
+  const built = buildStreetSurfaceV2(junctionCity('sig-1'));
+  const groups = Object.keys(STREET_SURFACE_V2_MESH_GROUPS);
+  for (const key of groups) {
+    assert(typeof STREET_SURFACE_V2_ENV_CLASSES[key] === 'string',
+      `mesh group '${key}' declares an environment class`);
+    assert(MATERIAL_CLASSES.includes(STREET_SURFACE_V2_ENV_CLASSES[key]),
+      `'${key}' -> '${STREET_SURFACE_V2_ENV_CLASSES[key]}' is a member of MATERIAL_CLASSES`);
+  }
+  let missing = 0;
+  let unknown = 0;
+  for (const [key, material] of Object.entries(built.materials)) {
+    const envClass = material.userData?.envClass;
+    if (!envClass) { missing += 1; continue; }
+    if (!MATERIAL_CLASSES.includes(envClass)) unknown += 1;
+    assert(envClass === STREET_SURFACE_V2_ENV_CLASSES[key],
+      `the built '${key}' material carries the declared class (${envClass})`);
+  }
+  assert(missing === 0, `every built material declares userData.envClass (${missing} missing)`);
+  assert(unknown === 0, `every declared class is known to the grader (${unknown} unknown)`);
+  assert(STREET_SURFACE_V2_ENV_CLASSES.carriageway === 'asphalt',
+    'the carriageway is graded as asphalt, which is what carries the wet-road response');
+  disposeStreetSurfaceV2(built);
+}
+
+section('19. footway and bank tone: the ground beside the walk is never the brighter thing');
+{
+  const luma = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  const hex = (h) => {
+    const n = parseInt(String(h).replace('#', ''), 16);
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  };
+  for (const name of Object.keys(STREET_SURFACE_V2_PALETTES)) {
+    const p = STREET_SURFACE_V2_PALETTES[name];
+    const footway = luma(hex(p.sidewalk));
+    const verge = luma(hex(p.verge));
+    const path = luma(hex(p.path));
+    // The bank grades from the cut edge of the slab down to open ground, so it
+    // must sit between the footway and the ground - never above the footway.
+    assert(verge < footway,
+      `${name}: the bank is darker than the footway it drops away from `
+      + `(${(verge * 255).toFixed(1)} < ${(footway * 255).toFixed(1)})`);
+    assert(path <= footway,
+      `${name}: plaza paving is no brighter than the street footway `
+      + `(${(path * 255).toFixed(1)} <= ${(footway * 255).toFixed(1)})`);
+    // The slab-edge blend at the top of the bank, as emitSegment computes it.
+    const edge = [0, 1, 2].map((i) => hex(p.sidewalk)[i] + (hex(p.verge)[i] - hex(p.sidewalk)[i]) * 0.5);
+    assert(luma(edge) < footway,
+      `${name}: the top of the bank is darker than the footway (${(luma(edge) * 255).toFixed(1)})`);
+  }
+
+  // The footway itself now varies. Round 2 emitted one constant colour for
+  // every footway vertex in the city, which measured as a single population
+  // (Otsu separation 9.0 over 54 000 pixels in `01-street-day`).
+  const cityA = straightCity();
+  const cityB = straightCity();
+  cityB.segments = cityB.segments.map((seg) => ({ ...seg, id: `${seg.id}-b`, streetId: `${seg.streetId}-b` }));
+  const dataA = buildStreetSurfaceData(cityA, { heightAt: () => 0 });
+  const dataB = buildStreetSurfaceData(cityB, { heightAt: () => 0 });
+  const tones = (d) => {
+    const layer = d.layers.sidewalk;
+    const set = new Set();
+    for (let i = 0; i < layer.colors.length; i += 3) {
+      set.add(`${layer.colors[i].toFixed(5)}|${layer.colors[i + 1].toFixed(5)}|${layer.colors[i + 2].toFixed(5)}`);
+    }
+    return set;
+  };
+  const toneSet = tones(dataA);
+  assert(toneSet.size >= 6,
+    `the footway carries more than one tone along a street (${toneSet.size} distinct vertex tones)`);
+  const spread = (() => {
+    const layer = dataA.layers.sidewalk;
+    let lo = 1;
+    let hi = 0;
+    for (let i = 0; i < layer.colors.length; i += 3) {
+      const l = luma([layer.colors[i], layer.colors[i + 1], layer.colors[i + 2]]);
+      if (l < lo) lo = l;
+      if (l > hi) hi = l;
+    }
+    return { lo, hi };
+  })();
+  console.log(`  footway vertex tone: ${(spread.lo * 255).toFixed(1)} .. ${(spread.hi * 255).toFixed(1)} `
+    + `(${toneSet.size} distinct tones on one fixture street)`);
+  assert((spread.hi - spread.lo) * 255 >= 4,
+    `the variation is large enough to see and small enough to stay concrete `
+    + `(${((spread.hi - spread.lo) * 255).toFixed(1)} luma)`);
+  assert((spread.hi - spread.lo) * 255 <= 30,
+    `the footway is still one material, not a patchwork (${((spread.hi - spread.lo) * 255).toFixed(1)} luma)`);
+  const same = buildStreetSurfaceData(straightCity(), { heightAt: () => 0 });
+  assert(JSON.stringify(same.layers.sidewalk.colors) === JSON.stringify(dataA.layers.sidewalk.colors),
+    'the footway tone is deterministic for a street id');
+  assert(JSON.stringify(dataB.layers.sidewalk.colors) !== JSON.stringify(dataA.layers.sidewalk.colors),
+    'a different street id gives a different pour');
+}
+
+section('20. the kerb profile at a corner is the one the module intends');
+{
+  // The round-2 reviewer read the corner in `01-street-day` as "a wide chamfer
+  // rather than a kerb". Measured here rather than argued: the exposed curb
+  // face and the curb top are emitted at exactly their declared dimensions,
+  // and the wide sloping surface at the corner is the KERB RAMP, which is
+  // supposed to be there and is 1.6 m along the kerb by 1.36 m deep.
+  const data = buildStreetSurfaceData(junctionCity('sig-1'), { heightAt: () => 0 });
+  const faceHeights = [];
+  const layer = data.layers.curbFace;
+  for (let i = 0; i < layer.indices.length; i += 3) {
+    const ys = [0, 1, 2].map((k) => layer.positions[layer.indices[i + k] * 3 + 1]);
+    faceHeights.push(Math.max(...ys) - Math.min(...ys));
+  }
+  const exposed = faceHeights.filter((h) => h > 1e-6);
+  const minFace = Math.min(...exposed);
+  const maxFace = Math.max(...exposed);
+  console.log(`  exposed curb face: ${minFace.toFixed(4)} .. ${maxFace.toFixed(4)} m over `
+    + `${exposed.length} triangles (declared ${O.curbFaceHeight} m, gutter ${O.gutterDepth} m)`);
+  assert(Math.abs(maxFace - (O.curbFaceHeight)) < 1e-6,
+    `the tallest curb face is exactly the declared exposed height (${maxFace.toFixed(4)} m)`);
+  assert(minFace > O.curbFaceHeight * 0.5,
+    `no curb face collapses to a chamfer anywhere on a junction (${minFace.toFixed(4)} m)`);
+  // The kerb ramp: what it really covers, so "wide chamfer" is answered with a
+  // number instead of an impression.
+  const rampReach = O.curbTopWidth + O.rampRun;
+  const rampWidth = O.rampWidth;
+  console.log(`  kerb ramp at a corner: ${rampWidth} m along the kerb by ${rampReach.toFixed(2)} m deep, `
+    + `dropping ${(O.curbFaceHeight).toFixed(3)} m from footway to gutter invert`);
+  assert(rampReach < 2.0 && rampWidth <= 2.0,
+    `the ramp is a ramp, not a chamfered corner (${rampWidth} m x ${rampReach.toFixed(2)} m)`);
+  assert(data.stats.ramps > 0, `the junction cuts kerb ramps (${data.stats.ramps})`);
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);

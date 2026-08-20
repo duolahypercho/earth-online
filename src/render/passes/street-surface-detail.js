@@ -71,6 +71,7 @@
 // variation is a string hash of a source id.
 
 import * as THREE from 'three';
+import { applyDetailMaps, uvScalePerMetre } from '../detail-maps.js';
 import {
   buildStreetscapePlan,
   sidewalkBand,
@@ -627,8 +628,21 @@ export function laneAssignment(node, approach) {
   return out;
 }
 
-/** Arrow outline(s) in approach-local (distance-back, lateral) coordinates. */
-function arrowShapes(movement, dTail, centre) {
+/**
+ * Arrow outline(s) in approach-local (distance-back, lateral) coordinates.
+ *
+ * ROUND 3 FIX. The turn barb used to run a fixed 1.5 m sideways and then put a
+ * 1.15 m arrow head beyond that, so on a narrow approach the head crossed the
+ * kerb line: on the shipped slice, `sf-seg-456` has half = 3.2 m and a single
+ * stopping lane centred at -1.6 m, which put the near-turn head at -4.25 m -
+ * 1.05 m onto the footway. That was 279 of 22 269 junction-paint vertices,
+ * every one of them at exactly that overshoot. The barb and its head are now
+ * fitted into whatever lateral room the carriageway actually has, and shrink
+ * together rather than the head being appended past the end.
+ *
+ * @param {number} half half the carriageway width of this approach, metres
+ */
+function arrowShapes(movement, dTail, centre, half) {
   const { arrowLength, arrowShaftWidth, arrowHeadWidth } = STREET_DETAIL_MARKINGS;
   const headLength = 1.15;
   const hw = arrowShaftWidth / 2;
@@ -653,7 +667,15 @@ function arrowShapes(movement, dTail, centre) {
     // A turn barb leaves the shaft, runs sideways, and ends in a head that
     // points across the carriageway.
     const barbD = wantsThrough ? dTail - 1.0 : dTail - (arrowLength - headLength);
-    const reach = wantsThrough ? 1.05 : 1.5;
+    const wantReach = wantsThrough ? 1.05 : 1.5;
+    // Room left on the turn side, inside the kerb line with the same 0.25 m
+    // inset a real lane line keeps.
+    const edge = Math.max(0.3, (Number.isFinite(half) ? half : Infinity) - 0.25);
+    const room = turn > 0 ? edge - centre : centre + edge;
+    const wanted = wantReach + headLength;
+    const fitted = Math.max(0.5, Math.min(wanted, room));
+    const head = Math.min(headLength, fitted * 0.45);
+    const reach = fitted - head;
     const vEnd = centre + turn * reach;
     if (!wantsThrough) {
       shapes.push([
@@ -668,7 +690,7 @@ function arrowShapes(movement, dTail, centre) {
     shapes.push([
       { d: barbD + arrowHeadWidth / 2, v: vEnd },
       { d: barbD - arrowHeadWidth / 2, v: vEnd },
-      { d: barbD, v: vEnd + turn * headLength },
+      { d: barbD, v: vEnd + turn * head },
     ]);
   }
   return shapes;
@@ -691,7 +713,23 @@ function emitJunctionPaint(state, node) {
     const u = approach.u;
     const m = perpCCW(u);
     const pos = node.position;
-    const at = (d, v) => ({ x: pos.x + u.x * d + m.x * v, z: pos.z + u.z * d + m.z * v });
+    // JUNCTION PAINT FOLLOWS THE CENTRELINE, NOT A RAY (round 3). See the
+    // matching note in street-surface-v2's `emitApproachPaint`. This pass has
+    // the worse case of the two: a lane arrow sits 14-25 m back from the node,
+    // so on a bending approach a straight extrapolation drifts by metres and
+    // stamps a carriageway arrow onto the footway. The arrow is now laid on
+    // the approach's own station frame. `v` is measured on the approach axis,
+    // so it flips sign at an end approach, where `u` is the reversed tangent.
+    const segment = approach.segment;
+    const lateralSign = approach.atStart ? 1 : -1;
+    const straightAt = (d, v) => ({ x: pos.x + u.x * d + m.x * v, z: pos.z + u.z * d + m.z * v });
+    const at = (d, v) => {
+      if (!segment || !Number.isFinite(segment.length)) return straightAt(d, v);
+      const station = approach.atStart ? d : segment.length - d;
+      const frame = streetStationAt(segment, station, true);
+      const lat = v * lateralSign;
+      return { x: frame.x + frame.nx * lat * frame.miter, z: frame.z + frame.nz * lat * frame.miter };
+    };
     const yAt = (p, v) => carriagewaySurfaceY(state.datum(p.x, p.z), v, half, o) + STREET_DETAIL_LIFTS.paint;
     const point = (d, v) => {
       const p = at(d, v);
@@ -818,11 +856,18 @@ function emitJunctionPaint(state, node) {
         const anchor = at(dTail, lane.centre);
         const emitted = emitItem(state, anchor.x, anchor.z, 'laneArrow', () => {
           const color = mix(fresh, worn, clamp(nodeWear * (0.6 + rng() * 0.5), 0, 1));
-          for (const shape of arrowShapes(lane.movement, dTail, lane.centre)) {
+          for (const shape of arrowShapes(lane.movement, dTail, lane.centre, half)) {
             pushFace(state.buffers.paint, shape.map((s) => point(s.d, s.v)), color, UP);
           }
         });
         if (emitted > 0) {
+          // The measured lateral extent of the arrow that was actually
+          // emitted, so a verifier asserts what is on the road rather than
+          // re-deriving it from the movement name.
+          let maxLateral = 0;
+          for (const shape of arrowShapes(lane.movement, dTail, lane.centre, half)) {
+            for (const s of shape) maxLateral = Math.max(maxLateral, Math.abs(s.v));
+          }
           state.records.laneArrows.push({
             nodeId: node.id,
             segmentId: approach.segmentId,
@@ -831,6 +876,7 @@ function emitJunctionPaint(state, node) {
             laneWidth: lane.width,
             centre: lane.centre,
             half,
+            maxLateral,
             dTail,
             x: anchor.x,
             z: anchor.z,
@@ -1573,12 +1619,21 @@ function segmentReach(state, segment) {
   return best;
 }
 
+/**
+ * `envClass` is a member of `MATERIAL_CLASSES` in src/render/environment-ibl.js
+ * and it is REQUIRED on every lit material this pass creates. The renderer's
+ * environment grading and the whole wet-weather response only reach materials
+ * that declare one; a material without a class gets no environment map, no
+ * `envMapIntensity` and no rain response, which is what left the road reading
+ * dry in the round-2 drizzle card. The verifier asserts every spec here
+ * declares a class the grader knows.
+ */
 const MATERIAL_SPECS = Object.freeze({
-  paint: { roughness: 0.58, metalness: 0, offset: [-4, -8], renderOrder: 3 },
-  wear: { roughness: 0.97, metalness: 0, offset: [-3, -6], renderOrder: 2 },
-  metal: { roughness: 0.6, metalness: 0.55, offset: [-4, -8], renderOrder: 3 },
-  concrete: { roughness: 0.93, metalness: 0, offset: [-3, -6], renderOrder: 2 },
-  dome: { roughness: 0.66, metalness: 0.1, offset: null, renderOrder: 0 },
+  paint: { roughness: 0.58, metalness: 0, offset: [-4, -8], renderOrder: 3, envClass: 'painted-metal' },
+  wear: { roughness: 0.97, metalness: 0, offset: [-3, -6], renderOrder: 2, envClass: 'asphalt' },
+  metal: { roughness: 0.6, metalness: 0.55, offset: [-4, -8], renderOrder: 3, envClass: 'painted-metal' },
+  concrete: { roughness: 0.93, metalness: 0, offset: [-3, -6], renderOrder: 2, envClass: 'sidewalk' },
+  dome: { roughness: 0.66, metalness: 0.1, offset: null, renderOrder: 0, envClass: 'painted-metal' },
 });
 
 function buildMeshes(state, group) {
@@ -1594,6 +1649,8 @@ function buildMeshes(state, group) {
         ? { polygonOffset: true, polygonOffsetFactor: spec.offset[0], polygonOffsetUnits: spec.offset[1] }
         : {}),
     });
+    material.userData = { envClass: spec.envClass };
+    material.name = `${STREET_DETAIL_ID}:${name}`;
     const mesh = new THREE.Mesh(bufferToGeometry(buffer), material);
     mesh.name = `${STREET_DETAIL_ID}:${name}`;
     mesh.renderOrder = spec.renderOrder;
@@ -1606,6 +1663,119 @@ function buildMeshes(state, group) {
     meshes.push({ name, triangles: buffer.triangles, drawCalls: 1 });
   }
   return meshes;
+}
+
+// ---------------------------------------------------------------------------
+// ground carpet dressing
+// ---------------------------------------------------------------------------
+
+/**
+ * The identity `src/world/ground-coverage.js` stamps on the carpet material.
+ * Kept as a literal rather than an import so this pass never depends on the
+ * world module's build succeeding; a missing carpet is simply not dressed.
+ */
+export const GROUND_CARPET_MATERIAL = Object.freeze({
+  source: 'ground-coverage-v1',
+  layer: 'ground-carpet',
+});
+
+/**
+ * Detail-map settings for the carpet. Deliberately weaker than the footway's:
+ * this is open ground seen at a grazing angle, so it wants a low-frequency
+ * roughness break-up and a shallow normal, not sidewalk relief.
+ */
+export const GROUND_DETAIL = Object.freeze({
+  // Metres of world per detail-map repeat. Coarser than the footway's 2.6 m
+  // tile because the carpet is yard, alley and open land, not slabs.
+  metresPerRepeat: 6.5,
+  normalScale: 0.55,
+  aoMapIntensity: 0.45,
+  roughness: 0.97,
+  resolution: 256,
+});
+
+/**
+ * Give the ground carpet the same class of surface response the paved surface
+ * has.
+ *
+ * WHY THIS LIVES HERE. `src/world/ground-coverage.js` is a world module and
+ * must not import a render module, and the renderer deliberately does not hand
+ * the carpet an albedo texture (its SF ground textures load lazily, so passing
+ * them at build time would texture the carpet on a rebuild and leave it bare
+ * on the first build - one city rendering two ways). The result measured in
+ * the round-2 capture was the only large surface in the world with no map of
+ * any kind: mean luma 209.6 in `01-street-day` against a footway at 184.5,
+ * Otsu separation 14.3 over a region that contains a surface boundary, and
+ * 16.5% of `03-canyon-golden` with nothing else under the camera at all.
+ *
+ * Normal / roughness / AO are DATA maps, not albedo, so they are stable
+ * whatever the lazy albedo load does, and applying them here is idempotent:
+ * the material records `detailApplied` and a second build skips it.
+ *
+ * @returns {{applied: boolean, reason?: string, class?: string, repeat?: object}}
+ */
+export function dressGroundCarpet(ctx) {
+  const root = ctx?.root;
+  if (!root || typeof root.getObjectByName !== 'function') {
+    return { applied: false, reason: 'no-root' };
+  }
+  const group = root.getObjectByName(GROUND_CARPET_MATERIAL.source);
+  if (!group) return { applied: false, reason: 'no-carpet' };
+  let material = null;
+  let mesh = null;
+  group.traverse((node) => {
+    if (material) return;
+    const candidate = Array.isArray(node.material) ? node.material[0] : node.material;
+    if (!candidate) return;
+    const identity = candidate.userData || {};
+    if (identity.source === GROUND_CARPET_MATERIAL.source
+      && identity.layer === GROUND_CARPET_MATERIAL.layer) {
+      material = candidate;
+      mesh = node;
+    }
+  });
+  if (!material) return { applied: false, reason: 'no-declared-material' };
+  if (material.userData.detailApplied) {
+    return { applied: false, reason: 'already-dressed', class: material.userData.detailClass };
+  }
+  if (!mesh?.geometry?.getAttribute?.('uv')) {
+    return { applied: false, reason: 'no-uv' };
+  }
+  const className = material.userData.detailClass || 'sidewalk-concrete';
+  const metres = Number(material.userData.uvMetersPerRepeat) || 8;
+  // The carpet bakes world-XZ UVs as x / `uvMetersPerRepeat`, so a UV unit is
+  // `metres` of world. To land one detail tile every
+  // GROUND_DETAIL.metresPerRepeat metres the texture repeat per UV unit is
+  // metres / target. (`uvScalePerMetre` is what the renderer uses for surfaces
+  // whose UVs are already in metres; it is recorded here for comparison, not
+  // used, because this surface states its own target tile size.)
+  const naturalTile = 1 / (uvScalePerMetre(className).x || 1);
+  const tile = GROUND_DETAIL.metresPerRepeat;
+  const perUv = metres / tile;
+  const repeat = { x: perUv, y: perUv };
+  try {
+    applyDetailMaps(material, className, {
+      resolution: GROUND_DETAIL.resolution,
+      repeat,
+      useMetalnessMap: false,
+      normalScale: GROUND_DETAIL.normalScale,
+      aoMapIntensity: GROUND_DETAIL.aoMapIntensity,
+      roughnessScale: GROUND_DETAIL.roughness,
+    });
+  } catch (error) {
+    return { applied: false, reason: `detail-maps-failed: ${String(error?.message || error)}` };
+  }
+  material.metalness = 0;
+  material.userData.detailApplied = true;
+  material.userData.detailRepeat = repeat;
+  return {
+    applied: true,
+    class: className,
+    repeat: { x: +repeat.x.toFixed(3), y: +repeat.y.toFixed(3) },
+    metresPerRepeat: tile,
+    classNaturalTileMetres: +naturalTile.toFixed(3),
+    uvMetersPerRepeat: metres,
+  };
 }
 
 export function buildStreetSurfaceDetail(ctx, overrides = {}) {
@@ -1628,8 +1798,18 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
     if (distance > farRadius + 60) { reject(state, 'node', 'out-of-range'); continue; }
     state.source = { kind: 'node', id: node.id };
     emitJunctionPaint(state, node);
-    if (distance <= midRadius + 40) emitNodeDrainage(state, node);
-    if (distance <= midRadius + 40) emitRampPads(state, node);
+    // ROUND 3 CORRECTION. These two were gated on `midRadius + 40` while their
+    // features are declared in EVERY ring, so with the shipped build focus
+    // (which is the pre-reframe startup camera, see the ring note above) no
+    // corner in the captured window got a detectable-warning pad and no
+    // junction got a kerb inlet. Measured on the round-2 capture, the corner
+    // in `01-street-day` is a bare 1.6 m x 1.36 m kerb ramp with no pad on it,
+    // which is what makes it read as a chamfer rather than a ramp. A ring may
+    // set the level of detail; it may not decide that a structural item does
+    // not exist. The ring feature sets already do the right thing here:
+    // `rampDome` is near-only, `rampPad` and `inlet` are everywhere.
+    if (distance <= farRadius) emitNodeDrainage(state, node);
+    if (distance <= farRadius) emitRampPads(state, node);
   }
 
   for (const segment of plan.segments) {
@@ -1643,6 +1823,8 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
   }
 
   emitDriveways(state, buildHostIndex(plan));
+
+  const groundDressing = dressGroundCarpet(ctx);
 
   const group = new THREE.Group();
   group.name = STREET_DETAIL_ID;
@@ -1688,6 +1870,7 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
     sourceNodeCount: nodeIds.length,
     buildMs: Date.now() - startedAt,
   };
+  diagnostics.groundDressing = groundDressing;
   diagnostics.markings = {
     crossings: state.records.crossings.length,
     stopBars: state.records.stopBars.length,

@@ -77,7 +77,9 @@ globalThis.fetch = async (url) => {
 };
 
 const { loadSfData } = await import(path.join(ROOT, 'src/citygen/sf-data.js'));
-const { buildStreetSurfaceData } = await import(path.join(ROOT, 'src/world/streets/street-surface-v2.js'));
+const streetMod = await import(path.join(ROOT, 'src/world/streets/street-surface-v2.js'));
+const { buildStreetSurfaceData, STREET_SURFACE_V2_PALETTES } = streetMod;
+const { MATERIAL_CLASSES } = await import(path.join(ROOT, 'src/render/environment-ibl.js'));
 const mod = await import(path.join(ROOT, 'src/world/ground-coverage.js'));
 
 const {
@@ -1022,6 +1024,138 @@ section('5. horizon reach: every below-horizon ray lands on ground');
     `the apron reaches past the far plane from the worst corner of the window (${data.options.horizonRadius} m)`);
   assert(data.stats.triangles <= mod.GROUND_COVERAGE_BUDGET.maxTriangles,
     `extending the apron cost no budget (${data.stats.triangles} <= ${mod.GROUND_COVERAGE_BUDGET.maxTriangles} triangles)`);
+}
+
+
+// ---------------------------------------------------------------------------
+section('8. tone: the carpet reads as ground, not as the brightest thing in frame');
+// ---------------------------------------------------------------------------
+{
+  // THE ROUND-2 DEFECT, measured on the shipped capture set:
+  //   01-street-day  region [1200,500,1580,700] mean luma 209.6, against a
+  //                  footway at 184.5 in [850,700,1150,880];
+  //   06-night-street region [1150,480,1350,620] mean luma 80.5, against a
+  //                  footway at 62.1 - the brightest ground in a night frame;
+  //   03-canyon-golden 16.5% of the frame, with no paved surface anywhere in
+  //                  the lower half, so the card's whole ground was this.
+  //
+  // The rule, asserted against the STREET module's own palette rather than a
+  // copied number, so changing a hex there without changing one here fails:
+  // no ground tone may be lighter than the footway it lies beside, and none
+  // may be lighter than the verge that grades down onto it.
+  const luma = (hex) => {
+    const n = parseInt(String(hex).replace('#', ''), 16);
+    return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  };
+  for (const name of Object.keys(mod.GROUND_COVERAGE_PALETTES)) {
+    const ground = mod.GROUND_COVERAGE_PALETTES[name];
+    const street = STREET_SURFACE_V2_PALETTES[name];
+    assert(street, `ground palette '${name}' has a matching street palette to be measured against`);
+    if (!street) continue;
+    const footway = luma(street.sidewalk);
+    const verge = luma(street.verge);
+    let brightest = 0;
+    let brightestName = '';
+    for (const key of mod.GROUND_COVERAGE_LAND_CLASSES) {
+      if (!ground[key]) continue;
+      const l = luma(ground[key]);
+      if (l > brightest) { brightest = l; brightestName = key; }
+    }
+    console.log(`  ${name}: brightest ground tone '${brightestName}' ${(brightest * 255).toFixed(1)}, `
+      + `footway ${(footway * 255).toFixed(1)}, verge ${(verge * 255).toFixed(1)}`);
+    assert(brightest <= footway,
+      `${name}: no ground tone is lighter than the street footway `
+      + `(${(brightest * 255).toFixed(1)} <= ${(footway * 255).toFixed(1)})`);
+    assert(brightest <= verge,
+      `${name}: no ground tone is lighter than the verge that grades onto it `
+      + `(${(brightest * 255).toFixed(1)} <= ${(verge * 255).toFixed(1)})`);
+  }
+
+  // The same rule on the buffer that actually ships, not just on the palette,
+  // so a regression in the mixing is caught as well as one in a hex.
+  const footwayLuma = (() => {
+    const n = parseInt(STREET_SURFACE_V2_PALETTES.sf.sidewalk.replace('#', ''), 16);
+    return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  })();
+  console.log(`  emitted vertex tone: min ${(s.tone.minLuma * 255).toFixed(1)} `
+    + `mean ${(s.tone.meanLuma * 255).toFixed(1)} max ${(s.tone.maxLuma * 255).toFixed(1)} `
+    + `(spread ${(s.tone.spread * 255).toFixed(1)})`);
+  assert(s.tone.maxLuma <= footwayLuma,
+    `the brightest vertex the carpet emits is still no lighter than the footway `
+    + `(${(s.tone.maxLuma * 255).toFixed(1)} <= ${(footwayLuma * 255).toFixed(1)})`);
+  assert(s.tone.maxLuma <= footwayLuma * 0.72,
+    `the carpet is toned clearly BELOW the footway, not merely level with it `
+    + `(${(s.tone.maxLuma * 255).toFixed(1)} <= ${(footwayLuma * 0.72 * 255).toFixed(1)})`);
+
+  // It is not one flat fill. Round 2's only variation was a +/-2.5% per-vertex
+  // hash, which is invisible; the mottling field has to produce a real spread.
+  assert(s.tone.spread * 255 >= 12,
+    `the carpet carries real tonal variation across the slice `
+    + `(${(s.tone.spread * 255).toFixed(1)} luma of spread over ${s.vertices} vertices)`);
+  // And the variation is spatial, not just per-vertex noise: neighbouring
+  // vertices must correlate, or the carpet is speckle rather than mottling.
+  {
+    const xs = data.grid.xs;
+    const zs = data.grid.zs;
+    const nx = xs.length;
+    const toneAt = (i, j) => {
+      const k = j * nx + i;
+      return 0.2126 * data.colors[k * 3] + 0.7152 * data.colors[k * 3 + 1] + 0.0722 * data.colors[k * 3 + 2];
+    };
+    let neighbour = 0;
+    let distant = 0;
+    let samples = 0;
+    for (let j = 8; j < zs.length - 8; j += 3) {
+      for (let i = 8; i < nx - 8; i += 3) {
+        neighbour += Math.abs(toneAt(i, j) - toneAt(i + 1, j));
+        distant += Math.abs(toneAt(i, j) - toneAt(i + 7, j));
+        samples += 1;
+      }
+    }
+    const near = neighbour / samples;
+    const far = distant / samples;
+    console.log(`  mean |tone difference|: adjacent vertices ${(near * 255).toFixed(2)}, `
+      + `seven cells apart ${(far * 255).toFixed(2)}`);
+    assert(far > near * 1.25,
+      `tone varies over distance rather than pixel to pixel `
+      + `(${(far * 255).toFixed(2)} at 7 cells vs ${(near * 255).toFixed(2)} adjacent)`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+section('9. material identity: the carpet declares what it is and what it needs');
+// ---------------------------------------------------------------------------
+{
+  const built = mod.buildGroundCoverage(city, { heightAt });
+  const identity = built.material.userData;
+  // Identity. A future change that swaps this surface for something else, or
+  // quietly drops its dressing request, has to change these too - and the
+  // street-surface-detail pass finds the material by exactly this pair.
+  assert(identity.source === GROUND_COVERAGE_ID,
+    `the material names its source (${identity.source})`);
+  assert(identity.layer === 'ground-carpet',
+    `the material names its layer, so it cannot be confused with the footway (${identity.layer})`);
+  assert(mod.GROUND_COVERAGE_MATERIAL.source === GROUND_COVERAGE_ID
+    && mod.GROUND_COVERAGE_MATERIAL.layer === 'ground-carpet',
+    'the exported identity matches the material the module builds');
+  assert(identity.tonePolicy === 'never-lighter-than-footway-or-verge',
+    `the material records the tone rule its palette was chosen under (${identity.tonePolicy})`);
+  // Dressing request. The renderer deliberately gives this surface no albedo
+  // texture; without a detail-map class it is the only large surface in the
+  // world with no map of any kind, which is how it became a flat card.
+  assert(typeof identity.detailClass === 'string' && identity.detailClass.length > 0,
+    `the material requests a detail-map class (${identity.detailClass})`);
+  assert(identity.detailApplied === false,
+    'the material starts undressed and records when a pass has dressed it, so dressing is idempotent');
+  assert(Number.isFinite(identity.uvMetersPerRepeat) && identity.uvMetersPerRepeat > 0,
+    `the material publishes its UV scale so a pass can compute a repeat (${identity.uvMetersPerRepeat} m)`);
+  // Environment class. Without this the renderer's grading and the whole
+  // wet-weather response never reach 8-17% of a captured frame.
+  assert(MATERIAL_CLASSES.includes(identity.envClass),
+    `the material declares an environment class the grader knows (${identity.envClass})`);
+  assert(identity.envClass === mod.GROUND_COVERAGE_MATERIAL.envClass,
+    'the built material carries the exported environment class');
+  mod.disposeGroundCoverage(built);
 }
 
 // ---------------------------------------------------------------------------
