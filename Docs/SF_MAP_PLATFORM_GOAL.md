@@ -6,8 +6,8 @@ Status: active project direction (2026-08-12)
 
 Build a visually exceptional, explorable, low-poly 3D model of the entire city
 of San Francisco at 1:1 metric scale. Use real San Francisco as the geographic
-authority, an AAA open-world city game as the city-specific reference, recent AAA open-world cities as
-references for density and coherence, and
+authority, external AAA open-world city presentation as the reference for
+density and coherence, and
 [`StarKnightt/night-street`](https://github.com/StarKnightt/night-street) as a
 reference for procedural Three.js street construction, materials, atmosphere,
 and measurement-led visual verification.
@@ -142,9 +142,10 @@ Every published tile must prove:
 - Apple Metal application p99 frame time at or below 16.67 ms in the declared
   density scenario, with zero console, page, network, or request failures.
 
-Visual reviews compare matched cameras against rights-cleared real SF imagery,
-an AAA open-world city game, and recent AAA open-world city presentation. Reference games guide density,
-composition, and atmosphere; real-world data remains the geographic authority.
+Visual reviews compare matched cameras against rights-cleared real SF imagery
+and the rubric in `Docs/VISUAL_QUALITY_GATE.md`. External references guide
+density, composition, and atmosphere; real-world data remains the geographic
+authority. Per `CLAUDE.md`, no third-party commercial product is named in-repo.
 
 ## First milestones
 

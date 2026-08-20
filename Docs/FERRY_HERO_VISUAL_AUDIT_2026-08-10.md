@@ -6,7 +6,7 @@
 
 **Launch:** `realmap.html?place=ferry-building&mode=walk`
 
-**Gate:** [`Docs/GTA_VISUAL_QUALITY_GATE.md`](GTA_VISUAL_QUALITY_GATE.md)
+**Gate:** [`Docs/VISUAL_QUALITY_GATE.md`](VISUAL_QUALITY_GATE.md)
 
 **Independent verdict:** **REJECT — 29.6/100**
 

@@ -39,3 +39,10 @@ Data/raw/datasf/
 # Local QA / session artifacts
 tmp/
 sessions/
+
+# Claude Code local notes, reviewer term lists, machine-specific paths
+.claude/
+
+# Local-only benchmark/reviewer material must never be committed
+*.local.md
+benchmark-local/
