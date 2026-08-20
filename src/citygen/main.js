@@ -1603,6 +1603,8 @@ async function boot() {
         verifiedTiles: state.metricMap.records.length,
       } : null,
       errors: state.errors,
+      // Presentation-pass evidence: what was built, what it cost, what failed.
+      passes: state.renderer?.passDiagnostics || null,
       mode: () => state.mode,
       interior: Boolean(state.interiors.active),
       interiorBuildingId: state.interiors.active?.buildingId || null,

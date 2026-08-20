@@ -45,6 +45,8 @@ import {
   createCrowdPresentation,
   PEDESTRIAN_PRESENTATION_VERSION,
 } from '../simulation/pedestrians/pedestrian-presentation.js';
+import { createPassRuntime } from '../render/pass-registry.js';
+import { PASSES } from '../render/passes/index.js';
 
 const PALETTES = Object.freeze({
   painted: ['#c96b66', '#5f93a2', '#d4ad61', '#7486a8', '#c88455', '#89a876', '#b87892'],
@@ -2071,9 +2073,59 @@ export class CityRenderer {
     this.rim.position.set(320, 240, -260);
     this.scene.add(this.rim);
 
+    // Presentation passes are built after the world exists and are the only
+    // sanctioned place for new scene content that is not owned by a legacy
+    // renderer method. See src/render/pass-registry.js.
+    this.passRuntime = createPassRuntime(PASSES);
+    this.passDiagnostics = this.passRuntime.diagnostics;
+    this.passContext = null;
+
     this.onResize = this.resize.bind(this);
     window.addEventListener('resize', this.onResize);
     this.resize();
+  }
+
+  /**
+   * The read-only view of the world a presentation pass is allowed to see.
+   * Rebuilt per city so a pass can never hold a stale root or terrain.
+   */
+  createPassContext(root, city) {
+    const renderer = this;
+    return {
+      root,
+      city,
+      scene: this.scene,
+      camera: this.camera,
+      renderer: this.renderer,
+      rendererBackend: this.rendererBackend,
+      terrain: this.terrain,
+      heightAt: (x, z) => (this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0),
+      isSanFrancisco: isSanFranciscoCity(city),
+      seed: Number(city?.meta?.seedInt || 1),
+      rng: (label) => mulberry32(hashString(`${city?.meta?.seed || 'city'}:${label}`)),
+      focus: this.buildFocus,
+      get hour() { return renderer.timeOfDay; },
+      get weather() { return renderer.envWeather; },
+      get day() { return renderer.day; },
+      /** Keep a geometry on the renderer's disposal ledger. */
+      registerGeometry: (geometry) => {
+        if (geometry) this.geometryCache.push(geometry);
+        return geometry;
+      },
+      /** Find a legacy renderer-owned group by name, e.g. 'sidewalk-props'. */
+      legacyGroup: (name) => root.getObjectByName(name) || null,
+    };
+  }
+
+  buildPresentationPasses(root, city) {
+    this.passContext = this.createPassContext(root, city);
+    const diagnostics = this.passRuntime.build(this.passContext);
+    if (diagnostics.errors.length) {
+      for (const error of diagnostics.errors) {
+        console.warn(`[pass:${error.id}] ${error.phase} failed: ${error.message}`);
+      }
+    }
+    return diagnostics;
   }
 
   async initialize() {
@@ -2323,6 +2375,8 @@ export class CityRenderer {
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
+    this.passRuntime.dispose();
+    this.passContext = null;
     disposeGroundCoverage(this.groundCoverage);
     this.groundCoverage = null;
     this.disposeCrowdPresentation();
@@ -2517,6 +2571,10 @@ export class CityRenderer {
     this.buildShopAwnings(root, city);
     this.installLocalLightPool(root);
 
+    // Registered presentation passes see the finished world and add their own
+    // content before the shadow policy pass gets the final word.
+    this.buildPresentationPasses(root, city);
+
     // Last pass over the finished city: decide, per mesh, whether it is thick
     // enough for the shadow map to resolve. Everything above this line has
     // already written its own `castShadow`; this is the single place that gets
@@ -2576,6 +2634,8 @@ export class CityRenderer {
   clearCity() {
     // Everything this renderer allocates through a module goes back through
     // the same path the rest of the dynamic scene uses.
+    this.passRuntime.dispose();
+    this.passContext = null;
     disposeGroundCoverage(this.groundCoverage);
     this.groundCoverage = null;
     this.groundCoverageDiagnostics = { pass: GROUND_COVERAGE_PASS, built: false, drawCalls: 0, triangles: 0, stats: null };
@@ -8387,6 +8447,7 @@ export class CityRenderer {
       this.updateCrowdPresentation(traffic, delta);
     }
     if (players) players.update(delta);
+    if (this.passContext) this.passRuntime.update(this.passContext, delta);
     if (this.water && this.water.material) {
       const wave = Math.sin(this.phaseClock * 0.6) * 0.05;
       this.water.position.y = 0.45 + wave;

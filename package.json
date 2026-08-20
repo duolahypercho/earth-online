@@ -183,7 +183,8 @@
     "qa:interior-visual": "node scripts/qa-interior-variants.mjs",
     "qa:npc-anim": "node scripts/qa-npc-animation.mjs",
     "qa:junction-sbs": "node scripts/qa-junction-sbs.mjs",
-    "probe:realmap-drive": "node scripts/probe-realmap-drive.mjs"
+    "probe:realmap-drive": "node scripts/probe-realmap-drive.mjs",
+    "verify:passes": "node scripts/verify/verify-pass-registry.mjs"
   },
   "dependencies": {
     "three": "0.180.0",
