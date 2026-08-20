@@ -35,6 +35,7 @@ import {
   FACADE_ARTICULATION_RINGS,
   FACADE_ARTICULATION_RING_ORDER,
   FACADE_ARTICULATION_VERSION,
+  FACADE_GLASS_MATERIAL,
   FACADE_MATERIAL_CLASSES,
   articulationLevels,
   articulationTriangleCap,
@@ -42,6 +43,7 @@ import {
   disposeFacadeArticulation,
   drawArticulationVariant,
   facadeArticulationSignature,
+  facadeFootprintMetrics,
   planFacadeArticulation,
   resolveArticulationClass,
 } from '../../src/world/buildings/facade-depth.js';
@@ -290,7 +292,8 @@ let blockDiagnostics = null;
   for (const required of [
     'window-reveal', 'window-frame', 'window-pane', 'mullion',
     'sill', 'lintel', 'drip', 'cornice', 'coping', 'parapet',
-    'plinth', 'bulkhead', 'shop-glazing-pane', 'entry', 'door', 'fascia',
+    'plinth', 'bulkhead', 'shop-glazing-reveal', 'shop-fitting', 'shop-valance',
+    'entry', 'door', 'fascia', 'blind', 'curtain',
   ]) {
     assert((parts[required] || 0) > 0, `elevation carries ${required} (${parts[required] || 0} quads)`);
   }
@@ -1006,6 +1009,80 @@ const BUILD_FOCUS = { x: 1600, z: 400 };
     `real polygons: nothing is built behind the shell wall (deepest ${(-worstInside).toFixed(5)} m behind its own wall)`,
   );
 
+  // Party-wall handling on real, messy footprints. The probe now needs a
+  // majority of its samples buried before it calls an edge a party wall --
+  // a single hit used to blank a whole tower frontage -- so an edge that only
+  // partly abuts a neighbour keeps its cladding, and that cladding reaches
+  // into the neighbour's own mass where they overlap. That is invisible (it is
+  // inside the neighbour) but it is not zero, so it is measured, not claimed.
+  {
+    const cell = 44;
+    const grid = new Map();
+    for (const building of REAL) {
+      const metrics = facadeFootprintMetrics(building);
+      if (!metrics.centroid) continue;
+      const key = `${Math.floor(metrics.centroid.x / cell)}:${Math.floor(metrics.centroid.z / cell)}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push({ building, centroid: metrics.centroid });
+    }
+    let worstIntrusion = 0;
+    let intruding = 0;
+    let checked = 0;
+    for (const record of batch.buildings.slice(0, 200)) {
+      const source = REAL.find((b) => b.id === record.id);
+      const metrics = facadeFootprintMetrics(source);
+      if (!metrics.centroid) continue;
+      const plan = planFacadeArticulation(source, { ring: record.ring, baseY: 0 });
+      if (plan.skipped) continue;
+      checked += 1;
+      const cx = Math.floor(metrics.centroid.x / cell);
+      const cz = Math.floor(metrics.centroid.z / cell);
+      let excess = 0;
+      for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dz = -1; dz <= 1; dz += 1) {
+          for (const other of grid.get(`${cx + dx}:${cz + dz}`) || []) {
+            if (other.building.id === source.id) continue;
+            // The source footprints themselves overlap on real OSM data, so
+            // the honest question is not "is my geometry inside the
+            // neighbour" -- the shell already is -- but "does it go any
+            // deeper than the shell it is cladding".
+            // Baseline is the shell WALL, sampled along the boundary, because
+            // that is the surface the cladding is an outward offset of.
+            let baseline = 0;
+            for (let e = 0; e < plan.polygon.length; e += 1) {
+              const a = plan.polygon[e];
+              const b = plan.polygon[(e + 1) % plan.polygon.length];
+              for (let t = 0; t <= 40; t += 1) {
+                const px = a.x + ((b.x - a.x) * t) / 40;
+                const pz = a.z + ((b.z - a.z) * t) / 40;
+                if (!pointInPolygon(px, pz, other.building.polygon)) continue;
+                baseline = Math.max(baseline, distanceToBoundary(px, pz, other.building.polygon));
+              }
+            }
+            let deepest = 0;
+            forEachVertex(plan, (x, _y, z) => {
+              if (!pointInPolygon(x, z, other.building.polygon)) return;
+              deepest = Math.max(deepest, distanceToBoundary(x, z, other.building.polygon));
+            });
+            excess = Math.max(excess, deepest - baseline);
+          }
+        }
+      }
+      if (excess > 1e-6) intruding += 1;
+      worstIntrusion = Math.max(worstIntrusion, excess);
+    }
+    // The bound is the allowance measured round a corner. A cornice wrapping a
+    // right-angle corner is legitimately `allowance * sqrt(2)` from that
+    // corner -- the same geometric fact section 5 measures -- so that, not the
+    // flat allowance, is the honest ceiling for a distance-to-polygon ruler.
+    const cornerBound = FACADE_ARTICULATION_GEOMETRY.maxProjection * Math.SQRT2;
+    assert(
+      worstIntrusion <= cornerBound + 1e-6,
+      `real corpus: cladding never reaches deeper into a neighbour than its own shell already does, plus the allowance measured round a corner (${worstIntrusion.toFixed(3)} m excess, bound ${cornerBound.toFixed(3)} m, over ${checked} buildings)`,
+    );
+    notes.push(`      neighbour reach on real footprints (source polygons already overlap): ${intruding}/${checked} buildings add any depth, worst excess ${worstIntrusion.toFixed(3)} m over the shell (allowance ${FACADE_ARTICULATION_GEOMETRY.maxProjection} m)`);
+  }
+
   notes.push(`      real corpus @ capture eye: ${batch.triangles} tri, ${batch.drawCalls} draws, ${buildMs} ms, demotions ${batch.demotions}`);
   notes.push(`      rings: ${FACADE_ARTICULATION_RING_ORDER.map((name) => `${name}=${batch.rings[name].buildings}/${batch.rings[name].triangles}`).join(' ')}`);
   notes.push(`      openings ${batch.openings}, storey bands ${batch.bands}, party edges ${batch.partyEdges}`);
@@ -1083,6 +1160,288 @@ section('13. the real corpus through the pass, end to end');
   runtime.dispose();
   assert(legacy.visible === true, 'dispose restores the relief it superseded');
   assert(root.children.length === 2, `dispose leaves only the pre-existing content (${root.children.length})`);
+}
+
+// ---------------------------------------------------------------------------
+section('14. glass behaves like glass, not like a hole');
+// ---------------------------------------------------------------------------
+
+{
+  // Round 1 shipped glass at metalness 0.26-0.42 with a dark base colour.
+  // That combination kills the diffuse term AND tints the specular by the same
+  // dark colour, so every pane was black: a pure black hole at golden hour and
+  // a two-storey black band in daylight. Glass is a dielectric.
+  assert(
+    FACADE_GLASS_MATERIAL.metalness <= 0.02,
+    `glass is a dielectric so the environment reflection is Fresnel-weighted, not a dark tinted metal (metalness ${FACADE_GLASS_MATERIAL.metalness})`,
+  );
+  assert(FACADE_GLASS_MATERIAL.roughness <= 0.15, `glass is smooth (roughness ${FACADE_GLASS_MATERIAL.roughness})`);
+  assert(FACADE_GLASS_MATERIAL.nightEmissiveIntensity > 0, 'the lit bucket has a night intensity to drive');
+
+  // The pane carries a sky-to-interior ramp, measured off the vertex colours.
+  const plan = planFacadeArticulation(BLOCK[6], { ring: 'near', baseY: 0 });
+  const panes = plan.quads.filter((quad) => quad.part === 'window-pane');
+  assert(panes.length > 0, `panes were built (${panes.length})`);
+  assert(panes.every((quad) => Array.isArray(quad.grad)), 'every pane carries a vertical ramp');
+  const ramped = panes.filter((quad) => Math.abs(quad.grad[0] - quad.grad[1]) > 0.05).length;
+  assert(ramped === panes.length, `every pane's ramp is non-trivial (${ramped}/${panes.length})`);
+  assert(panes.every((quad) => quad.grad[0] > quad.grad[1]), 'the ramp is brighter at the top: a pane reflects the sky above the canyon, not the pavement');
+
+  // And no pane is black. Measured in the geometry the renderer will draw.
+  const batch = buildFacadeArticulationBatch(BLOCK, { focus: { x: 140, z: -18 } });
+  let darkest = Infinity;
+  let paneVertices = 0;
+  for (const group of batch.groups) {
+    if (group.role !== 'glass' && group.role !== 'glass-lit') continue;
+    const colours = group.geometry.getAttribute('color').array;
+    for (let i = 0; i < colours.length; i += 3) {
+      paneVertices += 1;
+      darkest = Math.min(darkest, colours[i] + colours[i + 1] + colours[i + 2]);
+    }
+  }
+  assert(paneVertices > 0, `pane vertices measured: ${paneVertices}`);
+  assert(darkest > 0.02, `no pane vertex is black (darkest luminance sum ${darkest.toFixed(4)})`);
+  notes.push(`      darkest pane vertex (linear r+g+b): ${darkest.toFixed(4)} over ${paneVertices} vertices`);
+  disposeFacadeArticulation(batch);
+}
+
+// ---------------------------------------------------------------------------
+section('15. what is behind the pane varies per opening');
+// ---------------------------------------------------------------------------
+
+{
+  const plan = planFacadeArticulation(BLOCK[6], { ring: 'near', baseY: 0 });
+  const parts = plan.parts;
+  assert((parts.blind || 0) > 0, `blinds are hung in some openings (${parts.blind || 0})`);
+  assert((parts.curtain || 0) > 0, `curtains are hung in some openings (${parts.curtain || 0})`);
+
+  // Panes must not all land in one bucket, and must not all land in different
+  // ones either -- a facade where every window is unique reads as noise.
+  const batch = buildFacadeArticulationBatch(BLOCK, { focus: { x: 140, z: -18 } });
+  const roles = new Set(batch.groups.map((group) => group.role));
+  for (const role of ['structure', 'glass', 'glass-lit', 'frame', 'interior']) {
+    assert(roles.has(role), `the city builds the ${role} bucket`);
+  }
+  const lit = batch.groups.filter((group) => group.role === 'glass-lit').reduce((sum, group) => sum + group.quads, 0);
+  const plain = batch.groups.filter((group) => group.role === 'glass').reduce((sum, group) => sum + group.quads, 0);
+  const litShare = lit / Math.max(1, lit + plain);
+  assert(litShare > 0.03 && litShare < 0.6, `lit interiors are a minority, not a switch (${(litShare * 100).toFixed(1)}% of panes)`);
+  notes.push(`      panes: ${plain} unlit, ${lit} lit (${(litShare * 100).toFixed(1)}%), ${batch.parts.blind || 0} blinds, ${batch.parts.curtain || 0} curtains`);
+
+  // Shopfronts get a different treatment from an upper-storey window.
+  assert((batch.parts['shop-fitting'] || 0) > 0, `shopfronts carry fittings behind the glass (${batch.parts['shop-fitting'] || 0})`);
+  assert((batch.parts['shop-valance'] || 0) > 0, `shopfronts carry a lit valance (${batch.parts['shop-valance'] || 0})`);
+  disposeFacadeArticulation(batch);
+
+  // Determinism: the same opening keeps its blinds.
+  const again = planFacadeArticulation(BLOCK[6], { ring: 'near', baseY: 0 });
+  const key = (p) => p.quads.filter((q) => q.part === 'blind' || q.part === 'curtain').map((q) => q.positions.map((n) => Math.round(n * 1000)).join(',')).join('|');
+  assert(key(plan) === key(again), 'blinds and curtains are deterministic for a building');
+}
+
+// ---------------------------------------------------------------------------
+section('16. an elevation varies against itself, not just against its neighbours');
+// ---------------------------------------------------------------------------
+
+{
+  const tall = {
+    id: 'sf-building-vertical-1',
+    material: 'concrete',
+    type: 'office',
+    height: 118,
+    levels: 33,
+    polygon: rect(0, 0, 30, 24),
+  };
+  const plan = planFacadeArticulation(tall, { ring: 'near', baseY: 0 });
+  assert(!plan.skipped, `the tall fixture plans (${plan.skipped})`);
+  const registers = Object.keys(plan.features).filter((k) => k.startsWith('register-'));
+  assert(registers.includes('register-crown'), `the top of a tall elevation is a crown, not more shaft (${registers.join(' ')})`);
+  assert(registers.length >= 2, `a tall elevation carries several registers (${registers.join(' ')})`);
+  // The mezzanine is a per-building draw, not a rule, so it is asserted over a
+  // population rather than on one fixture.
+  let mezzanines = 0;
+  for (let i = 0; i < 24; i += 1) {
+    const sample = planFacadeArticulation({ ...tall, id: `sf-building-vertical-m${i}` }, { ring: 'near' });
+    if (Object.keys(sample.features).includes('register-mezzanine')) mezzanines += 1;
+  }
+  assert(mezzanines >= 4 && mezzanines <= 20, `a mezzanine is a per-building draw, not a rule (${mezzanines}/24 buildings)`);
+  assert((plan.parts.louvre || 0) > 0, `a tall building has a plant floor with louvres (${plan.parts.louvre || 0})`);
+  assert((plan.parts['string-course'] || 0) > 0, `a string course separates the shaft from the crown (${plan.parts['string-course'] || 0})`);
+  assert((plan.parts['bay-pier'] || 0) > 0, `the banded shaft carries continuous bay piers (${plan.parts['bay-pier'] || 0})`);
+  notes.push(`      118 m fixture registers: ${registers.map((k) => `${k.slice(9)}=${plan.features[k]}`).join(' ')}`);
+
+  // Weathering accumulates downward: the same detail is dirtier lower down.
+  const sills = plan.quads.filter((quad) => quad.part === 'sill');
+  assert(sills.length > 4, `sills measured (${sills.length})`);
+  const low = sills.filter((q) => q.positions[1] < plan.height * 0.25);
+  const high = sills.filter((q) => q.positions[1] > plan.height * 0.5);
+  if (low.length && high.length) {
+    const mean = (list) => list.reduce((s, q) => s + q.soffit, 0) / list.length;
+    assert(mean(low) > mean(high), `sill grime accumulates downward (low ${mean(low).toFixed(3)} > high ${mean(high).toFixed(3)})`);
+  } else {
+    assert(true, 'sill height spread too narrow on this fixture to compare grime');
+  }
+
+  // Storeys are not copies of each other.
+  const rowsBySill = new Map();
+  for (const quad of plan.quads) {
+    if (quad.part !== 'window-pane') continue;
+    const y = Math.round(Math.min(quad.positions[1], quad.positions[4], quad.positions[7], quad.positions[10]) * 10);
+    const sig = `${quad.role}:${quad.tint.map((c) => Math.round(c * 100)).join('-')}`;
+    if (!rowsBySill.has(y)) rowsBySill.set(y, new Set());
+    rowsBySill.get(y).add(sig);
+  }
+  const rowSignatures = new Set([...rowsBySill.values()].map((set) => [...set].sort().join('|')));
+  assert(
+    rowSignatures.size >= Math.min(4, rowsBySill.size),
+    `storeys differ from each other: ${rowSignatures.size} distinct rows out of ${rowsBySill.size}`,
+  );
+
+  // A short building must NOT get a plant floor or a crown.
+  const shortPlan = planFacadeArticulation({ id: 'sf-building-vertical-2', material: 'brick', height: 11, levels: 3, polygon: rect(0, 0, 16, 13) }, { ring: 'near' });
+  assert((shortPlan.parts.louvre || 0) === 0, 'a three-storey building has no plant floor');
+}
+
+// ---------------------------------------------------------------------------
+section('17. the cap scales with the building, so a tower does not end flat');
+// ---------------------------------------------------------------------------
+
+{
+  const capHeight = (height, levels) => {
+    const plan = planFacadeArticulation({ id: `sf-building-cap-${height}`, material: 'stone', height, levels, polygon: rect(0, 0, 26, 22) }, { ring: 'near' });
+    let low = Infinity;
+    for (const quad of plan.quads) {
+      if (!['cornice', 'architrave', 'coping', 'parapet', 'dentil'].includes(quad.part)) continue;
+      for (let i = 0; i < 4; i += 1) low = Math.min(low, quad.positions[i * 3 + 1] - plan.baseY);
+    }
+    return { height, cap: plan.height - low };
+  };
+  const small = capHeight(14, 4);
+  const mid = capHeight(49, 14);
+  const tall = capHeight(118, 33);
+  assert(small.cap > 0.4, `a low building still has a cap (${small.cap.toFixed(2)} m)`);
+  assert(mid.cap > small.cap * 1.5, `a 49 m building's cap is deeper than a 14 m one (${mid.cap.toFixed(2)} vs ${small.cap.toFixed(2)} m)`);
+  assert(tall.cap > mid.cap * 1.4, `a 118 m tower's cap is deeper again (${tall.cap.toFixed(2)} vs ${mid.cap.toFixed(2)} m)`);
+  // Read at the distance a tower is actually seen from: one storey is 3.4 m,
+  // so a cap under half a storey vanishes against the sky.
+  assert(tall.cap > 3.4, `a 118 m tower terminates in a cap taller than one storey (${tall.cap.toFixed(2)} m)`);
+  notes.push(`      cap depth: 14 m -> ${small.cap.toFixed(2)} m, 49 m -> ${mid.cap.toFixed(2)} m, 118 m -> ${tall.cap.toFixed(2)} m`);
+}
+
+// ---------------------------------------------------------------------------
+section('18. the quality gate\'s own capture poses are the LOD test set');
+// ---------------------------------------------------------------------------
+
+// Ring radii are not a guess. These are the eye positions the gate captures
+// its eight cards from, recorded from a capture manifest, and the assertion is
+// that the buildings which actually fill those frames land in a clad ring.
+const GATE_POSES = Object.freeze([
+  { id: '01-street-day', eye: { x: 1435.49, y: 2.35, z: 993.43 }, target: { x: 1379.47, y: 2.25, z: 1064.06 }, fov: 47 },
+  { id: '02-intersection', eye: { x: 1668.84, y: 2.17, z: -0.05 }, target: { x: 1678.9, y: 2.03, z: -21.1 }, fov: 47 },
+  { id: '03-canyon-golden', eye: { x: 1446.56, y: 2.34, z: 916.81 }, target: { x: 1515.56, y: 22.71, z: 974.62 }, fov: 58 },
+  { id: '07-character-curb', eye: { x: 1438.04, y: 2.7, z: 990.08 }, target: { x: 1436.07, y: 1.8, z: 993.95 }, fov: 47 },
+  { id: '08-traversal', eye: { x: 1455.42, y: 2.3, z: 971.01 }, target: { x: 1348.29, y: 2.22, z: 1103.24 }, fov: 47 },
+]);
+
+{
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const norm = (v) => { const l = Math.hypot(v.x, v.y, v.z); return { x: v.x / l, y: v.y / l, z: v.z / l }; };
+  const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+  for (const pose of GATE_POSES) {
+    const batch = buildFacadeArticulationBatch(REAL, { focus: { x: pose.eye.x, z: pose.eye.z } });
+    const ringOf = new Map(batch.buildings.map((r) => [r.id, r.ring]));
+    const fwd = norm(sub(pose.target, pose.eye));
+    const right = norm(cross(fwd, { x: 0, y: 1, z: 0 }));
+    const up = cross(right, fwd);
+    const f = 1 / Math.tan((pose.fov * Math.PI) / 360);
+    const aspect = 16 / 9;
+    let total = 0;
+    let clad = 0;
+    let windowed = 0;
+    let unclad = 0;
+    for (const building of REAL) {
+      let minx = Infinity;
+      let maxx = -Infinity;
+      let miny = Infinity;
+      let maxy = -Infinity;
+      let any = false;
+      for (const point of building.polygon) {
+        for (const h of [0, building.height]) {
+          const r = sub({ x: point.x, y: h, z: point.z }, pose.eye);
+          const cz = dot(r, fwd);
+          if (cz <= 0.5) continue;
+          const sx = (dot(r, right) * f) / aspect / cz;
+          const sy = (dot(r, up) * f) / cz;
+          minx = Math.min(minx, sx); maxx = Math.max(maxx, sx);
+          miny = Math.min(miny, sy); maxy = Math.max(maxy, sy);
+          any = true;
+        }
+      }
+      if (!any) continue;
+      const cx = Math.max(-1, minx);
+      const cX = Math.min(1, maxx);
+      const cy = Math.max(-1, miny);
+      const cY = Math.min(1, maxy);
+      if (!(cX > cx && cY > cy)) continue;
+      const cover = ((cX - cx) * (cY - cy)) / 4;
+      if (cover < 0.004) continue;
+      const ring = ringOf.get(building.id) || 'silhouette';
+      total += cover;
+      if (ring === 'silhouette') unclad += cover;
+      else clad += cover;
+      if (ring === 'near' || ring === 'mid') windowed += cover;
+    }
+    const cladShare = clad / Math.max(1e-9, total);
+    const windowShare = windowed / Math.max(1e-9, total);
+    assert(cladShare >= 0.97, `${pose.id}: ${(cladShare * 100).toFixed(1)}% of the frame-filling facade area is clad (threshold 97%)`);
+    assert(windowShare >= 0.75, `${pose.id}: ${(windowShare * 100).toFixed(1)}% has individual openings or bay rhythm at near/mid (threshold 75%)`);
+    assert(
+      batch.triangles <= FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
+      `${pose.id}: ${batch.triangles} triangles inside the ${FACADE_ARTICULATION_BUDGET.sceneTriangleBudget} budget`,
+    );
+    assert(batch.demotions === 0, `${pose.id}: no ring had to be demoted (${batch.demotions})`);
+    notes.push(`      ${pose.id}: ${batch.triangles} tri, ${batch.drawCalls} draws, clad ${(cladShare * 100).toFixed(0)}%, near+mid ${(windowShare * 100).toFixed(0)}%`);
+    disposeFacadeArticulation(batch);
+  }
+}
+
+// ---------------------------------------------------------------------------
+section('19. lit interiors follow the clock');
+// ---------------------------------------------------------------------------
+
+{
+  const litIntensity = () => {
+    let max = 0;
+    for (const material of state.materials?.values?.() || []) max = Math.max(max, material.emissiveIntensity || 0);
+    return max;
+  };
+  const root = new THREE.Group();
+  const runtime = createPassRuntime([facadeArticulation]);
+  const city = syntheticCity(BLOCK);
+  const day = makeContext(root, city, { x: 140, z: -18 });
+  day.hour = 12;
+  day.day = true;
+  runtime.build(day);
+  const diagnosticsDay = facadeArticulation.__diagnostics();
+  assert(diagnosticsDay.litPaneMaterials > 0, `a lit-glass bucket exists (${diagnosticsDay.litPaneMaterials})`);
+  assert(diagnosticsDay.nightLevel === 0, `at noon nothing glows (night level ${diagnosticsDay.nightLevel})`);
+
+  day.hour = 21.5;
+  runtime.update(day, 1 / 60);
+  const night = facadeArticulation.__diagnostics();
+  assert(night.nightLevel === 1, `at 21:30 the interiors are lit (night level ${night.nightLevel})`);
+
+  day.hour = 18.5;
+  runtime.update(day, 1 / 60);
+  const dusk = facadeArticulation.__diagnostics();
+  assert(dusk.nightLevel > 0 && dusk.nightLevel < 1, `golden hour lands part-way up the ramp (${dusk.nightLevel})`);
+
+  day.hour = 12;
+  runtime.update(day, 1 / 60);
+  assert(facadeArticulation.__diagnostics().nightLevel === 0, 'the ramp comes back down');
+  runtime.dispose();
 }
 
 // ---------------------------------------------------------------------------

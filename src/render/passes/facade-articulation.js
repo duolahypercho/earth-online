@@ -76,9 +76,13 @@
 import * as THREE from 'three';
 import {
   FACADE_ARTICULATION_BUDGET,
+  FACADE_ARTICULATION_ROLES,
+  FACADE_MATERIAL_CLASS_NAMES,
   FACADE_DEPTH_UV_METRES,
   FACADE_ARTICULATION_RINGS,
   FACADE_ARTICULATION_VERSION,
+  FACADE_GLASS_MATERIAL,
+  FACADE_INTERIOR_MATERIAL,
   FACADE_MATERIAL_CLASSES,
   FACADE_FRAME_MATERIAL,
   buildFacadeArticulationBatch,
@@ -113,8 +117,42 @@ const state = {
   hiddenLegacy: [],
   refreshes: 0,
   lastRefreshMs: 0,
+  litMaterials: [],
+  nightLevel: -1,
   diagnostics: { version: FACADE_ARTICULATION_VERSION, implemented: true },
 };
+
+/**
+ * How lit the interiors are, from the clock. 0 in daylight, 1 after dark, with
+ * an hour of ramp at each end so dusk and dawn cards land in between rather
+ * than snapping. `ctx.day === false` forces full night for a caller that drives
+ * the state directly instead of the hour.
+ */
+function nightLevelFor(ctx) {
+  if (ctx?.day === false) return 1;
+  const hour = Number(ctx?.hour);
+  if (!Number.isFinite(hour)) return 0;
+  if (hour <= 6) return 1;
+  if (hour < 7.2) return (7.2 - hour) / 1.2;
+  if (hour >= 20.2) return 1;
+  if (hour > 18.2) return (hour - 18.2) / 2;
+  return 0;
+}
+
+/** Apply the clock to the lit-glass bucket. No allocation in the steady state. */
+function applyNightLevel(level) {
+  const quantised = Math.round(level * 20) / 20;
+  if (quantised === state.nightLevel) return false;
+  state.nightLevel = quantised;
+  for (const material of state.litMaterials) {
+    material.emissiveIntensity = FACADE_GLASS_MATERIAL.nightEmissiveIntensity * quantised;
+  }
+  // Diagnostics are only rebuilt on an LOD refresh, so the clock has to write
+  // its own field or a reader sees the level from the last time the camera
+  // moved rather than the level the materials are actually at.
+  if (state.diagnostics) state.diagnostics.nightLevel = quantised;
+  return true;
+}
 
 function emptyDiagnostics(reason) {
   return {
@@ -175,17 +213,40 @@ function materialFor(className, role) {
   if (cached) return cached;
   const classDef = FACADE_MATERIAL_CLASSES[className] || FACADE_MATERIAL_CLASSES.plaster;
   let material;
-  if (role === 'glass') {
-    // Actually glass: smooth, dark, and carried almost entirely by the
-    // environment. It sits behind the frame inside a real hole, so it
-    // self-shadows and picks up a grazing specular from the sky.
+  if (role === 'glass' || role === 'glass-lit') {
+    // Glass is a DIELECTRIC. Round 1 gave it metalness 0.26-0.42 with a dark
+    // base colour, which kills the diffuse term and tints the specular by that
+    // same dark colour -- the result was a pure black pane at golden hour and a
+    // black storefront band in daylight. metalness 0 restores both halves of
+    // the physical answer: the interior ramp baked into vertex colour shows
+    // through the 4% normal-incidence reflectance, and the Fresnel term takes
+    // the environment reflection up toward 100% as the view angle goes
+    // grazing. That is the "reflectivity that varies with view angle".
     material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       vertexColors: true,
-      roughness: classDef.glass.roughness,
-      metalness: classDef.glass.metalness,
+      roughness: FACADE_GLASS_MATERIAL.roughness,
+      metalness: FACADE_GLASS_MATERIAL.metalness,
     });
+    if (role === 'glass-lit') {
+      // The lit bucket. The shell's own emissive night texture is behind the
+      // cladding now and cannot be seen, so without this the night card loses
+      // every lit window on a clad building. Intensity is driven from the
+      // clock in `update`.
+      material.emissive = new THREE.Color(FACADE_GLASS_MATERIAL.emissive);
+      material.emissiveIntensity = 0;
+    }
     material.userData.envClass = 'facade-glass';
+  } else if (role === 'interior') {
+    // Blinds, curtains, shop fittings and plant-floor louvres: matte, opaque,
+    // and standing in the glazing cavity behind the pane.
+    material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: FACADE_INTERIOR_MATERIAL.roughness,
+      metalness: FACADE_INTERIOR_MATERIAL.metalness,
+    });
+    material.userData.envClass = 'facade-painted';
   } else if (role === 'frame') {
     material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -223,6 +284,10 @@ function materialFor(className, role) {
   material.userData.articulationClass = className;
   material.userData.articulationRole = role;
   state.materials.set(key, material);
+  if (role === 'glass-lit') {
+    state.litMaterials.push(material);
+    material.emissiveIntensity = FACADE_GLASS_MATERIAL.nightEmissiveIntensity * Math.max(0, state.nightLevel);
+  }
   return material;
 }
 
@@ -411,6 +476,8 @@ function collectDiagnostics(centre, centreSource) {
       bulkRefreshMetres: budget.bulkRefreshMetres,
     },
     supersededLegacyMeshes: state.hiddenLegacy.length,
+    nightLevel: state.nightLevel,
+    litPaneMaterials: state.litMaterials.length,
     refreshes: state.refreshes,
     lastRefreshMs: state.lastRefreshMs,
   };
@@ -471,10 +538,22 @@ export default {
     };
 
     state.preserveIds = authoredElevations(ctx?.root);
+    state.nightLevel = -1;
+
+    // Create every material now, before the renderer walks the scene to cache
+    // its IBL material groups. A material that first appears during an LOD
+    // refresh would be built after that cache was taken and would never be
+    // handed an environment map -- its glass would render unlit for the rest
+    // of the session.
+    for (const className of FACADE_MATERIAL_CLASS_NAMES) materialFor(className, 'structure');
+    for (const role of FACADE_ARTICULATION_ROLES) {
+      if (role !== 'structure') materialFor('shared', role);
+    }
 
     // Start from the build focus. `update` re-centres on the live camera.
     const { centre, source } = resolveCentre(ctx, false);
     for (const zone of ZONES) buildZone(zone, centre);
+    applyNightLevel(nightLevelFor(ctx));
     supersedeLegacyRelief(ctx?.root);
     state.diagnostics = collectDiagnostics(centre, source);
     return { object: group, diagnostics: state.diagnostics };
@@ -486,6 +565,9 @@ export default {
    */
   update(ctx) {
     if (!state.group || !state.buildings.length) return;
+    // Interior lighting follows the clock. Quantised to 1/20, so a frame that
+    // does not cross a step writes nothing.
+    applyNightLevel(nightLevelFor(ctx));
     const camera = ctx?.camera?.position;
     if (!camera || !Number.isFinite(camera.x) || !Number.isFinite(camera.z)) return;
     // Steady state: two subtractions and a hypot per zone, no allocation, no
@@ -527,6 +609,8 @@ export default {
       material.dispose?.();
     }
     state.materials.clear();
+    state.litMaterials = [];
+    state.nightLevel = -1;
   },
 
   /** Test seam: the live diagnostics without going through the registry. */

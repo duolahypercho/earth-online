@@ -1901,7 +1901,11 @@ export function disposeFacadeDepth(result) {
  * face, and the whole build-up has to fit inside the projection allowance,
  * which is what bounds the reveal at 0.20 m rather than the brief's 0.25 m.
  */
-const ART_PANE = 0.012;
+// 30 mm rather than the 12 mm round 1 used. The pane and the backing plane are
+// the two surfaces closest to the shell, and at a grazing view up a 100 m wall
+// a 12 mm separation is inside one pixel's depth span -- measured offline, the
+// shell won those pixels and its painted grid showed through as speckle.
+const ART_PANE = 0.03;
 const ART_REVEAL_MIN = 0.1;
 const ART_REVEAL_MAX = 0.2;
 const ART_GLASS_SET_MIN = 0.03;
@@ -1970,25 +1974,31 @@ export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
  * within the ring, so the buildings the player is standing in front of are the
  * ones that keep the detail.
  *
- *   near   <=  78 m   full articulation. A 0.16 m reveal is ~7 px at 1440p
- *                     from 78 m, so frames, mullions and sills still resolve.
- *   mid    <= 175 m   reveal + pane + sill. Frames and mullions are under a
+ *   near   <=  85 m   full articulation. A 0.16 m reveal is ~6 px at 1440p
+ *                     from 85 m, so frames, mullions and sills still resolve.
+ *   mid    <= 200 m   reveal + pane + sill. Frames and mullions are under a
  *                     pixel here and only cost triangles and shimmer.
- *   far    <= 380 m   clad, with one recessed glazing band per storey on the
- *                     same sill/head line the near ring uses.
+ *   far    <= 420 m   clad, with one recessed glazing band per storey on the
+ *                     same sill/head line the near ring uses, and a continuous
+ *                     bay pier every bay so the band is not one flat stripe.
  *   beyond            silhouette: cornice and plinth only, shell texture kept.
  *                     No cladding, so there is no colour step at the cut --
- *                     at 380 m the painted grid is sub-pixel anyway.
+ *                     at 420 m the painted grid is sub-pixel anyway.
  *
- * Per-window geometry therefore stops at 175 m. That radius is the documented
+ * The radii are set from the poses the quality gate actually captures, not
+ * from a guess: the gate's cards are eye-level street views in which buildings
+ * 30-90 m away fill most of the frame, and the canyon card (58 deg) puts 26%
+ * of one frame on a single building at 65 m.
+ *
+ * Per-window geometry therefore stops at 200 m. That radius is the documented
  * one the brief asks for. `capScale` is how far the per-building triangle cap
  * may grow with the building's measured wall area; see
  * `articulationTriangleCap`.
  */
 export const FACADE_ARTICULATION_RINGS = Object.freeze({
-  near: Object.freeze({ radius: 78, maxBuildings: 22, triangleCap: 6000, capScale: 2.4 }),
-  mid: Object.freeze({ radius: 175, maxBuildings: 56, triangleCap: 2000, capScale: 2.6 }),
-  far: Object.freeze({ radius: 380, maxBuildings: 180, triangleCap: 640, capScale: 3.5 }),
+  near: Object.freeze({ radius: 85, maxBuildings: 26, triangleCap: 6000, capScale: 2.4 }),
+  mid: Object.freeze({ radius: 200, maxBuildings: 72, triangleCap: 2300, capScale: 2.6 }),
+  far: Object.freeze({ radius: 420, maxBuildings: 300, triangleCap: 820, capScale: 6 }),
   silhouette: Object.freeze({ radius: Infinity, maxBuildings: 900, triangleCap: 48, capScale: 16 }),
 });
 
@@ -2030,7 +2040,7 @@ export const FACADE_ARTICULATION_BUDGET = Object.freeze({
   // Arithmetic worst case: every ring full of buildings tall enough to take
   // the whole height scale. It is far above the scene budget on purpose --
   // the budget is what the batch enforces, by demoting whole rings.
-  worstCaseAllowance: 22 * 6000 * 2.4 + 56 * 2000 * 2.6 + 180 * 640 * 3.5 + 900 * 48 * 16,
+  worstCaseAllowance: 26 * 6000 * 2.4 + 72 * 2300 * 2.6 + 300 * 820 * 6 + 900 * 48 * 16,
   // 2 zones x 7 material classes x 3 roles, and only non-empty buckets are
   // built, so this is a ceiling and not a target.
   maxDrawCalls: 48,
@@ -2089,6 +2099,76 @@ export const FACADE_MATERIAL_CLASSES = Object.freeze({
 });
 
 export const FACADE_MATERIAL_CLASS_NAMES = Object.freeze(Object.keys(FACADE_MATERIAL_CLASSES));
+
+/**
+ * Geometry roles for articulation. Only `structure` is bucketed per material
+ * class -- glass, joinery and interior fittings look the same whatever the
+ * wall behind them is made of, and folding their colour into vertex colour
+ * instead of a material keeps the whole city inside a dozen draw calls a zone.
+ *
+ * `glass-lit` is the same glass with an emissive interior. The pass drives its
+ * `emissiveIntensity` from the clock, which is what puts lit windows back on
+ * the night card: the shell's own emissive night texture is behind the
+ * cladding now and cannot be seen.
+ */
+export const FACADE_ARTICULATION_ROLES = Object.freeze(['structure', 'glass', 'glass-lit', 'frame', 'interior']);
+
+/** Roles that share one material rather than one per material class. */
+export const FACADE_ARTICULATION_SHARED_ROLES = Object.freeze(['glass', 'glass-lit', 'frame', 'interior']);
+
+/** Bucket key component for a role: the wall class, or the shared bucket. */
+export function articulationBucketClass(role, className) {
+  return FACADE_ARTICULATION_SHARED_ROLES.includes(role) ? 'shared' : className;
+}
+
+/**
+ * What is behind a pane. A window that is only a dark sheet reads as a hole
+ * punched in a card, which is exactly what the round-1 captures showed: at
+ * golden hour every opening was pure black. Each opening therefore draws one
+ * of these, deterministically, from its own building/edge/storey/column.
+ *
+ * `sky` and `floor` are the two ends of the vertical gradient baked into the
+ * pane: the top of a pane at street level reflects the sky above the canyon,
+ * the bottom reflects the darker street and the room behind it. The physical
+ * Fresnel reflection from the environment rides on top of that, so the pane
+ * still brightens as the view angle goes grazing.
+ */
+export const WINDOW_INTERIORS = Object.freeze({
+  empty: Object.freeze({ sky: '#8fa6bb', floor: '#2f3438', weight: 30 }),
+  office: Object.freeze({ sky: '#7f96ab', floor: '#3b3a36', ceiling: true, weight: 18 }),
+  blind: Object.freeze({ sky: '#8fa6bb', floor: '#33383c', blind: true, weight: 20 }),
+  curtain: Object.freeze({ sky: '#8299ad', floor: '#343a3e', curtain: true, weight: 12 }),
+  lit: Object.freeze({ sky: '#9a8a6d', floor: '#6d5c40', lit: true, weight: 12 }),
+  litBlind: Object.freeze({ sky: '#9c8d70', floor: '#6a5a3f', blind: true, lit: true, weight: 8 }),
+});
+
+const WINDOW_INTERIOR_KEYS = Object.freeze(Object.keys(WINDOW_INTERIORS));
+const WINDOW_INTERIOR_TOTAL = WINDOW_INTERIOR_KEYS.reduce((sum, key) => sum + WINDOW_INTERIORS[key].weight, 0);
+
+/** Blind and curtain fabric, and the shop fittings behind display glazing. */
+export const FACADE_INTERIOR_MATERIAL = Object.freeze({
+  roughness: 0.86,
+  metalness: 0,
+  blinds: Object.freeze(['#cfc6b1', '#c3bcac', '#d8d1bf', '#b7b1a3', '#cdc0a4']),
+  curtains: Object.freeze(['#b6ada0', '#a9a396', '#c4bcae', '#9d968c']),
+  fittings: Object.freeze(['#6f6357', '#7b6c5c', '#5f574d']),
+});
+
+/** What a lit shop looks like through its own display glazing. */
+export const SHOP_INTERIOR = Object.freeze({
+  ceiling: '#d8c49a',
+  back: '#6a5a45',
+  valance: '#f0dcae',
+});
+
+/** Glass. A dielectric: metalness 0 is what gives it a view-angle Fresnel. */
+export const FACADE_GLASS_MATERIAL = Object.freeze({
+  roughness: 0.07,
+  metalness: 0,
+  // Warm interior glow driven from the clock by the pass.
+  emissive: '#ffcf8a',
+  nightEmissiveIntensity: 0.85,
+});
 
 /** Anodised/painted metal for frames, mullions, transom bars and shop fascia. */
 export const FACADE_FRAME_MATERIAL = Object.freeze({
@@ -2204,6 +2284,12 @@ export function drawArticulationVariant(building, style, className, salt = 0) {
     // Phase shift so two neighbours with the same bay width still do not line
     // their bays up across the party wall.
     bayPhase: random(),
+    // Vertical composition picks: whether the second storey reads as a
+    // mezzanine, where a plant floor sits, and how the crown is proportioned.
+    mezzanine: random() < 0.45,
+    mechanicalPick: random(),
+    crownRatio: 0.62 + random() * 0.24,
+    interruptSeed: Math.floor(random() * 65536),
   };
 }
 
@@ -2251,6 +2337,10 @@ class ArticulationSink extends QuadSink {
     // through every call site buys nothing.
     this.clad = 0;
     this.overlap = ART_CORNER_OVERLAP;
+    // Optional vertical gradient for the next quads, as [topScale,
+    // bottomScale] applied across the quad's own height. This is how a pane
+    // carries a reflected-sky-to-interior ramp without a shader.
+    this.grad = null;
   }
 
   paint(tint, soffit = 0) {
@@ -2263,6 +2353,12 @@ class ArticulationSink extends QuadSink {
    *  verifier both read it, so every emitter states what it is building. */
   mark(part) {
     this.part = part;
+    return this;
+  }
+
+  /** Vertical ramp for the following quads. `null` clears it. */
+  gradient(top, bottom) {
+    this.grad = top === null ? null : [top, bottom];
     return this;
   }
 
@@ -2355,6 +2451,7 @@ class ArticulationSink extends QuadSink {
       tint: this.tint,
       soffit: this.soffit,
       part: this.part,
+      grad: this.grad,
       baseY,
     });
     this.parts[this.part] = (this.parts[this.part] || 0) + 1;
@@ -2407,6 +2504,94 @@ function hexToSrgb(hex) {
 }
 
 // ---------------------------------------------------------------- emitters
+
+/**
+ * Deterministic per-opening hash. Stable across runs and independent of the
+ * order openings are emitted in, so a window keeps its blinds when the LOD
+ * ring around it changes.
+ */
+function openingHash(seed, edgeIndex, storey, column) {
+  let h = (seed ^ Math.imul(edgeIndex + 1, 0x27d4eb2d)) >>> 0;
+  h = Math.imul(h ^ (storey + 1), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (column + 1), 0xc2b2ae35) >>> 0;
+  h ^= h >>> 15;
+  return h >>> 0;
+}
+
+/** Weighted draw from WINDOW_INTERIORS. */
+function pickWindowInterior(hash) {
+  let roll = (hash % 1000) / 1000 * WINDOW_INTERIOR_TOTAL;
+  for (const key of WINDOW_INTERIOR_KEYS) {
+    roll -= WINDOW_INTERIORS[key].weight;
+    if (roll <= 0) return { key, ...WINDOW_INTERIORS[key] };
+  }
+  return { key: 'empty', ...WINDOW_INTERIORS.empty };
+}
+
+/**
+ * The full glazing description for one opening: which pane bucket it lands in,
+ * the sky-to-interior ramp baked into it, and whatever fabric is hanging in
+ * front of it. Everything here is opaque -- no transparency is introduced into
+ * the canonical path -- so the "interior" is a painted-on ramp plus real
+ * blind/curtain geometry standing in the glazing cavity.
+ */
+function glazingFor(hash, options = {}) {
+  const interior = options.interior || pickWindowInterior(hash);
+  const blindRoll = ((hash >>> 7) % 1000) / 1000;
+  const curtainRoll = ((hash >>> 13) % 1000) / 1000;
+  const paletteRoll = (hash >>> 19) % 997;
+  return {
+    key: interior.key,
+    role: interior.lit ? 'glass-lit' : 'glass',
+    sky: hexToSrgb(interior.sky),
+    floor: hexToSrgb(interior.floor),
+    // A blind covers the top of the opening; a curtain hangs down one side.
+    blind: interior.blind ? 0.28 + blindRoll * 0.5 : 0,
+    blindTint: hexToSrgb(FACADE_INTERIOR_MATERIAL.blinds[paletteRoll % FACADE_INTERIOR_MATERIAL.blinds.length]),
+    curtain: interior.curtain ? 0.18 + curtainRoll * 0.22 : 0,
+    curtainSide: (hash >>> 3) & 1 ? 1 : 0,
+    curtainTint: hexToSrgb(FACADE_INTERIOR_MATERIAL.curtains[paletteRoll % FACADE_INTERIOR_MATERIAL.curtains.length]),
+  };
+}
+
+/**
+ * Pane plus whatever is behind and in front of it.
+ *
+ * The pane's vertical ramp is the cheap half of the answer to "glass is a
+ * black void": the top of a pane reflects the sky over the canyon and the
+ * bottom reflects the street and the room. The expensive half is the material,
+ * which is a dielectric (metalness 0), so the environment's Fresnel reflection
+ * rides on top of this and grows as the view angle goes grazing.
+ */
+function emitGlazing(sink, edge, s0, s1, y0, y1, depth, glaze) {
+  sink.mark('window-pane').paint([1, 1, 1], 0.08);
+  // Ramp encoded as a tint plus a scale: the tint is the floor colour, and the
+  // top of the ramp lifts it toward the sky colour.
+  const lift = [
+    glaze.floor[0] > 1e-4 ? glaze.sky[0] / glaze.floor[0] : 1,
+    glaze.floor[1] > 1e-4 ? glaze.sky[1] / glaze.floor[1] : 1,
+    glaze.floor[2] > 1e-4 ? glaze.sky[2] / glaze.floor[2] : 1,
+  ];
+  const ramp = Math.min(3.2, (lift[0] + lift[1] + lift[2]) / 3);
+  sink.paint(glaze.floor, 0.08).gradient(ramp, 1);
+  sink.quad(glaze.role, edge, [[s0, y0, depth], [s0, y1, depth], [s1, y1, depth], [s1, y0, depth]], 'out');
+  sink.gradient(null, null);
+  const width = s1 - s0;
+  const height = y1 - y0;
+  if (glaze.blind > 0 && height > 0.6) {
+    const bottom = y1 - height * glaze.blind;
+    sink.mark('blind').paint(glaze.blindTint, 0.3).gradient(1, 0.86);
+    sink.quad('interior', edge, [[s0, bottom, depth + 0.014], [s0, y1, depth + 0.014], [s1, y1, depth + 0.014], [s1, bottom, depth + 0.014]], 'out');
+    sink.gradient(null, null);
+  }
+  if (glaze.curtain > 0 && width > 0.7) {
+    const cw = width * glaze.curtain;
+    const c0 = glaze.curtainSide ? s1 - cw : s0;
+    sink.mark('curtain').paint(glaze.curtainTint, 0.3).gradient(1, 0.88);
+    sink.quad('interior', edge, [[c0, y0, depth + 0.012], [c0, y1, depth + 0.012], [c0 + cw, y1, depth + 0.012], [c0 + cw, y0, depth + 0.012]], 'out');
+    sink.gradient(null, null);
+  }
+}
 
 /** Flush cladding: the wall itself, standing `ART_CLAD` proud of the shell. */
 function emitClad(sink, edge, s0, s1, y0, y1, depth = sink.clad) {
@@ -2475,9 +2660,8 @@ function emitOpening(sink, edge, s0, s1, y0, y1, opt) {
       gy1 = y1 + 0 - fw;
     }
   }
-  // The pane. One quad: the mullion and transom bars sit in front of it.
-  sink.mark('window-pane').paint(opt.glassTint, 0.1);
-  sink.quad('glass', edge, [[g0, gy0, pane], [g0, gy1, pane], [g1, gy1, pane], [g1, gy0, pane]], 'out');
+  // The pane, its ramp, and whatever is hanging in front of it.
+  emitGlazing(sink, edge, g0, g1, gy0, gy1, pane, opt.glaze);
   if (opt.mullionPattern > 0 && g1 - g0 > 0.9) {
     const bar = 0.05;
     const centre = (g0 + g1) / 2;
@@ -2501,8 +2685,7 @@ function emitPlainOpening(sink, edge, s0, s1, y0, y1, opt) {
   sink.quad('structure', edge, [[s1, y0, wall], [s1, y1, wall], [s1, y1, back], [s1, y0, back]], 'against');
   sink.paint(opt.tint, 0.95);
   sink.quad('structure', edge, [[s0, y1, wall], [s1, y1, wall], [s1, y1, back], [s0, y1, back]], 'down');
-  sink.mark('window-pane').paint(opt.glassTint, 0.1);
-  sink.quad('glass', edge, [[s0, y0, back], [s0, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+  emitGlazing(sink, edge, s0, s1, y0, y1, back, opt.glaze);
 }
 
 /**
@@ -2518,8 +2701,12 @@ function emitStoreyBand(sink, edge, s0, s1, y0, y1, opt) {
   sink.quad('structure', edge, [[s0, y1, wall], [s1, y1, wall], [s1, y1, back], [s0, y1, back]], 'down');
   sink.paint(opt.tint, 0.7);
   sink.quad('structure', edge, [[s0, y0, wall], [s1, y0, wall], [s1, y0, back], [s0, y0, back]], 'up');
-  sink.mark(`${part}-pane`).paint(opt.glassTint, 0.1);
-  sink.quad('glass', edge, [[s0, y0, back], [s0, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+  if (opt.glaze) {
+    emitGlazing(sink, edge, s0, s1, y0, y1, back, opt.glaze);
+  } else {
+    sink.mark(`${part}-pane`).paint(opt.glassTint, 0.1);
+    sink.quad('glass', edge, [[s0, y0, back], [s0, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+  }
 }
 
 /**
@@ -2547,8 +2734,8 @@ function emitRow(sink, edge, y0, y1, spans, tint, spanFn, soffit = 0, from = nul
 }
 
 /** Bay centres for an edge, as spans of the given width. */
-function bayspans(edge, variant, ratio) {
-  const columns = clamp(Math.round(edge.length / variant.bayWidth), 1, MAX_ART_BAYS);
+function bayspans(edge, variant, ratio, pitchScale = 1) {
+  const columns = clamp(Math.round(edge.length / (variant.bayWidth / pitchScale)), 1, MAX_ART_BAYS);
   const pitch = edge.length / columns;
   const width = Math.min(pitch * ratio, 3.2);
   if (width < MIN_WINDOW_WIDTH || pitch - width < 0.45) return { columns, pitch, width, spans: [] };
@@ -2657,12 +2844,43 @@ function emitStorefront(sink, edge, geom, opt) {
     emitPanel(sink, edge, s0, s1, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
   }
 
+  // Shopfront glazing is not upper-storey glazing: a shop is lit from inside
+  // all day, its ceiling is bright, and there are fittings a metre behind the
+  // glass. Round 1 gave it the same dark pane as a fourth-floor office and it
+  // read as a continuous black band two storeys tall.
+  let light = 0;
   emitRow(sink, edge, bulk, displayTop, spans, opt.tint, (span) => {
     if (span.kind === 'entry') return;
+    const hash = openingHash(opt.shopSeed, edge.index, 0, light);
+    light += 1;
+    const shopGlaze = {
+      key: 'shop',
+      role: 'glass-lit',
+      sky: hexToSrgb(SHOP_INTERIOR.ceiling),
+      floor: hexToSrgb(SHOP_INTERIOR.back),
+      blind: 0,
+      curtain: 0,
+      curtainSide: 0,
+      blindTint: [1, 1, 1],
+      curtainTint: [1, 1, 1],
+    };
     sink.mark('shop-glazing');
     emitStoreyBand(sink, edge, span.s0, span.s1, bulk, displayTop, {
-      clad: opt.clad, reveal: glazeDepth, tint: opt.tint, glassTint: opt.glassTint, part: 'shop-glazing',
+      clad: opt.clad, reveal: glazeDepth, tint: opt.tint, glassTint: opt.glassTint,
+      part: 'shop-glazing', glaze: shopGlaze,
     });
+    // Fittings behind the glass: a counter or display shelf at waist height,
+    // and the lit valance under the ceiling. Two quads per light, and they are
+    // what turn a black band into a shop.
+    const back = opt.clad - glazeDepth;
+    const counterY = bulk + Math.min(1.0, (displayTop - bulk) * 0.34);
+    const fitting = hexToSrgb(FACADE_INTERIOR_MATERIAL.fittings[hash % FACADE_INTERIOR_MATERIAL.fittings.length]);
+    if (displayTop - bulk > 1.4 && span.s1 - span.s0 > 0.5) {
+      sink.mark('shop-fitting').paint(fitting, 0.55);
+      sink.quad('interior', edge, [[span.s0, counterY - 0.34, back + 0.02], [span.s0, counterY, back + 0.02], [span.s1, counterY, back + 0.02], [span.s1, counterY - 0.34, back + 0.02]], 'out');
+      sink.mark('shop-valance').paint(hexToSrgb(SHOP_INTERIOR.valance), 0.15);
+      sink.quad('interior', edge, [[span.s0, displayTop - 0.24, back + 0.02], [span.s0, displayTop - 0.05, back + 0.02], [span.s1, displayTop - 0.05, back + 0.02], [span.s1, displayTop - 0.24, back + 0.02]], 'out');
+    }
   }, 0.2, s0, s1);
 
   if (hasEntry) {
@@ -2710,8 +2928,17 @@ function emitStorefront(sink, edge, geom, opt) {
 /** Roofline: era-appropriate cap between `capBottom` and the shell top. */
 function emitCap(sink, edge, height, opt) {
   const { variant, clad, tint, trimTint } = opt;
-  const parapet = clamp(variant.parapetHeight, 0.35, Math.max(0.35, height * 0.09));
-  const corniceHeight = clamp(variant.corniceHeight, 0.28, Math.max(0.28, height * 0.07));
+  // A cap is a silhouette element, and silhouette is read at distance. A fixed
+  // 0.6 m cornice is two pixels on a 115 m tower at 200 m, which is why round 1
+  // showed tall buildings terminating flat against the sky. Cap members
+  // therefore grow with the building: a tall building gets a metres-deep
+  // entablature, a shopfront keeps its 0.4 m one.
+  const capScale = clamp(1 + height / 45, 1, 4.5);
+  const parapet = clamp(variant.parapetHeight * capScale, 0.4, Math.max(0.4, height * 0.075));
+  const corniceHeight = clamp(variant.corniceHeight * capScale, 0.35, Math.max(0.35, height * 0.06));
+  const copingHeight = clamp(0.14 * capScale, 0.12, 0.85);
+  const architrave = clamp(0.16 * capScale, 0.14, 0.9);
+  const dentilHeight = clamp(0.2 * capScale, 0.18, 0.8);
   const corniceTop = height - parapet;
   const corniceBottom = corniceTop - corniceHeight;
   const projection = Math.min(variant.corniceProjection, opt.projection - clad);
@@ -2729,13 +2956,13 @@ function emitCap(sink, edge, height, opt) {
   let capBottom = corniceBottom;
   if (opt.full && (variant.capProfile === 'entablature' || variant.capProfile === 'bracketed')) {
     // Architrave, then the corona, then the parapet and its coping.
-    capBottom = corniceBottom - 0.16;
+    capBottom = corniceBottom - architrave;
     sink.mark('architrave');
-    emitProfile(sink, edge, s0, s1, corniceBottom - 0.16, corniceBottom, clad, clad + projection * 0.4, trimTint, 0.9);
+    emitProfile(sink, edge, s0, s1, corniceBottom - architrave, corniceBottom, clad, clad + projection * 0.4, trimTint, 0.9);
     if (variant.capProfile === 'bracketed') {
       // Dentils: a row of small blocks under the corona. Real high-frequency
       // detail on the one line of a masonry building the sun always rakes.
-      const count = clamp(Math.round(edge.length / 0.62), 2, 40);
+      const count = clamp(Math.round(edge.length / clamp(0.62 * capScale, 0.5, 2.2)), 2, 40);
       const step = edge.length / count;
       const spans = [];
       for (let i = 0; i < count; i += 1) {
@@ -2743,33 +2970,36 @@ function emitCap(sink, edge, height, opt) {
         const b = i * step + step * 0.72;
         if (b - a > 0.1) spans.push({ s0: a, s1: b });
       }
-      emitRow(sink, edge, corniceBottom, corniceBottom + 0.2, spans, tint, (span) => {
+      emitRow(sink, edge, corniceBottom, corniceBottom + dentilHeight, spans, tint, (span) => {
         sink.mark('dentil');
-        emitPanel(sink, edge, span.s0, span.s1, corniceBottom, corniceBottom + 0.2, clad, clad + projection * 0.55, trimTint, 0.95);
+        emitPanel(sink, edge, span.s0, span.s1, corniceBottom, corniceBottom + dentilHeight, clad, clad + projection * 0.55, trimTint, 0.95);
       }, 0.6);
       sink.mark('cornice');
-      emitProfile(sink, edge, s0, s1, corniceBottom + 0.2, corniceTop, clad, clad + projection, trimTint, 0.95);
+      emitProfile(sink, edge, s0, s1, corniceBottom + dentilHeight, corniceTop, clad, clad + projection, trimTint, 0.95);
     } else {
       sink.mark('cornice');
       emitProfile(sink, edge, s0, s1, corniceBottom, corniceTop, clad, clad + projection, trimTint, 0.95);
     }
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceTop, height - 0.14, clad);
+    emitClad(sink, edge, s0, s1, corniceTop, height - copingHeight, clad);
     sink.mark('coping');
-    emitProfile(sink, edge, s0, s1, height - 0.14, height, clad, clad + Math.min(0.09, projection), trimTint, 0.7);
+    emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.14, projection), trimTint, 0.7);
   } else if (variant.capProfile === 'reveal') {
     // Curtain-wall language: a shadow reveal under a flush parapet.
+    // Curtain-wall crown: a deep shadow reveal, then a flush parapet capped by
+    // a proud coping. The reveal is the cap here, so it scales too.
+    const revealBand = clamp(0.14 * capScale, 0.12, 0.7);
     sink.mark('cornice');
-    emitProfile(sink, edge, s0, s1, corniceBottom, corniceBottom + 0.14, clad, clad - Math.min(0.07, opt.inwardLimit), trimTint, 0.95);
+    emitProfile(sink, edge, s0, s1, corniceBottom, corniceBottom + revealBand, clad, Math.max(opt.pane, clad - 0.1), trimTint, 0.95);
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceBottom + 0.14, height - 0.1, clad);
+    emitClad(sink, edge, s0, s1, corniceBottom + revealBand, height - copingHeight, clad);
     sink.mark('coping');
-    emitProfile(sink, edge, s0, s1, height - 0.1, height, clad, clad + Math.min(0.07, projection), trimTint, 0.7);
+    emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.12, projection), trimTint, 0.7);
   } else {
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceBottom, height - 0.12, clad);
+    emitClad(sink, edge, s0, s1, corniceBottom, height - copingHeight, clad);
     sink.mark('coping');
-    emitProfile(sink, edge, s0, s1, height - 0.12, height, clad, clad + Math.min(0.11, projection), trimTint, 0.8);
+    emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.16, projection), trimTint, 0.8);
   }
   // Close the slot between the cladding and the shell's roof edge, so an
   // aerial view does not look down a 200 mm gap all the way round the roof.
@@ -2780,14 +3010,54 @@ function emitCap(sink, edge, height, opt) {
   return { capBottom };
 }
 
+/**
+ * Vertical composition: which register each storey belongs to.
+ *
+ * Round 1 varied buildings against each other but never a building against
+ * itself, so a tall elevation was one window band repeated storey after storey.
+ * A real elevation has registers:
+ *
+ *   ground      the street storey -- storefront or plinth
+ *   mezzanine   a shallower second register sitting on the ground floor
+ *   typical     the shaft
+ *   mechanical  a plant floor: louvres, no glazing
+ *   crown       the top one or two storeys, on a different rhythm
+ *
+ * Everything here is a deterministic function of the storey count and the
+ * building's own variant, so it is stable across LOD changes.
+ */
+function storeyRegisters(levels, variant) {
+  const registers = new Array(levels).fill('typical');
+  registers[0] = 'ground';
+  if (levels >= 5 && variant.mezzanine) registers[1] = 'mezzanine';
+  const crown = levels >= 12 ? 2 : levels >= 6 ? 1 : 0;
+  for (let i = 0; i < crown; i += 1) {
+    const index = levels - 1 - i;
+    if (index > 1) registers[index] = 'crown';
+  }
+  if (levels >= 10) {
+    const primary = Math.round(levels * (0.58 + variant.mechanicalPick * 0.12));
+    if (registers[primary] === 'typical') registers[primary] = 'mechanical';
+    if (levels >= 26) {
+      const secondary = Math.round(levels * 0.32);
+      if (registers[secondary] === 'typical') registers[secondary] = 'mechanical';
+    }
+  }
+  return registers;
+}
+
 /** Sill and head of one storey's glazing zone. Shared by openings and bands. */
-function articulationGlazing(storeys, index, variant, capBottom) {
+function articulationGlazing(storeys, index, variant, capBottom, register = 'typical') {
   const floor = storeys.floors[index];
   const top = storeys.tops[index];
   const storeyHeight = top - floor;
   if (!(storeyHeight > 2.3)) return null;
-  const sill = floor + clamp(storeyHeight * 0.24, 0.5, variant.sillLift);
-  const head = Math.min(sill + Math.min(storeyHeight * 0.6, 2.5), top - 0.35);
+  // Register changes the proportion, not just the decoration: a mezzanine is a
+  // wide low band, a crown storey is taller and sits higher in its storey.
+  const lift = register === 'mezzanine' ? 0.34 : register === 'crown' ? 0.2 : 0.24;
+  const share = register === 'mezzanine' ? 0.42 : register === 'crown' ? 0.68 : 0.6;
+  const sill = floor + clamp(storeyHeight * lift, 0.5, variant.sillLift * (register === 'mezzanine' ? 1.6 : 1));
+  const head = Math.min(sill + Math.min(storeyHeight * share, 2.8), top - 0.35);
   if (!(head - sill >= MIN_WINDOW_HEIGHT)) return null;
   if (head > capBottom - 0.2) return null;
   return { sill, head };
@@ -2800,12 +3070,12 @@ function articulationGlazing(storeys, index, variant, capBottom) {
  * pieces of it -- there is no rung at which part of a wall is missing.
  */
 export const ART_DETAIL_LADDER = Object.freeze([
-  Object.freeze({ name: 'full', clad: true, edges: 6, openStoreys: 6, frames: true, mullions: true, sills: true, lintels: true, drip: true, storefront: 'full', full: true }),
-  Object.freeze({ name: 'framed', clad: true, edges: 5, openStoreys: 5, frames: true, mullions: true, sills: true, lintels: false, drip: false, storefront: 'full', full: true }),
-  Object.freeze({ name: 'reveal', clad: true, edges: 4, openStoreys: 4, frames: false, mullions: false, sills: true, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'sparse', clad: true, edges: 4, openStoreys: 2, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'banded', clad: true, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'silhouette', clad: false, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: null, full: false }),
+  Object.freeze({ name: 'full', bandFins: true, clad: true, edges: 6, openStoreys: 6, frames: true, mullions: true, sills: true, lintels: true, drip: true, storefront: 'full', full: true }),
+  Object.freeze({ name: 'framed', bandFins: true, clad: true, edges: 5, openStoreys: 5, frames: true, mullions: true, sills: true, lintels: false, drip: false, storefront: 'full', full: true }),
+  Object.freeze({ name: 'reveal', bandFins: true, clad: true, edges: 4, openStoreys: 4, frames: false, mullions: false, sills: true, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'sparse', bandFins: true, clad: true, edges: 4, openStoreys: 2, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'banded', bandFins: true, clad: true, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'silhouette', bandFins: false, clad: false, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: null, full: false }),
 ]);
 
 const ART_RING_LADDER_START = Object.freeze({ near: 0, mid: 2, far: 4, silhouette: 5 });
@@ -2825,17 +3095,22 @@ function layoutEdge(sink, edge, state) {
   // It gets one flush panel at the pane plane: enough to cover the painted
   // shell where the neighbour is shorter, nothing that can reach into it.
   if (detail.clad && opt.projection <= ART_PARTY_ALLOWANCE + 1e-6) {
-    sink.mark('party-wall').paint(opt.tint, 0.4);
-    emitClad(sink, edge, 0, edge.length, 0, height, ART_PANE);
-    return { openings: 0, bands: 0 };
+    // A party wall is the face the next building is standing against. There is
+    // no room to clad it, and a near-coplanar panel laid over the shell is
+    // worse than nothing: measured offline, a flush panel on a 160 m party
+    // wall lost the depth test to the shell at a grazing view and the painted
+    // grid showed through as speckle across the whole face. So this edge is
+    // left to the shell, which is what carried it before the pass existed.
+    return { openings: 0, bands: 0, party: true };
   }
 
   if (!detail.clad) {
     // Silhouette: the shell texture keeps the wall; only the two lines that
     // give a prism a top and a foot are built.
     const projection = Math.min(variant.corniceProjection, opt.projection);
+    const capBand = clamp(0.62 * clamp(1 + height / 45, 1, 4.5), 0.5, Math.max(0.5, height * 0.09));
     sink.mark('cornice');
-    emitProfile(sink, edge, 0, edge.length, Math.max(0, height - 0.62), height, 0, projection, opt.trimTint, 0.9);
+    emitProfile(sink, edge, 0, edge.length, Math.max(0, height - capBand), height, 0, projection, opt.trimTint, 0.9);
     const plinth = clamp(variant.plinthHeight, 0.3, Math.max(0.3, height * 0.12));
     sink.mark('plinth');
     emitProfile(sink, edge, 0, edge.length, GROUND_CLEARANCE, plinth, 0, Math.min(variant.plinthProjection, opt.projection), opt.trimTint, 0.95);
@@ -2849,13 +3124,15 @@ function layoutEdge(sink, edge, state) {
   // colour instead. It is deliberately NOT part of the partition: the
   // coverage check ignores it, so it cannot hide a real hole.
   sink.mark('backing').paint(opt.tint, 0.45);
-  emitClad(sink, edge, -overlap, edge.length + overlap, 0, height, ART_PANE * 0.5);
+  emitClad(sink, edge, -overlap, edge.length + overlap, 0, height, ART_PANE * 0.6);
 
   const cap = emitCap(sink, edge, height, opt);
   const capBottom = Math.max(1, cap.capBottom);
   let cursor = 0;
   let openings = 0;
   let bands = 0;
+  let bandLow = Infinity;
+  let bandHigh = -Infinity;
 
   let storefront = false;
   if (state.commercial && detail.storefront && detailEdge && storeys.tops[0] > 2.6 && edge.length >= 4.5) {
@@ -2881,18 +3158,91 @@ function layoutEdge(sink, edge, state) {
   }
 
   const startStorey = storefront ? 1 : 0;
-  const bays = bayspans(edge, variant, variant.windowRatio);
-  const canOpen = detailEdge && bays.spans.length > 0;
+  const typicalBays = bayspans(edge, variant, variant.windowRatio);
+  // The crown runs on its own rhythm: narrower, more closely spaced openings,
+  // so the top of a tower does not look like more of the same shaft.
+  const crownBays = bayspans(edge, variant, variant.windowRatio * variant.crownRatio, 1.35);
+  const canOpen = detailEdge && typicalBays.spans.length > 0;
   let opened = 0;
+  const seed = state.seed;
+  // The cap eats the top of a tall building -- a 115 m tower carries a ~16 m
+  // entablature and parapet -- so the crown register has to be pinned to the
+  // topmost storey that can still carry glazing, not to the topmost storey.
+  // Without this the crown falls inside the cap and never renders, which is
+  // how round 1 ended up banding every elevation right up to the roofline.
+  const registers = state.registers.slice();
+  let topGlazed = -1;
+  for (let i = storeys.levels - 1; i >= 0; i -= 1) {
+    if (storeys.tops[i] - storeys.floors[i] > 2.3 && storeys.tops[i] - 0.35 <= capBottom - 0.2) { topGlazed = i; break; }
+  }
+  if (topGlazed >= 2 && state.crownCount > 0) {
+    for (let i = 0; i < registers.length; i += 1) if (registers[i] === 'crown') registers[i] = 'typical';
+    for (let k = 0; k < state.crownCount; k += 1) {
+      const index = topGlazed - k;
+      if (index > 1 && registers[index] === 'typical') registers[index] = 'crown';
+    }
+  }
+  // The crown and the mezzanine are reserved out of the opening budget rather
+  // than competing for it. On a thirty-storey tower the budget is spent long
+  // before the top, and the top is the part read against the sky -- round 1
+  // banded it, which is why tall elevations repeated to the roofline.
+  const bottomBudget = detail.openStoreys > 0 ? Math.max(1, detail.openStoreys - state.crownCount) : 0;
 
   for (let index = startStorey; index < storeys.levels; index += 1) {
-    const band = articulationGlazing(storeys, index, variant, capBottom);
+    const register = registers[index] || 'typical';
+    const band = articulationGlazing(storeys, index, variant, capBottom, register);
     if (!band) continue;
     if (!(band.sill > cursor + 0.12)) continue;
-    const useOpenings = canOpen && opened < detail.openStoreys;
-    const sillLedge = useOpenings && detail.sills;
-    const dripBand = useOpenings && detail.drip;
-    const sillTop = sillLedge ? band.sill : band.sill;
+    // Weathering accumulates downward: every sill above sheds onto the wall
+    // below it, so the same detail is dirtier the closer it is to the street.
+    const shed = clamp(0.5 + 0.5 * (1 - band.sill / Math.max(1, height)), 0.5, 1);
+
+    // --- mechanical floor: louvres, no glazing ------------------------------
+    if (register === 'mechanical') {
+      const inset = clamp(edge.length * 0.05, 0.18, 0.8);
+      const m0 = inset;
+      const m1 = edge.length - inset;
+      if (m1 - m0 > 1 && band.head - band.sill > 0.9) {
+        if (band.sill > cursor + EPSILON) {
+          sink.mark('wall').paint(opt.tint, 0.1);
+          emitClad(sink, edge, -overlap, edge.length + overlap, cursor, band.sill, opt.clad);
+        }
+        emitRow(sink, edge, band.sill, band.head, [{ s0: m0, s1: m1 }], opt.tint, (span) => {
+          const plenum = Math.max(opt.pane, opt.clad - 0.09);
+          sink.mark('louvre-plenum').paint(opt.plenumTint, 1);
+          emitPanel(sink, edge, span.s0, span.s1, band.sill, band.head, opt.clad, plenum, opt.plenumTint, 1);
+          const fins = 5;
+          const step = (band.head - band.sill) / fins;
+          sink.mark('louvre').paint(opt.frameTint, 0.55);
+          for (let f = 0; f < fins; f += 1) {
+            const fy0 = band.sill + f * step + step * 0.12;
+            const fy1 = fy0 + step * 0.6;
+            sink.quad('interior', edge, [[span.s0, fy0, plenum + 0.05], [span.s0, fy1, plenum + 0.05], [span.s1, fy1, plenum + 0.05], [span.s1, fy0, plenum + 0.05]], 'out');
+          }
+        }, 0.3);
+        sink.counts.mechanical = (sink.counts.mechanical || 0) + 1;
+        cursor = band.head;
+        continue;
+      }
+    }
+
+    const bays = register === 'crown' && crownBays.spans.length ? crownBays : typicalBays;
+    // A blank bay every few storeys stops the grid reading as a print. The
+    // pier fill covers whatever is dropped, so this can never open a hole.
+    const interrupt = openingHash(seed ^ variant.interruptSeed, edge.index, index, 0);
+    let spansForStorey = bays.spans;
+    if (register === 'typical' && bays.spans.length >= 3 && interrupt % 6 === 0) {
+      const drop = interrupt % bays.spans.length;
+      spansForStorey = bays.spans.filter((_, i) => i !== drop);
+    }
+
+    // A rung with no opening budget at all builds bands only, whatever the
+    // register: that is what keeps per-window geometry inside the mid radius.
+    const reserved = detail.openStoreys > 0 && (register === 'crown' || register === 'mezzanine');
+    const useOpenings = canOpen && spansForStorey.length > 0 && (reserved || opened < bottomBudget);
+    const sillLedge = useOpenings && detail.sills && register !== 'mezzanine';
+    const dripBand = useOpenings && detail.drip && register !== 'mezzanine';
+    const sillTop = band.sill;
     const sillBottom = sillLedge ? band.sill - 0.1 : band.sill;
     const dripTop = sillBottom;
     const dripBottom = dripBand ? dripTop - ART_DRIP_HEIGHT : dripTop;
@@ -2901,53 +3251,72 @@ function layoutEdge(sink, edge, state) {
       sink.mark('wall').paint(opt.tint, 0.1);
       emitClad(sink, edge, -overlap, edge.length + overlap, cursor, dripBottom, opt.clad);
     }
+    // A string course under the first crown storey: the line that separates
+    // the shaft from the cap.
+    if (register === 'crown' && registers[index - 1] !== 'crown' && dripBottom > 1.2 && detail.sills) {
+      sink.mark('string-course');
+      emitProfile(
+        sink, edge, -overlap, edge.length + overlap, dripBottom - 0.22, dripBottom - 0.04,
+        opt.clad, opt.clad + Math.min(0.12, opt.projection - opt.clad), opt.trimTint, 0.9,
+      );
+      sink.counts.stringCourse = (sink.counts.stringCourse || 0) + 1;
+    }
     if (dripBand && dripTop > dripBottom) {
       // Drip recess: a 35 mm groove under each sill. Rain leaving the sill
       // runs into it, so this is where the streak lives -- as geometry that
       // self-shadows, not as a painted stripe.
-      const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.08, s1: span.s1 + 0.08 }));
+      const spans = spansForStorey.map((span) => ({ s0: span.s0 - 0.08, s1: span.s1 + 0.08 }));
       emitRow(sink, edge, dripBottom, dripTop, spans, opt.tint, (span) => {
         sink.mark('drip');
-        emitPanel(sink, edge, span.s0, span.s1, dripBottom, dripTop, opt.clad, opt.clad - ART_DRIP_DEPTH, opt.tint, 1);
-      }, 0.15);
+        emitPanel(sink, edge, span.s0, span.s1, dripBottom, dripTop, opt.clad, opt.clad - ART_DRIP_DEPTH, opt.tint, shed);
+      }, 0.15 * shed);
     }
     if (sillLedge && sillTop > sillBottom) {
-      const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.13, s1: span.s1 + 0.13 }));
+      const spans = spansForStorey.map((span) => ({ s0: span.s0 - 0.13, s1: span.s1 + 0.13 }));
       emitRow(sink, edge, sillBottom, sillTop, spans, opt.tint, (span) => {
         sink.mark('sill');
         emitPanel(
           sink, edge, span.s0, span.s1, sillBottom, sillTop,
-          opt.clad, opt.clad + Math.min(variant.sillProjection, opt.projection - opt.clad), opt.trimTint, 1,
+          opt.clad, opt.clad + Math.min(variant.sillProjection, opt.projection - opt.clad), opt.trimTint, shed,
         );
-      }, 0.2);
+      }, 0.2 * shed);
       sink.counts.sill = (sink.counts.sill || 0) + 1;
     }
 
     if (useOpenings) {
-      emitRow(sink, edge, band.sill, band.head, bays.spans, opt.tint, (span) => {
+      let column = 0;
+      emitRow(sink, edge, band.sill, band.head, spansForStorey, opt.tint, (span) => {
+        const glaze = glazingFor(openingHash(seed, edge.index, index, column));
+        column += 1;
         if (detail.frames) {
           emitOpening(sink, edge, span.s0, span.s1, band.sill, band.head, {
             clad: opt.clad,
             reveal: opt.reveal,
             glassSet: variant.glassSet,
             frameWidth: variant.frameWidth,
-            mullionPattern: detail.mullions ? variant.mullionPattern : 0,
+            // A crown opening is a paired light; a mezzanine is a single wide
+            // one. Rhythm changes up the elevation, not just proportion.
+            mullionPattern: detail.mullions
+              ? (register === 'crown' ? 1 : register === 'mezzanine' ? 0 : variant.mullionPattern)
+              : 0,
             tint: opt.tint,
             glassTint: opt.glassTint,
             frameTint: opt.frameTint,
+            glaze,
           });
         } else {
           emitPlainOpening(sink, edge, span.s0, span.s1, band.sill, band.head, {
-            clad: opt.clad, reveal: opt.reveal, tint: opt.tint, glassTint: opt.glassTint,
+            clad: opt.clad, reveal: opt.reveal, tint: opt.tint, glassTint: opt.glassTint, glaze,
           });
         }
         openings += 1;
       }, 0.25);
-      sink.counts.window = (sink.counts.window || 0) + bays.spans.length;
+      sink.counts.window = (sink.counts.window || 0) + spansForStorey.length;
+      sink.counts[`register-${register}`] = (sink.counts[`register-${register}`] || 0) + 1;
       opened += 1;
       cursor = band.head;
       if (detail.lintels) {
-        const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.09, s1: span.s1 + 0.09 }));
+        const spans = spansForStorey.map((span) => ({ s0: span.s0 - 0.09, s1: span.s1 + 0.09 }));
         const top = Math.min(band.head + 0.14, capBottom);
         if (top > band.head + 0.02) {
           emitRow(sink, edge, band.head, top, spans, opt.tint, (span) => {
@@ -2964,15 +3333,32 @@ function layoutEdge(sink, edge, state) {
     } else {
       // One recessed glazing band across the storey, on the same line the
       // openings would use.
-      const inset = clamp(edge.length * 0.05, 0.18, 0.8);
+      // Banded storeys still have to differ from each other: the inset shifts,
+      // and roughly a fifth of them are lit, so a shaft is not one row of
+      // pixels copied to the roofline.
+      const bandHash = openingHash(seed, edge.index, index, 0);
+      const inset = clamp(edge.length * (0.04 + ((bandHash >>> 9) % 5) * 0.008), 0.18, 0.9);
       const b0 = inset;
       const b1 = edge.length - inset;
       if (b1 - b0 > 0.9) {
+        const bandLit = ((bandHash >>> 5) % 100) < 22;
+        const glaze = glazingFor(bandHash, {
+          interior: bandLit
+            ? { ...WINDOW_INTERIORS.lit, blind: false, curtain: false }
+            : { ...WINDOW_INTERIORS.empty, blind: false, curtain: false, lit: false },
+        });
         emitRow(sink, edge, band.sill, band.head, [{ s0: b0, s1: b1 }], opt.tint, (span) => {
           emitStoreyBand(sink, edge, span.s0, span.s1, band.sill, band.head, {
-            clad: opt.clad, reveal: opt.reveal, tint: opt.tint, glassTint: opt.glassTint,
+            clad: opt.clad,
+            reveal: opt.reveal,
+            tint: opt.tint,
+            trimTint: opt.trimTint,
+            glassTint: opt.glassTint,
+            glaze,
           });
           bands += 1;
+          bandLow = Math.min(bandLow, band.sill);
+          bandHigh = Math.max(bandHigh, band.head);
         }, 0.25);
         sink.counts.band = (sink.counts.band || 0) + 1;
         cursor = band.head;
@@ -2983,6 +3369,27 @@ function layoutEdge(sink, edge, state) {
   if (cursor < capBottom) {
     sink.mark('wall').paint(opt.tint, 0.1);
     emitClad(sink, edge, -overlap, edge.length + overlap, cursor, capBottom, opt.clad);
+  }
+
+  // Continuous bay piers over a banded elevation. An unbroken glazing stripe
+  // is what makes a distant tower read as a flat coloured band with a black
+  // slot cut in it, but a fin per bay per storey costs a fin per bay per
+  // storey. One pier running the whole banded height is both cheaper -- bays
+  // instead of bays x storeys -- and better architecture: that is what a
+  // curtain wall's mullions actually do.
+  if (detail.bandFins && bands > 0 && bandHigh - bandLow > 1.5) {
+    const columns = clamp(Math.round(edge.length / variant.bayWidth), 1, MAX_ART_BAYS);
+    if (columns > 1) {
+      const pitch = edge.length / columns;
+      const width = clamp(pitch * 0.06, 0.08, 0.24);
+      const proud = Math.min(opt.clad + 0.07, opt.projection);
+      sink.mark('bay-pier').paint(opt.trimTint, 0.35);
+      for (let i = 1; i < columns; i += 1) {
+        const c = i * pitch;
+        sink.quad('structure', edge, [[c - width, bandLow, proud], [c - width, bandHigh, proud], [c + width, bandHigh, proud], [c + width, bandLow, proud]], 'out');
+      }
+      sink.counts.bayPier = (sink.counts.bayPier || 0) + 1;
+    }
   }
   // End returns: the side of the cladding tab where it runs past the corner.
   // On a right angle they land inside the neighbouring elevation and are never
@@ -3105,7 +3512,7 @@ export function planFacadeArticulation(building, options = {}) {
   const ranked = usable.slice().sort((a, b) => (b.length - a.length) || (a.index - b.index));
   let start = ART_RING_LADDER_START[ring];
   let chosen = null;
-  for (let attempt = 0; attempt < 3 && start + attempt < ART_DETAIL_LADDER.length; attempt += 1) {
+  for (let attempt = 0; attempt < 4 && start + attempt < ART_DETAIL_LADDER.length; attempt += 1) {
     const detail = ART_DETAIL_LADDER[start + attempt];
     const placement = createArticulationPlacement({ minX, maxX, minZ, maxZ }, baseY, height, declaredProjection, uvMetres);
     const sink = new ArticulationSink(placement);
@@ -3122,10 +3529,17 @@ export function planFacadeArticulation(building, options = {}) {
       signTint,
       glassTint,
       frameTint,
+      plenumTint: tint.map((c) => clamp(c * 0.3, 0, 1)),
+      shopSeed: facadeDepthSeed(building?.id) ^ 0x5bf03635,
       variant,
       full: detail.full,
     };
-    const state = { height, storeys, variant, detail, opt, detailEdges, commercial, tagged };
+    const state = {
+      height, storeys, variant, detail, opt, detailEdges, commercial, tagged,
+      registers: storeyRegisters(storeys.levels, variant),
+      crownCount: storeys.levels >= 12 ? 2 : storeys.levels >= 6 ? 1 : 0,
+      seed: facadeDepthSeed(building?.id) ^ Math.imul(salt + 1, 0x9e3779b9),
+    };
     let openings = 0;
     let bands = 0;
     for (const edge of usable) {
@@ -3221,14 +3635,26 @@ export function articulationGeometryFromQuads(quads, baseY = 0) {
     uvs.set(quad.uvs, q * 8);
     const tint = quad.tint || [1, 1, 1];
     const linear = [srgbToLinear(tint[0]), srgbToLinear(tint[1]), srgbToLinear(tint[2])];
+    let gy0 = 0;
+    let gspan = 0;
+    if (quad.grad) {
+      gy0 = Math.min(quad.positions[1], quad.positions[4], quad.positions[7], quad.positions[10]);
+      const gy1 = Math.max(quad.positions[1], quad.positions[4], quad.positions[7], quad.positions[10]);
+      gspan = gy1 - gy0;
+    }
     for (let v = 0; v < 4; v += 1) {
       normals[q * 12 + v * 3] = quad.normal[0];
       normals[q * 12 + v * 3 + 1] = quad.normal[1];
       normals[q * 12 + v * 3 + 2] = quad.normal[2];
-      const scale = articulationGrimeScale(quad.positions[v * 3 + 1] - (quad.baseY ?? baseY), quad.soffit || 0);
-      colors[q * 12 + v * 3] = linear[0] * scale;
-      colors[q * 12 + v * 3 + 1] = linear[1] * scale;
-      colors[q * 12 + v * 3 + 2] = linear[2] * scale;
+      const y = quad.positions[v * 3 + 1];
+      let scale = articulationGrimeScale(y - (quad.baseY ?? baseY), quad.soffit || 0);
+      if (quad.grad && gspan > 1e-5) {
+        const t = (y - gy0) / gspan;
+        scale *= quad.grad[1] + (quad.grad[0] - quad.grad[1]) * t;
+      }
+      colors[q * 12 + v * 3] = Math.min(1, linear[0] * scale);
+      colors[q * 12 + v * 3 + 1] = Math.min(1, linear[1] * scale);
+      colors[q * 12 + v * 3 + 2] = Math.min(1, linear[2] * scale);
     }
     const base = q * 4;
     const i = q * 6;
@@ -3283,18 +3709,23 @@ function edgeProjectionProbe(polygon, edges, neighbours, allowance) {
   const limits = new Map();
   const probe = allowance + 0.05;
   for (const edge of edges) {
-    let party = false;
-    for (const t of [0.15, 0.5, 0.85]) {
+    // Seven samples, and the edge is only a party wall if most of them are
+    // buried. Round 1 flagged the whole edge on a single hit, which turned a
+    // sixty-metre tower frontage into one blank panel because its far corner
+    // happened to touch the next footprint. Measured on the real slice that
+    // over-triggered on 931 edges; the majority rule leaves the genuine
+    // shared walls and gives the frontages back.
+    let hits = 0;
+    for (const t of [0.08, 0.22, 0.36, 0.5, 0.64, 0.78, 0.92]) {
       const s = edge.length * t;
       const x = edge.ax + edge.ux * s + edge.nx * probe;
       const z = edge.az + edge.uz * s + edge.nz * probe;
       for (const neighbour of neighbours) {
         if (neighbour === polygon) continue;
-        if (pointInPolygon(x, z, neighbour)) { party = true; break; }
+        if (pointInPolygon(x, z, neighbour)) { hits += 1; break; }
       }
-      if (party) break;
     }
-    limits.set(edge.index, party ? ART_PARTY_ALLOWANCE : allowance);
+    limits.set(edge.index, hits >= 5 ? ART_PARTY_ALLOWANCE : allowance);
   }
   return limits;
 }
@@ -3503,10 +3934,11 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       revealDepth: plan.revealDepth,
     });
     for (const quad of plan.quads) {
-      const key = `${zone}|${plan.className}|${quad.role}`;
+      const bucketClass = articulationBucketClass(quad.role, plan.className);
+      const key = `${zone}|${bucketClass}|${quad.role}`;
       let bucket = buckets.get(key);
       if (!bucket) {
-        bucket = { key, zone, className: plan.className, role: quad.role, quads: [], buildingIds: [] };
+        bucket = { key, zone, className: bucketClass, role: quad.role, quads: [], buildingIds: [] };
         buckets.set(key, bucket);
       }
       bucket.quads.push(quad);
