@@ -43,17 +43,30 @@
 // Rings, radii and per-ring triangle caps live in FACADE_ARTICULATION_RINGS
 // (src/world/buildings/facade-depth.js) and are reported in `diagnostics`:
 //
-//   near   <=  78 m   <=  22 buildings   base 6000 tri/building
-//   mid    <= 175 m   <=  56 buildings   base 2000 tri/building
-//   far    <= 380 m   <= 180 buildings   base  640 tri/building
+//   near   <=  85 m   <=  26 buildings   base 6000 tri/building
+//   mid    <= 200 m   <=  72 buildings   base 2300 tri/building
+//   far    <= 420 m   <= 300 buildings   base  820 tri/building
 //   beyond            <= 900 buildings   base   48 tri/building
 //
+// The radius is measured to the NEAREST POINT OF THE FOOTPRINT. The centroid
+// is the wrong question and round 2 shipped it: an eleven storey frontage 61 m
+// from the eye, filling most of one capture card, had its centroid at 87 m and
+// was therefore built at the mid ring's rung.
+//
 // The base cap is scaled by the greater of the building's wall area and its
-// edge count; see `articulationTriangleCap`. Per-window geometry stops at
-// 175 m. Scene ceiling is 330,000 triangles and 48 draw calls, enforced by
-// uniform outside-in ring demotion. Measured on the real 700 building slice
-// from the street capture pose: 181,236 triangles, 29 draw calls, 0 demotions,
-// 700/700 buildings articulated.
+// edge count, and then by SCREEN COVERAGE -- how much of the reference frame
+// the elevation fills; see `articulationTriangleCap` and
+// `articulationScreenCoverage`. Without that term a 160 m tower carrying
+// 23,000 m2 of wall gets the same 14,400 triangles whether it is four metres
+// from the eye or three hundred, which buys four glazed storeys and forty-six
+// flat glazing bands: the uniform grid round 2 was rejected for.
+//
+// Scene ceiling is 330,000 triangles and 48 draw calls. It is held by giving
+// up the coverage bonus first -- that takes triangles off the two or three
+// buildings holding the most of them and leaves the rest of the city alone --
+// and only then by uniform outside-in ring demotion. Measured on the real 700
+// building slice from the street capture pose: 317,378 triangles, 20 draw
+// calls, 0 coverage cuts, 0 demotions, 700/700 buildings articulated.
 //
 // Captures run through a software GL backend, so the pass also renders before
 // the shell (`renderOrder = -1`): the cladding wins the depth test first and
@@ -171,11 +184,16 @@ function emptyDiagnostics(reason) {
     rejected: [],
     rejectedByReason: {},
     signatures: { total: 0, unique: 0, uniqueRatio: 1, neighbourCollisions: 0, resignatured: 0 },
+    glazedStoreys: 0,
+    bandedStoreys: 0,
+    glazedStoreyShare: 0,
+    maxCoverage: 0,
     budget: {
       sceneTriangleBudget: FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
       maxDrawCalls: FACADE_ARTICULATION_BUDGET.maxDrawCalls,
       withinBudget: true,
       demotions: 0,
+      coverageCuts: 0,
     },
     supersededLegacyMeshes: 0,
     refreshes: 0,
@@ -415,6 +433,10 @@ function collectDiagnostics(centre, centreSource) {
   let preservedAuthored = 0;
   let collisions = 0;
   let resignatured = 0;
+  let coverageCuts = 0;
+  let glazedStoreys = 0;
+  let bandedStoreys = 0;
+  let maxCoverage = 0;
   for (const batch of batches) {
     triangles += batch.triangles;
     drawCalls += batch.drawCalls;
@@ -422,6 +444,7 @@ function collectDiagnostics(centre, centreSource) {
     bands += batch.bands;
     articulated += batch.articulated;
     demotions = Math.max(demotions, batch.demotions);
+    coverageCuts = Math.max(coverageCuts, batch.coverageCuts || 0);
     partyEdges += batch.partyEdges;
     preservedAuthored += batch.preservedAuthored;
     collisions += batch.signatures.neighbourCollisions;
@@ -437,7 +460,12 @@ function collectDiagnostics(centre, centreSource) {
     for (const [name, count] of Object.entries(batch.features)) features[name] = (features[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.parts)) parts[name] = (parts[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.classes)) classes[name] = (classes[name] || 0) + count;
-    for (const record of batch.buildings) signatures.add(record.signature);
+    for (const record of batch.buildings) {
+      signatures.add(record.signature);
+      glazedStoreys += record.glazedStoreys || 0;
+      bandedStoreys += record.bandedStoreys || 0;
+      maxCoverage = Math.max(maxCoverage, record.coverage || 0);
+    }
   }
   const budget = FACADE_ARTICULATION_BUDGET;
   return {
@@ -451,6 +479,16 @@ function collectDiagnostics(centre, centreSource) {
     bands,
     triangles,
     drawCalls,
+    // The number the round 2 review was really about: how much of the elevation
+    // is built as individual openings rather than one flat glazing band per
+    // storey. A clad ring with a starved opening budget reads as a printed
+    // grid, and only this ratio says so.
+    glazedStoreys,
+    bandedStoreys,
+    glazedStoreyShare: glazedStoreys + bandedStoreys > 0
+      ? glazedStoreys / (glazedStoreys + bandedStoreys)
+      : 0,
+    maxCoverage,
     rings,
     features,
     parts,
@@ -472,6 +510,9 @@ function collectDiagnostics(centre, centreSource) {
       maxDrawCalls: budget.maxDrawCalls,
       withinBudget: triangles <= budget.sceneTriangleBudget && drawCalls <= budget.maxDrawCalls,
       demotions,
+      // Steps of the screen-coverage bonus this frame had to hand back before
+      // it fit. This is given up before any ring is demoted.
+      coverageCuts,
       detailRefreshMetres: budget.detailRefreshMetres,
       bulkRefreshMetres: budget.bulkRefreshMetres,
     },

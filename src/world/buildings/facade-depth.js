@@ -1974,6 +1974,13 @@ export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
  * within the ring, so the buildings the player is standing in front of are the
  * ones that keep the detail.
  *
+ * The radius is measured to the NEAREST POINT OF THE FOOTPRINT, not to the
+ * centroid -- see `nearestFootprintDistance`. `coverageGain` and
+ * `glazeCoverage` are the screen-coverage terms: the first scales the
+ * per-building triangle cap by how much of the frame the elevation fills, the
+ * second is the frame share above which every storey is glazed individually
+ * instead of banded. See `articulationScreenCoverage`.
+ *
  *   near   <=  85 m   full articulation. A 0.16 m reveal is ~6 px at 1440p
  *                     from 85 m, so frames, mullions and sills still resolve.
  *   mid    <= 200 m   reveal + pane + sill. Frames and mullions are under a
@@ -1981,6 +1988,11 @@ export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
  *   far    <= 420 m   clad, with one recessed glazing band per storey on the
  *                     same sill/head line the near ring uses, and a continuous
  *                     bay pier every bay so the band is not one flat stripe.
+ *                     Its `capScale` is 2.4 rather than 6: at 200-420 m a
+ *                     4,900 triangle elevation resolves to the same pixels a
+ *                     2,000 triangle one does, and on the gate's own poses that
+ *                     ring was holding a third of the whole scene budget for
+ *                     buildings covering under 2% of the frame each.
  *   beyond            silhouette: cornice and plinth only, shell texture kept.
  *                     No cladding, so there is no colour step at the cut --
  *                     at 420 m the painted grid is sub-pixel anyway.
@@ -1996,11 +2008,100 @@ export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
  * `articulationTriangleCap`.
  */
 export const FACADE_ARTICULATION_RINGS = Object.freeze({
-  near: Object.freeze({ radius: 85, maxBuildings: 26, triangleCap: 6000, capScale: 2.4 }),
-  mid: Object.freeze({ radius: 200, maxBuildings: 72, triangleCap: 2300, capScale: 2.6 }),
-  far: Object.freeze({ radius: 420, maxBuildings: 300, triangleCap: 820, capScale: 6 }),
-  silhouette: Object.freeze({ radius: Infinity, maxBuildings: 900, triangleCap: 48, capScale: 16 }),
+  near: Object.freeze({ radius: 85, maxBuildings: 26, triangleCap: 6000, capScale: 2.4, coverageGain: 7.5, glazeCoverage: 0.05 }),
+  mid: Object.freeze({ radius: 200, maxBuildings: 72, triangleCap: 2300, capScale: 2.6, coverageGain: 6, glazeCoverage: 0.06 }),
+  far: Object.freeze({ radius: 420, maxBuildings: 300, triangleCap: 820, capScale: 2.4, coverageGain: 0, glazeCoverage: Infinity }),
+  silhouette: Object.freeze({ radius: Infinity, maxBuildings: 900, triangleCap: 48, capScale: 16, coverageGain: 0, glazeCoverage: Infinity }),
 });
+
+/**
+ * The frame the screen-coverage term is measured in.
+ *
+ * Not a guess: this is the quality gate's own street card -- 47 deg vertical
+ * field of view, 16:9, eye at 2.4 m. Coverage is measured as if the camera had
+ * turned to face the building, deliberately, because it has to survive the
+ * player turning on the spot and a rebuild costs a few hundred milliseconds.
+ * A term that depended on the current view direction would make every LOD
+ * decision a function of something that changes sixty times a second.
+ */
+export const FACADE_ARTICULATION_SCREEN = Object.freeze({
+  fov: 47,
+  aspect: 16 / 9,
+  eyeHeight: 2.4,
+});
+
+/**
+ * Distance from a point to the nearest point of a footprint; 0 inside it.
+ *
+ * This is the distance the LOD ring is measured in. The centroid is the wrong
+ * question: a 200 m block's centroid is 100 m from the wall you are standing
+ * against, and measured on the real slice that put buildings whose frontage is
+ * 20-60 m from the eye -- half the frame -- one or two rings out.
+ */
+export function nearestFootprintDistance(polygon, point) {
+  const points = normalisePolygon(polygon);
+  if (!points.length || !point || !Number.isFinite(point.x) || !Number.isFinite(point.z)) return NaN;
+  if (pointInPolygon(point.x, point.z, points)) return 0;
+  let best = Infinity;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const ex = b.x - a.x;
+    const ez = b.z - a.z;
+    const len2 = ex * ex + ez * ez;
+    let t = len2 > EPSILON ? ((point.x - a.x) * ex + (point.z - a.z) * ez) / len2 : 0;
+    t = clamp(t, 0, 1);
+    best = Math.min(best, Math.hypot(a.x + ex * t - point.x, a.z + ez * t - point.z));
+  }
+  return best;
+}
+
+/**
+ * The share of the reference frame this building's silhouette would fill.
+ *
+ * Distance alone cannot answer "does this elevation need windows": a 3 m
+ * lock-up and a 160 m tower standing the same 5 m away subtend wildly
+ * different amounts of frame, and it is the frame share -- not the metres --
+ * that decides whether a storey is a readable band of glass or a sub-pixel
+ * line. Width comes from the angular spread of the footprint about the eye,
+ * height from the nearest wall, and both are clipped to the frame before the
+ * product is taken, so a building taller than the frame does not earn credit
+ * for the part that is off-screen.
+ *
+ * Returns 0..1.
+ */
+export function articulationScreenCoverage(building, focus, screen = FACADE_ARTICULATION_SCREEN) {
+  if (!focus || !Number.isFinite(focus.x) || !Number.isFinite(focus.z)) return 0;
+  const points = normalisePolygon(building?.polygon);
+  const height = Number(building?.height);
+  if (!points.length || !Number.isFinite(height) || height <= 0) return 0;
+  const fovV = ((Number(screen?.fov) || FACADE_ARTICULATION_SCREEN.fov) * Math.PI) / 180;
+  const aspect = Number(screen?.aspect) || FACADE_ARTICULATION_SCREEN.aspect;
+  const eyeY = Number.isFinite(screen?.eyeHeight) ? screen.eyeHeight : FACADE_ARTICULATION_SCREEN.eyeHeight;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * aspect);
+  const distance = nearestFootprintDistance(points, focus);
+  if (!Number.isFinite(distance)) return 0;
+  if (distance <= EPSILON) return 1;
+
+  // Angular width, measured about the direction to the footprint centroid so
+  // the +/-pi branch cut cannot land inside the building.
+  let cx = 0;
+  let cz = 0;
+  for (const point of points) { cx += point.x; cz += point.z; }
+  const reference = Math.atan2(cz / points.length - focus.z, cx / points.length - focus.x);
+  let lowest = 0;
+  let highest = 0;
+  for (const point of points) {
+    let delta = Math.atan2(point.z - focus.z, point.x - focus.x) - reference;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    lowest = Math.min(lowest, delta);
+    highest = Math.max(highest, delta);
+  }
+  const angularWidth = highest - lowest;
+  const angularHeight = Math.atan(Math.max(0, height - eyeY) / distance) + Math.atan(Math.max(0, eyeY) / distance);
+  return clamp((Math.min(angularWidth, fovH) / fovH) * (Math.min(angularHeight, fovV) / fovV), 0, 1);
+}
 
 /**
  * The elevation area one ring's base triangle cap is written for, in square
@@ -2014,20 +2115,39 @@ export const FACADE_ARTICULATION_REFERENCE_WALL = 1200;
 /**
  * Per-building triangle cap for a ring.
  *
- * Two things drive how much elevation a building has: its wall area, and how
- * many separate faces that wall is broken into -- a cornice line costs the
- * same twelve triangles on a 3 m return as on a 40 m frontage. The cap takes
- * whichever of the two demands more, up to the ring's `capScale`.
+ * Three things drive how much elevation a building deserves: its wall area,
+ * how many separate faces that wall is broken into -- a cornice line costs the
+ * same twelve triangles on a 3 m return as on a 40 m frontage -- and how much
+ * of the frame it actually fills. The first two are `demand`, taken whichever
+ * way round is larger and clamped to the ring's `capScale`. The third is
+ * `coverage`, and it is the one round 2 was missing: a 160 m tower carries
+ * 23,000 m2 of wall, twenty times the reference, so `demand` clamps at 2.4 and
+ * the cap lands on 14,400 triangles whether that tower is filling half the
+ * frame from 4.5 m or is one of thirty in the background. Fourteen thousand
+ * triangles over fifty storeys buys four glazed storeys and forty-six flat
+ * bands, which is exactly what the capture showed. `coverageGain` is what lets
+ * the handful of buildings a frame is actually made of spend the budget the
+ * background is not using.
  */
-export function articulationTriangleCap(ring, wallArea, edgeCount = 4) {
+export function articulationTriangleCap(ring, wallArea, edgeCount = 4, coverage = 0) {
   const spec = FACADE_ARTICULATION_RINGS[ring] || FACADE_ARTICULATION_RINGS.silhouette;
   const area = Number.isFinite(wallArea) && wallArea > 0 ? wallArea : FACADE_ARTICULATION_REFERENCE_WALL;
   const edges = Number.isFinite(edgeCount) && edgeCount > 0 ? edgeCount : 4;
   const demand = Math.max(area / FACADE_ARTICULATION_REFERENCE_WALL, edges / 4);
-  return Math.round(spec.triangleCap * clamp(demand, 1, spec.capScale));
+  const share = Number.isFinite(coverage) ? clamp(coverage, 0, 1) : 0;
+  const gain = 1 + (spec.coverageGain || 0) * share;
+  return Math.round(spec.triangleCap * clamp(demand, 1, spec.capScale) * gain);
 }
 
 export const FACADE_ARTICULATION_RING_ORDER = Object.freeze(['near', 'mid', 'far', 'silhouette']);
+
+/**
+ * How the screen-coverage bonus is given up when a frame does not fit the
+ * scene budget, before any ring is demoted. Each step is the multiplier the
+ * whole city's coverage term is scaled by, so the buildings holding the most
+ * bonus give up the most triangles and the background is untouched.
+ */
+export const COVERAGE_CUT_STEPS = Object.freeze([0.5, 0.2, 0]);
 
 /**
  * Scene budget. The arithmetic worst case of the ring caps is
@@ -3084,6 +3204,11 @@ const ART_RING_LADDER_START = Object.freeze({ near: 0, mid: 2, far: 4, silhouett
 function layoutEdge(sink, edge, state) {
   const { height, storeys, variant, detail, opt } = state;
   const detailEdge = state.detailEdges.has(edge.index);
+  // The shopfront is not budgeted with the shaft. It is the part of the
+  // elevation the player stands closest to and walks around the corner of, so
+  // it follows the longest frontages rather than the faces that happen to turn
+  // toward the LOD centre this refresh.
+  const frontEdge = state.frontEdges.has(edge.index);
   sink.clad = opt.clad;
   // Adjacent elevations must meet at the corner. Running each one past its end
   // by its own clad depth closes a right-angle corner exactly; the end returns
@@ -3101,7 +3226,7 @@ function layoutEdge(sink, edge, state) {
     // wall lost the depth test to the shell at a grazing view and the painted
     // grid showed through as speckle across the whole face. So this edge is
     // left to the shell, which is what carried it before the pass existed.
-    return { openings: 0, bands: 0, party: true };
+    return { openings: 0, bands: 0, glazedRows: 0, bandedRows: 0, party: true };
   }
 
   if (!detail.clad) {
@@ -3114,7 +3239,7 @@ function layoutEdge(sink, edge, state) {
     const plinth = clamp(variant.plinthHeight, 0.3, Math.max(0.3, height * 0.12));
     sink.mark('plinth');
     emitProfile(sink, edge, 0, edge.length, GROUND_CLEARANCE, plinth, 0, Math.min(variant.plinthProjection, opt.projection), opt.trimTint, 0.95);
-    return { openings: 0, bands: 0 };
+    return { openings: 0, bands: 0, glazedRows: 0, bandedRows: 0 };
   }
 
   // Backing plane. The courses below partition the whole elevation, but a
@@ -3135,7 +3260,7 @@ function layoutEdge(sink, edge, state) {
   let bandHigh = -Infinity;
 
   let storefront = false;
-  if (state.commercial && detail.storefront && detailEdge && storeys.tops[0] > 2.6 && edge.length >= 4.5) {
+  if (state.commercial && detail.storefront && frontEdge && storeys.tops[0] > 2.6 && edge.length >= 4.5) {
     storefront = emitStorefront(sink, edge, { groundTop: Math.min(storeys.tops[0], capBottom) }, {
       ...opt,
       full: detail.storefront === 'full',
@@ -3164,6 +3289,8 @@ function layoutEdge(sink, edge, state) {
   const crownBays = bayspans(edge, variant, variant.windowRatio * variant.crownRatio, 1.35);
   const canOpen = detailEdge && typicalBays.spans.length > 0;
   let opened = 0;
+  let glazedRows = 0;
+  let bandedRows = 0;
   const seed = state.seed;
   // The cap eats the top of a tall building -- a 115 m tower carries a ~16 m
   // entablature and parapet -- so the crown register has to be pinned to the
@@ -3186,7 +3313,16 @@ function layoutEdge(sink, edge, state) {
   // than competing for it. On a thirty-storey tower the budget is spent long
   // before the top, and the top is the part read against the sky -- round 1
   // banded it, which is why tall elevations repeated to the roofline.
-  const bottomBudget = detail.openStoreys > 0 ? Math.max(1, detail.openStoreys - state.crownCount) : 0;
+  // The ladder's `openStoreys` is a FLOOR, not a ceiling. `state.openStoreyBudget`
+  // is the screen-coverage answer to the same question -- when this elevation
+  // fills enough of the frame for its storeys to be read individually, every
+  // storey is glazed individually. Round 2 had only the floor, so a fifty
+  // storey tower 4.5 m from the eye carried four glazed storeys and forty-six
+  // flat bands: the ladder's own rule is that approaching a building deepens
+  // the same lines rather than moving them, and a rung that swaps a band for a
+  // window moves them.
+  const budgeted = Math.max(detail.openStoreys, state.openStoreyBudget || 0);
+  const bottomBudget = detail.openStoreys > 0 ? Math.max(1, budgeted - state.crownCount) : 0;
 
   for (let index = startStorey; index < storeys.levels; index += 1) {
     const register = registers[index] || 'typical';
@@ -3314,6 +3450,7 @@ function layoutEdge(sink, edge, state) {
       sink.counts.window = (sink.counts.window || 0) + spansForStorey.length;
       sink.counts[`register-${register}`] = (sink.counts[`register-${register}`] || 0) + 1;
       opened += 1;
+      glazedRows += 1;
       cursor = band.head;
       if (detail.lintels) {
         const spans = spansForStorey.map((span) => ({ s0: span.s0 - 0.09, s1: span.s1 + 0.09 }));
@@ -3361,6 +3498,7 @@ function layoutEdge(sink, edge, state) {
           bandHigh = Math.max(bandHigh, band.head);
         }, 0.25);
         sink.counts.band = (sink.counts.band || 0) + 1;
+        bandedRows += 1;
         cursor = band.head;
       }
     }
@@ -3399,7 +3537,7 @@ function layoutEdge(sink, edge, state) {
     sink.quad('structure', edge, [[-overlap, 0, 0], [-overlap, height, 0], [-overlap, height, opt.clad], [-overlap, 0, opt.clad]], 'against');
     sink.quad('structure', edge, [[edge.length + overlap, 0, 0], [edge.length + overlap, height, 0], [edge.length + overlap, height, opt.clad], [edge.length + overlap, 0, opt.clad]], 'along');
   }
-  return { openings, bands };
+  return { openings, bands, glazedRows, bandedRows };
 }
 
 /**
@@ -3439,6 +3577,11 @@ export function planFacadeArticulation(building, options = {}) {
     triangles: 0,
     openings: 0,
     bands: 0,
+    glazedStoreys: 0,
+    bandedStoreys: 0,
+    edgeRows: [],
+    coverage: 0,
+    glazeAll: false,
     features: {},
     bounds: null,
     footprint: null,
@@ -3505,18 +3648,53 @@ export function planFacadeArticulation(building, options = {}) {
   let perimeter = 0;
   for (const edge of allEdges) perimeter += edge.length;
   const wallArea = perimeter * height;
+  // Screen coverage: how much of the reference frame this elevation fills. It
+  // sizes the cap and decides whether the storeys are glazed individually.
+  const coverage = Number.isFinite(options.coverage)
+    ? clamp(options.coverage, 0, 1)
+    : (options.facing ? articulationScreenCoverage(building, options.facing, options.screen) : 0);
+  const ringSpec = FACADE_ARTICULATION_RINGS[ring] || FACADE_ARTICULATION_RINGS.silhouette;
   const cap = Number.isFinite(options.triangleCap)
     ? Math.max(0, options.triangleCap)
-    : articulationTriangleCap(ring, wallArea, usable.length);
+    : articulationTriangleCap(ring, wallArea, usable.length, coverage);
+  const glazeAll = Number.isFinite(ringSpec.glazeCoverage) && coverage >= ringSpec.glazeCoverage;
 
-  const ranked = usable.slice().sort((a, b) => (b.length - a.length) || (a.index - b.index));
+  // Detail edges are the ones the focus can see. Ranking on length alone spent
+  // the cap on the back of a tower -- six long faces built, two of them ever
+  // rendered -- and it is that misallocation which paid for the flat bands on
+  // the face the camera was pointed at. A non-facing edge is still clad and
+  // still banded, so nothing is uncovered by this; it only loses joinery.
+  const facing = options.facing && Number.isFinite(options.facing.x) && Number.isFinite(options.facing.z)
+    ? options.facing
+    : null;
+  const faces = (edge) => {
+    if (!facing) return 0;
+    const mx = edge.ax + edge.ux * edge.length * 0.5;
+    const mz = edge.az + edge.uz * edge.length * 0.5;
+    return (facing.x - mx) * edge.nx + (facing.z - mz) * edge.nz > 0 ? 0 : 1;
+  };
+  const ranked = usable.slice().sort(
+    (a, b) => (faces(a) - faces(b)) || (b.length - a.length) || (a.index - b.index),
+  );
+  // A prism seen from a street shows two or three of its faces. When the focus
+  // is known, the joinery budget stops at the faces that turn toward it; the
+  // rest of the elevation is still clad and still banded, and the triangles
+  // that were being spent on the back of the block pay for the front of it.
+  const facingCount = facing ? ranked.filter((edge) => faces(edge) === 0).length : 0;
+  const byLength = usable.slice().sort((a, b) => (b.length - a.length) || (a.index - b.index));
   let start = ART_RING_LADDER_START[ring];
   let chosen = null;
   for (let attempt = 0; attempt < 4 && start + attempt < ART_DETAIL_LADDER.length; attempt += 1) {
     const detail = ART_DETAIL_LADDER[start + attempt];
     const placement = createArticulationPlacement({ minX, maxX, minZ, maxZ }, baseY, height, declaredProjection, uvMetres);
     const sink = new ArticulationSink(placement);
-    const detailEdges = new Set(ranked.slice(0, detail.edges).map((edge) => edge.index));
+    // Every face that turns toward the focus, not the ladder's count of them:
+    // the ladder's `edges` was a cost bound, and the triangle cap is now the
+    // cost bound. A face the camera can see and its neighbour cannot is what
+    // makes one elevation read as two different buildings.
+    const detailEdgeCount = facingCount > 0 ? facingCount : detail.edges;
+    const detailEdges = new Set(ranked.slice(0, detailEdgeCount).map((edge) => edge.index));
+    const frontEdges = new Set(byLength.slice(0, detail.edges).map((edge) => edge.index));
     const opt = {
       clad: detail.clad ? cladDepth : 0,
       pane: ART_PANE,
@@ -3535,13 +3713,18 @@ export function planFacadeArticulation(building, options = {}) {
       full: detail.full,
     };
     const state = {
-      height, storeys, variant, detail, opt, detailEdges, commercial, tagged,
+      height, storeys, variant, detail, opt, detailEdges, frontEdges, commercial, tagged,
       registers: storeyRegisters(storeys.levels, variant),
       crownCount: storeys.levels >= 12 ? 2 : storeys.levels >= 6 ? 1 : 0,
+      // Every storey, when the frame share says the storeys are readable.
+      openStoreyBudget: glazeAll ? storeys.levels : 0,
       seed: facadeDepthSeed(building?.id) ^ Math.imul(salt + 1, 0x9e3779b9),
     };
     let openings = 0;
     let bands = 0;
+    let glazedStoreys = 0;
+    let bandedStoreys = 0;
+    const edgeRows = [];
     for (const edge of usable) {
       // Per-edge outward allowance: a party wall has no room for a cornice.
       opt.projection = typeof options.projectionForEdge === 'function'
@@ -3552,8 +3735,20 @@ export function planFacadeArticulation(building, options = {}) {
       sink.commit('elevation');
       openings += result.openings;
       bands += result.bands;
+      glazedStoreys += result.glazedRows;
+      bandedStoreys += result.bandedRows;
+      // Per edge, so a caller can ask "does the face I am looking at carry
+      // openings" instead of averaging the front of the building with its back.
+      edgeRows.push({
+        edgeIndex: edge.index,
+        length: edge.length,
+        detail: detailEdges.has(edge.index),
+        glazedRows: result.glazedRows,
+        bandedRows: result.bandedRows,
+        party: result.party === true,
+      });
     }
-    chosen = { detail, sink, openings, bands };
+    chosen = { detail, sink, openings, bands, glazedStoreys, bandedStoreys, edgeRows };
     if (sink.triangles <= cap) break;
   }
   if (!chosen) return { ...empty, skipped: 'no-detail-level' };
@@ -3589,6 +3784,14 @@ export function planFacadeArticulation(building, options = {}) {
     triangles: sink.triangles,
     openings: chosen.openings,
     bands: chosen.bands,
+    // Storey-rows that carry individual openings, and storey-rows that carry a
+    // flat glazing band instead. Their ratio is what a reviewer sees as
+    // "articulated elevation" versus "uniform grid of identical windows".
+    glazedStoreys: chosen.glazedStoreys,
+    bandedStoreys: chosen.bandedStoreys,
+    edgeRows: chosen.edgeRows,
+    coverage,
+    glazeAll,
     features: { ...sink.counts },
     parts: { ...sink.parts },
     bounds: { minX: boundsMinX, maxX: boundsMaxX, minY: boundsMinY, maxY: boundsMaxY, minZ: boundsMinZ, maxZ: boundsMaxZ },
@@ -3755,6 +3958,9 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
     ? { x: options.focus.x, z: options.focus.z }
     : null;
   const wantZone = options.zone === 'detail' || options.zone === 'bulk' ? options.zone : null;
+  const screen = options.screen && Number.isFinite(options.screen.fov)
+    ? { ...FACADE_ARTICULATION_SCREEN, ...options.screen }
+    : FACADE_ARTICULATION_SCREEN;
   const preserve = options.preserveIds instanceof Set
     ? options.preserveIds
     : new Set(Array.isArray(options.preserveIds) ? options.preserveIds : []);
@@ -3780,8 +3986,13 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
     const metrics = facadeFootprintMetrics(building);
     const centroid = metrics.centroid;
     if (!centroid) { reject(building?.id, 'centroid'); continue; }
-    const distance = focus ? Math.hypot(centroid.x - focus.x, centroid.z - focus.z) : 0;
-    const entry = { building, index, polygon, centroid, distance, rank: focus ? distance : index };
+    // Distance to the nearest point of the footprint, not to the centroid: the
+    // wall the player is standing against is the surface the ring is deciding
+    // for. Coverage is the screen term -- how much of the reference frame this
+    // elevation fills -- and it sizes the budget the plan is allowed to spend.
+    const distance = focus ? nearestFootprintDistance(polygon, focus) : 0;
+    const coverage = focus ? articulationScreenCoverage(building, focus, screen) : 0;
+    const entry = { building, index, polygon, centroid, distance, coverage, rank: focus ? distance : index };
     entries.push(entry);
     const key = `${Math.floor(centroid.x / cell)}:${Math.floor(centroid.z / cell)}`;
     let bucket = grid.get(key);
@@ -3834,7 +4045,7 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
     }
   };
 
-  const planAll = () => {
+  const planAll = (coverageScale = 1) => {
     const signatureGrid = new Map();
     const planned = [];
     let triangles = 0;
@@ -3868,6 +4079,8 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
           maxProjection: allowance,
           projectionForEdge: (edgeIndex) => limits.get(edgeIndex) ?? allowance,
           uvMetres: options.uvMetres,
+          coverage: entry.coverage * coverageScale,
+          facing: focus,
         });
         if (plan.skipped) break;
         if (!nearbySignatures.has(plan.signature)) break;
@@ -3883,18 +4096,37 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       planned.push({ entry, plan, zone });
       triangles += plan.triangles;
     }
-    return { planned, triangles, resignatured, collisions, partyEdges };
+    return { planned, triangles, resignatured, collisions, partyEdges, coverageScale };
   };
 
-  let demotions = 0;
-  assignRings(demotions);
-  let attempt = planAll();
-  while (attempt.triangles > sceneBudget && demotions < 4) {
-    demotions += 1;
+  // Degrade in two stages, and give up the screen-coverage bonus FIRST.
+  //
+  // The bonus is what the two or three buildings a frame is made of are
+  // spending; the ring ladder is what everything else is standing on. Cutting
+  // the bonus takes triangles off the elevations that have the most of them
+  // and leaves the rest of the city exactly where it was, so it is both the
+  // cheapest step and the one a viewer is least likely to see. Only when the
+  // bonus is gone entirely does the uniform outside-in ring demotion start,
+  // and that still moves whole rings, never one building out of a pair
+  // standing side by side.
+  const reset = () => {
     rejected.length = 0;
     for (const key of Object.keys(rejectedByReason)) delete rejectedByReason[key];
+  };
+  let coverageCuts = 0;
+  let demotions = 0;
+  assignRings(demotions);
+  let attempt = planAll(1);
+  while (attempt.triangles > sceneBudget && coverageCuts < COVERAGE_CUT_STEPS.length) {
+    coverageCuts += 1;
+    reset();
+    attempt = planAll(COVERAGE_CUT_STEPS[coverageCuts - 1]);
+  }
+  while (attempt.triangles > sceneBudget && demotions < 4) {
+    demotions += 1;
+    reset();
     assignRings(demotions);
-    attempt = planAll();
+    attempt = planAll(COVERAGE_CUT_STEPS[COVERAGE_CUT_STEPS.length - 1]);
   }
 
   // 3. Merge. One bucket per (zone, material class, role): a whole city of
@@ -3925,6 +4157,10 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       style: plan.style,
       signature: plan.signature,
       distance: entry.distance,
+      coverage: entry.coverage,
+      capCoverage: plan.coverage,
+      glazedStoreys: plan.glazedStoreys,
+      bandedStoreys: plan.bandedStoreys,
       triangles: plan.triangles,
       triangleCap: plan.triangleCap,
       wallArea: plan.wallArea,
@@ -4000,6 +4236,11 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
     partyEdges: attempt.partyEdges,
     preservedAuthored: perBuilding.filter((record) => preserve.has(record.id)).length,
     demotions,
+    // How many steps of the screen-coverage bonus this frame had to give up
+    // before it fit. Nonzero means the frame is spending its whole budget on
+    // the elevations in front of the player; >= COVERAGE_CUT_STEPS.length means
+    // the bonus is gone and the ring ladder is next.
+    coverageCuts,
     sceneTriangleBudget: sceneBudget,
     maxProjection: allowance,
   };

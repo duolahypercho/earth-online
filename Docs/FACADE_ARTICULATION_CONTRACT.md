@@ -79,35 +79,99 @@ Consequences other subsystems must respect:
 LOD is by distance from the pass's centre, in four rings. Radii, populations
 and per-building triangle caps are in `FACADE_ARTICULATION_RINGS`.
 
-| ring | radius | max buildings | base cap | what it builds |
-| --- | --- | --- | --- | --- |
-| near | 85 m | 26 | 6000 | reveals, frame rings, mullions, sills, lintels, drip recesses, full storefront |
-| mid | 200 m | 72 | 2300 | reveals, pane, sill; no joinery |
-| far | 420 m | 300 | 820 | clad, one recessed glazing band per storey, continuous bay piers |
-| silhouette | — | 900 | 48 | cornice and plinth only; shell texture kept |
+| ring | radius | max buildings | base cap | coverage gain | what it builds |
+| --- | --- | --- | --- | --- | --- |
+| near | 85 m | 26 | 6000 | x7.5 | reveals, frame rings, mullions, sills, lintels, drip recesses, full storefront |
+| mid | 200 m | 72 | 2300 | x6 | reveals, pane, sill; no joinery |
+| far | 420 m | 300 | 820 | - | clad, one recessed glazing band per storey, continuous bay piers |
+| silhouette | - | 900 | 48 | - | cornice and plinth only; shell texture kept |
 
 **Per-window geometry stops at 200 m.** Beyond 420 m nothing is clad, so there
 is no colour step at the cut.
 
-The radii are set from the poses the quality gate actually captures, not from a
-guess. Those poses are embedded in the verifier, which asserts that at least
-97% of the frame-filling facade area is clad and at least 75% carries
-individual openings or bay rhythm. Measured: 100/99, 100/94, 99/79 (the 58 deg
-canyon card), 100/99, 100/99.
+**The radius is measured to the nearest point of the footprint**, not to the
+centroid - `nearestFootprintDistance`. The centroid is the wrong question: a
+200 m block's centroid is 100 m from the wall you are standing against. On the
+round 2 street card an eleven-storey frontage 61 m from the eye, filling most
+of the right-hand half of the frame, had its centroid at 87 m and was therefore
+built at the mid ring's rung.
 
 The base cap is scaled by the greater of the building's wall area (against a
-1200 m² reference) and its edge count (against four), up to the ring's
-`capScale` — see `articulationTriangleCap`. Scene ceiling is 330,000 triangles
-and 48 draw calls, enforced by uniform outside-in ring demotion: shrink every
-ring's population to 60%, then far → silhouette, mid → far, near → mid. Every
-step moves a whole ring, so a budget cut can never leave one facade detailed
-and its neighbour at the same distance bare.
+1200 m2 reference) and its edge count (against four), up to the ring's
+`capScale` - see `articulationTriangleCap`. Scene ceiling is 330,000 triangles
+and 48 draw calls.
 
-Measured on the real 700-building San Francisco slice from the street capture
-pose: **244,504 triangles, 20 draw calls, 0 demotions, 700/700 buildings
-articulated, 695 unique facade signatures.** Draw calls fell from 29 despite
-the extra geometry because glass, joinery and interior fittings share one
-material each instead of one per wall class.
+### 2a. Screen coverage sizes the budget
+
+Distance alone cannot answer *does this elevation need windows*. A 160 m tower
+carries 23,000 m2 of wall - twenty times the reference - so the wall-area term
+clamps at `capScale` and the cap lands on 14,400 triangles whether that tower
+is four metres from the eye or three hundred. Fourteen thousand triangles over
+fifty storeys buys four glazed storeys and forty-six flat glazing bands, and
+that is the uniform grid the round 2 review rejected.
+
+`articulationScreenCoverage(building, focus)` returns the share of a reference
+frame the elevation would fill if the camera turned to face it. The reference
+frame is fixed - `FACADE_ARTICULATION_SCREEN`, 47 deg vertical, 16:9, eye at
+2.4 m, the gate's own street card - and deliberately independent of the live
+view direction and field of view, because the player turns on the spot sixty
+times a second and a rebuild costs a few hundred milliseconds.
+
+Coverage drives three things:
+
+- the per-building triangle cap, through the ring's `coverageGain`;
+- whether every storey is glazed individually or banded, through the ring's
+  `glazeCoverage` threshold. `ART_DETAIL_LADDER`'s `openStoreys` is now a
+  **floor**, not a ceiling: the ladder removes joinery with distance, it does
+  not remove windows. A rung that swaps a window for a band moves the
+  elevation's lines, and the pass's own rule is that approaching a building
+  deepens the same lines rather than moving them;
+- which edges carry joinery: the faces that turn toward the focus. A face
+  turned away is still fully clad and still banded - the verifier samples one
+  and requires 99.9% coverage - it only loses joinery, and the triangles that
+  were being spent on the back of a block now pay for the front of it. The
+  shopfront is exempt and follows the longest frontages instead, because it is
+  the part the player walks around the corner of.
+
+### 2b. Degrade order
+
+The coverage bonus is given up **before** any ring is demoted
+(`COVERAGE_CUT_STEPS` = 0.5, 0.2, 0). Cutting the bonus takes triangles off the
+two or three buildings holding the most of them and leaves the rest of the city
+where it was; demoting a ring changes what every building in it is made of.
+Once the bonus is gone the old uniform outside-in ring demotion takes over -
+shrink every ring's population to 60%, then far to silhouette, mid to far,
+near to mid. Every step still moves a whole ring, so a budget cut can never
+leave one facade detailed and its neighbour at the same distance bare.
+`diagnostics.budget.coverageCuts` and `.demotions` report both.
+
+### 2c. Measured
+
+On the real 700-building San Francisco slice from the street capture pose:
+**317,378 triangles, 20 draw calls, 0 coverage cuts, 0 demotions, 700/700
+buildings articulated, 695 unique facade signatures.** Draw calls stayed at 20
+because glass, joinery and interior fittings share one material each instead of
+one per wall class.
+
+The verifier holds every eye the quality gate has captured from - nine poses
+from the round 1 and round 2 capture manifests - to two measurements:
+
+- at least 97% of the frame-filling facade area is clad, and at least 75% of it
+  is in a ring that carries openings or bay rhythm (section 18);
+- at least 85% of the **elevation area the frame is actually made of** carries
+  individual openings rather than one flat glazing band per storey (section
+  21). This is weighted by projected screen area, taken only over faces that
+  turn toward the eye, and each pose is reported against a control with the
+  screen-coverage term switched off.
+
+Measured, worst pose first: 88% (control 41%), 89% (30%), 92% (21%), 93% (64%),
+94% (94%), 96% (36%), 98% (61%), 98% (54%), 98% (61%). A sweep of 48 eyes along
+the real street network stays inside the budget with no ring demoted.
+
+The pass reports `diagnostics.glazedStoreys`, `.bandedStoreys`,
+`.glazedStoreyShare` and `.maxCoverage`, because a clad ring whose storeys are
+all bands is indistinguishable from a clad ring whose storeys are all windows
+in every other diagnostic the pass publishes.
 
 ## 3. The LOD centre must follow the camera
 
@@ -166,3 +230,37 @@ detail is dirtier lower down. One bay in six storeys is blanked.
 Cap members scale with the building: cap depth is 2.1 m at 14 m, 3.9 m at 49 m,
 6.4 m at 118 m. A fixed 0.6 m cornice is two pixels on a tower at 200 m, which
 is why round 1 showed tall buildings terminating flat against the sky.
+
+## 6. What the round 2 capture measured, and what it does not settle
+
+Both articulation findings in the round 2 review are one defect. Measured on
+`.qa-round2/01-street-day.png` with `scripts/qa/measure-frame-v1.mjs`, on the
+right-hand frontage the reviewer called a uniform grid:
+
+| region | mean luma | Otsu separation |
+| --- | --- | --- |
+| the nine banded storeys (x 1030-1560, y 30-270) | 58.4 | 11.0 |
+| one spandrel on its own (x 1140-1400, y 95-125) | 57.9 | 9.1 |
+| the two storeys that do carry individual openings (y 300-395) | 54.7 | 17.8 |
+| the storefront band (y 400-470) | 70.4 | 33.9 |
+
+One surface, one distance, one light angle: separation tracks whether the
+storey carries openings. The banded shaft measures flatter than that capture's
+unshadowed footway; the two glazed rows on the same wall measure 62% higher.
+
+On `.qa-round2/03-canyon-golden.png` the near facade at x 980-1450, y 60-500
+measures 13.4 separation with 44% near-black, and x 1000-1200, y 100-300
+measures 9.6 - one population. The brick plinth directly under it, at x
+1150-1500, y 700-780, resolves individual brick courses sharply in the same
+frame, so that facade is missing horizontal geometry, not texture resolution:
+what is left at a 4.5 m grazing view of a banded shaft is vertical bay piers
+and glazing stripes and nothing to break them.
+
+**What the fix above does not show.** Every number in section 2c is geometric
+and comes from `node scripts/verify/verify-facade-articulation.mjs`. It proves
+what is built and what it costs. It cannot prove the wall now reads, and it is
+not a claim that it does. The observable pass condition for the next capture is
+the frame measurement, on the same regions: the banded-shaft separation should
+move toward the 17.8 the glazed rows already measure, and the near facade in the
+canyon card should stop being one population. Neither is settled until a
+capture is measured.

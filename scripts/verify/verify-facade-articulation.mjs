@@ -38,7 +38,10 @@ import {
   FACADE_GLASS_MATERIAL,
   FACADE_MATERIAL_CLASSES,
   articulationLevels,
+  articulationScreenCoverage,
   articulationTriangleCap,
+  COVERAGE_CUT_STEPS,
+  nearestFootprintDistance,
   buildFacadeArticulationBatch,
   disposeFacadeArticulation,
   drawArticulationVariant,
@@ -64,6 +67,21 @@ function assert(condition, message) {
 
 function section(title) {
   console.log(`\n${title}`);
+}
+
+// Some invariants have to hold for every one of several hundred records. One
+// assertion per record would bury the report, so this collapses a repeated
+// claim to a single line that only fires -- once -- when it is broken.
+const onceSeen = new Set();
+function assert_once(condition, message) {
+  const key = message.replace(/\([^)]*\)/g, '()');
+  if (condition) {
+    if (onceSeen.has(key)) return;
+    onceSeen.add(key);
+    assert(true, key);
+    return;
+  }
+  assert(false, message);
 }
 
 const EPS = 1e-9;
@@ -953,7 +971,7 @@ const BUILD_FOCUS = { x: 1600, z: 400 };
   for (const record of batch.buildings) {
     // Recompute the cap independently from the published formula, then check
     // both that the batch agrees and that the geometry respects it.
-    const cap = articulationTriangleCap(record.ring, record.wallArea, record.edges);
+    const cap = articulationTriangleCap(record.ring, record.wallArea, record.edges, record.capCoverage);
     if (record.triangleCap !== cap) capMismatch += 1;
     if (record.triangles > record.triangleCap) {
       overCap += 1;
@@ -1137,6 +1155,16 @@ section('13. the real corpus through the pass, end to end');
     `pass triangles ${entry.triangles} <= ${FACADE_ARTICULATION_BUDGET.sceneTriangleBudget}`,
   );
   assert(detail.budget.withinBudget === true, 'the pass reports itself inside budget');
+  // The pass has to publish the number the review turned on, not just the ring
+  // populations: a clad ring whose storeys are all bands looks exactly like a
+  // clad ring whose storeys are all windows in every other diagnostic here.
+  assert(
+    Number.isFinite(detail.glazedStoreyShare) && detail.glazedStoreys > 0,
+    `the pass reports its glazed-storey share (${detail.glazedStoreys} glazed / ${detail.bandedStoreys} banded`
+    + `, ${(detail.glazedStoreyShare * 100).toFixed(1)}%)`,
+  );
+  assert(detail.budget.coverageCuts === 0, `the build focus needed no coverage cut (${detail.budget.coverageCuts})`);
+  assert(detail.maxCoverage > 0, `the pass reports the frame share of its biggest elevation (${detail.maxCoverage.toFixed(3)})`);
   assert(detail.authoredElevations === authoredIds.length, `authored hero elevations are detected (${detail.authoredElevations})`);
   {
     const preserved = buildFacadeArticulationBatch(REAL, { focus: BUILD_FOCUS, preserveIds: authoredIds });
@@ -1405,6 +1433,437 @@ const GATE_POSES = Object.freeze([
     notes.push(`      ${pose.id}: ${batch.triangles} tri, ${batch.drawCalls} draws, clad ${(cladShare * 100).toFixed(0)}%, near+mid ${(windowShare * 100).toFixed(0)}%`);
     disposeFacadeArticulation(batch);
   }
+}
+
+// ---------------------------------------------------------------------------
+section('20. screen coverage is measured, not guessed');
+// ---------------------------------------------------------------------------
+
+// The term round 2 was missing. Ring radius answers "how far away is the
+// middle of that block"; it does not answer "how much of this frame is that
+// wall", and the frame share is what decides whether a storey is a readable
+// band of glass or a sub-pixel line.
+
+{
+  const square = (cx, cz, half, height) => ({
+    id: `probe-${cx}-${cz}-${half}-${height}`,
+    height,
+    polygon: [
+      { x: cx - half, z: cz - half },
+      { x: cx + half, z: cz - half },
+      { x: cx + half, z: cz + half },
+      { x: cx - half, z: cz + half },
+    ],
+  });
+
+  // nearestFootprintDistance is the distance the ring is measured in.
+  const block = square(0, 0, 20, 40);
+  assert(nearestFootprintDistance(block.polygon, { x: 0, z: 0 }) === 0, 'a focus inside the footprint is at distance 0');
+  const nearest = nearestFootprintDistance(block.polygon, { x: 0, z: 25 });
+  assert(Math.abs(nearest - 5) < 1e-9, `the nearest wall of a 40 m block from 25 m out is 5 m away (${nearest.toFixed(3)})`);
+  const centroidDistance = Math.hypot(0 - 0, 25 - 0);
+  assert(
+    centroidDistance - nearest === 20,
+    `the centroid of that same block is 20 m further out than its wall (${centroidDistance} vs ${nearest})`,
+  );
+  // This is the failure it fixes: a block whose wall is inside the near ring
+  // but whose centroid is outside it. Measured on the real slice at the round 2
+  // street pose, that is exactly what happened to the building the reviewer
+  // called a uniform grid.
+  const long = { id: 'long-block', height: 120, polygon: [
+    { x: -100, z: 70 }, { x: 100, z: 70 }, { x: 100, z: 130 }, { x: -100, z: 130 },
+  ] };
+  const eye = { x: 0, z: 0 };
+  const longNearest = nearestFootprintDistance(long.polygon, eye);
+  const longCentroid = Math.hypot(0 - eye.x, 100 - eye.z);
+  assert(
+    longNearest <= FACADE_ARTICULATION_RINGS.near.radius && longCentroid > FACADE_ARTICULATION_RINGS.near.radius,
+    `a frontage ${longNearest} m away whose centroid is ${longCentroid} m away is a near building`
+    + ` (near radius ${FACADE_ARTICULATION_RINGS.near.radius} m)`,
+  );
+
+  // Coverage: bounded, monotone in distance, monotone in height.
+  const tower = square(0, 0, 15, 160);
+  const covers = [5, 20, 60, 150, 400].map((d) => articulationScreenCoverage(tower, { x: 0, z: 15 + d }));
+  for (const value of covers) {
+    assert(value >= 0 && value <= 1, `coverage stays inside 0..1 (${value.toFixed(4)})`);
+  }
+  let monotone = true;
+  for (let i = 1; i < covers.length; i += 1) if (covers[i] > covers[i - 1] + 1e-9) monotone = false;
+  assert(monotone, `coverage falls with distance (${covers.map((c) => c.toFixed(3)).join(' > ')})`);
+  const shed = square(0, 0, 15, 4);
+  assert(
+    articulationScreenCoverage(tower, { x: 0, z: 25 }) > articulationScreenCoverage(shed, { x: 0, z: 25 }),
+    'at the same distance a 160 m tower covers more frame than a 4 m shed',
+  );
+  assert(articulationScreenCoverage(tower, null) === 0, 'no focus means no coverage claim');
+  assert(articulationScreenCoverage(tower, { x: 0, z: 0 }) === 1, 'standing inside the footprint is full coverage');
+
+  // The cap must actually respond, and must not respond when it is told there
+  // is no coverage -- the three-argument form has to keep its old value or
+  // every ring budget in the contract silently moves.
+  const wall = 23000;
+  const flat = articulationTriangleCap('near', wall, 6);
+  const filled = articulationTriangleCap('near', wall, 6, 1);
+  assert(
+    flat === Math.round(FACADE_ARTICULATION_RINGS.near.triangleCap * FACADE_ARTICULATION_RINGS.near.capScale),
+    `with no coverage the cap is the published ring cap (${flat})`,
+  );
+  assert(
+    filled === Math.round(flat * (1 + FACADE_ARTICULATION_RINGS.near.coverageGain)),
+    `a frame-filling elevation earns the ring's coverage gain (${flat} -> ${filled})`,
+  );
+  assert(articulationTriangleCap('far', wall, 6, 1) === articulationTriangleCap('far', wall, 6),
+    'the far ring has no coverage gain: at 200-420 m the triangles resolve to the same pixels');
+  notes.push(`      cap on a 23,000 m2 elevation: ${flat} flat, ${filled} frame-filling`);
+}
+
+// ---------------------------------------------------------------------------
+section('21. GATE POSES: the elevation the frame is made of carries openings');
+// ---------------------------------------------------------------------------
+
+// Section 18 asserts that the buildings filling the frame land in a clad ring.
+// That check passed on the round 2 capture and the reviewer still measured "a
+// uniform 8x11 array of identical flat-blue windows on identical spandrels" on
+// 40% of one frame, so ring membership is not the whole question. A clad ring
+// with a starved opening budget builds four glazed storeys at the pavement and
+// bands the other forty-six, which is that uniform grid exactly.
+//
+// So this measures the thing the reviewer measures: of the elevation area the
+// frame is actually made of, what share of its storey rows carry individual
+// openings -- reveal, frame, sill -- rather than one flat glazing band.
+//
+// Poses are every eye the quality gate has actually captured from, taken from
+// the round 1 and round 2 capture manifests. They live here rather than being
+// read from `.qa-*` because that material is untracked local scratch and a
+// check that silently skips when a directory is missing is not a check.
+const CAPTURED_POSES = Object.freeze([
+  { id: 'r1/01-street-day', eye: { x: 1435.49, y: 2.35, z: 993.43 }, target: { x: 1379.47, y: 2.25, z: 1064.06 }, fov: 47 },
+  { id: 'r1/02-intersection', eye: { x: 1668.84, y: 2.17, z: -0.05 }, target: { x: 1678.9, y: 2.03, z: -21.1 }, fov: 47 },
+  { id: 'r1/03-canyon-golden', eye: { x: 1446.56, y: 2.34, z: 916.81 }, target: { x: 1515.56, y: 22.71, z: 974.62 }, fov: 58 },
+  { id: 'r1/07-character-curb', eye: { x: 1438.04, y: 2.7, z: 990.08 }, target: { x: 1436.07, y: 1.8, z: 993.95 }, fov: 47 },
+  { id: 'r1/08-traversal', eye: { x: 1455.42, y: 2.3, z: 971.01 }, target: { x: 1348.29, y: 2.22, z: 1103.24 }, fov: 47 },
+  { id: 'r2/01-street-day', eye: { x: 1447.11, y: 2.41, z: 1003.77 }, target: { x: 1503.13, y: 2.26, z: 933.14 }, fov: 47 },
+  { id: 'r2/03-canyon-golden', eye: { x: 1450.24, y: 2.39, z: 912.59 }, target: { x: 1381.24, y: 22.79, z: 854.78 }, fov: 58 },
+  { id: 'r2/05-wet-street', eye: { x: 1435.49, y: 2.41, z: 993.43 }, target: { x: 1379.47, y: 2.31, z: 1064.06 }, fov: 47 },
+  { id: 'r2/08-traversal', eye: { x: 1427.18, y: 2.32, z: 1026.19 }, target: { x: 1534.31, y: 2.16, z: 893.96 }, fov: 47 },
+]);
+
+{
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const norm = (v) => { const l = Math.hypot(v.x, v.y, v.z); return { x: v.x / l, y: v.y / l, z: v.z / l }; };
+  const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+  /** Screen area, in frame fractions, of a set of world points. */
+  const screenArea = (points, basis) => {
+    let minx = Infinity; let maxx = -Infinity; let miny = Infinity; let maxy = -Infinity;
+    let any = false;
+    for (const point of points) {
+      const r = sub(point, basis.eye);
+      const cz = dot(r, basis.fwd);
+      if (cz <= 0.5) continue;
+      const sx = (dot(r, basis.right) * basis.f) / basis.aspect / cz;
+      const sy = (dot(r, basis.up) * basis.f) / cz;
+      minx = Math.min(minx, sx); maxx = Math.max(maxx, sx);
+      miny = Math.min(miny, sy); maxy = Math.max(maxy, sy);
+      any = true;
+    }
+    if (!any) return 0;
+    const cx = Math.max(-1, minx); const cX = Math.min(1, maxx);
+    const cy = Math.max(-1, miny); const cY = Math.min(1, maxy);
+    if (!(cX > cx && cY > cy)) return 0;
+    return ((cX - cx) * (cY - cy)) / 4;
+  };
+
+  const worst = { id: null, share: 1 };
+  for (const pose of CAPTURED_POSES) {
+    const eye2d = { x: pose.eye.x, z: pose.eye.z };
+    const batch = buildFacadeArticulationBatch(REAL, { focus: eye2d });
+    const recordOf = new Map(batch.buildings.map((record) => [record.id, record]));
+    const fwd = norm(sub(pose.target, pose.eye));
+    const right = norm(cross(fwd, { x: 0, y: 1, z: 0 }));
+    const basis = {
+      eye: pose.eye, fwd, right, up: cross(right, fwd),
+      f: 1 / Math.tan((pose.fov * Math.PI) / 360), aspect: 16 / 9,
+    };
+
+    let frameArea = 0;
+    let glazedArea = 0;
+    let controlArea = 0;
+    let partyArea = 0;
+    for (const building of REAL) {
+      const record = recordOf.get(building.id);
+      if (!record) continue;
+      const corners = [];
+      for (const point of building.polygon) {
+        corners.push({ x: point.x, y: 0, z: point.z });
+        corners.push({ x: point.x, y: building.height, z: point.z });
+      }
+      // Only the buildings a frame is actually made of. Same 0.4% floor
+      // section 18 uses, so the two metrics describe the same population.
+      if (screenArea(corners, basis) < 0.004) continue;
+
+      // Reproduce the plan the batch made for this building, from the record
+      // it published. If the two ever disagree the numbers below are fiction.
+      const plan = planFacadeArticulation(building, {
+        ring: record.ring,
+        baseY: 0,
+        coverage: record.capCoverage,
+        facing: eye2d,
+      });
+      if (plan.skipped) continue;
+      assert_once(
+        plan.triangleCap === record.triangleCap,
+        `${pose.id}: the published record reproduces the plan's cap (${building.id})`,
+      );
+      // The control: the same building, same ring, with the screen-coverage
+      // term switched off. That is the round 2 opening budget, and it is what
+      // makes this section an A/B rather than an absolute claim.
+      const control = planFacadeArticulation(building, { ring: record.ring, baseY: 0, coverage: 0, facing: eye2d });
+
+      const edges = edgesOf(plan.polygon);
+      const byIndex = new Map(edges.map((edge) => [edge.index, edge]));
+      const rowsOf = (source) => new Map((source.edgeRows || []).map((row) => [row.edgeIndex, row]));
+      const planRows = rowsOf(plan);
+      const controlRows = rowsOf(control);
+      for (const edge of edges) {
+        // Only faces that turn toward the eye can be in the frame at all.
+        const mx = edge.ax + edge.ux * edge.length * 0.5;
+        const mz = edge.az + edge.uz * edge.length * 0.5;
+        if ((pose.eye.x - mx) * edge.nx + (pose.eye.z - mz) * edge.nz <= 0) continue;
+        const area = screenArea([
+          { x: edge.ax, y: 0, z: edge.az },
+          { x: edge.ax, y: building.height, z: edge.az },
+          { x: edge.ax + edge.ux * edge.length, y: 0, z: edge.az + edge.uz * edge.length },
+          { x: edge.ax + edge.ux * edge.length, y: building.height, z: edge.az + edge.uz * edge.length },
+        ], basis);
+        if (area <= 0) continue;
+        const row = planRows.get(edge.index);
+        if (!row) continue;
+        if (row.party) { partyArea += area; continue; }
+        const rows = row.glazedRows + row.bandedRows;
+        if (rows <= 0) continue;
+        frameArea += area;
+        glazedArea += area * (row.glazedRows / rows);
+        const controlRow = controlRows.get(edge.index);
+        const controlTotal = controlRow ? controlRow.glazedRows + controlRow.bandedRows : 0;
+        controlArea += controlTotal > 0 ? area * (controlRow.glazedRows / controlTotal) : 0;
+      }
+    }
+
+    const share = frameArea > 0 ? glazedArea / frameArea : 1;
+    const controlShare = frameArea > 0 ? controlArea / frameArea : 1;
+    if (share < worst.share) { worst.id = pose.id; worst.share = share; }
+    assert(
+      share >= 0.85,
+      `${pose.id}: ${(share * 100).toFixed(1)}% of the frame's elevation area carries individual openings, not bands (threshold 85%, was ${(controlShare * 100).toFixed(1)}% without the coverage term)`,
+    );
+    assert(
+      share > controlShare + 0.05 || controlShare >= 0.85,
+      `${pose.id}: the screen-coverage term is what produced that (${(controlShare * 100).toFixed(1)}% -> ${(share * 100).toFixed(1)}%)`,
+    );
+    assert(
+      batch.triangles <= FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
+      `${pose.id}: ${batch.triangles} triangles inside the ${FACADE_ARTICULATION_BUDGET.sceneTriangleBudget} budget`,
+    );
+    assert(
+      batch.drawCalls <= FACADE_ARTICULATION_BUDGET.maxDrawCalls,
+      `${pose.id}: ${batch.drawCalls} draw calls inside the ${FACADE_ARTICULATION_BUDGET.maxDrawCalls} budget`,
+    );
+    assert(batch.demotions === 0, `${pose.id}: no ring had to be demoted (${batch.demotions})`);
+    assert(batch.coverageCuts === 0, `${pose.id}: the coverage bonus was affordable in full (${batch.coverageCuts} cuts)`);
+    notes.push(
+      `      ${pose.id}: openings on ${(share * 100).toFixed(0)}% of the frame's elevation`
+      + ` (control ${(controlShare * 100).toFixed(0)}%), ${batch.triangles} tri, ${batch.drawCalls} draws`
+      + `, party walls ${(partyArea / Math.max(1e-9, frameArea + partyArea) * 100).toFixed(1)}% of frame`,
+    );
+    disposeFacadeArticulation(batch);
+  }
+  notes.push(`      worst captured pose: ${worst.id} at ${(worst.share * 100).toFixed(1)}%`);
+}
+
+// ---------------------------------------------------------------------------
+section('22. the budget survives the whole street network, not just the gate');
+// ---------------------------------------------------------------------------
+
+// A coverage term that fits the eight poses it was tuned on and blows the
+// budget on the ninth is not a budget. Walk the real street network and hold
+// every sampled eye to the same ceiling.
+
+{
+  const points = [];
+  for (const segment of REAL_CITY.segments || []) {
+    const line = segment.points;
+    if (line && line.length > 1) points.push({ x: (line[0].x + line[1].x) / 2, z: (line[0].z + line[1].z) / 2 });
+  }
+  assert(points.length > 200, `the real slice offers ${points.length} street eyes to sample`);
+  const sampled = 48;
+  let maxTriangles = 0;
+  let maxDraws = 0;
+  let demoted = 0;
+  let cut = 0;
+  for (let i = 0; i < sampled; i += 1) {
+    const focus = points[Math.floor((i * points.length) / sampled)];
+    const batch = buildFacadeArticulationBatch(REAL, { focus });
+    maxTriangles = Math.max(maxTriangles, batch.triangles);
+    maxDraws = Math.max(maxDraws, batch.drawCalls);
+    if (batch.demotions > 0) demoted += 1;
+    if (batch.coverageCuts > 0) cut += 1;
+    disposeFacadeArticulation(batch);
+  }
+  assert(
+    maxTriangles <= FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
+    `worst of ${sampled} street eyes: ${maxTriangles} triangles inside the ${FACADE_ARTICULATION_BUDGET.sceneTriangleBudget} budget`,
+  );
+  assert(
+    maxDraws <= FACADE_ARTICULATION_BUDGET.maxDrawCalls,
+    `worst of ${sampled} street eyes: ${maxDraws} draw calls inside the ${FACADE_ARTICULATION_BUDGET.maxDrawCalls} budget`,
+  );
+  assert(demoted === 0, `no sampled street eye had to demote a ring (${demoted}/${sampled})`);
+  notes.push(`      street sweep: ${sampled} eyes, worst ${maxTriangles} tri / ${maxDraws} draws, ${cut} needed a coverage cut, ${demoted} demoted a ring`);
+}
+
+// ---------------------------------------------------------------------------
+section('23. the regression itself, and what it costs elsewhere');
+// ---------------------------------------------------------------------------
+
+// Round 2's finding, reduced to two buildings and one number: a fifty storey
+// tower whose wall is a few metres from the eye carried four glazed storeys
+// and forty-six flat bands, because the per-building triangle cap could not
+// tell that tower from one in the background.
+
+{
+  const tower = {
+    id: 'regression-tower',
+    height: 160,
+    levels: 50,
+    material: 'concrete',
+    polygon: [
+      { x: -22, z: 5 }, { x: 22, z: 5 }, { x: 22, z: 49 }, { x: -22, z: 49 },
+    ],
+  };
+  const eye = { x: 0, z: 0 };
+  const coverage = articulationScreenCoverage(tower, eye);
+  assert(coverage > 0.9, `a 160 m tower 5 m from the eye fills the frame (coverage ${coverage.toFixed(3)})`);
+
+  const facingRows = (plan) => (plan.edgeRows || []).filter((row) => row.detail && !row.party);
+  const clad = planFacadeArticulation(tower, { ring: 'near', baseY: 0, coverage, facing: eye });
+  const starved = planFacadeArticulation(tower, { ring: 'near', baseY: 0, coverage: 0, facing: eye });
+
+  const bandedNow = facingRows(clad).reduce((sum, row) => sum + row.bandedRows, 0);
+  const glazedNow = facingRows(clad).reduce((sum, row) => sum + row.glazedRows, 0);
+  const bandedBefore = facingRows(starved).reduce((sum, row) => sum + row.bandedRows, 0);
+  const glazedBefore = facingRows(starved).reduce((sum, row) => sum + row.glazedRows, 0);
+
+  assert(
+    glazedBefore / Math.max(1, glazedBefore + bandedBefore) < 0.35,
+    `without the coverage term that tower bands most of its shaft (${glazedBefore} glazed, ${bandedBefore} banded storey rows)`,
+  );
+  assert(
+    glazedNow / Math.max(1, glazedNow + bandedNow) >= 0.95,
+    `with it the faces turned toward the eye are glazed storey by storey (${glazedNow} glazed, ${bandedNow} banded)`,
+  );
+  assert(
+    clad.triangles <= clad.triangleCap,
+    `the frame-filling plan still respects its own cap (${clad.triangles} <= ${clad.triangleCap})`,
+  );
+  notes.push(`      160 m tower at 5 m: ${glazedBefore}/${glazedBefore + bandedBefore} glazed rows before, ${glazedNow}/${glazedNow + bandedNow} after`);
+
+  // ...and the far side of the same policy: per-window geometry still stops at
+  // the documented radius, so the coverage term cannot smuggle windows into a
+  // ring the contract says does not have them.
+  const distantEye = { x: 0, z: -300 };
+  const distant = planFacadeArticulation(tower, {
+    ring: 'far',
+    baseY: 0,
+    coverage: articulationScreenCoverage(tower, distantEye),
+    facing: distantEye,
+  });
+  assert(distant.openings === 0, `at the far ring the same tower carries no individual openings (${distant.openings})`);
+
+  // A face that is NOT turned toward the focus loses joinery, and must not lose
+  // cladding: the whole point of the pass is that no strip of painted shell can
+  // show. Section 8 proves the partition without a focus; this proves it with
+  // one, on the edge the focus is behind.
+  const edges = edgesOf(clad.polygon);
+  const behind = edges.filter((edge) => {
+    const mx = edge.ax + edge.ux * edge.length * 0.5;
+    const mz = edge.az + edge.uz * edge.length * 0.5;
+    return (eye.x - mx) * edge.nx + (eye.z - mz) * edge.nz <= 0;
+  });
+  assert(behind.length > 0, `the tower has ${behind.length} faces turned away from the eye to test`);
+  let samples = 0;
+  let covered = 0;
+  for (const edge of behind) {
+    const rects = [];
+    for (const quad of clad.quads) {
+      if (quad.edgeIndex !== edge.index) continue;
+      if (quad.part === 'backing' || quad.part === 'corner-return') continue;
+      let s0 = Infinity; let s1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
+      for (let i = 0; i < 4; i += 1) {
+        const local = localOf(edge, quad.positions[i * 3], quad.positions[i * 3 + 1], quad.positions[i * 3 + 2], clad.baseY);
+        s0 = Math.min(s0, local.s); s1 = Math.max(s1, local.s);
+        y0 = Math.min(y0, local.y); y1 = Math.max(y1, local.y);
+      }
+      if (s1 - s0 < 1e-4 || y1 - y0 < 1e-4) continue;
+      rects.push({ s0, s1, y0, y1 });
+    }
+    for (let ix = 0; ix < 31; ix += 1) {
+      const sPos = 0.35 + ((ix + 0.5) / 31) * (edge.length - 0.7);
+      for (let iy = 0; iy < 29; iy += 1) {
+        const yPos = 0.09 + ((iy + 0.5) / 29) * (clad.height - 0.14);
+        samples += 1;
+        for (const r of rects) {
+          if (sPos >= r.s0 - 1e-4 && sPos <= r.s1 + 1e-4 && yPos >= r.y0 - 1e-4 && yPos <= r.y1 + 1e-4) { covered += 1; break; }
+        }
+      }
+    }
+  }
+  assert(
+    covered / Math.max(1, samples) >= 0.999,
+    `a face turned away from the focus is still fully clad (${(covered / Math.max(1, samples) * 100).toFixed(3)}% of ${samples} samples)`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+section('24. the coverage bonus is the first thing given up, not the last');
+// ---------------------------------------------------------------------------
+
+// A budget that is spent on the elevations in front of the player has to be
+// able to hand those triangles back. The order matters: cutting the bonus takes
+// triangles off the two or three buildings that have the most of them; demoting
+// a ring changes what every building in it is made of.
+
+{
+  const focus = { x: CAPTURE_EYE.x, z: CAPTURE_EYE.z };
+  const full = buildFacadeArticulationBatch(REAL, { focus });
+  assert(full.coverageCuts === 0 && full.demotions === 0, `at the published budget nothing is given up (${full.coverageCuts} cuts, ${full.demotions} demotions)`);
+
+  // Squeeze it to just under what it wants, and only the bonus should move.
+  const squeezed = buildFacadeArticulationBatch(REAL, { focus, sceneTriangleBudget: Math.round(full.triangles * 0.85) });
+  assert(squeezed.coverageCuts > 0, `a tighter budget cuts the coverage bonus (${squeezed.coverageCuts} steps)`);
+  assert(squeezed.demotions === 0, `and does not demote a ring to do it (${squeezed.demotions})`);
+  assert(
+    squeezed.triangles <= Math.round(full.triangles * 0.85),
+    `the squeezed frame fits (${squeezed.triangles} <= ${Math.round(full.triangles * 0.85)})`,
+  );
+  assert(
+    squeezed.rings.near.buildings === full.rings.near.buildings,
+    `every near building is still a near building (${squeezed.rings.near.buildings} vs ${full.rings.near.buildings})`,
+  );
+
+  // Squeeze it far past that and the ring ladder takes over, as before.
+  const crushed = buildFacadeArticulationBatch(REAL, { focus, sceneTriangleBudget: 60000 });
+  assert(
+    crushed.coverageCuts === COVERAGE_CUT_STEPS.length,
+    `an impossible budget spends the whole bonus ladder first (${crushed.coverageCuts}/${COVERAGE_CUT_STEPS.length})`,
+  );
+  assert(crushed.demotions > 0, `and only then demotes a ring (${crushed.demotions})`);
+  notes.push(`      degrade order: ${full.triangles} tri -> ${squeezed.triangles} (${squeezed.coverageCuts} coverage cuts, ${squeezed.demotions} demotions) -> ${crushed.triangles} (${crushed.coverageCuts}, ${crushed.demotions})`);
+  disposeFacadeArticulation(full);
+  disposeFacadeArticulation(squeezed);
+  disposeFacadeArticulation(crushed);
 }
 
 // ---------------------------------------------------------------------------

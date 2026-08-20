@@ -173,6 +173,11 @@ report.state = await evaluateInWorld(() => {
       totals: s.passes.totals,
       built: (s.passes.built || []).map((b) => ({
         id: b.id, buildMs: b.buildMs, triangles: b.triangles, drawCalls: b.drawCalls,
+        // A pass's own diagnostics are the only record of what it did AFTER
+        // build: which LOD centre it ended on, whether it had to give budget
+        // back, and what it actually built there. `triangles` above is a
+        // build-time snapshot and says nothing about the captured frame.
+        detail: b.detail || null,
       })),
     } : null,
   };
