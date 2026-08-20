@@ -16,11 +16,23 @@
 //      junction paint clears segment paint
 //   8. a signalised node gets crosswalk bands, stop bars, curb returns, ramps
 //      and a junction pad; an unsignalised node gets no paint
-//   9. approach carriageways are trimmed back to the pad (no overlap)
-//  10. output is deterministic and does not mutate the source city
-//  11. no NaN/Inf anywhere and every index is in range
-//  12. the triangle budget per 100 m of street and per intersection holds
-//  13. the THREE build stays on stock materials, 3 draw calls, polygonOffset
+//   9. the junction pad carries the gutter channel round the node, not just a
+//      bare cone, and still crowns in the middle
+//  10. approach carriageways are trimmed back to the pad (no overlap)
+//  11. output is deterministic and does not mutate the source city
+//  12. no NaN/Inf anywhere and every index is in range
+//  13. COVERAGE: the paved footprint is watertight. A dense grid of points is
+//      sampled across carriageway + both footways + corner returns of eleven
+//      street fixtures - four-way, T, five-way star, six-way, skew, one-way,
+//      asymmetric widths, a footway-less side, a short block between two
+//      junctions, a dead end and a twelve-node grid city - and EVERY sample
+//      must land on at least one emitted triangle. A deliberately punched
+//      hole must fail the same check.
+//  14. WINDING: every triangle's index order agrees with its own vertex
+//      normal, no triangle is degenerate, every horizontal surface faces up
+//      and every curb face is vertical and faces the road
+//  15. the triangle budget per 100 m of street and per intersection holds
+//  16. the THREE build stays on stock materials, 3 draw calls, polygonOffset
 
 import * as THREE from 'three';
 import * as mod from '../../src/world/streets/street-surface-v2.js';
@@ -110,6 +122,112 @@ function junctionCity(signalId = 'sig-1', extra = {}) {
   };
 }
 
+// A T junction. This is the shape the round-1 surface failed on: the
+// straight-through side has no fillet at all (its sweep is 180 degrees), yet
+// both through segments are still trimmed back to the pad, so the footway and
+// curb across the top of the T went missing over about 2 x trim metres.
+function teeCity(signalId = null) {
+  return {
+    meta: META,
+    segments: [
+      makeSegment('tw', [{ x: -70, z: 0 }, { x: 0, z: 0 }]),
+      makeSegment('te', [{ x: 0, z: 0 }, { x: 70, z: 0 }]),
+      makeSegment('ts', [{ x: 0, z: 0 }, { x: 0, z: 70 }], { highway: 'residential', lanes: 2, width: 9, sidewalkW: 2.5 }),
+    ],
+    intersections: [{ id: 't1', position: { x: 0, z: 0 }, signalId }],
+  };
+}
+
+const rad = (deg) => (deg * Math.PI) / 180;
+const spoke = (deg, length) => ({ x: Math.cos(rad(deg)) * length, z: Math.sin(rad(deg)) * length });
+
+/** Star junction: one leg per bearing, all leaving the origin. */
+function starCity(bearings, widths, walks, signalId = null, length = 80) {
+  return {
+    meta: META,
+    segments: bearings.map((deg, i) => makeSegment(`k${i}`, [{ x: 0, z: 0 }, spoke(deg, length)], {
+      lanes: 2, width: widths[i], sidewalkW: walks[i],
+    })),
+    intersections: [{ id: 'star', position: { x: 0, z: 0 }, signalId }],
+  };
+}
+
+/** Four-way where every leg has a different carriageway and footway width. */
+function asymmetricCity() {
+  return {
+    meta: META,
+    segments: [
+      makeSegment('aw', [{ x: -70, z: 0 }, { x: 0, z: 0 }], { width: 16, sidewalkLeft: 4.5, sidewalkRight: 2 }),
+      makeSegment('ae', [{ x: 0, z: 0 }, { x: 70, z: 0 }], { width: 8 }),
+      makeSegment('as', [{ x: 0, z: 0 }, { x: 0, z: 70 }], { lanes: 2, width: 7, sidewalkW: 2 }),
+      makeSegment('an', [{ x: 0, z: -70 }, { x: 0, z: 0 }], { lanes: 2, width: 11, sidewalkW: 3.5 }),
+    ],
+    intersections: [{ id: 'a1', position: { x: 0, z: 0 }, signalId: 'sig-a' }],
+  };
+}
+
+// A 14 m block between two junctions. Both ends want ~10 m of trim, which is
+// more trim than the block is long: the reconciliation pass has to shrink both
+// trims together instead of the segment being dropped and leaving a hole the
+// width of the whole block.
+function shortBlockCity() {
+  return {
+    meta: META,
+    segments: [
+      makeSegment('bw', [{ x: -70, z: 0 }, { x: 0, z: 0 }]),
+      makeSegment('bm', [{ x: 0, z: 0 }, { x: 14, z: 0 }]),
+      makeSegment('be', [{ x: 14, z: 0 }, { x: 80, z: 0 }]),
+      makeSegment('bn', [{ x: 0, z: 0 }, { x: 0, z: 60 }], { lanes: 2, width: 9, sidewalkW: 2.5 }),
+      makeSegment('bs', [{ x: 14, z: 0 }, { x: 14, z: -60 }], { lanes: 2, width: 9, sidewalkW: 2.5 }),
+    ],
+    intersections: [
+      { id: 'b1', position: { x: 0, z: 0 }, signalId: null },
+      { id: 'b2', position: { x: 14, z: 0 }, signalId: 'sig-b' },
+    ],
+  };
+}
+
+/** A T whose -n side carries no footway at all. */
+function noFootwayCity() {
+  return {
+    meta: META,
+    segments: [
+      makeSegment('fw', [{ x: -70, z: 0 }, { x: 0, z: 0 }], { sidewalkLeft: 3, sidewalkRight: 0 }),
+      makeSegment('fe', [{ x: 0, z: 0 }, { x: 70, z: 0 }], { sidewalkLeft: 3, sidewalkRight: 0 }),
+      makeSegment('fs', [{ x: 0, z: 0 }, { x: 0, z: 70 }], { lanes: 2, width: 9, sidewalkLeft: 3, sidewalkRight: 0 }),
+    ],
+    intersections: [{ id: 'f1', position: { x: 0, z: 0 }, signalId: 'sig-f' }],
+  };
+}
+
+// Twelve-node grid city: 4 avenues x 4 streets at 90 m, alternating widths and
+// footways, one one-way avenue, alternating signals, and the four outer
+// corners left as plain two-segment bends rather than junctions.
+function gridCity() {
+  const segments = [];
+  const intersections = [];
+  const N = 4;
+  const D = 90;
+  for (let r = 0; r < N; r += 1) {
+    for (let c = 0; c < N - 1; c += 1) {
+      segments.push(makeSegment(`h${r}_${c}`, [{ x: c * D, z: r * D }, { x: (c + 1) * D, z: r * D }],
+        { width: r % 2 ? 14 : 10, sidewalkW: r % 2 ? 3.5 : 2.5, lanes: r % 2 ? 4 : 2 }));
+    }
+  }
+  for (let c = 0; c < N; c += 1) {
+    for (let r = 0; r < N - 1; r += 1) {
+      segments.push(makeSegment(`v${c}_${r}`, [{ x: c * D, z: r * D }, { x: c * D, z: (r + 1) * D }],
+        { highway: 'secondary', width: c % 2 ? 12 : 9, sidewalkW: c % 2 ? 3 : 2, lanes: c % 2 ? 4 : 2, oneway: c === 2 }));
+    }
+  }
+  for (let r = 0; r < N; r += 1) {
+    for (let c = 0; c < N; c += 1) {
+      intersections.push({ id: `g${r}_${c}`, position: { x: c * D, z: r * D }, signalId: (r + c) % 2 ? `sig-g${r}${c}` : null });
+    }
+  }
+  return { meta: META, segments, intersections };
+}
+
 const ROAD_LIFT = META.streetDesign.roadLift;
 const O = resolveStreetSurfaceOptions({ meta: META });
 
@@ -132,6 +250,177 @@ function quadHeights(layer) {
     out.push(Math.max(...ys) - Math.min(...ys));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// coverage harness
+//
+// The paved footprint of a street is not something the module gets to define:
+// it follows straight from the source data. For every segment it is the band
+// within (width/2 + footway) of the authoritative centreline, over the whole
+// length of that centreline - the part inside a junction included, because a
+// junction is where the pavement has to be continuous, not where it is allowed
+// to stop. A side whose footway is below minSidewalkWidth carries no footway
+// at all and its band stops at the carriageway edge.
+//
+// The check samples that band on a dense grid and asks, for every sample,
+// whether ANY emitted surface triangle covers it in plan. Curb faces are
+// excluded because they are vertical and project to a line; markings are
+// excluded because they are paint on top of a surface, not a surface.
+//
+// The fixtures use straight legs. A mitred bend deliberately cuts the corner
+// of the round-ended corridor this model describes, so a bent centreline would
+// make the model - not the geometry - wrong; bends are covered by the mitre
+// assertions in section 2 instead.
+// ---------------------------------------------------------------------------
+
+const COVERAGE_SURFACE_LAYERS = ['carriageway', 'curbTop', 'sidewalk', 'ramp'];
+const COVERAGE_CELL = 2;
+
+function buildCoverageIndex(data, names = COVERAGE_SURFACE_LAYERS) {
+  const triangles = [];
+  for (const name of names) {
+    const layer = data.layers[name];
+    if (!layer) continue;
+    for (let i = 0; i < layer.indices.length; i += 3) {
+      const a = layer.indices[i] * 3;
+      const b = layer.indices[i + 1] * 3;
+      const c = layer.indices[i + 2] * 3;
+      triangles.push([
+        layer.positions[a], layer.positions[a + 2],
+        layer.positions[b], layer.positions[b + 2],
+        layer.positions[c], layer.positions[c + 2],
+      ]);
+    }
+  }
+  const map = new Map();
+  triangles.forEach((t, index) => {
+    const minX = Math.min(t[0], t[2], t[4]);
+    const maxX = Math.max(t[0], t[2], t[4]);
+    const minZ = Math.min(t[1], t[3], t[5]);
+    const maxZ = Math.max(t[1], t[3], t[5]);
+    for (let cx = Math.floor(minX / COVERAGE_CELL); cx <= Math.floor(maxX / COVERAGE_CELL); cx += 1) {
+      for (let cz = Math.floor(minZ / COVERAGE_CELL); cz <= Math.floor(maxZ / COVERAGE_CELL); cz += 1) {
+        const key = `${cx}|${cz}`;
+        const bucket = map.get(key);
+        if (bucket) bucket.push(index); else map.set(key, [index]);
+      }
+    }
+  });
+  return { triangles, map };
+}
+
+function isCovered(index, x, z) {
+  const bucket = index.map.get(`${Math.floor(x / COVERAGE_CELL)}|${Math.floor(z / COVERAGE_CELL)}`);
+  if (!bucket) return false;
+  const eps = 1e-7;
+  for (const i of bucket) {
+    const [ax, az, bx, bz, cx, cz] = index.triangles[i];
+    const d1 = (x - bx) * (az - bz) - (ax - bx) * (z - bz);
+    const d2 = (x - cx) * (bz - cz) - (bx - cx) * (z - cz);
+    const d3 = (x - ax) * (cz - az) - (cx - ax) * (z - az);
+    const negative = d1 < -eps || d2 < -eps || d3 < -eps;
+    const positive = d1 > eps || d2 > eps || d3 > eps;
+    if (!(negative && positive)) return true;
+  }
+  return false;
+}
+
+function samplePavedFootprint(city, options, step, inset) {
+  const samples = [];
+  for (const segment of city.segments) {
+    if (options.excludeSet.has(segment.highway)) continue;
+    const points = segment.points;
+    for (let e = 0; e < points.length - 1; e += 1) {
+      const a = points[e];
+      const b = points[e + 1];
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      if (!(length > 2 * inset)) continue;
+      const dx = (b.x - a.x) / length;
+      const dz = (b.z - a.z) / length;
+      const nx = -dz;
+      const nz = dx;
+      const half = segment.width / 2;
+      const left = Number.isFinite(segment.sidewalkLeft) ? segment.sidewalkLeft : segment.sidewalkW;
+      const right = Number.isFinite(segment.sidewalkRight) ? segment.sidewalkRight : segment.sidewalkW;
+      const lo = -(half + (right >= options.minSidewalkWidth ? right : 0)) + inset;
+      const hi = (half + (left >= options.minSidewalkWidth ? left : 0)) - inset;
+      const alongSteps = Math.max(2, Math.round((length - 2 * inset) / step));
+      const acrossSteps = Math.max(2, Math.round((hi - lo) / step));
+      for (let i = 0; i <= alongSteps; i += 1) {
+        const s = inset + ((length - 2 * inset) * i) / alongSteps;
+        for (let j = 0; j <= acrossSteps; j += 1) {
+          const v = lo + ((hi - lo) * j) / acrossSteps;
+          samples.push({
+            x: a.x + dx * s + nx * v,
+            z: a.z + dz * s + nz * v,
+            segment: segment.id,
+            s,
+            v,
+          });
+        }
+      }
+    }
+  }
+  return samples;
+}
+
+function measureCoverage(city, data, step = 0.3, inset = 0.03) {
+  const index = buildCoverageIndex(data);
+  const samples = samplePavedFootprint(city, data.options, step, inset);
+  let missed = 0;
+  let first = null;
+  for (const sample of samples) {
+    if (isCovered(index, sample.x, sample.z)) continue;
+    missed += 1;
+    if (!first) first = sample;
+  }
+  return { total: samples.length, missed, rate: samples.length ? (samples.length - missed) / samples.length : 0, first };
+}
+
+/** Negative control: drop every triangle of one layer near a point. */
+function punchHole(data, name, centre, radius) {
+  const layer = data.layers[name];
+  const kept = [];
+  let removed = 0;
+  for (let i = 0; i < layer.indices.length; i += 3) {
+    let cx = 0;
+    let cz = 0;
+    for (let k = 0; k < 3; k += 1) {
+      const base = layer.indices[i + k] * 3;
+      cx += layer.positions[base] / 3;
+      cz += layer.positions[base + 2] / 3;
+    }
+    if (Math.hypot(cx - centre.x, cz - centre.z) <= radius) { removed += 1; continue; }
+    kept.push(layer.indices[i], layer.indices[i + 1], layer.indices[i + 2]);
+  }
+  return {
+    removed,
+    data: { ...data, layers: { ...data.layers, [name]: { ...layer, indices: kept } } },
+  };
+}
+
+/** Geometric normal of one indexed triangle plus the normal it stored. */
+function triangleFrame(layer, i) {
+  const ia = layer.indices[i] * 3;
+  const ib = layer.indices[i + 1] * 3;
+  const ic = layer.indices[i + 2] * 3;
+  const ax = layer.positions[ib] - layer.positions[ia];
+  const ay = layer.positions[ib + 1] - layer.positions[ia + 1];
+  const az = layer.positions[ib + 2] - layer.positions[ia + 2];
+  const bx = layer.positions[ic] - layer.positions[ia];
+  const by = layer.positions[ic + 1] - layer.positions[ia + 1];
+  const bz = layer.positions[ic + 2] - layer.positions[ia + 2];
+  const nx = ay * bz - az * by;
+  const ny = az * bx - ax * bz;
+  const nz = ax * by - ay * bx;
+  const length = Math.hypot(nx, ny, nz);
+  return {
+    doubleArea: length,
+    geometric: length > 0 ? { x: nx / length, y: ny / length, z: nz / length } : null,
+    stored: { x: layer.normals[ia], y: layer.normals[ia + 1], z: layer.normals[ia + 2] },
+    centroidZ: (layer.positions[ia + 2] + layer.positions[ib + 2] + layer.positions[ic + 2]) / 3,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +608,37 @@ const junction = buildStreetSurfaceData(junctionCity('sig-1'));
   assert(rampY.min < walkY.min + 1e-9 && rampY.max > ROAD_LIFT,
     'kerb ramps descend from footway level down to the gutter');
 }
+{
+  // The pad used to be a bare cone from the node crown straight down to the
+  // curb: no channel, so the gutter of every approach stopped dead at the
+  // junction. It is now crown -> gutter lip -> invert, the same section the
+  // segments have, carried all the way round the node.
+  const st = junction.stats;
+  assert(st.junctionCrownTriangles > 0 && st.junctionGutterTriangles > 0,
+    `the pad is built as a crown fan (${st.junctionCrownTriangles} tri) PLUS a gutter channel (${st.junctionGutterTriangles} tri)`);
+  assert(st.junctionGutterTriangles >= st.junctionCrownTriangles,
+    'the gutter channel runs round the whole pad boundary, not just part of it');
+  const lipY = ROAD_LIFT + O.crossSlope * O.gutterWidth;
+  const invert = ROAD_LIFT - O.gutterDepth;
+  const crown = ROAD_LIFT + O.crossSlope * 6 * 0.6;
+  let atInvert = 0;
+  let atLip = 0;
+  let atCrown = 0;
+  const pad = junction.layers.carriageway;
+  for (let i = 1; i < pad.positions.length; i += 3) {
+    const x = pad.positions[i - 1];
+    const z = pad.positions[i + 1];
+    if (Math.hypot(x, z) > 14) continue;
+    const y = pad.positions[i];
+    if (near(y, invert, 1e-9)) atInvert += 1;
+    else if (near(y, lipY, 1e-9)) atLip += 1;
+    else if (near(y, crown, 1e-9)) atCrown += 1;
+  }
+  assert(atCrown > 0 && atLip > 0 && atInvert > 0,
+    `the pad section is crown ${crown.toFixed(3)} m -> lip ${lipY.toFixed(3)} m -> invert ${invert.toFixed(3)} m (${atCrown}/${atLip}/${atInvert} vertices)`);
+  assert(crown - lipY > 0.05 && lipY - invert > 0.02,
+    'the pad still crowns above the gutter lip and the lip still drains into the invert');
+}
 
 section('5. determinism, source integrity, numeric health');
 {
@@ -355,7 +675,107 @@ section('5. determinism, source integrity, numeric health');
     'the whole cross-section rides the supplied terrain height function');
 }
 
-section('6. triangle budget');
+section('6. paved coverage is watertight');
+const COVERAGE_FIXTURES = [
+  ['signalised four-way', junctionCity('sig-1')],
+  ['T junction (no fillet on the through side)', teeCity()],
+  ['signalised T junction', teeCity('sig-t')],
+  ['five-way star at 45 degrees', starCity([0, 45, 90, 180, 270], [12, 10, 9, 12, 9], [3, 4, 2.5, 3, 2.5], 'sig-5')],
+  ['six-way star', starCity([0, 55, 118, 180, 236, 300], [12, 9, 10, 12, 9, 10], [3, 2, 4, 3, 2, 4], 'sig-6')],
+  ['skew four-way', starCity([0, 70, 175, 250], [12, 9, 12, 9], [3, 2.5, 3, 2.5], 'sig-k')],
+  ['asymmetric widths and footways', asymmetricCity()],
+  ['14 m block between two junctions', shortBlockCity()],
+  ['T with no footway on one side', noFootwayCity()],
+  ['one-way leg out of a signalised node', junctionCity('sig-1', { oneway: true })],
+  ['isolated dead-end arterial', straightCity()],
+  ['twelve-node grid city', gridCity()],
+];
+{
+  let totalSamples = 0;
+  let totalMissed = 0;
+  for (const [name, city] of COVERAGE_FIXTURES) {
+    const data = buildStreetSurfaceData(city);
+    const result = measureCoverage(city, data);
+    totalSamples += result.total;
+    totalMissed += result.missed;
+    const where = result.first
+      ? ` first gap on ${result.first.segment} at s=${result.first.s.toFixed(2)} v=${result.first.v.toFixed(2)}`
+      : '';
+    assert(result.total > 1000 && result.missed === 0,
+      `${name}: ${result.total} samples, ${(result.rate * 100).toFixed(3)}% of the paved footprint covered${where}`);
+  }
+  console.log(`       ${totalSamples} coverage samples over ${COVERAGE_FIXTURES.length} fixtures, ${totalSamples - totalMissed} covered (${((totalSamples - totalMissed) / totalSamples * 100).toFixed(4)}%)`);
+}
+{
+  // Negative control. The check is only worth having if a hole fails it, so
+  // punch out the corner footway of the T junction - the exact geometry the
+  // round-1 surface was missing - and require the same measurement to fail.
+  const city = teeCity();
+  const data = buildStreetSurfaceData(city);
+  const clean = measureCoverage(city, data);
+  const holed = punchHole(data, 'sidewalk', { x: 0, z: 0 }, 14);
+  const index = buildCoverageIndex(holed.data);
+  const samples = samplePavedFootprint(city, data.options, 0.3, 0.03);
+  let missed = 0;
+  for (const sample of samples) if (!isCovered(index, sample.x, sample.z)) missed += 1;
+  assert(holed.removed > 0 && missed > 200,
+    `removing the ${holed.removed} footway triangles around the T node opens ${missed} uncovered samples - a gap fails this check`);
+  assert(clean.missed === 0, 'and the same fixture with the footway intact has none');
+}
+
+section('7. triangle winding');
+{
+  const data = buildStreetSurfaceData(gridCity(), { heightAt: (x, z) => Math.sin(x * 0.01) * 3 + Math.cos(z * 0.013) * 2 });
+  const upward = new Set(['carriageway', 'curbTop', 'sidewalk', 'marking', 'crosswalk']);
+  let triangles = 0;
+  let degenerate = 0;
+  let flipped = 0;
+  let worstDot = 1;
+  let minUpwardY = 1;
+  let curbFaces = 0;
+  let curbTilted = 0;
+  for (const name of STREET_SURFACE_V2_LAYERS) {
+    const layer = data.layers[name];
+    for (let i = 0; i < layer.indices.length; i += 3) {
+      const frame = triangleFrame(layer, i);
+      triangles += 1;
+      if (!frame.geometric || frame.doubleArea < 1e-9) { degenerate += 1; continue; }
+      const dot = frame.geometric.x * frame.stored.x + frame.geometric.y * frame.stored.y + frame.geometric.z * frame.stored.z;
+      if (dot < worstDot) worstDot = dot;
+      if (dot <= 0.9) flipped += 1;
+      if (upward.has(name) && frame.geometric.y < minUpwardY) minUpwardY = frame.geometric.y;
+      if (name === 'curbFace') {
+        curbFaces += 1;
+        if (Math.abs(frame.geometric.y) > 0.05) curbTilted += 1;
+      }
+    }
+  }
+  assert(degenerate === 0, `no degenerate triangle in ${triangles} emitted triangles (a zero-area face has no defined winding)`);
+  assert(flipped === 0,
+    `every triangle's index order agrees with its own vertex normal (worst dot ${worstDot.toFixed(6)} over ${triangles} triangles)`);
+  assert(minUpwardY > 0.5,
+    `every carriageway / curb-top / footway / paint triangle is wound front-face-up (min normal.y ${minUpwardY.toFixed(4)})`);
+  assert(curbFaces > 0 && curbTilted === 0,
+    `all ${curbFaces} curb-face triangles are vertical, so none of them is a mis-wound horizontal surface`);
+}
+{
+  // Curb faces have to look AT the road, otherwise the curb is backface-culled
+  // from the street and reads as a hole in the kerb line.
+  const layer = straight.layers.curbFace;
+  let wrong = 0;
+  let faces = 0;
+  for (let i = 0; i < layer.indices.length; i += 3) {
+    const frame = triangleFrame(layer, i);
+    if (!frame.geometric) continue;
+    faces += 1;
+    // The reference street runs along +x, so the +z curb must face -z.
+    if (frame.centroidZ > 0 ? frame.geometric.z > -0.99 : frame.geometric.z < 0.99) wrong += 1;
+  }
+  assert(faces > 0 && wrong === 0,
+    `all ${faces} curb-face triangles on the reference street point inward at the carriageway`);
+}
+
+section('8. triangle budget');
 {
   const st = straight.stats;
   assert(near(st.streetLengthMeters, 100, 1e-9), 'the reference street is 100 m of presented carriageway');
@@ -371,7 +791,7 @@ section('6. triangle budget');
     'the reported budget flags agree with the measured cost');
 }
 
-section('7. THREE build (stock materials only, WebGL2-safe)');
+section('9. THREE build (stock materials only, WebGL2-safe)');
 {
   const built = buildStreetSurfaceV2(junctionCity('sig-1'));
   assert(built.drawCalls === 3 && built.group.children.length === 3,

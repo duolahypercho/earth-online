@@ -20,7 +20,9 @@
  *      zenith/horizon radiance, irradiance estimate, recommended
  *      `envMapIntensity` per material class, recommended light-rig values).
  *      `sampleSkyRadiance()` and `renderEquirectRadiance()` evaluate it.
- *      These functions import nothing from three and touch no GPU state.
+ *      `computeSunShadowCamera()` fits the sun's orthographic shadow camera to
+ *      the visible city. These functions import nothing from three and touch no
+ *      GPU state.
  *
  *   2. A **GPU** rig. `createEnvironmentRig(renderer)` wraps a
  *      `PMREMGenerator`, uploads the pure equirect radiance buffer as a
@@ -58,6 +60,32 @@
  * - No new npm dependency.
  * - Works on the WebGL2 fallback path of `WebGPURenderer`.
  *
+ * What changed in v2
+ * ------------------
+ * Three defects, all of them measured rather than guessed:
+ *
+ *   1. *Golden hour was dusk.* The solar model ran a late-September date on
+ *      the site's **standard** offset (UTC-8) when San Francisco is on daylight
+ *      time (UTC-7) in September. Every solar event landed an hour early, so
+ *      the canonical 18:30 golden-hour card was captured 30 minutes after
+ *      sunset at -4.83 deg. The date is now an explicit parameter with a
+ *      documented default (`CANONICAL_SKY_DATE`, `CANONICAL_SITE`), and 18:30
+ *      sits at +6.6 deg. See `CANONICAL_SKY_DATE` for why that date.
+ *   2. *The sun cast no visible shadows.* The shadow pass was fine; the
+ *      orthographic shadow camera was a fixed +/-420 m box on a fixed light
+ *      position, covering 2.44 texels/m of somewhere the player was not
+ *      looking. `computeSunShadowCamera()` is the pure fitting function that
+ *      replaces it, at 5.21 texels/m and anchored to the view.
+ *   3. *The light-rig advice was a two-state switch.* It keyed off `daylight`,
+ *      which saturates 6 deg either side of the horizon, so golden hour got
+ *      noon's advice while the environment was delivering a seventh of noon's
+ *      fill. It now keys off measured sky irradiance.
+ *
+ * A fourth, found on the way: the weather energy normalisation matched *mean
+ * radiance* between weather domes rather than *irradiance*, which let an
+ * overcast dome out-light the clear sky it was normalised against once the sun
+ * was low. `clearReferenceIrradianceLuminance` documents the fix.
+ *
  * @module src/render/environment-ibl
  */
 
@@ -80,7 +108,7 @@ import {
  * across versions.
  * @type {string}
  */
-export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v1';
+export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v2';
 
 /** Supported weather keys. @type {readonly string[]} */
 export const WEATHER_KINDS = Object.freeze(['clear', 'fog', 'drizzle']);
@@ -113,15 +141,164 @@ export const BASELINE_LIGHT_RIG = Object.freeze({
   rim: 0.6,
 });
 
-/** Default site: San Francisco. */
-const DEFAULT_SITE = Object.freeze({
+/** Days before the first of each month in a common (non-leap) year. */
+const MONTH_DAY_OFFSETS = Object.freeze([0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]);
+/** Days in each month of a common year. */
+const MONTH_LENGTHS = Object.freeze([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]);
+
+/**
+ * Day-of-year (1..365) for a month/day in a common year.
+ *
+ * A common year is used deliberately: the sky model must be reproducible from
+ * `{month, day}` alone, with no calendar year and no `Date` object, so captured
+ * evidence stays comparable forever. The leap-year shift is a quarter of a day
+ * of solar declination (< 0.1 deg of altitude) and is below the tolerance of
+ * every assertion in this module.
+ *
+ * @param {number} month 1..12
+ * @param {number} day 1..31
+ * @returns {number} 1..365
+ */
+export function dayOfYearFromMonthDay(month, day) {
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    throw new TypeError(`environment-ibl: month must be an integer 1..12, got ${month}`);
+  }
+  if (!Number.isInteger(day) || day < 1 || day > 31) {
+    throw new TypeError(`environment-ibl: day must be an integer 1..31, got ${day}`);
+  }
+  if (day > MONTH_LENGTHS[month - 1]) {
+    throw new RangeError(`environment-ibl: month ${month} has ${MONTH_LENGTHS[month - 1]} days in a common year, got ${day}`);
+  }
+  return MONTH_DAY_OFFSETS[month - 1] + day;
+}
+
+/**
+ * The canonical capture date, chosen on purpose rather than inherited.
+ *
+ * **September 22, the September equinox.** Three reasons, in the order they
+ * matter to the capture set:
+ *
+ * 1. *Golden hour lands on the clock hour we capture.* On the equinox in San
+ *    Francisco the sun sets at about 19:04 local time, so the canonical
+ *    18:30 (`hour = 18.5`) card sits roughly +6.7 deg above the horizon -
+ *    inside golden hour by the usual definition (sun below ~6-10 deg), warm,
+ *    raking, still casting. Pick a midsummer date and 18:30 is a bland +16 deg
+ *    afternoon; pick midwinter and the sun set an hour ago.
+ * 2. *The sun rises due east and sets due west.* Only at an equinox is the
+ *    sunset azimuth exactly 270 deg, so the low sun runs straight along an
+ *    east-west street instead of across it. That is what makes the "dense
+ *    building canyon at golden hour" card a canyon shot and not a wall shot.
+ * 3. *It is the median sun path of the year.* Noon altitude ~50 deg is the
+ *    annual mean for this latitude, so the daylight cards are representative
+ *    rather than a seasonal extreme.
+ *
+ * The offset is **UTC-7, Pacific Daylight Time**, because PDT - not PST - is
+ * the offset actually in force in San Francisco on September 22. Running the
+ * previous UTC-8 offset on a late-September date was the whole bug: it shifted
+ * every solar event one hour earlier, put sunset at 18:04, and rendered the
+ * 18:30 golden-hour card as post-sunset dusk (measured altitude -4.83 deg).
+ *
+ * @type {Readonly<{label:string, month:number, day:number, dayOfYear:number}>}
+ */
+export const CANONICAL_SKY_DATE = Object.freeze({
+  label: 'September 22 (September equinox)',
+  month: 9,
+  day: 22,
+  dayOfYear: dayOfYearFromMonthDay(9, 22),
+});
+
+/**
+ * Canonical site: San Francisco on the canonical date.
+ *
+ * `utcOffsetHours` is the offset in force **on `date`**, not the site's
+ * standard offset. `standardUtcOffsetHours` is recorded next to it so the
+ * choice is auditable instead of looking like a typo.
+ *
+ * @type {Readonly<object>}
+ */
+export const CANONICAL_SITE = Object.freeze({
+  name: 'San Francisco',
   latitudeDeg: 37.7749,
   longitudeDeg: -122.4194,
-  timezoneOffsetHours: -8,
-  // Late September: a near-equinox sun path, which puts the 15:00 sun at
-  // roughly the altitude/azimuth the existing hard-coded key light uses.
-  dayOfYear: 264,
+  /** Offset in force on the canonical date: Pacific Daylight Time. */
+  utcOffsetHours: -7,
+  /** The site's winter offset, kept for documentation and for winter dates. */
+  standardUtcOffsetHours: -8,
+  daylightSaving: true,
+  date: CANONICAL_SKY_DATE,
+  dayOfYear: CANONICAL_SKY_DATE.dayOfYear,
 });
+
+/** Internal alias so existing call sites keep reading naturally. */
+const DEFAULT_SITE = CANONICAL_SITE;
+
+/**
+ * Solar altitude band, in degrees, that this project calls golden hour.
+ *
+ * `-4` is the low edge: below that the disc is gone and the direct key has
+ * collapsed to nothing, which is blue hour, not golden hour. `+8` is the high
+ * edge: above it the shadows shorten enough that the light reads as ordinary
+ * afternoon. The commonly quoted photographic band (-4 to +6) sits inside
+ * this; the extra two degrees are deliberate headroom so a capture hour does
+ * not fall out of the window because of a one-day calendar slip.
+ *
+ * @type {readonly [number, number]}
+ */
+export const GOLDEN_HOUR_ALTITUDE_BAND_DEG = Object.freeze([-4, 8]);
+
+/**
+ * The clock hours the capture set uses, with the expected solar altitude band
+ * for each on the canonical date. These are the numbers the self-check asserts;
+ * they are exported so a capture harness can log the expectation next to the
+ * frame instead of re-deriving it.
+ *
+ * @type {readonly Readonly<{hour:number, label:string, minAltitudeDeg:number,
+ *   maxAltitudeDeg:number, aboveHorizon:boolean}>[]}
+ */
+export const CANONICAL_CAPTURE_HOURS = Object.freeze([
+  Object.freeze({
+    hour: 6,
+    label: 'pre-dawn twilight, sun still down (sunrise is 07:00 on this date)',
+    minAltitudeDeg: -16,
+    maxAltitudeDeg: -8,
+    aboveHorizon: false,
+  }),
+  Object.freeze({
+    hour: 9,
+    label: 'morning, sun clear of the low buildings, long east shadows',
+    minAltitudeDeg: 18,
+    maxAltitudeDeg: 28,
+    aboveHorizon: true,
+  }),
+  Object.freeze({
+    hour: 12,
+    label: 'late morning; solar noon is 13:02, so this is not the daily peak',
+    minAltitudeDeg: 45,
+    maxAltitudeDeg: 55,
+    aboveHorizon: true,
+  }),
+  Object.freeze({
+    hour: 15,
+    label: 'afternoon, the clear-day card',
+    minAltitudeDeg: 38,
+    maxAltitudeDeg: 49,
+    aboveHorizon: true,
+  }),
+  Object.freeze({
+    hour: 18.5,
+    label: 'golden hour, the dense-canyon card: low, warm, still casting',
+    minAltitudeDeg: 3,
+    maxAltitudeDeg: 8,
+    aboveHorizon: true,
+  }),
+  Object.freeze({
+    hour: 21.5,
+    label: 'night, the shop/vehicle/street-lighting card',
+    minAltitudeDeg: -40,
+    maxAltitudeDeg: -18,
+    aboveHorizon: false,
+  }),
+]);
 
 // --- Preetham constants (wavelengths 680/550/450 nm) -------------------------
 const TOTAL_RAYLEIGH = Object.freeze([5.804542996261093e-6, 1.3562911419845635e-5, 3.0265902468824876e-5]);
@@ -244,15 +421,90 @@ export function environmentCacheKey({ hour, weather, quantum = 0.25 }) {
 // --- solar position ----------------------------------------------------------
 
 /**
+ * Resolve the date of a site description into a day-of-year.
+ *
+ * Accepts, in priority order:
+ *   - `site.date` as `{month, day}`, as `'MM-DD'` / `'YYYY-MM-DD'`, or as a
+ *     plain day-of-year number;
+ *   - `site.dayOfYear`;
+ *   - the canonical date.
+ *
+ * Exported so the integrator and the self-check resolve dates the same way.
+ *
+ * @param {object} [site]
+ * @returns {number} 1..365
+ */
+export function resolveDayOfYear(site = {}) {
+  const { date, dayOfYear } = site;
+  if (date !== undefined && date !== null) {
+    if (typeof date === 'number') {
+      if (!Number.isInteger(date) || date < 1 || date > 365) {
+        throw new TypeError(`environment-ibl: numeric site.date must be a day-of-year 1..365, got ${date}`);
+      }
+      return date;
+    }
+    if (typeof date === 'string') {
+      const parts = date.split('-').filter((part) => part.length > 0);
+      if (parts.length < 2) throw new TypeError(`environment-ibl: cannot read site.date '${date}'`);
+      const [month, day] = parts.slice(-2).map((part) => Number.parseInt(part, 10));
+      return dayOfYearFromMonthDay(month, day);
+    }
+    if (typeof date === 'object') {
+      if (Number.isInteger(date.month) && Number.isInteger(date.day)) {
+        return dayOfYearFromMonthDay(date.month, date.day);
+      }
+      if (Number.isInteger(date.dayOfYear)) return date.dayOfYear;
+    }
+    throw new TypeError(`environment-ibl: cannot read site.date ${JSON.stringify(date)}`);
+  }
+  if (dayOfYear !== undefined) {
+    if (!Number.isInteger(dayOfYear) || dayOfYear < 1 || dayOfYear > 365) {
+      throw new TypeError(`environment-ibl: site.dayOfYear must be an integer 1..365, got ${dayOfYear}`);
+    }
+    return dayOfYear;
+  }
+  return CANONICAL_SKY_DATE.dayOfYear;
+}
+
+/**
+ * Resolve the UTC offset in force for a site description.
+ * `timezoneOffsetHours` is the pre-v2 spelling and still wins when it is the
+ * only one the caller supplied, so old call sites keep their meaning.
+ * @param {object} [site]
+ * @returns {number}
+ */
+function resolveUtcOffsetHours(site = {}) {
+  const explicit = site.utcOffsetHours ?? site.timezoneOffsetHours;
+  if (explicit === undefined) return CANONICAL_SITE.utcOffsetHours;
+  if (!isFiniteNumber(explicit)) {
+    throw new TypeError(`environment-ibl: utcOffsetHours must be a finite number, got ${explicit}`);
+  }
+  return explicit;
+}
+
+/**
  * NOAA solar-position approximation.
+ *
+ * The date is an **explicit, documented parameter** (`site.date`, defaulting to
+ * `CANONICAL_SKY_DATE`), and the offset is the one in force on that date
+ * (`site.utcOffsetHours`, defaulting to `CANONICAL_SITE.utcOffsetHours`). See
+ * `CANONICAL_SKY_DATE` for why September 22 / UTC-7 and not something else.
+ *
+ * Note that the fractional-year term is evaluated in **UTC**, not on the local
+ * clock. Using the local hour there biases the declination by the timezone
+ * offset - small (< 0.1 deg here) but a systematic error with no upside.
  *
  * @param {number} hour Local clock hour, 0..24.
  * @param {object} [site]
  * @param {number} [site.latitudeDeg]
  * @param {number} [site.longitudeDeg]
- * @param {number} [site.timezoneOffsetHours]
- * @param {number} [site.dayOfYear] 1..365.
- * @returns {{x:number,y:number,z:number,altitudeDeg:number,azimuthDeg:number,declinationDeg:number}}
+ * @param {number} [site.utcOffsetHours] Offset in force on `date`.
+ * @param {number} [site.timezoneOffsetHours] Deprecated alias of `utcOffsetHours`.
+ * @param {{month:number,day:number}|string|number} [site.date]
+ * @param {number} [site.dayOfYear] 1..365. Lower priority than `site.date`.
+ * @returns {{x:number,y:number,z:number,altitudeDeg:number,azimuthDeg:number,
+ *   declinationDeg:number,dayOfYear:number,utcOffsetHours:number,
+ *   equationOfTimeMinutes:number,hourAngleDeg:number}}
  *   Unit direction **toward** the sun in world space (+X east, +Y up, -Z north),
  *   plus altitude above the horizon and azimuth clockwise from north.
  */
@@ -260,12 +512,13 @@ export function computeSunDirection(hour, site = {}) {
   const {
     latitudeDeg = DEFAULT_SITE.latitudeDeg,
     longitudeDeg = DEFAULT_SITE.longitudeDeg,
-    timezoneOffsetHours = DEFAULT_SITE.timezoneOffsetHours,
-    dayOfYear = DEFAULT_SITE.dayOfYear,
   } = site;
+  const timezoneOffsetHours = resolveUtcOffsetHours(site);
+  const dayOfYear = resolveDayOfYear(site);
   const h = wrapHour(hour);
 
-  const gamma = (TAU / 365) * (dayOfYear - 1 + (h - 12) / 24);
+  // Fractional year at the instant, in UTC.
+  const gamma = (TAU / 365) * (dayOfYear - 1 + (h - timezoneOffsetHours - 12) / 24);
   const eqTimeMinutes = 229.18 * (
     0.000075
     + 0.001868 * Math.cos(gamma)
@@ -309,6 +562,84 @@ export function computeSunDirection(hour, site = {}) {
     altitudeDeg: altitude / DEG,
     azimuthDeg: azimuth / DEG,
     declinationDeg: declination / DEG,
+    dayOfYear,
+    utcOffsetHours: timezoneOffsetHours,
+    equationOfTimeMinutes: eqTimeMinutes,
+    hourAngleDeg: hourAngle / DEG,
+  });
+}
+
+/**
+ * Solar events for a whole day at a site: sunrise, sunset, solar noon, the
+ * peak altitude, and the golden-hour window.
+ *
+ * Deterministic by construction: a fixed 1-minute scan finds each bracket and
+ * a fixed 24-step bisection refines it, so the result depends only on the
+ * arguments. No `Date`, no iteration-until-converged.
+ *
+ * Golden hour is reported as the clock window where the altitude lies inside
+ * `GOLDEN_HOUR_ALTITUDE_BAND_DEG`. The evening side is the one the canonical
+ * 18:30 card captures.
+ *
+ * @param {object} [site] Same shape as `computeSunDirection`'s site.
+ * @returns {Readonly<object>}
+ */
+export function computeSolarDay(site = {}) {
+  const altitudeAt = (h) => computeSunDirection(h, site).altitudeDeg;
+  const STEPS = 24 * 60;
+  const crossing = (target, rising) => {
+    for (let i = 0; i < STEPS; i += 1) {
+      const h0 = (i / STEPS) * 24;
+      const h1 = ((i + 1) / STEPS) * 24;
+      const a0 = altitudeAt(h0) - target;
+      const a1 = altitudeAt(h1) - target;
+      if (rising ? (a0 <= 0 && a1 > 0) : (a0 >= 0 && a1 < 0)) {
+        let lo = h0;
+        let hi = h1;
+        for (let k = 0; k < 24; k += 1) {
+          const mid = 0.5 * (lo + hi);
+          const am = altitudeAt(mid) - target;
+          if (rising ? am <= 0 : am >= 0) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+      }
+    }
+    return null;
+  };
+
+  let peakHour = 0;
+  let peakAltitude = -90;
+  for (let i = 0; i <= STEPS; i += 1) {
+    const h = (i / STEPS) * 24;
+    const a = altitudeAt(h);
+    if (a > peakAltitude) {
+      peakAltitude = a;
+      peakHour = h;
+    }
+  }
+
+  const sunriseHour = crossing(0, true);
+  const sunsetHour = crossing(0, false);
+  const goldenEveningStart = crossing(GOLDEN_HOUR_ALTITUDE_BAND_DEG[1], false);
+  const goldenEveningEnd = crossing(GOLDEN_HOUR_ALTITUDE_BAND_DEG[0], false);
+  const goldenMorningStart = crossing(GOLDEN_HOUR_ALTITUDE_BAND_DEG[0], true);
+  const goldenMorningEnd = crossing(GOLDEN_HOUR_ALTITUDE_BAND_DEG[1], true);
+  return Object.freeze({
+    dayOfYear: resolveDayOfYear(site),
+    utcOffsetHours: resolveUtcOffsetHours(site),
+    sunriseHour,
+    sunsetHour,
+    solarNoonHour: peakHour,
+    maxAltitudeDeg: peakAltitude,
+    daylightHours: sunriseHour !== null && sunsetHour !== null ? sunsetHour - sunriseHour : null,
+    goldenHourBandDeg: GOLDEN_HOUR_ALTITUDE_BAND_DEG,
+    /** Evening window where the altitude is inside `GOLDEN_HOUR_ALTITUDE_BAND_DEG`. */
+    goldenHourEvening: goldenEveningStart !== null && goldenEveningEnd !== null
+      ? Object.freeze({ startHour: goldenEveningStart, endHour: goldenEveningEnd })
+      : null,
+    goldenHourMorning: goldenMorningStart !== null && goldenMorningEnd !== null
+      ? Object.freeze({ startHour: goldenMorningStart, endHour: goldenMorningEnd })
+      : null,
   });
 }
 
@@ -519,27 +850,39 @@ const IRRADIANCE_SAMPLES = 512;
 const IRRADIANCE_DIRS = hemisphereSamples(IRRADIANCE_SAMPLES);
 
 /**
- * Mean upper-hemisphere luminance of the *clear* Preetham dome for a given
- * sun. Used to energy-normalise the other weather profiles. Memoised on the
- * sun elevation, because the sky model is only rebuilt when the hour bucket
- * changes.
+ * Cosine-weighted upper-hemisphere irradiance luminance of the *clear*
+ * Preetham dome for a given sun, used to energy-normalise the other weather
+ * profiles. Memoised on the sun elevation, because the sky model is only
+ * rebuilt when the hour bucket changes.
+ *
+ * This is deliberately the **cosine-weighted irradiance** and not the mean
+ * radiance it used to be. The two are not interchangeable: an overcast dome
+ * concentrates its radiance at the zenith, where the cosine weight is 1, while
+ * a clear dome at low sun concentrates its radiance near the horizon, where
+ * the cosine weight approaches 0. Normalising the *mean radiance* therefore let
+ * an overcast sky deliver more irradiance than the clear sky it was normalised
+ * against, which is backwards and is exactly what showed up once the corrected
+ * solar model put the 09:00 sun at 23 deg instead of 34 deg. Normalising the
+ * irradiance makes `brightness` mean what its documentation says: diffuse
+ * transmission relative to a clear sky with the same sun.
  * @private
  */
 const _clearReferenceCache = new Map();
-function clearReferenceMeanLuminance(sun, sunDiscIntensity) {
+function clearReferenceIrradianceLuminance(sun, sunDiscIntensity) {
   const key = `${Math.round(sun.y * 1e6)}|${sunDiscIntensity}`;
   const cached = _clearReferenceCache.get(key);
   if (cached !== undefined) return cached;
   const state = preethamState(sun, weatherProfile('clear'), sunDiscIntensity);
   let sum = 0;
   for (let i = 0; i < IRRADIANCE_SAMPLES; i += 1) {
+    const dy = IRRADIANCE_DIRS[i * 3 + 1];
     sum += luminance(preethamRadiance(
       state,
       IRRADIANCE_DIRS[i * 3],
-      IRRADIANCE_DIRS[i * 3 + 1],
+      dy,
       IRRADIANCE_DIRS[i * 3 + 2],
       sun,
-    ));
+    )) * dy;
   }
   const value = Math.max(1e-9, sum / IRRADIANCE_SAMPLES);
   // Bounded memo: the rig only ever visits 96 hour buckets per weather kind.
@@ -608,7 +951,10 @@ export function computeSkyModel(options = {}) {
   const requestedHour = wrapHour(hour);
   const quantised = quantiseHour(hour, hourQuantum);
   const profile = { ...weatherProfile(weather), ...overrides };
-  const sun = computeSunDirection(quantised, { ...DEFAULT_SITE, ...site });
+  // Not merged with DEFAULT_SITE here: `computeSunDirection` resolves its own
+  // defaults, and pre-merging would make `CANONICAL_SITE.utcOffsetHours` shadow
+  // a caller that only passed the deprecated `timezoneOffsetHours` spelling.
+  const sun = computeSunDirection(quantised, site || {});
 
   // Daylight ramp: full daylight above +6 deg, full night below -6 deg
   // (civil twilight). Used to fade in the urban skyglow.
@@ -625,15 +971,21 @@ export function computeSkyModel(options = {}) {
     * (1 - daylight) * (1 - profile.overcast * 0.7) * exposure;
 
   // Pass 1: the raw Preetham dome, needed to derive the overcast zenith
-  // luminance and the mean radiance used by the isotropy blend.
+  // luminance and the mean radiance used by the isotropy blend. The raw
+  // samples are kept so pass 1.5 can shape them without re-evaluating
+  // Preetham 512 more times.
   let meanR = 0;
   let meanG = 0;
   let meanB = 0;
+  const rawDome = new Float64Array(IRRADIANCE_SAMPLES * 3);
   for (let i = 0; i < IRRADIANCE_SAMPLES; i += 1) {
     const dx = IRRADIANCE_DIRS[i * 3];
     const dy = IRRADIANCE_DIRS[i * 3 + 1];
     const dz = IRRADIANCE_DIRS[i * 3 + 2];
     const c = preethamRadiance(state, dx, dy, dz, sun);
+    rawDome[i * 3] = c[0];
+    rawDome[i * 3 + 1] = c[1];
+    rawDome[i * 3 + 2] = c[2];
     meanR += c[0];
     meanG += c[1];
     meanB += c[2];
@@ -643,20 +995,48 @@ export function computeSkyModel(options = {}) {
   meanB /= IRRADIANCE_SAMPLES;
   const mean = [meanR, meanG, meanB];
 
-  // Energy normalisation. Preetham's absolute output climbs steeply with
-  // turbidity, so a fog profile evaluated raw comes out brighter than a clear
-  // sky, which is backwards. Rescale every weather dome onto the clear-sky
-  // reference for the same sun, then let `brightness` express the real diffuse
-  // transmission (fog 0.62, drizzle 0.38 of clear).
-  const referenceMeanLuminance = clearReferenceMeanLuminance(sun, sunDiscIntensity);
-  const meanLuminance = Math.max(1e-9, luminance(mean));
-  const energyScale = referenceMeanLuminance / meanLuminance;
-  const grade = profile.brightness * exposure * SKY_RADIANCE_SCALE * energyScale;
-
   // CIE overcast: the zenith is roughly 3x the horizon. Normalising by the
   // mean of (1 + 2 cos(theta)) / 3 over the hemisphere keeps total energy
   // close to the clear-sky dome before `brightness` grades it down.
   const overcastZenith = [meanR * 1.5, meanG * 1.5, meanB * 1.5];
+
+  // Pass 1.5: energy normalisation.
+  //
+  // Preetham's absolute output climbs steeply with turbidity, so a fog profile
+  // evaluated raw comes out brighter than a clear sky, which is backwards.
+  // The normalisation is done on the **cosine-weighted irradiance of the fully
+  // shaped dome**, not on its mean radiance, because overcast blending moves
+  // energy toward the zenith where the cosine weight is largest. Getting this
+  // wrong is invisible with a high sun and obvious with a low one.
+  //
+  // After this, `skyIrradiance` for any weather is exactly
+  // `brightness * clearSkyIrradiance` for the same sun, up to the twilight and
+  // skyglow terms added later, which are additive and not part of the dome.
+  let shapedIrradianceLuminance = 0;
+  const shapedSample = [0, 0, 0];
+  for (let i = 0; i < IRRADIANCE_SAMPLES; i += 1) {
+    const dy = IRRADIANCE_DIRS[i * 3 + 1];
+    const cieShape = (1 + 2 * Math.max(0, dy)) / 3;
+    for (let c = 0; c < 3; c += 1) {
+      const v = mix(rawDome[i * 3 + c], overcastZenith[c] * cieShape, profile.overcast);
+      shapedSample[c] = mix(v, mean[c], profile.isotropy);
+    }
+    if (desaturation > 0) {
+      const l = luminance(shapedSample);
+      shapedSample[0] = mix(shapedSample[0], l, desaturation);
+      shapedSample[1] = mix(shapedSample[1], l, desaturation);
+      shapedSample[2] = mix(shapedSample[2], l, desaturation);
+    }
+    shapedIrradianceLuminance += luminance([
+      shapedSample[0] * tint[0],
+      shapedSample[1] * tint[1],
+      shapedSample[2] * tint[2],
+    ]) * dy;
+  }
+  shapedIrradianceLuminance = Math.max(1e-12, shapedIrradianceLuminance / IRRADIANCE_SAMPLES);
+  const referenceIrradianceLuminance = clearReferenceIrradianceLuminance(sun, sunDiscIntensity);
+  const energyScale = referenceIrradianceLuminance / shapedIrradianceLuminance;
+  const grade = profile.brightness * exposure * SKY_RADIANCE_SCALE * energyScale;
 
   /**
    * Elevation-only terms shared by a whole equirect row.
@@ -812,7 +1192,10 @@ export function computeSkyModel(options = {}) {
   };
 
   model.envMapIntensity = envMapIntensityTable(model);
-  model.lightRig = recommendedLightRig(model);
+  // `skipLightRig` exists only to break the one-shot recursion when
+  // `recommendedLightRig` builds its clear-noon irradiance reference. Nothing
+  // outside this module should pass it.
+  model.lightRig = options.skipLightRig === true ? null : recommendedLightRig(model);
   return Object.freeze(model);
 }
 
@@ -1075,16 +1458,101 @@ export function applyEnvMapIntensity(target, materialClassOrModel, maybeModel) {
 // --- light rig recommendation ------------------------------------------------
 
 /**
+ * The per-hour punctual curve the renderer already runs, reconstructed here as
+ * a function of `daylight` alone.
+ *
+ * This matters because `lightRig.scales` are **multipliers applied on top of
+ * that curve**, not absolute intensities. Writing the curve down makes the
+ * recommendation checkable: `scales.hemi * curveFill(daylight)` is the fill the
+ * recommendation actually asks for, and that is the number the model reasons
+ * about. `lightRig.absolute` reports it directly for an integrator who would
+ * rather set intensities than scale them.
+ *
+ * @param {number} daylight 0 at night, 1 in full day.
+ * @returns {{hemi:number, ambient:number, fill:number}}
+ */
+export function baselineFillCurve(daylight) {
+  const d = clamp(daylight, 0, 1);
+  const hemi = 0.55 + 0.80 * d;
+  const ambient = 0.08 + 0.26 * d;
+  return { hemi, ambient, fill: hemi + ambient };
+}
+
+/**
+ * Reference clear-sky irradiance luminance at the canonical noon, used to
+ * normalise the fill curve. Recomputed lazily and memoised, never hard-coded,
+ * so it cannot drift away from the sky model.
+ * @private
+ */
+let _noonReferenceIrradiance = 0;
+function noonReferenceIrradiance() {
+  if (_noonReferenceIrradiance === 0) {
+    _noonReferenceIrradiance = computeSkyModel({
+      hour: 12,
+      weather: 'clear',
+      skipLightRig: true,
+    }).skyIrradianceLuminance;
+  }
+  return _noonReferenceIrradiance;
+}
+
+/**
+ * Perceptual compression applied to the fill's day/night swing.
+ *
+ * A fully physical fill would fall by a factor of ~7 between noon and golden
+ * hour and by ~40 between noon and night. The renderer's tone mapping exposure
+ * is fixed per day/night state, so a fully physical fall underexposes the
+ * shadow side into mud. `^0.35` is roughly a lightness curve: it keeps the
+ * ordering and the direction of every change while compressing a 40:1 physical
+ * range into about 3.5:1 on screen.
+ */
+const FILL_COMPRESSION = 0.35;
+
+/**
+ * Kasten-Young relative optical air mass, then a standard direct-beam
+ * transmittance. Used only to describe how much the *key* is attenuated at low
+ * sun, which is what makes golden hour warm and weak.
+ * @param {number} altitudeDeg
+ * @returns {{airMass:number, transmittance:number}}
+ */
+export function directBeamTransmittance(altitudeDeg) {
+  if (altitudeDeg <= -1) return { airMass: Infinity, transmittance: 0 };
+  const alt = Math.max(altitudeDeg, 0);
+  const airMass = 1 / (Math.sin(alt * DEG) + 0.50572 * Math.pow(alt + 6.07995, -1.6364));
+  const transmittance = Math.pow(0.7, Math.pow(airMass, 0.678));
+  return { airMass, transmittance };
+}
+
+/**
  * Recommended punctual-light values now that IBL carries the sky fill.
  *
- * The existing rig fakes ambient bounce with a strong `HemisphereLight` and an
- * `AmbientLight`. A real environment map delivers that fill with correct
- * directionality, so leaving both at full strength double-counts the sky and
- * washes out contact shadows. These numbers keep the total illuminance close
- * to the current look while moving the fill from flat to directional.
+ * What changed in v2, and why
+ * ---------------------------
+ * v1 drove the whole recommendation off `daylight`, which saturates six degrees
+ * either side of the horizon. That made the advice a two-state switch: every
+ * hour from 07:30 to 18:30 got the same 0.25x hemi and 0.20x ambient. It is
+ * right at noon and wrong everywhere else, and it is most wrong exactly at the
+ * golden-hour card, where the environment's own irradiance has fallen to 0.18
+ * against noon's 1.23 - a seventh of the fill - while the punctual fill that
+ * used to cover the gap is still being cut by 75-80%. Shadow sides went muddy
+ * and the frame lost its low-sun colour separation.
  *
- * The key light is only trimmed slightly: IBL must supplement it, never
- * replace it.
+ * v2 drives it off the sky model's **measured irradiance** instead:
+ *
+ *   environmentFill = skyIrradianceLuminance * environmentIntensity
+ *   targetFill      = baselineNoonFill * (skyIrradiance / noonSkyIrradiance)^0.35
+ *   punctualFill    = max(0, targetFill - environmentFill)
+ *   hemi/ambient scale = punctualFill / baselineFillCurve(daylight).fill
+ *
+ * The key is left alone at low sun. It is already weak there - direct-beam
+ * transmittance at +6.6 deg is 0.25 against 0.65 at noon - so trimming it again
+ * for "IBL now helps" is double-counting in the wrong direction. The trim is
+ * therefore scaled by how much fill the environment is really delivering, which
+ * is ~1.0 at noon and ~0.15 at golden hour.
+ *
+ * The rim light is the piece IBL most completely replaces: it exists only to
+ * fake a sky bounce from the anti-sun side, which is precisely what a
+ * prefiltered sky dome does correctly. It takes the largest cut.
  *
  * @param {Readonly<SkyModel>|{hour:number, weather?:string}} modelOrState
  * @param {Readonly<{sun:number,hemi:number,ambient:number,rim:number}>} [baseline]
@@ -1095,19 +1563,43 @@ export function recommendedLightRig(modelOrState, baseline = BASELINE_LIGHT_RIG)
     ? modelOrState
     : computeSkyModel(modelOrState || {});
 
-  // How much of the fill the environment can actually carry. In full daylight
-  // it carries nearly all of it; at night the env is dim skyglow, so the
-  // punctual fill must stay closer to its old value or the city goes black.
-  const envAuthority = clamp(0.30 + 0.70 * model.daylight, 0, 1);
-  // Overcast skies are almost pure fill, so IBL can take even more.
-  const overcastBoost = 1 + 0.12 * model.overcast;
+  // The dome is now energy-correct per weather (fog transmits 0.62 of clear,
+  // drizzle 0.38), so `environmentIntensity` no longer has to carry a
+  // brightness trim - that would double-count. The residual 0.10 overcast trim
+  // is there for one narrower reason: an isotropic grey dome reflects as a
+  // flat white highlight on wet asphalt and glass, and easing the whole
+  // environment slightly is cheaper than re-tuning every glossy class.
+  const environmentIntensity = clamp(1 - 0.10 * model.overcast, 0.6, 1.2);
+  const environmentFill = model.skyIrradianceLuminance * environmentIntensity;
 
-  const hemiScale = clamp(1 - 0.75 * envAuthority * overcastBoost, 0.18, 1);
-  const ambientScale = clamp(1 - 0.80 * envAuthority * overcastBoost, 0.12, 1);
-  const rimScale = clamp(1 - 0.30 * envAuthority, 0.55, 1);
-  const sunScale = clamp(1 - 0.07 * model.daylight - 0.10 * model.overcast, 0.7, 1);
+  // How much fill the environment is delivering, as a fraction of clear noon.
+  // This is the "IBL authority" number, and unlike v1's it is measured.
+  const irradianceRatio = model.skyIrradianceLuminance / Math.max(1e-9, noonReferenceIrradiance());
+  const envAuthority = clamp(environmentFill / Math.max(1e-9, noonReferenceIrradiance()), 0, 1.5);
 
+  // Fill the frame should end up with, compressed against the physical swing.
+  const baselineNoonFill = baselineFillCurve(1).fill;
+  const targetFill = baselineNoonFill * Math.pow(clamp(irradianceRatio, 0, 4), FILL_COMPRESSION);
+  const punctualFill = Math.max(0, targetFill - environmentFill);
+  const curve = baselineFillCurve(model.daylight);
+  const fillScale = clamp(punctualFill / Math.max(1e-6, curve.fill), 0.12, 1.15);
+
+  // Ambient is the flattest of the three, so it gives up slightly more of the
+  // remaining fill than the hemisphere light, which at least has an up/down
+  // gradient. 0.9 / 1.05 keeps their sum at the requested `punctualFill`.
+  const hemiScale = clamp(fillScale * 1.05, 0.12, 1.2);
+  const ambientScale = clamp(fillScale * 0.90, 0.10, 1.2);
+
+  // The rim faked the anti-sun sky bounce; the env dome now does it properly.
+  const rimScale = clamp(1 - 0.45 * clamp(envAuthority, 0, 1), 0.5, 1);
+
+  // Key trim, proportional to how much the environment is genuinely adding.
+  const sunScale = clamp(1 - 0.06 * clamp(envAuthority, 0, 1) - 0.10 * model.overcast, 0.72, 1);
+
+  const beam = directBeamTransmittance(model.sun.altitudeDeg);
   const round = (value) => Math.round(value * 1000) / 1000;
+  const round4 = (value) => Math.round(value * 10000) / 10000;
+
   return Object.freeze({
     baseline: Object.freeze({ ...baseline }),
     scales: Object.freeze({
@@ -1120,11 +1612,470 @@ export function recommendedLightRig(modelOrState, baseline = BASELINE_LIGHT_RIG)
     hemi: round(baseline.hemi * hemiScale),
     ambient: round(baseline.ambient * ambientScale),
     rim: round(baseline.rim * rimScale),
+    /**
+     * The intensities the recommendation actually asks for once the scales are
+     * applied to the renderer's own day/night curve. Set these directly if you
+     * would rather not multiply.
+     */
+    absolute: Object.freeze({
+      hemi: round(curve.hemi * hemiScale),
+      ambient: round(curve.ambient * ambientScale),
+    }),
     /** Value for `scene.environmentIntensity`. */
-    environmentIntensity: round(clamp(1 - 0.15 * model.overcast, 0.6, 1.2)),
+    environmentIntensity: round(environmentIntensity),
     envAuthority: round(envAuthority),
-    note: 'IBL supplements the key light; sun stays dominant, hemi/ambient drop because the env now carries directional fill.',
+    fill: Object.freeze({
+      environment: round4(environmentFill),
+      target: round4(targetFill),
+      punctual: round4(punctualFill),
+      total: round4(environmentFill + punctualFill),
+      curve: round4(curve.fill),
+      irradianceRatio: round4(irradianceRatio),
+    }),
+    key: Object.freeze({
+      altitudeDeg: round(model.sun.altitudeDeg),
+      airMass: Number.isFinite(beam.airMass) ? round(beam.airMass) : null,
+      transmittance: round4(beam.transmittance),
+      /** Horizontal irradiance the key delivers, relative to clear noon. */
+      relativeIrradiance: round4(
+        (beam.transmittance * Math.max(0, model.sun.y))
+        / Math.max(1e-9, directBeamTransmittance(52.73).transmittance * Math.sin(52.73 * DEG)),
+      ),
+    }),
+    shadow: Object.freeze({
+      castShadow: model.sun.altitudeDeg > 0,
+      /** `light.shadow.intensity`: soften the map under an overcast dome. */
+      intensity: round(clamp(1 - 0.55 * model.overcast, 0.4, 1)),
+    }),
+    note: 'Fill follows measured sky irradiance, not a day/night switch; the key is left alone at low sun '
+      + 'because direct-beam transmittance already weakens it; the rim takes the largest cut because the '
+      + 'env dome replaces it outright.',
   });
+}
+
+/**
+ * The whole recommendation across the canonical capture hours, as a table.
+ *
+ * Exists so the numbers in the handoff are generated, not typed, and so the
+ * self-check asserts the same rows the integrator reads.
+ *
+ * @param {'clear'|'fog'|'drizzle'} [weather='clear']
+ * @returns {readonly Readonly<object>[]}
+ */
+export function lightRigSchedule(weather = 'clear') {
+  return Object.freeze(CANONICAL_CAPTURE_HOURS.map((entry) => {
+    const model = computeSkyModel({ hour: entry.hour, weather });
+    const rig = model.lightRig;
+    return Object.freeze({
+      hour: entry.hour,
+      label: entry.label,
+      weather: model.weather,
+      sunAltitudeDeg: Math.round(model.sun.altitudeDeg * 100) / 100,
+      skyIrradiance: Math.round(model.skyIrradianceLuminance * 10000) / 10000,
+      environmentIntensity: rig.environmentIntensity,
+      scales: rig.scales,
+      absolute: rig.absolute,
+      fill: rig.fill,
+      key: rig.key,
+      shadow: rig.shadow,
+    });
+  }));
+}
+
+// --- sun shadow camera fitting -----------------------------------------------
+
+/**
+ * Why this section exists
+ * ----------------------
+ * Measured on the canonical street-day pose: `shadowMap.enabled = true`,
+ * `PCFSoftShadowMap`, a 2048x2048 map, 297 casters, 162 receivers, and not one
+ * visible cast shadow on the roadway. Nothing is broken in the shadow *pass* -
+ * the orthographic shadow camera is simply not fitted to the area the player
+ * can see. A fixed +/-420 m box hung off a fixed light position covers a
+ * different 840 m square than the one under the camera, so the map is either
+ * spent on empty ground or the receivers fall outside it entirely.
+ *
+ * Fitting method: bounding sphere, not tight AABB
+ * -----------------------------------------------
+ * The obvious fit - transform the eight frustum corners into light space and
+ * take their axis-aligned bounds - is a trap for a day/night city. That box
+ * changes size as the sun rotates, so the metres-per-texel changes with the
+ * time of day (2-3x across a day here), and it changes as the *camera* rotates,
+ * so shadow edges crawl and shimmer while the player turns.
+ *
+ * Fitting the minimal sphere around the frustum slice and using a square box of
+ * that diameter is invariant to both rotations: `texelsPerMetre` is a function
+ * of `shadowDistance` and `mapSize` only. The cost is roughly 25-30% of the map
+ * area on a 16:9 frustum, which is a good trade for a stable, predictable,
+ * loggable texel density. The centre is then snapped to whole texels in light
+ * space, which is what actually removes the crawl.
+ *
+ * The near plane, and why it is not `r`
+ * ------------------------------------
+ * The set of casters that can shadow the sphere is the cylinder of radius `r`
+ * around the light axis, extended back toward the sun. A caster of height `H`
+ * above the sphere whose shadow still lands inside the sphere sits at a
+ * horizontal distance of about `H / tan(alt)` and therefore at an along-axis
+ * distance of about
+ *
+ *     (H / tan(alt)) * cos(alt) + H * sin(alt) = H / sin(alt)
+ *
+ * from the centre. So the light must be pulled back by `r + H / sin(alt)`, and
+ * that pull-back grows without bound as the sun approaches the horizon. This is
+ * exactly the golden-hour case: at +6.6 deg a 260 m tower needs 2.2 km of
+ * extrusion before its shadow is complete. It costs no texel density - the box
+ * stays `2r` wide - only depth range, which is why the recommended `bias` below
+ * is expressed per unit of depth range rather than as a constant.
+ */
+
+/** Defaults for `computeSunShadowCamera`. */
+export const SHADOW_FIT_DEFAULTS = Object.freeze({
+  /** Metres of the view frustum the shadow map covers. See the density table. */
+  shadowDistance: 220,
+  /** Camera near plane. Only affects the fit through the near frustum corners. */
+  cameraNear: 0.5,
+  /** Square shadow map resolution. */
+  mapSize: 2048,
+  /** Tallest caster expected above the fitted sphere, in metres. */
+  maxCasterHeight: 260,
+  /** Sun altitudes below this are treated as this for the extrusion maths. */
+  minCasterAltitudeDeg: 3,
+  /** Hard ceiling on the near-plane extrusion, in metres. */
+  maxCasterExtrusion: 3200,
+  /** Shadow camera near plane, in metres. */
+  shadowNear: 1,
+  /** Snap the fitted centre to whole texels to stop edge crawl. */
+  texelSnap: true,
+  /** `normalBias` in texel widths. */
+  normalBiasTexels: 1.25,
+  /** `bias` in texel widths of depth pull-back. */
+  depthBiasTexels: 0.5,
+});
+
+/**
+ * The texel density band this fit is designed to stay inside, in
+ * texels-per-metre, for `mapSize = 2048` and `shadowDistance` between 120 m and
+ * 400 m. Outside this band the shadows are either aliased (below ~2.5) or the
+ * map is being wasted on an area smaller than the visible street (above ~12).
+ * @type {readonly [number, number]}
+ */
+export const SHADOW_TEXEL_DENSITY_RANGE = Object.freeze([2.5, 12]);
+
+/** Read a `{x,y,z}` / `[x,y,z]` / `Vector3` triple without importing three. */
+function readVec3(value, label) {
+  if (Array.isArray(value) && value.length >= 3) {
+    const [x, y, z] = value;
+    if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z)) return { x, y, z };
+  } else if (value && typeof value === 'object'
+    && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.z)) {
+    return { x: value.x, y: value.y, z: value.z };
+  }
+  throw new TypeError(`environment-ibl: ${label} must be a finite {x,y,z} vector`);
+}
+
+const vecAdd = (a, b) => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
+const vecScale = (a, s) => ({ x: a.x * s, y: a.y * s, z: a.z * s });
+const vecDot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const vecCross = (a, b) => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x,
+});
+function vecNormalise(a, label) {
+  const length = Math.hypot(a.x, a.y, a.z);
+  if (!(length > 1e-12)) throw new TypeError(`environment-ibl: ${label} must not be a zero-length vector`);
+  return { x: a.x / length, y: a.y / length, z: a.z / length };
+}
+
+/**
+ * Fit an orthographic shadow camera to the visible part of a 1-2 km city.
+ *
+ * **Pure.** It reads only its arguments, allocates only its result, imports
+ * nothing from three, and touches no scene object. The same arguments always
+ * produce the same numbers, so it is safe to call every frame and safe to
+ * assert on in a headless check.
+ *
+ * @param {object} options
+ * @param {{x:number,y:number,z:number}|number[]} options.cameraPosition World-space eye.
+ * @param {{x:number,y:number,z:number}|number[]} options.cameraDirection Forward,
+ *   need not be normalised. (`camera.getWorldDirection(v)`.)
+ * @param {number} options.fovDeg Vertical field of view in degrees.
+ * @param {number} options.aspect Width / height.
+ * @param {{x:number,y:number,z:number}|number[]} options.sunDirection Unit-ish
+ *   direction **toward** the sun, i.e. what `computeSunDirection` returns.
+ * @param {number} [options.shadowDistance=220] Metres of view depth covered.
+ * @param {number} [options.cameraNear=0.5]
+ * @param {number} [options.mapSize=2048]
+ * @param {number} [options.maxCasterHeight=260]
+ * @param {number} [options.minCasterAltitudeDeg=3]
+ * @param {number} [options.maxCasterExtrusion=3200]
+ * @param {number} [options.shadowNear=1]
+ * @param {boolean} [options.texelSnap=true]
+ * @param {number} [options.normalBiasTexels=1.25]
+ * @param {number} [options.depthBiasTexels=0.5]
+ * @returns {Readonly<object>} `{ left, right, top, bottom, near, far }` for
+ *   `light.shadow.camera`, `position` / `target` for `light` and `light.target`,
+ *   `normalBias` / `bias` for `light.shadow`, the achieved `texelsPerMetre`,
+ *   and the intermediates a diagnostic overlay wants.
+ */
+export function computeSunShadowCamera(options = {}) {
+  const config = { ...SHADOW_FIT_DEFAULTS, ...options };
+  const {
+    fovDeg,
+    aspect,
+    shadowDistance,
+    cameraNear,
+    mapSize,
+    maxCasterHeight,
+    minCasterAltitudeDeg,
+    maxCasterExtrusion,
+    shadowNear,
+    texelSnap,
+    normalBiasTexels,
+    depthBiasTexels,
+  } = config;
+
+  if (!isFiniteNumber(fovDeg) || fovDeg <= 0 || fovDeg >= 180) {
+    throw new TypeError(`environment-ibl: fovDeg must be in (0, 180), got ${fovDeg}`);
+  }
+  if (!isFiniteNumber(aspect) || aspect <= 0) {
+    throw new TypeError(`environment-ibl: aspect must be positive, got ${aspect}`);
+  }
+  if (!isFiniteNumber(cameraNear) || cameraNear <= 0) {
+    throw new TypeError(`environment-ibl: cameraNear must be positive, got ${cameraNear}`);
+  }
+  if (!isFiniteNumber(shadowDistance) || shadowDistance <= cameraNear) {
+    throw new TypeError(`environment-ibl: shadowDistance must exceed cameraNear, got ${shadowDistance}`);
+  }
+  if (!Number.isFinite(mapSize) || mapSize < 16) {
+    throw new TypeError(`environment-ibl: mapSize must be at least 16, got ${mapSize}`);
+  }
+  if (!isFiniteNumber(shadowNear) || shadowNear <= 0) {
+    throw new TypeError(`environment-ibl: shadowNear must be positive, got ${shadowNear}`);
+  }
+
+  const eye = readVec3(config.cameraPosition, 'cameraPosition');
+  const forward = vecNormalise(readVec3(config.cameraDirection, 'cameraDirection'), 'cameraDirection');
+  const toSun = vecNormalise(readVec3(config.sunDirection, 'sunDirection'), 'sunDirection');
+
+  // --- camera basis. The world-up degeneracy (looking straight down a lift
+  // shaft) is handled by swapping the reference axis, never by leaving a
+  // near-zero cross product to normalise.
+  const worldUp = Math.abs(forward.y) > 0.9995 ? { x: 0, y: 0, z: -1 } : { x: 0, y: 1, z: 0 };
+  const camRight = vecNormalise(vecCross(forward, worldUp), 'camera right');
+  const camUp = vecCross(camRight, forward);
+
+  // --- the eight frustum-slice corners.
+  const tanHalfV = Math.tan(0.5 * fovDeg * DEG);
+  const tanHalfH = tanHalfV * aspect;
+  const frustumCorners = [];
+  for (const depth of [cameraNear, shadowDistance]) {
+    const h = depth * tanHalfV;
+    const w = depth * tanHalfH;
+    for (const sy of [-1, 1]) {
+      for (const sx of [-1, 1]) {
+        frustumCorners.push(vecAdd(
+          vecAdd(eye, vecScale(forward, depth)),
+          vecAdd(vecScale(camRight, sx * w), vecScale(camUp, sy * h)),
+        ));
+      }
+    }
+  }
+
+  // --- minimal on-axis sphere around the slice.
+  // Equalise the distance to the near and far corner rings; clamp the solution
+  // into the slice when one ring dominates. The radius is then taken from the
+  // corners themselves, so containment is exact by construction rather than by
+  // trusting the closed form.
+  const k2 = (1 + aspect * aspect) * tanHalfV * tanHalfV;
+  const a = cameraNear;
+  const b = shadowDistance;
+  const centreDistance = clamp(0.5 * (a + b) * (1 + k2), a, b);
+  const centre0 = vecAdd(eye, vecScale(forward, centreDistance));
+  let radius = 0;
+  for (const corner of frustumCorners) {
+    radius = Math.max(radius, Math.hypot(corner.x - centre0.x, corner.y - centre0.y, corner.z - centre0.z));
+  }
+
+  // --- light basis. `lightForward` is the direction the light travels.
+  const lightForward = vecScale(toSun, -1);
+  const lightRef = Math.abs(lightForward.y) > 0.9995 ? { x: 0, y: 0, z: -1 } : { x: 0, y: 1, z: 0 };
+  const lightRight = vecNormalise(vecCross(lightRef, lightForward), 'light right');
+  const lightUp = vecCross(lightForward, lightRight);
+
+  // --- box. One texel of margin absorbs the half-texel that snapping can move
+  // the centre on each axis, which is what makes containment provable:
+  //   texelWorld = 2r / (mapSize - 2)  =>  width = 2(r + texelWorld) = mapSize * texelWorld.
+  const texelWorld = (2 * radius) / (mapSize - 2);
+  const halfExtent = radius + texelWorld;
+
+  let centre = centre0;
+  if (texelSnap) {
+    const cx = Math.round(vecDot(centre0, lightRight) / texelWorld) * texelWorld;
+    const cy = Math.round(vecDot(centre0, lightUp) / texelWorld) * texelWorld;
+    const cz = vecDot(centre0, lightForward);
+    centre = vecAdd(
+      vecAdd(vecScale(lightRight, cx), vecScale(lightUp, cy)),
+      vecScale(lightForward, cz),
+    );
+  }
+
+  // --- near-plane extrusion: how far back the light must sit so that a caster
+  // of `maxCasterHeight` still writes a complete shadow into the box.
+  const sunAltitudeDeg = Math.asin(clamp(toSun.y, -1, 1)) / DEG;
+  const extrusionAltitudeDeg = Math.max(sunAltitudeDeg, minCasterAltitudeDeg);
+  const rawExtrusion = maxCasterHeight / Math.sin(extrusionAltitudeDeg * DEG);
+  const casterExtrusion = Math.min(rawExtrusion, maxCasterExtrusion);
+  const lightDistance = radius + casterExtrusion + shadowNear;
+  const far = lightDistance + radius;
+  const depthRange = far - shadowNear;
+
+  const position = vecAdd(centre, vecScale(toSun, lightDistance));
+
+  // --- light-space bounds of the frustum corners, relative to the final
+  // centre. Returned so the integrator (and the self-check) can see the fit
+  // actually contains what it claims to.
+  const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
+  for (const corner of frustumCorners) {
+    const d = { x: corner.x - centre.x, y: corner.y - centre.y, z: corner.z - centre.z };
+    const lx = vecDot(d, lightRight);
+    const ly = vecDot(d, lightUp);
+    const lz = vecDot(d, lightForward);
+    bounds.minX = Math.min(bounds.minX, lx);
+    bounds.maxX = Math.max(bounds.maxX, lx);
+    bounds.minY = Math.min(bounds.minY, ly);
+    bounds.maxY = Math.max(bounds.maxY, ly);
+    bounds.minZ = Math.min(bounds.minZ, lz);
+    bounds.maxZ = Math.max(bounds.maxZ, lz);
+  }
+
+  const texelsPerMetre = mapSize / (2 * halfExtent);
+  const round = (value, places) => {
+    const scale = 10 ** places;
+    return Math.round(value * scale) / scale;
+  };
+
+  // --- bias.
+  //
+  // `normalBias` moves the shadow lookup along the surface normal, in metres.
+  // Acne is a texel-footprint artifact, so the offset that cures it scales with
+  // the texel, not with the scene: one texel is the width of the depth step the
+  // map can represent, and `PCFSoftShadowMap` reads a 2x2 block spread over
+  // about 1.5 texels, so 1.25 texels covers the kernel without paying for the
+  // worst case. The price is peter-panning of at most `normalBias` metres,
+  // which at the default fit is ~0.24 m - under the 0.19 m texel plus the
+  // filter width, i.e. below what the map can resolve anyway.
+  //
+  // `bias` is added to the shadow-space depth in NDC, where the orthographic
+  // depth range `far - near` maps linearly onto [-1, 1]. So a pull-back of `t`
+  // metres toward the light is `-2t / depthRange`, and half a texel is enough
+  // once `normalBias` has done the geometric work. Expressing it this way is
+  // the point: the extrusion above makes `depthRange` swing from ~670 m at noon
+  // to ~2500 m at golden hour, and a constant `bias` that is correct at noon is
+  // four times too weak at 18:30. That is the second half of why the current
+  // fixed `-0.0004` does nothing useful.
+  const normalBias = round(normalBiasTexels * texelWorld, 4);
+  const bias = -round((depthBiasTexels * texelWorld * 2) / depthRange, 7);
+
+  const warnings = [];
+  if (sunAltitudeDeg <= 0) {
+    warnings.push('sun is below the horizon: set light.castShadow = false and let the local lights carry the night');
+  } else if (sunAltitudeDeg < minCasterAltitudeDeg) {
+    warnings.push(`sun altitude ${sunAltitudeDeg.toFixed(2)} deg is below minCasterAltitudeDeg `
+      + `${minCasterAltitudeDeg}: shadows past the fit radius will be clipped`);
+  }
+  if (rawExtrusion > maxCasterExtrusion) {
+    warnings.push(`caster extrusion clamped from ${Math.round(rawExtrusion)} m to ${maxCasterExtrusion} m: `
+      + 'the tallest casters lose the far end of their shadow');
+  }
+  if (texelsPerMetre < SHADOW_TEXEL_DENSITY_RANGE[0]) {
+    warnings.push(`texel density ${texelsPerMetre.toFixed(2)}/m is below the ${SHADOW_TEXEL_DENSITY_RANGE[0]}/m floor: `
+      + 'reduce shadowDistance or raise mapSize');
+  }
+  if (texelsPerMetre > SHADOW_TEXEL_DENSITY_RANGE[1]) {
+    warnings.push(`texel density ${texelsPerMetre.toFixed(2)}/m is above the ${SHADOW_TEXEL_DENSITY_RANGE[1]}/m ceiling: `
+      + 'the map is covering less than the visible street');
+  }
+
+  return Object.freeze({
+    // --- straight onto light.shadow.camera
+    left: -halfExtent,
+    right: halfExtent,
+    top: halfExtent,
+    bottom: -halfExtent,
+    near: shadowNear,
+    far,
+    // --- straight onto light / light.target
+    position: Object.freeze(position),
+    target: Object.freeze(centre),
+    // --- straight onto light.shadow
+    normalBias,
+    bias,
+    mapSize,
+    // --- diagnostics
+    texelsPerMetre,
+    texelWorldSize: texelWorld,
+    radius,
+    halfExtent,
+    width: 2 * halfExtent,
+    depthRange,
+    lightDistance,
+    casterExtrusion,
+    casterExtrusionUnclamped: rawExtrusion,
+    centreDistance,
+    sunAltitudeDeg,
+    shadowDistance,
+    castShadow: sunAltitudeDeg > 0,
+    frustumCorners: Object.freeze(frustumCorners.map((corner) => Object.freeze(corner))),
+    lightSpaceBounds: Object.freeze(bounds),
+    lightBasis: Object.freeze({
+      right: Object.freeze(lightRight),
+      up: Object.freeze(lightUp),
+      forward: Object.freeze(lightForward),
+    }),
+    warnings: Object.freeze(warnings),
+  });
+}
+
+/**
+ * Copy a fit onto a three `DirectionalLight`.
+ *
+ * The one impure helper in this module, and deliberately trivial: it assigns
+ * plain numeric properties on an object the caller already owns. It creates no
+ * renderer, no light, no scene node and no loop, and it imports nothing - so it
+ * still runs under the headless self-check against a plain stub.
+ *
+ * `light.target` must already be in the scene graph, which is the usual
+ * `scene.add(light.target)` line.
+ *
+ * @param {object} light A `DirectionalLight` (or a stub with the same shape).
+ * @param {Readonly<object>} fit Result of `computeSunShadowCamera`.
+ * @returns {Readonly<object>} `fit`, for chaining.
+ */
+export function applySunShadowFit(light, fit) {
+  if (!light || typeof light !== 'object' || !light.shadow || !light.position) {
+    throw new TypeError('environment-ibl: applySunShadowFit(light, fit) needs a DirectionalLight');
+  }
+  const camera = light.shadow.camera;
+  if (!camera) throw new TypeError('environment-ibl: light.shadow.camera is missing');
+
+  light.position.set?.(fit.position.x, fit.position.y, fit.position.z);
+  if (light.target?.position?.set) {
+    light.target.position.set(fit.target.x, fit.target.y, fit.target.z);
+    light.target.updateMatrixWorld?.();
+  }
+  camera.left = fit.left;
+  camera.right = fit.right;
+  camera.top = fit.top;
+  camera.bottom = fit.bottom;
+  camera.near = fit.near;
+  camera.far = fit.far;
+  camera.updateProjectionMatrix?.();
+  light.shadow.normalBias = fit.normalBias;
+  light.shadow.bias = fit.bias;
+  if (typeof light.castShadow === 'boolean') light.castShadow = fit.castShadow;
+  light.shadow.needsUpdate = true;
+  return fit;
 }
 
 // --- GPU rig -----------------------------------------------------------------

@@ -350,6 +350,42 @@ for (const card of cards) {
     await page.screenshot({ path: file, timeout: SHOT_MS });
     entry.file = file;
     entry.shotMs = Date.now() - t0;
+    // Hole detector. The rubric's automatic-reject list includes visible gaps,
+    // and a 30-65s software frame inspected by eye is a bad way to find them.
+    // Cast a grid of rays through the lower half of the frame: any ray that
+    // reaches the sky dome, or hits nothing at all, is a hole in the ground.
+    entry.coverage = await page.evaluate(async () => {
+      const THREE = await import(/* @vite-ignore */ '/node_modules/three/build/three.module.js');
+      const r = window.__CITYGEN__.getRenderer();
+      r.camera.updateMatrixWorld(true);
+      const ray = new THREE.Raycaster();
+      const COLS = 24;
+      const ROWS = 12;
+      let holes = 0;
+      let solid = 0;
+      const worst = [];
+      for (let iy = 0; iy < ROWS; iy += 1) {
+        // lower 45% of the frame: where ground/pavement must be
+        const sy = 0.55 + (iy + 0.5) / ROWS * 0.45;
+        for (let ix = 0; ix < COLS; ix += 1) {
+          const sx = (ix + 0.5) / COLS;
+          ray.setFromCamera(new THREE.Vector2(sx * 2 - 1, -(sy * 2 - 1)), r.camera);
+          const hit = ray.intersectObjects(r.scene.children, true)[0];
+          const isHole = !hit || hit.object.name === 'sky-dome' || hit.distance > 400;
+          if (isHole) {
+            holes += 1;
+            if (worst.length < 6) {
+              worst.push({ sx: +sx.toFixed(3), sy: +sy.toFixed(3),
+                hit: hit ? hit.object.name || '(unnamed)' : 'nothing',
+                dist: hit ? +hit.distance.toFixed(1) : null });
+            }
+          } else solid += 1;
+        }
+      }
+      const total = holes + solid;
+      return { samples: total, holes, solid, holeRatio: +(holes / total).toFixed(4), worst };
+    });
+
     entry.held = await page.evaluate(() => {
       const r = window.__CITYGEN__.getRenderer();
       const c = window.__QA_CAM__;
@@ -365,6 +401,22 @@ for (const card of cards) {
   }
   report.cards.push(entry);
   console.log(`${card.id}: ${entry.error ? `FAILED ${entry.error}` : `ok ${entry.shotMs}ms`}`);
+}
+
+const covered = report.cards.filter((c) => c.coverage);
+report.coverageSummary = covered.length ? {
+  cards: covered.length,
+  worstCard: covered.slice().sort((a, b) => b.coverage.holeRatio - a.coverage.holeRatio)[0]?.id || null,
+  maxHoleRatio: Math.max(...covered.map((c) => c.coverage.holeRatio)),
+  meanHoleRatio: +(covered.reduce((s2, c) => s2 + c.coverage.holeRatio, 0) / covered.length).toFixed(4),
+} : null;
+if (report.coverageSummary) {
+  console.log(`\nground coverage: worst card ${report.coverageSummary.worstCard} `
+    + `${(report.coverageSummary.maxHoleRatio * 100).toFixed(1)}% holes, `
+    + `mean ${(report.coverageSummary.meanHoleRatio * 100).toFixed(1)}%`);
+  for (const c of covered) {
+    console.log(`  ${c.id}: ${(c.coverage.holeRatio * 100).toFixed(1)}% of lower-frame rays reach sky/void`);
+  }
 }
 
 report.errors = consoleErrors.slice(0, 40);

@@ -24,15 +24,47 @@
  *    of facade depth costs at most 12 extra draw calls, and it uses the same UV
  *    parameterisation as the shell so it can share the shell's facade texture.
  *
- * Triangle cost per building, by level of detail (hard caps, enforced):
+ * Detail tier is a screen-space decision, not a per-building one. Two
+ * buildings standing side by side must never render at different facade
+ * fidelity: a real cornice next to a painted-on window grid reads as a broken
+ * asset, and that is more damaging than uniformly lower detail. So the tier is
+ * derived from how many pixels one *reference storey* (3.4 m, a fixed metric
+ * quantity that does not scale with the building) covers on screen:
  *
- *   lod    cap    what it buys
+ *     pixelsPerMetre = viewportHeight / (2 * distance * tan(fov / 2))
+ *     storeyPixels   = pixelsPerMetre * 3.4
+ *
+ * Facade construction has fixed metric sizes -- a 0.16 m window reveal, a
+ * 0.7 m cornice, a 3.4 m storey -- so a 200 m tower and a 10 m shop at the same
+ * distance present those elements at exactly the same size on screen. That is
+ * why `facadeDetailTier` must not, and does not, read the building's own height
+ * or footprint as a fidelity input. Height and footprint area are read for one
+ * thing only: whether the building can carry facade construction at all
+ * (`carriesFacadeConstruction`). That gate is provably a subset of what
+ * `planFacadeDepth` already refuses, so it can never demote a building that
+ * would otherwise have produced geometry, and therefore can never introduce a
+ * visible difference between neighbours.
+ *
+ * Triangle cost per building, by detail tier (hard caps, enforced):
+ *
+ *   tier   cap    what it buys
  *   off      0    nothing; the shell texture carries the facade
- *   far     64    cornice / parapet cap + ground plinth on up to 4 edges
+ *   far     96    cornice / parapet cap + ground plinth on up to 4 edges,
+ *                   plus a recessed glazing band on the lowest 2 storeys, cut
+ *                   to the same reveal depth as a near-tier window so a
+ *                   distant facade still throws a real horizontal shadow
  *   mid    512    + string courses, shopfront glazing line and door recess,
  *                   bays, and the first 24 recessed window openings
  *   near  1664    + sills, lintels, pilasters, and up to 60 recessed window
  *                   openings on 6 edges, 5 storeys deep
+ *
+ * Measured over the 700 building corpus the far tier now costs 54 triangles at
+ * its cheapest, 96 at its ceiling and 77.1 on average, against a flat 48
+ * before -- a cornice and a plinth and nothing else, which is exactly why a
+ * distant facade read as a flat prism. The band replaces nothing:
+ * it is emitted where the mid/near tiers would emit individual openings, at the
+ * same sill and head heights, so approaching a building deepens the same lines
+ * instead of introducing new ones.
  *
  * Integration sketch (the renderer owns the call site, this module does not):
  *
@@ -54,10 +86,16 @@
  * (12 m x 4.6 m per tile), so a structure group can share the building's
  * existing facade texture without any remapping.
  *
- * Scene budget for 700 visible buildings: the reference LOD mix
- * (16 near / 96 mid / 588 far) costs 113,408 triangles against a 120,000
- * triangle allowance. Only the storeys a street-level camera can actually read
- * are detailed; tall towers get their lowest storeys and keep the texture above.
+ * Scene budget for 700 visible buildings: the reference tier mix
+ * (16 near / 96 mid / 588 far) measures 93,580 triangles against the 120,000
+ * triangle runtime allowance; its arithmetic worst case, every building pinned
+ * to its tier ceiling, is 132,224 against a declared 136,000 worst-case
+ * allowance. `buildFacadeDepthBatch` never exceeds the runtime allowance: when
+ * a scene would overrun it, the batch lowers one *global* tier ceiling and then
+ * drops whole distance rings from the outside in. Both moves are uniform in
+ * distance, so a tight budget can never leave one building detailed and its
+ * neighbour flat. Only the storeys a street-level camera can actually read are
+ * detailed; tall towers get their lowest storeys and keep the texture above.
  */
 import * as THREE from 'three';
 
@@ -86,18 +124,50 @@ export const FACADE_DEPTH_MAX_PROJECTION = 0.45;
 
 export const FACADE_DEPTH_BUDGET = Object.freeze({
   visibleBuildings: 700,
-  trianglesPerBuilding: Object.freeze({ off: 0, far: 64, mid: 512, near: 1664 }),
+  trianglesPerBuilding: Object.freeze({ off: 0, far: 96, mid: 512, near: 1664 }),
   // A plausible street-level distribution of 700 visible buildings.
   referenceMix: Object.freeze({ near: 16, mid: 96, far: 588 }),
-  referenceTriangles: 16 * 1664 + 96 * 512 + 588 * 64,
+  referenceTriangles: 16 * 1664 + 96 * 512 + 588 * 96,
+  // What `buildFacadeDepthBatch` will actually spend. It degrades uniformly
+  // rather than dropping individual buildings, so this is a hard ceiling.
   sceneTriangleBudget: 120000,
+  // The arithmetic worst case of the reference mix, every building pinned to
+  // its tier ceiling. Declared so the raised far-tier floor is budgeted, not
+  // assumed; the runtime allowance above is what the batch enforces.
+  worstCaseAllowance: 136000,
   // Worst case if every visible building were forced to mid detail.
   allMidTriangles: 700 * 512,
   maxDrawCalls: FACADE_DEPTH_STYLES.length * FACADE_DEPTH_ROLES.length,
 });
 
-/** Distance thresholds, in metres, used when the caller passes a view point. */
-export const FACADE_DEPTH_LOD_DISTANCES = Object.freeze({ near: 60, mid: 140, far: 320 });
+/** The four detail tiers, weakest first. Alias of FACADE_DEPTH_LODS. */
+export const FACADE_DEPTH_TIERS = FACADE_DEPTH_LODS;
+
+/** Ordering used to compare tiers. Higher rank is more construction. */
+export const FACADE_TIER_RANK = Object.freeze({ off: 0, far: 1, mid: 2, near: 3 });
+
+/**
+ * Reference screen. Used whenever the caller does not pass camera parameters,
+ * so a legacy call site keeps the ring distances it had before the tier became
+ * screen-space (59.7 / 138.3 / 328.4 m).
+ */
+export const FACADE_DEPTH_SCREEN = Object.freeze({ fov: 50, viewportHeight: 720 });
+
+/**
+ * The facade's natural unit of construction, in metres. Deliberately a fixed
+ * metric quantity: it is the same for every building, which is what makes the
+ * tier equal for equal-distance neighbours.
+ */
+export const FACADE_DEPTH_REFERENCE_STOREY = 3.4;
+
+/**
+ * Tier thresholds, in screen pixels covered by one reference storey.
+ *  near: a storey is 44 px tall -- a 0.16 m reveal is ~2 px, so a real shadow.
+ *  mid : 19 px -- openings still resolve, sills and lintels do not.
+ *  far : 8 px -- only a horizontal band can be read; below this the shell
+ *        texture carries the facade on its own.
+ */
+export const FACADE_DEPTH_TIER_PIXELS = Object.freeze({ near: 44, mid: 19, far: 8 });
 
 /**
  * Per-style construction language. `revealDepth` is the window recess and is
@@ -199,22 +269,28 @@ export const FACADE_STYLE_PROFILES = Object.freeze({
 
 const LOD_CONFIG = Object.freeze({
   off: Object.freeze({
-    edges: 0, storeys: 0, windows: 0,
+    edges: 0, storeys: 0, windows: 0, windowBands: 0,
     cornice: false, plinth: false, stringCourse: false, bay: false,
     shopfront: false, sill: false, lintel: false, pilaster: false,
   }),
+  // `windowBands` is the far tier's substitute for individual openings: one
+  // recessed glazing band per storey, spanning the edge, cut at the same
+  // reveal depth a near-tier window would use and sitting between the same
+  // sill and head heights. It is a far-tier-only feature by design -- the mid
+  // and near tiers emit the openings themselves, and a band drawn over them
+  // would occlude the deeper reveals behind it.
   far: Object.freeze({
-    edges: 4, storeys: 0, windows: 0,
+    edges: 4, storeys: 0, windows: 0, windowBands: 2,
     cornice: true, plinth: true, stringCourse: false, bay: false,
     shopfront: false, sill: false, lintel: false, pilaster: false,
   }),
   mid: Object.freeze({
-    edges: 4, storeys: 3, windows: 24,
+    edges: 4, storeys: 3, windows: 24, windowBands: 0,
     cornice: true, plinth: true, stringCourse: true, bay: true,
     shopfront: true, sill: false, lintel: false, pilaster: false,
   }),
   near: Object.freeze({
-    edges: 6, storeys: 5, windows: 60,
+    edges: 6, storeys: 5, windows: 60, windowBands: 0,
     cornice: true, plinth: true, stringCourse: true, bay: true,
     shopfront: true, sill: true, lintel: true, pilaster: true,
   }),
@@ -230,6 +306,12 @@ const GROUND_CLEARANCE = 0.03;
 const MIN_EDGE_LENGTH = 3;
 const MIN_PLAN_EXTENT = 3;
 const MIN_BUILDING_HEIGHT = 3;
+// A footprint smaller than this cannot carry facade construction: it is a
+// kiosk, a lift head or a map artefact. Refused by the planner *and* used by
+// `carriesFacadeConstruction`, so the two always agree.
+const MIN_FOOTPRINT_AREA = MIN_PLAN_EXTENT * MIN_PLAN_EXTENT;
+// Guard so a camera standing inside a building cannot divide by zero.
+const MIN_TIER_DISTANCE = 0.5;
 const MIN_WINDOW_WIDTH = 0.7;
 const MIN_WINDOW_HEIGHT = 0.7;
 const EPSILON = 1e-6;
@@ -283,7 +365,159 @@ export function hasStreetLevelTrade(building) {
   return building.facade === 'shopfront';
 }
 
-/** Pick a level of detail from a camera distance in metres. */
+// ---------------------------------------------------------------- detail tier
+
+function resolveScreen(options) {
+  const fov = Number(options?.fov);
+  const viewportHeight = Number(options?.viewportHeight);
+  return {
+    fov: Number.isFinite(fov) && fov > 1 && fov < 179 ? fov : FACADE_DEPTH_SCREEN.fov,
+    viewportHeight: Number.isFinite(viewportHeight) && viewportHeight >= 16
+      ? viewportHeight
+      : FACADE_DEPTH_SCREEN.viewportHeight,
+  };
+}
+
+function resolveTierPixels(options) {
+  const override = options?.tierPixels;
+  if (!override) return FACADE_DEPTH_TIER_PIXELS;
+  const near = Number.isFinite(override.near) ? override.near : FACADE_DEPTH_TIER_PIXELS.near;
+  const mid = Number.isFinite(override.mid) ? override.mid : FACADE_DEPTH_TIER_PIXELS.mid;
+  const far = Number.isFinite(override.far) ? override.far : FACADE_DEPTH_TIER_PIXELS.far;
+  return { near, mid, far };
+}
+
+function resolveReferenceStorey(options) {
+  const value = Number(options?.referenceStorey);
+  return Number.isFinite(value) && value > 0 ? value : FACADE_DEPTH_REFERENCE_STOREY;
+}
+
+/**
+ * Screen scale in pixels per world metre for a perspective camera. Depends on
+ * the camera and the viewport only -- never on what is being looked at.
+ */
+export function facadeDepthPixelsPerMetre(distance, fov, viewportHeight) {
+  const screen = resolveScreen({ fov, viewportHeight });
+  const d = Number(distance);
+  if (!Number.isFinite(d) || d < 0) return 0;
+  const clamped = Math.max(d, MIN_TIER_DISTANCE);
+  return screen.viewportHeight / (2 * clamped * Math.tan((screen.fov * Math.PI) / 360));
+}
+
+/**
+ * Can this building carry facade construction at all?
+ *
+ * This is a *capability* test, never a fidelity test. It is deliberately a
+ * strict subset of what `planFacadeDepth` already refuses:
+ *
+ *   height < MIN_BUILDING_HEIGHT     -> planner skips with reason 'height'
+ *   footprintArea < MIN_FOOTPRINT_AREA -> planner skips with reason 'area'
+ *
+ * So a building this returns false for produces zero geometry at *every* tier.
+ * Demoting it to 'off' therefore cannot make it look different from the
+ * building beside it -- both were always going to be bare shells.
+ *
+ * A missing or non-finite input is treated as unknown and never gates.
+ */
+export function carriesFacadeConstruction(height, footprintArea) {
+  const h = Number(height);
+  if (Number.isFinite(h) && h < MIN_BUILDING_HEIGHT) return false;
+  const area = Number(footprintArea);
+  if (Number.isFinite(area) && area >= 0 && area < MIN_FOOTPRINT_AREA) return false;
+  return true;
+}
+
+/**
+ * Screen-space detail tier, with the measurements that produced it.
+ *
+ * Pure: same inputs, same output, no clock, no seed, no scene state. The tier
+ * is a function of (distance, fov, viewportHeight) alone for every building
+ * that can carry construction, which is what guarantees:
+ *
+ *  - two buildings side by side at the same distance land in the same tier,
+ *    whatever their height, footprint, style, id or index; and
+ *  - the tier is monotone: a nearer building never gets a lower tier than a
+ *    farther one, because storeyPixels is strictly decreasing in distance and
+ *    the thresholds are ordered near > mid > far.
+ *
+ * @param {object} params
+ * @param {number} params.distance      camera-to-building distance, metres
+ * @param {number} [params.height]      building height, metres (capability only)
+ * @param {number} [params.footprintArea] footprint area, m^2 (capability only)
+ * @param {number} [params.fov]         vertical field of view, degrees
+ * @param {number} [params.viewportHeight] drawing buffer height, pixels
+ * @param {{near:number,mid:number,far:number}} [params.tierPixels] threshold override
+ * @param {number} [params.referenceStorey] reference storey height, metres
+ * @returns {{tier:string, distance:number, fov:number, viewportHeight:number,
+ *   pixelsPerMetre:number, storeyPixels:number, screenHeightPixels:number,
+ *   carries:boolean, reason:string|null}}
+ */
+export function facadeDetailTierMetrics(params = {}) {
+  const screen = resolveScreen(params);
+  const thresholds = resolveTierPixels(params);
+  const referenceStorey = resolveReferenceStorey(params);
+  const distance = Number(params.distance);
+  const base = {
+    tier: 'off',
+    distance,
+    fov: screen.fov,
+    viewportHeight: screen.viewportHeight,
+    pixelsPerMetre: 0,
+    storeyPixels: 0,
+    screenHeightPixels: 0,
+    carries: true,
+    reason: null,
+  };
+  if (!Number.isFinite(distance) || distance < 0) return { ...base, reason: 'distance' };
+
+  const pixelsPerMetre = facadeDepthPixelsPerMetre(distance, screen.fov, screen.viewportHeight);
+  const storeyPixels = pixelsPerMetre * referenceStorey;
+  const height = Number(params.height);
+  const measured = {
+    ...base,
+    pixelsPerMetre,
+    storeyPixels,
+    screenHeightPixels: Number.isFinite(height) ? Math.max(0, height) * pixelsPerMetre : 0,
+  };
+  if (!carriesFacadeConstruction(params.height, params.footprintArea)) {
+    return { ...measured, carries: false, reason: 'no-construction' };
+  }
+  if (storeyPixels >= thresholds.near) return { ...measured, tier: 'near' };
+  if (storeyPixels >= thresholds.mid) return { ...measured, tier: 'mid' };
+  if (storeyPixels >= thresholds.far) return { ...measured, tier: 'far' };
+  return { ...measured, reason: 'below-far' };
+}
+
+/**
+ * The assertable entry point the integrator calls, per frame or per build:
+ * (distance, height, footprintArea, fov, viewportHeight) -> tier.
+ */
+export function facadeDetailTier(params = {}) {
+  return facadeDetailTierMetrics(params).tier;
+}
+
+/**
+ * The distance, in metres, at which each tier boundary falls for a given
+ * screen. Useful for culling rings and for asserting the tier round trip.
+ */
+export function facadeDetailTierDistances(screenOptions = {}) {
+  const screen = resolveScreen(screenOptions);
+  const thresholds = resolveTierPixels(screenOptions);
+  const referenceStorey = resolveReferenceStorey(screenOptions);
+  const k = (screen.viewportHeight * referenceStorey) / (2 * Math.tan((screen.fov * Math.PI) / 360));
+  return Object.freeze({ near: k / thresholds.near, mid: k / thresholds.mid, far: k / thresholds.far });
+}
+
+/**
+ * Distance thresholds, in metres, for the reference screen. Derived from the
+ * tier function rather than declared beside it, so the two cannot drift.
+ */
+export const FACADE_DEPTH_LOD_DISTANCES = facadeDetailTierDistances();
+
+/**
+ * Distance-only tier lookup, kept for call sites that have no camera. It is
+ * the screen-space tier evaluated on the reference screen.
+ */
 export function facadeDepthLodForDistance(distance, distances = FACADE_DEPTH_LOD_DISTANCES) {
   const d = Number(distance);
   if (!Number.isFinite(d)) return 'off';
@@ -380,7 +614,10 @@ class QuadSink {
     const cost = pending.length * 2;
     if (!pending.length) return false;
     if (this.triangles + cost > this.context.triangleCap) return false;
-    for (const quad of pending) this.quads.push(quad);
+    for (const quad of pending) {
+      quad.feature = feature;
+      this.quads.push(quad);
+    }
     this.triangles += cost;
     this.counts[feature] = (this.counts[feature] || 0) + 1;
     return true;
@@ -448,7 +685,14 @@ class QuadSink {
     for (const value of positions) {
       if (!Number.isFinite(value)) return;
     }
-    (this.pending || this.quads).push({ role, positions, uvs, normal: [nx, ny, nz] });
+    (this.pending || this.quads).push({
+      role,
+      feature: null,
+      edgeIndex: edge.index,
+      positions,
+      uvs,
+      normal: [nx, ny, nz],
+    });
   }
 }
 
@@ -501,6 +745,20 @@ function emitLedge(sink, edge, s0, s1, yBottom, yTop, depth, role = 'structure')
   sink.quad(role, edge, [[s0, yBottom, 0], [s1, yBottom, 0], [s1, yBottom, outer], [s0, yBottom, outer]], depth > 0 ? 'down' : 'up');
 }
 
+/**
+ * Recessed glazing band: one horizontal strip cut back into the wall between a
+ * storey's sill and head heights, with a lit cill below and a shadowed head
+ * soffit above. Three quads, six triangles, and it reads at 8 px per storey --
+ * this is what stops a far-tier facade from being a flat prism.
+ */
+function emitBand(sink, edge, s0, s1, yBottom, yTop, depth) {
+  if (!(s1 - s0 > EPSILON) || !(yTop - yBottom > EPSILON)) return;
+  const d = -Math.abs(depth);
+  sink.quad('glass', edge, [[s0, yBottom, d], [s0, yTop, d], [s1, yTop, d], [s1, yBottom, d]], 'out');
+  sink.quad('structure', edge, [[s0, yTop, 0], [s1, yTop, 0], [s1, yTop, d], [s0, yTop, d]], 'down');
+  sink.quad('structure', edge, [[s0, yBottom, 0], [s1, yBottom, 0], [s1, yBottom, d], [s0, yBottom, d]], 'up');
+}
+
 /** Recessed opening: four reveal returns plus the pane set back in the hole. */
 function emitReveal(sink, edge, s0, s1, y0, y1, depth, paneRole = 'glass') {
   const d = -Math.abs(depth);
@@ -509,6 +767,26 @@ function emitReveal(sink, edge, s0, s1, y0, y1, depth, paneRole = 'glass') {
   sink.quad('structure', edge, [[s1, y0, 0], [s1, y1, 0], [s1, y1, d], [s1, y0, d]], 'against');
   sink.quad('structure', edge, [[s0, y1, 0], [s1, y1, 0], [s1, y1, d], [s0, y1, d]], 'down');
   sink.quad('structure', edge, [[s0, y0, 0], [s1, y0, 0], [s1, y0, d], [s0, y0, d]], 'up');
+}
+
+/**
+ * Sill and head height of one storey's glazing zone. Shared by the far tier's
+ * band and the mid/near tiers' individual openings, so the tiers cannot
+ * disagree about where the glazing sits: approaching a building deepens the
+ * same horizontal line instead of sliding it.
+ */
+function glazingBandFor(layout, storey, variant, height) {
+  if (!(storey >= 0) || storey >= layout.stories) return null;
+  const floorY = layout.floors[storey];
+  const storeyHeight = layout.tops[storey] - floorY;
+  if (!(storeyHeight > 2.2)) return null;
+  const sillY = floorY + clamp(storeyHeight * 0.26, 0.7, variant.sillLift);
+  let windowHeight = Math.min(storeyHeight * 0.56, 2.3);
+  windowHeight = Math.min(windowHeight, floorY + storeyHeight - 0.3 - sillY);
+  if (windowHeight < MIN_WINDOW_HEIGHT) return null;
+  const headY = sillY + windowHeight;
+  if (headY > height - 0.15) return null;
+  return { sillY, headY };
 }
 
 function storeyLayout(building, height, commercial) {
@@ -558,14 +836,18 @@ function drawVariant(building, style) {
  *
  * @param {object} building city.buildings[i] shaped record
  * @param {object} [options]
- * @param {'off'|'far'|'mid'|'near'} [options.lod='near']
+ * @param {'off'|'far'|'mid'|'near'} [options.tier='near'] detail tier
+ * @param {'off'|'far'|'mid'|'near'} [options.lod='near'] legacy alias of tier
  * @param {number} [options.baseY=0] ground elevation of the shell base
  * @param {number} [options.maxProjection=0.45] outward projection allowance (m)
  * @param {number} [options.triangleCap] override the per-LOD triangle cap
  * @param {{x:number,y:number}} [options.uvMetres]
  */
 export function planFacadeDepth(building, options = {}) {
-  const lod = FACADE_DEPTH_LODS.includes(options.lod) ? options.lod : 'near';
+  // `tier` is the current name; `lod` is kept so existing call sites keep
+  // working. They mean the same thing and only one of them may be set.
+  const requested = options.tier !== undefined ? options.tier : options.lod;
+  const lod = FACADE_DEPTH_LODS.includes(requested) ? requested : 'near';
   const style = resolveFacadeStyle(building);
   const profile = FACADE_STYLE_PROFILES[style];
   const config = LOD_CONFIG[lod];
@@ -610,6 +892,11 @@ export function planFacadeDepth(building, options = {}) {
   }
   const planExtent = Math.min(maxX - minX, maxZ - minZ);
   if (!(planExtent >= MIN_PLAN_EXTENT)) return { ...empty, skipped: 'extent' };
+  // Refused for the same reason `carriesFacadeConstruction` refuses it: a
+  // footprint this small is a kiosk or a map artefact, not a facade. Keeping
+  // the two in lockstep is what makes the tier gate provably harmless.
+  const footprintArea = Math.abs(signedArea(points));
+  if (!(footprintArea >= MIN_FOOTPRINT_AREA)) return { ...empty, skipped: 'area' };
 
   const allEdges = buildEdges(points);
   if (!allEdges.length) return { ...empty, skipped: 'edges' };
@@ -664,15 +951,24 @@ export function planFacadeDepth(building, options = {}) {
   // 3. Ground floor: shopfront glazing line and a recessed door for anything
   //    with a shop or amenity tag, on the street-facing (longest) edge.
   const groundTop = layout.tops[0];
-  const shopWindows = commercial && config.shopfront && groundTop > 2.6 && primary.length >= 4;
-  if (shopWindows) {
+  // Tier independent on purpose: the far tier needs to know where the shopfront
+  // sits so its ground-storey band lands on the same line the mid tier will
+  // turn into a real glazing reveal.
+  const shopEligible = commercial && groundTop > 2.6 && primary.length >= 4;
+  let shopBand = null;
+  if (shopEligible) {
     const head = groundTop - Math.max(0.5, variant.shopHead * 1.6);
     const cill = Math.min(0.65, groundTop * 0.18);
     const inset = Math.min(0.9, primary.length * 0.08);
     const s0 = inset;
     const s1 = primary.length - inset;
+    if (s1 - s0 > 1.2 && head - cill > 1.2) shopBand = { s0, s1, sillY: cill, headY: head };
+  }
+  const shopWindows = shopEligible && config.shopfront;
+  if (shopWindows && shopBand) {
+    const { s0, s1, sillY: cill, headY: head } = shopBand;
     const glazingDepth = Math.min(0.22, inwardLimit);
-    if (s1 - s0 > 1.2 && head - cill > 1.2) {
+    {
       sink.begin();
       emitReveal(sink, primary, s0, s1, cill, head, glazingDepth, 'glass');
       sink.commit('shopfront-glazing');
@@ -785,15 +1081,9 @@ export function planFacadeDepth(building, options = {}) {
       for (let storey = 0; storey <= topStorey; storey += 1) {
         if (windowsLeft <= 0) break;
         if (storey === 0 && shopWindows) continue;
-        const floorY = layout.floors[storey];
-        const storeyHeight = layout.tops[storey] - floorY;
-        if (!(storeyHeight > 2.2)) continue;
-        const sillY = floorY + clamp(storeyHeight * 0.26, 0.7, variant.sillLift);
-        let windowHeight = Math.min(storeyHeight * 0.56, 2.3);
-        windowHeight = Math.min(windowHeight, floorY + storeyHeight - 0.3 - sillY);
-        if (windowHeight < MIN_WINDOW_HEIGHT) continue;
-        const headY = sillY + windowHeight;
-        if (headY > height - 0.15) continue;
+        const band = glazingBandFor(layout, storey, variant, height);
+        if (!band) continue;
+        const { sillY, headY } = band;
         for (let column = 0; column < columns; column += 1) {
           if (windowsLeft <= 0) break;
           const centre = (column + 0.5) * pitch;
@@ -811,6 +1101,38 @@ export function planFacadeDepth(building, options = {}) {
           if (sink.commit('window')) windowsLeft -= 1;
           else { windowsLeft = 0; break; }
         }
+      }
+    }
+  }
+
+  // 8. Far-tier glazing bands. The far tier cannot afford individual openings,
+  //    and a facade with only a cornice and a plinth still reads as a flat
+  //    prism, so each of the lowest storeys gets one continuous recessed band
+  //    at the same sill and head heights the mid tier will use, cut to the same
+  //    reveal depth. Cost is six triangles per band per edge: at most
+  //    2 storeys x 4 edges = 48, on top of the 24 + 24 the cornice and plinth
+  //    spend, for a 96 triangle far tier.
+  if (config.windowBands > 0) {
+    const bandDepth = clamp(Math.min(reveal, inwardLimit), 0.08, 0.25);
+    const bandStoreys = Math.min(config.windowBands, layout.stories);
+    for (let storey = 0; storey < bandStoreys; storey += 1) {
+      // A shop-eligible ground storey belongs to the shopfront, not to the
+      // residential window grid: it takes the shopfront's own line, on the
+      // shopfront's own edge, so the far -> mid handover does not move it.
+      const shopStorey = storey === 0 && shopEligible;
+      const range = shopStorey && shopBand
+        ? shopBand
+        : glazingBandFor(layout, storey, variant, height);
+      if (!range) continue;
+      const bandEdges = shopStorey ? [primary] : edges;
+      for (const edge of bandEdges) {
+        const inset = clamp(edge.length * 0.06, 0.2, 0.9);
+        const s0 = inset;
+        const s1 = edge.length - inset;
+        if (!(s1 - s0 > 1)) continue;
+        sink.begin();
+        emitBand(sink, edge, s0, s1, range.sillY, range.headY, bandDepth);
+        sink.commit('window-band');
       }
     }
   }
@@ -846,6 +1168,7 @@ export function planFacadeDepth(building, options = {}) {
       ? { minX: boundsMinX, maxX: boundsMaxX, minY: boundsMinY, maxY: boundsMaxY, minZ: boundsMinZ, maxZ: boundsMaxZ }
       : null,
     footprint: { minX, maxX, minZ, maxZ },
+    footprintArea,
     baseY,
     height,
     maxProjection,
@@ -917,30 +1240,132 @@ export function buildFacadeDepth(building, options = {}) {
   };
 }
 
-function resolveLod(building, options, index) {
-  if (typeof options.lodFor === 'function') {
-    const chosen = options.lodFor(building, index);
-    if (FACADE_DEPTH_LODS.includes(chosen)) return chosen;
+/** Deterministic footprint centroid and area, derived from the polygon. */
+export function facadeFootprintMetrics(building) {
+  const polygon = normalisePolygon(building?.polygon);
+  if (!polygon.length) {
+    const declared = Number(building?.footprintArea);
+    return { centroid: null, area: Number.isFinite(declared) ? declared : NaN };
   }
-  if (FACADE_DEPTH_LODS.includes(options.lod)) return options.lod;
+  let cx = 0;
+  let cz = 0;
+  for (const point of polygon) {
+    cx += point.x;
+    cz += point.z;
+  }
+  return {
+    centroid: { x: cx / polygon.length, z: cz / polygon.length },
+    // The polygon is authoritative: a record-declared area can disagree with
+    // the geometry the planner will actually read.
+    area: Math.abs(signedArea(polygon)),
+  };
+}
+
+/**
+ * One tier decision per building, with the distance that produced it.
+ *
+ * Every path here is uniform in distance. Nothing that can differ between two
+ * neighbours standing at the same distance -- style, id, index, height, storey
+ * count -- reaches the tier, except the capability gate, which only ever fires
+ * on buildings that produce no geometry at any tier.
+ */
+function resolveTierEntry(building, options, index) {
+  const metrics = facadeFootprintMetrics(building);
   const view = options.viewPoint;
-  if (view && Number.isFinite(view.x) && Number.isFinite(view.z)) {
-    const polygon = normalisePolygon(building?.polygon);
-    if (!polygon.length) return 'off';
-    let cx = 0;
-    let cz = 0;
-    for (const point of polygon) {
-      cx += point.x;
-      cz += point.z;
-    }
-    cx /= polygon.length;
-    cz /= polygon.length;
-    return facadeDepthLodForDistance(
-      Math.hypot(cx - view.x, cz - view.z),
-      options.lodDistances || FACADE_DEPTH_LOD_DISTANCES,
-    );
+  const distance = metrics.centroid && view && Number.isFinite(view.x) && Number.isFinite(view.z)
+    ? Math.hypot(metrics.centroid.x - view.x, metrics.centroid.z - view.z)
+    : NaN;
+
+  let tier = null;
+  if (typeof options.tierFor === 'function') {
+    const chosen = options.tierFor(building, index);
+    if (FACADE_DEPTH_TIERS.includes(chosen)) tier = chosen;
   }
-  return 'near';
+  if (tier === null && typeof options.lodFor === 'function') {
+    const chosen = options.lodFor(building, index);
+    if (FACADE_DEPTH_TIERS.includes(chosen)) tier = chosen;
+  }
+  if (tier === null && FACADE_DEPTH_TIERS.includes(options.tier)) tier = options.tier;
+  if (tier === null && FACADE_DEPTH_TIERS.includes(options.lod)) tier = options.lod;
+  if (tier === null && Number.isFinite(distance)) {
+    if (options.lodDistances) {
+      tier = facadeDepthLodForDistance(distance, options.lodDistances);
+    } else {
+      tier = facadeDetailTier({
+        distance,
+        height: building?.height,
+        footprintArea: metrics.area,
+        fov: options.fov,
+        viewportHeight: options.viewportHeight,
+        tierPixels: options.tierPixels,
+        referenceStorey: options.referenceStorey,
+      });
+    }
+  }
+  if (tier === null) tier = metrics.centroid ? 'near' : 'off';
+
+  return {
+    building,
+    index,
+    tier,
+    distance,
+    // Ring order. Distance when the caller gave a view point, declaration
+    // order otherwise, so the outside-in cut below always has an ordering.
+    rank: Number.isFinite(distance) ? distance : index,
+  };
+}
+
+function planEntries(entries, options, ceiling) {
+  const ceilingRank = FACADE_TIER_RANK[ceiling];
+  const planned = [];
+  let triangles = 0;
+  for (const entry of entries) {
+    const tier = FACADE_TIER_RANK[entry.tier] <= ceilingRank ? entry.tier : ceiling;
+    if (tier === 'off') continue;
+    const baseY = typeof options.baseYFor === 'function'
+      ? Number(options.baseYFor(entry.building))
+      : options.baseY;
+    const plan = planFacadeDepth(entry.building, {
+      tier,
+      baseY: Number.isFinite(baseY) ? baseY : 0,
+      maxProjection: options.maxProjection,
+      uvMetres: options.uvMetres,
+    });
+    if (!plan.quads.length) continue;
+    planned.push({ entry, plan });
+    triangles += plan.triangles;
+  }
+  return { planned, triangles };
+}
+
+/**
+ * Drop whole distance rings from the outside in until the scene fits. Every
+ * building sharing a rank is kept or dropped together, so the cut can never
+ * separate two neighbours standing at the same distance.
+ */
+function ringCut(planned, budget) {
+  const ordered = planned.slice().sort((a, b) => (a.entry.rank - b.entry.rank) || (a.entry.index - b.entry.index));
+  let triangles = 0;
+  let cutRank = -Infinity;
+  let i = 0;
+  while (i < ordered.length) {
+    const rank = ordered[i].entry.rank;
+    let j = i;
+    let ringCost = 0;
+    while (j < ordered.length && ordered[j].entry.rank === rank) {
+      ringCost += ordered[j].plan.triangles;
+      j += 1;
+    }
+    if (triangles + ringCost > budget) break;
+    triangles += ringCost;
+    cutRank = rank;
+    i = j;
+  }
+  return {
+    cutRank,
+    triangles,
+    planned: planned.filter((item) => item.entry.rank <= cutRank),
+  };
 }
 
 /**
@@ -949,51 +1374,67 @@ function resolveLod(building, options, index) {
  * Geometry is merged per (style, role), so the whole city costs at most
  * `FACADE_DEPTH_BUDGET.maxDrawCalls` (12) additional draw calls.
  *
+ * Budget behaviour is deliberately uniform. An earlier version walked the list
+ * and skipped whichever building happened to cross the budget line, which put a
+ * fully detailed facade next to an untouched prism at the same distance -- the
+ * single most damaging facade artefact there is. Instead the batch now lowers
+ * one *global* tier ceiling (near -> mid -> far) and, only if that still does
+ * not fit, drops whole distance rings from the outside in.
+ *
  * @param {Array<object>} buildings
  * @param {object} [options]
- * @param {'off'|'far'|'mid'|'near'} [options.lod]
- * @param {(building:object, index:number)=>string} [options.lodFor]
- * @param {{x:number,z:number}} [options.viewPoint] distance driven LOD
+ * @param {'off'|'far'|'mid'|'near'} [options.tier] pin every building to a tier
+ * @param {'off'|'far'|'mid'|'near'} [options.lod] legacy alias of tier
+ * @param {(building:object, index:number)=>string} [options.tierFor]
+ * @param {(building:object, index:number)=>string} [options.lodFor] legacy alias
+ * @param {{x:number,z:number}} [options.viewPoint] screen-space tiering origin
+ * @param {number} [options.fov] vertical field of view, degrees
+ * @param {number} [options.viewportHeight] drawing buffer height, pixels
  * @param {(building:object)=>number} [options.baseYFor] terrain sample per building
  * @param {number} [options.baseY]
  * @param {number} [options.maxProjection]
- * @param {number} [options.sceneTriangleBudget] stop adding detail past this
+ * @param {number} [options.sceneTriangleBudget] hard ceiling, degraded uniformly
  */
 export function buildFacadeDepthBatch(buildings, options = {}) {
   const list = Array.isArray(buildings) ? buildings : [];
   const sceneBudget = Number.isFinite(options.sceneTriangleBudget)
-    ? options.sceneTriangleBudget
+    ? Math.max(0, options.sceneTriangleBudget)
     : FACADE_DEPTH_BUDGET.sceneTriangleBudget;
+
+  const entries = list.map((building, index) => resolveTierEntry(building, options, index));
+  const requestedTiers = { off: 0, far: 0, mid: 0, near: 0 };
+  for (const entry of entries) requestedTiers[entry.tier] += 1;
+
+  let ceiling = 'near';
+  let attempt = planEntries(entries, options, ceiling);
+  for (const next of ['mid', 'far']) {
+    if (attempt.triangles <= sceneBudget) break;
+    ceiling = next;
+    attempt = planEntries(entries, options, ceiling);
+  }
+  let cutRank = null;
+  let planned = attempt.planned;
+  let triangles = attempt.triangles;
+  if (triangles > sceneBudget) {
+    const cut = ringCut(planned, sceneBudget);
+    planned = cut.planned;
+    triangles = cut.triangles;
+    cutRank = Number.isFinite(cut.cutRank) ? cut.cutRank : null;
+  }
+
   const buckets = new Map();
   const perBuilding = [];
-  let triangles = 0;
-  let skipped = 0;
-  for (let index = 0; index < list.length; index += 1) {
-    const building = list[index];
-    const lod = resolveLod(building, options, index);
-    if (lod === 'off') {
-      skipped += 1;
-      continue;
-    }
-    const baseY = typeof options.baseYFor === 'function'
-      ? Number(options.baseYFor(building))
-      : options.baseY;
-    const plan = planFacadeDepth(building, {
-      lod,
-      baseY: Number.isFinite(baseY) ? baseY : 0,
-      maxProjection: options.maxProjection,
-      uvMetres: options.uvMetres,
+  const tiers = { off: 0, far: 0, mid: 0, near: 0 };
+  for (const { entry, plan } of planned) {
+    tiers[plan.lod] += 1;
+    perBuilding.push({
+      id: plan.id,
+      style: plan.style,
+      tier: plan.lod,
+      lod: plan.lod,
+      distance: entry.distance,
+      triangles: plan.triangles,
     });
-    if (!plan.quads.length) {
-      skipped += 1;
-      continue;
-    }
-    if (triangles + plan.triangles > sceneBudget) {
-      skipped += 1;
-      continue;
-    }
-    triangles += plan.triangles;
-    perBuilding.push({ id: plan.id, style: plan.style, lod: plan.lod, triangles: plan.triangles });
     for (const quad of plan.quads) {
       const key = `${plan.style}:${quad.role}`;
       let bucket = buckets.get(key);
@@ -1005,6 +1446,7 @@ export function buildFacadeDepthBatch(buildings, options = {}) {
       if (bucket.buildingIds[bucket.buildingIds.length - 1] !== plan.id) bucket.buildingIds.push(plan.id);
     }
   }
+
   const groups = [];
   const orderedKeys = Array.from(buckets.keys()).sort();
   for (const key of orderedKeys) {
@@ -1027,7 +1469,11 @@ export function buildFacadeDepthBatch(buildings, options = {}) {
     drawCalls: groups.length,
     triangles,
     buildings: perBuilding,
-    skipped,
+    skipped: list.length - perBuilding.length,
+    tiers,
+    requestedTiers,
+    tierCeiling: ceiling,
+    ringCutDistance: cutRank,
     sceneTriangleBudget: sceneBudget,
   };
 }

@@ -7,6 +7,10 @@ import {
   createEnvironmentRig,
   classifyMaterialClass,
   envMapIntensityFor,
+  computeSunShadowCamera,
+  applySunShadowFit,
+  SHADOW_FIT_DEFAULTS,
+  SHADOW_TEXEL_DENSITY_RANGE,
 } from '../render/environment-ibl.js';
 import {
   applyDetailMaps,
@@ -16,7 +20,13 @@ import {
   detailMapCacheStats,
   uvScalePerMetre,
 } from '../render/detail-maps.js';
-import { buildFacadeDepthBatch, FACADE_DEPTH_UV_METRES } from '../world/buildings/facade-depth.js';
+import {
+  buildFacadeDepthBatch,
+  FACADE_DEPTH_UV_METRES,
+  FACADE_DEPTH_BUDGET,
+  FACADE_DEPTH_SCREEN,
+  facadeDetailTierDistances,
+} from '../world/buildings/facade-depth.js';
 import { buildStreetSurfaceV2, STREET_SURFACE_V2_DEFAULTS } from '../world/streets/street-surface-v2.js';
 
 const PALETTES = Object.freeze({
@@ -133,7 +143,10 @@ const DETAIL_ROUGHNESS_MEAN = Object.freeze({
 // Additive facade relief. The module caps itself per building and per scene;
 // this is the scene allowance the renderer grants it.
 const FACADE_DEPTH_PASS = 'facade-depth-1';
-const FACADE_DEPTH_SCENE_BUDGET = 120000;
+// Owned by the module, not re-typed here: the batch enforces this ceiling by
+// lowering one global tier and then cutting whole distance rings, so the two
+// numbers must never be allowed to drift apart.
+const FACADE_DEPTH_SCENE_BUDGET = FACADE_DEPTH_BUDGET.sceneTriangleBudget;
 const FACADE_DEPTH_SURFACES = Object.freeze({
   edwardian: Object.freeze({ detail: 'painted-concrete', color: '#e7ddcd' }),
   'modern-grid': Object.freeze({ detail: 'painted-concrete', color: '#d6d2c8' }),
@@ -161,6 +174,58 @@ const FACADE_DEPTH_GLASS = Object.freeze({ color: '#3f5a68', roughness: 0.16, me
 const LEGACY_SIDEWALK_LIFT = 0.045;
 const STREET_GUTTER_DEPTH = 0.04;
 const STREET_SURFACE_PASS = 'street-surface-v2';
+
+/** Empty facade-relief diagnostics, so every reset path has the same shape. */
+function createFacadeDepthDiagnostics() {
+  return {
+    pass: FACADE_DEPTH_PASS,
+    drawCalls: 0,
+    triangles: 0,
+    buildings: 0,
+    skipped: 0,
+    styles: [],
+    screen: null,
+    tierDistances: null,
+    tiers: null,
+    requestedTiers: null,
+    tierCeiling: null,
+    ringCutDistance: null,
+    sceneTriangleBudget: FACADE_DEPTH_SCENE_BUDGET,
+  };
+}
+
+// --- sun shadow fit ---------------------------------------------------------
+//
+// The shipped rig used a fixed +/-420 m orthographic box aimed at the world
+// origin. On the two-kilometre real-map slice the player stands a kilometre or
+// more from that origin, so every shadow texel landed outside the view: the map
+// was enabled, had casters, and drew nothing anyone could see.
+//
+// `computeSunShadowCamera` fits the box to the visible slice of the view
+// frustum instead (minimal bounding sphere, square box, centre snapped to whole
+// texels). Its `texelsPerMetre` then depends only on `SUN_SHADOW_DISTANCE` and
+// the map size, so the density is a number we can log once and reason about,
+// and it does not swing with the time of day or with which way the player is
+// facing.
+const SUN_SHADOW_PASS = 'sun-shadow-fit-1';
+const SUN_SHADOW_MAP_SIZE = 2048;
+// 220 m of view depth at 2048 -> 5.21 texels/m (19.2 cm texels), inside the
+// module's declared 2.5-12 texels/m band. Beyond this ring the city is carried
+// by fog and by the environment dome, not by the shadow map.
+const SUN_SHADOW_DISTANCE = SHADOW_FIT_DEFAULTS.shadowDistance;
+// Fallback when the city has not declared its own tallest caster yet.
+const SUN_SHADOW_DEFAULT_CASTER_HEIGHT = SHADOW_FIT_DEFAULTS.maxCasterHeight;
+// The night key is not the sun. Below the horizon the solar direction would
+// light the city from underneath, so the key is reflected to the anti-solar
+// azimuth and lifted to a fixed altitude, which is where a full moon sits. It
+// keeps the deterministic 0.3 intensity floor the day/night curve already
+// applies, and `computeSunShadowCamera` still reports `castShadow` from the
+// direction it is handed, so the night frame keeps soft moon shadows instead of
+// the flat unshadowed pool it has now.
+const NIGHT_KEY_ALTITUDE_DEG = 52;
+// Refit only when something the fit actually reads has moved. Half a texel of
+// camera travel is the point at which the snapped centre can step.
+const SUN_SHADOW_REFIT_EPSILON = 0.05;
 
 /** Detail-map `repeat` for UVs measured in tiles of `metresX` x `metresY`. */
 function detailRepeatForUvTile(className, metresX, metresY) {
@@ -1895,14 +1960,7 @@ export class CityRenderer {
       textureReady: false,
     };
     this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy: null, ...detailMapCacheStats() };
-    this.facadeDepthDiagnostics = {
-      pass: FACADE_DEPTH_PASS,
-      drawCalls: 0,
-      triangles: 0,
-      buildings: 0,
-      skipped: 0,
-      styles: [],
-    };
+    this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
     this.streetSurface = null;
     this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
     this.buildFocus = null;
@@ -1910,15 +1968,45 @@ export class CityRenderer {
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
     this.sun.position.set(-260, 380, 120);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.camera.near = 10;
-    this.sun.shadow.camera.far = 1000;
-    this.sun.shadow.camera.left = -420;
-    this.sun.shadow.camera.right = 420;
-    this.sun.shadow.camera.top = 420;
-    this.sun.shadow.camera.bottom = -420;
-    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
     this.scene.add(this.sun);
+    // A DirectionalLight aims at `light.target`, and three only reads that
+    // target's world matrix. Keeping it in the graph is what lets the fit move
+    // the aim point with the camera instead of leaving it pinned at the origin.
+    this.scene.add(this.sun.target);
+    // Everything else on `sun.shadow` - the orthographic extents, near/far,
+    // bias and normalBias - is written every frame by `updateSunShadow()` from
+    // `computeSunShadowCamera`. There are deliberately no hand-typed numbers
+    // here: a constant `bias` is only correct at one sun altitude, because the
+    // orthographic depth range it is expressed in swings by ~4x across a day.
+    //
+    // Direction *toward* the key light, unit length. Seeded from the placement
+    // above and replaced by the solar model on the first `setTimeOfDay`.
+    this.sunKeyDirection = this.sun.position.clone().normalize();
+    this.shadowFit = null;
+    this.shadowFitSignature = null;
+    this.shadowFitLogged = false;
+    this.maxCasterHeight = SUN_SHADOW_DEFAULT_CASTER_HEIGHT;
+    this.shadowDiagnostics = {
+      pass: SUN_SHADOW_PASS,
+      fitted: false,
+      mapSize: SUN_SHADOW_MAP_SIZE,
+      shadowDistance: SUN_SHADOW_DISTANCE,
+      texelsPerMetre: null,
+      texelWorldSize: null,
+      width: null,
+      depthRange: null,
+      normalBias: null,
+      bias: null,
+      castShadow: false,
+      sunAltitudeDeg: null,
+      maxCasterHeight: SUN_SHADOW_DEFAULT_CASTER_HEIGHT,
+      densityRange: SHADOW_TEXEL_DENSITY_RANGE,
+      refits: 0,
+      warnings: [],
+    };
+    this._shadowForward = new THREE.Vector3();
+    this._shadowEye = new THREE.Vector3();
 
     this.hemi = new THREE.HemisphereLight(0xe9f6ff, 0x9fb47a, 1.38);
     this.scene.add(this.hemi);
@@ -2209,6 +2297,22 @@ export class CityRenderer {
       this.scene.fog.near = Math.max(330, mapSpan * 0.55);
       this.scene.fog.far = Math.max(1380, mapSpan * 1.5);
     }
+    // Tallest thing that can throw a shadow into the fitted box. The near
+    // plane has to be pulled back by roughly `height / sin(altitude)`, so at a
+    // low sun this is the difference between a complete tower shadow and one
+    // that stops halfway down the block. Measured from the source heights, plus
+    // an allowance for the roof clutter and the terrain the shells stand on.
+    const buildingHeights = Array.isArray(city?.buildings)
+      ? city.buildings.map((building) => Number(building?.height)).filter(Number.isFinite)
+      : [];
+    const tallest = buildingHeights.length ? Math.max(...buildingHeights) : 0;
+    this.maxCasterHeight = clamp(
+      tallest + 60,
+      60,
+      SHADOW_FIT_DEFAULTS.maxCasterHeight * 2,
+    );
+    this.shadowDiagnostics.maxCasterHeight = this.maxCasterHeight;
+    this.shadowFitSignature = null;
     // The baked SF grid is intentionally a little compressed for data use.
     // A restrained render-only lift restores the stepped hill silhouette while
     // keeping every road/building query on the same height function.
@@ -2268,14 +2372,7 @@ export class CityRenderer {
     this.envMaterialGroups = null;
     this.streetSurface = null;
     this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
-    this.facadeDepthDiagnostics = {
-      pass: FACADE_DEPTH_PASS,
-      drawCalls: 0,
-      triangles: 0,
-      buildings: 0,
-      skipped: 0,
-      styles: [],
-    };
+    this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
     this.sidewalkPropRecords = [];
     this.sidewalkPropRuntime = null;
     this.sidewalkPropDiagnostics = {
@@ -2297,12 +2394,9 @@ export class CityRenderer {
     const root = new THREE.Group();
     root.name = 'city-root';
 
-    // Sky dome.
+    // Sky dome. The painted cloud shell that used to be added just inside it is
+    // gone; see `makeSky` for why.
     root.add(this.makeSky(city));
-    if (this.cloudMesh) {
-      root.add(this.cloudMesh);
-      this.cloudMesh = null;
-    }
     // Terrain base + park ground.
     root.add(this.makeGround(city));
     this.buildTerrainContours(root, city);
@@ -2468,18 +2562,36 @@ export class CityRenderer {
       this.envMaterialGroups = null;
       this.streetSurface = null;
       this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
-      this.facadeDepthDiagnostics = {
-        pass: FACADE_DEPTH_PASS,
-        drawCalls: 0,
-        triangles: 0,
-        buildings: 0,
-        skipped: 0,
-        styles: [],
-      };
+      this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
       this.root = null;
     }
   }
 
+  /**
+   * The sky dome.
+   *
+   * Until this pass a second, slightly smaller `SphereGeometry(1840)` shell
+   * carrying a painted cloud texture was added immediately inside this dome. It
+   * was unnamed, `MeshBasicMaterial`, `transparent`, and on the real-map
+   * generators its opacity was `0.05`. It has been removed rather than fitted,
+   * for three reasons:
+   *
+   *  1. At 0.05 it contributed nothing readable as cloud, but it was still the
+   *     first surface a ray met through any gap in the world - which is exactly
+   *     how it was found. The pale polygon in the street card was this shell,
+   *     seen at 1.2 km through a hole in the footway, and the stray diagonal in
+   *     the night card was its painted blob band crossing the frame.
+   *  2. `scene.environment` now carries an analytic sky whose radiance, sun
+   *     position and weather all come from one model. A hand-painted warm cloud
+   *     band drawn over the top of it is a second, contradictory sky; nothing
+   *     graded it with the hour, so at night it laid warm paint on a blue dome.
+   *  3. It cost a full-screen transparent draw and a 512x256 canvas texture per
+   *     city build to do that.
+   *
+   * The dome itself stays: it is the only background this scene has. It is now
+   * named, so the next time something falls through the world the diagnosis is
+   * in the report instead of having to be re-derived.
+   */
   makeSky(city) {
     const bounds = city.meta.bounds;
     const skyCenterX = (bounds.minX + bounds.maxX) / 2;
@@ -2503,48 +2615,13 @@ export class CityRenderer {
       depthWrite: false,
     });
     const sky = new THREE.Mesh(geometry, material);
+    // Deliberately left raycastable: a hole in the world should still be
+    // reported, and now it is reported by name.
+    sky.name = 'sky-dome';
     sky.position.set(skyCenterX, 0, skyCenterZ);
     sky.renderOrder = -10;
     this.geometryCache.push(geometry);
     this.skyMesh = sky;
-    // Soft stylized cloud layer adds gentle structure to the sky dome.
-    const cloudTexture = seededTexture(505, (context, width, height, random) => {
-      context.clearRect(0, 0, width, height);
-      for (let i = 0; i < 14; i += 1) {
-        const cx = random() * width;
-        const cy = height * (0.18 + random() * 0.4);
-        const blobs = 3 + Math.floor(random() * 4);
-        // Warm-tinted clouds keep the sky saturation high under the soft
-        // warm key light.
-        context.fillStyle = `rgba(255,222,186,${0.28 + random() * 0.24})`;
-        for (let bIdx = 0; bIdx < blobs; bIdx += 1) {
-          context.beginPath();
-          context.ellipse(
-            cx + (random() - 0.5) * 90,
-            cy + (random() - 0.5) * 18,
-            26 + random() * 46,
-            7 + random() * 10,
-            0, 0, Math.PI * 2,
-          );
-          context.fill();
-        }
-      }
-    }, 512, 256);
-    cloudTexture.wrapS = THREE.RepeatWrapping;
-    const cloudGeometry = new THREE.SphereGeometry(1840, 32, 16);
-    const cloudMaterial = new THREE.MeshBasicMaterial({
-      map: cloudTexture,
-      transparent: true,
-      opacity: city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap' ? 0.05 : 0.28,
-      depthWrite: false,
-      side: THREE.BackSide,
-      fog: false,
-    });
-    const clouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
-    clouds.position.set(skyCenterX, 0, skyCenterZ);
-    clouds.renderOrder = -9;
-    this.geometryCache.push(cloudGeometry);
-    this.cloudMesh = clouds;
     return sky;
   }
 
@@ -3340,21 +3417,27 @@ export class CityRenderer {
    */
   buildFacadeRelief(root, buildings, baseYById) {
     this.facadeReliefMaterials = new Map();
-    const diagnostics = {
-      pass: FACADE_DEPTH_PASS,
-      drawCalls: 0,
-      triangles: 0,
-      buildings: 0,
-      skipped: 0,
-      styles: [],
-    };
+    const diagnostics = createFacadeDepthDiagnostics();
     if (!buildings.length) {
       this.facadeDepthDiagnostics = diagnostics;
       return null;
     }
     const view = this.buildFocus || this.camera.position;
+    // Screen-space tiering. The module scores a building by how many pixels one
+    // reference storey covers, so it needs the real lens and the real viewport;
+    // left unset it silently falls back to its 50 deg / 720 px reference screen
+    // and the rings land in the wrong place on any other window.
+    //
+    // The height is taken in CSS pixels rather than drawing-buffer pixels on
+    // purpose: the pixel ratio is capped at 1.5 and varies by machine, and the
+    // module's declared per-tier budgets are measured against a 720 px screen.
+    // Tying the tier to the device pixel ratio would make the same city build
+    // to a different triangle count on two machines showing the same view.
+    const screen = this.facadeDepthScreen();
     const batch = buildFacadeDepthBatch(buildings, {
       viewPoint: { x: view.x, z: view.z },
+      fov: screen.fov,
+      viewportHeight: screen.viewportHeight,
       baseYFor: (building) => baseYById.get(building.id) ?? 0,
       sceneTriangleBudget: FACADE_DEPTH_SCENE_BUDGET,
     });
@@ -3383,8 +3466,38 @@ export class CityRenderer {
     diagnostics.triangles = batch.triangles;
     diagnostics.buildings = batch.buildings.length;
     diagnostics.skipped = batch.skipped;
+    // The evidence that the tier is uniform in distance. `tierCeiling` is the
+    // one global tier the batch had to fall back to in order to fit the scene
+    // budget, and `ringCutDistance` is the radius past which whole rings were
+    // dropped. Both are uniform moves: neither can leave one building detailed
+    // and its neighbour at the same distance bare, which is the artifact the
+    // old per-building skip produced.
+    diagnostics.screen = screen;
+    diagnostics.tierDistances = facadeDetailTierDistances(screen);
+    diagnostics.tiers = batch.tiers;
+    diagnostics.requestedTiers = batch.requestedTiers;
+    diagnostics.tierCeiling = batch.tierCeiling;
+    diagnostics.ringCutDistance = batch.ringCutDistance;
+    diagnostics.sceneTriangleBudget = batch.sceneTriangleBudget;
     this.facadeDepthDiagnostics = diagnostics;
     return batch;
+  }
+
+  /**
+   * The screen the facade tier is scored against: the live lens, and the canvas
+   * height in CSS pixels. Falls back to the module's reference screen before
+   * the canvas has been laid out.
+   */
+  facadeDepthScreen() {
+    const height = this.renderer?.domElement?.clientHeight
+      || this.container?.clientHeight
+      || 0;
+    return {
+      fov: Number.isFinite(this.camera?.fov) && this.camera.fov > 0
+        ? this.camera.fov
+        : FACADE_DEPTH_SCREEN.fov,
+      viewportHeight: height > 0 ? height : FACADE_DEPTH_SCREEN.viewportHeight,
+    };
   }
 
   buildHeroGroundingBatch(root, sourceEntries, city) {
@@ -7544,7 +7657,6 @@ export class CityRenderer {
       this.skyMesh.geometry.attributes.color.needsUpdate = true;
     }
     this.sun.intensity = 0.3 + nightFactor * 2.7 + golden * 0.7;
-    this.sun.position.set(-180 - nightFactor * 80, 260 + nightFactor * 120, 110);
     this.sun.color.copy(this.timeColors.sun.setHSL(0.09 + (1 - nightFactor) * 0.02, 0.55, 0.82));
     this.hemi.color.copy(this.timeColors.hemiDay).lerp(this.timeColors.hemiNight, 1 - nightFactor);
     this.hemi.intensity = 0.55 + nightFactor * 0.8;
@@ -7567,7 +7679,38 @@ export class CityRenderer {
       this.ambient.intensity *= scales.ambient;
       this.rim.intensity *= scales.rim;
       this.applyEnvironmentGrading(environment.model, environment.texture);
+      // The key light now stands where the sky says the sun is. The hand-rolled
+      // placement it replaces sat at a fixed azimuth, so the shadows in the
+      // golden-hour card ran in a different direction from the sun visible in
+      // the environment - the kind of mismatch that reads as "painted" no
+      // matter how good the geometry is.
+      this.setKeyDirectionFromSun(environment.model.sun, environment.model.daylight);
+      // The key crosses zero at the horizon, because the direct beam does. The
+      // day/night curve above only reaches its 0.3 floor at 20:00, an hour
+      // after sunset, which would have left a bright key swinging overhead
+      // through the ~40 minutes of civil twilight where the direction hands
+      // over from sun to moon. `daylight` saturates at +/-6 deg, so this is 1
+      // in daylight, 1 in night, and 0 exactly at sunrise and sunset - and it
+      // is already 1 at the golden-hour card's +6.61 deg, which is untouched.
+      // Squared rather than absolute so the envelope is smooth through the
+      // crossing as well as zero at it, which is what keeps the direction
+      // hand-over from being visible: the key is at a few per cent of its
+      // strength exactly where it rotates fastest.
+      this.sun.intensity *= (2 * environment.model.daylight - 1) ** 2;
+      // The rim exists to fake the anti-sun sky bounce (which is why the module
+      // cuts it hardest as the environment takes that job over). A fixed world
+      // direction made it the anti-sun of nothing once the key started moving,
+      // so it is aimed opposite the key, at a shallow angle.
+      this.aimRimOppositeKey();
+      if (environment.lightRig.shadow && 'intensity' in this.sun.shadow) {
+        // Soften the map under an overcast dome instead of stamping a hard
+        // clear-sky edge through fog or drizzle.
+        this.sun.shadow.intensity = environment.lightRig.shadow.intensity;
+      }
     }
+    // The fit reads the key direction, so it has to be refreshed whenever the
+    // hour moves, not only when the camera does.
+    this.updateSunShadow({ force: true });
     if (previousNight !== night) {
       for (const entry of this.nightEmissive) {
         entry.material.emissiveIntensity = night
@@ -7604,6 +7747,162 @@ export class CityRenderer {
       this.nightBoost = null;
       this.renderer.toneMappingExposure = 0.82;
     }
+  }
+
+  /**
+   * Point the key light where the sky model says the sun is.
+   *
+   * In daylight this is the solar direction itself, so the shadows agree with
+   * the environment that lit the frame. Below the horizon the solar direction
+   * points underground and would light the city from beneath, so the key is
+   * reflected to the anti-solar azimuth and lifted to `NIGHT_KEY_ALTITUDE_DEG`
+   * - roughly where a full moon stands - and keeps the 0.3 intensity floor the
+   * day/night curve already applies.
+   *
+   * The two are crossfaded on the model's own `daylight` term, which saturates
+   * at +/-6 deg (civil twilight). Switching on the sign of `sun.y` instead
+   * would snap the key through 180 deg of azimuth at sunrise and sunset, and
+   * the clock runs a whole day in 40 seconds. The band is wide enough to be
+   * smooth and narrow enough that the golden-hour card, at +6.61 deg, is
+   * already fully saturated and gets the pure solar direction.
+   *
+   * Deterministic: a function of the solar direction and the daylight term
+   * alone, with no clock and no seed.
+   *
+   * @param {{x:number,y:number,z:number}} sun Direction toward the sun.
+   * @param {number} [daylight] 1 in daylight, 0 below civil twilight.
+   */
+  setKeyDirectionFromSun(sun, daylight = null) {
+    if (!sun || !Number.isFinite(sun.x) || !Number.isFinite(sun.y) || !Number.isFinite(sun.z)) return;
+    const solarLength = Math.hypot(sun.x, sun.y, sun.z);
+    if (!(solarLength > 1e-6)) return;
+    const solar = { x: sun.x / solarLength, y: sun.y / solarLength, z: sun.z / solarLength };
+
+    const altitude = (NIGHT_KEY_ALTITUDE_DEG * Math.PI) / 180;
+    const cosAltitude = Math.cos(altitude);
+    const horizontal = Math.hypot(solar.x, solar.z);
+    // Anti-solar azimuth at a fixed altitude.
+    const moon = horizontal > 1e-6
+      ? {
+        x: (-solar.x / horizontal) * cosAltitude,
+        y: Math.sin(altitude),
+        z: (-solar.z / horizontal) * cosAltitude,
+      }
+      : { x: 0, y: 1, z: 0 };
+
+    const weight = Number.isFinite(daylight)
+      ? clamp(daylight, 0, 1)
+      : (solar.y > 0 ? 1 : 0);
+    const x = solar.x * weight + moon.x * (1 - weight);
+    const y = solar.y * weight + moon.y * (1 - weight);
+    const z = solar.z * weight + moon.z * (1 - weight);
+    if (Math.hypot(x, y, z) < 1e-4) {
+      this.sunKeyDirection.set(moon.x, moon.y, moon.z).normalize();
+      return;
+    }
+    this.sunKeyDirection.set(x, y, z).normalize();
+  }
+
+  /**
+   * Put the rim light on the anti-key side of the scene at a shallow altitude.
+   * It casts no shadow; only its direction matters.
+   */
+  aimRimOppositeKey() {
+    const key = this.sunKeyDirection;
+    const horizontal = Math.hypot(key.x, key.z);
+    const altitude = (28 * Math.PI) / 180;
+    const cosAltitude = Math.cos(altitude);
+    const x = horizontal > 1e-6 ? (-key.x / horizontal) * cosAltitude : 0;
+    const z = horizontal > 1e-6 ? (-key.z / horizontal) * cosAltitude : -cosAltitude;
+    this.rim.position.set(x * 420, Math.sin(altitude) * 420, z * 420);
+  }
+
+  /**
+   * Fit the sun's orthographic shadow camera to the visible slice of the view
+   * frustum, and copy the fit onto the light.
+   *
+   * Called from `update()` every frame so the box tracks the player, and again
+   * from `renderFrame()` so a caller that repositions the camera after
+   * `update()` (the QA card harness pins its pose there) still renders with a
+   * box fitted to the pose it is about to draw. The refit is guarded by a
+   * signature, so the second call is a handful of comparisons unless something
+   * actually moved.
+   *
+   * All of the geometry lives in `computeSunShadowCamera`, which is pure and
+   * self-checked; this method only supplies the current camera and key
+   * direction and records what came back.
+   *
+   * @param {{force?: boolean}} [options]
+   * @returns {Readonly<object>|null} the fit, or null when the fit is unchanged.
+   */
+  updateSunShadow({ force = false } = {}) {
+    const camera = this.camera;
+    const key = this.sunKeyDirection;
+    if (!camera || !key) return null;
+    const forward = camera.getWorldDirection(this._shadowForward);
+    // The fit throws on a degenerate lens rather than returning silent
+    // nonsense, which is right for a pure function and wrong for the render
+    // loop. Refuse the frame instead: the light keeps its last good fit.
+    if (!Number.isFinite(forward.x) || forward.lengthSq() < 1e-12) return null;
+    if (!Number.isFinite(camera.aspect) || camera.aspect <= 0) return null;
+    if (!Number.isFinite(camera.fov) || camera.fov <= 0 || camera.fov >= 180) return null;
+    if (!Number.isFinite(camera.near) || camera.near <= 0 || camera.near >= SUN_SHADOW_DISTANCE) return null;
+    if (!Number.isFinite(key.x) || key.lengthSq() < 1e-12) return null;
+    // World position, not local: `getWorldDirection` above has already brought
+    // the matrix up to date, and this stays correct if the camera is ever
+    // parented to a vehicle or player rig.
+    const eye = camera.getWorldPosition(this._shadowEye);
+    if (!Number.isFinite(eye.x) || !Number.isFinite(eye.y) || !Number.isFinite(eye.z)) return null;
+    const signature = `${Math.round(eye.x / SUN_SHADOW_REFIT_EPSILON)},`
+      + `${Math.round(eye.y / SUN_SHADOW_REFIT_EPSILON)},`
+      + `${Math.round(eye.z / SUN_SHADOW_REFIT_EPSILON)},`
+      + `${forward.x.toFixed(4)},${forward.y.toFixed(4)},${forward.z.toFixed(4)},`
+      + `${camera.fov},${camera.aspect.toFixed(5)},${camera.near},`
+      + `${key.x.toFixed(5)},${key.y.toFixed(5)},${key.z.toFixed(5)},`
+      + `${this.maxCasterHeight}`;
+    if (!force && signature === this.shadowFitSignature) return null;
+    this.shadowFitSignature = signature;
+
+    const fit = computeSunShadowCamera({
+      cameraPosition: { x: eye.x, y: eye.y, z: eye.z },
+      cameraDirection: { x: forward.x, y: forward.y, z: forward.z },
+      fovDeg: camera.fov,
+      aspect: camera.aspect,
+      sunDirection: { x: key.x, y: key.y, z: key.z },
+      shadowDistance: SUN_SHADOW_DISTANCE,
+      cameraNear: camera.near,
+      mapSize: SUN_SHADOW_MAP_SIZE,
+      maxCasterHeight: this.maxCasterHeight,
+    });
+    applySunShadowFit(this.sun, fit);
+    this.shadowFit = fit;
+    const diagnostics = this.shadowDiagnostics;
+    diagnostics.fitted = true;
+    diagnostics.refits += 1;
+    diagnostics.texelsPerMetre = fit.texelsPerMetre;
+    diagnostics.texelWorldSize = fit.texelWorldSize;
+    diagnostics.width = fit.width;
+    diagnostics.depthRange = fit.depthRange;
+    diagnostics.normalBias = fit.normalBias;
+    diagnostics.bias = fit.bias;
+    diagnostics.castShadow = fit.castShadow;
+    diagnostics.sunAltitudeDeg = fit.sunAltitudeDeg;
+    diagnostics.maxCasterHeight = this.maxCasterHeight;
+    diagnostics.warnings = fit.warnings;
+    if (!this.shadowFitLogged) {
+      this.shadowFitLogged = true;
+      // Once, at startup. The density is invariant to the sun and to which way
+      // the camera faces, so a single line describes every frame the app will
+      // ever draw at this map size and shadow distance.
+      console.info(
+        `[${SUN_SHADOW_PASS}] shadow map ${SUN_SHADOW_MAP_SIZE}x${SUN_SHADOW_MAP_SIZE} `
+        + `over ${SUN_SHADOW_DISTANCE} m of view depth: `
+        + `${fit.texelsPerMetre.toFixed(3)} texels/m `
+        + `(${(fit.texelWorldSize * 100).toFixed(1)} cm texels, ${fit.width.toFixed(1)} m box), `
+        + `normalBias ${fit.normalBias} m, bias ${fit.bias} over ${fit.depthRange.toFixed(0)} m of depth`,
+      );
+    }
+    return fit;
   }
 
   pick(pointer) {
@@ -7650,9 +7949,18 @@ export class CityRenderer {
       const boost = Math.min(1, this.nightBoost.remaining / 0.8);
       this.renderer.toneMappingExposure = 0.82 + boost * 0.14;
     }
+    // Track the camera. The box is 220 m across, so it has to follow the
+    // player; a fixed box aimed at the world origin is what made the shadow map
+    // invisible on a two-kilometre map.
+    this.updateSunShadow();
   }
 
   renderFrame() {
+    // Second, guarded call. `update()` is the canonical driver, but anything
+    // that moves the camera between `update()` and the draw would otherwise
+    // render one frame behind the fit. The signature check makes this free when
+    // nothing has moved.
+    this.updateSunShadow();
     this.renderer.render(this.scene, this.camera);
   }
 
