@@ -335,7 +335,28 @@ async function placeCamera(pose) {
     const a = pts[i - 1]; const b = pts[i];
     const dx = b.x - a.x; const dz = b.z - a.z;
     const len = Math.hypot(dx, dz) || 1;
-    const ux = dx / len; const uz = dz / len;
+    let ux = dx / len; let uz = dz / len;
+
+    // Face away from the sun, not into it. A card shot with the view heading
+    // close to the anti-solar azimuth puts every shadow behind its own caster
+    // and reads as a flat, shadowless frame no matter how good the shadow map
+    // is: the intersection card was 9.2 degrees off anti-solar and looked
+    // unlit, while the street cards were 104 degrees off and looked correct.
+    // A street runs both ways, so choosing the direction along it is free.
+    const sun = r.sun?.position;
+    let sunNote = null;
+    if (sun && (sun.x || sun.z)) {
+      // Where shadows point: away from the sun, projected on the ground.
+      const antiSolar = Math.atan2(-sun.x, -sun.z);
+      const separation = (heading) => {
+        const delta = Math.abs(((heading - antiSolar + Math.PI) % (Math.PI * 2)) - Math.PI);
+        return (delta * 180) / Math.PI;
+      };
+      const forward = separation(Math.atan2(ux, uz));
+      const backward = separation(Math.atan2(-ux, -uz));
+      if (backward > forward) { ux = -ux; uz = -uz; }
+      sunNote = `anti-solar separation ${Math.max(forward, backward).toFixed(1)} deg`;
+    }
     // right-hand normal
     const nx = -uz; const nz = ux;
     const halfRoad = (chosen.width || 7) / 2;
@@ -418,6 +439,7 @@ async function placeCamera(pose) {
     const tgtY = groundAt(target.x, target.z) + (pose === 'canyon' ? 22 : (pose === 'character' ? 1.1 : EYE * 0.92));
     cam.position.set(eye.x, eyeY, eye.z);
     cam.lookAt(target.x, tgtY, target.z);
+    if (sunNote) note = note ? `${note}; ${sunNote}` : sunNote;
     if (cam.fov != null) { cam.fov = pose === 'canyon' ? 58 : 47; cam.updateProjectionMatrix(); }
     if (controls?.target?.set) controls.target.set(target.x, tgtY, target.z);
     if (controls) controls.enabled = false;
