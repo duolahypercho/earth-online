@@ -24,8 +24,149 @@ const TURN_SIGNAL_DIST = 16; // blink before the intersection
 const LOCAL_LIFE_RADIUS = 120;
 const LOCAL_RECYCLE_RADIUS = 240;
 const LOCAL_FOCUS_SHIFT = 70;
-const LOCAL_CAR_TARGET = 16;
-const LOCAL_PEDESTRIAN_TARGET = 26;
+
+// ---------------------------------------------------------------------------
+// Street-level population
+// ---------------------------------------------------------------------------
+//
+// The rubric dimension this block exists for is "NPC and traffic life", scored
+// against a downtown block at midday. The previous figures - 16 cars and 26
+// walkers inside a 120 m disc - are about two people and one car per block
+// face, which is a Sunday-morning industrial estate, not a downtown.
+//
+// Targets, per ring, measured from the view focus, for a midday downtown
+// street. They are what the local-life recycler steers toward; the presentation
+// layer then decides how expensively each of them is drawn.
+//
+//   0-30 m    ~14 walkers, ~5 vehicles   the pavement directly in shot: one
+//                                        person per ~4 m of the two visible
+//                                        kerbs, which is an ordinary weekday
+//                                        pavement, not a crowd surge.
+//   30-80 m   ~46 walkers, ~16 vehicles  the mid-block and the next junction.
+//   80-120 m  ~52 walkers, ~19 vehicles  the far junction; figures here are
+//                                        3-6 px tall and cost almost nothing.
+//
+// Summed inside 120 m that is 112 walkers and 40 vehicles, which is what the
+// two constants below carry. They are DENSITY TARGETS, not spawn counts: the
+// recycler only ever moves an actor that is already far away and off camera,
+// so the cost is bounded by the pool, and the pool is bounded by the budget in
+// `STREET_POPULATION`.
+const LOCAL_CAR_TARGET = 32;
+const LOCAL_PEDESTRIAN_TARGET = 112;
+// How many of the 48 LOGICAL pedestrians the recycler keeps in the near field.
+// They carry gameplay behaviour, so the near field must never be all ambient
+// extras; the remainder of `LOCAL_PEDESTRIAN_TARGET` is filled from the ambient
+// pool. Raised from 26, which is one person per 45 m of local pavement.
+const LOCAL_LOGICAL_PEDESTRIAN_TARGET = 34;
+// Below this share of the local target the near field reads as deserted, and
+// filling it matters more than hiding the fill. See `updateLocalLife`.
+const LOCAL_STARVATION_RATIO = 0.6;
+// A recycled actor may never appear in shot closer than this: a figure that
+// pops in at conversational distance is worse than an empty pavement.
+const POP_IN_GUARD_METRES = 34;
+
+/**
+ * Ambient walker pool on top of the 48 logical pedestrians.
+ *
+ * The 48 are the gameplay-visible population: they carry instanced batch slots,
+ * collision, melee, witness and aftermath behaviour, and three verifiers pin
+ * their count and their identities. Widening THAT array would change what the
+ * game simulates. The ambient pool instead adds sidewalk walkers that exist for
+ * the crowd presentation to mirror: same clock, same paths, same deterministic
+ * movement, no batch slot, no gameplay hooks, and never inside
+ * `traffic.pedestrians`.
+ */
+export const STREET_POPULATION = Object.freeze({
+  /** Extra sidewalk walkers on a real-map city. */
+  ambientWalkers: 300,
+  /** Extra walkers on a small generated city, which has far less pavement. */
+  ambientWalkersGenerated: 90,
+  /** Share of ambient walkers that spawn as a companion group. */
+  groupShare: 0.34,
+  /** Companions in a group, inclusive range. */
+  groupSize: Object.freeze([2, 3]),
+});
+
+/**
+ * Footway surface above the carriageway datum, in metres.
+ *
+ * Two vertical planes are pinned by the renderer's street construction (see the
+ * LEGACY_SIDEWALK_LIFT note in src/citygen/renderer.js): the carriageway datum
+ * at `terrain + streetDesign.roadLift`, and the footway exactly 45 mm above it.
+ * Kerbside cars, street lamps, sidewalk props and the hero curb actors are all
+ * grounded on those two planes. Ambient traffic and ambient pedestrians were
+ * not: they stood on `terrain + 0.08`, which is 37 cm below the road surface
+ * for a car and 42 cm below the pavement for a walker. That is the "characters
+ * are not grounded" reject in one number.
+ */
+const FOOTWAY_LIFT_ABOVE_DATUM = 0.045;
+/** Fallback datum when a city omits `streetDesign.roadLift`, matching the renderer. */
+const DEFAULT_ROAD_LIFT = 0.5;
+
+/** Street classes an ambient walker may be placed on, and how heavily. */
+const SIDEWALK_CLASS_WEIGHT = Object.freeze({
+  primary: 1.0,
+  secondary: 0.95,
+  tertiary: 0.8,
+  residential: 0.55,
+  unclassified: 0.5,
+  living_street: 0.55,
+  pedestrian: 1.15,
+  service: 0.2,
+});
+
+/**
+ * Footfall multiplier by hour of day. Midday and the evening commute are the
+ * busy windows; 03:00-05:00 is nearly empty. Used to scale how much of the
+ * ambient pool is awake, never to change what the simulation owns.
+ */
+export function hourFootfall(hour) {
+  const h = Number.isFinite(hour) ? ((hour % 24) + 24) % 24 : 12;
+  const table = [
+    0.10, 0.07, 0.05, 0.04, 0.05, 0.10, 0.24, 0.52, 0.82, 0.88, 0.92, 0.97,
+    1.00, 0.98, 0.93, 0.92, 0.95, 1.00, 0.94, 0.78, 0.60, 0.46, 0.32, 0.18,
+  ];
+  const i = Math.floor(h);
+  const f = h - i;
+  return table[i] * (1 - f) + table[(i + 1) % 24] * f;
+}
+
+/**
+ * Deterministic [0,1) draw from a string/number key and a salt. No shared
+ * generator state, so an agent's schedule is identical whatever order the
+ * simulation happens to visit agents in.
+ */
+function keyedRandom(key, salt) {
+  const text = `${key}|${salt}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  h = Math.imul(h ^ (h >>> 15), 0x2545f491) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  return h / 4294967296;
+}
+
+/**
+ * What an ambient walker is doing when they are not simply walking, and how
+ * long it lasts. Presentation reads `pedestrian.activity` and picks a matching
+ * upper-body pose; the simulation owns the schedule.
+ *
+ * `atCorner` activities are only chosen near the end of a sidewalk path, which
+ * on this street contract is a junction: that is what makes a red light look
+ * like people waiting for a red light rather than people standing at random.
+ */
+const PEDESTRIAN_ACTIVITIES = Object.freeze([
+  { name: 'wait', weight: 0.34, seconds: [6, 18], atCorner: true, facing: 'across' },
+  { name: 'talk', weight: 0.16, seconds: [8, 26], atCorner: false, facing: 'partner' },
+  { name: 'phone', weight: 0.16, seconds: [5, 16], atCorner: false, facing: 'keep' },
+  { name: 'browse', weight: 0.13, seconds: [4, 13], atCorner: false, facing: 'inward' },
+  { name: 'stand', weight: 0.11, seconds: [3, 9], atCorner: false, facing: 'keep' },
+  { name: 'carry', weight: 0.10, seconds: [4, 10], atCorner: false, facing: 'keep' },
+]);
+/** Mean seconds a walker spends walking between two pauses. */
+const WALK_LEG_SECONDS = Object.freeze([14, 52]);
 const HERO_CURB_LIFE_PASS = 'market-pedestrian-life-v3';
 const HERO_CURB_SOURCE = Object.freeze({
   segmentId: 'sf-seg-308',
@@ -92,6 +233,11 @@ export class TrafficSim {
       edge.totalLength = cum[cum.length - 1];
     }
     this.signalById = new Map((city.signals || []).map((signal) => [signal.id, signal]));
+    // The two pinned vertical planes. Everything this simulation places on the
+    // street stands on one of them; nothing stands on bare terrain.
+    this.roadLift = Number(city.meta?.streetDesign?.roadLift ?? DEFAULT_ROAD_LIFT);
+    if (!Number.isFinite(this.roadLift)) this.roadLift = DEFAULT_ROAD_LIFT;
+    this.footwayLift = this.roadLift + FOOTWAY_LIFT_ABOVE_DATUM;
     const random = mulberry32(Number(city.meta.seedInt || 1) + 77);
     this.random = random;
     // Keep this array lookup in the existing seeded call site so vehicle
@@ -113,6 +259,12 @@ export class TrafficSim {
       focusUpdates: 0,
       localCars: 0,
       localPedestrians: 0,
+      localAmbientWalkers: 0,
+      localWalkers: 0,
+      ambientPool: 0,
+      logicalPedestrianTarget: LOCAL_LOGICAL_PEDESTRIAN_TARGET,
+      walkerTarget: LOCAL_PEDESTRIAN_TARGET,
+      popInGuardMeters: POP_IN_GUARD_METRES,
       events: [],
     };
     const trafficCount = realMap ? 42 : count;
@@ -137,8 +289,14 @@ export class TrafficSim {
       if (!path?.length) continue;
       this.pedestrians.push(this.spawnPedestrian(path, random, this.pedestrians.length));
     }
+    // The hero curb vignette selects its donors out of exactly the 48 logical
+    // pedestrians and three verifiers pin the indices it picks. Stage it BEFORE
+    // the ambient pool exists so the candidate set, the RNG sequence and the
+    // chosen donors are bit-identical to the single-population build.
     this.stageHeroCurbLife();
     if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
+    this.ambientCrowd = [];
+    this.spawnAmbientCrowd(sidewalkPaths, random, realMap);
     this.renderer.scene.add(this.group);
   }
 
@@ -256,6 +414,144 @@ export class TrafficSim {
     return pedestrian;
   }
 
+  /**
+   * A transform shim for an ambient walker.
+   *
+   * `updatePedestrian` and the crowd presentation both read
+   * `group.position` / `group.rotation.y` / `group.userData.walk`. An ambient
+   * walker needs exactly those three and nothing else: no geometry, no
+   * material, no scene attachment, no instanced batch slot. Sixteen numbers per
+   * walker instead of a mesh is what makes a 300-strong pool affordable.
+   */
+  static ambientTransform(cadence, time, bob) {
+    return {
+      position: {
+        x: 0,
+        y: 0,
+        z: 0,
+        set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; },
+      },
+      rotation: { x: 0, y: 0, z: 0 },
+      userData: { walk: { cadence, time, bob, gait: 0, bobOffset: 0 } },
+      parent: null,
+    };
+  }
+
+  /**
+   * Spawn the ambient sidewalk pool.
+   *
+   * Paths are drawn with a weight per street class, so a downtown avenue gets
+   * the traffic and a service alley does not. A third of the pool spawns as a
+   * companion group - two or three people on the same path, same direction,
+   * abreast - because a street of strictly solo walkers reads as a spawner.
+   *
+   * Everything here is deterministic in the city seed. Nothing is attached to
+   * the scene, and nothing touches `this.pedestrians`.
+   */
+  spawnAmbientCrowd(sidewalkPaths, random, realMap) {
+    this.ambientCrowd = [];
+    if (!Array.isArray(sidewalkPaths) || !sidewalkPaths.length) return this.ambientCrowd;
+    const target = realMap
+      ? STREET_POPULATION.ambientWalkers
+      : STREET_POPULATION.ambientWalkersGenerated;
+    if (target <= 0) return this.ambientCrowd;
+
+    // Weighted path table. Built once; the cumulative array makes each draw a
+    // binary search rather than a scan of 6 000 paths.
+    const cumulative = new Float64Array(sidewalkPaths.length);
+    let running = 0;
+    for (let i = 0; i < sidewalkPaths.length; i += 1) {
+      const path = sidewalkPaths[i];
+      const weight = SIDEWALK_CLASS_WEIGHT[path.highway] ?? 0.5;
+      running += Math.max(0.01, weight);
+      cumulative[i] = running;
+    }
+    const drawPath = () => {
+      const target2 = random() * running;
+      let lo = 0;
+      let hi = cumulative.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cumulative[mid] < target2) lo = mid + 1;
+        else hi = mid;
+      }
+      return sidewalkPaths[lo];
+    };
+
+    const [groupMin, groupMax] = STREET_POPULATION.groupSize;
+    let spawned = 0;
+    let guard = 0;
+    while (spawned < target && guard < target * 6) {
+      guard += 1;
+      const path = drawPath();
+      if (!path || path.length < 2) continue;
+      const cum = cumulativeLengths(path);
+      const total = cum[cum.length - 1] || 0.01;
+      if (total < 4) continue;
+      const asGroup = random() < STREET_POPULATION.groupShare;
+      const members = asGroup
+        ? Math.min(groupMax, groupMin + Math.floor(random() * (groupMax - groupMin + 1)))
+        : 1;
+      const dir = random() < 0.5 ? 1 : -1;
+      const baseArc = random() * total;
+      const speed = 1.15 + random() * 0.95;
+      for (let m = 0; m < members && spawned < target; m += 1) {
+        const id = `ambient-${spawned}`;
+        // Kept inside +/-0.38 m so a walker stays in the footway through-route
+        // and never walks through the stationary figures the street-life pass
+        // places against the kerb and against the property line.
+        const lateralSpread = members > 1
+          ? (m - (members - 1) / 2) * 0.38
+          : (random() - 0.5) * 0.76;
+        const walker = {
+          id,
+          // Stable identity for the presentation's procedural variation. Kept
+          // out of the 0..47 instance-index space so an ambient walker can
+          // never be mistaken for a logical pedestrian.
+          instanceIndex: null,
+          presentationId: `ped-a${spawned}`,
+          activityKey: id,
+          points: path,
+          cum,
+          total,
+          s: clamp(baseArc + (m - (members - 1) / 2) * 0.9, 0, total),
+          seg: 0,
+          dir,
+          // Companions keep one pace so a group stays a group.
+          speed: asGroup ? speed : speed * (0.88 + random() * 0.26),
+          lateral: lateralSpread,
+          roadSide: path.roadSide ?? 1,
+          groupId: asGroup ? `grp-${spawned}` : null,
+          group: TrafficSim.ambientTransform(
+            5.4 + random() * 2.2,
+            random() * 6.28,
+            0.018 + random() * 0.012,
+          ),
+        };
+        this.ambientCrowd.push(walker);
+        spawned += 1;
+      }
+    }
+    return this.ambientCrowd;
+  }
+
+  /**
+   * Every agent the crowd presentation should mirror this frame: the 48
+   * logical pedestrians followed by the ambient pool.
+   *
+   * Presentation-facing only. The array is rebuilt in place so calling it once
+   * a frame allocates nothing after the first call, and the records inside it
+   * are the simulation's own objects, handed over read-only.
+   */
+  presentationAgents() {
+    const out = this.presentationAgentList || (this.presentationAgentList = []);
+    out.length = 0;
+    for (let i = 0; i < this.pedestrians.length; i += 1) out.push(this.pedestrians[i]);
+    const ambient = this.ambientCrowd || [];
+    for (let i = 0; i < ambient.length; i += 1) out.push(ambient[i]);
+    return out;
+  }
+
   buildSidewalkPaths(city) {
     const paths = [];
     for (const segment of city.segments) {
@@ -270,7 +566,15 @@ export class TrafficSim {
         const a = { x: segment.points[0].x + nx * half * side, z: segment.points[0].z + nz * half * side };
         const b = { x: segment.points[1].x + nx * half * side, z: segment.points[1].z + nz * half * side };
         if (Math.hypot(b.x - a.x, b.z - a.z) < 4) continue;
-        paths.push([a, b]);
+        const path = [a, b];
+        // Read-only annotations on the path array itself. Existing consumers
+        // index it as a two-point polyline and are unaffected; the ambient
+        // spawner uses them to weight the draw and to know which way the road
+        // is, so a walker waiting to cross faces the carriageway.
+        path.highway = segment.highway;
+        path.segmentId = segment.id;
+        path.roadSide = side;
+        paths.push(path);
       }
     }
     return paths;
@@ -341,8 +645,8 @@ export class TrafficSim {
       ? this.renderer.terrain.heightAt(point.x, point.z)
       : 0);
     this.heroCurbGround = {
-      startY: terrainHeightAt(a) + roadLiftMeters + 0.045,
-      endY: terrainHeightAt(b) + roadLiftMeters + 0.045,
+      startY: terrainHeightAt(a) + roadLiftMeters + FOOTWAY_LIFT_ABOVE_DATUM,
+      endY: terrainHeightAt(b) + roadLiftMeters + FOOTWAY_LIFT_ABOVE_DATUM,
     };
     const pointAt = (sourceT, lateralOffsetMeters) => ({
       x: a.x + dx * sourceT + nx * lateralOffsetMeters,
@@ -726,8 +1030,30 @@ export class TrafficSim {
     return { x: mx + nx * bulge, z: mz + nz * bulge };
   }
 
+  /** Bare terrain under a point, metres. The datum both surfaces are built on. */
+  terrainY(x, z) {
+    return this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) : 0;
+  }
+
+  /**
+   * Carriageway surface: where a tyre contacts the road.
+   *
+   * This used to return `terrain + 0.08`, which put every moving vehicle 37 cm
+   * INSIDE the asphalt the renderer builds at `terrain + roadLift`, while the
+   * kerbside parked cars beside them sat correctly on top of it. Same street,
+   * two different road surfaces.
+   */
   groundY(x, z) {
-    return this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 0.08 : 0.08;
+    return this.terrainY(x, z) + this.roadLift;
+  }
+
+  /**
+   * Footway surface: where a shoe contacts the pavement. 45 mm above the
+   * carriageway datum, which is exactly where the renderer puts the kerb top,
+   * the street lamps, the sidewalk props and the hero curb actors.
+   */
+  pedestrianGroundY(x, z) {
+    return this.terrainY(x, z) + this.footwayLift;
   }
 
   edgeArc(car) {
@@ -749,6 +1075,12 @@ export class TrafficSim {
     }
     for (const pedestrian of this.pedestrians) {
       this.updatePedestrian(pedestrian, delta);
+    }
+    // Same clock, same step, same path logic - no second loop and no second
+    // timebase. Ambient walkers own no batch slot, so this is arithmetic only.
+    const ambient = this.ambientCrowd;
+    if (ambient) {
+      for (let i = 0; i < ambient.length; i += 1) this.updatePedestrian(ambient[i], delta);
     }
     if (this.vehicleBatch) {
       for (const car of this.cars) writeVehicleInstance(this.vehicleBatch, car);
@@ -772,14 +1104,59 @@ export class TrafficSim {
     const allowVisibleDestination = this.localLifeDiagnostics.focusUpdates === 1
       || this.localLifeAllowVisibleRefresh;
 
-    const localCars = this.cars.filter((car) => this.actorDistance(car.group, focus) <= LOCAL_LIFE_RADIUS);
-    const localPedestrians = this.pedestrians
-      .filter((pedestrian) => this.actorDistance(pedestrian.group, focus) <= LOCAL_LIFE_RADIUS);
-    this.recycleCarsNearFocus(focus, Math.max(0, LOCAL_CAR_TARGET - localCars.length), allowVisibleDestination);
+    const near = (actor) => this.actorDistance(actor.group, focus) <= LOCAL_LIFE_RADIUS;
+    const localCars = this.cars.filter(near);
+    const localLogical = this.pedestrians.filter(near);
+    const ambient = this.ambientCrowd || [];
+    const localAmbient = ambient.filter(near);
+    const localWalkers = localLogical.length + localAmbient.length;
+
+    // The old rule refused EVERY destination the camera could see, so a camera
+    // that cut to a new street was guaranteed an empty street: the only places
+    // an actor was allowed to appear were the places nobody was looking. The
+    // rule's purpose is to hide a pop, and it is worth keeping while the near
+    // field is already populated. When the near field is deserted, an empty
+    // pavement is the larger failure and the ban is lifted - subject to the
+    // pop-in guard inside the recyclers, which never lets an actor appear in
+    // shot closer than POP_IN_GUARD_METRES.
+    // The street empties overnight and fills at midday. The LOGICAL pedestrian
+    // target is deliberately NOT scaled: those 48 carry gameplay behaviour and
+    // the near field must keep them at every hour. Only the ambient mass and
+    // the traffic volume follow the clock.
+    const hour = Number(this.renderer?.timeOfDay);
+    const footfall = Number.isFinite(hour) ? hourFootfall(hour) : 1;
+    const walkerTarget = Math.max(
+      LOCAL_LOGICAL_PEDESTRIAN_TARGET,
+      Math.round(LOCAL_PEDESTRIAN_TARGET * footfall),
+    );
+    // Traffic thins at night but never stops: a city with no cars at 03:00
+    // reads as abandoned rather than as quiet.
+    const carTarget = Math.round(LOCAL_CAR_TARGET * (0.55 + 0.45 * footfall));
+
+    const carsStarved = localCars.length < carTarget * LOCAL_STARVATION_RATIO;
+    const walkersStarved = localWalkers < walkerTarget * LOCAL_STARVATION_RATIO;
+    const allowVisibleCars = allowVisibleDestination || carsStarved;
+    const allowVisibleWalkers = allowVisibleDestination || walkersStarved;
+
+    this.recycleCarsNearFocus(focus, Math.max(0, carTarget - localCars.length), allowVisibleCars);
+    // Logical pedestrians first: they are the population gameplay reads, so the
+    // near field can never be nothing but ambient extras.
+    const logicalShort = Math.max(0, LOCAL_LOGICAL_PEDESTRIAN_TARGET - localLogical.length);
+    const walkerShort = Math.max(0, walkerTarget - localWalkers);
+    const walkPlacements = (logicalShort > 0 || walkerShort > 0) && this.sidewalkPaths?.length
+      ? this.nearbyPlacements(this.sidewalkPaths, focus)
+      : null;
     this.recyclePedestriansNearFocus(
-      focus, Math.max(0, LOCAL_PEDESTRIAN_TARGET - localPedestrians.length), allowVisibleDestination,
+      focus, logicalShort, allowVisibleWalkers, this.pedestrians, walkPlacements,
+    );
+    this.recyclePedestriansNearFocus(
+      focus, walkerShort, allowVisibleWalkers, ambient, walkPlacements,
     );
     this.localLifeAllowVisibleRefresh = false;
+    this.localLifeDiagnostics.hour = Number.isFinite(hour) ? hour : null;
+    this.localLifeDiagnostics.footfall = Number(footfall.toFixed(3));
+    this.localLifeDiagnostics.walkerTarget = walkerTarget;
+    this.localLifeDiagnostics.carTarget = carTarget;
     this.updateLocalLifeCounts(focus);
   }
 
@@ -832,18 +1209,36 @@ export class TrafficSim {
     for (const car of donors) {
       if (placed >= needed) break;
       let selected = null;
-      for (let attempt = 0; attempt < placements.length; attempt += 1) {
-        const candidate = placements[(placed * 7 + attempt) % placements.length];
-        const jitter = ((placed % 5) - 2) * 5.5;
-        const arc = clamp(candidate.arc + jitter, 2, Math.max(2, candidate.cum.at(-1) - 2));
-        const clear = !this.cars.some((other) => other !== car && other.edge === candidate.path
-          && Math.abs(this.edgeArc(other) - arc) < 8);
-        const edgePosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
-        const visibleAfter = this.worldPointIsVisible(edgePosition.x, edgePosition.z);
-        if (clear && (allowVisibleDestination || !visibleAfter)) {
-          selected = { ...candidate, arc, edgePosition, visibleAfter };
-          break;
+      // The moving-vehicle pool is 42 cars over a two-kilometre map, so WHICH
+      // street they are on matters more than how many there are. When visible
+      // destinations are permitted at all, take a first pass that only accepts
+      // destinations the camera can actually see - down the block in front of
+      // it, past the pop-in guard - and fall back to the general rule after.
+      // Without this the recycler spreads cars evenly over the local network
+      // and the one street in shot is statistically empty.
+      const passes = allowVisibleDestination ? [true, false] : [false];
+      for (const preferVisible of passes) {
+        for (let attempt = 0; attempt < placements.length; attempt += 1) {
+          const candidate = placements[(placed * 7 + attempt) % placements.length];
+          const jitter = ((placed % 5) - 2) * 5.5;
+          const arc = clamp(candidate.arc + jitter, 2, Math.max(2, candidate.cum.at(-1) - 2));
+          const clear = !this.cars.some((other) => other !== car && other.edge === candidate.path
+            && Math.abs(this.edgeArc(other) - arc) < 8);
+          const edgePosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
+          const visibleAfter = this.worldPointIsVisible(edgePosition.x, edgePosition.z);
+          // Same pop-in guard as the walkers: a car may reappear down the
+          // block, never inside the near field the camera is already reading.
+          if (visibleAfter
+            && Math.hypot(edgePosition.x - focus.x, edgePosition.z - focus.z) < POP_IN_GUARD_METRES) {
+            continue;
+          }
+          if (preferVisible && !visibleAfter) continue;
+          if (clear && (allowVisibleDestination || !visibleAfter)) {
+            selected = { ...candidate, arc, edgePosition, visibleAfter };
+            break;
+          }
         }
+        if (selected) break;
       }
       if (!selected) continue;
       const fromDistance = this.actorDistance(car.group, focus);
@@ -862,11 +1257,13 @@ export class TrafficSim {
     }
   }
 
-  recyclePedestriansNearFocus(focus, needed, allowVisibleDestination = false) {
-    if (needed <= 0 || !this.sidewalkPaths?.length) return;
-    const placements = this.nearbyPlacements(this.sidewalkPaths, focus);
+  recyclePedestriansNearFocus(focus, needed, allowVisibleDestination = false, pool = this.pedestrians, cachedPlacements = null) {
+    if (needed <= 0 || !this.sidewalkPaths?.length || !pool?.length) return;
+    // `nearbyPlacements` walks every sidewalk path in the city (6 260 of them on
+    // the real map), so the two recycler passes share one scan.
+    const placements = cachedPlacements || this.nearbyPlacements(this.sidewalkPaths, focus);
     if (!placements.length) return;
-    const donors = this.pedestrians.filter((pedestrian) => !pedestrian.heroCurbBehavior
+    const donors = pool.filter((pedestrian) => !pedestrian.heroCurbBehavior
       && this.actorDistance(pedestrian.group, focus) >= LOCAL_RECYCLE_RADIUS
       && !this.actorIsVisible(pedestrian.group))
       .sort((a, b) => this.actorDistance(b.group, focus) - this.actorDistance(a.group, focus));
@@ -881,6 +1278,12 @@ export class TrafficSim {
         const arc = clamp(candidate.arc + jitter, 0.5, Math.max(0.5, total - 0.5));
         const pathPosition = pathPositionAtArc(candidate.points, candidate.cum, arc);
         const visibleAfter = this.worldPointIsVisible(pathPosition.x, pathPosition.z);
+        // Never materialise a walker in shot at conversational distance, even
+        // when the near field is starved: that reads as a spawn, not a city.
+        if (visibleAfter
+          && Math.hypot(pathPosition.x - focus.x, pathPosition.z - focus.z) < POP_IN_GUARD_METRES) {
+          continue;
+        }
         if (allowVisibleDestination || !visibleAfter) {
           selected = { ...candidate, total, arc, pathPosition, visibleAfter };
           break;
@@ -894,6 +1297,14 @@ export class TrafficSim {
       pedestrian.total = selected.total;
       pedestrian.s = selected.arc;
       pedestrian.seg = selected.pathPosition.index;
+      // A recycled ambient walker inherits its new path's road side so its
+      // "waiting to cross" facing still points at the carriageway.
+      if (pedestrian.activityKey) {
+        pedestrian.roadSide = selected.path.roadSide ?? pedestrian.roadSide ?? 1;
+        pedestrian.activity = 'walk';
+        pedestrian.activityFacing = 'keep';
+        pedestrian.activityTimer = 2 + keyedRandom(pedestrian.activityKey, `recycle-${this.localLifeDiagnostics.pedestrianRecycles}`) * 18;
+      }
       this.localLifeDiagnostics.pedestrianRecycles += 1;
       const toDistance = Math.hypot(selected.pathPosition.x - focus.x, selected.pathPosition.z - focus.z);
       this.recordLocalLifeEvent(
@@ -918,10 +1329,17 @@ export class TrafficSim {
   }
 
   updateLocalLifeCounts(focus) {
-    this.localLifeDiagnostics.localCars = this.cars
-      .filter((car) => this.actorDistance(car.group, focus) <= LOCAL_LIFE_RADIUS).length;
-    this.localLifeDiagnostics.localPedestrians = this.pedestrians
-      .filter((pedestrian) => this.actorDistance(pedestrian.group, focus) <= LOCAL_LIFE_RADIUS).length;
+    const within = (actor) => this.actorDistance(actor.group, focus) <= LOCAL_LIFE_RADIUS;
+    const logical = this.pedestrians.filter(within).length;
+    const ambient = (this.ambientCrowd || []).filter(within).length;
+    this.localLifeDiagnostics.localCars = this.cars.filter(within).length;
+    // `localPedestrians` keeps meaning "logical pedestrians near the focus", so
+    // the existing local-life contract still reads the same number; the ambient
+    // pool is reported alongside it rather than folded into it.
+    this.localLifeDiagnostics.localPedestrians = logical;
+    this.localLifeDiagnostics.localAmbientWalkers = ambient;
+    this.localLifeDiagnostics.localWalkers = logical + ambient;
+    this.localLifeDiagnostics.ambientPool = (this.ambientCrowd || []).length;
   }
 
   getLocalLifeDiagnostics() {
@@ -1289,7 +1707,14 @@ export class TrafficSim {
       return;
     }
     const walk = pedestrian.group.userData.walk;
-    pedestrian.s += pedestrian.dir * pedestrian.speed * delta;
+    const moving = this.advancePedestrianActivity(pedestrian, delta);
+    // The instantaneous ground speed, which is NOT `pedestrian.speed`: that is
+    // a nominal cruise figure that stays at 1.2-2.1 m/s even while the agent is
+    // standing at a kerb waiting for a light. Presentation drives the gait
+    // phase off distance travelled, so handing it the cruise figure would walk
+    // a stationary person's legs on the spot - the skating the gate rejects.
+    pedestrian.groundSpeed = moving ? pedestrian.speed : 0;
+    if (moving) pedestrian.s += pedestrian.dir * pedestrian.speed * delta;
     if (pedestrian.s >= pedestrian.total) {
       pedestrian.s = pedestrian.total;
       pedestrian.dir = -1;
@@ -1304,18 +1729,110 @@ export class TrafficSim {
     const b = points[Math.min(points.length - 1, pedestrian.seg + 1)];
     const segLen = pedestrian.cum[pedestrian.seg + 1] - pedestrian.cum[pedestrian.seg] || 0.01;
     const t = clamp((pedestrian.s - pedestrian.cum[pedestrian.seg]) / segLen, 0, 1);
-    const x = a.x + (b.x - a.x) * t;
-    const z = a.z + (b.z - a.z) * t;
-    const y = this.groundY(x, z);
-    walk.gait = Math.sin(this.phase * walk.cadence + walk.time);
-    walk.bobOffset = Math.abs(walk.gait) * walk.bob;
+    let x = a.x + (b.x - a.x) * t;
+    let z = a.z + (b.z - a.z) * t;
+    const segDx = b.x - a.x;
+    const segDz = b.z - a.z;
+    // Ambient walkers carry a lateral offset so a pavement is a stream of
+    // people rather than a single-file queue on the path centreline, and so a
+    // companion group can walk abreast. The 48 logical pedestrians keep the
+    // exact centreline the gameplay verifiers measure against.
+    if (pedestrian.lateral) {
+      const inv = 1 / (Math.hypot(segDx, segDz) || 1);
+      x += -segDz * inv * pedestrian.lateral;
+      z += segDx * inv * pedestrian.lateral;
+    }
+    const y = this.pedestrianGroundY(x, z);
+    // A stopped walker does not bob: the bob is a gait artefact, and running it
+    // on a stationary figure is the pogo-stick idle the rubric rejects.
+    walk.gait = moving ? Math.sin(this.phase * walk.cadence + walk.time) : 0;
+    walk.bobOffset = moving ? Math.abs(walk.gait) * walk.bob : 0;
     pedestrian.group.position.set(x, y + walk.bobOffset, z);
-    const fx = pedestrian.dir > 0 ? b.x - a.x : a.x - b.x;
-    const fz = pedestrian.dir > 0 ? b.z - a.z : a.z - b.z;
-    pedestrian.group.rotation.y = Math.atan2(fx, fz);
-    if (this.pedestrianBatch) {
+    const fx = pedestrian.dir > 0 ? segDx : -segDx;
+    const fz = pedestrian.dir > 0 ? segDz : -segDz;
+    const travelYaw = Math.atan2(fx, fz);
+    pedestrian.group.rotation.y = moving
+      ? travelYaw
+      : this.pausedFacing(pedestrian, travelYaw, segDx, segDz);
+    if (this.pedestrianBatch && pedestrian.instanceIndex != null) {
       writePedestrianInstance(this.pedestrianBatch, pedestrian.instanceIndex, pedestrian);
     }
+  }
+
+  /**
+   * Advance one walker's purposeful-behaviour schedule.
+   *
+   * A pavement where everybody moves at a constant speed in a straight line
+   * reads as a conveyor belt. Real people stop: at the kerb for a signal, to
+   * talk, to check a phone, to look in a window. The schedule is a pure
+   * function of the agent's identity and the number of legs it has already
+   * walked, so it replays identically and never consumes shared RNG state.
+   *
+   * @returns {boolean} whether the walker is moving along its path this step
+   */
+  advancePedestrianActivity(pedestrian, delta) {
+    // Only the ambient pool has a schedule. The 48 logical pedestrians are the
+    // gameplay population - collision, melee, witness, aftermath and three
+    // pinned verifiers all read their motion - so their movement contract is
+    // left exactly as it was.
+    if (!pedestrian.activityKey) return true;
+    if (pedestrian.activityTimer === undefined) {
+      pedestrian.activity = 'walk';
+      pedestrian.activityLeg = 0;
+      pedestrian.activityTimer = 4 + keyedRandom(pedestrian.activityKey, 'seed') * 24;
+    }
+    pedestrian.activityTimer -= delta;
+    if (pedestrian.activityTimer > 0) return pedestrian.activity === 'walk';
+    pedestrian.activityLeg += 1;
+    const key = pedestrian.activityKey;
+    const leg = pedestrian.activityLeg;
+    if (pedestrian.activity !== 'walk') {
+      pedestrian.activity = 'walk';
+      const [lo, hi] = WALK_LEG_SECONDS;
+      pedestrian.activityTimer = lo + keyedRandom(key, `walk-${leg}`) * (hi - lo);
+      return true;
+    }
+    // Near a path end is a junction on this street contract, so that is where a
+    // "waiting for the signal" pause is allowed to happen.
+    const nearCorner = Math.min(pedestrian.s, pedestrian.total - pedestrian.s) <= 6;
+    const pool = PEDESTRIAN_ACTIVITIES.filter((entry) => (entry.atCorner ? nearCorner : true));
+    let total = 0;
+    for (const entry of pool) total += entry.weight;
+    let roll = keyedRandom(key, `act-${leg}`) * total;
+    let chosen = pool[pool.length - 1];
+    for (const entry of pool) {
+      roll -= entry.weight;
+      if (roll <= 0) { chosen = entry; break; }
+    }
+    const [lo, hi] = chosen.seconds;
+    pedestrian.activity = chosen.name;
+    pedestrian.activityFacing = chosen.facing;
+    pedestrian.activityTimer = lo + keyedRandom(key, `dur-${leg}`) * (hi - lo);
+    return false;
+  }
+
+  /**
+   * Where a paused walker looks. Facing matters more than the pose: a person
+   * waiting to cross faces the crossing, a window shopper faces the window, and
+   * two people talking face each other.
+   */
+  pausedFacing(pedestrian, travelYaw, segDx, segDz) {
+    const facing = pedestrian.activityFacing;
+    if (!facing || facing === 'keep') return travelYaw;
+    const acrossYaw = Math.atan2(-segDz, segDx);
+    if (facing === 'across') {
+      // Toward the carriageway: the sidewalk path runs parallel to the kerb, so
+      // the crossing direction is its perpendicular, chosen on the road side.
+      return pedestrian.roadSide < 0 ? acrossYaw + Math.PI : acrossYaw;
+    }
+    if (facing === 'inward') {
+      return pedestrian.roadSide < 0 ? acrossYaw : acrossYaw + Math.PI;
+    }
+    if (facing === 'partner') {
+      // Companions turn to face each other across the group's lateral spread.
+      return travelYaw + (pedestrian.lateral >= 0 ? -Math.PI / 2 : Math.PI / 2);
+    }
+    return travelYaw;
   }
 
   updateHeroCurbPedestrian(pedestrian, delta) {

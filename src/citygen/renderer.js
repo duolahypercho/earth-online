@@ -8282,6 +8282,12 @@ export class CityRenderer {
   ensureCrowdPresentation() {
     if (this.crowd) return this.crowd;
     try {
+      // The plane the crowd stands on. `terrain.heightAt` is BARE GROUND; the
+      // pavement is `streetDesign.roadLift + 45 mm` above it - see
+      // `streetSurfaceLift` - which is where the kerb top, the street lamps, the
+      // sidewalk props and the seated hero actors already are. Sampling bare
+      // terrain sank the entire crowd 42 cm into the pavement.
+      const crowdFootwayLift = this.streetSurfaceLift(this.city || {}).footway;
       this.crowd = createCrowdPresentation({
         // Under `city-root`, not the scene. Interior mode hides every visible
         // child of `city-root` plus `traffic.group` (main.js `enterBuilding`);
@@ -8290,11 +8296,11 @@ export class CityRenderer {
         // `verify:citygen-actors` counts the meshes named `pedestrian-*` in
         // there and expects exactly the simulation's own eleven.
         parent: this.root || this.scene,
-        // The simulation's own ground function, not a second one. Pedestrians
-        // in this world walk at `terrain.heightAt + 0.08` (TrafficSim.groundY);
-        // sampling bare terrain here would sink the whole crowd 8 cm and make
-        // the presentation disagree with the thing it is mirroring.
-        sampleGround: (x, z) => (this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.08 : 0.08),
+        // The simulation's own footway datum, not a second one: TrafficSim's
+        // `pedestrianGroundY` puts walkers on the same plane.
+        sampleGround: (x, z) => (this.terrain?.heightAt
+          ? this.terrain.heightAt(x, z) + crowdFootwayLift
+          : crowdFootwayLift),
         readAgent: (source, index, out) => this.readPedestrianAgent(source, index, out),
       });
       this.crowdDiagnostics.pass = this.crowd.version;
@@ -8329,7 +8335,10 @@ export class CityRenderer {
   readPedestrianAgent(source, index, out) {
     const group = source?.group;
     const position = group?.position;
-    const id = source?.instanceIndex ?? index;
+    // Ambient walkers own no batch slot, so they carry their own stable
+    // presentation id. Falling through to the array index would hand an agent a
+    // new face and a new outfit every time the array is rebuilt.
+    const id = source?.presentationId ?? source?.instanceIndex ?? index;
     const bob = group?.userData?.walk?.bobOffset || 0;
     const x = Number(position?.x ?? 0);
     const y = Number(position?.y ?? 0) - bob;
@@ -8370,6 +8379,14 @@ export class CityRenderer {
     // what it can do is refuse to walk on the spot. `'sit'` forces the blend
     // fully to idle regardless of measured speed. See the known-limits note.
     out.pose = source?.heroCurbBehavior?.poseKind === 'bench-seated' ? 'sit' : 'walk';
+    // What the agent is DOING, when the simulation models it: 'wait', 'talk',
+    // 'phone', 'browse', 'carry', 'stand'. Presentation reads it to pick an
+    // upper-body overlay and writes nothing back.
+    out.activity = source?.activity ?? null;
+    // When the simulation reports its own instantaneous ground speed, prefer it
+    // over the measured displacement: it is exact, and it falls to zero on the
+    // frame the agent stops rather than ~125 ms later.
+    if (Number.isFinite(source?.groundSpeed)) out.speed = Math.max(0, source.groundSpeed);
     return out;
   }
 
@@ -8378,7 +8395,14 @@ export class CityRenderer {
    * one existing loop. Creates no loop, no renderer and no clock.
    */
   updateCrowdPresentation(traffic, delta) {
-    const agents = traffic?.pedestrians;
+    // Every agent the simulation wants mirrored: the 48 logical pedestrians plus
+    // the ambient sidewalk pool TrafficSim maintains alongside them. Ambient
+    // walkers own no instanced-batch slot and no gameplay hooks, so
+    // `traffic.pedestrians` - and every check that pins its length - is
+    // unchanged; they exist only to be drawn.
+    const agents = typeof traffic?.presentationAgents === 'function'
+      ? traffic.presentationAgents()
+      : traffic?.pedestrians;
     if (!Array.isArray(agents) || !agents.length) {
       if (this.crowd) this.crowd.update([], delta, this.camera);
       this.restoreLegacyPedestrianBatch();
@@ -8413,6 +8437,9 @@ export class CityRenderer {
     diagnostics.draws = stats.draws;
     diagnostics.grounded = stats.grounded;
     diagnostics.maxFootGroundSpeed = stats.maxFootGroundSpeed;
+    diagnostics.activities = stats.activities;
+    diagnostics.activityOverlays = stats.activityOverlays;
+    diagnostics.uniqueAppearances = stats.uniqueAppearances;
     return stats;
   }
 

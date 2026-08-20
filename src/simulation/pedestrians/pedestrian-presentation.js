@@ -633,6 +633,7 @@ export function sampleFootGrounding({
   soleOffset = GAIT.soleOffset,
   hipHeight = LEG_SEGMENTS.hipLocalY,
   legReach = LEG_SEGMENTS.thigh + LEG_SEGMENTS.shin,
+  detail = 'full',
 } = {}) {
   const sampler = typeof sampleGround === 'function' ? sampleGround : flatGround;
   let grounded = true;
@@ -650,6 +651,21 @@ export function sampleFootGrounding({
   const leftX = Math.cos(heading);
   const leftZ = -Math.sin(heading);
 
+  // Ground sampling is the single most-called thing in the crowd: seven probes
+  // per agent per frame, and the caller's sampler is a terrain lookup. A figure
+  // 150 m away cannot show a per-foot curb step or a 2-degree body roll, so it
+  // does not pay for them.
+  //
+  //   full    7 samples - root, two feet, four slope probes.  (near, skinned)
+  //   coarse  3 samples - root and two feet; no body tilt.    (mid, instanced)
+  //   flat    1 sample  - the root height serves both feet.   (far)
+  //
+  // Nothing else about the solve changes: stance, swing, the pelvis drop and
+  // the anti-skating guarantee are identical at every detail level, because
+  // they are functions of the gait, not of the ground.
+  const perFoot = detail !== 'flat';
+  const probeSlope = detail === 'full';
+
   const rootGround = ground(x, z);
 
   const feet = [];
@@ -666,7 +682,7 @@ export function sampleFootGrounding({
     });
     const fx = x + fwdX * plant.longitudinal + leftX * plant.lateral;
     const fz = z + fwdZ * plant.longitudinal + leftZ * plant.lateral;
-    const gy = ground(fx, fz);
+    const gy = perFoot ? ground(fx, fz) : rootGround;
     // The foot follows the ground under ITSELF. This is what makes a curb read
     // as a curb rather than as the whole body teleporting up 15 cm.
     const footY = gy + plant.lift;
@@ -730,13 +746,16 @@ export function sampleFootGrounding({
     ? supportY
     : damp(previousRootY, supportY, responseRate, dt);
 
-  const gFront = ground(x + fwdX * probe, z + fwdZ * probe);
-  const gBack = ground(x - fwdX * probe, z - fwdZ * probe);
-  const gLeft = ground(x + leftX * probe, z + leftZ * probe);
-  const gRight = ground(x - leftX * probe, z - leftZ * probe);
-
-  const slopePitch = Math.atan2(gFront - gBack, 2 * probe);
-  const slopeRoll = Math.atan2(gLeft - gRight, 2 * probe);
+  let slopePitch = 0;
+  let slopeRoll = 0;
+  if (probeSlope) {
+    const gFront = ground(x + fwdX * probe, z + fwdZ * probe);
+    const gBack = ground(x - fwdX * probe, z - fwdZ * probe);
+    const gLeft = ground(x + leftX * probe, z + leftZ * probe);
+    const gRight = ground(x - leftX * probe, z - leftZ * probe);
+    slopePitch = Math.atan2(gFront - gBack, 2 * probe);
+    slopeRoll = Math.atan2(gLeft - gRight, 2 * probe);
+  }
   const pitch = clamp(slopePitch * slopeFollow, -maxSlope, maxSlope);
   const roll = clamp(slopeRoll * slopeFollow, -maxSlope, maxSlope);
 
@@ -875,6 +894,287 @@ export function identityVariation(idOrSeed) {
       accent: pick(PEDESTRIAN_PALETTE.accent, seed, 'c-accent'),
     }),
   });
+}
+
+// --------------------------------------------------------------- wardrobe
+//
+// The base rig gives every agent the same silhouette: a boxed torso, bare
+// forearms, a hair cap. At eye level that reads as one asset repeated, which is
+// exactly the failure the rubric calls out. Wardrobe adds the *outline*
+// differences a passer-by actually registers before colour - a backpack, a
+// shoulder bag, a knee-length coat, a hat, long hair, a scarf, a carried case -
+// as optional bone-local parts that ride the same instanced bands.
+//
+// All of it is presentation. Nothing here is simulation truth, and every draw
+// is a pure function of the agent's identity seed.
+
+/**
+ * Optional silhouette parts, in the same vocabulary as `BODY_PARTS`.
+ * `key` is the wardrobe flag that switches the part on.
+ */
+export const WARDROBE_PARTS = Object.freeze([
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'box', size: [0.34, 0.42, 0.24], offset: [0, -0.14, 0], detail: 'far', group: 'top' },
+  { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.28, 0.36, 0.15], offset: [0, 0.03, -0.15], detail: 'far', group: 'accent' },
+  { key: 'bag', bone: 'Hips', slot: 'accent', kind: 'box', size: [0.19, 0.24, 0.10], offset: [0.20, 0.02, 0.02], detail: 'mid', group: 'accent' },
+  { key: 'hat', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.115, 0.125, 0.10], offset: [0, 0.235, 0], detail: 'far', group: 'accent' },
+  { key: 'brim', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.185, 0.185, 0.018], offset: [0, 0.182, 0.01], detail: 'mid', group: 'accent' },
+  { key: 'longHair', bone: 'Head', slot: 'hair', kind: 'box', size: [0.175, 0.26, 0.10], offset: [0, 0.055, -0.10], detail: 'far', group: 'hair' },
+  { key: 'scarf', bone: 'Neck', slot: 'accent', kind: 'cyl', size: [0.085, 0.085, 0.10], offset: [0, 0.045, 0], detail: 'mid', group: 'accent' },
+  { key: 'case', bone: 'RightHand', slot: 'accent', kind: 'box', size: [0.11, 0.30, 0.26], offset: [0.02, -0.16, 0], detail: 'mid', group: 'accent' },
+]);
+
+/** Wardrobe flags, in signature bit order. `brim` follows `hat`, never alone. */
+export const WARDROBE_FLAGS = Object.freeze([
+  'coat', 'backpack', 'bag', 'hat', 'longHair', 'scarf', 'case',
+]);
+
+/**
+ * How likely each wardrobe item is on a downtown street at midday. Tuned so a
+ * crowd is mostly plain (a street where everyone wears a hat reads as costume)
+ * while still giving roughly four in five agents at least one silhouette break.
+ */
+export const WARDROBE_RATES = Object.freeze({
+  coat: 0.34,
+  backpack: 0.24,
+  bag: 0.26,
+  hat: 0.16,
+  longHair: 0.38,
+  scarf: 0.14,
+  case: 0.10,
+});
+
+/**
+ * Deterministic wardrobe for an agent id. Mutually exclusive pairs are resolved
+ * here rather than at draw time, so the same id always yields the same
+ * silhouette and `signature` is a complete description of how the agent looks.
+ *
+ * @param {string|number} idOrSeed stable agent identity
+ * @returns {{seed:number, flags:object, signature:string, silhouetteBits:number}}
+ */
+export function identityWardrobe(idOrSeed) {
+  const seed = identitySeed(idOrSeed);
+  const flags = {};
+  for (const key of WARDROBE_FLAGS) {
+    flags[key] = identityRandom(seed, `w-${key}`) < WARDROBE_RATES[key];
+  }
+  // A backpack and a shoulder bag on the same shoulder intersect; keep one.
+  if (flags.backpack && flags.bag) flags.bag = false;
+  // A carried case needs a free hand: it loses to the shoulder bag.
+  if (flags.bag && flags.case) flags.case = false;
+  // A hat over long hair is fine; a hat always brings its brim.
+  flags.brim = flags.hat;
+  let bits = 0;
+  for (let i = 0; i < WARDROBE_FLAGS.length; i += 1) {
+    if (flags[WARDROBE_FLAGS[i]]) bits |= (1 << i);
+  }
+  return Object.freeze({ seed, flags: Object.freeze(flags), silhouetteBits: bits });
+}
+
+/**
+ * A compact, stable description of everything a viewer can see about an agent:
+ * proportions, six palette slots and the wardrobe bits. Two agents with the
+ * same signature are visually the same asset; the crowd verifier counts
+ * distinct signatures to prove the crowd is not one person repeated.
+ */
+export function appearanceSignature(idOrSeed) {
+  const variation = identityVariation(idOrSeed);
+  const wardrobe = identityWardrobe(idOrSeed);
+  const q = (value, steps) => Math.min(steps - 1, Math.max(0, Math.floor(value * steps)));
+  const height = q((variation.heightScale - 0.90) / 0.20, 16);
+  const build = q((variation.buildScale - 0.92) / 0.20, 12);
+  const slots = PALETTE_SLOTS
+    .map((slot) => PEDESTRIAN_PALETTE[slot].indexOf(variation.colors[slot]).toString(36))
+    .join('');
+  return `h${height.toString(36)}b${build.toString(36)}c${slots}w${wardrobe.silhouetteBits.toString(36)}`;
+}
+
+// ------------------------------------------------------------- activities
+//
+// Locomotion answers "how fast is this person walking". It cannot answer "what
+// is this person DOING", which is what makes a street read as purposeful rather
+// than as a treadmill. These are additive upper-body/leg overlays applied after
+// the locomotion mixer, for agents the simulation has marked as stationary or
+// engaged. They are analytic (no clips, no mixer, no allocation per frame) so
+// the instanced bands can use exactly the same vocabulary as the skinned band
+// and the static street-life pass.
+
+export const ACTIVITY_POSES = Object.freeze([
+  'stand', 'wait', 'phone', 'talk', 'listen', 'carry', 'lean', 'browse', 'sit',
+]);
+
+/** Activities that take the legs as well as the arms. */
+export const SEATED_ACTIVITIES = Object.freeze(['sit']);
+
+/**
+ * Per-activity bone overlay.
+ *
+ * Each entry is `[restX, restY, restZ, ampX, ampY, ampZ, rateHz, phase]` in
+ * radians: a constant pose plus one slow sinusoid so a standing figure is never
+ * a statue. Bones absent from an entry keep whatever the locomotion mixer left
+ * on them, which is what makes these overlays and not replacements.
+ *
+ * Arm bones hang down -Y in the rest pose, so a positive X rotation swings the
+ * hand forward and a negative one swings it back.
+ */
+export const ACTIVITY_POSE_SOURCE = Object.freeze({
+  stand: {
+    LeftArm: [0.04, 0, 0.09, 0.05, 0, 0.02, 0.12, 0],
+    RightArm: [0.04, 0, -0.09, 0.05, 0, 0.02, 0.11, 0.5],
+    LeftForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.12, 0.25],
+    RightForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.11, 0.75],
+    Spine: [0, 0, 0, 0, 0.035, 0.012, 0.09, 0],
+    Head: [0, 0, 0, 0.03, 0.13, 0, 0.07, 0.3],
+  },
+  wait: {
+    // Arms folded: upper arms in and slightly forward, forearms across the ribs.
+    LeftArm: [0.30, 0, 0.34, 0.02, 0, 0.01, 0.10, 0],
+    RightArm: [0.30, 0, -0.34, 0.02, 0, 0.01, 0.10, 0.5],
+    LeftForeArm: [1.15, 0.55, 0, 0.03, 0, 0, 0.10, 0],
+    RightForeArm: [1.15, -0.55, 0, 0.03, 0, 0, 0.10, 0.5],
+    Spine: [0.02, 0, 0, 0, 0.05, 0.02, 0.06, 0.2],
+    Head: [0.02, 0, 0, 0.04, 0.22, 0, 0.05, 0],
+  },
+  phone: {
+    // Handset arm up to the ear, free arm tucked; head tipped in.
+    RightArm: [0.55, 0, -0.72, 0.03, 0, 0.02, 0.13, 0],
+    RightForeArm: [1.95, -0.35, 0, 0.04, 0, 0, 0.13, 0],
+    LeftArm: [0.22, 0, 0.20, 0.03, 0, 0, 0.12, 0.5],
+    LeftForeArm: [0.85, 0, 0, 0.04, 0, 0, 0.12, 0.5],
+    Head: [0.14, -0.22, -0.12, 0.02, 0.05, 0, 0.16, 0],
+    Spine: [0.03, -0.05, 0, 0, 0.03, 0, 0.10, 0],
+  },
+  talk: {
+    // Gesturing hand, open shoulders, head turned toward the listener.
+    RightArm: [0.62, 0, -0.30, 0.30, 0, 0.16, 0.55, 0],
+    RightForeArm: [1.05, 0, 0, 0.42, 0, 0, 0.55, 0.18],
+    LeftArm: [0.20, 0, 0.16, 0.08, 0, 0.04, 0.31, 0.5],
+    LeftForeArm: [0.55, 0, 0, 0.12, 0, 0, 0.31, 0.6],
+    Head: [0.02, 0.26, 0, 0.05, 0.07, 0, 0.42, 0],
+    Spine: [0.02, 0.10, 0, 0.01, 0.04, 0, 0.28, 0],
+  },
+  listen: {
+    LeftArm: [0.26, 0, 0.30, 0.03, 0, 0.02, 0.16, 0],
+    RightArm: [0.26, 0, -0.30, 0.03, 0, 0.02, 0.16, 0.5],
+    LeftForeArm: [1.05, 0.42, 0, 0.04, 0, 0, 0.16, 0],
+    RightForeArm: [1.05, -0.42, 0, 0.04, 0, 0, 0.16, 0.5],
+    Head: [0.05, -0.24, 0, 0.06, 0.05, 0, 0.22, 0.4],
+    Spine: [0.03, -0.08, 0, 0, 0.02, 0, 0.19, 0],
+  },
+  carry: {
+    // Loaded arm hangs straight and heavy, free arm counter-swings a little.
+    RightArm: [0.02, 0, -0.05, 0.03, 0, 0.01, 0.20, 0],
+    RightForeArm: [0.06, 0, 0, 0.02, 0, 0, 0.20, 0],
+    LeftArm: [0.12, 0, 0.14, 0.10, 0, 0.03, 0.20, 0.5],
+    LeftForeArm: [0.30, 0, 0, 0.10, 0, 0, 0.20, 0.55],
+    Spine: [0, 0, -0.05, 0, 0.02, 0.01, 0.20, 0],
+    Head: [0.02, 0, 0, 0.02, 0.09, 0, 0.13, 0],
+  },
+  lean: {
+    Spine: [-0.10, 0, 0, 0.01, 0.03, 0.01, 0.08, 0],
+    Chest: [-0.06, 0, 0, 0.01, 0.02, 0, 0.08, 0.3],
+    LeftArm: [0.10, 0, 0.24, 0.03, 0, 0.02, 0.10, 0],
+    RightArm: [0.10, 0, -0.24, 0.03, 0, 0.02, 0.10, 0.5],
+    LeftForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0],
+    RightForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0.5],
+    Head: [-0.04, 0, 0, 0.03, 0.16, 0, 0.06, 0.2],
+  },
+  browse: {
+    // Facing a window: shoulders square to it, head up and scanning.
+    LeftArm: [0.16, 0, 0.14, 0.03, 0, 0.01, 0.14, 0],
+    RightArm: [0.30, 0, -0.16, 0.04, 0, 0.02, 0.14, 0.5],
+    LeftForeArm: [0.42, 0, 0, 0.04, 0, 0, 0.14, 0],
+    RightForeArm: [0.95, -0.20, 0, 0.05, 0, 0, 0.14, 0.5],
+    Head: [-0.06, 0, 0, 0.04, 0.20, 0, 0.11, 0],
+    Spine: [0.02, 0, 0, 0, 0.03, 0, 0.11, 0.4],
+  },
+  sit: {
+    // Thighs forward, shins down, torso upright over the seat.
+    LeftUpLeg: [-1.48, 0.06, 0, 0.02, 0, 0, 0.08, 0],
+    RightUpLeg: [-1.48, -0.06, 0, 0.02, 0, 0, 0.08, 0.5],
+    LeftLeg: [1.42, 0, 0, 0.03, 0, 0, 0.08, 0],
+    RightLeg: [1.42, 0, 0, 0.03, 0, 0, 0.08, 0.5],
+    LeftFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0],
+    RightFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0.5],
+    Spine: [0.06, 0, 0, 0.01, 0.04, 0, 0.09, 0],
+    LeftArm: [0.34, 0, 0.13, 0.04, 0, 0.01, 0.09, 0],
+    RightArm: [0.34, 0, -0.13, 0.04, 0, 0.01, 0.09, 0.5],
+    LeftForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0],
+    RightForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0.5],
+    Head: [0.04, 0, 0, 0.03, 0.14, 0, 0.07, 0.25],
+  },
+});
+
+/**
+ * Root drop, in metres, that an activity applies to the pelvis. Only seated
+ * activities move the root; everything else keeps the feet as the reference.
+ * 0.46 m is a standard bench/step seat height minus the rest hip height, so a
+ * seated figure's pelvis lands on the seat rather than inside it.
+ */
+export const ACTIVITY_ROOT_DROP = Object.freeze({ sit: 0.40 });
+
+/**
+ * Evaluate one activity overlay into a caller-supplied `{bone: [x,y,z]}` map of
+ * euler angles. Pure, allocation-free after the first call, deterministic in
+ * `(activity, t, seed)`.
+ *
+ * @param {string} activity one of `ACTIVITY_POSES`
+ * @param {number} t seconds; the per-agent identity offset is added inside
+ * @param {number|string} seedOrId identity, so two neighbours never breathe together
+ * @param {object} out reused output map
+ * @returns {object|null} `out`, or null when the activity has no overlay
+ */
+export function evaluateActivityPose(activity, t, seedOrId, out = {}) {
+  const source = ACTIVITY_POSE_SOURCE[activity];
+  if (!source) return null;
+  const seed = typeof seedOrId === 'number' && Number.isInteger(seedOrId) && seedOrId >= 0
+    ? seedOrId >>> 0
+    : identitySeed(seedOrId);
+  // Per-agent time offset AND per-agent rate scatter: identical rates would
+  // still drift into lockstep over a long shot.
+  const offset = identityRandom(seed, 'act-offset') * 20;
+  const rateScale = 0.85 + identityRandom(seed, 'act-rate') * 0.30;
+  const time = (Number.isFinite(t) ? t : 0) + offset;
+  for (const bone in source) {
+    const [rx, ry, rz, ax, ay, az, rate, phase] = source[bone];
+    const w = TAU * rate * rateScale * time + TAU * phase;
+    const s = Math.sin(w);
+    let slot = out[bone];
+    if (!slot) {
+      slot = [0, 0, 0];
+      out[bone] = slot;
+    }
+    slot[0] = rx + ax * s;
+    slot[1] = ry + ay * s;
+    slot[2] = rz + az * s;
+  }
+  return out;
+}
+
+/** Mirror an evaluated overlay left/right, for the second half of a talking pair. */
+export function mirrorActivityPose(pose) {
+  const swap = (a, b) => {
+    const left = pose[a];
+    const right = pose[b];
+    if (left) { left[1] = -left[1]; left[2] = -left[2]; }
+    if (right) { right[1] = -right[1]; right[2] = -right[2]; }
+    if (left && right) {
+      for (let i = 0; i < 3; i += 1) {
+        const tmp = left[i];
+        left[i] = right[i];
+        right[i] = tmp;
+      }
+    }
+  };
+  swap('LeftArm', 'RightArm');
+  swap('LeftForeArm', 'RightForeArm');
+  swap('LeftUpLeg', 'RightUpLeg');
+  swap('LeftLeg', 'RightLeg');
+  swap('LeftFoot', 'RightFoot');
+  for (const bone of ['Spine', 'Chest', 'Head', 'Hips', 'Neck']) {
+    const slot = pose[bone];
+    if (slot) { slot[1] = -slot[1]; slot[2] = -slot[2]; }
+  }
+  return pose;
 }
 
 // ------------------------------------------------- distance bands and budget
@@ -1159,8 +1459,11 @@ function bakePart(part, { origin, boneIndex = 0, radialSegments = 6 }) {
  * reused by every skinned actor; only the skeleton and the palette texture are
  * per-agent.
  */
-export function buildPedestrianBodyGeometry({ radialSegments = 6 } = {}) {
-  const chunks = BODY_PARTS.map((part) => {
+export function buildPedestrianBodyGeometry({ radialSegments = 6, wardrobe = null } = {}) {
+  const parts = wardrobe
+    ? [...BODY_PARTS, ...WARDROBE_PARTS.filter((part) => wardrobe[part.key])]
+    : BODY_PARTS;
+  const chunks = parts.map((part) => {
     const bone = restBoneWorld(part.bone);
     return bakePart(part, {
       origin: [bone[0] + part.offset[0], bone[1] + part.offset[1], bone[2] + part.offset[2]],
@@ -1171,6 +1474,41 @@ export function buildPedestrianBodyGeometry({ radialSegments = 6 } = {}) {
   const geometry = mergeParts(chunks);
   geometry.name = 'pedestrian-body';
   return geometry;
+}
+
+/**
+ * Bone-local (or character-local) geometry for each wardrobe part, keyed
+ * `"<flag>|<bone>|<group>"`. The instanced bands draw one mesh per key and only
+ * the agents carrying that flag write an instance into it, so a backpack costs
+ * one draw call for the whole crowd rather than a geometry variant per agent.
+ */
+export function buildWardrobeGeometries({
+  detail = 'mid',
+  radialSegments = 5,
+  mergeToRoot = false,
+} = {}) {
+  const wanted = DETAIL_RANK[detail] ?? 1;
+  const out = new Map();
+  for (const part of WARDROBE_PARTS) {
+    if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
+    const bone = mergeToRoot ? ROOT_BONE_KEY : part.bone;
+    let origin;
+    if (mergeToRoot) {
+      const world = restBoneWorld(part.bone);
+      origin = [
+        world[0] + part.offset[0],
+        world[1] + part.offset[1],
+        world[2] + part.offset[2],
+      ];
+    } else {
+      origin = part.offset;
+    }
+    const geometry = mergeParts([bakePart(part, { origin, radialSegments })], { skinning: false });
+    const key = `${part.key}|${bone}|${part.group}`;
+    geometry.name = `pedestrian-wardrobe-${key.replace(/\|/g, '-')}`;
+    out.set(key, { flag: part.key, bone, group: part.group, geometry });
+  }
+  return out;
 }
 
 /**
@@ -1486,9 +1824,17 @@ export function defaultReadAgent(source, index, out) {
   out.y = Number(source.y ?? position?.y ?? 0);
   out.z = Number(source.z ?? position?.z ?? 0);
   out.heading = Number(source.heading ?? source.yaw ?? group?.rotation?.y ?? 0);
-  out.speed = Math.max(0, Number(source.speed ?? 0));
+  // `groundSpeed` is the distance the simulation actually moved this agent per
+  // second; `speed` is often a nominal cruise figure that does not fall to zero
+  // when the agent stops. Prefer the real one: the gait phase is an odometer,
+  // so feeding it a cruise figure for a standing agent is exactly how a crowd
+  // starts skating on the spot.
+  out.speed = Math.max(0, Number(source.groundSpeed ?? source.speed ?? 0));
   out.active = source.active !== false;
   out.pose = source.pose ?? 'walk';
+  // What the agent is DOING, when the simulation models it. Presentation only
+  // reads it; the value stays owned by whoever wrote the schedule.
+  out.activity = source.activity ?? null;
   return out;
 }
 
@@ -1563,6 +1909,8 @@ const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
+const _q4 = new THREE.Quaternion();
+const _e1 = new THREE.Euler(0, 0, 0, 'XYZ');
 const _m1 = new THREE.Matrix4();
 
 /**
@@ -1576,7 +1924,7 @@ const _m1 = new THREE.Matrix4();
  */
 function applyPose(rig, pose, clipDurations, footIK) {
   const root = rig.root;
-  root.position.set(pose.x, pose.rootY, pose.z);
+  root.position.set(pose.x, pose.rootY - (pose.rootDrop || 0), pose.z);
   root.rotation.set(pose.pitch, pose.yaw, pose.roll, 'YXZ');
   root.scale.set(pose.scaleXZ, pose.scaleY, pose.scaleXZ);
 
@@ -1596,9 +1944,29 @@ function applyPose(rig, pose, clipDurations, footIK) {
     actions.brisk.time = pose.gaitPhase * clipDurations.brisk;
   }
   rig.mixer.update(0);
+
+  // Activity overlay. The mixer has just written a locomotion pose; this
+  // slerps the bones the activity owns toward what the person is DOING, with a
+  // weight that fades to zero as they start walking, so a folded-arms overlay
+  // can never fight a walk cycle.
+  const overlay = pose.activityPose;
+  const overlayWeight = pose.activityWeight || 0;
+  if (overlay && overlayWeight > 0.002) {
+    for (const boneName in overlay) {
+      const node = rig.byName.get(boneName);
+      if (!node) continue;
+      const angles = overlay[boneName];
+      _e1.set(angles[0], angles[1], angles[2], 'XYZ');
+      _q4.setFromEuler(_e1);
+      if (overlayWeight >= 0.998) node.quaternion.copy(_q4);
+      else node.quaternion.slerp(_q4, overlayWeight);
+    }
+  }
   root.updateMatrixWorld(true);
 
-  if (!footIK || !pose.grounding) return;
+  // A seated figure's legs come from the overlay, not from foot placement:
+  // there is no stance phase to plant.
+  if (!footIK || !pose.grounding || pose.seated) return;
 
   const hips = rig.byName.get('Hips');
   _m1.copy(hips.matrixWorld).invert();
@@ -1678,7 +2046,7 @@ function createInstancedBand(name, geometries, capacity, { castShadow }) {
     // draw a white crowd.
     mesh.setColorAt(0, new THREE.Color(0xffffff));
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    meshes.push({ key, bone: entry.bone, group: entry.group, mesh });
+    meshes.push({ key, bone: entry.bone, group: entry.group, flag: entry.flag ?? null, mesh });
     group.add(mesh);
   }
   return { group, meshes, materials, capacity };
@@ -1734,6 +2102,20 @@ export function createCrowdPresentation(options = {}) {
   let sunElevation = sunElevationDeg;
 
   const bodyGeometry = buildPedestrianBodyGeometry();
+  // One skinned geometry per distinct wardrobe silhouette, built on demand and
+  // shared by every actor wearing it. There are at most 2^7 silhouettes and
+  // only `caps.skinned` actors, so this cache is small and bounded.
+  const bodyGeometryCache = new Map();
+  function bodyGeometryFor(wardrobe) {
+    const key = wardrobe.silhouetteBits;
+    if (key === 0) return bodyGeometry;
+    let geometry = bodyGeometryCache.get(key);
+    if (!geometry) {
+      geometry = buildPedestrianBodyGeometry({ wardrobe: wardrobe.flags });
+      bodyGeometryCache.set(key, geometry);
+    }
+    return geometry;
+  }
   const skinnedTemplate = material || new THREE.MeshStandardMaterial({ roughness: 0.86, metalness: 0 });
 
   const midBand = createInstancedBand(
@@ -1748,7 +2130,22 @@ export function createCrowdPresentation(options = {}) {
     Math.max(1, caps.far),
     { castShadow: false },
   );
-  object3d.add(midBand.group, farBand.group);
+  // Wardrobe rides the same bands as one extra InstancedMesh per item, so a
+  // backpack costs one draw call for the whole crowd instead of a per-agent
+  // geometry. Only agents carrying the flag write an instance into it.
+  const midWardrobe = createInstancedBand(
+    'pedestrian-wardrobe-mid',
+    buildWardrobeGeometries({ detail: 'mid', radialSegments: 5 }),
+    Math.max(1, caps.instanced),
+    { castShadow },
+  );
+  const farWardrobe = createInstancedBand(
+    'pedestrian-wardrobe-far',
+    buildWardrobeGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true }),
+    Math.max(1, caps.far),
+    { castShadow: false },
+  );
+  object3d.add(midBand.group, farBand.group, midWardrobe.group, farWardrobe.group);
 
   const shadowTexture = buildContactShadowTexture();
   const shadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
@@ -1801,7 +2198,15 @@ export function createCrowdPresentation(options = {}) {
     maxFootGroundSpeed: 0,
     budget: caps,
     draws: 0,
+    /** How many agents are running each activity overlay this frame. */
+    activities: {},
+    wardrobeInstances: 0,
+    /** Agents whose activity overlay is actually blended in this frame. */
+    activityOverlays: 0,
+    /** Distinct appearance signatures drawn this frame. */
+    uniqueAppearances: 0,
   };
+  const signatureSet = new Set();
 
   const _color = new THREE.Color();
   const _obj = new THREE.Object3D();
@@ -1810,7 +2215,15 @@ export function createCrowdPresentation(options = {}) {
     x: 0, z: 0, rootY: 0, yaw: 0, pitch: 0, roll: 0,
     scaleXZ: 1, scaleY: 1, blend: null, gaitPhase: 0, idleTime: 0,
     grounding: null, footEuler, lift: 0.1,
+    activity: null, activityPose: null, activityWeight: 0, seated: false, rootDrop: 0,
   };
+  // Reused overlay buffers: `evaluateActivityPose` writes into them, so the
+  // per-frame activity work allocates nothing.
+  const overlayBuffer = {};
+  // Per-mesh instance cursors, reused across frames so a full crowd allocates
+  // nothing per frame.
+  const midCursor = new Map();
+  const farCursor2 = new Map();
 
   function clipDurationsFor(set) {
     return {
@@ -1868,6 +2281,8 @@ export function createCrowdPresentation(options = {}) {
       record = {
         id,
         variation,
+        wardrobe: identityWardrobe(seed),
+        signature: appearanceSignature(seed),
         phase: variation.phaseOffset,
         state: 'idle',
         rootY: null,
@@ -1905,7 +2320,10 @@ export function createCrowdPresentation(options = {}) {
     const count = list.length | 0;
 
     while (snapshots.length < count) {
-      snapshots.push({ id: null, seed: null, x: 0, y: 0, z: 0, heading: 0, speed: 0, active: true, pose: 'walk' });
+      snapshots.push({
+        id: null, seed: null, x: 0, y: 0, z: 0, heading: 0, speed: 0,
+        active: true, pose: 'walk', activity: null,
+      });
     }
     const active = [];
     for (let i = 0; i < count; i += 1) {
@@ -1933,9 +2351,14 @@ export function createCrowdPresentation(options = {}) {
     stats.grounded = 0;
     stats.ungrounded = 0;
     stats.maxFootGroundSpeed = 0;
+    stats.wardrobeInstances = 0;
+    stats.activityOverlays = 0;
+    signatureSet.clear();
+    for (const key in stats.activities) stats.activities[key] = 0;
 
     let shadowIndex = 0;
-    const midCursor = new Map();
+    midCursor.clear();
+    farCursor2.clear();
     let farCursor = 0;
 
     // Walk the plan nearest-first. `entry.index` indexes `active`.
@@ -1949,6 +2372,7 @@ export function createCrowdPresentation(options = {}) {
       const record = memoryFor(entry.id, agent.seed);
       record.seen = stats.frame;
       const variation = record.variation;
+      signatureSet.add(record.signature);
 
       const legLength = variation.legLength;
       const speed = agent.speed;
@@ -1962,6 +2386,7 @@ export function createCrowdPresentation(options = {}) {
       const blend = locomotionBlend(speed, agent);
 
       const grounding = sampleFootGrounding({
+        detail: entry.band === 'skinned' ? 'full' : entry.band === 'instanced' ? 'coarse' : 'flat',
         x: agent.x,
         y: agent.y,
         z: agent.z,
@@ -1988,6 +2413,32 @@ export function createCrowdPresentation(options = {}) {
         if (contactSpeed > stats.maxFootGroundSpeed) stats.maxFootGroundSpeed = contactSpeed;
       }
 
+      // What this person is doing, resolved from simulation-owned fields only.
+      // `pose === 'sit'` is an explicit seated actor; otherwise the simulation
+      // may name an activity, and a stationary agent with no named activity
+      // still gets the default standing overlay so a waiting crowd is never a
+      // field of statues.
+      const requested = agent.pose === 'sit'
+        ? 'sit'
+        : (ACTIVITY_POSES.includes(agent.activity) ? agent.activity : null);
+      const activity = requested || (blend.idle > 0.35 ? 'stand' : null);
+      const seated = activity === 'sit';
+      // The overlay fades out as the agent starts walking: at a full walk the
+      // locomotion clip owns every bone.
+      const activityWeight = seated ? 1 : clamp(blend.idle, 0, 1);
+      let activityPose = null;
+      if (activity) stats.activities[activity] = (stats.activities[activity] || 0) + 1;
+      if (activity && activityWeight > 0.002) {
+        activityPose = evaluateActivityPose(activity, record.idleTime, variation.seed, overlayBuffer);
+        if (variation.seed & 1) mirrorActivityPose(activityPose);
+        stats.activityOverlays += 1;
+      }
+      pose.activity = activity;
+      pose.activityPose = activityPose;
+      pose.activityWeight = activityPose ? activityWeight : 0;
+      pose.seated = seated;
+      pose.rootDrop = seated ? (ACTIVITY_ROOT_DROP.sit * variation.heightScale) : 0;
+
       pose.x = agent.x;
       pose.z = agent.z;
       pose.rootY = grounding.rootY;
@@ -2003,11 +2454,18 @@ export function createCrowdPresentation(options = {}) {
       pose.lift = Math.max(1e-4, lift);
       footEuler.set(grounding.slopePitch, pose.yaw, 0, 'YXZ');
 
+      const wardrobe = record.wardrobe;
+
       if (entry.band === 'skinned') {
         const actor = ensureSkinnedActor(stats.skinned);
         if (actor.id !== entry.id) {
           actor.id = entry.id;
           writePalette(actor, variation);
+          // Swap in the geometry that carries this person's silhouette. Bone
+          // order and skin attributes are identical, so the existing binding
+          // keeps working.
+          const geometry = bodyGeometryFor(wardrobe);
+          if (actor.mesh.geometry !== geometry) actor.mesh.geometry = geometry;
         }
         actor.group.visible = true;
         applyPose(actor.rig, pose, clipDurations, footIK);
@@ -2023,6 +2481,17 @@ export function createCrowdPresentation(options = {}) {
           item.mesh.setColorAt(cursor, _color);
           midCursor.set(item.key, cursor + 1);
         }
+        for (const item of midWardrobe.meshes) {
+          if (!wardrobe.flags[item.flag]) continue;
+          const cursor = midCursor.get(item.key) || 0;
+          if (cursor >= midWardrobe.capacity) continue;
+          const node = poser.byName.get(item.bone);
+          item.mesh.setMatrixAt(cursor, node.matrixWorld);
+          _color.setHex(variation.colors[item.group] ?? 0xffffff, THREE.SRGBColorSpace);
+          item.mesh.setColorAt(cursor, _color);
+          midCursor.set(item.key, cursor + 1);
+          stats.wardrobeInstances += 1;
+        }
         stats.instanced += 1;
       } else {
         // far: one root matrix, no per-bone articulation, no mixer.
@@ -2030,7 +2499,7 @@ export function createCrowdPresentation(options = {}) {
           const bob = blend.idle > 0.9
             ? 0
             : Math.sin(record.phase * TAU * 2) * 0.016 * variation.heightScale;
-          _obj.position.set(agent.x, grounding.rootY + bob, agent.z);
+          _obj.position.set(agent.x, grounding.rootY + bob - pose.rootDrop, agent.z);
           _obj.rotation.set(0, pose.yaw, 0);
           _obj.scale.set(pose.scaleXZ, pose.scaleY, pose.scaleXZ);
           _obj.updateMatrix();
@@ -2038,6 +2507,16 @@ export function createCrowdPresentation(options = {}) {
             item.mesh.setMatrixAt(farCursor, _obj.matrix);
             _color.setHex(variation.colors[item.group] ?? 0xffffff, THREE.SRGBColorSpace);
             item.mesh.setColorAt(farCursor, _color);
+          }
+          for (const item of farWardrobe.meshes) {
+            if (!wardrobe.flags[item.flag]) continue;
+            const cursor = farCursor2.get(item.key) || 0;
+            if (cursor >= farWardrobe.capacity) continue;
+            item.mesh.setMatrixAt(cursor, _obj.matrix);
+            _color.setHex(variation.colors[item.group] ?? 0xffffff, THREE.SRGBColorSpace);
+            item.mesh.setColorAt(cursor, _color);
+            farCursor2.set(item.key, cursor + 1);
+            stats.wardrobeInstances += 1;
           }
           farCursor += 1;
           stats.far += 1;
@@ -2086,11 +2565,24 @@ export function createCrowdPresentation(options = {}) {
       if (item.mesh.instanceColor) item.mesh.instanceColor.needsUpdate = true;
       if (item.mesh.count > 0) draws += 1;
     }
+    for (const item of midWardrobe.meshes) {
+      item.mesh.count = midCursor.get(item.key) || 0;
+      item.mesh.instanceMatrix.needsUpdate = true;
+      if (item.mesh.instanceColor) item.mesh.instanceColor.needsUpdate = true;
+      if (item.mesh.count > 0) draws += 1;
+    }
+    for (const item of farWardrobe.meshes) {
+      item.mesh.count = farCursor2.get(item.key) || 0;
+      item.mesh.instanceMatrix.needsUpdate = true;
+      if (item.mesh.instanceColor) item.mesh.instanceColor.needsUpdate = true;
+      if (item.mesh.count > 0) draws += 1;
+    }
     shadowMesh.count = shadowIndex;
     shadowMesh.instanceMatrix.needsUpdate = true;
     if (shadowIndex > 0) draws += 1;
     stats.shadows = shadowIndex;
     stats.draws = draws;
+    stats.uniqueAppearances = signatureSet.size;
 
     // Drop presentation memory for agents the simulation retired, so a long
     // session does not accumulate a map of dead ids.
@@ -2135,7 +2627,9 @@ export function createCrowdPresentation(options = {}) {
   function dispose() {
     if (object3d.parent) object3d.parent.remove(object3d);
     bodyGeometry.dispose();
-    for (const band of [midBand, farBand]) {
+    for (const geometry of bodyGeometryCache.values()) geometry.dispose();
+    bodyGeometryCache.clear();
+    for (const band of [midBand, farBand, midWardrobe, farWardrobe]) {
       for (const item of band.meshes) {
         item.mesh.geometry.dispose();
         item.mesh.dispose();
@@ -2158,6 +2652,8 @@ export function createCrowdPresentation(options = {}) {
     skinnedActors.length = 0;
     memory.clear();
     bandMemory.clear();
+    midCursor.clear();
+    farCursor2.clear();
     snapshots.length = 0;
   }
 

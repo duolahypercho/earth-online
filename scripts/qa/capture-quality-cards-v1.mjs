@@ -183,7 +183,13 @@ async function placeCamera(pose) {
     const city = api.getCity();
     const cam = r.camera;
     const controls = r.controls;
-    const groundAt = (x, z) => (r.terrain?.heightAt ? r.terrain.heightAt(x, z) : 0);
+    // `terrain.heightAt` is BARE GROUND. The street is built on top of it: the
+    // carriageway sits at `streetDesign.roadLift` and the footway 45 mm above
+    // that. Standing the eye on bare terrain put the camera ~0.5 m low, which is
+    // why the baseline card reads as a crouch rather than a 1.65 m eye line.
+    const lift = r.streetSurfaceLift ? r.streetSurfaceLift(city) : { footway: 0, datum: 0 };
+    const surfaceLift = pose === 'intersection' || pose === 'traversal' ? lift.datum : lift.footway;
+    const groundAt = (x, z) => (r.terrain?.heightAt ? r.terrain.heightAt(x, z) + surfaceLift : surfaceLift);
 
     // Road geometry lives on segments, not streets.
     const segs = (city.segments || []).filter((s) => (s.points || []).length >= 2);
