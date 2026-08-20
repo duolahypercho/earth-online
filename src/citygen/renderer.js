@@ -1885,6 +1885,7 @@ export class CityRenderer {
     this.timeOfDay = 15;
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
+    this.appliedPracticalKey = null;
     this.lightingPipelinesRendered = false;
     this.timeColors = {
       skyTopDay: new THREE.Color('#5f9fd1'),
@@ -2164,6 +2165,7 @@ export class CityRenderer {
     this.envWeather = next;
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
+    this.appliedPracticalKey = null;
     this.setTimeOfDay(this.timeOfDay);
     return this.envWeather;
   }
@@ -2484,6 +2486,7 @@ export class CityRenderer {
       : { x: this.camera.position.x, z: this.camera.position.z };
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
+    this.appliedPracticalKey = null;
     // Dispose old dynamic geometry only; static materials persist for rebuilds.
     // The crowd is parented to `city-root`, so it has to go before the root it
     // hangs off is replaced - `clearCity` normally does this first, but
@@ -2628,6 +2631,7 @@ export class CityRenderer {
     const restoreHour = this.timeOfDay;
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
+    this.appliedPracticalKey = null;
     this.setTimeOfDay(14);
     await this.renderer.compileAsync(this.scene, this.camera);
     if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
@@ -8030,19 +8034,32 @@ export class CityRenderer {
     // The fit reads the key direction, so it has to be refreshed whenever the
     // hour moves, not only when the camera does.
     this.updateSunShadow({ force: true });
-    if (previousNight !== night) {
+    // Practicals follow the light level in the street, not the binary `night`
+    // flag. `night` is `hour >= 19.5 || hour <= 6`, so at 18:30 - with the
+    // canyon already in deep shadow and the sun at +6.6 deg - every window in
+    // the frame sat at emissive 0 and the golden-hour card came back as a grid
+    // of black holes. `nightPracticalProfile` publishes two smooth ramps
+    // instead: `dusk` for interior lighting (+16 deg down to +2 deg) and
+    // `lampsOn` for street lighting (+8 deg down to -3 deg), which is the one
+    // thing here that genuinely is a horizon event.
+    //
+    // Guarded by a coarse key rather than by the night transition: `setTimeOfDay`
+    // already refuses hour moves under 0.02 h, and this quantises to 40 steps of
+    // each ramp, so the loop runs a few dozen times across a whole day.
+    const practicals = nightPracticalProfile({ hour, weather: this.envWeather });
+    const practicalKey = `${Math.round(practicals.windows.occupancy * 40)}:`
+      + `${Math.round(practicals.lampsOn * 40)}:${this.envWeather}`;
+    if (practicalKey !== this.appliedPracticalKey) {
+      this.appliedPracticalKey = practicalKey;
       // Occupancy, intensity and colour temperature per emissive group instead
-      // of one shared intensity for every window in the city. The quality gate
-      // rejects a night frame carried solely by uniformly emissive windows, and
-      // a single value is exactly that. Deterministic in the group index, so a
-      // pinned capture hour reproduces the same lit pattern.
-      const practicals = nightPracticalProfile({ hour, weather: this.envWeather });
+      // of one shared intensity for every window in the city. Deterministic in
+      // the group index, so a pinned capture hour reproduces the same pattern.
       let emissiveIndex = 0;
       for (const entry of this.nightEmissive) {
         emissiveIndex += 1;
         const base = entry.nightIntensity ?? (entry.texture || entry.nightTexture ? 0.5 : 0.9);
         const roll = ((Math.imul(emissiveIndex, 2654435761) >>> 8) % 1000) / 1000;
-        const lit = night && roll < practicals.windows.occupancy;
+        const lit = roll < practicals.windows.occupancy;
         const [lo, hi] = practicals.windows.intensityRange;
         entry.material.emissiveIntensity = lit ? base * (lo + (hi - lo) * roll) : 0;
         if (lit && entry.material.emissive) {
@@ -8052,12 +8069,16 @@ export class CityRenderer {
         }
       }
       for (const material of this.neonGlowMaterials) {
-        material.opacity = night ? material.userData.nightOpacity : (material.userData.dayOpacity ?? 0.18);
+        const nightOpacity = material.userData.nightOpacity ?? 0.5;
+        const dayOpacity = material.userData.dayOpacity ?? 0.18;
+        material.opacity = dayOpacity + (nightOpacity - dayOpacity) * practicals.lampsOn;
       }
       for (const bulb of this.lampBulbs) {
-        bulb.material.emissiveIntensity = night ? 1.2 : 0.12;
+        bulb.material.emissiveIntensity = 0.12 + 1.08 * practicals.lampsOn;
       }
-      this.localLightsNight = night;
+      // The three real point lights follow the street-lighting ramp too, so a
+      // 19:00 card has them on while `night` is still false.
+      this.localLightsNight = practicals.lampsOn > 0.15;
       this.updateLocalLightPool(0, true);
     }
     if (this.water?.material) {

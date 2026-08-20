@@ -78,7 +78,7 @@ import {
 } from '../environment-ibl.js';
 
 /** Identity of the scene content this pass builds. */
-export const SKY_ATMOSPHERE_VERSION = 'sky-atmosphere-v1';
+export const SKY_ATMOSPHERE_VERSION = 'sky-atmosphere-v2';
 
 /**
  * Declared budget for everything this pass adds.
@@ -365,6 +365,81 @@ function setLinear(color, rgb, scale = 1) {
     LinearSRGBColorSpace,
   );
   return color;
+}
+
+/**
+ * Vertical datums of the paved surface.
+ *
+ * This is the single most expensive thing round 1 got wrong. Every ground
+ * decal this pass builds was placed at `ctx.heightAt(x, z)`, which is the
+ * *terrain* height - but the renderer builds the carriageway at
+ * `terrain + streetDesign.roadLift` (0.5 m) and `street-surface-v2` builds the
+ * footway a further `curbFaceHeight - gutterDepth` (0.12 m) above that. So
+ * every light pool, every contact skirt and every under-vehicle patch was
+ * buried 0.5-0.62 m under the pavement, depth-tested away, and invisible. The
+ * night card's missing practicals are entirely this.
+ *
+ * The formulas are the renderer's own: see `renderer.js` ("carriageway datum =
+ * terrain + city.meta.streetDesign.roadLift") and `curbTopY()` in
+ * `street-surface-v2.js`.
+ * @private
+ */
+function pavedDatum(city) {
+  const design = city?.meta?.streetDesign || {};
+  const roadLift = finite(design.roadLift, 0.5);
+  const gutterDepth = finite(design.gutterDepth, 0.03);
+  const curbFaceHeight = finite(design.curbFaceHeight, 0.15);
+  return {
+    roadLift,
+    footwayLift: roadLift - gutterDepth + curbFaceHeight,
+    gutterDepth,
+    curbFaceHeight,
+  };
+}
+
+/**
+ * Coarse "is this point on paved ground" test.
+ *
+ * A building fronting a street stands next to a footway 0.62 m above the
+ * terrain; a building in the middle of a block stands on the ground carpet at
+ * terrain height. Putting every contact skirt at the footway datum would leave
+ * a dark ring floating over back yards, which is a worse artifact than the one
+ * being fixed. A cell grid over the street contract answers the question in
+ * one Set lookup and costs one pass over the segments at build.
+ * @private
+ */
+function streetProximity(city, cell = 12) {
+  const cells = new Set();
+  const segments = Array.isArray(city?.segments) ? city.segments : [];
+  for (const segment of segments) {
+    const points = segment?.points;
+    if (!Array.isArray(points) || points.length < 2) continue;
+    const reach = clamp(finite(segment.width, 8) * 0.5 + 5, 4, 40);
+    const rings = Math.min(2, Math.max(1, Math.ceil(reach / cell)));
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      const ax = finite(a?.x, NaN);
+      const az = finite(a?.z, NaN);
+      const bx = finite(b?.x, NaN);
+      const bz = finite(b?.z, NaN);
+      if (!Number.isFinite(ax) || !Number.isFinite(bx)) continue;
+      const length = Math.hypot(bx - ax, bz - az);
+      const steps = Math.min(48, Math.max(1, Math.ceil(length / (cell * 0.5))));
+      for (let step = 0; step <= steps; step += 1) {
+        const t = step / steps;
+        const cx = Math.floor((ax + (bx - ax) * t) / cell);
+        const cz = Math.floor((az + (bz - az) * t) / cell);
+        for (let ix = -rings; ix <= rings; ix += 1) {
+          for (let iz = -rings; iz <= rings; iz += 1) cells.add(`${cx + ix}:${cz + iz}`);
+        }
+      }
+    }
+  }
+  return {
+    cells: cells.size,
+    near: (x, z) => cells.has(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`),
+  };
 }
 
 /** Largest of the map's X/Z extents, or a sane default. @private */
@@ -658,9 +733,13 @@ function buildHaze(radius, height) {
  * software backend because it is one merged mesh with one basic material.
  * @private
  */
-function buildContactGrounding(ctx, city) {
+function buildContactGrounding(ctx, city, datum, proximity) {
   const sink = quadSink();
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
+  // Paved where the footprint fronts a street, terrain where it does not.
+  const groundY = (x, z) => finite(heightAt(x, z), 0)
+    + (proximity.near(x, z) ? datum.footwayLift + 0.02 : 0)
+    + 0.035;
   const buildings = Array.isArray(city?.buildings) ? city.buildings : [];
   let footprints = 0;
   let skipped = 0;
@@ -721,8 +800,8 @@ function buildContactGrounding(ctx, city) {
       const c = points[(i + 1) % n];
       const oa = offsets[i];
       const oc = offsets[(i + 1) % n];
-      const ya = finite(heightAt(a.x, a.z), 0) + 0.035;
-      const yc = finite(heightAt(c.x, c.z), 0) + 0.035;
+      const ya = groundY(a.x, a.z);
+      const yc = groundY(c.x, c.z);
       sink.quad(
         [a.x, ya, a.z],
         [c.x, yc, c.z],
@@ -764,9 +843,12 @@ function buildContactGrounding(ctx, city) {
  * were generated.
  * @private
  */
-function buildUnderObjectShading(ctx) {
+function buildUnderObjectShading(ctx, datum) {
   const sink = quadSink();
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
+  // Parked cars stand on the carriageway; canopies hang over the footway.
+  const carriagewayY = (x, z) => finite(heightAt(x, z), 0) + datum.roadLift + 0.03;
+  const footwayY = (x, z) => finite(heightAt(x, z), 0) + datum.footwayLift + 0.03;
   const world = new Vector3();
   let vehicles = 0;
   let canopies = 0;
@@ -789,7 +871,9 @@ function buildUnderObjectShading(ctx) {
       if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
       // Yaw straight out of the basis so the patch lies along the car.
       const rot = Math.atan2(array[o + 2], array[o]);
-      sink.rect(x, finite(heightAt(x, z), finite(y, 0)) + 0.03, z, 5.4, 2.6, rot);
+      // `y` is the instance's own body height above the road, so the road
+      // datum is preferred and the instance only backs it up.
+      sink.rect(Number.isFinite(y) ? x : x, carriagewayY(x, z), z, 5.4, 2.6, rot);
       vehicles += 1;
     }
   }
@@ -803,7 +887,7 @@ function buildUnderObjectShading(ctx) {
       const x = world.x;
       const z = world.z;
       if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-      sink.rect(x, finite(heightAt(x, z), 0) + 0.03, z, 3.6, 2.8, node.rotation?.y || 0);
+      sink.rect(x, footwayY(x, z), z, 3.6, 2.8, node.rotation?.y || 0);
       canopies += 1;
     });
   }
@@ -836,8 +920,9 @@ function buildUnderObjectShading(ctx) {
  * has to stay under 1 so it does not clip the sidewalk to white.
  * @private
  */
-function buildNightPracticals(ctx, profile) {
+function buildNightPracticals(ctx, profile, datum) {
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
+  const footwayY = (x, z) => finite(heightAt(x, z), 0) + datum.footwayLift + 0.025;
   const lampGroup = ctx.legacyGroup?.('street-lamps');
   const pools = quadSink();
   const glows = quadSink();
@@ -855,14 +940,15 @@ function buildNightPracticals(ctx, profile) {
       const x = world.x;
       const z = world.z;
       if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-      const ground = finite(heightAt(x, z), 0);
+      const ground = footwayY(x, z);
       // Per-fixture jitter: a street where every pool is the same size and the
       // same brightness reads as a texture, not as lighting.
       const jitter = 0.82 + 0.36 * hash01(hashString(`${lamp.name || 'lamp'}:${i}`));
       const radius = profile.pool.radius * jitter;
-      pools.rect(x, ground + 0.045, z, radius * 2, radius * 2);
-      // The bulb itself, as a soft glow in air at the fixture height.
-      glows.rect(x, ground + 5.5, z, 3.0 * jitter, 3.0 * jitter);
+      pools.rect(x, ground, z, radius * 2, radius * 2);
+      // The bulb itself, as a soft glow in air at the fixture height. The lamp
+      // group's own world Y is the authority here - it is the fixture.
+      glows.rect(x, finite(world.y, ground) + 5.5, z, 3.0 * jitter, 3.0 * jitter);
       lamps += 1;
     }
   }
@@ -882,7 +968,7 @@ function buildNightPracticals(ctx, profile) {
       const z = world.z;
       if (!Number.isFinite(x) || !Number.isFinite(z)) return;
       const depth = profile.shopSpill.depth * (0.8 + 0.5 * hash01(hashString(`spilld:${index}`)));
-      spill.rect(x, finite(heightAt(x, z), 0) + 0.05, z, 4.2, depth, node.rotation?.y || 0);
+      spill.rect(x, footwayY(x, z) + 0.01, z, 4.2, depth, node.rotation?.y || 0);
       spills += 1;
     });
   }
@@ -955,13 +1041,19 @@ function buildNightPracticals(ctx, profile) {
  * real carriageway and are stable across rebuilds.
  * @private
  */
-function buildWetSheen(ctx, city, grade) {
-  if (!(grade.wetness > 0.05)) return null;
+function buildWetSheen(ctx, city, grade, datum) {
+  // Built unconditionally, even in clear weather.
+  //
+  // Round 1 built this only when `ctx.weather` was already wet at *build*
+  // time, and the runtime changes weather long after the world is built - so
+  // the drizzle card could never have had puddles no matter what the harness
+  // did. Geometry is cheap (720 triangles) and a hidden mesh costs nothing;
+  // reacting to `setWeather` without a world rebuild is worth far more.
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
   const segments = Array.isArray(city?.segments) ? city.segments : [];
   const sink = quadSink();
   let placed = 0;
-  const lift = finite(city?.meta?.streetDesign?.roadLift, 0.45);
+  const lift = datum.roadLift;
   for (let s = 0; s < segments.length && placed < MAX_PUDDLES; s += 1) {
     const segment = segments[s];
     const points = segment?.points;
@@ -1007,7 +1099,7 @@ function buildWetSheen(ctx, city, grade) {
     roughness: grade.roughness,
     metalness: 0.06,
     transparent: true,
-    opacity: clamp(grade.sheenOpacity * 2.1, 0, 0.95),
+    opacity: 0,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -3,
@@ -1019,6 +1111,7 @@ function buildWetSheen(ctx, city, grade) {
   mesh.name = 'sky-atmosphere:wet-sheen';
   mesh.renderOrder = 1;
   mesh.receiveShadow = true;
+  mesh.visible = false;
   return { mesh, material, texture, geometry, puddles: placed };
 }
 
@@ -1126,6 +1219,25 @@ function retimeAerial(state, aerial) {
   }
 }
 
+/**
+ * Wet response, driven at runtime rather than at build.
+ *
+ * `setWeather` on the renderer does not rebuild the world, so everything the
+ * drizzle bucket changes has to be a property write on an existing material.
+ * Roughness is the one that matters: at 0.93 the puddle is a matte grey patch,
+ * at 0.24 it mirrors the sky and the practicals, and that is the whole
+ * difference between "the sky went grey" and "the street is wet".
+ * @private
+ */
+function retimeWet(state, grade) {
+  const wet = state.wet;
+  if (!wet) return;
+  wet.material.roughness = grade.roughness;
+  wet.material.envMapIntensity = grade.envMapIntensity;
+  wet.material.opacity = clamp(grade.sheenOpacity * 2.1, 0, 0.95);
+  wet.mesh.visible = wet.material.opacity > 0.02;
+}
+
 /** Turn the night practicals up or down. @private */
 function retimePracticals(state, profile) {
   for (const part of state.practicals?.parts || []) {
@@ -1134,7 +1246,7 @@ function retimePracticals(state, profile) {
       part.material.opacity = profile.pool.opacity;
     } else if (part.key === 'glows') {
       setLinear(part.material.color, profile.pool.color, 1.8);
-      part.material.opacity = clamp(profile.night * 0.62, 0, 1);
+      part.material.opacity = clamp(profile.lampsOn * 0.62, 0, 1);
     } else {
       // Shopfronts run warmer than the street lamps and vary in temperature.
       setLinear(part.material.color, blackBodyColor(2950), 0.9);
@@ -1215,13 +1327,15 @@ function buildPass(ctx) {
   const haze = buildHaze(Math.min(radius * 0.72, Math.max(240, aerial.far * 0.82)), aerial.haze.height);
   root.add(haze.mesh);
 
-  const contact = buildContactGrounding(ctx, city);
+  const datum = pavedDatum(city);
+  const proximity = streetProximity(city);
+  const contact = buildContactGrounding(ctx, city, datum, proximity);
   if (contact) root.add(contact.mesh);
-  const underObject = buildUnderObjectShading(ctx);
+  const underObject = buildUnderObjectShading(ctx, datum);
   if (underObject) root.add(underObject.mesh);
-  const practicals = buildNightPracticals(ctx, practical);
+  const practicals = buildNightPracticals(ctx, practical, datum);
   for (const part of practicals.parts) root.add(part.mesh);
-  const wet = buildWetSheen(ctx, city, wetAsphalt);
+  const wet = buildWetSheen(ctx, city, wetAsphalt, datum);
   if (wet) root.add(wet.mesh);
 
   // Deliberately *not* hiding the renderer's own `sky-dome` or
@@ -1270,6 +1384,7 @@ function buildPass(ctx) {
     radius,
     mapSpan,
     weather,
+    datum,
     bucket: null,
     fogNear: aerial.near,
     fogFar: aerial.far,
@@ -1283,6 +1398,7 @@ function buildPass(ctx) {
   retimeClouds(clouds, cloud);
   retimeAerial(state, aerial);
   retimePracticals(state, practical);
+  retimeWet(state, wetAsphalt);
   state.bucket = `${weather}|${quantiseHour(hour, SKY_ATMOSPHERE_BUDGET.hourQuantum).toFixed(4)}`;
 
   let textureBytes = 0;
@@ -1325,6 +1441,7 @@ function buildPass(ctx) {
       achieved: balance.achieved.ratio,
       gains: balance.gains,
       apply: balance.apply,
+      shadow: balance.shadow,
     },
     sky: {
       zenithLuminance: Math.round(model.zenithLuminance * 10000) / 10000,
@@ -1352,6 +1469,13 @@ function buildPass(ctx) {
       })),
       textureSize: CLOUD_TEXTURE_SIZE,
     },
+    datum: {
+      roadLift: datum.roadLift,
+      footwayLift: Math.round(datum.footwayLift * 1000) / 1000,
+      streetCells: proximity.cells,
+      note: 'ground decals sit on the paved datum, not on the terrain: the carriageway is '
+        + 'terrain+roadLift and the footway is a further curbFaceHeight-gutterDepth above it',
+    },
     lights: {
       lampPools: practicals.lamps,
       shopSpills: practicals.spills,
@@ -1378,6 +1502,9 @@ function buildPass(ctx) {
       colorScale: wetAsphalt.colorScale,
       envMapIntensity: wetAsphalt.envMapIntensity,
       puddles: wet?.puddles ?? 0,
+      /** Built in every bucket so a runtime `setWeather` needs no rebuild. */
+      builtDry: true,
+      visible: Boolean(wet?.mesh.visible),
     },
     suppressedLegacy: suppressed.map((entry) => entry.name),
     budget: {
@@ -1481,6 +1608,7 @@ export default {
     retimeClouds(state.clouds, cloud);
     retimeAerial(state, aerial);
     retimePracticals(state, practical);
+    retimeWet(state, wetSurfaceGrade('asphalt', model));
   },
 
   dispose() {

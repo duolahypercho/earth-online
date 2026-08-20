@@ -40,9 +40,12 @@ import {
   ATMOSPHERE_MODEL_VERSION,
   EXPOSURE_CURVE,
   KEY_FILL_GAIN_RANGE,
+  MIN_ENVIRONMENT_SHARE,
+  SHADOW_DISPLAY_FLOOR,
   TARGET_KEY_FILL,
   WEATHER_KINDS,
   aerialPerspective,
+  canyonBounce,
   blackBodyColor,
   cloudProfile,
   computeSkyModel,
@@ -52,6 +55,7 @@ import {
   nightPracticalProfile,
   recommendedExposure,
   renderCloudSheet,
+  sampleSkyRadiance,
   sceneIlluminance,
   skyDomeRadiance,
   starField,
@@ -76,6 +80,11 @@ const dayRows = [];
 const weatherRows = [];
 const budgetRows = [];
 let fogSpanRows = [];
+let shadowRow = null;
+let datumRow = null;
+let wetRow = null;
+let duskRow = [];
+let cardRows = [];
 let contactRow = null;
 let updateCostRow = null;
 
@@ -91,6 +100,70 @@ function check(condition, message) {
 }
 const finite = (values) => values.every((v) => Number.isFinite(v));
 const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+/** Local copy of the module's smoothstep, for probing ramp monotonicity. */
+const smoothstepLocal = (e0, e1, x) => {
+  const t = clamp01((x - e0) / (e1 - e0));
+  return t * t * (3 - 2 * t);
+};
+
+// --------------------------------------------------------------- display model
+//
+// The round-1 review rejected the golden-hour card on a measurement this suite
+// could not make: 55.7% of its pixels under 12/255 and a mean of 16.7. Nothing
+// here can render a frame, but the renderer's display transform is known
+// exactly - ACES filmic at `toneMappingExposure`, then the sRGB transfer - and
+// so is the shading model for a Lambertian surface. Putting those together
+// turns "how dark is the shadow side" from an opinion into a number, for every
+// hour and every weather bucket, without a browser.
+//
+// This predicts the value of a *surface*, not of a pixel. It cannot see
+// geometry, occlusion, texture or emissive content, so it is a floor test on
+// the lighting model and not a substitute for looking at a frame.
+
+/** ACES filmic curve, the fitted form three uses. */
+const aces = (x) => clamp01((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+/** Linear -> sRGB transfer. */
+const toSrgb = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+/** Scene-referred radiance -> 0..255 display value. */
+const display255 = (radiance, exposure) => 255 * toSrgb(aces(Math.max(0, radiance) * exposure));
+
+/** Anything under this reads as crushed black in a capture. */
+const BLACK_THRESHOLD = 12;
+
+/**
+ * The surfaces the rubric's cards are actually made of, with the albedo and
+ * orientation each one presents. Vertical surfaces see about half the sky
+ * hemisphere, which is why a facade in shadow is the first thing to crush.
+ */
+const CANONICAL_SURFACES = Object.freeze([
+  Object.freeze({ name: 'asphalt', albedo: 0.08, vertical: false, shadowFloor: 14 }),
+  Object.freeze({ name: 'sidewalk', albedo: 0.45, vertical: false, shadowFloor: 70 }),
+  Object.freeze({ name: 'facade-painted', albedo: 0.42, vertical: true, shadowFloor: 40 }),
+  Object.freeze({ name: 'facade-masonry', albedo: 0.30, vertical: true, shadowFloor: 28 }),
+  Object.freeze({ name: 'vehicle-paint', albedo: 0.22, vertical: true, shadowFloor: 20 }),
+]);
+
+/**
+ * Predicted display value of one surface, in shadow and in key light, under a
+ * rebalanced light rig.
+ */
+function surfaceDisplay(surface, balance, model) {
+  const exposure = balance.apply.exposure;
+  const fill = balance.achieved.fill;
+  const key = balance.achieved.key;
+  const shadowIrradiance = surface.vertical ? fill * 0.5 : fill;
+  // A vertical face square to the sun takes cos(altitude) of the beam; a
+  // horizontal one takes all of it, the beam already being horizontal-referred.
+  const keyIrradiance = surface.vertical
+    ? key * Math.max(0, Math.cos(model.sun.altitudeDeg * Math.PI / 180))
+    : key;
+  const brdf = surface.albedo / Math.PI;
+  return {
+    shadow: display255(shadowIrradiance * brdf, exposure),
+    lit: display255((shadowIrradiance + keyIrradiance) * brdf, exposure),
+  };
+}
 
 /**
  * Walk any plain value and fail on the first non-finite number found. This is
@@ -137,7 +210,13 @@ function makeCity({ buildings = 700, segments = 2835, span = 2000 } = {}) {
       seedInt: 4242,
       generator: 'sf-builtin',
       bounds: { minX: 0, maxX: span, minZ: 0, maxZ: span },
-      streetDesign: { roadLift: 0.45 },
+      // The vertical construction the renderer and `street-surface-v2` really
+      // publish. The pass has to read these, not assume the terrain.
+      streetDesign: {
+        roadLift: 0.45,
+        gutterDepth: 0.03,
+        curbFaceHeight: 0.15,
+      },
     },
     buildings: [],
     segments: [],
@@ -363,6 +442,8 @@ await section('sun direction is astronomically ordered', () => {
 
 // -------------------------------------------------- exposure and key/fill
 
+const rigEnvironmentIntensity = (hour, weather) => computeSkyModel({ hour, weather }).lightRig.environmentIntensity;
+
 await section('exposure and key/fill move in the right direction', () => {
   const noon = computeSkyModel({ hour: 12, weather: 'clear' });
   const golden = computeSkyModel({ hour: 18.5, weather: 'clear' });
@@ -382,9 +463,9 @@ await section('exposure and key/fill move in the right direction', () => {
   check(eGolden.exposure < eNight.exposure, `exposure must rise from golden hour to night (${eGolden.exposure} -> ${eNight.exposure})`);
   // Stated bands. Outside these the frame is either blown or crushed.
   check(eNoon.exposure > 0.74 && eNoon.exposure < 0.90, `noon exposure band 0.74..0.90, got ${eNoon.exposure}`);
-  check(eGolden.exposure > 0.95 && eGolden.exposure < 1.22, `golden exposure band 0.95..1.22, got ${eGolden.exposure}`);
-  check(eNight.exposure > 1.10 && eNight.exposure <= EXPOSURE_CURVE.max,
-    `night exposure band 1.10..${EXPOSURE_CURVE.max}, got ${eNight.exposure}`);
+  check(eGolden.exposure > 1.15 && eGolden.exposure < 1.45, `golden exposure band 1.15..1.45, got ${eGolden.exposure}`);
+  check(eNight.exposure > 1.35 && eNight.exposure <= EXPOSURE_CURVE.max,
+    `night exposure band 1.35..${EXPOSURE_CURVE.max}, got ${eNight.exposure}`);
   // Compression: adaptation must never be so strong that night matches day.
   check(eNight.exposure / eNoon.exposure < 2.2,
     `exposure swing must stay compressed, got ${eNight.exposure / eNoon.exposure}`);
@@ -416,11 +497,18 @@ await section('exposure and key/fill move in the right direction', () => {
     `golden hour must stay directional but below noon, got ${bGolden.achieved.ratio}`);
   check(bNight.gains.key === 1 && bNight.gains.fill === 1,
     'the correction must be inert below the horizon');
-  // Total illuminance is preserved, so the exposure curve stays valid.
+  // v1 preserved key+fill exactly, and the golden-hour card proved that was
+  // the wrong invariant: it says nothing about a surface the key cannot reach,
+  // and a canyon at 18:30 is nothing but such surfaces. The contract is now
+  // the shadow side itself, and the rebalance may only ever add light.
   for (const balance of [bNoon, bGolden]) {
-    const drift = Math.abs(balance.achieved.total - balance.measured.total) / Math.max(1e-9, balance.measured.total);
-    check(drift < 0.02, `rebalance must preserve total fill+key within 2%, drifted ${(drift * 100).toFixed(2)}%`);
+    check(balance.achieved.total >= balance.measured.total - 1e-6,
+      `the rebalance must never darken the frame overall (${balance.measured.total} -> ${balance.achieved.total})`);
+    check(balance.shadow.product >= SHADOW_DISPLAY_FLOOR - 1e-6,
+      `shadow side must clear the display floor, got ${balance.shadow.product} at hour ${balance.hour}`);
   }
+  check(bGolden.shadow.bounce > 0, 'golden hour must carry a canyon-bounce term');
+  check(bNight.shadow.bounce === 0, 'there is nothing to bounce below the horizon');
   // Gains stay inside the declared clamp for every hour and bucket.
   for (let h = 0; h < 24; h += 0.5) {
     for (const weather of WEATHER_KINDS) {
@@ -429,8 +517,11 @@ await section('exposure and key/fill move in the right direction', () => {
         && balance.gains.key <= KEY_FILL_GAIN_RANGE.key[1] + 1e-9,
       `key gain out of range at ${h} ${weather}: ${balance.gains.key}`);
       check(balance.gains.fill >= KEY_FILL_GAIN_RANGE.fill[0] - 1e-9
-        && balance.gains.fill <= 1 + 1e-9,
+        && balance.gains.fill <= KEY_FILL_GAIN_RANGE.fill[1] + 1e-9,
       `fill gain out of range at ${h} ${weather}: ${balance.gains.fill}`);
+      check(balance.apply.environmentIntensity
+        >= rigEnvironmentIntensity(h, weather) * MIN_ENVIRONMENT_SHARE - 1e-6,
+      `environmentIntensity must keep its floor at ${h} ${weather}: ${balance.apply.environmentIntensity}`);
       check(balance.apply.environmentIntensity > 0, `environmentIntensity must stay positive at ${h} ${weather}`);
     }
   }
@@ -438,6 +529,121 @@ await section('exposure and key/fill move in the right direction', () => {
   check(TARGET_KEY_FILL.fog < 1.2 && TARGET_KEY_FILL.drizzle < 1.4,
     'overcast buckets must target a near-unity key/fill');
   check(TARGET_KEY_FILL.clear > 3, 'the clear bucket must target a strongly directional key');
+});
+
+// ------------------------------------------------- shadow side / black share
+
+/**
+ * The gate round 1 did not have.
+ *
+ * Two numbers, both stated up front rather than discovered afterwards:
+ *
+ *  1. **Shadow-side band.** Every canonical surface has a floor it may not go
+ *     under in shadow, and the shadow may not come within a stated factor of
+ *     the key side either - a shadow that reads the same as the lit side is
+ *     the 0.70 key/fill defect this wave started from.
+ *  2. **Black share.** The share of (surface x hour x weather) combinations
+ *     whose shadow side falls under 12/255 must stay at or under 6%. The
+ *     round-1 golden-hour frame was at 55.7% of *pixels* under that value;
+ *     this is the surface-level proxy for it.
+ */
+await section('shadow side stays readable and the black share stays low', () => {
+  let combinations = 0;
+  let black = 0;
+  let worst = null;
+  for (const weather of WEATHER_KINDS) {
+    for (let hour = 0; hour < 24; hour += 0.5) {
+      const model = computeSkyModel({ hour, weather });
+      const balance = keyFillBalance(model);
+      for (const surface of CANONICAL_SURFACES) {
+        const value = surfaceDisplay(surface, balance, model);
+        combinations += 1;
+        check(finite([value.shadow, value.lit]),
+          `${surface.name} display must be finite at ${hour}:00 ${weather}`);
+        check(value.lit >= value.shadow - 1e-6,
+          `${surface.name} lit side must not be darker than its shadow at ${hour}:00 ${weather}`);
+        if (value.shadow < BLACK_THRESHOLD) black += 1;
+        if (!worst || value.shadow < worst.shadow) {
+          worst = { ...value, surface: surface.name, hour, weather };
+        }
+        // Per-surface shadow floor, over the whole clock and every bucket.
+        check(value.shadow >= surface.shadowFloor,
+          `${surface.name} shadow side must stay at or above ${surface.shadowFloor}/255 at `
+          + `${hour}:00 ${weather}, got ${value.shadow.toFixed(1)}`);
+        // ...and a ceiling, so "readable" never turns into "washed out".
+        check(value.shadow <= 190,
+          `${surface.name} shadow side must stay under 190/255 at ${hour}:00 ${weather}, `
+          + `got ${value.shadow.toFixed(1)}`);
+      }
+      // Contrast, measured on the surface the cards are mostly made of.
+      const sidewalk = surfaceDisplay(CANONICAL_SURFACES[1], balance, model);
+      const ratio = sidewalk.lit / Math.max(1e-6, sidewalk.shadow);
+      if (model.sun.altitudeDeg > 35 && weather === 'clear') {
+        check(ratio > 1.6 && ratio < 3.2,
+          `clear high-sun lit/shadow ratio band 1.6..3.2 at ${hour}:00, got ${ratio.toFixed(2)}`);
+      }
+      if (model.sun.altitudeDeg > 4) {
+        check(ratio > 1.05, `the key must be visible at all at ${hour}:00 ${weather}, ratio ${ratio.toFixed(2)}`);
+      }
+      if (model.sun.altitudeDeg < -8) {
+        check(ratio < 1.02, `there is no key below the horizon at ${hour}:00 ${weather}, ratio ${ratio.toFixed(2)}`);
+      }
+    }
+  }
+  const blackShare = black / combinations;
+  check(blackShare <= 0.06,
+    `black share must stay at or under 6% of surface/hour/weather combinations, got ${(blackShare * 100).toFixed(1)}%`);
+  shadowRow = { combinations, black, blackShare, worst };
+
+  // Ordering across the three cards the review named.
+  const noon = computeSkyModel({ hour: 12, weather: 'clear' });
+  const golden = computeSkyModel({ hour: 18.5, weather: 'clear' });
+  const night = computeSkyModel({ hour: 21.5, weather: 'clear' });
+  const sidewalk = CANONICAL_SURFACES[1];
+  const dNoon = surfaceDisplay(sidewalk, keyFillBalance(noon), noon);
+  const dGolden = surfaceDisplay(sidewalk, keyFillBalance(golden), golden);
+  const dNight = surfaceDisplay(sidewalk, keyFillBalance(night), night);
+  check(dNoon.lit > dGolden.lit && dGolden.lit > dNight.lit,
+    `lit level must fall noon -> golden -> night (${dNoon.lit.toFixed(0)}/${dGolden.lit.toFixed(0)}/${dNight.lit.toFixed(0)})`);
+  check(dNight.shadow < dGolden.shadow,
+    `night must sit below golden hour (${dNight.shadow.toFixed(0)} vs ${dGolden.shadow.toFixed(0)})`);
+  check(dGolden.shadow > dNoon.shadow * 0.9,
+    'golden hour must not be crushed relative to noon: it is the card the review rejected');
+  cardRows = [
+    { label: 'noon 12:00', ...dNoon },
+    { label: 'golden 18:30', ...dGolden },
+    { label: 'night 21:30', ...dNight },
+  ];
+
+  // The canyon bounce is the term that rescues the golden-hour card, so its
+  // shape is asserted rather than assumed.
+  const bounceGolden = canyonBounce(golden, keyFillBalance(golden).gains.key);
+  const bounceNoon = canyonBounce(noon, keyFillBalance(noon).gains.key);
+  const bounceNight = canyonBounce(night, 1);
+  const bounceFog = canyonBounce(computeSkyModel({ hour: 18.5, weather: 'fog' }), 2);
+  check(bounceGolden / keyFillBalance(golden).achieved.fill > 0.2,
+    'the bounce must be a fifth or more of the golden-hour fill');
+  check(bounceNoon / keyFillBalance(noon).achieved.fill < 0.2,
+    'the bounce must stay a minor term at noon');
+  check(bounceNight === 0, 'no beam below the horizon means no bounce');
+  check(bounceFog < bounceGolden * 0.25, 'an overcast dome has no directional beam to bounce');
+
+  // The environment's lower hemisphere is what a metal or glass surface
+  // reflects. Round 1 measured a glass tower at exactly (0, 0, 0).
+  for (const weather of WEATHER_KINDS) {
+    for (let hour = 0; hour < 24; hour += 1) {
+      const model = computeSkyModel({ hour, weather });
+      const down = sampleSkyRadiance(model, 0, -1, 0);
+      check(finite(down) && down.every((v) => v >= 0), `ground bounce finite at ${hour}:00 ${weather}`);
+      check(lum(down) < model.horizonLuminance,
+        `the ground hemisphere must stay darker than the sky above it at ${hour}:00 ${weather}`);
+      if (model.sun.altitudeDeg < -6) {
+        check(lum(down) > 0.008,
+          `a city lights its own ground: the night lower hemisphere may not be a void at `
+          + `${hour}:00 ${weather}, got ${lum(down).toFixed(5)}`);
+      }
+    }
+  }
 });
 
 // ------------------------------------------------------------- sky luminance
@@ -669,6 +875,44 @@ await section('night practicals and wet surfaces respond', () => {
     'a minority of lit windows must read cool');
   check(night.shopSpill.opacity > 0 && night.shopSpill.depth > 2,
     'shopfronts must spill light onto the sidewalk');
+
+  // Interior lights follow the light level in the street, not the horizon.
+  // Round 1 keyed them off `model.night`, which saturates six degrees either
+  // side of the horizon, so the golden-hour card had every window at emissive
+  // zero while the canyon was already in deep shadow.
+  const golden = nightPracticalProfile({ hour: 18.5, weather: 'clear' });
+  const dusk = nightPracticalProfile({ hour: 19, weather: 'clear' });
+  check(golden.dusk > 0.5, `windows must be coming on at golden hour, dusk ramp ${golden.dusk}`);
+  check(golden.windows.occupancy > 0.25,
+    `a quarter of windows or more must be lit at golden hour, got ${golden.windows.occupancy}`);
+  check(golden.shopSpill.opacity > 0.15, `shopfronts must be spilling at golden hour, got ${golden.shopSpill.opacity}`);
+  check(golden.lampsOn < 0.2, `street lighting must still be off at golden hour, got ${golden.lampsOn}`);
+  check(dusk.lampsOn > 0.5, `street lighting must be on by 19:00, got ${dusk.lampsOn}`);
+  check(noon.dusk === 0 && noon.lampsOn === 0, 'nothing is lit at midday');
+  // Both ramps are monotone as the sun drops.
+  let previousDusk = -1;
+  let previousLamps = -1;
+  for (let alt = 24; alt >= -12; alt -= 2) {
+    const at = nightPracticalProfile({ hour: 12, weather: 'clear' });
+    void at;
+    const probe = { dusk: 1 - smoothstepLocal(2, 16, alt), lamps: 1 - smoothstepLocal(-3, 8, alt) };
+    check(probe.dusk >= previousDusk, `dusk ramp must be monotone at ${alt} deg`);
+    check(probe.lamps >= previousLamps, `lamp ramp must be monotone at ${alt} deg`);
+    previousDusk = probe.dusk;
+    previousLamps = probe.lamps;
+  }
+  duskRow = [12, 17, 18, 18.5, 19, 20, 21.5, 3].map((hour) => {
+    const profile = nightPracticalProfile({ hour, weather: 'clear' });
+    return {
+      hour,
+      altitude: computeSkyModel({ hour, weather: 'clear' }).sun.altitudeDeg,
+      dusk: profile.dusk,
+      lampsOn: profile.lampsOn,
+      occupancy: profile.windows.occupancy,
+      pool: profile.pool.opacity,
+      spill: profile.shopSpill.opacity,
+    };
+  });
   check(night.vehicle.tailColor[0] > night.vehicle.tailColor[1] * 4,
     'vehicle tail lights must be red');
   check(night.pool.color[0] > night.pool.color[2] * 2, 'street lamps must read warm');
@@ -819,6 +1063,106 @@ await section('pass builds for every hour and weather bucket, inside budget', ()
         `dispose must restore the renderer's fog at ${hour}:00 ${weather}`);
     }
   }
+});
+
+await section('ground decals sit on the pavement, not under it', () => {
+  // Round 1 put every ground decal at `ctx.heightAt(x, z)` - the terrain - while
+  // the carriageway is `terrain + roadLift` and the footway a further
+  // `curbFaceHeight - gutterDepth` above that. The whole practical set was
+  // buried half a metre under the pavement and depth-tested away. This is the
+  // regression test for that.
+  const city = makeCity();
+  const roadLift = city.meta.streetDesign.roadLift;
+  const footwayLift = roadLift - city.meta.streetDesign.gutterDepth + city.meta.streetDesign.curbFaceHeight;
+  const ctx = makeContext(city, { hour: 21.5, weather: 'clear' });
+  const runtime = createPassRuntime([skyAtmosphere]);
+  const diagnostics = runtime.build(ctx);
+  const detail = diagnostics.built[0].detail;
+  check(detail.datum.roadLift === roadLift, `datum must read the street design's roadLift, got ${detail.datum.roadLift}`);
+  check(Math.abs(detail.datum.footwayLift - footwayLift) < 1e-6,
+    `footway datum must be ${footwayLift}, got ${detail.datum.footwayLift}`);
+  check(detail.datum.streetCells > 0, 'the street proximity grid must have cells');
+
+  const minY = (name) => {
+    const mesh = ctx.root.getObjectByName(name);
+    if (!mesh) return null;
+    const position = mesh.geometry.getAttribute('position');
+    let min = Infinity;
+    for (let i = 0; i < position.count; i += 1) min = Math.min(min, position.getY(i));
+    return min;
+  };
+  // Everything that lies on the footway.
+  for (const name of ['sky-atmosphere:light-pools', 'sky-atmosphere:shop-spill']) {
+    const y = minY(name);
+    check(y != null, `${name} must exist at night`);
+    check(y >= footwayLift, `${name} must sit on the footway (>= ${footwayLift}), got ${y}`);
+    check(y < footwayLift + 0.4, `${name} must not float above the footway, got ${y}`);
+  }
+  // ...and everything that lies on the carriageway.
+  const puddleY = minY('sky-atmosphere:wet-sheen');
+  check(puddleY != null && puddleY >= roadLift,
+    `puddles must sit on the carriageway (>= ${roadLift}), got ${puddleY}`);
+  // Contact skirts follow the street where there is one and the terrain where
+  // there is not, so their minimum is the terrain case and their maximum has
+  // to reach the footway.
+  const contact = ctx.root.getObjectByName('sky-atmosphere:contact-grounding');
+  const contactPos = contact.geometry.getAttribute('position');
+  let contactMax = -Infinity;
+  for (let i = 0; i < contactPos.count; i += 1) contactMax = Math.max(contactMax, contactPos.getY(i));
+  check(contactMax >= footwayLift,
+    `contact skirts fronting a street must reach the footway (>= ${footwayLift}), got ${contactMax}`);
+  check(detail.lights.lampPools > 0 && detail.lights.shopSpills > 0,
+    'practicals must build against the renderer\'s real group names');
+  check(detail.contact.vehicles > 0 && detail.contact.canopies > 0,
+    'under-object darkening must find the renderer\'s real instanced meshes');
+  datumRow = {
+    roadLift,
+    footwayLift,
+    pools: minY('sky-atmosphere:light-pools'),
+    spill: minY('sky-atmosphere:shop-spill'),
+    puddles: puddleY,
+    contactMax,
+    lampPools: detail.lights.lampPools,
+    shopSpills: detail.lights.shopSpills,
+    vehicles: detail.contact.vehicles,
+    canopies: detail.contact.canopies,
+  };
+  runtime.dispose();
+});
+
+await section('wet response reacts to a runtime weather change', () => {
+  // `setWeather` does not rebuild the world, so every wet cue has to be a
+  // property write on geometry that already exists. Round 1 built the puddles
+  // only when the *build* hour's weather was already wet, which the runtime
+  // can never satisfy.
+  const city = makeCity({ buildings: 200, segments: 900 });
+  const ctx = makeContext(city, { hour: 15, weather: 'clear' });
+  const runtime = createPassRuntime([skyAtmosphere]);
+  const diagnostics = runtime.build(ctx);
+  const detail = diagnostics.built[0].detail;
+  check(detail.wet.builtDry === true, 'wet content must be built in the clear bucket too');
+  check(detail.wet.puddles > 0, 'puddles must exist even when the world is built dry');
+  const sheen = ctx.root.getObjectByName('sky-atmosphere:wet-sheen');
+  check(sheen != null, 'the wet sheen mesh must exist in the clear bucket');
+  check(sheen.visible === false, 'the wet sheen must be hidden while the street is dry');
+  const dryRoughness = sheen.material.roughness;
+
+  ctx.weather = 'drizzle';
+  ctx.hour = 15.9;
+  runtime.update(ctx, 1 / 60);
+  check(sheen.visible === true, 'a runtime switch to drizzle must reveal the wet sheen');
+  check(sheen.material.roughness < dryRoughness * 0.45,
+    `drizzle must drop puddle roughness legibly (${dryRoughness} -> ${sheen.material.roughness})`);
+  check(sheen.material.opacity > 0.4, `drizzle sheen must be legible, got ${sheen.material.opacity}`);
+  const wetRoughness = sheen.material.roughness;
+
+  ctx.weather = 'clear';
+  ctx.hour = 16.9;
+  runtime.update(ctx, 1 / 60);
+  check(sheen.visible === false, 'drying out must hide the sheen again');
+  check(sheen.material.roughness > wetRoughness, 'drying out must restore roughness');
+  wetRow = { dryRoughness, wetRoughness, puddles: detail.wet.puddles };
+  runtime.dispose();
 });
 
 await section('build is deterministic and update is cheap', () => {
@@ -972,6 +1316,45 @@ for (const row of weatherRows) {
     + `${f(row.fog.haze.density, 5, 2)}  ${f(row.clouds, 5, 2)}  `
     + `${f(row.wet.dryRoughness, 8, 2)} -> ${f(row.wet.roughness, 4, 2)}   `
     + `${f(row.wet.envMapIntensity, 6, 2)}  ${String(row.wet.puddles).padStart(7)}  ${String(row.lights.shopSpills).padStart(6)}`);
+}
+
+console.log('');
+console.log('shadow side, predicted through ACES + sRGB at the recommended exposure');
+console.log('(surface model only - it sees no geometry, no texture and no emissive):');
+console.log('  card            sidewalk shadow/lit   ratio');
+for (const row of cardRows) {
+  console.log(`  ${row.label.padEnd(14)}  ${f(row.shadow, 8, 0)} / ${f(row.lit, 5, 0)}       `
+    + `${f(row.lit / Math.max(1e-6, row.shadow), 5, 2)}`);
+}
+if (shadowRow) {
+  console.log(`  black share: ${shadowRow.black}/${shadowRow.combinations} surface-hour-weather `
+    + `combinations under ${BLACK_THRESHOLD}/255 = ${(shadowRow.blackShare * 100).toFixed(1)}% (gate: <= 6%)`);
+  console.log(`  darkest shadow anywhere: ${shadowRow.worst.surface} at ${hm(shadowRow.worst.hour)} `
+    + `${shadowRow.worst.weather}, ${shadowRow.worst.shadow.toFixed(1)}/255`);
+  console.log('  round 1 measured 55.7% of the golden-hour card\'s PIXELS under that threshold; these');
+  console.log('  are surfaces, not pixels, so the two numbers are related but not comparable.');
+}
+
+console.log('');
+console.log('interior/street lighting ramps (clear):');
+console.log('  hour   altitude   dusk   lamps   windowOcc   pool   spill');
+for (const row of duskRow) {
+  console.log(`  ${hm(row.hour)}  ${f(row.altitude, 8)}  ${f(row.dusk, 5, 2)}  ${f(row.lampsOn, 6, 2)}  `
+    + `${f(row.occupancy, 10, 2)}  ${f(row.pool, 5, 2)}  ${f(row.spill, 5, 2)}`);
+}
+
+if (datumRow) {
+  console.log('');
+  console.log('vertical datum (the round-1 defect: every decal was buried under the pavement):');
+  console.log(`  carriageway ${datumRow.roadLift} m, footway ${datumRow.footwayLift.toFixed(2)} m above terrain`);
+  console.log(`  light pools at y=${datumRow.pools.toFixed(3)}, shop spill y=${datumRow.spill.toFixed(3)}, `
+    + `puddles y=${datumRow.puddles.toFixed(3)}, contact skirt reaches y=${datumRow.contactMax.toFixed(3)}`);
+  console.log(`  built against the renderer's real groups: ${datumRow.lampPools} lamp pools, `
+    + `${datumRow.shopSpills} shop spills, ${datumRow.vehicles} vehicles, ${datumRow.canopies} canopies`);
+}
+if (wetRow) {
+  console.log(`  wet response at runtime: ${wetRow.puddles} puddles built dry, roughness `
+    + `${wetRow.dryRoughness.toFixed(2)} -> ${wetRow.wetRoughness.toFixed(2)} on setWeather, no rebuild`);
 }
 
 console.log('');

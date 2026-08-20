@@ -108,7 +108,7 @@ import {
  * across versions.
  * @type {string}
  */
-export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v2';
+export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v3';
 
 /** Supported weather keys. @type {readonly string[]} */
 export const WEATHER_KINDS = Object.freeze(['clear', 'fog', 'drizzle']);
@@ -345,6 +345,35 @@ const SUN_KEY_IRRADIANCE = BASELINE_LIGHT_RIG.sun;
 
 /** Slightly warm bias for sun-lit ground bounce. */
 const GROUND_SUN_TINT = Object.freeze([1.06, 1.0, 0.9]);
+
+/**
+ * Colour and strength of the city's own lighting reflected back off the ground
+ * and the lower streetwall.
+ *
+ * Why v3 adds it: below about +10 deg the sun contributes nothing to the lower
+ * hemisphere, so `groundRadiance` collapses to `albedo * skyIrradiance / pi`,
+ * which at 21:30 is 0.0016 - effectively a black half-space. Every metal and
+ * glass surface in the city takes most of its appearance from the environment
+ * reflection, and half of that reflection is the lower hemisphere. The round-1
+ * golden-hour card shows the consequence: a glass tower measured at exactly
+ * (0, 0, 0) with a peak of 3/255 over a 380x600 pixel region, and unlit parked
+ * cars reading as black slabs on the night card.
+ *
+ * `0.22` is set by a hard constraint rather than by eye: the ground bounce must
+ * stay darker than the night sky it sits under, which caps the night ground
+ * luminance below the 0.034 the urban skyglow puts on the horizon. At 0.22 it
+ * lands at 0.023.
+ */
+const URBAN_GROUND_TINT = Object.freeze([1.18, 1.0, 0.72]);
+const URBAN_GROUND_STRENGTH = 0.22;
+
+/**
+ * Hard ceiling on the urban ground term, as a share of the measured horizon
+ * luminance. Without it the `fog` bucket at dawn and dusk - which carries the
+ * highest `urbanGlow` and the dimmest dome - produces a ground hemisphere 23%
+ * brighter than the sky above it.
+ */
+const URBAN_GROUND_HORIZON_SHARE = 0.75;
 
 const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;
@@ -1111,19 +1140,6 @@ export function computeSkyModel(options = {}) {
   const solidAngleWeight = TAU / IRRADIANCE_SAMPLES;
   const skyIrradiance = [irrR * solidAngleWeight, irrG * solidAngleWeight, irrB * solidAngleWeight];
 
-  // Ground bounce: Lambertian half-space lit by the sky irradiance (plus the
-  // sun's own contribution, approximated from its altitude) at `groundAlbedo`.
-  const albedo = profile.groundAlbedo;
-  // Direct sun contribution to the bounce, expressed as exitant radiance of a
-  // Lambertian half-space: L = albedo * E / pi, with E = key * sin(altitude).
-  const directGround = Math.max(0, sun.y) * SUN_KEY_IRRADIANCE / Math.PI
-    * profile.brightness * exposure * (1 - profile.overcast * 0.8);
-  const groundRadiance = [
-    albedo[0] * (skyIrradiance[0] / Math.PI + directGround * GROUND_SUN_TINT[0]),
-    albedo[1] * (skyIrradiance[1] / Math.PI + directGround * GROUND_SUN_TINT[1]),
-    albedo[2] * (skyIrradiance[2] / Math.PI + directGround * GROUND_SUN_TINT[2]),
-  ];
-
   const zenithRadiance = sampleUpper(0, 1, 0);
 
   // Horizon probes sit slightly above the horizon so they are pure sky.
@@ -1150,6 +1166,47 @@ export function computeSkyModel(options = {}) {
     horizonAccum[1] / HORIZON_PROBES,
     horizonAccum[2] / HORIZON_PROBES,
   ];
+
+  // Ground bounce: Lambertian half-space lit by the sky irradiance (plus the
+  // sun's own contribution, approximated from its altitude) at `groundAlbedo`.
+  //
+  // Computed after the horizon probes on purpose: the urban term below is
+  // capped against the horizon it sits under, and that cap has to be a real
+  // measurement rather than an estimate. A ground hemisphere brighter than the
+  // sky above it is the single most obvious way to make an environment map
+  // look wrong.
+  const albedo = profile.groundAlbedo;
+  // Direct sun contribution to the bounce, expressed as exitant radiance of a
+  // Lambertian half-space: L = albedo * E / pi, with E = key * sin(altitude).
+  const directGround = Math.max(0, sun.y) * SUN_KEY_IRRADIANCE / Math.PI
+    * profile.brightness * exposure * (1 - profile.overcast * 0.8);
+  // The city lighting its own ground, ramping in as the sun drops below +10 deg.
+  // Scales with `exposure` like every other radiance term here, so the model
+  // stays linear in it.
+  const urbanGroundRaw = smoothstep(10, -2, sun.altitudeDeg)
+    * urbanGlow * URBAN_GROUND_STRENGTH * exposure;
+  const groundAt = (urban) => [
+    albedo[0] * (skyIrradiance[0] / Math.PI + directGround * GROUND_SUN_TINT[0]
+      + urban * URBAN_GROUND_TINT[0]),
+    albedo[1] * (skyIrradiance[1] / Math.PI + directGround * GROUND_SUN_TINT[1]
+      + urban * URBAN_GROUND_TINT[1]),
+    albedo[2] * (skyIrradiance[2] / Math.PI + directGround * GROUND_SUN_TINT[2]
+      + urban * URBAN_GROUND_TINT[2]),
+  ];
+  const horizonLuminanceMeasured = luminance(horizonRadiance);
+  let urbanGround = urbanGroundRaw;
+  if (urbanGroundRaw > 0) {
+    const candidate = luminance(groundAt(urbanGroundRaw));
+    const ceiling = URBAN_GROUND_HORIZON_SHARE * horizonLuminanceMeasured;
+    if (candidate > ceiling) {
+      const baseLuminance = luminance(groundAt(0));
+      const perUnit = (candidate - baseLuminance) / urbanGroundRaw;
+      urbanGround = perUnit > 1e-12
+        ? Math.max(0, (ceiling - baseLuminance) / perUnit)
+        : 0;
+    }
+  }
+  const groundRadiance = groundAt(urbanGround);
 
   const skyIrradianceLuminance = luminance(skyIrradiance);
   const antisunLuminance = Math.max(1e-9, luminance(antisunHorizonRadiance));
@@ -2179,17 +2236,23 @@ export const ATMOSPHERE_MODEL_VERSION = 'earthonline-atmosphere-v1';
  * `adaptation` is the exponent on the illuminance ratio. 1.0 would be full
  * adaptation - every hour would render at the same apparent brightness, which
  * is how a night frame turns into a grey day frame. 0 would be no adaptation,
- * which is how a night frame turns into black. 0.14 keeps the ordering and the
- * direction of every change while compressing an 87:1 illuminance range into
- * about 1.5:1 of exposure.
+ * which is how a night frame turns into black.
+ *
+ * Round 1 shipped 0.14 with a 1.24 ceiling and the golden-hour card came back
+ * at mean luminance 16.7/255 with 55.7% of its pixels under 12/255. Measured
+ * against clear noon, 18:30 carries a tenth of the illuminance; a 1.38x
+ * exposure lift cannot carry a 10x fall. 0.20 with a 1.55 ceiling puts 18:30
+ * at 1.30 and full night at the ceiling, which is still only a 1.9:1 exposure
+ * swing across an 87:1 illuminance swing - night stays night, and lands at
+ * about 78% of the golden-hour display level rather than matching it.
  */
 export const EXPOSURE_CURVE = Object.freeze({
   referenceHour: 12,
   referenceWeather: 'clear',
   exposure: 0.82,
-  adaptation: 0.14,
+  adaptation: 0.20,
   min: 0.68,
-  max: 1.24,
+  max: 1.55,
 });
 
 /**
@@ -2327,21 +2390,51 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
   const base = TARGET_KEY_FILL[model.weather] ?? TARGET_KEY_FILL.clear;
   const targetRatio = base * Math.pow(altitudeTerm, 0.8);
 
-  let keyGain = 1;
-  let fillGain = 1;
-  if (key > 1e-6 && fill > 1e-9 && targetRatio > 1e-6) {
-    const total = key + fill;
-    fillGain = total / (fill * (1 + targetRatio));
-    keyGain = (targetRatio * fillGain * fill) / key;
-  }
+  const exposure = recommendedExposure(model).exposure;
+  const total = key + fill;
+
+  // Step 1: the total-preserving split that hits the target ratio. This alone
+  // is what v1 shipped, and it is right only for a surface the key can reach.
+  const desiredFill = targetRatio > 1e-6 ? total / (1 + targetRatio) : fill;
+  const provisionalKeyGain = key > 1e-6 ? (targetRatio * desiredFill) / key : 1;
+
+  // Step 2: the indirect term the renderer has no way to produce, added to the
+  // fill rather than to the key, because it arrives from a large area and has
+  // no direction worth casting a shadow from.
+  const bounce = canyonBounce(model, provisionalKeyGain, baseline);
+
+  // Step 3: three floors on the shadow side, in the order they bind.
+  //   * the physical one:   fill + bounce, from step 1;
+  //   * the displayed one:  fill * exposure may not fall under the floor;
+  //   * the relative one:   never cut the rig's own fill by more than half.
+  const floorFromDisplay = SHADOW_DISPLAY_FLOOR / Math.max(1e-6, exposure);
+  const floorFromRig = fill * MIN_FILL_GAIN;
+  let fillAfter = Math.max(desiredFill + bounce, floorFromDisplay, floorFromRig);
+  const bindingFloor = fillAfter === floorFromDisplay
+    ? 'display'
+    : fillAfter === floorFromRig ? 'rig' : 'ratio';
+
+  // Step 4: the key. It chases the ratio against the *direct* part of the fill
+  // (the bounce is a product of the key, so counting it in the denominator
+  // would make the key chase its own tail), and it is never cut below what the
+  // rig already delivers - this correction exists to add contrast, not remove
+  // it.
+  const directFill = Math.max(1e-9, fillAfter - bounce);
+  let keyAfter = Math.max(key, targetRatio * directFill);
+
+  let keyGain = key > 1e-6 ? keyAfter / key : 1;
+  let fillGain = fill > 1e-9 ? fillAfter / fill : 1;
+
   // Fade the whole correction out through civil twilight, and clamp what it
   // may ask for so a pathological sky cannot hand the renderer a 40x key.
   const authority = clamp(model.daylight, 0, 1);
   keyGain = mix(1, clamp(keyGain, KEY_FILL_GAIN_RANGE.key[0], KEY_FILL_GAIN_RANGE.key[1]), authority);
   fillGain = mix(1, clamp(fillGain, KEY_FILL_GAIN_RANGE.fill[0], KEY_FILL_GAIN_RANGE.fill[1]), authority);
+  keyAfter = key * keyGain;
+  fillAfter = fill * fillGain;
 
-  const achievedKey = key * keyGain;
-  const achievedFill = fill * fillGain;
+  const achievedKey = keyAfter;
+  const achievedFill = fillAfter;
   const round = (value) => Math.round(value * 10000) / 10000;
   return Object.freeze({
     version: ATMOSPHERE_MODEL_VERSION,
@@ -2354,7 +2447,8 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       punctualFill: round(punctualFill),
       fill: round(fill),
       ratio: round(measuredRatio),
-      total: round(key + fill),
+      total: round(total),
+      shadowProduct: round(fill * exposure),
     }),
     target: Object.freeze({ ratio: round(targetRatio), base, altitudeTerm: round(altitudeTerm) }),
     gains: Object.freeze({ key: round(keyGain), fill: round(fillGain) }),
@@ -2365,24 +2459,126 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       total: round(achievedKey + achievedFill),
     }),
     /**
+     * The shadow side, which is what the golden-hour card is actually made of.
+     * `product` is `fill * exposure`; `floor` is the value it may not go under.
+     */
+    shadow: Object.freeze({
+      product: round(achievedFill * exposure),
+      floor: SHADOW_DISPLAY_FLOOR,
+      bounce: round(bounce),
+      bounceShare: round(bounce / Math.max(1e-9, achievedFill)),
+      bindingFloor,
+      exposure,
+    }),
+    /**
      * Absolute values an integrator can set directly. `sun` multiplies the
      * renderer's own day/night key curve after `lightRig.scales.sun`; the
      * environment/hemi/ambient entries replace their equivalents.
      */
     apply: Object.freeze({
       sunScale: round(keyGain),
-      environmentIntensity: round(clamp(rig.environmentIntensity * fillGain, 0, 2)),
+      // Floored: `scene.environmentIntensity` is the only light a material
+      // without its own `envMap` gets from the sky, and for a metal or a glass
+      // tower it is the only light of any kind.
+      environmentIntensity: round(clamp(
+        rig.environmentIntensity * Math.max(fillGain, MIN_ENVIRONMENT_SHARE),
+        0,
+        2,
+      )),
       hemiScale: round(clamp(rig.scales.hemi * fillGain, 0.02, 1.2)),
       ambientScale: round(clamp(rig.scales.ambient * fillGain, 0.02, 1.2)),
       // The rim is pure fill with no physical counterpart once the env dome is
       // present, so it takes the fill cut and a little more.
       rimScale: round(clamp(rig.scales.rim * fillGain * 0.85, 0.02, 1)),
-      exposure: recommendedExposure(model).exposure,
+      exposure,
     }),
-    note: 'gains preserve key+fill, so the frame gains contrast without changing level; '
-      + 'the correction fades to 1 through civil twilight',
+    note: 'contrast is raised against a floored shadow side, not against the frame total: '
+      + 'the fill carries a canyon-bounce term the renderer has no GI to produce, and a '
+      + 'displayed floor it may not fall under',
   });
 }
+
+/**
+ * Facade albedo assumed for the canyon bounce. Painted stucco and light
+ * masonry sit near 0.4, glass and dark brick near 0.15; 0.34 is the measured
+ * mid of the facade palette this city builds.
+ */
+export const CANYON_FACADE_ALBEDO = 0.34;
+
+/**
+ * Fraction of the street-level hemisphere filled by *sunlit* facade in a
+ * typical block of this city (46 m of streetwall over an 18 m street, one side
+ * lit). Deliberately conservative: it is a view factor, not a fudge factor,
+ * and doubling it would be a lighting decision rather than a measurement.
+ */
+export const CANYON_VIEW_FACTOR = 0.16;
+
+/**
+ * Indirect illumination a street receives from the sunlit facades across from
+ * it - the single largest thing missing from a renderer with no global
+ * illumination.
+ *
+ * Why it is needed
+ * ----------------
+ * `keyFillBalance` v1 preserved key+fill, which is correct for a *lit*
+ * surface and says nothing at all about a surface in shadow. The round-1
+ * golden-hour card is the proof: a canyon at 18:30 is entirely in shadow, so
+ * every pixel of it is carried by fill alone, and the card came back 55.7%
+ * black. In a real street that shadow side is not dark, because the top two
+ * thirds of the opposite facade are in full low sun and are throwing that
+ * light back down into the canyon. With no GI there is nothing modelling that.
+ *
+ * The term is deliberately shaped, not a constant floor:
+ *
+ *  - it scales with the *normal* beam, not the horizontal one, because a
+ *    vertical facade at low sun is receiving nearly the full beam while the
+ *    ground receives almost none. That is exactly why the effect matters most
+ *    at golden hour (~40% of fill) and least at noon (~7%);
+ *  - it vanishes under an overcast dome, where there is no directional beam to
+ *    bounce and the sky is already the fill;
+ *  - it vanishes below the horizon, where there is no beam at all.
+ *
+ * @param {Readonly<SkyModel>} model
+ * @param {number} [keyGain=1] Gain the integrator is applying to the key.
+ * @param {Readonly<{sun:number}>} [baseline]
+ * @returns {number} Added irradiance, in the renderer's punctual light units.
+ */
+export function canyonBounce(model, keyGain = 1, baseline = BASELINE_LIGHT_RIG) {
+  const beam = directBeamTransmittance(model.sun.altitudeDeg);
+  const envelope = (2 * model.daylight - 1) ** 2;
+  const rigSunScale = model.lightRig ? model.lightRig.scales.sun : 1;
+  // Irradiance on a surface square to the sun: what a sunlit facade receives.
+  const normalBeam = baseline.sun * rigSunScale * beam.transmittance
+    * clamp(keyGain, 0, KEY_FILL_GAIN_RANGE.key[1]) * envelope * Math.max(0, Math.sign(model.sun.y));
+  // A street-facing facade's cosine to the sun. cos(altitude) is the upper
+  // bound, reached when the facade is square to the sun's azimuth.
+  const facadeCos = Math.max(0, Math.cos(model.sun.altitudeDeg * DEG));
+  const viewFactor = CANYON_VIEW_FACTOR * (1 - clamp(model.overcast, 0, 1) * 0.85);
+  return CANYON_FACADE_ALBEDO * normalBeam * facadeCos * viewFactor;
+}
+
+/**
+ * Floor on the shadow side, expressed as `fill * exposure` - i.e. the light a
+ * surface in shadow receives, times the exposure the frame is rendered at, so
+ * it is a *displayed* floor rather than a scene-referred one.
+ *
+ * Calibrated against the two round-1 cards that read correctly: the 11:00 card
+ * delivered 0.49 on this measure and its shadowed footway reads about 62/255,
+ * which is comfortably legible; the shipped pre-wave rig delivered 1.32 and
+ * read as flat. 0.62 sits above the card that worked, with margin.
+ */
+export const SHADOW_DISPLAY_FLOOR = 0.62;
+
+/** The fill is never cut below this fraction of the rig's own recommendation. */
+export const MIN_FILL_GAIN = 0.45;
+
+/**
+ * The environment keeps at least this share of its recommended intensity.
+ * `scene.environmentIntensity` is the only light a material with no `envMap`
+ * of its own receives from the sky, and for a metal or a glass tower it is the
+ * only light of any kind - there is no diffuse term to fall back on.
+ */
+export const MIN_ENVIRONMENT_SHARE = 0.8;
 
 /** Weather visibility grade applied on top of the renderer's map-span fog rule. */
 const VISIBILITY_GRADE = Object.freeze({
@@ -2575,10 +2771,15 @@ export function cloudProfile(modelOrState) {
   const sunHue = [sunward[0] / sunLuminance, sunward[1] / sunLuminance, sunward[2] / sunLuminance];
   const beamTerm = (beam / Math.PI) * 1.15;
   const glow = model.night * (weatherProfile(model.weather).urbanGlow ?? 0.6);
+  // Night: a city-lit cloud base is warm, but only slightly - round 1 came
+  // back with a deck at [0.041, 0.029, 0.023], a 1.8:1 red/blue ratio, which
+  // reads as mud rather than as an overcast city night. Halved and pulled
+  // toward neutral it sits at 1.25:1, warm enough to be city glow and cool
+  // enough to still be sky.
   const litTint = [
-    shadeTint[0] + sunHue[0] * beamTerm + glow * 0.055,
-    shadeTint[1] + sunHue[1] * beamTerm + glow * 0.036,
-    shadeTint[2] + sunHue[2] * beamTerm + glow * 0.022,
+    shadeTint[0] + sunHue[0] * beamTerm + glow * 0.030,
+    shadeTint[1] + sunHue[1] * beamTerm + glow * 0.026,
+    shadeTint[2] + sunHue[2] * beamTerm + glow * 0.024,
   ];
   const round4 = (value) => Math.round(value * 10000) / 10000;
   const layer = (name, altitude, radius, tiles, opacity, driftPerHour, seed) => Object.freeze({
@@ -2717,7 +2918,15 @@ export function renderCloudSheet(options = {}) {
       // than its lee, which is the whole reason a cloud reads as volume.
       const dx = density[j * size + wrap(i + 2)] - d;
       const dy = density[wrap(j + 2) * size + i] - d;
-      const shade = clamp(0.58 + 9.0 * (dx * 0.7 + dy * 0.7) + 0.40 * d, 0, 1);
+      // Two terms, because a cloud seen from below is not a flat gradient.
+      // The slope term is the lit face against its own lee, and it is what
+      // makes an edge read as a rounded surface. The depth term darkens the
+      // thick interior against the thin, bright rim, which is what stops a
+      // deck reading as a painted streak - round 1 had only the slope term at
+      // a third of this gain and came back looking airbrushed.
+      const slope = 16.0 * (dx * 0.7 + dy * 0.7);
+      const rimLift = 0.42 * (1 - smoothstep(threshold, threshold + soft * 2.4, d));
+      const shade = clamp(0.46 + slope + rimLift - 0.30 * d, 0, 1);
       const o = index * 4;
       const byte = Math.round(shade * 255);
       data[o] = byte;
@@ -2798,6 +3007,16 @@ export function nightPracticalProfile(modelOrState) {
     ? modelOrState
     : computeSkyModel(modelOrState || {});
   const night = clamp(model.night, 0, 1);
+  // `night` saturates 6 degrees either side of the horizon, which is far too
+  // late for interior lighting: the round-1 golden-hour card had every window
+  // in the frame at emissive 0 while the sun was still up at +6.6 deg, so a
+  // canyon already in deep shadow read as a grid of black holes. Interior
+  // lights follow the light level in the street, not the position of the sun
+  // relative to the horizon, so they ramp from +16 deg down to +2 deg.
+  const dusk = 1 - smoothstep(2, 16, model.sun.altitudeDeg);
+  // Street lighting switches later, near civil dusk, and is the one thing here
+  // that genuinely is a horizon event.
+  const lampsOn = 1 - smoothstep(-3, 8, model.sun.altitudeDeg);
   const hour = model.requestedHour;
   // Occupancy: an evening peak, an overnight floor, and a small pre-work bump.
   const bell = (centre, width) => {
@@ -2805,7 +3024,7 @@ export function nightPracticalProfile(modelOrState) {
     if (d > 12) d = 24 - d;
     return Math.exp(-(d * d) / (2 * width * width));
   };
-  const occupancy = clamp(0.08 + 0.56 * bell(20.5, 3.0) + 0.20 * bell(7.0, 1.5), 0, 1) * night;
+  const occupancy = clamp(0.08 + 0.56 * bell(20.5, 3.0) + 0.20 * bell(7.0, 1.5), 0, 1) * dusk;
   // Wet ground doubles the apparent reach of every pool: the light is being
   // reflected rather than absorbed.
   const wetGain = 1 + 0.85 * model.wetness;
@@ -2815,10 +3034,14 @@ export function nightPracticalProfile(modelOrState) {
     hour: model.hour,
     weather: model.weather,
     night: round4(night),
+    /** Interior-lighting ramp: 1 once the street is in shadow, 0 in full day. */
+    dusk: round4(dusk),
+    /** Street-lighting ramp: later than `dusk`, keyed to the horizon. */
+    lampsOn: round4(lampsOn),
     /** Ground pool under a 5.5 m street lamp. */
     pool: Object.freeze({
       radius: round4(7.4 * (1 + 0.25 * model.wetness)),
-      opacity: round4(0.46 * night * wetGain * (1 - 0.2 * model.overcast)),
+      opacity: round4(0.46 * lampsOn * wetGain * (1 - 0.2 * model.overcast)),
       /** Warm high-pressure-sodium-through-LED mix, linear RGB. */
       color: Object.freeze([1.0, 0.706, 0.392]),
       falloff: 2.1,
@@ -2826,7 +3049,7 @@ export function nightPracticalProfile(modelOrState) {
     /** Light thrown out of a shopfront onto the sidewalk. */
     shopSpill: Object.freeze({
       depth: round4(3.6 * (1 + 0.3 * model.wetness)),
-      opacity: round4(0.34 * night * wetGain),
+      opacity: round4(0.34 * dusk * wetGain),
       color: Object.freeze([1.0, 0.83, 0.60]),
       occupancy: round4(clamp(occupancy * 1.25, 0, 0.95)),
     }),
@@ -2834,7 +3057,7 @@ export function nightPracticalProfile(modelOrState) {
     vehicle: Object.freeze({
       headColor: Object.freeze([1.0, 0.96, 0.88]),
       tailColor: Object.freeze([1.0, 0.14, 0.07]),
-      opacity: round4(0.5 * night),
+      opacity: round4(0.5 * lampsOn),
       reach: round4(9.5 * (1 + 0.4 * model.wetness)),
     }),
     /** Emissive windows: how many, how bright, how warm. */
