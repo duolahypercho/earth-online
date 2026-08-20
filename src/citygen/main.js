@@ -1563,6 +1563,9 @@ async function boot() {
   await renderer.initialize();
   state.renderer = renderer;
   window.__CITYGEN__ = {
+    // QA handle: repeatable diagnostics need the same THREE the app runs on,
+    // e.g. to raycast a screen pixel back to the object that drew it.
+    THREE,
     getCity: () => state.city,
     getRenderer: () => state.renderer,
     getTraffic: () => state.traffic,

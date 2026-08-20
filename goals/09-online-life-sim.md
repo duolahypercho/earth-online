@@ -8,7 +8,7 @@
 Turn the roaming city study into a playable stylized life-sim: a visible player
 avatar that walks the city, enterable cars with lane-aware driving, local
 multiplayer state sync, WebRTC voice with 3D spatial audio, and a small
-Sims/Schedule-1-style needs layer with cash, a day clock, and resident chats.
+A stylized life-sim needs layer with cash, a day clock, and resident chats.
 
 ## Requirements
 

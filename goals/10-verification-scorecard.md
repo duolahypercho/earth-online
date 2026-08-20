@@ -30,13 +30,13 @@ Each objective requirement with its authoritative evidence and current status.
 | Real OSM traffic-signal nodes | Live OSM fetch returns 661 signals with no errors; `verify:citygen-any-city` adds `highway=traffic_signals` nodes and asserts they produce signal-controlled traffic edges that alternate red/green | Complete |
 | Walk and drive physics | Browser QA measures keyboard walk displacement and vehicle displacement along the traffic graph | Complete |
 | Sidewalk pedestrians | CityGen spawns 26 procedural / 48 real-map path-following pedestrians; QA asserts they exist and move | Complete |
-| Harsh visual critic / blind Schedule I comparison | `.qa-citygen-blind-ab.html` embeds 8 shuffled real-SF and Schedule I pairs; `.qa-citygen-blind-verdict.json` records automated per-pair scores; harsh critic is 101.5/100 | Complete for tooling; human verdict pending |
+| Harsh visual critic | `Docs/VISUAL_QUALITY_GATE.md` rubric, cards captured by `scripts/qa/capture-quality-cards-v1.mjs`, arithmetic owned by `scripts/qa/score-quality-cards-v1.mjs` | Open: the gate's audit records REJECT for the AAA-level claim |
 
-Latest blind verdict: 6 GAME / 2 TIE / 0 REFERENCE across the eight recorded
-pairs. CityGen wins SF night, SF built-in street, Schedule I street, night,
-street life, and real-SF street; the two remaining pairs (real SF skyline and
-day street) are statistical ties. The human A/B page still embeds all pairs
-for judgment. Harsh critic is currently 101.5/100.
+The former automated blind-A/B tooling scored image statistics against
+committed third-party frames. It was retired: the reference media violated the
+repository's reference policy, and edge density, colour count and mean luma
+cannot evaluate geometry, materials, animation or semantics. Nothing that
+tooling reported is evidence of the quality bar.
 
 ## Performance note
 
@@ -52,7 +52,8 @@ Run `npm run qa:blind-ab`, open `.qa-blind-ab.html`, judge each pair blind, and
 reveal labels. Paste the resulting `choices`/`order` JSON into the goal thread
 to finish the AAA comparison requirement.
 
-For CityGen, run `npm run qa:citygen-blind-ab`, open `.qa-citygen-blind-ab.html`,
-judge the 8 real-SF and Schedule I pairs blind, and paste the resulting
-`choices`/`order` JSON into the goal thread. The automated companion verdict
-is in `.qa-citygen-blind-verdict.json`.
+For the canonical route, capture the eight scene cards
+(`node scripts/qa/capture-quality-cards-v1.mjs`), have each independent
+reviewer score them against `Docs/VISUAL_QUALITY_GATE.md`, and run
+`node scripts/qa/score-quality-cards-v1.mjs <review.json>` per reviewer. Record
+only rubric dimensions, scores and written justifications.

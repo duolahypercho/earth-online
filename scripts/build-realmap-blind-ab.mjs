@@ -3,7 +3,7 @@ import { readFile, writeFile, access } from 'node:fs/promises';
 // Usage: node scripts/build-realmap-blind-ab.mjs
 // Builds .qa-realmap-blind-ab.html with five randomized pairs split into two axes:
 //   geography — game vs real SF photos (street layout, blocks, landmarks, grades)
-//   art       — game vs stylized low-poly references (Schedule I / Sim 4 tier)
+//   art       — game vs stylized low-poly references (stylized low-poly reference tier)
 // Reports separate geography and art scores.
 const args = process.argv.slice(2);
 const outPath = args[args.indexOf('--out') + 1] || '.qa-realmap-blind-ab.html';

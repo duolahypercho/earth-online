@@ -195,7 +195,7 @@ Latest gate results on this machine:
 
 ## Honest quality notes
 
-This is a stylized low-poly sandbox, not a Schedule 1 / The Sims 4 clone. It
+This is a stylized low-poly sandbox, not a clone of an external stylized life-sim reference. It
 prioritizes real geography, metadata, and playable generation over AAA
 character animation, interiors, or a fully streamed whole-city simulation.
 Visual acceptance in this environment is enforced with quantitative render
@@ -214,7 +214,7 @@ procedural normal/roughness maps, brighter lane markings, concrete/brick
 sidewalk variation, and instanced high-contrast zebra crossings. Pacific sky
 uses a three-band gradient (horizon/mid/top) with stronger sun, fill light,
 and lighter SSAO (kernel 0.65) so contact shadows read without flattening.
-Vehicles are Schedule-1-style low-poly bodies (chassis, hood, cabin,
+Vehicles are stylized low-poly bodies (chassis, hood, cabin,
 windshield, bumpers, taxi sign) with shared geometries. Street and hill trees
 use dual icosahedron canopy clusters instead of cones. All heavy props remain
 instanced for the ~16.67 ms frame budget.

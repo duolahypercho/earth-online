@@ -47,11 +47,9 @@ building authoring and real SF slice**
    night frames and validates metadata; `npm run qa:citygen-critic` scores
    them against the real SF reference; `npm run qa:citygen-harsh` gates
    color, structure, exposure, metadata, and the dynamic build/undo
-   round-trip; `npm run qa:citygen-blind-ab` embeds shuffled real-vs-game
-   pairs plus official Schedule I screenshot pairs for a human blind
-   comparison; `npm run qa:citygen-blind-verdict` records an automated
-   visual-richness verdict per pair; `npm run qa:citygen-schedule-critic`
-   records the matching Schedule I visual metrics.
+   round-trip. The quality bar itself is scored by reviewers against
+   `Docs/VISUAL_QUALITY_GATE.md` from the eight cards captured by
+   `scripts/qa/capture-quality-cards-v1.mjs`.
 
 ## Definition of done
 
@@ -91,13 +89,11 @@ building authoring and real SF slice**
 - Real SF slice: 700 buildings / 235 blocks / 2833 streets / 469 one-way /
   22 signals, real street names (e.g. 6th Street), rendered and captured
   through the same stylized pipeline.
-- Blind A/B: 9 shuffled pairs covering real San Francisco photos (including
-  the real SF built-in street) and official
-  Schedule I screenshots (street, night, street life) with local verdict JSON.
-  The latest automated verdict is 5 GAME / 2 TIE / 1 REFERENCE across the
-  eight recorded pairs (real SF skyline, street, night, built-in street, plus
-  Schedule I street, night, street life, real SF street); the only reference
-  win is the photographic SF skyline comparison.
+- Quality bar: scored by independent reviewers against
+  `Docs/VISUAL_QUALITY_GATE.md`, from the eight scene cards. The automated
+  image-statistic comparison that used to sit here was retired; it compared
+  against committed third-party frames and could not evaluate geometry,
+  materials, animation, or semantics.
 - Arbitrary map: `npm run verify:citygen-any-city` converts a Portland OSM
   fixture through the same importer used for San Francisco, proving street
   names, one-way directions, sidewalks, signals, type-aware materials, and

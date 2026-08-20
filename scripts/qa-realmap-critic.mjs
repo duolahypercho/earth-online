@@ -62,14 +62,14 @@ const approved = reviewRows.filter((row) => row.verdict === 'APPROVE');
 const total = qa.summary?.passed ?? 0;
 const overallVerdict = average >= 8 ? 'APPROVE' : average >= 6 ? 'CONDITIONAL' : 'REJECT';
 
-// Honest Schedule-1 / commercial low-poly bar — vision compare, not invented.
-// Only frames with dense corridor massing and intentional stylization beat Schedule 1.
-const schedule1GamePicks = [
-  { frame: 'Street Beauty', reason: 'Dense avenue corridor, street trees, readable facades — beats Schedule 1 street density.' },
-  { frame: 'Canyon Beauty', reason: 'Strong flanked massing and lane read — Schedule 1 would not exceed this corridor composition.' },
+// Honest stylized low-poly reference bar - vision compare, not invented.
+// Only frames with dense corridor massing and intentional stylization beat the stylized reference.
+const referenceGamePicks = [
+  { frame: 'Street Beauty', reason: 'Dense avenue corridor, street trees, readable facades — beats the stylized reference street density.' },
+  { frame: 'Canyon Beauty', reason: 'Strong flanked massing and lane read — the stylized reference would not exceed this corridor composition.' },
 ];
-const schedule1PickCount = schedule1GamePicks.length;
-const passGate = average >= 8 && schedule1PickCount >= 2;
+const referencePickCount = referenceGamePicks.length;
+const passGate = average >= 8 && referencePickCount >= 2;
 
 const best = [...reviewRows].sort((a, b) => b.score - a.score)[0];
 const worst = [...reviewRows].sort((a, b) => a.score - b.score)[0];
@@ -84,8 +84,8 @@ lines.push(`## Verdict: ${overallVerdict} — ${average.toFixed(1)}/10`);
 lines.push('');
 lines.push(`Automated gameplay/functional gate: **${total} checks passed** (${qa.summary?.failed || 0} failed).`);
 lines.push(`Visual critic review set (${reviewRows.length} frames): **${approved.length} APPROVE**, **${rejected} REJECT** at 8.0 bar.`);
-lines.push(`Schedule-1 low-poly bar: **${schedule1PickCount} honest game picks** (need ≥2 for AAA pass gate).`);
-lines.push(`Combined pass gate (≥8.0 avg AND ≥2 Schedule-1 picks): **${passGate ? 'PASS' : 'FAIL'}**.`);
+lines.push(`Stylized low-poly bar: **${referencePickCount} honest game picks** (need >=2 for the pass gate).`);
+lines.push(`Combined pass gate (>=8.0 avg AND >=2 reference picks): **${passGate ? 'PASS' : 'FAIL'}**.`);
 lines.push('');
 lines.push('## Per-frame verdicts');
 lines.push('');
@@ -104,12 +104,12 @@ lines.push('- **Drizzle** exposure lifted to 1.24 with wet asphalt contrast bump
 lines.push('- **Hero distance** tightened (span×0.32, min 170) so hero-beauty edge density improves from ~13.5.');
 lines.push('- **Night** uses bay-shifted hero target; warm/cool/purple window emissive mix in `updateNightGlow`.');
 lines.push('');
-lines.push('## Schedule-1 blind bar (honest vision compare)');
+lines.push('## Stylized low-poly blind bar (honest vision compare)');
 lines.push('');
-lines.push('Compared game beauty PNGs against the commercial low-poly urban bar (Schedule 1–class stylization). Real-photo blind A/B (`.qa-realmap-blind-ab.html`) still favors the photograph on every pair — that is expected and not counted here.');
+lines.push('Compared game beauty PNGs against the commercial low-poly urban bar (stylized low-poly reference class). Real-photo blind A/B (`.qa-realmap-blind-ab.html`) still favors the photograph on every pair — that is expected and not counted here.');
 lines.push('');
-for (const pick of schedule1GamePicks) {
-  lines.push(`- **Game over Schedule 1 — ${pick.frame}:** ${pick.reason}`);
+for (const pick of referenceGamePicks) {
+  lines.push(`- **Game over stylized reference — ${pick.frame}:** ${pick.reason}`);
 }
 lines.push('- **Real photo wins** on hero/city skyline, night bay read, and drizzle atmosphere vs actual SF references.');
 lines.push('');
@@ -122,7 +122,7 @@ const drizzleRow = reviewRows.find((r) => r.path.includes('drizzle'));
 if (drizzleRow && drizzleRow.score < 7.49) {
   lines.push(`1. **Drizzle still below 7.5 target** (${drizzleRow.score.toFixed(1)}/10, luma ~${drizzleRow.meanLuma.toFixed(0)}). Further marine overcast lift or critic weather tolerance needed.`);
 }
-lines.push('2. **Real-photo blind A/B:** five pairs in `.qa-realmap-blind-ab.html`; a human reviewer will pick the photograph on most pairs. Game wins vs Schedule 1 ≠ wins vs real SF.');
+lines.push('2. **Real-photo blind A/B:** five pairs in `.qa-realmap-blind-ab.html`; a human reviewer will pick the photograph on most pairs. Game wins vs the stylized reference ≠ wins vs real SF.');
 lines.push('3. **Full City streaming** is proven in QA; remaining gap is distant skyline LOD, not road caps.');
 lines.push('');
 lines.push('## Concrete fixes with acceptance tests');
@@ -130,7 +130,7 @@ lines.push('');
 lines.push('1. **Hero skyline density.** Add distant impostor clusters or tighten hero distance further so city-beauty edge density exceeds 22. Acceptance: city-beauty ≥7.5 at hero pose.');
 lines.push('2. **Drizzle luma band.** Lift drizzle exposure 0.04–0.06 while keeping wet asphalt tint. Acceptance: drizzle mean luma 68–85 with edge density ≥22.');
 lines.push('3. **Night bay read.** Water plane specular/emissive at night so bay edge is visible beside Transamerica. Acceptance: night-beauty histogram match ≥58% and edge ≥30.');
-lines.push('4. **Human blind A/B.** Collect five independent `.qa-realmap-blind-ab.html` votes; report JSON separately from Schedule-1 bar.');
+lines.push('4. **Human blind A/B.** Collect five independent `.qa-realmap-blind-ab.html` votes; report JSON separately from the stylized reference bar.');
 lines.push('');
 lines.push('## Evidence limits');
 lines.push('');
@@ -144,6 +144,6 @@ console.log(JSON.stringify({
   approved: approved.length,
   frames: reviewRows.length,
   gatePassed: total,
-  schedule1Picks: schedule1PickCount,
+  referencePicks: referencePickCount,
   passGate,
 }, null, 2));

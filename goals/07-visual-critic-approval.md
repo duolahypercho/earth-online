@@ -6,7 +6,7 @@
 ## Objective
 
 Compare the expanded map blind against real San Francisco references, the
-previous build, and the Schedule 1 / The Sims 4 quality bar. Reject and reopen
+previous build, and the external stylized-life-sim reference bar. Reject and reopen
 any district that reads generic, inaccurate, repetitive, or unfinished.
 
 ## Requirements

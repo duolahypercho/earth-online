@@ -90,14 +90,16 @@ The **SF Built-in** option loads the repo's real San
 Francisco OSM data as a playable district slice without depending on the
 public Overpass service.
 
-Visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh` (currently
-100/100). `npm run qa:citygen-blind-ab` builds a shuffled side-by-side page of
-the latest CityGen frames against real San Francisco reference photos and
-official Schedule I screenshots for a human blind comparison, and
-`npm run qa:citygen-blind-verdict` records an automated per-pair verdict.
-The latest verdict is 5 GAME / 2 TIE / 1 REFERENCE across the eight recorded
-pairs. The softer final grade holds mean saturation around 41-46 across hero,
-street, aerial, night, and the real SF built-in slice.
+Functional visual QA runs `npm run qa:citygen` + `npm run qa:citygen-harsh`.
+Those are regression signals over image statistics and metadata; they cannot
+approve a quality bar.
+
+The quality bar itself is [Docs/VISUAL_QUALITY_GATE.md](Docs/VISUAL_QUALITY_GATE.md):
+capture the eight scene cards with `node scripts/qa/capture-quality-cards-v1.mjs`,
+score a reviewer's per-dimension integers with
+`node scripts/qa/score-quality-cards-v1.mjs <review.json>`, and read the verdict
+from that script. The gate's own audit currently records REJECT for the
+AAA-level claim.
 `npm run verify:citygen-any-city` proves the OSM importer also converts a
 non-SF city (Portland fixture) with one-way, sidewalk, signal, and dynamic
 add/undo metadata. `SF_QA_SF_BUILTIN=1 npm run qa:citygen` also verifies the
