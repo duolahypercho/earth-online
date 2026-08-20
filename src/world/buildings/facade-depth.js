@@ -1832,3 +1832,1749 @@ export function disposeFacadeDepth(result) {
     for (const group of result.groups) group.geometry?.dispose?.();
   }
 }
+
+// ===========================================================================
+// Facade articulation: constructed elevations
+// ===========================================================================
+//
+// Everything above this line is *additive relief*: trim laid on top of the
+// shell, with the shell's painted window grid still doing the work of the
+// window. That is why a street still read as painted boxes. The painted grid
+// is a 128 px canvas tiled every 12 m x 4.6 m, so its "windows" are a fixed
+// metric wallpaper with no relation to the building's storeys -- three to six
+// rows per 4.6 m, i.e. a window every 0.8-1.5 m of wall. No amount of trim
+// laid over that reads as architecture, and real openings laid over it read as
+// two disagreeing grids.
+//
+// This section therefore *clads*: it replaces the visible wall with real
+// construction. For every edge it emits a partition of the whole rectangle
+// [0, edgeLength] x [0, height] -- base, spandrels, piers, openings, cap --
+// standing `ART_CLAD` (20 mm) proud of the shell wall, so the painted grid is
+// covered rather than competed with. The partition is contiguous by
+// construction: a budget cut lowers the whole elevation to a cheaper
+// vocabulary, it never removes a piece and leaves a hole.
+//
+// Vocabulary, base to cap:
+//
+//   base    plinth, or a commercial storefront: bulkhead, recessed display
+//           glazing with shopfront mullions, transom light, fascia/sign band,
+//           end piers, and a deeper recessed entry with a door leaf.
+//   shaft   per storey: spandrel wall, piers between bays, and either real
+//           openings (reveal returns, frame ring, glass set back behind the
+//           frame, mullion/transom bars, projecting sill with a drip recess
+//           under it, lintel) or -- further away -- one recessed glazing band
+//           per storey on the same sill/head line, so approaching a building
+//           deepens the same lines instead of moving them.
+//   cap     bed mould, corona, parapet wall, coping. Profile follows the era:
+//           a masonry building gets the full entablature, a curtain-wall
+//           building gets a thin coping and a shadow reveal.
+//
+// Weathering follows the geometry rather than a decal: every quad carries a
+// soffit factor (how sheltered/self-shadowed that face is: 0 for a sunlit
+// front face, ~1 for a head soffit or a drip recess) and vertex colour is
+// darkened by that factor plus a ground-splash falloff. Dirt therefore ends up
+// under sills, inside reveals, under cornices and at the pavement, because
+// those are the faces that carry the factor.
+//
+// LOD is by distance from the caller's focus, in four rings; see
+// FACADE_ARTICULATION_RINGS for the radii and per-ring budget.
+
+/**
+ * The depth stack, measured outward from the shell wall (d = 0).
+ *
+ * Everything the articulation emits stands OUTSIDE the shell. That is not a
+ * style choice, it is the only arrangement that works: the shell is opaque and
+ * is still drawn, so an opening cut inward would simply show the shell's
+ * painted texture at the bottom of the hole instead of glass. Measured on the
+ * real slice with an offline rasteriser, a 20 mm clad plane with inward
+ * reveals put the shell in front of every pane on the street.
+ *
+ * So the elevation is built as a real cladding layer:
+ *
+ *   d = 0                                  the shell wall (structure)
+ *   d = ART_PANE            0.012 m        the glass
+ *   d = pane + glassSet     0.042-0.062    the frame face
+ *   d = frame + reveal      0.142-0.262    the clad wall face
+ *   d = clad + projection   up to 0.45     sills, cornices, fascias
+ *
+ * The reveal is therefore the recess from the clad wall face down to the frame
+ * face, and the whole build-up has to fit inside the projection allowance,
+ * which is what bounds the reveal at 0.20 m rather than the brief's 0.25 m.
+ */
+const ART_PANE = 0.012;
+const ART_REVEAL_MIN = 0.1;
+const ART_REVEAL_MAX = 0.2;
+const ART_GLASS_SET_MIN = 0.03;
+const ART_GLASS_SET_MAX = 0.05;
+
+/**
+ * Cladding is extended past each edge end by a little more than the pane
+ * offset, so the neighbouring edge's return is met rather than missed and a
+ * building corner cannot show a seam.
+ */
+const ART_CORNER_OVERLAP = 0.03;
+
+/**
+ * Outward allowance handed to an edge that is a party wall. It is under the
+ * thinnest possible clad stack on purpose: an edge with this allowance is
+ * built as a single flush panel at the pane plane, because the next building
+ * is standing where its cornice would go.
+ */
+const ART_PARTY_ALLOWANCE = 0.05;
+
+/** Outward projection allowance for articulation, from the shell wall. */
+export const FACADE_ARTICULATION_MAX_PROJECTION = 0.45;
+
+/** Bays per edge. A real elevation does not have thirty bays on one face. */
+const MAX_ART_BAYS = 12;
+
+/** Height of the drip recess cut into the wall under a projecting sill. */
+const ART_DRIP_HEIGHT = 0.26;
+const ART_DRIP_DEPTH = 0.035;
+
+/** Below this the edge is a corner return, not an elevation. */
+const MIN_ART_EDGE = 1.2;
+
+export const FACADE_ARTICULATION_VERSION = 'facade-articulation-1';
+
+/**
+ * The constructed constants, exported so a verifier measures against the same
+ * numbers the geometry is built from instead of restating them.
+ *
+ * `revealRange` is the brief's contract: the recess from the clad wall face to
+ * the frame face is never shallower than 0.10 m and never deeper than 0.25 m.
+ * The pane sits a further `glassSet` (0.035-0.065 m) behind the frame face, so
+ * a *pane* measures up to 0.315 m behind the wall; that is the window's build-
+ * up, not its reveal.
+ */
+export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
+  paneOffset: ART_PANE,
+  cornerOverlap: ART_CORNER_OVERLAP,
+  partyAllowance: ART_PARTY_ALLOWANCE,
+  maxProjection: FACADE_ARTICULATION_MAX_PROJECTION,
+  dripHeight: ART_DRIP_HEIGHT,
+  dripDepth: ART_DRIP_DEPTH,
+  minEdge: MIN_ART_EDGE,
+  maxBays: MAX_ART_BAYS,
+  revealRange: Object.freeze({ min: ART_REVEAL_MIN, max: ART_REVEAL_MAX }),
+  glassSetRange: Object.freeze({ min: ART_GLASS_SET_MIN, max: ART_GLASS_SET_MAX }),
+  neighbourMetres: 48,
+});
+
+/**
+ * LOD rings, as distance from the caller's focus in metres and a hard count.
+ *
+ * Both limits are enforced: the radius is what makes the ring meaningful, the
+ * count is what makes the budget a bound rather than a hope. A dense block can
+ * put four hundred buildings inside 150 m; the count cut is applied outside-in
+ * within the ring, so the buildings the player is standing in front of are the
+ * ones that keep the detail.
+ *
+ *   near   <=  78 m   full articulation. A 0.16 m reveal is ~7 px at 1440p
+ *                     from 78 m, so frames, mullions and sills still resolve.
+ *   mid    <= 175 m   reveal + pane + sill. Frames and mullions are under a
+ *                     pixel here and only cost triangles and shimmer.
+ *   far    <= 380 m   clad, with one recessed glazing band per storey on the
+ *                     same sill/head line the near ring uses.
+ *   beyond            silhouette: cornice and plinth only, shell texture kept.
+ *                     No cladding, so there is no colour step at the cut --
+ *                     at 380 m the painted grid is sub-pixel anyway.
+ *
+ * Per-window geometry therefore stops at 175 m. That radius is the documented
+ * one the brief asks for. `capScale` is how far the per-building triangle cap
+ * may grow with the building's measured wall area; see
+ * `articulationTriangleCap`.
+ */
+export const FACADE_ARTICULATION_RINGS = Object.freeze({
+  near: Object.freeze({ radius: 78, maxBuildings: 22, triangleCap: 6000, capScale: 2.4 }),
+  mid: Object.freeze({ radius: 175, maxBuildings: 56, triangleCap: 2000, capScale: 2.6 }),
+  far: Object.freeze({ radius: 380, maxBuildings: 180, triangleCap: 640, capScale: 3.5 }),
+  silhouette: Object.freeze({ radius: Infinity, maxBuildings: 900, triangleCap: 48, capScale: 16 }),
+});
+
+/**
+ * The elevation area one ring's base triangle cap is written for, in square
+ * metres: a four-sided, 60 m perimeter block six storeys high. A building with
+ * twelve edges and three times the wall has three times as much elevation to
+ * build and cannot be held to the same count, so the cap scales with measured
+ * wall area up to the ring's `capScale`.
+ */
+export const FACADE_ARTICULATION_REFERENCE_WALL = 1200;
+
+/**
+ * Per-building triangle cap for a ring.
+ *
+ * Two things drive how much elevation a building has: its wall area, and how
+ * many separate faces that wall is broken into -- a cornice line costs the
+ * same twelve triangles on a 3 m return as on a 40 m frontage. The cap takes
+ * whichever of the two demands more, up to the ring's `capScale`.
+ */
+export function articulationTriangleCap(ring, wallArea, edgeCount = 4) {
+  const spec = FACADE_ARTICULATION_RINGS[ring] || FACADE_ARTICULATION_RINGS.silhouette;
+  const area = Number.isFinite(wallArea) && wallArea > 0 ? wallArea : FACADE_ARTICULATION_REFERENCE_WALL;
+  const edges = Number.isFinite(edgeCount) && edgeCount > 0 ? edgeCount : 4;
+  const demand = Math.max(area / FACADE_ARTICULATION_REFERENCE_WALL, edges / 4);
+  return Math.round(spec.triangleCap * clamp(demand, 1, spec.capScale));
+}
+
+export const FACADE_ARTICULATION_RING_ORDER = Object.freeze(['near', 'mid', 'far', 'silhouette']);
+
+/**
+ * Scene budget. The arithmetic worst case of the ring caps is
+ * 30*3400 + 90*1300 + 260*320 + 1200*48 = 358,600; the batch enforces the
+ * ceiling below by demoting whole rings outside-in, never by dropping one
+ * building and keeping its neighbour.
+ */
+export const FACADE_ARTICULATION_BUDGET = Object.freeze({
+  sceneTriangleBudget: 330000,
+  // Arithmetic worst case: every ring full of buildings tall enough to take
+  // the whole height scale. It is far above the scene budget on purpose --
+  // the budget is what the batch enforces, by demoting whole rings.
+  worstCaseAllowance: 22 * 6000 * 2.4 + 56 * 2000 * 2.6 + 180 * 640 * 3.5 + 900 * 48 * 16,
+  // 2 zones x 7 material classes x 3 roles, and only non-empty buckets are
+  // built, so this is a ceiling and not a target.
+  maxDrawCalls: 48,
+  // Zone refresh thresholds, in metres of focus movement. See the pass.
+  detailRefreshMetres: 25,
+  bulkRefreshMetres: 90,
+});
+
+/**
+ * Material classes. `surface` names a class in src/render/detail-maps.js so
+ * the pass can take a real normal/roughness map for it; `palette` is the
+ * per-building colour draw, in sRGB.
+ *
+ * Roughness and metalness are the physical part of the brief: brick and stucco
+ * are fully dielectric and rough, stone is a little smoother, a curtain-wall
+ * spandrel is a coated metal panel, and glass is smooth with a low dielectric
+ * response. Frames are a separate role so a mullion can be anodised metal
+ * while the wall next to it is brick.
+ */
+export const FACADE_MATERIAL_CLASSES = Object.freeze({
+  brick: Object.freeze({
+    surface: 'brick', roughness: 0.93, metalness: 0.0, detail: 1.0,
+    palette: Object.freeze(['#9c5a45', '#8d4c3a', '#a86a4f', '#7d4436', '#b07a5c', '#94513d']),
+    glass: Object.freeze({ color: '#2e3a42', roughness: 0.09, metalness: 0.28 }),
+  }),
+  stone: Object.freeze({
+    surface: 'painted-concrete', roughness: 0.78, metalness: 0.0, detail: 0.85,
+    palette: Object.freeze(['#cbc3ae', '#bdb49e', '#d6cfbb', '#c2b8a2', '#b6ac96', '#d0c7b1']),
+    glass: Object.freeze({ color: '#2b343b', roughness: 0.08, metalness: 0.3 }),
+  }),
+  plaster: Object.freeze({
+    surface: 'stucco', roughness: 0.89, metalness: 0.0, detail: 0.95,
+    palette: Object.freeze(['#e2c9a8', '#d9b892', '#eed6b6', '#cfae8b', '#e6d2b4', '#dcbfa0']),
+    glass: Object.freeze({ color: '#2f3941', roughness: 0.1, metalness: 0.26 }),
+  }),
+  painted: Object.freeze({
+    surface: 'stucco', roughness: 0.82, metalness: 0.0, detail: 0.8,
+    palette: Object.freeze(['#a8544f', '#4d7686', '#b08b45', '#5a6b8a', '#a56a44', '#6d8a5f', '#96607a']),
+    glass: Object.freeze({ color: '#2f3941', roughness: 0.1, metalness: 0.26 }),
+  }),
+  clapboard: Object.freeze({
+    surface: 'stucco', roughness: 0.76, metalness: 0.0, detail: 0.7,
+    palette: Object.freeze(['#8fb0c9', '#c9a179', '#9dc194', '#cfa2b0', '#93a8c9', '#c7c2a8']),
+    glass: Object.freeze({ color: '#303a42', roughness: 0.11, metalness: 0.24 }),
+  }),
+  concrete: Object.freeze({
+    surface: 'painted-concrete', roughness: 0.86, metalness: 0.02, detail: 0.9,
+    palette: Object.freeze(['#c3bfb4', '#b4b0a5', '#cdc9be', '#a9a59b', '#bcb8ac', '#c8c4b8']),
+    glass: Object.freeze({ color: '#2a333a', roughness: 0.07, metalness: 0.32 }),
+  }),
+  'curtain-wall': Object.freeze({
+    surface: 'glass-curtain', roughness: 0.38, metalness: 0.62, detail: 0.55,
+    palette: Object.freeze(['#5c6a72', '#4e5b63', '#6a7880', '#556269', '#61707a', '#48545c']),
+    glass: Object.freeze({ color: '#1f2b34', roughness: 0.05, metalness: 0.42 }),
+  }),
+});
+
+export const FACADE_MATERIAL_CLASS_NAMES = Object.freeze(Object.keys(FACADE_MATERIAL_CLASSES));
+
+/** Anodised/painted metal for frames, mullions, transom bars and shop fascia. */
+export const FACADE_FRAME_MATERIAL = Object.freeze({
+  roughness: 0.36,
+  metalness: 0.88,
+  palette: Object.freeze(['#3a3f45', '#2b2e33', '#4a4038', '#55585c', '#2f3a3f', '#6a604f']),
+});
+
+/** Source `building.material` -> articulation class. */
+const ART_CLASS_BY_MATERIAL = Object.freeze({
+  brick: 'brick',
+  stone: 'stone',
+  plaster: 'plaster',
+  painted: 'painted',
+  clapboard: 'clapboard',
+  concrete: 'concrete',
+  glass: 'curtain-wall',
+  metal: 'curtain-wall',
+  wood: 'clapboard',
+  stucco: 'plaster',
+});
+
+/**
+ * Which material class an articulated building is built from. The source
+ * record wins; a tower with no usable material tag is a curtain wall and
+ * anything else falls back to plaster, which is what most of the city is.
+ */
+export function resolveArticulationClass(building) {
+  const raw = String(building?.material ?? '').toLowerCase().trim();
+  const direct = ART_CLASS_BY_MATERIAL[raw];
+  if (direct) return { className: direct, source: 'material' };
+  for (const [key, className] of Object.entries(ART_CLASS_BY_MATERIAL)) {
+    if (raw.includes(key)) return { className, source: 'material-substring' };
+  }
+  const height = Number(building?.height);
+  if (Number.isFinite(height) && height >= 45) return { className: 'curtain-wall', source: 'height' };
+  const type = String(building?.type ?? '').toLowerCase();
+  if (type === 'tower') return { className: 'curtain-wall', source: 'type' };
+  if (type === 'warehouse' || type === 'civic') return { className: 'concrete', source: 'type' };
+  return { className: 'plaster', source: 'fallback' };
+}
+
+/**
+ * Storey count. `levels` is the brief's field name, `stories` is what the SF
+ * loader writes, and a record with neither is derived from its height. Every
+ * path is clamped so a bad tag cannot ask for a 2 m storey.
+ */
+export function articulationLevels(building, height) {
+  const declared = Number(
+    building?.levels
+    ?? building?.['building:levels']
+    ?? building?.stories
+    ?? NaN,
+  );
+  const capacity = Math.max(1, Math.floor(height / 2.6));
+  if (Number.isFinite(declared) && declared >= 1) return clamp(Math.round(declared), 1, Math.min(capacity, 80));
+  return clamp(Math.max(1, Math.round(height / 3.5)), 1, Math.min(capacity, 80));
+}
+
+/** Storey floor/top heights, with a taller commercial ground floor. */
+function articulationStoreys(building, height, commercial) {
+  const levels = articulationLevels(building, height);
+  if (levels === 1) return { levels: 1, floors: [0], tops: [height] };
+  const wanted = commercial ? 4.5 : 3.7;
+  const room = height - 2.6 * (levels - 1);
+  const ground = clamp(wanted, 2.6, Math.max(2.6, room));
+  const upper = (height - ground) / (levels - 1);
+  const floors = [0];
+  const tops = [ground];
+  for (let i = 1; i < levels; i += 1) {
+    floors.push(ground + (i - 1) * upper);
+    tops.push(ground + i * upper);
+  }
+  tops[tops.length - 1] = height;
+  return { levels, floors, tops };
+}
+
+/**
+ * Per-building deterministic variation. Drawn from the building id (plus a
+ * `salt` the batch uses to break a signature collision with a neighbour), and
+ * drawn *before* any ring branching so a building's proportions do not change
+ * as the camera walks toward it.
+ */
+export function drawArticulationVariant(building, style, className, salt = 0) {
+  const random = mulberry32((facadeDepthSeed(building?.id) ^ Math.imul(salt + 1, 0x85ebca6b)) >>> 0);
+  const profile = FACADE_STYLE_PROFILES[style] || FACADE_STYLE_PROFILES['modern-grid'];
+  const classDef = FACADE_MATERIAL_CLASSES[className] || FACADE_MATERIAL_CLASSES.plaster;
+  const modern = className === 'curtain-wall' || style === 'modern-grid';
+  return {
+    bayWidth: profile.bayWidth * (0.86 + random() * 0.3),
+    windowRatio: clamp(profile.windowRatio * (0.9 + random() * 0.2), 0.36, 0.88),
+    reveal: clamp(profile.revealDepth * (0.85 + random() * 0.34), ART_REVEAL_MIN, ART_REVEAL_MAX),
+    frameWidth: 0.055 + random() * 0.045,
+    glassSet: ART_GLASS_SET_MIN + random() * (ART_GLASS_SET_MAX - ART_GLASS_SET_MIN),
+    sillLift: 0.72 + random() * 0.42,
+    sillProjection: 0.07 + random() * 0.07,
+    lintelDepth: 0.05 + random() * 0.05,
+    corniceHeight: profile.corniceHeight * (0.85 + random() * 0.3),
+    corniceProjection: clamp(profile.corniceProjection * (0.8 + random() * 0.45), 0.06, 0.26),
+    parapetHeight: 0.55 + random() * 0.75,
+    plinthHeight: profile.plinthHeight * (0.85 + random() * 0.35),
+    plinthProjection: 0.05 + random() * 0.05,
+    // 0 = single light, 1 = one vertical mullion, 2 = mullion + transom.
+    mullionPattern: modern ? (random() < 0.35 ? 1 : 2) : (random() < 0.55 ? 1 : 0),
+    capProfile: modern ? (random() < 0.6 ? 'coping' : 'reveal') : (random() < 0.5 ? 'entablature' : 'bracketed'),
+    baseProfile: random() < 0.5 ? 'plinth' : 'water-table',
+    paletteIndex: Math.floor(random() * classDef.palette.length),
+    framePaletteIndex: Math.floor(random() * FACADE_FRAME_MATERIAL.palette.length),
+    storefrontHue: Math.floor(random() * 6),
+    doorPick: random(),
+    bulkheadHeight: 0.5 + random() * 0.22,
+    transomHeight: 0.42 + random() * 0.3,
+    // Phase shift so two neighbours with the same bay width still do not line
+    // their bays up across the party wall.
+    bayPhase: random(),
+  };
+}
+
+/**
+ * The facade's identity, as a short string. Two buildings with the same
+ * signature would read as the same kit part; the batch uses this to guarantee
+ * that no two buildings inside `ART_NEIGHBOUR_METRES` of each other share one.
+ */
+export function facadeArticulationSignature(style, className, variant) {
+  const bucket = (value, step) => Math.round(value / step);
+  return [
+    style,
+    className,
+    variant.paletteIndex,
+    bucket(variant.bayWidth, 0.35),
+    bucket(variant.windowRatio, 0.06),
+    bucket(variant.reveal, 0.03),
+    variant.capProfile,
+    variant.baseProfile,
+    variant.mullionPattern,
+    bucket(variant.bayPhase, 0.25),
+  ].join('|');
+}
+
+/** Two buildings closer than this must not share a facade signature. */
+export const ART_NEIGHBOUR_METRES = 48;
+
+// ------------------------------------------------------- articulation sink
+
+/**
+ * QuadSink plus a paint state. `paint(tint, soffit)` sets the sRGB colour and
+ * the shelter factor every following quad carries, so an emitter can hand a
+ * head soffit a different weathering response from the sunlit face directly
+ * below it without threading colour through every call.
+ */
+class ArticulationSink extends QuadSink {
+  constructor(context) {
+    super(context);
+    this.tint = [1, 1, 1];
+    this.soffit = 0;
+    this.part = 'wall';
+    this.parts = Object.create(null);
+    // The clad wall face for the elevation currently being laid out, and how
+    // far past each edge end it runs. Row fill needs both and threading them
+    // through every call site buys nothing.
+    this.clad = 0;
+    this.overlap = ART_CORNER_OVERLAP;
+  }
+
+  paint(tint, soffit = 0) {
+    this.tint = tint;
+    this.soffit = soffit;
+    return this;
+  }
+
+  /** Name the element the following quads belong to. Diagnostics and the
+   *  verifier both read it, so every emitter states what it is building. */
+  mark(part) {
+    this.part = part;
+    return this;
+  }
+
+  /**
+   * Same contract as `QuadSink.quad` -- corners in edge-local (s, y, d), the
+   * normal recomputed from the placed quad and the winding fixed against the
+   * hint -- written out longhand because an articulated city emits hundreds of
+   * thousands of these per rebuild and the shared version allocates ten
+   * temporaries per quad. Measured on a 700 building slice this is the
+   * difference between a 1.0 s and a 0.25 s rebuild.
+   */
+  quad(role, edge, corners, hint) {
+    const ctx = this.context;
+    const positions = new Array(12);
+    const uvs = new Array(8);
+    const { minX, maxX, minZ, maxZ, minY, maxY, baseY } = ctx;
+    const invU = 1 / ctx.uvMetres.x;
+    const invV = 1 / ctx.uvMetres.y;
+    for (let i = 0; i < 4; i += 1) {
+      const corner = corners[i];
+      const s = corner[0];
+      const d = corner[2];
+      let x = edge.ax + edge.ux * s + edge.nx * d;
+      let z = edge.az + edge.uz * s + edge.nz * d;
+      let y = baseY + corner[1];
+      if (x < minX) x = minX; else if (x > maxX) x = maxX;
+      if (z < minZ) z = minZ; else if (z > maxZ) z = maxZ;
+      if (y < minY) y = minY; else if (y > maxY) y = maxY;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+      positions[i * 3] = x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = z;
+      uvs[i * 2] = (edge.offset + s) * invU;
+      uvs[i * 2 + 1] = (y - baseY) * invV;
+    }
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const j = (i + 1) & 3;
+      const x0 = positions[i * 3];
+      const y0 = positions[i * 3 + 1];
+      const z0 = positions[i * 3 + 2];
+      const x1 = positions[j * 3];
+      const y1 = positions[j * 3 + 1];
+      const z1 = positions[j * 3 + 2];
+      nx += (y0 - y1) * (z0 + z1);
+      ny += (z0 - z1) * (x0 + x1);
+      nz += (x0 - x1) * (y0 + y1);
+    }
+    const length = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (!(length > 1e-9)) return; // degenerate after clamping: drop it.
+    nx /= length;
+    ny /= length;
+    nz /= length;
+    let hx = edge.nx;
+    let hy = 0;
+    let hz = edge.nz;
+    if (hint === 'in') { hx = -edge.nx; hz = -edge.nz; }
+    else if (hint === 'up') { hx = 0; hy = 1; hz = 0; }
+    else if (hint === 'down') { hx = 0; hy = -1; hz = 0; }
+    else if (hint === 'along') { hx = edge.ux; hz = edge.uz; }
+    else if (hint === 'against') { hx = -edge.ux; hz = -edge.uz; }
+    if (nx * hx + ny * hy + nz * hz < 0) {
+      for (let i = 0; i < 2; i += 1) {
+        const a = i;
+        const b = 3 - i;
+        for (let k = 0; k < 3; k += 1) {
+          const tmp = positions[a * 3 + k];
+          positions[a * 3 + k] = positions[b * 3 + k];
+          positions[b * 3 + k] = tmp;
+        }
+        for (let k = 0; k < 2; k += 1) {
+          const tmp = uvs[a * 2 + k];
+          uvs[a * 2 + k] = uvs[b * 2 + k];
+          uvs[b * 2 + k] = tmp;
+        }
+      }
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
+    }
+    (this.pending || this.quads).push({
+      role,
+      feature: null,
+      edgeIndex: edge.index,
+      positions,
+      uvs,
+      normal: [nx, ny, nz],
+      tint: this.tint,
+      soffit: this.soffit,
+      part: this.part,
+      baseY,
+    });
+    this.parts[this.part] = (this.parts[this.part] || 0) + 1;
+  }
+}
+
+/**
+ * Placement context for articulation. Same invariant as `createPlacement` --
+ * every vertex is clamped into the building's own footprint AABB expanded by
+ * at most `maxProjection`, and into [baseY, baseY + height] -- but it exposes
+ * the bounds as plain numbers so the sink can clamp without a call and an
+ * array allocation per corner.
+ */
+function createArticulationPlacement(bounds, baseY, height, maxProjection, uvMetres) {
+  return {
+    baseY,
+    uvMetres,
+    triangleCap: Infinity,
+    minX: bounds.minX - maxProjection,
+    maxX: bounds.maxX + maxProjection,
+    minZ: bounds.minZ - maxProjection,
+    maxZ: bounds.maxZ + maxProjection,
+    minY: baseY,
+    maxY: baseY + height,
+  };
+}
+
+/**
+ * Grime response. Two terms, both geometric:
+ *  - `soffit` is how sheltered the face is. A head soffit, a reveal return or
+ *    a drip recess never sees rain, so it keeps what the wall above sheds.
+ *  - the ground term is splash-back and traffic film, which falls off over the
+ *    first few metres of wall.
+ * Neither is a decal, so a face that is not there cannot be dirty.
+ */
+function articulationGrimeScale(yAboveBase, soffit) {
+  const ground = Math.exp(-Math.max(0, yAboveBase) / 6.5);
+  return clamp(1 - clamp(soffit, 0, 1) * 0.34 - ground * 0.2, 0.35, 1);
+}
+
+/** sRGB 0-1 channel to the linear working space vertex colours are read in. */
+function srgbToLinear(channel) {
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+function hexToSrgb(hex) {
+  const value = typeof hex === 'string' ? Number.parseInt(hex.replace('#', ''), 16) : Number(hex);
+  if (!Number.isFinite(value)) return [1, 1, 1];
+  return [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
+}
+
+// ---------------------------------------------------------------- emitters
+
+/** Flush cladding: the wall itself, standing `ART_CLAD` proud of the shell. */
+function emitClad(sink, edge, s0, s1, y0, y1, depth = sink.clad) {
+  if (!(s1 - s0 > EPSILON) || !(y1 - y0 > EPSILON)) return;
+  sink.quad('structure', edge, [[s0, y0, depth], [s0, y1, depth], [s1, y1, depth], [s1, y0, depth]], 'out');
+}
+
+/**
+ * A profiled band between two depths: front face plus the two returns. Used
+ * for every horizontal member -- cornice corona, bed mould, coping, string
+ * course, sill, lintel, plinth, fascia -- so they all shade consistently.
+ * The under-return always carries the soffit weathering.
+ */
+function emitProfile(sink, edge, s0, s1, y0, y1, inner, outer, tint, soffit = 0.85) {
+  if (!(s1 - s0 > EPSILON) || !(y1 - y0 > EPSILON) || Math.abs(outer - inner) < 1e-4) return;
+  const up = outer > inner ? 'up' : 'down';
+  const down = outer > inner ? 'down' : 'up';
+  sink.paint(tint, 0.06);
+  sink.quad('structure', edge, [[s0, y0, outer], [s0, y1, outer], [s1, y1, outer], [s1, y0, outer]], 'out');
+  sink.paint(tint, 0.25);
+  sink.quad('structure', edge, [[s0, y1, inner], [s1, y1, inner], [s1, y1, outer], [s0, y1, outer]], up);
+  sink.paint(tint, soffit);
+  sink.quad('structure', edge, [[s0, y0, inner], [s1, y0, inner], [s1, y0, outer], [s0, y0, outer]], down);
+}
+
+/**
+ * One constructed window opening.
+ *
+ * wall plane -> reveal returns -> frame ring -> glass, each on its own plane:
+ *
+ *      d = clad            the clad wall face
+ *      d = clad - reveal   the back of the reveal; the frame face sits here
+ *      d = that - glassSet the pane
+ *
+ * so the pane is genuinely inside a hole and self-shadows, the frame catches a
+ * specular edge, and the head soffit above it stays dark all day.
+ */
+function emitOpening(sink, edge, s0, s1, y0, y1, opt) {
+  const wall = opt.clad;
+  const back = wall - opt.reveal;
+  const pane = back - opt.glassSet;
+  // Reveal returns.
+  sink.mark('window-reveal').paint(opt.tint, 0.5);
+  sink.quad('structure', edge, [[s0, y0, wall], [s0, y1, wall], [s0, y1, back], [s0, y0, back]], 'along');
+  sink.quad('structure', edge, [[s1, y0, wall], [s1, y1, wall], [s1, y1, back], [s1, y0, back]], 'against');
+  sink.paint(opt.tint, 0.95);
+  sink.quad('structure', edge, [[s0, y1, wall], [s1, y1, wall], [s1, y1, back], [s0, y1, back]], 'down');
+  sink.paint(opt.tint, 0.7);
+  sink.quad('structure', edge, [[s0, y0, wall], [s1, y0, wall], [s1, y0, back], [s0, y0, back]], 'up');
+
+  let g0 = s0;
+  let g1 = s1;
+  let gy0 = y0;
+  let gy1 = y1;
+  if (opt.frameWidth > 0.01) {
+    const fw = Math.min(opt.frameWidth, (s1 - s0) * 0.22, (y1 - y0) * 0.22);
+    if (fw > 0.01) {
+      sink.mark('window-frame').paint(opt.frameTint, 0.2);
+      sink.quad('frame', edge, [[s0, y0, back], [s0, y1, back], [s0 + fw, y1, back], [s0 + fw, y0, back]], 'out');
+      sink.quad('frame', edge, [[s1 - fw, y0, back], [s1 - fw, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+      sink.quad('frame', edge, [[s0 + fw, y1 - fw, back], [s0 + fw, y1, back], [s1 - fw, y1, back], [s1 - fw, y1 - fw, back]], 'out');
+      sink.quad('frame', edge, [[s0 + fw, y0, back], [s0 + fw, y0 + fw, back], [s1 - fw, y0 + fw, back], [s1 - fw, y0, back]], 'out');
+      g0 = s0 + fw;
+      g1 = s1 - fw;
+      gy0 = y0 + fw;
+      gy1 = y1 + 0 - fw;
+    }
+  }
+  // The pane. One quad: the mullion and transom bars sit in front of it.
+  sink.mark('window-pane').paint(opt.glassTint, 0.1);
+  sink.quad('glass', edge, [[g0, gy0, pane], [g0, gy1, pane], [g1, gy1, pane], [g1, gy0, pane]], 'out');
+  if (opt.mullionPattern > 0 && g1 - g0 > 0.9) {
+    const bar = 0.05;
+    const centre = (g0 + g1) / 2;
+    sink.mark('mullion').paint(opt.frameTint, 0.2);
+    sink.quad('frame', edge, [[centre - bar, gy0, pane + 0.012], [centre - bar, gy1, pane + 0.012], [centre + bar, gy1, pane + 0.012], [centre + bar, gy0, pane + 0.012]], 'out');
+  }
+  if (opt.mullionPattern > 1 && gy1 - gy0 > 1.1) {
+    const bar = 0.05;
+    const transom = gy0 + (gy1 - gy0) * 0.72;
+    sink.mark('mullion').paint(opt.frameTint, 0.2);
+    sink.quad('frame', edge, [[g0, transom - bar, pane + 0.012], [g0, transom + bar, pane + 0.012], [g1, transom + bar, pane + 0.012], [g1, transom - bar, pane + 0.012]], 'out');
+  }
+}
+
+/** Cheap opening for the mid ring: reveal returns and a pane, nothing else. */
+function emitPlainOpening(sink, edge, s0, s1, y0, y1, opt) {
+  const wall = opt.clad;
+  const back = wall - opt.reveal;
+  sink.mark('window-reveal').paint(opt.tint, 0.5);
+  sink.quad('structure', edge, [[s0, y0, wall], [s0, y1, wall], [s0, y1, back], [s0, y0, back]], 'along');
+  sink.quad('structure', edge, [[s1, y0, wall], [s1, y1, wall], [s1, y1, back], [s1, y0, back]], 'against');
+  sink.paint(opt.tint, 0.95);
+  sink.quad('structure', edge, [[s0, y1, wall], [s1, y1, wall], [s1, y1, back], [s0, y1, back]], 'down');
+  sink.mark('window-pane').paint(opt.glassTint, 0.1);
+  sink.quad('glass', edge, [[s0, y0, back], [s0, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+}
+
+/**
+ * One recessed glazing band across a storey. The far ring's substitute for
+ * individual openings: same sill and head line, same reveal depth, so walking
+ * in deepens the line instead of introducing a new one.
+ */
+function emitStoreyBand(sink, edge, s0, s1, y0, y1, opt) {
+  const wall = opt.clad;
+  const back = wall - opt.reveal;
+  const part = opt.part || 'band';
+  sink.mark(`${part}-reveal`).paint(opt.tint, 0.95);
+  sink.quad('structure', edge, [[s0, y1, wall], [s1, y1, wall], [s1, y1, back], [s0, y1, back]], 'down');
+  sink.paint(opt.tint, 0.7);
+  sink.quad('structure', edge, [[s0, y0, wall], [s1, y0, wall], [s1, y0, back], [s0, y0, back]], 'up');
+  sink.mark(`${part}-pane`).paint(opt.glassTint, 0.1);
+  sink.quad('glass', edge, [[s0, y0, back], [s0, y1, back], [s1, y1, back], [s1, y0, back]], 'out');
+}
+
+/**
+ * Emit one horizontal row as a complete partition of [0, length] x [y0, y1]:
+ * the listed spans get `spanFn`, everything between them is clad wall. This is
+ * what makes a budget cut safe -- the gaps are filled by construction, so a
+ * dropped opening becomes wall rather than a hole.
+ */
+function emitRow(sink, edge, y0, y1, spans, tint, spanFn, soffit = 0, from = null, to = null) {
+  const start = from === null ? -sink.overlap : from;
+  const end = to === null ? edge.length + sink.overlap : to;
+  let cursor = start;
+  for (const span of spans) {
+    if (span.s0 > cursor) {
+      sink.mark('pier').paint(tint, soffit);
+      emitClad(sink, edge, cursor, span.s0, y0, y1);
+    }
+    spanFn(span);
+    cursor = Math.max(cursor, span.s1);
+  }
+  if (cursor < end) {
+    sink.mark('pier').paint(tint, soffit);
+    emitClad(sink, edge, cursor, end, y0, y1);
+  }
+}
+
+/** Bay centres for an edge, as spans of the given width. */
+function bayspans(edge, variant, ratio) {
+  const columns = clamp(Math.round(edge.length / variant.bayWidth), 1, MAX_ART_BAYS);
+  const pitch = edge.length / columns;
+  const width = Math.min(pitch * ratio, 3.2);
+  if (width < MIN_WINDOW_WIDTH || pitch - width < 0.45) return { columns, pitch, width, spans: [] };
+  const spans = [];
+  for (let column = 0; column < columns; column += 1) {
+    const centre = (column + 0.5) * pitch;
+    const s0 = centre - width / 2;
+    const s1 = centre + width / 2;
+    if (s0 < 0.22 || s1 > edge.length - 0.22) continue;
+    spans.push({ s0, s1 });
+  }
+  return { columns, pitch, width, spans };
+}
+
+/** Front face plus all four returns: a member that reads as solid from any angle. */
+function emitPanel(sink, edge, s0, s1, y0, y1, inner, outer, tint, soffit = 0.6) {
+  if (!(s1 - s0 > EPSILON) || !(y1 - y0 > EPSILON)) return;
+  const up = outer > inner ? 'up' : 'down';
+  const down = outer > inner ? 'down' : 'up';
+  sink.paint(tint, 0.05);
+  sink.quad('structure', edge, [[s0, y0, outer], [s0, y1, outer], [s1, y1, outer], [s1, y0, outer]], 'out');
+  if (Math.abs(outer - inner) < 1e-4) return;
+  sink.paint(tint, 0.28);
+  sink.quad('structure', edge, [[s0, y1, inner], [s1, y1, inner], [s1, y1, outer], [s0, y1, outer]], up);
+  sink.paint(tint, soffit);
+  sink.quad('structure', edge, [[s0, y0, inner], [s1, y0, inner], [s1, y0, outer], [s0, y0, outer]], down);
+  sink.paint(tint, 0.35);
+  sink.quad('structure', edge, [[s0, y0, inner], [s0, y1, inner], [s0, y1, outer], [s0, y0, outer]], 'against');
+  sink.quad('structure', edge, [[s1, y0, inner], [s1, y1, inner], [s1, y1, outer], [s1, y0, outer]], 'along');
+}
+
+/**
+ * Ground-floor commercial band: bulkhead, recessed display glazing with
+ * shopfront mullions, a real recessed entry with a door leaf, a transom bar,
+ * a transom light and a projecting fascia, held between two end piers.
+ *
+ * The whole zone [0, groundTop] is partitioned, so the storefront cannot leave
+ * a strip of painted shell showing between itself and the storey above.
+ */
+function emitStorefront(sink, edge, geom, opt) {
+  const { groundTop } = geom;
+  const pier = clamp(edge.length * 0.05, 0.35, 0.95);
+  const s0 = pier;
+  const s1 = edge.length - pier;
+  const bulk = clamp(opt.variant.bulkheadHeight, 0.4, groundTop * 0.24);
+  const fasciaHeight = clamp(0.42, 0.3, groundTop * 0.16);
+  const fasciaBottom = groundTop - fasciaHeight;
+  const transomHeight = opt.full ? clamp(opt.variant.transomHeight, 0.3, groundTop * 0.16) : 0;
+  const barHeight = transomHeight > 0 ? 0.09 : 0;
+  const transomBottom = fasciaBottom - transomHeight;
+  const displayTop = transomBottom - barHeight;
+  if (!(displayTop - bulk > 1.1) || !(s1 - s0 > 1.6)) return false;
+
+  // Every projecting member of the shopfront is held inside the edge's own
+  // outward allowance, which the batch narrows to the cladding thickness on a
+  // party wall. Without this a fascia would stand 130 mm into the next
+  // building, which the neighbour-intrusion check catches.
+  const proud = (metres) => Math.min(opt.clad + metres, opt.projection);
+
+  // End piers, full height of the storey.
+  sink.mark('shop-pier');
+  emitPanel(sink, edge, -sink.overlap, s0, 0, groundTop, opt.clad, proud(0.09), opt.tint, 0.75);
+  emitPanel(sink, edge, s1, edge.length + sink.overlap, 0, groundTop, opt.clad, proud(0.09), opt.tint, 0.75);
+
+  // Display zone: recessed glazing broken by shopfront mullions, with a deeper
+  // entry recess somewhere along it.
+  // Every recess stops at the pane plane: behind it is the opaque shell.
+  const deepest = Math.max(0.04, opt.clad - opt.pane);
+  const glazeDepth = Math.min(0.16, deepest);
+  const entryDepth = Math.min(opt.full ? 0.55 : 0.2, deepest);
+  const entryWidth = clamp((s1 - s0) * 0.18, 1.05, 1.9);
+  const entryCentre = s0 + entryWidth / 2 + (s1 - s0 - entryWidth) * (0.15 + opt.variant.doorPick * 0.7);
+  const e0 = clamp(entryCentre - entryWidth / 2, s0 + 0.15, s1 - entryWidth - 0.15);
+  const e1 = e0 + entryWidth;
+  const hasEntry = opt.full && opt.entry && e1 < s1 - 0.1 && e0 > s0 + 0.1;
+
+  const spans = [];
+  const mullionPitch = 2.3;
+  const pushGlazing = (a, b) => {
+    if (!(b - a > 0.6)) return;
+    const lights = Math.max(1, Math.round((b - a) / mullionPitch));
+    const step = (b - a) / lights;
+    for (let i = 0; i < lights; i += 1) {
+      const g0 = a + i * step + (i === 0 ? 0.05 : 0.045);
+      const g1 = a + (i + 1) * step - (i === lights - 1 ? 0.05 : 0.045);
+      if (g1 - g0 > 0.4) spans.push({ s0: g0, s1: g1, kind: 'display' });
+    }
+  };
+  if (hasEntry) {
+    pushGlazing(s0, e0);
+    spans.push({ s0: e0, s1: e1, kind: 'entry' });
+    pushGlazing(e1, s1);
+  } else {
+    pushGlazing(s0, s1);
+  }
+  spans.sort((a, b) => a.s0 - b.s0);
+
+  // Bulkhead. Splash-back and traffic film live here, hence the high soffit
+  // factor on its under-return and the ground term in the grime response. It
+  // stops at the entry: a kick plate across a doorway is not a doorway.
+  sink.mark('bulkhead');
+  if (hasEntry) {
+    emitPanel(sink, edge, s0, e0, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
+    emitPanel(sink, edge, e1, s1, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
+  } else {
+    emitPanel(sink, edge, s0, s1, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
+  }
+
+  emitRow(sink, edge, bulk, displayTop, spans, opt.tint, (span) => {
+    if (span.kind === 'entry') return;
+    sink.mark('shop-glazing');
+    emitStoreyBand(sink, edge, span.s0, span.s1, bulk, displayTop, {
+      clad: opt.clad, reveal: glazeDepth, tint: opt.tint, glassTint: opt.glassTint, part: 'shop-glazing',
+    });
+  }, 0.2, s0, s1);
+
+  if (hasEntry) {
+    // The entry is cut from the pavement to the transom, deeper than the
+    // display glazing, with a threshold and a door leaf at the back.
+    const doorTop = Math.min(displayTop - 0.05, 2.45);
+    const back = opt.clad - entryDepth;
+    sink.mark('entry').paint(opt.tint, 0.6);
+    sink.quad('structure', edge, [[e0, GROUND_CLEARANCE, opt.clad], [e0, doorTop, opt.clad], [e0, doorTop, back], [e0, GROUND_CLEARANCE, back]], 'along');
+    sink.quad('structure', edge, [[e1, GROUND_CLEARANCE, opt.clad], [e1, doorTop, opt.clad], [e1, doorTop, back], [e1, GROUND_CLEARANCE, back]], 'against');
+    sink.paint(opt.tint, 1);
+    sink.quad('structure', edge, [[e0, doorTop, opt.clad], [e1, doorTop, opt.clad], [e1, doorTop, back], [e0, doorTop, back]], 'down');
+    sink.paint(opt.trimTint, 0.95);
+    sink.quad('structure', edge, [[e0, GROUND_CLEARANCE, opt.clad], [e1, GROUND_CLEARANCE, opt.clad], [e1, GROUND_CLEARANCE, back], [e0, GROUND_CLEARANCE, back]], 'up');
+    // Door leaf: a glazed panel behind its frame, standing at the back of the
+    // recess. The glass is the deepest plane the entrance owns, and it still
+    // stands proud of the shell -- see the depth-stack note.
+    sink.mark('door').paint(opt.frameTint, 0.25);
+    sink.quad('frame', edge, [[e0 + 0.04, GROUND_CLEARANCE, back + 0.025], [e0 + 0.04, doorTop - 0.04, back + 0.025], [e1 - 0.04, doorTop - 0.04, back + 0.025], [e1 - 0.04, GROUND_CLEARANCE, back + 0.025]], 'out');
+    sink.paint(opt.glassTint, 0.25);
+    sink.quad('glass', edge, [[e0 + 0.13, 0.24, back], [e0 + 0.13, doorTop - 0.16, back], [e1 - 0.13, doorTop - 0.16, back], [e1 - 0.13, 0.24, back]], 'out');
+    // Wall above the entry head, up to the display head.
+    sink.mark('shop-wall').paint(opt.tint, 0.25);
+    emitClad(sink, edge, e0, e1, doorTop, displayTop, opt.clad);
+  }
+
+  if (transomHeight > 0) {
+    // Transom bar, then the transom light above the display head.
+    sink.mark('transom-bar');
+    emitPanel(sink, edge, s0, s1, displayTop, transomBottom, opt.clad, proud(0.055), opt.frameTint, 0.8);
+    emitRow(sink, edge, transomBottom, fasciaBottom, [{ s0: s0 + 0.06, s1: s1 - 0.06 }], opt.tint, (span) => {
+      sink.mark('transom');
+      emitStoreyBand(sink, edge, span.s0, span.s1, transomBottom, fasciaBottom, {
+        clad: opt.clad, reveal: Math.min(0.1, deepest), tint: opt.tint, glassTint: opt.glassTint, part: 'transom',
+      });
+    }, 0.3, s0, s1);
+  }
+
+  // Fascia / sign band: the projecting head of the shopfront.
+  sink.mark('fascia');
+  emitPanel(sink, edge, s0 - 0.06, s1 + 0.06, fasciaBottom, groundTop, opt.clad, proud(0.13), opt.signTint, 0.95);
+  return true;
+}
+
+/** Roofline: era-appropriate cap between `capBottom` and the shell top. */
+function emitCap(sink, edge, height, opt) {
+  const { variant, clad, tint, trimTint } = opt;
+  const parapet = clamp(variant.parapetHeight, 0.35, Math.max(0.35, height * 0.09));
+  const corniceHeight = clamp(variant.corniceHeight, 0.28, Math.max(0.28, height * 0.07));
+  const corniceTop = height - parapet;
+  const corniceBottom = corniceTop - corniceHeight;
+  const projection = Math.min(variant.corniceProjection, opt.projection - clad);
+  if (!(corniceBottom > 1) || projection < 0.03) {
+    const flat = Math.max(0, height - 0.6);
+    sink.mark('parapet').paint(tint, 0.1);
+    emitClad(sink, edge, -sink.overlap, edge.length + sink.overlap, flat, height, clad);
+    return { capBottom: flat };
+  }
+  const s0 = -sink.overlap;
+  const s1 = edge.length + sink.overlap;
+  // The bottom of whatever this branch actually emits. It is returned so the
+  // storey loop knows where its wall must stop; getting it wrong leaves an
+  // uncovered strip of painted shell under the cornice.
+  let capBottom = corniceBottom;
+  if (opt.full && (variant.capProfile === 'entablature' || variant.capProfile === 'bracketed')) {
+    // Architrave, then the corona, then the parapet and its coping.
+    capBottom = corniceBottom - 0.16;
+    sink.mark('architrave');
+    emitProfile(sink, edge, s0, s1, corniceBottom - 0.16, corniceBottom, clad, clad + projection * 0.4, trimTint, 0.9);
+    if (variant.capProfile === 'bracketed') {
+      // Dentils: a row of small blocks under the corona. Real high-frequency
+      // detail on the one line of a masonry building the sun always rakes.
+      const count = clamp(Math.round(edge.length / 0.62), 2, 40);
+      const step = edge.length / count;
+      const spans = [];
+      for (let i = 0; i < count; i += 1) {
+        const a = i * step + step * 0.28;
+        const b = i * step + step * 0.72;
+        if (b - a > 0.1) spans.push({ s0: a, s1: b });
+      }
+      emitRow(sink, edge, corniceBottom, corniceBottom + 0.2, spans, tint, (span) => {
+        sink.mark('dentil');
+        emitPanel(sink, edge, span.s0, span.s1, corniceBottom, corniceBottom + 0.2, clad, clad + projection * 0.55, trimTint, 0.95);
+      }, 0.6);
+      sink.mark('cornice');
+      emitProfile(sink, edge, s0, s1, corniceBottom + 0.2, corniceTop, clad, clad + projection, trimTint, 0.95);
+    } else {
+      sink.mark('cornice');
+      emitProfile(sink, edge, s0, s1, corniceBottom, corniceTop, clad, clad + projection, trimTint, 0.95);
+    }
+    sink.mark('parapet').paint(tint, 0.12);
+    emitClad(sink, edge, s0, s1, corniceTop, height - 0.14, clad);
+    sink.mark('coping');
+    emitProfile(sink, edge, s0, s1, height - 0.14, height, clad, clad + Math.min(0.09, projection), trimTint, 0.7);
+  } else if (variant.capProfile === 'reveal') {
+    // Curtain-wall language: a shadow reveal under a flush parapet.
+    sink.mark('cornice');
+    emitProfile(sink, edge, s0, s1, corniceBottom, corniceBottom + 0.14, clad, clad - Math.min(0.07, opt.inwardLimit), trimTint, 0.95);
+    sink.mark('parapet').paint(tint, 0.12);
+    emitClad(sink, edge, s0, s1, corniceBottom + 0.14, height - 0.1, clad);
+    sink.mark('coping');
+    emitProfile(sink, edge, s0, s1, height - 0.1, height, clad, clad + Math.min(0.07, projection), trimTint, 0.7);
+  } else {
+    sink.mark('parapet').paint(tint, 0.12);
+    emitClad(sink, edge, s0, s1, corniceBottom, height - 0.12, clad);
+    sink.mark('coping');
+    emitProfile(sink, edge, s0, s1, height - 0.12, height, clad, clad + Math.min(0.11, projection), trimTint, 0.8);
+  }
+  // Close the slot between the cladding and the shell's roof edge, so an
+  // aerial view does not look down a 200 mm gap all the way round the roof.
+  if (clad > 0.01) {
+    sink.mark('coping').paint(trimTint, 0.2);
+    sink.quad('structure', edge, [[s0, height, 0], [s1, height, 0], [s1, height, clad], [s0, height, clad]], 'up');
+  }
+  return { capBottom };
+}
+
+/** Sill and head of one storey's glazing zone. Shared by openings and bands. */
+function articulationGlazing(storeys, index, variant, capBottom) {
+  const floor = storeys.floors[index];
+  const top = storeys.tops[index];
+  const storeyHeight = top - floor;
+  if (!(storeyHeight > 2.3)) return null;
+  const sill = floor + clamp(storeyHeight * 0.24, 0.5, variant.sillLift);
+  const head = Math.min(sill + Math.min(storeyHeight * 0.6, 2.5), top - 0.35);
+  if (!(head - sill >= MIN_WINDOW_HEIGHT)) return null;
+  if (head > capBottom - 0.2) return null;
+  return { sill, head };
+}
+
+/**
+ * The detail ladder. A building starts at the rung its ring names and steps
+ * down until it fits its triangle cap. Every rung is a complete elevation, so
+ * a step down changes the vocabulary of the whole facade rather than removing
+ * pieces of it -- there is no rung at which part of a wall is missing.
+ */
+export const ART_DETAIL_LADDER = Object.freeze([
+  Object.freeze({ name: 'full', clad: true, edges: 6, openStoreys: 6, frames: true, mullions: true, sills: true, lintels: true, drip: true, storefront: 'full', full: true }),
+  Object.freeze({ name: 'framed', clad: true, edges: 5, openStoreys: 5, frames: true, mullions: true, sills: true, lintels: false, drip: false, storefront: 'full', full: true }),
+  Object.freeze({ name: 'reveal', clad: true, edges: 4, openStoreys: 4, frames: false, mullions: false, sills: true, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'sparse', clad: true, edges: 4, openStoreys: 2, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'banded', clad: true, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'silhouette', clad: false, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: null, full: false }),
+]);
+
+const ART_RING_LADDER_START = Object.freeze({ near: 0, mid: 2, far: 4, silhouette: 5 });
+
+/** Emit one complete elevation for one edge. */
+function layoutEdge(sink, edge, state) {
+  const { height, storeys, variant, detail, opt } = state;
+  const detailEdge = state.detailEdges.has(edge.index);
+  sink.clad = opt.clad;
+  // Adjacent elevations must meet at the corner. Running each one past its end
+  // by its own clad depth closes a right-angle corner exactly; the end returns
+  // emitted below close the rest, so no corner can show a slot.
+  const overlap = Math.max(ART_CORNER_OVERLAP, opt.clad);
+  sink.overlap = overlap;
+
+  // A party wall has the next building standing where its cladding would go.
+  // It gets one flush panel at the pane plane: enough to cover the painted
+  // shell where the neighbour is shorter, nothing that can reach into it.
+  if (detail.clad && opt.projection <= ART_PARTY_ALLOWANCE + 1e-6) {
+    sink.mark('party-wall').paint(opt.tint, 0.4);
+    emitClad(sink, edge, 0, edge.length, 0, height, ART_PANE);
+    return { openings: 0, bands: 0 };
+  }
+
+  if (!detail.clad) {
+    // Silhouette: the shell texture keeps the wall; only the two lines that
+    // give a prism a top and a foot are built.
+    const projection = Math.min(variant.corniceProjection, opt.projection);
+    sink.mark('cornice');
+    emitProfile(sink, edge, 0, edge.length, Math.max(0, height - 0.62), height, 0, projection, opt.trimTint, 0.9);
+    const plinth = clamp(variant.plinthHeight, 0.3, Math.max(0.3, height * 0.12));
+    sink.mark('plinth');
+    emitProfile(sink, edge, 0, edge.length, GROUND_CLEARANCE, plinth, 0, Math.min(variant.plinthProjection, opt.projection), opt.trimTint, 0.95);
+    return { openings: 0, bands: 0 };
+  }
+
+  // Backing plane. The courses below partition the whole elevation, but a
+  // shared edge between two of them can still crack by a pixel on some
+  // rasterisers, and behind that crack is the shell's painted window grid.
+  // One quad just outside the shell means a crack shows the building's own
+  // colour instead. It is deliberately NOT part of the partition: the
+  // coverage check ignores it, so it cannot hide a real hole.
+  sink.mark('backing').paint(opt.tint, 0.45);
+  emitClad(sink, edge, -overlap, edge.length + overlap, 0, height, ART_PANE * 0.5);
+
+  const cap = emitCap(sink, edge, height, opt);
+  const capBottom = Math.max(1, cap.capBottom);
+  let cursor = 0;
+  let openings = 0;
+  let bands = 0;
+
+  let storefront = false;
+  if (state.commercial && detail.storefront && detailEdge && storeys.tops[0] > 2.6 && edge.length >= 4.5) {
+    storefront = emitStorefront(sink, edge, { groundTop: Math.min(storeys.tops[0], capBottom) }, {
+      ...opt,
+      full: detail.storefront === 'full',
+      entry: state.tagged || detail.storefront === 'full',
+      variant,
+    });
+  }
+  if (storefront) {
+    cursor = Math.min(storeys.tops[0], capBottom);
+    sink.counts.storefront = (sink.counts.storefront || 0) + 1;
+  } else {
+    const plinth = Math.min(clamp(variant.plinthHeight, 0.3, Math.max(0.3, height * 0.12)), capBottom * 0.5);
+    sink.mark('plinth');
+    emitPanel(
+      sink, edge, -overlap, edge.length + overlap, GROUND_CLEARANCE, plinth,
+      opt.clad, opt.clad + Math.min(variant.plinthProjection, opt.projection - opt.clad), opt.trimTint, 0.95,
+    );
+    cursor = plinth;
+    sink.counts.plinth = (sink.counts.plinth || 0) + 1;
+  }
+
+  const startStorey = storefront ? 1 : 0;
+  const bays = bayspans(edge, variant, variant.windowRatio);
+  const canOpen = detailEdge && bays.spans.length > 0;
+  let opened = 0;
+
+  for (let index = startStorey; index < storeys.levels; index += 1) {
+    const band = articulationGlazing(storeys, index, variant, capBottom);
+    if (!band) continue;
+    if (!(band.sill > cursor + 0.12)) continue;
+    const useOpenings = canOpen && opened < detail.openStoreys;
+    const sillLedge = useOpenings && detail.sills;
+    const dripBand = useOpenings && detail.drip;
+    const sillTop = sillLedge ? band.sill : band.sill;
+    const sillBottom = sillLedge ? band.sill - 0.1 : band.sill;
+    const dripTop = sillBottom;
+    const dripBottom = dripBand ? dripTop - ART_DRIP_HEIGHT : dripTop;
+
+    if (dripBottom > cursor + EPSILON) {
+      sink.mark('wall').paint(opt.tint, 0.1);
+      emitClad(sink, edge, -overlap, edge.length + overlap, cursor, dripBottom, opt.clad);
+    }
+    if (dripBand && dripTop > dripBottom) {
+      // Drip recess: a 35 mm groove under each sill. Rain leaving the sill
+      // runs into it, so this is where the streak lives -- as geometry that
+      // self-shadows, not as a painted stripe.
+      const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.08, s1: span.s1 + 0.08 }));
+      emitRow(sink, edge, dripBottom, dripTop, spans, opt.tint, (span) => {
+        sink.mark('drip');
+        emitPanel(sink, edge, span.s0, span.s1, dripBottom, dripTop, opt.clad, opt.clad - ART_DRIP_DEPTH, opt.tint, 1);
+      }, 0.15);
+    }
+    if (sillLedge && sillTop > sillBottom) {
+      const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.13, s1: span.s1 + 0.13 }));
+      emitRow(sink, edge, sillBottom, sillTop, spans, opt.tint, (span) => {
+        sink.mark('sill');
+        emitPanel(
+          sink, edge, span.s0, span.s1, sillBottom, sillTop,
+          opt.clad, opt.clad + Math.min(variant.sillProjection, opt.projection - opt.clad), opt.trimTint, 1,
+        );
+      }, 0.2);
+      sink.counts.sill = (sink.counts.sill || 0) + 1;
+    }
+
+    if (useOpenings) {
+      emitRow(sink, edge, band.sill, band.head, bays.spans, opt.tint, (span) => {
+        if (detail.frames) {
+          emitOpening(sink, edge, span.s0, span.s1, band.sill, band.head, {
+            clad: opt.clad,
+            reveal: opt.reveal,
+            glassSet: variant.glassSet,
+            frameWidth: variant.frameWidth,
+            mullionPattern: detail.mullions ? variant.mullionPattern : 0,
+            tint: opt.tint,
+            glassTint: opt.glassTint,
+            frameTint: opt.frameTint,
+          });
+        } else {
+          emitPlainOpening(sink, edge, span.s0, span.s1, band.sill, band.head, {
+            clad: opt.clad, reveal: opt.reveal, tint: opt.tint, glassTint: opt.glassTint,
+          });
+        }
+        openings += 1;
+      }, 0.25);
+      sink.counts.window = (sink.counts.window || 0) + bays.spans.length;
+      opened += 1;
+      cursor = band.head;
+      if (detail.lintels) {
+        const spans = bays.spans.map((span) => ({ s0: span.s0 - 0.09, s1: span.s1 + 0.09 }));
+        const top = Math.min(band.head + 0.14, capBottom);
+        if (top > band.head + 0.02) {
+          emitRow(sink, edge, band.head, top, spans, opt.tint, (span) => {
+            sink.mark('lintel');
+            emitPanel(
+              sink, edge, span.s0, span.s1, band.head, top,
+              opt.clad, opt.clad + Math.min(variant.lintelDepth, opt.projection - opt.clad), opt.trimTint, 0.9,
+            );
+          }, 0.15);
+          cursor = top;
+          sink.counts.lintel = (sink.counts.lintel || 0) + 1;
+        }
+      }
+    } else {
+      // One recessed glazing band across the storey, on the same line the
+      // openings would use.
+      const inset = clamp(edge.length * 0.05, 0.18, 0.8);
+      const b0 = inset;
+      const b1 = edge.length - inset;
+      if (b1 - b0 > 0.9) {
+        emitRow(sink, edge, band.sill, band.head, [{ s0: b0, s1: b1 }], opt.tint, (span) => {
+          emitStoreyBand(sink, edge, span.s0, span.s1, band.sill, band.head, {
+            clad: opt.clad, reveal: opt.reveal, tint: opt.tint, glassTint: opt.glassTint,
+          });
+          bands += 1;
+        }, 0.25);
+        sink.counts.band = (sink.counts.band || 0) + 1;
+        cursor = band.head;
+      }
+    }
+  }
+
+  if (cursor < capBottom) {
+    sink.mark('wall').paint(opt.tint, 0.1);
+    emitClad(sink, edge, -overlap, edge.length + overlap, cursor, capBottom, opt.clad);
+  }
+  // End returns: the side of the cladding tab where it runs past the corner.
+  // On a right angle they land inside the neighbouring elevation and are never
+  // seen; on an acute or obtuse corner they are what closes it.
+  if (opt.clad > 0.01) {
+    sink.mark('corner-return').paint(opt.tint, 0.5);
+    sink.quad('structure', edge, [[-overlap, 0, 0], [-overlap, height, 0], [-overlap, height, opt.clad], [-overlap, 0, opt.clad]], 'against');
+    sink.quad('structure', edge, [[edge.length + overlap, 0, 0], [edge.length + overlap, height, 0], [edge.length + overlap, height, opt.clad], [edge.length + overlap, 0, opt.clad]], 'along');
+  }
+  return { openings, bands };
+}
+
+/**
+ * Plan one building's articulated elevation.
+ *
+ * @param {object} building city.buildings[i]: polygon, height, levels, material, id
+ * @param {object} [options]
+ * @param {'near'|'mid'|'far'|'silhouette'} [options.ring='near']
+ * @param {number} [options.baseY=0]
+ * @param {number} [options.salt=0] variant salt, used to break a signature
+ *   collision with a neighbour
+ * @param {number} [options.maxProjection] outward allowance from the wall
+ * @param {number} [options.triangleCap] override the ring cap
+ */
+export function planFacadeArticulation(building, options = {}) {
+  const ring = FACADE_ARTICULATION_RING_ORDER.includes(options.ring) ? options.ring : 'near';
+  const baseY = Number.isFinite(options.baseY) ? options.baseY : 0;
+  const salt = Number.isFinite(options.salt) ? options.salt : 0;
+  const uvMetres = options.uvMetres || FACADE_DEPTH_UV_METRES;
+  const resolved = resolveFacadeStyleEntry(building);
+  const style = resolved.style;
+  const { className, source: classSource } = resolveArticulationClass(building);
+  const classDef = FACADE_MATERIAL_CLASSES[className];
+  const variant = drawArticulationVariant(building, style, className, salt);
+  const signature = facadeArticulationSignature(style, className, variant);
+  const height = Number(building?.height);
+
+  const empty = {
+    id: building?.id ?? null,
+    style,
+    className,
+    classSource,
+    ring,
+    detailLevel: null,
+    signature,
+    quads: [],
+    triangles: 0,
+    openings: 0,
+    bands: 0,
+    features: {},
+    bounds: null,
+    footprint: null,
+    baseY,
+    height: Number.isFinite(height) ? height : 0,
+    levels: 0,
+    skipped: 'empty',
+  };
+
+  const points = normalisePolygon(building?.polygon);
+  if (!points.length) return { ...empty, skipped: 'polygon' };
+  if (!Number.isFinite(height) || height < MIN_BUILDING_HEIGHT) return { ...empty, skipped: 'height' };
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+  const planExtent = Math.min(maxX - minX, maxZ - minZ);
+  if (!(planExtent >= MIN_PLAN_EXTENT)) return { ...empty, skipped: 'extent' };
+  const footprintArea = Math.abs(signedArea(points));
+  if (!(footprintArea >= MIN_FOOTPRINT_AREA)) return { ...empty, skipped: 'area' };
+
+  const allEdges = buildEdges(points);
+  if (!allEdges.length) return { ...empty, skipped: 'edges' };
+  const usable = allEdges.filter((edge) => edge.length >= MIN_ART_EDGE);
+  if (!usable.length) return { ...empty, skipped: 'short-edges' };
+
+  const declaredProjection = Number.isFinite(options.maxProjection)
+    ? clamp(options.maxProjection, 0.04, FACADE_ARTICULATION_MAX_PROJECTION)
+    : FACADE_ARTICULATION_MAX_PROJECTION;
+  // A narrow plan cannot carry a thick cladding layer on both of its faces.
+  const inwardLimit = Math.max(0.05, Math.min(0.4, planExtent * 0.18));
+  // The reveal is the recess from the clad wall face down to the frame face.
+  // Everything sits outside the shell; see the depth-stack note above.
+  const glassSet = variant.glassSet;
+  const reveal = clamp(
+    Math.min(variant.reveal, Math.max(ART_REVEAL_MIN, planExtent * 0.06)),
+    ART_REVEAL_MIN,
+    ART_REVEAL_MAX,
+  );
+  const cladDepth = ART_PANE + glassSet + reveal;
+  const tagged = hasStreetLevelTrade(building);
+  const commercial = tagged || FACADE_STYLE_PROFILES[style].commercialGround;
+  const storeys = articulationStoreys(building, height, commercial);
+
+  const palette = classDef.palette;
+  const tint = hexToSrgb(palette[variant.paletteIndex % palette.length]);
+  // Trim is the same body colour lifted: painted stone, cast concrete or a
+  // lighter course, which is what a real cornice or sill is.
+  const trimTint = tint.map((c) => clamp(c * 1.18 + 0.06, 0, 1));
+  const signTint = tint.map((c) => clamp(c * 0.42, 0, 1));
+  const glassTint = hexToSrgb(classDef.glass.color);
+  const frameTint = hexToSrgb(FACADE_FRAME_MATERIAL.palette[variant.framePaletteIndex % FACADE_FRAME_MATERIAL.palette.length]);
+
+  // Taller buildings legitimately carry more wall, so the per-building cap
+  // scales with height. The scene budget in the batch is what actually bounds
+  // the city; this only decides which rung of the ladder one building lands on.
+  let perimeter = 0;
+  for (const edge of allEdges) perimeter += edge.length;
+  const wallArea = perimeter * height;
+  const cap = Number.isFinite(options.triangleCap)
+    ? Math.max(0, options.triangleCap)
+    : articulationTriangleCap(ring, wallArea, usable.length);
+
+  const ranked = usable.slice().sort((a, b) => (b.length - a.length) || (a.index - b.index));
+  let start = ART_RING_LADDER_START[ring];
+  let chosen = null;
+  for (let attempt = 0; attempt < 3 && start + attempt < ART_DETAIL_LADDER.length; attempt += 1) {
+    const detail = ART_DETAIL_LADDER[start + attempt];
+    const placement = createArticulationPlacement({ minX, maxX, minZ, maxZ }, baseY, height, declaredProjection, uvMetres);
+    const sink = new ArticulationSink(placement);
+    const detailEdges = new Set(ranked.slice(0, detail.edges).map((edge) => edge.index));
+    const opt = {
+      clad: detail.clad ? cladDepth : 0,
+      pane: ART_PANE,
+      glassSet,
+      reveal,
+      inwardLimit,
+      projection: declaredProjection,
+      tint,
+      trimTint,
+      signTint,
+      glassTint,
+      frameTint,
+      variant,
+      full: detail.full,
+    };
+    const state = { height, storeys, variant, detail, opt, detailEdges, commercial, tagged };
+    let openings = 0;
+    let bands = 0;
+    for (const edge of usable) {
+      // Per-edge outward allowance: a party wall has no room for a cornice.
+      opt.projection = typeof options.projectionForEdge === 'function'
+        ? clamp(Number(options.projectionForEdge(edge.index, edge)) || 0, 0, declaredProjection)
+        : declaredProjection;
+      sink.begin();
+      const result = layoutEdge(sink, edge, state);
+      sink.commit('elevation');
+      openings += result.openings;
+      bands += result.bands;
+    }
+    chosen = { detail, sink, openings, bands };
+    if (sink.triangles <= cap) break;
+  }
+  if (!chosen) return { ...empty, skipped: 'no-detail-level' };
+  const { sink, detail } = chosen;
+  if (!sink.quads.length) return { ...empty, skipped: 'no-features' };
+
+  let boundsMinX = Infinity;
+  let boundsMaxX = -Infinity;
+  let boundsMinY = Infinity;
+  let boundsMaxY = -Infinity;
+  let boundsMinZ = Infinity;
+  let boundsMaxZ = -Infinity;
+  for (const quad of sink.quads) {
+    for (let i = 0; i < 4; i += 1) {
+      boundsMinX = Math.min(boundsMinX, quad.positions[i * 3]);
+      boundsMaxX = Math.max(boundsMaxX, quad.positions[i * 3]);
+      boundsMinY = Math.min(boundsMinY, quad.positions[i * 3 + 1]);
+      boundsMaxY = Math.max(boundsMaxY, quad.positions[i * 3 + 1]);
+      boundsMinZ = Math.min(boundsMinZ, quad.positions[i * 3 + 2]);
+      boundsMaxZ = Math.max(boundsMaxZ, quad.positions[i * 3 + 2]);
+    }
+  }
+
+  return {
+    id: building?.id ?? null,
+    style,
+    className,
+    classSource,
+    ring,
+    detailLevel: detail.name,
+    signature,
+    quads: sink.quads,
+    triangles: sink.triangles,
+    openings: chosen.openings,
+    bands: chosen.bands,
+    features: { ...sink.counts },
+    parts: { ...sink.parts },
+    bounds: { minX: boundsMinX, maxX: boundsMaxX, minY: boundsMinY, maxY: boundsMaxY, minZ: boundsMinZ, maxZ: boundsMaxZ },
+    footprint: { minX, maxX, minZ, maxZ },
+    footprintArea,
+    polygon: points,
+    baseY,
+    height,
+    levels: storeys.levels,
+    triangleCap: cap,
+    perimeter,
+    wallArea,
+    edges: usable.length,
+    maxProjection: declaredProjection,
+    revealDepth: reveal,
+    cladDepth,
+    glassSet,
+    skipped: null,
+  };
+}
+
+// ---------------------------------------------------------------- geometry
+
+/**
+ * Merge articulation quads into one indexed geometry, with the weathering
+ * baked into a vertex colour attribute.
+ *
+ * Colour is `tint * grime(height, soffit)` converted to the linear working
+ * space three.js reads vertex colours in, so a material can stay white and one
+ * merged draw call can still carry a whole street of different building
+ * colours.
+ */
+export function articulationGeometryFromQuads(quads, baseY = 0) {
+  const count = quads.length;
+  if (!count) return null;
+  const positions = new Float32Array(count * 12);
+  const normals = new Float32Array(count * 12);
+  const uvs = new Float32Array(count * 8);
+  const colors = new Float32Array(count * 12);
+  const index = count * 4 > 65535 ? new Uint32Array(count * 6) : new Uint16Array(count * 6);
+  for (let q = 0; q < count; q += 1) {
+    const quad = quads[q];
+    positions.set(quad.positions, q * 12);
+    uvs.set(quad.uvs, q * 8);
+    const tint = quad.tint || [1, 1, 1];
+    const linear = [srgbToLinear(tint[0]), srgbToLinear(tint[1]), srgbToLinear(tint[2])];
+    for (let v = 0; v < 4; v += 1) {
+      normals[q * 12 + v * 3] = quad.normal[0];
+      normals[q * 12 + v * 3 + 1] = quad.normal[1];
+      normals[q * 12 + v * 3 + 2] = quad.normal[2];
+      const scale = articulationGrimeScale(quad.positions[v * 3 + 1] - (quad.baseY ?? baseY), quad.soffit || 0);
+      colors[q * 12 + v * 3] = linear[0] * scale;
+      colors[q * 12 + v * 3 + 1] = linear[1] * scale;
+      colors[q * 12 + v * 3 + 2] = linear[2] * scale;
+    }
+    const base = q * 4;
+    const i = q * 6;
+    index[i] = base;
+    index[i + 1] = base + 1;
+    index[i + 2] = base + 2;
+    index[i + 3] = base;
+    index[i + 4] = base + 2;
+    index[i + 5] = base + 3;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/** Which merged bucket a ring's geometry belongs to. See the pass: `detail`
+ *  is rebuilt when the focus moves 25 m, `bulk` when it moves 90 m. */
+export function articulationZoneFor(ring) {
+  return ring === 'near' || ring === 'mid' ? 'detail' : 'bulk';
+}
+
+// ------------------------------------------------------------------- batch
+
+function pointInPolygon(x, z, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if ((a.z > z) !== (b.z > z)
+      && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z || EPSILON) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Per-edge outward projection allowance.
+ *
+ * A cornice, a sill and a shopfront fascia all stand proud of the wall. On a
+ * party wall there is no room for them: the next building is there. Rather
+ * than shrinking every projection in the city to the worst case, each edge is
+ * probed outward at three points; an edge whose probe lands inside another
+ * building's footprint is a party wall and is built flush.
+ */
+function edgeProjectionProbe(polygon, edges, neighbours, allowance) {
+  const limits = new Map();
+  const probe = allowance + 0.05;
+  for (const edge of edges) {
+    let party = false;
+    for (const t of [0.15, 0.5, 0.85]) {
+      const s = edge.length * t;
+      const x = edge.ax + edge.ux * s + edge.nx * probe;
+      const z = edge.az + edge.uz * s + edge.nz * probe;
+      for (const neighbour of neighbours) {
+        if (neighbour === polygon) continue;
+        if (pointInPolygon(x, z, neighbour)) { party = true; break; }
+      }
+      if (party) break;
+    }
+    limits.set(edge.index, party ? ART_PARTY_ALLOWANCE : allowance);
+  }
+  return limits;
+}
+
+/**
+ * Build merged, ring-budgeted facade articulation for a whole city.
+ *
+ * @param {Array<object>} buildings
+ * @param {object} [options]
+ * @param {{x:number,z:number}} [options.focus] LOD centre
+ * @param {(building:object)=>number} [options.baseYFor] terrain sample
+ * @param {object} [options.rings] override FACADE_ARTICULATION_RINGS
+ * @param {number} [options.sceneTriangleBudget]
+ * @param {'detail'|'bulk'|null} [options.zone] build only one zone
+ * @param {Set<string>|Array<string>} [options.preserveIds] buildings whose
+ *   elevation is authored elsewhere (a hand-made facade atlas, a landmark).
+ *   They are never clad -- they only get the silhouette rung's roofline and
+ *   base course, so the authored surface survives and still has a top.
+ */
+export function buildFacadeArticulationBatch(buildings, options = {}) {
+  const list = Array.isArray(buildings) ? buildings : [];
+  const rings = { ...FACADE_ARTICULATION_RINGS, ...(options.rings || {}) };
+  const sceneBudget = Number.isFinite(options.sceneTriangleBudget)
+    ? Math.max(0, options.sceneTriangleBudget)
+    : FACADE_ARTICULATION_BUDGET.sceneTriangleBudget;
+  const focus = options.focus && Number.isFinite(options.focus.x) && Number.isFinite(options.focus.z)
+    ? { x: options.focus.x, z: options.focus.z }
+    : null;
+  const wantZone = options.zone === 'detail' || options.zone === 'bulk' ? options.zone : null;
+  const preserve = options.preserveIds instanceof Set
+    ? options.preserveIds
+    : new Set(Array.isArray(options.preserveIds) ? options.preserveIds : []);
+  const allowance = Number.isFinite(options.maxProjection)
+    ? clamp(options.maxProjection, 0.04, FACADE_ARTICULATION_MAX_PROJECTION)
+    : FACADE_ARTICULATION_MAX_PROJECTION;
+
+  const rejected = [];
+  const rejectedByReason = Object.create(null);
+  const reject = (id, reason) => {
+    rejectedByReason[reason] = (rejectedByReason[reason] || 0) + 1;
+    if (rejected.length < 40) rejected.push({ id: id ?? null, reason });
+  };
+
+  // 1. Footprints, distance, and the neighbour grid the party-wall probe uses.
+  const cell = 44;
+  const grid = new Map();
+  const entries = [];
+  for (let index = 0; index < list.length; index += 1) {
+    const building = list[index];
+    const polygon = normalisePolygon(building?.polygon);
+    if (!polygon.length) { reject(building?.id, 'polygon'); continue; }
+    const metrics = facadeFootprintMetrics(building);
+    const centroid = metrics.centroid;
+    if (!centroid) { reject(building?.id, 'centroid'); continue; }
+    const distance = focus ? Math.hypot(centroid.x - focus.x, centroid.z - focus.z) : 0;
+    const entry = { building, index, polygon, centroid, distance, rank: focus ? distance : index };
+    entries.push(entry);
+    const key = `${Math.floor(centroid.x / cell)}:${Math.floor(centroid.z / cell)}`;
+    let bucket = grid.get(key);
+    if (!bucket) { bucket = []; grid.set(key, bucket); }
+    bucket.push(entry);
+  }
+  const neighboursOf = (entry) => {
+    const cx = Math.floor(entry.centroid.x / cell);
+    const cz = Math.floor(entry.centroid.z / cell);
+    const out = [];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const bucket = grid.get(`${cx + dx}:${cz + dz}`);
+        if (bucket) for (const other of bucket) if (other !== entry) out.push(other.polygon);
+      }
+    }
+    return out;
+  };
+
+  // 2. Ring assignment: nearest first, bounded by both radius and count so the
+  //    budget is a bound rather than a hope. Ties break on declaration order,
+  //    so the assignment is deterministic for a given focus.
+  const ordered = entries.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
+
+  // Uniform outside-in degrade. Every step moves a whole ring, and the ring
+  // membership cut is nearest-first, so no step can leave one facade detailed
+  // and its neighbour at the same distance bare:
+  //   1. shrink every ring's population to 60%
+  //   2. far -> silhouette   3. mid -> far   4. near -> mid
+  const assignRings = (demotions) => {
+    const scale = demotions >= 1 ? 0.6 : 1;
+    const used = { near: 0, mid: 0, far: 0, silhouette: 0 };
+    for (const entry of ordered) {
+      let ring = 'silhouette';
+      for (const name of ['near', 'mid', 'far']) {
+        const room = Math.max(1, Math.floor(rings[name].maxBuildings * scale));
+        if (entry.distance <= rings[name].radius && used[name] < room) {
+          ring = name;
+          used[name] += 1;
+          break;
+        }
+      }
+      let final = ring;
+      if (demotions >= 2 && ring === 'far') final = 'silhouette';
+      if (demotions >= 3 && ring === 'mid') final = 'far';
+      if (demotions >= 4 && ring === 'near') final = 'mid';
+      // An authored elevation is never clad over, whatever ring it lands in.
+      if (preserve.has(entry.building?.id)) final = 'silhouette';
+      entry.ring = final;
+    }
+  };
+
+  const planAll = () => {
+    const signatureGrid = new Map();
+    const planned = [];
+    let triangles = 0;
+    let resignatured = 0;
+    let collisions = 0;
+    let partyEdges = 0;
+    for (const entry of ordered) {
+      const zone = articulationZoneFor(entry.ring);
+      if (wantZone && zone !== wantZone) continue;
+      const baseY = typeof options.baseYFor === 'function' ? Number(options.baseYFor(entry.building)) : options.baseY;
+      const edges = buildEdges(entry.polygon).filter((edge) => edge.length >= MIN_ART_EDGE);
+      const limits = edgeProjectionProbe(entry.polygon, edges, neighboursOf(entry), allowance);
+      for (const limit of limits.values()) if (limit < allowance) partyEdges += 1;
+      // Non-repeating language: a signature already used by a building within
+      // ART_NEIGHBOUR_METRES is re-drawn with a salted seed until it differs.
+      const cx = Math.floor(entry.centroid.x / ART_NEIGHBOUR_METRES);
+      const cz = Math.floor(entry.centroid.z / ART_NEIGHBOUR_METRES);
+      const nearbySignatures = new Set();
+      for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dz = -1; dz <= 1; dz += 1) {
+          const bucket = signatureGrid.get(`${cx + dx}:${cz + dz}`);
+          if (bucket) for (const signature of bucket) nearbySignatures.add(signature);
+        }
+      }
+      let plan = null;
+      for (let salt = 0; salt < 8; salt += 1) {
+        plan = planFacadeArticulation(entry.building, {
+          ring: entry.ring,
+          baseY: Number.isFinite(baseY) ? baseY : 0,
+          salt,
+          maxProjection: allowance,
+          projectionForEdge: (edgeIndex) => limits.get(edgeIndex) ?? allowance,
+          uvMetres: options.uvMetres,
+        });
+        if (plan.skipped) break;
+        if (!nearbySignatures.has(plan.signature)) break;
+        collisions += 1;
+        if (salt === 7) break;
+        resignatured += 1;
+      }
+      if (!plan || plan.skipped) { reject(entry.building?.id, plan?.skipped || 'plan'); continue; }
+      const key = `${cx}:${cz}`;
+      let bucket = signatureGrid.get(key);
+      if (!bucket) { bucket = new Set(); signatureGrid.set(key, bucket); }
+      bucket.add(plan.signature);
+      planned.push({ entry, plan, zone });
+      triangles += plan.triangles;
+    }
+    return { planned, triangles, resignatured, collisions, partyEdges };
+  };
+
+  let demotions = 0;
+  assignRings(demotions);
+  let attempt = planAll();
+  while (attempt.triangles > sceneBudget && demotions < 4) {
+    demotions += 1;
+    rejected.length = 0;
+    for (const key of Object.keys(rejectedByReason)) delete rejectedByReason[key];
+    assignRings(demotions);
+    attempt = planAll();
+  }
+
+  // 3. Merge. One bucket per (zone, material class, role): a whole city of
+  //    articulation costs at most FACADE_ARTICULATION_BUDGET.maxDrawCalls.
+  const buckets = new Map();
+  const perBuilding = [];
+  const ringStats = { near: { buildings: 0, triangles: 0 }, mid: { buildings: 0, triangles: 0 }, far: { buildings: 0, triangles: 0 }, silhouette: { buildings: 0, triangles: 0 } };
+  const features = Object.create(null);
+  const parts = Object.create(null);
+  const classes = Object.create(null);
+  const signatures = new Set();
+  let openings = 0;
+  let bands = 0;
+  for (const { entry, plan, zone } of attempt.planned) {
+    ringStats[plan.ring].buildings += 1;
+    ringStats[plan.ring].triangles += plan.triangles;
+    classes[plan.className] = (classes[plan.className] || 0) + 1;
+    signatures.add(plan.signature);
+    openings += plan.openings;
+    bands += plan.bands;
+    for (const [name, value] of Object.entries(plan.features)) features[name] = (features[name] || 0) + value;
+    for (const [name, value] of Object.entries(plan.parts)) parts[name] = (parts[name] || 0) + value;
+    perBuilding.push({
+      id: plan.id,
+      ring: plan.ring,
+      detailLevel: plan.detailLevel,
+      className: plan.className,
+      style: plan.style,
+      signature: plan.signature,
+      distance: entry.distance,
+      triangles: plan.triangles,
+      triangleCap: plan.triangleCap,
+      wallArea: plan.wallArea,
+      edges: plan.edges,
+      openings: plan.openings,
+      levels: plan.levels,
+      revealDepth: plan.revealDepth,
+    });
+    for (const quad of plan.quads) {
+      const key = `${zone}|${plan.className}|${quad.role}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { key, zone, className: plan.className, role: quad.role, quads: [], buildingIds: [] };
+        buckets.set(key, bucket);
+      }
+      bucket.quads.push(quad);
+      if (bucket.buildingIds[bucket.buildingIds.length - 1] !== plan.id) bucket.buildingIds.push(plan.id);
+    }
+  }
+
+  const groups = [];
+  for (const key of Array.from(buckets.keys()).sort()) {
+    const bucket = buckets.get(key);
+    const geometry = articulationGeometryFromQuads(bucket.quads);
+    if (!geometry) continue;
+    groups.push({
+      key,
+      zone: bucket.zone,
+      className: bucket.className,
+      role: bucket.role,
+      geometry,
+      quads: bucket.quads.length,
+      triangles: bucket.quads.length * 2,
+      buildingIds: bucket.buildingIds.slice(),
+    });
+  }
+
+  return {
+    version: FACADE_ARTICULATION_VERSION,
+    groups,
+    drawCalls: groups.length,
+    triangles: attempt.triangles,
+    focus,
+    zone: wantZone,
+    rings: FACADE_ARTICULATION_RING_ORDER.reduce((out, name) => {
+      out[name] = {
+        radius: rings[name].radius,
+        maxBuildings: rings[name].maxBuildings,
+        triangleCap: rings[name].triangleCap,
+        buildings: ringStats[name].buildings,
+        triangles: ringStats[name].triangles,
+      };
+      return out;
+    }, {}),
+    buildings: perBuilding,
+    articulated: perBuilding.length,
+    sourceBuildings: list.length,
+    rejected,
+    rejectedByReason: { ...rejectedByReason },
+    openings,
+    bands,
+    features: { ...features },
+    parts: { ...parts },
+    classes: { ...classes },
+    signatures: {
+      total: perBuilding.length,
+      unique: signatures.size,
+      uniqueRatio: perBuilding.length ? signatures.size / perBuilding.length : 1,
+      neighbourCollisions: attempt.collisions,
+      resignatured: attempt.resignatured,
+    },
+    partyEdges: attempt.partyEdges,
+    preservedAuthored: perBuilding.filter((record) => preserve.has(record.id)).length,
+    demotions,
+    sceneTriangleBudget: sceneBudget,
+    maxProjection: allowance,
+  };
+}
+
+/** Release every geometry a batch produced. */
+export function disposeFacadeArticulation(batch) {
+  if (!batch) return;
+  for (const group of batch.groups || []) group.geometry?.dispose?.();
+}

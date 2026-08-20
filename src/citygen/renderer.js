@@ -3642,7 +3642,18 @@ export class CityRenderer {
     }
     this.buildHeroGroundingBatch(root, heroRoofEntries, city);
     this.buildHeroRoofBatches(root, heroRoofEntries, heroTextures);
-    this.buildFacadeRelief(root, depthCandidates, depthBaseY);
+    // The facade-articulation presentation pass now owns the visible wall and
+    // emits a superset of this layer (cornice, plinth, glazing bands) on the same
+    // lines, so building both costs ~60k triangles that are immediately hidden
+    // and would z-fight if they were not. The pass hides these meshes at runtime;
+    // this guard stops them being built at all. Drop the guard (not the pass) to
+    // fall back to additive relief.
+    if (!PASSES.some((pass) => pass.id === 'facade-articulation')) {
+      this.buildFacadeRelief(root, depthCandidates, depthBaseY);
+    } else {
+      this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
+      this.facadeDepthDiagnostics.supersededBy = 'facade-articulation';
+    }
   }
 
   /**
