@@ -13,8 +13,12 @@ import path from 'node:path';
 
 const URL_BASE = process.env.SF_QA_URL || 'http://127.0.0.1:5178/';
 const OUT = process.env.SF_QA_OUT || '.qa-quality-cards';
-const W = Number(process.env.SF_QA_W || 1280);
-const H = Number(process.env.SF_QA_H || 720);
+// The gate's blind-review protocol wants 1440p or higher. That is ~4x the
+// fragments of 720p on a software backend, so iteration rounds run smaller and
+// say so; a round offered for review must set SF_QA_PROTOCOL=1.
+const PROTOCOL = process.env.SF_QA_PROTOCOL === '1';
+const W = Number(process.env.SF_QA_W || (PROTOCOL ? 2560 : 1280));
+const H = Number(process.env.SF_QA_H || (PROTOCOL ? 1440 : 720));
 const SETTLE = Number(process.env.SF_QA_SETTLE_MS || 2500);
 const SHOT_MS = Number(process.env.SF_QA_SHOT_MS || 240000);
 const BOOT_MS = Number(process.env.SF_QA_BOOT_MS || 300000);
@@ -32,6 +36,16 @@ const ALL_CARDS = [
   { id: '07-character-curb',hour: 12, pose: 'character', weather: 'clear' },
   { id: '08-traversal',    hour: 12, pose: 'traversal', weather: 'clear' },
 ];
+// SF_QA_PROBE="cardId:u,v u,v; cardId:u,v" - screen-space points to raycast.
+const PROBES = new Map();
+for (const spec of (process.env.SF_QA_PROBE || '').split(';').map((x) => x.trim()).filter(Boolean)) {
+  const [id, list] = spec.split(':');
+  if (!id || !list) continue;
+  const points = list.trim().split(/\s+/).map((pair) => pair.split(',').map(Number))
+    .filter((pt) => pt.length === 2 && pt.every(Number.isFinite));
+  if (points.length) PROBES.set(id.trim(), points);
+}
+
 const wanted = process.env.SF_QA_CARDS
   ? process.env.SF_QA_CARDS.split(',').map((s) => s.trim())
   : ALL_CARDS.map((c) => c.id);
@@ -62,6 +76,15 @@ const report = { url: URL_BASE, viewport: { w: W, h: H }, cards: [], errors: [] 
 let crashes = 0;
 page.on('crash', () => { crashes += 1; consoleErrors.push('renderer process crashed'); });
 
+// SF_QA_WINDOW="x,z,radius" rebuilds the world on a different window of the SF
+// extract before any card is posed. The default window has no shoreline in it,
+// so the waterfront card is captured in its own run rather than by rebuilding
+// the world mid-round (a rebuild costs a full world build).
+const WINDOW_SPEC = (process.env.SF_QA_WINDOW || '').split(',').map(Number);
+const WORLD_WINDOW = WINDOW_SPEC.length === 3 && WINDOW_SPEC.every(Number.isFinite)
+  ? { center: [WINDOW_SPEC[0], WINDOW_SPEC[1]], radius: WINDOW_SPEC[2] }
+  : null;
+
 async function bootWorld() {
   await page.goto(URL_BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForFunction(() => {
@@ -75,6 +98,15 @@ async function bootWorld() {
     const t = window.__CITYGEN__?.getTraffic?.();
     return !!t && (t.pedestrians?.length || 0) > 0 && (t.cars?.length || 0) > 0;
   }, null, { timeout: BOOT_MS }).catch(() => {});
+  if (WORLD_WINDOW) {
+    report.worldWindow = await page.evaluate(async (w) => {
+      const api = window.__CITYGEN__;
+      if (typeof api.loadSfWindow !== 'function') return { error: 'no loadSfWindow hook' };
+      return api.loadSfWindow(w);
+    }, WORLD_WINDOW);
+    console.log(`world window: ${JSON.stringify(report.worldWindow)}`);
+    await page.waitForFunction(() => (window.__CITYGEN__?.getCity()?.buildings?.length || 0) > 50, null, { timeout: BOOT_MS });
+  }
 }
 
 /** Evaluate against the live world, re-booting once if the context is lost. */
@@ -132,6 +164,16 @@ report.state = await evaluateInWorld(() => {
     rendererBackend: s.rendererBackend, webgpu: s.webgpu, webgl2: s.webgl2,
     avgBuildingHeight: s.avgBuildingHeight, avgStreetWidth: s.avgStreetWidth,
     errors: s.errors,
+    // What each presentation pass contributed, and what it cost to build. A
+    // round with a silently-empty pass is not evidence about that pass.
+    passes: s.passes ? {
+      registered: s.passes.registered,
+      errors: s.passes.errors,
+      totals: s.passes.totals,
+      built: (s.passes.built || []).map((b) => ({
+        id: b.id, buildMs: b.buildMs, triangles: b.triangles, drawCalls: b.drawCalls,
+      })),
+    } : null,
   };
 });
 
@@ -305,11 +347,38 @@ async function placeCamera(pose) {
       eye = { x: f.x - ux * 22 + nx * walk, z: f.z - uz * 22 + nz * walk };
       target = { x: f.x, z: f.z };
     } else if (pose === 'character') {
-      // third person: behind and above a figure standing at the curb
+      // The card is only evidence if there is a character in it. The canonical
+      // runtime has no player avatar, so this frames the nearest simulated
+      // pedestrian to the chosen kerb - and refuses if there is nobody there,
+      // rather than shooting an empty pavement and calling it a character card.
       const stand = { x: a.x + nx * (halfRoad + 0.6), z: a.z + nz * (halfRoad + 0.6) };
-      eye = { x: stand.x - ux * 4.2 + nx * 1.1, z: stand.z - uz * 4.2 + nz * 1.1 };
-      target = stand;
-      eyeLift = EYE + 0.35;
+      const traffic = api.getTraffic?.();
+      const crowd = typeof traffic?.presentationAgents === 'function'
+        ? traffic.presentationAgents()
+        : (traffic?.pedestrians || []);
+      let best = null; let bestDistance = Infinity;
+      for (const agent of crowd) {
+        const ax = Number(agent?.x); const az = Number(agent?.z);
+        if (!Number.isFinite(ax) || !Number.isFinite(az)) continue;
+        const distance = Math.hypot(ax - stand.x, az - stand.z);
+        if (distance < bestDistance) { bestDistance = distance; best = { x: ax, z: az }; }
+      }
+      if (!best || bestDistance > 30) {
+        return { ok: false, reason: `no pedestrian within 30 m of the kerb (nearest ${Number.isFinite(bestDistance) ? bestDistance.toFixed(1) : 'none'} m)`, crowd: crowd.length };
+      }
+      // Stand off far enough that the subject is whole in frame. Anything under
+      // ~3 m puts the camera inside the body.
+      const away = Math.hypot(best.x - a.x, best.z - a.z) > 0.01
+        ? { x: (best.x - a.x), z: (best.z - a.z) }
+        : { x: nx, z: nz };
+      const awayLength = Math.hypot(away.x, away.z) || 1;
+      const offsetX = away.x / awayLength;
+      const offsetZ = away.z / awayLength;
+      const STANDOFF = 4.6;
+      eye = { x: best.x + offsetX * STANDOFF - ux * 1.4, z: best.z + offsetZ * STANDOFF - uz * 1.4 };
+      target = best;
+      eyeLift = EYE + 0.15;
+      note = `${note ? `${note}; ` : ''}subject is a simulated pedestrian ${bestDistance.toFixed(1)} m from the kerb point; the runtime has no player avatar`;
     } else if (pose === 'traversal') {
       eye = { x: a.x - ux * 30 + nx * walk, z: a.z - uz * 30 + nz * walk };
       target = { x: a.x + ux * 140, z: a.z + uz * 140 };
@@ -379,13 +448,41 @@ for (const card of cards) {
   try {
     await page.evaluate((h) => { window.__QA_HOUR__ = h; window.__CITYGEN__.setClock?.(h); }, card.hour);
     if (card.weather) {
+      // `setWeather` is a renderer method. Calling it on the __CITYGEN__ handle
+      // silently returned null for every card, so the wet-street card was dry
+      // and the water/weather rubric dimension had no evidence behind it.
       entry.weatherApplied = await page.evaluate((w) => {
         const api = window.__CITYGEN__;
-        if (typeof api.setWeather === 'function') { api.setWeather(w); return w; }
-        return null;
+        const r = api.getRenderer?.();
+        if (typeof api.setWeather === 'function') return { via: 'api', applied: api.setWeather(w) ?? w };
+        if (r && typeof r.setWeather === 'function') return { via: 'renderer', applied: r.setWeather(w) };
+        return { via: null, applied: null };
       }, card.weather);
+      // The environment rig rebuilds asynchronously; a screenshot taken in the
+      // same tick records the previous weather.
+      await page.waitForTimeout(1500);
+      entry.weatherState = await page.evaluate(() => {
+        const r = window.__CITYGEN__.getRenderer?.();
+        const fog = r?.scene?.fog;
+        return {
+          envWeather: r?.envWeather ?? null,
+          fog: fog ? { near: +fog.near.toFixed(1), far: +fog.far.toFixed(1), color: fog.color.getHexString() } : null,
+          exposure: r?.renderer?.toneMappingExposure ?? null,
+        };
+      });
     }
     entry.pose = await placeCamera(card.pose);
+    // A failed pose used to leave the camera wherever the previous card left it
+    // and shoot anyway, so the round silently contained a duplicate frame under
+    // a different card's name. That is worse than a missing card: it is false
+    // evidence. Refuse, and fail the round.
+    if (entry.pose?.ok === false) {
+      entry.error = `pose failed: ${entry.pose.reason || 'unknown'}`;
+      entry.skipped = true;
+      report.cards.push(entry);
+      console.error(`${card.id}: SKIPPED (${entry.error}) - no frame written`);
+      continue;
+    }
     await page.waitForTimeout(SETTLE);
     const file = path.join(OUT, `${card.id}.png`);
     const t0 = Date.now();
@@ -427,6 +524,44 @@ for (const card of cards) {
       const total = holes + solid;
       return { samples: total, holes, solid, holeRatio: +(holes / total).toFixed(4), worst };
     });
+
+    // Optional: ask the world what actually drew at a screen pixel. A visual
+    // artifact is otherwise a guessing game, and a re-boot to investigate costs
+    // a full world build. Format: SF_QA_PROBE="01-street-day:0.25,0.85 0.5,0.9"
+    if (PROBES.has(card.id)) {
+      entry.probes = await page.evaluate(({ points, viewport }) => {
+        const api = window.__CITYGEN__;
+        const THREE = api.THREE;
+        const r = api.getRenderer();
+        if (!THREE?.Raycaster) return { error: 'no THREE handle' };
+        const raycaster = new THREE.Raycaster();
+        const out = [];
+        for (const [u, v] of points) {
+          raycaster.setFromCamera({ x: u * 2 - 1, y: -(v * 2 - 1) }, r.camera);
+          const hits = raycaster.intersectObject(r.scene, true).slice(0, 3);
+          out.push({
+            u, v,
+            hits: hits.map((hit) => ({
+              name: hit.object.name || '(unnamed)',
+              parent: hit.object.parent?.name || '(no parent)',
+              passId: hit.object.userData?.passId || hit.object.parent?.userData?.passId || null,
+              userData: JSON.stringify(hit.object.userData || {}).slice(0, 200),
+              distance: +hit.distance.toFixed(2),
+              point: { x: +hit.point.x.toFixed(2), y: +hit.point.y.toFixed(2), z: +hit.point.z.toFixed(2) },
+              material: hit.object.material ? {
+                type: hit.object.material.type,
+                color: hit.object.material.color?.getHexString?.() || null,
+                transparent: !!hit.object.material.transparent,
+                opacity: hit.object.material.opacity,
+                depthWrite: hit.object.material.depthWrite,
+                renderOrder: hit.object.renderOrder,
+              } : null,
+            })),
+          });
+        }
+        return { viewport, out };
+      }, { points: PROBES.get(card.id), viewport: { w: W, h: H } });
+    }
 
     entry.held = await page.evaluate(() => {
       const r = window.__CITYGEN__.getRenderer();
@@ -474,8 +609,26 @@ if (report.coverageSummary) {
 }
 
 report.rendererCrashes = crashes;
+report.protocolResolution = PROTOCOL;
+const skipped = report.cards.filter((c) => c.skipped).map((c) => c.id);
+const failed = report.cards.filter((c) => c.error && !c.skipped).map((c) => c.id);
+report.roundStatus = {
+  requested: cards.map((c) => c.id),
+  captured: report.cards.filter((c) => c.file).map((c) => c.id),
+  skipped,
+  failed,
+  complete: skipped.length === 0 && failed.length === 0 && report.cards.length === cards.length,
+  meetsProtocolResolution: PROTOCOL && H >= 1440,
+};
 report.errors = consoleErrors.slice(0, 40);
 await writeFile(path.join(OUT, 'capture-report.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report.state, null, 2));
 console.log(`errors: ${report.errors.length}`);
+if (!report.roundStatus.complete) {
+  console.error(`\nROUND INCOMPLETE - skipped: [${skipped.join(', ') || 'none'}] failed: [${failed.join(', ') || 'none'}]`);
+}
+if (!report.roundStatus.meetsProtocolResolution) {
+  console.error(`round captured at ${W}x${H}; the review protocol needs >= 1440p (SF_QA_PROTOCOL=1)`);
+}
 await browser.close();
+if (!report.roundStatus.complete) process.exit(4);

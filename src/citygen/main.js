@@ -1416,6 +1416,26 @@ async function fetchRealCity(query) {
   }
 }
 
+/**
+ * Load a specific window of the built-in San Francisco extract.
+ *
+ * The default window is centred on the downtown slice, which does not contain
+ * the shoreline - the quality gate's waterfront card had no water to stand in
+ * front of and the round silently shipped a duplicate frame instead. QA can ask
+ * for the window it needs; the game itself still opens on the default one.
+ */
+async function loadSfWindow({ center = [1600, 400], radius = 720, maxBuildings = 900 } = {}) {
+  const city = await loadSfData({ center, radius, maxBuildings });
+  await buildCity(city);
+  showOsmResult(city);
+  return {
+    center, radius,
+    buildings: city.buildings?.length || 0,
+    segments: city.segments?.length || 0,
+    water: (city.water?.length || 0) + (city.osmWater?.length || 0),
+  };
+}
+
 async function loadBuiltinSf() {
   if (osmBusy || state.busy) return;
   setOsmBusy(true, 'Loading prebuilt San Francisco OSM extract…');
@@ -1566,6 +1586,8 @@ async function boot() {
     // QA handle: repeatable diagnostics need the same THREE the app runs on,
     // e.g. to raycast a screen pixel back to the object that drew it.
     THREE,
+    /** QA only: rebuild the world on a different window of the SF extract. */
+    loadSfWindow,
     getCity: () => state.city,
     getRenderer: () => state.renderer,
     getTraffic: () => state.traffic,
