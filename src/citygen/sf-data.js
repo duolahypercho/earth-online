@@ -322,15 +322,27 @@ export async function loadSfData({ center = [1600, 400], radius = 720, maxBuildi
 }
 
 async function fetchWithFallback() {
-  try {
-    const response = await fetch(DATA_URL, { headers: { 'Accept-Encoding': 'gzip' } });
-    if (response.ok) return await response.json();
-  } catch {
-    // fall through
+  // Both sources are attempted, and each attempt is retried once: this payload
+  // is tens of megabytes, and a transient failure here silently downgrades the
+  // canonical route to a generated city that only looks like San Francisco.
+  const attempts = [];
+  for (const url of [DATA_URL, DATA_FALLBACK_URL]) {
+    for (let tries = 0; tries < 2; tries += 1) {
+      try {
+        const response = await fetch(url, url === DATA_URL
+          ? { headers: { 'Accept-Encoding': 'gzip' }, cache: 'reload' }
+          : { cache: 'reload' });
+        if (!response.ok) {
+          attempts.push(`${url} -> HTTP ${response.status}`);
+          continue;
+        }
+        return await response.json();
+      } catch (error) {
+        attempts.push(`${url} -> ${error?.message || error}`);
+      }
+    }
   }
-  const response = await fetch(DATA_FALLBACK_URL);
-  if (!response.ok) throw new Error(`SF data load failed: ${response.status}`);
-  return response.json();
+  throw new Error(`SF data load failed after ${attempts.length} attempts: ${attempts.join('; ')}`);
 }
 
 async function fetchElevation() {

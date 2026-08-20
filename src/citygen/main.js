@@ -1894,9 +1894,16 @@ async function boot() {
   setExplorerBusy(true, 'Loading San Francisco…', 'Building the main OSM streets, terrain, structures, and simulation');
   try {
     const initialCity = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+    window.__EARTH_ONLINE_WORLD_SOURCE__ = { real: true, reason: null };
     await buildCity(initialCity);
   } catch (error) {
+    // The generated city is a usable sandbox, but it is NOT San Francisco.
+    // Make that unmistakable rather than letting a fake map pass as the real
+    // one in screenshots, QA evidence, or a player's session.
     reportError(`Main San Francisco map failed: ${error.message}`, 'initial-sf');
+    console.error('[earth-online] Real San Francisco OSM data failed to load; '
+      + 'falling back to a GENERATED city. This is not the real map.', error);
+    window.__EARTH_ONLINE_WORLD_SOURCE__ = { real: false, reason: error?.message || String(error) };
     setExplorerBusy(false);
     await generate('sanfrancisco', 731);
   } finally {
@@ -2177,7 +2184,10 @@ async function boot() {
   function loop(now) {
     const frameStartedAt = performance.now();
     const frameIntervalMs = now - last;
-    const delta = Math.min(0.05, frameIntervalMs / 1000);
+    // Clamp low as well as high: a non-monotonic frame timestamp yields a
+    // negative interval, which would step the clock, player, vehicle, traffic
+    // and pedestrians backwards for that frame.
+    const delta = Math.max(0, Math.min(0.05, frameIntervalMs / 1000));
     last = now;
     state.clock = (state.clock + delta * 0.6) % 24;
     updatePlayer(delta);
