@@ -25,9 +25,26 @@ import {
   FACADE_DEPTH_UV_METRES,
   FACADE_DEPTH_BUDGET,
   FACADE_DEPTH_SCREEN,
+  FACADE_DEPTH_MIN_TIER,
   facadeDetailTierDistances,
 } from '../world/buildings/facade-depth.js';
 import { buildStreetSurfaceV2, STREET_SURFACE_V2_DEFAULTS } from '../world/streets/street-surface-v2.js';
+import { buildGroundCoverage, disposeGroundCoverage } from '../world/ground-coverage.js';
+import {
+  createShadowCasterPolicy,
+  createShadowCasterAudit,
+  measureShadowCaster,
+  summariseShadowCasterAudit,
+  recommendShadowBias,
+  SHADOW_ROLES,
+  SHADOW_CASTER_VERSION,
+  MEASURED_TEXEL_WORLD_SIZE,
+  MEASURED_RING_RADIUS,
+} from '../render/shadow-casters.js';
+import {
+  createCrowdPresentation,
+  PEDESTRIAN_PRESENTATION_VERSION,
+} from '../simulation/pedestrians/pedestrian-presentation.js';
 
 const PALETTES = Object.freeze({
   painted: ['#c96b66', '#5f93a2', '#d4ad61', '#7486a8', '#c88455', '#89a876', '#b87892'],
@@ -193,6 +210,13 @@ function createFacadeDepthDiagnostics() {
     sceneTriangleBudget: FACADE_DEPTH_SCENE_BUDGET,
   };
 }
+
+// A pedestrian that moves further than this in one step was re-seated by the
+// simulation's local-life recycler, not walking. Two metres is well above the
+// 2.2 m/s cruise at any plausible frame time and well below a block.
+const CROWD_TELEPORT_METRES = 2;
+
+const GROUND_COVERAGE_PASS = 'ground-coverage-v1';
 
 // --- sun shadow fit ---------------------------------------------------------
 //
@@ -1963,6 +1987,29 @@ export class CityRenderer {
     this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
     this.streetSurface = null;
     this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
+    this.groundCoverage = null;
+    this.groundCoverageDiagnostics = { pass: GROUND_COVERAGE_PASS, built: false, drawCalls: 0, triangles: 0, stats: null };
+    this.shadowCasterAudit = null;
+    this.shadowCasterLogged = false;
+    this.crowd = null;
+    this.crowdDiagnostics = {
+      pass: PEDESTRIAN_PRESENTATION_VERSION,
+      source: null,
+      agents: 0,
+      skinned: 0,
+      instanced: 0,
+      far: 0,
+      culled: 0,
+      draws: 0,
+      legacyBatchHidden: false,
+    };
+    this.crowdSunElevation = null;
+    this.crowdPresentationFailed = false;
+    /** Per-agent measured ground speed. Presentation state; never written back. */
+    this.crowdTracks = new Map();
+    this.crowdTrackStep = 0;
+    this.legacyPedestrianBatchGroup = null;
+    this.legacyPedestrianBatchVisible = true;
     this.buildFocus = null;
 
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
@@ -2004,6 +2051,14 @@ export class CityRenderer {
       densityRange: SHADOW_TEXEL_DENSITY_RANGE,
       refits: 0,
       warnings: [],
+      // Written by `applyShadowCasterPolicyPass` once per city build.
+      casterPolicy: null,
+      casters: 0,
+      castersExcluded: 0,
+      // Written by `updateSunShadow` on every refit.
+      biasPlan: null,
+      fitNormalBias: null,
+      fitBias: null,
     };
     this._shadowForward = new THREE.Vector3();
     this._shadowEye = new THREE.Vector3();
@@ -2268,6 +2323,9 @@ export class CityRenderer {
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
+    disposeGroundCoverage(this.groundCoverage);
+    this.groundCoverage = null;
+    this.disposeCrowdPresentation();
     this.disposeWorldPartitionRuntime();
     this.disposePortalPartitionRuntime();
     this.disposeParkedCarPartitionRuntime();
@@ -2343,6 +2401,10 @@ export class CityRenderer {
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     // Dispose old dynamic geometry only; static materials persist for rebuilds.
+    // The crowd is parented to `city-root`, so it has to go before the root it
+    // hangs off is replaced - `clearCity` normally does this first, but
+    // `buildCity` must not depend on having been called through it.
+    this.disposeCrowdPresentation();
     for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.geometryCache = [];
     this.pickables = [];
@@ -2398,7 +2460,21 @@ export class CityRenderer {
     // gone; see `makeSky` for why.
     root.add(this.makeSky(city));
     // Terrain base + park ground.
-    root.add(this.makeGround(city));
+    //
+    // This used to be `makeGround(city)`: a `PlaneGeometry` sized from
+    // `city.meta.bounds` whose SAMPLE coordinates were offset by the bounds
+    // centre but whose VERTICES never were, added to `city-root` at the world
+    // origin. On the real slice (bounds x 577..2626, z -755..1407) that plane
+    // spanned x +/-1284, z +/-1341 and so covered 33.5% of the map, containing
+    // neither the slice centre nor any of the eight quality-card poses. Two
+    // thirds of the world had nothing under it, and every ray that missed a
+    // road ribbon or a building shell ran to `sky-dome`. That is what the hole
+    // detector was measuring: 16.6% mean, 38.9% worst.
+    //
+    // `buildGroundCoverage` emits absolute world-metre vertices for the whole
+    // slice plus a graded apron out to the fog horizon, in one draw call, so
+    // the group MUST be added at identity.
+    this.installGroundCoverage(root, city);
     this.buildTerrainContours(root, city);
     // OSM parks and water polygons on real maps.
     this.buildOsmParks(root, city);
@@ -2440,6 +2516,12 @@ export class CityRenderer {
     this.buildParkedCars(root, city);
     this.buildShopAwnings(root, city);
     this.installLocalLightPool(root);
+
+    // Last pass over the finished city: decide, per mesh, whether it is thick
+    // enough for the shadow map to resolve. Everything above this line has
+    // already written its own `castShadow`; this is the single place that gets
+    // the final word, and it writes nothing else.
+    this.applyShadowCasterPolicyPass(root);
 
     this.root = root;
     this.scene.add(root);
@@ -2492,6 +2574,13 @@ export class CityRenderer {
   }
 
   clearCity() {
+    // Everything this renderer allocates through a module goes back through
+    // the same path the rest of the dynamic scene uses.
+    disposeGroundCoverage(this.groundCoverage);
+    this.groundCoverage = null;
+    this.groundCoverageDiagnostics = { pass: GROUND_COVERAGE_PASS, built: false, drawCalls: 0, triangles: 0, stats: null };
+    this.disposeCrowdPresentation();
+    this.shadowCasterAudit = null;
     this.groundMaterialLifecycle.clearCount += 1;
     this.groundMaterialDiagnostics.enabled = false;
     this.syncGroundMaterialDiagnostics();
@@ -2625,52 +2714,158 @@ export class CityRenderer {
     return sky;
   }
 
-  makeGround(city) {
-    const bounds = city.meta.bounds;
-    const width = bounds.maxX - bounds.minX + 520;
-    const depth = bounds.maxZ - bounds.minZ + 520;
-    const geometry = new THREE.PlaneGeometry(width, depth, 96, 96);
-    geometry.rotateX(-Math.PI / 2);
-    const positions = geometry.attributes.position.array;
-    const colors = [];
-    const park = new THREE.Color('#9fc38a');
-    const field = new THREE.Color('#7f9a66');
-    const waterEdge = new THREE.Color('#a9c99b');
-    const slopeWarm = new THREE.Color('#c8a879');
-    for (let i = 0; i < positions.length; i += 3) {
-      const x = positions[i] + (bounds.minX + bounds.maxX) / 2;
-      const z = positions[i + 2] + (bounds.minZ + bounds.maxZ) / 2;
-      const y = this.terrain?.heightAt ? this.terrain.heightAt(x, z) : 0;
-      positions[i + 1] = y - 0.22;
-      const n = Math.sin(x * 0.011 + z * 0.017 + Number(city.meta.seedInt) * 0.1) * 0.5 + 0.5;
-      const nearWater = smoothstep(bounds.maxX - 160, bounds.maxX - 30, x);
-      // Elevation-aware color grading gives the baked USGS grid a readable
-      // directional hillshade instead of a uniformly green carpet. The
-      // geometry normals still carry the true grade; this only adds a gentle
-      // low-poly material cue for aerial views.
-      const sampleStep = 8;
-      const slopeX = ((this.terrain?.heightAt ? this.terrain.heightAt(x + sampleStep, z) : 0)
-        - (this.terrain?.heightAt ? this.terrain.heightAt(x - sampleStep, z) : 0)) / (sampleStep * 2);
-      const slopeZ = ((this.terrain?.heightAt ? this.terrain.heightAt(x, z + sampleStep) : 0)
-        - (this.terrain?.heightAt ? this.terrain.heightAt(x, z - sampleStep) : 0)) / (sampleStep * 2);
-      const slope = Math.hypot(slopeX, slopeZ);
-      const light = clamp(0.88 - slopeX * 0.62 + slopeZ * 0.34, 0.66, 1.08);
-      const c = park.clone().lerp(field, n * 0.35).lerp(waterEdge, nearWater * 0.35);
-      c.multiplyScalar(light);
-      if (slope > 0.045) c.lerp(slopeWarm, clamp((slope - 0.045) * 0.9, 0, 0.16));
-      colors.push(c.r, c.g, c.b);
+  /**
+   * The ground carpet: one closed, world-positioned surface under everything.
+   *
+   * Replaces `makeGround`. See the call site in `buildCity` for why the old
+   * base plane could not be repaired in place. Vertices are absolute world
+   * metres, so the group is added at identity and never offset.
+   *
+   * `castShadow` stays false (a 29k-triangle carpet in the shadow map buys
+   * nothing that the terrain contours and road surface do not already give),
+   * and `receiveShadow` stays true, so this is not part of the caster set the
+   * shadow policy below audits.
+   */
+  installGroundCoverage(root, city) {
+    disposeGroundCoverage(this.groundCoverage);
+    this.groundCoverage = null;
+    this.groundCoverageDiagnostics = { pass: GROUND_COVERAGE_PASS, built: false, drawCalls: 0, triangles: 0, stats: null };
+    try {
+      const coverage = buildGroundCoverage(city, {
+        heightAt: this.terrain?.heightAt ? (x, z) => this.terrain.heightAt(x, z) : null,
+        palette: isSanFranciscoCity(city) ? 'sf' : 'stylised',
+      });
+      // No `maps.ground`. The SF ground textures are loaded lazily, later in
+      // `buildCity`, so passing them here would texture the carpet on a rebuild
+      // and leave it untextured on the first build - the same city rendering
+      // two different ways. The carpet is a backstop under the paved surface;
+      // its visible parts are yards, alleys and open land, which the vertex
+      // palette already grades.
+      root.add(coverage.group);
+      this.geometryCache.push(coverage.geometry);
+      this.groundCoverage = coverage;
+      this.groundCoverageDiagnostics = {
+        pass: GROUND_COVERAGE_PASS,
+        built: true,
+        drawCalls: coverage.drawCalls,
+        triangles: coverage.stats?.triangles ?? 0,
+        stats: coverage.stats,
+      };
+      return coverage;
+    } catch (error) {
+      // A missing carpet is a hole in the world, which is exactly what this
+      // round is fixing, so say so loudly rather than rendering sky through
+      // the pavement in silence.
+      console.error(`[${GROUND_COVERAGE_PASS}] ground coverage failed to build; `
+        + 'the world has no backstop surface and rays will reach the sky dome', error);
+      this.groundCoverageDiagnostics.error = String(error?.message || error);
+      return null;
     }
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 1,
-      metalness: 0,
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.receiveShadow = true;
-    this.geometryCache.push(geometry);
-    return mesh;
+  }
+
+  /**
+   * Map a renderer `userData.kind` onto a shadow role.
+   *
+   * The name hints in `SHADOW_ROLE_HINTS` cover the meshes this renderer
+   * names. It also merges whole classes of building into a handful of
+   * city-wide, deliberately UNNAMED meshes (`buildings-textured`,
+   * `buildings-flat`, `buildings-hero-textured`, ...), and those would fall
+   * through to `unknown`. `unknown` is treated as a prop, which is the wrong
+   * default for a merged streetwall, so the kind tag - which this renderer
+   * already writes on every one of them - supplies the role instead.
+   *
+   * @returns {string|null} role, or null to let the module classify by name.
+   */
+  shadowRoleForMesh(object) {
+    const kind = String(object?.userData?.kind || '');
+    if (!kind) return null;
+    if (kind === 'building' || kind === 'glass' || kind.startsWith('buildings-')
+      || kind.startsWith('hero-building') || kind.startsWith('hero-roof')) {
+      return SHADOW_ROLES.STRUCTURE;
+    }
+    if (kind === 'asphalt' || kind === 'sidewalk' || kind === 'roads'
+      || kind === 'sidewalks' || kind === 'ground') {
+      return SHADOW_ROLES.TERRAIN;
+    }
+    if (kind === 'road-markings') return SHADOW_ROLES.DECAL;
+    return null;
+  }
+
+  /**
+   * Shadow-caster admission, run once per city build.
+   *
+   * The measured caster set was 297 meshes, of which 143 had a smallest
+   * bounding-box dimension under 0.35 m and 137 of those were shopfront
+   * awnings - 0.14 m plates, 12 m long. At the fitted texel size an awning is
+   * well under one shadow texel, and the `normalBias` the map needs to stay
+   * free of slope acne is itself larger than the plate is thick, so the depth
+   * comparison flips on sub-texel detail. That is the dark X-shaped banding
+   * lying across real roadway in the night card. No bias serves both; at this
+   * texel size exclusion is the only correct answer.
+   *
+   * Three deliberate constraints on how the policy is applied here:
+   *
+   *  1. **It can only take shadows away, never grant them.** Only meshes that
+   *     already have `castShadow === true` are considered. Several modules
+   *     switch casting off on purpose - `street-surface-v2` does it for the
+   *     carriageway, because a flat road that shadows itself is pure acne -
+   *     and a role-based promotion would silently undo that decision.
+   *  2. **No `groundHeightAt`, so the ground-flush gate never runs.** That
+   *     gate looks for a thin plate resting on the ground by aspect ratio, and
+   *     this renderer merges whole classes of building into single city-wide
+   *     meshes whose bounding box is ~2 km x 60 m x 2 km - a 30:1 "plate"
+   *     sitting on the terrain. It would have excluded the entire streetwall.
+   *     Nothing is lost: a real ground decal is ~1 cm thick and the thickness
+   *     gate already refuses it.
+   *  3. **No `ringCentre`, so the ring gate never runs.** The fitted box
+   *     follows the camera; a build-time ring test would permanently silence
+   *     every caster that happened to be far from the build focus.
+   *
+   * Not per-frame: this is a `Box3.setFromObject` per mesh. The texel size is
+   * invariant to where the camera looks (see the `SUN_SHADOW_PASS` note), so
+   * one pass describes every frame this build will draw.
+   *
+   * Writes exactly one property, `castShadow`. `receiveShadow` is untouched:
+   * an awning that cannot cast should still be shaded by the wall above it.
+   */
+  applyShadowCasterPolicyPass(root) {
+    const texelWorldSize = Number.isFinite(this.shadowFit?.texelWorldSize)
+      ? this.shadowFit.texelWorldSize
+      : MEASURED_TEXEL_WORLD_SIZE;
+    const ringRadius = Number.isFinite(this.shadowFit?.halfExtent) && this.shadowFit.halfExtent > 0
+      ? this.shadowFit.halfExtent
+      : MEASURED_RING_RADIUS;
+    let audit;
+    try {
+      const policy = createShadowCasterPolicy({ texelWorldSize, ringRadius });
+      audit = createShadowCasterAudit();
+      root.updateMatrixWorld(true);
+      root.traverse((object) => {
+        if (!object.isMesh && !object.isInstancedMesh && !object.isBatchedMesh) return;
+        if (object.castShadow !== true) return;
+        const descriptor = measureShadowCaster(object);
+        const role = this.shadowRoleForMesh(object);
+        if (role) descriptor.role = role;
+        const result = policy.decide(descriptor);
+        object.castShadow = result.cast;
+        audit.record(result, descriptor.name || object.userData?.kind || '(unnamed)');
+      });
+    } catch (error) {
+      console.error(`[${SHADOW_CASTER_VERSION}] caster policy failed; the scene keeps `
+        + 'the per-builder castShadow flags', error);
+      return null;
+    }
+    this.shadowCasterAudit = audit;
+    this.shadowDiagnostics.casterPolicy = audit.toJSON();
+    this.shadowDiagnostics.casters = audit.casting;
+    this.shadowDiagnostics.castersExcluded = audit.excluded;
+    if (!this.shadowCasterLogged) {
+      this.shadowCasterLogged = true;
+      // Once, at startup. Deterministic: the histogram is ordered by the
+      // module's declared code order, not by traversal order.
+      console.info(summariseShadowCasterAudit(audit, SHADOW_CASTER_VERSION));
+    }
+    return audit;
   }
 
   buildTerrainContours(root, city) {
@@ -3434,10 +3629,22 @@ export class CityRenderer {
     // Tying the tier to the device pixel ratio would make the same city build
     // to a different triangle count on two machines showing the same view.
     const screen = this.facadeDepthScreen();
+    // The tier FLOOR, stated explicitly at the call site rather than left to
+    // the module default, because it is the thing that decides coverage.
+    //
+    // Measured on the real slice: from this build focus the distance ring alone
+    // scored `off:582 far:88 mid:27 near:3` - 83% of the city emitted no relief
+    // at all while 88% of the triangle allowance went unspent, and every one of
+    // the eight buildings within 90 m of the night capture eye scored `off`
+    // because they are 574-663 m from the ring CENTRE. The ring centre is
+    // `buildFocus`, which is scored once at build time and never rescored, so
+    // distance can only ever be a refinement here; it must not be allowed to
+    // decide whether a building carries construction at all.
     const batch = buildFacadeDepthBatch(buildings, {
       viewPoint: { x: view.x, z: view.z },
       fov: screen.fov,
       viewportHeight: screen.viewportHeight,
+      minTier: FACADE_DEPTH_MIN_TIER,
       baseYFor: (building) => baseYById.get(building.id) ?? 0,
       sceneTriangleBudget: FACADE_DEPTH_SCENE_BUDGET,
     });
@@ -3477,6 +3684,9 @@ export class CityRenderer {
     diagnostics.tiers = batch.tiers;
     diagnostics.requestedTiers = batch.requestedTiers;
     diagnostics.tierCeiling = batch.tierCeiling;
+    diagnostics.tierFloor = batch.tierFloor;
+    diagnostics.minTier = FACADE_DEPTH_MIN_TIER;
+    diagnostics.styleSources = batch.styleSources;
     diagnostics.ringCutDistance = batch.ringCutDistance;
     diagnostics.sceneTriangleBudget = batch.sceneTriangleBudget;
     this.facadeDepthDiagnostics = diagnostics;
@@ -7875,6 +8085,24 @@ export class CityRenderer {
       maxCasterHeight: this.maxCasterHeight,
     });
     applySunShadowFit(this.sun, fit);
+    // The fit's own bias pair was calibrated while 143 sub-texel meshes were
+    // still in the caster set - the one acne source a normal offset cannot fix
+    // at any magnitude - so it carries 1.25 texels of normalBias. With the
+    // caster policy above removing those meshes the residual acne is ordinary
+    // slope acne, which the slope formula prices at 1.0 texel; the 0.25 texels
+    // handed back are paid at the contact line, where the character and street
+    // dimensions are scored. `bias` is recomputed here every refit rather than
+    // held constant because it is expressed in the orthographic depth range,
+    // which swings ~4x between noon and golden hour.
+    const biasPlan = recommendShadowBias({
+      texelWorldSize: fit.texelWorldSize,
+      depthRange: fit.depthRange,
+      mapSize: SUN_SHADOW_MAP_SIZE,
+      sunAltitudeDeg: fit.sunAltitudeDeg,
+    });
+    if (Number.isFinite(biasPlan.normalBias)) this.sun.shadow.normalBias = biasPlan.normalBias;
+    if (Number.isFinite(biasPlan.bias)) this.sun.shadow.bias = biasPlan.bias;
+    this.sun.shadow.needsUpdate = true;
     this.shadowFit = fit;
     const diagnostics = this.shadowDiagnostics;
     diagnostics.fitted = true;
@@ -7883,8 +8111,20 @@ export class CityRenderer {
     diagnostics.texelWorldSize = fit.texelWorldSize;
     diagnostics.width = fit.width;
     diagnostics.depthRange = fit.depthRange;
-    diagnostics.normalBias = fit.normalBias;
-    diagnostics.bias = fit.bias;
+    // Report what is actually on the light, not what the fit proposed.
+    diagnostics.normalBias = this.sun.shadow.normalBias;
+    diagnostics.bias = this.sun.shadow.bias;
+    diagnostics.fitNormalBias = fit.normalBias;
+    diagnostics.fitBias = fit.bias;
+    diagnostics.biasPlan = {
+      normalBiasTexels: biasPlan.normalBiasTexels,
+      depthBiasTexels: biasPlan.depthBiasTexels,
+      holdsReceiverSlopeToDeg: biasPlan.holdsReceiverSlopeToDeg,
+      peterPanMetres: biasPlan.peterPanMetres,
+      contactLeakMetres: biasPlan.contactLeakMetres,
+      minCasterThickness: biasPlan.minCasterThickness,
+      warnings: biasPlan.warnings,
+    };
     diagnostics.castShadow = fit.castShadow;
     diagnostics.sunAltitudeDeg = fit.sunAltitudeDeg;
     diagnostics.maxCasterHeight = this.maxCasterHeight;
@@ -7899,10 +8139,212 @@ export class CityRenderer {
         + `over ${SUN_SHADOW_DISTANCE} m of view depth: `
         + `${fit.texelsPerMetre.toFixed(3)} texels/m `
         + `(${(fit.texelWorldSize * 100).toFixed(1)} cm texels, ${fit.width.toFixed(1)} m box), `
-        + `normalBias ${fit.normalBias} m, bias ${fit.bias} over ${fit.depthRange.toFixed(0)} m of depth`,
+        + `normalBias ${this.sun.shadow.normalBias} m `
+        + `(${biasPlan.normalBiasTexels} texel, holds receivers to `
+        + `${biasPlan.holdsReceiverSlopeToDeg} deg), bias ${this.sun.shadow.bias} `
+        + `(${biasPlan.depthBiasTexels} texel = ${biasPlan.depthPullbackMetres} m pull-back) `
+        + `over ${fit.depthRange.toFixed(0)} m of depth; caster thickness floor `
+        + `${biasPlan.minCasterThickness} m`,
       );
     }
     return fit;
+  }
+
+  /**
+   * Crowd presentation: a mirror of the pedestrian simulation, never a second
+   * copy of it.
+   *
+   * WHERE THE PEDESTRIANS ACTUALLY LIVE. `TrafficSim` (src/citygen/traffic.js)
+   * owns them. On the canonical route `buildCity` constructs it with the real
+   * SF slice, `buildSidewalkPaths` yields 6 260 curbside polylines from
+   * `city.segments`, and 48 walkers are spawned from them - which is also what
+   * `verify:citygen-actors` gates on (`pedestrians === 48`). They are NOT
+   * missing. Path, arc position, direction, identity and speed stay in
+   * `traffic.pedestrians`; this method reads them and writes nothing back.
+   *
+   * The legacy `pedestrian-batch` InstancedMeshes keep being written by the
+   * simulation - every existing check reads their instance matrices - but once
+   * this crowd is actually drawing, the batch group is hidden so the two do not
+   * occupy the same space. Visibility is presentation, not simulation state.
+   */
+  ensureCrowdPresentation() {
+    if (this.crowd) return this.crowd;
+    try {
+      this.crowd = createCrowdPresentation({
+        // Under `city-root`, not the scene. Interior mode hides every visible
+        // child of `city-root` plus `traffic.group` (main.js `enterBuilding`);
+        // a crowd hanging directly off the scene would keep walking through
+        // the shop interior. It cannot live under `traffic.group` either -
+        // `verify:citygen-actors` counts the meshes named `pedestrian-*` in
+        // there and expects exactly the simulation's own eleven.
+        parent: this.root || this.scene,
+        // The simulation's own ground function, not a second one. Pedestrians
+        // in this world walk at `terrain.heightAt + 0.08` (TrafficSim.groundY);
+        // sampling bare terrain here would sink the whole crowd 8 cm and make
+        // the presentation disagree with the thing it is mirroring.
+        sampleGround: (x, z) => (this.terrain?.heightAt ? this.terrain.heightAt(x, z) + 0.08 : 0.08),
+        readAgent: (source, index, out) => this.readPedestrianAgent(source, index, out),
+      });
+      this.crowdDiagnostics.pass = this.crowd.version;
+    } catch (error) {
+      console.error(`[${PEDESTRIAN_PRESENTATION_VERSION}] crowd presentation failed to build; `
+        + 'the simulation keeps its existing instanced batch', error);
+      this.crowd = null;
+      this.crowdPresentationFailed = true;
+    }
+    return this.crowd;
+  }
+
+  /**
+   * Read one simulation pedestrian into the presentation's snapshot record.
+   *
+   * Read-only by construction: it touches `group.position`, `group.rotation`
+   * and `userData.walk`, and assigns only to `out`.
+   *
+   * Two departures from `defaultReadAgent`, both so the mirror does not
+   * contradict the thing it mirrors:
+   *
+   *  1. `walk.bobOffset` is subtracted out of `y`. The simulation already adds
+   *     a gait bob to the group position; the presentation runs its own gait,
+   *     so passing the summed value through would bob the crowd twice.
+   *  2. `speed` is the distance the simulation actually moved this agent,
+   *     divided by the step - not `pedestrian.speed`, which is a nominal
+   *     cruise figure that stays at 1.3-2.2 m/s even for the curb actors that
+   *     are standing, turning or seated. The gait phase is an odometer driven
+   *     by this number, so a standing agent must report zero or its feet
+   *     skate on the spot.
+   */
+  readPedestrianAgent(source, index, out) {
+    const group = source?.group;
+    const position = group?.position;
+    const id = source?.instanceIndex ?? index;
+    const bob = group?.userData?.walk?.bobOffset || 0;
+    const x = Number(position?.x ?? 0);
+    const y = Number(position?.y ?? 0) - bob;
+    const z = Number(position?.z ?? 0);
+    let record = this.crowdTracks.get(id);
+    if (!record) {
+      record = { x, z, speed: Math.max(0, Number(source?.speed) || 0) };
+      this.crowdTracks.set(id, record);
+    } else {
+      const step = this.crowdTrackStep;
+      const jump = Math.hypot(x - record.x, z - record.z);
+      if (jump > CROWD_TELEPORT_METRES) {
+        // `recyclePedestriansNearFocus` moves an agent to a new path when the
+        // player walks away from it. That is a teleport, not locomotion:
+        // dividing it by the step would read as a sprint and burst the gait
+        // into the brisk clip for a frame. Re-seat the track instead.
+        record.speed = Math.max(0, Number(source?.speed) || 0);
+      } else if (step > 1e-4) {
+        const moved = jump / step;
+        // One-pole smoothing at ~8 Hz. Raw per-frame displacement is noisy
+        // enough to flicker the walk/idle threshold on a stationary agent.
+        const alpha = clamp(step * 8, 0, 1);
+        record.speed += (Math.min(moved, 4) - record.speed) * alpha;
+      }
+      record.x = x;
+      record.z = z;
+    }
+    out.id = id;
+    out.seed = id;
+    out.x = x;
+    out.y = y;
+    out.z = z;
+    out.heading = Number(group?.rotation?.y ?? 0);
+    out.speed = record.speed;
+    out.active = true;
+    // The curb vignette's bench actor is seated in the simulation. The
+    // presentation rig has no seated clip, so it cannot reproduce the pose;
+    // what it can do is refuse to walk on the spot. `'sit'` forces the blend
+    // fully to idle regardless of measured speed. See the known-limits note.
+    out.pose = source?.heroCurbBehavior?.poseKind === 'bench-seated' ? 'sit' : 'walk';
+    return out;
+  }
+
+  /**
+   * Drive the crowd from the simulation's own array, once per frame, from the
+   * one existing loop. Creates no loop, no renderer and no clock.
+   */
+  updateCrowdPresentation(traffic, delta) {
+    const agents = traffic?.pedestrians;
+    if (!Array.isArray(agents) || !agents.length) {
+      if (this.crowd) this.crowd.update([], delta, this.camera);
+      this.restoreLegacyPedestrianBatch();
+      return null;
+    }
+    if (this.crowdPresentationFailed) return null;
+    const crowd = this.ensureCrowdPresentation();
+    if (!crowd) return null;
+    this.crowdTrackStep = Math.max(0, delta);
+    // Contact-shadow density follows the key light the shadow fit reports.
+    const altitude = Number.isFinite(this.shadowFit?.sunAltitudeDeg)
+      ? this.shadowFit.sunAltitudeDeg
+      : null;
+    if (altitude !== null && altitude !== this.crowdSunElevation) {
+      this.crowdSunElevation = altitude;
+      crowd.setSunElevation(altitude);
+    }
+    const stats = crowd.update(agents, delta, this.camera);
+    const drawing = (stats.skinned + stats.instanced + stats.far) > 0;
+    // Hand over only once the replacement is demonstrably drawing something.
+    // A silent failure here would empty the streets, which is worse than two
+    // crowds in the same place.
+    if (drawing) this.hideLegacyPedestrianBatch(traffic);
+    else this.restoreLegacyPedestrianBatch();
+    const diagnostics = this.crowdDiagnostics;
+    diagnostics.source = 'traffic.pedestrians';
+    diagnostics.agents = stats.agents;
+    diagnostics.skinned = stats.skinned;
+    diagnostics.instanced = stats.instanced;
+    diagnostics.far = stats.far;
+    diagnostics.culled = stats.culled;
+    diagnostics.draws = stats.draws;
+    diagnostics.grounded = stats.grounded;
+    diagnostics.maxFootGroundSpeed = stats.maxFootGroundSpeed;
+    return stats;
+  }
+
+  /** Presentation-only: stop the simulation's own instanced batch drawing. */
+  hideLegacyPedestrianBatch(traffic) {
+    const group = traffic?.pedestrianBatch?.group;
+    if (!group || group === this.legacyPedestrianBatchGroup) return;
+    this.restoreLegacyPedestrianBatch();
+    this.legacyPedestrianBatchGroup = group;
+    this.legacyPedestrianBatchVisible = group.visible;
+    group.visible = false;
+    this.crowdDiagnostics.legacyBatchHidden = true;
+  }
+
+  /** Put the simulation's batch back exactly as it was found. */
+  restoreLegacyPedestrianBatch() {
+    const group = this.legacyPedestrianBatchGroup;
+    if (!group) return;
+    group.visible = this.legacyPedestrianBatchVisible;
+    this.legacyPedestrianBatchGroup = null;
+    this.legacyPedestrianBatchVisible = true;
+    this.crowdDiagnostics.legacyBatchHidden = false;
+  }
+
+  disposeCrowdPresentation() {
+    this.restoreLegacyPedestrianBatch();
+    if (this.crowd) {
+      this.crowd.dispose();
+      this.crowd = null;
+    }
+    this.crowdTracks.clear();
+    this.crowdSunElevation = null;
+    this.crowdPresentationFailed = false;
+    this.crowdDiagnostics = {
+      pass: PEDESTRIAN_PRESENTATION_VERSION,
+      source: null,
+      agents: 0,
+      skinned: 0,
+      instanced: 0,
+      far: 0,
+      culled: 0,
+      draws: 0,
+      legacyBatchHidden: false,
+    };
   }
 
   pick(pointer) {
@@ -7938,7 +8380,12 @@ export class CityRenderer {
         }
       }
     }
-    if (traffic) traffic.update(delta);
+    if (traffic) {
+      traffic.update(delta);
+      // Mirror the simulation's pedestrians. This runs after `traffic.update`
+      // so the crowd shows the state of this frame, not the previous one.
+      this.updateCrowdPresentation(traffic, delta);
+    }
     if (players) players.update(delta);
     if (this.water && this.water.material) {
       const wave = Math.sin(this.phaseClock * 0.6) * 0.05;
@@ -8170,11 +8617,6 @@ function collectProceduralLampRecords(city, maxLamps) {
       sideCounts: {},
     },
   };
-}
-
-function smoothstep(a, b, x) {
-  const t = clamp((x - a) / (b - a), 0, 1);
-  return t * t * (3 - 2 * t);
 }
 
 function isSanFranciscoCity(city) {

@@ -23,6 +23,8 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -30,13 +32,16 @@ import {
   FACADE_DEPTH_LOD_DISTANCES,
   FACADE_DEPTH_LODS,
   FACADE_DEPTH_MAX_PROJECTION,
+  FACADE_DEPTH_MIN_TIER,
   FACADE_DEPTH_REFERENCE_STOREY,
+  FACADE_DEPTH_RING_METRES,
   FACADE_DEPTH_ROLES,
   FACADE_DEPTH_SCREEN,
   FACADE_DEPTH_STYLES,
   FACADE_DEPTH_TIER_PIXELS,
   FACADE_DEPTH_TIERS,
   FACADE_DEPTH_VERSION,
+  FACADE_STYLE_ALIASES,
   FACADE_STYLE_PROFILES,
   FACADE_TIER_RANK,
   buildFacadeDepth,
@@ -50,8 +55,11 @@ import {
   facadeDetailTierDistances,
   facadeDetailTierMetrics,
   facadeFootprintMetrics,
+  clampTier,
   planFacadeDepth,
+  resolveMinTier,
   resolveFacadeStyle,
+  resolveFacadeStyleEntry,
 } from '../../src/world/buildings/facade-depth.js';
 
 const RENDERER_PATH = fileURLToPath(new URL('../../src/citygen/renderer.js', import.meta.url));
@@ -157,7 +165,12 @@ function forEachVertex(plan, visit) {
 
 section('module surface', () => {
   check(FACADE_DEPTH_VERSION === 'facade-depth-1', 'version string is stable');
-  check(FACADE_DEPTH_LODS.join(',') === 'off,far,mid,near', 'lod ladder is off/far/mid/near');
+  check(
+    FACADE_DEPTH_LODS.join(',') === 'off,silhouette,far,mid,near',
+    'lod ladder is off/silhouette/far/mid/near',
+  );
+  check(FACADE_DEPTH_MIN_TIER === 'far', 'the distance floor is the far tier');
+  check(FACADE_DEPTH_BUDGET.minTier === FACADE_DEPTH_MIN_TIER, 'the budget publishes the same floor');
   check(FACADE_DEPTH_ROLES.join(',') === 'structure,glass', 'two merge roles');
   for (const style of FACADE_DEPTH_STYLES) {
     check(Boolean(FACADE_STYLE_PROFILES[style]), `${style} has a construction profile`);
@@ -177,7 +190,63 @@ section('style vocabulary matches the renderer', () => {
     check(resolveFacadeStyle({ facade: style }) === style, `${style} resolves to itself`);
   }
   check(resolveFacadeStyle({ facade: 'nonsense', type: 'shop' }) === 'shopfront', 'unknown facade falls back by type');
-  check(resolveFacadeStyle({}) === 'modern-grid', 'default style is modern-grid');
+
+  // The fallback chain must be *total*: no record, however tagged, may fall out
+  // of the vocabulary and therefore out of construction. Chain order is
+  // declared -> alias -> street trade -> type -> usage -> material -> massing.
+  const vocabulary = new Set(FACADE_DEPTH_STYLES);
+  for (const [alias, style] of Object.entries(FACADE_STYLE_ALIASES)) {
+    check(vocabulary.has(style), `alias ${alias} maps outside the vocabulary (${style})`);
+    check(resolveFacadeStyle({ facade: alias }) === style, `alias ${alias} resolves to ${style}`);
+    check(resolveFacadeStyle({ facade: alias.toUpperCase() }) === style, `alias ${alias} is case insensitive`);
+    check(
+      resolveFacadeStyle({ facade: alias.replace(/-/g, '_') }) === style,
+      `alias ${alias} tolerates underscores`,
+    );
+    check(resolveFacadeStyleEntry({ facade: alias }).source === 'alias', `alias ${alias} reports source 'alias'`);
+  }
+  const fallbackRecords = [
+    [{}, 'massing'],
+    [{ facade: '' }, 'massing'],
+    [{ facade: null }, 'massing'],
+    [{ facade: '   ' }, 'massing'],
+    [{ facade: 'something-nobody-tagged' }, 'massing'],
+    [{ facade: 'nonsense', shop: 'bakery' }, 'trade'],
+    [{ facade: 'nonsense', amenity: 'cafe' }, 'trade'],
+    [{ type: 'warehouse' }, 'type'],
+    [{ usage: 'office' }, 'usage'],
+    [{ material: 'brick' }, 'material'],
+    [{ height: 90 }, 'massing'],
+    [{ height: 12 }, 'massing'],
+    [{ height: 4 }, 'massing'],
+  ];
+  for (const [record, source] of fallbackRecords) {
+    const entry = resolveFacadeStyleEntry(record);
+    check(vocabulary.has(entry.style), `${JSON.stringify(record)} resolved outside the vocabulary`);
+    check(entry.source === source, `${JSON.stringify(record)} expected source ${source}, got ${entry.source}`);
+    check(
+      planFacadeDepth({ ...record, id: `fallback-${source}`, polygon: rectangle(0, 0, 18, 12), height: record.height ?? 14, stories: 4 }, { tier: 'near' }).quads.length > 0,
+      `${JSON.stringify(record)} produced no construction through the fallback chain`,
+    );
+  }
+  check(resolveFacadeStyleEntry({ facade: 'edwardian' }).source === 'declared', 'a declared style reports source declared');
+});
+
+section('the tier floor API is total and ordered', () => {
+  check(resolveMinTier({}) === FACADE_DEPTH_MIN_TIER, 'no minTier means the default floor');
+  check(resolveMinTier({ minTier: 'nonsense' }) === FACADE_DEPTH_MIN_TIER, 'a bad minTier means the default floor');
+  check(resolveMinTier({ minTier: 'off' }) === 'off', 'an explicit off floor is honoured');
+  check(resolveMinTier({ minTier: 'near' }) === 'near', 'an explicit near floor is honoured');
+  for (const tier of FACADE_DEPTH_LODS) {
+    check(clampTier(tier, 'off', 'near') === tier, `clampTier is identity for ${tier} inside the full range`);
+    check(FACADE_TIER_RANK[clampTier(tier, 'far', 'near')] >= FACADE_TIER_RANK.far, `${tier} is lifted to the far floor`);
+    check(FACADE_TIER_RANK[clampTier(tier, 'off', 'far')] <= FACADE_TIER_RANK.far, `${tier} is lowered to the far ceiling`);
+  }
+  // A floor above the ceiling is the caller's mistake, not a crash: the
+  // ceiling wins, because the ceiling is what the budget can pay for.
+  check(clampTier('near', 'near', 'far') === 'far', 'a floor above the ceiling yields the ceiling');
+  check(FACADE_DEPTH_RING_METRES >= 4, 'the ring band is coarse enough to read as a distance fade');
+  check(Number.isInteger(FACADE_DEPTH_RING_METRES), 'the ring band is a whole number of metres');
 });
 
 section('seed is a stable pure hash of the id', () => {
@@ -239,11 +308,11 @@ section('a building record is never mutated', () => {
 
 // ------------------------------------------------------------------ budget
 
-const perLodTotals = { off: 0, far: 0, mid: 0, near: 0 };
-const perLodMax = { off: 0, far: 0, mid: 0, near: 0 };
+const perLodTotals = Object.fromEntries(FACADE_DEPTH_LODS.map((lod) => [lod, 0]));
+const perLodMax = Object.fromEntries(FACADE_DEPTH_LODS.map((lod) => [lod, 0]));
 const featureTally = new Map();
 
-section('per building triangle budget holds for 700 buildings x 4 LODs', () => {
+section('per building triangle budget holds for 700 buildings x every LOD', () => {
   for (const building of CORPUS) {
     for (const lod of FACADE_DEPTH_LODS) {
       const plan = planFacadeDepth(building, { lod, baseY: 3 });
@@ -266,12 +335,16 @@ section('per-tier triangle cost, measured over the 700 building corpus', () => {
   // which is why a distant facade read as a flat prism. The recessed glazing
   // band doubles it.
   const caps = FACADE_DEPTH_BUDGET.trianglesPerBuilding;
-  check(caps.off === 0 && caps.far === 96 && caps.mid === 512 && caps.near === 1664, 'declared per-tier ceilings');
+  check(
+    caps.off === 0 && caps.silhouette === 32 && caps.far === 96 && caps.mid === 512 && caps.near === 1664,
+    'declared per-tier ceilings',
+  );
   const means = {};
   for (const tier of FACADE_DEPTH_TIERS) {
     means[tier] = perLodTotals[tier] / CORPUS.length;
     check(perLodMax[tier] <= caps[tier], `${tier}: measured max ${perLodMax[tier]} over the ${caps[tier]} ceiling`);
   }
+  check(perLodMax.silhouette === 24, `silhouette tier measured max ${perLodMax.silhouette}, expected 24`);
   check(perLodMax.far === 96, `far tier measured max ${perLodMax.far}, expected the 96 ceiling`);
   check(perLodMax.mid === 470, `mid tier measured max ${perLodMax.mid}, expected 470`);
   check(perLodMax.near === 1658, `near tier measured max ${perLodMax.near}, expected 1658`);
@@ -281,9 +354,11 @@ section('per-tier triangle cost, measured over the 700 building corpus', () => {
   check(means.near > 1040 && means.near < 1070, `near tier mean ${means.near.toFixed(1)} drifted out of 1040-1070`);
   // Detail only ever grows with the tier, per building, not just on average.
   for (const building of CORPUS) {
+    const silhouette = planFacadeDepth(building, { tier: 'silhouette' }).triangles;
     const far = planFacadeDepth(building, { tier: 'far' }).triangles;
     const mid = planFacadeDepth(building, { tier: 'mid' }).triangles;
     const near = planFacadeDepth(building, { tier: 'near' }).triangles;
+    check(silhouette <= far, `${building.id}: silhouette (${silhouette}) costs more than far (${far})`);
     check(far <= mid, `${building.id}: far (${far}) costs more than mid (${mid})`);
     check(mid <= near, `${building.id}: mid (${mid}) costs more than near (${near})`);
   }
@@ -300,8 +375,12 @@ section('lod ladder is monotonic', () => {
   check(facadeDepthLodForDistance(10) === 'near', 'close camera gets near');
   check(facadeDepthLodForDistance(100) === 'mid', 'mid range gets mid');
   check(facadeDepthLodForDistance(250) === 'far', 'long range gets far');
-  check(facadeDepthLodForDistance(5000) === 'off', 'beyond the far ring costs nothing');
-  check(facadeDepthLodForDistance(NaN) === 'off', 'a bad distance costs nothing');
+  // The round-3 change: past the far ring a building drops to the floor, not
+  // to nothing. `off` is reachable only when the caller asks for it.
+  check(facadeDepthLodForDistance(5000) === FACADE_DEPTH_MIN_TIER, 'beyond the far ring lands on the floor');
+  check(facadeDepthLodForDistance(NaN) === FACADE_DEPTH_MIN_TIER, 'a bad distance lands on the floor');
+  check(facadeDepthLodForDistance(5000, undefined, 'off') === 'off', 'an explicit off floor is honoured');
+  check(facadeDepthLodForDistance(5000, undefined, 'silhouette') === 'silhouette', 'an explicit silhouette floor is honoured');
 });
 
 section('a lower LOD is a subset of a higher one (no sliding detail on approach)', () => {
@@ -330,6 +409,7 @@ section('scene budget for 700 visible buildings', () => {
   const caps = FACADE_DEPTH_BUDGET.trianglesPerBuilding;
   const total = mix.near * caps.near + mix.mid * caps.mid + mix.far * caps.far;
   check(mix.near + mix.mid + mix.far === FACADE_DEPTH_BUDGET.visibleBuildings, 'reference mix covers 700 buildings');
+  check((mix.off || 0) === 0, 'the reference mix leaves no building at off');
   check(total === FACADE_DEPTH_BUDGET.referenceTriangles, 'declared reference cost is arithmetically right');
   // Two numbers, because raising the far tier floor raised the ceiling but not
   // what the scene actually spends. The arithmetic worst case is budgeted
@@ -742,7 +822,7 @@ section('detail tier is monotone in distance: a nearer building is never coarser
 section('the tier ladder agrees with the distance shim and the screen model', () => {
   check(FACADE_DEPTH_TIERS === FACADE_DEPTH_LODS, 'tiers and lods are the same ladder');
   check(
-    Object.keys(FACADE_TIER_RANK).join(',') === 'off,far,mid,near',
+    Object.keys(FACADE_TIER_RANK).join(',') === 'off,silhouette,far,mid,near',
     'tier rank covers the whole ladder',
   );
   const rings = FACADE_DEPTH_LOD_DISTANCES;
@@ -1066,6 +1146,399 @@ section('no NaN reaches a vertex, a tier or a merged buffer', () => {
   }
 });
 
+// ------------------------------------------------------- the real SF corpus
+//
+// Everything above runs on a synthetic corpus. That is what let round 2 pass
+// while the captured frames still showed flat neighbours: the fixture never
+// contained the thing that was wrong. The block below loads the same 37 MB
+// payload the app fetches and runs the same slice the app runs
+// (`loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 })`),
+// then asserts against the 700 buildings that slice actually produces.
+
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+globalThis.fetch = async (url) => {
+  const rel = String(url).replace(/^https?:\/\/[^/]+/, '');
+  // The gzip sibling needs a decompressor the app has and node here does not;
+  // sf-data.js falls back to the plain JSON, which is byte-identical content.
+  if (rel.endsWith('.gz')) return { ok: false, status: 415 };
+  try {
+    const text = await readFile(path.join(ROOT, 'public', rel), 'utf8');
+    return { ok: true, status: 200, json: async () => JSON.parse(text) };
+  } catch {
+    return { ok: false, status: 404 };
+  }
+};
+const { loadSfData } = await import(path.join(ROOT, 'src/citygen/sf-data.js'));
+const REAL_CITY = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+const REAL = REAL_CITY.buildings;
+
+// The two view points that produced the round-2 artefact: the city is built
+// with the tier ring centred on the build focus, and the quality cards are then
+// captured from somewhere else entirely.
+const BUILD_FOCUS = { x: 1600, z: 400 };
+const CAPTURE_EYE = { x: 1435.49, z: 993.43 };
+const REAL_SCREEN = { fov: 47, viewportHeight: 720 };
+
+const realPerTier = Object.fromEntries(FACADE_DEPTH_LODS.map((tier) => [tier, {
+  total: 0, min: Infinity, max: 0, empty: 0, features: new Map(), featureHistogram: new Map(),
+}]));
+
+section('the real slice loads and is the corpus this module is budgeted for', () => {
+  check(REAL_CITY?.meta?.generator === 'sf-builtin', `expected the sf-builtin slice, got ${REAL_CITY?.meta?.generator}`);
+  check(REAL.length === FACADE_DEPTH_BUDGET.visibleBuildings, `real slice has ${REAL.length} buildings, budget assumes ${FACADE_DEPTH_BUDGET.visibleBuildings}`);
+  for (const building of REAL) {
+    check(typeof building.id === 'string' && building.id.length > 0, 'every real building has an id');
+    check(Array.isArray(building.polygon) && building.polygon.length >= 3, `${building.id}: real polygon has at least 3 points`);
+    check(Number.isFinite(building.height) && building.height > 0, `${building.id}: real height is finite and positive`);
+  }
+  check(new Set(REAL.map((b) => b.id)).size === REAL.length, 'real building ids are unique');
+});
+
+section('REAL CORPUS: no building emits empty geometry at any construction tier', () => {
+  // This is the assertion the round-2 verifier did not make. A building that
+  // emits nothing is a flat prism next to a neighbour with a cornice, and that
+  // is the single most damaging facade artefact there is.
+  const emptyByReason = new Map();
+  for (const tier of ['silhouette', 'far', 'mid', 'near']) {
+    const bucket = realPerTier[tier];
+    for (const building of REAL) {
+      const plan = planFacadeDepth(building, { tier, baseY: 0 });
+      bucket.total += plan.triangles;
+      bucket.min = Math.min(bucket.min, plan.triangles);
+      bucket.max = Math.max(bucket.max, plan.triangles);
+      let featureCount = 0;
+      for (const [feature, count] of Object.entries(plan.features)) {
+        bucket.features.set(feature, (bucket.features.get(feature) || 0) + count);
+        featureCount += count;
+      }
+      bucket.featureHistogram.set(featureCount, (bucket.featureHistogram.get(featureCount) || 0) + 1);
+      if (!plan.quads.length) {
+        bucket.empty += 1;
+        const key = `${tier}:${plan.skipped}`;
+        emptyByReason.set(key, (emptyByReason.get(key) || 0) + 1);
+      }
+      check(plan.triangles <= FACADE_DEPTH_BUDGET.trianglesPerBuilding[tier], `${building.id} ${tier}: ${plan.triangles} over the ${FACADE_DEPTH_BUDGET.trianglesPerBuilding[tier]} cap`);
+      check(plan.triangles === plan.quads.length * 2, `${building.id} ${tier}: triangle accounting`);
+    }
+  }
+  check(realPerTier.near.empty === 0, `${realPerTier.near.empty} real buildings emit nothing at the near tier`);
+  check(realPerTier.mid.empty === 0, `${realPerTier.mid.empty} real buildings emit nothing at the mid tier`);
+  check(realPerTier.far.empty === 0, `${realPerTier.far.empty} real buildings emit nothing at the far tier`);
+  check(realPerTier.silhouette.empty === 0, `${realPerTier.silhouette.empty} real buildings emit nothing at the silhouette tier`);
+  check(emptyByReason.size === 0, `real corpus skip reasons: ${[...emptyByReason].map(([k, v]) => `${k}=${v}`).join(' ')}`);
+
+  // Emptiness is not the only failure mode: a facade with a cornice and no
+  // glazing depth still reads as a painted-on window grid from the pavement.
+  for (const tier of ['far', 'mid', 'near']) {
+    for (const building of REAL) {
+      const plan = planFacadeDepth(building, { tier, baseY: 0 });
+      const glazing = (plan.features.window || 0)
+        + (plan.features['window-band'] || 0)
+        + (plan.features['shopfront-glazing'] || 0)
+        + (plan.features['bay-window'] || 0);
+      check(glazing > 0, `${building.id} ${tier}: cornice but no glazing depth anywhere on the facade`);
+      check((plan.features.cornice || 0) > 0, `${building.id} ${tier}: no cornice, the roofline reads as a cut-off box`);
+      check((plan.features.plinth || 0) > 0, `${building.id} ${tier}: no plinth, the wall has no foot`);
+    }
+  }
+});
+
+section('REAL CORPUS: every building resolves into the style vocabulary', () => {
+  const vocabulary = new Set(FACADE_DEPTH_STYLES);
+  const styles = new Map();
+  const sources = new Map();
+  for (const building of REAL) {
+    const entry = resolveFacadeStyleEntry(building);
+    check(vocabulary.has(entry.style), `${building.id}: resolved outside the vocabulary (${entry.style})`);
+    check(Boolean(FACADE_STYLE_PROFILES[entry.style]), `${building.id}: ${entry.style} has no construction profile`);
+    styles.set(entry.style, (styles.get(entry.style) || 0) + 1);
+    sources.set(entry.source, (sources.get(entry.source) || 0) + 1);
+  }
+  check(styles.size === FACADE_DEPTH_STYLES.length, `real corpus only exercises ${styles.size} of ${FACADE_DEPTH_STYLES.length} styles`);
+  // And the fallback chain is exercised, not merely present: strip the facade
+  // tag off every real record and confirm every one still lands on a style
+  // that produces construction.
+  for (const building of REAL) {
+    const stripped = { ...building, facade: undefined };
+    const entry = resolveFacadeStyleEntry(stripped);
+    check(vocabulary.has(entry.style), `${building.id}: untagged record resolved outside the vocabulary`);
+    check(entry.source !== 'declared', `${building.id}: untagged record still reported source 'declared'`);
+    const plan = planFacadeDepth(stripped, { tier: 'near', baseY: 0 });
+    check(plan.quads.length > 0, `${building.id}: untagged record produced no construction`);
+  }
+  results.push(`      real styles: ${[...styles].sort().map(([k, v]) => `${k}=${v}`).join(' ')}`);
+  results.push(`      real style sources: ${[...sources].sort().map(([k, v]) => `${k}=${v}`).join(' ')}`);
+});
+
+section('REAL CORPUS: emitted feature counts per building', () => {
+  for (const tier of ['far', 'mid', 'near']) {
+    const histogram = realPerTier[tier].featureHistogram;
+    const counts = [...histogram.keys()].sort((a, b) => a - b);
+    check(counts[0] > 0, `${tier}: ${histogram.get(0) || 0} buildings emitted zero features`);
+    const total = [...histogram.values()].reduce((a, b) => a + b, 0);
+    check(total === REAL.length, `${tier}: histogram covers ${total} of ${REAL.length} buildings`);
+    const mean = counts.reduce((sum, k) => sum + k * histogram.get(k), 0) / REAL.length;
+    // Deciles rather than every bin, so the report stays readable.
+    const flat = [];
+    for (const k of counts) for (let i = 0; i < histogram.get(k); i += 1) flat.push(k);
+    const q = (f) => flat[Math.floor(f * (flat.length - 1))];
+    results.push(`      ${tier.padEnd(4)} features/building: min ${q(0)} p10 ${q(0.1)} p50 ${q(0.5)} p90 ${q(0.9)} max ${q(1)} mean ${mean.toFixed(1)}`);
+  }
+  for (const tier of ['far', 'mid', 'near']) {
+    const features = realPerTier[tier].features;
+    results.push(`      ${tier.padEnd(4)} features total: ${[...features].sort().map(([k, v]) => `${k}=${v}`).join(' ')}`);
+  }
+});
+
+section('REAL CORPUS: per-tier triangle cost and the scene budget', () => {
+  const caps = FACADE_DEPTH_BUDGET.trianglesPerBuilding;
+  for (const tier of ['silhouette', 'far', 'mid', 'near']) {
+    const bucket = realPerTier[tier];
+    check(bucket.max <= caps[tier], `${tier}: real max ${bucket.max} over the ${caps[tier]} ceiling`);
+    check(bucket.min > 0, `${tier}: real min is ${bucket.min}`);
+    results.push(`      real ${tier.padEnd(10)} min ${String(bucket.min).padStart(5)}  max ${String(bucket.max).padStart(5)}  mean ${(bucket.total / REAL.length).toFixed(1).padStart(7)}  all-700 ${String(bucket.total).padStart(7)}`);
+  }
+  // Locked costs. If a change moves these, it moves the scene budget, and the
+  // budget conversation has to happen out loud rather than in a diff.
+  check(realPerTier.silhouette.total === 16800, `silhouette all-700 cost ${realPerTier.silhouette.total}, expected 16800`);
+  check(realPerTier.far.total === 52380, `far all-700 cost ${realPerTier.far.total}, expected 52380`);
+  check(realPerTier.mid.total === 203114, `mid all-700 cost ${realPerTier.mid.total}, expected 203114`);
+  check(realPerTier.near.total === 565336, `near all-700 cost ${realPerTier.near.total}, expected 565336`);
+
+  // The affordability claim, stated as arithmetic rather than as a hope:
+  // the floor must fit the runtime allowance with room left for the rings.
+  const allowance = FACADE_DEPTH_BUDGET.sceneTriangleBudget;
+  check(realPerTier.far.total < allowance, `the far floor (${realPerTier.far.total}) does not fit the ${allowance} allowance`);
+  check(realPerTier.far.total < allowance * 0.5, 'the far floor should leave at least half the allowance for the near/mid rings');
+  check(realPerTier.mid.total > allowance, 'mid is correctly not affordable as a floor');
+  check(realPerTier.silhouette.total < realPerTier.far.total, 'the silhouette relief valve is cheaper than the floor');
+  const perBuildingFloor = realPerTier.far.total / REAL.length;
+  const crossover = Math.floor(allowance / perBuildingFloor);
+  check(crossover > REAL.length, `the far floor only affords ${crossover} buildings, corpus is ${REAL.length}`);
+  results.push(`      floor affordability: ${perBuildingFloor.toFixed(2)} tri/building at the far floor -> ${crossover} buildings fit the ${allowance} allowance (corpus is ${REAL.length})`);
+});
+
+section('REAL CORPUS: determinism keyed on the building id', () => {
+  for (const tier of ['far', 'mid', 'near']) {
+    for (const building of REAL) {
+      const a = planFacadeDepth(building, { tier, baseY: 4.25 });
+      const b = planFacadeDepth(building, { tier, baseY: 4.25 });
+      check(a.quads.length === b.quads.length, `${building.id} ${tier}: quad count is stable`);
+      check(a.triangles === b.triangles, `${building.id} ${tier}: triangle count is stable`);
+      check(a.style === b.style && a.styleSource === b.styleSource, `${building.id} ${tier}: style resolution is stable`);
+      for (let q = 0; q < a.quads.length; q += 1) {
+        for (let v = 0; v < 12; v += 1) {
+          check(a.quads[q].positions[v] === b.quads[q].positions[v], `${building.id} ${tier}: vertex ${q}/${v} drifted`);
+        }
+      }
+    }
+  }
+  // The id is the whole seed: two records identical but for the id differ, and
+  // the same id under a different list position does not.
+  const sample = REAL.slice(0, 40);
+  for (const building of sample) {
+    const renamed = planFacadeDepth({ ...building, id: `${building.id}-twin` }, { tier: 'near', baseY: 0 });
+    const original = planFacadeDepth(building, { tier: 'near', baseY: 0 });
+    const differs = renamed.quads.length !== original.quads.length
+      || renamed.quads.some((quad, i) => quad.positions.some((value, v) => value !== original.quads[i].positions[v]));
+    check(differs, `${building.id}: the id does not actually seed the variation`);
+  }
+  // Byte identical through the merged buffers, twice, over the whole city.
+  const options = { viewPoint: CAPTURE_EYE, ...REAL_SCREEN, baseY: 0 };
+  const first = buildFacadeDepthBatch(REAL, options);
+  const second = buildFacadeDepthBatch(REAL, options);
+  check(first.groups.length === second.groups.length, 'group count is stable');
+  for (let g = 0; g < first.groups.length; g += 1) {
+    check(first.groups[g].key === second.groups[g].key, `group ${g} key is stable`);
+    check(
+      Buffer.compare(
+        Buffer.from(first.groups[g].geometry.attributes.position.array.buffer.slice(0)),
+        Buffer.from(second.groups[g].geometry.attributes.position.array.buffer.slice(0)),
+      ) === 0,
+      `${first.groups[g].key}: merged position buffer is byte identical`,
+    );
+  }
+  check(JSON.stringify(first.buildings) === JSON.stringify(second.buildings), 'per-building tiering is byte identical');
+  disposeFacadeDepth(first);
+  disposeFacadeDepth(second);
+});
+
+section('REAL CORPUS: equal-distance neighbours land in one tier', () => {
+  // Bucket the real corpus by distance from the capture eye, rounded to the
+  // metre, and require every bucket to be one tier. This is the neighbour claim
+  // made against real footprints, real heights and real ids rather than against
+  // a fixture built to satisfy it.
+  const batch = buildFacadeDepthBatch(REAL, { viewPoint: CAPTURE_EYE, ...REAL_SCREEN, baseY: 0 });
+  const tierById = new Map(batch.buildings.map((entry) => [entry.id, entry]));
+  const buckets = new Map();
+  for (const building of REAL) {
+    const centroid = facadeFootprintMetrics(building).centroid;
+    const distance = Math.hypot(centroid.x - CAPTURE_EYE.x, centroid.z - CAPTURE_EYE.z);
+    const key = distance.toFixed(0);
+    if (!buckets.has(key)) buckets.set(key, new Set());
+    buckets.get(key).add(tierById.get(building.id)?.tier ?? 'off');
+  }
+  let split = 0;
+  for (const [key, tiers] of buckets) {
+    if (tiers.size !== 1) {
+      split += 1;
+      check(false, `real ring at ${key} m split across tiers ${[...tiers].join('/')}`);
+    }
+  }
+  check(split === 0, `${split} real distance rings were split across tiers`);
+
+  // And the tier is monotone across the real corpus: sort by distance and the
+  // tier rank must never rise as distance rises.
+  const ordered = REAL.map((building) => {
+    const centroid = facadeFootprintMetrics(building).centroid;
+    return {
+      id: building.id,
+      distance: Math.hypot(centroid.x - CAPTURE_EYE.x, centroid.z - CAPTURE_EYE.z),
+      rank: FACADE_TIER_RANK[tierById.get(building.id)?.tier ?? 'off'],
+    };
+  }).sort((a, b) => a.distance - b.distance);
+  for (let i = 1; i < ordered.length; i += 1) {
+    check(
+      ordered[i].rank <= ordered[i - 1].rank,
+      `${ordered[i].id} at ${ordered[i].distance.toFixed(1)} m outranks ${ordered[i - 1].id} at ${ordered[i - 1].distance.toFixed(1)} m`,
+    );
+  }
+  disposeFacadeDepth(batch);
+});
+
+section('REAL CORPUS: a stale view point can no longer flatten the city', () => {
+  // The round-2 failure, reproduced and then asserted away. The renderer scores
+  // the tier once, from the build focus, and never rescores it; the quality
+  // cards are captured from ~615 m away. Under the old ladder that left every
+  // building the camera could actually see at `off`.
+  const batch = buildFacadeDepthBatch(REAL, { viewPoint: BUILD_FOCUS, ...REAL_SCREEN, baseY: 0 });
+  check(batch.buildings.length === REAL.length, `${REAL.length - batch.buildings.length} real buildings emitted nothing from the build focus`);
+  check(batch.emptyBuildings === 0, `batch reports ${batch.emptyBuildings} empty buildings`);
+  check(batch.tiers.off === 0, `${batch.tiers.off} real buildings were tiered off by distance`);
+  check(batch.requestedTiers.off === 0, `${batch.requestedTiers.off} real buildings were *requested* at off`);
+  check(batch.tierFloor === FACADE_DEPTH_MIN_TIER, `batch floor is ${batch.tierFloor}, expected ${FACADE_DEPTH_MIN_TIER}`);
+  check(batch.tierCeiling === 'near', `batch ceiling is ${batch.tierCeiling}, expected near`);
+  check(batch.ringCutDistance === null, 'the real corpus needs no ring cut');
+  check(batch.triangles <= batch.sceneTriangleBudget, `batch spent ${batch.triangles} of ${batch.sceneTriangleBudget}`);
+  check(batch.drawCalls <= FACADE_DEPTH_BUDGET.maxDrawCalls, `${batch.drawCalls} draw calls`);
+
+  // The buildings the *capture* camera stands in front of, scored from the
+  // stale build focus, must all carry real construction.
+  const tierById = new Map(batch.buildings.map((entry) => [entry.id, entry]));
+  let nearEye = 0;
+  for (const building of REAL) {
+    const centroid = facadeFootprintMetrics(building).centroid;
+    if (Math.hypot(centroid.x - CAPTURE_EYE.x, centroid.z - CAPTURE_EYE.z) > 90) continue;
+    nearEye += 1;
+    const entry = tierById.get(building.id);
+    check(Boolean(entry), `${building.id}: within 90 m of the capture eye and emitted nothing`);
+    check(entry.triangles > 0, `${building.id}: within 90 m of the capture eye and cost 0 triangles`);
+    check(
+      FACADE_TIER_RANK[entry.tier] >= FACADE_TIER_RANK[FACADE_DEPTH_MIN_TIER],
+      `${building.id}: within 90 m of the capture eye at tier ${entry.tier}`,
+    );
+  }
+  check(nearEye >= 8, `expected at least 8 buildings within 90 m of the capture eye, found ${nearEye}`);
+  results.push(`      stale-focus batch: ${batch.buildings.length}/${REAL.length} built, ${batch.triangles} tri, ${batch.drawCalls} draws, tiers ${JSON.stringify(batch.tiers)}, ${nearEye} buildings within 90 m of the capture eye all >= ${FACADE_DEPTH_MIN_TIER}`);
+  disposeFacadeDepth(batch);
+
+  // The floor survives every view point, not just the two that made the bug.
+  let worst = 0;
+  let worstView = null;
+  for (let i = 0; i < 96; i += 1) {
+    const angle = (i / 96) * Math.PI * 2;
+    const radius = 40 + (i % 12) * 70;
+    const view = { x: 1600 + Math.cos(angle) * radius, z: 400 + Math.sin(angle) * radius };
+    const sweep = buildFacadeDepthBatch(REAL, { viewPoint: view, fov: 58, viewportHeight: 720, baseY: 0 });
+    check(sweep.buildings.length === REAL.length, `view ${view.x.toFixed(0)},${view.z.toFixed(0)}: ${REAL.length - sweep.buildings.length} buildings emitted nothing`);
+    check(sweep.tiers.off === 0, `view ${view.x.toFixed(0)},${view.z.toFixed(0)}: ${sweep.tiers.off} buildings tiered off`);
+    check(sweep.ringCutDistance === null, `view ${view.x.toFixed(0)},${view.z.toFixed(0)}: needed a ring cut`);
+    check(sweep.triangles <= sweep.sceneTriangleBudget, `view ${view.x.toFixed(0)},${view.z.toFixed(0)}: spent ${sweep.triangles}`);
+    check(sweep.drawCalls <= FACADE_DEPTH_BUDGET.maxDrawCalls, `view ${view.x.toFixed(0)},${view.z.toFixed(0)}: ${sweep.drawCalls} draws`);
+    if (sweep.triangles > worst) { worst = sweep.triangles; worstView = view; }
+    disposeFacadeDepth(sweep);
+  }
+  results.push(`      96 view-point sweep (fov 58): worst ${worst} triangles at ${worstView.x.toFixed(0)},${worstView.z.toFixed(0)}, allowance ${FACADE_DEPTH_BUDGET.sceneTriangleBudget}, 700/700 built at every view`);
+});
+
+section('REAL CORPUS: a tight budget degrades uniformly, it does not drop neighbours', () => {
+  // Force the batch through every rung of the degrade ladder on real data and
+  // check that each rung is a global move: one ceiling, one floor, one ring.
+  const seen = new Set();
+  for (const budget of [Infinity, 120000, 60000, 40000, 20000, 10000, 4000, 1000, 0]) {
+    const batch = buildFacadeDepthBatch(REAL, {
+      viewPoint: CAPTURE_EYE,
+      ...REAL_SCREEN,
+      baseY: 0,
+      sceneTriangleBudget: Number.isFinite(budget) ? budget : undefined,
+    });
+    if (Number.isFinite(budget)) check(batch.triangles <= budget, `budget ${budget}: spent ${batch.triangles}`);
+    seen.add(`${batch.tierCeiling}/${batch.tierFloor}/${batch.ringCutDistance === null ? 'no-cut' : 'cut'}`);
+    check(FACADE_TIER_RANK[batch.tierFloor] <= FACADE_TIER_RANK[batch.tierCeiling], `budget ${budget}: floor ${batch.tierFloor} above ceiling ${batch.tierCeiling}`);
+    check(batch.tierFloor !== 'off', `budget ${budget}: the floor ladder must never reach off`);
+
+    // Equal distance, equal treatment, on real footprints. Exact distance:
+    // that is the actual contract, and it is what "two buildings side by side"
+    // means. Nearby-but-unequal distances are covered by monotonicity below.
+    const tierById = new Map(batch.buildings.map((entry) => [entry.id, entry]));
+    const measured = REAL.map((building) => {
+      const centroid = facadeFootprintMetrics(building).centroid;
+      return {
+        id: building.id,
+        distance: Math.hypot(centroid.x - CAPTURE_EYE.x, centroid.z - CAPTURE_EYE.z),
+        tier: tierById.get(building.id)?.tier ?? 'off',
+      };
+    }).sort((a, b) => a.distance - b.distance);
+    const exact = new Map();
+    for (const item of measured) {
+      const key = item.distance.toFixed(9);
+      if (!exact.has(key)) exact.set(key, new Set());
+      exact.get(key).add(item.tier);
+    }
+    for (const [key, tiers] of exact) {
+      check(tiers.size === 1, `budget ${budget}: two buildings at exactly ${key} m split across ${[...tiers].join('/')}`);
+    }
+    // Monotone: the tier never improves as distance grows. A tier boundary may
+    // fall between two nearby buildings -- that is what a distance ring is --
+    // but it may never invert.
+    for (let i = 1; i < measured.length; i += 1) {
+      check(
+        FACADE_TIER_RANK[measured[i].tier] <= FACADE_TIER_RANK[measured[i - 1].tier],
+        `budget ${budget}: ${measured[i].id} at ${measured[i].distance.toFixed(1)} m outranks ${measured[i - 1].id} at ${measured[i - 1].distance.toFixed(1)} m`,
+      );
+    }
+    // The cut is a ring: everything kept is nearer than everything dropped, and
+    // the boundary is quantised to a ring band rather than falling between two
+    // buildings 0.2 m apart.
+    let keptMax = -Infinity;
+    let droppedMin = Infinity;
+    for (const item of measured) {
+      if (tierById.has(item.id)) keptMax = Math.max(keptMax, item.distance);
+      else droppedMin = Math.min(droppedMin, item.distance);
+    }
+    check(keptMax <= droppedMin + 1e-6, `budget ${budget}: kept a building at ${keptMax.toFixed(1)} m while dropping one at ${droppedMin.toFixed(1)} m`);
+    if (batch.ringCutDistance !== null) {
+      check(
+        Math.abs(batch.ringCutDistance % FACADE_DEPTH_RING_METRES) < 1e-9,
+        `budget ${budget}: ring cut at ${batch.ringCutDistance} m is not aligned to the ${FACADE_DEPTH_RING_METRES} m band`,
+      );
+    }
+    disposeFacadeDepth(batch);
+  }
+  check(seen.size >= 3, `expected the degrade ladder to reach at least 3 distinct states, saw ${[...seen].join(', ')}`);
+  results.push(`      degrade states exercised on real data: ${[...seen].sort().join(', ')}`);
+});
+
+section('REAL CORPUS: the source city is never mutated', () => {
+  const before = JSON.stringify(REAL);
+  const batch = buildFacadeDepthBatch(REAL, { viewPoint: CAPTURE_EYE, ...REAL_SCREEN, baseY: 0 });
+  disposeFacadeDepth(batch);
+  for (const tier of FACADE_DEPTH_LODS) {
+    for (const building of REAL.slice(0, 50)) planFacadeDepth(building, { tier, baseY: 3 });
+  }
+  check(JSON.stringify(REAL) === before, 'the real slice is unchanged after planning and batching');
+});
+
 // ------------------------------------------------------------------- report
 
 console.log(`verify-facade-depth: ${FACADE_DEPTH_VERSION}`);
@@ -1074,7 +1547,7 @@ console.log('  triangle cost per building (measured over the 700 building corpus
 for (const lod of FACADE_DEPTH_LODS) {
   const cap = FACADE_DEPTH_BUDGET.trianglesPerBuilding[lod];
   const mean = perLodTotals[lod] / CORPUS.length;
-  console.log(`    ${lod.padEnd(5)} cap ${String(cap).padStart(5)}  max ${String(perLodMax[lod]).padStart(5)}  mean ${mean.toFixed(1).padStart(7)}`);
+  console.log(`    ${lod.padEnd(10)} cap ${String(cap).padStart(5)}  max ${String(perLodMax[lod]).padStart(5)}  mean ${mean.toFixed(1).padStart(7)}`);
 }
 console.log(`  features emitted: ${Array.from(featureTally.entries()).sort().map(([k, v]) => `${k}=${v}`).join(' ')}`);
 console.log(`verify-facade-depth: PASS (${checks} assertions)`);

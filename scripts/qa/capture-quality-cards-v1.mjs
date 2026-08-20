@@ -62,6 +62,13 @@ await page.waitForFunction(() => {
   const api = window.__CITYGEN__;
   return typeof api?.getState === 'function' && (api.getCity()?.buildings?.length || 0) > 50;
 }, null, { timeout: BOOT_MS });
+// The city object exists before TrafficSim is constructed, so reading runtime
+// state here reported pedestrians: 0 on a world that actually spawns 48 of
+// them. Wait for the simulation too, or every report understates the city.
+await page.waitForFunction(() => {
+  const t = window.__CITYGEN__?.getTraffic?.();
+  return !!t && (t.pedestrians?.length || 0) > 0 && (t.cars?.length || 0) > 0;
+}, null, { timeout: BOOT_MS }).catch(() => {});
 report.bootMs = Date.now() - bootStartedAt;
 console.log(`world ready in ${(report.bootMs / 1000).toFixed(1)}s`);
 

@@ -33,6 +33,14 @@
 //      and every curb face is vertical and faces the road
 //  15. the triangle budget per 100 m of street and per intersection holds
 //  16. the THREE build stays on stock materials, 3 draw calls, polygonOffset
+//  17. REAL-DATASET COVERAGE. Sections 13-15 run on fixtures, and a fixture is
+//      not evidence about the shipped city: round 2's coverage assertion passed
+//      on a synthetic grid while the real map still had holes. So this section
+//      loads public/data/sf/sf-city.json and runs the same slice the app runs
+//      (`loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 })`),
+//      builds the surface with the same options CityRenderer.buildRoadNetwork
+//      passes, and re-samples the paved band of every emitted segment against
+//      the emitted triangles.
 
 import * as THREE from 'three';
 import * as mod from '../../src/world/streets/street-surface-v2.js';
@@ -822,6 +830,179 @@ section('9. THREE build (stock materials only, WebGL2-safe)');
   disposeStreetSurfaceV2(built);
   assert(built.group.children.length === 0, 'dispose releases the group contents');
   assert(THREE.REVISION.length > 0, `built against three r${THREE.REVISION}`);
+}
+
+section('17. REAL-DATASET coverage: the shipped San Francisco slice');
+{
+  const { readFile } = await import('node:fs/promises');
+  const nodePath = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const HERE = nodePath.dirname(fileURLToPath(import.meta.url));
+  const REPO = nodePath.resolve(HERE, '..', '..');
+  // Serve public/ to the module's own loader so it sees byte-identical input
+  // to the shipped route.
+  globalThis.fetch = async (url) => {
+    const rel = String(url).replace(/^https?:\/\/[^/]+/, '');
+    if (rel.endsWith('.gz')) return { ok: false, status: 415 };
+    try {
+      const text = await readFile(nodePath.join(REPO, 'public', rel), 'utf8');
+      return { ok: true, status: 200, json: async () => JSON.parse(text) };
+    } catch {
+      return { ok: false, status: 404 };
+    }
+  };
+  const { loadSfData } = await import(nodePath.join(REPO, 'src/citygen/sf-data.js'));
+  const realCity = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+  assert(realCity.meta.generator === 'sf-builtin' && realCity.segments.length > 1000,
+    `real SF slice loaded (${realCity.segments.length} segments, ${realCity.buildings.length} buildings)`);
+
+  // CityRenderer.setCity scales the height field by 1.12 before any geometry is
+  // built; CityRenderer.buildRoadNetwork then passes exactly these options.
+  const realHeightAt = (x, z) => {
+    const v = Number(realCity.terrain.heightAt(x, z));
+    return Number.isFinite(v) ? v * 1.12 : 0;
+  };
+  const real = buildStreetSurfaceData(realCity, {
+    roadLift: Number(realCity.meta.streetDesign?.roadLift ?? 0.45),
+    gutterDepth: 0.04,
+    curbFaceHeight: 0.045 + 0.04 + 0.008,
+    heightAt: realHeightAt,
+    palette: 'sf',
+    inferNodes: true,
+  });
+  console.log(`  ${real.stats.trianglesTotal} triangles, ${real.stats.segments} segments, `
+    + `${real.stats.nodes} nodes, ${real.stats.streetLengthMeters.toFixed(0)} m of street`);
+  assert(real.stats.nonFinite === 0, 'no NaN/Inf anywhere in the real-slice buffers');
+  assert(real.stats.budget.withinTrianglesPer100m && real.stats.budget.withinTrianglesPerIntersection,
+    `budget holds on the real slice (${real.stats.trianglesPer100m.toFixed(0)} tri/100 m, `
+    + `${real.stats.trianglesPerIntersection.toFixed(0)} tri/node)`);
+
+  // XZ bucket index over the walkable/drivable layers only. Curb faces are
+  // vertical and paint is an overlay, so neither contributes footprint.
+  const CELL = 6;
+  const buckets = new Map();
+  const flat = [];
+  const addTri = (ax, az, bx, bz, cx, cz) => {
+    const index = flat.length / 6;
+    flat.push(ax, az, bx, bz, cx, cz);
+    for (let gz = Math.floor(Math.min(az, bz, cz) / CELL); gz <= Math.floor(Math.max(az, bz, cz) / CELL); gz += 1) {
+      for (let gx = Math.floor(Math.min(ax, bx, cx) / CELL); gx <= Math.floor(Math.max(ax, bx, cx) / CELL); gx += 1) {
+        const key = gx * 100003 + gz;
+        let list = buckets.get(key);
+        if (!list) { list = []; buckets.set(key, list); }
+        list.push(index);
+      }
+    }
+  };
+  for (const name of ['carriageway', 'curbTop', 'sidewalk', 'ramp']) {
+    const layer = real.layers[name];
+    for (let i = 0; i < layer.indices.length; i += 3) {
+      const a = layer.indices[i] * 3;
+      const b = layer.indices[i + 1] * 3;
+      const c = layer.indices[i + 2] * 3;
+      addTri(layer.positions[a], layer.positions[a + 2],
+        layer.positions[b], layer.positions[b + 2],
+        layer.positions[c], layer.positions[c + 2]);
+    }
+  }
+  const pavedAt = (x, z) => {
+    const list = buckets.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
+    if (!list) return false;
+    for (const index of list) {
+      const t = index * 6;
+      const ax = flat[t]; const az = flat[t + 1];
+      const bx = flat[t + 2]; const bz = flat[t + 3];
+      const cx = flat[t + 4]; const cz = flat[t + 5];
+      const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+      if (Math.abs(d) < 1e-12) continue;
+      const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+      const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+      if (l1 >= -1e-9 && l2 >= -1e-9 && 1 - l1 - l2 >= -1e-9) return true;
+    }
+    return false;
+  };
+
+  const hidden = new Set(STREET_SURFACE_V2_DEFAULTS.excludeHighways);
+  let samples = 0;
+  let uncovered = 0;
+  let uncoveredAwayFromEnds = 0;
+  let detached = 0;
+  let maxDetachedM = 0;
+  const worst = [];
+  for (const segment of realCity.segments) {
+    if (hidden.has(segment.highway)) continue;
+    const a = segment.points[0];
+    const b = segment.points[1];
+    if (!a || !b) continue;
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    if (length < 1) continue;
+    const ux = (b.x - a.x) / length;
+    const uz = (b.z - a.z) / length;
+    const nx = -uz;
+    const nz = ux;
+    const half = segment.width / 2;
+    const left = segment.sidewalkLeft ?? segment.sidewalkW ?? 0;
+    const right = segment.sidewalkRight ?? segment.sidewalkW ?? 0;
+    const steps = Math.max(2, Math.round(length / 3));
+    for (let i = 1; i < steps; i += 1) {
+      const t = (i / steps) * length;
+      for (const u of [-half - right * 0.5, -half * 0.5, 0, half * 0.5, half + left * 0.5]) {
+        const x = a.x + ux * t + nx * u;
+        const z = a.z + uz * t + nz * u;
+        samples += 1;
+        if (pavedAt(x, z)) continue;
+        uncovered += 1;
+        // The sampler assumes the IDEALISED cross-section band. Two legitimate
+        // constructions move pavement off that band: a junction trim hands the
+        // straight run to a corner return whose footprint is a fillet, and a
+        // mitre at a bend shifts the footway edge. So the question that matters
+        // is not "is this exact point paved" but "is there pavement here at
+        // all" - a real hole has no pavement anywhere near it.
+        let nearestPavedM = Infinity;
+        for (const radius of [1, 2, 3, 4, 5, 6]) {
+          for (let k = 0; k < 8; k += 1) {
+            const angle = (k / 8) * Math.PI * 2;
+            if (pavedAt(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius)) {
+              nearestPavedM = radius;
+              break;
+            }
+          }
+          if (Number.isFinite(nearestPavedM)) break;
+        }
+        if (nearestPavedM > maxDetachedM) maxDetachedM = nearestPavedM;
+        if (nearestPavedM > 4) {
+          detached += 1;
+          if (worst.length < 8) {
+            worst.push({ x: +x.toFixed(1), z: +z.toFixed(1), seg: segment.id, nearestPavedM });
+          }
+        }
+        const fromEnd = Math.min(t, length - t);
+        if (fromEnd > 12) uncoveredAwayFromEnds += 1;
+      }
+    }
+  }
+  const coverage = 1 - uncovered / samples;
+  console.log(`  paved-band samples: ${samples}, uncovered: ${uncovered} `
+    + `(${uncoveredAwayFromEnds} of them more than 12 m from a segment end)`);
+  console.log(`  real-slice paved coverage: ${(coverage * 100).toFixed(3)}%`);
+  console.log(`  worst distance from an uncovered sample to real pavement: ${maxDetachedM} m `
+    + `(${detached} samples further than 4 m)`);
+  if (worst.length) console.log(`  detached samples: ${JSON.stringify(worst)}`);
+  // Regression bound on real data. Measured on this slice: 99.929% of the
+  // idealised paved band is directly covered, and every one of the 71 residual
+  // samples has real pavement within a few metres - they are trim/mitre
+  // displacements, concentrated where the OSM slice carries DUPLICATE
+  // centrelines (e.g. sf-seg-1135, a 12.8 m tertiary shadowed by 3.2 m transit
+  // ways along nearly the same line, whose shared endpoints define the node the
+  // wide segment is trimmed to). None is a see-through: src/world/ground-coverage.js
+  // puts a closed surface 0.67 m below all of them.
+  // This is an ADDITIONAL bound on previously unasserted real data; the 100%
+  // fixture assertions in section 13 are unchanged.
+  assert(coverage >= 0.999,
+    `real-slice paved footprint is >= 99.9% covered (${(coverage * 100).toFixed(3)}%)`);
+  assert(detached === 0,
+    `no uncovered sample is detached from the pavement - every residual has real `
+    + `pavement within 4 m (worst ${maxDetachedM} m, ${detached} detached)`);
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);
