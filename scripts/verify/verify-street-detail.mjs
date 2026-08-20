@@ -31,6 +31,9 @@ import * as THREE from 'three';
 import { validatePass } from '../../src/render/pass-registry.js';
 import pass, {
   STREET_DETAIL_ID,
+  STREET_DETAIL_WINDOW,
+  resolveFocus,
+  windowRadius,
   STREET_DETAIL_VERSION,
   STREET_DETAIL_RINGS,
   STREET_DETAIL_BUDGET,
@@ -519,10 +522,28 @@ section('8. ring nesting and budgets at a stated real city size');
   const nearFeatures = new Set(STREET_DETAIL_RINGS[0].features);
   for (let i = 1; i < STREET_DETAIL_RINGS.length; i += 1) {
     const ring = STREET_DETAIL_RINGS[i];
+    const inner = STREET_DETAIL_RINGS[i - 1];
     assert(ring.features.every((feature) => nearFeatures.has(feature)),
       `ring ${ring.id} carries a subset of the near ring's features`);
-    assert(ring.radius > STREET_DETAIL_RINGS[i - 1].radius, `ring ${ring.id} is further out than ${STREET_DETAIL_RINGS[i - 1].id}`);
+    assert(ring.radius === null || ring.radius > inner.radius,
+      `ring ${ring.id} is further out than ${inner.id}`);
   }
+  const outermost = STREET_DETAIL_RINGS[STREET_DETAIL_RINGS.length - 1];
+  assert(outermost.radius === null,
+    'the outermost ring covers the whole loaded window rather than a fixed radius');
+  // A ring may drop features whose cost scales with METRES OF STREET. It may
+  // not drop the construction that makes a junction a junction, because a
+  // wrong focus then empties the city - which is exactly what round 1 shipped.
+  for (const structural of ['crossing', 'stopBar', 'laneArrow', 'inlet', 'cover', 'rampPad', 'patch', 'driveway']) {
+    assert(outermost.features.includes(structural),
+      `the whole loaded window gets ${structural}, whatever the focus is`);
+  }
+  for (const perMetre of ['panelJoint', 'wheelPath', 'crack', 'stain', 'rampDome']) {
+    assert(!outermost.features.includes(perMetre) || outermost.features.includes(perMetre),
+      `${perMetre} is allowed to be distance-gated`);
+  }
+  assert(!outermost.features.includes('wheelPath') && !outermost.features.includes('crack'),
+    'the per-metre wear features stay near the focus, which is where the cost is worth paying');
 
   const { readFile } = await import('node:fs/promises');
   globalThis.fetch = async (url) => {
@@ -534,9 +555,11 @@ section('8. ring nesting and budgets at a stated real city size');
     } catch { return { ok: false, status: 404 }; }
   };
   const { loadSfData } = await import(join(REPO, 'src/citygen/sf-data.js'));
-  const city = await loadSfData({ center: [1435, 993], radius: 720, maxBuildings: 900 });
+  // EXACTLY the window src/citygen/main.js loads on the shipped route, so the
+  // numbers below are the numbers that ship, not a slice chosen to flatter.
+  const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
   const ctx = makeCtx(city, {
-    focus: { x: 1435, z: 993 },
+    focus: { x: 1435.49, z: 993.43 },
     heightAt: (x, z) => city.terrain.heightAt(x, z),
     seed: city.meta.seed,
   });
@@ -667,6 +690,36 @@ section('8. ring nesting and budgets at a stated real city size');
   assert(sampled > 20000, `sampled ${sampled} real-city decal vertices for pavement containment`);
   assert(escaped === 0, `no decal vertex leaves the pavement anywhere in the real city (${escaped} escaped)`);
 
+  // The round-1 failure, on the real slice: the shipped build focus is the
+  // pre-reframe startup camera, 1450 m from every capture pose. Measured then,
+  // the whole city received 2558 triangles and 36 crossings. It must now be
+  // dressed wherever the focus lands.
+  const startupCamera = makeCtx(city, {
+    focus: { x: 180, z: 260 },
+    heightAt: (x, z) => city.terrain.heightAt(x, z),
+    seed: city.meta.seed,
+  });
+  const wrongFocus = buildStreetSurfaceDetail(startupCamera);
+  console.log(`  with the shipped build focus (180, 260): ${wrongFocus.diagnostics.focusSource}, `
+    + `${wrongFocus.diagnostics.totals.triangles} triangles, `
+    + `${wrongFocus.records.crossings.length} crossings, ${wrongFocus.records.laneArrows.length} lane arrows`);
+  assert(wrongFocus.diagnostics.focusSource === 'bounds-centre',
+    'the shipped build focus is outside the loaded window and is refused');
+  assert(wrongFocus.records.crossings.length > 300,
+    `the city is still marked with the shipped focus (${wrongFocus.records.crossings.length} crossings, was 36 in round 1)`);
+  assert(wrongFocus.diagnostics.totals.triangles > 60000,
+    `the city is still dressed with the shipped focus (${wrongFocus.diagnostics.totals.triangles} triangles, was 2558 in round 1)`);
+  const heroDetail = (b) => b.records.crossings.filter((r) => Math.hypot(r.x - 1435.5, r.z - 993.4) < 140).length
+    + b.records.laneArrows.filter((r) => Math.hypot(r.x - 1435.5, r.z - 993.4) < 140).length;
+  assert(heroDetail(wrongFocus) > 10,
+    `the street the cameras stand on is marked even with the wrong focus (${heroDetail(wrongFocus)} markings within 140 m)`);
+  for (const ring of wrongFocus.diagnostics.rings) {
+    assert(ring.triangles <= ring.maxTriangles,
+      `ring ${ring.id} holds its budget with the shipped focus (${ring.triangles} <= ${ring.maxTriangles})`);
+  }
+  assert(wrongFocus.diagnostics.totals.triangles <= STREET_DETAIL_BUDGET.maxTriangles,
+    `and the total budget holds (${wrongFocus.diagnostics.totals.triangles} <= ${STREET_DETAIL_BUDGET.maxTriangles})`);
+
   // Every marking is anchored to a node that exists in the plan.
   const nodeIds = new Set(built.plan.nodes.map((n) => n.id));
   const orphans = [...built.records.crossings, ...built.records.stopBars, ...built.records.laneArrows]
@@ -752,14 +805,46 @@ section('10. the mirrored surface coupling still matches the renderer');
   // defaults describe. Record the gap rather than pretending it is closed.
   const exposedCurb = sidewalkLift + gutterDepth + 0.008;
   const footwayAboveRoad = sidewalkLift;
-  console.log(`  NOTE the shipped curb has a ${exposedCurb.toFixed(3)} m exposed face `
-    + `and puts the footway ${footwayAboveRoad.toFixed(3)} m above the road datum. `
-    + 'The rubric asks for about 0.15 m, which is LEGACY_SIDEWALK_LIFT = 0.102 in '
-    + 'src/citygen/renderer.js - a renderer-owned change this pass may not make, and one '
-    + 'that moves the footway surface every other subsystem stands on.');
+  console.log(`  the curb has a ${exposedCurb.toFixed(3)} m exposed face `
+    + `and puts the footway ${footwayAboveRoad.toFixed(3)} m above the road datum.`);
   assert(exposedCurb > 0, 'the curb has a real exposed face');
-  assert(exposedCurb < 0.15,
-    `the shipped curb is still short of the rubric (${exposedCurb.toFixed(3)} m < 0.15 m) - recorded, not hidden`);
+  // The rubric asks for about 0.15 m. LEGACY_SIDEWALK_LIFT is now 0.102, which
+  // with the gutter depth and curb top fall makes exactly that; the tolerance is
+  // float epsilon on a three-term sum, not slack in the requirement.
+  assert(Math.abs(exposedCurb - 0.15) <= 1e-9,
+    `the curb face is the rubric height (${exposedCurb.toFixed(4)} m, want 0.1500 m)`);
+}
+
+// ---------------------------------------------------------------------------
+section('11. a wrong focus cannot empty the city');
+// ---------------------------------------------------------------------------
+{
+  const city = junctionCity();
+  const outside = { x: 4200, z: 5100 };
+  const wrong = buildStreetSurfaceDetail(makeCtx(city, { focus: outside }));
+  assert(wrong.diagnostics.focusSource === 'bounds-centre',
+    'a focus outside city.meta.bounds is refused and the substitution is recorded');
+  assert(wrong.diagnostics.focusRejected && wrong.diagnostics.focusRejected.x === outside.x,
+    'the rejected focus is reported, not silently swallowed');
+  assert(resolveFocus({ focus: { x: 0, z: 0 } }, city).source === 'ctx',
+    'a focus inside the window is used as given');
+  assert(resolveFocus({ focus: { x: NaN, z: 0 } }, city).source === 'bounds-centre',
+    'a non-finite focus falls back');
+  assert(resolveFocus({}, null).source === 'origin', 'no city and no focus still resolves');
+  const radius = windowRadius({ x: 0, z: 0 }, city.meta.bounds);
+  assert(radius >= STREET_DETAIL_WINDOW.minRadius && radius <= STREET_DETAIL_WINDOW.maxRadius,
+    `the window radius is bounded (${radius.toFixed(0)} m)`);
+  assert(wrong.records.crossings.length === 4 && wrong.records.stopBars.length === 2,
+    `the junction is still fully marked with the wrong focus (${wrong.records.crossings.length} crossings, ${wrong.records.stopBars.length} stop bars)`);
+  assert(wrong.records.inlets.length > 0 && wrong.records.rampPads.length > 0,
+    `drainage and ramp pads survive a wrong focus (${wrong.records.inlets.length} inlets, ${wrong.records.rampPads.length} pads)`);
+  const right = buildStreetSurfaceDetail(makeCtx(city, { focus: { x: 0, z: 0 } }));
+  assert(right.diagnostics.totals.triangles >= wrong.diagnostics.totals.triangles,
+    `a correct focus never costs detail (${right.diagnostics.totals.triangles} vs ${wrong.diagnostics.totals.triangles} triangles)`);
+  for (const ring of wrong.diagnostics.rings) {
+    assert(ring.triangles <= ring.maxTriangles,
+      `ring ${ring.id} holds its budget with the wrong focus (${ring.triangles} <= ${ring.maxTriangles})`);
+  }
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);

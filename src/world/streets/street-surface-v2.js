@@ -108,6 +108,7 @@ export const STREET_SURFACE_V2_LAYERS = Object.freeze([
   'curbFace',    // vertical curb faces (straight runs + corner returns)
   'curbTop',     // curb top surface
   'sidewalk',    // footway from the back of curb outward
+  'verge',       // graded bank from the back of the footway down to open ground
   'ramp',        // kerb ramps at corners
   'marking',     // edge / centre / lane / stop-bar paint
   'crosswalk',   // zebra bands
@@ -116,7 +117,7 @@ export const STREET_SURFACE_V2_LAYERS = Object.freeze([
 /** Which mesh (and therefore which material and draw call) each layer lands in. */
 export const STREET_SURFACE_V2_MESH_GROUPS = Object.freeze({
   carriageway: ['carriageway'],
-  concrete: ['curbFace', 'curbTop', 'sidewalk', 'ramp'],
+  concrete: ['curbFace', 'curbTop', 'sidewalk', 'verge', 'ramp'],
   markings: ['marking', 'crosswalk'],
 });
 
@@ -151,6 +152,26 @@ export const STREET_SURFACE_V2_DEFAULTS = Object.freeze({
   curbTopFall: 0.008,      // curb top falls this much toward the road
   sidewalkCrossSlope: 0.02,
   minSidewalkWidth: 0.5,   // below this a side gets no curb and no footway
+  // THE BACK OF THE FOOTWAY (round 2).
+  //
+  // `roadLift` raises the whole street 0.45 m above the terrain the buildings
+  // stand on, and src/world/ground-coverage.js puts its carpet a further
+  // `groundSink` below that terrain. Measured on the shipped slice at the
+  // eye-level traversal pose, the footway surface is y = 0.741 and the ground
+  // beside it is y = -0.078: a 0.82 m cliff at the back of every footway, with
+  // nothing modelled in between. Because the drop faces AWAY from a
+  // pedestrian-height camera it is never visible as a step - the eye sees the
+  // paved footway, then bare carpet three metres further out, and reads them
+  // as one surface with an inexplicable material seam. Both round-1 reviewers
+  // flagged that seam independently; on the traversal card the carpet was 46%
+  // of the lower frame.
+  //
+  // The verge models the drop: one graded bank per station, sharing the
+  // footway's own outer-edge vertices so it cannot crack, shaded from the
+  // concrete slab edge at the top to open ground at the bottom.
+  vergeReach: 2.2,         // lateral metres of bank beyond the footway edge
+  groundSink: 0.26,        // ground-coverage GROUND_COVERAGE_DEFAULTS.sink
+  vergeMaxDrop: 1.6,       // never model a bank taller than this
   // sampling
   maxStep: 6,              // max metres between cross-sections (terrain follow)
   nodeSnap: 0.6,           // endpoint-to-intersection match radius (renderer uses 0.5)
@@ -212,10 +233,18 @@ const PALETTES = Object.freeze({
     }),
     junction: '#d4d8da',
     gutter: '#bfc4c6',
-    curbFace: '#cfc9bd',
-    curbTop: '#e2ddd1',
+    // The curb reads as CAST STONE, not as more sidewalk. Round 1's palette put
+    // the curb top within 5% of the footway tone, and since the 0.093 m curb
+    // face is occluded by the curb top from any pedestrian standing on the
+    // footway (ray-cast on the shipped slice: the face is hit by 0.5-1% of
+    // lower-frame samples, the top by up to 49 px at 4 m), the only thing the
+    // eye had to go on was a tone difference that was not there. The curb top
+    // is the element that is actually visible, so it carries the contrast.
+    curbFace: '#c3bdb1',
+    curbTop: '#cfcabe',
     sidewalk: '#eee7da',
     ramp: '#e6dfce',
+    verge: '#9a9384',
     markingWhite: '#f4efe2',
     markingYellow: '#e6b93f',
     crosswalk: '#fbf6ea',
@@ -227,10 +256,11 @@ const PALETTES = Object.freeze({
     }),
     junction: '#5d5c5a',
     gutter: '#4f545a',
-    curbFace: '#a98a66',
-    curbTop: '#c0936b',
+    curbFace: '#9c7d5b',
+    curbTop: '#b0855f',
     sidewalk: '#e2c79a',
     ramp: '#d8bd90',
+    verge: '#7d7256',
     markingWhite: '#efe8d4',
     markingYellow: '#e6b93f',
     crosswalk: '#fff4dc',
@@ -966,6 +996,9 @@ function emitSegment(entry, layers, o, ctx, stats) {
   const curbFaceColor = hexToSrgb(palette.curbFace);
   const curbTopColor = hexToSrgb(palette.curbTop);
   const sidewalkColor = hexToSrgb(palette.sidewalk);
+  const vergeColor = hexToSrgb(palette.verge || palette.sidewalk);
+  // The top of the bank is the cut edge of the concrete slab, not soil.
+  const slabEdgeColor = mixColor(sidewalkColor, vergeColor, 0.35);
 
   const offs = sectionOffsets(half, o);
   const datums = stations.map((st) => ctx.datum(st.x, st.z));
@@ -1019,12 +1052,31 @@ function emitSegment(entry, layers, o, ctx, stats) {
       if (walk > o.curbTopWidth + 0.05) {
         const outU = side * (half + walk);
         const rise = o.sidewalkCrossSlope * (walk - o.curbTopWidth);
+        const edgeYA = topA + o.curbTopFall + rise;
+        const edgeYB = topB + o.curbTopFall + rise;
         pushQuad(layers.sidewalk,
           offsetPoint(A, backU, topA + o.curbTopFall),
           offsetPoint(B, backU, topB + o.curbTopFall),
-          offsetPoint(B, outU, topB + o.curbTopFall + rise),
-          offsetPoint(A, outU, topA + o.curbTopFall + rise),
+          offsetPoint(B, outU, edgeYB),
+          offsetPoint(A, outU, edgeYA),
           sidewalkColor, UP);
+        // The bank at the back of the footway. It starts on the SAME two
+        // vertices the footway ends on, so the two surfaces cannot part.
+        if (o.vergeReach > 0.05) {
+          const groundA = dA - o.roadLift - o.groundSink;
+          const groundB = dB - o.roadLift - o.groundSink;
+          const footA = Math.max(groundA, edgeYA - o.vergeMaxDrop);
+          const footB = Math.max(groundB, edgeYB - o.vergeMaxDrop);
+          if (edgeYA - footA > 0.02 || edgeYB - footB > 0.02) {
+            const vergeU = side * (half + walk + o.vergeReach);
+            pushQuad(layers.verge,
+              offsetPoint(A, outU, edgeYA),
+              offsetPoint(B, outU, edgeYB),
+              offsetPoint(B, vergeU, footB),
+              offsetPoint(A, vergeU, footA),
+              [slabEdgeColor, slabEdgeColor, vergeColor, vergeColor], UP);
+          }
+        }
       }
     }
   }

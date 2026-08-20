@@ -15,7 +15,8 @@
 //      back out of its world position rather than trusted from the placement,
 //      and above the curb it stands behind; a wall-mounted item is allowed to
 //      reach past the nominal property line but only as far as a real facade
-//   4. no two items overlap in plan, anywhere in a real city
+//   4. no two items overlap in plan, anywhere in a real city, and no item is
+//      ever placed on a carriageway or inside a junction pad
 //   5. no item stands inside a building footprint, and every wall-mounted item
 //      really is at a wall
 //   6. items do not collide with the props the legacy renderer already placed,
@@ -25,7 +26,14 @@
 //   8. every item leaves a pedestrian through-route on the footway
 //   9. output is deterministic for a seed and varies across seeds
 //  10. per-ring item/triangle caps, the total triangle budget and the draw-call
-//      budget hold at a stated real city size, and every catalogue geometry is
+//      budget hold at a stated real city size
+//  11. A WRONG FOCUS CANNOT EMPTY THE CITY. Round 1 shipped rings that decided
+//      EXISTENCE by distance, and the renderer's build focus turned out to be
+//      the pre-reframe startup camera 1450 m from every capture pose, so this
+//      pass placed zero items in the entire world. The outer ring now covers
+//      the whole loaded window, and this is asserted directly: building with
+//      the focus the shipped route actually supplies must still furnish the
+//      street the cameras stand on., and every catalogue geometry is
 //      finite and instanced
 
 import { resolve, dirname, join } from 'node:path';
@@ -36,13 +44,15 @@ import pass, {
   STREET_FURNITURE_ID,
   STREET_FURNITURE_VERSION,
   STREET_FURNITURE_RINGS,
+  STREET_FURNITURE_WINDOW,
   STREET_FURNITURE_BUDGET,
   STREET_FURNITURE_KINDS,
   STREET_FURNITURE_KIND_IDS,
   buildStreetFurniture,
   lateralFor,
+  onPavedRoadway,
 } from '../../src/render/passes/street-furniture.js';
-import { sidewalkBand } from '../../src/world/streets/street-surface-v2.js';
+import { sidewalkBand, sidewalkSurfaceY } from '../../src/world/streets/street-surface-v2.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -404,6 +414,60 @@ section('4. nothing overlaps');
     if (bucket) bucket.push(item); else grid.set(key, [item]);
   }
   assert(overlaps === 0, `no two items overlap in plan (${overlaps} overlaps, worst ${worst.toFixed(3)} m on ${worstPair || 'none'})`);
+
+  // NOTHING IN THE ROADWAY. Round 1 review found a bench standing on a
+  // crosswalk. An item is placed on the footway band of the segment it CLAIMS,
+  // which is not the same as being clear of every other paved surface: where a
+  // service way crosses a street, or a sibling segment of the same street runs
+  // close by, the claimed band lies on top of another carriageway or inside a
+  // junction pad.
+  let onRoad = 0;
+  const offenders = [];
+  for (const item of built.items) {
+    const kind = STREET_FURNITURE_KINDS[item.kind];
+    // The item's own oriented footprint, rebuilt here from its world pose
+    // rather than trusted from the placement.
+    const ox = Math.sin(item.rotation);
+    const oz = Math.cos(item.rotation);
+    const half = Math.max(0, kind.radius - kind.depth);
+    for (const t of half > 0.05 ? [-half, 0, half] : [0]) {
+      const hit = onPavedRoadway(built.state.roadway, item.x - oz * t, item.z + ox * t, Math.max(kind.depth, 0.18));
+      if (hit) { onRoad += 1; if (offenders.length < 4) offenders.push(`${item.kind}@${hit}`); break; }
+    }
+  }
+  assert(onRoad === 0,
+    `no item stands on a carriageway or inside a junction pad (${onRoad}${offenders.length ? `: ${offenders.join(', ')}` : ''})`);
+  // The test itself, probed directly: a point on a centreline is roadway, a
+  // point on the footway is not, and a junction centre is a pad.
+  const probeSegment = built.plan.segments[0];
+  const mid = probeSegment.points[0];
+  assert(onPavedRoadway(built.state.roadway, mid.x + 20, mid.z, 0.2) !== null,
+    'a point on a carriageway centreline is recognised as roadway');
+  const clear = built.items.find((item) => item.kind === 'signPole');
+  assert(clear && onPavedRoadway(built.state.roadway, clear.x, clear.z, 0.1) === null,
+    'a point on the footway is not roadway');
+  const node = built.plan.nodes[0];
+  assert(onPavedRoadway(built.state.roadway, node.position.x, node.position.z, 0.2) !== null,
+    'the middle of a junction pad is recognised as roadway');
+
+  // EVERY BASE TOUCHES THE SURFACE IT CLAIMS. An item's origin is its base, so
+  // its y has to equal the footway surface at its own position, not at the
+  // station it was laid out from.
+  const options = built.state.o;
+  let floating = 0;
+  let worstFloat = 0;
+  for (const item of built.items) {
+    const measured = measure(built.plan, item);
+    if (!measured) { floating += 1; continue; }
+    const datum = options.roadLift + 0; // fixture heightAt is flat 0
+    const surfaceLateral = Math.min(Math.abs(measured.lateral), item.band.outer);
+    const expected = sidewalkSurfaceY(datum, surfaceLateral, item.half, options);
+    const error = Math.abs(item.y - expected);
+    if (error > worstFloat) worstFloat = error;
+    if (error > 0.005) floating += 1;
+  }
+  assert(floating === 0,
+    `every item's base sits on the footway surface it claims (${floating} floating, worst ${worstFloat.toFixed(4)} m)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -614,14 +678,19 @@ section('10. budgets at a stated real city size');
 // ---------------------------------------------------------------------------
 {
   for (let i = 1; i < STREET_FURNITURE_RINGS.length; i += 1) {
-    assert(STREET_FURNITURE_RINGS[i].radius > STREET_FURNITURE_RINGS[i - 1].radius,
-      `ring ${STREET_FURNITURE_RINGS[i].id} is further out than ${STREET_FURNITURE_RINGS[i - 1].id}`);
-    assert(STREET_FURNITURE_RINGS[i].lod >= STREET_FURNITURE_RINGS[i - 1].lod,
-      `ring ${STREET_FURNITURE_RINGS[i].id} is no more detailed than the ring inside it`);
+    const outer = STREET_FURNITURE_RINGS[i];
+    const inner = STREET_FURNITURE_RINGS[i - 1];
+    assert(outer.radius === null || outer.radius > inner.radius,
+      `ring ${outer.id} is further out than ${inner.id}`);
+    assert(outer.lod >= inner.lod, `ring ${outer.id} is no more detailed than the ring inside it`);
   }
-  const far = STREET_FURNITURE_RINGS[STREET_FURNITURE_RINGS.length - 1];
-  assert(Array.isArray(far.kinds) && far.kinds.length < STREET_FURNITURE_KIND_IDS.length,
-    `the outermost ring carries only the silhouettes that still read (${far.kinds.join(', ')})`);
+  const outermost = STREET_FURNITURE_RINGS[STREET_FURNITURE_RINGS.length - 1];
+  assert(outermost.radius === null,
+    'the outermost ring covers the whole loaded window rather than a fixed radius');
+  assert(outermost.kinds === null,
+    'the outermost ring carries every kind - a ring may set the level of detail, never whether an item exists');
+  assert(STREET_FURNITURE_WINDOW.minRadius > 0 && STREET_FURNITURE_WINDOW.maxRadius > STREET_FURNITURE_WINDOW.minRadius,
+    `the resolved window radius is bounded (${STREET_FURNITURE_WINDOW.minRadius}-${STREET_FURNITURE_WINDOW.maxRadius} m)`);
 
   const { readFile } = await import('node:fs/promises');
   globalThis.fetch = async (url) => {
@@ -633,9 +702,11 @@ section('10. budgets at a stated real city size');
     } catch { return { ok: false, status: 404 }; }
   };
   const { loadSfData } = await import(join(REPO, 'src/citygen/sf-data.js'));
-  const city = await loadSfData({ center: [1435, 993], radius: 720, maxBuildings: 900 });
+  // EXACTLY the window src/citygen/main.js loads on the shipped route, so the
+  // numbers below are the numbers that ship, not a slice chosen to flatter.
+  const city = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
   const ctx = makeCtx(city, {
-    focus: { x: 1435, z: 993 },
+    focus: { x: 1435.49, z: 993.43 },
     heightAt: (x, z) => city.terrain.heightAt(x, z),
     seed: city.meta.seed,
   });
@@ -710,6 +781,27 @@ section('10. budgets at a stated real city size');
   }
   assert(overlaps === 0, `no two items overlap anywhere in the real city (${overlaps})`);
 
+  const refusedForRoad = Object.entries(d.rejections)
+    .filter(([key]) => key.endsWith(':on-carriageway'))
+    .reduce((total, [, count]) => total + count, 0);
+  console.log(`  placements refused for landing on a carriageway or junction pad: ${refusedForRoad}`);
+  assert(refusedForRoad > 100,
+    `the roadway test bites hard on real data - this is the bench-on-the-crosswalk class (${refusedForRoad} refused)`);
+  let realOnRoad = 0;
+  for (const item of built.items) {
+    const kind = STREET_FURNITURE_KINDS[item.kind];
+    const ox = Math.sin(item.rotation);
+    const oz = Math.cos(item.rotation);
+    const halfLen = Math.max(0, kind.radius - kind.depth);
+    for (const t of halfLen > 0.05 ? [-halfLen, 0, halfLen] : [0]) {
+      if (onPavedRoadway(built.state.roadway, item.x - oz * t, item.z + ox * t, Math.max(kind.depth, 0.18))) {
+        realOnRoad += 1;
+        break;
+      }
+    }
+  }
+  assert(realOnRoad === 0, `no item in the real city stands on a carriageway or junction pad (${realOnRoad})`);
+
   let outOfBand = 0;
   let belowCurb = 0;
   for (const item of built.items) {
@@ -733,6 +825,37 @@ section('10. budgets at a stated real city size');
   }
   assert(wallFloat === 0, `every wall-mounted item in the real city is on a facade (${wallFloat} floating or buried)`);
   assert(belowCurb === 0, `every item in the real city stands above the curb (${belowCurb} below)`);
+}
+
+// ---------------------------------------------------------------------------
+section('11. a wrong focus cannot empty the city');
+// ---------------------------------------------------------------------------
+{
+  const city = gridCity();
+  // The focus the shipped route actually supplies: CityRenderer takes it from
+  // camera.position at build time and the app reframes AFTER the build, so it
+  // is the startup camera, far outside the loaded window.
+  const startupCamera = { x: 2400, z: 2600 };
+  const wrong = buildStreetFurniture(makeCtx(city, { focus: startupCamera }));
+  assert(wrong.diagnostics.focusSource === 'bounds-centre',
+    'a focus outside city.meta.bounds is refused and the substitution is recorded');
+  assert(wrong.diagnostics.focusRejected && wrong.diagnostics.focusRejected.x === startupCamera.x,
+    'the rejected focus is reported, not silently swallowed');
+  const right = buildStreetFurniture(makeCtx(city, { focus: { x: 0, z: 0 } }));
+  assert(right.diagnostics.focusSource === 'ctx', 'a focus inside the window is used as given');
+  assert(wrong.items.length > right.items.length * 0.5,
+    `the wrong focus still furnishes the city (${wrong.items.length} items vs ${right.items.length})`);
+  // The property that actually failed in round 1: furniture near the CAMERA,
+  // not near the focus.
+  const nearCamera = (built) => built.items.filter((item) => Math.hypot(item.x, item.z) < 60).length;
+  assert(nearCamera(wrong) > 8,
+    `the street a camera stands on is furnished even when the focus is 3500 m away (${nearCamera(wrong)} items within 60 m of the origin)`);
+  assert(wrong.diagnostics.windowRadius >= STREET_FURNITURE_WINDOW.minRadius,
+    `the resolved window radius reaches the whole map (${wrong.diagnostics.windowRadius.toFixed(0)} m)`);
+  for (const ring of wrong.diagnostics.rings) {
+    assert(ring.triangles <= ring.maxTriangles && ring.items <= ring.maxItems,
+      `ring ${ring.id} still holds its caps with the wrong focus (${ring.items} items, ${ring.triangles} tri)`);
+  }
 }
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);

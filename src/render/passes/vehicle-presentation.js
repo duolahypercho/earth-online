@@ -165,7 +165,7 @@ export function vehicleSurfaceOptions(ctx, overrides = {}) {
   return {
     roadLift: finite(roadLift) ? roadLift : defaults.roadLift,
     gutterDepth: 0.04,
-    curbFaceHeight: 0.045 + 0.04 + defaults.curbTopFall,
+    curbFaceHeight: 0.102 + 0.04 + defaults.curbTopFall,   // renderer.js LEGACY_SIDEWALK_LIFT
     heightAt: heightAt ? (x, z) => {
       const h = Number(heightAt(x, z));
       return Number.isFinite(h) ? h : 0;

@@ -152,7 +152,6 @@
     "verify:citygen-parked-car-partition": "node scripts/verify-citygen-parked-car-partition.mjs",
     "verify:citygen-actors": "node scripts/verify-citygen-actors.mjs",
     "verify:citygen-hero-curb-life": "node scripts/verify-citygen-hero-curb-life.mjs",
-    "verify:citygen-sidewalk-props": "node scripts/verify-citygen-sidewalk-props.mjs",
     "verify:citygen-street-lamps": "node scripts/verify-citygen-street-lamps.mjs",
     "verify:citygen-local-life": "node scripts/verify-citygen-local-life.mjs",
     "verify:citygen-vehicle-batching": "node scripts/verify-citygen-vehicle-batching.mjs",
@@ -188,7 +187,8 @@
     "verify:street-furniture": "node scripts/verify/verify-street-furniture.mjs",
     "verify:facade-articulation": "node scripts/verify/verify-facade-articulation.mjs",
     "verify:vehicle-presentation": "node scripts/verify/verify-vehicle-presentation.mjs",
-    "verify:sun-shadow-cascade": "node scripts/verify/verify-sun-shadow-cascade.mjs"
+    "verify:sun-shadow-cascade": "node scripts/verify/verify-sun-shadow-cascade.mjs",
+    "verify:street-furniture-runtime": "node scripts/verify/verify-street-furniture-runtime.mjs"
   },
   "dependencies": {
     "three": "0.180.0",

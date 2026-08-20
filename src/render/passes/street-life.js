@@ -241,7 +241,7 @@ export function streetLifeSurfaceOptions(city) {
   const roadLift = Number(city?.meta?.streetDesign?.roadLift ?? defaults.roadLift);
   const datum = Number.isFinite(roadLift) ? roadLift : defaults.roadLift;
   const gutterDepth = 0.04;
-  const legacyFootwayLift = 0.045;
+  const legacyFootwayLift = 0.102;
   return {
     roadLift: datum,
     gutterDepth,

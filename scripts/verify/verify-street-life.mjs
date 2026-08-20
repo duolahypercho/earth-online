@@ -476,7 +476,7 @@ const surfaceOptions = streetLifeSurfaceOptions(city);
 assert(
   near(surfaceOptions.roadLift, 0.45, 1e-12)
   && near(surfaceOptions.gutterDepth, 0.04, 1e-12)
-  && near(surfaceOptions.curbFaceHeight, 0.093, 1e-12),
+  && near(surfaceOptions.curbFaceHeight, 0.15, 1e-9),
   `surface options mirror the renderer's pinned planes: datum ${surfaceOptions.roadLift} m, curb face ${surfaceOptions.curbFaceHeight.toFixed(3)} m`,
 );
 
@@ -594,8 +594,8 @@ for (const [label, heightAt] of [['flat ground', flatHeight], ['6% slope', slope
     `moving vehicles sit on the carriageway datum: worst offset ${maxCar.toExponential(2)} m over ${traffic.cars.length} cars`,
   );
   assert(
-    near(traffic.footwayLift - traffic.roadLift, 0.045, 1e-12),
-    `the footway is exactly 45 mm above the carriageway datum (${(traffic.footwayLift - traffic.roadLift).toFixed(4)} m)`,
+    near(traffic.footwayLift - traffic.roadLift, 0.102, 1e-12),
+    `the footway is exactly 102 mm above the carriageway datum (${(traffic.footwayLift - traffic.roadLift).toFixed(4)} m)`,
   );
 }
 

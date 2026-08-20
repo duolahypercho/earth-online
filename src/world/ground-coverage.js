@@ -95,7 +95,22 @@ export const GROUND_COVERAGE_DEFAULTS = Object.freeze({
   margin: 240,          // fine grid reach beyond city.meta.bounds, metres
   cellSize: 24,         // fine grid cell, metres (auto-coarsened to fit maxQuads)
   maxQuads: 24000,      // -> 48 000 triangles worst case, under the budget
-  horizonRadius: 3600,  // apron reach from the bounds centre; camera far is 4200
+  // Apron reach from the bounds centre.
+  //
+  // ROUND 2 CORRECTION. 3600 m was chosen against the canonical camera's
+  // 4200 m far plane, but the two are measured from different origins: the far
+  // plane is 4200 m from the CAMERA, and the camera can stand anywhere in the
+  // loaded window. On the shipped slice the window half-diagonal is 1489 m, so
+  // a ray leaving the far corner had only 2111 m of ground in front of it. A
+  // ray that grazes the horizon - eye 2.35 m, descent 0.0005 rad - needs about
+  // 4700 m to reach the carpet, so it ran out of world and hit the sky dome
+  // BELOW the horizon. Measured on the eight quality-card poses, 243 of
+  // 304 400 below-horizon rays escaped that way, all within 0.05 degrees of the
+  // horizon, which is exactly the thin sliver of sky under the skyline that the
+  // round-1 review flagged. The apron is geometric, so extending it past the
+  // far plane from the worst corner of the window costs no extra quads at all -
+  // only wider outermost cells.
+  horizonRadius: 5900,
   apronRings: 6,        // geometric apron steps per side
   apronGrowth: 2.4,     // ring-to-ring step ratio
   // vertical

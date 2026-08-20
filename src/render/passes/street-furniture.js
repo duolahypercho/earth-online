@@ -46,33 +46,42 @@ import {
   streetRandom,
   streetHash32,
 } from '../../world/streets/street-surface-v2.js';
-import { surfaceOptionsFor } from './street-surface-detail.js';
+import { surfaceOptionsFor, resolveFocus, windowRadius } from './street-surface-detail.js';
 
 export const STREET_FURNITURE_ID = 'street-furniture';
 export const STREET_FURNITURE_VERSION = 'street-furniture-v1';
 
 /**
- * Distance rings from `ctx.focus`. `lod` selects the geometry variant; `kinds`
- * is null for "every kind", or the restricted set a far ring carries.
+ * Distance rings from `ctx.focus`. `lod` selects the geometry variant.
+ *
+ * ROUND 2 CORRECTION - READ THIS BEFORE CHANGING A RADIUS.
+ *
+ * Round 1's outermost ring was 440 m and carried only five kinds. `ctx.focus`
+ * is the camera position at the moment `CityRenderer.buildCity` runs, and the
+ * app reframes the camera AFTER the build, so on the shipped route the focus
+ * was the startup camera at (180, 260) while every quality-card pose was
+ * 1450-1510 m away. Measured on the shipped slice, this pass placed EXACTLY
+ * ZERO items in the entire city and all eight captured frames contained no
+ * street furniture at all.
+ *
+ * A ring may therefore no longer decide whether an item EXISTS. The outer ring
+ * has `radius: null`, which resolves to the whole loaded window, and it
+ * carries every kind - only at a coarser level of detail and a wider spacing.
+ * A wrong focus now costs geometry detail, never the street's contents. Two
+ * tiers instead of three also halves the draw calls, which matters on the
+ * software GL backend the captures run on.
  */
 export const STREET_FURNITURE_RINGS = Object.freeze([
-  Object.freeze({ id: 'near', radius: 80, lod: 0, pitchScale: 1, maxItems: 900, maxTriangles: 90000, kinds: null }),
-  Object.freeze({ id: 'mid', radius: 200, lod: 1, pitchScale: 1.35, maxItems: 2200, maxTriangles: 90000, kinds: null }),
-  Object.freeze({
-    id: 'far',
-    radius: 440,
-    lod: 2,
-    pitchScale: 2.4,
-    maxItems: 3200,
-    maxTriangles: 70000,
-    // Only the silhouettes that still read at 200-440 m.
-    kinds: Object.freeze(['tree', 'signPole', 'transitShelter', 'busStopFlag', 'payStation']),
-  }),
+  Object.freeze({ id: 'near', radius: 120, lod: 0, pitchScale: 1, maxItems: 1400, maxTriangles: 130000, kinds: null }),
+  Object.freeze({ id: 'window', radius: null, lod: 1, pitchScale: 2.0, maxItems: 5200, maxTriangles: 170000, kinds: null }),
 ]);
 
+/** Hard bounds on the resolved window radius, so an enormous map still ends. */
+export const STREET_FURNITURE_WINDOW = Object.freeze({ minRadius: 600, maxRadius: 2600, margin: 140 });
+
 export const STREET_FURNITURE_BUDGET = Object.freeze({
-  maxTriangles: 260000,
-  maxDrawCalls: 48,
+  maxTriangles: 300000,
+  maxDrawCalls: 40,
   rings: STREET_FURNITURE_RINGS,
 });
 
@@ -225,7 +234,9 @@ function assemble(parts) {
  */
 function buildCatalogue(lod) {
   const coarse = lod > 0;
-  const sides = coarse ? 5 : 8;
+  // The coarse tier is what the whole loaded window gets, so it has to be
+  // genuinely cheap: four-sided posts and no sub-100 mm parts.
+  const sides = coarse ? 4 : 8;
   const g = {};
 
   g.hydrant = assemble([
@@ -234,7 +245,7 @@ function buildCatalogue(lod) {
     coarse ? null : cyl(0.075, 0.075, 0.06, 6, PALETTE.hydrantCap, 0, 0.76, 0),
     coarse ? null : cyl(0.055, 0.055, 0.1, 5, PALETTE.hydrantCap, 0, 0.44, -0.16).rotateX(Math.PI / 2),
     coarse ? null : cyl(0.055, 0.055, 0.1, 5, PALETTE.hydrantCap, 0, 0.44, 0.16).rotateX(Math.PI / 2),
-    box(0.34, 0.05, 0.34, PALETTE.hydrantBody, 0, 0.025, 0),
+    coarse ? null : box(0.34, 0.05, 0.34, PALETTE.hydrantBody, 0, 0.025, 0),
   ]);
 
   g.parkingMeter = assemble([
@@ -284,15 +295,15 @@ function buildCatalogue(lod) {
     box(0.44, 0.78, 0.4, PALETTE.newsBoxNeutral, 0, 0.51, 0),
     box(0.46, 0.1, 0.42, PALETTE.newsBoxC, 0, 1.0, 0),
     coarse ? null : box(0.3, 0.3, 0.014, PALETTE.signWhite, 0, 0.72, -0.205),
-    box(0.1, 0.24, 0.1, PALETTE.newsBoxC, -0.14, 0.12, 0),
-    box(0.1, 0.24, 0.1, PALETTE.newsBoxC, 0.14, 0.12, 0),
+    coarse ? null : box(0.1, 0.24, 0.1, PALETTE.newsBoxC, -0.14, 0.12, 0),
+    coarse ? null : box(0.1, 0.24, 0.1, PALETTE.newsBoxC, 0.14, 0.12, 0),
   ]);
 
   g.mailbox = assemble([
     box(0.52, 0.72, 0.44, PALETTE.mailboxBlue, 0, 0.68, 0),
     cyl(0.26, 0.26, 0.52, coarse ? 4 : 8, PALETTE.mailboxBlue, 0, 1.04, 0).rotateZ(Math.PI / 2),
-    box(0.1, 0.32, 0.1, PALETTE.benchFrame, -0.18, 0.16, 0),
-    box(0.1, 0.32, 0.1, PALETTE.benchFrame, 0.18, 0.16, 0),
+    coarse ? null : box(0.1, 0.32, 0.1, PALETTE.benchFrame, -0.18, 0.16, 0),
+    coarse ? null : box(0.1, 0.32, 0.1, PALETTE.benchFrame, 0.18, 0.16, 0),
   ]);
 
   g.bench = assemble([
@@ -300,8 +311,9 @@ function buildCatalogue(lod) {
     box(1.72, 0.07, 0.16, PALETTE.benchWood, 0, 0.44, 0.02),
     coarse ? null : box(1.72, 0.07, 0.16, PALETTE.benchWood, 0, 0.44, 0.2),
     box(1.72, 0.16, 0.07, PALETTE.benchWood, 0, 0.72, 0.28),
-    box(0.08, 0.44, 0.5, PALETTE.benchFrame, -0.76, 0.22, 0.04),
-    box(0.08, 0.44, 0.5, PALETTE.benchFrame, 0.76, 0.22, 0.04),
+    coarse ? null : box(0.08, 0.44, 0.5, PALETTE.benchFrame, -0.76, 0.22, 0.04),
+    coarse ? null : box(0.08, 0.44, 0.5, PALETTE.benchFrame, 0.76, 0.22, 0.04),
+    coarse ? box(1.6, 0.42, 0.42, PALETTE.benchFrame, 0, 0.21, 0.04) : null,
   ]);
 
   g.planter = assemble([
@@ -345,7 +357,7 @@ function buildCatalogue(lod) {
     cyl(0.11, 0.17, 2.5, coarse ? 4 : 6, PALETTE.trunk, 0, 1.25, 0),
     cone(1.45, 2.6, coarse ? 5 : 7, PALETTE.canopyA, 0, 3.9, 0),
     cone(1.15, 2.1, coarse ? 5 : 7, PALETTE.canopyB, 0.22, 4.9, -0.14),
-    lod > 1 ? null : cone(0.85, 1.7, 6, PALETTE.canopyC, -0.2, 5.6, 0.16),
+    coarse ? null : cone(0.85, 1.7, 6, PALETTE.canopyC, -0.2, 5.6, 0.16),
   ]);
 
   return g;
@@ -460,6 +472,110 @@ function seedOccupancyFromScene(state, root) {
     }
   });
   return added;
+}
+
+/**
+ * Uniform index over the paved carriageway and the junction pads, so nothing
+ * can be planted in the roadway.
+ *
+ * An item is placed on the footway band of the segment it CLAIMS, which is not
+ * the same as being clear of the road: where a service way crosses a street,
+ * or a segment runs close to a sibling of the same street, the claimed footway
+ * band lies on top of another segment's carriageway or inside a junction pad.
+ * That is exactly how a bench ends up on a crosswalk. The claim is therefore
+ * checked against every OTHER paved surface, not only the one it came from.
+ */
+function buildRoadwayIndex(plan) {
+  const cell = 24;
+  const segments = new Map();
+  for (const segment of plan.segments) {
+    for (let i = 0; i < segment.points.length - 1; i += 1) {
+      const a = segment.points[i];
+      const b = segment.points[i + 1];
+      const entry = { a, b, half: segment.half, id: segment.id };
+      const reach = segment.half + 3;
+      for (let gx = Math.floor((Math.min(a.x, b.x) - reach) / cell); gx <= Math.floor((Math.max(a.x, b.x) + reach) / cell); gx += 1) {
+        for (let gz = Math.floor((Math.min(a.z, b.z) - reach) / cell); gz <= Math.floor((Math.max(a.z, b.z) + reach) / cell); gz += 1) {
+          const key = `${gx}|${gz}`;
+          const bucket = segments.get(key);
+          if (bucket) bucket.push(entry); else segments.set(key, [entry]);
+        }
+      }
+    }
+  }
+  // Junction pads, as the closed curb ring the surface builder actually built.
+  const pads = new Map();
+  for (const node of plan.nodes) {
+    const ring = [];
+    for (const path of node.paths || []) {
+      for (const station of path.stations || []) ring.push({ x: station.x, z: station.z });
+    }
+    if (ring.length < 3) continue;
+    let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+    for (const p of ring) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    const entry = { ring, minX, maxX, minZ, maxZ, id: node.id };
+    for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+      for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+        const key = `${gx}|${gz}`;
+        const bucket = pads.get(key);
+        if (bucket) bucket.push(entry); else pads.set(key, [entry]);
+      }
+    }
+  }
+  return { cell, segments, pads };
+}
+
+/** True when the plan circle touches any carriageway or junction pad. */
+export function onPavedRoadway(index, x, z, radius) {
+  const gx = Math.floor(x / index.cell);
+  const gz = Math.floor(z / index.cell);
+  for (let i = -1; i <= 1; i += 1) {
+    for (let j = -1; j <= 1; j += 1) {
+      const key = `${gx + i}|${gz + j}`;
+      for (const e of index.segments.get(key) || []) {
+        const dx = e.b.x - e.a.x;
+        const dz = e.b.z - e.a.z;
+        const len2 = dx * dx + dz * dz;
+        const t = len2 > 1e-12 ? clamp(((x - e.a.x) * dx + (z - e.a.z) * dz) / len2, 0, 1) : 0;
+        if (Math.hypot(x - (e.a.x + dx * t), z - (e.a.z + dz * t)) < e.half + radius) return e.id;
+      }
+      for (const e of index.pads.get(key) || []) {
+        if (x < e.minX - radius || x > e.maxX + radius || z < e.minZ - radius || z > e.maxZ + radius) continue;
+        if (pointInPolygon(e.ring, x, z)) return e.id;
+        // Also reject when the circle merely clips the ring's boundary.
+        for (let k = 0, l = e.ring.length - 1; k < e.ring.length; l = k, k += 1) {
+          const a = e.ring[l];
+          const b = e.ring[k];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len2 = dx * dx + dz * dz;
+          const t = len2 > 1e-12 ? clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1) : 0;
+          if (Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t)) < radius) return e.id;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Is any part of an oriented item footprint on a carriageway or junction pad?
+ * `(ox, oz)` is the unit vector from the item toward the road.
+ */
+function itemOnRoadway(state, kind, x, z, ox, oz) {
+  const depth = Math.max(kind.depth, 0.18) + 0.06;
+  const half = Math.max(0, kind.radius - kind.depth);
+  // Along-street axis is perpendicular to the outward normal.
+  const ax = -oz;
+  const az = ox;
+  for (const t of half > 0.05 ? [-half, 0, half] : [0]) {
+    const hit = onPavedRoadway(state.roadway, x + ax * t, z + az * t, depth);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /** Axis-aligned footprint index over the building contract. */
@@ -673,6 +789,17 @@ function placeItem(state, spec) {
   const x = st.x + nx * side * placedLateral;
   const z = st.z + nz * side * placedLateral;
   if (occupancyHit(state.occupancy, x, z, kind.radius)) { reject(state, kindId, 'overlap'); return null; }
+  // The roadway test is done on the item's OWN footprint, not on its plan
+  // circle. A bench is 1.7 m long and 0.6 m deep and stands parallel to the
+  // kerb, so its circle radius points down the street, not at the traffic;
+  // testing that circle refuses every bench, rack and shelter in the city.
+  // Three samples along the long axis, each with the across-footway depth, is
+  // the oriented rectangle to the accuracy that matters here.
+  // Unit outward direction, matching the yaw the instance is actually given,
+  // plus a margin so the test is conservative rather than exact.
+  const outLen = Math.hypot(nx, nz) || 1;
+  const roadway = itemOnRoadway(state, kind, x, z, (side * nx) / outLen, (side * nz) / outLen);
+  if (roadway) { reject(state, kindId, 'on-carriageway'); return null; }
   // A wall-mounted kind is allowed to stand hard against a facade, but never
   // INSIDE one: the footway band can overlap a building footprint where the
   // authored footway is wider than the real setback, and an item placed there
@@ -722,6 +849,10 @@ function placeItem(state, spec) {
   state.items.push(item);
   state.counts[kindId] = (state.counts[kindId] || 0) + 1;
   state.usedSegments.add(segment.id);
+  // Both records move together: `state.rings` is what the placement walk tests
+  // its per-ring item cap against, and round 1 only ever incremented the
+  // diagnostics copy, so that cap never actually bound.
+  ring.items += 1;
   const ringRecord = state.ringRecords[state.rings.indexOf(ring)];
   ringRecord.items += 1;
   return item;
@@ -939,8 +1070,13 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxSceneOccupancy: 6000,
 });
 
-function makeState(plan, focus, ctx, options, seedTag) {
-  const rings = STREET_FURNITURE_RINGS.map((ring) => ({ ...ring, items: 0, triangles: 0 }));
+function makeState(plan, focus, ctx, options, seedTag, outerRadius) {
+  const rings = STREET_FURNITURE_RINGS.map((ring) => ({
+    ...ring,
+    radius: ring.radius == null ? outerRadius : ring.radius,
+    items: 0,
+    triangles: 0,
+  }));
   const o = plan.options;
   const heightAt = o.heightAt;
   return {
@@ -958,6 +1094,7 @@ function makeState(plan, focus, ctx, options, seedTag) {
     usedSegments: new Set(),
     occupancy: makeOccupancy(2.5),
     buildings: buildBuildingIndex(plan.city),
+    roadway: buildRoadwayIndex(plan),
     datum: heightAt ? (x, z) => o.roadLift + heightAt(x, z) : () => o.roadLift,
   };
 }
@@ -985,12 +1122,9 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   const surfaceOptions = surfaceOptionsFor(ctx, overrides.surface || {});
   const plan = buildStreetscapePlan(city, surfaceOptions);
   const bounds = city?.meta?.bounds;
-  const focus = ctx?.focus && Number.isFinite(ctx.focus.x) && Number.isFinite(ctx.focus.z)
-    ? { x: ctx.focus.x, z: ctx.focus.z }
-    : bounds
-      ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 }
-      : { x: 0, z: 0 };
-  const state = makeState(plan, focus, ctx, options, ctx?.seed ?? city?.meta?.seed ?? 'city');
+  const focus = resolveFocus(ctx, city);
+  const outerRadius = windowRadius(focus, bounds, STREET_FURNITURE_WINDOW);
+  const state = makeState(plan, focus, ctx, options, ctx?.seed ?? city?.meta?.seed ?? 'city', outerRadius);
   const legacyOccupancy = seedOccupancyFromScene(state, ctx?.root);
 
   // Corners first: they are the highest-value placements and must win the
@@ -1089,7 +1223,9 @@ export function buildStreetFurniture(ctx, overrides = {}) {
     // bulk cast, and only inside the two detailed rings. A 32 mm meter pole
     // could not resolve in the shadow map anyway - see the renderer's shadow
     // caster policy, which gets the final word after this pass.
-    mesh.castShadow = lod < 2 && SHADOW_CASTING_KINDS.has(kindId);
+    // Only the near tier casts. Every extra caster is another shadow-map draw
+    // call, and the capture path is a software GL backend.
+    mesh.castShadow = lod < 1 && SHADOW_CASTING_KINDS.has(kindId);
     mesh.receiveShadow = true;
     mesh.userData = { kind: 'street-furniture', pass: STREET_FURNITURE_ID, itemKind: kindId, lod };
     group.add(mesh);
@@ -1102,7 +1238,7 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   const pitBuffer = makeFlatBuffer();
   for (const item of state.items) {
     if (item.kind !== 'tree') continue;
-    emitTreePit(state, pitBuffer, item, item.lod < 2);
+    emitTreePit(state, pitBuffer, item, item.lod < 1);
   }
   if (pitBuffer.triangles > 0) {
     const pitGeometry = new THREE.BufferGeometry();
@@ -1135,7 +1271,10 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   const diagnostics = {
     version: STREET_FURNITURE_VERSION,
     implemented: true,
-    focus,
+    focus: { x: focus.x, z: focus.z },
+    focusSource: focus.source,
+    focusRejected: focus.rejected,
+    windowRadius: outerRadius,
     plan: plan.stats,
     counts: state.counts,
     rejections: state.rejections,

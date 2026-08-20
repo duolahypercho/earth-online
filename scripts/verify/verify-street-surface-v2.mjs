@@ -435,7 +435,13 @@ function triangleFrame(layer, i) {
 
 section('1. module contract');
 assert(STREET_SURFACE_V2_ID === 'street-surface-v2', 'module id is street-surface-v2');
-assert(STREET_SURFACE_V2_LAYERS.length === 7, 'seven geometry layers are declared');
+// Round 2 added `verge`: the graded bank at the back of the footway that closes
+// the 0.82 m cliff between the paved surface and the ground carpet. It is a
+// deliberate addition to the layer contract, not a relaxation of it - the
+// assertions below still require every layer to belong to exactly one mesh
+// group and the draw-call budget to hold.
+assert(STREET_SURFACE_V2_LAYERS.length === 8, 'eight geometry layers are declared');
+assert(STREET_SURFACE_V2_LAYERS.includes('verge'), 'the footway bank is a declared layer');
 {
   const grouped = Object.values(STREET_SURFACE_V2_MESH_GROUPS).flat().sort();
   assert(JSON.stringify(grouped) === JSON.stringify([...STREET_SURFACE_V2_LAYERS].sort()),
@@ -830,6 +836,55 @@ section('9. THREE build (stock materials only, WebGL2-safe)');
   disposeStreetSurfaceV2(built);
   assert(built.group.children.length === 0, 'dispose releases the group contents');
   assert(THREE.REVISION.length > 0, `built against three r${THREE.REVISION}`);
+}
+
+section('16b. the verge closes the cliff at the back of the footway');
+{
+  const O = resolveStreetSurfaceOptions(straightCity(), { curbFaceHeight: 0.093, gutterDepth: 0.04, roadLift: 0.45 });
+  const data = buildStreetSurfaceData(straightCity(), { curbFaceHeight: 0.093, gutterDepth: 0.04, roadLift: 0.45 });
+  const walkLayer = data.layers.sidewalk;
+  const vergeLayer = data.layers.verge;
+  assert(vergeLayer.triangles > 0, `the footway carries a graded bank (${vergeLayer.triangles} triangles)`);
+
+  // Vertex sharing: every verge triangle's highest vertices must coincide with
+  // footway vertices. A bank that merely starts near the footway edge leaves a
+  // hairline straight down to the ground carpet 0.8 m below.
+  const walkVerts = new Set();
+  for (let i = 0; i < walkLayer.positions.length; i += 3) {
+    walkVerts.add([walkLayer.positions[i], walkLayer.positions[i + 1], walkLayer.positions[i + 2]]
+      .map((v) => v.toFixed(6)).join(','));
+  }
+  let topVerts = 0;
+  let shared = 0;
+  let maxAbsU = 0;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < vergeLayer.positions.length; i += 3) {
+    const x = vergeLayer.positions[i];
+    const y = vergeLayer.positions[i + 1];
+    const z = vergeLayer.positions[i + 2];
+    maxAbsU = Math.max(maxAbsU, Math.abs(z));
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+    const key = [x, y, z].map((v) => v.toFixed(6)).join(',');
+    if (walkVerts.has(key)) shared += 1;
+    if (y > O.roadLift) topVerts += 1;
+  }
+  assert(topVerts > 0 && shared >= topVerts,
+    `every top-edge vertex of the bank is a footway vertex (${shared} shared of ${topVerts} top vertices)`);
+  const half = 12 / 2;
+  const walk = 3;
+  assert(maxAbsU <= half + walk + O.vergeReach + 1e-6,
+    `the bank never reaches past its declared reach (${maxAbsU.toFixed(3)} <= ${(half + walk + O.vergeReach).toFixed(3)} m)`);
+  assert(maxAbsU > half + walk + 0.05,
+    'the bank really does extend beyond the footway edge');
+  const groundY = O.roadLift - O.roadLift - O.groundSink; // heightAt is 0 here
+  assert(Math.abs(minY - groundY) < 1e-6,
+    `the bank lands exactly on the ground-coverage carpet plane (${minY.toFixed(4)} vs ${groundY.toFixed(4)})`);
+  assert(maxY - minY > 0.5,
+    `the bank spans the whole drop the round-1 review found invisible (${(maxY - minY).toFixed(3)} m)`);
+  assert(O.groundSink === 0.26,
+    'the bank foot uses the same sink src/world/ground-coverage.js does');
 }
 
 section('17. REAL-DATASET coverage: the shipped San Francisco slice');

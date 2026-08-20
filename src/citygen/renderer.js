@@ -195,7 +195,13 @@ const FACADE_DEPTH_GLASS = Object.freeze({ color: '#3f5a68', roughness: 0.16, me
 // rather than the flat ribbon it replaces, but it is 77 mm, not the module's
 // designed 150 mm. Raising it further means re-basing the footway offset in the
 // traffic simulation and in the prop placements at the same time.
-const LEGACY_SIDEWALK_LIFT = 0.045;
+// Exposed curb face = LIFT + gutterDepth + curbTopFall = 0.102 + 0.04 + 0.008
+// = 0.150 m, which is a real curb. At the previous 0.045 the face measured
+// 0.093 m and two independent reviewers measured it as wrong from three
+// different poses. The carriageway datum does not move, so traffic and vehicles
+// are unaffected; the footway surface rises 57 mm and everything grounded on it
+// follows through `streetSurfaceLift()`.
+const LEGACY_SIDEWALK_LIFT = 0.102;
 const STREET_GUTTER_DEPTH = 0.04;
 const STREET_SURFACE_PASS = 'street-surface-v2';
 
@@ -2491,9 +2497,23 @@ export class CityRenderer {
     this.setCity(city);
     this.day = day;
     // Facade relief picks its LOD ring from where the player will actually be.
+    // The camera has not been reframed yet when buildCity runs, so its position
+    // is the startup pose, not the world. Fall back to the loaded window
+    // instead: on the shipped route the startup camera was 1450 m from every
+    // capture pose, and every distance-ringed pass built its detail around empty
+    // terrain - the street furniture pass emitted nothing at all.
+    const windowCentre = city?.meta?.center
+      || (city?.meta?.bounds
+        ? {
+          x: (city.meta.bounds.minX + city.meta.bounds.maxX) / 2,
+          z: (city.meta.bounds.minZ + city.meta.bounds.maxZ) / 2,
+        }
+        : null);
     this.buildFocus = focus && Number.isFinite(focus.x) && Number.isFinite(focus.z)
       ? { x: focus.x, z: focus.z }
-      : { x: this.camera.position.x, z: this.camera.position.z };
+      : windowCentre
+        ? { x: windowCentre.x, z: windowCentre.z }
+        : { x: this.camera.position.x, z: this.camera.position.z };
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     this.appliedPracticalKey = null;
@@ -4720,7 +4740,14 @@ export class CityRenderer {
         lamp.position.set(0, positions[i], 0.24);
         group.add(lamp);
       }
-      group.position.set(signal.position.x, 0, signal.position.z);
+      // Signals stand on the paved surface, not on absolute zero. `roadLift`
+      // puts the carriageway 0.45 m above bare terrain and the terrain is not
+      // flat; measured across the shipped slice this was 0.51-0.68 m out at
+      // every one of the 22 signals.
+      const signalY = (this.terrain?.heightAt
+        ? this.terrain.heightAt(signal.position.x, signal.position.z)
+        : 0) + this.streetSurfaceLift(city).datum;
+      group.position.set(signal.position.x, signalY, signal.position.z);
       group.userData = { kind: 'signal', id: signal.id, signalId: signal.id };
       root.add(group);
       this.pickables.push(group);
@@ -5292,7 +5319,16 @@ export class CityRenderer {
     const random = mulberry32(Number(city.meta.seedInt) + 991);
     const treeData = [];
     const bounds = city.meta.bounds;
-    if (city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap') {
+    // Street trees and sidewalk props are owned by the `street-furniture`
+    // presentation pass, which derives them from the street contract, keeps them
+    // inside the footway band, gives every tree a real pit, and refuses any
+    // placement that lands on a carriageway or in a junction pad. The legacy
+    // layout laid props along the chord between a segment's first and last
+    // point and could not see a sibling segment's roadway, which is how a bench
+    // ended up standing on a crosswalk.
+    const streetDressingOwnedByPass = PASSES.some((pass) => pass.id === 'street-furniture');
+    if (!streetDressingOwnedByPass
+      && (city.meta.generator === 'sf-builtin' || city.meta.generator === 'openstreetmap')) {
       // Dense sidewalk trees along real polylines, like a real SF street.
       for (const segment of city.segments || []) {
         if (treeData.length >= 700) break;
@@ -5320,7 +5356,7 @@ export class CityRenderer {
           });
         }
       }
-    } else {
+    } else if (!streetDressingOwnedByPass) {
       for (const street of city.streets) {
         const perpendicular = street.axis === 'x' ? 'z' : 'x';
         const position = street.position;
@@ -5381,7 +5417,7 @@ export class CityRenderer {
     topMesh.castShadow = true;
     root.add(trunkMesh, canopyMesh, topMesh);
     this.geometryCache.push(trunkGeometry, canopyGeometry, topGeometry);
-    this.buildSidewalkProps(root, city, random);
+    if (!streetDressingOwnedByPass) this.buildSidewalkProps(root, city, random);
   }
 
   buildSidewalkProps(root, city, random) {

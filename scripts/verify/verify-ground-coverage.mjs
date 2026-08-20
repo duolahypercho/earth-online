@@ -28,6 +28,17 @@
 //   4. VERTICAL SAFETY. The carpet - interpolated across its cells, not merely
 //      sampled at its vertices - stays clear below the gutter invert
 //      (heightAt + roadLift - gutterDepth) everywhere a road exists.
+//   5. HORIZON REACH (round 2). Every ray from every quality-card camera pose
+//      that points BELOW the horizon and can reach the ground inside the
+//      camera's far plane must land on the carpet. Round 1's round of captures
+//      reported `holeRatio 0.0104` on the canyon card; the three offending
+//      probe samples were ABOVE the horizon, looking up a gap between two
+//      towers at the sky, which is the correct answer and not a hole. But the
+//      same sweep did find a real defect: `horizonRadius` was 3600 m measured
+//      from the bounds CENTRE while the camera far plane is 4200 m measured
+//      from the CAMERA, so a near-horizon ray from the far corner of the
+//      window ran out of ground and hit the sky dome below the horizon. That
+//      is the thin sliver of sky under the skyline in the canyon card.
 //   5. EYE-LEVEL RAYS. The eight quality-card camera poses are reproduced from
 //      the real slice with the same code path scripts/qa/capture-quality-cards-v1.mjs
 //      uses, and the same 24 x 12 ray grid through the lower 45% of the frame is
@@ -250,7 +261,7 @@ const heightAt = (x, z) => {
 };
 
 // Exactly the options CityRenderer.buildRoadNetwork passes for a real SF map.
-const LEGACY_SIDEWALK_LIFT = 0.045;
+const LEGACY_SIDEWALK_LIFT = 0.102;
 const STREET_GUTTER_DEPTH = 0.04;
 const roadDatum = Number(city.meta.streetDesign?.roadLift ?? 0.45);
 const streetStart = Date.now();
@@ -908,6 +919,109 @@ section('7. THREE build');
   mod.disposeGroundCoverage(built);
   assert(built.group.children.length === 0, 'dispose releases the group contents');
   console.log(`  built against three r${THREE.REVISION}`);
+}
+
+// ---------------------------------------------------------------------------
+section('5. horizon reach: every below-horizon ray lands on ground');
+// ---------------------------------------------------------------------------
+{
+  // The eight round-1 quality-card poses, verbatim from
+  // .qa-round1/capture-report.json, at the viewport they were captured at.
+  const POSES = [
+    ['01/05/06-street', { x: 1435.49, y: 2.35, z: 993.43 }, { x: 1379.47, y: 2.25, z: 1064.06 }, 47],
+    ['02-intersection', { x: 1668.84, y: 2.17, z: -0.05 }, { x: 1678.9, y: 2.03, z: -21.1 }, 47],
+    ['03/04-canyon', { x: 1446.56, y: 2.34, z: 916.81 }, { x: 1515.56, y: 22.71, z: 974.62 }, 58],
+    ['07-character', { x: 1438.04, y: 2.70, z: 990.08 }, { x: 1436.07, y: 1.80, z: 993.95 }, 47],
+    ['08-traversal', { x: 1455.42, y: 2.30, z: 971.01 }, { x: 1348.29, y: 2.22, z: 1103.24 }, 47],
+  ];
+  const VIEW = { w: 1600, h: 900 };
+  const CAMERA_FAR = 4200; // CityRenderer.buildCity pins this
+
+  const rayGrid = (eye, target, fov) => {
+    const f = { x: target.x - eye.x, y: target.y - eye.y, z: target.z - eye.z };
+    const fl = Math.hypot(f.x, f.y, f.z);
+    f.x /= fl; f.y /= fl; f.z /= fl;
+    let r = { x: f.y * 0 - f.z * 1, y: f.z * 0 - f.x * 0, z: f.x * 1 - f.y * 0 };
+    const rl = Math.hypot(r.x, r.y, r.z);
+    r = { x: r.x / rl, y: r.y / rl, z: r.z / rl };
+    const u = {
+      x: r.y * f.z - r.z * f.y,
+      y: r.z * f.x - r.x * f.z,
+      z: r.x * f.y - r.y * f.x,
+    };
+    const tanV = Math.tan((fov * Math.PI) / 360);
+    const aspect = VIEW.w / VIEW.h;
+    const out = [];
+    for (let py = 0; py < VIEW.h; py += 4) {
+      for (let px = 0; px < VIEW.w; px += 5) {
+        const dx = ((px + 0.5) / VIEW.w * 2 - 1) * tanV * aspect;
+        const dy = (1 - (py + 0.5) / VIEW.h * 2) * tanV;
+        const d = {
+          x: f.x + r.x * dx + u.x * dy,
+          y: f.y + r.y * dx + u.y * dy,
+          z: f.z + r.z * dx + u.z * dy,
+        };
+        const dl = Math.hypot(d.x, d.y, d.z);
+        out.push({ x: d.x / dl, y: d.y / dl, z: d.z / dl });
+      }
+    }
+    return out;
+  };
+
+  const xs = data.grid.xs;
+  const zs = data.grid.zs;
+  const inGrid = (x, z) => x >= xs[0] && x <= xs[xs.length - 1] && z >= zs[0] && z <= zs[zs.length - 1];
+  const carpetY = (x, z) => heightAt(x, z) - data.options.sink;
+
+  let totalBelow = 0;
+  let totalEscaped = 0;
+  let totalUnreachable = 0;
+  let worstReachable = null;
+  for (const [name, eye, target, fov] of POSES) {
+    let below = 0;
+    let escaped = 0;
+    let unreachable = 0;
+    for (const d of rayGrid(eye, target, fov)) {
+      if (d.y >= -1e-9) continue; // above the horizon: sky is the right answer
+      below += 1;
+      // A ray this shallow cannot reach the ground inside the far plane no
+      // matter how far the carpet is extended; that residue belongs to the
+      // atmosphere, not to this module.
+      const reachable = (eye.y - carpetY(eye.x, eye.z)) / -d.y <= CAMERA_FAR;
+      let t = 1;
+      let hit = false;
+      for (let k = 0; k < 96; k += 1) {
+        const x = eye.x + d.x * t;
+        const z = eye.z + d.z * t;
+        const y = eye.y + d.y * t;
+        if (!inGrid(x, z)) break;
+        const cy = carpetY(x, z);
+        if (y <= cy + 1e-3) { hit = true; break; }
+        t += Math.max(0.5, ((y - cy) / -d.y) * 0.9);
+        if (t > CAMERA_FAR) break;
+      }
+      if (hit) continue;
+      escaped += 1;
+      if (!reachable) unreachable += 1;
+      else if (!worstReachable) worstReachable = { name, dy: d.y };
+    }
+    totalBelow += below;
+    totalEscaped += escaped;
+    totalUnreachable += unreachable;
+    console.log(`  ${name.padEnd(16)} below-horizon rays ${below}, escaped ${escaped} `
+      + `(${escaped - unreachable} of them could have reached the ground inside the far plane)`);
+  }
+  const reachableEscapes = totalEscaped - totalUnreachable;
+  assert(totalBelow > 100000, `swept ${totalBelow} below-horizon rays across the eight card poses`);
+  assert(reachableEscapes === 0,
+    `every below-horizon ray that can reach the ground inside the ${CAMERA_FAR} m far plane lands on the carpet `
+    + `(${reachableEscapes} escaped${worstReachable ? `, first on ${worstReachable.name}` : ''})`);
+  console.log(`  ${totalUnreachable} of ${totalBelow} rays graze the horizon so closely that their ground `
+    + 'intersection is beyond the camera far plane; no carpet size can catch those.');
+  assert(data.options.horizonRadius >= 5000,
+    `the apron reaches past the far plane from the worst corner of the window (${data.options.horizonRadius} m)`);
+  assert(data.stats.triangles <= mod.GROUND_COVERAGE_BUDGET.maxTriangles,
+    `extending the apron cost no budget (${data.stats.triangles} <= ${mod.GROUND_COVERAGE_BUDGET.maxTriangles} triangles)`);
 }
 
 // ---------------------------------------------------------------------------

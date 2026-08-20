@@ -86,15 +86,35 @@ export const STREET_DETAIL_ID = 'street-surface-detail';
 export const STREET_DETAIL_VERSION = 'street-surface-detail-v1';
 
 /**
- * Distance rings from `ctx.focus`, in metres, with the feature set each ring
- * carries and its triangle cap. Measured numbers are in the diagnostics the
- * pass returns; the caps below are the regression bound, not the measurement.
+ * Distance rings from `ctx.focus`.
+ *
+ * ROUND 2 CORRECTION - READ THIS BEFORE CHANGING A RADIUS.
+ *
+ * Round 1 shipped three rings whose outermost radius was 900 m, on the
+ * assumption that `ctx.focus` is near the camera. It is not. `CityRenderer`
+ * takes the build focus from `this.camera.position` at the moment `buildCity`
+ * runs, and the app reframes the camera AFTER the build, so on the shipped
+ * route the focus is the startup camera at (180, 260) while the loaded window
+ * is centred on (1600, 400). Every quality-card pose was 1450-1510 m from that
+ * focus. Measured on the shipped slice, the whole city therefore received
+ * 2558 triangles of detail - 36 crossings and 28 stop bars, none of them
+ * anywhere near a camera - and the eight captured frames contained none of
+ * this pass's work at all.
+ *
+ * So a ring may no longer decide whether something EXISTS. The outermost ring
+ * has `radius: null`, which resolves to the whole loaded window, and it
+ * carries every structural feature: crossings, stop bars, lane arrows,
+ * drainage, covers, patching, ramp pads, expansion joints, aprons. The inner
+ * rings only add the features whose cost scales with METRES OF STREET rather
+ * than with junction or segment count - panel joints at true panel pitch,
+ * wheel polish, crack chains, stains, truncated domes. A wrong focus now
+ * costs fine detail near the camera; it can no longer empty the city.
  */
 export const STREET_DETAIL_RINGS = Object.freeze([
   Object.freeze({
     id: 'near',
-    radius: 120,
-    maxTriangles: 150000,
+    radius: 140,
+    maxTriangles: 170000,
     features: Object.freeze([
       'crossing', 'stopBar', 'laneArrow', 'inlet', 'cover', 'sidewalkCover',
       'patch', 'coldJoint', 'crack', 'wheelPath', 'gutterGrime',
@@ -104,23 +124,33 @@ export const STREET_DETAIL_RINGS = Object.freeze([
   }),
   Object.freeze({
     id: 'mid',
-    radius: 340,
-    maxTriangles: 120000,
+    radius: 420,
+    maxTriangles: 170000,
+    features: Object.freeze([
+      'crossing', 'stopBar', 'laneArrow', 'inlet', 'cover', 'sidewalkCover',
+      'patch', 'coldJoint', 'gutterGrime', 'panelJoint', 'expansionJoint',
+      'longJoint', 'rampPad', 'driveway',
+    ]),
+  }),
+  Object.freeze({
+    // `radius: null` = the whole loaded window. Resolved per build from
+    // `city.meta.bounds` and the focus, so nothing inside the world is ever
+    // undressed no matter where the focus lands.
+    id: 'window',
+    radius: null,
+    maxTriangles: 260000,
     features: Object.freeze([
       'crossing', 'stopBar', 'laneArrow', 'inlet', 'cover',
       'patch', 'coldJoint', 'gutterGrime', 'expansionJoint', 'rampPad', 'driveway',
     ]),
   }),
-  Object.freeze({
-    id: 'far',
-    radius: 900,
-    maxTriangles: 90000,
-    features: Object.freeze(['crossing', 'stopBar', 'patch', 'gutterGrime']),
-  }),
 ]);
 
+/** Hard bounds on the resolved window radius, so an enormous map still ends. */
+export const STREET_DETAIL_WINDOW = Object.freeze({ minRadius: 900, maxRadius: 2600, margin: 140 });
+
 export const STREET_DETAIL_BUDGET = Object.freeze({
-  maxTriangles: 360000,
+  maxTriangles: 520000,
   maxDrawCalls: 6,
   rings: STREET_DETAIL_RINGS,
 });
@@ -324,7 +354,7 @@ function discPoints(cx, cz, radius, sides, y, phase = 0) {
 
 export const STREET_SURFACE_COUPLING = Object.freeze({
   gutterDepth: 0.04,     // renderer.js STREET_GUTTER_DEPTH
-  sidewalkLift: 0.045,   // renderer.js LEGACY_SIDEWALK_LIFT
+  sidewalkLift: 0.102,   // renderer.js LEGACY_SIDEWALK_LIFT
   curbTopFall: 0.008,    // street-surface-v2 STREET_SURFACE_V2_DEFAULTS.curbTopFall
 });
 
@@ -353,11 +383,66 @@ export function surfaceOptionsFor(ctx, overrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// focus and window
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the rings are centred, and how far the outermost one has to reach.
+ *
+ * A focus outside the loaded window is not a focus, it is a bug in the caller,
+ * and round 1 proved it silently empties the city. So a focus is only accepted
+ * when it lands inside `city.meta.bounds` grown by a tenth; otherwise the
+ * bounds centre is used and the substitution is recorded in the diagnostics
+ * rather than hidden.
+ */
+export function resolveFocus(ctx, city) {
+  const bounds = city?.meta?.bounds;
+  const centre = bounds
+    ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 }
+    : { x: 0, z: 0 };
+  const given = ctx?.focus;
+  if (!given || !Number.isFinite(given.x) || !Number.isFinite(given.z)) {
+    return { ...centre, source: bounds ? 'bounds-centre' : 'origin', rejected: null };
+  }
+  if (bounds) {
+    const padX = (bounds.maxX - bounds.minX) * 0.1;
+    const padZ = (bounds.maxZ - bounds.minZ) * 0.1;
+    const inside = given.x >= bounds.minX - padX && given.x <= bounds.maxX + padX
+      && given.z >= bounds.minZ - padZ && given.z <= bounds.maxZ + padZ;
+    if (!inside) {
+      return {
+        ...centre,
+        source: 'bounds-centre',
+        rejected: { x: given.x, z: given.z, reason: 'focus outside city.meta.bounds' },
+      };
+    }
+  }
+  return { x: given.x, z: given.z, source: 'ctx', rejected: null };
+}
+
+/** Radius that reaches every corner of the loaded window from `focus`. */
+export function windowRadius(focus, bounds, limits = STREET_DETAIL_WINDOW) {
+  if (!bounds) return limits.minRadius;
+  let far = 0;
+  for (const x of [bounds.minX, bounds.maxX]) {
+    for (const z of [bounds.minZ, bounds.maxZ]) {
+      far = Math.max(far, Math.hypot(x - focus.x, z - focus.z));
+    }
+  }
+  return clamp(far + limits.margin, limits.minRadius, limits.maxRadius);
+}
+
+// ---------------------------------------------------------------------------
 // build state
 // ---------------------------------------------------------------------------
 
-function makeState(plan, focus, options, seedTag) {
-  const rings = STREET_DETAIL_RINGS.map((ring) => ({ ...ring, used: 0, features: new Set(ring.features) }));
+function makeState(plan, focus, options, seedTag, outerRadius) {
+  const rings = STREET_DETAIL_RINGS.map((ring) => ({
+    ...ring,
+    radius: ring.radius == null ? outerRadius : ring.radius,
+    used: 0,
+    features: new Set(ring.features),
+  }));
   const buffers = {
     paint: makeBuffer('paint'),
     wear: makeBuffer('wear'),
@@ -1529,12 +1614,9 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
   const options = surfaceOptionsFor(ctx, overrides);
   const plan = buildStreetscapePlan(city, options);
   const bounds = city?.meta?.bounds;
-  const focus = ctx?.focus && Number.isFinite(ctx.focus.x) && Number.isFinite(ctx.focus.z)
-    ? { x: ctx.focus.x, z: ctx.focus.z }
-    : bounds
-      ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 }
-      : { x: 0, z: 0 };
-  const state = makeState(plan, focus, options, ctx?.seed ?? city?.meta?.seed ?? 'city');
+  const focus = resolveFocus(ctx, city);
+  const outerRadius = windowRadius(focus, bounds);
+  const state = makeState(plan, focus, options, ctx?.seed ?? city?.meta?.seed ?? 'city', outerRadius);
   const farRadius = state.rings[state.rings.length - 1].radius;
   const midRadius = state.rings[Math.min(1, state.rings.length - 1)].radius;
   const nearRadius = state.rings[0].radius;
@@ -1574,7 +1656,12 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
   const diagnostics = {
     version: STREET_DETAIL_VERSION,
     implemented: true,
-    focus,
+    focus: { x: focus.x, z: focus.z },
+    // Round 1 shipped with a focus 1450 m from every camera and nobody could
+    // see it in the diagnostics. Now the substitution is on the record.
+    focusSource: focus.source,
+    focusRejected: focus.rejected,
+    windowRadius: outerRadius,
     plan: plan.stats,
     counts: state.counts,
     rejections: state.rejections,

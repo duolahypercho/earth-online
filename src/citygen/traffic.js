@@ -111,7 +111,7 @@ export const STREET_POPULATION = Object.freeze({
  * for a car and 42 cm below the pavement for a walker. That is the "characters
  * are not grounded" reject in one number.
  */
-const FOOTWAY_LIFT_ABOVE_DATUM = 0.045;
+const FOOTWAY_LIFT_ABOVE_DATUM = 0.102;   // renderer.js LEGACY_SIDEWALK_LIFT
 /** Fallback datum when a city omits `streetDesign.roadLift`, matching the renderer. */
 const DEFAULT_ROAD_LIFT = 0.5;
 
