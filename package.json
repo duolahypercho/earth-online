@@ -188,7 +188,8 @@
     "verify:facade-articulation": "node scripts/verify/verify-facade-articulation.mjs",
     "verify:vehicle-presentation": "node scripts/verify/verify-vehicle-presentation.mjs",
     "verify:sun-shadow-cascade": "node scripts/verify/verify-sun-shadow-cascade.mjs",
-    "verify:street-furniture-runtime": "node scripts/verify/verify-street-furniture-runtime.mjs"
+    "verify:street-furniture-runtime": "node scripts/verify/verify-street-furniture-runtime.mjs",
+    "qa:measure-frame": "node scripts/qa/measure-frame-v1.mjs"
   },
   "dependencies": {
     "three": "0.180.0",

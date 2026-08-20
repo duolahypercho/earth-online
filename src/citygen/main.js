@@ -1630,6 +1630,21 @@ async function boot() {
       errors: state.errors,
       // Presentation-pass evidence: what was built, what it cost, what failed.
       passes: state.renderer?.passDiagnostics || null,
+      // Shadow evidence: the fit the camera actually got, and how many meshes
+      // the caster policy admitted. A frame with no shadows is otherwise
+      // indistinguishable from a frame whose shadows are merely subtle.
+      shadows: state.renderer ? {
+        enabled: state.renderer.renderer?.shadowMap?.enabled ?? null,
+        mapSize: state.renderer.sun?.shadow?.mapSize
+          ? [state.renderer.sun.shadow.mapSize.width, state.renderer.sun.shadow.mapSize.height]
+          : null,
+        lightCastShadow: state.renderer.sun?.castShadow ?? null,
+        sunIntensity: state.renderer.sun?.intensity ?? null,
+        hemiIntensity: state.renderer.hemi?.intensity ?? null,
+        ambientIntensity: state.renderer.ambient?.intensity ?? null,
+        environmentIntensity: state.renderer.scene?.environmentIntensity ?? null,
+        diagnostics: state.renderer.shadowDiagnostics || null,
+      } : null,
       mode: () => state.mode,
       interior: Boolean(state.interiors.active),
       interiorBuildingId: state.interiors.active?.buildingId || null,

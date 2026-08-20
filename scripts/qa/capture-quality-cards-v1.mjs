@@ -20,7 +20,7 @@ const PROTOCOL = process.env.SF_QA_PROTOCOL === '1';
 const W = Number(process.env.SF_QA_W || (PROTOCOL ? 2560 : 1280));
 const H = Number(process.env.SF_QA_H || (PROTOCOL ? 1440 : 720));
 const SETTLE = Number(process.env.SF_QA_SETTLE_MS || 2500);
-const SHOT_MS = Number(process.env.SF_QA_SHOT_MS || 240000);
+const SHOT_MS = Number(process.env.SF_QA_SHOT_MS || 600000);
 const BOOT_MS = Number(process.env.SF_QA_BOOT_MS || 300000);
 
 // Eye level in metres. The runtime is 1 unit = 1 metre.
@@ -166,6 +166,7 @@ report.state = await evaluateInWorld(() => {
     errors: s.errors,
     // What each presentation pass contributed, and what it cost to build. A
     // round with a silently-empty pass is not evidence about that pass.
+    shadows: s.shadows || null,
     passes: s.passes ? {
       registered: s.passes.registered,
       errors: s.passes.errors,
