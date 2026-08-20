@@ -46,6 +46,9 @@ import {
   WEATHER_KINDS,
   aerialPerspective,
   canyonBounce,
+  displayValue,
+  displayStepScene,
+  sceneForDisplay,
   blackBodyColor,
   cloudProfile,
   computeSkyModel,
@@ -84,6 +87,12 @@ let shadowRow = null;
 let datumRow = null;
 let wetRow = null;
 let duskRow = [];
+let ditherRow = null;
+let lampRow = null;
+let practicalPeakRow = [];
+let puddleRow = null;
+// Must match DITHER_STEPS in the pass; asserted below against the built pass.
+const SKY_DITHER_STEPS = 2.0;
 let cardRows = [];
 let contactRow = null;
 let updateCostRow = null;
@@ -216,6 +225,8 @@ function makeCity({ buildings = 700, segments = 2835, span = 2000 } = {}) {
         roadLift: 0.45,
         gutterDepth: 0.03,
         curbFaceHeight: 0.15,
+        crossSlope: 0.02,
+        gutterWidth: 0.45,
       },
     },
     buildings: [],
@@ -495,8 +506,15 @@ await section('exposure and key/fill move in the right direction', () => {
     `corrected clear-noon key/fill band 3.0..${TARGET_KEY_FILL.clear}, got ${bNoon.achieved.ratio}`);
   check(bGolden.achieved.ratio > 0.5 && bGolden.achieved.ratio < bNoon.achieved.ratio,
     `golden hour must stay directional but below noon, got ${bGolden.achieved.ratio}`);
-  check(bNight.gains.key === 1 && bNight.gains.fill === 1,
-    'the correction must be inert below the horizon');
+  // The *ratio* correction is inert below the horizon - there is no key to
+  // balance against. The any-normal black floor is NOT, and must not be: it
+  // exists because the round-2 night card rendered 15.7% of its pixels at
+  // exactly (0, 0, 0), and 96% of those are ordinary lit surfaces in the day
+  // frame at the same pixels.
+  check(bNight.gains.key === 1, 'the key correction must be inert below the horizon');
+  check(bNight.gains.fill >= 1, 'the night floor may only add fill, never remove it');
+  check(bNight.shadow.anyNormalDisplay >= 2,
+    `a dark surface on any normal must clear the black floor at night, got ${bNight.shadow.anyNormalDisplay}`);
   // v1 preserved key+fill exactly, and the golden-hour card proved that was
   // the wrong invariant: it says nothing about a surface the key cannot reach,
   // and a canyon at 18:30 is nothing but such surfaces. The contract is now
@@ -609,6 +627,15 @@ await section('shadow side stays readable and the black share stays low', () => 
     `night must sit below golden hour (${dNight.shadow.toFixed(0)} vs ${dGolden.shadow.toFixed(0)})`);
   check(dGolden.shadow > dNoon.shadow * 0.9,
     'golden hour must not be crushed relative to noon: it is the card the review rejected');
+  // ...and the opposite failure. Lifting the shadow side until it matches the
+  // key side is how a golden-hour frame goes flat, which is the risk this
+  // wave's floor introduces.
+  check(dGolden.shadow < dNoon.shadow * 2.0,
+    `golden hour must not out-run noon's shadow side (${dGolden.shadow.toFixed(0)} vs ${dNoon.shadow.toFixed(0)})`);
+  const goldenFacade = surfaceDisplay(CANONICAL_SURFACES[2], keyFillBalance(golden), golden);
+  check(goldenFacade.lit / Math.max(1e-6, goldenFacade.shadow) > 1.35,
+    `a vertical facade must still read directional at golden hour, ratio `
+    + `${(goldenFacade.lit / goldenFacade.shadow).toFixed(2)}`);
   cardRows = [
     { label: 'noon 12:00', ...dNoon },
     { label: 'golden 18:30', ...dGolden },
@@ -623,8 +650,13 @@ await section('shadow side stays readable and the black share stays low', () => 
   const bounceFog = canyonBounce(computeSkyModel({ hour: 18.5, weather: 'fog' }), 2);
   check(bounceGolden / keyFillBalance(golden).achieved.fill > 0.2,
     'the bounce must be a fifth or more of the golden-hour fill');
-  check(bounceNoon / keyFillBalance(noon).achieved.fill < 0.2,
-    'the bounce must stay a minor term at noon');
+  // The contract is that the term is SHAPED by sun altitude, not that it has a
+  // particular size: a legitimate view-factor change moves both ends together.
+  const goldenShare = bounceGolden / keyFillBalance(golden).achieved.fill;
+  const noonShare = bounceNoon / keyFillBalance(noon).achieved.fill;
+  check(noonShare < goldenShare * 0.65,
+    `the bounce must matter far less at noon than at golden hour (${noonShare.toFixed(3)} vs ${goldenShare.toFixed(3)})`);
+  check(noonShare < 0.3, `the bounce may not dominate the noon fill, got ${noonShare.toFixed(3)}`);
   check(bounceNight === 0, 'no beam below the horizon means no bounce');
   check(bounceFog < bounceGolden * 0.25, 'an overcast dome has no directional beam to bounce');
 
@@ -917,7 +949,15 @@ await section('night practicals and wet surfaces respond', () => {
     'vehicle tail lights must be red');
   check(night.pool.color[0] > night.pool.color[2] * 2, 'street lamps must read warm');
   const wetNight = nightPracticalProfile({ hour: 21.5, weather: 'drizzle' });
-  check(wetNight.pool.opacity > night.pool.opacity, 'wet ground must extend the reach of a practical');
+  // The pool's opacity is an on/off ramp now that the level is display-referred,
+  // so the wet cue lives in the reach and the peak instead of in the alpha.
+  check(wetNight.pool.radius > night.pool.radius,
+    `wet ground must extend the reach of a practical (${night.pool.radius} -> ${wetNight.pool.radius})`);
+  check(wetNight.pool.peakDisplay > night.pool.peakDisplay,
+    `wet ground must brighten a practical (${night.pool.peakDisplay} -> ${wetNight.pool.peakDisplay})`);
+  check(wetNight.pool.carriageway.reach > night.pool.carriageway.reach,
+    'wet ground must extend the carriageway throw');
+  check(wetNight.pool.peakDisplay < 200, 'a wet pool must not blow out either');
   for (const weather of WEATHER_KINDS) {
     for (let h = 0; h < 24; h += 1) assertNoNaN(nightPracticalProfile({ hour: h, weather }), `practicals(${h},${weather})`);
   }
@@ -970,6 +1010,9 @@ await section('pass builds for every hour and weather bucket, inside budget', ()
       check(detail.model === ATMOSPHERE_MODEL_VERSION, 'diagnostics must be tagged with the model version');
 
       // The diagnostics contract the brief asks for.
+      check(detail.sky.dither.steps === SKY_DITHER_STEPS,
+        `the verifier's dither constant must track the pass (${detail.sky.dither.steps} vs ${SKY_DITHER_STEPS})`);
+      check(detail.sky.dither.amplitude > 0, `dither amplitude must be positive at ${hour}:00 ${weather}`);
       for (const key of ['sun', 'exposure', 'keyFill', 'fog', 'clouds', 'lights', 'contact', 'wet', 'schedule']) {
         check(detail[key] != null, `diagnostics must report ${key} at ${hour}:00 ${weather}`);
       }
@@ -1024,8 +1067,11 @@ await section('pass builds for every hour and weather bucket, inside budget', ()
       if (weather === 'clear' && (hour === 21 || hour === 22)) {
         check(detail.lights.lampPools > 0, `street lamps must pool light at ${hour}:00`);
         check(detail.lights.shopSpills > 0, `shopfronts must spill light at ${hour}:00`);
-        check(detail.contact.vehicles > 0, 'parked vehicles must get under-object darkening');
         check(detail.contact.canopies > 0, 'canopies must get under-object darkening');
+        // Vehicles are the vehicle owner's contact patch now, not this pass's.
+        // Two patches under one car is a darker artifact than none.
+        check(detail.contact.vehicles === 0,
+          'this pass must not also emit a vehicle contact patch');
       }
       if (hour === 12 && weather === 'clear') {
         budgetRows.push({ label: 'clear 12:00', ...counts, textureBytes: detail.budget.textureBytes });
@@ -1063,6 +1109,224 @@ await section('pass builds for every hour and weather bucket, inside budget', ()
         `dispose must restore the renderer's fog at ${hour}:00 ${weather}`);
     }
   }
+});
+
+/**
+ * Banding gate.
+ *
+ * A reviewer measured hard quantisation contours across the round-2 night sky,
+ * and scanning the frame confirms it: a vertical cut through open sky at x=760
+ * runs 15 pixels at luma 15, then 33 at 16, then 23 at 17 - flat bands
+ * stepping by exactly one. This reproduces that quantisation on a synthetic
+ * shallow gradient at the pass's own dither parameters and asserts the worst
+ * run falls, rather than asking anyone to look at a frame.
+ */
+await section('the sky dither breaks 8-bit contouring', () => {
+  const hash01Local = (i) => {
+    let x = i | 0;
+    x ^= x >>> 16;
+    x = Math.imul(x, 0x7feb352d);
+    x ^= x >>> 15;
+    x = Math.imul(x, 0x846ca68b);
+    x ^= x >>> 16;
+    return (x >>> 0) / 4294967296;
+  };
+  const longestRun = (values) => {
+    let best = 1;
+    let run = 1;
+    for (let i = 1; i < values.length; i += 1) {
+      if (values[i] === values[i - 1]) run += 1;
+      else { best = Math.max(best, run); run = 1; }
+    }
+    return Math.max(best, run);
+  };
+  const SAMPLES = 400;
+  let worstPlain = 0;
+  let worstDithered = 0;
+  let minAmplitudeSteps = Infinity;
+  for (const weather of WEATHER_KINDS) {
+    for (let hour = 0; hour < 24; hour += 1) {
+      const model = computeSkyModel({ hour, weather });
+      const exposure = recommendedExposure(model).exposure;
+      // The level the pass sizes its dither against: the visible dome's mean.
+      const reference = model.horizonLuminance * 0.35 + model.zenithLuminance * 0.65;
+      const amplitude = sceneForDisplay(SKY_DITHER_STEPS / 255, exposure);
+      const bias = displayStepScene(reference, exposure, SKY_DITHER_STEPS * 0.5);
+      check(Number.isFinite(amplitude) && amplitude > 0,
+        `dither amplitude must be positive at ${hour}:00 ${weather}, got ${amplitude}`);
+      const amplitudeSteps = 255 * displayValue(amplitude, exposure);
+      minAmplitudeSteps = Math.min(minAmplitudeSteps, amplitudeSteps);
+      check(amplitudeSteps >= 1,
+        `the dither must be worth at least one display step at ${hour}:00 ${weather}, got ${amplitudeSteps.toFixed(2)}`);
+      // A shallow gradient of the kind that bands: 16% over 400 pixels.
+      const plain = [];
+      const dithered = [];
+      for (let i = 0; i < SAMPLES; i += 1) {
+        const scene = reference * (1 + 0.16 * (i / SAMPLES));
+        plain.push(Math.round(255 * displayValue(scene, exposure)));
+        dithered.push(Math.round(
+          255 * displayValue(Math.max(0, scene - bias), exposure)
+          + 255 * displayValue(amplitude * hash01Local(i * 2654435761), exposure),
+        ));
+      }
+      const runPlain = longestRun(plain);
+      const runDithered = longestRun(dithered);
+      worstPlain = Math.max(worstPlain, runPlain);
+      worstDithered = Math.max(worstDithered, runDithered);
+      check(runDithered <= 14,
+        `dithered contour run must stay at or under 14 px at ${hour}:00 ${weather}, got ${runDithered}`);
+      if (runPlain > 24) {
+        check(runDithered < runPlain * 0.5,
+          `the dither must at least halve the contour run at ${hour}:00 ${weather} `
+          + `(${runPlain} -> ${runDithered})`);
+      }
+      // The gradient's level must survive the dither: a dither that changes
+      // the mean is a grade, not a dither.
+      const meanPlain = plain.reduce((a, b) => a + b, 0) / SAMPLES;
+      const meanDithered = dithered.reduce((a, b) => a + b, 0) / SAMPLES;
+      check(Math.abs(meanDithered - meanPlain) < 0.6,
+        `dither must be zero-mean at ${hour}:00 ${weather} (${meanPlain.toFixed(2)} -> ${meanDithered.toFixed(2)})`);
+    }
+  }
+  ditherRow = { worstPlain, worstDithered, minAmplitudeSteps };
+});
+
+await section('street lamps light the carriageway, not just their own base', () => {
+  // Round 2's night card measured its near road at mean luma 8.3/255 with 79%
+  // of it under the black threshold, while the footway beside it read 71.4.
+  // The pools existed and were at the right height; they were 7.4 m circles on
+  // the footway with a ^2.1 falloff, which is a row of spots on the pavement
+  // and nothing at all on the road.
+  const night = nightPracticalProfile({ hour: 21.5, weather: 'clear' });
+  check(night.pool.radius >= 10,
+    `pools must overlap at typical fixture spacing, radius ${night.pool.radius}`);
+  check(night.pool.falloff <= 1.7,
+    `a steep falloff puts spots on the pavement, got ^${night.pool.falloff}`);
+  check(night.pool.carriageway.reach >= 10 && night.pool.carriageway.length >= 25,
+    'the throw across the carriageway must reach the far lane and overlap along the street');
+  check(night.pool.carriageway.opacity > 0.2, 'the carriageway throw must be legible');
+
+  const city = makeCity();
+  const ctx = makeContext(city, { hour: 21.5, weather: 'clear' });
+  const runtime = createPassRuntime([skyAtmosphere]);
+  const detail = runtime.build(ctx).built[0].detail;
+  check(detail.lights.carriagewayPools > 0, 'lamps must throw light onto the carriageway');
+  check(detail.lights.carriagewayPools >= detail.lights.lampPools * 0.6,
+    `most lamps front a street and must light it: ${detail.lights.carriagewayPools} of ${detail.lights.lampPools}`);
+  const roadPools = ctx.root.getObjectByName('sky-atmosphere:road-pools');
+  check(roadPools != null && roadPools.visible, 'the carriageway pools must be visible at night');
+
+  // Practicals must be DISPLAY-referred. Three tone-maps per material and
+  // blends afterwards, so an additive pool contributes
+  // `displayValue(material.color) * alpha` and a scene-referred level does not
+  // mean what it looks like: round 2's 0.46 opacity on a 1.35x warm colour is
+  // 0.62 linear, which tone-maps to +218 luma - a blown white disc under every
+  // lamp. This asserts the peak lands where the profile says, and that it does
+  // not move when the exposure does.
+  const peakOf = (mesh, exposure) => {
+    const { color } = mesh.material;
+    const channel = (v) => 255 * displayValue(v, exposure);
+    return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+  };
+  const expected = [
+    ['sky-atmosphere:light-pools', night.pool.peakDisplay],
+    ['sky-atmosphere:road-pools', night.pool.carriageway.peakDisplay],
+    ['sky-atmosphere:bulb-glows', night.bulb.peakDisplay],
+    ['sky-atmosphere:shop-spill', night.shopSpill.peakDisplay],
+  ];
+  const nightExposure = recommendedExposure(computeSkyModel({ hour: 21.5, weather: 'clear' })).exposure;
+  for (const [name, target] of expected) {
+    const mesh = ctx.root.getObjectByName(name);
+    check(mesh != null, `${name} must exist at night`);
+    const peak = peakOf(mesh, nightExposure);
+    check(Math.abs(peak - target) / target < 0.10,
+      `${name} peak must land on ${target}/255 display, got ${peak.toFixed(1)}`);
+    check(peak < 200, `${name} must not blow out, got ${peak.toFixed(1)}`);
+  }
+  // Exposure independence: retime at a different exposure and the peak holds.
+  const dawnCtx = makeContext(city, { hour: 21.5, weather: 'clear' });
+  const dawnRuntime = createPassRuntime([skyAtmosphere]);
+  dawnRuntime.build(dawnCtx);
+  dawnCtx.hour = 19;
+  dawnRuntime.update(dawnCtx, 1 / 60);
+  const duskExposure = recommendedExposure(computeSkyModel({ hour: 19, weather: 'clear' })).exposure;
+  const duskProfile = nightPracticalProfile({ hour: 19, weather: 'clear' });
+  const duskPeak = peakOf(dawnCtx.root.getObjectByName('sky-atmosphere:road-pools'), duskExposure);
+  check(Math.abs(duskPeak - duskProfile.pool.carriageway.peakDisplay) / duskProfile.pool.carriageway.peakDisplay < 0.10,
+    `the carriageway peak must be exposure-independent, got ${duskPeak.toFixed(1)} at 19:00`);
+  dawnRuntime.dispose();
+  practicalPeakRow = expected.map(([name, target]) => ({
+    name: name.replace('sky-atmosphere:', ''),
+    target,
+    measured: peakOf(ctx.root.getObjectByName(name), nightExposure),
+  }));
+  // ...and they must sit on the crown, not on the flat datum, or the crowned
+  // road surface swallows them exactly as it swallowed the puddles.
+  const position = roadPools.geometry.getAttribute('position');
+  let minY = Infinity;
+  for (let i = 0; i < position.count; i += 1) minY = Math.min(minY, position.getY(i));
+  const design = city.meta.streetDesign;
+  const minHalf = Math.min(...city.segments.map((segment) => segment.width * 0.5));
+  const crown = design.roadLift + design.crossSlope * minHalf;
+  check(minY >= crown,
+    `carriageway pools must clear the road crown (${crown.toFixed(3)}), got ${minY.toFixed(3)}`);
+  lampRow = {
+    lamps: detail.lights.lampPools,
+    carriageway: detail.lights.carriagewayPools,
+    radius: night.pool.radius,
+    falloff: night.pool.falloff,
+    throw: night.pool.carriageway,
+  };
+  runtime.dispose();
+});
+
+await section('puddles sit on the crowned road and carry a real mask', () => {
+  const city = makeCity();
+  const design = city.meta.streetDesign;
+  const ctx = makeContext(city, { hour: 15, weather: 'drizzle' });
+  const runtime = createPassRuntime([skyAtmosphere]);
+  runtime.build(ctx);
+  const sheen = ctx.root.getObjectByName('sky-atmosphere:wet-sheen');
+  check(sheen != null, 'the wet sheen must exist');
+  // The road is crowned: at the centreline the surface is roadLift +
+  // crossSlope*half, which round 2 ignored and buried every puddle under.
+  const position = sheen.geometry.getAttribute('position');
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < position.count; i += 1) {
+    minY = Math.min(minY, position.getY(i));
+    maxY = Math.max(maxY, position.getY(i));
+  }
+  // Widest segment sets the highest crown a puddle may legitimately reach.
+  const maxHalf = Math.max(...city.segments.map((segment) => segment.width * 0.5));
+  const gutterInvert = design.roadLift - design.gutterDepth;
+  const crown = design.roadLift + design.crossSlope * maxHalf;
+  check(minY > gutterInvert, `no puddle may sit below the gutter invert ${gutterInvert}, got ${minY}`);
+  check(maxY <= crown + 0.06, `no puddle may float above the crown ${crown.toFixed(3)}, got ${maxY.toFixed(3)}`);
+  check(maxY - minY > 0.005, 'puddle heights must follow the cross-section, not be a constant');
+
+  // The alphaMap channel regression. `MaterialNode` coerces the alpha texture
+  // to a float, which takes red on the node path and green on the classic one,
+  // so a falloff stored only in the alpha channel is read as a constant 1 and
+  // every puddle renders as a hard-edged square at full opacity.
+  const material = sheen.material;
+  check(material.alphaMap != null, 'the puddle must carry an alphaMap');
+  check(material.map == null, 'the puddle must not also carry a map, or the falloff is applied twice');
+  const texels = material.alphaMap.image.data;
+  let minRed = 255;
+  let maxRed = 0;
+  let minGreen = 255;
+  let maxGreen = 0;
+  for (let i = 0; i < texels.length; i += 4) {
+    minRed = Math.min(minRed, texels[i]);
+    maxRed = Math.max(maxRed, texels[i]);
+    minGreen = Math.min(minGreen, texels[i + 1]);
+    maxGreen = Math.max(maxGreen, texels[i + 1]);
+  }
+  check(maxRed - minRed > 200, `the alphaMap's RED channel must carry the falloff, spread ${maxRed - minRed}`);
+  check(maxGreen - minGreen > 200, `the alphaMap's GREEN channel must carry it too, spread ${maxGreen - minGreen}`);
+  puddleRow = { minY, maxY, crown, gutterInvert, redSpread: maxRed - minRed };
+  runtime.dispose();
 });
 
 await section('ground decals sit on the pavement, not under it', () => {
@@ -1113,8 +1377,10 @@ await section('ground decals sit on the pavement, not under it', () => {
     `contact skirts fronting a street must reach the footway (>= ${footwayLift}), got ${contactMax}`);
   check(detail.lights.lampPools > 0 && detail.lights.shopSpills > 0,
     'practicals must build against the renderer\'s real group names');
-  check(detail.contact.vehicles > 0 && detail.contact.canopies > 0,
-    'under-object darkening must find the renderer\'s real instanced meshes');
+  check(detail.contact.canopies > 0,
+    'under-canopy darkening must find the renderer\'s real awning group');
+  check(detail.contact.vehicles === 0,
+    'vehicle contact patches belong to the vehicle presentation pass');
   datumRow = {
     roadLift,
     footwayLift,
@@ -1336,6 +1602,34 @@ if (shadowRow) {
 }
 
 console.log('');
+console.log('sky dither (simulated 8-bit quantisation of a shallow 16% gradient, 400 samples):');
+if (ditherRow) {
+  console.log(`  worst contour run: ${ditherRow.worstPlain} px undithered -> ${ditherRow.worstDithered} px dithered `
+    + `(gate: <= 14 px, and at least halved wherever the undithered run exceeds 24)`);
+  console.log(`  smallest dither amplitude over the whole clock and all buckets: `
+    + `${ditherRow.minAmplitudeSteps.toFixed(2)} display steps (gate: >= 1.00)`);
+  console.log('  round 2 measured real runs of 19, 23 and 33 px at one luma in the night sky at x=760.');
+}
+
+console.log('');
+if (lampRow) {
+  console.log('street lighting:');
+  console.log(`  ${lampRow.lamps} fixtures -> ${lampRow.carriageway} carriageway throws; `
+    + `footway pool r=${lampRow.radius} m falloff ^${lampRow.falloff}; `
+    + `throw ${lampRow.throw.length} m along the street x ${lampRow.throw.reach} m reach`);
+  console.log('  round 2: r=7.4 m falloff ^2.1, no carriageway throw at all; the night card measured');
+  console.log('  its near road at mean luma 8.3/255 with 78.7% of it under the black threshold.');
+  for (const row of practicalPeakRow) {
+    console.log(`  ${row.name.padEnd(12)} peak +${row.measured.toFixed(1)} display luma (target ${row.target})`);
+  }
+}
+if (puddleRow) {
+  console.log(`  puddles span y=${puddleRow.minY.toFixed(3)}..${puddleRow.maxY.toFixed(3)} between the gutter `
+    + `invert ${puddleRow.gutterInvert.toFixed(3)} and the crown ${puddleRow.crown.toFixed(3)}; `
+    + `alphaMap red-channel spread ${puddleRow.redSpread}/255`);
+}
+
+console.log('');
 console.log('interior/street lighting ramps (clear):');
 console.log('  hour   altitude   dusk   lamps   windowOcc   pool   spill');
 for (const row of duskRow) {
@@ -1350,7 +1644,8 @@ if (datumRow) {
   console.log(`  light pools at y=${datumRow.pools.toFixed(3)}, shop spill y=${datumRow.spill.toFixed(3)}, `
     + `puddles y=${datumRow.puddles.toFixed(3)}, contact skirt reaches y=${datumRow.contactMax.toFixed(3)}`);
   console.log(`  built against the renderer's real groups: ${datumRow.lampPools} lamp pools, `
-    + `${datumRow.shopSpills} shop spills, ${datumRow.vehicles} vehicles, ${datumRow.canopies} canopies`);
+    + `${datumRow.shopSpills} shop spills, ${datumRow.canopies} canopies `
+    + '(vehicle contact patches belong to the vehicle presentation pass)');
 }
 if (wetRow) {
   console.log(`  wet response at runtime: ${wetRow.puddles} puddles built dry, roughness `

@@ -66,6 +66,8 @@ import {
   blackBodyColor,
   cloudProfile,
   computeSkyModel,
+  displayStepScene,
+  sceneForDisplay,
   keyFillBalance,
   nightPracticalProfile,
   normaliseWeather,
@@ -90,7 +92,7 @@ export const SKY_ATMOSPHERE_VERSION = 'sky-atmosphere-v2';
  */
 export const SKY_ATMOSPHERE_BUDGET = Object.freeze({
   triangles: 48000,
-  drawCalls: 18,
+  drawCalls: 20,
   /** Bytes of texture this pass uploads, summed over every texture it owns. */
   textureBytes: 1_600_000,
   /**
@@ -111,6 +113,17 @@ const HAZE_SEGMENTS = 56;
 const HAZE_RINGS = 5;
 const STAR_COUNT = 620;
 const CLOUD_TEXTURE_SIZE = 256;
+const DITHER_TEXTURE_SIZE = 64;
+// Chosen so the pattern lands at roughly one texel per two screen pixels at the
+// capture's 47 deg field of view: the dome's u spans 360 deg, the frame sees
+// about a fifth of it, so 64 repeats put 64 x 64 / 5 = 820 texels across 1600 px.
+const DITHER_REPEAT = 64;
+// Peak-to-peak dither amplitude, in display steps. Measured against a
+// simulated shallow sky gradient: undithered it renders in runs of 113 pixels
+// at one luma value, at 1.4 steps the worst run falls to 20, and at 2.0 it
+// falls to 8. Two steps is also the textbook amplitude for fully decorrelating
+// the quantisation error, and 2/255 of full scale is not visible as grain.
+const DITHER_STEPS = 2.0;
 const MAX_CONTACT_BUILDINGS = 1200;
 const MAX_CONTACT_EDGES = 48;
 // Hard ceiling on the merged contact mesh. 1200 buildings at 48 edges each
@@ -118,7 +131,12 @@ const MAX_CONTACT_EDGES = 48;
 // total, not on the per-building edge count.
 const MAX_CONTACT_QUADS = 14000;
 const MAX_PUDDLES = 360;
-const CONTACT_WIDTH = 1.55;
+// Round 2's 1.55 m skirt reads as a line at the wall rather than as occlusion.
+// The golden-hour card measured its ground at Otsu separation 1.7 over a
+// 500x160 px region - one luminance, no depth cue anywhere. A wider, gentler
+// gradient is what an ambient term would produce and is the only depth cue
+// available on a surface the key cannot reach.
+const CONTACT_WIDTH = 3.6;
 // Slightly under the 0.62 the skirt alone would want, because the renderer's
 // existing `contact-shadows` blob still contributes a little at the footprint
 // edge and the two stack.
@@ -169,6 +187,58 @@ function radialAlphaTexture(size, power, core = 0) {
       data[o + 2] = 255;
       data[o + 3] = Math.round(clamp(a, 0, 1) * 255);
     }
+  }
+  return { data, width: size, height: size };
+}
+
+/**
+ * Radial mask with the falloff written into RGB *and* alpha.
+ *
+ * `radialAlphaTexture` puts the falloff only in the alpha channel, which is
+ * right for a `map` (three multiplies `diffuseColor.a` by `map.a`) and wrong
+ * for an `alphaMap`: `MaterialNode`'s OPACITY scope multiplies opacity by the
+ * alpha texture coerced to a float, which takes the RED channel, and the
+ * classic path takes green. Round 2's puddles used `radialAlphaTexture` as an
+ * `alphaMap`, so every texel read 1.0 and each puddle was a hard-edged square
+ * at full opacity rather than a soft pool.
+ * @private
+ */
+function radialMaskTexture(size, power, core = 0) {
+  const source = radialAlphaTexture(size, power, core);
+  const { data } = source;
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    data[i] = a;
+    data[i + 1] = a;
+    data[i + 2] = a;
+    data[i + 3] = 255;
+  }
+  return source;
+}
+
+/**
+ * Tileable dither pattern, centred on mid grey.
+ *
+ * Banding is an output-quantisation artifact and cannot be fixed by adding
+ * geometry or resolution: a gradient whose scene value changes by less than one
+ * display step across many pixels renders as a flat band with a hard contour at
+ * each step. Round 2's night sky measured single-luma runs of 19, 23 and 33
+ * pixels stepping by exactly 1 - the textbook signature. This is the noise that
+ * breaks those contours into pixel noise the eye integrates away. Its amplitude
+ * is set per retime from `displayStepScene`, not baked in here, because one
+ * display step is 3.2% of the scene value in the night sky and 1.4% at midday.
+ * @private
+ */
+function ditherTexture(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < size * size; i += 1) {
+    // Hash-based white noise. Blue noise would be marginally less grainy, but
+    // at one display step of amplitude the difference is not measurable.
+    const value = Math.round(hash01(i * 2654435761 + seed) * 255);
+    data[i * 4] = value;
+    data[i * 4 + 1] = value;
+    data[i * 4 + 2] = value;
+    data[i * 4 + 3] = 255;
   }
   return { data, width: size, height: size };
 }
@@ -389,11 +459,121 @@ function pavedDatum(city) {
   const roadLift = finite(design.roadLift, 0.5);
   const gutterDepth = finite(design.gutterDepth, 0.03);
   const curbFaceHeight = finite(design.curbFaceHeight, 0.15);
+  const crossSlope = finite(design.crossSlope, 0.02);
+  const gutterWidth = finite(design.gutterWidth, 0.45);
   return {
     roadLift,
     footwayLift: roadLift - gutterDepth + curbFaceHeight,
     gutterDepth,
     curbFaceHeight,
+    crossSlope,
+    gutterWidth,
+    /**
+     * Carriageway surface height at lateral offset `u` from the centreline, a
+     * direct port of `crossSectionY` in `street-surface-v2.js`.
+     *
+     * Round 2 placed puddles at `datum + 0.012` and forgot that the road is
+     * crowned: at the centreline the surface is `datum + crossSlope * half`,
+     * which on a 12 m street is 0.12 m and on a 30 m street 0.30 m. Every
+     * puddle was under the tarmac, which is why the drizzle card shows no
+     * standing water at all.
+     */
+    crossSectionY(terrainY, u, half) {
+      const datum = terrainY + roadLift;
+      const a = Math.min(Math.abs(u), half);
+      const crown = crossSlope * half;
+      const gutterStart = Math.max(0, half - gutterWidth);
+      if (a <= gutterStart) return datum + crown * (1 - a / half);
+      const lip = datum + crown * (1 - gutterStart / half);
+      const invert = datum - gutterDepth;
+      const t = (a - gutterStart) / Math.max(1e-6, half - gutterStart);
+      return lip + (invert - lip) * t;
+    },
+    /** Highest point of the carriageway for a given width: the crown. */
+    crownY(terrainY, half) {
+      return terrainY + roadLift + crossSlope * half;
+    },
+  };
+}
+
+/**
+ * Nearest street to a point, with its direction and width.
+ *
+ * A street lamp is not a point source over its own base: the head sits on an
+ * outreach arm and the distribution is deliberately thrown across the road,
+ * which is the only reason a carriageway is lit at all. To place that throw
+ * this pass has to know which way the road is from each fixture, so the street
+ * contract is indexed once per build and queried per lamp.
+ * @private
+ */
+function streetIndex(city, cell = 26) {
+  const grid = new Map();
+  const segments = Array.isArray(city?.segments) ? city.segments : [];
+  const put = (cx, cz, index) => {
+    const key = `${cx}:${cz}`;
+    let bucket = grid.get(key);
+    if (!bucket) { bucket = []; grid.set(key, bucket); }
+    if (!bucket.includes(index)) bucket.push(index);
+  };
+  for (let i = 0; i < segments.length; i += 1) {
+    const points = segments[i]?.points;
+    if (!Array.isArray(points) || points.length < 2) continue;
+    for (let k = 0; k < points.length - 1; k += 1) {
+      const ax = finite(points[k]?.x, NaN);
+      const az = finite(points[k]?.z, NaN);
+      const bx = finite(points[k + 1]?.x, NaN);
+      const bz = finite(points[k + 1]?.z, NaN);
+      if (!Number.isFinite(ax) || !Number.isFinite(bx)) continue;
+      const length = Math.hypot(bx - ax, bz - az);
+      const steps = Math.min(40, Math.max(1, Math.ceil(length / cell)));
+      for (let t = 0; t <= steps; t += 1) {
+        const f = t / steps;
+        put(Math.floor((ax + (bx - ax) * f) / cell), Math.floor((az + (bz - az) * f) / cell), i);
+      }
+    }
+  }
+  return {
+    cells: grid.size,
+    /** @returns {{distance:number,x:number,z:number,dx:number,dz:number,half:number}|null} */
+    query(x, z) {
+      const cx = Math.floor(x / cell);
+      const cz = Math.floor(z / cell);
+      let best = null;
+      for (let ix = -1; ix <= 1; ix += 1) {
+        for (let iz = -1; iz <= 1; iz += 1) {
+          const bucket = grid.get(`${cx + ix}:${cz + iz}`);
+          if (!bucket) continue;
+          for (const index of bucket) {
+            const segment = segments[index];
+            const points = segment.points;
+            for (let k = 0; k < points.length - 1; k += 1) {
+              const ax = points[k].x;
+              const az = points[k].z;
+              const ex = points[k + 1].x - ax;
+              const ez = points[k + 1].z - az;
+              const lengthSq = ex * ex + ez * ez;
+              if (!(lengthSq > 1e-6)) continue;
+              const t = clamp(((x - ax) * ex + (z - az) * ez) / lengthSq, 0, 1);
+              const px = ax + ex * t;
+              const pz = az + ez * t;
+              const distance = Math.hypot(x - px, z - pz);
+              if (!best || distance < best.distance) {
+                const length = Math.sqrt(lengthSq);
+                best = {
+                  distance,
+                  x: px,
+                  z: pz,
+                  dx: ex / length,
+                  dz: ez / length,
+                  half: clamp(finite(segment.width, 8), 3, 40) * 0.5,
+                };
+              }
+            }
+          }
+        }
+      }
+      return best;
+    },
   };
 }
 
@@ -537,6 +717,31 @@ function buildSky(radius) {
   moon.frustumCulled = false;
   group.add(moon);
 
+  // Dither shell. Sits just inside the dome, additive, and is the only thing
+  // that can break 8-bit contouring without a post-processing stage: the
+  // banding is created by the output quantisation, so it has to be attacked at
+  // pixel frequency, which no amount of dome tessellation reaches.
+  const ditherSource = ditherTexture(DITHER_TEXTURE_SIZE, 0x5eed);
+  const ditherTex = byteTexture(ditherSource.data, DITHER_TEXTURE_SIZE, DITHER_TEXTURE_SIZE, {
+    name: 'sky-atmosphere:dither',
+    wrap: RepeatWrapping,
+  });
+  ditherTex.repeat.set(DITHER_REPEAT, DITHER_REPEAT / 2);
+  const ditherMaterial = new MeshBasicMaterial({
+    map: ditherTex,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: BackSide,
+    fog: false,
+    opacity: 1,
+  });
+  const dither = new Mesh(new SphereGeometry(radius * 0.998, 24, 12), ditherMaterial);
+  dither.name = 'sky-atmosphere:dither';
+  dither.renderOrder = -4;
+  dither.frustumCulled = false;
+  group.add(dither);
+
   const stars = starField(STAR_COUNT, { seed: 11, minAltitudeDeg: 1.5 });
   const starPositions = new Float32Array(stars.count * 3);
   const starColors = new Float32Array(stars.count * 3);
@@ -586,7 +791,9 @@ function buildSky(radius) {
     moonMaterial,
     starPoints,
     starMaterial,
-    textures: [glowTexture, discTexture, starTexture],
+    dither,
+    ditherMaterial,
+    textures: [glowTexture, discTexture, starTexture, ditherTex],
     radius,
   };
 }
@@ -814,7 +1021,7 @@ function buildContactGrounding(ctx, city, datum, proximity) {
   }
   const geometry = sink.build('sky-atmosphere:contact-grounding');
   if (!geometry) return null;
-  const ramp = rampTexture(48, (t) => CONTACT_ALPHA * (1 - t) ** 2.1);
+  const ramp = rampTexture(64, (t) => CONTACT_ALPHA * (1 - t) ** 1.7);
   const texture = byteTexture(ramp.data, ramp.width, ramp.height, {
     name: 'sky-atmosphere:contact-ramp',
   });
@@ -850,33 +1057,19 @@ function buildUnderObjectShading(ctx, datum) {
   const carriagewayY = (x, z) => finite(heightAt(x, z), 0) + datum.roadLift + 0.03;
   const footwayY = (x, z) => finite(heightAt(x, z), 0) + datum.footwayLift + 0.03;
   const world = new Vector3();
-  let vehicles = 0;
+  const vehicles = 0;
   let canopies = 0;
 
-  for (const name of ['parked-car-bodies', 'sf-partitioned-parked-car-bodies']) {
-    const mesh = ctx.legacyGroup?.(name);
-    if (!mesh || !mesh.isInstancedMesh) continue;
-    // Read the instance buffer directly rather than through `getMatrixAt`: the
-    // only fields needed are the translation and the yaw, and going through a
-    // Matrix4 per instance would allocate inside a build loop that can run
-    // several hundred times.
-    const array = mesh.instanceMatrix?.array;
-    if (!array) continue;
-    const count = Math.min(finite(mesh.count, 0), Math.floor(array.length / 16));
-    for (let i = 0; i < count; i += 1) {
-      const o = i * 16;
-      const x = array[o + 12];
-      const y = array[o + 13];
-      const z = array[o + 14];
-      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-      // Yaw straight out of the basis so the patch lies along the car.
-      const rot = Math.atan2(array[o + 2], array[o]);
-      // `y` is the instance's own body height above the road, so the road
-      // datum is preferred and the instance only backs it up.
-      sink.rect(Number.isFinite(y) ? x : x, carriagewayY(x, z), z, 5.4, 2.6, rot);
-      vehicles += 1;
-    }
-  }
+  // Vehicles are deliberately NOT handled here any more.
+  //
+  // The vehicle owner has retired the legacy `parked-car-bodies` layer and now
+  // emits a contact patch under every near and mid vehicle from inside the
+  // vehicle presentation pass. That version is LOD-aware and follows moving
+  // traffic, neither of which a build-time pass over a static instance buffer
+  // can do, and running both would stack two darkening patches under one car.
+  // `carriagewayY` is retained because the datum arithmetic is shared and a
+  // future kerbside prop will want it.
+  void carriagewayY;
 
   const awnings = ctx.legacyGroup?.('shopfront-awnings');
   if (awnings && typeof awnings.traverse === 'function') {
@@ -920,15 +1113,17 @@ function buildUnderObjectShading(ctx, datum) {
  * has to stay under 1 so it does not clip the sidewalk to white.
  * @private
  */
-function buildNightPracticals(ctx, profile, datum) {
+function buildNightPracticals(ctx, profile, datum, streets) {
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
   const footwayY = (x, z) => finite(heightAt(x, z), 0) + datum.footwayLift + 0.025;
   const lampGroup = ctx.legacyGroup?.('street-lamps');
   const pools = quadSink();
+  const road = quadSink();
   const glows = quadSink();
   const spill = quadSink();
   const world = new Vector3();
   let lamps = 0;
+  let carriagewayPools = 0;
   let spills = 0;
 
   if (lampGroup && typeof lampGroup.traverse === 'function') {
@@ -946,6 +1141,29 @@ function buildNightPracticals(ctx, profile, datum) {
       const jitter = 0.82 + 0.36 * hash01(hashString(`${lamp.name || 'lamp'}:${i}`));
       const radius = profile.pool.radius * jitter;
       pools.rect(x, ground, z, radius * 2, radius * 2);
+      // The throw across the carriageway. Placed on the road's own crown
+      // rather than on the footway, and oriented along the street so adjacent
+      // fixtures overlap into a continuous band instead of a row of spots.
+      const street = streets.query(x, z);
+      if (street && street.distance < 26) {
+        const toRoadX = street.x - x;
+        const toRoadZ = street.z - z;
+        const toRoad = Math.hypot(toRoadX, toRoadZ);
+        const reach = profile.pool.carriageway.reach * jitter;
+        // Centre the patch part-way out over the carriageway, not on the kerb.
+        const bias = Math.min(street.half * 0.55, reach * 0.32);
+        const cx = toRoad > 1e-3 ? x + (toRoadX / toRoad) * bias : x;
+        const cz = toRoad > 1e-3 ? z + (toRoadZ / toRoad) * bias : z;
+        road.rect(
+          cx,
+          datum.crownY(finite(heightAt(cx, cz), 0), street.half) + 0.04,
+          cz,
+          profile.pool.carriageway.length * jitter,
+          reach * 2,
+          Math.atan2(street.dz, street.dx),
+        );
+        carriagewayPools += 1;
+      }
       // The bulb itself, as a soft glow in air at the fixture height. The lamp
       // group's own world Y is the authority here - it is the fixture.
       glows.rect(x, finite(world.y, ground) + 5.5, z, 3.0 * jitter, 3.0 * jitter);
@@ -975,11 +1193,16 @@ function buildNightPracticals(ctx, profile, datum) {
 
   const poolSource = radialAlphaTexture(96, profile.pool.falloff);
   const poolTexture = byteTexture(poolSource.data, 96, 96, { name: 'sky-atmosphere:light-pool' });
+  // The carriageway throw is elongated, so it gets a gentler falloff: a
+  // `^1.5` radial mask stretched 34 m along the street would read as an
+  // obvious ellipse rather than as a lit road.
+  const roadSource = radialAlphaTexture(96, 1.15);
+  const roadTexture = byteTexture(roadSource.data, 96, 96, { name: 'sky-atmosphere:road-pool' });
   const glowSource = radialAlphaTexture(48, 2.4);
   const glowTexture = byteTexture(glowSource.data, 48, 48, { name: 'sky-atmosphere:bulb-glow' });
 
   const parts = [];
-  const textures = [poolTexture, glowTexture];
+  const textures = [poolTexture, roadTexture, glowTexture];
 
   const poolGeometry = pools.build('sky-atmosphere:light-pools');
   if (poolGeometry) {
@@ -995,6 +1218,21 @@ function buildNightPracticals(ctx, profile, datum) {
     mesh.name = 'sky-atmosphere:light-pools';
     mesh.renderOrder = 3;
     parts.push({ key: 'pools', mesh, material, geometry: poolGeometry });
+  }
+  const roadGeometry = road.build('sky-atmosphere:road-pools');
+  if (roadGeometry) {
+    const material = new MeshBasicMaterial({
+      map: roadTexture,
+      transparent: true,
+      depthWrite: false,
+      blending: AdditiveBlending,
+      opacity: 0,
+      fog: true,
+    });
+    const mesh = new Mesh(roadGeometry, material);
+    mesh.name = 'sky-atmosphere:road-pools';
+    mesh.renderOrder = 3;
+    parts.push({ key: 'road', mesh, material, geometry: roadGeometry });
   }
   const glowGeometry = glows.build('sky-atmosphere:bulb-glows');
   if (glowGeometry) {
@@ -1027,7 +1265,7 @@ function buildNightPracticals(ctx, profile, datum) {
     parts.push({ key: 'spill', mesh, material, geometry: spillGeometry });
   }
 
-  return { parts, textures, lamps, spills };
+  return { parts, textures, lamps, spills, carriagewayPools };
 }
 
 /**
@@ -1053,7 +1291,8 @@ function buildWetSheen(ctx, city, grade, datum) {
   const segments = Array.isArray(city?.segments) ? city.segments : [];
   const sink = quadSink();
   let placed = 0;
-  const lift = datum.roadLift;
+  // `datum.crossSectionY` owns the vertical placement now; the raw lift is no
+  // longer used directly.
   for (let s = 0; s < segments.length && placed < MAX_PUDDLES; s += 1) {
     const segment = segments[s];
     const points = segment?.points;
@@ -1079,7 +1318,9 @@ function buildWetSheen(ctx, city, grade, datum) {
       const size = 2.2 + 3.4 * hash01(seed + k * 3301);
       sink.rect(
         x,
-        finite(heightAt(x, z), 0) + lift + 0.012,
+        // The road is crowned. Round 2 used `datum + 0.012` and buried every
+        // puddle under up to 0.30 m of tarmac.
+        datum.crossSectionY(finite(heightAt(x, z), 0), lateral, width * 0.5) + 0.02,
         z,
         size,
         size * (0.55 + 0.5 * hash01(seed + k * 5501)),
@@ -1090,10 +1331,12 @@ function buildWetSheen(ctx, city, grade, datum) {
   }
   const geometry = sink.build('sky-atmosphere:wet-sheen');
   if (!geometry) return null;
-  const source = radialAlphaTexture(64, 1.4, 0.28);
+  // A MASK, not an alpha texture: `alphaMap` is read as a float, which takes
+  // the red channel on the node path and green on the classic one, so the
+  // falloff has to live in RGB.
+  const source = radialMaskTexture(64, 1.4, 0.28);
   const texture = byteTexture(source.data, 64, 64, { name: 'sky-atmosphere:puddle' });
   const material = new MeshStandardMaterial({
-    map: texture,
     alphaMap: texture,
     color: 0x0b0e11,
     roughness: grade.roughness,
@@ -1118,18 +1361,53 @@ function buildWetSheen(ctx, city, grade, datum) {
 // ---------------------------------------------------------------- retiming
 
 /** Recolour the dome and re-aim the sun/moon/stars for a sky model. @private */
-function retimeSky(sky, model, aerial, cloud) {
+function retimeSky(sky, model, aerial, cloud, exposure) {
   const colors = sky.domeGeometry.getAttribute('color');
   const positions = sky.domeGeometry.getAttribute('position');
   const rgb = [0, 0, 0];
   const inverse = 1 / sky.radius;
+  // The dome's own mean luminance is the level the dither is sized against.
+  // It is free here because the loop already visits every vertex.
+  let luminanceSum = 0;
+  let luminanceCount = 0;
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i) * inverse;
     const y = positions.getY(i) * inverse;
     const z = positions.getZ(i) * inverse;
     skyDomeRadiance(model, x, y, z, { hazeColor: aerial.color }, rgb);
     colors.setXYZ(i, rgb[0], rgb[1], rgb[2]);
+    // Only the visible upper dome: the ground hemisphere is never the thing
+    // that bands, and averaging it in would drag the reference far too low.
+    if (y > 0) {
+      luminanceSum += 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+      luminanceCount += 1;
+    }
   }
+  const meanLuminance = luminanceCount ? luminanceSum / luminanceCount : 0;
+  // The shell blends ADDITIVELY, and three tone-maps per material, so what it
+  // contributes to the frame is `displayValue(amplitude * noise)` on its own -
+  // not `displayValue(sky + noise) - displayValue(sky)`. The amplitude is
+  // therefore the scene value that *itself* renders at DITHER_STEPS, and the
+  // compensation the dome pays back is the scene delta worth half that many
+  // steps at the sky's own level. Sizing the shell with `displayStepScene`
+  // instead would be a factor of several out, because one step near zero costs
+  // far less scene radiance than one step at the sky's level.
+  const amplitude = sceneForDisplay(DITHER_STEPS / 255, exposure);
+  const bias = displayStepScene(meanLuminance, exposure, DITHER_STEPS * 0.5);
+  if (bias > 0) {
+    for (let i = 0; i < colors.count; i += 1) {
+      colors.setXYZ(
+        i,
+        Math.max(0, colors.getX(i) - bias),
+        Math.max(0, colors.getY(i) - bias),
+        Math.max(0, colors.getZ(i) - bias),
+      );
+    }
+  }
+  setLinear(sky.ditherMaterial.color, [1, 1, 1], amplitude);
+  sky.dither.visible = amplitude > 0;
+  sky.ditherAmplitude = amplitude;
+  sky.ditherReference = meanLuminance;
   colors.needsUpdate = true;
 
   const sun = model.sun;
@@ -1239,18 +1517,41 @@ function retimeWet(state, grade) {
 }
 
 /** Turn the night practicals up or down. @private */
-function retimePracticals(state, profile) {
+/**
+ * Turn the night practicals up or down.
+ *
+ * Every level here is DISPLAY-referred, not scene-referred, and the conversion
+ * is the whole point. Three tone-maps each material and blends afterwards, so
+ * an additive pool contributes exactly `displayValue(material.color) * alpha`
+ * to the frame. A scene-referred level therefore does not mean what it looks
+ * like it means: round 2's 0.46 opacity on a 1.35x warm colour is 0.62 linear,
+ * which tone-maps to +218 luma - a white-hot disc under every lamp, and the
+ * only reason nobody saw it is that the pools were buried under the pavement.
+ * Setting the colour from `sceneForDisplay(peak / 255, exposure)` instead
+ * fixes the peak in display steps and makes it exposure-independent, and the
+ * mask then falls off linearly in display space, which is what a pool of light
+ * on tarmac actually looks like.
+ * @private
+ */
+function retimePracticals(state, profile, exposure) {
+  /** Colour whose tone-mapped luminance lands on `peak` display steps. */
+  const atPeak = (material, color, peak, opacity) => {
+    const target = sceneForDisplay(clamp(peak, 0, 254) / 255, exposure);
+    const luminance = Math.max(1e-6, 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]);
+    setLinear(material.color, color, target / luminance);
+    material.opacity = clamp(opacity, 0, 1);
+  };
   for (const part of state.practicals?.parts || []) {
     if (part.key === 'pools') {
-      setLinear(part.material.color, profile.pool.color, 1.35);
-      part.material.opacity = profile.pool.opacity;
+      atPeak(part.material, profile.pool.color, profile.pool.peakDisplay, profile.pool.opacity);
+    } else if (part.key === 'road') {
+      const throwSpec = profile.pool.carriageway;
+      atPeak(part.material, profile.pool.color, throwSpec.peakDisplay, throwSpec.opacity);
     } else if (part.key === 'glows') {
-      setLinear(part.material.color, profile.pool.color, 1.8);
-      part.material.opacity = clamp(profile.lampsOn * 0.62, 0, 1);
+      atPeak(part.material, profile.pool.color, profile.bulb.peakDisplay, profile.bulb.opacity);
     } else {
       // Shopfronts run warmer than the street lamps and vary in temperature.
-      setLinear(part.material.color, blackBodyColor(2950), 0.9);
-      part.material.opacity = profile.shopSpill.opacity;
+      atPeak(part.material, blackBodyColor(2950), profile.shopSpill.peakDisplay, profile.shopSpill.opacity);
     }
     part.mesh.visible = part.material.opacity > 0.012;
   }
@@ -1329,11 +1630,12 @@ function buildPass(ctx) {
 
   const datum = pavedDatum(city);
   const proximity = streetProximity(city);
+  const streets = streetIndex(city);
   const contact = buildContactGrounding(ctx, city, datum, proximity);
   if (contact) root.add(contact.mesh);
   const underObject = buildUnderObjectShading(ctx, datum);
   if (underObject) root.add(underObject.mesh);
-  const practicals = buildNightPracticals(ctx, practical, datum);
+  const practicals = buildNightPracticals(ctx, practical, datum, streets);
   for (const part of practicals.parts) root.add(part.mesh);
   const wet = buildWetSheen(ctx, city, wetAsphalt, datum);
   if (wet) root.add(wet.mesh);
@@ -1394,10 +1696,10 @@ function buildPass(ctx) {
   };
   setLinear(state.fogColor, aerial.color);
 
-  retimeSky(sky, model, aerial, cloud);
+  retimeSky(sky, model, aerial, cloud, exposure.exposure);
   retimeClouds(clouds, cloud);
   retimeAerial(state, aerial);
-  retimePracticals(state, practical);
+  retimePracticals(state, practical, exposure.exposure);
   retimeWet(state, wetAsphalt);
   state.bucket = `${weather}|${quantiseHour(hour, SKY_ATMOSPHERE_BUDGET.hourQuantum).toFixed(4)}`;
 
@@ -1450,6 +1752,13 @@ function buildPass(ctx) {
       stars: STAR_COUNT,
       sunDiscVisible: sky.disc.visible,
       moonVisible: sky.moon.visible,
+      dither: {
+        steps: DITHER_STEPS,
+        amplitude: sky.ditherAmplitude,
+        reference: sky.ditherReference,
+        repeat: DITHER_REPEAT,
+        textureSize: DITHER_TEXTURE_SIZE,
+      },
     },
     fog: {
       near: aerial.near,
@@ -1473,11 +1782,18 @@ function buildPass(ctx) {
       roadLift: datum.roadLift,
       footwayLift: Math.round(datum.footwayLift * 1000) / 1000,
       streetCells: proximity.cells,
+      indexedStreetCells: streets.cells,
+      crossSlope: datum.crossSlope,
+      contactWidth: CONTACT_WIDTH,
       note: 'ground decals sit on the paved datum, not on the terrain: the carriageway is '
         + 'terrain+roadLift and the footway is a further curbFaceHeight-gutterDepth above it',
     },
     lights: {
       lampPools: practicals.lamps,
+      carriagewayPools: practicals.carriagewayPools,
+      poolRadius: practical.pool.radius,
+      poolFalloff: practical.pool.falloff,
+      carriageway: practical.pool.carriageway,
       shopSpills: practicals.spills,
       bulbGlows: practicals.lamps,
       windowOccupancy: practical.windows.occupancy,
@@ -1604,10 +1920,10 @@ export default {
     state.fogNear = aerial.near;
     state.fogFar = aerial.far;
     setLinear(state.fogColor, aerial.color);
-    retimeSky(state.sky, model, aerial, cloud);
+    retimeSky(state.sky, model, aerial, cloud, recommendedExposure(model).exposure);
     retimeClouds(state.clouds, cloud);
     retimeAerial(state, aerial);
-    retimePracticals(state, practical);
+    retimePracticals(state, practical, recommendedExposure(model).exposure);
     retimeWet(state, wetSurfaceGrade('asphalt', model));
   },
 

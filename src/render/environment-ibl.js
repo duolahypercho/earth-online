@@ -2352,6 +2352,120 @@ export function recommendedExposure(modelOrState) {
 }
 
 /**
+ * ACES filmic tone curve, the fitted form three's `ACESFilmicToneMapping` uses,
+ * followed by the sRGB transfer. Exported so the display level of a surface is
+ * a computable number rather than something only a capture can answer.
+ *
+ * @param {number} scene Scene-referred radiance.
+ * @param {number} exposure `renderer.toneMappingExposure`.
+ * @returns {number} 0..1 display value (multiply by 255 for an 8-bit frame).
+ */
+export function displayValue(scene, exposure) {
+  const x = Math.max(0, scene) * Math.max(0, exposure);
+  const tone = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0, 1);
+  return tone <= 0.0031308 ? 12.92 * tone : 1.055 * Math.pow(tone, 1 / 2.4) - 0.055;
+}
+
+/**
+ * How much scene radiance one 8-bit display step is worth at a given level.
+ *
+ * This is what a dither amplitude has to be measured in. Banding is an
+ * output-quantisation artifact: a smooth gradient whose scene value changes by
+ * less than one display step over many pixels renders as a flat band with a
+ * hard contour at each step. Round 2's night sky measured runs of 15, 19, 23
+ * and 33 pixels at a single luma value, stepping by exactly 1 each time - the
+ * textbook signature. Adding noise of about one step breaks the contour into
+ * pixel noise, which the eye integrates back into the gradient.
+ *
+ * The relationship is strongly level-dependent: near the night sky's 16/255 a
+ * step is about 8.7% of the scene value, while at a daylit 150/255 it is 1.4%.
+ * A fixed relative dither would therefore either fail at night or be visible
+ * grain by day, which is why this is solved per retime rather than baked into
+ * a texture.
+ *
+ * @param {number} scene Scene-referred radiance to measure around.
+ * @param {number} exposure
+ * @param {number} [steps=1] How many display steps to measure.
+ * @returns {number} Scene-radiance delta worth `steps` display steps.
+ */
+export function displayStepScene(scene, exposure, steps = 1) {
+  const base = Math.max(1e-9, scene);
+  const target = clamp(displayValue(base, exposure) + steps / 255, 0, 1);
+  // Bisection on a monotone curve: 40 iterations is exact to well past float
+  // precision and, unlike a derivative, cannot be fooled by the curve's knee.
+  let lo = base;
+  let hi = base;
+  for (let i = 0; i < 60 && displayValue(hi, exposure) < target; i += 1) hi *= 1.5;
+  for (let i = 0; i < 40; i += 1) {
+    const mid = 0.5 * (lo + hi);
+    if (displayValue(mid, exposure) < target) lo = mid;
+    else hi = mid;
+  }
+  return Math.max(0, 0.5 * (lo + hi) - base);
+}
+
+/**
+ * Scene radiance that renders at a given display level. Inverse of
+ * `displayValue`, by bisection on a monotone curve.
+ *
+ * @param {number} display 0..1 display value.
+ * @param {number} exposure
+ * @returns {number} Scene-referred radiance.
+ */
+export function sceneForDisplay(display, exposure) {
+  const target = clamp(display, 0, 0.999);
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 60 && displayValue(hi, exposure) < target; i += 1) hi *= 2;
+  for (let i = 0; i < 60; i += 1) {
+    const mid = 0.5 * (lo + hi);
+    if (displayValue(mid, exposure) < target) lo = mid;
+    else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+/**
+ * Albedo of the darkest surface class the frame has to keep off the floor:
+ * dark brick, dark glass and vehicle glazing all sit near 0.06.
+ */
+export const DARK_SURFACE_ALBEDO = 0.06;
+
+/**
+ * Display steps such a surface must clear on ANY normal, including one facing
+ * away from the sky, the ground and the key.
+ *
+ * The round-2 night card rendered 15.7% of its pixels at exactly (0, 0, 0),
+ * and the golden-hour card 16.6%. Diffing the night card against the day card
+ * at the same camera pose settles what they are: 96% of those pixels carry
+ * luma 16 or more in daylight, and 31% carry 64 or more. They are ordinary
+ * lit surfaces, not black materials - they simply receive less than one
+ * display step of light after dark.
+ */
+export const BLACK_FLOOR_STEPS = 2.5;
+
+/**
+ * Share of the environment's hemispherical irradiance that still reaches a
+ * surface whose normal points away from everything - a window reveal, a
+ * soffit, the inside face of a parapet. A quarter is conservative for a dome
+ * with a lit lower hemisphere.
+ */
+export const ANY_NORMAL_ENV_SHARE = 0.25;
+
+/**
+ * Ambient scale needed so a dark surface on an unfavourable normal clears the
+ * black floor. Pure, and inert whenever the environment already does the job.
+ * @private
+ */
+function ambientFloorScale(exposure, environmentFill, curveAmbient) {
+  const sceneFloor = sceneForDisplay(BLACK_FLOOR_STEPS / 255, exposure);
+  const requiredIrradiance = (sceneFloor * Math.PI) / DARK_SURFACE_ALBEDO;
+  const fromEnvironment = Math.max(0, environmentFill) * ANY_NORMAL_ENV_SHARE;
+  const shortfall = Math.max(0, requiredIrradiance - fromEnvironment);
+  return shortfall / Math.max(1e-6, curveAmbient);
+}
+
+/**
  * Measure the key/fill balance a sky state currently produces, and return the
  * pair of gains that puts it on `TARGET_KEY_FILL` **without changing total
  * scene illuminance**.
@@ -2436,6 +2550,21 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
   keyAfter = key * keyGain;
   fillAfter = fill * fillGain;
 
+  // Step 5: the any-normal floor, applied after the twilight fade rather than
+  // through it, because night is exactly when it is needed. Ambient is the
+  // only light in the rig that reaches a surface facing away from the sky, the
+  // ground and the key, so the floor lands there and the extra it contributes
+  // is folded back into the reported fill - otherwise the diagnostics would
+  // under-report what the renderer is actually going to deliver.
+  const directFillGain = fillGain;
+  const envAfterGain = environmentFill * Math.max(fillGain, MIN_ENVIRONMENT_SHARE);
+  const ambientBase = curve.ambient * rig.scales.ambient * fillGain;
+  const ambientFloor = curve.ambient * ambientFloorScale(exposure, envAfterGain, curve.ambient);
+  const ambientAfter = Math.min(Math.max(ambientBase, ambientFloor), curve.ambient * 2.6);
+  const ambientExtra = Math.max(0, ambientAfter - ambientBase);
+  fillAfter += ambientExtra;
+  fillGain = fill > 1e-9 ? fillAfter / fill : 1;
+
   const achievedKey = keyAfter;
   const achievedFill = fillAfter;
   const round = (value) => Math.round(value * 10000) / 10000;
@@ -2467,6 +2596,12 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
      */
     shadow: Object.freeze({
       product: round(achievedFill * exposure),
+      /** Irradiance a surface facing away from everything still receives. */
+      anyNormal: round(ambientAfter + envAfterGain * ANY_NORMAL_ENV_SHARE),
+      anyNormalDisplay: Math.round(255 * displayValue(
+        (DARK_SURFACE_ALBEDO * (ambientAfter + envAfterGain * ANY_NORMAL_ENV_SHARE)) / Math.PI,
+        exposure,
+      ) * 10) / 10,
       floor: SHADOW_DISPLAY_FLOOR,
       bounce: round(bounce),
       bounceShare: round(bounce / Math.max(1e-9, achievedFill)),
@@ -2484,15 +2619,25 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       // without its own `envMap` gets from the sky, and for a metal or a glass
       // tower it is the only light of any kind.
       environmentIntensity: round(clamp(
-        rig.environmentIntensity * Math.max(fillGain, MIN_ENVIRONMENT_SHARE),
+        rig.environmentIntensity * Math.max(directFillGain, MIN_ENVIRONMENT_SHARE),
         0,
         2,
       )),
-      hemiScale: round(clamp(rig.scales.hemi * fillGain, 0.02, 1.2)),
-      ambientScale: round(clamp(rig.scales.ambient * fillGain, 0.02, 1.2)),
+      // `fillGain` now carries the ambient floor as well, so hemi and rim are
+      // scaled by the gain the *dome* asked for, not by the floored total.
+      hemiScale: round(clamp(rig.scales.hemi * directFillGain, 0.02, 1.2)),
+      // Ambient carries a floor rather than just the fill gain, because it is
+      // the only light in the rig that reaches a surface facing away from the
+      // sky, the ground and the key. The floor is computed, not chosen: it is
+      // the ambient level at which a DARK_SURFACE_ALBEDO surface lit by
+      // nothing else clears BLACK_FLOOR_STEPS of display, at this exposure,
+      // after whatever the environment already delivers to such a normal. At
+      // clear noon the environment alone already clears it and this is inert;
+      // at night the environment is 0.029 and it is not.
+      ambientScale: round(clamp(ambientAfter / Math.max(1e-6, curve.ambient), 0.02, 2.6)),
       // The rim is pure fill with no physical counterpart once the env dome is
       // present, so it takes the fill cut and a little more.
-      rimScale: round(clamp(rig.scales.rim * fillGain * 0.85, 0.02, 1)),
+      rimScale: round(clamp(rig.scales.rim * directFillGain * 0.85, 0.02, 1)),
       exposure,
     }),
     note: 'contrast is raised against a floored shadow side, not against the frame total: '
@@ -2510,11 +2655,16 @@ export const CANYON_FACADE_ALBEDO = 0.34;
 
 /**
  * Fraction of the street-level hemisphere filled by *sunlit* facade in a
- * typical block of this city (46 m of streetwall over an 18 m street, one side
- * lit). Deliberately conservative: it is a view factor, not a fudge factor,
- * and doubling it would be a lighting decision rather than a measurement.
+ * typical block of this city. 46 m of streetwall across an 18 m street
+ * subtends about 69 degrees of elevation over roughly half the azimuth from a
+ * point on the far footway, and one side of it is lit; the geometric view
+ * factor to that patch is around 0.35. Round 2 shipped 0.16 - deliberately
+ * under half of it - and the golden-hour card came back with its shadow-side
+ * facades still at mean 13.7/255. 0.24 remains under the geometric value and
+ * is a view factor, not a fudge factor: doubling it past 0.35 would be a
+ * lighting decision this module has no basis for.
  */
-export const CANYON_VIEW_FACTOR = 0.16;
+export const CANYON_VIEW_FACTOR = 0.24;
 
 /**
  * Indirect illumination a street receives from the sunlit facades across from
@@ -3041,18 +3191,57 @@ export function nightPracticalProfile(modelOrState) {
     dusk: round4(dusk),
     /** Street-lighting ramp: later than `dusk`, keyed to the horizon. */
     lampsOn: round4(lampsOn),
-    /** Ground pool under a 5.5 m street lamp. */
+    /**
+     * Ground pool under a 5.5 m street lamp.
+     *
+     * Round 2 used a 7.4 m radius with a `^2.1` falloff, which puts isolated
+     * circles under isolated lamps and leaves the carriageway between them
+     * black - the night card measured its near road at mean luma 8.3/255 with
+     * 79% of it under the black threshold. Real street lighting is specified
+     * so that adjacent pools overlap: at the ~32 m spacing this city places
+     * fixtures at, an 11.5 m radius with a `^1.5` falloff gives a continuous
+     * band along the kerb line instead of a row of spots.
+     */
     pool: Object.freeze({
-      radius: round4(7.4 * (1 + 0.25 * model.wetness)),
-      opacity: round4(0.46 * lampsOn * wetGain * (1 - 0.2 * model.overcast)),
+      radius: round4(11.5 * (1 + 0.25 * model.wetness)),
+      opacity: round4(clamp(lampsOn * wetGain * (1 - 0.2 * model.overcast), 0, 1)),
       /** Warm high-pressure-sodium-through-LED mix, linear RGB. */
       color: Object.freeze([1.0, 0.706, 0.392]),
-      falloff: 2.1,
+      falloff: 1.5,
+      /**
+       * Peak contribution at the pool centre, in DISPLAY steps out of 255.
+       *
+       * Practicals have to be specified this way rather than as a scene
+       * radiance, because three tone-maps per material and blends afterwards:
+       * an additive pool contributes `displayValue(colour) * alpha` to the
+       * frame, not `displayValue(sky + pool) - displayValue(sky)`. The
+       * previous scene-referred 0.46 opacity on a 1.35x colour worked out to
+       * +218 luma at the pool centre once the round-2 datum fix let it be
+       * seen at all - a white-hot disc under every lamp. Quoting the peak in
+       * display steps also makes the pool exposure-independent, which matters
+       * now that exposure ranges over 0.68..1.55 across the day.
+       */
+      peakDisplay: Math.round(82 * Math.min(1.35, wetGain)),
+      /**
+       * The throw over the carriageway. A street lamp is not a point source
+       * over its own base: the head is on an outreach arm and the distribution
+       * is deliberately biased across the road, which is the whole reason the
+       * road is lit at all.
+       */
+      carriageway: Object.freeze({
+        /** Along the street, metres. Sized to overlap at typical spacing. */
+        length: round4(34 * (1 + 0.2 * model.wetness)),
+        /** Across the street, metres, measured from the kerb. */
+        reach: round4(13 * (1 + 0.2 * model.wetness)),
+        opacity: round4(clamp(lampsOn * wetGain * (1 - 0.2 * model.overcast), 0, 1)),
+        peakDisplay: Math.round(72 * Math.min(1.35, wetGain)),
+      }),
     }),
     /** Light thrown out of a shopfront onto the sidewalk. */
     shopSpill: Object.freeze({
       depth: round4(3.6 * (1 + 0.3 * model.wetness)),
-      opacity: round4(0.34 * dusk * wetGain),
+      opacity: round4(clamp(dusk * wetGain, 0, 1)),
+      peakDisplay: Math.round(88 * Math.min(1.25, wetGain)),
       color: Object.freeze([1.0, 0.83, 0.60]),
       occupancy: round4(clamp(occupancy * 1.25, 0, 0.95)),
     }),
@@ -3073,6 +3262,11 @@ export function nightPracticalProfile(modelOrState) {
       /** Fraction of lit windows that read as cool (screens, offices). */
       coolShare: round4(clamp(0.18 + 0.42 * bell(21.0, 2.4), 0, 0.7)),
       flickerFree: true,
+    }),
+    /** The bulb itself, seen as a glow in air at the fixture head. */
+    bulb: Object.freeze({
+      opacity: round4(clamp(lampsOn, 0, 1)),
+      peakDisplay: 150,
     }),
     /** Ambient sky glow the practicals themselves put back into the dome. */
     skyGlow: round4(night * (weatherProfile(model.weather).urbanGlow ?? 0.6)),
