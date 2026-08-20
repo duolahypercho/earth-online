@@ -512,6 +512,26 @@ function formatClock(hour) {
   return `${display}:${String(minutes).padStart(2, '0')} ${suffix}`;
 }
 
+/**
+ * Where the camera will end up once the city is framed: the centroid of the
+ * built-up area, which is what `frameCityCamera` aims at. Computed before the
+ * build so the renderer can put its near detail there.
+ */
+function cityFocusPoint(city) {
+  const buildings = city?.buildings || [];
+  let cx = 0; let cz = 0; let count = 0;
+  for (const building of buildings.slice(0, 1200)) {
+    const xs = building.polygon?.map((p) => p.x) || [];
+    const zs = building.polygon?.map((p) => p.z) || [];
+    if (!xs.length) continue;
+    cx += (Math.min(...xs) + Math.max(...xs)) / 2;
+    cz += (Math.min(...zs) + Math.max(...zs)) / 2;
+    count += 1;
+  }
+  if (!count) return null;
+  return { x: cx / count, z: cz / count };
+}
+
 function frameCityCamera(city) {
   const bounds = city.meta.bounds;
   state.renderer.camera.fov = 52;
@@ -786,7 +806,15 @@ async function buildCity(city, { reframe = true } = {}) {
   MINIMAP.bitmap = null;
   if (state.vehicle) toggleVehicle(false);
   state.renderer.clearCity();
-  await state.renderer.buildCity(city, { day: state.day });
+  // Build the world's detail around where the player will actually stand.
+  // `frameCityCamera` runs after the build, so without this the renderer takes
+  // its LOD focus from the startup camera pose - which on the shipped route was
+  // ~600 m from the framed position and ~1450 m from the loaded window, so
+  // every distance-ringed pass put its near-tier detail where nobody was
+  // looking. Structural content is focus-independent now, but tree species mix,
+  // panel joints, warning pads and wear still follow this point.
+  const focus = cityFocusPoint(city);
+  await state.renderer.buildCity(city, { day: state.day, focus });
   state.collision = buildCollisionGrid(city);
   configureBuildingInteriors(city);
   if (state.traffic) {
