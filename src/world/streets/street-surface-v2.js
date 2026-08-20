@@ -1882,3 +1882,353 @@ export function disposeStreetSurfaceV2(result) {
   for (const material of Object.values(result.materials || {})) material.dispose?.();
   result.group?.clear?.();
 }
+
+// ---------------------------------------------------------------------------
+// streetscape plan
+// ---------------------------------------------------------------------------
+//
+// Everything above this line builds the *paved surface*. The two presentation
+// passes that dress that surface - `street-surface-detail` (paint, drainage,
+// covers, wear, scored joints, ramp pads) and `street-furniture` (hydrants,
+// meters, poles, bins, racks, shelters, trees) - need exactly the same street
+// truth this module already derives, and they need it to AGREE with the
+// surface to the millimetre:
+//
+//   * the same node set, so a crossing lands on a junction the surface
+//     actually built a pad for;
+//   * the same trims, so a stop bar is not painted inside a junction pad;
+//   * the same corner fillets, so a kerb ramp pad lands on the ramp the curb
+//     ring cut, and a corner bollard is not planted in the carriageway;
+//   * the same cross-section heights, so nothing floats or sinks.
+//
+// Recomputing that in a pass would be a second source of truth, and a second
+// source of truth is how a ramp pad ends up 40 cm off the ramp. So the plan is
+// produced here, by the passes that already exist, and handed out read-only.
+//
+// The plan is PURE DATA: no THREE, no DOM, plain numbers only, so a node
+// verifier can assert against the same object the browser renders from.
+
+export const STREETSCAPE_PLAN_VERSION = 'streetscape-plan-v1';
+
+/**
+ * Street class ordering, low to high. Used for "who stops for whom", how much
+ * paint an approach earns, and how heavily a footway is furnished.
+ * Unknown classes land on `residential`, which is the safe middle.
+ */
+const STREET_CLASS_RANK = Object.freeze({
+  path: 0, steps: 0, footway: 0, cycleway: 0, pedestrian: 0, corridor: 0, platform: 0,
+  track: 1, service: 1, alley: 1, driveway: 1,
+  living_street: 2, unclassified: 2,
+  residential: 3,
+  tertiary: 4, tertiary_link: 4,
+  secondary: 5, secondary_link: 5,
+  primary: 6, primary_link: 6,
+  trunk: 7, trunk_link: 7, motorway: 8, motorway_link: 8,
+});
+
+export function streetClassRank(className) {
+  const key = String(className || '').toLowerCase();
+  const rank = STREET_CLASS_RANK[key];
+  return Number.isFinite(rank) ? rank : 3;
+}
+
+/**
+ * The street contract is written two ways in this repo. The canonical runtime
+ * emits `highway` / `width` / `sidewalkW`; the pass-registry contract and the
+ * docs use `className` / `asphaltWidth` / `sidewalkWidth`. Both are the SAME
+ * authoritative field - accept either, prefer neither, and never write back.
+ */
+export function readSegmentContract(segment) {
+  if (!segment || typeof segment !== 'object') return null;
+  const points = dedupePoints(segment.points);
+  if (points.length < 2) return null;
+  const width = Number(segment.width ?? segment.asphaltWidth);
+  if (!finite(width) || width <= 0.2) return null;
+  const walkRaw = Number(segment.sidewalkW ?? segment.sidewalkWidth);
+  const walk = finite(walkRaw) && walkRaw > 0 ? walkRaw : 0;
+  const left = Number(segment.sidewalkLeft);
+  const right = Number(segment.sidewalkRight);
+  const className = String(segment.highway ?? segment.className ?? 'residential').toLowerCase();
+  const lanes = Math.max(1, Math.round(Number(segment.lanes) || Math.max(1, Math.round(width / 3.2))));
+  const oneway = segment.oneway === true || segment.oneway === 'yes' || segment.oneway === 1
+    || segment.oneway === '1' || segment.oneway === 'increasing' || segment.oneway === 'decreasing';
+  return {
+    id: String(segment.id ?? ''),
+    streetId: segment.streetId ?? null,
+    streetName: String(segment.streetName ?? segment.name ?? ''),
+    className,
+    classRank: streetClassRank(className),
+    width,
+    lanes,
+    oneway,
+    sidewalkW: walk,
+    sidewalkLeft: finite(left) && left >= 0 ? left : walk,
+    sidewalkRight: finite(right) && right >= 0 ? right : walk,
+    points,
+    signalId: segment.signalId ?? null,
+    intersectionId: segment.intersectionId ?? null,
+  };
+}
+
+/**
+ * A read-only shadow of the city expressed in the field names the surface
+ * builder reads. The source city object and every object inside it are
+ * untouched; each shadow segment keeps `source` so a pass can still report the
+ * authoritative id it came from.
+ */
+export function normalizeCityForStreetscape(city) {
+  const segments = [];
+  const list = Array.isArray(city?.segments) && city.segments.length
+    ? city.segments
+    : Array.isArray(city?.streets) ? city.streets : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const contract = readSegmentContract(list[i]);
+    if (!contract) continue;
+    if (!contract.id) contract.id = `street-${i}`;
+    segments.push({
+      ...contract,
+      highway: contract.className,
+      sidewalkW: contract.sidewalkW,
+      source: list[i],
+      sourceIndex: i,
+    });
+  }
+  return {
+    meta: city?.meta || {},
+    segments,
+    intersections: Array.isArray(city?.intersections) ? city.intersections : [],
+    signals: Array.isArray(city?.signals) ? city.signals : [],
+    blocks: Array.isArray(city?.blocks) ? city.blocks : [],
+    buildings: Array.isArray(city?.buildings) ? city.buildings : [],
+  };
+}
+
+/**
+ * Footway surface height at lateral offset `u`, matching `emitSegment` exactly:
+ * curb top at the curb line, a small fall across the curb top, then the
+ * footway cross-fall away from the road. Anything a pass places on the footway
+ * must sit on this, or it floats.
+ */
+export function sidewalkSurfaceY(datum, u, half, o) {
+  const a = Math.abs(u);
+  const top = curbTopY(datum, o);
+  if (a <= half) return top;
+  const back = half + o.curbTopWidth;
+  if (a <= back) return top + o.curbTopFall * ((a - half) / Math.max(1e-6, o.curbTopWidth));
+  return top + o.curbTopFall + o.sidewalkCrossSlope * (a - back);
+}
+
+/** Carriageway surface height at lateral offset `u`. Re-exported for passes. */
+export function carriagewaySurfaceY(datum, u, half, o) {
+  return crossSectionY(datum, u, half, o);
+}
+
+/** Curb-top height above the gutter invert, i.e. the exposed curb face. */
+export function curbTopSurfaceY(datum, o) {
+  return curbTopY(datum, o);
+}
+
+/**
+ * Station frame on a plan segment's centreline at arc length `s`.
+ * `{ x, z, nx, nz, tx, tz, miter }` - identical to what the ribbon is swept on.
+ */
+export function streetStationAt(planSegment, s, allowMiter = true) {
+  const total = planSegment.length;
+  return frameAt(planSegment.points, planSegment.cum, clamp(Number(s) || 0, 0, total), allowMiter !== false);
+}
+
+/** World point at arc length `s`, lateral offset `u`, height `y`. */
+export function streetPointAt(planSegment, s, u, y) {
+  return offsetPoint(streetStationAt(planSegment, s), u, y);
+}
+
+/**
+ * The furnishable footway band of one side of a segment, as lateral offsets
+ * from the centreline. `side` is +1 for the +n side (which carries
+ * `sidewalkLeft`) and -1 for the -n side, matching the repo convention.
+ *
+ * `inner` is the back of the curb: the first station that is footway rather
+ * than curb top. `outer` is the property line. `clear` is the pedestrian
+ * through-route reserved at the property-line end, which nothing may occupy.
+ */
+export function sidewalkBand(planSegment, side, o, clearWidth = 1.05) {
+  const walk = side > 0 ? planSegment.walks.left : planSegment.walks.right;
+  if (!(walk >= o.minSidewalkWidth)) return null;
+  const inner = planSegment.half + o.curbTopWidth;
+  const outer = planSegment.half + walk;
+  const usable = outer - inner;
+  if (!(usable > 0.25)) return null;
+  // A narrow footway keeps a proportional through-route rather than a fixed
+  // one, otherwise a 2.3 m SF footway would have no furnishing zone at all.
+  // 1.05 m is the practical minimum walking route; the proportional cap keeps
+  // a 1.5 m footway from being fully consumed by its own clearance.
+  const clear = Math.min(clearWidth, usable * 0.45);
+  return {
+    side,
+    walk,
+    inner,
+    outer,
+    usable,
+    clear,
+    furnishInner: inner + 0.12,
+    furnishOuter: outer - clear,
+  };
+}
+
+/**
+ * The plan every streetscape pass builds from.
+ *
+ * It runs the surface builder's own first three passes - prepare, node
+ * collection, trim planning, trim reconciliation, fillet fitting - and stops
+ * before any geometry is emitted. The result is therefore the identical node
+ * set, the identical trims and the identical corner arcs the paved surface was
+ * built from, which is the whole point.
+ *
+ * Degenerate input is not an error: a null city, a city with no segments,
+ * two-point segments, zero-width segments and a missing `signals` array all
+ * produce a valid, empty-or-partial plan.
+ *
+ * @param {object} city
+ * @param {object} [overrides] same keys as buildStreetSurfaceData.
+ */
+export function buildStreetscapePlan(city, overrides = {}) {
+  const shadow = normalizeCityForStreetscape(city);
+  const o = resolveStreetSurfaceOptions(city, overrides);
+  const entries = prepareSegments(shadow, o);
+  const nodes = collectNodes(shadow, entries, o);
+  for (const node of nodes) planJunction(node, o);
+  reconcileTrims(entries);
+  const throwaway = emptyStats();
+  for (const node of nodes) finaliseJunction(node, o, throwaway);
+
+  const byId = new Map();
+  const segments = entries.map((entry) => {
+    const plan = {
+      id: entry.segment.id,
+      source: entry.segment.source || null,
+      streetId: entry.segment.streetId,
+      streetName: entry.segment.streetName,
+      className: entry.segment.className,
+      classRank: entry.segment.classRank,
+      lanes: entry.segment.lanes,
+      oneway: entry.segment.oneway,
+      width: entry.segment.width,
+      half: entry.half,
+      walks: entry.walks,
+      points: entry.points,
+      cum: entry.cum,
+      length: entry.length,
+      trimStart: entry.trimStart,
+      trimEnd: entry.trimEnd,
+      signalId: entry.segment.signalId ?? null,
+      nodeStart: null,
+      nodeEnd: null,
+      entry,
+    };
+    byId.set(plan.id, plan);
+    return plan;
+  });
+
+  const planNodes = nodes.map((node) => {
+    const approaches = node.approaches.map((app) => {
+      const planSegment = byId.get(app.entry.segment.id) || null;
+      return {
+        node: null,
+        segmentId: app.entry.segment.id,
+        segment: planSegment,
+        atStart: app.atStart,
+        // Unit direction pointing AWAY from the node, along the approach.
+        u: { x: app.u.x, z: app.u.z },
+        angle: app.angle,
+        half: app.half,
+        trim: app.trim,
+        runLength: app.runLength,
+        // Footway width on the +perpCCW(u) and -perpCCW(u) sides of `u`.
+        walkCCW: app.widthCCW,
+        walkCW: app.widthCW,
+        oneway: app.oneway,
+        flowsToward: app.flowsToward,
+        classRank: planSegment ? planSegment.classRank : 3,
+        className: planSegment ? planSegment.className : 'residential',
+        lanes: planSegment ? planSegment.lanes : 2,
+        // Arc length of the node end of this approach on its own segment.
+        stationAtNode: app.atStart ? 0 : app.entry.length,
+        // The station the paved ribbon actually opens at.
+        stationAtMouth: app.atStart ? app.trim : app.entry.length - app.trim,
+        raw: app,
+      };
+    });
+    const signalId = node.signalId ?? null;
+    const maxClassRank = approaches.reduce((m, a) => Math.max(m, a.classRank), 0);
+    const minClassRank = approaches.reduce((m, a) => Math.min(m, a.classRank), 9);
+    const planNode = {
+      id: String(node.id),
+      position: { x: node.position.x, z: node.position.z },
+      signalId,
+      // A node the surface builder already painted. Anything a pass adds at a
+      // signalised node would land on top of that paint.
+      signalised: signalId !== null && signalId !== undefined,
+      inferred: String(node.id).startsWith('inferred:'),
+      degree: approaches.length,
+      maxClassRank,
+      minClassRank,
+      approaches,
+      corners: node.corners.map((corner) => (corner ? {
+        centre: { x: corner.centre.x, z: corner.centre.z },
+        radius: corner.radius,
+        ta: { x: corner.ta.x, z: corner.ta.z },
+        tb: { x: corner.tb.x, z: corner.tb.z },
+        bisector: { x: corner.bisector.x, z: corner.bisector.z },
+        sweep: corner.sweep,
+      } : null)),
+      paths: node.paths,
+      raw: node,
+    };
+    for (const app of approaches) {
+      app.node = planNode;
+      if (!app.segment) continue;
+      if (app.atStart) app.segment.nodeStart = planNode;
+      else app.segment.nodeEnd = planNode;
+    }
+    return planNode;
+  });
+
+  let streetLength = 0;
+  for (const plan of segments) streetLength += Math.max(0, plan.length - plan.trimStart - plan.trimEnd);
+
+  return {
+    version: STREETSCAPE_PLAN_VERSION,
+    options: o,
+    city: shadow,
+    segments,
+    segmentById: byId,
+    nodes: planNodes,
+    stats: {
+      sourceSegments: Array.isArray(city?.segments) ? city.segments.length : 0,
+      segments: segments.length,
+      nodes: planNodes.length,
+      signalisedNodes: planNodes.filter((n) => n.signalised).length,
+      inferredNodes: planNodes.filter((n) => n.inferred).length,
+      streetLengthMeters: streetLength,
+    },
+  };
+}
+
+/** 32-bit FNV-1a over a string. Exported so passes hash ids the same way. */
+export function streetHash32(value) {
+  return hash32(value);
+}
+
+/**
+ * Deterministic 0..1 stream seeded by a string. No Math.random anywhere in the
+ * streetscape: two runs of the same city must produce identical buffers.
+ */
+export function streetRandom(seed) {
+  let t = (hash32(seed) + 0x6d2b79f5) >>> 0;
+  return function next() {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}

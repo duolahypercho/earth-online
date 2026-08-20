@@ -2119,6 +2119,10 @@ export class CityRenderer {
       },
       /** Find a legacy renderer-owned group by name, e.g. 'sidewalk-props'. */
       legacyGroup: (name) => root.getObjectByName(name) || null,
+      // The exact options buildRoadNetwork handed street-surface-v2, so a pass
+      // that decorates that surface reads its geometry instead of mirroring the
+      // constants. buildPresentationPasses runs after buildRoadNetwork.
+      streetSurfaceOptions: this.streetSurface?.data?.options || null,
     };
   }
 

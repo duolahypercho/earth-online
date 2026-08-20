@@ -183,7 +183,10 @@
     "probe:realmap-drive": "node scripts/probe-realmap-drive.mjs",
     "verify:passes": "node scripts/verify/verify-pass-registry.mjs",
     "verify:sky-atmosphere": "node scripts/verify/verify-sky-atmosphere.mjs",
-    "verify:street-life": "node scripts/verify/verify-street-life.mjs"
+    "verify:street-life": "node scripts/verify/verify-street-life.mjs",
+    "verify:street-detail": "node scripts/verify/verify-street-detail.mjs",
+    "verify:street-furniture": "node scripts/verify/verify-street-furniture.mjs",
+    "verify:facade-articulation": "node scripts/verify/verify-facade-articulation.mjs"
   },
   "dependencies": {
     "three": "0.180.0",
