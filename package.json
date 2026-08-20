@@ -186,7 +186,9 @@
     "verify:street-life": "node scripts/verify/verify-street-life.mjs",
     "verify:street-detail": "node scripts/verify/verify-street-detail.mjs",
     "verify:street-furniture": "node scripts/verify/verify-street-furniture.mjs",
-    "verify:facade-articulation": "node scripts/verify/verify-facade-articulation.mjs"
+    "verify:facade-articulation": "node scripts/verify/verify-facade-articulation.mjs",
+    "verify:vehicle-presentation": "node scripts/verify/verify-vehicle-presentation.mjs",
+    "verify:sun-shadow-cascade": "node scripts/verify/verify-sun-shadow-cascade.mjs"
   },
   "dependencies": {
     "three": "0.180.0",

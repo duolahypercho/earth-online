@@ -16,10 +16,19 @@
 //   8. the ring, ground-flush, decal and non-occluder gates fire as designed
 //   9. the bias recommendation follows its own stated formula
 //  10. every decision is deterministic and free of wall-clock/random input
+//  11. a batch that has not been written yet is still measured from its source
+//      geometry - the regression that silenced every per-frame instanced batch
+//  12. the texel size at each of the eight captured poses, against a floor a
+//      0.35 m occluder can resolve
+//  13. the thickness bracket is re-derived from the texel size, not asserted,
+//      and the contact leak is priced at every candidate fit
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import * as THREE from 'three';
 import * as sc from '../../src/render/shadow-casters.js';
+import { CANONICAL_SITE, computeSunDirection } from '../../src/render/environment-ibl.js';
+import { planSunShadowCascades } from '../../src/render/sun-shadow-cascade.js';
 
 const root = resolve(import.meta.dirname, '../..');
 const MODULE_PATH = resolve(root, 'src/render/shadow-casters.js');
@@ -37,6 +46,7 @@ const MEASURED = {
 
 let checks = 0;
 const failures = [];
+const notes = [];
 
 function assert(condition, message) {
   checks += 1;
@@ -487,6 +497,268 @@ assert(JSON.stringify(ALL) === before,
   'shadowCasterDecision does not mutate the descriptors it is given');
 
 // ---------------------------------------------------------------------------
+section('11. an unwritten instanced batch is measured, not refused');
+// ---------------------------------------------------------------------------
+//
+// THE REGRESSION THIS SECTION EXISTS FOR.
+//
+// `Box3.setFromObject` asks an InstancedMesh for its own bounding box, which
+// three computes as the union of `count` instance boxes. Every batch that is
+// filled per frame - kerb parking, the street-life figure bands, the LOD prop
+// batches - still has `count === 0` while the world is being built, so that
+// union is empty. `measureShadowCaster` used to return `NaN` sizes for that
+// case, gate 1 refused the batch as degenerate, and because the policy runs
+// once per build and can only ever take casting away, the batch stayed dark
+// for the life of the world. That is a single-line cause for "not one dynamic
+// object casts a ground shadow".
+
+const batchGeometry = new THREE.BoxGeometry(0.5, 1.75, 0.35); // one pedestrian
+const batchMaterial = new THREE.MeshBasicMaterial();
+const unwritten = new THREE.InstancedMesh(batchGeometry, batchMaterial, 64);
+unwritten.name = 'street-life-near-torso';
+unwritten.count = 0;
+unwritten.updateMatrixWorld(true);
+
+const unwrittenDescriptor = sc.measureShadowCaster(unwritten);
+assert(Number.isFinite(unwrittenDescriptor.size.x)
+  && Number.isFinite(unwrittenDescriptor.size.y)
+  && Number.isFinite(unwrittenDescriptor.size.z),
+  'a count === 0 InstancedMesh measures a finite size from its source geometry '
+  + `(${unwrittenDescriptor.size.x} x ${unwrittenDescriptor.size.y} x ${unwrittenDescriptor.size.z} m)`);
+assert(unwrittenDescriptor.batched === true && unwrittenDescriptor.instanceCount === 0
+  && unwrittenDescriptor.placed === false,
+  'and it reports itself as an unplaced batch, so a caller can tell the two apart');
+assert(near(Math.min(unwrittenDescriptor.size.x, unwrittenDescriptor.size.y, unwrittenDescriptor.size.z), 0.35, 1e-6),
+  'the measured thickness is the ONE instance thickness, not the batch world box');
+
+const unwrittenDecision = sc.shadowCasterDecision(unwrittenDescriptor, ctx);
+assert(unwrittenDecision.cast === true,
+  `the unwritten pedestrian batch is admitted (${unwrittenDecision.code}), where it was `
+  + 'previously refused as skip:degenerate');
+assert(unwritten.boundingBox === null,
+  'and the empty bounding box three cached during the measurement is cleared again, '
+  + 'so the next reader does not inherit it');
+
+// The same batch, once written, must decide identically: the policy runs at
+// build time and the answer may not depend on whether the frame has been
+// simulated yet.
+const written = new THREE.InstancedMesh(batchGeometry, batchMaterial, 64);
+written.name = 'street-life-near-torso';
+const placement = new THREE.Object3D();
+for (let i = 0; i < 12; i += 1) {
+  placement.position.set(i * 7.5, 0.9, i * 3.25);
+  placement.updateMatrix();
+  written.setMatrixAt(i, placement.matrix);
+}
+written.count = 12;
+written.updateMatrixWorld(true);
+const writtenDescriptor = sc.measureShadowCaster(written);
+assert(JSON.stringify(writtenDescriptor.size) === JSON.stringify(unwrittenDescriptor.size),
+  'a written batch measures exactly the same instance size as an unwritten one');
+assert(sc.shadowCasterDecision(writtenDescriptor, ctx).code === unwrittenDecision.code,
+  'so the decision does not depend on whether the simulation has run yet');
+
+// A mesh with no geometry at all is still refused: the fix must not turn the
+// degenerate gate off, only stop it firing on the wrong thing.
+const emptyNode = new THREE.Mesh(new THREE.BufferGeometry(), batchMaterial);
+emptyNode.name = 'empty-node';
+emptyNode.updateMatrixWorld(true);
+assert(sc.shadowCasterDecision(sc.measureShadowCaster(emptyNode), ctx).code
+  === sc.SHADOW_DECISION_CODES.SKIP_DEGENERATE,
+  'geometry with no vertices is still refused as degenerate');
+
+// A sub-texel batch must still be refused at the new texel size.
+const thinBatch = new THREE.InstancedMesh(new THREE.BoxGeometry(12, 1.25, 0.14), batchMaterial, 200);
+thinBatch.name = 'shopfront-awnings';
+thinBatch.count = 0;
+thinBatch.updateMatrixWorld(true);
+assert(sc.shadowCasterDecision(sc.measureShadowCaster(thinBatch), ctx).code
+  === sc.SHADOW_DECISION_CODES.SKIP_SUB_TEXEL,
+  'an unwritten 0.14 m awning batch is still refused on thickness, not admitted by accident');
+
+batchGeometry.dispose();
+batchMaterial.dispose();
+
+// ---------------------------------------------------------------------------
+section('12. texel size at the eight captured poses');
+// ---------------------------------------------------------------------------
+//
+// The policy is only as good as the number it is handed. `texelWorldSize` is a
+// property of the POSE, not of the build: it is `2 * radius / (mapSize - 2)`
+// and the radius follows the field of view. The renderer calibrates the module
+// against a 52 deg default camera; the capture cards are shot at 47 and 58 deg,
+// so the module must be correct across that whole band.
+
+const CAPTURE_REPORT = resolve(root, '.qa-round1/capture-report.json');
+let cardPoses = [];
+try {
+  const report = JSON.parse(readFileSync(CAPTURE_REPORT, 'utf8'));
+  const aspect = report.viewport.w / report.viewport.h;
+  cardPoses = report.cards
+    .filter((card) => card.pose?.ok && card.pose.eye && card.pose.target)
+    .map((card) => ({
+      id: card.id,
+      aspect,
+      fovDeg: card.pose.fov,
+      hour: card.held?.clock ?? card.requested?.hour ?? 12,
+      eye: card.pose.eye,
+      target: card.pose.target,
+    }));
+} catch (error) {
+  cardPoses = [];
+  notes.push(`capture report unavailable (${String(error?.message || error)}); pose densities skipped`);
+}
+
+// A 0.35 m pedestrian torso is the thinnest thing the character dimension of
+// Docs/VISUAL_QUALITY_GATE.md scores. Admitting it needs
+// `texelWorldSize <= 0.35 / MIN_THICKNESS_TEXELS`.
+const TORSO_THICKNESS = 0.35;
+const TEXEL_FLOOR_FOR_TORSO = TORSO_THICKNESS / sc.MIN_THICKNESS_TEXELS;
+
+assert(cardPoses.length === 7,
+  `the capture report contributes ${cardPoses.length} usable poses (one card failed to pose)`);
+
+const poseRows = [];
+for (const pose of cardPoses) {
+  const sun = computeSunDirection(pose.hour, CANONICAL_SITE);
+  const plan = planSunShadowCascades({
+    cameraPosition: pose.eye,
+    cameraDirection: {
+      x: pose.target.x - pose.eye.x,
+      y: pose.target.y - pose.eye.y,
+      z: pose.target.z - pose.eye.z,
+    },
+    fovDeg: pose.fovDeg,
+    aspect: pose.aspect,
+    sunDirection: sun,
+    cascades: [{ mapSize: 2048, shadowDistance: 220 }],
+    cameraNear: 0.5,
+  });
+  const cascade = plan.cascades[0];
+  const bracket = sc.casterBracket(cascade.texelWorldSize);
+  poseRows.push({ id: pose.id, fov: pose.fovDeg, ...cascade, bracket });
+}
+
+for (const row of poseRows) {
+  notes.push(`${row.id} (fov ${row.fov}): ${row.texelsPerMetre} texels/m, `
+    + `${(row.texelWorldSize * 100).toFixed(2)} cm texels, reach ${row.coverage.far.toFixed(0)} m, `
+    + `${row.bracket.casting.length}/${row.bracket.rows.length} reference objects cast`);
+}
+
+const worstPose = poseRows.reduce((a, b) => (a.texelWorldSize >= b.texelWorldSize ? a : b), poseRows[0]);
+notes.push(`RECORDED REJECTION: the shipped 2048/220 fit misses the torso floor at ${worstPose.id} `
+  + `(${(worstPose.texelWorldSize * 100).toFixed(2)} cm/texel against the `
+  + `${(TEXEL_FLOOR_FOR_TORSO * 100).toFixed(2)} cm a ${TORSO_THICKNESS} m occluder needs). `
+  + 'src/citygen/renderer.js owns SUN_SHADOW_MAP_SIZE and SUN_SHADOW_DISTANCE; this module cannot fix it.');
+assert(poseRows.every((row) => row.texelWorldSize > 0 && Number.isFinite(row.texelWorldSize)),
+  'every pose produces a finite, positive texel size (no fit collapses)');
+assert(poseRows.every((row) => row.covers === true),
+  'and every pose’s single cascade contains its own authority interval');
+
+// The forward gate: the recommended fit must clear the floor at EVERY pose,
+// including the 58 deg canyon card, which is the coarsest of the eight.
+const RECOMMENDED = { mapSize: 4096, shadowDistance: 150 };
+const recommendedRows = cardPoses.map((pose) => {
+  const sun = computeSunDirection(pose.hour, CANONICAL_SITE);
+  const cascade = planSunShadowCascades({
+    cameraPosition: pose.eye,
+    cameraDirection: {
+      x: pose.target.x - pose.eye.x,
+      y: pose.target.y - pose.eye.y,
+      z: pose.target.z - pose.eye.z,
+    },
+    fovDeg: pose.fovDeg,
+    aspect: pose.aspect,
+    sunDirection: sun,
+    cascades: [RECOMMENDED],
+    cameraNear: 0.5,
+  }).cascades[0];
+  return { id: pose.id, ...cascade };
+});
+const worstRecommended = recommendedRows
+  .reduce((a, b) => (a.texelWorldSize >= b.texelWorldSize ? a : b), recommendedRows[0]);
+assert(worstRecommended.texelWorldSize <= TEXEL_FLOOR_FOR_TORSO,
+  `the recommended ${RECOMMENDED.mapSize} over ${RECOMMENDED.shadowDistance} m fit clears the torso `
+  + `floor at every captured pose: worst is ${worstRecommended.id} at `
+  + `${(worstRecommended.texelWorldSize * 100).toFixed(2)} cm/texel, inside the `
+  + `${(TEXEL_FLOOR_FOR_TORSO * 100).toFixed(2)} cm budget`);
+assert(recommendedRows.every((row) => row.covers === true && row.coverage.far >= 180),
+  `and it still reaches at least 180 m of view depth at every pose `
+  + `(worst ${Math.min(...recommendedRows.map((row) => row.coverage.far)).toFixed(0)} m)`);
+for (const row of recommendedRows) {
+  notes.push(`${row.id} at ${RECOMMENDED.mapSize}/${RECOMMENDED.shadowDistance}: ${row.texelsPerMetre} texels/m, `
+    + `${(row.texelWorldSize * 100).toFixed(2)} cm texels, reach ${row.coverage.far.toFixed(0)} m, `
+    + `${sc.casterBracket(row.texelWorldSize).casting.length}/11 reference objects cast`);
+}
+
+// The "low-rise collapse" hypothesis, tested directly: the intersection card
+// stands in 4.5 m surroundings, the street card in 46.9 m ones.
+const lowRise = poseRows.find((row) => row.id === '02-intersection');
+const highRise = poseRows.find((row) => row.id === '01-street-day');
+if (lowRise && highRise) {
+  assert(near(lowRise.texelWorldSize, highRise.texelWorldSize, 1e-9)
+    && near(lowRise.halfExtent, highRise.halfExtent, 1e-6)
+    && lowRise.castShadow === true,
+    'the low-rise intersection pose fits IDENTICALLY to the high-rise street pose '
+    + `(${lowRise.texelsPerMetre} texels/m, +/-${lowRise.halfExtent} m, castShadow true): `
+    + 'the fit reads no surrounding building height, so it cannot collapse on low geometry');
+  assert(lowRise.warnings.length === 0,
+    'and the low-rise fit raises no warning at all');
+}
+
+// ---------------------------------------------------------------------------
+section('13. the thickness bracket is derived from the texel, and priced');
+// ---------------------------------------------------------------------------
+
+const shippedBracket = sc.casterBracket(0.192055);
+assert(shippedBracket.casting.length === 5 && shippedBracket.rows.length === 11,
+  `at the captured 19.21 cm texel only ${shippedBracket.casting.length} of `
+  + `${shippedBracket.rows.length} reference street objects can cast: `
+  + `${shippedBracket.excluded.join(', ')} cannot`);
+assert(shippedBracket.clearanceBelow > 0 && shippedBracket.clearanceAbove > 0,
+  `the floor has clearance on both sides (${shippedBracket.clearanceBelow} m below, `
+  + `${shippedBracket.clearanceAbove} m above), so it is bracketed rather than lucky`);
+
+const denseBracket = sc.casterBracket(0.0654);
+assert(denseBracket.casting.length > shippedBracket.casting.length,
+  `at 6.54 cm (4096 over 150 m) that rises to ${denseBracket.casting.length}/11: `
+  + `only ${denseBracket.excluded.join(' and ')} stay out`);
+assert(denseBracket.clearanceBelow > 0 && denseBracket.clearanceAbove > 0,
+  `and the bracket still has clearance on both sides (${denseBracket.clearanceBelow} m / `
+  + `${denseBracket.clearanceAbove} m) at the new texel size`);
+assert(denseBracket.rows.find((r) => r.id === 'shopfront awning plate').casts === true,
+  'the 0.14 m awning becomes a LEGITIMATE caster at 6.54 cm, because normalBias '
+  + `(${denseBracket.normalBias} m) is now well under the plate thickness - the exclusion `
+  + 'was always a property of the texel size, never of the object');
+
+// Monotone: a finer texel never removes an object from the caster set.
+let monotone = true;
+let previousCasting = 0;
+for (const w of [0.2431, 0.19207, 0.1309, 0.0960, 0.0654, 0.0523, 0.0349]) {
+  const casting = sc.casterBracket(w).casting.length;
+  if (casting < previousCasting) monotone = false;
+  previousCasting = casting;
+}
+assert(monotone, 'the reference bracket is monotone: a finer texel never drops a caster');
+
+// Contact: the number that says a shadow map cannot do this job at all.
+const leakShipped = sc.contactShadowLeakMetres({ texelWorldSize: 0.192055, sunAltitudeDeg: 46.36 });
+const leakDense = sc.contactShadowLeakMetres({ texelWorldSize: 0.0654, sunAltitudeDeg: 46.36 });
+assert(leakShipped.leakMetres > 0.3,
+  `at the shipped fit the bias plan erases the first ${leakShipped.leakMetres} m of every shadow `
+  + 'where it meets the ground - the contact patch is gone before it is drawn');
+assert(leakDense.leakMetres > 0.1,
+  `even at 6.54 cm texels ${leakDense.leakMetres} m of contact is still erased, so raising the `
+  + 'shadow map cannot deliver foot contact: that has to come from geometry');
+assert(near(leakDense.leakMetres / leakShipped.leakMetres, 0.0654 / 0.192055, 1e-3),
+  'the leak scales exactly linearly with the texel, which is why no affordable map removes it');
+
+// ---------------------------------------------------------------------------
+if (notes.length > 0) {
+  console.log('\nmeasured:');
+  for (const note of notes) console.log(`  - ${note}`);
+}
+
 console.log(`\n${failures.length === 0 ? 'PASS' : 'FAIL'}: ${checks - failures.length}/${checks} checks passed`);
 if (failures.length > 0) {
   console.log('\nfailures:');

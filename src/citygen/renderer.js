@@ -239,11 +239,19 @@ const GROUND_COVERAGE_PASS = 'ground-coverage-v1';
 // and it does not swing with the time of day or with which way the player is
 // facing.
 const SUN_SHADOW_PASS = 'sun-shadow-fit-1';
-const SUN_SHADOW_MAP_SIZE = 2048;
+const SUN_SHADOW_MAP_SIZE = 4096;
 // 220 m of view depth at 2048 -> 5.21 texels/m (19.2 cm texels), inside the
 // module's declared 2.5-12 texels/m band. Beyond this ring the city is carried
 // by fog and by the environment dome, not by the shadow map.
-const SUN_SHADOW_DISTANCE = SHADOW_FIT_DEFAULTS.shadowDistance;
+// 150 m of view depth at 4096 -> 15.3 texels/m (6.5 cm texels) at 47 deg fov
+// and 12.1 texels/m (8.3 cm) at 58 deg. Both clear the two floors in
+// Docs/SHADOW_RESOLUTION_CONTRACT.md: 23.3 cm for a 0.35 m pedestrian torso and
+// 10.0 cm for a 0.15 m bollard. At the shipped 2048/220 only five of eleven
+// reference street objects could cast at all; at this fit eight can. Density
+// and reach are inversely coupled at a fixed map size, so this trades axial
+// reach 400 m -> 273 m; the cut-off stays about ten pixels below the horizon at
+// 900p eye height, and beyond it fog and the environment dome carry the city.
+const SUN_SHADOW_DISTANCE = 150;
 // Fallback when the city has not declared its own tallest caster yet.
 const SUN_SHADOW_DEFAULT_CASTER_HEIGHT = SHADOW_FIT_DEFAULTS.maxCasterHeight;
 // The night key is not the sun. Below the horizon the solar direction would
@@ -2110,6 +2118,8 @@ export class CityRenderer {
       seed: Number(city?.meta?.seedInt || 1),
       rng: (label) => mulberry32(hashString(`${city?.meta?.seed || 'city'}:${label}`)),
       focus: this.buildFocus,
+      /** The live traffic simulation, READ-ONLY. Presentation mirrors it. */
+      get traffic() { return renderer.activeTraffic || null; },
       get hour() { return renderer.timeOfDay; },
       get weather() { return renderer.envWeather; },
       get day() { return renderer.day; },
@@ -2599,8 +2609,14 @@ export class CityRenderer {
     this.buildSignals(root, city);
     // Trees.
     this.buildTrees(root, city);
-    // Curbside cars: saturated paint anchors the street-level color story.
-    this.buildParkedCars(root, city);
+    // Curbside cars are built by the vehicle-presentation pass
+    // (src/render/passes/vehicle-presentation.js, order 45), which places a real
+    // catalogue on the kerb from the street contract. The legacy slab layer only
+    // runs when that pass is not registered, so the parked-car partition
+    // verifier still has a layer to measure if the pass is removed.
+    if (!PASSES.some((pass) => pass.id === 'vehicle-presentation')) {
+      this.buildParkedCars(root, city);
+    }
     this.buildShopAwnings(root, city);
     this.installLocalLightPool(root);
 
@@ -2608,6 +2624,11 @@ export class CityRenderer {
     // content before the shadow policy pass gets the final word.
     this.buildPresentationPasses(root, city);
 
+    // Fit the shadow camera BEFORE the policy runs. The policy's only input is
+    // `texelWorldSize`, and until the first fit `this.shadowFit` is null, so it
+    // falls back to a constant measured on the 52 deg default camera, not on the
+    // camera about to be drawn. `maxCasterHeight` is already set above.
+    this.updateSunShadow({ force: true });
     // Last pass over the finished city: decide, per mesh, whether it is thick
     // enough for the shadow map to resolve. Everything above this line has
     // already written its own `castShadow`; this is the single place that gets
@@ -8561,6 +8582,9 @@ export class CityRenderer {
         }
       }
     }
+    // Presentation passes mirror the simulation; give them the handle rather
+    // than making them scan the scene graph for it.
+    this.activeTraffic = traffic || this.activeTraffic;
     if (traffic) {
       traffic.update(delta);
       // Mirror the simulation's pedestrians. This runs after `traffic.update`

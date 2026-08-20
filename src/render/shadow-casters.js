@@ -859,6 +859,185 @@ function solveSlopeForTexels(texels) {
 }
 
 // ---------------------------------------------------------------------------
+// Resolution bracket: what a given texel size can and cannot do
+// ---------------------------------------------------------------------------
+
+/**
+ * The city objects the thickness floor is bracketed against, as neutral
+ * measurements rather than asset names. `thickness` is the SMALLEST bounding
+ * box dimension in metres - the one the floor is compared against - and
+ * `span` the largest.
+ *
+ * There is deliberately no "must cast" column. Whether an object *should*
+ * cast is not a property of the object, it is a property of the object AND
+ * the current texel size, and `casterBracket` below derives it from the two
+ * physical conditions rather than asserting it:
+ *
+ *   1. it must be at least `minThicknessTexels` thick, or the PCF kernel
+ *      reads past it;
+ *   2. it must be thicker than `normalBias`, or the biased lookup lands on
+ *      the far side of the object and the comparison bands.
+ *
+ * `contact` marks the objects whose visual job is the dark patch where they
+ * meet the ground - the case `contactShadowLeakMetres` shows a shadow map
+ * cannot serve at any texel size this project can afford.
+ *
+ * @type {ReadonlyArray<Readonly<{id:string, thickness:number, span:number, contact:boolean}>>}
+ */
+export const REFERENCE_OCCLUDERS = Object.freeze([
+  Object.freeze({ id: 'lane marking', thickness: 0.01, span: 3.2, contact: false }),
+  Object.freeze({ id: 'overhead cable', thickness: 0.05, span: 30, contact: false }),
+  Object.freeze({ id: 'sign post', thickness: 0.09, span: 3.0, contact: true }),
+  Object.freeze({ id: 'shopfront awning plate', thickness: 0.14, span: 12, contact: false }),
+  Object.freeze({ id: 'bollard', thickness: 0.15, span: 1.0, contact: true }),
+  Object.freeze({ id: 'vehicle wheel', thickness: 0.22, span: 0.68, contact: true }),
+  Object.freeze({ id: 'street tree trunk', thickness: 0.32, span: 7.0, contact: true }),
+  Object.freeze({ id: 'pedestrian torso', thickness: 0.35, span: 1.75, contact: true }),
+  Object.freeze({ id: 'bench slat set', thickness: 0.45, span: 1.8, contact: true }),
+  Object.freeze({ id: 'planter box', thickness: 0.9, span: 1.6, contact: true }),
+  Object.freeze({ id: 'parked car body', thickness: 1.7, span: 4.4, contact: true }),
+]);
+
+/**
+ * Re-derive the thickness bracket at a given texel size.
+ *
+ * Everything here scales with `texelWorldSize`, which is the whole point: the
+ * floor is not a scene constant, it is `minThicknessTexels * w`, and the list
+ * of objects that clear it is a function of the fit. Reported per object:
+ *
+ *   `resolvable`  thickness >= minThicknessTexels * w  (PCF kernel width)
+ *   `biasSafe`    thickness >  normalBiasTexels * w    (banding condition)
+ *   `casts`       both of the above
+ *
+ * The two clearances are what make a chosen floor defensible: `clearanceBelow`
+ * is the gap between the floor and the thickest object it rejects,
+ * `clearanceAbove` the gap between the floor and the thinnest it admits. A
+ * floor with no clearance on one side was chosen by luck, not by measurement.
+ *
+ * **Pure.** Same inputs, same table, always.
+ *
+ * @param {number} texelWorldSize Metres per shadow texel.
+ * @param {object} [options]
+ * @param {number} [options.minThicknessTexels=MIN_THICKNESS_TEXELS]
+ * @param {number} [options.normalBiasTexels=1] The bias plan actually in force.
+ * @param {ReadonlyArray<object>} [options.occluders=REFERENCE_OCCLUDERS]
+ * @returns {Readonly<object>}
+ */
+export function casterBracket(texelWorldSize, options = {}) {
+  const {
+    minThicknessTexels = MIN_THICKNESS_TEXELS,
+    normalBiasTexels = 1,
+    occluders = REFERENCE_OCCLUDERS,
+  } = options;
+  if (!isFiniteNumber(texelWorldSize) || texelWorldSize <= 0) {
+    throw new TypeError(`shadow-casters: casterBracket needs positive texelWorldSize, got ${texelWorldSize}`);
+  }
+  if (!isFiniteNumber(minThicknessTexels) || minThicknessTexels <= 0) {
+    throw new TypeError(`shadow-casters: minThicknessTexels must be positive, got ${minThicknessTexels}`);
+  }
+  const minThickness = minThicknessTexels * texelWorldSize;
+  const normalBias = normalBiasTexels * texelWorldSize;
+  const rows = occluders.map((o) => {
+    const resolvable = o.thickness >= minThickness;
+    const biasSafe = o.thickness > normalBias;
+    return Object.freeze({
+      id: o.id,
+      thickness: o.thickness,
+      texels: round(o.thickness / texelWorldSize, 3),
+      resolvable,
+      biasSafe,
+      casts: resolvable && biasSafe,
+      contact: o.contact === true,
+    });
+  });
+  let highestExcluded = 0;
+  let lowestAdmitted = Infinity;
+  for (const row of rows) {
+    if (row.resolvable) lowestAdmitted = Math.min(lowestAdmitted, row.thickness);
+    else highestExcluded = Math.max(highestExcluded, row.thickness);
+  }
+  return Object.freeze({
+    version: SHADOW_CASTER_VERSION,
+    texelWorldSize,
+    texelsPerMetre: round(1 / texelWorldSize, 4),
+    minThicknessTexels,
+    minThickness: round(minThickness, 4),
+    normalBiasTexels,
+    normalBias: round(normalBias, 4),
+    rows: Object.freeze(rows),
+    casting: Object.freeze(rows.filter((r) => r.casts).map((r) => r.id)),
+    excluded: Object.freeze(rows.filter((r) => !r.casts).map((r) => r.id)),
+    /** Objects whose grounding the shadow map is being asked to carry. */
+    contactObjects: Object.freeze(rows.filter((r) => r.contact).map((r) => r.id)),
+    /** Metres between the floor and the thickest object it rejects. */
+    clearanceBelow: round(minThickness - highestExcluded, 4),
+    /** Metres between the thinnest object it admits and the floor. */
+    clearanceAbove: Number.isFinite(lowestAdmitted) ? round(lowestAdmitted - minThickness, 4) : null,
+  });
+}
+
+/**
+ * How much of a cast shadow is missing AT THE CONTACT POINT, in metres along a
+ * flat receiver, for a given fit and bias plan.
+ *
+ * Both bias terms push the depth comparison toward the light, and both are
+ * expressed in texels, so both scale with the fit:
+ *
+ *   - `normalBias` offsets the lookup along the receiver normal by
+ *     `n = normalBiasTexels * w` metres. On level ground the component of that
+ *     offset along the light is `n * sin(alt)`.
+ *   - `bias` pulls the stored depth back by `d = depthBiasTexels * w` metres.
+ *
+ * An occluder whose lowest point is within `n * sin(alt) + d` metres of the
+ * receiver, measured along the light ray, therefore fails the comparison and
+ * casts nothing. Projected onto the ground that is
+ * `(n * sin(alt) + d) / sin(alt)` metres of shadow erased at the foot of every
+ * object - which is exactly the darkest, most grounding part of the shadow.
+ *
+ * This is why "raise the shadow resolution" cannot deliver contact shading:
+ * the leak shrinks linearly with the texel, so removing a 10 cm leak needs a
+ * 10x denser map, and a contact patch is only a few centimetres wide to begin
+ * with. Contact must come from geometry (a blob or a baked footprint), not
+ * from the shadow map.
+ *
+ * **Pure.**
+ *
+ * @param {object} options
+ * @param {number} options.texelWorldSize Metres per shadow texel.
+ * @param {number} [options.normalBiasTexels=1]
+ * @param {number} [options.depthBiasTexels=0.75]
+ * @param {number} [options.sunAltitudeDeg=52]
+ * @returns {Readonly<object>} `{ leakMetres, alongLightMetres, ... }`
+ */
+export function contactShadowLeakMetres(options = {}) {
+  const {
+    texelWorldSize,
+    normalBiasTexels = 1,
+    depthBiasTexels = 0.75,
+    sunAltitudeDeg = 52,
+  } = options;
+  if (!isFiniteNumber(texelWorldSize) || texelWorldSize <= 0) {
+    throw new TypeError(`shadow-casters: contactShadowLeakMetres needs positive texelWorldSize, got ${texelWorldSize}`);
+  }
+  const altitude = Math.max(Math.abs(sunAltitudeDeg), 1) * (Math.PI / 180);
+  const sinAlt = Math.max(Math.sin(altitude), 1e-3);
+  const normalMetres = normalBiasTexels * texelWorldSize;
+  const depthMetres = depthBiasTexels * texelWorldSize;
+  const alongLight = normalMetres * sinAlt + depthMetres;
+  return Object.freeze({
+    version: SHADOW_CASTER_VERSION,
+    texelWorldSize,
+    sunAltitudeDeg,
+    normalBiasMetres: round(normalMetres, 4),
+    depthPullbackMetres: round(depthMetres, 4),
+    /** Depth, along the light ray, inside which an occluder stops casting. */
+    alongLightMetres: round(alongLight, 4),
+    /** The same distance measured across a level receiver. */
+    leakMetres: round(alongLight / sinAlt, 4),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Optional integration helpers
 // ---------------------------------------------------------------------------
 //
@@ -887,9 +1066,27 @@ const _scale = new THREE.Vector3();
  * @returns {object} Descriptor, ready for `shadowCasterDecision`.
  */
 export function measureShadowCaster(object, options = {}) {
+  // Is this one draw standing in for many placements?
+  const isBatch = object?.isInstancedMesh === true || object?.isBatchedMesh === true;
+  const instanceCount = isBatch && Number.isFinite(object.count) ? object.count : null;
+  // `Box3.setFromObject` asks an InstancedMesh for ITS OWN bounding box, which
+  // three builds by unioning `count` instance boxes - and then caches on the
+  // object. A batch that is written per frame (street life, kerb parking, the
+  // LOD prop batches) still has `count === 0` while the world is being built,
+  // so that union is empty, the descriptor below came out `NaN`, and gate 1
+  // refused the whole batch as degenerate. Because the policy runs once per
+  // build and only ever takes casting away, that single measurement removed
+  // every per-frame batch from the caster set for the life of the world. The
+  // batch branch below therefore measures the SOURCE geometry, which exists
+  // whether or not an instance has been written yet.
+  const hadCachedBatchBox = isBatch ? object.boundingBox : undefined;
   _box.makeEmpty();
   _box.setFromObject(object, true);
   const empty = _box.isEmpty();
+  // Do not leave three's cache holding the empty box we just provoked: the
+  // next reader (a rebuild, a raycast, another Box3.setFromObject) would get
+  // the same wrong answer without ever calling this function.
+  if (isBatch && hadCachedBatchBox === null && empty) object.boundingBox = null;
   _box.getSize(_size);
   _box.getCenter(_centre);
 
@@ -907,7 +1104,10 @@ export function measureShadowCaster(object, options = {}) {
   let sizeY = _size.y;
   let sizeZ = _size.z;
   let batched = false;
-  if (!empty && (object.isInstancedMesh || object.isBatchedMesh) && object.geometry) {
+  // Deliberately NOT gated on `!empty`: an unwritten batch has an empty world
+  // box and a perfectly good source geometry, and it is exactly the case the
+  // old gate got wrong.
+  if (isBatch && object.geometry) {
     if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
     const gb = object.geometry.boundingBox;
     if (gb && !gb.isEmpty()) {
@@ -941,13 +1141,18 @@ export function measureShadowCaster(object, options = {}) {
     );
   }
 
+  const measurable = batched || !empty;
   return {
     name: object.name || '',
     parentName: parents,
-    size: empty ? { x: NaN, y: NaN, z: NaN } : { x: sizeX, y: sizeY, z: sizeZ },
+    size: measurable ? { x: sizeX, y: sizeY, z: sizeZ } : { x: NaN, y: NaN, z: NaN },
     groundClearance,
     distance,
     batched,
+    /** `count` for a batch, `null` otherwise. 0 means "not written yet". */
+    instanceCount,
+    /** False when the world box was empty: nothing is placed *this frame*. */
+    placed: !empty,
   };
 }
 

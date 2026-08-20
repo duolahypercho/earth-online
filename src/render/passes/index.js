@@ -7,6 +7,7 @@ import skyAtmosphere from './sky-atmosphere.js';
 import facadeArticulation from './facade-articulation.js';
 import streetSurfaceDetail from './street-surface-detail.js';
 import streetFurniture from './street-furniture.js';
+import vehiclePresentation from './vehicle-presentation.js';
 import streetLife from './street-life.js';
 
 export const PASSES = Object.freeze([
@@ -14,6 +15,7 @@ export const PASSES = Object.freeze([
   facadeArticulation,
   streetSurfaceDetail,
   streetFurniture,
+  vehiclePresentation,
   streetLife,
 ]);
 

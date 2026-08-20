@@ -1816,7 +1816,10 @@ export const SHADOW_FIT_DEFAULTS = Object.freeze({
  * map is being wasted on an area smaller than the visible street (above ~12).
  * @type {readonly [number, number]}
  */
-export const SHADOW_TEXEL_DENSITY_RANGE = Object.freeze([2.5, 12]);
+// The 12/m ceiling was written for a 2048 map. At 4096 a legitimate
+// street-scale fit sits at 12-16 texels/m; the ceiling describes "the box is
+// smaller than the visible street", which at 4096 begins around 20/m.
+export const SHADOW_TEXEL_DENSITY_RANGE = Object.freeze([2.5, 20]);
 
 /** Read a `{x,y,z}` / `[x,y,z]` / `Vector3` triple without importing three. */
 function readVec3(value, label) {
