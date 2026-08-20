@@ -848,17 +848,31 @@ section('rig geometry, palette slots and triangle cost', () => {
     slots.add(slot);
   }
   check(slots.size === PALETTE_SLOTS.length, `all ${PALETTE_SLOTS.length} palette slots are used, got ${slots.size}`);
-  check(triangles < 500, `skinned body triangle budget: ${triangles}`);
+  // The skinned band is the <= 28 m band. It carries hands, a jaw, a brow, a
+  // nose, eyes, shoulder caps and a joint filler at every articulating joint,
+  // because a figure two metres from the camera made of a cube head and bare
+  // cylinder limbs caps the character dimension however good the grounding is.
+  // 1 600 is the ceiling for that: 24 of them is 35 k triangles.
+  check(triangles < 1600, `skinned body triangle budget: ${triangles}`);
+  check(body.attributes.color, 'the body carries baked cavity shading in its colour attribute');
+  let shadeMin = 1;
+  let shadeMax = 0;
+  for (const v of body.attributes.color.array) {
+    shadeMin = Math.min(shadeMin, v);
+    shadeMax = Math.max(shadeMax, v);
+  }
+  check(shadeMin >= 0.25 && shadeMax <= 1 && shadeMin < 0.9,
+    `cavity shading spans a usable range, ${shadeMin.toFixed(2)}-${shadeMax.toFixed(2)}`);
 
   const mid = buildInstancedPartGeometries({ detail: 'mid', radialSegments: 5 });
-  const far = buildInstancedPartGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true });
+  const far = buildInstancedPartGeometries({ detail: 'far', radialSegments: 3, mergeToRoot: true });
   let midTris = 0;
   for (const entry of mid.values()) midTris += entry.geometry.attributes.position.count / 3;
   let farTris = 0;
   for (const entry of far.values()) farTris += entry.geometry.attributes.position.count / 3;
   check(midTris < triangles, 'the instanced band is cheaper than the skinned body');
   check(farTris < midTris, 'the far band is cheaper than the instanced band');
-  check(far.size <= 4, `the far band must be a handful of draws, got ${far.size}`);
+  check(far.size <= 5, `the far band must be a handful of draws, got ${far.size}`);
   for (const entry of far.values()) {
     check(entry.bone === ROOT_BONE_KEY, 'the far band collapses onto a single root matrix');
     entry.geometry.computeBoundingBox();

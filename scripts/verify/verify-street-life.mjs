@@ -44,6 +44,7 @@ import streetLife, {
   buildDistrictDensity,
   collectStreetOccupancy,
 } from '../../src/render/passes/street-life.js';
+import { MATERIAL_CLASSES } from '../../src/render/environment-ibl.js';
 import {
   buildStreetscapePlan,
   sidewalkSurfaceY,
@@ -65,6 +66,15 @@ import {
   dutyFactorForSpeed,
   ACTIVITY_POSES,
   GAIT,
+  ARTICULATING_JOINTS,
+  BODY_PARTS,
+  PEDESTRIAN_BONE_NAMES,
+  REST_POSE,
+  jointClosure,
+  buildInstancedPartGeometries,
+  mirrorActivityPose,
+  buildLocomotionClips,
+  LOCOMOTION_STATES,
 } from '../../src/simulation/pedestrians/pedestrian-presentation.js';
 import {
   TrafficSim,
@@ -88,6 +98,36 @@ const WALKER_GROUNDING_TOLERANCE_M = 1e-9;
 const STRIDE_BAND = Object.freeze({ min: 0.34, max: 1.20 });
 /** A planted foot may not move faster than this in world space. */
 const MAX_STANCE_FOOT_SPEED = 1e-9;
+/**
+ * Every articulating joint must stay closed by this margin, in metres, at every
+ * joint angle and every detail tier that articulates.
+ *
+ * REGRESSION SENTINEL. The first version of this rig was a box torso with bare
+ * cylinder limbs and no joint geometry at all. Measured on that rig:
+ *   * the upper-arm cylinder's top rim sat 73 mm clear of the torso AT REST and
+ *     never closed at any angle;
+ *   * the elbow rims opened to 66 mm at a right angle.
+ * Because the upper arm carries the shirt colour and the forearm carries the
+ * skin colour, that read on screen as a shirt-coloured stub lost against the
+ * torso plus a skin-coloured stick floating beside the body - reported by four
+ * separate review frames as detached forearms and a broken rig, which is a
+ * critical-artifact reject. This assertion is what stops it coming back.
+ */
+const MIN_JOINT_MARGIN_M = 0.010;
+/**
+ * A bone may never sit further from its parent than its own rest length allows.
+ *
+ * Under a UNIFORM identity scale the distance is exact to machine precision. The
+ * crowd also applies a deliberately NON-uniform scale - `(h*b, h, h*b)`, where
+ * `b` is the identity's build - so a stocky agent is wider without being taller.
+ * Rotating a bone chain inside an anisotropic scale shears it, which stretches a
+ * limb by at most the anisotropy itself: 2 % of a 0.4 m thigh is 8 mm. That is
+ * absorbed by the 10-49 mm joint margins above, and it is the ONLY stretch
+ * allowed; anything larger means a bone is being translated, which is what a
+ * matrix written in the wrong space looks like.
+ */
+const BONE_LENGTH_TOLERANCE_M = 1e-9;
+const BUILD_ANISOTROPY = 0.12;
 /** Distinct appearance signatures required over N agents. */
 const MIN_DISTINCT_SHARE = 0.97;
 const APPEARANCE_SAMPLE = 1024;
@@ -891,7 +931,329 @@ section('7. density, decimation and budget');
 }
 
 // ---------------------------------------------------------------------------
-section('8. occupancy avoidance');
+section('8. limb attachment');
+
+{
+  // 8a. Pose-independent closure. A rotating joint is closed only if either the
+  // joint point is inside the parent's solid, or the child carries a filler
+  // centred on the joint that swallows the parent's terminal rim. Both are
+  // invariant under rotation about the joint, so proving them once proves them
+  // at every angle - which is stronger than sampling poses and hoping.
+  const tiers = [
+    { detail: 'mid', radialSegments: 5, label: 'instanced band / 28-90 m' },
+    { detail: 'near', radialSegments: 6, label: 'skinned band and street-life near ring' },
+  ];
+  for (const tier of tiers) {
+    let checked = 0;
+    let worst = Infinity;
+    let worstJoint = '';
+    const open = [];
+    for (const [parent, child] of ARTICULATING_JOINTS) {
+      const closure = jointClosure(parent, child, tier);
+      if (!closure.drawn) continue;
+      checked += 1;
+      if (closure.margin < worst) {
+        worst = closure.margin;
+        worstJoint = `${parent}->${child}`;
+      }
+      if (closure.margin < MIN_JOINT_MARGIN_M) {
+        open.push(`${parent}->${child} margin ${(closure.margin * 1000).toFixed(1)}mm`
+          + ` (parentCover ${(closure.parentCover * 1000).toFixed(1)}mm,`
+          + ` childCover ${(closure.childCover * 1000).toFixed(1)}mm,`
+          + ` parent rim ${(closure.parentTerminal * 1000).toFixed(1)}mm)`);
+      }
+    }
+    assert(checked >= 10, `${tier.detail}: ${checked} articulating joints carry drawn geometry on both sides`);
+    assert(
+      open.length === 0,
+      `${tier.detail} (${tier.label}): every joint closed by >= ${MIN_JOINT_MARGIN_M * 1000} mm`
+      + ` at any angle; worst is ${worstJoint} at ${(worst * 1000).toFixed(1)} mm${open.length ? ` -- OPEN: ${open.join('; ')}` : ''}`,
+    );
+  }
+
+  // 8b. Every joint filler is centred ON its joint. A filler that has drifted
+  // off the joint stops being rotation-invariant, and the guarantee above
+  // silently becomes a rest-pose coincidence.
+  // "Centred on the joint" to within 6 mm: a shoe's ankle ball is nudged a few
+  // millimetres back to sit inside the heel, which does not compromise the
+  // rotation invariance the filler exists for.
+  const fillers = BODY_PARTS.filter((part) => part.kind === 'ball' && part.offset.every((v) => Math.abs(v) < 0.006));
+  const jointBones = new Set(ARTICULATING_JOINTS.map(([, child]) => child));
+  const covered = new Set(fillers.map((part) => part.bone).filter((bone) => jointBones.has(bone)));
+  assert(
+    covered.size >= 12,
+    `${covered.size} joints carry a filler centred exactly on the joint: ${[...covered].sort().join(', ')}`,
+  );
+
+  // 8c. Kinematic sweep. Pose the rig through every activity, both mirrorings
+  // and 32 gait phases, and assert no bone ever leaves its parent's reach. This
+  // is what catches a matrix written in the wrong space rather than a hole in
+  // the geometry.
+  const rig = (() => {
+    const root = new THREE.Group();
+    const byName = new Map();
+    for (const name of PEDESTRIAN_BONE_NAMES) {
+      const node = new THREE.Object3D();
+      node.name = name;
+      const rest = REST_POSE[name];
+      node.position.set(rest.offset[0], rest.offset[1], rest.offset[2]);
+      byName.set(name, node);
+    }
+    for (const name of PEDESTRIAN_BONE_NAMES) {
+      const rest = REST_POSE[name];
+      (rest.parent ? byName.get(rest.parent) : root).add(byName.get(name));
+    }
+    return { root, byName };
+  })();
+  const euler = new THREE.Euler(0, 0, 0, 'XYZ');
+  const parentWorld = new THREE.Vector3();
+  const childWorld = new THREE.Vector3();
+  let sweep = 0;
+  let worstError = 0;
+  let worstPair = '';
+  for (const activity of ACTIVITY_POSES) {
+    for (const mirrored of [false, true]) {
+      for (let step = 0; step < 32; step += 1) {
+        const overlay = evaluateActivityPose(activity, step * 0.37, 11 + step, {});
+        if (mirrored) mirrorActivityPose(overlay);
+        for (const name of PEDESTRIAN_BONE_NAMES) {
+          const angles = overlay[name];
+          const node = rig.byName.get(name);
+          if (angles) {
+            euler.set(angles[0], angles[1], angles[2], 'XYZ');
+            node.quaternion.setFromEuler(euler);
+          } else {
+            node.quaternion.identity();
+          }
+        }
+        for (const [sx, sy, sz, budget] of [
+          // Uniform scale: the chain must be exact to machine precision.
+          [1.06, 1.06, 1.06, BONE_LENGTH_TOLERANCE_M],
+          // The crowd's real anisotropic build scaling: a limb may shear by the
+          // anisotropy and by nothing else.
+          [1.12, 1.10, 1.12, 0],
+        ]) {
+          rig.root.scale.set(sx, sy, sz);
+          rig.root.updateMatrixWorld(true);
+          for (const name of PEDESTRIAN_BONE_NAMES) {
+            const rest = REST_POSE[name];
+            if (!rest.parent) continue;
+            rig.byName.get(rest.parent).getWorldPosition(parentWorld);
+            rig.byName.get(name).getWorldPosition(childWorld);
+            const restLength = Math.hypot(rest.offset[0], rest.offset[1], rest.offset[2]);
+            const lo = restLength * Math.min(sx, sy, sz);
+            const hi = restLength * Math.max(sx, sy, sz);
+            const actual = parentWorld.distanceTo(childWorld);
+            const error = Math.max(lo - actual, actual - hi, 0);
+            const allowed = budget || BONE_LENGTH_TOLERANCE_M;
+            if (error > worstError) {
+              worstError = error;
+              worstPair = `${rest.parent}->${name}`;
+            }
+            if (error > allowed) sweep -= 1000000;
+            sweep += 1;
+          }
+        }
+      }
+    }
+  }
+  assert(
+    worstError <= BONE_LENGTH_TOLERANCE_M && sweep > 0,
+    `no limb segment leaves its parent joint at any activity, mirroring or phase:`
+    + ` worst deviation beyond the identity's own scale ${worstError.toExponential(2)} m`
+    + ` at ${worstPair || 'none'} over ${Math.max(0, sweep)} bone/pose samples`,
+  );
+
+  // 8d. The same sweep, but with the locomotion clips driving the rig at every
+  // point of the gait cycle, since that is the state most figures are in.
+  {
+    const clips = buildLocomotionClips();
+    const mixer = new THREE.AnimationMixer(rig.root);
+    const actions = LOCOMOTION_STATES.map((name) => {
+      const action = mixer.clipAction(clips[name]);
+      action.play();
+      action.setEffectiveWeight(0);
+      return action;
+    });
+    let clipSweep = 0;
+    let clipWorst = 0;
+    for (let s = 0; s < LOCOMOTION_STATES.length; s += 1) {
+      for (const action of actions) action.setEffectiveWeight(0);
+      actions[s].setEffectiveWeight(1);
+      for (let step = 0; step < 32; step += 1) {
+        actions[s].time = (step / 32) * clips[LOCOMOTION_STATES[s]].duration;
+        mixer.update(0);
+        rig.root.scale.set(1, 1, 1);
+        rig.root.updateMatrixWorld(true);
+        for (const name of PEDESTRIAN_BONE_NAMES) {
+          const rest = REST_POSE[name];
+          if (!rest.parent) continue;
+          rig.byName.get(rest.parent).getWorldPosition(parentWorld);
+          rig.byName.get(name).getWorldPosition(childWorld);
+          const restLength = Math.hypot(rest.offset[0], rest.offset[1], rest.offset[2]);
+          clipWorst = Math.max(clipWorst, Math.abs(parentWorld.distanceTo(childWorld) - restLength));
+          clipSweep += 1;
+        }
+      }
+    }
+    // 1 micron, not machine epsilon: three stores keyframe quaternions as
+    // float32 and slerps them, so a bone position round-trips to about 1e-8 m.
+    // That is rounding, not motion; a bone actually being translated by a clip
+    // shows up in millimetres.
+    assert(
+      clipWorst <= 1e-6,
+      `the locomotion clips never translate a bone off its joint: worst ${clipWorst.toExponential(2)} m`
+      + ` over ${clipSweep} bone/phase samples`,
+    );
+  }
+
+  // 8e. Silhouette: the near tier has to actually contain the parts a reviewer
+  // named as missing.
+  const near = buildInstancedPartGeometries({ detail: 'near', radialSegments: 6 });
+  const nearBones = new Set([...near.values()].map((entry) => entry.bone));
+  for (const required of ['Neck', 'LeftHand', 'RightHand', 'Head', 'LeftFoot']) {
+    assert(nearBones.has(required), `the near tier draws ${required}`);
+  }
+  let nearTriangles = 0;
+  let hasShading = true;
+  for (const entry of near.values()) {
+    nearTriangles += entry.geometry.getAttribute('position').count / 3;
+    if (!entry.geometry.getAttribute('color')) hasShading = false;
+  }
+  assert(hasShading, 'every near-tier chunk carries baked cavity shading in its colour attribute');
+  assert(
+    nearTriangles > 380 && nearTriangles < 900,
+    `near-tier body is ${nearTriangles} triangles - enough for a face and hands, not enough to be a hero asset`,
+  );
+  const mid = buildInstancedPartGeometries({ detail: 'mid', radialSegments: 5 });
+  let midTriangles = 0;
+  for (const entry of mid.values()) midTriangles += entry.geometry.getAttribute('position').count / 3;
+  assert(midTriangles < nearTriangles, `the tiers really are tiers: mid ${midTriangles} < near ${nearTriangles}`);
+  assert(
+    STREET_LIFE_RINGS[0].radius <= 40,
+    `the near ring stops at ${STREET_LIFE_RINGS[0].radius} m, so the expensive body is only drawn where a limb is more than a few pixels`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+section('9. locomotion variety');
+
+{
+  const sample = 256;
+  // `cadenceBias` is deliberately the narrowest of these: cadence and walking
+  // speed are physically coupled, so a crowd whose step rates differ by much
+  // more than +/-6% at one speed reads as wrong rather than as varied. The
+  // shape of the walk is varied by the other five instead.
+  const fields = ['strideScale', 'armSwing', 'torsoTwist', 'postureLean', 'cadenceBias', 'headScan'];
+  for (const field of fields) {
+    const values = [];
+    for (let i = 0; i < sample; i += 1) values.push(identityVariation(`walker-${i}`)[field]);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const spread = (max - min) / Math.max(1e-6, Math.abs(mean));
+    assert(
+      Number.isFinite(min) && spread >= 0.10,
+      `${field} varies across the crowd: ${min.toFixed(3)}..${max.toFixed(3)} (spread ${(spread * 100).toFixed(0)}% of mean)`,
+    );
+    let stable = true;
+    for (let i = 0; i < 32; i += 1) {
+      if (identityVariation(`walker-${i}`)[field] !== identityVariation(`walker-${i}`)[field]) stable = false;
+    }
+    assert(stable, `${field} is a pure function of the agent id`);
+  }
+
+  // Two agents walking at the same speed, at the same point in the cycle, must
+  // not be in the same pose. This is the check the "stiff and identical" note
+  // asks for: the shared clip is fine, a shared RESULT is not.
+  const ground = () => 0;
+  const crowd = createCrowdPresentation({ sampleGround: ground });
+  const agents = [];
+  for (let i = 0; i < 24; i += 1) {
+    agents.push({
+      id: `w-${i}`, seed: `w-${i}`, x: i * 1.6, y: 0, z: 0,
+      heading: 0, speed: 1.4, active: true, pose: 'walk',
+    });
+  }
+  for (let f = 0; f < 40; f += 1) crowd.update(agents, 1 / 30, { x: 0, y: 1.7, z: 0 });
+  // Read the skinned actors' bone rotations straight out of the scene graph.
+  const poses = [];
+  crowd.object3d.traverse((node) => {
+    if (node.name !== 'Chest' && node.name !== 'LeftArm') return;
+    poses.push(`${node.name}:${node.quaternion.x.toFixed(4)},${node.quaternion.y.toFixed(4)},${node.quaternion.z.toFixed(4)}`);
+  });
+  const distinctPoses = new Set(poses).size;
+  assert(
+    poses.length >= 20 && distinctPoses >= poses.length * 0.9,
+    `${distinctPoses}/${poses.length} torso and shoulder poses are distinct across a crowd walking at one speed`,
+  );
+  crowd.dispose();
+}
+
+// ---------------------------------------------------------------------------
+section('10. materials reach the lighting');
+
+{
+  // A crowd material that declares no `envClass` is invisible to the renderer's
+  // per-class environment grading: it keeps dry reflectance on a wet street and
+  // never receives the graded intensity everything else gets, which is what
+  // makes figures standing in shade read as cut-outs pasted on the wall.
+  const root = new THREE.Group();
+  const ctx = makeContext(gridCity({ blocks: 4, span: 90 }), { heightAt: flatHeight, hour: 11, root });
+  const built = streetLife.build(ctx);
+  root.add(built.object);
+  const materials = new Set();
+  root.traverse((node) => {
+    for (const material of Array.isArray(node.material) ? node.material : node.material ? [node.material] : []) {
+      // Only lit materials are graded. The contact-shadow blob is deliberately
+      // an unlit MeshBasicMaterial: it is an occlusion decal, not a surface, and
+      // giving it an environment response would make shadows glow.
+      if (material.isMeshStandardMaterial) materials.add(material);
+    }
+  });
+  const untagged = [...materials].filter((material) => !material.userData?.envClass);
+  assert(materials.size > 0, `${materials.size} materials in the pass`);
+  assert(
+    untagged.length === 0,
+    `every street-life material declares an envClass: ${untagged.map((m) => m.name).join(', ') || 'all tagged'}`,
+  );
+  const classes = new Set([...materials].map((material) => material.userData.envClass));
+  for (const declared of classes) {
+    assert(
+      MATERIAL_CLASSES.includes(declared),
+      `'${declared}' is a class the environment grader knows (${MATERIAL_CLASSES.length} declared classes)`,
+    );
+  }
+  const bodyMaterials = [...materials].filter((material) => material.name.startsWith('street-life-')
+    && !material.name.includes('car') && !material.name.includes('shadow'));
+  assert(
+    bodyMaterials.length > 0 && bodyMaterials.every((material) => material.vertexColors === true),
+    `all ${bodyMaterials.length} figure materials multiply the baked cavity shading`,
+  );
+  assert(
+    bodyMaterials.every((material) => material.metalness === 0 && material.roughness > 0.5),
+    'figure materials stay dielectric and rough - clothing, not car paint',
+  );
+  streetLife.dispose();
+
+  const crowd = createCrowdPresentation({ sampleGround: () => 0 });
+  const crowdMaterials = new Set();
+  crowd.object3d.traverse((node) => {
+    for (const material of Array.isArray(node.material) ? node.material : node.material ? [node.material] : []) {
+      if (!material.isMeshStandardMaterial) continue;
+      crowdMaterials.add(material);
+    }
+  });
+  const crowdUntagged = [...crowdMaterials].filter((material) => !material.userData?.envClass);
+  assert(
+    crowdUntagged.length === 0,
+    `every crowd material declares an envClass: ${crowdUntagged.map((m) => m.name).join(', ') || 'all tagged'}`,
+  );
+  crowd.dispose();
+}
+
+// ---------------------------------------------------------------------------
+section('11. occupancy avoidance');
 
 {
   // A street already carrying props: figures must route around them.

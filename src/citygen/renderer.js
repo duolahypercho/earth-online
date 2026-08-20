@@ -8340,6 +8340,12 @@ export class CityRenderer {
         readAgent: (source, index, out) => this.readPedestrianAgent(source, index, out),
       });
       this.crowdDiagnostics.pass = this.crowd.version;
+      // The crowd is built lazily, after `applyEnvironmentGrading` may already
+      // have cached its material groups from a traverse of `city-root`. Its
+      // materials declare `userData.envClass`, so drop the cache and let the
+      // next grade pick them up; otherwise the crowd is the one thing on the
+      // street with no environment response.
+      this.envMaterialGroups = null;
     } catch (error) {
       console.error(`[${PEDESTRIAN_PRESENTATION_VERSION}] crowd presentation failed to build; `
         + 'the simulation keeps its existing instanced batch', error);

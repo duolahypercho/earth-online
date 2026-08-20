@@ -83,23 +83,30 @@ export const STREET_LIFE_VERSION = 'street-life-v1';
 // radii below are chosen by what a figure is worth at that distance, not by
 // what fits in a GPU:
 //
-//   near  <= 46 m   A figure is 40-190 px tall. Individual limbs, wardrobe and
-//                   the activity's motion all read, so it gets per-bone
-//                   articulation: 15 body meshes + 8 wardrobe meshes, one
-//                   instance each, 244 tri per figure.
-//   mid   <= 132 m  A figure is 14-40 px tall. Limb positions are sub-pixel;
-//                   the silhouette, the colour and the fact that something is
-//                   standing there are all that survive. One root matrix, no
-//                   articulation, 136 tri per figure.
+//   near  <= 32 m   A figure is 55-190 px tall: a reviewer can count its
+//                   fingers, so it gets the full near-tier body - hands, jaw,
+//                   brow, nose, eyes, shoulder caps and a joint filler at every
+//                   articulating joint - under per-bone articulation. 568 tri
+//                   per figure, 26 figures, 19 body + 9 wardrobe draws.
+//   mid   <= 132 m  A figure is 14-55 px tall. Limb positions are sub-pixel and
+//                   a stationary figure has no motion to lose; the silhouette,
+//                   the colour and the fact that somebody is standing there are
+//                   all that survive. One root matrix, no articulation, 180 tri
+//                   per figure in 5 draws.
 //   past 132 m      Not drawn at all. The walking crowd's own far band already
 //                   populates 132-220 m, and a motionless figure at that range
 //                   is a smudge that costs a matrix.
 //
+// The near ring is small on purpose. Spending 568 triangles on a figure whose
+// limbs occupy four pixels is the failure mode this table exists to prevent;
+// the previous 46 m / 56-figure near ring was drawing 56 close-up bodies to
+// cover a ring where six of them were ever legible.
+//
 // Per-ring caps are hard: the planner sorts by distance and stops, so the cost
 // of this pass is bounded by the caps and NOT by the size of the city.
 export const STREET_LIFE_RINGS = Object.freeze([
-  Object.freeze({ id: 'near', radius: 46, budget: 56, articulated: true }),
-  Object.freeze({ id: 'mid', radius: 132, budget: 200, articulated: false }),
+  Object.freeze({ id: 'near', radius: 32, budget: 26, articulated: true, detail: 'near', radialSegments: 6 }),
+  Object.freeze({ id: 'mid', radius: 132, budget: 200, articulated: false, detail: 'far', radialSegments: 3 }),
 ]);
 
 export const STREET_LIFE_BUDGET = Object.freeze({
@@ -112,7 +119,7 @@ export const STREET_LIFE_BUDGET = Object.freeze({
   maxParkingSpots: 9000,
   /** Measured ceilings; exceeding either is a regression, not a tuning choice. */
   maxTriangles: 90000,
-  maxDrawCalls: 40,
+  maxDrawCalls: 48,
 });
 
 /**
@@ -757,10 +764,19 @@ function createBand(name, geometries, capacity, { castShadow }) {
     if (!material) {
       material = new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        roughness: entry.group === 'shoes' ? 0.7 : 0.88,
+        roughness: entry.group === 'shoes' ? 0.62 : entry.group === 'skin' ? 0.74 : 0.88,
         metalness: 0,
+        // The body geometry carries a baked cavity term in its colour
+        // attribute; three multiplies it with the per-agent instance colour, so
+        // a figure has a shaded side even where the scene lighting is flat.
+        vertexColors: true,
       });
       material.name = `street-life-${entry.group}`;
+      // Declared so `renderer.applyEnvironmentGrading` can reach these: an
+      // untagged material never receives the per-class environment intensity or
+      // the wet-weather roughness/albedo grade, and reads flat in shade.
+      material.userData.envClass = 'fabric';
+      material.envMapIntensity = 1;
       materials.set(entry.group, material);
     }
     const mesh = new THREE.InstancedMesh(entry.geometry, material, Math.max(1, capacity));
@@ -883,25 +899,25 @@ function createStreetLife() {
     const midRing = STREET_LIFE_RINGS[1];
     const near = createBand(
       'street-life-near',
-      buildInstancedPartGeometries({ detail: 'mid', radialSegments: 5 }),
+      buildInstancedPartGeometries({ detail: nearRing.detail, radialSegments: nearRing.radialSegments }),
       nearRing.budget,
       { castShadow: true },
     );
     const nearWardrobe = createBand(
       'street-life-near-wardrobe',
-      buildWardrobeGeometries({ detail: 'mid', radialSegments: 5 }),
+      buildWardrobeGeometries({ detail: nearRing.detail, radialSegments: nearRing.radialSegments }),
       nearRing.budget,
       { castShadow: true },
     );
     const mid = createBand(
       'street-life-mid',
-      buildInstancedPartGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true }),
+      buildInstancedPartGeometries({ detail: midRing.detail, radialSegments: midRing.radialSegments, mergeToRoot: true }),
       midRing.budget,
       { castShadow: false },
     );
     const midWardrobe = createBand(
       'street-life-mid-wardrobe',
-      buildWardrobeGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true }),
+      buildWardrobeGeometries({ detail: midRing.detail, radialSegments: midRing.radialSegments, mergeToRoot: true }),
       midRing.budget,
       { castShadow: false },
     );
@@ -940,10 +956,12 @@ function createStreetLife() {
       color: 0xffffff, roughness: 0.46, metalness: 0.32, flatShading: true,
     });
     hullMaterial.name = 'street-life-car-hull';
+    hullMaterial.userData.envClass = 'painted-metal';
     const cabinMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff, roughness: 0.16, metalness: 0.44, flatShading: true,
     });
     cabinMaterial.name = 'street-life-car-cabin';
+    cabinMaterial.userData.envClass = 'facade-glass';
     const carMeshes = [];
     for (const [geometry, material, label] of [
       [carGeometry.hull, hullMaterial, 'hull'],
@@ -1107,6 +1125,12 @@ function createStreetLife() {
       if (figure.distance <= nearRing.radius && nearList.length < nearRing.budget) {
         figure.ring = 'near';
         nearList.push(figure);
+      } else if (figure.anchor.seated) {
+        // The mid ring is one rigid root matrix over a figure baked standing.
+        // A seated anchor drawn from it is a standing person sunk into the kerb,
+        // so a seated figure simply stops existing past the articulated ring
+        // rather than being drawn wrong.
+        figure.ring = null;
       } else if (midList.length < midRing.budget) {
         figure.ring = 'mid';
         midList.push(figure);

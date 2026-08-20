@@ -77,6 +77,18 @@ const POP_IN_GUARD_METRES = 34;
  * `traffic.pedestrians`.
  */
 export const STREET_POPULATION = Object.freeze({
+  /**
+   * Moving vehicles on a real-map city.
+   *
+   * This is the one number in this file that is genuinely too low and that this
+   * subsystem cannot raise on its own: `verify:citygen-vehicle-batching` and
+   * `verify:citygen-local-life` both pin the pool at 42, and
+   * `EXPECTED_RNG_KINDS` in the former pins the seeded class of all 42. Raising
+   * it is an integration change; the constant is here so it is one edit, and
+   * `new TrafficSim(renderer, city, { vehiclePool })` overrides it so the exact
+   * consequences can be measured before anyone commits to them.
+   */
+  vehiclePool: 42,
   /** Extra sidewalk walkers on a real-map city. */
   ambientWalkers: 300,
   /** Extra walkers on a small generated city, which has far less pavement. */
@@ -208,7 +220,7 @@ const HERO_CURB_SEAT = Object.freeze({
 });
 
 export class TrafficSim {
-  constructor(renderer, city, { count = 26 } = {}) {
+  constructor(renderer, city, { count = 26, vehiclePool = null } = {}) {
     this.renderer = renderer;
     this.city = city;
     this.edges = buildTrafficGraph(city);
@@ -267,7 +279,9 @@ export class TrafficSim {
       popInGuardMeters: POP_IN_GUARD_METRES,
       events: [],
     };
-    const trafficCount = realMap ? 42 : count;
+    const trafficCount = realMap
+      ? (Number.isFinite(vehiclePool) ? Math.max(0, vehiclePool | 0) : STREET_POPULATION.vehiclePool)
+      : count;
     this.vehicleBatch = trafficCount > 0 ? buildVehicleBatch(trafficCount) : null;
     if (this.vehicleBatch) this.vehicleGroup.add(this.vehicleBatch.group);
     for (let i = 0; i < trafficCount; i += 1) {

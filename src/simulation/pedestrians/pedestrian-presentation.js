@@ -879,6 +879,28 @@ export function identityVariation(idOrSeed) {
     legLength: legLengthForHeight(height),
     /** Multiplies cadence: some people are naturally quicker-stepping. */
     cadenceBias: 0.94 + identityRandom(seed, 'cadence') * 0.12,
+    // ---------------------------------------------------------------------
+    // Locomotion style. Two people walking at the same speed do not walk the
+    // same way, and a street where they do reads as one animation on a hundred
+    // copies of one asset. Each of these modifies the SHAPE of the walk without
+    // touching the odometer that guarantees no skating: stride and cadence are
+    // scaled together and fed to the phase advance and to the foot placement
+    // from the same variable, so world foot speed in stance stays exactly zero.
+    // ---------------------------------------------------------------------
+    /** Longer or shorter steps at the same speed. Pairs with `cadenceBias`. */
+    strideScale: 0.88 + identityRandom(seed, 'stride') * 0.26,
+    /** How far the arms swing, as a multiple of the clip's own amplitude. */
+    armSwing: 0.55 + identityRandom(seed, 'swing') * 0.95,
+    /** Shoulders counter-rotating against the hips, radians at full stride. */
+    torsoTwist: 0.03 + identityRandom(seed, 'twist') * 0.10,
+    /** Constant forward lean of the spine: hurried, upright or slouched. */
+    postureLean: -0.03 + identityRandom(seed, 'posture') * 0.13,
+    /** Head carriage: a small constant tilt plus a slow look-around. */
+    headTilt: -0.05 + identityRandom(seed, 'headtilt') * 0.11,
+    headScan: 0.06 + identityRandom(seed, 'headscan') * 0.20,
+    headScanRate: 0.05 + identityRandom(seed, 'headrate') * 0.10,
+    /** One shoulder carried lower than the other. */
+    shoulderDrop: (identityRandom(seed, 'shoulder') - 0.5) * 0.09,
     /** Where in the walk cycle this agent starts. Cycles, [0,1). */
     phaseOffset: identityRandom(seed, 'phase'),
     /** Free-running idle clock offset, seconds. */
@@ -913,14 +935,21 @@ export function identityVariation(idOrSeed) {
  * `key` is the wardrobe flag that switches the part on.
  */
 export const WARDROBE_PARTS = Object.freeze([
-  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'box', size: [0.34, 0.42, 0.24], offset: [0, -0.14, 0], detail: 'far', group: 'top' },
-  { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.28, 0.36, 0.15], offset: [0, 0.03, -0.15], detail: 'far', group: 'accent' },
-  { key: 'bag', bone: 'Hips', slot: 'accent', kind: 'box', size: [0.19, 0.24, 0.10], offset: [0.20, 0.02, 0.02], detail: 'mid', group: 'accent' },
-  { key: 'hat', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.115, 0.125, 0.10], offset: [0, 0.235, 0], detail: 'far', group: 'accent' },
-  { key: 'brim', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.185, 0.185, 0.018], offset: [0, 0.182, 0.01], detail: 'mid', group: 'accent' },
-  { key: 'longHair', bone: 'Head', slot: 'hair', kind: 'box', size: [0.175, 0.26, 0.10], offset: [0, 0.055, -0.10], detail: 'far', group: 'hair' },
-  { key: 'scarf', bone: 'Neck', slot: 'accent', kind: 'cyl', size: [0.085, 0.085, 0.10], offset: [0, 0.045, 0], detail: 'mid', group: 'accent' },
-  { key: 'case', bone: 'RightHand', slot: 'accent', kind: 'box', size: [0.11, 0.30, 0.26], offset: [0.02, -0.16, 0], detail: 'mid', group: 'accent' },
+  // A coat is a hem, and a hem is the single most legible clothing silhouette at
+  // street distance: it flares below the hips and breaks the leg line.
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'taper', size: [0.30, 0.235, 0.375, 0.285, 0.44], offset: [0, -0.15, 0], detail: 'far', group: 'top', ao: 0.30 },
+  { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'taper', size: [0.245, 0.130, 0.275, 0.155, 0.360], offset: [0, 0.045, -0.160], detail: 'far', group: 'accent', ao: 0.30 },
+  // Straps: a backpack with no straps floats behind the shoulders.
+  { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
+  { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [-0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
+  { key: 'bag', bone: 'Hips', slot: 'accent', kind: 'taper', size: [0.175, 0.085, 0.205, 0.105, 0.245], offset: [0.185, 0.030, 0.015], detail: 'mid', group: 'accent', ao: 0.28 },
+  // The strap is what makes a bag read as carried rather than stuck on.
+  { key: 'bag', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.036, 0.300, 0.026], offset: [-0.055, 0.060, 0.088], detail: 'near', group: 'accent', ao: 0.40 },
+  { key: 'hat', bone: 'Head', slot: 'accent', kind: 'taper', size: [0.130, 0.140, 0.160, 0.168, 0.105], offset: [0, 0.268, 0.002], detail: 'far', group: 'accent', ao: 0.25 },
+  { key: 'brim', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.190, 0.190, 0.016], offset: [0, 0.213, 0.012], detail: 'mid', group: 'accent', ao: 0.55 },
+  { key: 'longHair', bone: 'Head', slot: 'hair', kind: 'taper', size: [0.180, 0.115, 0.155, 0.095, 0.270], offset: [0, 0.075, -0.078], detail: 'far', group: 'hair', ao: 0.34 },
+  { key: 'scarf', bone: 'Neck', slot: 'accent', kind: 'cyl', size: [0.086, 0.092, 0.115], offset: [0, 0.042, -0.002], detail: 'mid', group: 'accent', ao: 0.40 },
+  { key: 'case', bone: 'RightHand', slot: 'accent', kind: 'taper', size: [0.105, 0.245, 0.115, 0.270, 0.300], offset: [0.010, -0.235, 0], detail: 'mid', group: 'accent', ao: 0.28 },
 ]);
 
 /** Wardrobe flags, in signature bit order. `brim` follows `hat`, never alone. */
@@ -986,6 +1015,89 @@ export function appearanceSignature(idOrSeed) {
     .map((slot) => PEDESTRIAN_PALETTE[slot].indexOf(variation.colors[slot]).toString(36))
     .join('');
   return `h${height.toString(36)}b${build.toString(36)}c${slots}w${wardrobe.silhouetteBits.toString(36)}`;
+}
+
+/**
+ * Per-agent locomotion styling, applied after the mixer and before the foot IK.
+ *
+ * The locomotion clips are one authored walk shared by the whole crowd. That is
+ * the right way to spend memory and the wrong way to spend a street: a hundred
+ * figures stepping in the same shape at the same amplitude reads as one asset
+ * cloned, which is precisely what the review called stiff and identical.
+ *
+ * This adds, per identity and on top of whatever the clip left on the bone:
+ *   - arm swing scaled about the shoulder pitch axis, so amplitude varies;
+ *   - shoulders counter-rotating against the hips through the stride, which is
+ *     the single most legible thing missing from a stiff walk;
+ *   - a constant spine lean (hurried / upright / slouched) and one shoulder
+ *     carried lower;
+ *   - a head tilt plus a slow look-around at a rate that is not the gait rate,
+ *     so no two heads ever sync up.
+ *
+ * It is a rotation composed onto six bones - about a hundred float ops per
+ * agent - and it cannot affect foot placement, which the IK writes afterwards.
+ *
+ * @param {Map<string,THREE.Object3D>} byName rig bones
+ * @param {object} variation identity variation record
+ * @param {number} phase gait phase in cycles, [0,1)
+ * @param {number} moving 0..1 blend of the walking clips
+ * @param {number} clock free-running seconds, for the non-gait-rate motions
+ */
+function applyLocomotionStyle(byName, variation, phase, moving, clock) {
+  const swing = Math.sin(phase * TAU);
+  const twist = swing * variation.torsoTwist * moving;
+  const styleQ = _q5;
+  const styleE = _e2;
+
+  const spine = byName.get('Spine');
+  if (spine) {
+    styleE.set(variation.postureLean * (0.4 + 0.6 * moving), -twist, 0, 'XYZ');
+    styleQ.setFromEuler(styleE);
+    spine.quaternion.multiply(styleQ);
+  }
+  const chest = byName.get('Chest');
+  if (chest) {
+    styleE.set(0, twist * 1.7, variation.shoulderDrop * (0.5 + 0.5 * moving), 'XYZ');
+    styleQ.setFromEuler(styleE);
+    chest.quaternion.multiply(styleQ);
+  }
+  const head = byName.get('Head');
+  if (head) {
+    // Counter the torso twist so the head keeps looking where it is going, then
+    // add the slow scan. `clock` is the agent's own idle clock, already offset
+    // per identity, so the crowd never scans in unison.
+    const scan = Math.sin(clock * TAU * variation.headScanRate) * variation.headScan;
+    styleE.set(
+      variation.headTilt - variation.postureLean * 0.5,
+      scan - twist * 0.7,
+      0,
+      'XYZ',
+    );
+    styleQ.setFromEuler(styleE);
+    head.quaternion.multiply(styleQ);
+  }
+  if (moving > 0.01) {
+    // Arm swing amplitude. The clip already swings the arms; this adds the
+    // agent's own share of that swing, so `armSwing` 1.0 is the authored
+    // amplitude and 0.55 / 1.5 are a stroll and a march.
+    const extra = (variation.armSwing - 1) * 0.42 * moving;
+    for (const [bone, sign] of [['LeftArm', 1], ['RightArm', -1]]) {
+      const node = byName.get(bone);
+      if (!node) continue;
+      styleE.set(swing * sign * extra, 0, 0, 'XYZ');
+      styleQ.setFromEuler(styleE);
+      node.quaternion.multiply(styleQ);
+    }
+    for (const [bone, sign] of [['LeftForeArm', 1], ['RightForeArm', -1]]) {
+      const node = byName.get(bone);
+      if (!node) continue;
+      // The elbow closes on the forward swing and opens on the back swing, which
+      // is what stops a walking arm reading as a pendulum on a hinge.
+      styleE.set(Math.max(0, swing * sign) * 0.30 * moving * variation.armSwing, 0, 0, 'XYZ');
+      styleQ.setFromEuler(styleE);
+      node.quaternion.multiply(styleQ);
+    }
+  }
 }
 
 // ------------------------------------------------------------- activities
@@ -1134,6 +1246,17 @@ export function evaluateActivityPose(activity, t, seedOrId, out = {}) {
   const offset = identityRandom(seed, 'act-offset') * 20;
   const rateScale = 0.85 + identityRandom(seed, 'act-rate') * 0.30;
   const time = (Number.isFinite(t) ? t : 0) + offset;
+  // `out` is reused across agents to stay allocation-free, so bones written by
+  // a PREVIOUS activity are still in it. Reset them to identity before writing
+  // this activity, or a standing figure that follows a seated one inherits the
+  // seated legs.
+  for (const bone in out) {
+    if (bone in source) continue;
+    const slot = out[bone];
+    slot[0] = 0;
+    slot[1] = 0;
+    slot[2] = 0;
+  }
   for (const bone in source) {
     const [rx, ry, rz, ax, ay, az, rate, phase] = source[bone];
     const w = TAU * rate * rateScale * time + TAU * phase;
@@ -1351,31 +1474,287 @@ export function restBoneWorld(name, pose = REST_POSE) {
  * Body parts. `slot` indexes `PALETTE_SLOTS`, which is what makes one shared
  * geometry able to wear per-agent colours: every vertex of a part is given the
  * UV of its palette slot, and each agent owns a 6x1 palette texture.
- * `detail` selects which parts survive into the cheaper instanced bands.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THERE ARE JOINT PARTS
+ * ---------------------------------------------------------------------------
+ * The first version of this table was a box torso and bare cylinder limbs with
+ * nothing at the joints. Measured, the upper-arm cylinder's top rim sat 7.3 cm
+ * clear of the torso box AT REST and never closed, and the elbow rims opened to
+ * 6.6 cm at a 90-degree bend. Because the upper arm carries the shirt colour and
+ * the forearm carries the skin colour, the result on screen was a shirt-coloured
+ * stub that vanished against the torso and a skin-coloured stick apparently
+ * floating in mid-air beside the body - read by reviewers as a broken rig, and a
+ * critical-artifact reject.
+ *
+ * A cylinder cannot bridge a rotating joint: whatever the angle, its flat cap
+ * swings away from its neighbour. So every articulating joint now carries a
+ * sphere sized to the thicker of the two limbs, parented to the CHILD bone at
+ * its own origin. A sphere centred on the joint covers the wedge at any angle,
+ * which is what makes the limb chain continuous by construction rather than by
+ * luck. `verify-street-life.mjs` re-measures this over every pose and every
+ * animation phase and fails on any surface gap.
+ *
+ * ---------------------------------------------------------------------------
+ * DETAIL TIERS
+ * ---------------------------------------------------------------------------
+ *   'far'   the whole readable figure at 90-220 m: torso, head, straight limbs.
+ *   'mid'   + neck, hair, joint spheres, split shoes. Everything needed for the
+ *           figure to survive articulation without coming apart.
+ *   'near'  + hands, jaw, brow, nose, eyes, shoulder caps, collar. Only the
+ *           skinned band (<= 28 m) and the street-life near ring (<= 34 m) pay
+ *           for these; they are what stops a figure two metres from the camera
+ *           reading as a voxel mannequin.
+ *
+ * `kind`:
+ *   'box'    size [w, h, d]
+ *   'taper'  size [topW, topD, botW, botD, h]  - a frustum; shoulders wider
+ *            than the waist, thighs wider than the knee, cranium wider than jaw
+ *   'cyl'    size [rTop, rBottom, h]
+ *   'ball'   size [r]  (or [rx, ry, rz] for a squashed joint)
+ *   'wedge'  size [w, h, d, shear] - a box sheared along +Z, for the nose,
+ *            the toe of a shoe and the brow ridge
+ *
+ * `ao` is a baked cavity term in [0,1]; see `bakePart`. It multiplies the
+ * palette colour through the geometry's own colour attribute, which three
+ * multiplies with the per-instance colour, so it costs no extra draw call and
+ * no extra material. It is what stops a figure standing in shade reading as a
+ * flat cut-out.
  */
-const BODY_PARTS = Object.freeze([
-  { bone: 'Hips', slot: 'bottom', kind: 'box', size: [0.26, 0.19, 0.17], offset: [0, 0.02, 0], detail: 'far', group: 'bottom' },
-  { bone: 'Spine', slot: 'top', kind: 'box', size: [0.255, 0.17, 0.165], offset: [0, 0.06, 0], detail: 'far', group: 'top' },
-  { bone: 'Chest', slot: 'top', kind: 'box', size: [0.32, 0.25, 0.19], offset: [0, 0.085, 0], detail: 'far', group: 'top' },
-  { bone: 'Chest', slot: 'accent', kind: 'box', size: [0.328, 0.045, 0.198], offset: [0, -0.035, 0], detail: 'near', group: 'accent' },
-  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.048, 0.042, 0.085], offset: [0, 0.045, 0], detail: 'near', group: 'skin' },
-  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.155, 0.215, 0.185], offset: [0, 0.085, 0.005], detail: 'far', group: 'skin' },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.168, 0.085, 0.196], offset: [0, 0.185, -0.004], detail: 'mid', group: 'hair' },
-  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.048, 0.041, 0.26], offset: [0, -0.135, 0], detail: 'mid', group: 'top' },
-  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.039, 0.034, 0.235], offset: [0, -0.125, 0], detail: 'mid', group: 'skin' },
-  { bone: 'LeftHand', slot: 'skin', kind: 'box', size: [0.068, 0.10, 0.045], offset: [0, -0.05, 0], detail: 'near', group: 'skin' },
-  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.048, 0.041, 0.26], offset: [0, -0.135, 0], detail: 'mid', group: 'top' },
-  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.039, 0.034, 0.235], offset: [0, -0.125, 0], detail: 'mid', group: 'skin' },
-  { bone: 'RightHand', slot: 'skin', kind: 'box', size: [0.068, 0.10, 0.045], offset: [0, -0.05, 0], detail: 'near', group: 'skin' },
-  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'cyl', size: [0.077, 0.061, 0.36], offset: [0, -0.19, 0], detail: 'far', group: 'bottom' },
-  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.059, 0.046, 0.375], offset: [0, -0.2, 0], detail: 'far', group: 'bottom' },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'box', size: [0.095, 0.072, 0.245], offset: [0, -0.042, 0.055], detail: 'far', group: 'shoes' },
-  { bone: 'RightUpLeg', slot: 'bottom', kind: 'cyl', size: [0.077, 0.061, 0.36], offset: [0, -0.19, 0], detail: 'far', group: 'bottom' },
-  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.059, 0.046, 0.375], offset: [0, -0.2, 0], detail: 'far', group: 'bottom' },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'box', size: [0.095, 0.072, 0.245], offset: [0, -0.042, 0.055], detail: 'far', group: 'shoes' },
+export const BODY_PARTS = Object.freeze([
+  // ---- pelvis and torso -----------------------------------------------------
+  { bone: 'Hips', slot: 'bottom', kind: 'taper', size: [0.27, 0.175, 0.245, 0.165, 0.20], offset: [0, 0.015, 0], detail: 'far', group: 'bottom', ao: 0.35 },
+  { bone: 'Spine', slot: 'top', kind: 'taper', size: [0.285, 0.180, 0.255, 0.170, 0.17], offset: [0, 0.065, 0], detail: 'far', group: 'top', ao: 0.28 },
+  { bone: 'Chest', slot: 'top', kind: 'taper', size: [0.345, 0.205, 0.290, 0.185, 0.26], offset: [0, 0.090, 0], detail: 'far', group: 'top', ao: 0.22 },
+  // Deltoid caps: the shoulder is a real corner of the body, not a hole the arm
+  // hangs out of. These live on the Chest so they never rotate away from it.
+  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.072, 0.062, 0.072], offset: [0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
+  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.072, 0.062, 0.072], offset: [-0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
+  { bone: 'Chest', slot: 'accent', kind: 'box', size: [0.300, 0.042, 0.196], offset: [0, 0.196, 0.004], detail: 'near', group: 'accent', ao: 0.45 },
+  // ---- neck and head --------------------------------------------------------
+  // Promoted from 'near' to 'mid': without it the head floats off the shoulders
+  // at every distance the crowd is actually seen at.
+  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.046, 0.058, 0.108], offset: [0, 0.036, -0.004], detail: 'mid', group: 'skin', ao: 0.55 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.062, 0.058, 0.062], offset: [0, 0.004, -0.002], detail: 'mid', group: 'skin', ao: 0.50 },
+  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.150, 0.180, 0.140, 0.170, 0.135], offset: [0, 0.145, 0.004], detail: 'far', group: 'skin', ao: 0.16 },
+  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.140, 0.170, 0.115, 0.140, 0.088], offset: [0, 0.037, 0.010], detail: 'near', group: 'skin', ao: 0.30 },
+  { bone: 'Head', slot: 'skin', kind: 'wedge', size: [0.032, 0.052, 0.038, 0.012], offset: [0, 0.118, 0.088], detail: 'near', group: 'skin', ao: 0.10 },
+  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.116, 0.020, 0.020], offset: [0, 0.163, 0.082], detail: 'near', group: 'skin', ao: 0.18 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [0.076, 0.128, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [-0.076, 0.128, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
+  // Hair is a shell that wraps the cranium, not a slab balanced on top of it.
+  { bone: 'Head', slot: 'hair', kind: 'taper', size: [0.156, 0.150, 0.160, 0.152, 0.052], offset: [0, 0.212, 0.002], detail: 'far', group: 'hair', ao: 0.22 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.162, 0.150, 0.030], offset: [0, 0.150, -0.078], detail: 'near', group: 'hair', ao: 0.42 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.026, 0.130, 0.150], offset: [0.072, 0.155, -0.006], detail: 'near', group: 'hair', ao: 0.40 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.026, 0.130, 0.150], offset: [-0.072, 0.155, -0.006], detail: 'near', group: 'hair', ao: 0.40 },
+  // Eyes ride the hair slot: hair colours are the dark end of the palette, so an
+  // eye is always darker than the face it sits in without a seventh slot.
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [0.033, 0.140, 0.078], detail: 'near', group: 'hair', ao: 0.0 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [-0.033, 0.140, 0.078], detail: 'near', group: 'hair', ao: 0.0 },
+  // ---- arms -----------------------------------------------------------------
+  { bone: 'LeftArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
+  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'LeftForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
+  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', group: 'skin', ao: 0.22 },
+  { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.034], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
+  { bone: 'LeftHand', slot: 'skin', kind: 'taper', size: [0.062, 0.038, 0.050, 0.028, 0.100], offset: [0, -0.054, 0], detail: 'near', group: 'skin', ao: 0.22 },
+  { bone: 'RightArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
+  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'RightForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
+  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', group: 'skin', ao: 0.22 },
+  { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.034], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
+  { bone: 'RightHand', slot: 'skin', kind: 'taper', size: [0.062, 0.038, 0.050, 0.028, 0.100], offset: [0, -0.054, 0], detail: 'near', group: 'skin', ao: 0.22 },
+  // ---- legs -----------------------------------------------------------------
+  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'ball', size: [0.083], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.42 },
+  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', group: 'bottom', ao: 0.30 },
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'ball', size: [0.064], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', group: 'bottom', ao: 0.26 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'taper', size: [0.092, 0.130, 0.086, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
+  { bone: 'RightUpLeg', slot: 'bottom', kind: 'ball', size: [0.083], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.42 },
+  { bone: 'RightUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', group: 'bottom', ao: 0.30 },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'ball', size: [0.064], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', group: 'bottom', ao: 0.26 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'taper', size: [0.092, 0.130, 0.086, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
 ]);
 
 const DETAIL_RANK = { far: 0, mid: 1, near: 2 };
+export const PART_DETAIL_RANK = Object.freeze({ ...DETAIL_RANK });
+
+/**
+ * The articulating joints of the rig, as `[parentBone, childBone]`.
+ *
+ * A joint is where two drawn limb segments meet and rotate against each other,
+ * which is exactly where a rig comes apart on screen. `verify-street-life.mjs`
+ * walks this list and proves, for every detail tier, that the joint is closed
+ * by geometry at any angle rather than by luck at the rest pose.
+ */
+export const ARTICULATING_JOINTS = Object.freeze([
+  Object.freeze(['Chest', 'LeftArm']),
+  Object.freeze(['Chest', 'RightArm']),
+  Object.freeze(['LeftArm', 'LeftForeArm']),
+  Object.freeze(['RightArm', 'RightForeArm']),
+  Object.freeze(['LeftForeArm', 'LeftHand']),
+  Object.freeze(['RightForeArm', 'RightHand']),
+  Object.freeze(['Hips', 'LeftUpLeg']),
+  Object.freeze(['Hips', 'RightUpLeg']),
+  Object.freeze(['LeftUpLeg', 'LeftLeg']),
+  Object.freeze(['RightUpLeg', 'RightLeg']),
+  Object.freeze(['LeftLeg', 'LeftFoot']),
+  Object.freeze(['RightLeg', 'RightFoot']),
+  Object.freeze(['Chest', 'Neck']),
+  Object.freeze(['Neck', 'Head']),
+]);
+
+/**
+ * The radius of the largest ball, centred on a bone's own origin, that is
+ * entirely inside geometry drawn for that bone at `detail`.
+ *
+ * This is the number that decides whether a joint can come apart. A cylinder
+ * cannot bridge a rotating joint - whatever the angle, its flat cap swings away
+ * from its neighbour - so the joint has to be covered by something centred ON
+ * the joint. Returns 0 when nothing covers the joint, which is what the first
+ * version of this rig scored and why its arms looked detached.
+ */
+export function jointCoverRadius(bone, detail = 'near') {
+  const wanted = DETAIL_RANK[detail] ?? 2;
+  let best = 0;
+  for (const part of BODY_PARTS) {
+    if (part.bone !== bone) continue;
+    if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
+    const [ox, oy, oz] = part.offset;
+    if (part.kind === 'ball') {
+      const [rx, ry = rx, rz = rx] = part.size;
+      // Inradius of the ellipsoid, reduced by how far it is off the joint.
+      const inradius = Math.min(rx, ry, rz) - Math.hypot(ox, oy, oz);
+      if (inradius > best) best = inradius;
+    } else if (part.kind === 'box') {
+      const [w, h, d] = part.size;
+      const r = Math.min(w / 2 - Math.abs(ox), h / 2 - Math.abs(oy), d / 2 - Math.abs(oz));
+      if (r > best) best = r;
+    } else if (part.kind === 'taper') {
+      const [topW, topD, botW, botD, h] = part.size;
+      const r = Math.min(
+        Math.min(topW, botW) / 2 - Math.abs(ox),
+        h / 2 - Math.abs(oy),
+        Math.min(topD, botD) / 2 - Math.abs(oz),
+      );
+      if (r > best) best = r;
+    } else if (part.kind === 'cyl') {
+      const [rTop, rBottom, h] = part.size;
+      const r = Math.min(Math.min(rTop, rBottom) - Math.hypot(ox, oz), h / 2 - Math.abs(oy));
+      if (r > best) best = r;
+    }
+  }
+  return Math.max(0, best);
+}
+
+/**
+ * Is an articulating joint closed by geometry at every angle?
+ *
+ * A rotating joint can only be closed two ways:
+ *
+ *   a) the joint point is INSIDE the parent's solid with margin, so the parent's
+ *      surface simply does not end there (shoulder inside the deltoid cap, hip
+ *      inside the pelvis, neck inside the chest); or
+ *   b) the CHILD carries a filler centred exactly on the joint whose radius
+ *      swallows the parent's terminal rim, so however far the child swings, the
+ *      parent's last ring of vertices stays buried inside it (elbow, knee,
+ *      wrist, ankle).
+ *
+ * Both conditions are invariant under rotation about the joint, which is why
+ * this can be decided once from the geometry rather than sampled per frame.
+ *
+ * The first version of this rig satisfied NEITHER at the shoulder or the elbow:
+ * measured, the upper-arm cylinder's top rim sat 7.3 cm clear of the torso at
+ * rest and the elbow rims opened to 6.6 cm at a right angle, which is what put
+ * apparently detached forearms in four review frames.
+ *
+ * @returns {{parentCover:number, childCover:number, parentTerminal:number,
+ *            drawn:boolean, closed:boolean, margin:number}}
+ */
+export function jointClosure(parentBone, childBone, { detail = 'near', radialSegments = 6 } = {}) {
+  const wanted = DETAIL_RANK[detail] ?? 2;
+  const joint = REST_POSE[childBone]?.offset;
+  const partsOf = (bone) => BODY_PARTS.filter(
+    (part) => part.bone === bone && (DETAIL_RANK[part.detail] ?? 1) <= wanted,
+  );
+  const parentParts = partsOf(parentBone);
+  const childParts = partsOf(childBone);
+  if (!joint || !parentParts.length || !childParts.length) {
+    return { parentCover: 0, childCover: 0, parentTerminal: 0, drawn: false, closed: true, margin: Infinity };
+  }
+  const parentCover = coverRadiusAt(parentParts, joint);
+  const childCover = coverRadiusAt(childParts, [0, 0, 0]);
+
+  // The parent's terminal rim: the ring of its vertices nearest the joint, and
+  // how far the widest of them sits from it.
+  let nearest = Infinity;
+  const distances = [];
+  for (const part of parentParts) {
+    const geometry = makePartGeometry(part, radialSegments);
+    const position = geometry.attributes.position;
+    for (let i = 0; i < position.count; i += 1) {
+      const d = Math.hypot(
+        position.getX(i) + part.offset[0] - joint[0],
+        position.getY(i) + part.offset[1] - joint[1],
+        position.getZ(i) + part.offset[2] - joint[2],
+      );
+      distances.push(d);
+      if (d < nearest) nearest = d;
+    }
+    geometry.dispose();
+  }
+  // Vertices belonging to the rim: within 2 cm of the closest one.
+  let parentTerminal = 0;
+  for (const d of distances) {
+    if (d <= nearest + 0.02 && d > parentTerminal) parentTerminal = d;
+  }
+  const byParent = parentCover;
+  const byChild = childCover - parentTerminal;
+  const margin = Math.max(byParent, byChild);
+  return {
+    parentCover,
+    childCover,
+    parentTerminal,
+    drawn: true,
+    closed: margin > 0,
+    margin,
+  };
+}
+
+/** Largest ball centred at `point` (bone-local) fully inside `parts`. */
+function coverRadiusAt(parts, point) {
+  let best = 0;
+  for (const part of parts) {
+    const dx = point[0] - part.offset[0];
+    const dy = point[1] - part.offset[1];
+    const dz = point[2] - part.offset[2];
+    let r = 0;
+    if (part.kind === 'ball') {
+      const [rx, ry = rx, rz = rx] = part.size;
+      r = Math.min(rx, ry, rz) - Math.hypot(dx, dy, dz);
+    } else if (part.kind === 'cyl') {
+      const [rTop, rBottom, h] = part.size;
+      r = Math.min(Math.min(rTop, rBottom) - Math.hypot(dx, dz), h / 2 - Math.abs(dy));
+    } else if (part.kind === 'taper') {
+      const [topW, topD, botW, botD, h] = part.size;
+      r = Math.min(
+        Math.min(topW, botW) / 2 - Math.abs(dx),
+        h / 2 - Math.abs(dy),
+        Math.min(topD, botD) / 2 - Math.abs(dz),
+      );
+    } else {
+      const [w, h, d] = part.size;
+      r = Math.min(w / 2 - Math.abs(dx), h / 2 - Math.abs(dy), d / 2 - Math.abs(dz));
+    }
+    if (r > best) best = r;
+  }
+  return Math.max(0, best);
+}
 
 /**
  * Pseudo-bone key for geometry baked into character space (feet on the ground)
@@ -1384,21 +1763,126 @@ const DETAIL_RANK = { far: 0, mid: 1, near: 2 };
  */
 export const ROOT_BONE_KEY = 'Root';
 
+/**
+ * A frustum box: `[topW, topD, botW, botD, height]`, centred on its own origin.
+ * Twelve triangles, no wasted caps-in-caps. This is what gives the figure real
+ * taper - shoulders wider than the waist, thigh wider than the knee, cranium
+ * wider than the jaw - for the same triangle count as a box.
+ */
+function taperedBoxGeometry([topW, topD, botW, botD, height]) {
+  const hy = height / 2;
+  const tw = topW / 2;
+  const td = topD / 2;
+  const bw = botW / 2;
+  const bd = botD / 2;
+  // 8 corners: bottom 0-3 (front-left, front-right, back-right, back-left), top 4-7
+  const c = [
+    [-bw, -hy, bd], [bw, -hy, bd], [bw, -hy, -bd], [-bw, -hy, -bd],
+    [-tw, hy, td], [tw, hy, td], [tw, hy, -td], [-tw, hy, -td],
+  ];
+  const quads = [
+    [0, 1, 5, 4], // front  +z
+    [1, 2, 6, 5], // right  +x
+    [2, 3, 7, 6], // back   -z
+    [3, 0, 4, 7], // left   -x
+    [4, 5, 6, 7], // top    +y
+    [3, 2, 1, 0], // bottom -y
+  ];
+  const position = new Float32Array(quads.length * 6 * 3);
+  const normal = new Float32Array(quads.length * 6 * 3);
+  let v = 0;
+  const ax = new THREE.Vector3();
+  const bx = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const p = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  for (const quad of quads) {
+    for (let i = 0; i < 4; i += 1) p[i].fromArray(c[quad[i]]);
+    ax.copy(p[1]).sub(p[0]);
+    bx.copy(p[3]).sub(p[0]);
+    n.crossVectors(ax, bx).normalize();
+    for (const [i0, i1, i2] of [[0, 1, 2], [0, 2, 3]]) {
+      for (const idx of [i0, i1, i2]) {
+        position[v * 3] = p[idx].x;
+        position[v * 3 + 1] = p[idx].y;
+        position[v * 3 + 2] = p[idx].z;
+        normal[v * 3] = n.x;
+        normal[v * 3 + 1] = n.y;
+        normal[v * 3 + 2] = n.z;
+        v += 1;
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  return geometry;
+}
+
+/**
+ * A box sheared along +Z by `shear` over its height: the nose, the brow ridge
+ * and the toe of a shoe are all this shape.
+ */
+function wedgeGeometry([w, h, d, shear]) {
+  const geometry = new THREE.BoxGeometry(w, h, d).toNonIndexed();
+  const position = geometry.attributes.position;
+  for (let i = 0; i < position.count; i += 1) {
+    const y = position.getY(i);
+    position.setZ(i, position.getZ(i) + (y / h) * shear * 2);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function makePartGeometry(part, radialSegments) {
-  const [a, b, c] = part.size;
   let geometry;
   if (part.kind === 'cyl') {
+    const [a, b, c] = part.size;
     geometry = new THREE.CylinderGeometry(a, b, c, radialSegments, 1, false);
+  } else if (part.kind === 'taper') {
+    return taperedBoxGeometry(part.size);
+  } else if (part.kind === 'wedge') {
+    return wedgeGeometry(part.size);
+  } else if (part.kind === 'ball') {
+    // A joint filler. Its whole job is to close the wedge between two limbs at
+    // any angle, so it is sized, not admired: an octahedron (8 triangles) does
+    // that as well as a sphere anywhere past arm's length, and the near tier
+    // spends a real sphere only where the viewer can count the facets.
+    const [rx, ry = rx, rz = rx] = part.size;
+    geometry = radialSegments >= 7
+      ? new THREE.SphereGeometry(1, 7, 5)
+      : new THREE.OctahedronGeometry(1, 0);
+    geometry.scale(rx, ry, rz);
   } else {
+    const [a, b, c] = part.size;
     geometry = new THREE.BoxGeometry(a, b, c);
   }
-  return geometry.toNonIndexed();
+  return geometry.getIndex() ? geometry.toNonIndexed() : geometry;
+}
+
+/**
+ * Baked cavity shading, written into the geometry's own colour attribute.
+ *
+ * three multiplies the vertex colour, the instance colour and the material
+ * colour together, so this rides the existing per-agent palette for free: no
+ * extra draw call, no extra material, no texture. It buys the two things a
+ * flat-lit low-poly figure most lacks - a dark side under every downward face,
+ * and a dark seam where a limb meets the body - which is most of the difference
+ * between "a person in shade" and "a cut-out pasted on the wall".
+ */
+function cavityShade(part, y, halfHeight, ny) {
+  const strength = Number.isFinite(part.ao) ? part.ao : 0.25;
+  // Downward-facing surfaces never see the sky.
+  const skyward = 1 - 0.30 * Math.max(0, -ny);
+  // The top of a limb is the armpit / crotch / collar side of the joint.
+  const along = halfHeight > 1e-6 ? clamp((y + halfHeight) / (2 * halfHeight), 0, 1) : 0.5;
+  const cavity = 1 - strength * along * along;
+  return clamp(skyward * cavity, 0.25, 1);
 }
 
 /**
  * Concatenate non-indexed geometries. Written inline instead of importing
  * `three/addons/utils/BufferGeometryUtils.js` because addons are off-limits on
- * this renderer path and this is twenty lines.
+ * this renderer path and this is thirty lines.
  */
 function mergeParts(chunks, { skinning = true } = {}) {
   let total = 0;
@@ -1406,6 +1890,7 @@ function mergeParts(chunks, { skinning = true } = {}) {
   const position = new Float32Array(total * 3);
   const normal = new Float32Array(total * 3);
   const uv = new Float32Array(total * 2);
+  const color = new Float32Array(total * 3);
   const skinIndex = new Uint16Array(total * 4);
   const skinWeight = new Float32Array(total * 4);
   let v = 0;
@@ -1413,6 +1898,7 @@ function mergeParts(chunks, { skinning = true } = {}) {
     position.set(chunk.position, v * 3);
     normal.set(chunk.normal, v * 3);
     uv.set(chunk.uv, v * 2);
+    color.set(chunk.color, v * 3);
     skinIndex.set(chunk.skinIndex, v * 4);
     skinWeight.set(chunk.skinWeight, v * 4);
     v += chunk.count;
@@ -1421,6 +1907,7 @@ function mergeParts(chunks, { skinning = true } = {}) {
   geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
   if (skinning) {
     geometry.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
     geometry.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
@@ -1436,22 +1923,33 @@ function bakePart(part, { origin, boneIndex = 0, radialSegments = 6 }) {
   const position = Float32Array.from(source.attributes.position.array);
   const normal = Float32Array.from(source.attributes.normal.array);
   const uv = new Float32Array(count * 2);
+  const color = new Float32Array(count * 3);
   const skinIndex = new Uint16Array(count * 4);
   const skinWeight = new Float32Array(count * 4);
   const slot = PALETTE_SLOTS.indexOf(part.slot);
   const u = (slot + 0.5) / PALETTE_SLOTS.length;
   const [ox, oy, oz] = origin;
+  // Half-height of the part in its own local frame, for the cavity gradient.
+  let halfHeight = 0;
   for (let i = 0; i < count; i += 1) {
+    const y = Math.abs(position[i * 3 + 1]);
+    if (y > halfHeight) halfHeight = y;
+  }
+  for (let i = 0; i < count; i += 1) {
+    const shade = cavityShade(part, position[i * 3 + 1], halfHeight, normal[i * 3 + 1]);
     position[i * 3] += ox;
     position[i * 3 + 1] += oy;
     position[i * 3 + 2] += oz;
     uv[i * 2] = u;
     uv[i * 2 + 1] = 0.5;
+    color[i * 3] = shade;
+    color[i * 3 + 1] = shade;
+    color[i * 3 + 2] = shade;
     skinIndex[i * 4] = boneIndex;
     skinWeight[i * 4] = 1;
   }
   source.dispose();
-  return { count, position, normal, uv, skinIndex, skinWeight };
+  return { count, position, normal, uv, color, skinIndex, skinWeight };
 }
 
 /**
@@ -1459,10 +1957,16 @@ function bakePart(part, { origin, boneIndex = 0, radialSegments = 6 }) {
  * reused by every skinned actor; only the skeleton and the palette texture are
  * per-agent.
  */
-export function buildPedestrianBodyGeometry({ radialSegments = 6, wardrobe = null } = {}) {
-  const parts = wardrobe
-    ? [...BODY_PARTS, ...WARDROBE_PARTS.filter((part) => wardrobe[part.key])]
-    : BODY_PARTS;
+export function buildPedestrianBodyGeometry({
+  radialSegments = 7,
+  wardrobe = null,
+  detail = 'near',
+} = {}) {
+  const wanted = DETAIL_RANK[detail] ?? 2;
+  const parts = [
+    ...BODY_PARTS,
+    ...(wardrobe ? WARDROBE_PARTS.filter((part) => wardrobe[part.key]) : []),
+  ].filter((part) => (DETAIL_RANK[part.detail] ?? 1) <= wanted);
   const chunks = parts.map((part) => {
     const bone = restBoneWorld(part.bone);
     return bakePart(part, {
@@ -1489,6 +1993,7 @@ export function buildWardrobeGeometries({
 } = {}) {
   const wanted = DETAIL_RANK[detail] ?? 1;
   const out = new Map();
+  const buckets = new Map();
   for (const part of WARDROBE_PARTS) {
     if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
     const bone = mergeToRoot ? ROOT_BONE_KEY : part.bone;
@@ -1503,10 +2008,18 @@ export function buildWardrobeGeometries({
     } else {
       origin = part.offset;
     }
-    const geometry = mergeParts([bakePart(part, { origin, radialSegments })], { skinning: false });
     const key = `${part.key}|${bone}|${part.group}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { flag: part.key, bone, group: part.group, chunks: [] };
+      buckets.set(key, bucket);
+    }
+    bucket.chunks.push(bakePart(part, { origin, radialSegments }));
+  }
+  for (const [key, bucket] of buckets) {
+    const geometry = mergeParts(bucket.chunks, { skinning: false });
     geometry.name = `pedestrian-wardrobe-${key.replace(/\|/g, '-')}`;
-    out.set(key, { flag: part.key, bone, group: part.group, geometry });
+    out.set(key, { flag: bucket.flag, bone: bucket.bone, group: bucket.group, geometry });
   }
   return out;
 }
@@ -1601,6 +2114,12 @@ export function createPedestrianRig({ geometry, variation, clips, material = nul
     ? material.clone()
     : new THREE.MeshStandardMaterial({ roughness: 0.86, metalness: 0.0 });
   actorMaterial.map = palette;
+  // The geometry carries a baked cavity term in its colour attribute; three
+  // multiplies it into the palette texture, so a figure has a shaded side even
+  // where the scene lighting is flat. Without this a crowd standing in shade
+  // reads as cut-outs pasted on the wall.
+  actorMaterial.vertexColors = true;
+  actorMaterial.userData.envClass = 'fabric';
   actorMaterial.needsUpdate = true;
 
   const mesh = new THREE.SkinnedMesh(geometry, actorMaterial);
@@ -1910,7 +2429,9 @@ const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
 const _q4 = new THREE.Quaternion();
+const _q5 = new THREE.Quaternion();
 const _e1 = new THREE.Euler(0, 0, 0, 'XYZ');
+const _e2 = new THREE.Euler(0, 0, 0, 'XYZ');
 const _m1 = new THREE.Matrix4();
 
 /**
@@ -1944,6 +2465,19 @@ function applyPose(rig, pose, clipDurations, footIK) {
     actions.brisk.time = pose.gaitPhase * clipDurations.brisk;
   }
   rig.mixer.update(0);
+
+  // Per-identity locomotion styling, on top of the shared clip. Runs before the
+  // activity overlay so a stationary agent's folded arms still win, and before
+  // the foot IK so it can never move a planted foot.
+  if (pose.variation) {
+    applyLocomotionStyle(
+      rig.byName,
+      pose.variation,
+      pose.gaitPhase,
+      pose.blend ? clamp(pose.blend.walk + pose.blend.brisk, 0, 1) : 0,
+      pose.idleTime,
+    );
+  }
 
   // Activity overlay. The mixer has just written a locomotion pose; this
   // slerps the bones the activity owns toward what the person is DOING, with a
@@ -2026,10 +2560,22 @@ function createInstancedBand(name, geometries, capacity, { castShadow }) {
     let material = materials.get(entry.group);
     if (!material) {
       material = new THREE.MeshStandardMaterial({
-        roughness: entry.group === 'shoes' ? 0.7 : 0.88,
+        roughness: entry.group === 'shoes' ? 0.62 : entry.group === 'skin' ? 0.74 : 0.88,
         metalness: 0,
         color: 0xffffff,
+        // Baked cavity shading (geometry colour attribute) x per-agent palette
+        // (instance colour). three multiplies both into the diffuse term.
+        vertexColors: true,
       });
+      material.envMapIntensity = 1;
+      // Hook into the renderer's per-class environment grading. Without an
+      // `envClass` these materials are invisible to `applyEnvironmentGrading`,
+      // so a crowd keeps dry-weather reflectance on a wet street and misses the
+      // per-class intensity the lighting owner grades everything else with -
+      // which is most of why figures standing in shade read as cut-outs.
+      // `fabric` is the closest declared class for clothing, hair and skin: low
+      // reflectance with a real wetness response.
+      material.userData.envClass = 'fabric';
       material.name = `pedestrian-${entry.group}`;
       materials.set(entry.group, material);
     }
@@ -2101,7 +2647,9 @@ export function createCrowdPresentation(options = {}) {
   let groundSampler = typeof sampleGround === 'function' ? sampleGround : null;
   let sunElevation = sunElevationDeg;
 
-  const bodyGeometry = buildPedestrianBodyGeometry();
+  // The skinned band is the <= 28 m band: it is the one a reviewer walks up to,
+  // so it pays for hands, jaw, brow, nose, eyes and shoulder caps.
+  const bodyGeometry = buildPedestrianBodyGeometry({ detail: 'near', radialSegments: 7 });
   // One skinned geometry per distinct wardrobe silhouette, built on demand and
   // shared by every actor wearing it. There are at most 2^7 silhouettes and
   // only `caps.skinned` actors, so this cache is small and bounded.
@@ -2111,12 +2659,13 @@ export function createCrowdPresentation(options = {}) {
     if (key === 0) return bodyGeometry;
     let geometry = bodyGeometryCache.get(key);
     if (!geometry) {
-      geometry = buildPedestrianBodyGeometry({ wardrobe: wardrobe.flags });
+      geometry = buildPedestrianBodyGeometry({ wardrobe: wardrobe.flags, detail: 'near', radialSegments: 7 });
       bodyGeometryCache.set(key, geometry);
     }
     return geometry;
   }
-  const skinnedTemplate = material || new THREE.MeshStandardMaterial({ roughness: 0.86, metalness: 0 });
+  const skinnedTemplate = material
+    || new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0, vertexColors: true });
 
   const midBand = createInstancedBand(
     'pedestrian-band-mid',
@@ -2126,7 +2675,7 @@ export function createCrowdPresentation(options = {}) {
   );
   const farBand = createInstancedBand(
     'pedestrian-band-far',
-    buildInstancedPartGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true }),
+    buildInstancedPartGeometries({ detail: 'far', radialSegments: 3, mergeToRoot: true }),
     Math.max(1, caps.far),
     { castShadow: false },
   );
@@ -2141,7 +2690,7 @@ export function createCrowdPresentation(options = {}) {
   );
   const farWardrobe = createInstancedBand(
     'pedestrian-wardrobe-far',
-    buildWardrobeGeometries({ detail: 'far', radialSegments: 4, mergeToRoot: true }),
+    buildWardrobeGeometries({ detail: 'far', radialSegments: 3, mergeToRoot: true }),
     Math.max(1, caps.far),
     { castShadow: false },
   );
@@ -2216,6 +2765,7 @@ export function createCrowdPresentation(options = {}) {
     scaleXZ: 1, scaleY: 1, blend: null, gaitPhase: 0, idleTime: 0,
     grounding: null, footEuler, lift: 0.1,
     activity: null, activityPose: null, activityWeight: 0, seated: false, rootDrop: 0,
+    variation: null,
   };
   // Reused overlay buffers: `evaluateActivityPose` writes into them, so the
   // per-frame activity work allocates nothing.
@@ -2376,7 +2926,11 @@ export function createCrowdPresentation(options = {}) {
 
       const legLength = variation.legLength;
       const speed = agent.speed;
-      const stride = strideLengthForSpeed(speed, legLength) / Math.max(0.5, variation.cadenceBias);
+      // One stride value drives BOTH the phase odometer and the foot placement,
+      // so scaling it per identity changes the shape of the walk and can never
+      // introduce skating: the contact maths cancels `stride` exactly.
+      const stride = strideLengthForSpeed(speed, legLength)
+        * variation.strideScale / Math.max(0.5, variation.cadenceBias);
       const duty = dutyFactorForSpeed(speed);
       const lift = swingLiftForSpeed(speed) * variation.heightScale;
 
@@ -2450,6 +3004,7 @@ export function createCrowdPresentation(options = {}) {
       pose.blend = blend;
       pose.gaitPhase = record.phase;
       pose.idleTime = record.idleTime;
+      pose.variation = variation;
       pose.grounding = grounding;
       pose.lift = Math.max(1e-4, lift);
       footEuler.set(grounding.slopePitch, pose.yaw, 0, 'YXZ');
@@ -2499,7 +3054,11 @@ export function createCrowdPresentation(options = {}) {
           const bob = blend.idle > 0.9
             ? 0
             : Math.sin(record.phase * TAU * 2) * 0.016 * variation.heightScale;
-          _obj.position.set(agent.x, grounding.rootY + bob - pose.rootDrop, agent.z);
+          // The far band is one rigid figure baked standing, so a seated agent
+          // gets NO root drop here: dropping it would sink a standing silhouette
+          // 40 cm into the pavement, which is far more visible at 200 m than the
+          // fact that somebody is drawn upright.
+          _obj.position.set(agent.x, grounding.rootY + bob, agent.z);
           _obj.rotation.set(0, pose.yaw, 0);
           _obj.scale.set(pose.scaleXZ, pose.scaleY, pose.scaleXZ);
           _obj.updateMatrix();
