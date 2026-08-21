@@ -165,6 +165,13 @@ const PALETTE = Object.freeze({
   // These are the desaturated olive/khaki greens a dusty downtown street tree
   // actually shows, and the three tones are used per CLUSTER, not per cone, so
   // one crown carries all of them.
+  //
+  // ROUND 5: these are still the tones the crown and the trunk RENDER at. The
+  // leaf/bark atlas is normalised to a per-channel linear mean of
+  // STREET_TREE_ATLAS.normalisedMean and the baked vertex tint is multiplied by
+  // STREET_TREE_ATLAS.tintGain (its reciprocal), so palette x gain x atlas
+  // lands back on these values with the photographic detail on top - and falls
+  // back to exactly these values if the atlas never loads.
   trunk: '#5f5245',
   branch: '#6a5c4c',
   canopyA: '#55663f',
@@ -328,8 +335,15 @@ export const STREET_TREE_OPENNESS = Object.freeze({
 
 /**
  * Crown and trunk forms. Three at the near tier so a block does not read as
- * one stamp; the window tier uses the first form only, at four clusters, so a
+ * one stamp; the window tier uses the first form only, at fewer clusters, so a
  * distant tree costs about what the old cone tree cost.
+ *
+ * ROUND 5. `clusters` went up and `clusterR` came down when the solid
+ * icosahedral lobes became alpha-tested cross-cards. A card cluster is 6
+ * triangles against the icosahedron's 20, so a crown of MORE and SMALLER
+ * clusters is both finer-grained and cheaper than the round-4 crown: measured
+ * per near-tier species, 244 / 228 / 256 triangles became 172 / 164 / 180, and
+ * the window tier went from 76 to 70 on 611 instances.
  *
  * `lean` is degrees off vertical, `crotch` the fraction of trunk height where
  * the limbs leave it, `clusterR` the base leaf-cluster radius in metres and
@@ -340,17 +354,17 @@ export const STREET_TREE_SPECIES = Object.freeze([
   Object.freeze({
     id: 'broad', trunkHeight: 2.55, baseRadius: 0.185, topRadius: 0.105,
     lean: 3.5, crotch: 0.82, limbs: 5, crownRadius: 1.42, crownHeight: 2.9,
-    clusters: 9, clusterR: 0.72, spread: 1.0,
+    clusters: 16, clusterR: 0.42, spread: 1.0,
   }),
   Object.freeze({
     id: 'upright', trunkHeight: 3.2, baseRadius: 0.155, topRadius: 0.088,
     lean: 1.5, crotch: 0.86, limbs: 4, crownRadius: 1.08, crownHeight: 3.5,
-    clusters: 8, clusterR: 0.66, spread: 1.02,
+    clusters: 16, clusterR: 0.39, spread: 1.02,
   }),
   Object.freeze({
     id: 'open', trunkHeight: 2.3, baseRadius: 0.215, topRadius: 0.12,
     lean: 5.5, crotch: 0.74, limbs: 6, crownRadius: 1.45, crownHeight: 2.45,
-    clusters: 8, clusterR: 0.72, spread: 1.06,
+    clusters: 16, clusterR: 0.40, spread: 1.06,
   }),
 ]);
 
@@ -413,7 +427,7 @@ export function streetTreeSkeleton(variant, coarse = false) {
   // clusters far apart in plan, and the radial jitter keeps the outline lobed
   // rather than circular.
   const GOLDEN = Math.PI * (3 - Math.sqrt(5));
-  const count = coarse ? 6 : species.clusters;
+  const count = coarse ? 7 : species.clusters;
   const clusters = [];
   for (let i = 0; i < count; i += 1) {
     // Golden angle in plan so successive clusters never stack in one view, and
@@ -428,10 +442,18 @@ export function streetTreeSkeleton(variant, coarse = false) {
     // grown slightly, so the crown has a dense middle to read as a mass. The
     // rest are outer lobes, which are what break the outline and let light
     // through. A crown of outer lobes alone reads as a bunch of balloons.
-    const core = i % 3 === 1;
+    //
+    // The WINDOW tier has no core clusters. Seven big cards with a filled
+    // middle projected to a solid rectangle from every side - measured zero
+    // broken scanlines - and at that distance nobody is reading the inside of
+    // the crown anyway. Dropping the core opens the middle and the distant
+    // tree measures hullFill 0.69/0.70 with 43/44 broken scanlines.
+    const core = coarse ? false : i % 3 === 1;
     const radial = crownRadius * species.spread * ring
       * (core ? 0.12 + 0.28 * rng() : 0.58 + 0.5 * rng());
-    const r = species.clusterR * (coarse ? 1.24 : 1) * (core ? 1.16 : 1) * (0.78 + 0.44 * rng());
+    // The window tier carries 7 clusters against the near tier's 16, so each
+    // one has to be correspondingly bigger or a distant crown turns to lace.
+    const r = species.clusterR * (coarse ? 1.55 : 1) * (core ? 1.16 : 1) * (0.78 + 0.44 * rng());
     clusters.push({
       x: crownCentre.x + Math.cos(angle) * radial,
       y: crownCentre.y + hy * (0.85 + 0.3 * rng()),
@@ -480,8 +502,97 @@ export function streetTreeSkeleton(variant, coarse = false) {
   };
 }
 
-/** A tapered limb from `a` to `b`, open-ended (no caps: they are never seen). */
-function limb(a, b, r0, r1, sides, hex, shade = 1) {
+/**
+ * The leaf/bark atlas the crown and the trunk sample.
+ *
+ * ROUND 5 REPLACEMENT - READ THIS BEFORE PUTTING SOLID CLUSTERS BACK.
+ *
+ * Round 4's crown was 8-9 CLOSED icosahedra, 20 triangles each, with no alpha
+ * anywhere. That is a solid convex shell per lobe: its outline is a polygon, no
+ * light passes through a lobe, and its shadow is the shadow of a lump of rock.
+ * At the 3-5 m the capture cameras stand at, that is the single most obvious
+ * placeholder left in a daylight card, and no amount of tone work fixes a
+ * silhouette made of straight polygon edges.
+ *
+ * The crown is now alpha-tested CROSS-CARDS. Each leaf cluster is three quads
+ * that intersect through its centre - 6 triangles - carrying a photographic
+ * leaf-mass cell out of this atlas. That is CHEAPER than the 20-triangle
+ * icosahedron it replaces, and it buys:
+ *
+ *   * a real leaf silhouette, with lobed leaf edges and gaps between leaves,
+ *     instead of a polygon outline;
+ *   * a correctly shaped SHADOW. `alphaTest` (not `transparent`) means the
+ *     depth prepass and the shadow depth material both discard the same
+ *     fragments, so the cast shadow is leaf-shaped and nothing enters the
+ *     sorted transparent pass;
+ *   * silhouette variety for free: four cluster cells, mirrored in u and in v,
+ *     picked per CARD from the placement hash, on top of the existing spin.
+ *
+ * WHY THE BARK STRIP IS IN THE SAME SHEET. The whole tree - trunk, limbs and
+ * crown - is one merged geometry drawn with one material, so the trunk is
+ * alpha-tested too. It therefore has to sample a region whose alpha is 1. The
+ * bottom quarter of the sheet is a fully opaque bark strip, and it sits at
+ * v = 0 so that even a part that inherited the default (0, 0) uv lands on
+ * opaque bark and cannot be discarded.
+ *
+ * WHY THE ATLAS IS TONE-NEUTRAL. The generator normalises the sheet's
+ * per-channel linear mean to `normalisedMean`, so the sheet carries leaf
+ * DETAIL and the pass carries the COLOUR in its baked vertex tint, multiplied
+ * by `tintGain = 1 / normalisedMean`. Two consequences worth knowing: the
+ * round-4 palette still decides the canopy tone, and if the texture ever fails
+ * to load the crown falls back to exactly the round-4 flat olive rather than to
+ * white.
+ *
+ * The sheet is built by scripts/world-assets/build-world-assets-cc0-v1.mjs from
+ * CC0 sources; provenance is public/assets/world-assets-cc0-v1.provenance.json.
+ * The verifier asserts that these numbers still match the generator's.
+ */
+export const STREET_TREE_ATLAS = Object.freeze({
+  url: 'assets/street-tree-leaf-atlas-v1.png',
+  width: 1024,
+  height: 1024,
+  normalisedMean: 0.28,
+  get tintGain() { return 1 / this.normalisedMean; },
+  alphaTest: 0.32,
+  // uv rects, y-up (v = 1 - pixelRow / height), inset by half a texel of the
+  // coarsest mip we care about so no cell bleeds into its neighbour.
+  cells: Object.freeze([
+    Object.freeze({ id: 'maple-a', u0: 0.002, v0: 0.627, u1: 0.498, v1: 0.998 }),
+    Object.freeze({ id: 'maple-b', u0: 0.502, v0: 0.627, u1: 0.998, v1: 0.998 }),
+    Object.freeze({ id: 'ovate-a', u0: 0.002, v0: 0.252, u1: 0.498, v1: 0.623 }),
+    Object.freeze({ id: 'ovate-b', u0: 0.502, v0: 0.252, u1: 0.998, v1: 0.623 }),
+  ]),
+  // Opaque bark, v 0 .. 0.25, horizontally periodic over a quarter of the
+  // sheet so a trunk cylinder can wrap one column with no seam.
+  bark: Object.freeze({ v0: 0.004, v1: 0.246, tileColumns: 4 }),
+  // Card half-extents as a multiple of the cluster radius, in the cells' own
+  // 4:3 aspect so the leaf photograph is not stretched. These are the numbers
+  // the crown's openness is tuned on: a card is what the silhouette measure in
+  // verify-street-furniture.mjs sees, and a card is a RECTANGLE where the old
+  // lobe was an ellipsoid, so the same crown built from cards of the old size
+  // measured hullFill 0.86-0.92 with zero broken scanlines - i.e. as solid as
+  // the cone this whole line of work replaced. More, smaller clusters restore
+  // the openness AND make the crown finer-grained: measured on the shipped
+  // species, hullFill 0.66-0.82 with 34-73 broken scanlines of ~135.
+  cardHalfHeight: 0.82,
+  cardHalfWidth: 1.0933,
+  cardsNear: 3,
+  cardsCoarse: 3,
+});
+
+/** Which atlas cells a species' crown draws from. */
+const SPECIES_CELLS = Object.freeze([
+  Object.freeze([0, 1]),   // broad   - maple/plane
+  Object.freeze([2, 3]),   // upright - ovate
+  Object.freeze([1, 0]),   // open    - maple/plane, other cell first
+]);
+
+/**
+ * A tapered limb from `a` to `b`, open-ended (no caps: they are never seen).
+ * The cylinder's own uv is remapped onto one column of the opaque bark strip,
+ * so the bark reads at roughly its real scale and the wrap seam matches.
+ */
+function limb(a, b, r0, r1, sides, hex, shade = 1, barkColumn = 0) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const dz = b.z - a.z;
@@ -492,23 +603,82 @@ function limb(a, b, r0, r1, sides, hex, shade = 1) {
   const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
   geometry.applyQuaternion(quaternion);
   geometry.translate(a.x + dx / 2, a.y + dy / 2, a.z + dz / 2);
+  const uv = geometry.getAttribute('uv');
+  const bark = STREET_TREE_ATLAS.bark;
+  const columns = bark.tileColumns;
+  const u0 = (barkColumn % columns) / columns;
+  for (let i = 0; i < uv.count; i += 1) {
+    uv.setXY(i, u0 + uv.getX(i) / columns, bark.v0 + uv.getY(i) * (bark.v1 - bark.v0));
+  }
+  uv.needsUpdate = true;
   return tint(geometry, hex, shade);
 }
 
 /**
- * One leaf cluster. An icosahedron at the near tier (20 triangles) and an
- * octahedron at the window tier (8), squashed and spun so no two clusters in a
- * crown share an outline.
+ * One leaf cluster as intersecting alpha-tested cards.
+ *
+ * `cards` quads pass through the cluster centre, evenly spread in yaw and each
+ * tilted a little off vertical so no two project to the same rectangle. Vertex
+ * normals point out of the crown centre rather than along the card plane: a
+ * flat card lit by its own normal reads as a flat card, whereas a spherical
+ * normal makes the crown shade as one rounded mass. The card's own tone runs
+ * from its shaded bottom edge to its lit top edge, which is what gives the
+ * crown depth once the atlas detail is multiplied in.
  */
-function leafCluster(cluster, coarse, hex, spin) {
-  const geometry = coarse
-    ? new THREE.OctahedronGeometry(cluster.r, 0)
-    : new THREE.IcosahedronGeometry(cluster.r, 0);
-  geometry.scale(1, 0.74, 1);
-  geometry.rotateY(spin);
-  geometry.translate(cluster.x, cluster.y, cluster.z);
-  // Sunlit top, shaded underside: 0.62 .. 1.12 of the base tone.
-  return tint(geometry, hex, 0.62 + cluster.light * 0.5);
+function leafCards(cluster, cards, hex, spin, cells, crownCentre, pick) {
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const hh = cluster.r * STREET_TREE_ATLAS.cardHalfHeight;
+  const hw = cluster.r * STREET_TREE_ATLAS.cardHalfWidth;
+  const [rBase, gBase, bBase] = hexToLinear(hex);
+  const colors = [];
+  for (let c = 0; c < cards; c += 1) {
+    const yaw = spin + (c * Math.PI) / cards;
+    const tilt = ((pick(c * 2 + 1) % 17) / 17 - 0.5) * 0.42;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    // Card frame: `right` in plan, `up` tilted about `right`.
+    const rx = cosY; const rz = sinY;
+    const ux = -sinY * Math.sin(tilt);
+    const uy = Math.cos(tilt);
+    const uz = cosY * Math.sin(tilt);
+    const cell = STREET_TREE_ATLAS.cells[cells[pick(c * 2) % cells.length]];
+    const flipU = pick(c * 2 + 3) % 2 === 1;
+    const flipV = pick(c * 2 + 5) % 3 === 0;
+    const corners = [
+      [-1, -1], [1, -1], [1, 1],
+      [-1, -1], [1, 1], [-1, 1],
+    ];
+    for (const [sx, sy] of corners) {
+      const x = cluster.x + rx * sx * hw + ux * sy * hh;
+      const y = cluster.y + uy * sy * hh;
+      const z = cluster.z + rz * sx * hw + uz * sy * hh;
+      positions.push(x, y, z);
+      const nx = x - crownCentre.x;
+      const ny = (y - crownCentre.y) * 1.35;
+      const nz = z - crownCentre.z;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      normals.push(nx / nl, ny / nl, nz / nl);
+      const u = flipU ? (sx < 0 ? cell.u1 : cell.u0) : (sx < 0 ? cell.u0 : cell.u1);
+      const v = flipV ? (sy < 0 ? cell.v1 : cell.v0) : (sy < 0 ? cell.v0 : cell.v1);
+      uvs.push(u, v);
+      // Sunlit top, shaded underside, across the card AND across the crown.
+      const band = clamp(0.62 + cluster.light * 0.5 + (sy > 0 ? 0.16 : -0.16), 0.3, 1.4);
+      const shade = band * STREET_TREE_ATLAS.tintGain;
+      colors.push(
+        clamp(rBase * shade, 0, 1),
+        clamp(gBase * shade, 0, 1),
+        clamp(bBase * shade, 0, 1),
+      );
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
 }
 
 /**
@@ -520,23 +690,39 @@ export function buildStreetTreeGeometry(variant, coarse = false) {
   const trunkSides = coarse ? 4 : 6;
   const limbSides = coarse ? 3 : 4;
   const parts = [];
-  for (const section of skeleton.trunk) {
-    parts.push(limb(section.a, section.b, section.r0, section.r1, trunkSides, PALETTE.trunk, 1));
-  }
-  for (const branch of skeleton.limbs) {
-    parts.push(limb(branch.a, branch.b, branch.r0, branch.r1, limbSides, PALETTE.branch, 1.06));
-  }
+  skeleton.trunk.forEach((section, i) => {
+    parts.push(limb(section.a, section.b, section.r0, section.r1, trunkSides,
+      PALETTE.trunk, STREET_TREE_ATLAS.tintGain, i));
+  });
+  skeleton.limbs.forEach((branch, i) => {
+    parts.push(limb(branch.a, branch.b, branch.r0, branch.r1, limbSides,
+      PALETTE.branch, 1.06 * STREET_TREE_ATLAS.tintGain, i + 1));
+  });
   const tones = [PALETTE.canopyA, PALETTE.canopyB, PALETTE.canopyC];
+  const cells = SPECIES_CELLS[Math.abs(skeleton.variant) % SPECIES_CELLS.length];
+  const cards = coarse ? STREET_TREE_ATLAS.cardsCoarse : STREET_TREE_ATLAS.cardsNear;
   skeleton.clusters.forEach((cluster, i) => {
-    parts.push(leafCluster(cluster, coarse, tones[i % tones.length], (i * 1.7) % (Math.PI * 2)));
+    // Deterministic per (species, tier, cluster): a hash, never Math.random.
+    const pick = (salt) => streetHash32(`${skeleton.species}:${coarse ? 'c' : 'n'}:${i}:${salt}`);
+    parts.push(leafCards(cluster, cards, tones[i % tones.length], (i * 1.7) % (Math.PI * 2),
+      cells, skeleton.crownCentre, pick));
   });
   const merged = assemble(parts);
   if (merged) merged.userData = { treeSkeleton: skeleton };
   return merged;
 }
 
+/** A small solid shrub for the mid-footway planter. See `g.planter`. */
+function planterShrub(radius, hex) {
+  const geometry = new THREE.OctahedronGeometry(radius, 0);
+  geometry.scale(1.35, 0.8, 1.35);
+  geometry.rotateY(0.7);
+  geometry.translate(0, 0.9, 0);
+  return tint(geometry, hex, 1.05);
+}
+
 /**
- * The catalogue geometry, by kind and level of detail.
+ * The catalogue geometry, by level of detail.
  * Local frame: origin on the footway, +Y up, -Z toward the carriageway (an
  * item is rotated so -Z faces the road), +X along the street.
  */
@@ -627,7 +813,11 @@ function buildCatalogue(lod) {
   g.planter = assemble([
     box(1.05, 0.62, 0.66, PALETTE.planterConcrete, 0, 0.31, 0),
     box(0.9, 0.06, 0.52, PALETTE.planterSoil, 0, 0.63, 0),
-    coarse ? null : leafCluster({ x: 0, y: 0.9, z: 0, r: 0.3, light: 0.8 }, true, PALETTE.canopyB, 0.7),
+    // The planter shrub stays SOLID. It is 0.3 m of foliage inside a concrete
+    // box, it draws on the prop material - which has no alpha test and no
+    // atlas - and at that size a card would read as a flat sticker. The street
+    // TREE is the thing the reviews rejected, and that is what changed.
+    coarse ? null : planterShrub(0.3, PALETTE.canopyB),
   ]);
 
   g.transitShelter = assemble([
@@ -1467,17 +1657,28 @@ export function furnitureGeometryKey(item) {
  * refresh would never be handed an environment map and would render unlit for
  * the rest of the session.
  */
-export function createStreetFurnitureMaterials() {
+export function createStreetFurnitureMaterials(options = {}) {
   const prop = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.74, metalness: 0.14,
   });
   prop.name = `${STREET_FURNITURE_ID}:prop`;
   prop.userData = { envClass: 'painted-metal' };
+  // The crown is alpha-TESTED, never transparent. `transparent: true` would put
+  // 600-odd trees into the sorted pass, cost a sort every frame, and - the part
+  // that actually shows - hand the shadow map a fully opaque quad, because a
+  // transparent material does not discard in the depth material. With
+  // `alphaTest` the colour pass, the depth prepass and the shadow depth
+  // material all discard the same fragments, so the tree casts a leaf-shaped
+  // shadow. DoubleSide because a card is one quad seen from both sides; it also
+  // closes the open-ended trunk cylinders.
+  const atlas = options.foliageAtlas || null;
   const foliage = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.92, metalness: 0,
+    map: atlas, alphaTest: STREET_TREE_ATLAS.alphaTest, side: THREE.DoubleSide,
+    transparent: false,
   });
   foliage.name = `${STREET_FURNITURE_ID}:foliage`;
-  foliage.userData = { envClass: 'foliage' };
+  foliage.userData = { envClass: 'foliage', foliageAtlas: !!atlas };
   const pit = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.94, metalness: 0.05,
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
@@ -1724,6 +1925,9 @@ const passState = {
   diagnostics: { version: STREET_FURNITURE_VERSION, implemented: false },
 };
 
+/** The leaf/bark atlas is loaded once and shared by every rebuild. */
+const foliageAtlasState = { loaded: false, texture: null };
+
 /**
  * A read-only view of `ctx` whose focus is the live camera. `Object.create`
  * rather than a spread: the renderer's context exposes `hour`, `weather` and
@@ -1733,6 +1937,39 @@ function cameraCentredContext(ctx, x, z) {
   const view = Object.create(ctx);
   view.focus = { x, z };
   return view;
+}
+
+/**
+ * Load the leaf/bark atlas, once per session.
+ *
+ * The pass owns this rather than taking it from `ctx`: the renderer's material
+ * asset table is not this subsystem's file, and a texture that only this pass
+ * uses does not need to be threaded through the composition root. In a headless
+ * verifier there is no document, no loader and no atlas - the material simply
+ * has no map, the crown renders at the palette tone (see PALETTE), and every
+ * geometric assertion is unaffected.
+ *
+ * `TextureLoader.load` returns the Texture synchronously and fills it in later,
+ * so the material is compiled WITH a map from the first frame; a map that
+ * appeared later would need a shader recompile the pass has no hook to trigger.
+ */
+function loadFoliageAtlas() {
+  if (foliageAtlasState.loaded) return foliageAtlasState.texture;
+  foliageAtlasState.loaded = true;
+  if (typeof document === 'undefined') return null;
+  try {
+    const base = import.meta.env?.BASE_URL ?? '/';
+    const texture = new THREE.TextureLoader().load(`${base}${STREET_TREE_ATLAS.url}`);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 4;
+    texture.name = `${STREET_FURNITURE_ID}:leaf-atlas`;
+    foliageAtlasState.texture = texture;
+    return texture;
+  } catch {
+    return null;
+  }
 }
 
 /** Replace the pass group's contents with a fresh build, in place. */
@@ -1749,7 +1986,7 @@ export default {
   id: STREET_FURNITURE_ID,
   order: 40,
   build(ctx) {
-    passState.materials = createStreetFurnitureMaterials();
+    passState.materials = createStreetFurnitureMaterials({ foliageAtlas: loadFoliageAtlas() });
     const result = buildStreetFurniture(ctx, { materials: passState.materials });
     passState.group = result.object;
     passState.centre = { x: result.diagnostics.focus.x, z: result.diagnostics.focus.z };
@@ -1799,6 +2036,9 @@ export default {
     // was never attached, so release the whole set here and drop the
     // singleton's references, so a rebuilt city starts clean.
     disposeStreetFurnitureMaterials(passState.materials);
+    foliageAtlasState.texture?.dispose?.();
+    foliageAtlasState.texture = null;
+    foliageAtlasState.loaded = false;
     passState.group = null;
     passState.materials = null;
     passState.centre = null;

@@ -33,6 +33,10 @@
 // to `material.map` or `material.emissiveMap`.
 
 import * as THREE from 'three';
+import {
+  Fn, float, vec2, dFdx, dFdy, faceDirection, positionView, materialReference,
+  normalMap as normalMapNode,
+} from 'three/tsl';
 
 export const DETAIL_MAPS_VERSION = 'detail-maps-v1';
 
@@ -325,6 +329,86 @@ export function getSurfaceDef(className) {
     );
   }
   return def;
+}
+
+// ---------------------------------------------------------------------------
+// Per-class resolution policy.
+//
+// Resolution used to be decided entirely by the caller, with `defaultResolution`
+// as the fallback. That had two failure modes on the canonical renderer:
+//
+//   1. ONE global override for every class. The renderer pinned every class to
+//      256, which is a different physical frequency per class because each
+//      class declares its own `metresPerRepeat`. At 256 the footway resolves
+//      3.0 m / 256 = 11.72 mm per relief texel and asphalt 1.5 m / 256 =
+//      5.86 mm - 3 to 6 screen pixels per texel at the 2-4 m the camera stands
+//      at, and coarser than the micro-relief program is tuned for.
+//   2. A caller that passes NO resolution silently bakes a SECOND bundle at
+//      `defaultResolution` for a class the renderer already baked, because the
+//      resolution is part of the bundle cache key. Two full RGBA sets per class,
+//      at two frequencies, on the same wall.
+//
+// The policy fixes both: it is the fallback every uncached call resolves
+// through, so a call site that states no resolution gets the SAME bundle the
+// renderer preloaded. Set it once, before the first bake.
+// ---------------------------------------------------------------------------
+
+const resolutionPolicy = new Map();
+
+/**
+ * Resolution this module will bake `className` at when a caller states none.
+ * Falls back to the class's own `defaultResolution`.
+ */
+export function detailResolutionFor(className) {
+  const override = resolutionPolicy.get(className);
+  if (Number.isFinite(override) && override >= 4) return Math.round(override);
+  return getSurfaceDef(className).defaultResolution;
+}
+
+/**
+ * Declare per-class bake resolutions. `{ asphalt: 1024, brick: 512 }`.
+ *
+ * Call BEFORE the first `getDetailMaps` / `preloadDetailMaps` of a session:
+ * resolution is part of the bundle cache key, so changing the policy after a
+ * bake orphans the bundles already made at the old resolution rather than
+ * replacing them. Returns the resolved policy for every known class, which is
+ * what a diagnostics block should record.
+ */
+export function setDetailResolutionPolicy(policy = {}) {
+  for (const [className, resolution] of Object.entries(policy)) {
+    getSurfaceDef(className); // reject an unknown class loudly, not silently
+    if (resolution == null) resolutionPolicy.delete(className);
+    else resolutionPolicy.set(className, Math.max(4, Math.round(resolution)));
+  }
+  return getDetailResolutionPolicy();
+}
+
+/** The resolution every known class will bake at, policy applied. */
+export function getDetailResolutionPolicy() {
+  const out = {};
+  for (const className of SURFACE_CLASSES) out[className] = detailResolutionFor(className);
+  return out;
+}
+
+/** Drop every per-class override; `defaultResolution` decides again. */
+export function clearDetailResolutionPolicy() {
+  resolutionPolicy.clear();
+}
+
+/**
+ * Millimetres of surface per relief texel for a class under the active policy.
+ * This is the number that decides whether relief survives at the distance the
+ * camera actually stands at, and it is the one a budget line should quote.
+ */
+export function reliefTexelMillimetres(className, resolution = null) {
+  const def = getSurfaceDef(className);
+  const size = Number.isFinite(resolution) ? resolution : detailResolutionFor(className);
+  return {
+    className,
+    resolution: size,
+    x: (def.metresPerRepeat.x * 1000) / size,
+    y: (def.metresPerRepeat.y * 1000) / size,
+  };
 }
 
 /** Per-class seed mix, so one seed produces uncorrelated classes. */
@@ -750,7 +834,10 @@ export function sampleSurfaceField(className, u, v, options = {}) {
 // ---------------------------------------------------------------------------
 
 function normalizeResolution(resolution, def) {
-  const size = Math.max(4, Math.round(resolution ?? def.defaultResolution));
+  // `detailResolutionFor` (not `def.defaultResolution`) is the fallback, so an
+  // uncached caller lands on the same bundle the renderer preloaded.
+  const fallback = detailResolutionFor(def.className);
+  const size = Math.max(4, Math.round(resolution ?? fallback));
   return { width: size, height: size };
 }
 
@@ -1136,7 +1223,7 @@ function bundleCacheKey(className, options) {
     DETAIL_MAPS_VERSION,
     className,
     String(options.seed ?? 0),
-    String(options.resolution ?? getSurfaceDef(className).defaultResolution),
+    String(options.resolution ?? detailResolutionFor(className)),
     String(options.normalStrength ?? 1),
     options.flipGreen ? 'gy' : 'gn',
     String(options.aoStrength ?? 1),
@@ -1309,6 +1396,105 @@ export function applyDetailMaps(material, classNameOrBundle, options = {}) {
   }
   material.needsUpdate = true;
   return bundle;
+}
+
+// ---------------------------------------------------------------------------
+// Composite relief: detail normal map + albedo-derived bump.
+//
+// three's stock normal chain is exclusive, not additive. `MaterialNode`'s
+// NORMAL scope reads:
+//
+//     if (material.normalMap)      -> normalMap(...)
+//     else if (material.bumpMap)   -> bumpMap(...)
+//     else                         -> normalView
+//
+// (node_modules/three/src/nodes/accessors/MaterialNode.js). So the moment
+// `applyDetailMaps` fills the `normalMap` slot, any `bumpMap` already on that
+// material becomes unreachable: the texture stays bound, `bumpScale` stays
+// authored, and neither reaches a shader. That is exactly the state the
+// canonical carriageway and footway materials were in - street-surface-v2
+// binds the 1254 px ground albedo as a height source, the renderer then
+// assigns a detail normal map, and the higher-frequency source is dropped
+// with no error and no diagnostic.
+//
+// This composes the two instead of choosing between them. The detail normal
+// map supplies the base view-space normal exactly as three would; the bump
+// term then perturbs THAT normal rather than the geometric one, using the
+// same surface-gradient construction as three's own `BumpMapNode`
+// (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU"), with
+// `surf_norm` bound to the detail normal instead of `normalView`.
+//
+// It stays inside the project's material policy: no ShaderMaterial, no
+// onBeforeCompile. `material.normalNode` is a stock NodeMaterial slot, and
+// `normalMap` / `normalScale` / `bumpMap` / `bumpScale` are left bound, so a
+// caller that clears `normalNode` gets the stock behaviour back with no
+// rebuild of anything else.
+//
+// The one approximation against three's BumpMapNode: three re-samples the
+// height texture at `uv + dFdx(uv)` and `uv + dFdy(uv)` (forward differencing,
+// three taps); this takes the screen derivative of the single sampled height
+// (one tap). Same gradient to first order, a third of the sampling cost, and
+// on a software rasterizer the tap count is the cost that matters.
+// ---------------------------------------------------------------------------
+
+/**
+ * View-space normal = detail normal map, perturbed by the material's own
+ * `bumpMap` / `bumpScale`. Built once and shared: every reference resolves
+ * against whatever material is being compiled.
+ */
+const composedReliefNormal = /*@__PURE__*/ Fn(() => {
+  // Identical to three's own `normalMap(this.getTexture('normal'),
+  // this.getCache('normalScale','vec2'))`, so tiling, repeat clones and
+  // tangent-frame reconstruction behave exactly as they do on the stock path.
+  const base = normalMapNode(
+    materialReference('normalMap', 'texture'),
+    materialReference('normalScale', 'vec2'),
+  ).toVar();
+  const height = float(materialReference('bumpMap', 'texture').r).toVar();
+  const dHdxy = vec2(dFdx(height), dFdy(height))
+    .mul(materialReference('bumpScale', 'float'));
+  const sigmaX = dFdx(positionView).normalize();
+  const sigmaY = dFdy(positionView).normalize();
+  const r1 = sigmaY.cross(base);
+  const r2 = base.cross(sigmaX);
+  const det = sigmaX.dot(r1).mul(faceDirection);
+  const grad = det.sign().mul(dHdxy.x.mul(r1).add(dHdxy.y.mul(r2)));
+  return det.abs().mul(base).sub(grad).normalize();
+});
+
+/**
+ * Make a material's `bumpMap` reachable again alongside its detail normal map.
+ *
+ * No-ops (and says why) unless BOTH slots are filled - a material with only one
+ * of them is already correctly served by the stock chain and must not pay for
+ * a custom node.
+ *
+ * @param {THREE.Material} material
+ * @returns {{applied: boolean, reason: string|null}}
+ */
+export function composeBumpRelief(material) {
+  if (!material) return { applied: false, reason: 'no-material' };
+  if (!material.normalMap) return { applied: false, reason: 'no-normal-map' };
+  if (!material.bumpMap) return { applied: false, reason: 'no-bump-map' };
+  if (material.normalNode) return { applied: true, reason: 'already-composed' };
+  material.normalNode = composedReliefNormal();
+  material.userData = material.userData || {};
+  material.userData.reliefComposition = 'detail-normal+bump-v1';
+  material.needsUpdate = true;
+  return { applied: true, reason: null };
+}
+
+/**
+ * Undo `composeBumpRelief`. The stock exclusive chain takes over again, which
+ * means the `bumpMap` goes back to being unreachable - this exists so a capture
+ * can price the composition, not as a fix.
+ */
+export function releaseBumpRelief(material) {
+  if (!material || !material.normalNode) return false;
+  material.normalNode = null;
+  if (material.userData) delete material.userData.reliefComposition;
+  material.needsUpdate = true;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

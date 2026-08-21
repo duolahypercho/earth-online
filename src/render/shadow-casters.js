@@ -1115,6 +1115,27 @@ export const GROUNDING_DEFAULTS = Object.freeze({
    * structural, the map resolves it, and a flat quad would be wrong anyway.
    */
   maxSpanMetres: 12,
+  /**
+   * Tallest object that gets a projected contact, in metres.
+   *
+   * There was no height ceiling here, and `maxLengthMetres` was left to absorb
+   * the consequence. It cannot: the clamp does not shorten a tall object's
+   * shadow, it truncates it, and what a truncated projection draws is a
+   * `maxLengthMetres`-long quad at full alpha with a hard straight end - a
+   * slab, not a shadow. The round-4 wet-street card shows one: a uniformly
+   * darkened band on the footway, ~1.2 m wide and 25-30 m long, running along
+   * the anti-solar azimuth to within 5 deg, present at identical pixels with
+   * the key light off (so it is drawn geometry, not a shadow-map artifact) and
+   * darkening whatever it crosses by the same 0.58 factor in both frames. A
+   * 26 m throw at that card's 43.9 deg sun requires a ~25 m tall anchor.
+   *
+   * 12 m is above every street prop this city builds - a lamp column is ~9 m,
+   * a signal mast ~7 m, a street tree ~8 m - and below anything that reads as
+   * architecture. Above it the object is exactly what the shadow map's
+   * structural exemption is for, and with the cascade rig the near cascade
+   * resolves it at 3.8 cm.
+   */
+  maxHeightMetres: 12,
   /** Shortest object that gets one. Under 25 cm the projection is a smudge. */
   minHeightMetres: 0.25,
   /**
@@ -1510,6 +1531,7 @@ const _groundPoint = new THREE.Vector3();
  * @param {number} [options.maxAnchors=1024] Hard cap on anchors returned.
  * @param {number} [options.maxSpanMetres] See `GROUNDING_DEFAULTS`.
  * @param {number} [options.minHeightMetres] See `GROUNDING_DEFAULTS`.
+ * @param {number} [options.maxHeightMetres] See `GROUNDING_DEFAULTS`.
  * @param {(object) => boolean} [options.skip] Return true to ignore a subtree.
  * @returns {{anchors: Array<object>, sources: number, scanned: number,
  *   candidates: number, capped: boolean, skipped: object}}
@@ -1519,13 +1541,14 @@ export function collectGroundingAnchors(root, options = {}) {
     maxAnchors = 1024,
     maxSpanMetres = GROUNDING_DEFAULTS.maxSpanMetres,
     minHeightMetres = GROUNDING_DEFAULTS.minHeightMetres,
+    maxHeightMetres = GROUNDING_DEFAULTS.maxHeightMetres,
     skip = null,
   } = options;
   if (!root || typeof root.traverse !== 'function') {
     throw new TypeError('shadow-casters: collectGroundingAnchors(root) needs an Object3D');
   }
   const skipped = {
-    casting: 0, role: 0, tooSmall: 0, tooBig: 0, degenerate: 0, hidden: 0, optedOut: 0,
+    casting: 0, role: 0, tooSmall: 0, tooBig: 0, tooTall: 0, degenerate: 0, hidden: 0, optedOut: 0,
   };
   /** @type {Array<Array<object>>} one list per source mesh, for round-robin. */
   const perSource = [];
@@ -1576,6 +1599,10 @@ export function collectGroundingAnchors(root, options = {}) {
       }
       if (height < minHeightMetres) { skipped.tooSmall += 1; continue; }
       if (span > maxSpanMetres) { skipped.tooBig += 1; continue; }
+      // A projection this tall would be clamped to `maxLengthMetres` at every
+      // sun altitude the frame ever sees, and a clamped projection is a slab.
+      // See `GROUNDING_DEFAULTS.maxHeightMetres`.
+      if (height > maxHeightMetres) { skipped.tooTall += 1; continue; }
       candidates += 1;
       // The object-space point that maps to the world footprint centre. Stored
       // so a moving object can be re-read with one matrix apply per frame

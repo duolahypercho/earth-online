@@ -284,9 +284,23 @@ const PALETTES = Object.freeze({
     // large flat area at the footway's own tone reads as a light box.
     path: '#ded5c4',
     verge: '#9a9384',
-    markingWhite: '#f4efe2',
-    markingYellow: '#e6b93f',
-    crosswalk: '#fbf6ea',
+    // PAINT TONE (round 5). READ THIS BEFORE BRIGHTENING THESE THREE.
+    //
+    // Round 4 shipped markingWhite at linear 0.87 and the crosswalk band at
+    // linear 0.90. Fresh thermoplastic and fresh cold paint measure 0.55-0.70
+    // linear; nothing on a street is 0.87 except a specular highlight. The
+    // consequence is measurable in two places: the day cards read as printed
+    // decal because the paint has no headroom left above it, and in the night
+    // card the markings hold near full value in a street with no key on it,
+    // because a 0.87 albedo needs almost no light to stay bright.
+    //
+    // These are the DIFFUSE ALBEDO of the paint. The rendered value is this
+    // tint multiplied by PAINT_MAP (bead speckle and wear break-up, mean
+    // linear PAINT_MAP_STATS.meanLinear), so the fresh-texel value is the
+    // number below and the area mean lands a little under it.
+    markingWhite: '#d5d1c5',   // linear 0.620 mean, was 0.843
+    markingYellow: '#d0a638',  // linear luma 0.411, was 0.514
+    crosswalk: '#dad6cc',      // linear 0.660 mean, was 0.902
   }),
   stylised: Object.freeze({
     asphalt: Object.freeze({
@@ -301,9 +315,10 @@ const PALETTES = Object.freeze({
     ramp: '#d8bd90',
     path: '#d2b78c',
     verge: '#7d7256',
-    markingWhite: '#efe8d4',
-    markingYellow: '#e6b93f',
-    crosswalk: '#fff4dc',
+    // Same treatment as the sf palette above: paint albedo, not paint highlight.
+    markingWhite: '#d8d2c0',   // linear 0.620 mean, was 0.776
+    markingYellow: '#d0a638',  // linear luma 0.411, was 0.514
+    crosswalk: '#e1d8c2',      // linear 0.660 mean, was 0.873
   }),
 });
 
@@ -325,6 +340,227 @@ export const STREET_SURFACE_V2_ENV_CLASSES = Object.freeze({
   concrete: 'sidewalk',
   markings: 'painted-metal',
 });
+
+// ---------------------------------------------------------------------------
+// road paint albedo tile
+// ---------------------------------------------------------------------------
+//
+// WHY PAINT NEEDS A TEXTURE AT ALL.
+//
+// Through round 4 the marking material was `vertexColors` and nothing else, so
+// every square metre of paint in the city rendered as one flat value. Measured
+// on card 01 the eight stripes of one crossing had means of 230.2-232.3 sRGB -
+// a 0.9% spread across a crossing that in reality is scrubbed by two wheel
+// paths, chipped at every edge and repainted in strips. A flat value is what
+// makes paint read as a printed decal rather than as a 2 mm layer of resin and
+// glass bead lying on top of the road.
+//
+// This tile supplies the part of that variation that is INSIDE the paint,
+// independent of where the stripe is:
+//   * bead speckle - retroreflective glass beads broadcast into hot binder,
+//     which is what makes fresh paint sparkle rather than sit matte;
+//   * wear break-up - the thin, translucent areas where the binder has been
+//     scrubbed back toward the road, concentrated into blotches rather than
+//     spread as uniform noise, because that is how paint actually fails;
+//   * edge break-up - a fine ragged modulation at bead scale, so a stripe edge
+//     sampled at a grazing angle is not a mathematically straight line.
+// The part of the variation that depends on WHERE the stripe is - repaint age
+// per junction, tyre tracks across the band - is vertex colour, and lives in
+// `emitApproachPaint` and in the street-detail pass.
+//
+// Pure integer arithmetic, no canvas, no Math.random: the tile is identical in
+// node and in the browser, which is what lets `PAINT_MAP_STATS` be asserted.
+// It is one shared 128x128 RGBA tile for the whole city, 65 536 bytes of
+// texture payload before mipmaps.
+
+export const PAINT_MAP_RESOLUTION = 128;
+
+/** Deterministic 32-bit avalanche, local so this module imports nothing. */
+function paintHash(x, y, salt) {
+  let h = Math.imul(x + 0x9e3779b9, 0x85ebca6b) ^ 0;
+  h = Math.imul(h ^ (y + 0x165667b1), 0xc2b2ae35);
+  h = Math.imul(h ^ (salt | 0), 0x27d4eb2f);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+function paintFade(t) {
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/**
+ * Value noise on an integer lattice, exactly periodic in u with period 1 and
+ * in v with period 1, whatever `px` / `py` are. Separate axis periods are what
+ * lets a scuff be anisotropic WITHOUT breaking the tile seam: scaling the
+ * coordinate would change the period, scaling the lattice does not.
+ */
+function paintNoise(u, v, periodX, periodY, salt) {
+  // Integer lattice periods only: a fractional period is not periodic in [0,1)
+  // and would put a visible seam down every stripe in the city.
+  const px = Math.max(1, Math.round(periodX));
+  const py = Math.max(1, Math.round(periodY));
+  const x = u * px;
+  const y = v * py;
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = paintFade(x - ix);
+  const fy = paintFade(y - iy);
+  const x0 = ((ix % px) + px) % px;
+  const y0 = ((iy % py) + py) % py;
+  const x1 = (x0 + 1) % px;
+  const y1 = (y0 + 1) % py;
+  const n00 = paintHash(x0, y0, salt);
+  const n10 = paintHash(x1, y0, salt);
+  const n01 = paintHash(x0, y1, salt);
+  const n11 = paintHash(x1, y1, salt);
+  const a = n00 + (n10 - n00) * fx;
+  const b = n01 + (n11 - n01) * fx;
+  return a + (b - a) * fy;
+}
+
+function paintFbm(u, v, px, py, octaves, salt) {
+  let amp = 1;
+  let total = 0;
+  let norm = 0;
+  let ax = px;
+  let ay = py;
+  for (let o = 0; o < octaves; o += 1) {
+    total += amp * paintNoise(u, v, ax, ay, salt + o * 977);
+    norm += amp;
+    amp *= 0.5;
+    ax *= 2;
+    ay *= 2;
+  }
+  return norm > 0 ? total / norm : 0;
+}
+
+function srgbEncode(linear) {
+  const c = linear <= 0 ? 0 : linear >= 1 ? 1 : linear;
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055;
+}
+
+/**
+ * The paint tile as a linear-luminance multiplier field in [0,1], sampled at
+ * normalized tile coordinates. 1.0 is intact paint; low values are places the
+ * road is showing through. Exported so a verifier can integrate it without
+ * building a texture.
+ *
+ * Exactly periodic in both axes: `paintSurfaceValue(0, v)` and
+ * `paintSurfaceValue(1, v)` agree, which is what makes the tile seamless on a
+ * stripe that runs for tens of metres.
+ */
+export function paintSurfaceValue(u, v) {
+  // Wear blotches: two octave bands, folded so the thin areas are compact
+  // patches rather than an even fog of noise. Real paint fails in patches.
+  const blotch = paintFbm(u, v, 3, 3, 4, 0x51ed);
+  const coarse = paintFbm(u, v, 2, 2, 2, 0x2f19);
+  const field = blotch * 0.66 + coarse * 0.34;
+  // 0 over intact paint, rising to 1 in the middle of a thin patch.
+  const wearT = Math.min(1, Math.max(0, field - 0.560) / 0.230);
+  const wear = wearT * wearT * (3 - 2 * wearT);
+  // Scuff: a fine scrub stretched along u, stronger where paint is thin.
+  const scuff = paintFbm(u, v, 3, 22, 3, 0x7a11) - 0.5;
+  // Bead speckle: near-texel-scale sparkle from broadcast glass bead clusters.
+  const bead = paintNoise(u, v, PAINT_MAP_RESOLUTION / 2, PAINT_MAP_RESOLUTION / 2, 0x1d3b);
+  const beadFine = paintNoise(u, v, PAINT_MAP_RESOLUTION, PAINT_MAP_RESOLUTION, 0x6c07);
+  const speckle = (bead - 0.5) * 0.10 + (beadFine - 0.5) * 0.08;
+  // A bead that catches the light. Rare, bright, one texel wide.
+  const glint = beadFine > 0.955 ? 0.10 : 0;
+  const base = 1 + speckle + glint + scuff * 0.30 * (0.25 + wear);
+  const value = base * (1 - 0.80 * wear);
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/**
+ * RGBA bytes for the paint tile, row-major, `PAINT_MAP_RESOLUTION` square.
+ * The channel values are sRGB-encoded because the texture is sampled as colour.
+ */
+export function buildPaintMapRGBA(resolution = PAINT_MAP_RESOLUTION) {
+  const n = Math.max(4, Math.round(resolution));
+  const data = new Uint8Array(n * n * 4);
+  let sumLinear = 0;
+  let minLinear = 1;
+  let maxLinear = 0;
+  for (let y = 0; y < n; y += 1) {
+    for (let x = 0; x < n; x += 1) {
+      const linear = paintSurfaceValue((x + 0.5) / n, (y + 0.5) / n);
+      sumLinear += linear;
+      if (linear < minLinear) minLinear = linear;
+      if (linear > maxLinear) maxLinear = linear;
+      // Intact paint is exactly neutral, so a texel at full value multiplies
+      // the palette tint by 1 and nothing else. Where the paint is thin what
+      // shows through is binder and road, which is warmer than the paint, so
+      // the tilt is applied in proportion to the wear and vanishes at 1.0.
+      const warmth = (1 - linear) * 0.12;
+      const byte = (c) => Math.max(0, Math.min(255, Math.round(srgbEncode(c) * 255)));
+      const i = (y * n + x) * 4;
+      data[i] = byte(linear * (1 + warmth * 0.5));
+      data[i + 1] = byte(linear);
+      data[i + 2] = byte(linear * (1 - warmth));
+      data[i + 3] = 255;
+    }
+  }
+  return {
+    data,
+    width: n,
+    height: n,
+    meanLinear: sumLinear / (n * n),
+    minLinear,
+    maxLinear,
+  };
+}
+
+/**
+ * Integrated statistics of the shipped tile, so the palette above can be read
+ * against the value the road actually renders: rendered paint = palette tint x
+ * this mean. Computed once, lazily, and frozen.
+ */
+let paintMapStats = null;
+export function getPaintMapStats() {
+  if (!paintMapStats) {
+    const image = buildPaintMapRGBA();
+    paintMapStats = Object.freeze({
+      resolution: image.width,
+      meanLinear: image.meanLinear,
+      minLinear: image.minLinear,
+      maxLinear: image.maxLinear,
+      bytes: image.data.length,
+    });
+  }
+  return paintMapStats;
+}
+
+let paintTexture = null;
+
+/**
+ * The shared paint albedo tile. One texture for the whole city; it tiles every
+ * `uvMetersPerRepeat.marking` metres of world, on the same world-XZ UVs the
+ * marking layer already bakes, so it is continuous across every stripe.
+ */
+export function getPaintMapTexture() {
+  if (paintTexture) return paintTexture;
+  const image = buildPaintMapRGBA();
+  const texture = new THREE.DataTexture(
+    image.data, image.width, image.height, THREE.RGBAFormat, THREE.UnsignedByteType,
+  );
+  texture.name = 'street-surface-v2:paint-tile';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  paintTexture = texture;
+  return paintTexture;
+}
+
+/** Drop the shared tile. Only a full teardown should call this. */
+export function disposePaintMapTexture() {
+  paintTexture?.dispose?.();
+  paintTexture = null;
+}
 
 // ---------------------------------------------------------------------------
 // small deterministic math helpers
@@ -366,6 +602,25 @@ function mixColor(a, b, t) {
 
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/**
+ * Multiply a stored sRGB colour by a LINEAR factor.
+ *
+ * `scaleColor` scales the sRGB code value, which is not what "half as bright"
+ * means: scaling an sRGB code by 0.7 is a linear factor of 0.45, and scaling
+ * it by 0.5 is a linear factor of 0.22. Every place in this module that means
+ * "this much of the light the surface underneath reflects" - paint wear, tyre
+ * tracks - uses this instead, so the number in the source is the number the
+ * renderer produces.
+ */
+function scaleLinearColor(rgb, factor) {
+  const k = factor < 0 ? 0 : factor;
+  return [
+    clamp(srgbEncode(srgbToLinear(rgb[0]) * k), 0, 1),
+    clamp(srgbEncode(srgbToLinear(rgb[1]) * k), 0, 1),
+    clamp(srgbEncode(srgbToLinear(rgb[2]) * k), 0, 1),
+  ];
 }
 
 function perpCCW(u) {
@@ -1173,8 +1428,15 @@ function emitSegment(entry, layers, o, ctx, stats) {
   stats.markingLines += lines.length;
   const white = hexToSrgb(palette.markingWhite);
   const yellow = hexToSrgb(palette.markingYellow);
+  // A street is repainted as a street, so its lines share an age; the edge
+  // line then wears further than the centre line because it is the one that
+  // sits in the grime at the gutter lip and under parked wheels, while a lane
+  // divider lives BETWEEN the two wheel paths and is the last thing to go.
+  const segAge = ((hash32(`repaint:${entry.segment.id}`) % 1000) / 1000) ** 1.3;
   for (const line of lines) {
-    const color = line.paint === 'yellow' ? yellow : white;
+    const base = line.paint === 'yellow' ? yellow : white;
+    const exposure = line.role === 'edge' ? 1 : line.role === 'centre' ? 0.7 : 0.5;
+    const color = scaleLinearColor(base, clamp(1 - 0.5 * segAge * exposure, 0.3, 1));
     if (line.dashed) stats.dashedLines += 1;
     const emitSpan = (fa, fb) => {
       const da = ctx.datum(fa.x, fa.z);
@@ -1726,10 +1988,38 @@ function emitCurbRing(path, layers, o, ctx, stats) {
   stats.rampStrips += rampSpans;
 }
 
+/**
+ * How hard the wheel paths scrub a point `v` metres off the approach
+ * centreline, in [0, 1]. Two tracks per lane at the real 1.64 m track width,
+ * each about 0.3 m wide with a soft shoulder, which is why the stripes of a
+ * crossing wear in a comb pattern rather than evenly.
+ *
+ * Exported so a verifier can assert the comb without reading a buffer.
+ */
+export function wheelTrackWeight(v, half, lanes) {
+  const laneCount = Math.max(1, Math.round(lanes) || 1);
+  const laneWidth = (half * 2) / laneCount;
+  let worst = 0;
+  for (let k = 0; k < laneCount; k += 1) {
+    const centre = -half + laneWidth * (k + 0.5);
+    for (const track of [-0.82, 0.82]) {
+      const d = Math.abs(v - (centre + track));
+      // 1 in the middle of the track, 0 beyond 0.42 m, smooth between.
+      const t = clamp(1 - d / 0.42, 0, 1);
+      const w = t * t * (3 - 2 * t);
+      if (w > worst) worst = w;
+    }
+  }
+  return worst;
+}
+
 function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const palette = o.colors;
   const crosswalkColor = hexToSrgb(palette.crosswalk);
   const white = hexToSrgb(palette.markingWhite);
+  // Repainting is a per-junction event, so every mark at one node shares an
+  // age. 0 = repainted last month, 1 = overdue.
+  const nodeAge = ((hash32(`repaint:${node.id}`) % 1000) / 1000) ** 1.3;
   const u = app.u;
   const m = perpCCW(u);
   const half = app.half;
@@ -1770,6 +2060,7 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   // Zebra band, stripes parallel to the approach axis, aligned to the approach.
   const usable = Math.max(0, half * 2 - o.crosswalkEdgeInset * 2);
   const stripes = Math.max(2, Math.floor(usable / o.crosswalkStripePitch));
+  const laneCount = Math.max(1, Math.round(Number(app.entry.segment.lanes) || 2));
   for (let i = 0; i < stripes; i += 1) {
     const v = -half + o.crosswalkEdgeInset + (usable * (i + 0.5)) / stripes;
     const v0 = v - o.crosswalkStripeWidth / 2;
@@ -1778,12 +2069,27 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
     const p01 = at(bandStart, v1);
     const p10 = at(bandEnd, v0);
     const p11 = at(bandEnd, v1);
+    // WHY EIGHT STRIPES MUST NOT BE THE SAME COLOUR (round 5).
+    //
+    // The stripes of a continental crossing run PARALLEL to the traffic that
+    // crosses them, so a wheel path lies along a stripe rather than across it
+    // and scrubs that whole stripe while leaving its neighbour intact. Round 4
+    // painted every stripe one value and card 01 measured the result: eight
+    // means inside 230.2-232.3 sRGB, a 0.9% spread, which is a printed decal.
+    // Three independent terms now separate them - the junction's repaint age,
+    // a per-stripe jitter for the strip-by-strip way a crew repaints, and the
+    // comb of the wheel paths.
+    const jitter = (hash32(`stripe:${node.id}:${app.entry.segment.id}:${i}`) % 1000) / 1000;
+    const age = clamp(nodeAge * (0.62 + jitter * 0.72), 0, 1);
+    const track = wheelTrackWeight(v, half, laneCount);
+    const wear = clamp(1 - 0.52 * age - 0.42 * track, 0.18, 1);
+    const stripeColor = scaleLinearColor(crosswalkColor, wear);
     pushQuad(layers.crosswalk,
       { x: p00.x, y: yAt(p00, v0), z: p00.z },
       { x: p10.x, y: yAt(p10, v0), z: p10.z },
       { x: p11.x, y: yAt(p11, v1), z: p11.z },
       { x: p01.x, y: yAt(p01, v1), z: p01.z },
-      crosswalkColor, UP);
+      stripeColor, UP);
   }
   stats.crosswalkBands += 1;
 
@@ -1801,12 +2107,18 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const c01 = at(barStart, vHi);
   const c10 = at(barEnd, vLo);
   const c11 = at(barEnd, vHi);
+  // The stop bar is crossed by every wheel on the approach rather than lying
+  // under one track, so it takes the junction's repaint age and an averaged
+  // scrub instead of the comb.
+  const barTrack = wheelTrackWeight((vLo + vHi) / 2, half, Math.max(1,
+    Math.round(Number(app.entry.segment.lanes) || 2)));
+  const barWear = clamp(1 - 0.48 * nodeAge - 0.22 * barTrack, 0.22, 1);
   pushQuad(layers.marking,
     { x: c00.x, y: yAt(c00, vLo), z: c00.z },
     { x: c10.x, y: yAt(c10, vLo), z: c10.z },
     { x: c11.x, y: yAt(c11, vHi), z: c11.z },
     { x: c01.x, y: yAt(c01, vHi), z: c01.z },
-    white, UP);
+    scaleLinearColor(white, barWear), UP);
   stats.stopBars += 1;
 }
 
@@ -2190,8 +2502,19 @@ export function buildStreetSurfaceV2(city, overrides = {}) {
   // Paint: see the Z-FIGHTING POLICY note at the top of this file. The 12 mm
   // world lift handles the general case; polygonOffset handles the grazing
   // pedestrian-eye case where the depth slope across one quad is large.
+  //
+  // The paint tile carries the variation that lives INSIDE the paint - bead
+  // speckle, wear break-up and a ragged edge modulation - on the same world-XZ
+  // UVs the marking layer bakes, so it is continuous across a stripe and
+  // across the gap to the next one. Round 4 had no map here at all, which is
+  // why one crossing measured a 0.9% spread across eight stripes. `maps.paint`
+  // opts out (a caller that wants flat paint, e.g. a geometry-only test).
+  const paintTexture = maps.paint === null ? null : (maps.paint || getPaintMapTexture());
   materials.markings = new THREE.MeshStandardMaterial({
     vertexColors: true,
+    map: paintTexture,
+    bumpMap: paintTexture,
+    bumpScale: paintTexture ? 0.004 : 1,
     roughness: 0.58,
     metalness: 0,
     polygonOffset: true,

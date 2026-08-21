@@ -112,11 +112,65 @@ export const TRAFFIC_MIRROR = Object.freeze({
   maxTriangles: 100000,
 });
 
+/**
+ * HEADLIGHTS THAT ARE LIGHTS.
+ *
+ * Round 4's night card has tail lights that glow and headlights that glow, and
+ * not one photon of either lands on the road: every lamp in this pass was an
+ * emissive material and nothing else, so a lit vehicle was a sticker. The
+ * quality gate's automatic rejection condition for a night scene is exactly
+ * that - "carried solely by emissive windows rather than local lighting and
+ * material response".
+ *
+ * This is a POOL, not a light per vehicle. It is bounded three ways, because an
+ * unbounded local light pool is how a night frame's cost runs away:
+ *
+ *   * only MIRRORED (moving) vehicles are lit - a parked car at the kerb has
+ *     nobody in it, and lighting the parked row would put 40 pairs of beams on
+ *     one block;
+ *   * only the nearest `maxVehicles` of them, and only inside `radius`, which
+ *     is well inside the near ring, so a vehicle that leaves the ring releases
+ *     its pair on the next frame - there is no per-vehicle allocation to leak;
+ *   * `maxLights` is a hard ceiling on the whole pass, declared in
+ *     `VEHICLE_BUDGET` and reported live in the diagnostics.
+ *
+ * None of them cast shadows. Eight shadow-casting spots would need eight extra
+ * depth passes per frame, which is not a trade a headlight is worth.
+ *
+ * The renderer's own camera-local practical pool is a SEPARATE budget owned by
+ * `src/citygen/renderer.js`. These lights are created, updated, counted and
+ * released entirely inside this pass and are never handed to it, so the two
+ * cannot double-allocate the same vehicle.
+ */
+export const VEHICLE_LIGHTS = Object.freeze({
+  /** Mirrored vehicles that get a real beam pair, nearest first. */
+  maxVehicles: 4,
+  perVehicle: 2,
+  maxLights: 8,
+  /** Only inside this distance from the camera; the near ring reaches 80 m. */
+  radius: 55,
+  /** A low-beam pattern: wide enough to light a lane, short enough to fall off. */
+  angle: 0.42,
+  penumbra: 0.55,
+  distance: 38,
+  decay: 2,
+  /** Peak intensity at full night, before the lamps-on ramp. */
+  intensity: 22,
+  colour: 0xfff1da,
+  /** Where the beam is aimed, in the vehicle's own frame. */
+  aimAhead: 14,
+  aimDrop: 1.15,
+  /** The same ramp the emissive lamps use, so glass and beam switch together. */
+  onAtNightness: 0.35,
+});
+
 export const VEHICLE_BUDGET = Object.freeze({
   maxTriangles: 400000,
   maxDrawCalls: 96,
   rings: VEHICLE_RINGS,
   traffic: TRAFFIC_MIRROR,
+  lights: VEHICLE_LIGHTS,
+  maxLights: VEHICLE_LIGHTS.maxLights,
 });
 
 /**
@@ -380,18 +434,106 @@ function buildBuildingIndex(city) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fit a vehicle onto the carriageway.
+ * The road DATUM under a point, sampled the way the drawn ribbon samples it.
+ *
+ * ROUND 5 CORRECTION - READ THIS BEFORE SIMPLIFYING IT BACK.
+ *
+ * `street-surface-v2.emitSegment` builds one datum per CENTRELINE station and
+ * sweeps the whole cross-section - crown, gutter, kerb - off that single
+ * number: `datums = stations.map((st) => ctx.datum(st.x, st.z))`. It never
+ * samples the terrain at a lateral offset. Sampling `heightAt` under the WHEEL
+ * therefore reads a different height than the asphalt the wheel stands on
+ * wherever the terrain cross-falls: the error is the terrain's cross-grade
+ * times the wheel's lateral offset, which for a kerbside wheel 4 m off the
+ * centreline on a 10% cross-grade is 0.4 m of float. Projecting the wheel back
+ * onto its own centreline before sampling the terrain removes that term
+ * exactly, and is a no-op on flat ground.
+ */
+function centrelineDatumAt(segment, x, z, datumAt) {
+  let bestD2 = Infinity;
+  let px = x;
+  let pz = z;
+  for (let i = 0; i < segment.points.length - 1; i += 1) {
+    const a = segment.points[i];
+    const b = segment.points[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz;
+    if (!(len2 > 1e-12)) continue;
+    const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+    const qx = a.x + dx * t;
+    const qz = a.z + dz * t;
+    const d2 = (x - qx) * (x - qx) + (z - qz) * (z - qz);
+    if (d2 < bestD2) { bestD2 = d2; px = qx; pz = qz; }
+  }
+  return datumAt(px, pz);
+}
+
+/**
+ * Fit a vehicle onto the carriageway around a world centre.
  *
  * The four wheel contact patches are sampled on the real cross-section - the
  * crown, the gutter fall and the terrain under them - and the body is pitched
  * and rolled onto the plane they define. On a flat street this is a no-op; on a
  * San Francisco grade it is the difference between four wheels on the road and
  * one corner in the air.
+ *
+ * Shared by the parked layout (which knows its station and lateral offset) and
+ * by the traffic mirror (which only knows where the simulation put the vehicle).
  */
-export function groundVehicle(spec, segment, station, u, yaw, options, datumAt) {
-  const frame = streetStationAt(segment, clamp(station, 0, segment.length));
-  const cx = frame.x + frame.nx * u * frame.miter;
-  const cz = frame.z + frame.nz * u * frame.miter;
+export function drawnCarriagewayY(segment, x, z, options, datumAt, slack = 0) {
+  const hit = segmentProjection(segment, x, z);
+  if (!hit) return null;
+  // `slack` past the kerb line is for the FALLBACK only: a wheel that overhangs
+  // the kerb still rests on the road. It must not be allowed into the
+  // topmost-surface test, where it would let a neighbouring street's kerb line
+  // win over the asphalt the vehicle is actually standing on.
+  if (Math.abs(hit.lateral) > segment.half + slack) return null;
+  const u = clamp(hit.lateral, -segment.half, segment.half);
+  // Between the trims the SEGMENT RIBBON owns the surface. Past them the
+  // JUNCTION PAD owns it, and this cross-section is only an approximation of
+  // the pad - so the flag is carried out and a pad is never allowed to lift a
+  // wheel above real ribbon. `createDrawnRoadIndex` resolves the pad exactly
+  // wherever the drawn mesh is available; this is the fallback for the rest.
+  const inRibbon = hit.station >= segment.trimStart - 0.05
+    && hit.station <= segment.length - segment.trimEnd + 0.05;
+  const datum = centrelineDatumAt(segment, x, z, datumAt);
+  return { y: carriagewaySurfaceY(datum, u, segment.half, options), ribbon: inRibbon };
+}
+
+/**
+ * Height of the TOPMOST drawn carriageway under a point.
+ *
+ * Ribbons overlap: a narrow alley crossing a wide street lays its own asphalt
+ * across the other's, and the one a camera sees is whichever is higher there.
+ * Grounding on the nearest centreline instead of the highest surface put a
+ * wheel up to 165 mm under the asphalt at those crossings. Measured over 2257
+ * wheel contacts on the shipped slice, taking the maximum is the difference
+ * between a 165 mm worst case and a sub-centimetre one.
+ */
+export function topCarriagewayY(index, x, z, options, datumAt, fallbackSegment = null) {
+  let ribbon = null;
+  let pad = null;
+  const candidates = index?.candidates ? index.candidates(x, z) : null;
+  if (candidates) {
+    for (const segment of candidates) {
+      const y = drawnCarriagewayY(segment, x, z, options, datumAt);
+      if (y === null) continue;
+      // A segment whose ribbon is trimmed away here draws nothing of its own:
+      // the junction pad does, and the pad is only an approximation of it. Real
+      // ribbon always wins over an approximated pad, so a wheel is never lifted
+      // onto a surface that may not be there.
+      if (y.ribbon) { if (ribbon === null || y.y > ribbon) ribbon = y.y; }
+      else if (pad === null || y.y > pad) pad = y.y;
+    }
+  }
+  if (ribbon !== null) return ribbon;
+  const back = fallbackSegment ? drawnCarriagewayY(fallbackSegment, x, z, options, datumAt, 1.0) : null;
+  if (back) return back.y;
+  return pad;
+}
+
+export function groundVehicleAt(spec, segment, cx, cz, yaw, options, datumAt, index = null, road = null) {
   // World directions of the vehicle's own axes. Rotation about +Y maps local
   // +Z to (sin yaw, cos yaw) and local +X - the vehicle's LEFT - to
   // (cos yaw, -sin yaw).
@@ -408,9 +550,19 @@ export function groundVehicle(spec, segment, station, u, yaw, options, datumAt) 
       const ox = (side * axle.track) / 2;
       const x = cx + lx * ox + fx * axle.z;
       const z = cz + lz * ox + fz * axle.z;
-      const lateral = lateralOf(segment, x, z);
+      // The drawn geometry first - it has no model error - then the modelled
+      // cross-section for anything outside the indexed window.
+      const drawn = road ? road.heightAt(x, z) : null;
+      const own = drawnCarriagewayY(segment, x, z, options, datumAt, 1.0);
+      const top = drawn !== null ? drawn : (index
+        ? topCarriagewayY(index, x, z, options, datumAt, segment)
+        : (own ? own.y : null));
+      const y = top === null
+        ? carriagewaySurfaceY(centrelineDatumAt(segment, x, z, datumAt),
+          clamp(lateralOf(segment, x, z), -segment.half, segment.half), segment.half, options)
+        : top;
       samples.push({
-        x, z, y: carriagewaySurfaceY(datumAt(x, z), lateral, segment.half, options),
+        x, z, y,
         dx: lx * ox + fx * axle.z, dz: lz * ox + fz * axle.z,
       });
     }
@@ -450,6 +602,191 @@ export function groundVehicle(spec, segment, station, u, yaw, options, datumAt) 
   const pitch = -Math.atan(forwardGrade);
   const roll = Math.atan(leftGrade);
   return { x: cx, y: c, z: cz, pitch, roll, samples, plane: { a, b, c } };
+}
+
+/**
+ * Fit a vehicle onto the carriageway at a station and lateral offset.
+ * Thin wrapper over `groundVehicleAt`, kept because the parked layout works in
+ * (station, u) and the verifier calls it by that signature.
+ */
+export function groundVehicle(spec, segment, station, u, yaw, options, datumAt, index = null, road = null) {
+  const frame = streetStationAt(segment, clamp(station, 0, segment.length));
+  const cx = frame.x + frame.nx * u * frame.miter;
+  const cz = frame.z + frame.nz * u * frame.miter;
+  return groundVehicleAt(spec, segment, cx, cz, yaw, options, datumAt, index, road);
+}
+
+/**
+ * The DRAWN carriageway, indexed as triangles.
+ *
+ * ROUND 5. Everything above models the surface: it re-evaluates the same cross
+ * section the ribbon was swept with. That is exact on an open ribbon and only
+ * approximate where `street-surface-v2` laps two paved surfaces over each other
+ * - a junction pad across an approach, a narrow street's ribbon under a wide
+ * one's - because the model does not know which of them is on top. Measured on
+ * the shipped slice that is 353 of 544 test bodies standing over a step, with
+ * up to 110 mm between the modelled height and the asphalt actually drawn.
+ *
+ * A model cannot resolve that. The geometry can: this reads the carriageway
+ * mesh the renderer built, buckets its triangles into a uniform grid, and
+ * answers "what is the height of the topmost asphalt at this point" by
+ * barycentric lookup. Grounding then has no model error at all, by
+ * construction, and follows any future change to the street module for free.
+ *
+ * Windowed on the LOD centre so the memory is bounded by the ring budget rather
+ * than by the size of the city, and rebuilt with the rings.
+ *
+ * @param {object} mesh THREE.Mesh - `street-surface-v2:carriageway`
+ * @param {{x:number,z:number}} centre
+ */
+export function createDrawnRoadIndex(mesh, { centre = { x: 0, z: 0 }, radius = 400, cell = 6 } = {}) {
+  const geometry = mesh?.geometry;
+  const position = geometry?.getAttribute?.('position');
+  if (!position) return null;
+  const index = geometry.getIndex?.() || null;
+  const count = index ? index.count : position.count;
+  const matrix = mesh.matrixWorld && mesh.matrixWorld.isMatrix4 ? mesh.matrixWorld : null;
+  if (matrix) mesh.updateWorldMatrix?.(true, false);
+  const e = matrix ? matrix.elements : null;
+  const put = (i, out, at) => {
+    const x = position.getX(i); const y = position.getY(i); const z = position.getZ(i);
+    if (!e) { out[at] = x; out[at + 1] = y; out[at + 2] = z; return; }
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15] || 1;
+    out[at] = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
+    out[at + 1] = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
+    out[at + 2] = (e[2] * x + e[6] * y + e[10] * z + e[14]) / w;
+  };
+  const tris = [];
+  const grid = new Map();
+  const r2 = radius * radius;
+  const tri = new Array(9);
+  for (let i = 0; i < count; i += 3) {
+    const a = index ? index.getX(i) : i;
+    const b = index ? index.getX(i + 1) : i + 1;
+    const c = index ? index.getX(i + 2) : i + 2;
+    put(a, tri, 0); put(b, tri, 3); put(c, tri, 6);
+    const cx = (tri[0] + tri[3] + tri[6]) / 3;
+    const cz = (tri[2] + tri[5] + tri[8]) / 3;
+    const dx = cx - centre.x; const dz = cz - centre.z;
+    if (dx * dx + dz * dz > r2) continue;
+    const ti = tris.push(tri.slice()) - 1;
+    const minX = Math.min(tri[0], tri[3], tri[6]); const maxX = Math.max(tri[0], tri[3], tri[6]);
+    const minZ = Math.min(tri[2], tri[5], tri[8]); const maxZ = Math.max(tri[2], tri[5], tri[8]);
+    for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+      for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+        const k = `${gx}:${gz}`;
+        let list = grid.get(k);
+        if (!list) { list = []; grid.set(k, list); }
+        list.push(ti);
+      }
+    }
+  }
+  return {
+    triangles: tris.length,
+    cells: grid.size,
+    radius,
+    centre: { x: centre.x, z: centre.z },
+    /** Topmost drawn asphalt at a world point, or null where none is drawn. */
+    heightAt(x, z) {
+      const list = grid.get(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`);
+      if (!list) return null;
+      let best = null;
+      for (let i = 0; i < list.length; i += 1) {
+        const t = tris[list[i]];
+        const x0 = t[0]; const y0 = t[1]; const z0 = t[2];
+        const x1 = t[3]; const y1 = t[4]; const z1 = t[5];
+        const x2 = t[6]; const y2 = t[7]; const z2 = t[8];
+        const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+        if (d > -1e-12 && d < 1e-12) continue;
+        const l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d;
+        if (l0 < -1e-6) continue;
+        const l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d;
+        if (l1 < -1e-6) continue;
+        const l2 = 1 - l0 - l1;
+        if (l2 < -1e-6) continue;
+        const y = l0 * y0 + l1 * y1 + l2 * y2;
+        if (best === null || y > best) best = y;
+      }
+      return best;
+    },
+  };
+}
+
+/** The carriageway mesh the renderer drew, or null when it is not in the root. */
+export function findDrawnRoadMesh(root) {
+  if (!root) return null;
+  if (typeof root.getObjectByName === 'function') {
+    const named = root.getObjectByName('street-surface-v2:carriageway');
+    if (named?.geometry) return named;
+  }
+  let found = null;
+  root.traverse?.((node) => {
+    if (found || !node?.isMesh) return;
+    if (node.name === 'street-surface-v2:carriageway') found = node;
+  });
+  return found;
+}
+
+/**
+ * Uniform-grid index over the streetscape plan.
+ *
+ * The parked layout always knows which segment a vehicle belongs to; the
+ * traffic mirror does not - it is handed a world position by the simulation and
+ * has to find the carriageway under it before it can put the wheels on it.
+ * Built once per plan, O(spans); a lookup is one bucket plus a short scan.
+ */
+export function createSegmentIndex(plan, cell = 24) {
+  const buckets = new Map();
+  const key = (cx, cz) => `${cx}:${cz}`;
+  let spans = 0;
+  for (const segment of plan?.segments || []) {
+    const points = segment.points;
+    if (!Array.isArray(points) || points.length < 2) continue;
+    const reach = segment.half + 1.5;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      if (!finite(a?.x) || !finite(b?.x)) continue;
+      spans += 1;
+      const minX = Math.min(a.x, b.x) - reach;
+      const maxX = Math.max(a.x, b.x) + reach;
+      const minZ = Math.min(a.z, b.z) - reach;
+      const maxZ = Math.max(a.z, b.z) + reach;
+      for (let cz = Math.floor(minZ / cell); cz <= Math.floor(maxZ / cell); cz += 1) {
+        for (let cx = Math.floor(minX / cell); cx <= Math.floor(maxX / cell); cx += 1) {
+          const k = key(cx, cz);
+          let list = buckets.get(k);
+          if (!list) { list = new Set(); buckets.set(k, list); }
+          list.add(segment);
+        }
+      }
+    }
+  }
+  const empty = [];
+  return {
+    spans,
+    cells: buckets.size,
+    /** Every plan segment whose cell covers a world point. */
+    candidates(x, z) {
+      return buckets.get(key(Math.floor(x / cell), Math.floor(z / cell))) || empty;
+    },
+    /** The carriageway segment covering a world point, nearest centreline wins. */
+    locate(x, z) {
+      const list = buckets.get(key(Math.floor(x / cell), Math.floor(z / cell)));
+      if (!list) return null;
+      let best = null;
+      for (const segment of list) {
+        const hit = segmentProjection(segment, x, z);
+        if (!hit) continue;
+        // Inside the paved carriageway, plus a small gutter-side slack so a
+        // vehicle straddling the kerb line still grounds on its own street.
+        if (Math.abs(hit.lateral) > segment.half + 1.0) continue;
+        if (best && hit.distance >= best.distance) continue;
+        best = { segment, lateral: hit.lateral, station: hit.station, distance: hit.distance };
+      }
+      return best;
+    },
+  };
 }
 
 /** Wheel contact points of a placed vehicle, in world space. */
@@ -521,6 +858,8 @@ export function planParkedVehicles(plan, {
   buildings = null,
   emptyStallRate = 0.16,
   maxVehicles = 900,
+  index = null,
+  road = null,
 } = {}) {
   const options = plan.options;
   const heightAt = options.heightAt;
@@ -596,7 +935,7 @@ export function planParkedVehicles(plan, {
         const skew = (random() - 0.5) * 0.05;
         const along = side > 0 ? 1 : -1;
         const yaw = Math.atan2(frame.tx * along, frame.tz * along) + skew;
-        const placement = groundVehicle(spec, segment, station, u, yaw, options, datumAt);
+        const placement = groundVehicle(spec, segment, station, u, yaw, options, datumAt, index, road);
         if (!finite(placement.x) || !finite(placement.y) || !finite(placement.z)) {
           reject(state, 'non-finite-placement');
           continue;
@@ -801,7 +1140,7 @@ function createParkedFleet(assets, materials, kept) {
 }
 
 /** Wheel-contact audit over what was actually placed. */
-function groundingAudit(plan, options, kept) {
+function groundingAudit(plan, options, kept, index = null, road = null) {
   let worst = 0;
   let sum = 0;
   let samples = 0;
@@ -812,8 +1151,11 @@ function groundingAudit(plan, options, kept) {
     const segment = plan.segmentById.get(vehicle.segmentId);
     if (!segment) continue;
     for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
-      const lateral = lateralOf(segment, contact.x, contact.z);
-      const expected = carriagewaySurfaceY(datumAt(contact.x, contact.z), lateral, segment.half, options);
+      const drawn = road ? road.heightAt(contact.x, contact.z) : null;
+      const expected = drawn !== null
+        ? drawn
+        : topCarriagewayY(index, contact.x, contact.z, options, datumAt, segment);
+      if (expected === null) continue;
       const error = Math.abs(contact.y - expected);
       sum += error;
       samples += 1;
@@ -867,9 +1209,20 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   const hideLegacy = overrides.hideLegacy !== false;
   const occupancy = collectExistingVehicles(ctx?.root);
   const buildings = buildBuildingIndex(plan.city);
+  // The drawn carriageway, indexed for point lookup. Both populations ground
+  // through it: the parked layout so a kerbside wheel reads the ribbon it is
+  // actually on, the traffic mirror so a moving vehicle can be grounded from a
+  // world position alone.
+  const segmentIndex = createSegmentIndex(plan);
+  const roadMesh = findDrawnRoadMesh(ctx?.root);
+  const roadIndex = roadMesh
+    ? createDrawnRoadIndex(roadMesh, { centre: focus, radius: DRAWN_ROAD_WINDOW.radius })
+    : null;
   const planned = planParkedVehicles(plan, {
     focus,
     seed,
+    index: segmentIndex,
+    road: roadIndex,
     occupancy: hideLegacy ? null : occupancy,
     buildings,
     emptyStallRate: overrides.emptyStallRate ?? 0.16,
@@ -904,7 +1257,7 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   const parkedStats = parked ? parked.stats() : { triangles: 0, drawCalls: 0, meshes: [] };
   const trafficStats = { triangles: 0, drawCalls: 0, meshes: [] };
 
-  const grounding = groundingAudit(plan, options, kept);
+  const grounding = groundingAudit(plan, options, kept, segmentIndex, roadIndex);
   const { uniqueAppearances, byType } = populationStats(kept);
 
   const state = {
@@ -918,6 +1271,15 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     group,
     plan,
     options,
+    // The drawn carriageway, indexed for point lookup, plus the same datum
+    // sampler the parked layout grounds on. The traffic mirror needs both to
+    // put a moving vehicle's wheels on the road it is driving down.
+    segmentIndex,
+    roadMesh,
+    roadIndex,
+    datumAt: options.heightAt
+      ? (x, z) => options.roadLift + options.heightAt(x, z)
+      : () => options.roadLift,
     focus,
     // The datum the rings are centred on RIGHT NOW. `focus` is the BUILD
     // focus; `centre` follows the camera. See the LOD-centre note below.
@@ -936,6 +1298,14 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     mirror: null,
     mirrorScan: 0,
     mirrorState: new Map(),
+    lightPool: null,
+    lightMatrices: [],
+    lightScratch: new THREE.Vector3(),
+    lightMatrix: new THREE.Matrix4(),
+    lightQuat: new THREE.Quaternion(),
+    lightEuler: new THREE.Euler(0, 0, 0, 'YXZ'),
+    lightScale: new THREE.Vector3(1, 1, 1),
+    lightPos: new THREE.Vector3(),
     blinkPhase: 0,
     lastHour: null,
     lastWeather: null,
@@ -965,6 +1335,12 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
       source: ctx?.streetSurfaceOptions ? 'ctx.streetSurfaceOptions' : 'renderer-defaults',
       requestedRoadLift: requested.roadLift,
       hasTerrain: Boolean(options.heightAt),
+      // Grounding source. `drawn-geometry` means wheel heights came out of the
+      // carriageway mesh the renderer built, with no model in between.
+      groundingSource: roadIndex ? 'drawn-geometry' : 'modelled-cross-section',
+      drawnRoadTriangles: roadIndex ? roadIndex.triangles : 0,
+      drawnRoadRadius: roadIndex ? roadIndex.radius : 0,
+      drawnRoadRebuilds: 0,
     },
     catalogueSize: VEHICLE_SPECS.length,
     counts: byType,
@@ -990,9 +1366,22 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     night: {
       nightness: nightnessFor(ctx?.hour),
       wetness: wetnessFor(ctx?.weather),
-      lampsLit: nightnessFor(ctx?.hour) > 0.35,
+      lampsLit: nightnessFor(ctx?.hour) > VEHICLE_LIGHTS.onAtNightness,
       headEmissive: materials.lamps.head.emissiveIntensity,
       tailEmissive: materials.lamps.tail.emissiveIntensity,
+    },
+    // Real lights, as opposed to emissive quads. Owned and counted here; see
+    // VEHICLE_LIGHTS for why the pool is bounded the way it is.
+    lights: {
+      pooled: 0,
+      active: 0,
+      litVehicles: 0,
+      maxLights: VEHICLE_LIGHTS.maxLights,
+      maxVehicles: VEHICLE_LIGHTS.maxVehicles,
+      radius: VEHICLE_LIGHTS.radius,
+      castShadow: false,
+      withinBudget: true,
+      population: 'mirrored-traffic-near',
     },
     // Declared so a reviewer can see, without opening the renderer, that these
     // materials are eligible for the environment map and the wet grade.
@@ -1017,6 +1406,16 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
 
 /** Signed lateral offset of a world point from a plan segment's centreline. */
 export function lateralOf(segment, x, z) {
+  const hit = segmentProjection(segment, x, z);
+  return hit ? hit.lateral : 0;
+}
+
+/**
+ * Nearest point on a plan segment's centreline: signed lateral offset, arc
+ * station, and the planar distance to the centreline. `lateralOf` is the
+ * lateral component of this; the traffic mirror needs all three.
+ */
+export function segmentProjection(segment, x, z) {
   let best = null;
   for (let i = 0; i < segment.points.length - 1; i += 1) {
     const a = segment.points[i];
@@ -1038,7 +1437,7 @@ export function lateralOf(segment, x, z) {
       station: segment.cum[i] + t,
     };
   }
-  return best ? best.lateral : 0;
+  return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,6 +1445,86 @@ export function lateralOf(segment, x, z) {
 // ---------------------------------------------------------------------------
 
 const MIRROR_RESCAN_SECONDS = 2;
+
+// ---------------------------------------------------------------------------
+// headlights
+// ---------------------------------------------------------------------------
+
+/**
+ * Allocate the whole light pool once, dark and hidden.
+ *
+ * Every slot is a spot light plus its own target object, both parented to the
+ * pass group so the pass's dispose releases them and nothing else in the scene
+ * has to know they exist.
+ */
+function createVehicleLightPool(group) {
+  const slots = [];
+  for (let i = 0; i < VEHICLE_LIGHTS.maxLights; i += 1) {
+    const light = new THREE.SpotLight(
+      VEHICLE_LIGHTS.colour, 0,
+      VEHICLE_LIGHTS.distance, VEHICLE_LIGHTS.angle,
+      VEHICLE_LIGHTS.penumbra, VEHICLE_LIGHTS.decay,
+    );
+    light.name = `vehicle-headlight-${i}`;
+    light.castShadow = false;
+    light.visible = false;
+    light.userData = { pass: VEHICLE_PRESENTATION_ID, kind: 'headlight' };
+    const target = new THREE.Object3D();
+    target.name = `vehicle-headlight-target-${i}`;
+    light.target = target;
+    group.add(light);
+    group.add(target);
+    slots.push({ light, target, vehicle: null });
+  }
+  return { slots, active: 0 };
+}
+
+/** Park every slot: dark, hidden, and holding no vehicle. */
+function releaseVehicleLights(pool, from = 0) {
+  if (!pool) return;
+  for (let i = from; i < pool.slots.length; i += 1) {
+    const slot = pool.slots[i];
+    if (slot.light.visible === false && slot.light.intensity === 0) continue;
+    slot.light.visible = false;
+    slot.light.intensity = 0;
+    slot.vehicle = null;
+  }
+}
+
+/**
+ * Point the pool at the nearest lit vehicles.
+ *
+ * `lit` is already sorted nearest-first and truncated to `maxVehicles`; each
+ * entry carries the world matrix the fleet drew the vehicle with, so a beam
+ * leaves the same lamp the emissive quad is on rather than a guessed offset.
+ */
+function aimVehicleLights(pool, lit, nightness, scratch) {
+  if (!pool) return 0;
+  let used = 0;
+  for (const entry of lit) {
+    const heads = entry.heads;
+    for (let i = 0; i < heads.length && used < pool.slots.length; i += 1) {
+      const lamp = heads[i];
+      const slot = pool.slots[used];
+      scratch.set(lamp.x, lamp.y, lamp.z).applyMatrix4(entry.matrix);
+      slot.light.position.copy(scratch);
+      // Aim from the lamp, along the vehicle's own +Z, dropped so the cone
+      // lands on the carriageway instead of on the next storey of the block.
+      scratch.set(lamp.x, lamp.y - VEHICLE_LIGHTS.aimDrop, lamp.z + VEHICLE_LIGHTS.aimAhead)
+        .applyMatrix4(entry.matrix);
+      slot.target.position.copy(scratch);
+      slot.target.updateMatrixWorld();
+      slot.light.intensity = VEHICLE_LIGHTS.intensity * nightness;
+      slot.light.visible = true;
+      slot.vehicle = entry.id;
+      used += 1;
+    }
+    if (used >= pool.slots.length) break;
+  }
+  releaseVehicleLights(pool, used);
+  pool.active = used;
+  return used;
+}
 
 function hideLegacyVehicles(state, root) {
   if (!root || typeof root.traverse !== 'function') return;
@@ -1142,15 +1621,48 @@ export const VEHICLE_FOCUS = Object.freeze({
 });
 
 /**
+ * The drawn-road grounding window.
+ *
+ * `radius` covers the near ring (80 m) and the mid ring (110 m) plus the 60 m
+ * the centre may drift before the window is rebuilt, so every vehicle a
+ * reviewer can resolve is grounded on real geometry; the far ring's ten-pixel
+ * silhouettes fall back to the modelled cross-section. Measured on the shipped
+ * slice: 3.9k triangles and 41 ms to build, against 15.9k and 154 ms at 400 m.
+ *
+ * `rebuildMetres` is deliberately larger than `refreshMetres`: re-planning the
+ * kerb is cheap, re-bucketing the asphalt is not, and the window only has to be
+ * rebuilt when the rings are about to walk out of it.
+ */
+export const DRAWN_ROAD_WINDOW = Object.freeze({
+  radius: 200,
+  rebuildMetres: 60,
+});
+
+/**
  * Re-centre the parked population on `centre`. Returns the elapsed
  * milliseconds. Safe to call with no state.
  */
 export function recentreVehiclePresentation(state, centre) {
   if (!state || !state.plan) return 0;
   const startedAt = Date.now();
+  // The drawn-road window follows the rings: a vehicle outside it falls back to
+  // the modelled cross-section, which is exact everywhere except where two
+  // paved surfaces lap.
+  if (state.roadMesh) {
+    const held = state.roadIndex?.centre;
+    const drift = held ? Math.hypot(centre.x - held.x, centre.z - held.z) : Infinity;
+    if (drift >= DRAWN_ROAD_WINDOW.rebuildMetres) {
+      state.roadIndex = createDrawnRoadIndex(state.roadMesh, {
+        centre, radius: DRAWN_ROAD_WINDOW.radius,
+      });
+      state.roadRebuilds = (state.roadRebuilds || 0) + 1;
+    }
+  }
   const planned = planParkedVehicles(state.plan, {
     focus: centre,
     seed: state.seed,
+    index: state.segmentIndex,
+    road: state.roadIndex,
     occupancy: state.hideLegacy ? null : state.occupancy,
     buildings: state.buildings,
     emptyStallRate: state.emptyStallRate,
@@ -1188,7 +1700,7 @@ export function recentreVehiclePresentation(state, centre) {
     ...record,
     withinBudget: record.vehicles <= record.maxVehicles && record.triangles <= record.maxTriangles,
   }));
-  d.grounding = groundingAudit(state.plan, state.options, kept);
+  d.grounding = groundingAudit(state.plan, state.options, kept, state.segmentIndex, state.roadIndex);
   d.meshes = [...stats.meshes];
   d.totals = {
     vehicles: kept.length,
@@ -1201,6 +1713,10 @@ export function recentreVehiclePresentation(state, centre) {
   };
   d.refreshes = state.refreshes;
   d.lastRefreshMs = state.lastRefreshMs;
+  if (d.surface) {
+    d.surface.drawnRoadTriangles = state.roadIndex ? state.roadIndex.triangles : 0;
+    d.surface.drawnRoadRebuilds = state.roadRebuilds || 0;
+  }
   return state.lastRefreshMs;
 }
 
@@ -1269,9 +1785,15 @@ export function updateVehiclePresentation(state, ctx, delta) {
   }
   fleet.begin();
   let mirrored = 0;
+  let grounded = 0;
+  let offStreet = 0;
+  let worstLift = 0;
+  const litCandidates = [];
+  const nightnessNow = state.materials.state.nightness;
+  const lampsOnNow = nightnessNow > VEHICLE_LIGHTS.onAtNightness;
   if (state.mirror) {
-    const night = state.materials.state.nightness;
-    const lampsOn = night > 0.35;
+    const night = nightnessNow;
+    const lampsOn = lampsOnNow;
     for (const car of state.mirror.cars) {
       if (mirrored >= TRAFFIC_MIRROR.maxVehicles) break;
       const rig = car.userData?.rig;
@@ -1304,15 +1826,65 @@ export function updateVehiclePresentation(state, ctx, delta) {
       // Bicycle model: steer angle from yaw rate and speed.
       const steer = clamp(Math.atan((yawRate * spec.wheelbase) / Math.max(1.2, speed)), -0.62, 0.62);
       const indicator = Math.abs(yawRate) > 0.12 ? (yawRate > 0 ? 1 : -1) : 0;
+      // GROUNDING (round 5). `src/citygen/traffic.js` owns where a vehicle IS.
+      // What the asphalt under it is doing is this pass's business, because
+      // this pass is what draws the vehicle.
+      //
+      // Until this round the mirror wrote the simulation's own y straight into
+      // the fleet, and that y was the flat road datum `terrain + roadLift` -
+      // the carriageway CROWN minus `crossSlope * half`. Measured against the
+      // drawn triangles that is 48 mm below the asphalt on average and 128 mm
+      // below it on the crown of a wide street. The body sinks by that much,
+      // and the contact patch the fleet writes 20 mm above the vehicle origin
+      // ends up BURIED under the road, so a moving vehicle loses the one piece
+      // of shading that ties it to the surface and reads as levitating.
+      //
+      // The contact height is re-derived here from the DRAWN carriageway under
+      // the vehicle's own four wheels, and the body takes the pitch and roll of
+      // the plane they define. It is presentation only: the simulation's
+      // transform is read, never written.
+      let groundY = py;
+      let groundPitch = 0;
+      let groundRoll = 0;
+      const hit = state.segmentIndex?.locate(px, pz) || null;
+      if (hit) {
+        const placed = groundVehicleAt(
+          spec, hit.segment, px, pz, yaw, state.options, state.datumAt,
+          state.segmentIndex, state.roadIndex,
+        );
+        if (finite(placed.y)) {
+          groundY = placed.y;
+          groundPitch = placed.pitch;
+          groundRoll = placed.roll;
+          grounded += 1;
+          const lift = placed.y - py;
+          if (Math.abs(lift) > Math.abs(worstLift)) worstLift = lift;
+        }
+      } else {
+        // Junction interiors belong to no segment corridor. The drawn mesh
+        // still has asphalt there, so the body is set down on it flat rather
+        // than left on the simulation datum.
+        const pad = state.roadIndex ? state.roadIndex.heightAt(px, pz) : null;
+        if (pad !== null && finite(pad)) {
+          groundY = pad;
+          grounded += 1;
+          const lift = pad - py;
+          if (Math.abs(lift) > Math.abs(worstLift)) worstLift = lift;
+        } else {
+          offStreet += 1;
+        }
+      }
       const ok = fleet.push({
         typeId: record.typeId,
         lod: TRAFFIC_MIRROR.lod,
         x: px,
-        y: py,
+        y: groundY,
         z: pz,
         yaw,
-        pitch: 0,
-        roll: clamp(-yawRate * Math.min(speed, 14) * 0.006, -0.05, 0.05),
+        pitch: groundPitch,
+        // Body roll is the road's camber plus a little weight transfer in a
+        // turn; the two add, and the cornering term stays inside its old band.
+        roll: groundRoll + clamp(-yawRate * Math.min(speed, 14) * 0.006, -0.05, 0.05),
         paint: record.paint,
         rim: record.rim,
         steer,
@@ -1324,11 +1896,55 @@ export function updateVehiclePresentation(state, ctx, delta) {
         lampsOn,
       });
       if (ok) mirrored += 1;
+      if (!ok || !lampsOn || !eye) continue;
+      // Headlight candidates: nearest first, inside the lit radius. The pool is
+      // handed the vehicle's own world matrix so the beam starts at the lamp.
+      const range = Math.hypot(px - eye.x, pz - eye.z);
+      if (range > VEHICLE_LIGHTS.radius) continue;
+      const built = state.assets.body(record.typeId, TRAFFIC_MIRROR.lod);
+      const heads = built?.lamps?.filter((lamp) => lamp.kind === 'head') || [];
+      if (!heads.length) continue;
+      state.lightEuler.set(groundPitch, yaw, groundRoll, 'YXZ');
+      state.lightQuat.setFromEuler(state.lightEuler);
+      state.lightPos.set(px, groundY, pz);
+      // Pooled matrices: the mirror runs every frame and must not allocate.
+      let matrix = state.lightMatrices[litCandidates.length];
+      if (!matrix) {
+        matrix = new THREE.Matrix4();
+        state.lightMatrices[litCandidates.length] = matrix;
+      }
+      matrix.compose(state.lightPos, state.lightQuat, state.lightScale);
+      litCandidates.push({ id: record.typeId, range, heads, matrix });
     }
   }
   fleet.commit();
+
+  // Lights, after the bodies: the pool follows what was actually drawn.
+  if (lampsOnNow && litCandidates.length) {
+    if (!state.lightPool) {
+      state.lightPool = createVehicleLightPool(state.group);
+      state.diagnostics.lights.pooled = state.lightPool.slots.length;
+    }
+    litCandidates.sort((a, b) => a.range - b.range);
+    const lit = litCandidates.slice(0, VEHICLE_LIGHTS.maxVehicles);
+    const active = aimVehicleLights(state.lightPool, lit, nightnessNow, state.lightScratch);
+    state.diagnostics.lights.active = active;
+    state.diagnostics.lights.litVehicles = lit.length;
+    state.diagnostics.lights.withinBudget = active <= VEHICLE_LIGHTS.maxLights;
+  } else if (state.lightPool) {
+    releaseVehicleLights(state.lightPool);
+    state.lightPool.active = 0;
+    state.diagnostics.lights.active = 0;
+    state.diagnostics.lights.litVehicles = 0;
+  }
   const stats = fleet.stats();
   state.diagnostics.traffic.mirrored = mirrored;
+  state.diagnostics.traffic.grounded = grounded;
+  state.diagnostics.traffic.offStreet = offStreet;
+  // How far the drawn contact height had to move from the simulation datum.
+  // A non-zero number here is the camber the flat datum cannot express, not an
+  // error: it is what stops the wheels sinking into the crown.
+  state.diagnostics.traffic.worstGroundLift = worstLift;
   state.diagnostics.traffic.triangles = stats.triangles;
   state.diagnostics.traffic.drawCalls = stats.drawCalls;
   state.diagnostics.traffic.withinBudget = stats.triangles <= TRAFFIC_MIRROR.maxTriangles;
@@ -1336,6 +1952,17 @@ export function updateVehiclePresentation(state, ctx, delta) {
 
 export function disposeVehiclePresentation(state) {
   if (!state) return;
+  if (state.lightPool) {
+    for (const slot of state.lightPool.slots) {
+      slot.light.visible = false;
+      slot.light.intensity = 0;
+      slot.light.parent?.remove(slot.light);
+      slot.target.parent?.remove(slot.target);
+      slot.light.dispose?.();
+      slot.vehicle = null;
+    }
+    state.lightPool = null;
+  }
   for (const node of state.hiddenLegacy) node.visible = true;
   state.hiddenLegacy.length = 0;
   state.parked?.dispose();

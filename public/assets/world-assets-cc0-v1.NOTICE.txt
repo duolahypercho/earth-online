@@ -1,0 +1,33 @@
+THIRD-PARTY ASSET NOTICE - world-assets-cc0-v1
+
+Source library : ambientCG (https://ambientcg.com/)
+Licence        : Creative Commons CC0 1.0 Universal (SPDX: CC0-1.0)
+Licence page   : https://docs.ambientcg.com/license/
+Verified on    : 2026-08-21 by fetching the licence page above.
+
+Publisher statement, quoted from that page:
+  "All ambientCG assets are provided under the Creative Commons CC0 1.0 Universal License. This applies to the downloadable asset files and the material preview renders shown for each asset on the site."
+
+CC0 waives the attribution requirement. The publisher asks for credit anyway,
+and this repository records provenance for every vendored byte, so:
+
+  LeafSet010 - https://ambientcg.com/a/LeafSet010
+  LeafSet003 - https://ambientcg.com/a/LeafSet003
+  RoadLines032C - https://ambientcg.com/a/RoadLines032C
+  TireTracks001 - https://ambientcg.com/a/TireTracks001
+  AsphaltDamage001 - https://ambientcg.com/a/AsphaltDamage001
+  ManholeCover011 - https://ambientcg.com/a/ManholeCover011
+  TactilePaving001 - https://ambientcg.com/a/TactilePaving001
+
+  Created using LeafSet010, LeafSet003, RoadLines032C, TireTracks001, AsphaltDamage001, ManholeCover011, TactilePaving001 from ambientCG.com, licensed under the Creative Commons CC0 1.0 Universal License.
+
+The bark region of the leaf atlas is not from any third party: it is generated
+procedurally by scripts/world-assets/build-world-assets-cc0-v1.mjs.
+
+Repacked outputs in public/assets/ are derivative works of the CC0 sources and
+are themselves offered under CC0 1.0. The full legal code is in
+public/assets/world-assets-cc0-v1.LICENSE.txt; the per-file record is in
+public/assets/world-assets-cc0-v1.provenance.json.
+
+None of these sources is scanned, ripped, or otherwise derived from any
+commercial product, and none carries a brand mark.

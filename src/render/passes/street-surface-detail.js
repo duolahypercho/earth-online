@@ -81,6 +81,9 @@ import {
   streetStationAt,
   streetRandom,
   streetHash32,
+  wheelTrackWeight,
+  getPaintMapTexture,
+  STREET_SURFACE_V2_DEFAULTS,
 } from '../../world/streets/street-surface-v2.js';
 
 export const STREET_DETAIL_ID = 'street-surface-detail';
@@ -199,30 +202,64 @@ const PALETTE = Object.freeze({
 });
 
 /**
- * Everything that is a MODIFICATION of the surface underneath it - a patch, a
- * tar seal, a polished wheel path, gutter grime, a scored joint, a stain, an
- * apron - is derived from the active palette's own tone for that surface, not
- * from a fixed hex. The canonical San Francisco palette is a pale concrete
- * road; the stylised palette is dark asphalt. A fixed "patch grey" is darker
- * than one and lighter than the other, so it reads as a patch in one world and
- * as a spill in the other.
+ * WEAR IS A MULTIPLIER, NOT A COLOUR (round 5). READ THIS BEFORE EDITING.
+ *
+ * Everything in this pass that is a MODIFICATION of the surface underneath it
+ * - a patch, a tar seal, a polished wheel path, gutter grime, a scored joint,
+ * a stain, an apron - has to end up DARKER or LIGHTER THAN WHAT IT MODIFIES,
+ * by a stated ratio, on any palette. Rounds 1-4 got that wrong twice over:
+ *
+ *   1. The tone was derived from the palette TINT alone, while the surface it
+ *      lands on renders as tint x albedo map. The carriageway tint is a pale
+ *      #dde0e1 multiplied by a dark asphalt photo, so the road renders at
+ *      linear 0.0595 - and `scale(asphalt, 0.7)`, with no map on it, rendered
+ *      at linear 0.326. The "dark patch" was 5.5x BRIGHTER than the road it
+ *      was patching. Every decal in the pass had the same defect, because none
+ *      of the five materials carried a map of any kind.
+ *   2. `scale()` multiplies the sRGB CODE VALUE, so the number in the source
+ *      was never the ratio the renderer produced: 0.7 of the code is 0.45 of
+ *      the light, and 0.5 of the code is 0.22 of the light.
+ *
+ * Both halves are fixed here. The materials now carry the SAME albedo maps the
+ * street surface carries, on UVs baked at the SAME metres-per-repeat, so a
+ * decal samples the same texel as the surface it sits on; and the tone is the
+ * surface's own tint scaled by a LINEAR factor, so `patchDark: 0.58` means the
+ * patch reflects 58% of what the road beside it reflects, on every palette,
+ * whatever the map underneath is doing.
  */
+export const STREET_WEAR_MULTIPLIERS = Object.freeze({
+  // carriageway
+  patchDark: 0.58,      // fresh dense-graded overlay, darker than aged asphalt
+  patchLight: 1.30,     // an old, oxidised, sun-bleached cut
+  tar: 0.30,            // crack sealant and cold-joint seal: near-black
+  wheelPolish: 0.86,    // aggregate polished by tyres: slightly darker, glossier
+  gutterGrime: 0.66,    // silt and oil against the kerb line
+  // footway
+  jointLip: 0.86,       // the tooled shoulder either side of a score joint
+  jointDeep: 0.44,      // the bottom of the groove, which never sees the sky
+  stain: 0.76,          // downpipe and kerb-runoff washes
+  apron: 0.94,          // a driveway apron is a separate, later pour
+  // paint
+  paintWorn: 0.26,      // a stripe scrubbed back to a ghost
+});
+
 function wearTones(o, className) {
   const asphalt = hexToSrgb(o.colors.asphalt[className] || o.colors.asphalt.default);
   const sidewalk = hexToSrgb(o.colors.sidewalk);
+  const gutter = hexToSrgb(o.colors.gutter);
+  const k = STREET_WEAR_MULTIPLIERS;
   return {
-    patchDark: scale(asphalt, 0.7),
-    patchLight: scale(asphalt, 1.06),
-    tar: scale(asphalt, 0.44),
-    wheelPolish: scale(asphalt, 0.9),
-    gutterGrime: mix(hexToSrgb(o.colors.gutter), scale(asphalt, 0.62), 0.5),
-    jointDark: scale(sidewalk, 0.86),
-    jointDeep: scale(sidewalk, 0.75),
-    stain: scale(sidewalk, 0.92),
-    apron: scale(sidewalk, 0.965),
+    patchDark: mulLinear(asphalt, k.patchDark),
+    patchLight: mulLinear(asphalt, k.patchLight),
+    tar: mulLinear(asphalt, k.tar),
+    wheelPolish: mulLinear(asphalt, k.wheelPolish),
+    gutterGrime: mulLinear(gutter, k.gutterGrime),
+    jointLip: mulLinear(sidewalk, k.jointLip),
+    jointDeep: mulLinear(sidewalk, k.jointDeep),
+    stain: mulLinear(sidewalk, k.stain),
+    apron: mulLinear(sidewalk, k.apron),
     paintFresh: hexToSrgb(o.colors.markingWhite),
-    // Fully worn paint is faded, never darker than the road it is painted on.
-    paintWorn: mix(hexToSrgb(o.colors.markingWhite), scale(asphalt, 1.02), 0.75),
+    paintWorn: mulLinear(hexToSrgb(o.colors.markingWhite), k.paintWorn),
   };
 }
 
@@ -241,16 +278,35 @@ function hexToSrgb(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-function mix(a, b, t) {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+function linearToSrgb(c) {
+  const v = c <= 0 ? 0 : c >= 1 ? 1 : c;
+  return v <= 0.0031308 ? v * 12.92 : 1.055 * (v ** (1 / 2.4)) - 0.055;
 }
 
-function scale(rgb, k) {
-  return [Math.min(1, rgb[0] * k), Math.min(1, rgb[1] * k), Math.min(1, rgb[2] * k)];
+/**
+ * Multiply a stored sRGB colour by a LINEAR factor: `mulLinear(c, 0.5)` halves
+ * the light the surface reflects. See STREET_WEAR_MULTIPLIERS.
+ */
+function mulLinear(rgb, k) {
+  const f = k < 0 ? 0 : k;
+  return [
+    linearToSrgb(srgbToLinear(rgb[0]) * f),
+    linearToSrgb(srgbToLinear(rgb[1]) * f),
+    linearToSrgb(srgbToLinear(rgb[2]) * f),
+  ];
 }
 
-function makeBuffer(name) {
-  return { name, positions: [], normals: [], colors: [], uvs: [], indices: [], triangles: 0 };
+/**
+ * `uvMetres` is how many world metres one UV unit spans, so the decal's UVs
+ * land on the SAME texel of the SAME albedo map as the surface it decorates.
+ * Round 4 baked every buffer at a fixed 2 m and no buffer had a map on it.
+ */
+function makeBuffer(name, uvMetres = 2) {
+  return {
+    name,
+    uvScale: 1 / (Number(uvMetres) > 0 ? Number(uvMetres) : 2),
+    positions: [], normals: [], colors: [], uvs: [], indices: [], triangles: 0,
+  };
 }
 
 /**
@@ -285,7 +341,7 @@ function pushFace(buffer, points, color, normal = UP) {
     buffer.normals.push(normal.x, normal.y, normal.z);
     const c = perVertex ? color[flip ? count - 1 - i : i] : color;
     buffer.colors.push(srgbToLinear(c[0]), srgbToLinear(c[1]), srgbToLinear(c[2]));
-    buffer.uvs.push(p.x * 0.5, p.z * 0.5);
+    buffer.uvs.push(p.x * buffer.uvScale, p.z * buffer.uvScale);
   }
   for (let i = 1; i < count - 1; i += 1) {
     buffer.indices.push(base, base + i, base + i + 1);
@@ -444,14 +500,19 @@ function makeState(plan, focus, options, seedTag, outerRadius) {
     used: 0,
     features: new Set(ring.features),
   }));
-  const buffers = {
-    paint: makeBuffer('paint'),
-    wear: makeBuffer('wear'),
-    metal: makeBuffer('metal'),
-    concrete: makeBuffer('concrete'),
-    dome: makeBuffer('dome'),
-  };
   const o = plan.options;
+  // One UV unit per buffer = one repeat of the map that buffer's material
+  // carries, in world metres, exactly as street-surface-v2 bakes the surface
+  // underneath. `metal` and `dome` carry no albedo, only a fine detail relief,
+  // so they state their own tile.
+  const uv = o.uvMetersPerRepeat || SURFACE_UV_METRES;
+  const buffers = {
+    paint: makeBuffer('paint', uv.marking || SURFACE_UV_METRES.marking),
+    wear: makeBuffer('wear', uv.carriageway || SURFACE_UV_METRES.carriageway),
+    metal: makeBuffer('metal', HARDWARE_UV_METRES),
+    concrete: makeBuffer('concrete', uv.concrete || SURFACE_UV_METRES.concrete),
+    dome: makeBuffer('dome', HARDWARE_UV_METRES),
+  };
   const heightAt = o.heightAt;
   return {
     plan,
@@ -700,10 +761,23 @@ function emitJunctionPaint(state, node) {
   const o = state.o;
   const tones = wearTones(o, node.approaches[0]?.className || 'default');
   const fresh = tones.paintFresh;
-  const worn = tones.paintWorn;
   // Repainting is a per-junction event, so the wear of every mark at one node
   // is correlated. 0 = repainted last month, 1 = due for repainting.
   const nodeWear = ((streetHash32(`${state.seedTag}:repaint:${node.id}`) % 1000) / 1000) ** 1.4;
+  // PAINT WEAR IS A LINEAR MULTIPLIER ON THE PAINT (round 5).
+  //
+  // Round 4 interpolated between markingWhite and a "worn" tone that was
+  // itself the road tint brightened by 2%, so the whole ramp from fresh to
+  // scrubbed-out spanned 13% of linear luminance: every stripe of every
+  // crossing in the city was the same value to within a couple of code
+  // points, and card 01 measured eight stripes inside a 0.9% spread. A stripe
+  // that has been driven over for four years reflects a QUARTER of what a
+  // stripe repainted last month reflects, so the ramp is now a ratio with a
+  // floor at STREET_WEAR_MULTIPLIERS.paintWorn.
+  const paintFloor = STREET_WEAR_MULTIPLIERS.paintWorn;
+  const paintTone = (age, track) => mulLinear(
+    fresh, clamp(1 - 0.52 * age - 0.42 * track, paintFloor, 1),
+  );
   const crossings = junctionEarnsCrossings(node);
   const width = crossingWidthFor(node);
   const ladder = node.maxClassRank >= 5;
@@ -754,19 +828,24 @@ function emitJunctionPaint(state, node) {
             const v = -half + o.crosswalkEdgeInset + (usable * (i + 0.5)) / stripes;
             const v0 = v - stripeWidth / 2;
             const v1 = v + stripeWidth / 2;
-            const wear = clamp(nodeWear * (0.72 + rng() * 0.5), 0, 1);
-            const color = mix(fresh, worn, wear);
+            // The bars of a continental crossing run PARALLEL to the traffic
+            // that crosses them, so a wheel path lies along one bar and leaves
+            // its neighbour alone. That comb - not noise - is what makes the
+            // eight bars of a real crossing eight different values.
+            const age = clamp(nodeWear * (0.72 + rng() * 0.5), 0, 1);
+            const track = wheelTrackWeight(v, half, approach.lanes);
             pushFace(state.buffers.paint, [
               point(bandStart, v0), point(bandEnd, v0), point(bandEnd, v1), point(bandStart, v1),
-            ], color, UP);
+            ], paintTone(age, track), UP);
           }
         } else {
           const lineWidth = STREET_DETAIL_MARKINGS.transverseLineWidth;
           const v0 = -half + o.crosswalkEdgeInset;
           const v1 = half - o.crosswalkEdgeInset;
           for (const d of [bandStart + lineWidth / 2, bandEnd - lineWidth / 2]) {
-            const wear = clamp(nodeWear * (0.8 + rng() * 0.4), 0, 1);
-            const color = mix(fresh, worn, wear);
+            // A transverse pair is crossed by every wheel on the approach, so
+            // it takes an averaged scrub rather than the comb.
+            const color = paintTone(clamp(nodeWear * (0.8 + rng() * 0.4), 0, 1), 0.5);
             pushFace(state.buffers.paint, [
               point(d - lineWidth / 2, v0), point(d + lineWidth / 2, v0),
               point(d + lineWidth / 2, v1), point(d - lineWidth / 2, v1),
@@ -818,7 +897,7 @@ function emitJunctionPaint(state, node) {
         // convention; a one-way approach stops across its whole width.
         const vLo = -half + o.stopBarEdgeInset;
         const vHi = approach.oneway ? half - o.stopBarEdgeInset : 0;
-        const color = mix(fresh, worn, clamp(nodeWear * 0.9, 0, 1));
+        const color = paintTone(clamp(nodeWear * 0.9, 0, 1), 0.35);
         pushFace(state.buffers.paint, [
           point(barStart, vLo), point(barEnd, vLo), point(barEnd, vHi), point(barStart, vHi),
         ], color, UP);
@@ -855,7 +934,9 @@ function emitJunctionPaint(state, node) {
         if (dTail + 0.5 > runAvailable) { reject(state, 'laneArrow', 'no-room'); continue; }
         const anchor = at(dTail, lane.centre);
         const emitted = emitItem(state, anchor.x, anchor.z, 'laneArrow', () => {
-          const color = mix(fresh, worn, clamp(nodeWear * (0.6 + rng() * 0.5), 0, 1));
+          // An arrow is painted in the middle of a lane, between the two wheel
+          // paths, so it is the last mark on the road to be scrubbed away.
+          const color = paintTone(clamp(nodeWear * (0.6 + rng() * 0.5), 0, 1), 0.12);
           for (const shape of arrowShapes(lane.movement, dTail, lane.centre, half)) {
             pushFace(state.buffers.paint, shape.map((s) => point(s.d, s.v)), color, UP);
           }
@@ -1263,6 +1344,78 @@ export function panelLengthFor(segment, seedTag = 'city') {
   return 1.2 + ((streetHash32(`${seedTag}:panel:${key}`) % 7) / 10);
 }
 
+/**
+ * A REAL SCORE JOINT, NOT A GREY LINE (round 5). READ THIS BEFORE EDITING.
+ *
+ * Round 4 drew every footway joint as one flat 22 mm quad, 14% darker than the
+ * slab, lying at a constant lift above it. At any distance past about 4 m that
+ * is a pencil line on paper: it has no shading term of its own, so it cannot
+ * change with the sun, it produces no contact darkening, and it disappears
+ * entirely in overcast light. A jointing tool leaves a groove with a radiused
+ * shoulder either side, and what makes that groove legible in real light is
+ * that the two facets face in DIFFERENT DIRECTIONS and the bottom of the
+ * groove is occluded from most of the sky.
+ *
+ * So the joint is now two quads meeting at a depressed centre line, with real
+ * per-facet normals and a darker tone at the bottom than at the shoulders.
+ *
+ * WHY THE GROOVE IS BUILT UPWARD FROM THE SURFACE, NOT CUT INTO IT. The
+ * footway slab is a solid mesh with no groove in it, so a facet sunk below the
+ * slab is behind it and gets depth-rejected in exactly the places the groove
+ * would be visible. The shoulders therefore sit at `lift + depth` and the
+ * centre line at `lift`, i.e. the whole groove is above the surface it scores
+ * and only the RELIEF between shoulder and centre is real. That relief is what
+ * the ambient-occlusion resolve in src/render/post-chain.js integrates, and it
+ * is what the sun shades: geometrically it is a tooled lip standing 9 mm
+ * proud, which is also what a jointing tool actually leaves behind.
+ *
+ * `walkPoint(s, v, lift)` supplies the CAMBERED footway height at (s, v), so
+ * the groove follows the cross-fall of the walk instead of floating over it.
+ */
+export const STREET_JOINT_GROOVE = Object.freeze({
+  panelHalfWidth: 0.013,     // 26 mm overall, the width of a tooled score joint
+  expansionHalfWidth: 0.026, // 52 mm, a sealed expansion joint
+  depth: 0.009,              // shoulder to groove bottom
+});
+
+/**
+ * Emit one V-groove between two points on the footway, as two quads sharing a
+ * depressed centre line. `at(s, v, lift)` must return a point on the surface
+ * being scored. `axis` is 'along' (the groove runs along v, i.e. across the
+ * walk) or 'across' (the groove runs along s, i.e. down the walk).
+ */
+function pushGroove(buffer, at, s, v0, v1, halfWidth, tones, axis) {
+  const { depth } = STREET_JOINT_GROOVE;
+  const lip = STREET_DETAIL_LIFTS.joint + depth;
+  const floor = STREET_DETAIL_LIFTS.joint;
+  const shoulder = tones.jointLip;
+  const bottom = tones.jointDeep;
+  // Facet normal: rises `depth` over `halfWidth`, tilted away from the centre.
+  const run = Math.hypot(halfWidth, depth) || 1;
+  const nUp = halfWidth / run;
+  const nOut = depth / run;
+  let faces = 0;
+  for (const sign of [-1, 1]) {
+    const outer = axis === 'along'
+      ? [at(s + sign * halfWidth, v0, lip), at(s + sign * halfWidth, v1, lip)]
+      : [at(v0, s + sign * halfWidth, lip), at(v1, s + sign * halfWidth, lip)];
+    const inner = axis === 'along'
+      ? [at(s, v0, floor), at(s, v1, floor)]
+      : [at(v0, s, floor), at(v1, s, floor)];
+    // The facet climbs from the groove floor out to the shoulder, so its
+    // normal leans back INTO the groove. Taken from the emitted points rather
+    // than from the axis argument, so it cannot be inverted by a sign
+    // convention: an inverted pair reads as a raised ridge, not a groove.
+    const ox = outer[0].x - inner[0].x;
+    const oz = outer[0].z - inner[0].z;
+    const ol = Math.hypot(ox, oz) || 1;
+    const normal = { x: -(ox / ol) * nOut, y: nUp, z: -(oz / ol) * nOut };
+    faces += pushFace(buffer, [outer[0], outer[1], inner[1], inner[0]],
+      [shoulder, shoulder, bottom, bottom], normal);
+  }
+  return faces;
+}
+
 function emitSidewalkDetail(state, segment) {
   const o = state.o;
   const s0 = segment.trimStart + 0.4;
@@ -1283,32 +1436,43 @@ function emitSidewalkDetail(state, segment) {
       const z = st.z + st.nz * st.miter * v;
       return { x, y: sidewalkSurfaceY(state.datum(x, z), v, segment.half, o) + lift, z };
     };
-    const pointAt = (s, v) => walkPoint(s, v, STREET_DETAIL_LIFTS.joint);
     const stainAt = (s, v) => walkPoint(s, v, STREET_DETAIL_LIFTS.stain);
     // Scored transverse joints, with a wider expansion joint every sixth panel.
     const count = Math.floor((s1 - s0) / panel);
     for (let i = 1; i < count; i += 1) {
       const s = s0 + panel * i;
       const expansion = i % 6 === 0;
-      const width = expansion ? 0.05 : 0.022;
-      const color = expansion ? tones.jointDeep : tones.jointDark;
+      const halfWidth = expansion
+        ? STREET_JOINT_GROOVE.expansionHalfWidth
+        : STREET_JOINT_GROOVE.panelHalfWidth;
       const st = streetStationAt(segment, s, false);
       const cx = st.x + st.nx * st.miter * ((inner + outer) / 2);
       const cz = st.z + st.nz * st.miter * ((inner + outer) / 2);
       emitItem(state, cx, cz, expansion ? 'expansionJoint' : 'panelJoint', () => {
-        pushFace(state.buffers.concrete, [
-          pointAt(s - width / 2, inner), pointAt(s + width / 2, inner),
-          pointAt(s + width / 2, outer), pointAt(s - width / 2, outer),
-        ], color, UP);
+        pushGroove(state.buffers.concrete, walkPoint, s, inner, outer, halfWidth, tones, 'along');
       });
     }
-    // A wide footway is scored down the middle as well.
-    if (band.usable >= 2.6) {
-      const lateral = side * (band.inner + band.usable / 2);
+    // SCORED INTO SQUARES, NOT INTO STRIPS (round 5).
+    //
+    // Round 4 only scored a footway down its length when the usable band
+    // reached 2.6 m, and the shipped San Francisco slice carries a 2.5 m
+    // footway. Every walk in every card was therefore scored into transverse
+    // STRIPS 1.2-1.8 m by 2.5 m - a 1:1.6 module that no city pours, because a
+    // panel that long cracks down its own middle. A real walk is scored close
+    // to square, so the number of longitudinal joints is whatever it takes to
+    // bring the cell width back to about the panel length.
+    const longCells = Math.max(1, Math.round(band.usable / panel));
+    for (let j = 1; j < longCells; j += 1) {
+      const lateral = side * (band.inner + (band.usable * j) / longCells);
       const st = streetStationAt(segment, (s0 + s1) / 2, false);
       emitItem(state, st.x + st.nx * lateral, st.z + st.nz * lateral, 'longJoint', () => {
-        ribbon(state, segment, s0, s1, lateral, 0.022,
-          tones.jointDark, state.buffers.concrete, STREET_DETAIL_LIFTS.joint, 6, true);
+        const spans = Math.max(1, Math.ceil((s1 - s0) / 6));
+        for (let k = 0; k < spans; k += 1) {
+          const a = s0 + ((s1 - s0) * k) / spans;
+          const b = s0 + ((s1 - s0) * (k + 1)) / spans;
+          pushGroove(state.buffers.concrete, walkPoint, lateral, a, b,
+            STREET_JOINT_GROOVE.panelHalfWidth, tones, 'across');
+        }
       });
     }
     // Staining: dark washes at the curb where water runs off, and at the
@@ -1409,8 +1573,16 @@ function emitRampPads(state, node) {
         return { x, y: invert + (back - invert) * t, z };
       };
       const anchor = surfaceAt(a, padDepth / 2);
+      // The pad goes in the DOME buffer, not the concrete one (round 5). A
+      // detectable-warning pad is a manufactured cast panel bolted onto the
+      // ramp, not a modification of the concrete, and the concrete buffer now
+      // multiplies its vertex colour by the footway albedo photograph. Safety
+      // yellow multiplied by a concrete photograph is a dull ochre, which is
+      // the one thing this element must never be. The pad and its domes are
+      // one object, so they now share one buffer and one material - and the
+      // dome material carries the same polygonOffset the pad had before.
       const emitted = emitItem(state, anchor.x, anchor.z, 'rampPad', () => {
-        pushFace(state.buffers.concrete, [
+        pushFace(state.buffers.dome, [
           surfaceAt(a, 0.05), surfaceAt(b, 0.05),
           surfaceAt(b, 0.05 + padDepth), surfaceAt(a, 0.05 + padDepth),
         ], padColor, UP);
@@ -1629,12 +1801,81 @@ function segmentReach(state, segment) {
  * declares a class the grader knows.
  */
 const MATERIAL_SPECS = Object.freeze({
-  paint: { roughness: 0.58, metalness: 0, offset: [-4, -8], renderOrder: 3, envClass: 'painted-metal' },
-  wear: { roughness: 0.97, metalness: 0, offset: [-3, -6], renderOrder: 2, envClass: 'asphalt' },
-  metal: { roughness: 0.6, metalness: 0.55, offset: [-4, -8], renderOrder: 3, envClass: 'painted-metal' },
-  concrete: { roughness: 0.93, metalness: 0, offset: [-3, -6], renderOrder: 2, envClass: 'sidewalk' },
-  dome: { roughness: 0.66, metalness: 0.1, offset: null, renderOrder: 0, envClass: 'painted-metal' },
+  paint: {
+    roughness: 0.58, metalness: 0, offset: [-4, -8], renderOrder: 3,
+    envClass: 'painted-metal', surface: 'paint', detailClass: null, bumpScale: 0.004,
+  },
+  wear: {
+    roughness: 0.97, metalness: 0, offset: [-3, -6], renderOrder: 2,
+    envClass: 'asphalt', surface: 'carriageway', detailClass: 'asphalt',
+    normalScale: 0.9, aoMapIntensity: 0.55, bumpScale: 0.024,
+  },
+  metal: {
+    roughness: 0.6, metalness: 0.55, offset: [-4, -8], renderOrder: 3,
+    envClass: 'painted-metal', surface: null, detailClass: 'painted-concrete',
+    normalScale: 0.7, aoMapIntensity: 0.5,
+  },
+  concrete: {
+    roughness: 0.93, metalness: 0, offset: [-3, -6], renderOrder: 2,
+    envClass: 'sidewalk', surface: 'concrete', detailClass: 'sidewalk-concrete',
+    normalScale: 0.85, aoMapIntensity: 0.6, bumpScale: 0.014,
+  },
+  dome: {
+    roughness: 0.66, metalness: 0.1, offset: [-3, -6], renderOrder: 2,
+    envClass: 'painted-metal', surface: null, detailClass: null,
+  },
 });
+
+/**
+ * Mean of each detail class's baked roughness channel. three MULTIPLIES
+ * `material.roughness` by the map, so a call site that wants a measured
+ * roughness has to divide it out first. Mirrors DETAIL_ROUGHNESS_MEAN in
+ * src/citygen/renderer.js, which this pass may not import.
+ */
+const DETAIL_ROUGHNESS_MEAN = Object.freeze({
+  asphalt: 0.925,
+  'sidewalk-concrete': 0.875,
+  'painted-concrete': 0.685,
+});
+
+/** Detail-map bake settings. Resolution is the renderer's, per class. */
+const DETAIL_RESOLUTION = 256;
+
+/** Fallback UV tiles, used only when the context exposes no surface options. */
+const SURFACE_UV_METRES = STREET_SURFACE_V2_DEFAULTS.uvMetersPerRepeat;
+
+/**
+ * UV tile for the two buffers that carry no albedo (covers, tactile domes).
+ * A manhole cover is 0.6 m across, so a 6.5 m detail tile would put one texel
+ * of relief on it; 0.6 m puts a whole tile on it.
+ */
+const HARDWARE_UV_METRES = 0.6;
+
+/**
+ * The albedo maps this pass's decals must share with the surface they lie on,
+ * and how many world metres one repeat of each covers.
+ *
+ * `ctx.streetSurfaceOptions` is the EXACT options object the renderer handed
+ * street-surface-v2, so `maps` here is the same THREE.Texture instance the
+ * carriageway and footway are rendering with, at the same `repeat` (1) and the
+ * same wrapping. No clone, no second upload, no extra texture bytes: the pass
+ * adds 65 536 bytes of paint tile and nothing else.
+ */
+export function streetDetailSurfaceMaps(ctx) {
+  const options = ctx?.streetSurfaceOptions || null;
+  const maps = options?.maps || {};
+  const uv = options?.uvMetersPerRepeat || SURFACE_UV_METRES;
+  return {
+    carriageway: maps.carriageway || null,
+    concrete: maps.concrete || null,
+    paint: maps.paint === null ? null : (maps.paint || getPaintMapTexture()),
+    uvMetersPerRepeat: {
+      carriageway: uv.carriageway || SURFACE_UV_METRES.carriageway,
+      concrete: uv.concrete || SURFACE_UV_METRES.concrete,
+      marking: uv.marking || SURFACE_UV_METRES.marking,
+    },
+  };
+}
 
 /**
  * One material per buffer. Created ONCE per city and reused across every LOD
@@ -1644,18 +1885,50 @@ const MATERIAL_SPECS = Object.freeze({
  * render unlit for the rest of the session. Same reason facade-articulation
  * builds its material set up front.
  */
-export function createStreetDetailMaterials() {
+export function createStreetDetailMaterials(surfaceMaps = null) {
+  const maps = surfaceMaps || { carriageway: null, concrete: null, paint: null,
+    uvMetersPerRepeat: SURFACE_UV_METRES };
+  const uv = maps.uvMetersPerRepeat || SURFACE_UV_METRES;
   const materials = {};
   for (const [name, spec] of Object.entries(MATERIAL_SPECS)) {
+    const albedo = spec.surface ? maps[spec.surface] || null : null;
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: spec.roughness,
       metalness: spec.metalness,
+      ...(albedo ? { map: albedo, bumpMap: albedo, bumpScale: spec.bumpScale ?? 0.01 } : {}),
       ...(spec.offset
         ? { polygonOffset: true, polygonOffsetFactor: spec.offset[0], polygonOffsetUnits: spec.offset[1] }
         : {}),
     });
-    material.userData = { envClass: spec.envClass };
+    // Micro-relief. Without a normal / roughness / AO map a decal is a flat
+    // painted card that cannot catch a grazing sun or a wet-street reflection,
+    // which is what made the whole pass read as printed vinyl in round 4. The
+    // tile is the SAME size the surface underneath uses, so the relief is
+    // continuous across the decal edge rather than restarting at it.
+    if (spec.detailClass) {
+      const tileMetres = spec.surface
+        ? (uv[spec.surface] || SURFACE_UV_METRES[spec.surface] || 1)
+        : HARDWARE_UV_METRES;
+      const perMetre = uvScalePerMetre(spec.detailClass);
+      const repeat = { x: tileMetres * perMetre.x, y: tileMetres * perMetre.y };
+      const mean = DETAIL_ROUGHNESS_MEAN[spec.detailClass] || 1;
+      try {
+        applyDetailMaps(material, spec.detailClass, {
+          resolution: DETAIL_RESOLUTION,
+          repeat,
+          useMetalnessMap: false,
+          normalScale: spec.normalScale ?? 0.8,
+          aoMapIntensity: spec.aoMapIntensity ?? 0.5,
+          roughnessScale: clamp(spec.roughness / mean, 0, 1),
+        });
+        material.metalness = spec.metalness;
+      } catch {
+        // A detail bake is an enhancement, never a reason to lose the decal.
+        material.roughness = spec.roughness;
+      }
+    }
+    material.userData = { envClass: spec.envClass, surface: spec.surface || null };
     material.name = `${STREET_DETAIL_ID}:${name}`;
     materials[name] = material;
   }
@@ -1851,7 +2124,7 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
   const group = new THREE.Group();
   group.name = STREET_DETAIL_ID;
   group.userData = { kind: 'street-surface-detail', version: STREET_DETAIL_VERSION };
-  const materials = overrides.materials || createStreetDetailMaterials();
+  const materials = overrides.materials || createStreetDetailMaterials(streetDetailSurfaceMaps(ctx));
   const meshes = buildMeshes(state, group, materials);
 
   const triangles = totalTriangles(state);
@@ -1899,6 +2172,24 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
     buildMs: Date.now() - startedAt,
   };
   diagnostics.groundDressing = groundDressing;
+  // What the decals are actually sampling. Round 4's frames could not be
+  // explained from the diagnostics because nothing recorded that every decal
+  // material was mapless; this makes the binding visible without a capture.
+  diagnostics.surfaces = {
+    uvMetersPerRepeat: {
+      carriageway: state.buffers.wear.uvScale > 0 ? 1 / state.buffers.wear.uvScale : null,
+      concrete: state.buffers.concrete.uvScale > 0 ? 1 / state.buffers.concrete.uvScale : null,
+      marking: state.buffers.paint.uvScale > 0 ? 1 / state.buffers.paint.uvScale : null,
+    },
+    maps: Object.fromEntries(Object.entries(materials).map(([name, material]) => [name, {
+      albedo: material?.map?.name || null,
+      normal: Boolean(material?.normalMap),
+      roughness: Boolean(material?.roughnessMap),
+      ao: Boolean(material?.aoMap),
+    }])),
+    wearMultipliers: STREET_WEAR_MULTIPLIERS,
+    jointGroove: STREET_JOINT_GROOVE,
+  };
   diagnostics.markings = {
     crossings: state.records.crossings.length,
     stopBars: state.records.stopBars.length,
@@ -1979,7 +2270,7 @@ export default {
   id: STREET_DETAIL_ID,
   order: 30,
   build(ctx) {
-    passState.materials = createStreetDetailMaterials();
+    passState.materials = createStreetDetailMaterials(streetDetailSurfaceMaps(ctx));
     const result = buildStreetSurfaceDetail(ctx, { materials: passState.materials });
     passState.group = result.object;
     passState.centre = { x: result.diagnostics.focus.x, z: result.diagnostics.focus.z };

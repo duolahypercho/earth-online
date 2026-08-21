@@ -476,6 +476,10 @@ export class TrafficSim {
       legacyFootwayPlaneLift: FOOTWAY_LIFT_ABOVE_DATUM,
       misses: 0,
       hits: 0,
+      // Vehicles ground on the same index, at their own wheels. Counted
+      // separately so a regression in one population is visible on its own.
+      vehicleHits: 0,
+      vehicleMisses: 0,
     };
     const random = mulberry32(Number(city.meta.seedInt || 1) + 77);
     this.random = random;
@@ -1289,6 +1293,63 @@ export class TrafficSim {
   }
 
   /**
+   * Carriageway surface under a VEHICLE, sampled at its own four wheels.
+   *
+   * ROUND 5. `groundY` above is a PLANE at the road datum. The carriageway the
+   * renderer draws is not a plane: `street-surface-v2` crowns it by
+   * `crossSlope * half` at the centreline and falls it into a gutter pan at the
+   * kerb, so the datum is the one height on the cross-section the asphalt never
+   * has. Measured against the drawn triangles over a 120 x 120 m window at the
+   * hero pose, a vehicle on the datum is 48 mm below the road on average and
+   * 128 mm below it on the crown of a wide street. The tyres sink into the
+   * asphalt, and the 20 mm contact patch the presentation fleet writes above
+   * the vehicle origin is buried under it - which is why a moving vehicle lost
+   * the contact shading that ties it to the road.
+   *
+   * The contact point is the WHEEL, not the body origin, and a long vehicle
+   * spanning the crown rests on the crown. This samples the drawn cross-section
+   * under each wheel of the rig's own layout and returns the height of the
+   * plane through those contacts at the vehicle origin, which for a symmetric
+   * wheel layout is their mean. Off-street points keep the datum, so nothing
+   * that was grounded before becomes ungrounded.
+   *
+   * `surfaceY` is not used here: past the kerb line it returns the FOOTWAY, and
+   * a tyre that overhangs the kerb must still rest on the road, not climb the
+   * pavement. The lateral offset is clamped to the carriageway instead.
+   */
+  vehicleGroundY(x, z, yaw, rig) {
+    const sampler = this.streetSurfaceSampler;
+    const wheels = rig?.layout?.wheels;
+    if (!sampler || !Array.isArray(wheels) || !wheels.length) return this.groundY(x, z);
+    // Vehicles face +z, so local +x is the vehicle's LEFT.
+    const fx = Math.sin(yaw); const fz = Math.cos(yaw);
+    const lx = Math.cos(yaw); const lz = -Math.sin(yaw);
+    let sum = 0;
+    let hits = 0;
+    for (const wheel of wheels) {
+      const wx = Number(wheel[0]);
+      const wz = Number(wheel[1]);
+      if (!Number.isFinite(wx) || !Number.isFinite(wz)) continue;
+      const px = x + lx * wx + fx * wz;
+      const pz = z + lz * wx + fz * wz;
+      const found = sampler.locate(px, pz);
+      if (!found) continue;
+      const datum = this.terrainY(px, pz) + sampler.options.roadLift;
+      const u = clamp(found.u, -found.half, found.half);
+      const y = carriagewaySurfaceY(datum, u, found.half, sampler.options);
+      if (!Number.isFinite(y)) continue;
+      sum += y;
+      hits += 1;
+    }
+    if (!hits) {
+      this.groundingDiagnostics.vehicleMisses += 1;
+      return this.groundY(x, z);
+    }
+    this.groundingDiagnostics.vehicleHits += 1;
+    return sum / hits;
+  }
+
+  /**
    * Footway surface: where a shoe contacts the pavement.
    *
    * This used to return `terrain + roadLift + 0.102`, a PLANE. The drawn
@@ -1906,8 +1967,14 @@ export class TrafficSim {
     const nz = (segB.x - segA.x) / segLen;
     const offset = this.laneOffsetFor(car.edge);
     car.laneOffset = offset;
-    car.group.position.set(x + nx * offset, this.groundY(x, z), z + nz * offset);
-    car.group.rotation.y = Math.atan2(segB.x - segA.x, segB.z - segA.z);
+    // Ground on the DRAWN carriageway under the vehicle's own wheels, at the
+    // lane-offset position it actually occupies - not on the datum under the
+    // centreline it is tracking.
+    const yaw = Math.atan2(segB.x - segA.x, segB.z - segA.z);
+    const wx = x + nx * offset;
+    const wz = z + nz * offset;
+    car.group.position.set(wx, this.vehicleGroundY(wx, wz, yaw, car.group.userData?.rig), wz);
+    car.group.rotation.y = yaw;
   }
 
   updateCorner(car, delta) {
@@ -1931,7 +1998,11 @@ export class TrafficSim {
     while (dyaw > Math.PI) dyaw -= Math.PI * 2;
     while (dyaw < -Math.PI) dyaw += Math.PI * 2;
     car.group.rotation.y += dyaw * clamp(delta * 8, 0, 1);
-    car.group.position.set(p.x, this.groundY(p.x, p.z), p.z);
+    car.group.position.set(
+      p.x,
+      this.vehicleGroundY(p.x, p.z, car.group.rotation.y, car.group.userData?.rig),
+      p.z,
+    );
     if (corner.t >= 1) {
       car.corner = null;
       car.turnSide = 0; // maneuver finished; stop the blinker
@@ -2370,8 +2441,11 @@ export class TrafficSim {
     const nx = -dz / len;
     const nz = dx / len;
     const offset = this.laneOffsetFor(car.edge);
-    car.group.position.set(x + nx * offset, this.groundY(x, z), z + nz * offset);
-    car.group.rotation.y = Math.atan2(next.x - updated.x, next.z - updated.z) + (car.steerYaw || 0);
+    const yaw = Math.atan2(next.x - updated.x, next.z - updated.z) + (car.steerYaw || 0);
+    const wx = x + nx * offset;
+    const wz = z + nz * offset;
+    car.group.position.set(wx, this.vehicleGroundY(wx, wz, yaw, car.group.userData?.rig), wz);
+    car.group.rotation.y = yaw;
     this.animateCar(car, delta);
   }
 

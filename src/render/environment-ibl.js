@@ -41,11 +41,33 @@
  * irradiance and a ground albedo, because a black lower hemisphere is the
  * classic "PBR object floating in a void" tell.
  *
- * The solar disc is deliberately **not** baked into the environment by
- * default (`sunDiscIntensity: 0`). The renderer already owns a
- * `DirectionalLight` key; baking the disc as well would double-count the sun
- * and produce PMREM ringing. The Mie aureole around the sun is kept, so the
- * sky still biases specular toward the sun direction.
+ * The solar disc IS baked into the prefiltered probe, at a measured, bounded
+ * intensity (`DEFAULT_RIG_OPTIONS.sunDiscIntensity`). `computeSkyModel`'s own
+ * default stays 0, because that function is also the analytic light-rig
+ * source and its irradiance must describe the sky alone; the GPU rig, which
+ * exists to feed specular reflections, overrides it.
+ *
+ * Why it was 0, and why that was the wrong trade. The reasoning was that a
+ * `DirectionalLight` key already delivers the sun, so baking the disc as well
+ * double-counts it. That is true of the *diffuse* term and false of the
+ * *specular* one: with no disc in the probe, every reflection in the scene
+ * samples a smooth two-lobe gradient, so a pane's ~4% Fresnel term, wet
+ * asphalt's narrow lobe and a car's clearcoat all reflect nothing but a
+ * vertical ramp. There is no sun to see anywhere in the frame except on the
+ * sky dome itself.
+ *
+ * The double-count is real but it is a *quantity*, so it is bounded rather
+ * than avoided. Integrating the equirect buffer over the upper hemisphere
+ * (cosine-weighted) at 512x256 gives the disc's share of the sky's diffuse
+ * irradiance as a straight line in `sunDiscIntensity`: +13.7% per 0.02 at
+ * 11:00 and 15:00 clear, +3.9% per 0.02 at 18:00. The shipped value is
+ * chosen from that line to stay under 2%, which is below the exposure
+ * quantisation the grade already applies, while the disc's peak radiance is
+ * still ~430x the mean sky radiance - which is the only number a specular
+ * lobe cares about. See `DEFAULT_RIG_OPTIONS`.
+ *
+ * The Mie aureole around the sun is kept either way, so the sky still biases
+ * broad-lobe specular toward the sun direction.
  *
  * Determinism
  * -----------
@@ -108,7 +130,7 @@ import {
  * across versions.
  * @type {string}
  */
-export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v3';
+export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v4';
 
 /** Supported weather keys. @type {readonly string[]} */
 export const WEATHER_KINDS = Object.freeze(['clear', 'fog', 'drizzle']);
@@ -439,12 +461,43 @@ export function normaliseWeather(weather) {
 
 /**
  * Stable cache key for a quantised sky state.
- * @param {{hour:number, weather:string, quantum?:number}} state
+ *
+ * `fingerprint` exists because the hour/weather bucket is NOT the whole
+ * identity of a prefiltered probe: two rigs on the same hour and weather
+ * produce different radiance if they disagree about the solar disc, the
+ * exposure, the equirect resolution or the site. Leaving those out of the key
+ * is how a probe survives a configuration change that should have invalidated
+ * it. `createEnvironmentRig` passes `rigFingerprint(config)`; callers that
+ * only want the hour bucket omit it and get the original three-part key.
+ *
+ * @param {{hour:number, weather:string, quantum?:number, fingerprint?:string}} state
  * @returns {string}
  */
-export function environmentCacheKey({ hour, weather, quantum = 0.25 }) {
+export function environmentCacheKey({ hour, weather, quantum = 0.25, fingerprint = '' }) {
   const q = quantiseHour(hour, quantum);
-  return `${SKY_MODEL_VERSION}|${normaliseWeather(weather)}|${q.toFixed(4)}`;
+  const base = `${SKY_MODEL_VERSION}|${normaliseWeather(weather)}|${q.toFixed(4)}`;
+  return fingerprint ? `${base}|${fingerprint}` : base;
+}
+
+/**
+ * Everything about a rig configuration that changes the radiance it bakes.
+ *
+ * Deliberately explicit rather than a hash of the whole options object: a
+ * `scene` reference or an injected `pmremGenerator` must NOT partition the
+ * cache, and a new radiance-affecting option must be a deliberate edit here.
+ *
+ * @param {object} [config]
+ * @returns {string}
+ */
+export function rigFingerprint(config = {}) {
+  const site = config.site || {};
+  const siteKey = [site.latitudeDeg, site.longitudeDeg, site.utcOffsetHours,
+    site.dayOfYear, typeof site.date === 'object' ? `${site.date.month}-${site.date.day}` : site.date]
+    .map((v) => (v === undefined || v === null ? '' : String(v))).join(',');
+  return `d${Number(config.sunDiscIntensity ?? 0)}`
+    + `|e${Number(config.exposure ?? 1)}`
+    + `|${Number(config.equirectWidth ?? 0)}x${Number(config.equirectHeight ?? 0)}`
+    + (siteKey.replace(/,/g, '') ? `|s${siteKey}` : '');
 }
 
 // --- solar position ----------------------------------------------------------
@@ -956,7 +1009,9 @@ function clearReferenceIrradianceLuminance(sun, sunDiscIntensity) {
  * @param {number} [options.hourQuantum=0.25] Quantisation applied before evaluation.
  * @param {number} [options.exposure=1] Linear multiplier on all radiance.
  * @param {number} [options.sunDiscIntensity=0] Bake the solar disc into the env
- *   map. Leave at 0 while a `DirectionalLight` key exists, or the sun is counted twice.
+ *   map. 0 here on purpose: this function is the analytic light-rig source and
+ *   its `skyIrradiance` must describe the sky alone. The GPU rig overrides it
+ *   with `RIG_SUN_DISC_INTENSITY`, whose double-count budget is stated there.
  * @param {object} [options.site] Overrides for `computeSunDirection`.
  * @param {object} [options.overrides] Direct overrides for turbidity/rayleigh/
  *   mieCoefficient/mieDirectionalG/overcast/isotropy/brightness/wetness/groundAlbedo.
@@ -3556,13 +3611,44 @@ export function wetSurfaceGrade(materialClass, modelOrState) {
 
 // --- GPU rig -----------------------------------------------------------------
 
+/**
+ * The solar disc intensity baked into the prefiltered probe.
+ *
+ * Measured, not chosen by eye. Two quantities move together with this number
+ * and they pull in opposite directions:
+ *
+ *   * **Double count.** The disc adds diffuse irradiance the analytic
+ *     `DirectionalLight` key is already delivering. Integrating the 512x256
+ *     equirect over the upper hemisphere, cosine-weighted, the added share of
+ *     the sky's own irradiance is linear in this value: +13.7% per 0.02 at
+ *     11:00 and 15:00 clear, +3.9% per 0.02 at 18:00. At 0.0025 that is
+ *     +1.71% of the sky term at midday. The sky and the key deliver 1.076 and
+ *     1.145 lux-equivalents respectively in the 15:00 rig, so the error on the
+ *     total is +0.83% - under the 0.05-stop resolution of the exposure curve
+ *     and well under the tone mapper's own noise.
+ *   * **Specular reach.** Peak equirect radiance at 0.0025 is 121 against a
+ *     mean sky radiance of 0.282, a ratio of 430:1. That ratio, not the
+ *     absolute level, is what a specular lobe reflects: a pane's ~4% Fresnel
+ *     term returns a highlight two orders of magnitude above the sky it sits
+ *     in, and a narrow wet-asphalt lobe (roughness 0.24) integrates the disc
+ *     to roughly 9x the local sky radiance at the mirror angle.
+ *
+ * Half-float headroom is not a constraint here: 121 is three orders below the
+ * 65504 ceiling `createEquirectTexture` clamps to, so nothing clips and the
+ * PMREM has no single-texel spike to ring on.
+ *
+ * `computeSkyModel`'s own default stays 0. That function is the analytic
+ * light-rig source and its `skyIrradiance` must describe the sky alone.
+ */
+export const RIG_SUN_DISC_INTENSITY = 0.0025;
+
 const DEFAULT_RIG_OPTIONS = Object.freeze({
   equirectWidth: 512,
   equirectHeight: 256,
   hourQuantum: 0.25,
   cacheSize: 8,
   exposure: 1,
-  sunDiscIntensity: 0,
+  sunDiscIntensity: RIG_SUN_DISC_INTENSITY,
 });
 
 /**
@@ -3615,7 +3701,8 @@ function createEquirectTexture(buffer) {
  * @param {number} [options.hourQuantum=0.25] Hours per cache bucket.
  * @param {number} [options.cacheSize=8] Prefiltered targets retained.
  * @param {number} [options.exposure=1]
- * @param {number} [options.sunDiscIntensity=0]
+ * @param {number} [options.sunDiscIntensity=RIG_SUN_DISC_INTENSITY] Solar disc
+ *   radiance baked into the probe. Part of the rig's cache fingerprint.
  * @param {object} [options.site] Overrides for solar position.
  * @param {boolean} [options.applyEnvironmentIntensity=true] Also write
  *   `scene.environmentIntensity` from the recommended light rig.
@@ -3644,6 +3731,11 @@ export function createEnvironmentRig(renderer, options = {}) {
   }
 
   const config = { ...DEFAULT_RIG_OPTIONS, ...options };
+  // Radiance identity of THIS rig. Without it two rigs that disagree about the
+  // solar disc, the exposure, the equirect size or the site would share cache
+  // entries, and a configuration change would be silently served the probe it
+  // was supposed to invalidate.
+  const fingerprint = rigFingerprint(config);
   const pmrem = config.pmremGenerator || new PMREMGenerator(renderer);
   /** @type {Map<string, {target: object, model: object}>} */
   const cache = new Map();
@@ -3653,6 +3745,8 @@ export function createEnvironmentRig(renderer, options = {}) {
   let currentTarget = null;
   const stats = {
     version: SKY_MODEL_VERSION,
+    fingerprint,
+    sunDiscIntensity: config.sunDiscIntensity,
     generated: 0,
     cacheHits: 0,
     cacheMisses: 0,
@@ -3718,7 +3812,7 @@ export function createEnvironmentRig(renderer, options = {}) {
     assertLive();
     const hour = state?.hour ?? 12;
     const weather = normaliseWeather(state?.weather ?? 'clear');
-    const key = environmentCacheKey({ hour, weather, quantum: config.hourQuantum });
+    const key = environmentCacheKey({ hour, weather, quantum: config.hourQuantum, fingerprint });
     const hit = cache.get(key);
     if (hit) {
       stats.cacheHits += 1;

@@ -8,31 +8,59 @@
 //
 //     texelsPerMetre ~= mapSize / (2 * radius),  radius ~= k(fov, aspect) * shadowDistance
 //
-// so density and reach are inversely coupled. On the shipped fit
-// (mapSize 2048, shadowDistance 220 m) the eight captured poses measure
-// 5.207 texels/m at 47 deg fov (19.2 cm texels) and 4.113 texels/m at 58 deg
-// (24.3 cm). `casterBracket()` in ./shadow-casters.js reports that at 19.2 cm
-// only five of eleven reference street objects can cast at all, and
-// `contactShadowLeakMetres()` reports that the bias plan erases the first
-// 0.37 m of every shadow at the point where it touches the ground.
+// so density and reach are inversely coupled. On the single-box rig the round-4
+// capture measures 6.855 texels/m (14.59 cm texels) over 150 m of view depth,
+// and the caster policy in ./shadow-casters.js consequently refuses 165 of 340
+// meshes under a 21.9 cm thickness floor: every tree, pole, sign, railing and
+// small prop in the city casts nothing at all.
 //
 // The textbook answer is a cascaded shadow map: a tight, dense near cascade
-// plus the existing wide one, with a per-fragment choice between them. This
-// module exists to plan such a split, to state its density and coverage in
-// numbers, and - critically - to CHECK whether the split can actually be
-// implemented on this renderer. On the canonical path it cannot, and the
-// module says so with the arithmetic rather than with an opinion. See
-// `assessCascadeRig` and the "Why two lights is not a cascade" note there.
+// plus wider ones, with a per-fragment CHOICE between them. This module plans
+// such a split and states its density and coverage in numbers.
+//
+// CORRECTION TO THIS FILE'S PREVIOUS HEADER
+// -----------------------------------------
+// An earlier version of this comment asserted that a cascade "cannot" be
+// implemented on the canonical renderer. That is false and was already false
+// when it was written. The blocker it named was the canonical-runtime rule
+// against a new `ShaderMaterial` or `onBeforeCompile` dependency, on the
+// premise that the per-fragment cascade choice has to be patched into the
+// lighting shader. It does not: three ships `CSMShadowNode`
+// (three/addons/csm/CSMShadowNode.js), a `ShadowBaseNode` attached through
+// `light.shadow.shadowNode`, which three's own node material calls in place of
+// its default shadow term. No material is subclassed, no shader source is
+// patched, nothing is compiled by this project. The renderer now uses it; the
+// integration lives in src/citygen/renderer.js.
+//
+// `assessCascadeRig` below is UNCHANGED and its verdict is unchanged, because
+// it never assessed a cascade in the first place. It assesses the *shader-free
+// multi-light substitute* - N collinear `DirectionalLight`s splitting the key
+// intensity - and prices its light leak at `1 - 1/N`. That substitute is still
+// not viable, and the arithmetic proving it is still worth keeping, because it
+// is the thing a future reader will otherwise be tempted to build. Read it as
+// "why we use a shadow node instead of more lights", not as "why there is no
+// cascade".
 //
 // What this module is
 // -------------------
-// A pure planner. Given a camera pose, a sun direction and a list of
-// `{ shadowDistance, mapSize }` cascade requests it returns, per cascade, the
-// fit from `computeSunShadowCamera`, the achieved texel density, the interval
-// of view depth the cascade is AUTHORITATIVE for, the interval its box
-// actually contains, and whether that box covers its authority interval. It
-// also solves the inverse problem: given a target texel size and a required
-// reach, which single `{ mapSize, shadowDistance }` pair delivers both.
+// A pure planner, in two halves.
+//
+//   1. The original single-box half. Given a camera pose, a sun direction and
+//      a list of `{ shadowDistance, mapSize }` requests it returns, per
+//      cascade, the fit from `computeSunShadowCamera`, the achieved texel
+//      density, the interval of view depth the cascade is AUTHORITATIVE for,
+//      the interval its box actually contains, and whether that box covers its
+//      authority interval. `recommendSingleCascade` solves the inverse
+//      problem. This half models a fit that tracks the SUN.
+//
+//   2. The texel-budget calculator, `planCascadeTexelBudget`. This half models
+//      the fit `CSMShadowNode` actually performs, which is a different fit: it
+//      splits the view frustum at practical-scheme breaks and sizes each
+//      cascade's square box to the DIAGONAL of its frustum slice, in light
+//      space, independent of the sun. It is what chooses the cascade count and
+//      `maxFar` the renderer ships, and what the per-cascade caster thickness
+//      floors are derived from. It reproduces `CSMShadowNode._getBreaks` and
+//      `CSMShadowNode._updateShadowBounds` exactly so the two cannot drift.
 //
 // Design constraints honoured here
 // --------------------------------
@@ -404,12 +432,14 @@ export function cascadeForDepth(plan, depth) {
  * A real cascaded shadow map is one light with N maps and a per-fragment
  * choice: the fragment picks the cascade whose box contains it and takes ALL
  * of the light's occlusion from that one map. That choice lives in the
- * lighting shader. On this renderer the lighting shader is three's own node
- * material and the canonical-runtime rule forbids introducing a
- * `ShaderMaterial` or `onBeforeCompile` dependency into it, so the choice
- * cannot be made per fragment.
+ * lighting shader. The renderer makes it with `CSMShadowNode`, a
+ * `ShadowBaseNode` hung on `light.shadow.shadowNode` that three's own node
+ * material calls in place of its default shadow term - no `ShaderMaterial`,
+ * no `onBeforeCompile`, no shader source owned by this project.
  *
- * The shader-free substitute is N `DirectionalLight`s pointing the same way,
+ * What follows is the assessment of the OTHER option, the one that needs no
+ * node at all, so that the cost of choosing it is on the record. It is N
+ * `DirectionalLight`s pointing the same way,
  * each with its own shadow camera, sharing the key's intensity in fractions
  * `f_i` that sum to 1. That is a SUM, not a choice. A point is darkened by
  * cascade `i` only for the fraction `f_i` of the key that light carries, so a
@@ -429,7 +459,8 @@ export function cascadeForDepth(plan, depth) {
  * is why `viable` is false for every N > 1 at any sane `MAX_SHADOW_LEAK`, and
  * the number below is the proof rather than the claim.
  *
- * A single cascade has no leak, which is why `recommendSingleCascade` exists.
+ * A single light has no leak, which is why `recommendSingleCascade` exists and
+ * why the shipped rig uses one light with a shadow node rather than N lights.
  *
  * **Pure.**
  *
@@ -590,6 +621,245 @@ export function recommendSingleCascade(options = {}) {
     found: false,
     mapSize: null,
     shadowDistance: null,
+    tried: Object.freeze(tried),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Texel budget for a real cascade rig (the fit CSMShadowNode performs)
+// ---------------------------------------------------------------------------
+//
+// Everything above models `computeSunShadowCamera`, which fits a box to the
+// visible slice *along the sun*. `CSMShadowNode` does not do that. It splits
+// the view frustum at practical-scheme breaks and gives each slice a SQUARE
+// box whose side is the slice's longest diagonal, measured in light space and
+// therefore independent of the sun direction. That independence is the whole
+// point: the density below is a property of the lens and the split, so it is
+// one number per cascade for every frame the app will ever draw, and the
+// caster thickness floors derived from it never move with the time of day.
+//
+// The two functions below reproduce `CSMShadowNode._getBreaks` (mode
+// 'practical') and `CSMShadowNode._updateShadowBounds` exactly. If three
+// changes either, this file must change with it or the renderer's logged
+// budget stops describing the rig it ships.
+
+/** `lambda` used by CSM's 'practical' split. Hard-coded in three. */
+export const PRACTICAL_SPLIT_LAMBDA = 0.5;
+
+/**
+ * Cascade split fractions, in `[0,1]` of `far`, for CSM's 'practical' scheme.
+ *
+ * Practical = the arithmetic mean of the uniform and logarithmic schemes at
+ * `lambda = 0.5`. Uniform alone wastes the near cascade on empty air;
+ * logarithmic alone makes the far cascade carry almost the whole scene.
+ *
+ * @param {number} cascades Number of cascades, >= 1.
+ * @param {number} near Camera near plane, metres.
+ * @param {number} far Effective far (`min(camera.far, maxFar)`), metres.
+ * @param {number} [lambda=PRACTICAL_SPLIT_LAMBDA]
+ * @returns {number[]} `cascades` entries, last one exactly 1.
+ */
+export function practicalCascadeBreaks(cascades, near, far, lambda = PRACTICAL_SPLIT_LAMBDA) {
+  if (!Number.isInteger(cascades) || cascades < 1) {
+    throw new TypeError(`sun-shadow-cascade: cascades must be a positive integer, got ${cascades}`);
+  }
+  if (!isFiniteNumber(near) || near <= 0) {
+    throw new TypeError(`sun-shadow-cascade: near must be positive metres, got ${near}`);
+  }
+  if (!isFiniteNumber(far) || far <= near) {
+    throw new TypeError(`sun-shadow-cascade: far must exceed near, got ${far} <= ${near}`);
+  }
+  const breaks = [];
+  for (let i = 1; i < cascades; i += 1) {
+    const uniform = (near + (far - near) * i / cascades) / far;
+    const logarithmic = (near * (far / near) ** (i / cascades)) / far;
+    breaks.push(uniform + (logarithmic - uniform) * lambda);
+  }
+  breaks.push(1);
+  return breaks;
+}
+
+/**
+ * Half-extent, in metres, of the square orthographic box CSM gives a frustum
+ * slice running from view depth `z0` to `z1`.
+ *
+ * CSM takes the longer of two diagonals: the one across the far plane of the
+ * slice, and the one from a far corner to the opposite near corner. The box
+ * side is that length, so the box contains the slice at any light orientation
+ * - which is exactly why the density does not move with the sun.
+ *
+ * @param {number} z0 Near depth of the slice, metres.
+ * @param {number} z1 Far depth of the slice, metres.
+ * @param {number} fovDeg Vertical field of view.
+ * @param {number} aspect Width / height.
+ * @returns {number} Half the box side, metres.
+ */
+export function cascadeSliceHalfExtent(z0, z1, fovDeg, aspect) {
+  if (!isFiniteNumber(fovDeg) || fovDeg <= 0 || fovDeg >= 180) {
+    throw new TypeError(`sun-shadow-cascade: fovDeg must be in (0,180), got ${fovDeg}`);
+  }
+  if (!isFiniteNumber(aspect) || aspect <= 0) {
+    throw new TypeError(`sun-shadow-cascade: aspect must be positive, got ${aspect}`);
+  }
+  const t = Math.tan((fovDeg * Math.PI) / 360);
+  const h0 = z0 * t;
+  const h1 = z1 * t;
+  const w0 = h0 * aspect;
+  const w1 = h1 * aspect;
+  // Far-plane diagonal: opposite corners of the slice's far rectangle.
+  const acrossFar = 2 * Math.hypot(w1, h1);
+  // Corner-to-opposite-corner through the slice's depth.
+  const throughSlice = Math.hypot(w1 + w0, h1 + h0, z1 - z0);
+  return Math.max(acrossFar, throughSlice) / 2;
+}
+
+/**
+ * Per-cascade texel budget for a CSM rig.
+ *
+ * This is the function that chooses what the renderer ships: it says, for one
+ * lens and one split, exactly how many centimetres a shadow texel is worth in
+ * each cascade and therefore what the caster policy's thickness floor becomes
+ * there. The floor is `minThicknessTexels * texelWorldSize` - the same product
+ * `resolveShadowCasterContext` computes - so the two modules agree by
+ * construction rather than by a copied constant.
+ *
+ * @param {object} options
+ * @param {number} [options.cascades=3]
+ * @param {number} [options.mapSize=2048] Square map size, per cascade.
+ * @param {number} options.fovDeg Vertical field of view.
+ * @param {number} options.aspect Width / height.
+ * @param {number} [options.cameraNear=0.5]
+ * @param {number} [options.maxFar=250] CSM's `maxFar`; the split runs
+ *   `cameraNear .. min(cameraFar, maxFar)`.
+ * @param {number} [options.cameraFar=Infinity]
+ * @param {number} [options.lambda=PRACTICAL_SPLIT_LAMBDA]
+ * @param {number} [options.minThicknessTexels=1.5] Mirrors
+ *   `MIN_THICKNESS_TEXELS` in ./shadow-casters.js.
+ * @returns {Readonly<object>} `{ version, cascades: [...], far, breaks,
+ *   texelBytes, finestTexelWorldSize, coarsestTexelWorldSize }`
+ */
+export function planCascadeTexelBudget(options = {}) {
+  const {
+    cascades = 3,
+    mapSize = 2048,
+    fovDeg,
+    aspect,
+    cameraNear = CASCADE_PLAN_DEFAULTS.cameraNear,
+    maxFar = 250,
+    cameraFar = Infinity,
+    lambda = PRACTICAL_SPLIT_LAMBDA,
+    minThicknessTexels = 1.5,
+  } = options;
+  if (!Number.isInteger(mapSize) || mapSize < 16) {
+    throw new TypeError(`sun-shadow-cascade: mapSize must be an integer >= 16, got ${mapSize}`);
+  }
+  if (!isFiniteNumber(minThicknessTexels) || minThicknessTexels <= 0) {
+    throw new TypeError(`sun-shadow-cascade: minThicknessTexels must be positive, got ${minThicknessTexels}`);
+  }
+  const far = Math.min(cameraFar, maxFar);
+  const breaks = practicalCascadeBreaks(cascades, cameraNear, far, lambda);
+  const slices = [];
+  let previous = cameraNear;
+  for (let i = 0; i < cascades; i += 1) {
+    // `breaks` are computed by `_getBreaks` as fractions OF `far`, and then
+    // applied by `CSMFrustum.split` as lerp fractions FROM `cameraNear` TO
+    // `far`. Those are not the same mapping, and three uses the second one.
+    // Reproducing three's behaviour is the point of this function, so the
+    // inconsistency is copied deliberately rather than tidied away: tidying it
+    // would make this file disagree with the rig it claims to describe by
+    // about 1% of a texel at the near cascade.
+    const sliceFar = i === cascades - 1 ? far : cameraNear + (far - cameraNear) * breaks[i];
+    const halfExtent = cascadeSliceHalfExtent(previous, sliceFar, fovDeg, aspect);
+    const texelWorldSize = (halfExtent * 2) / mapSize;
+    slices.push(Object.freeze({
+      index: i,
+      near: round(previous, 4),
+      far: round(sliceFar, 4),
+      /** Fraction of `far` this cascade is authoritative up to. */
+      breakFraction: round(breaks[i], 6),
+      halfExtent: round(halfExtent, 4),
+      width: round(halfExtent * 2, 4),
+      mapSize,
+      texelWorldSize: round(texelWorldSize, 6),
+      texelsPerMetre: round(1 / texelWorldSize, 4),
+      /** Thinnest mesh this cascade can resolve, metres. */
+      minCasterThickness: round(minThicknessTexels * texelWorldSize, 4),
+    }));
+    previous = sliceFar;
+  }
+  return Object.freeze({
+    version: SUN_SHADOW_CASCADE_VERSION,
+    cascades: Object.freeze(slices),
+    cameraNear,
+    maxFar,
+    far: round(far, 4),
+    lambda,
+    minThicknessTexels,
+    breaks: Object.freeze(breaks.map((b) => round(b, 6))),
+    /** Depth-attachment bytes at 32-bit, all cascades. The cost line. */
+    texelBytes: cascades * mapSize * mapSize * 4,
+    finestTexelWorldSize: slices[0].texelWorldSize,
+    coarsestTexelWorldSize: slices[slices.length - 1].texelWorldSize,
+    finestMinCasterThickness: slices[0].minCasterThickness,
+    coarsestMinCasterThickness: slices[slices.length - 1].minCasterThickness,
+  });
+}
+
+/**
+ * Choose the cascade count and `maxFar` for a lens and a texel target.
+ *
+ * The rule is the one the round-4 evidence forces: the NEAR cascade has to
+ * resolve street-scale trim, so its texel has to be small enough that
+ * `minThicknessTexels * texelWorldSize` sits under the thinnest thing that
+ * must cast. Cascade count is the only free variable that buys that without
+ * either growing the map (memory) or shortening the reach (visible cut-off),
+ * so this searches the counts in order and returns the first that clears the
+ * target - and reports every count it rejected, with its number.
+ *
+ * Each extra cascade is an extra shadow render pass per frame. On a software
+ * rasterizer that is the dominant cost of the whole feature, so the search
+ * stops at the FIRST count that works rather than the best one.
+ *
+ * @param {object} options `planCascadeTexelBudget` fields, plus:
+ * @param {number} options.targetMinCasterThickness Metres. The thinnest mesh
+ *   the near cascade must be able to admit.
+ * @param {number[]} [options.counts=[1,2,3,4]] Cascade counts to try, in order.
+ * @returns {Readonly<object>} `{ found, cascades, maxFar, budget, tried }`
+ */
+export function recommendCascadeCount(options = {}) {
+  const { targetMinCasterThickness, counts = [1, 2, 3, 4], ...rest } = options;
+  if (!isFiniteNumber(targetMinCasterThickness) || targetMinCasterThickness <= 0) {
+    throw new TypeError('sun-shadow-cascade: targetMinCasterThickness must be positive metres, '
+      + `got ${targetMinCasterThickness}`);
+  }
+  const tried = [];
+  for (const cascades of counts) {
+    const budget = planCascadeTexelBudget({ ...rest, cascades });
+    const achieved = budget.finestMinCasterThickness;
+    if (achieved <= targetMinCasterThickness) {
+      return Object.freeze({
+        version: SUN_SHADOW_CASCADE_VERSION,
+        found: true,
+        cascades,
+        maxFar: budget.maxFar,
+        minCasterThickness: achieved,
+        shadowPassesPerFrame: cascades,
+        budget,
+        tried: Object.freeze(tried),
+      });
+    }
+    tried.push(Object.freeze({
+      cascades,
+      minCasterThickness: achieved,
+      reason: `near cascade resolves ${round(achieved * 100, 1)} cm, over the `
+        + `${round(targetMinCasterThickness * 100, 1)} cm target`,
+    }));
+  }
+  return Object.freeze({
+    version: SUN_SHADOW_CASCADE_VERSION,
+    found: false,
+    cascades: null,
+    maxFar: null,
     tried: Object.freeze(tried),
   });
 }

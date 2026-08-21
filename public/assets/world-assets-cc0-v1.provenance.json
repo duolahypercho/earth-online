@@ -1,0 +1,302 @@
+{
+  "schemaVersion": 1,
+  "asset": "world-assets-cc0-v1",
+  "license": "CC0-1.0",
+  "licenseName": "Creative Commons CC0 1.0 Universal",
+  "licenseUrl": "https://docs.ambientcg.com/license/",
+  "licenseVerifiedOn": "2026-08-21",
+  "licenseStatement": "All ambientCG assets are provided under the Creative Commons CC0 1.0 Universal License. This applies to the downloadable asset files and the material preview renders shown for each asset on the site.",
+  "attribution": "Created using <asset name> from ambientCG.com, licensed under the Creative Commons CC0 1.0 Universal License.",
+  "author": "ambientCG contributors",
+  "assetPage": "https://ambientcg.com/",
+  "intent": "presentation-only foliage alpha atlas and street-surface decal slate for the canonical runtime; not survey data, not geometry, and not a source of map truth",
+  "sources": {
+    "leafMaple": {
+      "assetId": "LeafSet010",
+      "assetPage": "https://ambientcg.com/a/LeafSet010",
+      "url": "https://ambientcg.com/get?file=LeafSet010_1K-PNG.zip",
+      "archive": "LeafSet010_1K-PNG.zip",
+      "archiveBytes": 12111800,
+      "sha256": "eb9eaa00b8748fb49e3000c90987b78c1334e3b518dad8210d353229b6cee48c",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "leafOvate": {
+      "assetId": "LeafSet003",
+      "assetPage": "https://ambientcg.com/a/LeafSet003",
+      "url": "https://ambientcg.com/get?file=LeafSet003_1K-PNG.zip",
+      "archive": "LeafSet003_1K-PNG.zip",
+      "archiveBytes": 13632809,
+      "sha256": "48b5aa90d48c1e076e87b2df0370e67c5ee9a330c96061d78645ea6c15738384",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "roadLineWorn": {
+      "assetId": "RoadLines032C",
+      "assetPage": "https://ambientcg.com/a/RoadLines032C",
+      "url": "https://ambientcg.com/get?file=RoadLines032C_1K-PNG.zip",
+      "archive": "RoadLines032C_1K-PNG.zip",
+      "archiveBytes": 3523693,
+      "sha256": "3417621d667a447213c6eb9c6c49be20a38bb15f1348fc3ed39bd1217eb64724",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "tyreTrack": {
+      "assetId": "TireTracks001",
+      "assetPage": "https://ambientcg.com/a/TireTracks001",
+      "url": "https://ambientcg.com/get?file=TireTracks001_1K-PNG.zip",
+      "archive": "TireTracks001_1K-PNG.zip",
+      "archiveBytes": 4939013,
+      "sha256": "6b8fbe4cc2deb71575660be3f4d7cc2ee98099854ae7dc311ae3e9108ee51cef",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "asphaltDamage": {
+      "assetId": "AsphaltDamage001",
+      "assetPage": "https://ambientcg.com/a/AsphaltDamage001",
+      "url": "https://ambientcg.com/get?file=AsphaltDamage001_1K-PNG.zip",
+      "archive": "AsphaltDamage001_1K-PNG.zip",
+      "archiveBytes": 16691245,
+      "sha256": "e7495c7ed145179d828fc82b1d03b7a00ab29040e7e33c1510545de66a75460c",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "manholeCover": {
+      "assetId": "ManholeCover011",
+      "assetPage": "https://ambientcg.com/a/ManholeCover011",
+      "url": "https://ambientcg.com/get?file=ManholeCover011_1K-PNG.zip",
+      "archive": "ManholeCover011_1K-PNG.zip",
+      "archiveBytes": 17755057,
+      "sha256": "8720de52e8fd493a151c171efca938df829a1d30a59c49aa7a6139c97e4f130b",
+      "pinned": true,
+      "license": "CC0-1.0"
+    },
+    "tactilePaving": {
+      "assetId": "TactilePaving001",
+      "assetPage": "https://ambientcg.com/a/TactilePaving001",
+      "url": "https://ambientcg.com/get?file=TactilePaving001_1K-PNG.zip",
+      "archive": "TactilePaving001_1K-PNG.zip",
+      "archiveBytes": 15209113,
+      "sha256": "100fd65499d3fa3094f6341ba6c83841d45cdfed1bee336ae0448440f6682556",
+      "pinned": true,
+      "license": "CC0-1.0"
+    }
+  },
+  "legalCode": {
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt",
+    "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "bytes": 7048
+  },
+  "outputs": {
+    "street-tree-leaf-atlas-v1.png": {
+      "path": "public/assets/street-tree-leaf-atlas-v1.png",
+      "bytes": 1331440,
+      "sha256": "f9a496a71212383520088abb08cd5ca331c928e3e9e940efc926c0508c6f01c4",
+      "encoding": "sRGB RGB + straight alpha, 8-bit RGBA PNG",
+      "consumedBy": "src/render/passes/street-furniture.js (STREET_TREE_ATLAS)",
+      "layout": {
+        "cells": [
+          {
+            "id": "maple-a",
+            "x": 0,
+            "y": 0,
+            "w": 512,
+            "h": 384
+          },
+          {
+            "id": "maple-b",
+            "x": 512,
+            "y": 0,
+            "w": 512,
+            "h": 384
+          },
+          {
+            "id": "ovate-a",
+            "x": 0,
+            "y": 384,
+            "w": 512,
+            "h": 384
+          },
+          {
+            "id": "ovate-b",
+            "x": 512,
+            "y": 384,
+            "w": 512,
+            "h": 384
+          }
+        ],
+        "bark": {
+          "x": 0,
+          "y": 768,
+          "width": 1024,
+          "height": 256,
+          "tileColumns": 4
+        }
+      },
+      "build": {
+        "width": 1024,
+        "height": 1024,
+        "cells": [
+          {
+            "id": "maple-a",
+            "source": "LeafSet010",
+            "leaves": 300,
+            "coverage": 0.5766
+          },
+          {
+            "id": "maple-b",
+            "source": "LeafSet010",
+            "leaves": 300,
+            "coverage": 0.593
+          },
+          {
+            "id": "ovate-a",
+            "source": "LeafSet003",
+            "leaves": 300,
+            "coverage": 0.5822
+          },
+          {
+            "id": "ovate-b",
+            "source": "LeafSet003",
+            "leaves": 300,
+            "coverage": 0.5863
+          }
+        ],
+        "desaturate": 0.3,
+        "normalisedMeanTarget": 0.28,
+        "meanLinearBefore": [
+          0.16268,
+          0.21806,
+          0.08047
+        ],
+        "normalisationGain": [
+          1.72119,
+          1.28407,
+          3.47948
+        ],
+        "meanLinearAfter": [
+          0.27944,
+          0.2797,
+          0.27888
+        ],
+        "barkMeanLinearBefore": [
+          0.40378,
+          0.37331,
+          0.33521
+        ],
+        "barkNormalisationGain": [
+          0.69345,
+          0.75004,
+          0.8353
+        ],
+        "barkMeanLinearAfter": [
+          0.28001,
+          0.28002,
+          0.28005
+        ],
+        "opaqueFraction": 0.6884,
+        "clippedChannelFraction": 0.00503,
+        "dilatePasses": 8
+      },
+      "sources": [
+        "LeafSet010",
+        "LeafSet003",
+        "procedural bark (this script, buildBarkStrip)"
+      ]
+    },
+    "decal-road-line-worn-v1.png": {
+      "path": "public/assets/decal-road-line-worn-v1.png",
+      "bytes": 77498,
+      "sha256": "2ec9323221541ad1c9543d4e74cdf428c0b45dcfa06b0d0ab519d33a0e36ecae",
+      "encoding": "sRGB RGB + straight alpha, 8-bit RGBA PNG",
+      "sourceAsset": "RoadLines032C",
+      "sourceMaps": [
+        "Color",
+        "Opacity"
+      ],
+      "resample": "box filter 1024x1024 -> 512x512",
+      "note": "worn dashed carriageway line, cracked asphalt bed",
+      "consumedBy": "unclaimed - available to the street-surface/detail pass"
+    },
+    "decal-tyre-track-v1.png": {
+      "path": "public/assets/decal-tyre-track-v1.png",
+      "bytes": 194888,
+      "sha256": "109ce5cd3d0bb49f8bb379023c74ce45c25ad6018adb3b0cf11899252df83595",
+      "encoding": "sRGB RGB + straight alpha, 8-bit RGBA PNG",
+      "sourceAsset": "TireTracks001",
+      "sourceMaps": [
+        "Color",
+        "Opacity"
+      ],
+      "resample": "box filter 1024x256 -> 512x512",
+      "note": "tyre tread track; upstream substrate is loose ground, use as a tread stencil not as a bed",
+      "consumedBy": "unclaimed - available to the street-surface/detail pass"
+    },
+    "decal-asphalt-damage-v1.png": {
+      "path": "public/assets/decal-asphalt-damage-v1.png",
+      "bytes": 522440,
+      "sha256": "0ae50dd0f84d2ca97669c4aa2254052643fefe417e6b40db47be8a88a529782b",
+      "encoding": "sRGB RGB + straight alpha, 8-bit RGBA PNG",
+      "sourceAsset": "AsphaltDamage001",
+      "sourceMaps": [
+        "Color",
+        "Opacity"
+      ],
+      "resample": "box filter 1024x1024 -> 512x512",
+      "note": "crack and break-up patch for a carriageway",
+      "consumedBy": "unclaimed - available to the street-surface/detail pass"
+    },
+    "decal-manhole-cover-v1.png": {
+      "path": "public/assets/decal-manhole-cover-v1.png",
+      "bytes": 484685,
+      "sha256": "8d5226c01a9e100a8bb716035985e4bea7bcaa3057ac951c0d637c1f9b396c0c",
+      "encoding": "sRGB RGB + straight alpha, 8-bit RGBA PNG",
+      "sourceAsset": "ManholeCover011",
+      "sourceMaps": [
+        "Color",
+        "Opacity"
+      ],
+      "resample": "box filter 1024x1024 -> 512x512",
+      "note": "square rusted cast cover with a concrete surround",
+      "consumedBy": "unclaimed - available to the street-surface/detail pass"
+    },
+    "surface-tactile-paving-warning-v1.png": {
+      "path": "public/assets/surface-tactile-paving-warning-v1.png",
+      "bytes": 399709,
+      "sha256": "b9aae7a033de5a90be6dae5c8bcf8c19dd17b70d3b1dd4fa262cd7515002d056",
+      "encoding": "sRGB, 8-bit RGB PNG",
+      "sourceAsset": "TactilePaving001",
+      "sourceMaps": [
+        "Color"
+      ],
+      "resample": "box filter 1024x1024 -> 512x512",
+      "note": "tileable detectable-warning surface, colour only",
+      "consumedBy": "unclaimed - available to the street-surface/detail pass"
+    },
+    "world-assets-cc0-v1.LICENSE.txt": {
+      "path": "public/assets/world-assets-cc0-v1.LICENSE.txt",
+      "bytes": 7048,
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "encoding": "text/plain",
+      "url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt",
+      "note": "verbatim CC0 1.0 Universal legal code"
+    },
+    "world-assets-cc0-v1.NOTICE.txt": {
+      "path": "public/assets/world-assets-cc0-v1.NOTICE.txt",
+      "bytes": 1824,
+      "sha256": "8472d5444336f9524e1563634583996a6e377be7bcc60df5c9688e7586b767c2",
+      "encoding": "text/plain"
+    }
+  },
+  "generator": {
+    "path": "scripts/world-assets/build-world-assets-cc0-v1.mjs",
+    "libraries": [
+      "scripts/world-assets/lib/png.mjs",
+      "scripts/world-assets/lib/zip.mjs",
+      "scripts/world-assets/lib/image.mjs"
+    ],
+    "node": "v22.19.x",
+    "algorithm": "zip -> PNG decode -> connected-component leaf extraction -> seeded cluster composition -> edge dilation -> desaturate + per-channel linear mean normalisation -> deterministic PNG re-encode",
+    "determinism": "string-seeded mulberry32 only; re-runnable with --check, which fails if any output byte changes"
+  }
+}
