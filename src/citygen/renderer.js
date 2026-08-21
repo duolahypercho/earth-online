@@ -8267,7 +8267,11 @@ export class CityRenderer {
       // crossing as well as zero at it, which is what keeps the direction
       // hand-over from being visible: the key is at a few per cent of its
       // strength exactly where it rotates fastest.
-      this.sun.intensity *= (2 * environment.model.daylight - 1) ** 2;
+      // `(2 * daylight - 1) ** 2` is zero at the horizon and returns to ONE
+      // below it, so the key came back at full strength after dark - which is
+      // why the night card was lit by a sun 28 degrees underground. The
+      // envelope is monotone in altitude and exactly zero at and below it.
+      this.sun.intensity *= environment.lightRig.key.envelope;
       // The rim exists to fake the anti-sun sky bounce (which is why the module
       // cuts it hardest as the environment takes that job over). A fixed world
       // direction made it the anti-sun of nothing once the key started moving,
@@ -8407,6 +8411,12 @@ export class CityRenderer {
       return;
     }
     this.sunKeyDirection.set(x, y, z).normalize();
+    // Where the SUN is, as distinct from where the key is pointed. At night the
+    // key is reflected and lifted, and the fit must not publish that as a solar
+    // altitude nor cast a shadow map from it.
+    this.solarAltitudeDeg = Number.isFinite(sun?.altitudeDeg)
+      ? sun.altitudeDeg
+      : null;
   }
 
   /**
@@ -8479,6 +8489,7 @@ export class CityRenderer {
       cameraNear: camera.near,
       mapSize: SUN_SHADOW_MAP_SIZE,
       maxCasterHeight: this.maxCasterHeight,
+      solarAltitudeDeg: Number.isFinite(this.solarAltitudeDeg) ? this.solarAltitudeDeg : null,
     });
     applySunShadowFit(this.sun, fit);
     // The fit's own bias pair was calibrated while 143 sub-texel meshes were
@@ -8522,7 +8533,9 @@ export class CityRenderer {
       warnings: biasPlan.warnings,
     };
     diagnostics.castShadow = fit.castShadow;
-    diagnostics.sunAltitudeDeg = fit.sunAltitudeDeg;
+    diagnostics.sunAltitudeDeg = fit.solarAltitudeDeg ?? fit.keyAltitudeDeg;
+    diagnostics.keyAltitudeDeg = fit.keyAltitudeDeg;
+    diagnostics.keyIsSun = fit.keyIsSun;
     diagnostics.maxCasterHeight = this.maxCasterHeight;
     diagnostics.warnings = fit.warnings;
     if (!this.shadowFitLogged) {
