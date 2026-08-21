@@ -2290,14 +2290,36 @@ function readShadowRigOptions() {
     mapSize: SUN_SHADOW_MAP_SIZE,
     maxFar: SUN_SHADOW_MAX_FAR,
   };
-  const cascades = Number(read('cascades'));
-  if (Number.isInteger(cascades) && cascades >= 0 && cascades <= 4) options.cascades = cascades;
-  const mapSize = Number(read('shadowMap'));
-  if (Number.isInteger(mapSize) && mapSize >= 256 && mapSize <= 4096) options.mapSize = mapSize;
-  const maxFar = Number(read('shadowFar'));
-  if (Number.isFinite(maxFar) && maxFar >= 20 && maxFar <= 2000) options.maxFar = maxFar;
+  // `Number(null)` is 0, not NaN, so a *missing* parameter must be rejected
+  // before it is coerced. `?cascades=` is the one knob here whose valid range
+  // includes 0, so an absent parameter used to read as "shadows off" and
+  // silently disabled the whole rig on every run that did not ask for it.
+  const num = (key) => {
+    const raw = read(key);
+    return raw === null || raw === '' ? null : Number(raw);
+  };
+  const cascades = num('cascades');
+  // Whether the cascade count was ASKED FOR, as opposed to defaulted. The
+  // backend policy in `applyBackendShadowRigPolicy` drops an un-asked-for
+  // cascade to the single box on a backend that cannot render it, and must
+  // not silently overrule a round that explicitly requested `?cascades=3`.
+  let cascadesExplicit = false;
+  if (cascades !== null && Number.isInteger(cascades) && cascades >= 0 && cascades <= 4) {
+    options.cascades = cascades;
+    cascadesExplicit = true;
+  }
+  const mapSize = num('shadowMap');
+  if (mapSize !== null && Number.isInteger(mapSize) && mapSize >= 256 && mapSize <= 4096) {
+    options.mapSize = mapSize;
+  }
+  const maxFar = num('shadowFar');
+  if (maxFar !== null && Number.isFinite(maxFar) && maxFar >= 20 && maxFar <= 2000) {
+    options.maxFar = maxFar;
+  }
   const override = (typeof window !== 'undefined' && window.__QA_SHADOW__) || null;
-  return Object.freeze(override ? { ...options, ...override } : options);
+  if (override && Object.prototype.hasOwnProperty.call(override, 'cascades')) cascadesExplicit = true;
+  options.cascadesExplicit = cascadesExplicit;
+  return Object.freeze(override ? { ...options, ...override, cascadesExplicit } : options);
 }
 
 export class CityRenderer {
@@ -2598,6 +2620,15 @@ export class CityRenderer {
         shadowPassesPerFrame: 0,
         /** Depth-attachment bytes at 32-bit across all cascades. */
         texelBytes: 0,
+        /** 'webgpu' | 'webgl2-fallback' | 'unknown', written after init. */
+        backend: null,
+        /**
+         * Whether a `light.shadow.shadowNode` cascade actually DEPOSITS on the
+         * active backend. Measured, not assumed - see
+         * `applyBackendShadowRigPolicy` for the measurement this records.
+         */
+        depositsOnThisBackend: null,
+        backendNote: 'backend not detected yet',
       },
       densityRange: SHADOW_TEXEL_DENSITY_RANGE,
       refits: 0,
@@ -2705,6 +2736,10 @@ export class CityRenderer {
       : this.renderer.backend?.isWebGLBackend === true
         ? 'webgl2-fallback'
         : 'unknown';
+    // Before ANY material is built, and therefore before the cascade count is
+    // unrolled into the node graph: pick a shadow rig this backend can
+    // actually deposit with.
+    this.applyBackendShadowRigPolicy();
     // Bake the shared detail maps at load rather than on the first frame, and
     // clamp their sampler anisotropy to what this backend really supports.
     const anisotropy = applyRendererCapabilities(this.renderer);
@@ -9852,6 +9887,138 @@ export class CityRenderer {
   }
 
   /**
+   * Choose a shadow rig the ACTIVE BACKEND can actually deposit with.
+   *
+   * WHAT WAS MEASURED, headless, on this box (WebGPURenderer running its
+   * WebGL2 fallback under a software rasterizer):
+   *
+   *  - a plain `DirectionalLight` with `castShadow` and a fitted orthographic
+   *    box deposits a correct, hard shadow on the first drawn frame - both
+   *    on a bare `renderer.render(scene, camera)` and through the same
+   *    `pass(scene, camera)` + MRT + `renderOutput` chain this route uses;
+   *  - the same scene with `light.shadow.shadowNode = new CSMShadowNode(...)`
+   *    deposits NOTHING, with every cascade depth target allocated at its
+   *    requested size and every cascade light placed at its planned position.
+   *    Five variants - one drawn frame, three drawn frames, the placement
+   *    below applied, the per-fragment cascade choice bypassed so cascade 0 is
+   *    always sampled, and a ONE-cascade `CSMShadowNode` - are byte-identical
+   *    to each other and none of them carries a shadow anywhere.
+   *
+   * The last two matter for whoever picks this up: the split is not the
+   * problem. A single-cascade node with `breaks = [1]`, and a node whose
+   * cascade choice is removed entirely, fail exactly as hard as three
+   * cascades. What is left is the `shadow(lwLight, clonedShadow)` node the
+   * addon builds on its `LwLight` placeholder - a bare `Object3D` carrying a
+   * `shadow`, not a `DirectionalLight` - reached through
+   * `light.shadow.shadowNode`. That is where the next attempt should look.
+   *
+   * So the cascade is not mis-fitted here, it is unrendered. Until that is
+   * traced inside three's node graph, a build that cannot see a cascade must
+   * not ship one: three allocated shadow maps and three extra shadow render
+   * passes per frame, for a frame with no shadow in it, is the exact failure
+   * this round was called to end.
+   *
+   * `?cascades=N` still wins. A round that explicitly asks for the cascade
+   * gets the cascade, on any backend, and the diagnostics say so - that is how
+   * the next GPU target measures it, and how this finding gets re-checked.
+   *
+   * @returns {?{from: number, to: number}} the change, or null if none.
+   */
+  applyBackendShadowRigPolicy() {
+    const diagnostics = this.shadowDiagnostics.cascade;
+    diagnostics.backend = this.rendererBackend;
+    const fallback = this.rendererBackend === 'webgl2-fallback';
+    diagnostics.depositsOnThisBackend = fallback ? false : null;
+    if (!fallback) {
+      diagnostics.backendNote = 'backend is not the WebGL2 fallback; the cascade path is '
+        + 'kept, and this build has NOT measured whether it deposits here';
+      return null;
+    }
+    if (this.shadowRig.cascadesExplicit) {
+      diagnostics.backendNote = `?cascades=${this.shadowRig.cascades} was asked for explicitly, `
+        + 'so the rig is left alone. Measured on this backend, a cascade node deposits no '
+        + 'shadow at all: expect a flat-lit frame at cascades >= 2 here';
+      if (this.shadowRig.cascades >= 2) {
+        // The reason string is what the capture report prints. A round must
+        // not be able to read "3 cascades installed" without also reading
+        // that they deposit nothing on the backend that drew the frame.
+        diagnostics.reason = `${diagnostics.reason}; DEPOSITS NOTHING ON THIS BACKEND `
+          + '(webgl2-fallback, measured): the frame it produces is unshadowed';
+      }
+      return null;
+    }
+    if (this.shadowRig.cascades < 2) {
+      diagnostics.backendNote = 'already un-cascaded; nothing to fall back from';
+      return null;
+    }
+    const from = this.shadowRig.cascades;
+    this.shadowRig = Object.freeze({ ...this.shadowRig, cascades: 1 });
+    this.installShadowCascade();
+    diagnostics.backendNote = `fell back from ${from} cascades to one well-fitted box: a `
+      + 'cascade node deposits no shadow on this backend (measured headless, all targets '
+      + 'allocated, all cascade lights placed). Reach the cascade anyway with '
+      + `?cascades=${from}`;
+    diagnostics.reason = `${diagnostics.reason}; ${diagnostics.backendNote}`;
+    console.warn(`[${SUN_SHADOW_CASCADE_VERSION}] ${diagnostics.backendNote}`);
+    return { from, to: 1 };
+  }
+
+  /**
+   * Place the cascade lights for the frame that is ABOUT TO BE DRAWN.
+   *
+   * `CSMShadowNode.updateBefore` is what moves the per-cascade lights, and
+   * three registers it as a SEQUENTIAL node - `NodeBuilder.addSequentialNode`
+   * runs after `setup()`, so the child `shadow()` nodes the cascade builds
+   * inside its own setup are registered BEFORE it. Their `updateBefore`, which
+   * is the one that actually rasterises each cascade's depth, therefore runs
+   * first, one whole frame ahead of the placement it depends on. Measured
+   * headless: after the first drawn frame every cascade light's `matrixWorld`
+   * translation is still (0, 0, 0) while its `position` already holds the
+   * planned value; the two only agree from the third frame on.
+   *
+   * The capture harness draws exactly one frame per card, so on the capture
+   * path that lag is not a transient - it is every frame the round delivers.
+   *
+   * Running the node's own placement here, before the draw, and forcing the
+   * two placeholder objects' world matrices, is enough to make frame one carry
+   * the same placement frame three would. Three will run `updateBefore` again
+   * at the end of the frame with the same inputs, which recomputes the same
+   * numbers.
+   *
+   * This does NOT make the cascade deposit on the WebGL2 fallback - nothing in
+   * this method addresses that, and it was still empty at three frames - it
+   * removes a defect that would otherwise hide behind that one on a backend
+   * where the cascade does render.
+   *
+   * @returns {boolean} whether the cascade was placed for this frame.
+   */
+  prepareShadowCascadeFrame() {
+    const node = this.shadowCascade;
+    if (!node || node.camera === null || !node.lights.length) return false;
+    if (this.camera && node.camera !== this.camera) node.camera = this.camera;
+    if (!this.sun.parent) return false;
+    try {
+      this.camera.updateMatrixWorld();
+      this.sun.updateMatrixWorld();
+      this.sun.target.updateMatrixWorld();
+      node.updateBefore();
+      for (let i = 0; i < node.lights.length; i += 1) {
+        const light = node.lights[i];
+        light.updateMatrixWorld(true);
+        if (light.target) light.target.updateMatrixWorld(true);
+      }
+    } catch (error) {
+      if (!this.shadowCascadePlacementWarned) {
+        this.shadowCascadePlacementWarned = true;
+        console.error(`[${SUN_SHADOW_CASCADE_VERSION}] could not place the cascade lights for `
+          + 'this frame; three will place them one frame late', error);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * QA handle: report the cascade rig, and say plainly why it cannot be
    * changed after boot.
    *
@@ -10592,6 +10759,9 @@ export class CityRenderer {
     // render one frame behind the fit. The signature check makes this free when
     // nothing has moved.
     this.updateSunShadow();
+    // The cascade lights are placed by a node that three runs AFTER the nodes
+    // that rasterise the cascades. See `prepareShadowCascadeFrame`.
+    this.prepareShadowCascadeFrame();
     // One draw site on the canonical path. The chain owns tone mapping, the
     // colour-space encode and the grade when it is on; the bare render is the
     // documented fallback and keeps the renderer's own output transform.
