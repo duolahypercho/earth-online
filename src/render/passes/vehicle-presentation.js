@@ -495,7 +495,11 @@ export function drawnCarriagewayY(segment, x, z, options, datumAt, slack = 0) {
   // the pad - so the flag is carried out and a pad is never allowed to lift a
   // wheel above real ribbon. `createDrawnRoadIndex` resolves the pad exactly
   // wherever the drawn mesh is available; this is the fallback for the rest.
-  const inRibbon = hit.station >= segment.trimStart - 0.05
+  // Where the ribbon is actually DRAWN: between the two trims, and between the
+  // polyline's own two ends. `overshoot` is what stops a street answering for
+  // ground it stops short of - see `segmentProjection`.
+  const inRibbon = hit.overshoot <= 0.05
+    && hit.station >= segment.trimStart - 0.05
     && hit.station <= segment.length - segment.trimEnd + 0.05;
   const datum = centrelineDatumAt(segment, x, z, datumAt);
   return { y: carriagewaySurfaceY(datum, u, segment.half, options), ribbon: inRibbon };
@@ -511,7 +515,7 @@ export function drawnCarriagewayY(segment, x, z, options, datumAt, slack = 0) {
  * wheel contacts on the shipped slice, taking the maximum is the difference
  * between a 165 mm worst case and a sub-centimetre one.
  */
-export function topCarriagewayY(index, x, z, options, datumAt, fallbackSegment = null) {
+export function topCarriagewayY(index, x, z, options, datumAt, fallbackSegment = null, tally = null) {
   let ribbon = null;
   let pad = null;
   const candidates = index?.candidates ? index.candidates(x, z) : null;
@@ -519,18 +523,38 @@ export function topCarriagewayY(index, x, z, options, datumAt, fallbackSegment =
     for (const segment of candidates) {
       const y = drawnCarriagewayY(segment, x, z, options, datumAt);
       if (y === null) continue;
-      // A segment whose ribbon is trimmed away here draws nothing of its own:
-      // the junction pad does, and the pad is only an approximation of it. Real
-      // ribbon always wins over an approximated pad, so a wheel is never lifted
-      // onto a surface that may not be there.
+      // A segment whose ribbon is trimmed away here - or that stops short of
+      // this point altogether - draws nothing of its own: the junction pad
+      // does, and the pad is only an approximation of it. Real ribbon always
+      // wins over an approximated pad, so a wheel is never lifted onto a
+      // surface that may not be there.
       if (y.ribbon) { if (ribbon === null || y.y > ribbon) ribbon = y.y; }
       else if (pad === null || y.y > pad) pad = y.y;
     }
   }
-  if (ribbon !== null) return ribbon;
+  if (ribbon !== null) { if (tally) tally.modelledRibbon += 1; return ribbon; }
+  // A wheel that overhangs the kerb of its own street still rests on that
+  // street's road, so the fallback re-reads it with a metre of lateral slack.
+  // Only when THAT is real ribbon, though: past the segment's own end it is
+  // no better a guess than the pad below it.
   const back = fallbackSegment ? drawnCarriagewayY(fallbackSegment, x, z, options, datumAt, 1.0) : null;
-  if (back) return back.y;
-  return pad;
+  if (back && back.ribbon) { if (tally) tally.modelledOverhang += 1; return back.y; }
+  if (pad !== null) { if (tally) tally.modelledPad += 1; return pad; }
+  if (back) { if (tally) tally.modelledExtended += 1; return back.y; }
+  if (tally) tally.unresolved += 1;
+  return null;
+}
+
+/** A fresh counter set for `topCarriagewayY`, so a caller can say where its heights came from. */
+export function createGroundingTally() {
+  return {
+    drawnGeometry: 0,
+    modelledRibbon: 0,
+    modelledOverhang: 0,
+    modelledPad: 0,
+    modelledExtended: 0,
+    unresolved: 0,
+  };
 }
 
 export function groundVehicleAt(spec, segment, cx, cz, yaw, options, datumAt, index = null, road = null) {
@@ -1139,11 +1163,19 @@ function createParkedFleet(assets, materials, kept) {
   return fleet;
 }
 
-/** Wheel-contact audit over what was actually placed. */
+/**
+ * Wheel-contact audit over what was actually placed.
+ *
+ * `sources` is the honest part: it counts, per wheel contact, WHICH surface
+ * answered - the drawn triangles the renderer built, or one of the modelled
+ * cross-sections that stand in for them where no mesh is indexed. A number in
+ * anything but `drawnGeometry` is the pass admitting it is on a model.
+ */
 function groundingAudit(plan, options, kept, index = null, road = null) {
   let worst = 0;
   let sum = 0;
   let samples = 0;
+  const sources = createGroundingTally();
   const datumAt = options.heightAt
     ? (x, z) => options.roadLift + options.heightAt(x, z)
     : () => options.roadLift;
@@ -1152,9 +1184,13 @@ function groundingAudit(plan, options, kept, index = null, road = null) {
     if (!segment) continue;
     for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
       const drawn = road ? road.heightAt(contact.x, contact.z) : null;
-      const expected = drawn !== null
-        ? drawn
-        : topCarriagewayY(index, contact.x, contact.z, options, datumAt, segment);
+      let expected;
+      if (drawn !== null) {
+        sources.drawnGeometry += 1;
+        expected = drawn;
+      } else {
+        expected = topCarriagewayY(index, contact.x, contact.z, options, datumAt, segment, sources);
+      }
       if (expected === null) continue;
       const error = Math.abs(contact.y - expected);
       sum += error;
@@ -1162,12 +1198,16 @@ function groundingAudit(plan, options, kept, index = null, road = null) {
       if (error > worst) worst = error;
     }
   }
+  const modelled = samples - sources.drawnGeometry;
   return {
     samples,
     worstContactError: worst,
     meanContactError: samples ? sum / samples : 0,
     tolerance: 0.010,
     withinTolerance: worst <= 0.010,
+    sources,
+    // How often the pass had to fall back off the drawn triangles, 0..1.
+    modelledShare: samples ? modelled / samples : 0,
   };
 }
 
@@ -1412,8 +1452,20 @@ export function lateralOf(segment, x, z) {
 
 /**
  * Nearest point on a plan segment's centreline: signed lateral offset, arc
- * station, and the planar distance to the centreline. `lateralOf` is the
- * lateral component of this; the traffic mirror needs all three.
+ * station, the planar distance to the centreline, and the LONGITUDINAL
+ * OVERSHOOT past the polyline's own ends.
+ *
+ * ROUND 6. `overshoot` is new and it is load-bearing. The projection is
+ * clamped to the polyline, so a point that lies well beyond a street's last
+ * vertex still comes back with a `station` pinned to that vertex and a small
+ * `lateral` - and every caller then read that as "this point is on that
+ * street's carriageway, near its crown". Measured on the shipped slice that is
+ * where the whole worst-case error lived: the sedan on sf-seg-512 stood 5.71 m
+ * off its own centreline over asphalt at 0.667 m, while sf-seg-511 - a street
+ * that ENDS 9 m short of the wheel - answered 0.774 m from its crown, won the
+ * topmost-surface test, and lifted the car 110 mm into the air. A ribbon is
+ * only drawn between its own two ends; `overshoot > 0` means it is not drawn
+ * here at all.
  */
 export function segmentProjection(segment, x, z) {
   let best = null;
@@ -1426,15 +1478,21 @@ export function segmentProjection(segment, x, z) {
     if (!(len > 1e-9)) continue;
     const ux = dx / len;
     const uz = dz / len;
-    const t = clamp((x - a.x) * ux + (z - a.z) * uz, 0, len);
+    const raw = (x - a.x) * ux + (z - a.z) * uz;
+    const t = clamp(raw, 0, len);
     const px = a.x + ux * t;
     const pz = a.z + uz * t;
     const distance = Math.hypot(x - px, z - pz);
     if (best && distance >= best.distance) continue;
+    // Only the ENDS of the whole polyline overshoot: a point past the end of an
+    // interior span is inside the next one, and that span wins on distance.
+    const station = segment.cum[i] + t;
+    const overshoot = Math.max(0, -raw, raw - len);
     best = {
       distance,
       lateral: (x - px) * -uz + (z - pz) * ux,
-      station: segment.cum[i] + t,
+      station,
+      overshoot: (station > 1e-6 && station < segment.length - 1e-6) ? 0 : overshoot,
     };
   }
   return best;
@@ -1623,18 +1681,38 @@ export const VEHICLE_FOCUS = Object.freeze({
 /**
  * The drawn-road grounding window.
  *
- * `radius` covers the near ring (80 m) and the mid ring (110 m) plus the 60 m
- * the centre may drift before the window is rebuilt, so every vehicle a
- * reviewer can resolve is grounded on real geometry; the far ring's ten-pixel
- * silhouettes fall back to the modelled cross-section. Measured on the shipped
- * slice: 3.9k triangles and 41 ms to build, against 15.9k and 154 ms at 400 m.
+ * BUDGET CHANGE, ROUND 6: `radius` 200 m -> 340 m. RESTATED, WITH THE NUMBERS.
+ *
+ * 200 m covered the near ring (80 m) and the mid ring (110 m) and left the far
+ * ring (320 m) on the modelled cross-section, on the argument that a ten-pixel
+ * silhouette does not need real geometry. That argument is about how visible
+ * the error is, not about whether it is there, and it is what makes the pass's
+ * own grounding counter disagree with the frame: measured on the shipped slice
+ * WITH the renderer's street mesh in the root, a 200 m window answered only
+ * 854 of 1760 wheel contacts from drawn triangles and left 906 - 51.5% of the
+ * fleet's contacts - on the model, which is exact on an open ribbon and wrong
+ * by up to a decimetre wherever two paved surfaces lap.
+ *
+ * 340 m is the far ring plus a vehicle length of overhang. At that radius all
+ * 1760 contacts come off the drawn triangles: `grounding.modelledShare` is 0.
+ *
+ * What it costs, measured on the same slice (720 m of downtown, 109 859
+ * carriageway triangles in the mesh), five builds averaged:
+ *   200 m -> 5 278 triangles, 1 214 cells, 33.8 ms
+ *   320 m -> 13 167 triangles, 2 968 cells, 31.0 ms
+ *   340 m -> 15 103 triangles, 3 437 cells, 29.6 ms
+ *   400 m -> 20 346 triangles, 4 689 cells, 34.4 ms
+ * The build walks every triangle of the mesh whatever the radius and only
+ * filters what it KEEPS, so the time is flat inside measurement noise; the
+ * radius buys retained triangles, roughly 2 MB of JS arrays at 340 m against
+ * 0.7 MB at 200 m. Rebuilds are rare - see `rebuildMetres`.
  *
  * `rebuildMetres` is deliberately larger than `refreshMetres`: re-planning the
  * kerb is cheap, re-bucketing the asphalt is not, and the window only has to be
  * rebuilt when the rings are about to walk out of it.
  */
 export const DRAWN_ROAD_WINDOW = Object.freeze({
-  radius: 200,
+  radius: 340,
   rebuildMetres: 60,
 });
 

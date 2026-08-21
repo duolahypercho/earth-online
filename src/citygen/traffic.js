@@ -4,6 +4,7 @@ import {
   resolveStreetSurfaceOptions,
   sidewalkSurfaceY,
   carriagewaySurfaceY,
+  STREET_SURFACE_V2_DEFAULTS,
 } from '../world/streets/street-surface-v2.js';
 import {
   buildVehicle,
@@ -174,6 +175,12 @@ export const STREET_POPULATION = Object.freeze({
 const FOOTWAY_LIFT_ABOVE_DATUM = 0.102;   // renderer.js LEGACY_SIDEWALK_LIFT
 /** Fallback datum when a city omits `streetDesign.roadLift`, matching the renderer. */
 const DEFAULT_ROAD_LIFT = 0.5;
+/**
+ * The gutter depth the renderer actually draws with (`STREET_GUTTER_DEPTH` in
+ * src/citygen/renderer.js), which is NOT the street module's 0.03 m default.
+ * Used only when no renderer is available to state its own.
+ */
+const DRAWN_GUTTER_DEPTH = 0.04;
 
 // ---------------------------------------------------------------------------
 // The drawn street surface, sampled
@@ -303,14 +310,20 @@ export function createStreetSurfaceSampler(city, options) {
 
   /**
    * The street span covering a world point, with the point's signed lateral
-   * offset from that span's centreline.
+   * offset from that span's centreline AND the point's own projection back
+   * onto that centreline.
    *
    * Longitudinal overshoot up to the corridor reach is accepted so that a point
    * standing in a junction mouth is still grounded on the street it walked in
-   * on rather than falling through to the constant; laterally the nearest
-   * centreline wins, which is the segment whose ribbon is on top there.
+   * on rather than falling through to the constant. The winner is the span at
+   * the smallest TRUE distance - lateral where the point is beside the span,
+   * lateral and overshoot together where it is past the end - so a span the
+   * point has already walked off cannot beat the one it is standing beside.
    *
-   * @returns {{u:number, half:number, id:*}|null}
+   * `cx, cz` is the load-bearing part. See `datumAt` below: the drawn ribbon
+   * samples the terrain THERE, never under the body.
+   *
+   * @returns {{u:number, half:number, id:*, cx:number, cz:number}|null}
    */
   function locate(x, z) {
     const bucket = grid.get(streetSampleKey(
@@ -320,7 +333,8 @@ export function createStreetSurfaceSampler(city, options) {
     if (!bucket) return null;
     let best = null;
     let bestU = 0;
-    let bestAbs = Infinity;
+    let bestT = 0;
+    let bestScore = Infinity;
     for (let i = 0; i < bucket.length; i += 1) {
       const entry = bucket[i];
       const rx = x - entry.ax;
@@ -330,13 +344,68 @@ export function createStreetSurfaceSampler(city, options) {
       // n = perpCCW(t), the same normal `buildSidewalkPaths` offsets along.
       const u = rx * -entry.tz + rz * entry.tx;
       const abs = Math.abs(u);
-      if (abs > entry.reach || abs >= bestAbs) continue;
-      bestAbs = abs;
+      if (abs > entry.reach) continue;
+      // RANK BY THE DISTANCE TO THE FINITE SPAN, not by |u|.
+      //
+      // ROUND 6. Ranking by lateral offset alone let a span that STOPS 8 m
+      // short of the point win over the span the point is standing on, because
+      // both are the same street and therefore share a lateral offset. That was
+      // harmless while the datum came from under the body; now that the datum
+      // comes from the projection, the winner's clamped end point is where the
+      // terrain gets sampled, and on the 6% fixture that is 458 mm of pure
+      // bookkeeping error. The true distance to the finite span breaks the tie
+      // in favour of the span the point is actually beside.
+      const t = along < 0 ? 0 : (along > entry.length ? entry.length : along);
+      const over = along - t;
+      const score = over === 0 ? abs : Math.hypot(abs, over);
+      if (score >= bestScore) continue;
+      bestScore = score;
       bestU = u;
+      bestT = t;
       best = entry;
     }
     if (!best) return null;
-    return { u: bestU, half: best.half, id: best.id };
+    // Clamped to the span, because the ribbon's stations are on the polyline:
+    // a point past the end of a span is swept from the end station, not from an
+    // extrapolated one.
+    return {
+      u: bestU,
+      half: best.half,
+      id: best.id,
+      cx: best.ax + best.tx * bestT,
+      cz: best.az + best.tz * bestT,
+    };
+  }
+
+  /**
+   * THE DATUM. One owner, for every population this file grounds.
+   *
+   * ROUND 6 CORRECTION - READ THIS BEFORE PASSING A HEIGHT IN AGAIN.
+   *
+   * `street-surface-v2.emitSegment` takes ONE datum per CENTRELINE station and
+   * sweeps the entire cross-section - crown, gutter pan, kerb face, kerb top,
+   * footway cross-fall - off that single number:
+   *
+   *     const datums = stations.map((st) => ctx.datum(st.x, st.z));
+   *
+   * It never samples the terrain at a lateral offset. So a datum taken under
+   * the BODY differs from the datum the asphalt under that body was swept from
+   * by exactly (terrain cross-grade) x (the body's lateral offset). On the
+   * street-life fixture's 6% cross-grade that is 281 mm under a car in the
+   * kerbside lane and 507 mm under a walker on the far edge of the footway -
+   * which is what five reviewers saw as floating vehicles and what the old
+   * `surfaceY(x, z, terrainY)` signature made unavoidable, because a caller
+   * standing at (x, z) has no way to sample the terrain anywhere else.
+   *
+   * The cure is to take a terrain FUNCTION and project first. On flat ground
+   * and on a pure longitudinal grade this is a no-op.
+   *
+   * @param {{cx:number, cz:number}} hit a `locate` result
+   * @param {(x:number,z:number)=>number} terrainAt bare ground sampler
+   */
+  function datumAt(hit, terrainAt) {
+    const h = Number(terrainAt(hit.cx, hit.cz));
+    return (Number.isFinite(h) ? h : 0) + options.roadLift;
   }
 
   return {
@@ -344,6 +413,7 @@ export function createStreetSurfaceSampler(city, options) {
     spans,
     cells: grid.size,
     locate,
+    datumAt,
     /**
      * Height of the DRAWN street surface at a world point, or null when the
      * point is not on a street. Footway past the kerb line, carriageway inside
@@ -352,17 +422,52 @@ export function createStreetSurfaceSampler(city, options) {
      *
      * @param {number} x
      * @param {number} z
-     * @param {number} terrainY bare ground under the point
+     * @param {(x:number,z:number)=>number} terrainAt bare ground sampler. NOT a
+     *   height: the datum is read on the centreline, not under the body.
      */
-    surfaceY(x, z, terrainY) {
+    surfaceY(x, z, terrainAt) {
       const hit = locate(x, z);
       if (!hit) return null;
-      const datum = terrainY + options.roadLift;
+      const datum = datumAt(hit, terrainAt);
       return Math.abs(hit.u) >= hit.half
         ? sidewalkSurfaceY(datum, hit.u, hit.half, options)
         : carriagewaySurfaceY(datum, hit.u, hit.half, options);
     },
+    /**
+     * Height of the DRAWN CARRIAGEWAY at a world point, or null off-street.
+     *
+     * The same datum rule as `surfaceY`, but the lateral offset is clamped to
+     * the kerb line instead of climbing onto the footway: a tyre that overhangs
+     * the kerb still rests on the road.
+     */
+    carriagewayY(x, z, terrainAt) {
+      const hit = locate(x, z);
+      if (!hit) return null;
+      const u = hit.u < -hit.half ? -hit.half : (hit.u > hit.half ? hit.half : hit.u);
+      return carriagewaySurfaceY(datumAt(hit, terrainAt), u, hit.half, options);
+    },
   };
+}
+
+/**
+ * `TrafficSim.terrainY` as a plain function.
+ *
+ * The street index samples the terrain at a point that is NOT the point being
+ * grounded - the body's projection onto its own centreline - so it takes a
+ * sampler rather than a height. See `createStreetSurfaceSampler`'s `datumAt`.
+ *
+ * Written as a free function over `sim` rather than a method because two
+ * verifiers exercise `vehicleGroundY` with `.call()` on a hand-built stub that
+ * has `terrainY` and nothing else, and because a deep-frozen simulation must
+ * still be able to ground: the cache is best-effort, and a frozen instance
+ * simply allocates one closure per call.
+ */
+function terrainProbeOf(sim) {
+  const cached = sim.terrainProbeFn;
+  if (typeof cached === 'function') return cached;
+  const probe = (x, z) => sim.terrainY(x, z);
+  try { sim.terrainProbeFn = probe; } catch { /* frozen instance: per-call closure */ }
+  return probe;
 }
 
 /**
@@ -387,7 +492,23 @@ export function resolveDrawnStreetOptions(renderer, city) {
       curbFaceHeight: lift.curbFaceHeight,
     });
   }
-  return resolveStreetSurfaceOptions(city);
+  // LAST RESORT: the renderer's OWN recipe, not the module defaults.
+  //
+  // ROUND 6. `resolveStreetSurfaceOptions(city)` alone returns the street
+  // module's default gutter depth, 0.03 m. Nothing in this project ever draws
+  // that: `CityRenderer.streetSurfaceLift` pins the gutter at 0.04 m and
+  // derives the curb face from it and from the 102 mm footway plane, and every
+  // surface the renderer builds goes through that. Falling back to the module
+  // default therefore modelled a kerb 10 mm below the concrete a walker was
+  // standing on - a tenth of the whole grounding budget, spent on a constant
+  // nobody draws. These are the same three numbers `streetSurfaceLift` returns,
+  // written here rather than imported so this file keeps no dependency on the
+  // renderer.
+  return resolveStreetSurfaceOptions(city, {
+    gutterDepth: DRAWN_GUTTER_DEPTH,
+    curbFaceHeight: FOOTWAY_LIFT_ABOVE_DATUM + DRAWN_GUTTER_DEPTH
+      + STREET_SURFACE_V2_DEFAULTS.curbTopFall,
+  });
 }
 
 /** Street classes an ambient walker may be placed on, and how heavily. */
@@ -604,6 +725,8 @@ export class TrafficSim {
     // drawn cross-section through this index. Built once, from the same options
     // object the renderer handed the surface builder.
     this.streetSurfaceOptions = resolveDrawnStreetOptions(renderer, city);
+    // Allocated once; see `terrainProbeOf`.
+    this.terrainProbeFn = (x, z) => this.terrainY(x, z);
     this.streetSurfaceSampler = createStreetSurfaceSampler(city, this.streetSurfaceOptions);
     this.groundingDiagnostics = {
       source: renderer?.streetSurface?.data?.options ? 'renderer.streetSurface.options'
@@ -1558,7 +1681,9 @@ export class TrafficSim {
    *
    * `surfaceY` is not used here: past the kerb line it returns the FOOTWAY, and
    * a tyre that overhangs the kerb must still rest on the road, not climb the
-   * pavement. The lateral offset is clamped to the carriageway instead.
+   * pavement. `carriagewayY` clamps the lateral offset instead - but it reaches
+   * the datum through the SAME `datumAt` the walkers do, so one rule produces
+   * the surface both populations stand on. See the ROUND 6 note on `datumAt`.
    */
   vehicleGroundY(x, z, yaw, rig) {
     const sampler = this.streetSurfaceSampler;
@@ -1567,6 +1692,7 @@ export class TrafficSim {
     // Vehicles face +z, so local +x is the vehicle's LEFT.
     const fx = Math.sin(yaw); const fz = Math.cos(yaw);
     const lx = Math.cos(yaw); const lz = -Math.sin(yaw);
+    const terrainAt = terrainProbeOf(this);
     let sum = 0;
     let hits = 0;
     for (const wheel of wheels) {
@@ -1575,12 +1701,11 @@ export class TrafficSim {
       if (!Number.isFinite(wx) || !Number.isFinite(wz)) continue;
       const px = x + lx * wx + fx * wz;
       const pz = z + lz * wx + fz * wz;
-      const found = sampler.locate(px, pz);
-      if (!found) continue;
-      const datum = this.terrainY(px, pz) + sampler.options.roadLift;
-      const u = clamp(found.u, -found.half, found.half);
-      const y = carriagewaySurfaceY(datum, u, found.half, sampler.options);
-      if (!Number.isFinite(y)) continue;
+      // Same index, same datum rule, same cross-section as the walkers: the
+      // only difference is that a tyre is clamped to the kerb line instead of
+      // climbing the footway. `carriagewayY` owns both.
+      const y = sampler.carriagewayY(px, pz, terrainAt);
+      if (y === null || !Number.isFinite(y)) continue;
       sum += y;
       hits += 1;
     }
@@ -1610,16 +1735,15 @@ export class TrafficSim {
    * the legacy plane, so nothing that was grounded before becomes ungrounded.
    */
   pedestrianGroundY(x, z) {
-    const terrain = this.terrainY(x, z);
     const sampled = this.streetSurfaceSampler
-      ? this.streetSurfaceSampler.surfaceY(x, z, terrain)
+      ? this.streetSurfaceSampler.surfaceY(x, z, terrainProbeOf(this))
       : null;
     if (sampled != null && Number.isFinite(sampled)) {
       this.groundingDiagnostics.hits += 1;
       return sampled;
     }
     this.groundingDiagnostics.misses += 1;
-    return terrain + this.footwayLift;
+    return this.terrainY(x, z) + this.footwayLift;
   }
 
   edgeArc(car) {
