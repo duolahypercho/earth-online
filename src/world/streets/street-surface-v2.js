@@ -2396,12 +2396,75 @@ function finaliseJunction(node, o, stats) {
   }
 }
 
+/**
+ * THE JUNCTION'S DATUM, TAKEN THE WAY THE RIBBON TAKES IT (round 7).
+ *
+ * `emitSegment` sweeps a whole cross-section - crown, gutter pan, kerb face,
+ * kerb top, footway, bank - from ONE datum per CENTRELINE station:
+ *
+ *     const datums = stations.map((st) => ctx.datum(st.x, st.z));
+ *
+ * The junction used to take a datum PER VERTEX, at the vertex's own position:
+ * `crossSectionY(ctx.datum(x, z), off, ...)` on the pad boundary,
+ * `ctx.datum(st.x, st.z)` on every corner station and again inside
+ * `emitCurbRing`. On a cross-grade those are two different surfaces, and they
+ * part by (terrain cross-grade) x (lateral offset) at the exact vertex the pad
+ * and the ribbon are supposed to share. Measured on the street-life fixture
+ * before this change, INSIDE A SINGLE LAYER so no other surface can explain
+ * it: a 246.8 mm step in the sidewalk over 0.10 m of ground at
+ * (-328.3, -127.10) and a 239.8 mm step in the carriageway at (-326.0,
+ * -127.10) - 0.06 cross-grade x 4.11 m lateral. The same street's carriageway
+ * sampled ON the centreline through the same node stepped 0.4 mm.
+ *
+ * This returns the datum every part of one node is swept from:
+ *
+ *   * `approach[i]` - the datum of approach i's TRIMMED END FRAME, i.e. the
+ *     identical number `emitSegment` opens that ribbon's first (or closes its
+ *     last) cross-section with. Every pad-boundary vertex of that mouth and
+ *     both curb stations of the two paths that meet it use it, so the pad, the
+ *     curb ring and the ribbon share vertices by construction rather than by
+ *     luck.
+ *   * `path[i]` - one datum per station of corner path i, blended by
+ *     CHORD LENGTH along the path from approach i's datum to approach
+ *     i+1's. It is therefore exact at both ends (where the ring meets a
+ *     ribbon) and smooth in between, which is what a real corner return is:
+ *     the surface warps across the node instead of stepping.
+ *
+ * WHAT WOULD MAKE THIS WRONG. If `approachEndFrame` ever stopped being the
+ * frame `buildStations` opens the ribbon on - a different arc length, a
+ * different miter flag - the pad would part from the ribbon again by the
+ * difference. `verify:street-surface-v2` measures that joint directly on the
+ * drawn triangles; it does not model it.
+ */
+function junctionDatums(node, ctx) {
+  const approaches = node.approaches;
+  const approach = approaches.map((app) => {
+    const frame = approachEndFrame(app);
+    return ctx.datum(frame.x, frame.z);
+  });
+  const path = node.paths.map((p, i) => {
+    const stations = p.stations;
+    const a = approach[i];
+    const b = approach[(i + 1) % approaches.length];
+    let run = 0;
+    const cum = [0];
+    for (let k = 1; k < stations.length; k += 1) {
+      run += Math.hypot(stations[k].x - stations[k - 1].x, stations[k].z - stations[k - 1].z);
+      cum.push(run);
+    }
+    if (!(run > 1e-6)) return cum.map(() => a);
+    return cum.map((c) => a + (b - a) * (c / run));
+  });
+  return { approach, path };
+}
+
 /** Pass 4: pad, curb ring, kerb ramps, crosswalks, stop bars. */
 function emitJunction(node, layers, o, ctx, stats) {
   const palette = o.colors;
   const approaches = node.approaches;
   const count = approaches.length;
   const maxHalf = Math.max(...approaches.map((a) => a.half));
+  const datums = junctionDatums(node, ctx);
 
   // Junction pad. The boundary is the closed curb line of the whole node:
   // every approach's full trimmed cross-section (so the pad shares vertices
@@ -2418,6 +2481,8 @@ function emitJunction(node, layers, o, ctx, stats) {
     const side = frameSideCCW(app);
     const offs = sectionOffsets(app.half, o);
     const gutterStart = Math.max(0, app.half - o.gutterWidth);
+    // One datum for this whole mouth: the ribbon's own end-station datum.
+    const datum = datums.approach[i];
     for (const off of offs) {
       const u = side * off;
       const x = frame.x + frame.nx * u * frame.miter;
@@ -2427,18 +2492,23 @@ function emitJunction(node, layers, o, ctx, stats) {
       boundary.push({
         x,
         z,
-        y: crossSectionY(ctx.datum(x, z), off, app.half, o),
+        datum,
+        y: crossSectionY(datum, off, app.half, o),
         in: { x: -sign * side * frame.nx, z: -sign * side * frame.nz },
         run: edge ? (app.half - gutterStart) * frame.miter : 0,
         lipOff: gutterStart,
         half: app.half,
       });
     }
-    for (const st of node.paths[i].stations.slice(1, -1)) {
+    const stations = node.paths[i].stations;
+    const pathDatum = datums.path[i];
+    for (let k = 1; k < stations.length - 1; k += 1) {
+      const st = stations[k];
       boundary.push({
         x: st.x,
         z: st.z,
-        y: ctx.datum(st.x, st.z) - o.gutterDepth,
+        datum: pathDatum[k],
+        y: pathDatum[k] - o.gutterDepth,
         in: { x: -st.out.x, z: -st.out.z },
         run: o.gutterWidth,
         lipOff: null,
@@ -2451,18 +2521,27 @@ function emitJunction(node, layers, o, ctx, stats) {
   const gutterColor = hexToSrgb(palette.gutter);
   const lipColor = mixColor(junctionColor, gutterColor, 0.45);
   const apexDatum = ctx.datum(node.position.x, node.position.z);
-  const apex = { x: node.position.x, y: apexDatum + o.crossSlope * maxHalf * 0.6, z: node.position.z };
+  // ONE CROWN RULE FOR THE WHOLE STREET (round 7). A ribbon crowns its
+  // centreline at `crossSlope * half` above its datum; the pad apex used to be
+  // crowned at `crossSlope * maxHalf * 0.6`, i.e. deliberately 40% short. The
+  // pad and the ribbon it opens into therefore disagreed by
+  // `crossSlope * half * 0.4` at the node - 51 mm modelled on the fixture's
+  // 12.8 m avenue, and 42.5 mm measured under a car standing 0.56 m from a
+  // node. The apex now carries the crown of the widest approach, which is the
+  // crown a junction is really graded to: the major road runs through and the
+  // minor road warps to meet it.
+  const apex = { x: node.position.x, y: apexDatum + o.crossSlope * maxHalf, z: node.position.z };
   const lip = boundary.map((b) => {
     if (!(b.run > 1e-6)) return { x: b.x, y: b.y, z: b.z };
-    const x = b.x + b.in.x * b.run;
-    const z = b.z + b.in.z * b.run;
-    const datum = ctx.datum(x, z);
     return {
-      x,
-      z,
+      x: b.x + b.in.x * b.run,
+      z: b.z + b.in.z * b.run,
+      // The gutter lip is `crossSlope * gutterWidth` above the datum on every
+      // cross-section, whatever the half width, so the corner and the mouth
+      // reach the same lip height from the same datum.
       y: b.lipOff === null
-        ? datum + o.crossSlope * o.gutterWidth
-        : crossSectionY(datum, b.lipOff, b.half, o),
+        ? b.datum + o.crossSlope * o.gutterWidth
+        : crossSectionY(b.datum, b.lipOff, b.half, o),
     };
   });
   const before = layers.carriageway.triangles;
@@ -2488,7 +2567,7 @@ function emitJunction(node, layers, o, ctx, stats) {
 
   // Curb ring: curb face, curb top, footway and kerb ramps, continuous from
   // one approach cross-section round to the next.
-  for (const path of node.paths) emitCurbRing(path, layers, o, ctx, stats);
+  for (let i = 0; i < node.paths.length; i += 1) emitCurbRing(node.paths[i], datums.path[i], layers, o, stats);
 
   // Crosswalks and stop bars.
   if (node.signalId !== null && node.signalId !== undefined) {
@@ -2502,8 +2581,15 @@ function emitJunction(node, layers, o, ctx, stats) {
  * station's own `out` direction and scaled by that station's miter, which is
  * exactly how emitSegment lays out the same three strips, so the two meet
  * vertex for vertex.
+ *
+ * `datums` is one datum per station, from `junctionDatums` - the ribbon's own
+ * end-station datum at each end of the path, blended by chord length in
+ * between. It is NOT sampled under the station: a curb station stands
+ * `half + radius` metres off every centreline, so a datum taken there parts
+ * from the ribbon's by the terrain's cross-grade times that offset, which is
+ * the 246.8 mm step this ring used to open in the sidewalk layer at a corner.
  */
-function emitCurbRing(path, layers, o, ctx, stats) {
+function emitCurbRing(path, datums, layers, o, stats) {
   const stations = path.stations;
   if (stations.length < 2) return;
   let maxWalk = 0;
@@ -2517,8 +2603,8 @@ function emitCurbRing(path, layers, o, ctx, stats) {
   const rampColor = hexToSrgb(palette.ramp);
   const rampReach = o.curbTopWidth + o.rampRun;
 
-  const prepared = stations.map((st) => {
-    const datum = ctx.datum(st.x, st.z);
+  const prepared = stations.map((st, i) => {
+    const datum = datums[i];
     const scale = finite(st.scale) && st.scale > 0 ? st.scale : 1;
     const top = curbTopY(datum, o);
     const curbTop = Math.min(o.curbTopWidth, st.walk);
@@ -2702,15 +2788,28 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const straightAt = (d, v) => ({
     x: node.position.x + u.x * d + m.x * v,
     z: node.position.z + u.z * d + m.z * v,
+    datum: ctx.datum(node.position.x + u.x * d, node.position.z + u.z * d),
   });
   const at = (d, v) => {
     const entry = app.entry;
     if (!entry || !entry.points || entry.points.length < 2) return straightAt(d, v);
     const st = frameAt(entry.points, entry.cum, clamp(stationFor(d), 0, entry.length), true);
     const lat = v * lateralSign;
-    return { x: st.x + st.nx * lat * st.miter, z: st.z + st.nz * lat * st.miter };
+    return {
+      x: st.x + st.nx * lat * st.miter,
+      z: st.z + st.nz * lat * st.miter,
+      // THE PAINT TAKES THE ROAD'S DATUM, NOT THE GROUND UNDER THE STRIPE.
+      // A zebra bar reaches `half` metres off the centreline; sampling the
+      // terrain at the bar's own corner put the outer end of every band on a
+      // different surface from the asphalt it is painted on, by the cross-grade
+      // times that offset. It is the same defect as the pad boundary's, and it
+      // is why a crossing could sit proud of the road at one end. The datum is
+      // now the one the carriageway cross-section at this station was swept
+      // from, so the paint rides the road by construction.
+      datum: ctx.datum(st.x, st.z),
+    };
   };
-  const yAt = (p, v) => crossSectionY(ctx.datum(p.x, p.z), v, half, o) + o.junctionPaintLift;
+  const yAt = (p, v) => crossSectionY(p.datum, v, half, o) + o.junctionPaintLift;
 
   // Zebra band, bars parallel to the approach axis, aligned to the approach.
   // The bar width and the bar pitch come from `planCrossingStripes`, which is

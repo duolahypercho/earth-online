@@ -116,16 +116,39 @@ export const STREET_LIFE_VERSION = 'street-life-v1';
 //                   21 body + 9 wardrobe draws. The chunk keys are per
 //                   bone/group, so neither the segment count nor the loft ring
 //                   count can ever add a draw call.
-//   mid   <= 132 m  A figure is 14-55 px tall. Limb positions are sub-pixel and
-//                   a stationary figure has no motion to lose; the silhouette,
-//                   the colour and the fact that somebody is standing there are
-//                   all that survive. One root matrix, no articulation, 180 tri
-//                   per figure in 5 draws.
+//   mid   <= 132 m  A figure is 14-55 px tall - AND, when the near ring is
+//                   saturated, as close as the 27th-nearest figure happens to
+//                   be. That second case is what this ring is now built for.
+//                   One root matrix, no articulation, `mid` detail: 556 body +
+//                   112 wardrobe tri per figure in 5 + 8 draws.
 //   past 132 m      Not drawn at all. The walking crowd's own far band already
 //                   populates 132-220 m, and a motionless figure at that range
 //                   is a smudge that costs a matrix.
 //
-// The near ring is small on purpose. Spending 2432 triangles on a figure whose
+// WHY THIS RING IS NO LONGER DRAWN AT `far` DETAIL.
+//
+// A ring cap is not a distance. The near ring takes the 26 nearest figures and
+// every other figure inside its radius falls to this one, so the tier a figure
+// gets is decided by its RANK, not by how big it is on screen. The round-5
+// capture report records what that costs: the pass published 149 figures inside
+// the 32 m near ring on three of the four cards, against a near cap of 26. The
+// other 123 - the nearest of them about 13 m from the lens, ~140 px tall - were
+// drawn from the tier authored for 120-220 m.
+//
+// Measured on the drawn triangles of that tier, at the rest pose, in horizontal
+// slices 10 mm apart: `far` had NO geometry at all in the slice through the
+// elbow, the knee, the ankle, or anywhere in the 140 mm between the top of the
+// shoulders and the base of the skull. It was not a cheap figure, it was a
+// figure in pieces, and 123 of them were standing in the hero frame. That is
+// the "blocky mannequin with a cube head and untapered cylinder limbs" the
+// reviewers wrote down.
+//
+// So this ring now draws `mid`: continuous across every joint (proved by the
+// same slice measurement), with hands, a neck that reaches the skull, and a
+// lofted cranium. `far` keeps its triangle count within 12 and is now drawn
+// only by the walking crowd's own 120-220 m band.
+//
+// The near ring is small on purpose. Spending 2520 triangles on a figure whose
 // limbs occupy four pixels is the failure mode this table exists to prevent;
 // the previous 46 m / 56-figure near ring was drawing 56 close-up bodies to
 // cover a ring where six of them were ever legible.
@@ -149,52 +172,63 @@ export const STREET_LIFE_RINGS = Object.freeze([
     minRadius: 1.05,
     introduceRadius: 1.95,
   }),
-  Object.freeze({ id: 'mid', radius: 132, budget: 200, articulated: false, detail: 'far', radialSegments: 3 }),
+  Object.freeze({ id: 'mid', radius: 132, budget: 130, articulated: false, detail: 'mid', radialSegments: 5 }),
 ]);
 
-// RESTATED BUDGET (silhouette landing).
+// RESTATED BUDGET (continuity landing). THE CEILING MOVES THIS WAVE.
 //
-// The instance caps did not move: 26 near, 200 mid, 72 kerb cars, one contact
-// shadow each. What moved is the triangles behind one near-tier instance, now
-// that the near tier draws a lofted body instead of frusta and swept cylinders.
 // The ceiling is derived from the caps, never from a high-water mark a capture
-// pose happened to produce, so a busy junction that fills the ring cannot fail
-// it.
-//
-// Worst case is the arithmetic sum of the caps, all four bands saturated and
+// pose happened to produce, so a busy junction that fills a ring cannot fail
+// it. Worst case is the arithmetic sum of the caps, every ring saturated and
 // every wardrobe flag set - a state no pose can exceed because the ring caps
-// are hard:
+// are hard.
 //
-//   near body      26 x 2432 = 63 232     (measured, `buildInstancedPartGeometries`)
-//   near wardrobe  26 x  186 =  4 836     (measured, every flag set)
+// WAS (mid ring at `far` detail, cap 200):
+//
+//   near body      26 x 2432 = 63 232
+//   near wardrobe  26 x  186 =  4 836
 //   mid body      200 x  180 = 36 000
 //   mid wardrobe  200 x   48 =  9 600
-//   kerb cars      72 x  128 =  9 216     (hull 116 + cabin 12)
+//   kerb cars      72 x  128 =  9 216
 //                             --------
-//                              122 884
+//                              122 884   against a declared 123 000
 //
-// RESTATED THIS WAVE, and the ceiling did NOT move. The near wardrobe went from
-// 164 to 186 triangles per figure, in two authored changes:
+// NOW (mid ring at `mid` detail, cap 130):
 //
-//   coat        +20   a 6-sided lofted skirt at the near tier instead of the
-//                     4-cornered frustum the cheaper tiers keep
-//   bag strap    +2   a 3-sided lofted diagonal from shoulder to hip instead
-//                     of an upright box that reached neither end
+//   near body      26 x 2520 = 65 520   (+88/figure: the lofted shoe)
+//   near wardrobe  26 x  186 =  4 836   (unchanged)
+//   mid body      130 x  556 = 72 280   (+376/figure over `far`: a neck, a
+//                                        throat ring on the skull, hands, a
+//                                        lofted deltoid, a hair shell, and
+//                                        every limb crossing its own joint)
+//   mid wardrobe  130 x  112 = 14 560   (+64/figure over `far`)
+//   kerb cars      72 x  128 =  9 216   (unchanged)
+//                             --------
+//                              166 412   against a declared 167 000
 //
-// That is +572 against the saturated 26-figure ring: worst case 122 312 ->
-// 122 884, against an unchanged ceiling of 123 000. Draw calls are unchanged at
-// 42: both lofts REPLACE a primitive inside the chunk it already had
-// (`coat|Hips|top`, `bag|Chest|accent`), so no chunk was added. See
-// `WARDROBE_PARTS` for both.
+// That is +43 528 triangles of worst case, spent on exactly one thing: the
+// figures between the near cap and 132 m stop being drawn from a tier that has
+// holes in it. What it buys is stated at STREET_LIFE_RINGS.
+//
+// The cost is bounded and small in context. The round-5 capture recorded
+// 1 638 320 triangles in the hero frame and 59 072 of them in this pass, so the
+// NEW WORST CASE - a state the measured poses do not reach - is +2.7% of that
+// frame. The mid ring gave up 70 instances (200 -> 130) to pay for part of it;
+// at the round-5 poses the pass drew 137 mid figures, so the cap still covers
+// what the measured poses place, and `figures.culled` publishes it when it does
+// not.
+//
+// DRAW CALLS DID NOT MOVE, and they remain the tighter constraint. The chunk
+// keys are per bone/group and the mid ring is merged to one root, so a
+// saturated pass is 21 + 9 near, 5 + 8 mid, 1 shadow and 2 car meshes = 46,
+// against an unchanged ceiling of 48. The mid ring went from 9 draws to 13
+// because `mid` detail carries two more wardrobe chunks over the same 5 body
+// chunks; neither the segment count, the loft ring count nor the figure count
+// can add one.
 //
 // Contact shadows are 2 tri x 298 instances and are not in this total because
 // `writeFrame` has never counted them; that accounting predates this landing
 // and is left alone rather than changed silently.
-//
-// Draw calls are the tighter constraint and are still inside the ceiling: the
-// chunk keys are per bone/group, so 21 + 9 near, 5 + 4 mid, 1 shadow and 2 car
-// meshes is 42 with every band saturated, against a ceiling of 48. Neither the
-// segment count, the loft ring count nor the figure count can add one.
 export const STREET_LIFE_BUDGET = Object.freeze({
   rings: STREET_LIFE_RINGS,
   /** Kerb stalls drawn, nearest first, inside `parkingRadius`. */
@@ -217,10 +251,10 @@ export const STREET_LIFE_BUDGET = Object.freeze({
   maxParkingSpots: 9000,
   /**
    * Ceilings derived from the caps above; exceeding either is a regression, not
-   * a tuning choice. `maxTriangles` is the 122 312 worst case rounded up to the
+   * a tuning choice. `maxTriangles` is the 166 412 worst case rounded up to the
    * next round number, so it stays a bound and not a high-water mark.
    */
-  maxTriangles: 123000,
+  maxTriangles: 167000,
   maxDrawCalls: 48,
 });
 

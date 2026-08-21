@@ -1997,6 +1997,95 @@ export const FACADE_ARTICULATION_GEOMETRY = Object.freeze({
 });
 
 /**
+ * Rooftop plant.
+ * ---------------------------------------------------------------------------
+ *
+ * The one item on the round-4 construction list that this module had no answer
+ * to at all: every elevation terminated in a coping and above that line the
+ * building simply stopped. A real roof carries a lift/stair overrun, air
+ * handling housings, a tank, risers and a mast, and those are what stop a
+ * skyline reading as a row of extruded prisms cut off flat against the sky.
+ *
+ * It is deliberately NOT part of the clad elevation, and it is kept in its own
+ * quad list (`plan.roofQuads`) for one reason that has to be stated plainly:
+ *
+ *   THE CLADDING INVARIANT IS "NOTHING RISES ABOVE THE SHELL TOP".
+ *
+ * That invariant is correct for cladding -- a clad wall that overshoots the
+ * shell shows its own back edge against the sky -- and it is measured over
+ * `plan.quads`. Roof plant is the one element whose whole purpose is to stand
+ * ABOVE that line, so it cannot live in the same list without either breaking
+ * the invariant or being flattened onto the roof where the shell's own opaque
+ * roof cap hides it. It therefore carries its own, separately measurable
+ * bound: every element stands on the roof deck, rises at most `maxRise` above
+ * it, and its plan rectangle lies strictly inside the building's own footprint
+ * polygon -- checked by segment/rectangle intersection against every polygon
+ * edge, not by sampling corners, so a concave notch cannot be straddled.
+ *
+ * `plan.roofRise` reports the measured worst rise and `plan.roofTriangles` the
+ * measured cost, so both bounds are readable from the plan instead of being
+ * asserted by construction.
+ *
+ * Cost is a fixed, ring-gated handful of boxes and is charged to the SCENE
+ * budget (see `planAll`) but not to the per-building elevation cap: the cap is
+ * what the detail ladder trades against, and a ladder that could pay for a
+ * window by deleting the roof would be trading the wrong things. The scene-wide
+ * allowance below is what bounds it instead.
+ *
+ * The per-ring element counts are on `elementsByRing`. The silhouette ring
+ * keeps one box: its ELEVATION rung is 48 triangles and stays there, but that
+ * ring is read as a skyline and nothing else, and ten triangles is a price the
+ * background can pay.
+ */
+export const FACADE_ROOF_PLANT = Object.freeze({
+  /**
+   * Elements per building, per ring.
+   *
+   * The silhouette ring keeps one. Its ELEVATION rung is 48 triangles and
+   * must stay there, but a skyline is the one thing the silhouette ring is
+   * actually read for: at the ring's own inner radius of 420 m a 3 m overrun
+   * is about twelve pixels tall at 1440p, so one box each is the difference
+   * between a background of extruded prisms cut off flat and a city.
+   */
+  elementsByRing: Object.freeze({ near: 4, mid: 3, far: 2, silhouette: 1 }),
+  /** Below this the building has no plant room to hide. */
+  minHeight: 7,
+  /** Shortest plan dimension that can stand a box clear of its own parapet. */
+  minRoofExtent: 7,
+  /** Clearance from the footprint AABB, so nothing sits on the coping. */
+  parapetClearance: 1.35,
+  /** Hard bound on how far above the shell top any element reaches. */
+  maxRise: 6.5,
+  /** A box shorter than this does not clear a parapet and is not built. */
+  minRise: 0.9,
+  /** How far a box is sunk into the roof deck so no gap can open under it. */
+  bed: 0.05,
+  /**
+   * Scene-wide triangle allowance for roof plant, measured on the real 700
+   * building slice; see the note on FACADE_ARTICULATION_BUDGET.
+   */
+  triangleAllowance: 14000,
+});
+
+/**
+ * The plant alphabet. `w`/`d`/`h` are metre ranges, `minBuilding` the shell
+ * height below which the element is not plausible, `weight` its draw share.
+ * `role` picks the material bucket: a masonry/concrete housing is `structure`
+ * and shares the wall's own class, a tank, duct or mast is `frame` and lands
+ * in the shared metal bucket.
+ */
+const ROOF_PLANT_KINDS = Object.freeze([
+  Object.freeze({ key: 'overrun', w: [4.2, 7.0], d: [3.4, 5.4], h: [3.2, 4.8], role: 'structure', minBuilding: 16, weight: 3 }),
+  Object.freeze({ key: 'housing', w: [2.8, 5.6], d: [2.2, 4.4], h: [1.7, 2.6], role: 'structure', minBuilding: 9, weight: 4 }),
+  Object.freeze({ key: 'tank', w: [2.0, 3.0], d: [2.0, 3.0], h: [2.2, 3.4], role: 'frame', minBuilding: 9, weight: 3 }),
+  Object.freeze({ key: 'duct', w: [0.8, 1.5], d: [0.8, 1.5], h: [1.6, 3.0], role: 'frame', minBuilding: 7, weight: 3 }),
+  Object.freeze({ key: 'mast', w: [0.3, 0.5], d: [0.3, 0.5], h: [3.0, 6.4], role: 'frame', minBuilding: 24, weight: 2 }),
+  Object.freeze({ key: 'vent', w: [1.1, 2.0], d: [1.1, 2.0], h: [0.9, 1.4], role: 'structure', minBuilding: 7, weight: 4 }),
+]);
+
+const ROOF_PLANT_WEIGHT = ROOF_PLANT_KINDS.reduce((sum, kind) => sum + kind.weight, 0);
+
+/**
  * LOD rings, as distance from the caller's focus in metres and a hard count.
  *
  * Both limits are enforced: the radius is what makes the ring meaningful, the
@@ -2219,6 +2308,25 @@ export const COVERAGE_CUT_STEPS = Object.freeze([0.5, 0.2, 0]);
  * The two zones were previously each handed the WHOLE scene budget and their
  * sum was never bounded by anything, which is why this is a restatement with
  * enforcement rather than a raise.
+ *
+ * RESTATED AGAIN IN WAVE D, WHICH MOVED THE SPEND BUT NOT THE CEILING.
+ *
+ * Wave D added three constructed members the elevations did not carry: a
+ * two-part base course at the head of the ground storey on every near/mid
+ * elevation, a throat groove under every near-ring coping, and rooftop plant.
+ * Measured on the same real 700 building slice, with the same 48-eye street
+ * sweep this file's numbers were set from:
+ *
+ *   capture eye        317,612 -> 323,746 triangles   (+1.9%)
+ *   build focus        246,516 -> 253,058 triangles
+ *   worst street eye   356,714 -> 363,434 triangles   (ceiling 380,000)
+ *   worst draw calls        21 -> 22                  (ceiling 48)
+ *   coverage cuts / demotions over 48 eyes: 0 / 0, unchanged
+ *
+ * `sceneTriangleBudget`, `bulkTriangleFloor` and `maxDrawCalls` are therefore
+ * UNCHANGED: 16,566 triangles of the ceiling and 26 draw calls are still
+ * unspent at the worst sampled eye. Roof plant is charged to this budget, but
+ * carries its own tighter allowance as well; see FACADE_ROOF_PLANT.
  */
 export const FACADE_ARTICULATION_BUDGET = Object.freeze({
   sceneTriangleBudget: 380000,
@@ -3541,6 +3649,23 @@ function emitStorefront(sink, edge, geom, opt) {
   return true;
 }
 
+/**
+ * The groove under a coping.
+ *
+ * Three quads: the recessed face, the coping soffit above it and the parapet
+ * head below it. The recess is deliberately measured from the clad face and
+ * floored at the pane plane, so it can never reach behind the shell -- the
+ * whole build-up stays outside the opaque wall the cladding is covering.
+ */
+function emitCopingThroat(sink, edge, s0, s1, y0, throat, opt) {
+  if (!(throat > 0.02)) return;
+  const back = Math.max(opt.pane, opt.clad - 0.05);
+  if (!(opt.clad - back > 0.015)) return;
+  sink.mark('coping-throat');
+  emitProfile(sink, edge, s0, s1, y0, y0 + throat, opt.clad, back, opt.trimTint, 1);
+  sink.counts.copingThroat = (sink.counts.copingThroat || 0) + 1;
+}
+
 /** Roofline: era-appropriate cap between `capBottom` and the shell top. */
 function emitCap(sink, edge, height, opt) {
   const { variant, clad, tint, trimTint } = opt;
@@ -3553,10 +3678,26 @@ function emitCap(sink, edge, height, opt) {
   const parapet = clamp(variant.parapetHeight * capScale, 0.4, Math.max(0.4, height * 0.075));
   const corniceHeight = clamp(variant.corniceHeight * capScale, 0.35, Math.max(0.35, height * 0.06));
   const copingHeight = clamp(0.14 * capScale, 0.12, 0.85);
+  // Throat: the recessed groove cut under the coping, which is what makes a
+  // parapet read as a capped WALL WITH THICKNESS rather than as a plate with a
+  // painted edge. The coping already oversails the parapet face; the groove is
+  // what puts a hard dark line under that oversail at every hour, and the
+  // ambient-occlusion pass darkens it further. Near and mid rungs only.
   const architrave = clamp(0.16 * capScale, 0.14, 0.9);
   const dentilHeight = clamp(0.2 * capScale, 0.18, 0.8);
   const corniceTop = height - parapet;
   const corniceBottom = corniceTop - corniceHeight;
+  const copingBottom = height - copingHeight;
+  // The groove is cut out of the parapet panel, so it can only be as deep as
+  // the panel is tall. `corniceTop` is the highest of the three branch starts
+  // below, so flooring on it keeps every branch a contiguous partition: when
+  // there is no room the throat is zero and the cap is built exactly as it was.
+  const throatRoom = Math.max(0, copingBottom - corniceTop - 0.12);
+  const throat = opt.full
+    ? Math.min(clamp(0.09 * capScale, 0.07, 0.2), copingHeight * 0.9, throatRoom)
+    : 0;
+  // The top of the flush parapet panel: the throat and the coping sit above it.
+  const parapetTop = copingBottom - throat;
   const projection = Math.min(variant.corniceProjection, opt.projection - clad);
   if (!(corniceBottom > 1) || projection < 0.03) {
     const flat = Math.max(0, height - 0.6);
@@ -3597,7 +3738,8 @@ function emitCap(sink, edge, height, opt) {
       emitProfile(sink, edge, s0, s1, corniceBottom, corniceTop, clad, clad + projection, trimTint, 0.95);
     }
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceTop, height - copingHeight, clad);
+    emitClad(sink, edge, s0, s1, corniceTop, parapetTop, clad);
+    emitCopingThroat(sink, edge, s0, s1, parapetTop, throat, opt);
     sink.mark('coping');
     emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.14, projection), trimTint, 0.7);
   } else if (variant.capProfile === 'reveal') {
@@ -3608,12 +3750,14 @@ function emitCap(sink, edge, height, opt) {
     sink.mark('cornice');
     emitProfile(sink, edge, s0, s1, corniceBottom, corniceBottom + revealBand, clad, Math.max(opt.pane, clad - 0.1), trimTint, 0.95);
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceBottom + revealBand, height - copingHeight, clad);
+    emitClad(sink, edge, s0, s1, corniceBottom + revealBand, parapetTop, clad);
+    emitCopingThroat(sink, edge, s0, s1, parapetTop, throat, opt);
     sink.mark('coping');
     emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.12, projection), trimTint, 0.7);
   } else {
     sink.mark('parapet').paint(tint, 0.12);
-    emitClad(sink, edge, s0, s1, corniceBottom, height - copingHeight, clad);
+    emitClad(sink, edge, s0, s1, corniceBottom, parapetTop, clad);
+    emitCopingThroat(sink, edge, s0, s1, parapetTop, throat, opt);
     sink.mark('coping');
     emitProfile(sink, edge, s0, s1, height - copingHeight, height, clad, clad + Math.min(0.16, projection), trimTint, 0.8);
   }
@@ -3805,9 +3949,54 @@ function layoutEdge(sink, edge, state) {
     sink.counts.plinth = (sink.counts.plinth || 0) + 1;
   }
 
-  // Where the shaft starts: the top of the storefront or of the plinth. The
-  // downpipe below runs from here, so it stops at the shoe rather than running
-  // through the base course.
+  // The base course: the continuous, projecting line where the base register
+  // ends and the shaft begins.
+  //
+  // It is the horizontal a pedestrian stands directly under, and until this
+  // wave an elevation carried exactly two continuous courses -- the plinth at
+  // the pavement and the cornice at the roofline. On a thirty-storey building
+  // that is one line at 0.4 m and the next at 99 m, which is a large part of
+  // why the shaft read as identical storeys with nothing dividing them: the
+  // sills and lintels are per opening, so the wall between two bays has no
+  // horizontal at all.
+  //
+  // Two members, not one, because one is a stripe: a bed mould, then a corona
+  // oversailing it. The oversail is 0.08 m, comfortably over the near-field
+  // cascade's 0.058 m caster floor, so the corona throws its own hard shadow
+  // line onto the bed mould and onto the shopfront fascia below it rather than
+  // being painted on. Near and mid rungs only -- it rides `detail.sills`, so a
+  // building that steps down the ladder loses it with its sills.
+  if (detail.sills && detail.clad && capBottom - cursor > 3) {
+    const room = opt.projection - opt.clad;
+    const bedDepth = castingProjection(0.085, room);
+    const coronaDepth = castingProjection(0.165, room);
+    const bedBand = clamp(0.13 * (1 + height / 110), 0.11, 0.2);
+    const coronaBand = clamp(0.17 * (1 + height / 110), 0.15, 0.3);
+    // The course lands with its head on the ground storey's ceiling line, on
+    // EVERY elevation and not only on the ones that carry a shopfront. A
+    // string course that stops at the corner is not a string course, and the
+    // shopfront is budgeted to the longest frontages, so without this the line
+    // would die wherever the ladder stopped putting shops.
+    const line = Math.max(cursor, Math.min(storeys.tops[0], capBottom) - bedBand - coronaBand);
+    const top = Math.min(line + bedBand + coronaBand, capBottom - 0.2);
+    if (line > 1.2 && top > line + 0.14 && coronaDepth - bedDepth > 0.02) {
+      if (line > cursor + EPSILON) {
+        sink.mark('wall').paint(opt.tint, 0.1);
+        emitClad(sink, edge, -overlap, edge.length + overlap, cursor, line, opt.clad);
+      }
+      const mid = top - coronaBand;
+      sink.mark('base-course-bed');
+      emitProfile(sink, edge, -overlap, edge.length + overlap, line, mid, opt.clad, opt.clad + bedDepth, opt.trimTint, 0.92);
+      sink.mark('base-course');
+      emitProfile(sink, edge, -overlap, edge.length + overlap, mid, top, opt.clad + bedDepth, opt.clad + coronaDepth, opt.trimTint, 0.95);
+      cursor = top;
+      sink.counts.baseCourse = (sink.counts.baseCourse || 0) + 1;
+    }
+  }
+
+  // Where the shaft starts: the top of the storefront, the base course, or the
+  // plinth. The downpipe below runs from here, so it stops at the shoe rather
+  // than running through the base course.
   const goodsBottom = cursor;
   const startStorey = storefront ? 1 : 0;
   const typicalBays = bayspans(edge, variant, variant.windowRatio);
@@ -4120,6 +4309,171 @@ function layoutEdge(sink, edge, state) {
 }
 
 /**
+ * Does this segment touch this axis-aligned rectangle? Liang-Barsky, so it is
+ * exact rather than a corner sample.
+ *
+ * This is the test that makes "the box stands on its own roof" a measured
+ * claim. Sampling the box's corners is NOT enough: a concave footprint can put
+ * a notch between two corners that are both inside, and the box would then
+ * hang over the street. A rectangle whose centre is inside the polygon and
+ * which no polygon edge crosses is strictly inside it.
+ */
+function segmentHitsRect(ax, az, bx, bz, x0, z0, x1, z1) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = bx - ax;
+  const dz = bz - az;
+  const clip = (p, q) => {
+    if (Math.abs(p) < 1e-12) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+  return clip(-dx, ax - x0) && clip(dx, x1 - ax) && clip(-dz, az - z0) && clip(dz, z1 - az);
+}
+
+/** True when [x0,x1] x [z0,z1] lies strictly inside `polygon`. */
+function rectInsidePolygon(polygon, x0, z0, x1, z1) {
+  if (!pointInPolygon((x0 + x1) / 2, (z0 + z1) / 2, polygon)) return false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    if (segmentHitsRect(polygon[j].x, polygon[j].z, polygon[i].x, polygon[i].z, x0, z0, x1, z1)) return false;
+  }
+  return true;
+}
+
+/**
+ * One quad of roof plant, in world coordinates.
+ *
+ * Same record shape the ArticulationSink emits, so the merge, the vertex
+ * colour bake and the disposal path all treat it identically. The normal is
+ * given rather than derived because a box face's orientation is known by
+ * construction and the winding below is written to match it.
+ */
+function pushRoofQuad(out, role, part, corners, normal, tint, soffit, baseY, uvMetres, planar) {
+  const positions = new Array(12);
+  const uvs = new Array(8);
+  for (let i = 0; i < 4; i += 1) {
+    const [x, y, z] = corners[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    positions[i * 3] = x;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = z;
+    if (planar) {
+      uvs[i * 2] = x / uvMetres.x;
+      uvs[i * 2 + 1] = z / uvMetres.y;
+    } else {
+      uvs[i * 2] = (x * -normal[2] + z * normal[0]) / uvMetres.x;
+      uvs[i * 2 + 1] = (y - baseY) / uvMetres.y;
+    }
+  }
+  out.push({
+    role,
+    feature: null,
+    // Roof plant belongs to no wall. The per-edge rulers in the verifiers key
+    // off this, and -1 is what says "do not measure me against an elevation".
+    edgeIndex: -1,
+    positions,
+    uvs,
+    normal,
+    tint,
+    soffit,
+    part,
+    grad: null,
+    baseY,
+  });
+}
+
+/** Five faces of an upstanding box: four sides and a top. No bottom -- it is
+ *  bedded into the roof deck, so a bottom face would only z-fight the roof. */
+function emitRoofBox(out, box, role, part, tint, baseY, uvMetres) {
+  const { x0, x1, z0, z1, y0, y1 } = box;
+  pushRoofQuad(out, role, part, [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], [1, 0, 0], tint, 0.12, baseY, uvMetres, false);
+  pushRoofQuad(out, role, part, [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [-1, 0, 0], tint, 0.12, baseY, uvMetres, false);
+  pushRoofQuad(out, role, part, [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [0, 0, 1], tint, 0.12, baseY, uvMetres, false);
+  pushRoofQuad(out, role, part, [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [0, 0, -1], tint, 0.12, baseY, uvMetres, false);
+  pushRoofQuad(out, role, part, [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [0, 1, 0], tint, 0.05, baseY, uvMetres, true);
+}
+
+/**
+ * Plan one building's rooftop plant.
+ *
+ * Deterministic in the building's own seed, so it survives an LOD refresh
+ * without moving. Returns the quads and the worst rise above the shell top;
+ * both bounds are the caller's to publish.
+ */
+function planRoofPlant(context) {
+  const { polygon, footprint, baseY, height, ring, seed, tint, frameTint, uvMetres, enabled } = context;
+  const quads = [];
+  let rise = 0;
+  const budget = enabled === false ? 0 : (FACADE_ROOF_PLANT.elementsByRing[ring] || 0);
+  if (budget <= 0) return { quads, rise, elements: 0 };
+  if (!(height >= FACADE_ROOF_PLANT.minHeight)) return { quads, rise, elements: 0 };
+  const spanX = footprint.maxX - footprint.minX;
+  const spanZ = footprint.maxZ - footprint.minZ;
+  if (Math.min(spanX, spanZ) < FACADE_ROOF_PLANT.minRoofExtent) return { quads, rise, elements: 0 };
+
+  const random = mulberry32((seed ^ 0x27d4eb2f) >>> 0);
+  const deck = baseY + height;
+  const clear = FACADE_ROOF_PLANT.parapetClearance;
+  // A housing is the wall's own material, weathered down; a tank, duct or mast
+  // is the frame bucket's metal. Neither is a new material or a new draw call.
+  const housingTint = shiftTint(tint, 0, 0.4, 0.78);
+  const metalTint = shiftTint(frameTint, 0, 0.55, 0.95);
+  const placed = [];
+  let guard = 0;
+  while (placed.length < budget && guard < budget * 10) {
+    guard += 1;
+    // Draw a kind by weight, then reject the ones this building is too short
+    // to plausibly carry rather than re-rolling forever.
+    let pick = random() * ROOF_PLANT_WEIGHT;
+    let kind = ROOF_PLANT_KINDS[ROOF_PLANT_KINDS.length - 1];
+    for (const candidate of ROOF_PLANT_KINDS) {
+      pick -= candidate.weight;
+      if (pick <= 0) { kind = candidate; break; }
+    }
+    if (height < kind.minBuilding) continue;
+    const w = kind.w[0] + random() * (kind.w[1] - kind.w[0]);
+    const d = kind.d[0] + random() * (kind.d[1] - kind.d[0]);
+    const tall = clamp(kind.h[0] + random() * (kind.h[1] - kind.h[0]), FACADE_ROOF_PLANT.minRise, FACADE_ROOF_PLANT.maxRise);
+    const xLow = footprint.minX + clear;
+    const xHigh = footprint.maxX - clear - w;
+    const zLow = footprint.minZ + clear;
+    const zHigh = footprint.maxZ - clear - d;
+    if (!(xHigh > xLow) || !(zHigh > zLow)) continue;
+    const x0 = xLow + random() * (xHigh - xLow);
+    const z0 = zLow + random() * (zHigh - zLow);
+    const x1 = x0 + w;
+    const z1 = z0 + d;
+    // The box stands on its own roof, entirely, or it is not built.
+    if (!rectInsidePolygon(polygon, x0 - clear, z0 - clear, x1 + clear, z1 + clear)) continue;
+    let clash = false;
+    for (const other of placed) {
+      if (x0 < other.x1 + 0.6 && x1 > other.x0 - 0.6 && z0 < other.z1 + 0.6 && z1 > other.z0 - 0.6) { clash = true; break; }
+    }
+    if (clash) continue;
+    placed.push({ x0, x1, z0, z1 });
+    const structure = kind.role === 'structure';
+    emitRoofBox(
+      quads,
+      { x0, x1, z0, z1, y0: deck - FACADE_ROOF_PLANT.bed, y1: deck + tall },
+      kind.role,
+      `roof-${kind.key}`,
+      structure ? housingTint : metalTint,
+      baseY,
+      uvMetres,
+    );
+    rise = Math.max(rise, tall);
+  }
+  return { quads, rise, elements: placed.length };
+}
+
+/**
  * Plan one building's articulated elevation.
  *
  * @param {object} building city.buildings[i]: polygon, height, levels, material, id
@@ -4130,6 +4484,8 @@ function layoutEdge(sink, edge, state) {
  *   collision with a neighbour
  * @param {number} [options.maxProjection] outward allowance from the wall
  * @param {number} [options.triangleCap] override the ring cap
+ * @param {boolean} [options.roofPlant=true] build rooftop plant. False for an
+ *   authored elevation, which brings its own roof; see FACADE_ROOF_PLANT.
  */
 export function planFacadeArticulation(building, options = {}) {
   const ring = FACADE_ARTICULATION_RING_ORDER.includes(options.ring) ? options.ring : 'near';
@@ -4154,6 +4510,10 @@ export function planFacadeArticulation(building, options = {}) {
     signature,
     quads: [],
     triangles: 0,
+    roofQuads: [],
+    roofTriangles: 0,
+    roofRise: 0,
+    roofElements: 0,
     openings: 0,
     bands: 0,
     glazedStoreys: 0,
@@ -4342,6 +4702,30 @@ export function planFacadeArticulation(building, options = {}) {
   const { sink, detail } = chosen;
   if (!sink.quads.length) return { ...empty, skipped: 'no-features' };
 
+  // Rooftop plant. Planned AFTER the detail ladder has settled and kept in its
+  // own list: it is the one element that stands above the shell top, which is
+  // the invariant every clad quad has to hold. See FACADE_ROOF_PLANT.
+  const roof = planRoofPlant({
+    polygon: points,
+    footprint: { minX, maxX, minZ, maxZ },
+    baseY,
+    height,
+    ring,
+    // An authored elevation brings its own roof; see `preserveIds` in the
+    // batch. Standing a procedural overrun on it is exactly the mistake the
+    // preserve contract exists to prevent.
+    enabled: options.roofPlant !== false,
+    // Seeded from the building id ALONE -- deliberately not from `salt`. Salt
+    // is redrawn when a facade signature collides with a neighbour's, and that
+    // resolution depends on the order buildings are planned in, which depends
+    // on the LOD centre. A roof that reseeded on salt would therefore rearrange
+    // itself every time the player walked far enough to trigger a refresh.
+    seed: facadeDepthSeed(building?.id),
+    tint,
+    frameTint,
+    uvMetres,
+  });
+
   let boundsMinX = Infinity;
   let boundsMaxX = -Infinity;
   let boundsMinY = Infinity;
@@ -4369,6 +4753,13 @@ export function planFacadeArticulation(building, options = {}) {
     signature,
     quads: sink.quads,
     triangles: sink.triangles,
+    // Roof plant is measured and published separately from the elevation, and
+    // is charged to the scene budget rather than to this building's cap.
+    // `roofRise` is the worst height any element reaches above the shell top.
+    roofQuads: roof.quads,
+    roofTriangles: roof.quads.length * 2,
+    roofRise: roof.rise,
+    roofElements: roof.elements,
     openings: chosen.openings,
     bands: chosen.bands,
     // Storey-rows that carry individual openings, and storey-rows that carry a
@@ -4380,7 +4771,12 @@ export function planFacadeArticulation(building, options = {}) {
     coverage,
     glazeAll,
     features: { ...sink.counts },
-    parts: { ...sink.parts },
+    // Roof parts are folded in so the standard diagnostics readout shows what
+    // is standing on the roofs, not only what is on the walls.
+    parts: roof.quads.reduce((out, quad) => {
+      out[quad.part] = (out[quad.part] || 0) + 1;
+      return out;
+    }, { ...sink.parts }),
     bounds: { minX: boundsMinX, maxX: boundsMaxX, minY: boundsMinY, maxY: boundsMaxY, minZ: boundsMinZ, maxZ: boundsMaxZ },
     footprint: { minX, maxX, minZ, maxZ },
     footprintArea,
@@ -4663,6 +5059,8 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
           ring: entry.ring,
           baseY: Number.isFinite(baseY) ? baseY : 0,
           salt,
+          // An authored frontage keeps its own roof as well as its own wall.
+          roofPlant: !preserve.has(entry.building?.id),
           maxProjection: allowance,
           projectionForEdge: (edgeIndex) => limits.get(edgeIndex) ?? allowance,
           uvMetres: options.uvMetres,
@@ -4681,7 +5079,10 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       if (!bucket) { bucket = new Set(); signatureGrid.set(key, bucket); }
       bucket.add(plan.signature);
       planned.push({ entry, plan, zone });
-      triangles += plan.triangles;
+      // The scene budget is what the frame actually costs, so it counts the
+      // roof as well as the wall. The per-building cap above deliberately does
+      // not: see FACADE_ROOF_PLANT.
+      triangles += plan.triangles + plan.roofTriangles;
     }
     return { planned, triangles, resignatured, collisions, partyEdges, coverageScale };
   };
@@ -4727,6 +5128,9 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
   const signatures = new Set();
   let openings = 0;
   let bands = 0;
+  let roofTriangles = 0;
+  let roofElements = 0;
+  let roofRise = 0;
   for (const { entry, plan, zone } of attempt.planned) {
     ringStats[plan.ring].buildings += 1;
     ringStats[plan.ring].triangles += plan.triangles;
@@ -4750,13 +5154,34 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       bandedStoreys: plan.bandedStoreys,
       triangles: plan.triangles,
       triangleCap: plan.triangleCap,
+      roofTriangles: plan.roofTriangles,
+      roofElements: plan.roofElements,
+      roofRise: plan.roofRise,
       wallArea: plan.wallArea,
       edges: plan.edges,
       openings: plan.openings,
       levels: plan.levels,
       revealDepth: plan.revealDepth,
     });
+    roofTriangles += plan.roofTriangles;
+    roofElements += plan.roofElements;
+    roofRise = Math.max(roofRise, plan.roofRise);
+    // Roof plant merges into the same (zone, class, role) buckets as the wall,
+    // so it is disposed by the same path and adds at most one draw call to a
+    // zone -- measured, one: the bulk zone had no `frame` role geometry before
+    // (its rungs carry no mullions), so a duct or a mast opens that bucket.
     for (const quad of plan.quads) {
+      const bucketClass = articulationBucketClass(quad.role, plan.className);
+      const key = `${zone}|${bucketClass}|${quad.role}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { key, zone, className: bucketClass, role: quad.role, quads: [], buildingIds: [] };
+        buckets.set(key, bucket);
+      }
+      bucket.quads.push(quad);
+      if (bucket.buildingIds[bucket.buildingIds.length - 1] !== plan.id) bucket.buildingIds.push(plan.id);
+    }
+    for (const quad of plan.roofQuads) {
       const bucketClass = articulationBucketClass(quad.role, plan.className);
       const key = `${zone}|${bucketClass}|${quad.role}`;
       let bucket = buckets.get(key);
@@ -4821,6 +5246,18 @@ export function buildFacadeArticulationBatch(buildings, options = {}) {
       resignatured: attempt.resignatured,
     },
     partyEdges: attempt.partyEdges,
+    // Rooftop plant, measured. `roofRise` is the worst height any element
+    // reaches above its own shell top; it is the bound the cladding invariant
+    // does not cover and the one a reviewer should check.
+    roofPlant: {
+      triangles: roofTriangles,
+      elements: roofElements,
+      worstRise: roofRise,
+      maxRise: FACADE_ROOF_PLANT.maxRise,
+      triangleAllowance: FACADE_ROOF_PLANT.triangleAllowance,
+      withinAllowance: roofTriangles <= FACADE_ROOF_PLANT.triangleAllowance
+        && roofRise <= FACADE_ROOF_PLANT.maxRise + 1e-6,
+    },
     preservedAuthored: perBuilding.filter((record) => preserve.has(record.id)).length,
     demotions,
     // How many steps of the screen-coverage bonus this frame had to give up

@@ -25,6 +25,43 @@
 // returns, a frame ring, a pane set back behind the frame, mullion and transom
 // bars, a projecting sill and a drip recess cut under it.
 //
+// ---------------------------------------------------------------------------
+// What wave D added, and where the construction now runs out
+// ---------------------------------------------------------------------------
+//
+// The round 4 finding was measured on frames in which the hero building was
+// never clad at all -- 139 buildings, 64% of the frame's screen coverage, were
+// pinned to the silhouette rung by a bad authored-elevation test, and the 115 m
+// building filling the whole card emitted 84 triangles. With that fixed, the
+// near tier builds 44,844 triangles on that same building. Three members from
+// the reviewers' list were still genuinely absent from every elevation, and
+// this wave adds them:
+//
+//   base course     A two-part member -- bed mould, then a corona oversailing
+//                   it by 0.08 m -- landing with its head on the ground
+//                   storey's ceiling line, continuous round every near/mid
+//                   elevation whether or not that face carries a shopfront.
+//                   Until now an elevation had exactly two continuous
+//                   horizontals: the plinth at the pavement and the cornice at
+//                   the roofline. On a thirty-six storey building that is one
+//                   line at 0.4 m and the next at 99 m.
+//   coping throat   A groove cut under every near-ring coping, so a parapet
+//                   reads as a capped wall with thickness rather than a plate
+//                   with a painted edge.
+//   roof plant      Overruns, housings, tanks, ducts, masts and vents standing
+//                   on the roof deck. The one item on the list this module had
+//                   no answer to at all: every elevation terminated in a coping
+//                   and above that line the building simply stopped.
+//
+// STILL NOT BUILT, and priced rather than guessed, so the next wave can decide
+// it: a recessed spandrel panel between a window head and the sill above it.
+// Per bay per storey that is 10 triangles plus the pier fills -- about +72
+// triangles per glazed storey row, ~6,700 on the hero elevation alone and an
+// estimated +20,000 to +43,000 across the scene depending on whether the
+// spandrels are cut per bay or on the bay sequence. There are 16,566 triangles
+// of scene ceiling left at the worst sampled street eye, so it does not fit
+// without a measured raise of `sceneTriangleBudget`.
+//
 // The whole build-up sits OUTSIDE the shell wall, which is the only
 // arrangement that works: the shell is opaque and is still drawn, so an
 // opening cut inward shows the shell's painted texture at the bottom of the
@@ -48,6 +85,12 @@
 //   far    <= 420 m   <= 300 buildings   base  820 tri/building
 //   beyond            <= 900 buildings   base   48 tri/building
 //
+// Rooftop plant is deliberately NOT charged to that per-building cap: the cap
+// is what the detail ladder trades against, and a ladder that could buy a
+// window by deleting the roof would be trading the wrong things. It is charged
+// to the SCENE budget and bounded separately by FACADE_ROOF_PLANT, and the
+// pass republishes both bounds as `diagnostics.roofPlant`.
+//
 // The radius is measured to the NEAREST POINT OF THE FOOTPRINT. The centroid
 // is the wrong question and round 2 shipped it: an eleven storey frontage 61 m
 // from the eye, filling most of one capture card, had its centroid at 87 m and
@@ -61,12 +104,15 @@
 // from the eye or three hundred, which buys four glazed storeys and forty-six
 // flat glazing bands: the uniform grid round 2 was rejected for.
 //
-// Scene ceiling is 330,000 triangles and 48 draw calls. It is held by giving
-// up the coverage bonus first -- that takes triangles off the two or three
-// buildings holding the most of them and leaves the rest of the city alone --
-// and only then by uniform outside-in ring demotion. Measured on the real 700
-// building slice from the street capture pose: 317,378 triangles, 20 draw
-// calls, 0 coverage cuts, 0 demotions, 700/700 buildings articulated.
+// Scene ceiling is FACADE_ARTICULATION_BUDGET.sceneTriangleBudget triangles and
+// 48 draw calls. It is held by giving up the coverage bonus first -- that takes
+// triangles off the two or three buildings holding the most of them and leaves
+// the rest of the city alone -- and only then by uniform outside-in ring
+// demotion. Measured on the real 700 building slice after this wave: 323,746
+// triangles and 21 draw calls at the street capture pose, 363,434 triangles and
+// 22 draw calls at the worst of 48 sampled street eyes, 0 coverage cuts, 0
+// demotions, 700/700 buildings articulated. The ceiling is 380,000 and was NOT
+// moved by this wave; see the restatement on FACADE_ARTICULATION_BUDGET.
 //
 // Captures run through a software GL backend, so the pass also renders before
 // the shell (`renderOrder = -1`): the cladding wins the depth test first and
@@ -98,6 +144,7 @@ import {
   FACADE_INTERIOR_MATERIAL,
   FACADE_MATERIAL_CLASSES,
   FACADE_FRAME_MATERIAL,
+  FACADE_ROOF_PLANT,
   buildFacadeArticulationBatch,
   disposeFacadeArticulation,
   facadeFootprintMetrics,
@@ -189,6 +236,15 @@ function emptyDiagnostics(reason) {
     bandedStoreys: 0,
     glazedStoreyShare: 0,
     maxCoverage: 0,
+    roofPlant: {
+      triangles: 0,
+      elements: 0,
+      buildings: 0,
+      worstRise: 0,
+      maxRise: FACADE_ROOF_PLANT.maxRise,
+      triangleAllowance: FACADE_ROOF_PLANT.triangleAllowance,
+      withinAllowance: true,
+    },
     budget: {
       sceneTriangleBudget: FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
       maxDrawCalls: FACADE_ARTICULATION_BUDGET.maxDrawCalls,
@@ -521,6 +577,7 @@ function collectDiagnostics(centre, centreSource) {
   let glazedStoreys = 0;
   let bandedStoreys = 0;
   let maxCoverage = 0;
+  const roofPlant = { triangles: 0, elements: 0, worstRise: 0, buildings: 0 };
   for (const batch of batches) {
     triangles += batch.triangles;
     drawCalls += batch.drawCalls;
@@ -544,8 +601,14 @@ function collectDiagnostics(centre, centreSource) {
     for (const [name, count] of Object.entries(batch.features)) features[name] = (features[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.parts)) parts[name] = (parts[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.classes)) classes[name] = (classes[name] || 0) + count;
+    if (batch.roofPlant) {
+      roofPlant.triangles += batch.roofPlant.triangles;
+      roofPlant.elements += batch.roofPlant.elements;
+      roofPlant.worstRise = Math.max(roofPlant.worstRise, batch.roofPlant.worstRise);
+    }
     for (const record of batch.buildings) {
       signatures.add(record.signature);
+      if (record.roofElements > 0) roofPlant.buildings += 1;
       glazedStoreys += record.glazedStoreys || 0;
       bandedStoreys += record.bandedStoreys || 0;
       maxCoverage = Math.max(maxCoverage, record.coverage || 0);
@@ -577,6 +640,18 @@ function collectDiagnostics(centre, centreSource) {
       ? glazedStoreys / (glazedStoreys + bandedStoreys)
       : 0,
     maxCoverage,
+    // Rooftop plant, measured rather than asserted. `worstRise` is the highest
+    // any element reaches above its own shell top -- the one bound the
+    // cladding invariant ("nothing rises above the shell top", measured over
+    // the elevation quads) deliberately does not cover, because standing above
+    // that line is what roof plant is for. See FACADE_ROOF_PLANT.
+    roofPlant: {
+      ...roofPlant,
+      maxRise: FACADE_ROOF_PLANT.maxRise,
+      triangleAllowance: FACADE_ROOF_PLANT.triangleAllowance,
+      withinAllowance: roofPlant.triangles <= FACADE_ROOF_PLANT.triangleAllowance
+        && roofPlant.worstRise <= FACADE_ROOF_PLANT.maxRise + 1e-6,
+    },
     rings,
     features,
     parts,

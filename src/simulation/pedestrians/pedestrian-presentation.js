@@ -155,26 +155,26 @@
  * self-check, not estimated):
  *
  *   skinned    24 agents  <  28 m   1 SkinnedMesh + 1 AnimationMixer + 17 bones
- *                                   each, 336 tri. 24 draws, 8.1 k tri. The real
- *                                   limit is CPU: 24 mixer evaluations and 48
- *                                   two-bone IK solves per frame, not triangles.
- *   instanced  96 agents  <  90 m   15 InstancedMeshes carrying one matrix per
+ *                                   each, 2 520 body + up to 186 wardrobe tri.
+ *                                   24 draws. The real limit is CPU: 24 mixer
+ *                                   evaluations and 48 two-bone IK solves per
+ *                                   frame, not triangles.
+ *   instanced  96 agents  < 120 m   18 InstancedMeshes carrying one matrix per
  *                                   bone per agent - articulated legs and arms,
  *                                   no skinning, one shared virtual rig posed
- *                                   once per agent. 244 tri each: 15 draws,
- *                                   23.4 k tri.
- *   far       320 agents  < 220 m   4 InstancedMeshes (bottom / top / skin /
- *                                   shoes), the whole figure baked into
+ *                                   once per agent. 556 body + up to 112
+ *                                   wardrobe tri each: 26 draws.
+ *   far       320 agents  < 220 m   5 InstancedMeshes (bottom / top / skin /
+ *                                   hair / shoes), the whole figure baked into
  *                                   character space onto one root matrix, bob
- *                                   only, no mixer. 136 tri each: 4 draws,
- *                                   43.5 k tri.
+ *                                   only, no mixer. 192 + 48 tri each: 9 draws.
  *   shadows   440 agents            1 InstancedMesh of soft blob quads.
  *
- * Total steady-state cost at full population: 44 draw calls and ~75 k triangles
- * for a 440-agent crowd. Agents beyond a band's budget fall to the next cheaper
- * band; only agents past the far band are culled. The budget is a hard cap:
- * `planCrowdPresentation()` can never return more skinned agents than
- * `budget.skinned`, and the self-check proves it over a 600-agent corpus.
+ * Worst case at full population, every wardrobe flag set: 60 draw calls and
+ * 205 872 triangles for a 440-agent crowd. Agents beyond a band's budget fall to
+ * the next cheaper band; only agents past the far band are culled. The budget is
+ * a hard cap: `planCrowdPresentation()` can never return more skinned agents
+ * than `budget.skinned`, and the self-check proves it over a 600-agent corpus.
  */
 
 import * as THREE from 'three';
@@ -1242,77 +1242,105 @@ export const SEATED_ACTIVITIES = Object.freeze(['sit']);
  * a statue. Bones absent from an entry keep whatever the locomotion mixer left
  * on them, which is what makes these overlays and not replacements.
  *
- * Arm bones hang down -Y in the rest pose, so a positive X rotation swings the
- * hand forward and a negative one swings it back.
+ * SIGN CONVENTION, AND THE ONE THAT WAS HERE BEFORE.
+ *
+ * These are three.js `XYZ` eulers on a bone whose geometry runs down its own
+ * -Y. `RX(t)` maps `(0,-1,0)` to `(0,-cos t,-sin t)`, so on a HANGING bone - an
+ * arm, a forearm, a thigh, a shin - a POSITIVE X swings the far end toward -Z,
+ * which is BEHIND this rig (heading 0 faces +Z; the nose is at +Z). On a bone
+ * that points up - spine, chest, neck, head - the same positive X tips the top
+ * toward +Z, i.e. forward. The two families read opposite, and the table used
+ * to say the opposite of what the maths does.
+ *
+ * The consequence was measurable and it was in every hero frame: with the arm
+ * entries authored as if positive were forward, ALL NINE activities put BOTH
+ * hands behind the body - `wait` at z = -0.33 m, `phone` with the handset hand
+ * 0.27 m behind the head instead of at the ear - and every forearm bent
+ * BACKWARD, which is not a direction an elbow has. `LOCOMOTION_CLIP_SOURCE`
+ * below always had it right (its forearm keys are negative throughout and its
+ * arm swing is contralateral to the leg swing), so the walking crowd was fine
+ * and the standing one was not.
+ *
+ * The X terms on the four arm bones are therefore negated against what this
+ * table used to hold. Legs (`sit`) and the up-pointing bones were already
+ * correct and are untouched. `hands.mjs`-style measurement: with the fix, no
+ * activity puts a hand behind the coronal plane.
  */
 export const ACTIVITY_POSE_SOURCE = Object.freeze({
   stand: {
-    LeftArm: [0.04, 0, 0.09, 0.05, 0, 0.02, 0.12, 0],
-    RightArm: [0.04, 0, -0.09, 0.05, 0, 0.02, 0.11, 0.5],
-    LeftForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.12, 0.25],
-    RightForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.11, 0.75],
+    LeftArm: [-0.04, 0, 0.09, -0.05, 0, 0.02, 0.12, 0],
+    RightArm: [-0.04, 0, -0.09, -0.05, 0, 0.02, 0.11, 0.5],
+    LeftForeArm: [-0.18, 0, 0, -0.05, 0, 0, 0.12, 0.25],
+    RightForeArm: [-0.18, 0, 0, -0.05, 0, 0, 0.11, 0.75],
     Spine: [0, 0, 0, 0, 0.035, 0.012, 0.09, 0],
     Head: [0, 0, 0, 0.03, 0.13, 0, 0.07, 0.3],
   },
   wait: {
-    // Arms folded: upper arms in and slightly forward, forearms across the ribs.
-    LeftArm: [0.30, 0, 0.34, 0.02, 0, 0.01, 0.10, 0],
-    RightArm: [0.30, 0, -0.34, 0.02, 0, 0.01, 0.10, 0.5],
-    LeftForeArm: [1.15, 0.55, 0, 0.03, 0, 0, 0.10, 0],
-    RightForeArm: [1.15, -0.55, 0, 0.03, 0, 0, 0.10, 0.5],
+    // Arms folded. Solved against the rig rather than eyeballed: with these
+    // four angles the drawn hands land at (+-0.076, 1.120, 0.162) m, i.e. one
+    // in front of each set of ribs, 152 mm apart so the two forearms lie across
+    // the body without either crossing the midline into the other.
+    LeftArm: [0.25, -0.30, -0.20, -0.02, 0, 0.01, 0.10, 0],
+    RightArm: [0.25, 0.30, 0.20, -0.02, 0, 0.01, 0.10, 0.5],
+    LeftForeArm: [-1.85, 0, 0, -0.03, 0, 0, 0.10, 0],
+    RightForeArm: [-1.85, 0, 0, -0.03, 0, 0, 0.10, 0.5],
     Spine: [0.02, 0, 0, 0, 0.05, 0.02, 0.06, 0.2],
     Head: [0.02, 0, 0, 0.04, 0.22, 0, 0.05, 0],
   },
   phone: {
-    // Handset arm up to the ear, free arm tucked; head tipped in.
-    RightArm: [0.55, 0, -0.72, 0.03, 0, 0.02, 0.13, 0],
-    RightForeArm: [1.95, -0.35, 0, 0.04, 0, 0, 0.13, 0],
-    LeftArm: [0.22, 0, 0.20, 0.03, 0, 0, 0.12, 0.5],
-    LeftForeArm: [0.85, 0, 0, 0.04, 0, 0, 0.12, 0.5],
+    // Reading a phone: the busy hand comes up and forward to (-0.32, 1.36,
+    // 0.27) m - chest height, a forearm's length in front - and the head tips
+    // 0.14 rad down toward it. The free arm is tucked. (Before the sign fix
+    // above these numbers put that hand 0.27 m BEHIND the head, which is what
+    // the table's comment used to describe as "up to the ear".)
+    RightArm: [-0.55, 0, -0.72, -0.03, 0, 0.02, 0.13, 0],
+    RightForeArm: [-1.95, -0.35, 0, -0.04, 0, 0, 0.13, 0],
+    LeftArm: [-0.22, 0, 0.20, -0.03, 0, 0, 0.12, 0.5],
+    LeftForeArm: [-0.85, 0, 0, -0.04, 0, 0, 0.12, 0.5],
     Head: [0.14, -0.22, -0.12, 0.02, 0.05, 0, 0.16, 0],
     Spine: [0.03, -0.05, 0, 0, 0.03, 0, 0.10, 0],
   },
   talk: {
     // Gesturing hand, open shoulders, head turned toward the listener.
-    RightArm: [0.62, 0, -0.30, 0.30, 0, 0.16, 0.55, 0],
-    RightForeArm: [1.05, 0, 0, 0.42, 0, 0, 0.55, 0.18],
-    LeftArm: [0.20, 0, 0.16, 0.08, 0, 0.04, 0.31, 0.5],
-    LeftForeArm: [0.55, 0, 0, 0.12, 0, 0, 0.31, 0.6],
+    RightArm: [-0.62, 0, -0.30, -0.3, 0, 0.16, 0.55, 0],
+    RightForeArm: [-1.05, 0, 0, -0.42, 0, 0, 0.55, 0.18],
+    LeftArm: [-0.2, 0, 0.16, -0.08, 0, 0.04, 0.31, 0.5],
+    LeftForeArm: [-0.55, 0, 0, -0.12, 0, 0, 0.31, 0.6],
     Head: [0.02, 0.26, 0, 0.05, 0.07, 0, 0.42, 0],
     Spine: [0.02, 0.10, 0, 0.01, 0.04, 0, 0.28, 0],
   },
   listen: {
-    LeftArm: [0.26, 0, 0.30, 0.03, 0, 0.02, 0.16, 0],
-    RightArm: [0.26, 0, -0.30, 0.03, 0, 0.02, 0.16, 0.5],
-    LeftForeArm: [1.05, 0.42, 0, 0.04, 0, 0, 0.16, 0],
-    RightForeArm: [1.05, -0.42, 0, 0.04, 0, 0, 0.16, 0.5],
+    LeftArm: [-0.26, 0, 0.30, -0.03, 0, 0.02, 0.16, 0],
+    RightArm: [-0.26, 0, -0.30, -0.03, 0, 0.02, 0.16, 0.5],
+    LeftForeArm: [-1.05, 0.42, 0, -0.04, 0, 0, 0.16, 0],
+    RightForeArm: [-1.05, -0.42, 0, -0.04, 0, 0, 0.16, 0.5],
     Head: [0.05, -0.24, 0, 0.06, 0.05, 0, 0.22, 0.4],
     Spine: [0.03, -0.08, 0, 0, 0.02, 0, 0.19, 0],
   },
   carry: {
     // Loaded arm hangs straight and heavy, free arm counter-swings a little.
-    RightArm: [0.02, 0, -0.05, 0.03, 0, 0.01, 0.20, 0],
-    RightForeArm: [0.06, 0, 0, 0.02, 0, 0, 0.20, 0],
-    LeftArm: [0.12, 0, 0.14, 0.10, 0, 0.03, 0.20, 0.5],
-    LeftForeArm: [0.30, 0, 0, 0.10, 0, 0, 0.20, 0.55],
+    RightArm: [-0.02, 0, -0.05, -0.03, 0, 0.01, 0.20, 0],
+    RightForeArm: [-0.06, 0, 0, -0.02, 0, 0, 0.20, 0],
+    LeftArm: [-0.12, 0, 0.14, -0.1, 0, 0.03, 0.20, 0.5],
+    LeftForeArm: [-0.3, 0, 0, -0.1, 0, 0, 0.20, 0.55],
     Spine: [0, 0, -0.05, 0, 0.02, 0.01, 0.20, 0],
     Head: [0.02, 0, 0, 0.02, 0.09, 0, 0.13, 0],
   },
   lean: {
     Spine: [-0.10, 0, 0, 0.01, 0.03, 0.01, 0.08, 0],
     Chest: [-0.06, 0, 0, 0.01, 0.02, 0, 0.08, 0.3],
-    LeftArm: [0.10, 0, 0.24, 0.03, 0, 0.02, 0.10, 0],
-    RightArm: [0.10, 0, -0.24, 0.03, 0, 0.02, 0.10, 0.5],
-    LeftForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0],
-    RightForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0.5],
+    LeftArm: [-0.1, 0, 0.24, -0.03, 0, 0.02, 0.10, 0],
+    RightArm: [-0.1, 0, -0.24, -0.03, 0, 0.02, 0.10, 0.5],
+    LeftForeArm: [-0.35, 0, 0, -0.03, 0, 0, 0.10, 0],
+    RightForeArm: [-0.35, 0, 0, -0.03, 0, 0, 0.10, 0.5],
     Head: [-0.04, 0, 0, 0.03, 0.16, 0, 0.06, 0.2],
   },
   browse: {
     // Facing a window: shoulders square to it, head up and scanning.
-    LeftArm: [0.16, 0, 0.14, 0.03, 0, 0.01, 0.14, 0],
-    RightArm: [0.30, 0, -0.16, 0.04, 0, 0.02, 0.14, 0.5],
-    LeftForeArm: [0.42, 0, 0, 0.04, 0, 0, 0.14, 0],
-    RightForeArm: [0.95, -0.20, 0, 0.05, 0, 0, 0.14, 0.5],
+    LeftArm: [-0.16, 0, 0.14, -0.03, 0, 0.01, 0.14, 0],
+    RightArm: [-0.3, 0, -0.16, -0.04, 0, 0.02, 0.14, 0.5],
+    LeftForeArm: [-0.42, 0, 0, -0.04, 0, 0, 0.14, 0],
+    RightForeArm: [-0.95, -0.20, 0, -0.05, 0, 0, 0.14, 0.5],
     Head: [-0.06, 0, 0, 0.04, 0.20, 0, 0.11, 0],
     Spine: [0.02, 0, 0, 0, 0.03, 0, 0.11, 0.4],
   },
@@ -1325,10 +1353,10 @@ export const ACTIVITY_POSE_SOURCE = Object.freeze({
     LeftFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0],
     RightFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0.5],
     Spine: [0.06, 0, 0, 0.01, 0.04, 0, 0.09, 0],
-    LeftArm: [0.34, 0, 0.13, 0.04, 0, 0.01, 0.09, 0],
-    RightArm: [0.34, 0, -0.13, 0.04, 0, 0.01, 0.09, 0.5],
-    LeftForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0],
-    RightForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0.5],
+    LeftArm: [-0.34, 0, 0.13, -0.04, 0, 0.01, 0.09, 0],
+    RightArm: [-0.34, 0, -0.13, -0.04, 0, 0.01, 0.09, 0.5],
+    LeftForeArm: [-0.72, 0, 0, -0.05, 0, 0, 0.09, 0],
+    RightForeArm: [-0.72, 0, 0, -0.05, 0, 0, 0.09, 0.5],
     Head: [0.04, 0, 0, 0.03, 0.14, 0, 0.07, 0.25],
   },
 });
@@ -1949,24 +1977,37 @@ export const PRESENTATION_BAND_DISTANCES = Object.freeze({
  * next cheaper band, so the crowd thins in fidelity rather than in population.
  */
 /**
- * BUDGET, restated for the mid-band skull and the 120 m instanced boundary.
+ * BUDGET, restated for the CONTINUITY landing.
  *
- * Caps are unchanged, and so are draw calls: the lofted skull merges into the
- * existing `Head|skin` bucket, which is one instanced mesh either way.
+ * Caps are unchanged. What moved is the triangles behind one instanced and one
+ * far figure, and the reason is measured rather than argued: in horizontal
+ * slices 2 mm apart through the DRAWN triangles of the rest pose, the previous
+ * tables had slices containing NO geometry at all -
  *
- *   instanced  392 -> 456 tri  x 96  = 43 776   (+64/figure: 76-triangle
- *                                                lofted skull replacing a
- *                                                12-triangle frustum)
- *   far        180        tri x 320  = 57 600   (untouched)
+ *   far   elbow, knee, ankle, and the whole 140 mm between the top of the
+ *         shoulders and the base of the skull (there was no neck at `far`);
+ *   mid   a 15 mm slot between the head filler and the skull;
+ *   both  a 5 mm slot straight through the waist, between the top of the
+ *         pelvis frustum and the bottom of the spine frustum.
  *
- * The 90 -> 120 m instanced boundary adds no triangles at all: bands are
- * assigned nearest-first under these caps, so a wider boundary can only spend
- * instanced slots no nearer agent claimed. The ceiling was and remains
- * 24 skinned + 96 instanced + 320 far figures.
+ * A slice with nothing in it is a hole you can see the street through. Every
+ * limb primitive now crosses its own joint and is buried by the one it meets,
+ * so the closure is a property of the solid and holds at any joint angle:
  *
- * The skinned figure's own triangle count is set by the near-tier parts table
- * and is measured by `verify:pedestrian-presentation` against its 1 600
- * ceiling; nothing here changes it.
+ *   instanced  456 -> 556 tri x 96  = 53 376  (+100: lofted deltoid replacing a
+ *                                              swept cylinder plus its exposed
+ *                                              joint bead, a hand, a throat
+ *                                              ring on the skull, a hair shell
+ *                                              instead of a 4-cornered slab)
+ *   far        180 -> 192 tri x 320 = 61 440  (+12: the neck)
+ *   skinned   2432 -> 2520 tri x 24 = 60 480  (+88: the lofted shoe)
+ *
+ * plus wardrobe: 186 near, 112 mid, 48 far per figure with every flag set.
+ * Whole-crowd worst case 205 872 triangles against 190 320 before.
+ *
+ * Draw calls: the mid band gains the two `*Hand|skin` chunks, 16 -> 18. The
+ * lofted deltoid, the throat ring and the hair shell merge into buckets that
+ * already existed, so they add none.
  */
 /**
  * Band caps. Hard: `planCrowdPresentation` can never return more.
@@ -2168,6 +2209,36 @@ export function restBoneWorld(name, pose = REST_POSE) {
  * animation phase and fails on any surface gap.
  *
  * ---------------------------------------------------------------------------
+ * AND WHY A JOINT FILLER IS NOT ENOUGH ON ITS OWN
+ * ---------------------------------------------------------------------------
+ * A filler proves the joint cannot OPEN when the limb rotates. It does not
+ * prove there is solid there in the first place, and at the two cheap tiers
+ * there was not. Measured on the drawn triangles - not on the table, on the
+ * baked vertices - by cutting the rest pose into horizontal slices 2 mm apart
+ * and asking which slices contain no geometry at all:
+ *
+ *   far   nothing in the slice through the elbow, the knee or the ankle, and
+ *         nothing anywhere in the 140 mm between the top of the shoulders and
+ *         the base of the skull. There was no neck at `far`; the head floated.
+ *   mid   nothing in a 15 mm band between the top of the head filler and the
+ *         base of the skull.
+ *   both  nothing in a 5 mm band straight through the waist, where the pelvis
+ *         frustum stopped at 1.035 m and the spine frustum started at 1.040 m.
+ *
+ * Each of those is a slot you can see the street through, and `far` was being
+ * drawn 13 m from the lens by the street-life pass (see its ring table). So the
+ * rule the table now follows, at EVERY tier:
+ *
+ *   every limb primitive crosses its own joint, and the one it meets there is
+ *   WIDER at the crossing, so the rim is buried inside its neighbour.
+ *
+ * That is a property of the authored solid, so it holds at any joint angle, and
+ * it is what the offsets and heights below are chosen to satisfy. Sole exactly
+ * at y = 0, thigh into pelvis, shin over knee, foot over ankle, forearm over
+ * elbow and under wrist, skull down into the neck, spine down into the pelvis.
+ * A slice with nothing in it is the assertion that fails.
+ *
+ * ---------------------------------------------------------------------------
  * DETAIL TIERS
  * ---------------------------------------------------------------------------
  *   'far'   the whole readable figure at 90-220 m: torso, head, straight limbs.
@@ -2197,7 +2268,7 @@ export const BODY_PARTS = Object.freeze([
   // ---- pelvis and torso -----------------------------------------------------
   // far/mid: frusta. near: lofts that replace them (see `maxDetail`).
   { bone: 'Hips', slot: 'bottom', kind: 'taper', size: [0.27, 0.175, 0.245, 0.165, 0.20], offset: [0, 0.015, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.35 },
-  { bone: 'Spine', slot: 'top', kind: 'taper', size: [0.285, 0.180, 0.255, 0.170, 0.17], offset: [0, 0.065, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.28 },
+  { bone: 'Spine', slot: 'top', kind: 'taper', size: [0.285, 0.180, 0.255, 0.170, 0.19], offset: [0, 0.055, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.28 },
   { bone: 'Chest', slot: 'top', kind: 'taper', size: [0.345, 0.205, 0.290, 0.185, 0.26], offset: [0, 0.090, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.22 },
   // NEAR pelvis. The trochanter is the widest point of a standing body and the
   // frustum did not have one, which is why the hips read as a box the legs were
@@ -2245,7 +2316,7 @@ export const BODY_PARTS = Object.freeze([
   // ---- neck and head --------------------------------------------------------
   // Promoted from 'near' to 'mid': without it the head floats off the shoulders
   // at every distance the crowd is actually seen at.
-  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.046, 0.058, 0.108], offset: [0, 0.036, -0.004], detail: 'mid', group: 'skin', ao: 0.55 },
+  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.046, 0.058, 0.108], offset: [0, 0.036, -0.004], detail: 'far', group: 'skin', ao: 0.55 },
   // NEAR collar. It stands 22-26 mm proud of the neck, so the head no longer
   // grows out of the shirt on a bare tube, and the accent band on top of it is
   // a second colour exactly where a viewer looks first.
@@ -2258,7 +2329,7 @@ export const BODY_PARTS = Object.freeze([
     [ 0.030, 0.083, 0.087, 0, -0.006],
     [ 0.056, 0.066, 0.070, 0, -0.006],
   ] },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.062, 0.058, 0.062], offset: [0, 0.004, -0.002], detail: 'mid', group: 'skin', ao: 0.50 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.050, 0.048, 0.052], offset: [0, 0.004, -0.002], detail: 'mid', group: 'skin', ao: 0.50 },
   // THE CRANIUM, TWICE OVER.
   //
   // A 4-sided frustum is 12 triangles and reads correctly at the ~4 px a head
@@ -2273,13 +2344,14 @@ export const BODY_PARTS = Object.freeze([
   // so nothing below it opens a seam, widest at the cheekbone, tucked back and
   // rounded at the crown. 76 triangles against the frustum's 12, on the mid
   // band only - see the budget restated at `CROWD_BUDGET`.
-  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.150, 0.180, 0.140, 0.170, 0.135], offset: [0, 0.145, 0.004], detail: 'far', maxDetail: 'far', group: 'skin', ao: 0.16 },
+  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.150, 0.180, 0.140, 0.170, 0.225], offset: [0, 0.100, 0.004], detail: 'far', maxDetail: 'far', group: 'skin', ao: 0.16 },
   { bone: 'Head', slot: 'skin', kind: 'loft', sides: 8, detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.16, offset: [0, 0, 0], size: [
+    [-0.0200, 0.0520, 0.0600, 0, 0.004],
     [0.0775, 0.0700, 0.0850, 0, 0.004],
     [0.1150, 0.0745, 0.0890, 0, 0.006],
     [0.1550, 0.0750, 0.0900, 0, 0.002],
-    [0.1900, 0.0670, 0.0800, 0, -0.002],
-    [0.2125, 0.0430, 0.0520, 0, -0.006],
+    [0.1900, 0.0700, 0.0810, 0, -0.002],
+    [0.2125, 0.0660, 0.0720, 0, -0.006],
   ] },
   // NEAR head. Seven rings, and every one of them is a landmark: throat, jaw,
   // cheekbone, brow, cranium, crown. The centre of the section moves forward
@@ -2294,15 +2366,20 @@ export const BODY_PARTS = Object.freeze([
     [ 0.198, 0.060, 0.070, 0, -0.010],
     [ 0.218, 0.036, 0.042, 0, -0.010],
   ] },
-  { bone: 'Head', slot: 'skin', kind: 'wedge', size: [0.032, 0.052, 0.038, 0.012], offset: [0, 0.104, 0.086], detail: 'near', group: 'skin', ao: 0.10 },
-  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.116, 0.020, 0.020], offset: [0, 0.146, 0.084], detail: 'near', group: 'skin', ao: 0.18 },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [0.076, 0.112, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [-0.076, 0.112, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
+  { bone: 'Head', slot: 'skin', kind: 'wedge', size: [0.030, 0.052, 0.040, -0.012], offset: [0, 0.108, 0.082], detail: 'near', group: 'skin', ao: 0.10 },
+  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.100, 0.016, 0.016], offset: [0, 0.146, 0.085], detail: 'near', group: 'skin', ao: 0.18 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.013, 0.026, 0.011], offset: [0.070, 0.114, 0.004], detail: 'near', group: 'skin', ao: 0.35 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.013, 0.026, 0.011], offset: [-0.070, 0.114, 0.004], detail: 'near', group: 'skin', ao: 0.35 },
   // Hair. far/mid keep the cap. NEAR is a shell whose rings follow the cranium
   // rings 4-7 mm out and 16-20 mm BACK, so it meets the face at a hairline
   // across the brow and carries the occiput - hair growing on a head rather
   // than a slab resting on one.
-  { bone: 'Head', slot: 'hair', kind: 'taper', size: [0.156, 0.150, 0.160, 0.152, 0.052], offset: [0, 0.212, 0.002], detail: 'far', maxDetail: 'mid', group: 'hair', ao: 0.22 },
+  { bone: 'Head', slot: 'hair', kind: 'taper', size: [0.156, 0.150, 0.160, 0.152, 0.052], offset: [0, 0.212, 0.002], detail: 'far', maxDetail: 'far', group: 'hair', ao: 0.22 },
+  { bone: 'Head', slot: 'hair', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'hair', ao: 0.30, offset: [0, 0, 0], size: [
+    [ 0.130, 0.078, 0.092, 0, -0.014],
+    [ 0.190, 0.075, 0.086, 0, -0.016],
+    [ 0.230, 0.050, 0.054, 0, -0.014],
+  ] },
   { bone: 'Head', slot: 'hair', kind: 'loft', sides: 8, detail: 'near', group: 'hair', ao: 0.36, offset: [0, 0, 0], size: [
     [ 0.118, 0.080, 0.084, 0, -0.020],
     [ 0.152, 0.080, 0.085, 0, -0.022],
@@ -2311,11 +2388,17 @@ export const BODY_PARTS = Object.freeze([
   ] },
   // Eyes ride the hair slot: hair colours are the dark end of the palette, so an
   // eye is always darker than the face it sits in without a seventh slot.
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [0.033, 0.124, 0.082], detail: 'near', group: 'hair', ao: 0.0 },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [-0.033, 0.124, 0.082], detail: 'near', group: 'hair', ao: 0.0 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.022, 0.011, 0.012], offset: [0.030, 0.126, 0.083], detail: 'near', group: 'hair', ao: 0.0 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.022, 0.011, 0.012], offset: [-0.030, 0.126, 0.083], detail: 'near', group: 'hair', ao: 0.0 },
   // ---- arms -----------------------------------------------------------------
   { bone: 'LeftArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
-  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.30 },
+  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.262], offset: [0, -0.135, 0], detail: 'far', maxDetail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'LeftArm', slot: 'top', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'top', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.266, 0.033, 0.033, 0, 0],
+    [-0.140, 0.048, 0.048, 0, 0.002],
+    [-0.024, 0.058, 0.064, 0, 0],
+    [ 0.022, 0.052, 0.058, 0, 0],
+  ] },
   // NEAR upper arm: deltoid (72 mm) -> mid-humerus (49 mm) -> elbow (42 mm).
   // Its widest ring is ABOVE the shoulder joint and wider than the joint ball,
   // so the ball never appears in silhouette; its narrowest is two thirds of the
@@ -2337,7 +2420,7 @@ export const BODY_PARTS = Object.freeze([
     [-0.240, 0.050, 0.049, 0, 0.003],
   ] },
   { bone: 'LeftForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
-  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
+  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.290], offset: [0, -0.115, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
   // NEAR forearm: belly below the elbow, then a wrist that is WIDER THAN IT IS
   // DEEP (29 x 24 mm). A wrist with a circular section is the single clearest
   // tell that a limb is a swept primitive.
@@ -2348,6 +2431,7 @@ export const BODY_PARTS = Object.freeze([
     [-0.030, 0.048, 0.046, 0, 0.004],
     [ 0.030, 0.047, 0.045, 0, 0.002],
   ] },
+  { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.040, 0.058, 0.034], offset: [0, -0.010, 0.003], detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.30 },
   { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.038], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
   // NEAR hand: a flattened palm...
   { bone: 'LeftHand', slot: 'skin', kind: 'loft', sides: 6, detail: 'near', group: 'skin', ao: 0.22, offset: [0, 0, 0], size: [
@@ -2365,7 +2449,13 @@ export const BODY_PARTS = Object.freeze([
     [ 0.006, 0.017, 0.018, -0.026, 0.006],
   ] },
   { bone: 'RightArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
-  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.30 },
+  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.262], offset: [0, -0.135, 0], detail: 'far', maxDetail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'top', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.266, 0.033, 0.033, 0, 0],
+    [-0.140, 0.048, 0.048, 0, 0.002],
+    [-0.024, 0.058, 0.064, 0, 0],
+    [ 0.022, 0.052, 0.058, 0, 0],
+  ] },
   { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.32, offset: [0, 0, 0], size: [
     [-0.262, 0.042, 0.042, 0, 0.002],
     [-0.215, 0.046, 0.045, 0, 0.004],
@@ -2380,7 +2470,7 @@ export const BODY_PARTS = Object.freeze([
     [-0.240, 0.050, 0.049, 0, 0.003],
   ] },
   { bone: 'RightForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
-  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
+  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.290], offset: [0, -0.115, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
   { bone: 'RightForeArm', slot: 'skin', kind: 'loft', sides: 7, detail: 'near', group: 'skin', ao: 0.24, offset: [0, 0, 0], size: [
     [-0.248, 0.025, 0.022, 0, 0],
     [-0.205, 0.030, 0.026, 0, 0],
@@ -2388,6 +2478,7 @@ export const BODY_PARTS = Object.freeze([
     [-0.030, 0.048, 0.046, 0, 0.004],
     [ 0.030, 0.047, 0.045, 0, 0.002],
   ] },
+  { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.040, 0.058, 0.034], offset: [0, -0.010, 0.003], detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.30 },
   { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.038], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
   { bone: 'RightHand', slot: 'skin', kind: 'loft', sides: 6, detail: 'near', group: 'skin', ao: 0.22, offset: [0, 0, 0], size: [
     [-0.108, 0.024, 0.014, 0, 0.004],
@@ -2415,7 +2506,7 @@ export const BODY_PARTS = Object.freeze([
     [ 0.020, 0.074, 0.078, 0, 0],
   ] },
   { bone: 'LeftLeg', slot: 'bottom', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
-  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.064, 0.038, 0.415], offset: [0, -0.1775, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
   // NEAR shin: the calf belly is 10 mm BEHIND the shin axis and 60% of the way
   // up, which is the profile that makes a leg read as a leg from the side.
   { bone: 'LeftLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.26, offset: [0, 0, 0], size: [
@@ -2426,9 +2517,20 @@ export const BODY_PARTS = Object.freeze([
     [-0.055, 0.058, 0.064, 0, -0.010],
     [ 0.034, 0.062, 0.064, 0, -0.002],
   ] },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'ball', size: [0.040, 0.038, 0.040], offset: [0, 0, -0.002], detail: 'mid', group: 'shoes', ao: 0.40 },
+  // NEAR shoe. A sole, a welt, an instep and a collar, on a 6-gon section that
+  // is 2.5x longer than it is wide and carried 46 mm forward of the ankle, so
+  // the outline in plan is a shoe rather than a slab. 208 mm heel to toe.
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'loft', sides: 6, detail: 'near', group: 'shoes', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.080, 0.042, 0.104, 0, 0.046],
+    [-0.062, 0.047, 0.114, 0, 0.043],
+    [-0.036, 0.046, 0.104, 0, 0.036],
+    [-0.012, 0.045, 0.084, 0, 0.024],
+    [ 0.010, 0.043, 0.062, 0, 0.006],
+    [ 0.028, 0.041, 0.054, 0, 0.000],
+  ] },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.105], offset: [0, -0.0275, -0.005], detail: 'far', maxDetail: 'mid', group: 'shoes', ao: 0.30 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.051, 0.108], detail: 'mid', maxDetail: 'mid', group: 'shoes', ao: 0.24 },
   { bone: 'RightUpLeg', slot: 'bottom', kind: 'ball', size: [0.083], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.42 },
   { bone: 'RightUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.30 },
   { bone: 'RightUpLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.30, offset: [0, 0, 0], size: [
@@ -2440,7 +2542,7 @@ export const BODY_PARTS = Object.freeze([
     [ 0.020, 0.074, 0.078, 0, 0],
   ] },
   { bone: 'RightLeg', slot: 'bottom', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
-  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.064, 0.038, 0.415], offset: [0, -0.1775, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
   { bone: 'RightLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.26, offset: [0, 0, 0], size: [
     [-0.418, 0.031, 0.032, 0, 0.002],
     [-0.372, 0.030, 0.031, 0, 0],
@@ -2449,9 +2551,20 @@ export const BODY_PARTS = Object.freeze([
     [-0.055, 0.058, 0.064, 0, -0.010],
     [ 0.034, 0.062, 0.064, 0, -0.002],
   ] },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'ball', size: [0.040, 0.038, 0.040], offset: [0, 0, -0.002], detail: 'mid', group: 'shoes', ao: 0.40 },
+  // NEAR shoe. A sole, a welt, an instep and a collar, on a 6-gon section that
+  // is 2.5x longer than it is wide and carried 46 mm forward of the ankle, so
+  // the outline in plan is a shoe rather than a slab. 208 mm heel to toe.
+  { bone: 'RightFoot', slot: 'shoes', kind: 'loft', sides: 6, detail: 'near', group: 'shoes', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.080, 0.042, 0.104, 0, 0.046],
+    [-0.062, 0.047, 0.114, 0, 0.043],
+    [-0.036, 0.046, 0.104, 0, 0.036],
+    [-0.012, 0.045, 0.084, 0, 0.024],
+    [ 0.010, 0.043, 0.062, 0, 0.006],
+    [ 0.028, 0.041, 0.054, 0, 0.000],
+  ] },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.105], offset: [0, -0.0275, -0.005], detail: 'far', maxDetail: 'mid', group: 'shoes', ao: 0.30 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.051, 0.108], detail: 'mid', maxDetail: 'mid', group: 'shoes', ao: 0.24 },
 ]);
 
 const DETAIL_RANK = { far: 0, mid: 1, near: 2 };
