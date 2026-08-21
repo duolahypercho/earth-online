@@ -799,7 +799,37 @@ export const CONTACT_SHADOW = Object.freeze({
    * foot at grazing angles.
    */
   lift: 0.03,
+  /**
+   * How much of the blob survives with the sun below the horizon.
+   *
+   * Not zero. A body still occludes the sky dome and the street lighting above
+   * it, so there is still a darker patch under it at night - that is what keeps
+   * a figure attached to the pavement after dark. It is just not a cast shadow,
+   * and 0.42 x 0.40 = 0.17 opacity is the difference between "standing there"
+   * and "a black disc has been stuck to the ground".
+   */
+  nightFloor: 0.40,
 });
+
+/**
+ * Contact-blob density for a sun elevation, as a multiplier on
+ * `CONTACT_SHADOW.baseOpacity`.
+ *
+ * ABOVE the horizon this is unchanged from the shipped daytime behaviour - a
+ * high sun makes a tight dark pool, a low one a softer wash - so no day card
+ * moves. BELOW it, the term falls to `nightFloor` instead of MIRRORING the
+ * daytime value, which is what it used to do: `Math.abs()` gave a sun 30
+ * degrees under the horizon exactly the shadow of a sun 30 degrees over it.
+ *
+ * The crossing is ramped over the first six degrees rather than stepped,
+ * because a sun on the horizon is a long weak wash and not a light switch.
+ */
+export function contactShadowSunTerm(sunElevationDeg) {
+  const deg = Number.isFinite(sunElevationDeg) ? sunElevationDeg : 45;
+  const above = clamp(deg, 0, 90) / 90;
+  const daylight = smoothstep(0, 6, deg);
+  return lerp(CONTACT_SHADOW.nightFloor, lerp(0.72, 1.0, above), daylight);
+}
 
 /**
  * Cheap, reliable grounding: a soft blob under every agent in every band.
@@ -822,10 +852,17 @@ export function contactShadowFor({
   const lengthScale = 1 + CONTACT_SHADOW.speedStretch * clamp(v / 2, 0, 1);
   const clearance = 1 - smoothstep(0, CONTACT_SHADOW.clearanceFade, Math.max(0, groundClearance));
   const distanceFade = 1 - smoothstep(CONTACT_SHADOW.fadeStart, CONTACT_SHADOW.fadeEnd, distance);
-  // A low sun makes a long soft ambient occlusion pool; a high sun makes a
-  // tight dark one. Both are darker than an overhead-light-only guess.
-  const sun = clamp(Math.abs(sunElevationDeg) / 90, 0, 1);
-  const sunTerm = lerp(0.72, 1.0, sun);
+  // A high sun makes a tight dark pool; a low sun makes a soft one; a sun BELOW
+  // the horizon makes neither, and the blob becomes pure ambient occlusion of
+  // the sky dome by the body - real, but much lighter.
+  //
+  // `Math.abs()` used to stand where `sunElevationFactor` does now, so a sun 30
+  // degrees below the horizon produced exactly the shadow of a sun 30 degrees
+  // above it. On the round-4 night card that put a 0.34-opacity black disc
+  // under every figure standing on pavement lit only by shopfronts - a hard
+  // shadow with no light to cast it, which reads as a decal rather than as
+  // contact.
+  const sunTerm = contactShadowSunTerm(sunElevationDeg);
   const opacity = clamp(
     CONTACT_SHADOW.baseOpacity * clearance * distanceFade * sunTerm * opacityScale,
     0,
@@ -1613,7 +1650,7 @@ export const BODY_PARTS = Object.freeze([
     [ 0.020, 0.160, 0.104, 0, 0.006],
     [ 0.090, 0.170, 0.102, 0, 0.004],
     [ 0.140, 0.172, 0.096, 0, 0],
-    [ 0.175, 0.140, 0.085, 0, -0.004],
+    [ 0.175, 0.144, 0.086, 0, -0.004],
     [ 0.205, 0.098, 0.066, 0, -0.006],
     [ 0.230, 0.076, 0.060, 0, -0.006],
   ] },
@@ -1705,9 +1742,9 @@ export const BODY_PARTS = Object.freeze([
     [-0.262, 0.042, 0.042, 0, 0.002],
     [-0.215, 0.046, 0.045, 0, 0.004],
     [-0.140, 0.049, 0.048, 0, 0.002],
-    [-0.060, 0.055, 0.058, 0, 0],
-    [ 0.005, 0.059, 0.068, 0, 0],
-    [ 0.046, 0.048, 0.056, 0, 0],
+    [-0.055, 0.058, 0.060, 0, 0],
+    [ 0.000, 0.059, 0.068, 0, 0],
+    [ 0.030, 0.046, 0.056, 0, 0],
   ] },
   // NEAR sleeve. A short sleeve ending just past the elbow: 10 mm proud of the
   // arm, which is a hard silhouette break in the shirt colour, and it buries
@@ -1751,9 +1788,9 @@ export const BODY_PARTS = Object.freeze([
     [-0.262, 0.042, 0.042, 0, 0.002],
     [-0.215, 0.046, 0.045, 0, 0.004],
     [-0.140, 0.049, 0.048, 0, 0.002],
-    [-0.060, 0.055, 0.058, 0, 0],
-    [ 0.005, 0.059, 0.068, 0, 0],
-    [ 0.046, 0.048, 0.056, 0, 0],
+    [-0.055, 0.058, 0.060, 0, 0],
+    [ 0.000, 0.059, 0.068, 0, 0],
+    [ 0.030, 0.046, 0.056, 0, 0],
   ] },
   { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.42, offset: [0, 0, 0], size: [
     [-0.292, 0.044, 0.044, 0, 0.002],
@@ -3654,9 +3691,9 @@ export function createCrowdPresentation(options = {}) {
       if (!Number.isFinite(deg)) return;
       sunElevation = deg;
       // A high sun makes a tight dark pool; a low or absent sun makes a soft
-      // ambient one. Both keep feet attached to the pavement.
-      const sun = clamp(Math.abs(deg) / 90, 0, 1);
-      shadowMaterial.opacity = CONTACT_SHADOW.baseOpacity * lerp(0.72, 1, sun);
+      // ambient one. Both keep feet attached to the pavement, and neither
+      // paints a cast shadow the sky is not casting - see `sunElevationFactor`.
+      shadowMaterial.opacity = CONTACT_SHADOW.baseOpacity * contactShadowSunTerm(deg);
     },
     materials: { contactShadow: shadowMaterial },
     /** Exposed so a caller can retarget an external clip against this skeleton. */

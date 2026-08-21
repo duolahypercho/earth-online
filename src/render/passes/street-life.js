@@ -70,6 +70,7 @@ import {
   ACTIVITY_ROOT_DROP,
   contactShadowFor,
   CONTACT_SHADOW,
+  contactShadowSunTerm,
 } from '../../simulation/pedestrians/pedestrian-presentation.js';
 
 export const STREET_LIFE_ID = 'street-life';
@@ -674,33 +675,46 @@ export function planStreetLifeAnchors(plan, {
   const options = plan.options;
   const hourFactor = streetLifeHourFactor(hour);
   const districtAt = density ? (x, z) => density.at(x, z) : () => 0.7;
-  // Figures already placed. Two rules, both in one pass over the neighbourhood:
-  // a hard minimum separation (`radius`, from `STREET_LIFE_SPACING`) and a cap
-  // on how many figures may share a `clusterRadius` patch of pavement.
+  // Figures already placed. Two rules, both enforced here because both are
+  // properties of the FINAL set, not of one placement:
   //
-  // The grid cell is 2 m and `clusterRadius` is 3 m, so the scan has to reach
-  // two cells out; the separation test only ever needs one, and gets the wider
-  // scan for free.
+  //   1. minimum separation, and the minimum depends on whether the two figures
+  //      belong to the same conversation or queue. Comparing a grouped figure
+  //      against a stranger at the group minimum was the hole in the previous
+  //      version: two different pairs could end up 0.80 m apart, which is a
+  //      stranger distance the rules say is 0.95 m;
+  //   2. the cluster cap, which is symmetric. Rejecting a candidate that has
+  //      too many neighbours is not enough - the candidate is also a NEW
+  //      neighbour for everyone around it, so a figure placed early can be
+  //      pushed over the cap by figures placed later. Each accepted figure
+  //      therefore also has to leave every neighbour under the cap.
+  //
+  // The grid cell is 2 m and `clusterRadius` is 3 m, so the scan reaches two
+  // cells out; the separation test only ever needs one, and gets the wider scan
+  // for free.
   const CELL = 2;
   const REACH = Math.ceil(STREET_LIFE_SPACING.clusterRadius / CELL);
   const clusterR2 = STREET_LIFE_SPACING.clusterRadius * STREET_LIFE_SPACING.clusterRadius;
+  const solo2 = STREET_LIFE_SPACING.solo * STREET_LIFE_SPACING.solo;
+  const group2 = STREET_LIFE_SPACING.group * STREET_LIFE_SPACING.group;
+  /** @type {Map<string, Array<{x:number, z:number, groupId:string|null, near:number}>>} */
   const placed = new Map();
-  const claim = (x, z, radius) => {
+  const claim = (x, z, groupId) => {
     const cx = Math.floor(x / CELL);
     const cz = Math.floor(z / CELL);
-    let neighbours = 0;
+    const neighbours = [];
     for (let dz = -REACH; dz <= REACH; dz += 1) {
       for (let dx = -REACH; dx <= REACH; dx += 1) {
         const list = placed.get(`${cx + dx}:${cz + dz}`);
         if (!list) continue;
-        for (let i = 0; i < list.length; i += 2) {
-          const ddx = list[i] - x;
-          const ddz = list[i + 1] - z;
-          const d2 = ddx * ddx + ddz * ddz;
-          if (d2 < radius * radius) return false;
+        for (const other of list) {
+          const d2 = (other.x - x) * (other.x - x) + (other.z - z) * (other.z - z);
+          const together = Boolean(groupId) && other.groupId === groupId;
+          if (d2 < (together ? group2 : solo2)) return false;
           if (d2 < clusterR2) {
-            neighbours += 1;
-            if (neighbours > STREET_LIFE_SPACING.maxWithinCluster) return false;
+            if (other.near >= STREET_LIFE_SPACING.maxWithinCluster) return false;
+            neighbours.push(other);
+            if (neighbours.length > STREET_LIFE_SPACING.maxWithinCluster) return false;
           }
         }
       }
@@ -711,7 +725,8 @@ export function planStreetLifeAnchors(plan, {
       list = [];
       placed.set(key, list);
     }
-    list.push(x, z);
+    for (const other of neighbours) other.near += 1;
+    list.push({ x, z, groupId: groupId || null, near: neighbours.length });
     return true;
   };
 
@@ -781,10 +796,7 @@ export function planStreetLifeAnchors(plan, {
         const x = frame.x + frame.nx * u * frame.miter;
         const z = frame.z + frame.nz * u * frame.miter;
         if (occupancy && occupancy.blocked(x, z, FIGURE_RADIUS)) { rejected.blocked += 1; return false; }
-        if (!claim(x, z, groupId ? STREET_LIFE_SPACING.group : STREET_LIFE_SPACING.solo)) {
-          rejected.crowded += 1;
-          return false;
-        }
+        if (!claim(x, z, groupId)) { rejected.crowded += 1; return false; }
         const datum = heightAt(x, z) + options.roadLift;
         const y = sidewalkSurfaceY(datum, u, segment.half, options);
         // Facing.
@@ -1076,6 +1088,23 @@ function buildPoser() {
 // the pass
 // ---------------------------------------------------------------------------
 
+/**
+ * Sun elevation in degrees for the pass, from the context.
+ *
+ * `ctx.sunElevationDeg` if the renderer supplies it - it owns the real solar
+ * position and should - otherwise a plain day-arc from `ctx.hour`, which is the
+ * only clock this pass is guaranteed. The arc is deliberately crude: what it
+ * has to get right is the SIGN, because the contact blob's whole night
+ * behaviour turns on whether the sun is up.
+ */
+export function streetLifeSunElevationDeg(ctx) {
+  const supplied = ctx?.sunElevationDeg;
+  if (Number.isFinite(supplied)) return supplied;
+  const hour = Number.isFinite(ctx?.hour) ? ((ctx.hour % 24) + 24) % 24 : 12;
+  // Up at 06:00, down at 18:00, 64 degrees at the zenith.
+  return 64 * Math.sin((Math.PI * (hour - 6)) / 12);
+}
+
 function viewPosition(ctx, out) {
   const camera = ctx?.camera;
   if (camera && camera.isCamera) {
@@ -1189,7 +1218,10 @@ function createStreetLife() {
       map: shadowTexture,
       color: 0x080b0e,
       transparent: true,
-      opacity: CONTACT_SHADOW.baseOpacity,
+      // Density follows the sun, exactly as the walking crowd's does. A fixed
+      // opacity put a full daylight contact shadow under every scenery figure
+      // on the round-4 night card, where there is no sun to cast one.
+      opacity: CONTACT_SHADOW.baseOpacity * contactShadowSunTerm(streetLifeSunElevationDeg(ctx)),
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -1281,6 +1313,7 @@ function createStreetLife() {
       active: { near: [], mid: [] },
       activeParking: [],
       lens: streetLifeLensGuard(ctx?.camera),
+      sunElevationDeg: streetLifeSunElevationDeg(ctx),
       // Published, live, nearest-first. See `object.userData.streetLife`.
       nearAnchors: [],
       scratch: {
@@ -1425,6 +1458,10 @@ function createStreetLife() {
     const midRing = STREET_LIFE_RINGS[1];
     // Re-derived every re-plan so a FOV or aspect change is followed for free.
     const lens = streetLifeLensGuard(ctx?.camera, state.lens);
+    // The clock moves between re-plans; the blob follows it.
+    state.sunElevationDeg = streetLifeSunElevationDeg(ctx);
+    state.shadowMaterial.opacity = CONTACT_SHADOW.baseOpacity
+      * contactShadowSunTerm(state.sunElevationDeg);
     const candidates = [];
     let lensCulled = 0;
     let lensWithheld = 0;
@@ -1570,7 +1607,7 @@ function createStreetLife() {
         buildScale: figure.variation.buildScale,
         groundClearance: 0,
         distance: figure.distance,
-        sunElevationDeg: 45,
+        sunElevationDeg: state.sunElevationDeg,
       });
       const fade = clamp(blob.opacity / CONTACT_SHADOW.baseOpacity, 0, 1);
       if (fade <= 0.08) return;

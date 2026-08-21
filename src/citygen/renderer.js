@@ -2069,6 +2069,11 @@ export class CityRenderer {
       envMapIntensity: null,
       lightRig: null,
       textureReady: false,
+      // What the prefiltered probe actually baked, including the solar disc
+      // intensity and the cache fingerprint that separates one rig
+      // configuration from another. A flat probe and a probe with a sun in it
+      // are indistinguishable from `textureReady` alone.
+      probe: null,
     };
     this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy: null, ...detailMapCacheStats() };
     this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
@@ -2192,6 +2197,10 @@ export class CityRenderer {
       /** The live traffic simulation, READ-ONLY. Presentation mirrors it. */
       get traffic() { return renderer.activeTraffic || null; },
       get hour() { return renderer.timeOfDay; },
+      /** Real solar altitude in degrees; negative after dark. A pass that
+       *  shades contact must not infer this from the clock: the key is
+       *  reflected and lifted at night and the clock cannot tell you that. */
+      get sunElevationDeg() { return renderer.solarAltitudeDeg ?? null; },
       get weather() { return renderer.envWeather; },
       get day() { return renderer.day; },
       /** Keep a geometry on the renderer's disposal ledger. */
@@ -2386,6 +2395,9 @@ export class CityRenderer {
       envMapIntensity: table,
       lightRig: model.lightRig ? { ...model.lightRig.scales } : null,
       textureReady: Boolean(texture),
+      probe: (() => {
+        try { return this.envRig?.stats ? this.envRig.stats() : null; } catch { return null; }
+      })(),
     };
     return graded;
   }
@@ -5012,7 +5024,11 @@ export class CityRenderer {
     // WebGPU currently evaluates every PointLight against the scene. Keep all
     // authored emissive fixtures, but reserve real illumination for a small
     // camera-local pool so city density does not multiply frame cost.
-    const poolSize = Math.min(3, this.localLightCandidates.length);
+    // Three real lights cannot cover a street lamp, a shopfront run and a
+    // vehicle at once, and the night card is scored on exactly that street.
+    // Six is a deliberate, measurable step: the capture records per-card frame
+    // telemetry, so the next round prices it instead of leaving it inferred.
+    const poolSize = Math.min(6, this.localLightCandidates.length);
     const group = new THREE.Group();
     group.name = 'local-light-pool';
     for (let i = 0; i < poolSize; i += 1) {
@@ -7559,6 +7575,20 @@ export class CityRenderer {
       group.add(awning);
       lastAwning = awning;
       count += 1;
+      // A lit shopfront is the brightest thing on a night street and it
+      // currently illuminates nothing: the glazing is emissive only, and the
+      // camera-local pool's only candidates are street lamps. Measured on the
+      // night card, a figure 4 m from glazing reading luma 119 sits at luma
+      // 41.5 - darker than the pavement under it.
+      this.localLightCandidates.push({
+        x: awning.position.x,
+        y: baseY - 0.9,
+        z: awning.position.z,
+        color: 0xffe2b0,
+        intensity: 1.6,
+        distance: 16,
+        decay: 1.8,
+      });
       if (neonSigns.length < 400) {
         const neonColors = ['#ff5fa2', '#35d7d7', '#ffc43d', '#8dff5f', '#c08fff', '#ff7a45'];
         const signLength = Math.min(9, Math.max(3, face === 'x' ? maxZ - minZ : maxX - minX) * 0.56);

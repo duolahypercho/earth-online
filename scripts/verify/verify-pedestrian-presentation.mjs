@@ -52,6 +52,7 @@ import {
   BAND_HYSTERESIS,
   CONTACT_SHADOW,
   CROWD_BUDGET,
+  BODY_PARTS,
   GAIT,
   LEG_SEGMENTS,
   LOCOMOTION_BLEND_RAMP,
@@ -848,13 +849,61 @@ section('rig geometry, palette slots and triangle cost', () => {
     slots.add(slot);
   }
   check(slots.size === PALETTE_SLOTS.length, `all ${PALETTE_SLOTS.length} palette slots are used, got ${slots.size}`);
-  // The skinned band is the <= 28 m band. It carries hands, a jaw, a brow, a
-  // nose, eyes, shoulder caps and a joint filler at every articulating joint,
-  // because a figure two metres from the camera made of a cube head and bare
-  // cylinder limbs caps the character dimension however good the grounding is.
-  // 1 600 is the ceiling for that: 24 of them is 35 k triangles.
-  check(triangles < 1600, `skinned body triangle budget: ${triangles}`);
+  // The skinned band is the <= 28 m band, and it is the one a reviewer walks up
+  // to. It carries a lofted torso with a real shoulder line, limbs whose section
+  // changes along their length, a head with a jaw, a brow and a nose, hands with
+  // a thumb, a collar, a cuff, a shirt hem, and a joint filler at every
+  // articulating joint - because a figure two metres from the camera made of a
+  // cube head and bare cylinder limbs caps the character dimension however good
+  // the grounding is.
+  //
+  // The ceiling is stated from the band cap, not from taste: `CROWD_BUDGET`
+  // draws at most 24 skinned actors, so 2 800 is 67 k triangles for the whole
+  // skinned band, against a frame that already draws 1.5 M. The number that
+  // matters is per-figure, because it is per-figure that a regression would
+  // creep.
+  check(triangles < 2800, `skinned body triangle budget: ${triangles} x ${CROWD_BUDGET.skinned} actors`);
   check(body.attributes.color, 'the body carries baked cavity shading in its colour attribute');
+
+  // Lofted parts are hand-wound: two triangles per quad plus two triangle fans
+  // for the end caps. A reversed fan is invisible in a wireframe and renders as
+  // a hole in a frame, so the winding is checked NUMERICALLY, on the geometry
+  // the pass actually ships.
+  //
+  // The test is the signed volume. For a closed surface wound outward,
+  // `sum(a . (b x c)) / 6` is the enclosed volume and is POSITIVE; flip any
+  // face and the sum drops by twice that face's contribution, flip a cap and it
+  // drops visibly, flip the whole solid and it goes negative. It needs no
+  // knowledge of how the part was built, and it doubles as a sanity check that
+  // the figure is a person-sized amount of solid rather than a collapsed one.
+  {
+    const lofts = BODY_PARTS.filter((part) => part.kind === 'loft');
+    check(lofts.length > 0, 'the near tier is built from lofted solids');
+    const chunks = buildInstancedPartGeometries({ detail: 'near', radialSegments: 7 });
+    let negative = 0;
+    let volume = 0;
+    for (const entry of chunks.values()) {
+      const position = entry.geometry.getAttribute('position');
+      let signed = 0;
+      for (let i = 0; i < position.count; i += 3) {
+        const ax = position.getX(i); const ay = position.getY(i); const az = position.getZ(i);
+        const bx = position.getX(i + 1); const by = position.getY(i + 1); const bz = position.getZ(i + 1);
+        const cx = position.getX(i + 2); const cy = position.getY(i + 2); const cz = position.getZ(i + 2);
+        signed += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+      }
+      // Chunks are baked in BONE-local space, so a chunk whose solid does not
+      // enclose its bone origin (a hand, a foot) can legitimately sum small;
+      // what is never legitimate is a negative sum, which is an inside-out
+      // solid.
+      if (signed < 0) negative += 1;
+      volume += signed / 6;
+    }
+    check(negative === 0, `every near-tier chunk is wound outward (${negative} of ${chunks.size} inside out)`);
+    // A 1.75 m adult displaces roughly 0.07 m^3. The chunks are bone-local, so
+    // this is not the figure's true volume - it is a stable, sensitive number
+    // that moves the moment a solid collapses or inverts.
+    check(volume > 0.02 && volume < 0.25, `the near-tier body encloses ${volume.toFixed(4)} m^3 of solid`);
+  }
   let shadeMin = 1;
   let shadeMax = 0;
   for (const v of body.attributes.color.array) {
