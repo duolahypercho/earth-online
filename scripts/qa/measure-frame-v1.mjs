@@ -123,7 +123,40 @@ if (process.argv[2] === '--diff') {
     delta.data[j] = delta.data[j + 1] = delta.data[j + 2] = Math.min(255, Math.round(d));
     j += 3; sum += d; if (d > max) max = d; if (d > 4) changed += 1;
   }
-  const regions = process.argv.slice(5).map((spec) => spec.split(',').map(Number));
+  // Write the difference image when asked: seeing WHERE the key landed is
+  // usually the answer, and a number cannot show a shadow's shape.
+  const outIndex = process.argv.indexOf('--out');
+  if (outIndex > 0 && process.argv[outIndex + 1]) {
+    const { deflateSync } = await import('node:zlib');
+    const w = delta.width; const h = delta.height;
+    const raw = Buffer.alloc(h * (w * 3 + 1));
+    for (let y = 0; y < h; y += 1) {
+      raw[y * (w * 3 + 1)] = 0;
+      delta.data.copy(raw, y * (w * 3 + 1) + 1, y * w * 3, (y + 1) * w * 3);
+    }
+    const chunk = (type, body) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(body.length, 0);
+      head.write(type, 4, 'ascii');
+      const crcBuf = Buffer.concat([Buffer.from(type, 'ascii'), body]);
+      let crc = ~0;
+      for (let i = 0; i < crcBuf.length; i += 1) {
+        crc ^= crcBuf[i];
+        for (let b = 0; b < 8; b += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+      }
+      const tail = Buffer.alloc(4); tail.writeUInt32BE((~crc) >>> 0, 0);
+      return Buffer.concat([head, body, tail]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(process.argv[outIndex + 1], Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+    ]));
+  }
+  const regions = process.argv.slice(5).filter((a) => a.includes(',')).map((spec) => spec.split(',').map(Number));
   console.log(JSON.stringify({
     a: process.argv[3], b: process.argv[4],
     meanDelta: +(sum / (a.width * a.height)).toFixed(2),
