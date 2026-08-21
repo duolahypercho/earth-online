@@ -37,7 +37,9 @@ import {
   planSunShadowCascades,
   recommendSingleCascade,
 } from '../../src/render/sun-shadow-cascade.js';
-import { CANONICAL_SITE, computeSunDirection } from '../../src/render/environment-ibl.js';
+import {
+  CANONICAL_SITE, computeSkyModel, computeSunDirection, computeSunShadowCamera,
+} from '../../src/render/environment-ibl.js';
 import { MIN_THICKNESS_TEXELS, casterBracket, contactShadowLeakMetres } from '../../src/render/shadow-casters.js';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -482,6 +484,122 @@ assert(twoBudget.texelBudgetRatio === 2,
   `the rejected two-cascade rig is only ${twoBudget.texelBudgetRatio}x the texels but TWO shadow passes, `
   + 'two caster traversals and a second directional light in every lit fragment - '
   + 'a worse trade than the single cascade even before the 50% light leak');
+
+section('12. the key is the sun, or it is nothing');
+
+// Round 4's night card shipped a directional key at intensity 0.2997 with
+// `castShadow: true`, and its shadow fit published `sunAltitudeDeg: 52.0`, at
+// an hour when `computeSkyModel` puts the sun 28.12 deg BELOW the horizon.
+// `measure-frame-v1 --ratio` on that pair classifies 421964 pixels as reached
+// by that key. Nothing in the fit was wrong: it was handed a direction that
+// had been reflected to the anti-solar azimuth and lifted to a fixed 52 deg,
+// and it reported the altitude of what it was given. The name lied, the
+// envelope let the key back in below the horizon, and the frame paid for both.
+//
+// These are the assertions that stop it recurring. They are model-side: the
+// model has always said the right thing (key illuminance 0.0000,
+// relativeIrradiance 0, castShadow false, key/fill target 0 - four independent
+// outputs), so what was missing was a single number the integrator applies and
+// a fit that refuses to pretend.
+{
+  const belowHorizonWithKey = [];
+  const belowHorizonCasting = [];
+  let daylightSuppressed = 0;
+  for (let hour = 0; hour < 24; hour += 0.25) {
+    const model = computeSkyModel({ hour, weather: 'clear' });
+    const key = model.lightRig.key;
+    if (model.sun.altitudeDeg <= 0) {
+      if (key.envelope !== 0) belowHorizonWithKey.push(hour);
+      if (key.castShadow !== false || model.lightRig.shadow.castShadow !== false) {
+        belowHorizonCasting.push(hour);
+      }
+    } else if (model.sun.altitudeDeg >= 4 && key.envelope < 1) {
+      daylightSuppressed += 1;
+    }
+  }
+  assert(belowHorizonWithKey.length === 0,
+    'across all 96 quarter-hours of the day, every hour with the sun at or below the horizon '
+    + 'publishes key.envelope exactly 0: there is no multiplier by which a directional key can '
+    + 'survive sunset');
+  assert(belowHorizonCasting.length === 0,
+    'and none of them asks for a shadow map, because a shadow map records where the sun cannot '
+    + 'reach and below the horizon there is no sun');
+  assert(daylightSuppressed === 0,
+    'every hour with the sun at or above 4 deg keeps the full key, so no daylight card loses a '
+    + 'single step to this envelope - including the golden-hour card at +6.61 deg');
+
+  const golden = computeSkyModel({ hour: 18.5, weather: 'clear' });
+  assert(golden.lightRig.key.envelope === 1,
+    `the golden-hour card at ${golden.sun.altitudeDeg.toFixed(2)} deg is untouched (envelope 1)`);
+  const night = computeSkyModel({ hour: 21.5, weather: 'clear' });
+  assert(night.lightRig.key.envelope === 0 && night.lightRig.key.castShadow === false,
+    `the night card at ${night.sun.altitudeDeg.toFixed(2)} deg asks for envelope 0 and no shadow`);
+  // Monotone in altitude, so it cannot come back below the horizon the way
+  // `(2 * daylight - 1) ** 2` did.
+  let previousEnvelope = 0;
+  let envelopeMonotone = true;
+  for (let altitude = -40; altitude <= 60; altitude += 0.5) {
+    const value = altitude <= 0 ? 0 : Math.min(1, Math.max(0, (() => {
+      const t = Math.min(1, Math.max(0, altitude / 4));
+      return t * t * (3 - 2 * t);
+    })()));
+    if (value < previousEnvelope - 1e-12) envelopeMonotone = false;
+    previousEnvelope = value;
+  }
+  assert(envelopeMonotone,
+    'the envelope is monotone in solar altitude over -40..+60 deg: unlike a squared daylight '
+    + 'term it has no second branch that returns to full strength on the far side of the horizon');
+
+  // --- the fit must not publish a key altitude as a solar altitude.
+  const nightPose = POSES.find((pose) => pose.id === '06-night-street') || POSES[0];
+  const nightKeyDirection = (() => {
+    const solar = computeSunDirection(21.5, CANONICAL_SITE);
+    const horizontal = Math.hypot(solar.x, solar.z);
+    const lift = (52 * Math.PI) / 180;
+    return {
+      x: (-solar.x / horizontal) * Math.cos(lift),
+      y: Math.sin(lift),
+      z: (-solar.z / horizontal) * Math.cos(lift),
+    };
+  })();
+  const honest = computeSunShadowCamera({
+    fovDeg: nightPose.fovDeg,
+    aspect: ASPECT,
+    cameraPosition: nightPose.eye,
+    cameraDirection: nightPose.forward,
+    sunDirection: nightKeyDirection,
+    mapSize: 2048,
+    shadowDistance: 220,
+    solarAltitudeDeg: night.sun.altitudeDeg,
+  });
+  assert(Math.abs(honest.keyAltitudeDeg - 52) < 0.05,
+    `handed the renderer's night key the fit reports keyAltitudeDeg ${honest.keyAltitudeDeg.toFixed(2)}, `
+    + 'which is what it was given');
+  assert(honest.solarAltitudeDeg === night.sun.altitudeDeg && honest.keyIsSun === false,
+    'and reports the model\'s own solar altitude alongside it, flagged as not-the-sun, so no '
+    + 'capture report can publish 52 deg as a solar altitude again');
+  assert(honest.castShadow === false,
+    'castShadow is forced false because the SUN is down, whatever direction the key was pointed');
+  assert(honest.warnings.some((w) => w.includes('describes the KEY')),
+    'and the fit says so in its warnings rather than leaving the reader to notice');
+
+  // Backwards compatible: a caller that does not supply the truth gets exactly
+  // the behaviour it had.
+  const legacy = computeSunShadowCamera({
+    fovDeg: nightPose.fovDeg,
+    aspect: ASPECT,
+    cameraPosition: nightPose.eye,
+    cameraDirection: nightPose.forward,
+    sunDirection: nightKeyDirection,
+    mapSize: 2048,
+    shadowDistance: 220,
+  });
+  assert(legacy.castShadow === true && legacy.keyIsSun === true && legacy.solarAltitudeDeg === null,
+    'a caller that supplies no solar altitude sees the previous contract unchanged');
+
+  notes.push('night key: model says envelope 0, castShadow false, key illuminance 0.0000 at 21:30; '
+    + 'round 4 shipped intensity 0.2997 with castShadow true at a fit-reported 52.0 deg');
+}
 
 if (notes.length > 0) {
   console.log('\nmeasured:');

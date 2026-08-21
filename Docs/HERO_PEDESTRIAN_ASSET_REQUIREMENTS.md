@@ -1,22 +1,33 @@
 # Hero pedestrian asset acceptance contract
 
-Status: bundled candidates rejected for civilian hero use
+Status: bundled candidates rejected for civilian hero use; the rejected
+binaries have been removed from the tree
 
 ## Bundled-asset gate result
 
-The current bundled GLBs are technically usable skinned characters, but neither
-is an acceptable visual upgrade for near/midground San Francisco pedestrians.
-They must not be integrated as civilian hero actors.
+Two skinned-character GLBs were formerly bundled under `public/assets/`. Both
+were technically usable skinned characters, but neither was an acceptable visual
+upgrade for near/midground San Francisco pedestrians. They were rejected as
+civilian hero actors, no module ever imported them, and the binaries have since
+been deleted. This record is retained so the same class of asset is not
+re-adopted; the filenames are deliberately not carried forward.
 
-| Asset | Technical inventory | Rejection reason |
+| Rejected candidate | Technical inventory | Rejection reason |
 | --- | --- | --- |
-| `public/assets/xbot.glb` | Two skinned meshes, 67-joint Mixamo-style skeleton, approximately 28,374 vertices, seven clips (`agree`, `headShake`, `idle`, `run`, `sad_pose`, `sneak_pose`, `walk`). Bind-pose bounds are approximately 1.81 m high. | Mesh and material names identify exposed `Beta_Joints`/`Beta_Surface`; the contrasting articulated body reads as a robot/mannequin, not clothing over a human body. Recoloring cannot create civilian anatomy or clothing silhouette. |
-| `public/assets/soldier.glb` | Body plus visor, 49-joint skin, approximately 7,434 vertices, four clips (`Idle`, `Run`, `TPose`, `Walk`). | The embedded diffuse texture and normal map depict distressed armor, rigid plates, visor, tactical undersuit, and military/sci-fi equipment. Muted tinting would still read as an armored soldier. |
+| A — exposed-joint mannequin | Two skinned meshes, 67-joint retargeting-service skeleton, approximately 28,374 vertices, seven clips (`agree`, `headShake`, `idle`, `run`, `sad_pose`, `sneak_pose`, `walk`). Bind-pose bounds are approximately 1.81 m high. | Mesh and material names identified bare joint/surface shells; the contrasting articulated body read as a robot/mannequin, not clothing over a human body. Recoloring cannot create civilian anatomy or clothing silhouette. |
+| B — armored tactical figure | Body plus visor, 49-joint skin, approximately 7,434 vertices, four clips (`Idle`, `Run`, `TPose`, `Walk`). | The embedded diffuse texture and normal map depicted distressed armor, rigid plates, visor, tactical undersuit, and military/sci-fi equipment. Muted tinting would still read as an armored combatant. |
 
-Both files contain usable locomotion clips, but animation quality cannot make
+Both files contained usable locomotion clips, but animation quality cannot make
 the wrong character design appropriate. Shipping either model as a commuter,
-barista, tourist, cleaner, or courier would reduce visual credibility relative
-to the existing procedural civilian silhouettes.
+barista, tourist, cleaner, or courier would have reduced visual credibility
+relative to the existing procedural civilian silhouettes. Do not re-import an
+exposed-joint mannequin or an armored/tactical figure as a civilian actor.
+
+A third unreferenced binary — a demo road-vehicle GLB whose filename was a
+third-party automotive marque — was removed in the same pass. It was imported by
+no module either, and its filename breached the reference policy in
+[CLAUDE.md](../CLAUDE.md). Vehicles ship from `src/vehicles/`; do not reintroduce
+a third-party-branded vehicle model.
 
 ## Required replacement license
 

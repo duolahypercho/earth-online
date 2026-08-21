@@ -6,9 +6,17 @@
 //   node scripts/qa/capture-quality-cards-v1.mjs
 //
 // Env: SF_QA_URL, SF_QA_OUT, SF_QA_CARDS (comma list), SF_QA_W, SF_QA_H,
-//      SF_QA_SETTLE_MS, SF_QA_SHOT_MS
+//      SF_QA_SETTLE_MS (weather rig only), SF_QA_SHOT_MS, SF_QA_SETTLE_FRAMES,
+//      SF_QA_SIM_WARM_S, SF_QA_SIM_CARD_S, SF_QA_SIM_STEP_S, SF_QA_PREWARM=on,
+//      SF_QA_COVER_COLS, SF_QA_COVER_ROWS, SF_QA_TRAVERSAL_FRAMES,
+//      SF_QA_TRAVERSAL_SPAN_M, SF_QA_TRAVERSAL_SPEED
+//
+// Frame budget: this harness draws frames only when it asks for them. The
+// animation loop keeps ticking (the world simulates, the compositor stays
+// live) but `renderFrame` is gated behind `window.__QA_RENDER__`, so a round
+// pays for exactly the frames it captures.
 import { chromium } from 'playwright';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const URL_BASE = process.env.SF_QA_URL || 'http://127.0.0.1:5178/';
@@ -19,9 +27,41 @@ const OUT = process.env.SF_QA_OUT || '.qa-quality-cards';
 const PROTOCOL = process.env.SF_QA_PROTOCOL === '1';
 const W = Number(process.env.SF_QA_W || (PROTOCOL ? 2560 : 1280));
 const H = Number(process.env.SF_QA_H || (PROTOCOL ? 1440 : 720));
-const SETTLE = Number(process.env.SF_QA_SETTLE_MS || 2500);
+// Wall-clock settles are gone from the card path: a fixed millisecond wait is
+// not evidence that anything was drawn (see `renderFrames`). This remains only
+// for the asynchronous weather rig rebuild, which is not a frame.
+const WEATHER_SETTLE = Number(process.env.SF_QA_SETTLE_MS || 1500);
 const SHOT_MS = Number(process.env.SF_QA_SHOT_MS || 600000);
 const BOOT_MS = Number(process.env.SF_QA_BOOT_MS || 300000);
+// One rendered frame costs minutes on this software rasterizer, so the round
+// pays for frames explicitly: the animation loop is stopped from DRAWING for
+// everything that is not a card, and a card waits for a counted number of
+// RENDERED frames instead of a wall-clock guess.
+const SETTLE_FRAMES = Math.max(1, Number(process.env.SF_QA_SETTLE_FRAMES || 1));
+const FRAME_MS = Number(process.env.SF_QA_FRAME_MS || 600000);
+// Simulated seconds to advance before the first card, and before each pose.
+// The loop clamps its delta to 0.05 s, so at ~161 s per frame the world would
+// otherwise be frozen at the boot instant for the whole round.
+const SIM_WARM_S = Number(process.env.SF_QA_SIM_WARM_S ?? 20);
+const SIM_CARD_S = Number(process.env.SF_QA_SIM_CARD_S ?? 4);
+// The character card needs a walker to actually reach the kerb it is framed
+// on. Stepping is CPU-only, so simulated time is cheap; frames are not.
+const SIM_CHARACTER_S = Number(process.env.SF_QA_SIM_CHARACTER_S ?? 15);
+const SIM_CHARACTER_TRIES = Math.max(1, Number(process.env.SF_QA_SIM_CHARACTER_TRIES || 6));
+const SIM_STEP_S = Number(process.env.SF_QA_SIM_STEP_S || 1 / 60);
+// Ground-hole tripwire grid. Four consecutive rounds reported 0.0% holes, so
+// this is a regression signal, not a discovery tool; 12x6 keeps it cheap.
+const COVER_COLS = Math.max(2, Number(process.env.SF_QA_COVER_COLS || 12));
+const COVER_ROWS = Math.max(2, Number(process.env.SF_QA_COVER_ROWS || 6));
+// Traversal card: a stepped strip along a path that crosses a runtime tile
+// boundary. Each frame is a full render, so the count is explicit and small.
+const TRAVERSAL_FRAMES = Math.max(2, Number(process.env.SF_QA_TRAVERSAL_FRAMES || 4));
+const TRAVERSAL_SPAN_M = Number(process.env.SF_QA_TRAVERSAL_SPAN_M || 210);
+const TRAVERSAL_SPEED_MS = Number(process.env.SF_QA_TRAVERSAL_SPEED || 1.45);
+// The lighting warm-up exists to smooth the day/night pipeline transition. A
+// capture pins the clock per card and never experiences that transition, so it
+// is skipped by default here and only here. SF_QA_PREWARM=on restores it.
+const SKIP_PREWARM = process.env.SF_QA_PREWARM !== 'on';
 
 // Eye level in metres. The runtime is 1 unit = 1 metre.
 const EYE = 1.65;
@@ -58,6 +98,11 @@ const browser = await chromium.launch({
   args: ['--disable-dev-shm-usage', '--enable-unsafe-swiftshader', '--use-angle=swiftshader'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
+// Read once, before any module runs: `prewarmLightingPipelines` checks this
+// probe at the end of every buildCity.
+if (SKIP_PREWARM) {
+  await page.addInitScript(() => { window.__QA_SKIP_PREWARM__ = true; });
+}
 const consoleErrors = [];
 page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 300)));
 page.on('console', (m) => {
@@ -91,6 +136,12 @@ async function bootWorld() {
     const api = window.__CITYGEN__;
     return typeof api?.getState === 'function' && (api.getCity()?.buildings?.length || 0) > 50;
   }, null, { timeout: BOOT_MS });
+  // Pin BEFORE the animation loop starts. `state.city` is assigned at the top
+  // of `buildCity`, so the wait above returns while the renderer is still
+  // building and `setAnimationLoop` has not been called yet. Installing here is
+  // what makes the round pay for zero unrequested frames; installing after the
+  // state reads (where this used to live) leaked whole frames at ~161 s each.
+  report.pin = await installPin();
   // The city object exists before TrafficSim is constructed, so reading runtime
   // state here reported pedestrians: 0 on a world that actually spawns 48 of
   // them. Wait for the simulation too, or every report understates the city.
@@ -198,12 +249,33 @@ async function hideInterface() {
 }
 await hideInterface();
 
+// Let the world live before the first card. The loop clamps its delta to
+// 0.05 s and a frame costs minutes, so without this every card of every round
+// samples the same boot instant: cars parked mid-lane, nobody having taken a
+// step. This runs the canonical fixed-step driver and draws nothing.
+report.simWarm = await stepSimulation(SIM_WARM_S, 'boot-warm');
+if (report.simWarm) {
+  console.log(`simulation warmed ${report.simWarm.simulatedSeconds}s in ${(report.simWarm.wallMs / 1000).toFixed(1)}s wall `
+    + `(${report.simWarm.steps} steps of ${report.simWarm.stepSeconds.toFixed(4)}s)`);
+}
+
 // The runtime re-frames the camera every frame in orbit mode and advances
 // state.clock at 0.6h per second, so a card would otherwise drift through half
 // a day mid-exposure. Wrap renderer.update to pin both for the duration.
+//
+// The pin also owns WHEN THE WORLD DRAWS. The animation loop keeps rendering
+// throughout every `page.evaluate` this harness makes, so all harness work was
+// paid twice: the renderer main thread idled while the GPU process burned
+// cores on frames nobody looks at. `renderFrame` is wrapped behind
+// `__QA_RENDER__`, false by default, and `__QA_FRAMES__` counts the frames
+// that were actually drawn. The rAF loop itself keeps ticking - the world
+// keeps simulating and the compositor stays live - it just stops drawing.
 async function installPin() {
   return page.evaluate(() => {
     const r = window.__CITYGEN__.getRenderer();
+    if (window.__QA_RENDER__ === undefined) window.__QA_RENDER__ = false;
+    if (window.__QA_FRAMES__ === undefined) window.__QA_FRAMES__ = 0;
+    if (!window.__QA_FRAME_MS__) window.__QA_FRAME_MS__ = [];
     if (r.__qaPinned) return 'already';
     const origUpdate = r.update.bind(r);
     r.update = (delta, opts) => {
@@ -217,15 +289,133 @@ async function installPin() {
       }
       return out;
     };
+    const origRender = r.renderFrame.bind(r);
+    r.renderFrame = () => {
+      if (!window.__QA_RENDER__) return undefined;
+      const startedAt = performance.now();
+      const out = origRender();
+      // Main-thread cost of issuing the frame. The GPU cost is measured by the
+      // harness as wall-clock between arming the flag and the counter moving.
+      window.__QA_FRAME_MS__.push(+(performance.now() - startedAt).toFixed(1));
+      if (window.__QA_FRAME_MS__.length > 64) window.__QA_FRAME_MS__.shift();
+      window.__QA_FRAMES__ = (window.__QA_FRAMES__ | 0) + 1;
+      // Snapshot the draw counters now: the next frame resets them, and a
+      // counter read after the world stops drawing describes nothing.
+      try {
+        const info = r.renderer?.info;
+        if (info) {
+          window.__QA_RENDER_INFO__ = {
+            render: info.render ? { ...info.render } : null,
+            memory: info.memory ? { ...info.memory } : null,
+          };
+        }
+      } catch { /* diagnostics only */ }
+      // Stop at exactly the requested number of frames. The harness polls at
+      // second granularity, so without this the loop started a second frame
+      // while the first was still being detected - and the screenshot then had
+      // to wait on that second frame's GPU work as well.
+      if ((window.__QA_FRAME_BUDGET__ | 0) > 0) {
+        window.__QA_FRAME_BUDGET__ = (window.__QA_FRAME_BUDGET__ | 0) - 1;
+        if ((window.__QA_FRAME_BUDGET__ | 0) <= 0) window.__QA_RENDER__ = false;
+      }
+      return out;
+    };
     r.__qaPinned = true;
     return 'installed';
   });
 }
 
+/**
+ * Draw a counted number of frames and stop again.
+ *
+ * This replaces the wall-clock settle. A fixed millisecond wait on a machine
+ * where one frame costs 161-197 s is not evidence that anything was drawn;
+ * a frame counter advancing by a known number is.
+ */
+async function renderFrames(count = SETTLE_FRAMES) {
+  const startedAt = Date.now();
+  const base = await page.evaluate((need) => {
+    window.__QA_FRAME_MS__ = [];
+    window.__QA_FRAME_BUDGET__ = need;
+    window.__QA_RENDER__ = true;
+    return window.__QA_FRAMES__ | 0;
+  }, count);
+  let timedOut = false;
+  try {
+    await page.waitForFunction(
+      ({ base: b, need }) => (window.__QA_FRAMES__ | 0) >= b + need,
+      { base, need: count },
+      { timeout: FRAME_MS, polling: 1000 },
+    );
+  } catch (error) {
+    timedOut = true;
+    consoleErrors.push(`renderFrames timed out after ${Date.now() - startedAt} ms`);
+  }
+  const detail = await page.evaluate((b) => ({
+    drawn: (window.__QA_FRAMES__ | 0) - b,
+    cpuFrameMs: (window.__QA_FRAME_MS__ || []).slice(-8),
+  }), base);
+  return { requested: count, ...detail, wallMs: Date.now() - startedAt, timedOut };
+}
+
+/**
+ * Draw the card, stop drawing, then take the screenshot.
+ *
+ * With the loop drawing continuously, `page.screenshot` queued behind in-flight
+ * frames and measured 161-197 s per card. Once the world holds still the
+ * compositor already owns the last presented frame, so the screenshot is a
+ * copy. The frame that matters is paid for exactly once, above.
+ *
+ * A stale/blank compositor surface would be silent false evidence, so the PNG
+ * size is checked: a black or empty frame compresses to a few KB. If it looks
+ * empty, re-shoot once with the loop drawing and record that it happened.
+ */
+async function captureFrame(file, { frames = SETTLE_FRAMES } = {}) {
+  const out = { file };
+  out.render = await renderFrames(frames);
+  await stopRendering();
+  let started = Date.now();
+  await page.screenshot({ path: file, timeout: SHOT_MS });
+  out.shotMs = Date.now() - started;
+  out.bytes = (await stat(file)).size;
+  if (out.bytes < 20000) {
+    out.emptyFrameSuspected = out.bytes;
+    consoleErrors.push(`${path.basename(file)} was ${out.bytes} B; re-shooting with the loop drawing`);
+    const second = await renderFrames(1);
+    started = Date.now();
+    await page.screenshot({ path: file, timeout: SHOT_MS });
+    await stopRendering();
+    out.reshot = { render: second, shotMs: Date.now() - started, bytes: (await stat(file)).size };
+    out.bytes = out.reshot.bytes;
+  }
+  return out;
+}
+
+/** Stop drawing. Simulation, rAF and the compositor keep running. */
+async function stopRendering() {
+  await page.evaluate(() => { window.__QA_RENDER__ = false; }).catch(() => {});
+}
+
+/**
+ * Advance the world by simulated seconds without drawing a frame.
+ * `stepSimulation` runs the canonical fixed-step driver; it is deterministic
+ * and it does not let presentation write simulation state.
+ */
+async function stepSimulation(seconds, label) {
+  if (!(seconds > 0)) return null;
+  const result = await evaluateInWorld(({ s, step }) => {
+    const api = window.__CITYGEN__;
+    if (typeof api.stepSimulation !== 'function') return { ok: false, reason: 'no stepSimulation hook' };
+    return api.stepSimulation(s, { step });
+  }, { s: seconds, step: SIM_STEP_S });
+  if (result && result.ok === false) consoleErrors.push(`stepSimulation(${label}): ${result.reason}`);
+  return result ? { label, ...result } : null;
+}
+
 // Place the camera in world metres. Returns what it actually chose so the
 // manifest records the real pose, not the requested one.
 async function placeCamera(pose) {
-  return page.evaluate(({ pose, EYE }) => {
+  return page.evaluate(({ pose, EYE, traversal }) => {
     const api = window.__CITYGEN__;
     const r = api.getRenderer();
     const city = api.getCity();
@@ -334,6 +524,37 @@ async function placeCamera(pose) {
         // No shoreline in the loaded window: report honestly instead of faking it.
         return { ok: false, reason: 'no Embarcadero/water in loaded window', water: (city.water || []).length };
       }
+    } else if (pose === 'traversal') {
+      // The gate asks for a clip "crossing a tile boundary". The runtime's
+      // streaming tile is the 140 m world-partition cell that gates street
+      // life, portals and parked cars (BISTRO/PORTAL/PARKED_CAR_PARTITION_CELL_SIZE
+      // in the renderer), so a traversal crosses one of those cell lines.
+      const tile = traversal.tileM;
+      const cellKey = (x, z) => `${Math.floor(x / tile)},${Math.floor(z / tile)}`;
+      const walkable = segs.filter((sg) => !['footway', 'cycleway', 'pedestrian', 'service', 'motorway'].includes(sg.highway)
+        && segLen(sg) >= 90);
+      const pool = (walkable.length ? walkable : segs).map((sg) => {
+        // Count cell changes along the polyline, sampled at 5 m: a two-point
+        // segment can cross a cell line without either endpoint reporting it.
+        let crossings = 0;
+        let previous = null;
+        for (let i = 1; i < sg.points.length; i += 1) {
+          const p0 = sg.points[i - 1];
+          const p1 = sg.points[i];
+          const length = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+          const steps = Math.max(1, Math.ceil(length / 5));
+          for (let k = 0; k <= steps; k += 1) {
+            const t = k / steps;
+            const key = cellKey(p0.x + (p1.x - p0.x) * t, p0.z + (p1.z - p0.z) * t);
+            if (previous !== null && key !== previous) crossings += 1;
+            previous = key;
+          }
+        }
+        return { sg, length: segLen(sg), crossings };
+      });
+      pool.sort((left, right) => (right.crossings - left.crossings) || (right.length - left.length));
+      chosen = pool[0]?.sg || longest(segs);
+      note = `tile=${tile}m partition cells; crossings=${pool[0]?.crossings ?? 0}; length=${(pool[0]?.length || 0).toFixed(0)}m`;
     } else if (pose === 'intersection') {
       const withSig = (city.intersections || []).filter((i) => i.position);
       if (!withSig.length) return { ok: false, reason: 'no intersections' };
@@ -397,6 +618,7 @@ async function placeCamera(pose) {
     const walk = halfRoad + Math.max(1.2, (chosen.sidewalkW || 2) * 0.55);
 
     let eye; let target; let eyeLift = EYE;
+    let traversalPlan = null;
     if (pose === 'intersection') {
       const f = chosen.__focus;
       eye = { x: f.x - ux * 22 + nx * walk, z: f.z - uz * 22 + nz * walk };
@@ -406,20 +628,59 @@ async function placeCamera(pose) {
       // runtime has no player avatar, so this frames the nearest simulated
       // pedestrian to the chosen kerb - and refuses if there is nobody there,
       // rather than shooting an empty pavement and calling it a character card.
-      const stand = { x: a.x + nx * (halfRoad + 0.6), z: a.z + nz * (halfRoad + 0.6) };
+      // "nearest none m" with 348 agents on the record is not a crowd problem,
+      // it is arithmetic: one non-finite term makes every distance NaN, NaN is
+      // never `< bestDistance`, and the card reports an empty street. Guard the
+      // kerb point, skip non-finite agents, and say WHICH input was bad instead
+      // of blaming the crowd.
+      const kerb = { x: a.x + nx * (halfRoad + 0.6), z: a.z + nz * (halfRoad + 0.6) };
+      const stand = Number.isFinite(kerb.x) && Number.isFinite(kerb.z) ? kerb : { x: a.x, z: a.z };
+      if (!Number.isFinite(stand.x) || !Number.isFinite(stand.z)) {
+        return {
+          ok: false,
+          reason: 'kerb point is not finite',
+          detail: { a, nx, nz, halfRoad, width: chosen.width ?? null, sidewalkW: chosen.sidewalkW ?? null },
+        };
+      }
       const traffic = api.getTraffic?.();
       const crowd = typeof traffic?.presentationAgents === 'function'
         ? traffic.presentationAgents()
         : (traffic?.pedestrians || []);
       let best = null; let bestDistance = Infinity;
+      let positioned = 0;
+      let unpositionedSample = null;
       for (const agent of crowd) {
         const position = agentPosition(agent);
-        if (!position) continue;
+        if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) {
+          if (!unpositionedSample && agent) {
+            unpositionedSample = {
+              keys: Object.keys(agent).slice(0, 14),
+              hasGroup: !!agent.group,
+              groupPosition: agent.group?.position
+                ? { x: agent.group.position.x, z: agent.group.position.z } : null,
+              points: Array.isArray(agent.points) ? agent.points.length : null,
+              s: agent.s ?? null,
+              total: agent.total ?? null,
+            };
+          }
+          continue;
+        }
+        positioned += 1;
         const distance = Math.hypot(position.x - stand.x, position.z - stand.z);
+        if (!Number.isFinite(distance)) continue;
         if (distance < bestDistance) { bestDistance = distance; best = position; }
       }
       if (!best || bestDistance > 30) {
-        return { ok: false, reason: `no pedestrian within 30 m of the kerb (nearest ${Number.isFinite(bestDistance) ? bestDistance.toFixed(1) : 'none'} m)`, crowd: crowd.length };
+        return {
+          ok: false,
+          reason: `no pedestrian within 30 m of the kerb (nearest ${Number.isFinite(bestDistance) ? bestDistance.toFixed(1) : 'none'} m)`,
+          crowd: crowd.length,
+          // The three numbers that separate "the street is empty" from "the
+          // measurement is broken".
+          positioned,
+          kerbPoint: { x: +stand.x.toFixed(2), z: +stand.z.toFixed(2) },
+          unpositionedSample,
+        };
       }
       // Stand off far enough that the subject is whole in frame. Anything under
       // ~3 m puts the camera inside the body.
@@ -435,15 +696,95 @@ async function placeCamera(pose) {
       eyeLift = EYE + 0.15;
       note = `${note ? `${note}; ` : ''}subject is a simulated pedestrian ${bestDistance.toFixed(1)} m from the kerb point; the runtime has no player avatar`;
     } else if (pose === 'traversal') {
-      eye = { x: a.x - ux * 30 + nx * walk, z: a.z - uz * 30 + nz * walk };
-      target = { x: a.x + ux * 140, z: a.z + uz * 140 };
+      // A stepped strip along the chosen street: `traversal.frames` poses
+      // spread over `traversal.spanM` metres of real polyline, each recording
+      // the partition cell it stands in. The harness renders one frame per
+      // pose and steps the simulation between them.
+      const tile = traversal.tileM;
+      const poly = chosen.points;
+      const cum = [0];
+      for (let i = 1; i < poly.length; i += 1) {
+        cum.push(cum[i - 1] + Math.hypot(poly[i].x - poly[i - 1].x, poly[i].z - poly[i - 1].z));
+      }
+      const total = cum[cum.length - 1];
+      const at = (distance) => {
+        const d = Math.max(0, Math.min(total, distance));
+        let i = 0;
+        while (i < cum.length - 2 && cum[i + 1] < d) i += 1;
+        const p0 = poly[i];
+        const p1 = poly[i + 1];
+        const length = (cum[i + 1] - cum[i]) || 1;
+        const t = (d - cum[i]) / length;
+        return {
+          x: p0.x + (p1.x - p0.x) * t,
+          z: p0.z + (p1.z - p0.z) * t,
+          ux: (p1.x - p0.x) / length,
+          uz: (p1.z - p0.z) / length,
+        };
+      };
+      const cellOf = (x, z) => [Math.floor(x / tile), Math.floor(z / tile)];
+      const span = Math.min(traversal.spanM, total * 0.98);
+      const start = Math.max(0, (total - span) / 2);
+      const count = Math.max(2, traversal.frames);
+      const buildSide = (side) => {
+        const frames = [];
+        for (let k = 0; k < count; k += 1) {
+          const d = start + (span * k) / (count - 1);
+          const p = at(d);
+          const px = -p.uz * side;
+          const pz = p.ux * side;
+          const ex = p.x + px * walk;
+          const ez = p.z + pz * walk;
+          const look = at(Math.min(total, d + 34));
+          frames.push({
+            index: k,
+            distanceAlong: +d.toFixed(2),
+            eye: { x: +ex.toFixed(2), y: +(groundAt(ex, ez) + EYE).toFixed(2), z: +ez.toFixed(2) },
+            look: {
+              x: +look.x.toFixed(2),
+              y: +(groundAt(look.x, look.z) + EYE * 0.92).toFixed(2),
+              z: +look.z.toFixed(2),
+            },
+            cell: cellOf(ex, ez),
+            insideBuilding: insideAny({ x: ex, z: ez }),
+          });
+        }
+        return frames;
+      };
+      const left = buildSide(1);
+      const right = buildSide(-1);
+      const badness = (list) => list.filter((f) => f.insideBuilding).length;
+      const frames = badness(right) < badness(left) ? right : left;
+      let crossings = 0;
+      let previous = null;
+      for (let d = start; d <= start + span + 0.001; d += 5) {
+        const p = at(d);
+        const key = cellOf(p.x, p.z).join(',');
+        if (previous !== null && key !== previous) crossings += 1;
+        previous = key;
+      }
+      traversalPlan = {
+        tileMeters: tile,
+        tileDefinition: 'runtime world-partition cell (streamed street life, portals, parked cars)',
+        spanMeters: +span.toFixed(1),
+        segmentLengthMeters: +total.toFixed(1),
+        boundaryCrossings: crossings,
+        crossesTileBoundary: crossings > 0,
+        distinctCells: [...new Set(frames.map((f) => f.cell.join(',')))],
+        framesInsideBuilding: frames.filter((f) => f.insideBuilding).length,
+        frames,
+      };
+      eye = { x: frames[0].eye.x, z: frames[0].eye.z };
+      target = { x: frames[0].look.x, z: frames[0].look.z };
     } else {
       eye = { x: a.x + nx * walk, z: a.z + nz * walk };
       target = { x: a.x + ux * 90 + nx * (walk * 0.35), z: a.z + uz * 90 + nz * (walk * 0.35) };
     }
 
     // If the eye landed inside a building, try the opposite kerb, then other candidates.
-    if (insideAny(eye)) {
+    // A traversal path has already chosen its side over the whole strip; moving
+    // just its first pose here would desync the recorded path from the frames.
+    if (pose !== 'traversal' && insideAny(eye)) {
       const flipped = { x: a.x - nx * walk, z: a.z - nz * walk };
       if (!insideAny(flipped)) {
         eye = flipped;
@@ -484,11 +825,51 @@ async function placeCamera(pose) {
       if (typeof traffic?.presentationAgents === 'function') return traffic.presentationAgents();
       return traffic?.pedestrians || [];
     })();
+    // The simulated crowd is not the only thing that can stand in the lens: the
+    // street-life pass draws its own standing figures, and one of those - not a
+    // simulated pedestrian - is what ended up inside the near plane on the
+    // intersection card. The guard therefore unions the crowd with the figures
+    // that pass has actually drawn.
+    //
+    // TODO(street-life): the pass exposes no active near-anchor list on its
+    // diagnostics yet, and another agent is adding a minimum camera radius to
+    // it this wave. Until that lands, read the drawn near-ring instance
+    // matrices straight off the scene. Replace this with the pass's own anchor
+    // list as soon as it publishes one.
+    const streetLifePoints = (() => {
+      const out = [];
+      const T = api.THREE;
+      if (!T?.Matrix4) return out;
+      const local = new T.Matrix4();
+      const world = new T.Matrix4();
+      const seen = new Set();
+      r.scene.traverse((object) => {
+        if (!object.isInstancedMesh || !object.visible) return;
+        if (!/^street-life-near/.test(object.name || '')) return;
+        object.updateWorldMatrix(true, false);
+        const count = Math.min(object.count || 0, object.instanceMatrix?.count || 0);
+        for (let i = 0; i < count; i += 1) {
+          object.getMatrixAt(i, local);
+          world.multiplyMatrices(object.matrixWorld, local);
+          const x = world.elements[12];
+          const z = world.elements[14];
+          const key = `${x.toFixed(1)},${z.toFixed(1)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ x, z });
+        }
+      });
+      return out;
+    })();
     const nearestAgent = (point) => {
       let best = Infinity;
       for (const agent of agents) {
         const position = agentPosition(agent);
         if (!position) continue;
+        const distance = Math.hypot(position.x - point.x, position.z - point.z);
+        if (distance < best) best = distance;
+      }
+      for (const position of streetLifePoints) {
         const distance = Math.hypot(position.x - point.x, position.z - point.z);
         if (distance < best) best = distance;
       }
@@ -503,7 +884,7 @@ async function placeCamera(pose) {
         eye = { x: eye.x + (back.x / backLength) * 0.8, z: eye.z + (back.z / backLength) * 0.8 };
         steps += 1;
       }
-      if (steps) clearanceNote = `stepped back ${(steps * 0.8).toFixed(1)} m to clear a pedestrian`;
+      if (steps) clearanceNote = `stepped back ${(steps * 0.8).toFixed(1)} m to clear a figure`;
     }
     if (clearanceNote) note = note ? `${note}; ${clearanceNote}` : clearanceNote;
     if (sunNote) note = note ? `${note}; ${sunNote}` : sunNote;
@@ -515,6 +896,7 @@ async function placeCamera(pose) {
     const t = tallnessAt({ x: a.x, z: a.z });
     return {
       ok: true,
+      traversal: traversalPlan,
       eyeInsideBuilding: insideAny(eye),
       street: chosen.streetName || null,
       segmentId: chosen.id,
@@ -522,15 +904,16 @@ async function placeCamera(pose) {
       sidewalkW: chosen.sidewalkW || null,
       surroundingAvgHeight: +t.avg.toFixed(1),
       surroundingCount: t.count,
+      crowdPoints: agents.length,
+      streetLifeNearPoints: streetLifePoints.length,
+      nearestFigureM: +nearestAgent(eye).toFixed(2),
       note,
       eye: { x: +eye.x.toFixed(2), y: +eyeY.toFixed(2), z: +eye.z.toFixed(2) },
       target: { x: +target.x.toFixed(2), y: +tgtY.toFixed(2), z: +target.z.toFixed(2) },
       fov: cam.fov ?? null,
     };
-  }, { pose, EYE });
+  }, { pose, EYE, traversal: { frames: TRAVERSAL_FRAMES, spanM: TRAVERSAL_SPAN_M, tileM: 140 } });
 }
-
-report.pin = await installPin();
 
 for (const card of cards) {
   const entry = { id: card.id, requested: card };
@@ -548,8 +931,9 @@ for (const card of cards) {
         return { via: null, applied: null };
       }, card.weather);
       // The environment rig rebuilds asynchronously; a screenshot taken in the
-      // same tick records the previous weather.
-      await page.waitForTimeout(1500);
+      // same tick records the previous weather. This one is a genuine
+      // asynchronous rebuild, not a frame, so it stays a wall-clock wait.
+      await page.waitForTimeout(WEATHER_SETTLE);
       entry.weatherState = await page.evaluate(() => {
         const r = window.__CITYGEN__.getRenderer?.();
         const fog = r?.scene?.fog;
@@ -560,7 +944,40 @@ for (const card of cards) {
         };
       });
     }
+    // Pose, then let the world LIVE, then pose again.
+    //
+    // Every card used to sample the same frozen boot instant: the loop clamps
+    // its delta to 0.05 s and a frame costs minutes, so nothing ever walked
+    // anywhere and the character card had no subject to frame. The first pose
+    // moves the local-life focus to where the card will be shot, the step then
+    // advances the crowd deterministically around that focus, and the second
+    // pose is the one that becomes evidence - it sees the crowd as it will be
+    // photographed, which is also what the camera-clearance guard needs.
+    const focusPose = card.pose === 'character' ? 'street' : card.pose;
+    entry.prefocus = await placeCamera(focusPose);
+    entry.sim = await stepSimulation(SIM_CARD_S, card.id);
     entry.pose = await placeCamera(card.pose);
+    if (card.pose === 'character' && entry.pose?.ok === false) {
+      // Walk the world forward until somebody is actually at the kerb. The
+      // guard itself is untouched: the card is only allowed to shoot a subject
+      // within 30 m of the kerb point, and if nobody gets there in
+      // SIM_CHARACTER_TRIES x SIM_CHARACTER_S simulated seconds the card is
+      // still refused, with the nearest distance on the record.
+      entry.characterSearch = [{ attempt: 0, reason: entry.pose.reason, crowd: entry.pose.crowd }];
+      for (let attempt = 1; attempt <= SIM_CHARACTER_TRIES; attempt += 1) {
+        const stepped = await stepSimulation(SIM_CHARACTER_S, `${card.id}:subject-${attempt}`);
+        entry.pose = await placeCamera(card.pose);
+        entry.characterSearch.push({
+          attempt,
+          simulatedSeconds: stepped?.simulatedSeconds ?? null,
+          ok: entry.pose?.ok === true,
+          reason: entry.pose?.ok === true ? null : entry.pose?.reason,
+        });
+        if (entry.pose?.ok) break;
+      }
+      entry.characterSimulatedSeconds = entry.characterSearch
+        .reduce((sum, item) => sum + (item.simulatedSeconds || 0), 0);
+    }
     // A failed pose used to leave the camera wherever the previous card left it
     // and shoot anyway, so the round silently contained a duplicate frame under
     // a different card's name. That is worse than a missing card: it is false
@@ -572,33 +989,106 @@ for (const card of cards) {
       console.error(`${card.id}: SKIPPED (${entry.error}) - no frame written`);
       continue;
     }
-    await page.waitForTimeout(SETTLE);
-    const file = path.join(OUT, `${card.id}.png`);
-    const t0 = Date.now();
-    await page.screenshot({ path: file, timeout: SHOT_MS });
-    entry.file = file;
-    entry.shotMs = Date.now() - t0;
+    if (card.pose === 'traversal' && entry.pose?.traversal?.frames?.length) {
+      // The gate asks for a 30 s 60 FPS traversal clip. One frame costs minutes
+      // on this rasterizer, so 1800 of them is not a thing this machine can
+      // produce; the honest substitute is a numbered strip of stepped frames
+      // along a real traversal path that crosses a runtime tile boundary, with
+      // the simulation advanced between frames by the time the walk would take.
+      const plan = entry.pose.traversal;
+      entry.sequence = [];
+      for (const frame of plan.frames) {
+        if (frame.index > 0) {
+          const gap = frame.distanceAlong - plan.frames[frame.index - 1].distanceAlong;
+          entry.sequence.push({ stepped: await stepSimulation(gap / TRAVERSAL_SPEED_MS, `${card.id}:${frame.index}`) });
+        }
+        await page.evaluate((f) => {
+          const r = window.__CITYGEN__.getRenderer();
+          window.__QA_CAM__ = { pos: [f.eye.x, f.eye.y, f.eye.z], look: [f.look.x, f.look.y, f.look.z] };
+          r.camera.position.set(f.eye.x, f.eye.y, f.eye.z);
+          r.camera.lookAt(f.look.x, f.look.y, f.look.z);
+          if (r.controls?.target?.set) r.controls.target.set(f.look.x, f.look.y, f.look.z);
+        }, frame);
+        const name = `${card.id}-${String(frame.index + 1).padStart(2, '0')}.png`;
+        const shot = await captureFrame(path.join(OUT, name));
+        const record = { ...frame, ...shot, name };
+        entry.sequence.push(record);
+        console.log(`  ${name}: cell ${frame.cell.join(',')} ${shot.render.wallMs} ms frame, ${shot.shotMs} ms shot`);
+      }
+      const shots = entry.sequence.filter((item) => item.file);
+      entry.file = shots[0]?.file || null;
+      entry.shotMs = shots.reduce((sum, item) => sum + (item.shotMs || 0), 0);
+      entry.frameWallMs = shots.reduce((sum, item) => sum + (item.render?.wallMs || 0), 0);
+      entry.clipForm = `stepped strip of ${shots.length} rendered frames over ${plan.spanMeters} m `
+        + `crossing ${plan.boundaryCrossings} runtime tile (${plan.tileMeters} m partition cell) boundaries; `
+        + 'NOT a 30 s 60 FPS clip - this rasterizer cannot render 1800 frames';
+    } else {
+      const shot = await captureFrame(path.join(OUT, `${card.id}.png`));
+      entry.file = shot.file;
+      entry.shotMs = shot.shotMs;
+      entry.frame = shot.render;
+      entry.frameWallMs = shot.render?.wallMs ?? null;
+      entry.bytes = shot.bytes;
+      if (shot.emptyFrameSuspected) entry.emptyFrameSuspected = shot.emptyFrameSuspected;
+      if (shot.reshot) entry.reshot = shot.reshot;
+    }
     // Hole detector. The rubric's automatic-reject list includes visible gaps,
     // and a 30-65s software frame inspected by eye is a bad way to find them.
     // Cast a grid of rays through the lower half of the frame: any ray that
     // reaches the sky dome, or hits nothing at all, is a hole in the ground.
-    entry.coverage = await page.evaluate(async () => {
-      const THREE = await import(/* @vite-ignore */ '/node_modules/three/build/three.module.js');
-      const r = window.__CITYGEN__.getRenderer();
+    const coverageStartedAt = Date.now();
+    entry.coverage = await page.evaluate(({ cols, rows }) => {
+      const api = window.__CITYGEN__;
+      // The app's own THREE. This used to dynamically import a SECOND copy of
+      // three per card, which is both wasteful and a different class identity
+      // from the objects it raycasts against.
+      const THREE = api.THREE;
+      const r = api.getRenderer();
+      if (!THREE?.Raycaster) return { error: 'no THREE handle' };
       r.camera.updateMatrixWorld(true);
+
+      // Curated target list, collected once per boot. Raycasting the whole
+      // 658k-triangle scene with no acceleration structure cost ~54 s of main
+      // thread per card. The list keeps everything that legitimately fills the
+      // lower frame - terrain, ground, roads, footways, building shells - plus
+      // the sky dome the hole test needs, and drops named street dressing.
+      //
+      // Dropping dressing cannot invent a hole: a ray that would have stopped
+      // on a parked car now stops on the road under it, which is the correct
+      // answer for "is the ground there". It COULD miss a hole whose only
+      // surface is dressing (an elevated deck, say); that limit is the price of
+      // the 30x saving and is stated in the round report.
+      const cached = window.__QA_TARGETS__;
+      const rootId = r.root?.uuid || null;
+      if (!cached || cached.rootId !== rootId) {
+        const DRESSING = /lamp|light|prop|awning|ripple|contour|contact-shadow|shadow|rail|tie|overhead|support|parked-car|street-life|crowd|pedestrian|vehicle|car|signal|tree|foliage|canopy|marker|ghost|minimap/i;
+        const list = [];
+        let dropped = 0;
+        r.scene.traverse((object) => {
+          if (!object.visible) return;
+          if (!object.isMesh && !object.isInstancedMesh) return;
+          if (!object.geometry) return;
+          const name = object.name || object.parent?.name || '';
+          if (name !== 'sky-dome' && DRESSING.test(name)) { dropped += 1; return; }
+          list.push(object);
+        });
+        window.__QA_TARGETS__ = { rootId, list, dropped };
+      }
+      const targets = window.__QA_TARGETS__;
+
       const ray = new THREE.Raycaster();
-      const COLS = 24;
-      const ROWS = 12;
+      const pointer = new THREE.Vector2();
       let holes = 0;
       let solid = 0;
       const worst = [];
-      for (let iy = 0; iy < ROWS; iy += 1) {
+      for (let iy = 0; iy < rows; iy += 1) {
         // lower 45% of the frame: where ground/pavement must be
-        const sy = 0.55 + (iy + 0.5) / ROWS * 0.45;
-        for (let ix = 0; ix < COLS; ix += 1) {
-          const sx = (ix + 0.5) / COLS;
-          ray.setFromCamera(new THREE.Vector2(sx * 2 - 1, -(sy * 2 - 1)), r.camera);
-          const hit = ray.intersectObjects(r.scene.children, true)[0];
+        const sy = 0.55 + (iy + 0.5) / rows * 0.45;
+        for (let ix = 0; ix < cols; ix += 1) {
+          const sx = (ix + 0.5) / cols;
+          pointer.set(sx * 2 - 1, -(sy * 2 - 1));
+          ray.setFromCamera(pointer, r.camera);
+          const hit = ray.intersectObjects(targets.list, false)[0];
           const isHole = !hit || hit.object.name === 'sky-dome' || hit.distance > 400;
           if (isHole) {
             holes += 1;
@@ -611,8 +1101,18 @@ for (const card of cards) {
         }
       }
       const total = holes + solid;
-      return { samples: total, holes, solid, holeRatio: +(holes / total).toFixed(4), worst };
-    });
+      return {
+        samples: total,
+        grid: [cols, rows],
+        targets: targets.list.length,
+        droppedDressing: targets.dropped,
+        holes,
+        solid,
+        holeRatio: +(holes / total).toFixed(4),
+        worst,
+      };
+    }, { cols: COVER_COLS, rows: COVER_ROWS });
+    if (entry.coverage) entry.coverage.ms = Date.now() - coverageStartedAt;
 
     // Optional: ask the world what actually drew at a screen pixel. A visual
     // artifact is otherwise a guessing game, and a re-boot to investigate costs
@@ -695,8 +1195,7 @@ for (const card of cards) {
         window.__QA_KEY__ = r.sun.intensity;
         r.sun.intensity = 0;
       });
-      await page.waitForTimeout(SETTLE);
-      await page.screenshot({ path: path.join(OUT, `${card.id}-keyoff.png`), timeout: SHOT_MS });
+      entry.keyOff = await captureFrame(path.join(OUT, `${card.id}-keyoff.png`));
       await page.evaluate(() => {
         const r = window.__CITYGEN__.getRenderer();
         r.sun.intensity = window.__QA_KEY__;
@@ -712,6 +1211,30 @@ for (const card of cards) {
         cameraDriftM: c ? +Math.hypot(p.x - c.pos[0], p.y - c.pos[1], p.z - c.pos[2]).toFixed(3) : null,
         hour: window.__QA_HOUR__,
         clock: +window.__CITYGEN__.getState().clock.toFixed(2),
+      };
+    });
+
+    // What this card's frame actually cost, and what it drew. The next wave
+    // adds ambient occlusion, an AA resolve and possibly a cascade split onto a
+    // rasterizer where one frame already costs minutes; without a per-card
+    // attribution the round after this one can simply fail to finish with
+    // nobody able to say which change did it.
+    entry.telemetry = await page.evaluate(() => {
+      const api = window.__CITYGEN__;
+      const r = api.getRenderer();
+      const info = r.renderer?.info || null;
+      return {
+        // Counters snapshotted inside the frame wrapper, at the moment this
+        // card's frame finished. `renderer.info` read here would describe an
+        // idle world, which is how it reported 0 draw calls for a captured card.
+        renderInfoAtFrame: window.__QA_RENDER_INFO__ || null,
+        renderInfoNow: info ? {
+          render: info.render ? { ...info.render } : null,
+          memory: info.memory ? { ...info.memory } : null,
+          programs: Array.isArray(info.programs) ? info.programs.length : (info.programs ?? null),
+        } : null,
+        performance: typeof api.getPerformanceTelemetry === 'function' ? api.getPerformanceTelemetry() : null,
+        drawnFrames: window.__QA_FRAMES__ | 0,
       };
     });
   } catch (e) {
@@ -730,7 +1253,96 @@ for (const card of cards) {
     }
   }
   report.cards.push(entry);
-  console.log(`${card.id}: ${entry.error ? `FAILED ${entry.error}` : `ok ${entry.shotMs}ms`}`);
+  console.log(`${card.id}: ${entry.error
+    ? `FAILED ${entry.error}`
+    : `ok frame ${entry.frameWallMs ?? '?'}ms shot ${entry.shotMs}ms coverage ${entry.coverage?.ms ?? '?'}ms`}`);
+}
+
+// Run-level technical evidence. Read AFTER the cards, because a shadow render
+// target does not exist until something has actually been drawn.
+report.runtime = await evaluateInWorld(() => {
+  const api = window.__CITYGEN__;
+  const r = api.getRenderer();
+  const gl = r.renderer;
+  // Every field below is diagnostics. One throwing accessor must not be able
+  // to delete the whole block - that is exactly what happened the first time.
+  const safe = (fn, fallback = null) => { try { return fn(); } catch { return fallback; } };
+  const shadow = r.sun?.shadow || null;
+  const map = shadow?.map || null;
+  const requested = shadow?.mapSize ? [shadow.mapSize.width, shadow.mapSize.height] : null;
+  const allocated = map
+    ? [map.width ?? map.texture?.image?.width ?? null, map.height ?? map.texture?.image?.height ?? null]
+    : null;
+  return {
+    backend: {
+      rendererBackend: safe(() => api.getState().rendererBackend),
+      isWebGPUBackend: safe(() => gl?.backend?.isWebGPUBackend ?? null),
+      backendName: safe(() => gl?.backend?.constructor?.name || null),
+      samples: safe(() => gl?.samples ?? null),
+      pixelRatio: safe(() => gl?.getPixelRatio?.() ?? null),
+      // `getDrawingBufferSize` writes into a THREE.Vector2 - a plain object
+      // throws inside the renderer and took the whole telemetry block with it.
+      drawingBufferSize: (() => {
+        try {
+          const V = api.THREE?.Vector2;
+          if (!V || !gl?.getDrawingBufferSize) return null;
+          const size = gl.getDrawingBufferSize(new V());
+          return [size.x, size.y];
+        } catch (error) { return { error: String(error).slice(0, 120) }; }
+      })(),
+      outputColorSpace: gl?.outputColorSpace ?? null,
+      toneMappingExposure: gl?.toneMappingExposure ?? null,
+    },
+    shadowTarget: {
+      requested,
+      allocated,
+      // Assert-and-log only: this records what the runtime got, it does not
+      // relax anything.
+      matchesRequest: !!(requested && allocated && requested[0] === allocated[0] && requested[1] === allocated[1]),
+      exists: !!map,
+      type: map?.constructor?.name || null,
+    },
+    boot: safe(() => (typeof api.getBootPhases === 'function' ? api.getBootPhases() : null)),
+    performance: safe(() => (typeof api.getPerformanceTelemetry === 'function' ? api.getPerformanceTelemetry() : null)),
+    drawnFrames: window.__QA_FRAMES__ | 0,
+  };
+}).catch((error) => ({ error: String(error).slice(0, 200) }));
+
+if (report.runtime?.backend) {
+  console.log(`\nbackend: ${report.runtime.backend.rendererBackend} `
+    + `isWebGPUBackend=${report.runtime.backend.isWebGPUBackend} samples=${report.runtime.backend.samples} `
+    + `drawingBuffer=${JSON.stringify(report.runtime.backend.drawingBufferSize)}`);
+}
+if (report.runtime?.shadowTarget) {
+  const st = report.runtime.shadowTarget;
+  const line = `shadow map: requested ${JSON.stringify(st.requested)} allocated ${JSON.stringify(st.allocated)}`;
+  if (st.exists && st.matchesRequest) console.log(line);
+  else {
+    console.error(`${line} - MISMATCH or not allocated`);
+    consoleErrors.push(`shadow render target ${st.exists ? 'mismatched' : 'never allocated'}: ${line}`);
+  }
+}
+if (report.runtime?.boot?.phases?.length) {
+  console.log('boot phases:');
+  for (const phase of report.runtime.boot.phases) {
+    console.log(`  ${phase.name}: ${(phase.ms / 1000).toFixed(1)}s`);
+  }
+  const prewarm = report.runtime.boot.prewarm;
+  if (prewarm) {
+    console.log(`  lighting warm-up: ${(prewarm.ms / 1000).toFixed(1)}s `
+      + `(${prewarm.skipped ? `skipped: ${prewarm.skipped}` : `ran at ${JSON.stringify(prewarm.warmSize)}`})`);
+  }
+}
+const framed = report.cards.filter((c) => c.frameWallMs != null);
+if (framed.length) {
+  report.frameCost = {
+    perCardWallMs: Object.fromEntries(framed.map((c) => [c.id, c.frameWallMs])),
+    perCardShotMs: Object.fromEntries(framed.map((c) => [c.id, c.shotMs])),
+    totalFrameWallMs: framed.reduce((sum, c) => sum + c.frameWallMs, 0),
+    totalShotMs: framed.reduce((sum, c) => sum + (c.shotMs || 0), 0),
+  };
+  console.log('\nper-card rendered-frame cost (wall ms to draw, then ms to copy the surface):');
+  for (const c of framed) console.log(`  ${c.id}: ${c.frameWallMs} ms frame, ${c.shotMs} ms screenshot`);
 }
 
 const covered = report.cards.filter((c) => c.coverage);
@@ -751,6 +1363,29 @@ if (report.coverageSummary) {
 
 report.rendererCrashes = crashes;
 report.protocolResolution = PROTOCOL;
+report.settings = {
+  skipPrewarm: SKIP_PREWARM,
+  settleFrames: SETTLE_FRAMES,
+  simWarmSeconds: SIM_WARM_S,
+  simCardSeconds: SIM_CARD_S,
+  simStepSeconds: SIM_STEP_S,
+  simCharacterSeconds: SIM_CHARACTER_S,
+  simCharacterTries: SIM_CHARACTER_TRIES,
+  coverageGrid: [COVER_COLS, COVER_ROWS],
+  traversalFrames: TRAVERSAL_FRAMES,
+  traversalSpanMeters: TRAVERSAL_SPAN_M,
+  traversalSpeedMps: TRAVERSAL_SPEED_MS,
+  weatherSettleMs: WEATHER_SETTLE,
+};
+const traversalCard = report.cards.find((c) => c.id === '08-traversal');
+if (traversalCard?.clipForm) {
+  report.traversalEvidence = {
+    form: traversalCard.clipForm,
+    frames: (traversalCard.sequence || []).filter((item) => item.file).map((item) => item.name),
+    plan: traversalCard.pose?.traversal || null,
+  };
+  console.log(`\ntraversal evidence: ${traversalCard.clipForm}`);
+}
 const skipped = report.cards.filter((c) => c.skipped).map((c) => c.id);
 const failed = report.cards.filter((c) => c.error && !c.skipped).map((c) => c.id);
 report.roundStatus = {

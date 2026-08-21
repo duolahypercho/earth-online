@@ -1712,6 +1712,35 @@ export function recommendedLightRig(modelOrState, baseline = BASELINE_LIGHT_RIG)
         (beam.transmittance * Math.max(0, model.sun.y))
         / Math.max(1e-9, directBeamTransmittance(52.73).transmittance * Math.sin(52.73 * DEG)),
       ),
+      /**
+       * Multiplier the integrator applies to the directional key's intensity
+       * AFTER every other scale. It is a function of solar altitude alone.
+       *
+       * Why this exists, and what it replaces. Round 4's night card shipped a
+       * key at intensity 0.2997 with `castShadow: true` and a shadow fit
+       * reporting 52 deg, at an hour where this model reports the sun at
+       * -28.12 deg, key illuminance 0.0000, `shadow.castShadow: false`,
+       * `relativeIrradiance: 0` and a key/fill target of 0. Four separate
+       * model outputs said "no key"; the frame had one anyway, strongly enough
+       * that switching it off moved 421964 pixels by 24 luma or more. The
+       * cause is an envelope of the form `(2 * daylight - 1) ** 2`, which is
+       * zero exactly at the horizon crossing and returns to ONE below it - so
+       * a key that was only ever meant to survive twilight came back at full
+       * strength all night, pointed at a reflected, lifted, invented
+       * direction.
+       *
+       * `smoothstep(0, 4)` in altitude instead: 1 at the golden-hour card's
+       * +6.61 deg (so no daylight card changes by a single step), 0.5 at
+       * +2 deg, and exactly 0 at and below the horizon. It is monotone in
+       * altitude, so it cannot come back.
+       *
+       * A night city is carried by its practicals, its windows and the sky
+       * dome. If that leaves it dark, the answer is the practicals, not a
+       * directional key at 1/27 of daylight standing where no sun is.
+       */
+      envelope: round4(smoothstep(0, 4, model.sun.altitudeDeg)),
+      /** Never cast from a key the sun is not behind. */
+      castShadow: model.sun.altitudeDeg > 0,
     }),
     shadow: Object.freeze({
       castShadow: model.sun.altitudeDeg > 0,
@@ -1821,6 +1850,23 @@ export const SHADOW_FIT_DEFAULTS = Object.freeze({
   normalBiasTexels: 1.25,
   /** `bias` in texel widths of depth pull-back. */
   depthBiasTexels: 0.5,
+  /**
+   * The model's TRUE solar altitude, in degrees, when the key direction handed
+   * in is not the sun.
+   *
+   * The fit only ever sees a direction. Round 4 recorded what that costs: the
+   * renderer's night rig reflects the key to the anti-solar azimuth and lifts
+   * it to a fixed 52 deg, so at 21:30 - with `computeSkyModel` reporting the
+   * sun at -28.12 deg - the fit was handed a 52 deg direction, dutifully
+   * reported `sunAltitudeDeg: 52.0` and `castShadow: true`, and the capture
+   * report published a night city whose shadow camera believed the sun was 52
+   * degrees UP. Nothing in the fit was wrong; the name was.
+   *
+   * Supply this and the fit reports both altitudes separately and refuses to
+   * cast when the real sun is down. Leave it null and the behaviour is exactly
+   * what it was.
+   */
+  solarAltitudeDeg: null,
 });
 
 /**
@@ -1907,6 +1953,7 @@ export function computeSunShadowCamera(options = {}) {
     texelSnap,
     normalBiasTexels,
     depthBiasTexels,
+    solarAltitudeDeg,
   } = config;
 
   if (!isFiniteNumber(fovDeg) || fovDeg <= 0 || fovDeg >= 180) {
@@ -2052,6 +2099,20 @@ export function computeSunShadowCamera(options = {}) {
   const bias = -round((depthBiasTexels * texelWorld * 2) / depthRange, 7);
 
   const warnings = [];
+  // Is the direction we were handed actually the sun?
+  const solarAltitude = isFiniteNumber(solarAltitudeDeg) ? solarAltitudeDeg : null;
+  const keyIsSun = solarAltitude === null || Math.abs(solarAltitude - sunAltitudeDeg) <= 0.5;
+  const solarBelowHorizon = solarAltitude !== null && solarAltitude <= 0;
+  if (!keyIsSun) {
+    warnings.push(`the key direction is at ${sunAltitudeDeg.toFixed(2)} deg but the model puts the sun `
+      + `at ${solarAltitude.toFixed(2)} deg: this fit describes the KEY, not the sun. Read keyAltitudeDeg, `
+      + 'not sunAltitudeDeg, and do not publish this number as a solar altitude');
+  }
+  if (solarBelowHorizon) {
+    warnings.push(`the sun is ${solarAltitude.toFixed(2)} deg below the horizon: castShadow is forced false `
+      + 'no matter where the key points. A night city is lit by its practicals, not by a directional key '
+      + 'reflected overhead');
+  }
   if (sunAltitudeDeg <= 0) {
     warnings.push('sun is below the horizon: set light.castShadow = false and let the local lights carry the night');
   } else if (sunAltitudeDeg < minCasterAltitudeDeg) {
@@ -2097,9 +2158,23 @@ export function computeSunShadowCamera(options = {}) {
     casterExtrusion,
     casterExtrusionUnclamped: rawExtrusion,
     centreDistance,
+    /**
+     * Altitude of the direction this fit was handed, in degrees. Historically
+     * called `sunAltitudeDeg`, which is only true when `keyIsSun`.
+     */
     sunAltitudeDeg,
+    keyAltitudeDeg: sunAltitudeDeg,
+    /** The model's own solar altitude, when it was supplied. */
+    solarAltitudeDeg: solarAltitude,
+    /** False when the key has been reflected or lifted away from the sun. */
+    keyIsSun,
     shadowDistance,
-    castShadow: sunAltitudeDeg > 0,
+    /**
+     * A shadow map is a record of where the SUN cannot reach. Below the horizon
+     * there is no sun, so there is nothing for it to record - whatever the key
+     * direction happens to be.
+     */
+    castShadow: sunAltitudeDeg > 0 && !solarBelowHorizon,
     frustumCorners: Object.freeze(frustumCorners.map((corner) => Object.freeze(corner))),
     lightSpaceBounds: Object.freeze(bounds),
     lightBasis: Object.freeze({

@@ -753,6 +753,181 @@ assert(leakDense.leakMetres > 0.1,
 assert(near(leakDense.leakMetres / leakShipped.leakMetres, 0.0654 / 0.192055, 1e-3),
   'the leak scales exactly linearly with the texel, which is why no affordable map removes it');
 
+section('14. grounding: the projection follows the sun, or it is not drawn');
+
+// The claim under test is the one the round-3 review demanded and the round-3
+// build could not make: a ground darkening element must either be small enough
+// to read as ambient occlusion, or it must track the key. This is the second
+// branch, so every property below is about the SUN.
+{
+  const sunAt = (hour) => {
+    const dir = computeSunDirection(hour, CANONICAL_SITE);
+    return { x: dir.x, y: dir.y, z: dir.z, altitudeDeg: dir.altitudeDeg };
+  };
+
+  // --- 1. direction. The shadow runs away from the sun, exactly.
+  for (const hour of [8, 10, 12, 14, 16, 18]) {
+    const sun = sunAt(hour);
+    if (sun.altitudeDeg <= sc.GROUNDING_DEFAULTS.minAltitudeDeg) continue;
+    const plan = sc.projectedContactShadow({ height: 1.8, radius: 0.3 }, sun, 0.5);
+    const horizontal = Math.hypot(sun.x, sun.z);
+    assert(near(plan.dirX, -sun.x / horizontal, 1e-5) && near(plan.dirZ, -sun.z / horizontal, 1e-5),
+      `${String(hour).padStart(2, '0')}:00 the projection runs along the anti-solar azimuth, `
+      + `not an authored one (${plan.dirX.toFixed(3)}, ${plan.dirZ.toFixed(3)})`);
+  }
+
+  // --- 2. length is the elementary projection, and nothing else.
+  for (const [altitude, height] of [[60, 1.8], [43.33, 4.2], [20, 0.75], [10, 3.0]]) {
+    const plan = sc.projectedContactShadow({ height, radius: 0.2 },
+      { altitudeDeg: altitude, x: 0, z: -1 }, 0.5);
+    const expected = Math.min(height / Math.tan((altitude * Math.PI) / 180),
+      sc.GROUNDING_DEFAULTS.maxLengthMetres);
+    assert(near(plan.length, expected, 1e-3),
+      `a ${height} m object at ${altitude} deg throws ${plan.length} m (h/tan(alt) = ${expected.toFixed(3)})`);
+  }
+  // Monotone: a lower sun always throws further, up to the clamp.
+  let previous = 0;
+  let monotone = true;
+  for (let altitude = 85; altitude >= 5; altitude -= 5) {
+    const plan = sc.projectedContactShadow({ height: 1.8, radius: 0.3 },
+      { altitudeDeg: altitude, x: 0, z: -1 }, 0.5);
+    if (plan.length < previous - 1e-9) monotone = false;
+    previous = plan.length;
+  }
+  assert(monotone, 'the throw lengthens monotonically as the sun drops, and never shortens');
+
+  // --- 3. it dies with the sun. This is the whole point.
+  const belowHorizon = [];
+  for (let hour = 0; hour < 24; hour += 0.25) {
+    const sun = sunAt(hour);
+    if (sun.altitudeDeg > 0) continue;
+    const frame = sc.groundingFrame(sun, 0.5);
+    const plan = sc.projectedContactShadow({ height: 1.8, radius: 0.3 }, sun, 0.5);
+    if (frame.active || plan.grounded || plan.opacity > 0) belowHorizon.push(hour);
+  }
+  assert(belowHorizon.length === 0,
+    'across all 96 quarter-hours with the sun below the horizon, the grounding frame is '
+    + 'inactive and every projection has zero opacity - a contact shadow cannot outlive its sun');
+
+  // ...and it dies with the key even while the sun is up, because the alpha IS
+  // the key share. An overcast sky delivers no beam, so it delivers no shadow.
+  const noKey = sc.projectedContactShadow({ height: 1.8, radius: 0.3 },
+    { altitudeDeg: 45, x: 0, z: -1 }, 0);
+  assert(!noKey.grounded && noKey.opacity === 0,
+    'with the key delivering none of the ground illuminance there is no projection at all');
+
+  // --- 4. alpha is the key share, exactly. Under linear compositing a black
+  //        quad at alpha `a` leaves radiance * (1 - a), so a = key/(key+sky)
+  //        leaves exactly the fill: the definition of a shadow.
+  for (const share of [0.2, 0.5154, 0.83]) {
+    const plan = sc.projectedContactShadow({ height: 2, radius: 0.2 },
+      { altitudeDeg: 45, x: 0, z: -1 }, share);
+    assert(near(plan.opacity, share, 1e-4),
+      `alpha ${plan.opacity} is the key share ${share}, so the patch lands on the fill-only level`);
+  }
+  assert(near(sc.keyShareOfIlluminance({ key: 1.1294, sky: 1.0619 }), 0.5154, 1e-3),
+    'the 11:00 clear card PHYSICAL key share is 0.5154 of ground illuminance');
+  assert(sc.keyShareOfIlluminance({ key: 0, sky: 0.0289 }) === 0,
+    'at 21:30 the model reports key illuminance 0.0000, so the key share is exactly 0');
+  // ...but the number the pass actually hands the projection is the DELIVERED
+  // key/fill, because the rig corrects that ratio on purpose and a drawn
+  // shadow has to be the same darkness as the shadow map's own.
+  assert(near(sc.keyShareOfRatio(3.9523), 0.7981, 1e-4),
+    'the delivered key/fill 3.9523 at 11:00 gives alpha 0.7981 = r/(1+r), which leaves the '
+    + 'receiver at exactly its fill-only radiance under linear compositing');
+  assert(sc.keyShareOfRatio(0) === 0 && sc.keyShareOfRatio(-1) === 0 && sc.keyShareOfRatio(NaN) === 0,
+    'a zero, negative or non-finite delivered ratio is zero alpha, never a default');
+  let ratioMonotone = true;
+  let previousShare = -1;
+  for (let ratio = 0; ratio <= 12; ratio += 0.05) {
+    const share = sc.keyShareOfRatio(ratio);
+    if (share < previousShare - 1e-12) ratioMonotone = false;
+    previousShare = share;
+  }
+  assert(ratioMonotone && sc.keyShareOfRatio(1e6) < 1,
+    'alpha rises monotonically with the delivered ratio and never reaches 1: there is always '
+    + 'fill left in a shadow');
+
+  // --- 5. penumbra. The tip is wider than the foot, by the solar disc.
+  const long = sc.projectedContactShadow({ height: 1.8, radius: 0.3 },
+    { altitudeDeg: 8, x: 0, z: -1 }, 0.5);
+  assert(long.tipWidth > long.baseWidth,
+    `a ${long.length} m throw ends ${((long.tipWidth - long.baseWidth) * 100).toFixed(1)} cm wider `
+    + 'than it starts, which is the 0.532 deg solar disc opening the penumbra');
+  assert(near(sc.PENUMBRA_PER_METRE, Math.tan((0.266 * Math.PI) / 180), 1e-9),
+    'the penumbra rate is tan of the solar angular radius, not a taste value');
+
+  // --- 6. anchors. The selection is the complement of the caster policy.
+  const scene = new THREE.Group();
+  scene.name = 'city-root';
+  const material = new THREE.MeshBasicMaterial();
+  const tower = new THREE.Mesh(new THREE.BoxGeometry(20, 40, 20), material);
+  tower.name = 'building-tower';
+  tower.castShadow = true;
+  tower.position.set(0, 20, 0);
+  scene.add(tower);
+  const column = new THREE.Mesh(new THREE.BoxGeometry(0.12, 4.2, 0.12), material);
+  column.name = 'lamp-column';
+  column.castShadow = false;
+  column.position.set(30, 2.1, 4);
+  scene.add(column);
+  const paint = new THREE.Mesh(new THREE.BoxGeometry(3, 0.01, 0.3), material);
+  paint.name = 'lane-marking';
+  paint.castShadow = false;
+  paint.position.set(10, 0.005, 0);
+  scene.add(paint);
+  const hydrants = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.22, 0.75, 6), material, 40);
+  hydrants.name = 'hydrants';
+  hydrants.castShadow = false;
+  const matrix = new THREE.Matrix4();
+  for (let i = 0; i < 40; i += 1) {
+    matrix.makeTranslation(i * 12, 0.375, 20);
+    hydrants.setMatrixAt(i, matrix);
+  }
+  hydrants.instanceMatrix.needsUpdate = true;
+  scene.add(hydrants);
+
+  const audit = sc.collectGroundingAnchors(scene, { maxAnchors: 256 });
+  const names = audit.anchors.map((a) => a.node.name);
+  assert(!names.includes('building-tower'),
+    'an object the shadow map is already drawing gets no second shadow from this feature');
+  assert(!names.includes('lane-marking'),
+    'a 1 cm painted marking is under the height floor and is not an occluder');
+  assert(names.filter((n) => n === 'hydrants').length === 40,
+    `an instanced batch is expanded per instance (${names.filter((n) => n === 'hydrants').length} of 40): `
+    + 'a batch is one castShadow flag standing in for forty separate objects on the street');
+  const columnAnchor = audit.anchors.find((a) => a.node.name === 'lamp-column');
+  assert(columnAnchor != null && near(columnAnchor.height, 4.2, 1e-3) && near(columnAnchor.y, 0, 1e-3),
+    'the lamp column anchors at its own base with its own height, from the world matrix');
+
+  // Round-robin, so one 700-instance batch cannot eat the whole budget and
+  // leave every hydrant on the street ungrounded.
+  const capped = sc.collectGroundingAnchors(scene, { maxAnchors: 6 });
+  const perSource = new Set(capped.anchors.map((a) => a.node.name));
+  assert(capped.anchors.length === 6 && perSource.size === 2 && capped.capped === true,
+    `the ${capped.anchors.length}-anchor budget is shared round-robin across `
+    + `${perSource.size} sources, not spent on the first batch`);
+
+  // Moving objects: the anchor re-reads its owner rather than remembering it.
+  matrix.makeTranslation(500, 0.375, 900);
+  hydrants.setMatrixAt(0, matrix);
+  hydrants.instanceMatrix.needsUpdate = true;
+  const moved = audit.anchors.find((a) => a.node.name === 'hydrants' && a.instance === 0);
+  assert(sc.refreshGroundingAnchor(moved) && near(moved.x, 500, 1e-3) && near(moved.z, 900, 1e-3),
+    'an anchor follows its owner when the owner moves, which is what pedestrians and traffic do');
+  hydrants.count = 0;
+  assert(sc.refreshGroundingAnchor(moved) === false,
+    'an anchor whose instance has left the batch reports itself dead instead of drawing a '
+    + 'shadow for an object that is not there');
+
+  notes.push(`grounding anchors: ${audit.anchors.length} from ${audit.sources} sources over `
+    + `${audit.scanned} meshes, ${audit.skipped.casting} already cast, ${audit.skipped.tooSmall} under the height floor`);
+  const noon = sc.projectedContactShadow({ height: 1.8, radius: 0.3 },
+    { altitudeDeg: 50.08, x: 0.2, z: -0.9 }, 0.5154);
+  notes.push(`a 1.8 m pedestrian at the noon card throws ${noon.length} m at alpha ${noon.opacity}, `
+    + `tip ${(noon.tipWidth * 100).toFixed(1)} cm against a ${(noon.baseWidth * 100).toFixed(0)} cm foot`);
+}
+
 // ---------------------------------------------------------------------------
 if (notes.length > 0) {
   console.log('\nmeasured:');

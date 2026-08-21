@@ -51,6 +51,7 @@ import {
   PEDESTRIAN_PRESENTATION_VERSION,
 } from '../simulation/pedestrians/pedestrian-presentation.js';
 import { createPassRuntime } from '../render/pass-registry.js';
+import { createPostChain, POST_CHAIN_VERSION } from '../render/post-chain.js';
 import { PASSES } from '../render/passes/index.js';
 
 const PALETTES = Object.freeze({
@@ -1867,6 +1868,44 @@ function shade(color, amount) {
   return c;
 }
 
+/**
+ * Capture-round overrides for the image pipeline, read once at construction.
+ *
+ * A round needs to attribute cost without evaluating JavaScript mid-run, so
+ * every stage is reachable from the URL: `?post=off`, `?ao=off`, `?aa=fxaa`,
+ * `?aa=none`, `?aoScale=0.35`, `?aoRadius=1.5`, `?samples=0`. Defaults are
+ * production behaviour; an unparsable value is ignored rather than obeyed.
+ */
+function readPostChainOptions() {
+  const options = {};
+  let params = null;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch (error) {
+    params = null;
+  }
+  const override = (typeof window !== 'undefined' && window.__QA_POST__) || null;
+  const read = (key) => (params ? params.get(key) : null);
+  const off = (value) => value === 'off' || value === '0' || value === 'false';
+  const post = read('post');
+  if (off(post)) options.enabled = false;
+  const aoFlag = read('ao');
+  const ao = {};
+  if (off(aoFlag)) ao.enabled = false;
+  const aoScale = Number(read('aoScale'));
+  if (Number.isFinite(aoScale) && aoScale > 0 && aoScale <= 1) ao.resolutionScale = aoScale;
+  const aoRadius = Number(read('aoRadius'));
+  if (Number.isFinite(aoRadius) && aoRadius > 0 && aoRadius <= 8) ao.radius = aoRadius;
+  const aoNormals = read('aoNormals');
+  if (aoNormals === 'depth' || aoNormals === 'mrt') ao.normalSource = aoNormals;
+  if (Object.keys(ao).length) options.ao = ao;
+  const aa = read('aa');
+  if (aa) options.antialias = aa;
+  const samples = read('samples');
+  if (samples !== null && Number.isFinite(Number(samples))) options.sceneSamples = Number(samples);
+  return override ? { ...options, ...override } : options;
+}
+
 export class CityRenderer {
   constructor(container, { pixelRatioCap = 1.5 } = {}) {
     this.container = container;
@@ -1889,9 +1928,25 @@ export class CityRenderer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
     if (!sceneCanvas) container.appendChild(this.renderer.domElement);
-    // A restrained filmic grade keeps the pastel material palette intact and
-    // avoids turning large real-map facades into neon color fields.
-    this.renderer.domElement.style.filter = 'saturate(1.16) contrast(1.04) brightness(1.01)';
+    // The restrained filmic grade that used to live here as a CSS
+    // `domElement.style.filter` now lives in the node graph, after
+    // `renderOutput`. It sat outside colour management, was invisible to every
+    // pixel readback we have taken of these frames, and its `contrast(1.04)`
+    // pivoted on 0.5 - which clipped everything under 4.9/255 display to black
+    // and so destroyed the very shadow toe `SHADOW_DISPLAY_FLOOR` and
+    // `BLACK_FLOOR_STEPS` exist to protect. See src/render/post-chain.js.
+    this.renderer.domElement.style.filter = '';
+    // The image pipeline itself is built in `initialize()`, once the backend
+    // is known. Declared here so a caller that never initialises still sees a
+    // well-formed handle rather than `undefined`.
+    this.postChain = null;
+    this.postChainOptions = readPostChainOptions();
+    this.postChainDiagnostics = {
+      version: POST_CHAIN_VERSION,
+      built: false,
+      enabled: false,
+      reason: 'not initialised',
+    };
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -2186,7 +2241,61 @@ export class CityRenderer {
     // frames read as flat painted card.
     this.envRig = createEnvironmentRig(this.renderer, { scene: this.scene });
     await this.envRig.updateAsync({ hour: this.timeOfDay, weather: this.envWeather });
+    this.buildPostChain();
     return this.rendererBackend;
+  }
+
+  /**
+   * Stand up the canonical image pipeline. A failure here must not cost the
+   * round a frame: the chain is left null, the reason is recorded, and
+   * `renderFrame()` falls back to the bare render - which is exactly what the
+   * build did before this pass existed, minus the CSS grade.
+   */
+  buildPostChain() {
+    if (this.postChain) return this.postChain;
+    try {
+      this.postChain = createPostChain(this.renderer, this.scene, this.camera, this.postChainOptions);
+      this.postChainDiagnostics = { built: true, ...this.postChain.diagnostics() };
+    } catch (error) {
+      this.postChain = null;
+      this.postChainDiagnostics = {
+        version: POST_CHAIN_VERSION,
+        built: false,
+        enabled: false,
+        reason: String(error?.message || error),
+      };
+    }
+    return this.postChain;
+  }
+
+  /**
+   * QA control surface, reachable as
+   * `window.__CITYGEN__.getRenderer().setImagePipeline({ ... })`.
+   *
+   * Every stage is switchable so a capture round can attribute its cost:
+   *   { enabled }             whole chain on/off (off = bare render, no grade)
+   *   { ao }                  true/false, or a partial GTAO override
+   *   { antialias }           'smaa' | 'fxaa' | 'none'
+   *   { sceneSamples }        MSAA on the scene pass; null inherits the renderer
+   *   { grade }               true/false, or partial saturation/contrast/brightness
+   * Returns the chain diagnostics so the caller can record what it got.
+   */
+  setImagePipeline(patch = {}) {
+    const chain = this.postChain;
+    if (!chain) return this.postChainDiagnostics;
+    if ('enabled' in patch) chain.setEnabled(patch.enabled);
+    if ('ao' in patch) chain.setAmbientOcclusion(patch.ao);
+    if ('antialias' in patch) chain.setAntialias(patch.antialias);
+    if ('sceneSamples' in patch) chain.setSceneSamples(patch.sceneSamples);
+    if ('grade' in patch) chain.setGrade(patch.grade);
+    this.postChainDiagnostics = { built: true, ...chain.diagnostics() };
+    return this.postChainDiagnostics;
+  }
+
+  /** Live view of the image pipeline for the capture report. */
+  getImagePipeline() {
+    if (this.postChain) this.postChainDiagnostics = { built: true, ...this.postChain.diagnostics() };
+    return this.postChainDiagnostics;
   }
 
   /** Weather bucket driving the sky/IBL model: 'clear' | 'fog' | 'drizzle'. */
@@ -2437,6 +2546,13 @@ export class CityRenderer {
 
   dispose() {
     window.removeEventListener('resize', this.onResize);
+    if (this.postChain) {
+      this.postChain.dispose();
+      this.postChain = null;
+      this.postChainDiagnostics = {
+        version: POST_CHAIN_VERSION, built: false, enabled: false, reason: 'disposed',
+      };
+    }
     this.controls.dispose();
     this.passRuntime.dispose();
     this.passContext = null;
@@ -2681,25 +2797,84 @@ export class CityRenderer {
   }
 
   async prewarmLightingPipelines() {
-    if (typeof this.renderer.compileAsync !== 'function') return;
+    const startedAt = performance.now();
+    const diagnostics = {
+      ran: false,
+      skipped: null,
+      renderWarmup: false,
+      warmSize: null,
+      restoredSize: null,
+      restoredAspect: null,
+      ms: 0,
+    };
+    this.prewarmDiagnostics = diagnostics;
+    if (typeof this.renderer.compileAsync !== 'function') {
+      diagnostics.skipped = 'no-compileAsync';
+      return diagnostics;
+    }
+    // A clock-pinned capture holds one hour for the whole run, so it never
+    // experiences the day/night pipeline transition this warm-up exists to
+    // smooth. Let such a run opt out explicitly - and only explicitly: the
+    // probe is read once, here, and the default (absent flag, no query
+    // parameter) keeps the production behaviour.
+    const search = typeof window !== 'undefined' ? (window.location?.search || '') : '';
+    const skipRequested = (typeof window !== 'undefined' && window.__QA_SKIP_PREWARM__ === true)
+      || new URLSearchParams(search).get('qaPrewarm') === 'off';
+    if (skipRequested) {
+      diagnostics.skipped = 'requested';
+      diagnostics.ms = +(performance.now() - startedAt).toFixed(1);
+      return diagnostics;
+    }
     const renderWarmup = !this.lightingPipelinesRendered
       && typeof this.renderer.renderAsync === 'function';
+    diagnostics.renderWarmup = renderWarmup;
+    // The compiled pipelines are identical at any resolution; the fragment work
+    // is not. Warm at 64x64 and put the drawing buffer back afterwards. The
+    // restore is `updateStyle = false`, so the canvas CSS box never changes and
+    // no resize observer or re-render is triggered by it; the camera aspect is
+    // saved and re-applied because it belongs to the presented size, not to the
+    // warm-up one.
+    const canResize = typeof this.renderer.setSize === 'function'
+      && typeof this.renderer.getSize === 'function';
+    const previousSize = canResize ? this.renderer.getSize(new THREE.Vector2()) : null;
+    const previousAspect = this.camera?.aspect ?? null;
     const restoreHour = this.timeOfDay;
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     this.appliedPracticalKey = null;
-    this.setTimeOfDay(14);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
-    this.setTimeOfDay(22);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
-    this.setTimeOfDay(restoreHour);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) {
-      await this.renderer.renderAsync(this.scene, this.camera);
-      this.lightingPipelinesRendered = true;
+    try {
+      if (canResize && previousSize && previousSize.x > 64 && previousSize.y > 64) {
+        this.renderer.setSize(64, 64, false);
+        diagnostics.warmSize = [64, 64];
+      } else {
+        diagnostics.warmSize = previousSize ? [previousSize.x, previousSize.y] : null;
+      }
+      this.setTimeOfDay(14);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+      this.setTimeOfDay(22);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+      this.setTimeOfDay(restoreHour);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) {
+        await this.renderer.renderAsync(this.scene, this.camera);
+        this.lightingPipelinesRendered = true;
+      }
+      diagnostics.ran = true;
+    } finally {
+      if (canResize && previousSize && diagnostics.warmSize && diagnostics.warmSize[0] === 64) {
+        this.renderer.setSize(previousSize.x, previousSize.y, false);
+        diagnostics.restoredSize = [previousSize.x, previousSize.y];
+      }
+      if (previousAspect != null && this.camera) {
+        this.camera.aspect = previousAspect;
+        this.camera.updateProjectionMatrix();
+        diagnostics.restoredAspect = previousAspect;
+      }
+      diagnostics.ms = +(performance.now() - startedAt).toFixed(1);
     }
+    return diagnostics;
   }
 
   installMetricTileRoot(root, bounds) {
@@ -8391,11 +8566,23 @@ export class CityRenderer {
   ensureCrowdPresentation() {
     if (this.crowd) return this.crowd;
     try {
-      // The plane the crowd stands on. `terrain.heightAt` is BARE GROUND; the
-      // pavement is `streetDesign.roadLift + 45 mm` above it - see
-      // `streetSurfaceLift` - which is where the kerb top, the street lamps, the
-      // sidewalk props and the seated hero actors already are. Sampling bare
-      // terrain sank the entire crowd 42 cm into the pavement.
+      // The SURFACE the crowd stands on - not a plane.
+      //
+      // `terrain.heightAt` is BARE GROUND; the pavement is above it. This used
+      // to add the single constant `streetSurfaceLift().footway`, which is the
+      // kerb-top plane the street lamps and the sidewalk props are placed on.
+      // But the footway the street pass DRAWS falls 8 mm across the kerb top and
+      // then cross-falls 2% away from the road, so on a walking line 1.2 m back
+      // from the kerb the constant is 18-46 mm BELOW the concrete - which sank
+      // every sole into the pavement and put the contact-shadow blob underneath
+      // it, where it darkens nothing.
+      //
+      // `TrafficSim.pedestrianGroundY` samples the street module's own
+      // cross-section at the point asked for, and is the single source of
+      // footway height for the simulated crowd. Sampling it here rather than
+      // duplicating the arithmetic is what keeps the drawn figure and the
+      // simulated walker on ONE surface; the constant survives only as the
+      // off-street fallback, and only until a sampler is available.
       const crowdFootwayLift = this.streetSurfaceLift(this.city || {}).footway;
       this.crowd = createCrowdPresentation({
         // Under `city-root`, not the scene. Interior mode hides every visible
@@ -8405,11 +8592,19 @@ export class CityRenderer {
         // `verify:citygen-actors` counts the meshes named `pedestrian-*` in
         // there and expects exactly the simulation's own eleven.
         parent: this.root || this.scene,
-        // The simulation's own footway datum, not a second one: TrafficSim's
-        // `pedestrianGroundY` puts walkers on the same plane.
-        sampleGround: (x, z) => (this.terrain?.heightAt
-          ? this.terrain.heightAt(x, z) + crowdFootwayLift
-          : crowdFootwayLift),
+        // The simulation's own footway sampler, not a second one: whatever
+        // `TrafficSim.pedestrianGroundY` says is under a walker is what the
+        // drawn figure stands on, to the last bit.
+        sampleGround: (x, z) => {
+          const sampler = this.crowdGroundSampler;
+          if (sampler) {
+            const y = sampler(x, z);
+            if (Number.isFinite(y)) return y;
+          }
+          return this.terrain?.heightAt
+            ? this.terrain.heightAt(x, z) + crowdFootwayLift
+            : crowdFootwayLift;
+        },
         readAgent: (source, index, out) => this.readPedestrianAgent(source, index, out),
       });
       this.crowdDiagnostics.pass = this.crowd.version;
@@ -8524,6 +8719,12 @@ export class CityRenderer {
       return null;
     }
     if (this.crowdPresentationFailed) return null;
+    // Late-bound so the crowd never holds a stale TrafficSim across a map
+    // switch. Read-only: presentation asks the simulation where the ground is
+    // and writes nothing back.
+    this.crowdGroundSampler = typeof traffic?.pedestrianGroundY === 'function'
+      ? (x, z) => traffic.pedestrianGroundY(x, z)
+      : null;
     const crowd = this.ensureCrowdPresentation();
     if (!crowd) return null;
     this.crowdTrackStep = Math.max(0, delta);
@@ -8663,7 +8864,11 @@ export class CityRenderer {
     // render one frame behind the fit. The signature check makes this free when
     // nothing has moved.
     this.updateSunShadow();
-    this.renderer.render(this.scene, this.camera);
+    // One draw site on the canonical path. The chain owns tone mapping, the
+    // colour-space encode and the grade when it is on; the bare render is the
+    // documented fallback and keeps the renderer's own output transform.
+    if (this.postChain && this.postChain.enabled) this.postChain.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   setWalkMode(enabled) {

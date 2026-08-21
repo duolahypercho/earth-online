@@ -1636,11 +1636,17 @@ const MATERIAL_SPECS = Object.freeze({
   dome: { roughness: 0.66, metalness: 0.1, offset: null, renderOrder: 0, envClass: 'painted-metal' },
 });
 
-function buildMeshes(state, group) {
-  const meshes = [];
-  for (const [name, buffer] of Object.entries(state.buffers)) {
-    if (buffer.triangles === 0) continue;
-    const spec = MATERIAL_SPECS[name];
+/**
+ * One material per buffer. Created ONCE per city and reused across every LOD
+ * re-centre, because the renderer caches its environment-grading buckets from
+ * a single traverse taken after the passes are built: a material that first
+ * appeared during a refresh would never be handed an environment map and would
+ * render unlit for the rest of the session. Same reason facade-articulation
+ * builds its material set up front.
+ */
+export function createStreetDetailMaterials() {
+  const materials = {};
+  for (const [name, spec] of Object.entries(MATERIAL_SPECS)) {
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: spec.roughness,
@@ -1651,6 +1657,22 @@ function buildMeshes(state, group) {
     });
     material.userData = { envClass: spec.envClass };
     material.name = `${STREET_DETAIL_ID}:${name}`;
+    materials[name] = material;
+  }
+  return materials;
+}
+
+export function disposeStreetDetailMaterials(materials) {
+  if (!materials) return;
+  for (const material of Object.values(materials)) material?.dispose?.();
+}
+
+function buildMeshes(state, group, materials) {
+  const meshes = [];
+  for (const [name, buffer] of Object.entries(state.buffers)) {
+    if (buffer.triangles === 0) continue;
+    const spec = MATERIAL_SPECS[name];
+    const material = materials[name];
     const mesh = new THREE.Mesh(bufferToGeometry(buffer), material);
     mesh.name = `${STREET_DETAIL_ID}:${name}`;
     mesh.renderOrder = spec.renderOrder;
@@ -1829,7 +1851,8 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
   const group = new THREE.Group();
   group.name = STREET_DETAIL_ID;
   group.userData = { kind: 'street-surface-detail', version: STREET_DETAIL_VERSION };
-  const meshes = buildMeshes(state, group);
+  const materials = overrides.materials || createStreetDetailMaterials();
+  const meshes = buildMeshes(state, group, materials);
 
   const triangles = totalTriangles(state);
   const drawCalls = meshes.length;
@@ -1843,6 +1866,11 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
     // see it in the diagnostics. Now the substitution is on the record.
     focusSource: focus.source,
     focusRejected: focus.rejected,
+    // Which datum the rings are centred on RIGHT NOW: the build focus on the
+    // first build, the live camera after a re-centre. Round 3 shipped rings
+    // frozen on the build focus 640 m from the capture eye; this is the field
+    // that makes that visible without opening a frame.
+    centreSource: overrides.centreSource || focus.source,
     windowRadius: outerRadius,
     plan: plan.stats,
     counts: state.counts,
@@ -1878,14 +1906,145 @@ export function buildStreetSurfaceDetail(ctx, overrides = {}) {
     inlets: state.records.inlets.length,
     rampPads: state.records.rampPads.length,
   };
-  return { object: triangles > 0 ? group : null, diagnostics, state, plan, records: state.records };
+  return {
+    object: triangles > 0 ? group : null,
+    diagnostics, state, plan, materials, records: state.records,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// pass module: the LOD centre follows the camera
+// ---------------------------------------------------------------------------
+//
+// ROUND 3 CORRECTION - READ THIS BEFORE CHANGING THE THRESHOLD.
+//
+// The ring note at the top of this file explains why the outer ring covers the
+// whole window: a wrong focus must never empty the city. It does not fix the
+// other half of the same bug. `ctx.focus` is sampled ONCE, when the city is
+// built, and the player - or the capture harness - then moves away from it.
+// Measured on the round-3 capture set the rings were still centred on
+// (1588.8, 369.5) while the street card stood at (1447.1, 1003.8), 640 m away,
+// and the footway directly under the lens was therefore built at the window
+// tier: 2994 panel joints, 3454 wheel paths and 1010 tactile domes were
+// rejected with a `ring-window` reason, so the slab under the camera had no
+// scored joints, no polish and no truncated domes on its kerb ramps.
+//
+// `update` re-centres the rings on the live camera once it has moved past
+// STREET_DETAIL_FOCUS.refreshMetres, exactly as facade-articulation does. The
+// rebuild is SYNCHRONOUS and completes inside the update call, so a camera
+// teleport - which is how every capture card is posed - is fully re-centred in
+// the frame it is posed for. Nothing is interpolated.
+//
+// Threshold choice. The near ring reaches 140 m, so re-centring every 45 m
+// keeps at least 95 m of fully detailed footway ahead of the eye while costing
+// one rebuild per 45 m travelled instead of one per frame. Measured rebuild
+// cost on the shipped slice is ~0.75 s in the browser (`buildMs` in the
+// diagnostics), which is why the threshold is not tighter.
+export const STREET_DETAIL_FOCUS = Object.freeze({
+  refreshMetres: 45,
+});
+
+/** Live pass state. A pass module is a singleton, so this is its whole world. */
+const passState = {
+  group: null,
+  materials: null,
+  centre: null,
+  refreshes: 0,
+  lastRefreshMs: 0,
+  diagnostics: { version: STREET_DETAIL_VERSION, implemented: false },
+};
+
+/**
+ * A read-only view of `ctx` whose focus is the live camera. `Object.create`
+ * rather than a spread: the renderer's context exposes `hour`, `weather` and
+ * `traffic` as getters, and a spread would freeze them at their current value.
+ */
+function cameraCentredContext(ctx, x, z) {
+  const view = Object.create(ctx);
+  view.focus = { x, z };
+  return view;
+}
+
+/** Replace the pass group's contents with a fresh build, in place. */
+function adoptContent(group, next) {
+  for (const child of [...group.children]) {
+    child.geometry?.dispose?.();
+    group.remove(child);
+  }
+  if (!next) return;
+  for (const child of [...next.children]) group.add(child);
 }
 
 export default {
   id: STREET_DETAIL_ID,
   order: 30,
   build(ctx) {
-    const result = buildStreetSurfaceDetail(ctx);
+    passState.materials = createStreetDetailMaterials();
+    const result = buildStreetSurfaceDetail(ctx, { materials: passState.materials });
+    passState.group = result.object;
+    passState.centre = { x: result.diagnostics.focus.x, z: result.diagnostics.focus.z };
+    passState.refreshes = 0;
+    passState.lastRefreshMs = 0;
+    result.diagnostics.refreshes = 0;
+    result.diagnostics.lastRefreshMs = 0;
+    result.diagnostics.refreshMetres = STREET_DETAIL_FOCUS.refreshMetres;
+    passState.diagnostics = result.diagnostics;
     return { object: result.object, diagnostics: result.diagnostics };
+  },
+
+  /**
+   * Re-centre the rings on the live camera. Steady state is one subtraction
+   * and a hypot; everything else only runs on a threshold crossing.
+   */
+  update(ctx) {
+    if (!passState.group || !passState.centre) return;
+    const camera = ctx?.camera?.position;
+    if (!camera || !Number.isFinite(camera.x) || !Number.isFinite(camera.z)) return;
+    const moved = Math.hypot(camera.x - passState.centre.x, camera.z - passState.centre.z);
+    if (moved < STREET_DETAIL_FOCUS.refreshMetres) return;
+    const startedAt = Date.now();
+    const next = buildStreetSurfaceDetail(
+      cameraCentredContext(ctx, camera.x, camera.z),
+      { materials: passState.materials, centreSource: 'camera' },
+    );
+    // The centre is the CAMERA, not the focus the build settled on. A camera
+    // outside `city.meta.bounds` has its focus substituted for the bounds
+    // centre (see `resolveFocus`); recording that substitute would leave the
+    // stored centre a long way from the camera and rebuild the pass every
+    // frame for as long as it stood there.
+    passState.centre = { x: camera.x, z: camera.z };
+    adoptContent(passState.group, next.object);
+    passState.refreshes += 1;
+    passState.lastRefreshMs = Date.now() - startedAt;
+    Object.assign(passState.diagnostics, next.diagnostics, {
+      refreshes: passState.refreshes,
+      lastRefreshMs: passState.lastRefreshMs,
+      refreshMetres: STREET_DETAIL_FOCUS.refreshMetres,
+      // The carpet is dressed once and the dressing is idempotent, so a
+      // refresh reports 'already-dressed'. Keep the result that says what was
+      // actually done, or a capture report taken after a re-centre would read
+      // as though the carpet had never been dressed at all.
+      groundDressing: passState.diagnostics.groundDressing?.applied
+        ? passState.diagnostics.groundDressing
+        : next.diagnostics.groundDressing,
+    });
+  },
+
+  dispose() {
+    // The registry disposes the returned object's geometry and the materials
+    // that are still attached to it. A material whose buffer ended up empty
+    // was never attached, so release the whole set here and drop the
+    // singleton's references, so a rebuilt city starts clean.
+    disposeStreetDetailMaterials(passState.materials);
+    passState.group = null;
+    passState.materials = null;
+    passState.centre = null;
+    passState.refreshes = 0;
+    passState.lastRefreshMs = 0;
+  },
+
+  /** Test seam: the live diagnostics without going through the registry. */
+  __diagnostics() {
+    return passState.diagnostics;
   },
 };

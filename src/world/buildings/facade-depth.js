@@ -418,6 +418,10 @@ const MIN_FOOTPRINT_AREA = MIN_PLAN_EXTENT * MIN_PLAN_EXTENT;
 const MIN_TIER_DISTANCE = 0.5;
 const MIN_WINDOW_WIDTH = 0.7;
 const MIN_WINDOW_HEIGHT = 0.7;
+/** Floor-to-floor a storey may never drop below, jitter included. */
+const ART_MIN_STOREY = 2.6;
+/** Largest relative per-storey height deviation. See `articulationStoreys`. */
+const ART_STOREY_JITTER = 0.11;
 const EPSILON = 1e-6;
 
 // ---------------------------------------------------------------- primitives
@@ -2349,18 +2353,52 @@ export function articulationLevels(building, height) {
 }
 
 /** Storey floor/top heights, with a taller commercial ground floor. */
-function articulationStoreys(building, height, commercial) {
+function articulationStoreys(building, height, commercial, variant = null) {
   const levels = articulationLevels(building, height);
   if (levels === 1) return { levels: 1, floors: [0], tops: [height] };
-  const wanted = commercial ? 4.5 : 3.7;
-  const room = height - 2.6 * (levels - 1);
-  const ground = clamp(wanted, 2.6, Math.max(2.6, room));
-  const upper = (height - ground) / (levels - 1);
+  const groundJitter = variant ? 0.94 + ((variant.storeySeed >>> 3) % 256) / 256 * 0.22 : 1;
+  const wanted = (commercial ? 4.5 : 3.7) * groundJitter;
+  const room = height - ART_MIN_STOREY * (levels - 1);
+  const ground = clamp(wanted, ART_MIN_STOREY, Math.max(ART_MIN_STOREY, room));
+  const upperRoom = height - ground;
+  const count = levels - 1;
+  const uniform = upperRoom / count;
+  // Per-storey height variation. A shaft of identical slabs is nine identical
+  // rows of the same window whatever the bay rhythm does, because the sill and
+  // head lines are the only horizontals a shaft has and they are evenly
+  // spaced. Two terms, both deterministic:
+  //
+  //  - a shape gradient: lower floors sit a little taller than upper ones and
+  //    the top floor picks up again, which is what a real section does;
+  //  - a per-storey draw off the building's own seed.
+  //
+  // `dev` is the largest relative deviation that still leaves every floor at
+  // or above ART_MIN_STOREY once the weights are normalised, because the
+  // weights are normalised back to `upperRoom` -- the storeys add up to the
+  // shell height exactly and no single storey absorbs the residual.
+  const dev = variant && count > 1
+    ? clamp((uniform - ART_MIN_STOREY) / (uniform + ART_MIN_STOREY), 0, ART_STOREY_JITTER)
+    : 0;
+  const weights = new Array(count);
+  let total = 0;
+  for (let i = 0; i < count; i += 1) {
+    let weight = 1;
+    if (dev > 0) {
+      const t = count > 1 ? i / (count - 1) : 0;
+      const shape = clamp((0.5 - t) * 0.9 + (t > 0.9 ? 0.5 : 0), -1, 1);
+      const noise = ((openingHash(variant.storeySeed, 0, i, 0) % 4096) / 4096) * 2 - 1;
+      weight = 1 + clamp(shape * 0.5 + noise * 0.62, -1, 1) * dev;
+    }
+    weights[i] = weight;
+    total += weight;
+  }
   const floors = [0];
   const tops = [ground];
-  for (let i = 1; i < levels; i += 1) {
-    floors.push(ground + (i - 1) * upper);
-    tops.push(ground + i * upper);
+  let cursor = ground;
+  for (let i = 0; i < count; i += 1) {
+    floors.push(cursor);
+    cursor += upperRoom * (weights[i] / total);
+    tops.push(cursor);
   }
   tops[tops.length - 1] = height;
   return { levels, floors, tops };
@@ -2410,6 +2448,38 @@ export function drawArticulationVariant(building, style, className, salt = 0) {
     mechanicalPick: random(),
     crownRatio: 0.62 + random() * 0.24,
     interruptSeed: Math.floor(random() * 65536),
+    // --- everything below is appended, and must stay appended -------------
+    // The draws above are consumed in declaration order, so a new field added
+    // in the middle of this literal would re-roll every proportion after it.
+    //
+    // Continuous colour. See `shiftTint`: the palette index picks the family,
+    // these move the building inside it, so two buildings that landed on the
+    // same hex are still two colours.
+    hueJitter: (random() - 0.5) * 0.062,
+    satJitter: 0.78 + random() * 0.46,
+    litJitter: 0.85 + random() * 0.32,
+    // Trim is still derived from the body colour -- painted stone, cast
+    // concrete, a lighter course -- but the *relationship* is drawn too, so a
+    // street does not share one lift factor.
+    trimHue: (random() - 0.5) * 0.05,
+    trimSat: 0.48 + random() * 0.46,
+    trimLift: 1.08 + random() * 0.26,
+    // A fascia is painted, not tinted body colour: it keeps the body hue as a
+    // starting point and rotates off it.
+    signHue: (random() - 0.5) * 0.24,
+    signSat: 0.55 + random() * 0.95,
+    signLit: 0.3 + random() * 0.28,
+    // Bay composition: which motif this elevation is sequenced from, where the
+    // sequence starts, and whether it is mirrored about the elevation's centre.
+    bayMotif: Math.floor(random() * 64),
+    bayRotation: Math.floor(random() * 6),
+    baySymmetry: random() < 0.55,
+    // Per-storey height variation, normalised back to the shell height.
+    storeySeed: Math.floor(random() * 65536),
+    // Tenancy: how wide a shopfront unit wants to be, and where the
+    // subdivision starts along the frontage.
+    tenancyWidth: 7.5 + random() * 5.5,
+    tenancySeed: Math.floor(random() * 65536),
   };
 }
 
@@ -2621,6 +2691,60 @@ function hexToSrgb(hex) {
   const value = typeof hex === 'string' ? Number.parseInt(hex.replace('#', ''), 16) : Number(hex);
   if (!Number.isFinite(value)) return [1, 1, 1];
   return [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
+}
+
+/**
+ * sRGB -> HSL. A palette entry is a point; a facade needs a neighbourhood.
+ *
+ * Each material class carries six or seven hexes, so a seven-class city of
+ * seven hundred buildings is painted from about forty-two wall colours and a
+ * street of it reads as one kit repeated. Moving a building continuously in
+ * hue/saturation/lightness around its own palette entry keeps the class's
+ * family -- brick stays brick -- and still gives every building its own wall.
+ */
+function srgbToHsl(rgb) {
+  const r = clamp(rgb[0], 0, 1);
+  const g = clamp(rgb[1], 0, 1);
+  const b = clamp(rgb[2], 0, 1);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const span = max - min;
+  if (span < 1e-6) return [0, 0, l];
+  const s = l > 0.5 ? span / (2 - max - min) : span / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / span + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / span + 2) / 6;
+  else h = ((r - g) / span + 4) / 6;
+  return [h, s, l];
+}
+
+/** HSL -> sRGB, the inverse of `srgbToHsl`. Always returns channels in [0, 1]. */
+function hslToSrgb(hue, sat, lit) {
+  const h = ((hue % 1) + 1) % 1;
+  const s = clamp(sat, 0, 1);
+  const l = clamp(lit, 0, 1);
+  if (s < 1e-6) return [l, l, l];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t0) => {
+    let t = ((t0 % 1) + 1) % 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)];
+}
+
+/**
+ * Move a colour in HSL and come back to sRGB. `litShift` is applied after the
+ * scale so a trim course can be lifted off a body colour that is already dark
+ * without having to multiply it past white.
+ */
+function shiftTint(tint, hueShift, satScale, litScale, litShift = 0) {
+  const [h, s, l] = srgbToHsl(tint);
+  return hslToSrgb(h + hueShift, s * satScale, clamp(l * litScale + litShift, 0.02, 0.985));
 }
 
 // ---------------------------------------------------------------- emitters
@@ -2853,21 +2977,148 @@ function emitRow(sink, edge, y0, y1, spans, tint, spanFn, soffit = 0, from = nul
   }
 }
 
-/** Bay centres for an edge, as spans of the given width. */
-function bayspans(edge, variant, ratio, pitchScale = 1) {
+/**
+ * The bay alphabet.
+ *
+ * One pitch and one window width per elevation is a tiled wall: every storey
+ * emits the same spans and the frontage reads as printed paper. A composed
+ * elevation is a *sequence* of bays of different kinds, and the kinds differ
+ * in width as well as in what they carry -- that is what makes a pier read as
+ * structure rather than as a missing window.
+ *
+ * `weight` is the bay's share of the elevation, `lights` how many openings it
+ * carries, `fill` how much of its own width the glazing takes.
+ */
+const ART_BAY_TYPES = Object.freeze({
+  wide: Object.freeze({ weight: 1.32, lights: 1, fill: 1.06 }),
+  narrow: Object.freeze({ weight: 0.80, lights: 1, fill: 0.94 }),
+  pier: Object.freeze({ weight: 0.58, lights: 0, fill: 0 }),
+  paired: Object.freeze({ weight: 1.44, lights: 2, fill: 1.02 }),
+});
+
+/**
+ * Bay sequences. A building draws one and reads it off with its own rotation,
+ * optionally mirrored about the elevation's centre, so a frontage is composed
+ * about an axis instead of tiled from a single module. Every motif keeps a
+ * majority of glazed bays: a pier is a rhythm break, not a way to stop
+ * building windows.
+ */
+const ART_BAY_MOTIFS = Object.freeze([
+  Object.freeze(['wide', 'narrow', 'wide', 'narrow']),
+  Object.freeze(['pier', 'wide', 'wide']),
+  Object.freeze(['narrow', 'paired', 'narrow']),
+  Object.freeze(['wide', 'wide', 'pier', 'narrow']),
+  Object.freeze(['paired', 'narrow', 'paired', 'wide']),
+  Object.freeze(['wide', 'narrow', 'narrow', 'wide', 'pier']),
+  Object.freeze(['narrow', 'wide', 'paired']),
+  Object.freeze(['wide', 'pier', 'paired', 'pier']),
+]);
+
+/**
+ * The bay sequence for one elevation: a partition of [0, length] into bays,
+ * each with a type.
+ *
+ * Deterministic from the building's variant and the edge index alone -- NOT
+ * from the ring, the detail rung or the camera -- because a lower rung has to
+ * emit a prefix of the same pattern. A bay that moves when the player walks
+ * toward it pops.
+ */
+function bayComposition(edge, variant, pitchScale = 1) {
   const columns = clamp(Math.round(edge.length / (variant.bayWidth / pitchScale)), 1, MAX_ART_BAYS);
-  const pitch = edge.length / columns;
-  const width = Math.min(pitch * ratio, 3.2);
-  if (width < MIN_WINDOW_WIDTH || pitch - width < 0.45) return { columns, pitch, width, spans: [] };
-  const spans = [];
-  for (let column = 0; column < columns; column += 1) {
-    const centre = (column + 0.5) * pitch;
-    const s0 = centre - width / 2;
-    const s1 = centre + width / 2;
-    if (s0 < 0.22 || s1 > edge.length - 0.22) continue;
-    spans.push({ s0, s1 });
+  const motif = ART_BAY_MOTIFS[(variant.bayMotif ?? 0) % ART_BAY_MOTIFS.length];
+  const rotation = (variant.bayRotation ?? 0) + edge.index;
+  const mirrored = variant.baySymmetry === true && columns > 2;
+  const bays = [];
+  let weight = 0;
+  for (let i = 0; i < columns; i += 1) {
+    const k = mirrored ? Math.min(i, columns - 1 - i) : i;
+    const type = columns <= 2 ? 'wide' : motif[(k + rotation) % motif.length];
+    const spec = ART_BAY_TYPES[type];
+    bays.push({ type, spec, s0: 0, s1: 0 });
+    weight += spec.weight;
   }
-  return { columns, pitch, width, spans };
+  let cursor = 0;
+  for (const bay of bays) {
+    bay.s0 = cursor;
+    cursor += edge.length * (bay.spec.weight / weight);
+    bay.s1 = cursor;
+  }
+  bays[bays.length - 1].s1 = edge.length;
+  return { columns, bays };
+}
+
+/**
+ * Opening spans for an elevation, read off its bay sequence. `ratio` and
+ * `pitchScale` are the register's proportions -- the crown asks for narrower
+ * lights on a tighter sequence -- and the sequence itself is unchanged, so the
+ * crown lands on the same bay boundaries as the shaft below it.
+ */
+function bayspans(edge, variant, ratio, pitchScale = 1) {
+  const comp = bayComposition(edge, variant, pitchScale);
+  const margin = 0.22;
+  const spans = [];
+  let width = 0;
+  for (const bay of comp.bays) {
+    const bayWidth = bay.s1 - bay.s0;
+    const centre = (bay.s0 + bay.s1) / 2;
+    if (bay.spec.lights === 0) continue;
+    const wanted = Math.min(bayWidth * ratio * bay.spec.fill, 3.2);
+    if (bay.spec.lights === 2) {
+      // A paired bay is two lights behind one opening rhythm. If the pair does
+      // not fit it falls back to the single light rather than to nothing, so a
+      // narrow frontage never loses a whole bay to arithmetic.
+      const gap = clamp(bayWidth * 0.09, 0.16, 0.36);
+      const each = (Math.min(bayWidth * ratio * bay.spec.fill, 3.4) - gap) / 2;
+      if (each >= MIN_WINDOW_WIDTH && bayWidth - (each * 2 + gap) >= 0.45) {
+        const total = each * 2 + gap;
+        const a0 = centre - total / 2;
+        const b0 = a0 + each + gap;
+        if (a0 >= margin && b0 + each <= edge.length - margin) {
+          spans.push({ s0: a0, s1: a0 + each }, { s0: b0, s1: b0 + each });
+          width = Math.max(width, each);
+          continue;
+        }
+      }
+    }
+    if (wanted < MIN_WINDOW_WIDTH || bayWidth - wanted < 0.45) continue;
+    const s0 = centre - wanted / 2;
+    const s1 = centre + wanted / 2;
+    if (s0 < margin || s1 > edge.length - margin) continue;
+    spans.push({ s0, s1 });
+    width = Math.max(width, wanted);
+  }
+  return { columns: comp.columns, bays: comp.bays, pitch: edge.length / comp.columns, width, spans };
+}
+
+/**
+ * The same sequence read as glazing bands rather than as openings: runs of
+ * adjacent glazed bays become one stripe and every blank pier bay cuts it.
+ * A far-ring elevation therefore carries the elevation's composition, and the
+ * near ring only deepens the lines it already has.
+ */
+function bandSpansFor(bays, from, to) {
+  const out = [];
+  if (!bays || !bays.bays || !bays.bays.length) return to - from > 0.9 ? [{ s0: from, s1: to }] : out;
+  let open = null;
+  for (const bay of bays.bays) {
+    if (bay.spec.lights > 0) {
+      if (!open) open = { s0: bay.s0, s1: bay.s1 };
+      else open.s1 = bay.s1;
+      continue;
+    }
+    if (open) { out.push(open); open = null; }
+  }
+  if (open) out.push(open);
+  const clipped = [];
+  for (const span of out) {
+    const s0 = Math.max(span.s0, from);
+    const s1 = Math.min(span.s1, to);
+    if (s1 - s0 > 0.9) clipped.push({ s0, s1 });
+  }
+  // A sequence that is all piers, or clipped to nothing, still has to band:
+  // an unbanded storey is a blank wall, and the ladder never removes windows.
+  if (!clipped.length && to - from > 0.9) clipped.push({ s0: from, s1: to });
+  return clipped;
 }
 
 /** Front face plus all four returns: a member that reads as solid from any angle. */
@@ -2886,14 +3137,86 @@ function emitPanel(sink, edge, s0, s1, y0, y1, inner, outer, tint, soffit = 0.6)
   sink.quad('structure', edge, [[s0, y0, inner], [s0, y1, inner], [s0, y1, outer], [s0, y0, outer]], 'against');
   sink.quad('structure', edge, [[s1, y0, inner], [s1, y1, inner], [s1, y1, outer], [s1, y0, outer]], 'along');
 }
+/**
+ * One horizontal member whose front face is cut into differently painted
+ * segments -- the run of shopfront fascias along a frontage, or the run of
+ * bulkheads under them.
+ *
+ * The returns are emitted once across the whole run, because a tenancy change
+ * is a change of paint and not a change of construction. That is what lets a
+ * four-tenancy frontage cost four extra quads instead of four extra panels,
+ * and the whole tenancy subdivision fit inside the declared triangle budget.
+ */
+function emitSegmentedPanel(sink, edge, y0, y1, inner, outer, segments, soffit = 0.6) {
+  if (!segments.length || !(y1 - y0 > EPSILON)) return;
+  const a = segments[0].s0;
+  const b = segments[segments.length - 1].s1;
+  if (!(b - a > EPSILON)) return;
+  for (const segment of segments) {
+    if (!(segment.s1 - segment.s0 > EPSILON)) continue;
+    sink.paint(segment.tint, 0.05);
+    sink.quad('structure', edge, [[segment.s0, y0, outer], [segment.s0, y1, outer], [segment.s1, y1, outer], [segment.s1, y0, outer]], 'out');
+  }
+  if (Math.abs(outer - inner) < 1e-4) return;
+  const up = outer > inner ? 'up' : 'down';
+  const down = outer > inner ? 'down' : 'up';
+  const tint = segments[0].tint;
+  sink.paint(tint, 0.28);
+  sink.quad('structure', edge, [[a, y1, inner], [b, y1, inner], [b, y1, outer], [a, y1, outer]], up);
+  sink.paint(tint, soffit);
+  sink.quad('structure', edge, [[a, y0, inner], [b, y0, inner], [b, y0, outer], [a, y0, outer]], down);
+  sink.paint(tint, 0.35);
+  sink.quad('structure', edge, [[a, y0, inner], [a, y1, inner], [a, y1, outer], [a, y0, outer]], 'against');
+  sink.quad('structure', edge, [[b, y0, inner], [b, y1, inner], [b, y1, outer], [b, y0, outer]], 'along');
+}
 
 /**
- * Ground-floor commercial band: bulkhead, recessed display glazing with
- * shopfront mullions, a real recessed entry with a door leaf, a transom bar,
- * a transom light and a projecting fascia, held between two end piers.
+ * Tenancy subdivision of one frontage.
+ *
+ * A block frontage is not one shop. Emitting it as one -- one bulkhead tone,
+ * one fascia, one mullion pitch from corner to corner -- is what makes a whole
+ * street block read as a single building however varied the shaft above it is.
+ *
+ * Unit widths are unequal and drawn from the building's own seed: real
+ * frontages are cut into whatever the leases were, not into equal thirds. The
+ * count is bounded so a short frontage stays one shop and a long one never
+ * degenerates into a row of doors.
+ */
+function tenancyUnits(edge, s0, s1, variant) {
+  const span = s1 - s0;
+  const wanted = clamp(variant.tenancyWidth ?? 9, 6, 14);
+  const minUnit = 4.2;
+  let count = clamp(Math.round(span / wanted), 1, 4);
+  while (count > 1 && span / count < minUnit) count -= 1;
+  if (count <= 1) return [{ u0: s0, u1: s1, index: 0 }];
+  const weights = [];
+  let total = 0;
+  for (let i = 0; i < count; i += 1) {
+    const weight = 0.74 + ((openingHash(variant.tenancySeed ?? 1, edge.index, 1, i) % 512) / 512) * 0.52;
+    weights.push(weight);
+    total += weight;
+  }
+  const units = [];
+  let cursor = s0;
+  for (let i = 0; i < count; i += 1) {
+    const next = i === count - 1 ? s1 : cursor + span * (weights[i] / total);
+    units.push({ u0: cursor, u1: next, index: i });
+    cursor = next;
+  }
+  return units;
+}
+
+/**
+ * Ground-floor commercial band: a run of tenancies between two end piers, each
+ * with its own bulkhead tone, fascia tone, mullion pitch and entry, separated
+ * by a projecting pilaster, and roughly one in three carrying a projecting
+ * blade sign or an awning.
  *
  * The whole zone [0, groundTop] is partitioned, so the storefront cannot leave
- * a strip of painted shell showing between itself and the storey above.
+ * a strip of painted shell showing between itself and the storey above. Every
+ * projecting member -- pilaster, blade, awning, fascia -- is held inside the
+ * edge's own outward allowance, which the batch narrows to the cladding
+ * thickness on a party wall.
  */
 function emitStorefront(sink, edge, geom, opt) {
   const { groundTop } = geom;
@@ -2915,53 +3238,115 @@ function emitStorefront(sink, edge, geom, opt) {
   // building, which the neighbour-intrusion check catches.
   const proud = (metres) => Math.min(opt.clad + metres, opt.projection);
 
+  // Every recess stops at the pane plane: behind it is the opaque shell.
+  const deepest = Math.max(0.04, opt.clad - opt.pane);
+  const glazeDepth = Math.min(0.16, deepest);
+  const entryDepth = Math.min(opt.full ? 0.55 : 0.2, deepest);
+
+  const units = tenancyUnits(edge, s0, s1, opt.variant);
+  const spans = [];
+  const bulkSegments = [];
+  const fasciaSegments = [];
+  const pilasters = [];
+  const projections = [];
+  const entries = [];
+
+  for (const unit of units) {
+    const hash = openingHash(opt.shopSeed, edge.index, 3, unit.index);
+    // The pilaster between two tenancies. The first unit has none: the end
+    // pier is already standing there.
+    const gap = unit.index > 0 ? clamp((unit.u1 - unit.u0) * 0.04, 0.16, 0.34) : 0;
+    if (gap > 0) pilasters.push({ s0: unit.u0, s1: unit.u0 + gap });
+    const a = unit.u0 + gap;
+    const b = unit.u1;
+
+    // Paint. Both are still derived from the building -- a tenancy repaints a
+    // fascia, it does not rebuild the wall -- but each unit lands somewhere
+    // else in that neighbourhood. See `shiftTint`.
+    const fasciaTint = shiftTint(
+      opt.signTint,
+      ((hash % 256) / 256 - 0.5) * 0.30,
+      0.65 + ((hash >>> 8) % 256) / 256 * 0.8,
+      0.7 + ((hash >>> 16) % 256) / 256 * 0.85,
+    );
+    const bulkTint = shiftTint(
+      opt.trimTint,
+      ((hash >>> 5) % 128) / 128 * 0.06 - 0.03,
+      0.55 + ((hash >>> 11) % 128) / 128 * 0.7,
+      0.7 + ((hash >>> 19) % 128) / 128 * 0.42,
+    );
+    // The fascia runs the whole frontage whatever happens below it, so it is
+    // pushed before the width guard: a unit too narrow to glaze is still a
+    // stretch of fascia and not a hole in it.
+    fasciaSegments.push({ s0: unit.index === 0 ? s0 - 0.06 : unit.u0, s1: unit.index === units.length - 1 ? s1 + 0.06 : b, tint: fasciaTint });
+    if (!(b - a > 1.0)) continue;
+
+    // Each tenancy is glazed on its own pitch, so two shops side by side do
+    // not share one mullion rhythm across the party pilaster.
+    const mullionPitch = 1.85 + ((hash >>> 21) % 64) / 64 * 1.2;
+    const entryWidth = clamp((b - a) * 0.22, 1.05, 1.9);
+    const entryCentre = a + entryWidth / 2 + (b - a - entryWidth) * (0.15 + ((opt.variant.doorPick + unit.index * 0.37) % 1) * 0.7);
+    const e0 = clamp(entryCentre - entryWidth / 2, a + 0.15, b - entryWidth - 0.15);
+    const e1 = e0 + entryWidth;
+    const hasEntry = opt.full && opt.entry && b - a > 3.2 && e1 < b - 0.1 && e0 > a + 0.1;
+
+    const pushGlazing = (from, to) => {
+      if (!(to - from > 0.6)) return;
+      const lights = Math.max(1, Math.round((to - from) / mullionPitch));
+      const step = (to - from) / lights;
+      for (let i = 0; i < lights; i += 1) {
+        const g0 = from + i * step + (i === 0 ? 0.05 : 0.045);
+        const g1 = from + (i + 1) * step - (i === lights - 1 ? 0.05 : 0.045);
+        if (g1 - g0 > 0.4) spans.push({ s0: g0, s1: g1, kind: 'display' });
+      }
+    };
+    if (hasEntry) {
+      pushGlazing(a, e0);
+      spans.push({ s0: e0, s1: e1, kind: 'entry' });
+      pushGlazing(e1, b);
+      entries.push({ e0, e1 });
+      bulkSegments.push({ s0: a, s1: e0, tint: bulkTint }, { s0: e1, s1: b, tint: bulkTint });
+    } else {
+      pushGlazing(a, b);
+      bulkSegments.push({ s0: a, s1: b, tint: bulkTint });
+    }
+
+    // Roughly one unit in three carries something that stands off the wall and
+    // breaks the frontage in silhouette rather than in paint.
+    const roll = (hash >>> 27) % 3;
+    if (roll === 0 && b - a > 2.4) {
+      projections.push({ kind: 'blade', s: a + Math.min(1.1, (b - a) * 0.18), tint: fasciaTint });
+    } else if (roll === 1 && b - a > 3.4) {
+      projections.push({ kind: 'awning', s0: a + 0.12, s1: b - 0.12, tint: fasciaTint });
+    }
+  }
+  spans.sort((a, b) => a.s0 - b.s0);
+  bulkSegments.sort((a, b) => a.s0 - b.s0);
+  // Nothing has been emitted yet: a frontage that cannot be laid out must
+  // leave the sink untouched, because the caller falls back to a plinth over
+  // the same zone and two of them would z-fight.
+  if (!spans.length || !bulkSegments.length || !fasciaSegments.length) return false;
+
   // End piers, full height of the storey.
   sink.mark('shop-pier');
   emitPanel(sink, edge, -sink.overlap, s0, 0, groundTop, opt.clad, proud(0.09), opt.tint, 0.75);
   emitPanel(sink, edge, s1, edge.length + sink.overlap, 0, groundTop, opt.clad, proud(0.09), opt.tint, 0.75);
 
-  // Display zone: recessed glazing broken by shopfront mullions, with a deeper
-  // entry recess somewhere along it.
-  // Every recess stops at the pane plane: behind it is the opaque shell.
-  const deepest = Math.max(0.04, opt.clad - opt.pane);
-  const glazeDepth = Math.min(0.16, deepest);
-  const entryDepth = Math.min(opt.full ? 0.55 : 0.2, deepest);
-  const entryWidth = clamp((s1 - s0) * 0.18, 1.05, 1.9);
-  const entryCentre = s0 + entryWidth / 2 + (s1 - s0 - entryWidth) * (0.15 + opt.variant.doorPick * 0.7);
-  const e0 = clamp(entryCentre - entryWidth / 2, s0 + 0.15, s1 - entryWidth - 0.15);
-  const e1 = e0 + entryWidth;
-  const hasEntry = opt.full && opt.entry && e1 < s1 - 0.1 && e0 > s0 + 0.1;
-
-  const spans = [];
-  const mullionPitch = 2.3;
-  const pushGlazing = (a, b) => {
-    if (!(b - a > 0.6)) return;
-    const lights = Math.max(1, Math.round((b - a) / mullionPitch));
-    const step = (b - a) / lights;
-    for (let i = 0; i < lights; i += 1) {
-      const g0 = a + i * step + (i === 0 ? 0.05 : 0.045);
-      const g1 = a + (i + 1) * step - (i === lights - 1 ? 0.05 : 0.045);
-      if (g1 - g0 > 0.4) spans.push({ s0: g0, s1: g1, kind: 'display' });
-    }
-  };
-  if (hasEntry) {
-    pushGlazing(s0, e0);
-    spans.push({ s0: e0, s1: e1, kind: 'entry' });
-    pushGlazing(e1, s1);
-  } else {
-    pushGlazing(s0, s1);
-  }
-  spans.sort((a, b) => a.s0 - b.s0);
-
   // Bulkhead. Splash-back and traffic film live here, hence the high soffit
   // factor on its under-return and the ground term in the grime response. It
-  // stops at the entry: a kick plate across a doorway is not a doorway.
+  // stops at each entry: a kick plate across a doorway is not a doorway.
   sink.mark('bulkhead');
-  if (hasEntry) {
-    emitPanel(sink, edge, s0, e0, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
-    emitPanel(sink, edge, e1, s1, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
-  } else {
-    emitPanel(sink, edge, s0, s1, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), opt.trimTint, 0.9);
+  {
+    // One run per unbroken stretch. The shared returns are only shared inside
+    // a run, or the panel's own top and bottom edges would carry a 35 mm ledge
+    // straight across a doorway.
+    let run = [bulkSegments[0]];
+    for (let i = 1; i <= bulkSegments.length; i += 1) {
+      const segment = bulkSegments[i];
+      if (segment && segment.s0 <= run[run.length - 1].s1 + 1e-4) { run.push(segment); continue; }
+      emitSegmentedPanel(sink, edge, GROUND_CLEARANCE, bulk, opt.clad, proud(0.035), run, 0.9);
+      if (segment) run = [segment];
+    }
   }
 
   // Shopfront glazing is not upper-storey glazing: a shop is lit from inside
@@ -3003,7 +3388,7 @@ function emitStorefront(sink, edge, geom, opt) {
     }
   }, 0.2, s0, s1);
 
-  if (hasEntry) {
+  for (const { e0, e1 } of entries) {
     // The entry is cut from the pavement to the transom, deeper than the
     // display glazing, with a threshold and a door leaf at the back.
     const doorTop = Math.min(displayTop - 0.05, 2.45);
@@ -3027,6 +3412,17 @@ function emitStorefront(sink, edge, geom, opt) {
     emitClad(sink, edge, e0, e1, doorTop, displayTop, opt.clad);
   }
 
+  // The party pilaster between two tenancies. One quad: the row fill behind it
+  // has already clad the gap, so this only has to stand in front of it.
+  if (pilasters.length) {
+    const face = proud(0.07);
+    sink.mark('shop-pilaster').paint(opt.trimTint, 0.6);
+    for (const bay of pilasters) {
+      sink.quad('structure', edge, [[bay.s0, GROUND_CLEARANCE, face], [bay.s0, fasciaBottom, face], [bay.s1, fasciaBottom, face], [bay.s1, GROUND_CLEARANCE, face]], 'out');
+    }
+    sink.counts.tenancy = (sink.counts.tenancy || 0) + pilasters.length;
+  }
+
   if (transomHeight > 0) {
     // Transom bar, then the transom light above the display head.
     sink.mark('transom-bar');
@@ -3039,9 +3435,40 @@ function emitStorefront(sink, edge, geom, opt) {
     }, 0.3, s0, s1);
   }
 
-  // Fascia / sign band: the projecting head of the shopfront.
+  // Fascia / sign band: the projecting head of the shopfront, repainted at
+  // every tenancy boundary.
   sink.mark('fascia');
-  emitPanel(sink, edge, s0 - 0.06, s1 + 0.06, fasciaBottom, groundTop, opt.clad, proud(0.13), opt.signTint, 0.95);
+  emitSegmentedPanel(sink, edge, fasciaBottom, groundTop, opt.clad, proud(0.13), fasciaSegments, 0.95);
+
+  // Blades and awnings. These are the only members of the elevation that leave
+  // its plane, so they are what breaks a frontage in silhouette instead of in
+  // paint. Both are held inside the same outward allowance as the fascia.
+  for (const item of projections) {
+    const face = proud(0.42);
+    if (face - opt.clad < 0.12) continue;
+    if (item.kind === 'blade') {
+      const top = fasciaBottom - 0.12;
+      const bottom = Math.max(bulk + 0.35, top - 1.35);
+      if (!(top - bottom > 0.5)) continue;
+      const half = 0.03;
+      const c = item.s;
+      sink.mark('blade-sign').paint(item.tint, 0.3);
+      sink.quad('structure', edge, [[c - half, bottom, opt.clad], [c - half, top, opt.clad], [c - half, top, face], [c - half, bottom, face]], 'against');
+      sink.quad('structure', edge, [[c + half, bottom, opt.clad], [c + half, top, opt.clad], [c + half, top, face], [c + half, bottom, face]], 'along');
+      sink.paint(item.tint, 0.5);
+      sink.quad('structure', edge, [[c - half, bottom, face], [c - half, top, face], [c + half, top, face], [c + half, bottom, face]], 'out');
+      sink.counts.blade = (sink.counts.blade || 0) + 1;
+    } else {
+      const top = fasciaBottom - 0.05;
+      const drop = Math.min(0.55, (top - bulk) * 0.3);
+      if (!(drop > 0.15) || !(item.s1 - item.s0 > 1.2)) continue;
+      sink.mark('awning').paint(item.tint, 0.25);
+      sink.quad('structure', edge, [[item.s0, top, opt.clad], [item.s0, top - drop, face], [item.s1, top - drop, face], [item.s1, top, opt.clad]], 'up');
+      sink.paint(item.tint, 0.85);
+      sink.quad('structure', edge, [[item.s0, top - drop - 0.14, face], [item.s0, top - drop, face], [item.s1, top - drop, face], [item.s1, top - drop - 0.14, face]], 'out');
+      sink.counts.awning = (sink.counts.awning || 0) + 1;
+    }
+  }
   return true;
 }
 
@@ -3477,14 +3904,20 @@ function layoutEdge(sink, edge, state) {
       const inset = clamp(edge.length * (0.04 + ((bandHash >>> 9) % 5) * 0.008), 0.18, 0.9);
       const b0 = inset;
       const b1 = edge.length - inset;
-      if (b1 - b0 > 0.9) {
+      // The band is cut where the elevation's own sequence puts a blank pier,
+      // so a banded shaft carries the same vertical composition as a glazed
+      // one instead of one unbroken stripe per storey. Walking in swaps each
+      // surviving stripe for the openings of the same bays -- the lines do not
+      // move, they deepen.
+      const bandSpans = bandSpansFor(typicalBays, b0, b1);
+      if (b1 - b0 > 0.9 && bandSpans.length) {
         const bandLit = ((bandHash >>> 5) % 100) < 22;
         const glaze = glazingFor(bandHash, {
           interior: bandLit
             ? { ...WINDOW_INTERIORS.lit, blind: false, curtain: false }
             : { ...WINDOW_INTERIORS.empty, blind: false, curtain: false, lit: false },
         });
-        emitRow(sink, edge, band.sill, band.head, [{ s0: b0, s1: b1 }], opt.tint, (span) => {
+        emitRow(sink, edge, band.sill, band.head, bandSpans, opt.tint, (span) => {
           emitStoreyBand(sink, edge, span.s0, span.s1, band.sill, band.head, {
             clad: opt.clad,
             reveal: opt.reveal,
@@ -3493,10 +3926,12 @@ function layoutEdge(sink, edge, state) {
             glassTint: opt.glassTint,
             glaze,
           });
-          bands += 1;
           bandLow = Math.min(bandLow, band.sill);
           bandHigh = Math.max(bandHigh, band.head);
         }, 0.25);
+        // One per storey row, whatever the sequence cut it into: `bands` is
+        // the count of banded storeys, and section 21 reads it that way.
+        bands += 1;
         sink.counts.band = (sink.counts.band || 0) + 1;
         bandedRows += 1;
         cursor = band.head;
@@ -3515,15 +3950,25 @@ function layoutEdge(sink, edge, state) {
   // storey. One pier running the whole banded height is both cheaper -- bays
   // instead of bays x storeys -- and better architecture: that is what a
   // curtain wall's mullions actually do.
+  // The piers stand on the elevation's own bay boundaries, not on a uniform
+  // pitch: a boundary next to a blank pier bay is wider than one between two
+  // glazed bays, which is what stops the fins from reading as a comb.
   if (detail.bandFins && bands > 0 && bandHigh - bandLow > 1.5) {
-    const columns = clamp(Math.round(edge.length / variant.bayWidth), 1, MAX_ART_BAYS);
-    if (columns > 1) {
-      const pitch = edge.length / columns;
-      const width = clamp(pitch * 0.06, 0.08, 0.24);
+    const boundaries = typicalBays.bays && typicalBays.bays.length > 1
+      ? typicalBays.bays.slice(1).map((bay) => ({
+        s: bay.s0,
+        // A pier bay on either side of the joint means a real structural
+        // member; two glazed bays meeting means a mullion.
+        wide: bay.spec.lights === 0,
+      }))
+      : [];
+    if (boundaries.length) {
       const proud = Math.min(opt.clad + 0.07, opt.projection);
       sink.mark('bay-pier').paint(opt.trimTint, 0.35);
-      for (let i = 1; i < columns; i += 1) {
-        const c = i * pitch;
+      for (const boundary of boundaries) {
+        const width = clamp(typicalBays.pitch * (boundary.wide ? 0.1 : 0.055), 0.08, 0.3);
+        const c = boundary.s;
+        if (c - width < 0.05 || c + width > edge.length - 0.05) continue;
         sink.quad('structure', edge, [[c - width, bandLow, proud], [c - width, bandHigh, proud], [c + width, bandHigh, proud], [c + width, bandLow, proud]], 'out');
       }
       sink.counts.bayPier = (sink.counts.bayPier || 0) + 1;
@@ -3631,14 +4076,22 @@ export function planFacadeArticulation(building, options = {}) {
   const cladDepth = ART_PANE + glassSet + reveal;
   const tagged = hasStreetLevelTrade(building);
   const commercial = tagged || FACADE_STYLE_PROFILES[style].commercialGround;
-  const storeys = articulationStoreys(building, height, commercial);
+  const storeys = articulationStoreys(building, height, commercial, variant);
 
   const palette = classDef.palette;
-  const tint = hexToSrgb(palette[variant.paletteIndex % palette.length]);
-  // Trim is the same body colour lifted: painted stone, cast concrete or a
-  // lighter course, which is what a real cornice or sill is.
-  const trimTint = tint.map((c) => clamp(c * 1.18 + 0.06, 0, 1));
-  const signTint = tint.map((c) => clamp(c * 0.42, 0, 1));
+  // The palette entry chooses the family; the jitter chooses the building. Six
+  // hexes per class over seven classes is forty-two wall colours for seven
+  // hundred buildings, which is what makes a block read as one kit part
+  // repeated. See `shiftTint`.
+  const tint = shiftTint(
+    hexToSrgb(palette[variant.paletteIndex % palette.length]),
+    variant.hueJitter, variant.satJitter, variant.litJitter,
+  );
+  // Trim is still the same body colour lifted -- painted stone, cast concrete
+  // or a lighter course, which is what a real cornice or sill is -- but the
+  // lift itself is drawn per building, so the relationship varies too.
+  const trimTint = shiftTint(tint, variant.trimHue, variant.trimSat, variant.trimLift, 0.03);
+  const signTint = shiftTint(tint, variant.signHue, variant.signSat, variant.signLit);
   const glassTint = hexToSrgb(classDef.glass.color);
   const frameTint = hexToSrgb(FACADE_FRAME_MATERIAL.palette[variant.framePaletteIndex % FACADE_FRAME_MATERIAL.palette.length]);
 

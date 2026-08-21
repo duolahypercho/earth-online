@@ -50,9 +50,18 @@ export const VEHICLE_LOD_CONFIG = Object.freeze([
     glass: true, details: 'full', instancedWheels: true, bakedWheels: false,
     instancedLamps: true, plates: true,
   }),
+  // ROUND 3 CHANGE. `glass: false` did NOT remove the glazing at this tier -
+  // `buildVehicleGeometry` still emits every pane, into the TRIM buffer, where
+  // it is drawn with the opaque dark trim material. A mid-ring car therefore
+  // had windows the exact colour of its bumper rubber and read as a solid
+  // capsule. Giving the tier its own glass buffer moves those same triangles
+  // to the glass material - a dielectric with real Fresnel - and costs one
+  // extra instanced draw call per vehicle class present at this tier, not one
+  // per vehicle. The triangle count of the tier is unchanged: the panes move
+  // between buffers, they are not added.
   Object.freeze({
     lod: 1, profilePoints: 8, roofPoints: 7, archSamples: 3, maxStationGap: 1.60,
-    glass: false, details: 'lite', instancedWheels: false, bakedWheels: 'cylinder',
+    glass: true, details: 'lite', instancedWheels: false, bakedWheels: 'cylinder',
     instancedLamps: false, plates: false,
   }),
   Object.freeze({

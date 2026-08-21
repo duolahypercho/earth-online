@@ -86,8 +86,21 @@ export const STREET_LIFE_VERSION = 'street-life-v1';
 //   near  <= 32 m   A figure is 55-190 px tall: a reviewer can count its
 //                   fingers, so it gets the full near-tier body - hands, jaw,
 //                   brow, nose, eyes, shoulder caps and a joint filler at every
-//                   articulating joint - under per-bone articulation. 568 tri
-//                   per figure, 26 figures, 19 body + 9 wardrobe draws.
+//                   articulating joint - under per-bone articulation.
+//                   `radialSegments: 7` is a threshold, not a dial:
+//                   `makePartGeometry` draws every joint filler as an
+//                   8-triangle OCTAHEDRON below 7 and as a sphere at 7 and
+//                   above. At 6 every elbow, knee, shoulder cap, ankle and eye
+//                   on a figure two metres from the lens was a faceted lozenge.
+//                   The near tier additionally replaces the frusta and swept
+//                   cylinders of the cheaper tiers with LOFTED solids - a
+//                   deltoid continuous with the torso, limbs whose section
+//                   changes along their length, a head with a jaw and a brow,
+//                   hands with a thumb, and a collar, a cuff and a shirt hem.
+//                   Measured: body 2432 tri and wardrobe 164 tri per figure, in
+//                   21 body + 9 wardrobe draws. The chunk keys are per
+//                   bone/group, so neither the segment count nor the loft ring
+//                   count can ever add a draw call.
 //   mid   <= 132 m  A figure is 14-55 px tall. Limb positions are sub-pixel and
 //                   a stationary figure has no motion to lose; the silhouette,
 //                   the colour and the fact that somebody is standing there are
@@ -97,40 +110,119 @@ export const STREET_LIFE_VERSION = 'street-life-v1';
 //                   populates 132-220 m, and a motionless figure at that range
 //                   is a smudge that costs a matrix.
 //
-// The near ring is small on purpose. Spending 568 triangles on a figure whose
+// The near ring is small on purpose. Spending 2432 triangles on a figure whose
 // limbs occupy four pixels is the failure mode this table exists to prevent;
 // the previous 46 m / 56-figure near ring was drawing 56 close-up bodies to
 // cover a ring where six of them were ever legible.
 //
+// LENS GUARD. `minRadius` and `introduceRadius` are the two floors described at
+// `streetLifeLensGuard` below. They are recomputed from the live camera on
+// every re-plan; the numbers stored here are the values for the canonical
+// runtime camera (52 deg, near 0.5 m, 16:9) and are what the budget table and
+// the verifier are stated against.
+//
 // Per-ring caps are hard: the planner sorts by distance and stops, so the cost
 // of this pass is bounded by the caps and NOT by the size of the city.
 export const STREET_LIFE_RINGS = Object.freeze([
-  Object.freeze({ id: 'near', radius: 32, budget: 26, articulated: true, detail: 'near', radialSegments: 6 }),
+  Object.freeze({
+    id: 'near',
+    radius: 32,
+    budget: 26,
+    articulated: true,
+    detail: 'near',
+    radialSegments: 7,
+    minRadius: 1.05,
+    introduceRadius: 1.95,
+  }),
   Object.freeze({ id: 'mid', radius: 132, budget: 200, articulated: false, detail: 'far', radialSegments: 3 }),
 ]);
 
+// RESTATED BUDGET (silhouette landing).
+//
+// The instance caps did not move: 26 near, 200 mid, 72 kerb cars, one contact
+// shadow each. What moved is the triangles behind one near-tier instance, now
+// that the near tier draws a lofted body instead of frusta and swept cylinders.
+// The ceiling is derived from the caps, never from a high-water mark a capture
+// pose happened to produce, so a busy junction that fills the ring cannot fail
+// it.
+//
+// Worst case is the arithmetic sum of the caps, all four bands saturated and
+// every wardrobe flag set - a state no pose can exceed because the ring caps
+// are hard:
+//
+//   near body      26 x 2432 = 63 232     (measured, `buildInstancedPartGeometries`)
+//   near wardrobe  26 x  164 =  4 264     (measured, every flag set)
+//   mid body      200 x  180 = 36 000
+//   mid wardrobe  200 x   48 =  9 600
+//   kerb cars      72 x  128 =  9 216     (hull 116 + cabin 12)
+//                             --------
+//                              122 312
+//
+// Contact shadows are 2 tri x 298 instances and are not in this total because
+// `writeFrame` has never counted them; that accounting predates this landing
+// and is left alone rather than changed silently.
+//
+// Draw calls are the tighter constraint and are still inside the ceiling: the
+// chunk keys are per bone/group, so 21 + 9 near, 5 + 4 mid, 1 shadow and 2 car
+// meshes is 42 with every band saturated, against a ceiling of 48. Neither the
+// segment count, the loft ring count nor the figure count can add one.
 export const STREET_LIFE_BUDGET = Object.freeze({
   rings: STREET_LIFE_RINGS,
   /** Kerb stalls drawn, nearest first, inside `parkingRadius`. */
   parkedCars: 72,
   parkingRadius: 150,
-  /** Planning caps, so a huge city cannot blow memory on records it never draws. */
-  maxAnchors: 6000,
+  /**
+   * Planning caps, so a huge city cannot blow memory on records it never draws.
+   *
+   * `maxAnchors` is a MEMORY cap, not a draw budget - the ring caps above are
+   * what bound the cost of a frame. It matters because hitting it truncates the
+   * plan in segment order, which would leave the tail of the source array with
+   * no population at all: the same first-come bias this pass exists to correct
+   * in the legacy parked-car layer. Raised from 6000 with the density: the
+   * shipped 720 m slice (3397 segments, 154.8 km of centreline) plans 4987
+   * figures at 0.13/m, which left 17% of headroom, and a denser or wider slice
+   * would have started truncating silently. `rejected.capped` is published so
+   * that if it ever does fire, it is visible rather than inferred.
+   */
+  maxAnchors: 10000,
   maxParkingSpots: 9000,
-  /** Measured ceilings; exceeding either is a regression, not a tuning choice. */
-  maxTriangles: 90000,
+  /**
+   * Ceilings derived from the caps above; exceeding either is a regression, not
+   * a tuning choice. `maxTriangles` is the 122 312 worst case rounded up to the
+   * next round number, so it stays a bound and not a high-water mark.
+   */
+  maxTriangles: 123000,
   maxDrawCalls: 48,
 });
 
 /**
- * Standing figures per metre of kerb, before class, district and hour scaling.
+ * Standing figures per metre of kerb PER SIDE, before class, district and hour
+ * scaling.
  *
- * Calibration: a busy downtown block face is about 100 m long and carries three
- * to six people who are stationary at any instant - a pair talking, someone on
- * a phone, one or two at the corner waiting for the light. 0.042/m puts four on
- * that block face. Anything near 0.1/m produces a protest march.
+ * Re-calibrated. The old 0.042/m was calibrated against a block face, and it is
+ * defensible as a count of people who are *motionless for a whole minute*. It
+ * is the wrong quantity. What a frame contains is everyone who is not walking
+ * AT THAT INSTANT, which includes the much larger population that is pausing:
+ * reading a sign, at a doorway, digging for keys, half-turned mid-conversation,
+ * stopped at the kerb before stepping off. 0.042/m starved the declared rings -
+ * the pass was drawing 3 of an allowed 26 near figures and 50 of an allowed 200
+ * mid figures at the round-3 capture poses, so the "empty pavement" complaint
+ * survived a pass built to answer it.
+ *
+ * 0.13/m puts about ten stationary figures on each side of a 100 m downtown
+ * block face at midday, before the class weight (0.5 residential, 0.95
+ * secondary) and the district term (0.22 at the quiet floor, 1.0 downtown)
+ * multiply it down. On a residential street at 04:00 that is
+ * 100 * 0.13 * 0.5 * 0.22 * 0.05 = 0.07 people, i.e. still an empty street.
+ *
+ * This buys instance matrices, not draw calls: every figure a ring adds writes
+ * into an InstancedMesh that is already being drawn, so the ceiling that moves
+ * is `maxTriangles`, and it is restated and verified above.
+ *
+ * The ring caps, not this number, are what bound the cost. Raising the density
+ * past the point where the caps saturate buys nothing but planning time.
  */
-export const STREET_LIFE_LINE_DENSITY = 0.042;
+export const STREET_LIFE_LINE_DENSITY = 0.13;
 
 /** How heavily each street class is populated with stationary figures. */
 export const STREET_LIFE_CLASS_WEIGHT = Object.freeze({
@@ -209,8 +301,50 @@ export const WALKER_LANE_CLEARANCE_M = 0.45;
 
 /** How close to a junction a figure has to be to count as "at the corner". */
 const CORNER_ZONE_METRES = 7;
+
+/**
+ * How close two standing figures may ever be, and how many of them may share a
+ * patch of pavement.
+ *
+ * ---------------------------------------------------------------------------
+ * DERIVED FROM THE BODY, NOT PICKED
+ * ---------------------------------------------------------------------------
+ * The near-tier body's bideltoid breadth is `2 * (shoulder joint 0.185 +
+ * deltoid half-width 0.059) = 0.488 m`, and `identityVariation` scales a figure
+ * by up to 1.06, so the widest figure this pass can draw is 0.517 m across the
+ * shoulders. Every number below is that breadth plus a stated air gap:
+ *
+ *   solo   0.95 m  ->  0.43 m of air. Two strangers on a pavement.
+ *   group  0.80 m  ->  0.28 m of air. A conversation pair or a crossing queue;
+ *                      closer than strangers stand, which is the point, but
+ *                      still not touching.
+ *   queue  0.86 m  ->  the along-kerb pitch of a waiting line, > `group`.
+ *
+ * The previous values were 0.78 / 0.55 / 0.78. `group` at 0.55 m was NARROWER
+ * THAN THE FIGURE, so a conversation pair and a crossing queue were authored to
+ * intersect: the two bodies shared 0.03 m of solid at the shoulder at the
+ * reference scale, and more at every scale above it. That is the "six figures
+ * overlapping inside about three metres" a reviewer measured on a round-3 card,
+ * and it is a placement bug, not a density preference.
+ *
+ * `maxWithinCluster` is the separate rule. Minimum separation alone bounds the
+ * NEAREST neighbour and says nothing about how many neighbours there are: at
+ * 0.95 m you can still stand thirty people inside a 3 m circle and pass every
+ * pairwise test. A knot of people is a real thing on a pavement, a crowd scene
+ * is not, so no figure may have more than four other figures inside
+ * `clusterRadius`.
+ */
+export const STREET_LIFE_SPACING = Object.freeze({
+  /** Widest figure the near tier draws, metres across the shoulders. */
+  shoulderBreadth: 0.517,
+  solo: 0.95,
+  group: 0.80,
+  queue: 0.86,
+  clusterRadius: 3.0,
+  maxWithinCluster: 4,
+});
 /** Extra waiting figures placed at each signalised junction approach. */
-const CROSSING_QUEUE = Object.freeze({ min: 1, max: 4, spacing: 0.78 });
+const CROSSING_QUEUE = Object.freeze({ min: 1, max: 4, spacing: STREET_LIFE_SPACING.queue });
 /** Plan-radius of a standing figure, for the overlap test against street props. */
 const FIGURE_RADIUS = 0.34;
 /** Kerb stall pitch: a 4.6 m car plus a 1.8 m manoeuvring gap. */
@@ -224,6 +358,95 @@ const TAU = Math.PI * 2;
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+// ---------------------------------------------------------------------------
+// lens guard
+// ---------------------------------------------------------------------------
+//
+// One of the round-3 cards is an intersection whose near quarter is a scenery
+// figure standing on the lens. Two things made that inevitable rather than
+// unlucky:
+//
+//   * the near ring selected nearest-first with no floor, so the closest
+//     scenery figure in the world was GUARANTEED to be drawn, however close it
+//     was to the eye;
+//   * a scenery figure is not a pedestrian. The simulated crowd walks out of
+//     shot on its own and the QA clearance guard knows where its agents are;
+//     these figures are motionless, are known to no simulation list, and will
+//     stand in the lens for as long as the camera is there.
+//
+// THE RULE. "No figure within R metres of the camera" is the obvious fix and it
+// is the wrong one for gameplay: the figures stand in the furnishing strip
+// about 1.2 m off the walking route, so a radius large enough to clear a lens
+// deletes every figure the player walks past, and the crowd visibly tears a
+// hole around the player. The rule implemented instead is about the LENS, has
+// two parts, and neither part can open a hole in a crowd the player is walking
+// through:
+//
+//   1. HARD CULL, `nearVolume`. A figure whose body can reach inside the
+//      camera's near volume - the space between the eye and the near plane - is
+//      never drawn. Anything it removes is geometry the lens is inside of: it
+//      would render as a sliced torso pasted over the frame, or clip open
+//      entirely. The radius is the sphere that circumscribes the near-plane
+//      rectangle, `hypot(near, near*tan(fov/2), near*tan(fov/2)*aspect)`, plus
+//      the figure's body radius. For the canonical 52 deg / 0.5 m / 16:9 camera
+//      that is 1.05 m; for the 47 deg capture camera, 1.01 m.
+//
+//   2. INTRODUCE GUARD, `introduce`. A figure that is not already being drawn
+//      is not introduced inside the distance at which a standing figure spans
+//      the whole frame height, `figureHeight / (2*tan(fov/2))` - 1.95 m on the
+//      canonical camera, 2.19 m on the 47 deg capture camera, 1.71 m at the
+//      58 deg canyon FOV, exactly as it should be: a wider lens needs less
+//      room. A figure ALREADY drawn is kept however close the camera comes
+//      (down to the hard cull), so walking up to somebody never pops them out.
+//      What the guard actually forbids is the camera ARRIVING with a body
+//      already inside the lens - a capture pose, a fast travel, a respawn, a
+//      re-plan after a teleport - which is precisely the round-3 failure.
+//
+// Both radii are recomputed from the live camera every re-plan, so they follow
+// a FOV change, a photo mode, or an aspect change without a second constant to
+// keep in sync.
+export const STREET_LIFE_LENS_GUARD = Object.freeze({
+  /** Tallest figure the pass draws: 1.78 m rig x the 1.06 top of `heightScale`. */
+  figureHeight: 1.9,
+  /** Plan radius of a body, the same one the placement overlap test uses. */
+  bodyRadius: FIGURE_RADIUS,
+  /** Used when the pass is driven from `ctx.focus` with no perspective camera. */
+  fallback: Object.freeze({ fov: 52, aspect: 16 / 9, near: 0.5 }),
+});
+
+/**
+ * The two lens radii, in metres from the eye, for a given camera.
+ *
+ * Pure function of `fov`, `aspect` and `near`; a non-perspective or missing
+ * camera falls back to the canonical runtime camera rather than to zero, so a
+ * headless or orthographic caller still gets a guard.
+ *
+ * @param {THREE.Camera|null} camera
+ * @param {object} [out] reused result object
+ */
+export function streetLifeLensGuard(camera, out = {}) {
+  const fallback = STREET_LIFE_LENS_GUARD.fallback;
+  const perspective = Boolean(camera && camera.isPerspectiveCamera);
+  const read = (value, spare, lo, hi) => {
+    const n = Number(perspective ? value : spare);
+    return Number.isFinite(n) && n > 0 ? clamp(n, lo, hi) : spare;
+  };
+  const fov = read(camera?.fov, fallback.fov, 10, 150);
+  const aspect = read(camera?.aspect, fallback.aspect, 0.2, 8);
+  const near = read(camera?.near, fallback.near, 0.01, 10);
+  const tanHalf = Math.tan((fov * Math.PI) / 360);
+  const halfHeight = near * tanHalf;
+  const halfWidth = halfHeight * aspect;
+  const nearVolume = Math.hypot(near, halfHeight, halfWidth) + STREET_LIFE_LENS_GUARD.bodyRadius;
+  const introduce = Math.max(nearVolume, STREET_LIFE_LENS_GUARD.figureHeight / (2 * tanHalf));
+  out.fov = fov;
+  out.aspect = aspect;
+  out.near = near;
+  out.nearVolume = nearVolume;
+  out.introduce = introduce;
+  return out;
 }
 
 /**
@@ -451,21 +674,38 @@ export function planStreetLifeAnchors(plan, {
   const options = plan.options;
   const hourFactor = streetLifeHourFactor(hour);
   const districtAt = density ? (x, z) => density.at(x, z) : () => 0.7;
-  // Figures already placed, so two of them cannot occupy one square metre.
+  // Figures already placed. Two rules, both in one pass over the neighbourhood:
+  // a hard minimum separation (`radius`, from `STREET_LIFE_SPACING`) and a cap
+  // on how many figures may share a `clusterRadius` patch of pavement.
+  //
+  // The grid cell is 2 m and `clusterRadius` is 3 m, so the scan has to reach
+  // two cells out; the separation test only ever needs one, and gets the wider
+  // scan for free.
+  const CELL = 2;
+  const REACH = Math.ceil(STREET_LIFE_SPACING.clusterRadius / CELL);
+  const clusterR2 = STREET_LIFE_SPACING.clusterRadius * STREET_LIFE_SPACING.clusterRadius;
   const placed = new Map();
   const claim = (x, z, radius) => {
-    const key = `${Math.floor(x / 2)}:${Math.floor(z / 2)}`;
-    for (let dz = -1; dz <= 1; dz += 1) {
-      for (let dx = -1; dx <= 1; dx += 1) {
-        const list = placed.get(`${Math.floor(x / 2) + dx}:${Math.floor(z / 2) + dz}`);
+    const cx = Math.floor(x / CELL);
+    const cz = Math.floor(z / CELL);
+    let neighbours = 0;
+    for (let dz = -REACH; dz <= REACH; dz += 1) {
+      for (let dx = -REACH; dx <= REACH; dx += 1) {
+        const list = placed.get(`${cx + dx}:${cz + dz}`);
         if (!list) continue;
         for (let i = 0; i < list.length; i += 2) {
           const ddx = list[i] - x;
           const ddz = list[i + 1] - z;
-          if (ddx * ddx + ddz * ddz < radius * radius) return false;
+          const d2 = ddx * ddx + ddz * ddz;
+          if (d2 < radius * radius) return false;
+          if (d2 < clusterR2) {
+            neighbours += 1;
+            if (neighbours > STREET_LIFE_SPACING.maxWithinCluster) return false;
+          }
         }
       }
     }
+    const key = `${cx}:${cz}`;
     let list = placed.get(key);
     if (!list) {
       list = [];
@@ -541,7 +781,10 @@ export function planStreetLifeAnchors(plan, {
         const x = frame.x + frame.nx * u * frame.miter;
         const z = frame.z + frame.nz * u * frame.miter;
         if (occupancy && occupancy.blocked(x, z, FIGURE_RADIUS)) { rejected.blocked += 1; return false; }
-        if (!claim(x, z, groupId ? 0.55 : 0.78)) { rejected.crowded += 1; return false; }
+        if (!claim(x, z, groupId ? STREET_LIFE_SPACING.group : STREET_LIFE_SPACING.solo)) {
+          rejected.crowded += 1;
+          return false;
+        }
         const datum = heightAt(x, z) + options.roadLift;
         const y = sidewalkSurfaceY(datum, u, segment.half, options);
         // Facing.
@@ -550,9 +793,17 @@ export function planStreetLifeAnchors(plan, {
         switch (entry.facing) {
           case 'road': yaw = yawTo(-outward.x, -outward.z); break;
           case 'building': yaw = yawTo(outward.x, outward.z); break;
-          case 'pair': yaw = pairIndex === 1
-            ? yawTo(-frame.tx, -frame.tz)
-            : yawTo(frame.tx, frame.tz); break;
+          case 'pair': {
+            // Facing the other half of the conversation, but not squared up to
+            // them: two figures on exactly opposite yaws read as a mirror, and
+            // a street of mirrors is the clustering artifact this pass is
+            // supposed to be the cure for. +/- 0.22 rad, deterministic.
+            const base = pairIndex === 1
+              ? yawTo(-frame.tx, -frame.tz)
+              : yawTo(frame.tx, frame.tz);
+            yaw = base + (identityRandom(seed, `pair-yaw-${salt}-${pairIndex}`) - 0.5) * 0.44;
+            break;
+          }
           default: yaw = yawTo(frame.tx, frame.tz) + (identityRandom(seed, `yaw-${salt}`) - 0.5) * 0.7;
         }
         const id = `sl-${segment.id}-${side > 0 ? 'l' : 'r'}-${anchors.length}`;
@@ -586,7 +837,15 @@ export function planStreetLifeAnchors(plan, {
         const entry = pickActivity(seed, `pick-${side}-${i}`, Boolean(atCorner));
         if (entry.pair) {
           const groupId = `pair-${segment.id}-${side}-${i}`;
-          const partner = ACTIVITY_CATALOGUE.find((candidate) => candidate.activity === entry.pair) || entry;
+          // The partner's activity is `entry.pair` - 'listen', which is a real
+          // pose in `ACTIVITY_POSES` with its own arms-folded, head-tilted
+          // overlay. It is deliberately NOT in `ACTIVITY_CATALOGUE`, because
+          // nobody stands alone listening; it only exists as the other half of
+          // a conversation. Looking it up in the catalogue therefore missed,
+          // fell back to `entry`, and drew every conversation in this city as
+          // two people making the same talking gesture at each other.
+          const partner = ACTIVITY_CATALOGUE.find((candidate) => candidate.activity === entry.pair)
+            || { ...entry, activity: entry.pair, pair: null };
           emit(station, entry, groupId, 0);
           emit(station + 0.92, { ...partner, zone: entry.zone, facing: 'pair' }, groupId, 1);
         } else {
@@ -994,6 +1253,11 @@ function createStreetLife() {
         rootY: anchor.y + (anchor.seated ? -ACTIVITY_ROOT_DROP.sit * variation.heightScale : 0),
         distance: Infinity,
         ring: null,
+        // Lens-guard hysteresis: true while this figure is being drawn. A
+        // figure is never INTRODUCED inside the lens radius, but one that is
+        // already drawn is kept as the camera closes on it, so walking up to
+        // somebody never pops them out of the world.
+        drawn: false,
       };
     });
 
@@ -1016,6 +1280,9 @@ function createStreetLife() {
       view: { x: 0, y: 0, z: 0 },
       active: { near: [], mid: [] },
       activeParking: [],
+      lens: streetLifeLensGuard(ctx?.camera),
+      // Published, live, nearest-first. See `object.userData.streetLife`.
+      nearAnchors: [],
       scratch: {
         object3d: new THREE.Object3D(),
         colour: new THREE.Color(),
@@ -1034,6 +1301,9 @@ function createStreetLife() {
           near: 0,
           mid: 0,
           culled: 0,
+          // Figures the lens guard withheld at the last re-plan.
+          lensCulled: 0,
+          lensWithheld: 0,
           rejected: planned.rejected,
           sampledSegments: planned.sampledSegments,
         },
@@ -1055,7 +1325,40 @@ function createStreetLife() {
         },
         budget: STREET_LIFE_BUDGET,
         cost: { triangles: 0, drawCalls: 0 },
+        // PUBLISHED HANDLES. Both are the same live objects `state` holds, so a
+        // reader that keeps the reference sees every re-plan without polling
+        // the pass. See `object.userData.streetLife`.
+        lens: null,
+        nearAnchors: null,
       },
+    };
+    state.diagnostics.lens = state.lens;
+    state.diagnostics.nearAnchors = state.nearAnchors;
+
+    // The stable handle the QA clearance guard reads.
+    //
+    // The capture harness has to keep the lens clear of anything that can stand
+    // in it, and it can enumerate the simulated crowd because the simulation
+    // publishes it. These figures belong to no simulation list, so until this
+    // landed the only way to find them was to scrape instance matrices off the
+    // meshes named `street-life-near*` - which misses every figure the near
+    // budget spilled into the mid ring, and breaks the moment a mesh is
+    // renamed. `userData.streetLife.nearAnchors` is that list, done properly:
+    // every figure this pass is CURRENTLY DRAWING inside the near-ring radius,
+    // near tier and mid tier alike, nearest first, in world metres.
+    //
+    // The array identity is stable for the life of the build; it is rewritten
+    // in place on every re-plan.
+    object.userData.pass = STREET_LIFE_ID;
+    object.userData.streetLife = {
+      id: STREET_LIFE_ID,
+      version: STREET_LIFE_VERSION,
+      /** [{ id, x, y, z, distance, ring, activity }], nearest first. */
+      nearAnchors: state.nearAnchors,
+      /** { fov, aspect, near, nearVolume, introduce } - see `streetLifeLensGuard`. */
+      lens: state.lens,
+      /** Radius `nearAnchors` is reported out to. */
+      radius: STREET_LIFE_RINGS[0].radius,
     };
 
     // Grounding self-report: how far each figure's foot plane is from the
@@ -1093,6 +1396,20 @@ function createStreetLife() {
     return { object, diagnostics: state.diagnostics };
   }
 
+  /** One published record for the QA clearance guard. Plain data, no THREE. */
+  function publishAnchor(figure) {
+    const anchor = figure.anchor;
+    return {
+      id: anchor.id,
+      x: anchor.x,
+      y: anchor.y,
+      z: anchor.z,
+      distance: figure.distance,
+      ring: figure.ring,
+      activity: anchor.activity,
+    };
+  }
+
   /** Re-select which figures and stalls are drawn, nearest first. */
   function replan(ctx, force = false) {
     if (!state) return;
@@ -1106,13 +1423,39 @@ function createStreetLife() {
 
     const nearRing = STREET_LIFE_RINGS[0];
     const midRing = STREET_LIFE_RINGS[1];
+    // Re-derived every re-plan so a FOV or aspect change is followed for free.
+    const lens = streetLifeLensGuard(ctx?.camera, state.lens);
     const candidates = [];
+    let lensCulled = 0;
+    let lensWithheld = 0;
     for (const figure of state.figures) {
       const dx = figure.anchor.x - view.x;
       const dz = figure.anchor.z - view.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 > midRing.radius * midRing.radius) continue;
-      figure.distance = Math.sqrt(d2);
+      if (d2 > midRing.radius * midRing.radius) {
+        figure.ring = null;
+        figure.drawn = false;
+        continue;
+      }
+      const distance = Math.sqrt(d2);
+      figure.distance = distance;
+      // 1. Hard cull: the body can reach inside the near volume, so the lens is
+      //    inside the person. Never drawn, drawn or not a moment ago.
+      if (distance < lens.nearVolume) {
+        figure.ring = null;
+        figure.drawn = false;
+        lensCulled += 1;
+        continue;
+      }
+      // 2. Introduce guard: a figure that is not already on screen is not
+      //    introduced inside the distance at which it would span the whole
+      //    frame. One that IS already drawn stays drawn all the way down to the
+      //    hard cull, so approaching a figure never punches a hole in the crowd.
+      if (distance < lens.introduce && !figure.drawn) {
+        figure.ring = null;
+        lensWithheld += 1;
+        continue;
+      }
       candidates.push(figure);
     }
     candidates.sort((a, b) => a.distance - b.distance
@@ -1137,10 +1480,25 @@ function createStreetLife() {
       } else {
         figure.ring = null;
       }
+      figure.drawn = figure.ring !== null;
     }
     state.diagnostics.figures.near = nearList.length;
     state.diagnostics.figures.mid = midList.length;
     state.diagnostics.figures.culled = state.figures.length - nearList.length - midList.length;
+    state.diagnostics.figures.lensCulled = lensCulled;
+    state.diagnostics.figures.lensWithheld = lensWithheld;
+
+    // Republish the drawn near-field figures for the QA clearance guard. Both
+    // rings, because a busy street spills figures well inside `nearRing.radius`
+    // into the mid tier and one of those in the lens is the same artifact.
+    const nearAnchors = state.nearAnchors;
+    nearAnchors.length = 0;
+    for (const figure of nearList) nearAnchors.push(publishAnchor(figure));
+    for (const figure of midList) {
+      if (figure.distance <= nearRing.radius) nearAnchors.push(publishAnchor(figure));
+    }
+    nearAnchors.sort((a, b) => a.distance - b.distance
+      || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     const parkingRadius2 = STREET_LIFE_BUDGET.parkingRadius * STREET_LIFE_BUDGET.parkingRadius;
     const stalls = [];
@@ -1385,6 +1743,14 @@ function createStreetLife() {
       if (state.replanIn === before) writeFrame(step, false);
     },
     dispose,
+    /**
+     * Every figure this pass is currently drawing inside the near-ring radius,
+     * nearest first, in world metres. The QA camera-clearance guard unions this
+     * with the simulated crowd; nothing else should mutate it.
+     */
+    nearAnchors: () => (state ? state.nearAnchors : []),
+    /** The lens radii in force at the last re-plan. */
+    lens: () => (state ? state.lens : streetLifeLensGuard(null)),
     /** Test seam: the live state, for the headless verifier. */
     _state: () => state,
   };

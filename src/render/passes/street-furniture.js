@@ -748,6 +748,11 @@ function seedOccupancyFromScene(state, root) {
   root.traverse((node) => {
     if (added >= state.options.maxSceneOccupancy) return;
     if (!node.isMesh && !node.isInstancedMesh) return;
+    // This pass's OWN previous placement is not an obstacle. The LOD re-centre
+    // rebuilds the whole population from scratch against a fresh internal
+    // occupancy grid, so reading last build's items back in would leave every
+    // slot occupied and the refreshed street empty.
+    if (node.userData?.pass === STREET_FURNITURE_ID) return;
     if (DYNAMIC_NAME.test(String(node.name || ''))) return;
     if (DYNAMIC_NAME.test(String(node.userData?.kind || ''))) return;
     const geometry = node.geometry;
@@ -1445,6 +1450,48 @@ export function furnitureGeometryKey(item) {
   return item.kind === 'tree' ? `tree#${item.variant || 0}` : item.kind;
 }
 
+/**
+ * The three materials this pass draws with.
+ *
+ * `envClass` is a member of `MATERIAL_CLASSES` in
+ * src/render/environment-ibl.js and is REQUIRED on every lit material: the
+ * renderer's environment grading and the wet-weather response only reach
+ * materials that declare one. Round 2 shipped all three of these without a
+ * class, which is why the street trees stayed fully saturated green in the
+ * night card - the foliage was never graded by anything. The verifier asserts
+ * these names against that module's own exported list.
+ *
+ * They are built ONCE per city and reused across every LOD re-centre. The
+ * renderer caches its environment-grading buckets from a single traverse taken
+ * just after the passes are built, so a material that first appeared during a
+ * refresh would never be handed an environment map and would render unlit for
+ * the rest of the session.
+ */
+export function createStreetFurnitureMaterials() {
+  const prop = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.74, metalness: 0.14,
+  });
+  prop.name = `${STREET_FURNITURE_ID}:prop`;
+  prop.userData = { envClass: 'painted-metal' };
+  const foliage = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.92, metalness: 0,
+  });
+  foliage.name = `${STREET_FURNITURE_ID}:foliage`;
+  foliage.userData = { envClass: 'foliage' };
+  const pit = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.94, metalness: 0.05,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+  });
+  pit.name = `${STREET_FURNITURE_ID}:pit`;
+  pit.userData = { envClass: 'sidewalk' };
+  return { prop, foliage, pit };
+}
+
+export function disposeStreetFurnitureMaterials(materials) {
+  if (!materials) return;
+  for (const material of Object.values(materials)) material?.dispose?.();
+}
+
 export function buildStreetFurniture(ctx, overrides = {}) {
   const startedAt = Date.now();
   const city = ctx?.city;
@@ -1500,29 +1547,8 @@ export function buildStreetFurniture(ctx, overrides = {}) {
   group.name = STREET_FURNITURE_ID;
   group.userData = { kind: 'street-furniture', version: STREET_FURNITURE_VERSION };
 
-  // `envClass` is a member of `MATERIAL_CLASSES` in
-  // src/render/environment-ibl.js and is REQUIRED on every lit material: the
-  // renderer's environment grading and the wet-weather response only reach
-  // materials that declare one. Round 2 shipped all three of these without a
-  // class, which is why the street trees stayed fully saturated green in the
-  // night card - the foliage was never graded by anything. The verifier
-  // asserts these names against that module's own exported list.
-  const propMaterial = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.74, metalness: 0.14,
-  });
-  propMaterial.name = `${STREET_FURNITURE_ID}:prop`;
-  propMaterial.userData = { envClass: 'painted-metal' };
-  const foliageMaterial = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.92, metalness: 0,
-  });
-  foliageMaterial.name = `${STREET_FURNITURE_ID}:foliage`;
-  foliageMaterial.userData = { envClass: 'foliage' };
-  const groundMaterial = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.94, metalness: 0.05,
-    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
-  });
-  groundMaterial.name = `${STREET_FURNITURE_ID}:pit`;
-  groundMaterial.userData = { envClass: 'sidewalk' };
+  const materials = overrides.materials || createStreetFurnitureMaterials();
+  const { prop: propMaterial, foliage: foliageMaterial, pit: groundMaterial } = materials;
 
   const buckets = new Map();
   for (const item of state.items) {
@@ -1622,6 +1648,9 @@ export function buildStreetFurniture(ctx, overrides = {}) {
     focus: { x: focus.x, z: focus.z },
     focusSource: focus.source,
     focusRejected: focus.rejected,
+    // Which datum the rings are centred on RIGHT NOW: the build focus on the
+    // first build, the live camera after a re-centre.
+    centreSource: overrides.centreSource || focus.source,
     windowRadius: outerRadius,
     plan: plan.stats,
     counts: state.counts,
@@ -1648,14 +1677,137 @@ export function buildStreetFurniture(ctx, overrides = {}) {
     sourceSegmentCount: segmentIds.length,
     buildMs: Date.now() - startedAt,
   };
-  return { object: state.items.length ? group : null, diagnostics, items: state.items, plan, state };
+  return {
+    object: state.items.length ? group : null,
+    diagnostics, items: state.items, plan, state, materials,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// pass module: the LOD centre follows the camera
+// ---------------------------------------------------------------------------
+//
+// ROUND 3 CORRECTION - READ THIS BEFORE CHANGING THE THRESHOLD.
+//
+// The ring note at the top of this file explains why the outer ring covers the
+// whole window: a wrong focus must never empty the city. That fixed existence,
+// not detail. `ctx.focus` is sampled ONCE, when the city is built, and the
+// player - or the capture harness - then moves away from it. Measured on the
+// round-3 capture set the rings were still centred on (1588.8, 369.5) while
+// the street card stood at (1447.1, 1003.8), 640 m away, so EVERY tree in
+// every captured frame drew the lod1 six-cluster form - including the one 18 m
+// from the lens, which is the "placeholder tree" the reviews have flagged
+// three rounds running. The near tier existed; nothing was standing in it.
+//
+// `update` re-centres the rings on the live camera once it has moved past
+// STREET_FURNITURE_FOCUS.refreshMetres, exactly as facade-articulation does.
+// The rebuild is SYNCHRONOUS and completes inside the update call, so a camera
+// teleport - which is how every capture card is posed - is fully re-centred in
+// the frame it is posed for. Nothing is interpolated.
+//
+// Threshold choice. The near ring reaches 120 m, so re-centring every 40 m
+// keeps at least 80 m of lod0 furniture ahead of the eye while costing one
+// rebuild per 40 m travelled instead of one per frame. Measured rebuild cost
+// on the shipped slice is ~1.0 s in the browser (`buildMs` in the
+// diagnostics), which is why the threshold is not tighter.
+export const STREET_FURNITURE_FOCUS = Object.freeze({
+  refreshMetres: 40,
+});
+
+/** Live pass state. A pass module is a singleton, so this is its whole world. */
+const passState = {
+  group: null,
+  materials: null,
+  centre: null,
+  refreshes: 0,
+  lastRefreshMs: 0,
+  diagnostics: { version: STREET_FURNITURE_VERSION, implemented: false },
+};
+
+/**
+ * A read-only view of `ctx` whose focus is the live camera. `Object.create`
+ * rather than a spread: the renderer's context exposes `hour`, `weather` and
+ * `traffic` as getters, and a spread would freeze them at their current value.
+ */
+function cameraCentredContext(ctx, x, z) {
+  const view = Object.create(ctx);
+  view.focus = { x, z };
+  return view;
+}
+
+/** Replace the pass group's contents with a fresh build, in place. */
+function adoptContent(group, next) {
+  for (const child of [...group.children]) {
+    child.geometry?.dispose?.();
+    group.remove(child);
+  }
+  if (!next) return;
+  for (const child of [...next.children]) group.add(child);
 }
 
 export default {
   id: STREET_FURNITURE_ID,
   order: 40,
   build(ctx) {
-    const result = buildStreetFurniture(ctx);
+    passState.materials = createStreetFurnitureMaterials();
+    const result = buildStreetFurniture(ctx, { materials: passState.materials });
+    passState.group = result.object;
+    passState.centre = { x: result.diagnostics.focus.x, z: result.diagnostics.focus.z };
+    passState.refreshes = 0;
+    passState.lastRefreshMs = 0;
+    result.diagnostics.refreshes = 0;
+    result.diagnostics.lastRefreshMs = 0;
+    result.diagnostics.refreshMetres = STREET_FURNITURE_FOCUS.refreshMetres;
+    passState.diagnostics = result.diagnostics;
     return { object: result.object, diagnostics: result.diagnostics };
+  },
+
+  /**
+   * Re-centre the rings on the live camera. Steady state is one subtraction
+   * and a hypot; everything else only runs on a threshold crossing.
+   */
+  update(ctx) {
+    if (!passState.group || !passState.centre) return;
+    const camera = ctx?.camera?.position;
+    if (!camera || !Number.isFinite(camera.x) || !Number.isFinite(camera.z)) return;
+    const moved = Math.hypot(camera.x - passState.centre.x, camera.z - passState.centre.z);
+    if (moved < STREET_FURNITURE_FOCUS.refreshMetres) return;
+    const startedAt = Date.now();
+    const next = buildStreetFurniture(
+      cameraCentredContext(ctx, camera.x, camera.z),
+      { materials: passState.materials, centreSource: 'camera' },
+    );
+    // The centre is the CAMERA, not the focus the build settled on. A camera
+    // outside `city.meta.bounds` has its focus substituted for the bounds
+    // centre (see `resolveFocus`); recording that substitute would leave the
+    // stored centre a long way from the camera and rebuild the pass every
+    // frame for as long as it stood there.
+    passState.centre = { x: camera.x, z: camera.z };
+    adoptContent(passState.group, next.object);
+    passState.refreshes += 1;
+    passState.lastRefreshMs = Date.now() - startedAt;
+    Object.assign(passState.diagnostics, next.diagnostics, {
+      refreshes: passState.refreshes,
+      lastRefreshMs: passState.lastRefreshMs,
+      refreshMetres: STREET_FURNITURE_FOCUS.refreshMetres,
+    });
+  },
+
+  dispose() {
+    // The registry disposes the returned object's geometry and the materials
+    // that are still attached to it. A material whose buffer ended up empty
+    // was never attached, so release the whole set here and drop the
+    // singleton's references, so a rebuilt city starts clean.
+    disposeStreetFurnitureMaterials(passState.materials);
+    passState.group = null;
+    passState.materials = null;
+    passState.centre = null;
+    passState.refreshes = 0;
+    passState.lastRefreshMs = 0;
+  },
+
+  /** Test seam: the live diagnostics without going through the registry. */
+  __diagnostics() {
+    return passState.diagnostics;
   },
 };

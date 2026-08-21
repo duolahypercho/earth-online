@@ -72,6 +72,8 @@ import {
   REST_POSE,
   jointClosure,
   buildInstancedPartGeometries,
+  buildWardrobeGeometries,
+  partIsDrawn,
   mirrorActivityPose,
   buildLocomotionClips,
   LOCOMOTION_STATES,
@@ -1108,22 +1110,63 @@ section('8. limb attachment');
   }
 
   // 8e. Silhouette: the near tier has to actually contain the parts a reviewer
-  // named as missing.
-  const near = buildInstancedPartGeometries({ detail: 'near', radialSegments: 6 });
+  // named as missing, at the SEGMENT COUNT THE PASS ACTUALLY SHIPS.
+  //
+  // The previous version of this block built the near tier at `radialSegments:
+  // 6` while `STREET_LIFE_RINGS[0]` ships 7, so the number it asserted on was
+  // not the number the pass draws and the budget it proved was not the budget
+  // the frame paid. Read the ring.
+  const nearSegments = STREET_LIFE_RINGS[0].radialSegments;
+  const near = buildInstancedPartGeometries({ detail: 'near', radialSegments: nearSegments });
   const nearBones = new Set([...near.values()].map((entry) => entry.bone));
   for (const required of ['Neck', 'LeftHand', 'RightHand', 'Head', 'LeftFoot']) {
     assert(nearBones.has(required), `the near tier draws ${required}`);
   }
   let nearTriangles = 0;
+  let nearDraws = 0;
   let hasShading = true;
   for (const entry of near.values()) {
     nearTriangles += entry.geometry.getAttribute('position').count / 3;
+    nearDraws += 1;
     if (!entry.geometry.getAttribute('color')) hasShading = false;
   }
   assert(hasShading, 'every near-tier chunk carries baked cavity shading in its colour attribute');
+  // The ceiling is the ring cap arithmetic, not taste: a saturated near ring is
+  // `budget x body`, and it has to leave room for the mid ring, the wardrobe and
+  // the kerb cars inside `STREET_LIFE_BUDGET.maxTriangles`. See the budget block
+  // in street-life.js for the full sum.
+  const nearWardrobe = buildWardrobeGeometries({ detail: 'near', radialSegments: nearSegments });
+  let nearWardrobeTriangles = 0;
+  for (const entry of nearWardrobe.values()) {
+    nearWardrobeTriangles += entry.geometry.getAttribute('position').count / 3;
+  }
+  const midRingGeometry = buildInstancedPartGeometries({
+    detail: STREET_LIFE_RINGS[1].detail,
+    radialSegments: STREET_LIFE_RINGS[1].radialSegments,
+    mergeToRoot: true,
+  });
+  const midRingWardrobe = buildWardrobeGeometries({
+    detail: STREET_LIFE_RINGS[1].detail,
+    radialSegments: STREET_LIFE_RINGS[1].radialSegments,
+    mergeToRoot: true,
+  });
+  const sumTris = (map) => {
+    let total = 0;
+    for (const entry of map.values()) total += entry.geometry.getAttribute('position').count / 3;
+    return total;
+  };
+  const worstCase = STREET_LIFE_RINGS[0].budget * (nearTriangles + nearWardrobeTriangles)
+    + STREET_LIFE_RINGS[1].budget * (sumTris(midRingGeometry) + sumTris(midRingWardrobe))
+    + STREET_LIFE_BUDGET.parkedCars * 128;
   assert(
-    nearTriangles > 380 && nearTriangles < 900,
-    `near-tier body is ${nearTriangles} triangles - enough for a face and hands, not enough to be a hero asset`,
+    worstCase <= STREET_LIFE_BUDGET.maxTriangles,
+    `every ring saturated costs ${worstCase} triangles <= the declared ${STREET_LIFE_BUDGET.maxTriangles}`
+    + ` (near body ${nearTriangles} + wardrobe ${nearWardrobeTriangles} per figure at ${nearSegments} segments)`,
+  );
+  const worstDraws = nearDraws + nearWardrobe.size + midRingGeometry.size + midRingWardrobe.size + 1 + 2;
+  assert(
+    worstDraws <= STREET_LIFE_BUDGET.maxDrawCalls,
+    `every ring saturated costs ${worstDraws} draw calls <= the declared ${STREET_LIFE_BUDGET.maxDrawCalls}`,
   );
   const mid = buildInstancedPartGeometries({ detail: 'mid', radialSegments: 5 });
   let midTriangles = 0;
@@ -1133,6 +1176,310 @@ section('8. limb attachment');
     STREET_LIFE_RINGS[0].radius <= 40,
     `the near ring stops at ${STREET_LIFE_RINGS[0].radius} m, so the expensive body is only drawn where a limb is more than a few pixels`,
   );
+
+  // 8f. Every authored part must be reachable.
+  //
+  // `partIsDrawn` is a RANGE - `detail` is the cheapest tier that draws a part
+  // and `maxDetail` the richest - so `{detail:'near', maxDetail:'mid'}` is an
+  // empty range and the part silently never renders. That is a one-character
+  // authoring mistake with no symptom other than a missing limb.
+  {
+    const orphans = BODY_PARTS.filter(
+      (part) => !['far', 'mid', 'near'].some((tier) => partIsDrawn(part, tier)),
+    );
+    assert(
+      orphans.length === 0,
+      `every body part is drawn at some tier (${orphans.length} unreachable)`,
+    );
+    const loftParts = BODY_PARTS.filter((part) => part.kind === 'loft');
+    let ascending = true;
+    for (const part of loftParts) {
+      for (let i = 1; i < part.size.length; i += 1) {
+        if (!(part.size[i][0] > part.size[i - 1][0])) ascending = false;
+      }
+    }
+    assert(
+      loftParts.length > 0 && ascending,
+      `all ${loftParts.length} lofts are authored bottom-to-top (jointCoverRadius interpolates in that order)`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+section('8b. near-tier silhouette');
+
+// A joint that is CLOSED can still read as a kit of parts. Section 8 proves the
+// figure does not come apart; this section proves it does not look assembled.
+//
+// Round-4 measurement of the shipped near tier, on the third-person character
+// card at 4.6 m, is the thing these assertions exist to prevent recurring:
+//   * the upper arm was a 40 mm circle swept 245 mm with a 72 mm sphere sitting
+//     proud of the torso beside it, so the shoulder read as a ball joint and
+//     the elbow as a bead on a stick;
+//   * the head was a 4-sided frustum 150 x 180 mm with a hair slab balanced on
+//     top of it, so it had no profile at any angle;
+//   * the hand was a 4-sided paddle with no thumb;
+//   * nothing on the figure broke its own outline, so it read as a mannequin.
+//
+// Every check below is a measurement of the authored solid, so it holds at any
+// joint angle and needs no render.
+{
+  const NEAR = 'near';
+  const partsOf = (bone) => BODY_PARTS.filter((part) => part.bone === bone && partIsDrawn(part, NEAR));
+
+  /**
+   * Half-width, half-depth and section centre of one part at bone-local `y`,
+   * or null when the part does not reach that height. Independent of the
+   * module's own implementation on purpose.
+   */
+  function sectionAt(part, y) {
+    const [ox, oy, oz] = part.offset;
+    const dy = y - oy;
+    if (part.kind === 'loft') {
+      const rings = part.size;
+      if (dy < rings[0][0] || dy > rings[rings.length - 1][0]) return null;
+      for (let i = 0; i < rings.length - 1; i += 1) {
+        const [ay, aw, ad, aox = 0, aoz = 0] = rings[i];
+        const [by, bw, bd, box = 0, boz = 0] = rings[i + 1];
+        if (dy < ay || dy > by) continue;
+        const t = by > ay ? (dy - ay) / (by - ay) : 0;
+        return {
+          halfW: aw + (bw - aw) * t,
+          halfD: ad + (bd - ad) * t,
+          cx: ox + aox + (box - aox) * t,
+          cz: oz + aoz + (boz - aoz) * t,
+        };
+      }
+      return null;
+    }
+    if (part.kind === 'ball') {
+      const [rx, ry = rx, rz = rx] = part.size;
+      if (Math.abs(dy) > ry) return null;
+      const k = Math.sqrt(Math.max(0, 1 - (dy / ry) ** 2));
+      return { halfW: rx * k, halfD: rz * k, cx: ox, cz: oz };
+    }
+    if (part.kind === 'cyl') {
+      const [rTop, rBottom, h] = part.size;
+      if (Math.abs(dy) > h / 2) return null;
+      const t = (dy + h / 2) / h;
+      const r = rBottom + (rTop - rBottom) * t;
+      return { halfW: r, halfD: r, cx: ox, cz: oz };
+    }
+    if (part.kind === 'taper') {
+      const [topW, topD, botW, botD, h] = part.size;
+      if (Math.abs(dy) > h / 2) return null;
+      const t = (dy + h / 2) / h;
+      return {
+        halfW: (botW + (topW - botW) * t) / 2,
+        halfD: (botD + (topD - botD) * t) / 2,
+        cx: ox,
+        cz: oz,
+      };
+    }
+    const [w, h, d] = part.size;
+    if (Math.abs(dy) > h / 2) return null;
+    return { halfW: w / 2, halfD: d / 2, cx: ox, cz: oz };
+  }
+
+  /** Widest half-width any of `parts` reaches over `y0..y1`. */
+  function widestOver(parts, y0, y1, steps = 24) {
+    let best = 0;
+    for (let i = 0; i <= steps; i += 1) {
+      const y = y0 + ((y1 - y0) * i) / steps;
+      for (const part of parts) {
+        const section = sectionAt(part, y);
+        if (section) best = Math.max(best, section.halfW + Math.abs(section.cx));
+      }
+    }
+    return best;
+  }
+
+  // --- 1. No joint filler shows in silhouette --------------------------------
+  //
+  // A filler is a ball centred on a bone's own origin. It is what keeps a
+  // rotating joint closed, and it is also what a reviewer sees as "the elbow is
+  // a sphere" if it is the widest thing at the joint. Rotation-invariant test:
+  // the limb the filler caps must be at least as wide as the filler, measured
+  // over the filler's own height, so the filler is inside the limb's outline at
+  // every joint angle.
+  const FILLER_PROUD_TOLERANCE_M = 0.002;
+  let worstProud = -1;
+  let worstProudBone = '';
+  let fillers = 0;
+  for (const [, child] of ARTICULATING_JOINTS) {
+    const parts = partsOf(child);
+    const filler = parts.find(
+      (part) => part.kind === 'ball' && Math.hypot(...part.offset) < 0.01,
+    );
+    if (!filler) continue;
+    fillers += 1;
+    const [rx, ry = rx, rz = rx] = filler.size;
+    const radius = Math.max(rx, rz);
+    const limb = parts.filter((part) => part !== filler);
+    const widest = widestOver(limb, -ry, ry);
+    const proud = radius - widest;
+    if (proud > worstProud) { worstProud = proud; worstProudBone = child; }
+  }
+  assert(
+    fillers >= 10 && worstProud <= FILLER_PROUD_TOLERANCE_M,
+    `no joint filler is wider than the limb it caps: worst is ${worstProudBone}`
+    + ` at ${(worstProud * 1000).toFixed(1)} mm proud over ${fillers} fillers`
+    + ` (tolerance ${FILLER_PROUD_TOLERANCE_M * 1000} mm)`,
+  );
+
+  // --- 2. Limbs are not swept circles ---------------------------------------
+  //
+  // Two independent properties, because a limb can fail either one and still
+  // look like a tube: the section must CHANGE SIZE along the limb, and it must
+  // be NON-CIRCULAR somewhere along it.
+  const LIMB_TAPER_MIN = 1.20;
+  const LIMB_OVALITY_MIN_M = 0.002;
+  for (const bone of ['LeftArm', 'LeftForeArm', 'LeftUpLeg', 'LeftLeg', 'RightArm', 'RightForeArm']) {
+    const lofts = partsOf(bone).filter((part) => part.kind === 'loft');
+    assert(lofts.length > 0, `${bone} carries a lofted solid at the near tier`);
+    let min = Infinity;
+    let max = 0;
+    let ovality = 0;
+    for (const part of lofts) {
+      for (const [, halfW, halfD] of part.size) {
+        min = Math.min(min, halfW);
+        max = Math.max(max, halfW);
+        ovality = Math.max(ovality, Math.abs(halfW - halfD));
+      }
+    }
+    assert(
+      max / min >= LIMB_TAPER_MIN,
+      `${bone} changes section along its length: widest/narrowest ${(max / min).toFixed(2)} >= ${LIMB_TAPER_MIN}`,
+    );
+    assert(
+      ovality >= LIMB_OVALITY_MIN_M,
+      `${bone} is not a swept circle: widest section is ${(ovality * 1000).toFixed(1)} mm off round`,
+    );
+  }
+
+  // --- 3. The head has a profile --------------------------------------------
+  const headLoft = partsOf('Head').find((part) => part.kind === 'loft' && part.slot === 'skin');
+  assert(Boolean(headLoft), 'the near tier draws a lofted head');
+  {
+    let frontMost = -Infinity;
+    let backMost = Infinity;
+    for (const [, , , , dz = 0] of headLoft.size) {
+      frontMost = Math.max(frontMost, dz);
+      backMost = Math.min(backMost, dz);
+    }
+    assert(
+      frontMost - backMost >= 0.012,
+      `the head's section centre travels ${(frontMost - backMost) * 1000} mm front-to-back between jaw and crown`,
+    );
+    // A nose and a brow, measured as protrusion past the face at their own height.
+    for (const [label, kind] of [['nose', 'wedge'], ['brow', 'box']]) {
+      const feature = partsOf('Head').find(
+        (part) => part.kind === kind && part.slot === 'skin' && part.offset[2] > 0.05,
+      );
+      assert(Boolean(feature), `the near head carries a ${label}`);
+      const y = feature.offset[1];
+      const face = sectionAt(headLoft, y);
+      const featureFront = feature.offset[2] + (kind === 'wedge' ? feature.size[2] / 2 : feature.size[2] / 2);
+      const faceFront = face ? face.cz + face.halfD : 0;
+      assert(
+        featureFront - faceFront >= 0.004,
+        `the ${label} stands ${((featureFront - faceFront) * 1000).toFixed(1)} mm proud of the face`,
+      );
+    }
+  }
+
+  // --- 4. Hair follows the cranium ------------------------------------------
+  {
+    const hair = partsOf('Head').find((part) => part.kind === 'loft' && part.slot === 'hair');
+    assert(Boolean(hair), 'the near tier draws a lofted hair shell');
+    let minShell = Infinity;
+    let maxShell = 0;
+    let checked = 0;
+    for (const [y, halfW] of hair.size) {
+      const skull = sectionAt(headLoft, y);
+      if (!skull) continue;
+      checked += 1;
+      const shell = halfW - skull.halfW;
+      minShell = Math.min(minShell, shell);
+      maxShell = Math.max(maxShell, shell);
+    }
+    assert(
+      checked >= 2 && minShell >= 0.002 && maxShell <= 0.030,
+      `hair wraps the cranium at ${(minShell * 1000).toFixed(1)}-${(maxShell * 1000).toFixed(1)} mm`
+      + ` over ${checked} rings, rather than resting on it`,
+    );
+    // ...and it starts BEHIND the brow, or it is a helmet.
+    const brow = partsOf('Head').find(
+      (part) => part.kind === 'box' && part.slot === 'skin' && part.offset[2] > 0.05,
+    );
+    const hairAtBrow = sectionAt(hair, brow.offset[1]);
+    const browFront = brow.offset[2] + brow.size[2] / 2;
+    assert(
+      hairAtBrow && browFront - (hairAtBrow.cz + hairAtBrow.halfD) >= 0.010,
+      `the hairline sits ${(((browFront - (hairAtBrow?.cz + hairAtBrow?.halfD)) || 0) * 1000).toFixed(1)} mm behind the brow`,
+    );
+  }
+
+  // --- 5. Hands have a thumb ------------------------------------------------
+  //
+  // Mirrored: the thumb is on the MEDIAL edge of each hand, which is -x on the
+  // left hand and +x on the right. A pair of hands with the thumb on the same
+  // side is a mirroring bug you cannot see until somebody looks at the near
+  // card, so it is measured here.
+  for (const [bone, medial] of [['LeftHand', -1], ['RightHand', 1]]) {
+    const lofts = partsOf(bone).filter((part) => part.kind === 'loft');
+    assert(lofts.length >= 2, `${bone} draws a palm and a thumb`);
+    let palmReach = 0;
+    let thumbReach = 0;
+    for (const part of lofts) {
+      let signed = 0;
+      let lateral = 0;
+      for (const [, halfW, , dx = 0] of part.size) {
+        signed += dx;
+        lateral = Math.max(lateral, medial * dx + halfW);
+      }
+      if (signed * medial > 0.01) thumbReach = Math.max(thumbReach, lateral);
+      else palmReach = Math.max(palmReach, lateral);
+    }
+    assert(
+      thumbReach - palmReach >= 0.012,
+      `${bone} shows a thumb ${((thumbReach - palmReach) * 1000).toFixed(1)} mm past the palm on the medial side`,
+    );
+  }
+
+  // --- 6. Clothing breaks the body outline ----------------------------------
+  //
+  // A collar, a cuff and a hem. Each one is only worth its triangles if it
+  // stands PROUD of what it is worn over - a garment flush with the body is a
+  // colour change, not a silhouette - so each is measured against the solid
+  // underneath it at its own height.
+  const CLOTHING_PROUD_MIN_M = 0.005;
+  const garments = [
+    { label: 'collar', bone: 'Neck', slot: 'top', under: (part) => part.slot === 'skin' },
+    { label: 'cuff', bone: 'LeftArm', slot: 'top', under: (part) => part.kind === 'loft' && part.size.length > 3 },
+    { label: 'hem', bone: 'Hips', slot: 'top', under: (part) => part.slot === 'bottom' },
+  ];
+  for (const garment of garments) {
+    const parts = partsOf(garment.bone);
+    const worn = parts.filter((part) => part.slot === garment.slot && part.kind === 'loft');
+    assert(worn.length > 0, `the near tier draws a ${garment.label}`);
+    const body = parts.filter(garment.under);
+    let proud = -Infinity;
+    for (const part of worn) {
+      for (const [y, halfW] of part.size) {
+        let under = 0;
+        for (const candidate of body) {
+          const section = sectionAt(candidate, y);
+          if (section) under = Math.max(under, section.halfW + Math.abs(section.cx));
+        }
+        if (under > 0) proud = Math.max(proud, halfW - under);
+      }
+    }
+    assert(
+      proud >= CLOTHING_PROUD_MIN_M,
+      `the ${garment.label} stands ${(proud * 1000).toFixed(1)} mm proud of the body under it`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

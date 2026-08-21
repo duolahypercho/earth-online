@@ -71,6 +71,11 @@ import skyAtmosphere, {
   SKY_ATMOSPHERE_BUDGET,
   SKY_ATMOSPHERE_VERSION,
 } from '../../src/render/passes/sky-atmosphere.js';
+import {
+  contactShadowLeakMetres,
+  keyShareOfRatio,
+  projectedContactShadow,
+} from '../../src/render/shadow-casters.js';
 import { PASSES } from '../../src/render/passes/index.js';
 import { createPassRuntime, validatePass } from '../../src/render/pass-registry.js';
 
@@ -98,6 +103,8 @@ const SKY_DITHER_STEPS = 2.0;
 let cardRows = [];
 let deliveredRows = [];
 let contactRow = null;
+let contactAoRow = null;
+let groundingRow = null;
 let updateCostRow = null;
 
 async function section(name, body) {
@@ -1522,12 +1529,44 @@ await section('ground decals sit on the pavement, not under it', () => {
     for (let i = 0; i < position.count; i += 1) min = Math.min(min, position.getY(i));
     return min;
   };
-  // Everything that lies on the footway.
+  // Everything that lies on the paved surface.
+  //
+  // CONTRACT CHANGE, round 5. The old assertion was `y >= footwayLift` for
+  // every vertex of every pool, i.e. "a light pool lies on the footway". That
+  // was true of a single flat quad and is wrong of the thing a pool actually
+  // is: an 11.5 m radius patch that starts on the footway, crosses the kerb
+  // and lands on a crowned carriageway 0.12 m lower, over ground that is not
+  // level. Holding a 23 m quad at the footway datum is exactly what put it
+  // under the pavement on the sloping half - the round-4 night card has no
+  // lamp pool on the ground anywhere, at any of the 240 fixtures the pass
+  // reports building.
+  //
+  // The new floor is the gutter invert (`roadLift - gutterDepth`), which is
+  // the lowest point of the paved cross-section, plus the pass's clearance;
+  // the new ceiling is the footway plus that clearance plus a margin. So the
+  // patch is still required to be ON the pavement, over its whole area - just
+  // over the real pavement rather than over one datum of it.
+  const poolLift = 0.12;
+  const gutterInvertLift = roadLift - city.meta.streetDesign.gutterDepth;
   for (const name of ['sky-atmosphere:light-pools', 'sky-atmosphere:shop-spill']) {
-    const y = minY(name);
-    check(y != null, `${name} must exist at night`);
-    check(y >= footwayLift, `${name} must sit on the footway (>= ${footwayLift}), got ${y}`);
-    check(y < footwayLift + 0.4, `${name} must not float above the footway, got ${y}`);
+    const mesh = ctx.root.getObjectByName(name);
+    check(mesh != null, `${name} must exist at night`);
+    const position = mesh.geometry.getAttribute('position');
+    let low = Infinity;
+    let high = -Infinity;
+    for (let i = 0; i < position.count; i += 1) {
+      low = Math.min(low, position.getY(i));
+      high = Math.max(high, position.getY(i));
+    }
+    check(low >= gutterInvertLift + poolLift - 1e-3,
+      `${name} must sit on the paved cross-section (>= ${gutterInvertLift + poolLift}), got ${low}`);
+    check(high < footwayLift + poolLift + 0.3,
+      `${name} must not float above the footway, got ${high}`);
+    // The patch is a grid, not a quad: it has to have more than four corners
+    // or it cannot follow anything.
+    check(position.count > 4 * detail.lights.lampPools,
+      `${name} must be terrain-conforming, got ${position.count} vertices for `
+      + `${detail.lights.lampPools} fixtures`);
   }
   // ...and everything that lies on the carriageway.
   const puddleY = minY('sky-atmosphere:wet-sheen');
@@ -1559,6 +1598,217 @@ await section('ground decals sit on the pavement, not under it', () => {
     shopSpills: detail.lights.shopSpills,
     vehicles: detail.contact.vehicles,
     canopies: detail.contact.canopies,
+  };
+  runtime.dispose();
+});
+
+await section('contact darkening is ambient occlusion, and it tracks the sky', () => {
+  // The round-3 review's first finding, restated as a test.
+  //
+  // `01-street-day` (11:00) and `06-night-street` (21:30) were shot from an
+  // identical eye and target. On row 760 the frame stepped at exactly x=1330
+  // in BOTH: 191.5 -> 152.0 by day and 73.1 -> 43.2 at night. The round-4
+  // key-off pair says why. Inverting the display transform at that pixel, the
+  // key contributes 0.572 radiance left of the boundary and 0.291 right of it,
+  // while the fill contributes 0.075 and 0.035 - both scaled by 0.50, which is
+  // an alpha-0.5 black quad composited in linear space, i.e. CONTACT_ALPHA.
+  // The 3.6 m skirt, mitred to 9.4 m at a sharp corner, was a fake shadow that
+  // did not move with the sun and did not switch off with it.
+  //
+  // Two properties are required of what replaced it: small enough to read as
+  // ambient occlusion, and scaled by the light it occludes.
+  const leak = contactShadowLeakMetres({ texelWorldSize: 0.192055, sunAltitudeDeg: 46.36 });
+  const day = createPassRuntime([skyAtmosphere]);
+  const dayCtx = makeContext(makeCity(), { hour: 12, weather: 'clear' });
+  const dayDetail = day.build(dayCtx).built[0].detail;
+
+  check(dayDetail.contact.width <= leak.leakMetres + 1e-9,
+    `the contact band is ${dayDetail.contact.width} m, at or under the ${leak.leakMetres} m of `
+    + 'contact the shadow map\'s own bias plan erases - it fills in exactly that and no more');
+  check(dayDetail.contact.width <= 0.35,
+    `${dayDetail.contact.width} m reads as a crevice line, not as a shadow (round 3 shipped 3.6 m)`);
+  check(dayDetail.contact.mitreClamp * dayDetail.contact.width <= 0.5,
+    `the widest a corner mitre can open is ${(dayDetail.contact.mitreClamp * dayDetail.contact.width).toFixed(3)} m; `
+    + 'round 3 could throw a 9.4 m wedge across a footway from one needle corner');
+  check(dayDetail.contact.aoScale > 0.5,
+    `at noon there is sky to occlude, so the AO runs at ${dayDetail.contact.aoScale.toFixed(3)}`);
+
+  // Physics check on the width choice: a wall's own AO does NOT fall off over
+  // a footway, so a wide band cannot be justified as wall occlusion. For an
+  // infinite wall of height h the cosine-weighted sky occlusion at distance d
+  // is (1/2) h^2 / (h^2 + d^2).
+  const occlusionAt = (d, h) => 0.5 * ((h * h) / (h * h + d * d));
+  check(occlusionAt(3.6, 20) > 0.48,
+    `at 3.6 m from a 20 m wall the sky occlusion is still ${occlusionAt(3.6, 20).toFixed(3)} of `
+    + '0.500 at the wall: wall AO is a broad canyon term, which the light rig already delivers, '
+    + 'so painting a 3.6 m band on top of it was double-counting');
+
+  const night = createPassRuntime([skyAtmosphere]);
+  const nightCtx = makeContext(makeCity(), { hour: 21.5, weather: 'clear' });
+  const nightDetail = night.build(nightCtx).built[0].detail;
+  check(nightDetail.contact.aoScale < 0.05,
+    `at 21:30 the sky delivers 0.029 against a noon 1.076, so the AO runs at `
+    + `${nightDetail.contact.aoScale.toFixed(4)} - a hairline, not a wedge`);
+  const nightContact = nightCtx.root.getObjectByName('sky-atmosphere:contact-grounding');
+  const nightCanopy = nightCtx.root.getObjectByName('sky-atmosphere:under-object-shading');
+  check(nightContact.material.opacity < 0.05 && nightCanopy.material.opacity < 0.05,
+    `both AO meshes are at ${nightContact.material.opacity.toFixed(4)} and `
+    + `${nightCanopy.material.opacity.toFixed(4)} opacity at 21:30: ambient occlusion removes SKY, `
+    + 'and at 21:30 there is almost none to remove');
+  const dayContact = dayCtx.root.getObjectByName('sky-atmosphere:contact-grounding');
+  check(dayContact.material.opacity > nightContact.material.opacity * 10,
+    'the day and night strengths differ by more than an order of magnitude, so the boundary '
+    + 'cannot sit at the identical pixel with the identical value in both frames again');
+  contactAoRow = {
+    leak: leak.leakMetres,
+    width: dayDetail.contact.width,
+    dayScale: dayDetail.contact.aoScale,
+    nightScale: nightDetail.contact.aoScale,
+  };
+  day.dispose();
+  night.dispose();
+});
+
+await section('grounding: the objects the shadow map refused still touch the ground', () => {
+  // The round-3 review's second finding. On the near footway of round 4's
+  // `01-street-day`, `measure-frame-v1 --ratio` classifies 217758 pixels as
+  // reached by the key and 3 as shadowed: the tree, the lamp column, the
+  // hydrant, the parked car and every pedestrian put nothing on the ground.
+  // The caster policy is right to refuse them - 165 of 340 meshes are thinner
+  // than the PCF kernel - so the shadow they cannot have is drawn directly.
+  const runtime = createPassRuntime([skyAtmosphere]);
+  const ctx = makeContext(makeCity(), { hour: 11, weather: 'clear' });
+  // Props of exactly the kind the policy excludes: a 12 cm lamp column, a
+  // batch of hydrants, a pedestrian - and one tower that DOES cast.
+  const material = new MeshBasicMaterial();
+  const props = new Group();
+  props.name = 'sidewalk-props';
+  const column = new Mesh(new BoxGeometry(0.12, 4.2, 0.12), material);
+  column.name = 'lamp-column';
+  column.castShadow = false;
+  column.position.set(60, 2.1, 25);
+  props.add(column);
+  const walker = new Mesh(new BoxGeometry(0.5, 1.8, 0.35), material);
+  walker.name = 'pedestrian-7';
+  walker.castShadow = false;
+  walker.position.set(70, 0.9, 26);
+  props.add(walker);
+  const hydrants = new InstancedMesh(new BoxGeometry(0.44, 0.75, 0.44), material, 24);
+  hydrants.name = 'hydrants';
+  hydrants.castShadow = false;
+  const matrix = new Matrix4();
+  for (let i = 0; i < 24; i += 1) {
+    matrix.makeTranslation(i * 14 + 4, 0.375, 30);
+    hydrants.setMatrixAt(i, matrix);
+  }
+  hydrants.instanceMatrix.needsUpdate = true;
+  props.add(hydrants);
+  const tower = new Mesh(new BoxGeometry(20, 40, 20), material);
+  tower.name = 'building-tower';
+  tower.castShadow = true;
+  tower.position.set(300, 20, 300);
+  props.add(tower);
+  ctx.root.add(props);
+
+  runtime.build(ctx);
+  const mesh = ctx.root.getObjectByName('sky-atmosphere:grounding');
+  check(mesh != null, 'the grounding mesh exists');
+  // Nothing at build: this pass is order 10 and the passes that own trees,
+  // vehicles and people are 40-60. The scan is deferred on purpose.
+  const inspect = skyAtmosphere._inspect();
+  check(inspect.grounding.anchors.length === 0,
+    'no anchors at build time, because the objects that need grounding are built by later passes');
+  for (let frame = 0; frame < 4; frame += 1) runtime.update(ctx, 1 / 60);
+  const grounding = skyAtmosphere._inspect().grounding;
+  const byName = (name) => grounding.anchors.filter((anchor) => anchor.node.name === name).length;
+  check(byName('hydrants') === 24,
+    `the hydrant batch is expanded to ${byName('hydrants')} separate anchors: one castShadow flag `
+    + 'was standing in for 24 objects on 24 different corners');
+  check(byName('lamp-column') === 1 && byName('pedestrian-7') === 1,
+    'the 12 cm lamp column and the pedestrian each get one');
+  check(byName('parked-car-bodies') === 140,
+    `and the ${byName('parked-car-bodies')} kerbside car instances the fixture builds, which is the `
+    + 'case the round-4 street card shows with no shadow under any of them');
+  check(byName('building-tower') === 0 && grounding.audit.skipped.casting === 1,
+    'the tower is left alone: the shadow map is already drawing it');
+  check(grounding.anchors.length === 166,
+    `${grounding.anchors.length} anchors in total; the 90 awning plates are refused because a 14 cm `
+    + 'plate is under the height floor and has no silhouette to project');
+  check(grounding.quads === grounding.anchors.length && mesh.visible === true,
+    `${grounding.quads} quads are drawn at 11:00 and the mesh is visible`);
+  // The darkness is the rig's own delivered key/fill, so a drawn contact
+  // shadow and the shadow map's shadow on the building beside it are the same
+  // shadow. It is NOT a chosen opacity.
+  const delivered = keyFillBalance(computeSkyModel({ hour: 11, weather: 'clear' })).achieved.ratio;
+  check(Math.abs(mesh.material.opacity - delivered / (1 + delivered)) < 1e-4,
+    `alpha ${mesh.material.opacity.toFixed(4)} is r/(1+r) for the delivered key/fill ${delivered}: `
+    + 'under linear compositing that leaves the receiver at exactly its fill-only radiance');
+  const at11 = { anchors: grounding.anchors.length, quads: grounding.quads, keyShare: grounding.keyShare };
+
+  const positionOf = (quad) => {
+    const position = mesh.geometry.getAttribute('position');
+    const out = [];
+    for (let v = 0; v < 4; v += 1) {
+      out.push(position.getX(quad * 4 + v), position.getY(quad * 4 + v), position.getZ(quad * 4 + v));
+    }
+    return out;
+  };
+  const morning = positionOf(0);
+  const model11 = computeSkyModel({ hour: 11, weather: 'clear' });
+  const horizontal11 = Math.hypot(model11.sun.x, model11.sun.z);
+  const footX = (morning[0] + morning[3]) / 2;
+  const footZ = (morning[2] + morning[5]) / 2;
+  const tipX = (morning[6] + morning[9]) / 2;
+  const tipZ = (morning[8] + morning[11]) / 2;
+  const runLength = Math.hypot(tipX - footX, tipZ - footZ);
+  check(Math.abs((tipX - footX) / runLength - (-model11.sun.x / horizontal11)) < 0.02
+    && Math.abs((tipZ - footZ) / runLength - (-model11.sun.z / horizontal11)) < 0.02,
+    'the quad runs along the anti-solar azimuth taken from the sky model, not an authored direction');
+
+  // Move the clock: the quads must move with it.
+  ctx.hour = 15;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const afternoon = positionOf(0);
+  const moved = afternoon.some((value, index) => Math.abs(value - morning[index]) > 0.05);
+  check(moved,
+    'the same quad has different corners at 15:00 than at 11:00 - the element tracks the key, '
+    + 'which is exactly what the round-3 contact skirt could not do');
+
+  // Move an object: the quad must follow it.
+  matrix.makeTranslation(500, 0.375, 900);
+  hydrants.setMatrixAt(0, matrix);
+  hydrants.instanceMatrix.needsUpdate = true;
+  hydrants.updateMatrixWorld(true);
+  runtime.update(ctx, 1 / 60);
+  const followed = skyAtmosphere._inspect().grounding.anchors
+    .find((anchor) => anchor.node === hydrants && anchor.instance === 0);
+  check(Math.abs(followed.x - 500) < 1e-3 && Math.abs(followed.z - 900) < 1e-3,
+    'a moving object drags its contact with it, which is what pedestrians and traffic need');
+
+  // Sunset: the whole element must be gone. Not faint - gone.
+  ctx.hour = 21.5;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const dark = skyAtmosphere._inspect().grounding;
+  check(dark.quads === 0 && mesh.visible === false && mesh.material.opacity === 0,
+    'at 21:30 the grounding mesh draws zero quads, is invisible and has zero opacity: a projected '
+    + 'contact shadow cannot outlive the sun that projects it');
+  check(mesh.geometry.drawRange.count === 0,
+    'and the draw range is zero, so it is not even submitted');
+
+  // Back into the light: it must come back.
+  ctx.hour = 9;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const dawn = skyAtmosphere._inspect().grounding;
+  check(dawn.quads === 166 && mesh.visible === true,
+    'and it returns with the sun the next morning');
+
+  const noonModel = computeSkyModel({ hour: 12, weather: 'clear' });
+  const noonShare = keyShareOfRatio(keyFillBalance(noonModel).achieved.ratio);
+  const noonPlan = projectedContactShadow({ height: 1.8, radius: 0.3 }, noonModel.sun, noonShare);
+  groundingRow = {
+    ...at11,
+    pedestrianThrow: noonPlan.length,
+    pedestrianAlpha: noonPlan.opacity,
   };
   runtime.dispose();
 });
@@ -1860,6 +2110,17 @@ for (const row of budgetRows) {
 if (contactRow) {
   console.log(`  contact grounding: ${contactRow.footprints} footprints -> ${contactRow.quads} quads, `
     + `${contactRow.vehicles} vehicles, ${contactRow.canopies} canopies, ${contactRow.skipped} skipped`);
+}
+if (contactAoRow) {
+  console.log(`  contact AO band: ${contactAoRow.width} m wide against a measured `
+    + `${contactAoRow.leak} m contact leak; strength ${contactAoRow.dayScale.toFixed(3)} at noon, `
+    + `${contactAoRow.nightScale.toFixed(4)} at 21:30 (round 3 shipped 3.6 m at a fixed 0.55)`);
+}
+if (groundingRow) {
+  console.log(`  grounding: ${groundingRow.anchors} anchors -> ${groundingRow.quads} quads at 11:00, `
+    + `alpha ${groundingRow.keyShare.toFixed(4)} = r/(1+r) for the delivered key/fill; `
+    + `a 1.8 m pedestrian at noon throws ${groundingRow.pedestrianThrow} m at alpha `
+    + `${groundingRow.pedestrianAlpha}; zero quads at 21:30`);
 }
 if (updateCostRow) {
   console.log(`  update over ${updateCostRow.frames} frames: mean ${updateCostRow.mean.toFixed(3)} ms, `

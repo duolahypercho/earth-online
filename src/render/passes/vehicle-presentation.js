@@ -81,16 +81,25 @@ export const VEHICLE_PRESENTATION_VERSION = 'vehicle-presentation-v1';
  *
  * `lod` selects the geometry variant. The radii are set by what a vehicle
  * actually resolves to on a 1600x900 frame at 47 deg: a 1.8 m wide car spans
- * about 60 px at 55 m, 30 px at 110 m and 10 px at 320 m. Separate wheels, door
- * shut lines, mirrors and wipers stop paying for themselves past 55 m; a
- * separate glazing draw call stops paying past 110 m; past 320 m a vehicle is
- * a ten-pixel silhouette and a parked one is not worth a triangle.
+ * about 60 px at 55 m, 40 px at 80 m, 30 px at 110 m and 10 px at 320 m. Past
+ * 320 m a vehicle is a ten-pixel silhouette and a parked one is not worth a
+ * triangle.
+ *
+ * ROUND 3 BUDGET CHANGE, stated so it is not a silent drift. The near ring was
+ * 55 m. Measured on the shipped slice it held 20 of its 60 allowed vehicles and
+ * 39,192 of its 120,000 allowed triangles - a third of the cap, because the
+ * ring was small AND, until this round, centred on a datum nobody stood at. A
+ * 40-pixel-wide car still shows its wheels, mirrors and door shut lines, so the
+ * ring is taken out to 80 m, where the headroom pays for the vehicles that
+ * actually fill a hero street frame. The caps themselves are unchanged and the
+ * verifier asserts them; a denser block now spends more of a budget it already
+ * had rather than being granted a new one.
  *
  * `maxVehicles` and `maxTriangles` are hard caps applied nearest-first, so a
  * dense downtown block never spends the whole budget on the far ring.
  */
 export const VEHICLE_RINGS = Object.freeze([
-  Object.freeze({ id: 'near', radius: 55, lod: 0, maxVehicles: 60, maxTriangles: 120000 }),
+  Object.freeze({ id: 'near', radius: 80, lod: 0, maxVehicles: 60, maxTriangles: 120000 }),
   Object.freeze({ id: 'mid', radius: 110, lod: 1, maxVehicles: 140, maxTriangles: 90000 }),
   Object.freeze({ id: 'far', radius: 320, lod: 2, maxVehicles: 360, maxTriangles: 80000 }),
 ]);
@@ -715,6 +724,122 @@ function triangleCostOf(assets, typeId, lod) {
   return each;
 }
 
+/**
+ * Assign every planned vehicle to a ring, nearest first, against the per-ring
+ * caps. Pure data: no geometry is touched beyond asking the (cached) asset
+ * library what a body costs.
+ *
+ * Shared by the first build and by every LOD re-centre, so a refreshed
+ * population is assigned by exactly the same rule as a built one.
+ */
+function assignVehicleRings(assets, planned, baseRejections) {
+  const ringRecords = VEHICLE_RINGS.map((ring) => ({
+    id: ring.id, radius: ring.radius, lod: ring.lod, vehicles: 0, triangles: 0,
+    maxVehicles: ring.maxVehicles, maxTriangles: ring.maxTriangles,
+  }));
+  const sorted = [...planned].sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
+  const kept = [];
+  const rejections = { ...baseRejections };
+  const bump = (reason) => { rejections[reason] = (rejections[reason] || 0) + 1; };
+  for (const vehicle of sorted) {
+    const ring = ringFor(vehicle.distance);
+    if (!ring) { bump('beyond-far-ring'); continue; }
+    // A full ring DEMOTES, it does not delete. A vehicle that cannot fit its
+    // own ring's budget falls outward to the next tier and draws at a coarser
+    // level of detail; only a vehicle that fits nowhere is dropped. Dropping
+    // it instead would punch a hole in the parked line at exactly the distance
+    // where the line is most visible, which is the opposite of what a budget
+    // is for. Vehicles are considered nearest-first, so the near tier still
+    // gets first claim on every tier's budget.
+    const home = VEHICLE_RINGS.indexOf(ring);
+    let placed = false;
+    for (let index = home; index < VEHICLE_RINGS.length; index += 1) {
+      const tier = VEHICLE_RINGS[index];
+      const record = ringRecords[index];
+      if (record.vehicles >= tier.maxVehicles) { bump(`ring-${tier.id}-vehicle-cap`); continue; }
+      const cost = triangleCostOf(assets, vehicle.typeId, tier.lod);
+      if (record.triangles + cost > tier.maxTriangles) { bump(`ring-${tier.id}-triangle-cap`); continue; }
+      record.vehicles += 1;
+      record.triangles += cost;
+      vehicle.ring = tier.id;
+      vehicle.lod = tier.lod;
+      if (index !== home) bump(`demoted-${ring.id}-to-${tier.id}`);
+      kept.push(vehicle);
+      placed = true;
+      break;
+    }
+    if (!placed) bump('no-ring-has-room');
+  }
+  return { kept, ringRecords, rejections };
+}
+
+/** One static instanced fleet holding the parked population. */
+function createParkedFleet(assets, materials, kept) {
+  const capacity = new Map();
+  for (const vehicle of kept) {
+    const key = `${vehicle.typeId}:${vehicle.lod}`;
+    capacity.set(key, (capacity.get(key) || 0) + 1);
+  }
+  if (!capacity.size) return null;
+  const fleet = createVehicleFleet({ name: 'vehicle-parked', assets, materials, capacity });
+  fleet.begin();
+  for (const vehicle of kept) {
+    fleet.push({
+      typeId: vehicle.typeId,
+      lod: vehicle.lod,
+      x: vehicle.x, y: vehicle.y, z: vehicle.z,
+      yaw: vehicle.yaw, pitch: vehicle.pitch, roll: vehicle.roll,
+      paint: hexToLinear(vehicle.paintHex),
+      rim: hexToLinear(vehicle.rimHex),
+      // A parked vehicle is unlit: no brake, no indicator, wheels straight.
+      steer: 0, spin: 0, brake: false, indicator: 0,
+      hazard: vehicle.hazard, blink: false,
+    });
+  }
+  fleet.commit();
+  return fleet;
+}
+
+/** Wheel-contact audit over what was actually placed. */
+function groundingAudit(plan, options, kept) {
+  let worst = 0;
+  let sum = 0;
+  let samples = 0;
+  const datumAt = options.heightAt
+    ? (x, z) => options.roadLift + options.heightAt(x, z)
+    : () => options.roadLift;
+  for (const vehicle of kept) {
+    const segment = plan.segmentById.get(vehicle.segmentId);
+    if (!segment) continue;
+    for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
+      const lateral = lateralOf(segment, contact.x, contact.z);
+      const expected = carriagewaySurfaceY(datumAt(contact.x, contact.z), lateral, segment.half, options);
+      const error = Math.abs(contact.y - expected);
+      sum += error;
+      samples += 1;
+      if (error > worst) worst = error;
+    }
+  }
+  return {
+    samples,
+    worstContactError: worst,
+    meanContactError: samples ? sum / samples : 0,
+    tolerance: 0.010,
+    withinTolerance: worst <= 0.010,
+  };
+}
+
+/** Appearance spread and per-class census over the placed population. */
+function populationStats(kept) {
+  const appearance = new Set();
+  const byType = {};
+  for (const vehicle of kept) {
+    appearance.add(`${vehicle.typeId}|${vehicle.paintHex}|${vehicle.rimHex}|${vehicle.lod}`);
+    byType[vehicle.typeId] = (byType[vehicle.typeId] || 0) + 1;
+  }
+  return { uniqueAppearances: appearance.size, byType };
+}
+
 export function buildVehiclePresentation(ctx, overrides = {}) {
   const startedAt = Date.now();
   const city = ctx?.city;
@@ -751,38 +876,11 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     maxVehicles: overrides.maxVehicles ?? 900,
   });
 
-  const assets = createVehicleAssets(TRIM);
+  const assets = overrides.assets || createVehicleAssets(TRIM);
   const materials = overrides.materials || createVehicleMaterials();
 
   // Ring assignment, nearest first, against the per-ring caps.
-  const ringRecords = VEHICLE_RINGS.map((ring) => ({
-    id: ring.id, radius: ring.radius, lod: ring.lod, vehicles: 0, triangles: 0,
-    maxVehicles: ring.maxVehicles, maxTriangles: ring.maxTriangles,
-  }));
-  const sorted = [...planned.vehicles].sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
-  const kept = [];
-  const rejections = { ...planned.rejections };
-  const bump = (reason) => { rejections[reason] = (rejections[reason] || 0) + 1; };
-  for (const vehicle of sorted) {
-    const ring = ringFor(vehicle.distance);
-    if (!ring) { bump('beyond-far-ring'); continue; }
-    const index = VEHICLE_RINGS.indexOf(ring);
-    const record = ringRecords[index];
-    if (record.vehicles >= ring.maxVehicles) { bump(`ring-${ring.id}-vehicle-cap`); continue; }
-    const cost = triangleCostOf(assets, vehicle.typeId, ring.lod);
-    if (record.triangles + cost > ring.maxTriangles) { bump(`ring-${ring.id}-triangle-cap`); continue; }
-    record.vehicles += 1;
-    record.triangles += cost;
-    vehicle.ring = ring.id;
-    vehicle.lod = ring.lod;
-    kept.push(vehicle);
-  }
-
-  const parkedCapacity = new Map();
-  for (const vehicle of kept) {
-    const key = `${vehicle.typeId}:${vehicle.lod}`;
-    parkedCapacity.set(key, (parkedCapacity.get(key) || 0) + 1);
-  }
+  const { kept, ringRecords, rejections } = assignVehicleRings(assets, planned.vehicles, planned.rejections);
 
   const group = new THREE.Group();
   group.name = VEHICLE_PRESENTATION_ID;
@@ -795,28 +893,8 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   const anchor = createMaterialAnchor(materials);
   group.add(anchor);
 
-  const parked = parkedCapacity.size
-    ? createVehicleFleet({ name: 'vehicle-parked', assets, materials, capacity: parkedCapacity })
-    : null;
-  if (parked) {
-    parked.begin();
-    for (const vehicle of kept) {
-      const paint = hexToLinear(vehicle.paintHex);
-      const rim = hexToLinear(vehicle.rimHex);
-      parked.push({
-        typeId: vehicle.typeId,
-        lod: vehicle.lod,
-        x: vehicle.x, y: vehicle.y, z: vehicle.z,
-        yaw: vehicle.yaw, pitch: vehicle.pitch, roll: vehicle.roll,
-        paint, rim,
-        // A parked vehicle is unlit: no brake, no indicator, wheels straight.
-        steer: 0, spin: 0, brake: false, indicator: 0,
-        hazard: vehicle.hazard, blink: false,
-      });
-    }
-    parked.commit();
-    group.add(parked.group);
-  }
+  const parked = createParkedFleet(assets, materials, kept);
+  if (parked) group.add(parked.group);
 
   // The mirrored traffic fleet is built the first time the simulation is found
   // in the scene, with the exact per-type capacity that simulation asked for.
@@ -826,37 +904,14 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
   const parkedStats = parked ? parked.stats() : { triangles: 0, drawCalls: 0, meshes: [] };
   const trafficStats = { triangles: 0, drawCalls: 0, meshes: [] };
 
-  // Grounding audit over what was actually placed.
-  let worstContact = 0;
-  let contactSum = 0;
-  let contactSamples = 0;
-  const datumAt = options.heightAt
-    ? (x, z) => options.roadLift + options.heightAt(x, z)
-    : () => options.roadLift;
-  for (const vehicle of kept) {
-    const segment = plan.segmentById.get(vehicle.segmentId);
-    if (!segment) continue;
-    for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
-      const lateral = lateralOf(segment, contact.x, contact.z);
-      const expected = carriagewaySurfaceY(datumAt(contact.x, contact.z), lateral, segment.half, options);
-      const error = Math.abs(contact.y - expected);
-      contactSum += error;
-      contactSamples += 1;
-      if (error > worstContact) worstContact = error;
-    }
-  }
-
-  const appearance = new Set();
-  const byType = {};
-  for (const vehicle of kept) {
-    appearance.add(`${vehicle.typeId}|${vehicle.paintHex}|${vehicle.rimHex}|${vehicle.lod}`);
-    byType[vehicle.typeId] = (byType[vehicle.typeId] || 0) + 1;
-  }
+  const grounding = groundingAudit(plan, options, kept);
+  const { uniqueAppearances, byType } = populationStats(kept);
 
   const state = {
     id: VEHICLE_PRESENTATION_ID,
     assets,
     materials,
+    ownsAssets: !overrides.assets,
     ownsMaterials: !overrides.materials,
     parked,
     traffic: null,
@@ -864,7 +919,17 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     plan,
     options,
     focus,
+    // The datum the rings are centred on RIGHT NOW. `focus` is the BUILD
+    // focus; `centre` follows the camera. See the LOD-centre note below.
+    centre: { x: focus.x, z: focus.z },
+    refreshes: 0,
+    lastRefreshMs: 0,
     seed,
+    // Everything a re-centre needs to re-plan without re-reading the world.
+    buildings,
+    occupancy,
+    emptyStallRate: overrides.emptyStallRate ?? 0.16,
+    maxVehicles: overrides.maxVehicles ?? 900,
     vehicles: kept,
     hideLegacy,
     hiddenLegacy: [],
@@ -888,6 +953,12 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     catalogue: VEHICLE_CATALOGUE_VERSION,
     implemented: true,
     focus,
+    // Which datum the rings are centred on RIGHT NOW: the build focus on the
+    // first build, the live camera after a re-centre.
+    centreSource: 'focus',
+    refreshes: 0,
+    lastRefreshMs: 0,
+    refreshMetres: VEHICLE_FOCUS.refreshMetres,
     plan: plan.stats,
     surface: {
       roadLift: options.roadLift,
@@ -900,7 +971,7 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
     planned: planned.vehicles.length,
     placed: kept.length,
     rejections,
-    uniqueAppearances: appearance.size,
+    uniqueAppearances,
     legacyVehiclePoints: occupancy ? occupancy.points : 0,
     legacyPolicy: hideLegacy ? 'hide-and-own-the-kerb' : 'defer-and-dedupe',
     buildingFootprints: buildings.count,
@@ -908,13 +979,7 @@ export function buildVehiclePresentation(ctx, overrides = {}) {
       ...record,
       withinBudget: record.vehicles <= record.maxVehicles && record.triangles <= record.maxTriangles,
     })),
-    grounding: {
-      samples: contactSamples,
-      worstContactError: worstContact,
-      meanContactError: contactSamples ? contactSum / contactSamples : 0,
-      tolerance: 0.010,
-      withinTolerance: worstContact <= 0.010,
-    },
+    grounding,
     traffic: {
       capacity: TRAFFIC_MIRROR.maxVehicles,
       perTypeCapacity: TRAFFIC_MIRROR.perTypeCapacity,
@@ -1042,8 +1107,113 @@ function bindTrafficFleet(state, found) {
   state.group.add(state.traffic.group);
 }
 
+// ---------------------------------------------------------------------------
+// LOD centre
+// ---------------------------------------------------------------------------
+//
+// ROUND 3 CORRECTION - READ THIS BEFORE CHANGING THE THRESHOLD.
+//
+// `ctx.focus` is the renderer's BUILD focus: it is sampled once, when the city
+// is built, and the camera then moves away from it. Measured on the round-3
+// capture set the rings were still centred on (1588.8, 369.5) while the street
+// card stood at (1447.1, 1003.8), 640 m away. Every vehicle in every captured
+// frame therefore drew a lod1 or lod2 body - no separate glazing, no wheels,
+// details 'none' - which is the "primitive vehicle silhouette" the quality gate
+// names as an automatic rejection condition. It is also why no parked vehicle
+// cast a shadow: `createVehicleFleet` grants `castShadow` to lod0 paint (and to
+// lod1 paint for van/truck/bus/pickup), so a population pinned at lod1/lod2 has
+// almost no casters. The flag was always set; nothing was standing in the ring
+// that uses it. DO NOT "fix" this by adding a castShadow flag somewhere.
+//
+// `recentreVehiclePresentation` re-plans the parked population around a new
+// centre and rebuilds ONLY the parked fleet. The asset library, the materials,
+// the streetscape plan, the building index, the traffic mirror and its
+// per-vehicle presentation state are all kept, so a refresh costs a re-plan
+// plus one instanced-fleet allocation - not a pass rebuild.
+//
+// The rebuild is SYNCHRONOUS and completes inside the update call, so a camera
+// teleport - which is how every capture card is posed - is fully re-centred in
+// the frame it is posed for. Nothing is interpolated.
+//
+// Threshold choice: the near ring reaches 80 m, so re-centring every 30 m keeps
+// at least 50 m of lod0 kerb ahead of the eye.
+export const VEHICLE_FOCUS = Object.freeze({
+  refreshMetres: 30,
+});
+
+/**
+ * Re-centre the parked population on `centre`. Returns the elapsed
+ * milliseconds. Safe to call with no state.
+ */
+export function recentreVehiclePresentation(state, centre) {
+  if (!state || !state.plan) return 0;
+  const startedAt = Date.now();
+  const planned = planParkedVehicles(state.plan, {
+    focus: centre,
+    seed: state.seed,
+    occupancy: state.hideLegacy ? null : state.occupancy,
+    buildings: state.buildings,
+    emptyStallRate: state.emptyStallRate,
+    maxVehicles: state.maxVehicles,
+  });
+  const { kept, ringRecords, rejections } = assignVehicleRings(
+    state.assets, planned.vehicles, planned.rejections,
+  );
+  const parked = createParkedFleet(state.assets, state.materials, kept);
+  // Swap, then release: the old fleet's meshes stay in the group until the new
+  // ones are in place, so a refresh can never leave the kerb empty.
+  if (parked) state.group.add(parked.group);
+  state.parked?.dispose();
+  state.parked = parked;
+  state.vehicles = kept;
+  state.centre = { x: centre.x, z: centre.z };
+  state.refreshes += 1;
+  state.lastRefreshMs = Date.now() - startedAt;
+
+  const stats = parked ? parked.stats() : { triangles: 0, drawCalls: 0, meshes: [] };
+  // `totals` counts the PARKED fleet, exactly as the first build does. The
+  // mirrored traffic fleet is reported separately under `traffic` and is
+  // budgeted separately by TRAFFIC_MIRROR; folding it in here on a refresh but
+  // not on a build would make the two numbers incomparable.
+  const { uniqueAppearances, byType } = populationStats(kept);
+  const d = state.diagnostics;
+  d.focus = { x: centre.x, z: centre.z };
+  d.centreSource = 'camera';
+  d.counts = byType;
+  d.planned = planned.vehicles.length;
+  d.placed = kept.length;
+  d.rejections = rejections;
+  d.uniqueAppearances = uniqueAppearances;
+  d.rings = ringRecords.map((record) => ({
+    ...record,
+    withinBudget: record.vehicles <= record.maxVehicles && record.triangles <= record.maxTriangles,
+  }));
+  d.grounding = groundingAudit(state.plan, state.options, kept);
+  d.meshes = [...stats.meshes];
+  d.totals = {
+    vehicles: kept.length,
+    triangles: stats.triangles,
+    drawCalls: stats.drawCalls,
+    maxTriangles: VEHICLE_BUDGET.maxTriangles,
+    maxDrawCalls: VEHICLE_BUDGET.maxDrawCalls,
+    withinTriangleBudget: stats.triangles <= VEHICLE_BUDGET.maxTriangles,
+    withinDrawCallBudget: stats.drawCalls <= VEHICLE_BUDGET.maxDrawCalls,
+  };
+  d.refreshes = state.refreshes;
+  d.lastRefreshMs = state.lastRefreshMs;
+  return state.lastRefreshMs;
+}
+
 export function updateVehiclePresentation(state, ctx, delta) {
   if (!state) return;
+  // LOD centre. Steady state is one subtraction and a hypot; the re-plan only
+  // runs on a threshold crossing.
+  const eye = ctx?.camera?.position;
+  if (eye && finite(eye.x) && finite(eye.z) && state.centre) {
+    if (Math.hypot(eye.x - state.centre.x, eye.z - state.centre.z) >= VEHICLE_FOCUS.refreshMetres) {
+      recentreVehiclePresentation(state, { x: eye.x, z: eye.z });
+    }
+  }
   const step = Number.isFinite(delta) ? clamp(delta, 0, 0.25) : 0;
   state.blinkPhase = (state.blinkPhase + step) % 1.2;
   const blink = state.blinkPhase < 0.6;
@@ -1170,7 +1340,7 @@ export function disposeVehiclePresentation(state) {
   state.hiddenLegacy.length = 0;
   state.parked?.dispose();
   state.traffic?.dispose();
-  state.assets?.dispose();
+  if (state.ownsAssets !== false) state.assets?.dispose();
   if (state.ownsMaterials) disposeVehicleMaterials(state.materials);
   state.mirror = null;
   state.mirrorState.clear();
@@ -1200,5 +1370,15 @@ export default {
   dispose() {
     disposeVehiclePresentation(activeState);
     activeState = null;
+  },
+
+  /** Test seam: the live diagnostics without going through the registry. */
+  __diagnostics() {
+    return activeState?.diagnostics || null;
+  },
+
+  /** Test seam: the live pass state. */
+  __state() {
+    return activeState;
   },
 };
