@@ -1348,13 +1348,27 @@ export function renderEquirectRadiance(model, width = 512, height = 256) {
  * radiance levels this module produces. Glass and water are allowed above 1
  * because they are almost entirely specular; masonry and foliage stay low so
  * the env map reads as sky fill rather than a mirror finish.
+ *
+ * `asphalt` is the one entry that is no longer an aesthetic trim. The renderer
+ * gives every classed material its own `envMap` and this intensity, so for a
+ * surface in shadow this number *is* its sky light - and a matched
+ * key-on/key-off capture of the 11:00 clear card measures the shadowed
+ * carriageway at a median 11.5/255 with 55.4% of those pixels under the 12/255
+ * black threshold. At the roughness this project ships for dry road (0.93) the
+ * environment response is diffuse irradiance, not a reflection, so trimming it
+ * is indistinguishable from crushing the shadow side and there is no mirror to
+ * protect against. 0.92 sits just under 1.0, the physical value for a rough
+ * dielectric. `WETNESS_GAIN.asphalt` is cut from 1.15 to 0.85 to absorb most of
+ * the knock-on: the drizzle value moves 1.23 -> 1.50 rather than 1.23 -> 1.74,
+ * and the wet *look* is carried by the roughness drop in `wetSurfaceGrade`,
+ * which is untouched.
  */
 const BASE_ENV_MAP_INTENSITY = Object.freeze({
   'facade-glass': 1.15,
   'facade-masonry': 0.55,
   'facade-painted': 0.62,
   'facade-metal': 0.95,
-  asphalt: 0.65,
+  asphalt: 0.92,
   sidewalk: 0.55,
   'painted-metal': 0.9,
   chrome: 1.25,
@@ -1369,7 +1383,7 @@ const WETNESS_GAIN = Object.freeze({
   'facade-masonry': 0.45,
   'facade-painted': 0.5,
   'facade-metal': 0.3,
-  asphalt: 1.15,
+  asphalt: 0.85,
   sidewalk: 0.85,
   'painted-metal': 0.35,
   chrome: 0.1,
@@ -2261,21 +2275,52 @@ export const EXPOSURE_CURVE = Object.freeze({
 /**
  * Target key/fill ratio at high sun, per weather bucket.
  *
- * Clear sits below the physical 5.8 on purpose: the renderer tone-maps with a
- * fixed per-frame exposure and has no local adaptation, so a fully physical
- * ratio drops the shadow side below the point where facade material reads at
- * all. 4.0 is the ratio at which a cast shadow is unmistakably a value change
- * (about 55% of the lit value through ACES) while the shadow side keeps its
- * albedo. Overcast buckets sit near 1 because that is what an overcast sky
- * physically does - the sky *is* the key.
+ * Clear now targets the physical direct/diffuse ratio itself: about 640 W/m2
+ * direct-horizontal against 110 W/m2 diffuse-horizontal at the reference
+ * altitude, i.e. 5.8. Overcast buckets sit near 1 because that is what an
+ * overcast sky physically does - the sky *is* the key.
+ *
+ * Why the earlier 4.0 discount is gone
+ * ------------------------------------
+ * 4.0 was a deliberate discount below physical, on the argument that a fully
+ * physical ratio "drops the shadow side below the point where facade material
+ * reads at all". A matched key-on/key-off capture pair settles that argument
+ * with a measurement instead. On the 11:00 clear card, sampling the *same*
+ * pixels with `sun.intensity = 5.60` and with `sun.intensity = 0`:
+ *
+ *   footway     lit 191.1/255   fully shadowed 68.8/255
+ *   carriageway lit  85.2/255   fully shadowed 11.5/255 (median)
+ *
+ * Inverting ACES on the footway pair eliminates the surface albedo entirely
+ * and leaves `1 + key/fill = 6.29`, so the rig is already delivering a
+ * scene-referred key/fill of **5.29** to a horizontal surface - close to the
+ * physical 5.8, and about twice what `achieved.ratio` books (see the
+ * `delivered` block below for where the two bookings diverge).
+ *
+ * The discount therefore was not protecting the shadow side. What protects the
+ * shadow side is `SHADOW_DISPLAY_FLOOR`, and the same card shows that floor is
+ * the binding constraint, not a spare one: the shadowed carriageway sits at a
+ * median 11.5/255 with 55.4% of its pixels under 12/255. Cutting fill to raise
+ * contrast
+ * is measurably unavailable. Raising the target moves the whole change onto the
+ * lit side, where there is headroom, and leaves the fill on its floor.
  */
-export const TARGET_KEY_FILL = Object.freeze({ clear: 4.0, fog: 0.9, drizzle: 1.1 });
+export const TARGET_KEY_FILL = Object.freeze({ clear: 5.8, fog: 0.9, drizzle: 1.1 });
 
 /** Reference altitude the target ratio is quoted at (canonical solar noon). */
 export const KEY_FILL_REFERENCE_ALTITUDE_DEG = 50.08;
 
 /** Clamp on the gains `keyFillBalance` will ask for. */
 export const KEY_FILL_GAIN_RANGE = Object.freeze({ key: [0.5, 6.5], fill: [0.2, 1.6] });
+
+/**
+ * Material class `keyFillBalance().delivered` is quoted for.
+ *
+ * The footway is the surface the street cards are mostly made of and the one
+ * the matched key-on/key-off capture was sampled on, so quoting the delivered
+ * prediction for anything else would not be checkable.
+ */
+export const DELIVERED_REFERENCE_CLASS = 'sidewalk';
 
 const _illuminanceReference = { value: 0 };
 
@@ -2568,6 +2613,54 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
   const achievedKey = keyAfter;
   const achievedFill = fillAfter;
   const round = (value) => Math.round(value * 10000) / 10000;
+
+  // The values the renderer is actually handed, hoisted so the `delivered`
+  // block below can be built from exactly the same numbers `apply` publishes.
+  const applyEnvironmentIntensity = clamp(
+    rig.environmentIntensity * Math.max(directFillGain, MIN_ENVIRONMENT_SHARE),
+    0,
+    2,
+  );
+  const applyHemiScale = clamp(rig.scales.hemi * directFillGain, 0.02, 1.2);
+  const applyAmbientScale = clamp(ambientAfter / Math.max(1e-6, curve.ambient), 0.02, 2.6);
+  const applyRimScale = clamp(rig.scales.rim * directFillGain * 0.85, 0.02, 1);
+
+  // --- what the rig above will actually deliver -----------------------------
+  //
+  // `measured`/`achieved` book the *solver's* view: an atmospherically
+  // transmitted beam against a fill that is scaled by `fillGain`. Neither is
+  // what reaches a pixel, and the gap is not small. Two structural differences,
+  // both readable straight off the renderer:
+  //
+  //  1. **The key carries no extinction.** `sceneIlluminance` multiplies the
+  //     beam by `directBeamTransmittance` (0.58 at +43 deg), because that is
+  //     physically right for an illuminance. The renderer's key is
+  //     `intensity * sunScale` with a hand-authored colour; nothing applies
+  //     transmittance to it. So the delivered key is the *untransmitted* beam.
+  //  2. **The environment is graded per material class.** The renderer gives
+  //     every classed material its own `envMap` and `envMapIntensityFor(class)`,
+  //     which for a street surface is well under the global
+  //     `scene.environmentIntensity` this function floors at
+  //     `MIN_ENVIRONMENT_SHARE`. A shadowed footway is lit by the class value,
+  //     not by the global one.
+  //
+  // Together those two are why the shipped 11:00 clear card measures a
+  // scene-referred key/fill of 5.29 (from key-on/key-off on the same footway
+  // pixels, which cancels the surface albedo exactly) while `achieved.ratio`
+  // books 2.78. This block is the module's own prediction of that measurement,
+  // so the next capture can check it instead of inferring it.
+  //
+  // It is a prediction, not a reading: it models the renderer's day curve with
+  // `BASELINE_LIGHT_RIG.sun` and assumes white light colours, and the renderer
+  // uses neither. On the one card available it lands about 17% under the
+  // measured ratio, which is the size of the light-colour and prefilter losses
+  // it does not model.
+  const deliveredKey = Math.max(0, model.sun.y) * baseline.sun * rig.scales.sun
+    * ((2 * model.daylight - 1) ** 2) * keyGain;
+  const deliveredEnvironment = model.skyIrradianceLuminance
+    * envMapIntensityFor(DELIVERED_REFERENCE_CLASS, model);
+  const deliveredPunctual = curve.hemi * applyHemiScale + curve.ambient * applyAmbientScale;
+  const deliveredFill = deliveredEnvironment + deliveredPunctual;
   return Object.freeze({
     version: ATMOSPHERE_MODEL_VERSION,
     hour: model.hour,
@@ -2609,6 +2702,21 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       exposure,
     }),
     /**
+     * Predicted scene-referred irradiance the rig in `apply` puts on a
+     * horizontal surface of `referenceClass`, in the renderer's own units.
+     * This is the number a matched key-on/key-off capture measures; `achieved`
+     * is the number the solver reasons with. See the comment above the block
+     * for the two reasons they differ.
+     */
+    delivered: Object.freeze({
+      referenceClass: DELIVERED_REFERENCE_CLASS,
+      key: round(deliveredKey),
+      environment: round(deliveredEnvironment),
+      punctual: round(deliveredPunctual),
+      fill: round(deliveredFill),
+      ratio: round(deliveredKey / Math.max(1e-9, deliveredFill)),
+    }),
+    /**
      * Absolute values an integrator can set directly. `sun` multiplies the
      * renderer's own day/night key curve after `lightRig.scales.sun`; the
      * environment/hemi/ambient entries replace their equivalents.
@@ -2618,14 +2726,10 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       // Floored: `scene.environmentIntensity` is the only light a material
       // without its own `envMap` gets from the sky, and for a metal or a glass
       // tower it is the only light of any kind.
-      environmentIntensity: round(clamp(
-        rig.environmentIntensity * Math.max(directFillGain, MIN_ENVIRONMENT_SHARE),
-        0,
-        2,
-      )),
+      environmentIntensity: round(applyEnvironmentIntensity),
       // `fillGain` now carries the ambient floor as well, so hemi and rim are
       // scaled by the gain the *dome* asked for, not by the floored total.
-      hemiScale: round(clamp(rig.scales.hemi * directFillGain, 0.02, 1.2)),
+      hemiScale: round(applyHemiScale),
       // Ambient carries a floor rather than just the fill gain, because it is
       // the only light in the rig that reaches a surface facing away from the
       // sky, the ground and the key. The floor is computed, not chosen: it is
@@ -2634,10 +2738,10 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       // after whatever the environment already delivers to such a normal. At
       // clear noon the environment alone already clears it and this is inert;
       // at night the environment is 0.029 and it is not.
-      ambientScale: round(clamp(ambientAfter / Math.max(1e-6, curve.ambient), 0.02, 2.6)),
+      ambientScale: round(applyAmbientScale),
       // The rim is pure fill with no physical counterpart once the env dome is
       // present, so it takes the fill cut and a little more.
-      rimScale: round(clamp(rig.scales.rim * directFillGain * 0.85, 0.02, 1)),
+      rimScale: round(applyRimScale),
       exposure,
     }),
     note: 'contrast is raised against a floored shadow side, not against the frame total: '
@@ -2718,9 +2822,17 @@ export function canyonBounce(model, keyGain = 1, baseline = BASELINE_LIGHT_RIG) 
  * Calibrated against the two round-1 cards that read correctly: the 11:00 card
  * delivered 0.49 on this measure and its shadowed footway reads about 62/255,
  * which is comfortably legible; the shipped pre-wave rig delivered 1.32 and
- * read as flat. 0.62 sits above the card that worked, with margin.
+ * read as flat.
+ *
+ * Raised from 0.62 to 0.66 when the key target went to the physical ratio. The
+ * key-off capture of the 11:00 clear card shows the shadow side is *not* the
+ * spare term: its shadowed carriageway reads a median 11.5/255 with 55.4% of
+ * those pixels under 12/255, so the shadow side is already at the crush limit.
+ * 0.66 is the value at which the shipped card's own `fill * exposure` (0.654 at
+ * 11:00, 0.627 at 12:00) is a floor rather than a coincidence, so raising the
+ * key target cannot claw back any part of the shadow side to pay for it.
  */
-export const SHADOW_DISPLAY_FLOOR = 0.62;
+export const SHADOW_DISPLAY_FLOOR = 0.66;
 
 /** The fill is never cut below this fraction of the rig's own recommendation. */
 export const MIN_FILL_GAIN = 0.45;

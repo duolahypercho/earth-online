@@ -154,6 +154,43 @@ function getPerformanceTelemetry() {
   };
 }
 
+// Boot-phase timing. A world build is minutes long on a software rasterizer,
+// and "the boot got slower" is not actionable without knowing which phase.
+// These are User Timing marks/measures, so they also show up in a trace.
+const bootPhases = [];
+
+async function timedPhase(name, run) {
+  const label = `citygen:${name}`;
+  const startMark = `${label}:start`;
+  const endMark = `${label}:end`;
+  const startedAt = performance.now();
+  try {
+    performance.mark(startMark);
+  } catch { /* User Timing is diagnostics only; never fail a boot for it. */ }
+  try {
+    return await run();
+  } finally {
+    let ms = performance.now() - startedAt;
+    try {
+      performance.mark(endMark);
+      const measure = performance.measure(label, startMark, endMark);
+      if (measure && Number.isFinite(measure.duration)) ms = measure.duration;
+    } catch { /* ignore */ }
+    bootPhases.push({ name, ms: +ms.toFixed(1), startedAt: +startedAt.toFixed(1) });
+  }
+}
+
+function getBootPhases() {
+  return {
+    phases: bootPhases.map((phase) => ({ ...phase })),
+    totalMs: +bootPhases.reduce((sum, phase) => sum + phase.ms, 0).toFixed(1),
+    // The pipeline warm-up is inside `renderer.buildCity`, and is the single
+    // largest term in a QA boot, so it is reported separately rather than
+    // hidden inside the build phase.
+    prewarm: state.renderer?.prewarmDiagnostics || null,
+  };
+}
+
 let pillTimer = null;
 
 function installExplorerUi() {
@@ -814,17 +851,21 @@ async function buildCity(city, { reframe = true } = {}) {
   // looking. Structural content is focus-independent now, but tree species mix,
   // panel joints, warning pads and wear still follow this point.
   const focus = cityFocusPoint(city);
-  await state.renderer.buildCity(city, { day: state.day, focus });
-  state.collision = buildCollisionGrid(city);
-  configureBuildingInteriors(city);
+  await timedPhase('renderer.buildCity', () => state.renderer.buildCity(city, { day: state.day, focus }));
+  await timedPhase('collision', async () => { state.collision = buildCollisionGrid(city); });
+  await timedPhase('interiors', async () => { configureBuildingInteriors(city); });
   if (state.traffic) {
     state.traffic.dispose();
   }
-  state.traffic = new TrafficSim(state.renderer, city, { count: city.meta.generator === 'openstreetmap' ? 14 : 26 });
+  await timedPhase('traffic', async () => {
+    state.traffic = new TrafficSim(state.renderer, city, { count: city.meta.generator === 'openstreetmap' ? 14 : 26 });
+  });
   if (reframe) {
-    frameCityCamera(city);
-    state.renderer.updateWorldPartition(true, true);
-    state.renderer.updatePortalPartition(true, true);
+    await timedPhase('reframe', async () => {
+      frameCityCamera(city);
+      state.renderer.updateWorldPartition(true, true);
+      state.renderer.updatePortalPartition(true, true);
+    });
   }
   updateReadout(city);
   document.querySelectorAll('.preset').forEach((button) => {
@@ -1608,7 +1649,7 @@ function updatePlayer(delta) {
 
 async function boot() {
   const renderer = new CityRenderer(canvasHost, { pixelRatioCap: 1.4 });
-  await renderer.initialize();
+  await timedPhase('renderer.initialize', () => renderer.initialize());
   state.renderer = renderer;
   window.__CITYGEN__ = {
     // QA handle: repeatable diagnostics need the same THREE the app runs on,
@@ -1658,6 +1699,9 @@ async function boot() {
       errors: state.errors,
       // Presentation-pass evidence: what was built, what it cost, what failed.
       passes: state.renderer?.passDiagnostics || null,
+      // What the light model says it is delivering right now, so a key-off pair
+      // can check the prediction directly instead of it being re-derived by hand.
+      lightRig: state.renderer?.environmentDiagnostics?.lightRig || null,
       // Shadow evidence: the fit the camera actually got, and how many meshes
       // the caster policy admitted. A frame with no shadows is otherwise
       // indistinguishable from a frame whose shadows are merely subtle.
@@ -1948,6 +1992,49 @@ async function boot() {
     getMetricMap: () => state.metricMap,
     getPerformanceTelemetry,
     resetPerformanceTelemetry,
+    getBootPhases,
+    /**
+     * QA only: advance the simulation by a requested amount of SIMULATED time
+     * without rendering.
+     *
+     * A rendered frame costs minutes on a software rasterizer, so the
+     * animation loop's per-frame delta is clamped to 0.05 s and every capture
+     * card samples the same frozen boot instant: the crowd never walks
+     * anywhere and a card that needs a moving world has nothing to show. This
+     * runs the *same* fixed-step path the loop runs - `renderer.update`, which
+     * drives `traffic.update` and then mirrors it onto the presentation - for
+     * a whole number of equal steps, and draws nothing.
+     *
+     * Determinism is preserved because the step is fixed and derived only from
+     * the requested arguments, never from wall-clock time. Nothing here writes
+     * simulation state from presentation; it only advances the canonical
+     * driver.
+     */
+    stepSimulation: (seconds, options = {}) => {
+      if (!state.renderer) return { ok: false, reason: 'no renderer' };
+      const stepSeconds = clamp(Number(options.step) || 1 / 60, 1 / 240, 0.05);
+      const requested = clamp(Number(seconds) || 0, 0, 600);
+      const steps = Math.max(0, Math.round(requested / stepSeconds));
+      const advanceClock = options.advanceClock === true;
+      const startedAt = performance.now();
+      for (let index = 0; index < steps; index += 1) {
+        if (advanceClock) state.clock = (state.clock + stepSeconds * 0.6) % 24;
+        state.renderer.update(stepSeconds, { time: state.clock, traffic: state.traffic });
+      }
+      return {
+        ok: true,
+        steps,
+        stepSeconds,
+        simulatedSeconds: +(steps * stepSeconds).toFixed(3),
+        wallMs: +(performance.now() - startedAt).toFixed(1),
+        advanceClock,
+        clock: +state.clock.toFixed(3),
+        pedestrians: state.traffic?.pedestrians?.length || 0,
+        presentationAgents: typeof state.traffic?.presentationAgents === 'function'
+          ? state.traffic.presentationAgents().length
+          : null,
+      };
+    },
     exportMetadata,
     importMetadata: async (payload) => {
       const city = importCityMetadata(payload);
@@ -1963,9 +2050,9 @@ async function boot() {
   };
   setExplorerBusy(true, 'Loading San Francisco…', 'Building the main OSM streets, terrain, structures, and simulation');
   try {
-    const initialCity = await loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 });
+    const initialCity = await timedPhase('loadSfData', () => loadSfData({ center: [1600, 400], radius: 720, maxBuildings: 900 }));
     window.__EARTH_ONLINE_WORLD_SOURCE__ = { real: true, reason: null };
-    await buildCity(initialCity);
+    await timedPhase('buildCity', () => buildCity(initialCity));
   } catch (error) {
     // The generated city is a usable sandbox, but it is NOT San Francisco.
     // Make that unmistakable rather than letting a fake map pass as the real

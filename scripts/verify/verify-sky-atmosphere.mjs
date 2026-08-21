@@ -38,6 +38,7 @@ import {
 
 import {
   ATMOSPHERE_MODEL_VERSION,
+  DELIVERED_REFERENCE_CLASS,
   EXPOSURE_CURVE,
   KEY_FILL_GAIN_RANGE,
   MIN_ENVIRONMENT_SHARE,
@@ -48,6 +49,7 @@ import {
   canyonBounce,
   displayValue,
   displayStepScene,
+  envMapIntensityFor,
   sceneForDisplay,
   blackBodyColor,
   cloudProfile,
@@ -94,6 +96,7 @@ let puddleRow = null;
 // Must match DITHER_STEPS in the pass; asserted below against the built pass.
 const SKY_DITHER_STEPS = 2.0;
 let cardRows = [];
+let deliveredRows = [];
 let contactRow = null;
 let updateCostRow = null;
 
@@ -597,8 +600,13 @@ await section('shadow side stays readable and the black share stays low', () => 
       const sidewalk = surfaceDisplay(CANONICAL_SURFACES[1], balance, model);
       const ratio = sidewalk.lit / Math.max(1e-6, sidewalk.shadow);
       if (model.sun.altitudeDeg > 35 && weather === 'clear') {
-        check(ratio > 1.6 && ratio < 3.2,
-          `clear high-sun lit/shadow ratio band 1.6..3.2 at ${hour}:00, got ${ratio.toFixed(2)}`);
+        // Re-banded from 1.6..3.2 when `TARGET_KEY_FILL.clear` went to the
+        // physical 5.8. The shipped value sat at 1.90..2.06, the bottom of the
+        // old band; it now sits at 2.07..2.18. The band is tight because this
+        // is a *booked* ratio - see the delivered-rig section below for what a
+        // capture measures, and why the two numbers are not the same one.
+        check(ratio > 2.0 && ratio < 2.6,
+          `clear high-sun lit/shadow ratio band 2.0..2.6 at ${hour}:00, got ${ratio.toFixed(2)}`);
       }
       if (model.sun.altitudeDeg > 4) {
         check(ratio > 1.05, `the key must be visible at all at ${hour}:00 ${weather}, ratio ${ratio.toFixed(2)}`);
@@ -652,10 +660,28 @@ await section('shadow side stays readable and the black share stays low', () => 
     'the bounce must be a fifth or more of the golden-hour fill');
   // The contract is that the term is SHAPED by sun altitude, not that it has a
   // particular size: a legitimate view-factor change moves both ends together.
-  const goldenShare = bounceGolden / keyFillBalance(golden).achieved.fill;
-  const noonShare = bounceNoon / keyFillBalance(noon).achieved.fill;
+  //
+  //
+  // Measured at a FIXED key gain, per unit of horizontal key. That is the
+  // physical statement the term makes: a vertical facade at low sun takes
+  // nearly the whole beam while the ground under it takes almost none.
+  // Re-deriving the bounce from each hour's own `gains.key` instead confounds
+  // the altitude shape with the gain - the clear key target is now the physical
+  // 5.8, which raises the noon gain far more than the golden-hour one (golden
+  // was already on the 6.5 clamp), so both ends move for a reason that has
+  // nothing to do with the term being tested.
+  const shapeGain = 2;
+  const shapeGolden = canyonBounce(golden, shapeGain) / sceneIlluminance(golden).key;
+  const shapeNoon = canyonBounce(noon, shapeGain) / sceneIlluminance(noon).key;
+  check(shapeNoon < shapeGolden * 0.25,
+    `per unit of horizontal key the bounce must be far larger at golden hour `
+    + `(${shapeNoon.toFixed(3)} vs ${shapeGolden.toFixed(3)})`);
+  // ...and the share of the fill the module ACTUALLY applies at each end,
+  // which is the number that reaches the shadow side.
+  const goldenShare = keyFillBalance(golden).shadow.bounceShare;
+  const noonShare = keyFillBalance(noon).shadow.bounceShare;
   check(noonShare < goldenShare * 0.65,
-    `the bounce must matter far less at noon than at golden hour (${noonShare.toFixed(3)} vs ${goldenShare.toFixed(3)})`);
+    `the applied bounce must matter far less at noon than at golden hour (${noonShare.toFixed(3)} vs ${goldenShare.toFixed(3)})`);
   check(noonShare < 0.3, `the bounce may not dominate the noon fill, got ${noonShare.toFixed(3)}`);
   check(bounceNight === 0, 'no beam below the horizon means no bounce');
   check(bounceFog < bounceGolden * 0.25, 'an overcast dome has no directional beam to bounce');
@@ -676,6 +702,147 @@ await section('shadow side stays readable and the black share stays low', () => 
       }
     }
   }
+});
+
+// --------------------------------------------- delivered rig vs a real capture
+//
+// The gate above predicts the display value of a surface from `achieved`, which
+// is the solver's own book. For three rounds nobody checked that book against a
+// frame, and it does not agree with one.
+//
+// The evidence is a matched pair: the capture harness now shoots a second frame
+// per card with `sun.intensity = 0`, so the same pixels can be read with the key
+// on and with the key off. Key-off is exactly what a fully shadowed surface
+// receives, because a shadow map zeroes the same term. On `01-street-day`
+// (11:00, clear, sun altitude 43.33 deg, sun.intensity 5.60, hemi 0.218,
+// ambient 0.047, scene.environmentIntensity 0.80):
+//
+//   footway     [380,450,600,530]   key on 191.1/255   key off  68.8/255
+//   carriageway [120,485,260,525]   key on  86.8/255   key off  12.5/255
+//                                                      median 11.5, 55.4% < 12
+//
+// Inverting ACES + sRGB on the footway pair cancels the surface albedo exactly
+// and leaves `1 + key/fill = 6.29`, i.e. a delivered scene-referred key/fill of
+// **5.29**. The pre-wave `achieved.ratio` booked 2.78 for the same state. The
+// two disagree by 1.9x, and the direction matters: the book is *optimistic*
+// about the shadow side, which is why the black-share gate above could read
+// 0/720 while more than half of the shipped card's shadowed carriageway sat
+// under the same 12/255 threshold.
+//
+// `keyFillBalance().delivered` is the module's prediction of that measurement.
+// This section pins it to the card.
+const CARD_11_CLEAR = Object.freeze({
+  hour: 11,
+  weather: 'clear',
+  /** Albedo-free: (radiance_lit / radiance_shadow) - 1 on the same footway pixels. */
+  deliveredKeyFill: 5.286,
+  /** Displayed lit/shadow on that footway, straight off the two frames. */
+  displayedRatio: 191.1 / 68.8,
+  /** `delivered.fill` the module predicted for the state that card was shot in. */
+  deliveredFillAtCapture: 0.849,
+});
+
+await section('the delivered rig is checked against a matched key-off capture', () => {
+  const card = computeSkyModel({ hour: CARD_11_CLEAR.hour, weather: CARD_11_CLEAR.weather });
+  const balance = keyFillBalance(card);
+  const delivered = balance.delivered;
+
+  check(delivered.referenceClass === DELIVERED_REFERENCE_CLASS,
+    'the delivered block must name the class it is quoted for');
+  check(finite([delivered.key, delivered.environment, delivered.punctual, delivered.fill, delivered.ratio]),
+    'every delivered term must be finite');
+  check(Math.abs(delivered.environment
+    - card.skyIrradianceLuminance * envMapIntensityFor(DELIVERED_REFERENCE_CLASS, card)) < 1e-3,
+  'the delivered environment term must be the per-class grade, not the global intensity');
+
+  // 1. The book is optimistic, and by roughly the measured factor. The module
+  //    models neither the renderer's light colours nor the prefilter loss, so
+  //    it is allowed to land under the card - but not over it, and not by more
+  //    than the size of the terms it omits.
+  const modelled = delivered.ratio;
+  // What this same block predicted for the rig the card was shot with
+  // (TARGET_KEY_FILL.clear = 4.0, SHADOW_DISPLAY_FLOOR = 0.62): key 3.412
+  // against fill 0.849. The card measured 5.286 for that state, so the model's
+  // residual error there was 1.32x. Carrying that residual forward assumes it
+  // is multiplicative and hour-independent, which is an assumption one card
+  // cannot test - it is stated here so the next capture can refute it.
+  const MODELLED_AT_CAPTURE = 4.019;
+  const measuredNow = CARD_11_CLEAR.deliveredKeyFill * (modelled / MODELLED_AT_CAPTURE);
+  check(modelled > balance.achieved.ratio * 1.2,
+    `the delivered ratio must exceed the booked one - the renderer applies no `
+    + `atmospheric extinction to its key (${modelled} vs ${balance.achieved.ratio})`);
+  check(modelled >= MODELLED_AT_CAPTURE * 1.25,
+    `this wave must raise the delivered key/fill at clear high sun, got ${modelled} `
+    + `against ${MODELLED_AT_CAPTURE} for the captured rig`);
+  check(modelled > 5.0 && modelled < 7.0,
+    `delivered clear high-sun key/fill band 5.0..7.0, got ${modelled}`);
+
+  // 2. The shadow side may not be cut to pay for it. This is the constraint the
+  //    card makes non-negotiable: its shadowed carriageway is already at the
+  //    black threshold, so any reduction here is a measured crush.
+  const MODELLED_FILL_AT_CAPTURE = CARD_11_CLEAR.deliveredFillAtCapture;
+  check(delivered.fill >= MODELLED_FILL_AT_CAPTURE - 1e-6,
+    `the delivered shadow side may not fall below the shipped card's own level `
+    + `(${delivered.fill} vs ${MODELLED_FILL_AT_CAPTURE})`);
+
+  // 3. The displayed consequence, which is what the review actually scores.
+  //    Same ACES + sRGB transform, applied to the card's own measured shadow
+  //    level scaled by the change in the delivered ratio, so the prediction
+  //    inherits the card's albedo instead of assuming one.
+  const shadowScene = sceneForDisplay(68.8 / 255, balance.apply.exposure)
+    * (delivered.fill / MODELLED_FILL_AT_CAPTURE);
+  const litScene = shadowScene * (1 + measuredNow);
+  const predictedShadow = 255 * displayValue(shadowScene, balance.apply.exposure);
+  const predictedLit = 255 * displayValue(litScene, balance.apply.exposure);
+  const predictedRatio = predictedLit / predictedShadow;
+  check(predictedRatio > CARD_11_CLEAR.displayedRatio,
+    `the predicted displayed ratio must beat the card it is measured against `
+    + `(${predictedRatio.toFixed(2)} vs ${CARD_11_CLEAR.displayedRatio.toFixed(2)})`);
+  check(predictedRatio > 2.9 && predictedRatio < 3.4,
+    `predicted displayed lit/shadow band 2.9..3.4 on the captured footway, got ${predictedRatio.toFixed(2)}`);
+  check(predictedLit < 232,
+    `the lit footway must keep headroom for sunlit white paint, got ${predictedLit.toFixed(0)}/255`);
+  check(predictedShadow >= 68.0,
+    `the shadow side of that footway may not go down, got ${predictedShadow.toFixed(1)}/255`);
+
+  // 4. The carriageway is the surface that was measured crushing. Its shadow
+  //    side is carried by `envMapIntensityFor('asphalt')`, because the renderer
+  //    gives a classed material its own envMap and that intensity. At the dry
+  //    road roughness this project ships (0.93) that response is diffuse
+  //    irradiance, not a reflection, so trimming it below the physical value
+  //    for a rough dielectric is indistinguishable from crushing the shadow.
+  const noonClear = computeSkyModel({ hour: 12, weather: 'clear' });
+  check(envMapIntensityFor('asphalt', noonClear) >= 0.9,
+    `the carriageway's dry environment grade may not sit below 0.9 - its shadow side `
+    + `was measured at a median 11.5/255, got ${envMapIntensityFor('asphalt', noonClear)}`);
+
+  // 5. Shape over the clock: the delivered ratio has to behave like a sun, not
+  //    like a constant, and it must be zero below the horizon.
+  for (const weather of WEATHER_KINDS) {
+    for (let hour = 0; hour < 24; hour += 0.5) {
+      const model = computeSkyModel({ hour, weather });
+      const d = keyFillBalance(model).delivered;
+      check(finite([d.key, d.fill, d.ratio]) && d.fill > 0,
+        `delivered terms finite and positive at ${hour}:00 ${weather}`);
+      if (model.sun.altitudeDeg <= 0) {
+        check(d.key === 0, `no delivered key below the horizon at ${hour}:00 ${weather}`);
+      }
+      if (weather !== 'clear') {
+        check(d.ratio < 5.0,
+          `an overcast dome may not deliver a clear-sky key/fill at ${hour}:00 ${weather}, got ${d.ratio}`);
+      }
+    }
+  }
+  const dNoon = keyFillBalance(computeSkyModel({ hour: 12, weather: 'clear' })).delivered;
+  const dGolden = keyFillBalance(computeSkyModel({ hour: 18.5, weather: 'clear' })).delivered;
+  check(dNoon.ratio > dGolden.ratio,
+    `the delivered ratio must fall with the sun (${dNoon.ratio} -> ${dGolden.ratio})`);
+
+  deliveredRows = [
+    { label: 'card 11:00 clear', ...delivered, predictedShadow, predictedLit, predictedRatio },
+    { label: 'noon 12:00 clear', ...dNoon },
+    { label: 'golden 18:30 clear', ...dGolden },
+  ];
 });
 
 // ------------------------------------------------------------- sky luminance
@@ -1599,6 +1766,28 @@ if (shadowRow) {
     + `${shadowRow.worst.weather}, ${shadowRow.worst.shadow.toFixed(1)}/255`);
   console.log('  round 1 measured 55.7% of the golden-hour card\'s PIXELS under that threshold; these');
   console.log('  are surfaces, not pixels, so the two numbers are related but not comparable.');
+  console.log('  NOTE: this table is built from `achieved`, the solver\'s book. A matched key-off');
+  console.log('  capture shows that book is optimistic about the shadow side - see below.');
+}
+
+console.log('');
+console.log('delivered rig, checked against the matched key-off capture of 01-street-day');
+console.log('(11:00 clear, sun altitude 43.33 deg; key-off is what a fully shadowed surface gets):');
+console.log('  measured on that card, same pixels with the key on and off:');
+console.log('    footway      191.1 -> 68.8 /255   displayed lit/shadow 2.78');
+console.log('    carriageway   86.8 -> 12.5 /255   median 11.5, 55.4% of it under 12/255');
+console.log('    albedo-free scene-referred key/fill on the footway: 5.29 (booked: 2.78)');
+for (const row of deliveredRows) {
+  console.log(`  ${row.label.padEnd(20)} key ${f(row.key, 6, 2)}  env ${f(row.environment, 5, 2)}  `
+    + `punctual ${f(row.punctual, 5, 2)}  fill ${f(row.fill, 5, 2)}  key/fill ${f(row.ratio, 5, 2)}`);
+}
+if (deliveredRows[0]) {
+  console.log(`  predicted for the captured footway after this wave: `
+    + `${deliveredRows[0].predictedShadow.toFixed(1)} -> ${deliveredRows[0].predictedLit.toFixed(1)} /255, `
+    + `displayed ratio ${deliveredRows[0].predictedRatio.toFixed(2)} (card: 2.78)`);
+  console.log('  the shadow side is held, not cut: the whole change is on the lit side.');
+  console.log('  PREDICTION ONLY. It is the module\'s own model of the renderer\'s rig, anchored on');
+  console.log('  one card at one hour. It is not a capture and it is not visual evidence.');
 }
 
 console.log('');
