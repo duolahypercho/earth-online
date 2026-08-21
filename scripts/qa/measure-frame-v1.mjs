@@ -168,8 +168,56 @@ if (process.argv[2] === '--diff') {
   process.exit(0);
 }
 
+// `--ratio keyon.png keyoff.png` answers the question the rubric actually asks:
+// what is the DELIVERED lit-to-shadowed ratio in the frame?
+//
+// Two earlier attempts got this wrong in opposite directions. Comparing a lit
+// region to a hand-picked "shadowed" one measures whatever the picker chose -
+// often a penumbra. Comparing key-on to key-off at the SAME pixel measures
+// 1 + key/fill, which is how much of that pixel's light is sun, not lit versus
+// shadowed. Neither is the ratio a reviewer sees.
+//
+// The difference image classifies every pixel instead: a pixel the sun reaches
+// changes when the key is switched off, and a pixel in shadow does not. So
+// classify by delta, then measure both classes in the key-on frame. No region
+// picking, no penumbra: pixels in the transition band are excluded by the
+// deadband and reported separately.
+if (process.argv[2] === '--ratio') {
+  const on = decodePng(readFileSync(process.argv[3]));
+  const off = decodePng(readFileSync(process.argv[4]));
+  if (on.width !== off.width || on.height !== off.height) throw new Error('frames differ in size');
+  const regionArgs = process.argv.slice(5).filter((a) => a.includes(','));
+  const box = regionArgs.length ? regionArgs[0].split(',').map(Number) : [0, 0, on.width, on.height];
+  const LIT_DELTA = 24;      // clearly reached by the key
+  const SHADOW_DELTA = 4;    // clearly not reached
+  let litSum = 0; let litN = 0; let shadowSum = 0; let shadowN = 0; let penumbraN = 0;
+  for (let y = Math.max(0, box[1]); y < Math.min(on.height, box[3]); y += 1) {
+    for (let x = Math.max(0, box[0]); x < Math.min(on.width, box[2]); x += 1) {
+      const i = (y * on.width + x) * on.channels;
+      const j = (y * off.width + x) * off.channels;
+      const lOn = luma(on.data[i], on.data[i + 1], on.data[i + 2]);
+      const lOff = luma(off.data[j], off.data[j + 1], off.data[j + 2]);
+      const delta = lOn - lOff;
+      if (delta >= LIT_DELTA) { litSum += lOn; litN += 1; }
+      else if (delta <= SHADOW_DELTA) { shadowSum += lOn; shadowN += 1; }
+      else penumbraN += 1;
+    }
+  }
+  const lit = litN ? litSum / litN : 0;
+  const shadow = shadowN ? shadowSum / shadowN : 0;
+  console.log(JSON.stringify({
+    keyOn: process.argv[3], keyOff: process.argv[4], region: box,
+    litPixels: litN, shadowPixels: shadowN, penumbraPixels: penumbraN,
+    litMeanLuma: +lit.toFixed(1),
+    shadowMeanLuma: +shadow.toFixed(1),
+    deliveredLitShadowRatio: shadow > 0 ? +(lit / shadow).toFixed(2) : null,
+    note: 'classified by whether the key reaches the pixel; both means measured in the key-on frame',
+  }, null, 2));
+  process.exit(0);
+}
+
 const file = process.argv[2];
-if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [x0,y0,x1,y1 ...] | --diff a.png b.png [regions]'); process.exit(2); }
+if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [regions] | --diff a.png b.png [regions] [--out d.png] | --ratio keyon.png keyoff.png [region]'); process.exit(2); }
 const image = decodePng(readFileSync(file));
 const regions = process.argv.slice(3).map((spec) => spec.split(',').map(Number));
 const report = {
