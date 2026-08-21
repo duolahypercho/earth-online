@@ -239,6 +239,34 @@ async function placeCamera(pose) {
     const surfaceLift = pose === 'intersection' || pose === 'traversal' ? lift.datum : lift.footway;
     const groundAt = (x, z) => (r.terrain?.heightAt ? r.terrain.heightAt(x, z) + surfaceLift : surfaceLift);
 
+    // A simulated pedestrian's position is NOT on the record: it is derived from
+    // its path (`points`, `cum`, `s`) and mirrored onto its group each frame.
+    // Reading `agent.x` returned undefined for every agent, so the character
+    // card refused every pose with "nearest none" and the camera-clearance test
+    // silently never fired.
+    const agentPosition = (agent) => {
+      const gp = agent?.group?.position;
+      if (gp && Number.isFinite(gp.x) && Number.isFinite(gp.z)) return { x: gp.x, z: gp.z };
+      const pts = agent?.points;
+      if (Array.isArray(pts) && pts.length >= 2) {
+        const total = Number(agent.total) || 0;
+        const distance = total > 0 ? ((Number(agent.s) || 0) % total + total) % total : 0;
+        const cum = agent.cum;
+        let index = 0;
+        if (Array.isArray(cum)) {
+          while (index < cum.length - 1 && cum[index + 1] < distance) index += 1;
+        }
+        const a = pts[Math.min(index, pts.length - 2)];
+        const b = pts[Math.min(index + 1, pts.length - 1)];
+        const segStart = Array.isArray(cum) ? (cum[index] || 0) : 0;
+        const segLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const t = Math.max(0, Math.min(1, (distance - segStart) / segLength));
+        return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t };
+      }
+      if (Number.isFinite(agent?.x) && Number.isFinite(agent?.z)) return { x: agent.x, z: agent.z };
+      return null;
+    };
+
     // Road geometry lives on segments, not streets.
     const segs = (city.segments || []).filter((s) => (s.points || []).length >= 2);
     if (!segs.length) return { ok: false, reason: 'no segments' };
@@ -385,10 +413,10 @@ async function placeCamera(pose) {
         : (traffic?.pedestrians || []);
       let best = null; let bestDistance = Infinity;
       for (const agent of crowd) {
-        const ax = Number(agent?.x); const az = Number(agent?.z);
-        if (!Number.isFinite(ax) || !Number.isFinite(az)) continue;
-        const distance = Math.hypot(ax - stand.x, az - stand.z);
-        if (distance < bestDistance) { bestDistance = distance; best = { x: ax, z: az }; }
+        const position = agentPosition(agent);
+        if (!position) continue;
+        const distance = Math.hypot(position.x - stand.x, position.z - stand.z);
+        if (distance < bestDistance) { bestDistance = distance; best = position; }
       }
       if (!best || bestDistance > 30) {
         return { ok: false, reason: `no pedestrian within 30 m of the kerb (nearest ${Number.isFinite(bestDistance) ? bestDistance.toFixed(1) : 'none'} m)`, crowd: crowd.length };
@@ -459,9 +487,9 @@ async function placeCamera(pose) {
     const nearestAgent = (point) => {
       let best = Infinity;
       for (const agent of agents) {
-        const ax = Number(agent?.x); const az = Number(agent?.z);
-        if (!Number.isFinite(ax) || !Number.isFinite(az)) continue;
-        const distance = Math.hypot(ax - point.x, az - point.z);
+        const position = agentPosition(agent);
+        if (!position) continue;
+        const distance = Math.hypot(position.x - point.x, position.z - point.z);
         if (distance < best) best = distance;
       }
       return best;
