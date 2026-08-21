@@ -652,6 +652,58 @@ for (const card of cards) {
       }, { points: PROBES.get(card.id), viewport: { w: W, h: H } });
     }
 
+    // Per-card shadow state. The run-level block is read once at boot and
+    // therefore describes the boot clock, not this card - it reported a 23.2
+    // degree sun for a card whose hour puts the sun at 43.3.
+    entry.shadows = await page.evaluate(() => {
+      const r = window.__CITYGEN__.getRenderer();
+      const cam = r.sun?.shadow?.camera;
+      return {
+        hour: window.__QA_HOUR__,
+        sunIntensity: r.sun?.intensity ?? null,
+        sunPosition: r.sun ? [+r.sun.position.x.toFixed(1), +r.sun.position.y.toFixed(1), +r.sun.position.z.toFixed(1)] : null,
+        castShadow: r.sun?.castShadow ?? null,
+        shadowIntensity: r.sun?.shadow?.intensity ?? null,
+        normalBias: r.sun?.shadow?.normalBias ?? null,
+        bias: r.sun?.shadow?.bias ?? null,
+        camera: cam ? {
+          left: +cam.left.toFixed(1), right: +cam.right.toFixed(1),
+          top: +cam.top.toFixed(1), bottom: +cam.bottom.toFixed(1),
+          near: +cam.near.toFixed(1), far: +cam.far.toFixed(1),
+        } : null,
+        fit: r.shadowDiagnostics ? {
+          texelsPerMetre: r.shadowDiagnostics.texelsPerMetre,
+          sunAltitudeDeg: r.shadowDiagnostics.sunAltitudeDeg,
+          fitted: r.shadowDiagnostics.fitted,
+          warnings: r.shadowDiagnostics.warnings,
+          casting: r.shadowDiagnostics.casterPolicy?.casting ?? null,
+        } : null,
+        hemi: r.hemi?.intensity ?? null,
+        ambient: r.ambient?.intensity ?? null,
+        environmentIntensity: r.scene?.environmentIntensity ?? null,
+      };
+    });
+
+    // SF_QA_KEYOFF=1 shoots a second frame per card with the key light off.
+    // Differencing the two isolates exactly what the sun contributes and where:
+    // a real cast shadow appears as a hard boundary in the difference, and a
+    // frame with no shadows shows a smooth falloff and nothing else. This is
+    // the only way to answer "is the sun casting" from a screenshot.
+    if (process.env.SF_QA_KEYOFF === '1') {
+      await page.evaluate(() => {
+        const r = window.__CITYGEN__.getRenderer();
+        window.__QA_KEY__ = r.sun.intensity;
+        r.sun.intensity = 0;
+      });
+      await page.waitForTimeout(SETTLE);
+      await page.screenshot({ path: path.join(OUT, `${card.id}-keyoff.png`), timeout: SHOT_MS });
+      await page.evaluate(() => {
+        const r = window.__CITYGEN__.getRenderer();
+        r.sun.intensity = window.__QA_KEY__;
+      });
+      entry.keyOffFrame = `${card.id}-keyoff.png`;
+    }
+
     entry.held = await page.evaluate(() => {
       const r = window.__CITYGEN__.getRenderer();
       const c = window.__QA_CAM__;

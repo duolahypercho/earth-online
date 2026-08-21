@@ -105,8 +105,38 @@ function measure(image, region) {
   };
 }
 
+// `--diff a.png b.png` reports what changed between two frames of the same
+// pose. Differencing a frame against the same frame with the key light off is
+// the only way to answer "is the sun casting a shadow here" from screenshots: a
+// real cast shadow is a hard boundary in the difference image, which shows up
+// as two populations; a frame with no shadows differs smoothly and nothing else.
+if (process.argv[2] === '--diff') {
+  const a = decodePng(readFileSync(process.argv[3]));
+  const b = decodePng(readFileSync(process.argv[4]));
+  if (a.width !== b.width || a.height !== b.height) throw new Error('frames differ in size');
+  const delta = { width: a.width, height: a.height, channels: 3, data: Buffer.alloc(a.width * a.height * 3) };
+  let sum = 0; let max = 0; let changed = 0;
+  for (let i = 0, j = 0; i < a.width * a.height; i += 1) {
+    const ia = i * a.channels; const ib = i * b.channels;
+    const d = Math.abs(luma(a.data[ia], a.data[ia + 1], a.data[ia + 2])
+      - luma(b.data[ib], b.data[ib + 1], b.data[ib + 2]));
+    delta.data[j] = delta.data[j + 1] = delta.data[j + 2] = Math.min(255, Math.round(d));
+    j += 3; sum += d; if (d > max) max = d; if (d > 4) changed += 1;
+  }
+  const regions = process.argv.slice(5).map((spec) => spec.split(',').map(Number));
+  console.log(JSON.stringify({
+    a: process.argv[3], b: process.argv[4],
+    meanDelta: +(sum / (a.width * a.height)).toFixed(2),
+    maxDelta: +max.toFixed(1),
+    changedShare: +(changed / (a.width * a.height)).toFixed(4),
+    whole: measure(delta),
+    regions: regions.map((r) => measure(delta, r)),
+  }, null, 2));
+  process.exit(0);
+}
+
 const file = process.argv[2];
-if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [x0,y0,x1,y1 ...]'); process.exit(2); }
+if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [x0,y0,x1,y1 ...] | --diff a.png b.png [regions]'); process.exit(2); }
 const image = decodePng(readFileSync(file));
 const regions = process.argv.slice(3).map((spec) => spec.split(',').map(Number));
 const report = {
