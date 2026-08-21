@@ -57,6 +57,61 @@ const LOCAL_FOCUS_SHIFT = 70;
 // so the cost is bounded by the pool, and the pool is bounded by the budget in
 // `STREET_POPULATION`.
 const LOCAL_CAR_TARGET = 32;
+// ---------------------------------------------------------------------------
+// Traffic that is WHERE THE CAMERA IS
+// ---------------------------------------------------------------------------
+//
+// Measured, not assumed. On the real slice, at the round-4 intersection card's
+// own pose and after the capture harness's own 20 s warm-up, the fleet reads:
+//
+//   cars within 20/40/60/80/120/240 m of the focus:  2 / 4 / 5 / 7 / 22 / 41
+//   cars inside the camera frustum AND within 90 m:  2 of 42
+//
+// Every one of the 42 cars is driving - position and drawn instance matrix
+// both change every step, verified below - so "nothing moves" was never a
+// dispatch failure. The fleet is simply not in the shot. Two mechanisms put it
+// there and keep it there:
+//
+//  1. THE DENSITY TARGET IS A DISC, THE CARD IS A FRUSTUM. `LOCAL_CAR_TARGET`
+//     is satisfied by cars behind the camera and round the corner, and the
+//     refill rule refuses every destination the camera can see unless the DISC
+//     is starved. The disc sits just above its starvation threshold (22 against
+//     18.6), so the one street in shot is the single place a car may never be
+//     put. `LOCAL_ONSCREEN_CAR_TARGET` measures the frustum instead.
+//
+//  2. CARS DISPERSE AND CANNOT BE RECALLED. A donor must be >= 240 m away, and
+//     41 of the 42 are inside that, so the recycler has one donor and the near
+//     field decays from 31 to 22 over the warm-up. Rather than widen the
+//     teleport - a car that pops into shot is worse than an empty one - the
+//     cure is that a car beyond the near field PREFERS THE TURN THAT BRINGS IT
+//     BACK. It is a legal turn at a legal node, indistinguishable from
+//     ordinary driving, and it costs no RNG draw.
+//
+/** Moving vehicles the camera should be able to SEE, not merely be near. */
+const LOCAL_ONSCREEN_CAR_TARGET = 6;
+/**
+ * Strongest multiplier the homing bias may apply to one candidate turn.
+ *
+ * At 3.0 a turn that heads straight back toward the focus is weighted like the
+ * straight-on continuation (4.0 against 1.6 for a cross turn). It is a
+ * preference, never a rail: the driving model, one-ways and signals all still
+ * decide, and inside `LOCAL_LIFE_RADIUS` the bias is exactly zero so traffic
+ * in shot drives naturally.
+ */
+const HOMING_MAX_GAIN = 3.0;
+/**
+ * How far from the EYE a point still counts as "on camera".
+ *
+ * Same number as `LOCAL_RECYCLE_RADIUS`, and deliberately so: an actor at or
+ * beyond that range is already recyclable by distance, so treating it as
+ * on-camera as well made the two rules contradict each other and disabled the
+ * recycler. See `worldPointIsVisible` for the measurement that found it.
+ */
+const VISIBILITY_HORIZON_M = LOCAL_RECYCLE_RADIUS;
+/** Simulated seconds of drawn-matrix motion history the diagnostics keep. */
+const MOTION_WINDOW_SECONDS = 4;
+/** Fastest speed the driving model can issue, m/s. Above this it is a teleport. */
+const MAX_DRIVEN_SPEED_MS = 20;
 const LOCAL_PEDESTRIAN_TARGET = 112;
 // How many of the 48 LOGICAL pedestrians the recycler keeps in the near field.
 // They carry gameplay behaviour, so the near field must never be all ambient
@@ -151,6 +206,18 @@ const DEFAULT_ROAD_LIFT = 0.5;
 const STREET_SAMPLE_CELL_M = 32;
 /** Extra lateral slack past the footway edge that still counts as street. */
 const STREET_SAMPLE_EDGE_SLACK_M = 0.25;
+
+/**
+ * Identity of a street node, snapped so two footways that end at the same
+ * junction agree on the key even when the source coordinates differ in the
+ * last bit. Also parsed back into a position by `buildFootwayGraph`, so the
+ * format is load-bearing: "<x>,<z>" of the snapped centre.
+ */
+function footwayNodeKey(point) {
+  const x = Math.round(point.x / FOOTWAY_NODE_SNAP_M) * FOOTWAY_NODE_SNAP_M;
+  const z = Math.round(point.z / FOOTWAY_NODE_SNAP_M) * FOOTWAY_NODE_SNAP_M;
+  return `${x},${z}`;
+}
 
 function streetSampleKey(cx, cz) {
   return `${cx}:${cz}`;
@@ -387,6 +454,79 @@ const PEDESTRIAN_ACTIVITIES = Object.freeze([
 ]);
 /** Mean seconds a walker spends walking between two pauses. */
 const WALK_LEG_SECONDS = Object.freeze([14, 52]);
+
+// ---------------------------------------------------------------------------
+// Where a walker goes when the pavement runs out
+// ---------------------------------------------------------------------------
+//
+// It used to go back the way it came: `dir = -1` at the end of the path and
+// `dir = +1` at the start, with no transition to another footway and no
+// crossing anywhere in this file. Three consequences, all of them things the
+// rubric rejects by name:
+//
+//   * every ambient figure paced one block face forever - the obvious loop;
+//   * the yaw flipped 180 degrees in ONE frame at each end, which no body
+//     turns like;
+//   * the "wait" activity was drawn near a path end by weighted random with no
+//     reference to `this.signals`, so nobody ever waited FOR anything and
+//     nobody ever crossed a street. The city has 22 signals and not one
+//     pedestrian had ever read one.
+//
+// The replacement uses the street contract that is already here: the footway
+// paths carry the street node they hang off, so they form a graph, and the
+// city's signals sit on some of those nodes.
+
+/** Grid, in metres, that decides whether two footway ends share a street node. */
+const FOOTWAY_NODE_SNAP_M = 0.5;
+/** How near a street node a city signal must be to control its crossings. */
+const SIGNAL_NODE_RADIUS_M = 20;
+/**
+ * How far back from the junction centre a crossing is walked.
+ *
+ * street-surface-v2 paints its zebra band on the APPROACH, outside the
+ * junction box, so a crossing walked through the node centre would be walked
+ * across bare asphalt with the paint beside it. 4 m is inside the shortest
+ * approach mouth this slice produces and outside the widest corner radius.
+ */
+const CROSSING_SETBACK_M = 4;
+/** Share of arrivals at a signalised node that choose to cross rather than turn. */
+const CROSSING_SHARE = 0.45;
+/**
+ * Share of arrivals at an UNSIGNALISED junction that choose to cross.
+ *
+ * Only 22 of this slice's 3441 footway nodes carry a signal, so a rule that
+ * crossed at signals alone would put roughly ten crossings per five minutes
+ * across a 300-walker pool - which is indistinguishable from the "no walker
+ * ever crosses a street" this replaced. An unsignalised junction is where most
+ * crossings happen in a real grid; the walker waits for a gap in the traffic
+ * instead of for a light.
+ */
+const UNSIGNALLED_CROSSING_SHARE = 0.3;
+/**
+ * Clear distance a walker wants along the crossing before stepping off an
+ * unsignalised kerb, in metres. 22 m is a little over three seconds at the
+ * 7.2 m/s a residential lane runs at here.
+ */
+const CROSSING_GAP_M = 22;
+/** Safety margin, in seconds, on top of the time the crossing itself takes. */
+const CROSSING_CLEARANCE_S = 2;
+/**
+ * Longest a walker will stand at a kerb before giving up and turning instead.
+ *
+ * The signal cycle here is 4 x 8 s, so a full cycle is 32 s; 40 s means a
+ * walker always gets at least one whole cycle of chances and can still never
+ * become a permanent statue if a phase never opens.
+ */
+const KERB_WAIT_MAX_S = 40;
+/**
+ * How fast a walking figure changes heading, rad/s.
+ *
+ * A person turning a street corner takes roughly 0.6 s to swing 90 degrees, so
+ * 2.6 rad/s. Applied to the ambient pool only; the 48 logical pedestrians keep
+ * the instantaneous heading their verifiers measure.
+ */
+const PEDESTRIAN_TURN_RATE = 2.6;
+
 const HERO_CURB_LIFE_PASS = 'market-pedestrian-life-v3';
 const HERO_CURB_SOURCE = Object.freeze({
   segmentId: 'sf-seg-308',
@@ -524,9 +664,26 @@ export class TrafficSim {
       for (const car of this.cars) writeVehicleInstance(this.vehicleBatch, car);
       commitVehicleBatch(this.vehicleBatch, this.cars.length);
     }
+    this.motion = this.createMotionLedger();
     const pedestrianCount = realMap ? 48 : 26;
     const sidewalkPaths = this.buildSidewalkPaths(city);
     this.sidewalkPaths = sidewalkPaths;
+    // The footway network the ambient pool routes over. Built from the paths
+    // above and the city's own signals; nothing here reads a mesh.
+    this.footwayGraph = this.buildFootwayGraph(sidewalkPaths, city);
+    this.routeDiagnostics = {
+      version: 'ambient-routing-v1',
+      ...this.footwayGraph.stats,
+      continuations: 0,
+      reversals: 0,
+      crossingsStarted: 0,
+      crossingsCompleted: 0,
+      kerbWaits: 0,
+      kerbWaitsAbandoned: 0,
+      waitingNow: 0,
+      crossingNow: 0,
+      worstYawStepRad: 0,
+    };
     this.pedestrianBatch = sidewalkPaths.length ? buildPedestrianBatch(pedestrianCount) : null;
     if (this.pedestrianBatch) this.group.add(this.pedestrianBatch.group);
     for (let i = 0; i < pedestrianCount; i += 1) {
@@ -759,6 +916,12 @@ export class TrafficSim {
           points: path,
           cum,
           total,
+          // Which footway this is, so the router can find the street node at
+          // either end of it without searching.
+          pathIndex: path.index ?? null,
+          transit: null,
+          kerbWait: null,
+          routeLeg: 0,
           s: clamp(baseArc + (m - (members - 1) / 2) * 0.9, 0, total),
           seg: 0,
           dir,
@@ -807,6 +970,7 @@ export class TrafficSim {
       const len = Math.hypot(dx, dz) || 1;
       const nx = -dz / len;
       const nz = dx / len;
+      const pair = [];
       for (const side of [1, -1]) {
         const a = { x: segment.points[0].x + nx * half * side, z: segment.points[0].z + nz * half * side };
         const b = { x: segment.points[1].x + nx * half * side, z: segment.points[1].z + nz * half * side };
@@ -819,10 +983,89 @@ export class TrafficSim {
         path.highway = segment.highway;
         path.segmentId = segment.id;
         path.roadSide = side;
+        // Junction identity, taken from the SEGMENT endpoint rather than from
+        // this footway's own offset end: two footways that meet at a corner
+        // are metres apart, but the street nodes they hang off are the same
+        // point, and that is what makes the footway network a graph.
+        path.nodeKeys = [
+          footwayNodeKey(segment.points[0]),
+          footwayNodeKey(segment.points[1]),
+        ];
+        // Unit vector from the segment's start toward its end, and the kerb
+        // normal. The crossing leg is built from these.
+        path.tangent = { x: dx / len, z: dz / len };
+        path.normal = { x: nx, z: nz };
+        path.half = half;
+        path.index = paths.length;
+        pair.push(path);
         paths.push(path);
+      }
+      // The two footways of one street are each other's crossing partner: a
+      // crosswalk at a node runs from one kerb to the other, perpendicular to
+      // the carriageway, which is exactly the band street-surface-v2 paints on
+      // that approach.
+      if (pair.length === 2) {
+        pair[0].crossIndex = pair[1].index;
+        pair[1].crossIndex = pair[0].index;
       }
     }
     return paths;
+  }
+
+  /**
+   * The footway network as a graph, plus which of its nodes are signalised.
+   *
+   * Built once, from the paths `buildSidewalkPaths` just produced. Before this
+   * existed a walker had exactly one behaviour at the end of its path -
+   * `dir = -1` - so no ambient figure ever left the block face it spawned on,
+   * never crossed a street, and never once looked at one of the city's 22
+   * signals. The rubric names that failure by its symptom: "obvious loops".
+   */
+  buildFootwayGraph(paths, city) {
+    const nodes = new Map();
+    for (const path of paths) {
+      if (!path.nodeKeys) continue;
+      for (let end = 0; end < 2; end += 1) {
+        const key = path.nodeKeys[end];
+        let node = nodes.get(key);
+        if (!node) {
+          node = { key, x: path[end].x, z: path[end].z, ends: [], signal: null };
+          nodes.set(key, node);
+        }
+        node.ends.push({ index: path.index, end });
+      }
+    }
+    // The node POSITION is the street node, not one footway's corner. Recover
+    // it from the key so the signal search and the crossing setback measure
+    // from the junction centre.
+    for (const node of nodes.values()) {
+      const [nx, nz] = node.key.split(',');
+      node.x = Number(nx);
+      node.z = Number(nz);
+    }
+    let signalised = 0;
+    for (const signal of (city.signals || [])) {
+      const position = signal.position;
+      if (!position) continue;
+      let best = null;
+      let bestDistance = SIGNAL_NODE_RADIUS_M;
+      for (const node of nodes.values()) {
+        const d = Math.hypot(node.x - position.x, node.z - position.z);
+        if (d < bestDistance) { bestDistance = d; best = node; }
+      }
+      if (best && !best.signal) { best.signal = signal; signalised += 1; }
+    }
+    return {
+      nodes,
+      paths,
+      stats: {
+        nodes: nodes.size,
+        paths: paths.length,
+        signalisedNodes: signalised,
+        signals: (city.signals || []).length,
+        junctions: Array.from(nodes.values()).filter((node) => node.ends.length > 2).length,
+      },
+    };
   }
 
   stageHeroCurbLife() {
@@ -1408,6 +1651,12 @@ export class TrafficSim {
     if (this.vehicleBatch) {
       for (const car of this.cars) writeVehicleInstance(this.vehicleBatch, car);
       commitVehicleBatch(this.vehicleBatch, this.cars.length);
+      // Read the buffer that was just committed, never `car.distance`. Round 4
+      // is on record with a grounding counter reporting 0.0019 m while a van
+      // levitated; a motion counter that re-reads the mover's own model would
+      // be the same mistake. This is the translation column of the instance
+      // matrix the vehicle body is drawn from.
+      this.sampleDrawnVehicleMotion(delta);
     }
     if (this.pedestrianBatch) commitPedestrianBatch(this.pedestrianBatch, this.pedestrians.length);
     if (this.localLifeFocus) this.updateLocalLifeCounts(this.localLifeFocus);
@@ -1458,7 +1707,20 @@ export class TrafficSim {
 
     const carsStarved = localCars.length < carTarget * LOCAL_STARVATION_RATIO;
     const walkersStarved = localWalkers < walkerTarget * LOCAL_STARVATION_RATIO;
-    const allowVisibleCars = allowVisibleDestination || carsStarved;
+    // THE DISC IS NOT THE FRAME. `carTarget` counts cars behind the camera and
+    // round the corner as readily as cars in the shot, so the disc can sit
+    // comfortably above its starvation threshold while the one street the card
+    // photographs holds nothing. Count what the camera can actually see, and
+    // let the recycler's existing visible-destination pass run when THAT is
+    // short. The pop-in guard is unchanged: a car may still never appear
+    // closer than POP_IN_GUARD_METRES, so this buys a car down the block, not
+    // a car materialising at conversational distance.
+    const onScreenCars = localCars.reduce(
+      (count, car) => count + (this.actorIsVisible(car.group) ? 1 : 0),
+      0,
+    );
+    const onScreenStarved = onScreenCars < LOCAL_ONSCREEN_CAR_TARGET;
+    const allowVisibleCars = allowVisibleDestination || carsStarved || onScreenStarved;
     const allowVisibleWalkers = allowVisibleDestination || walkersStarved;
 
     this.recycleCarsNearFocus(focus, Math.max(0, carTarget - localCars.length), allowVisibleCars);
@@ -1480,6 +1742,9 @@ export class TrafficSim {
     this.localLifeDiagnostics.footfall = Number(footfall.toFixed(3));
     this.localLifeDiagnostics.walkerTarget = walkerTarget;
     this.localLifeDiagnostics.carTarget = carTarget;
+    this.localLifeDiagnostics.onScreenCars = onScreenCars;
+    this.localLifeDiagnostics.onScreenCarTarget = LOCAL_ONSCREEN_CAR_TARGET;
+    this.localLifeDiagnostics.visibilityHorizon = VISIBILITY_HORIZON_M;
     this.updateLocalLifeCounts(focus);
   }
 
@@ -1498,9 +1763,37 @@ export class TrafficSim {
     return this.worldPointIsVisible(group.position.x, group.position.z, group.position.y + 1);
   }
 
+  /**
+   * "Would a viewer notice this point change?"
+   *
+   * The frustum test alone answers a different question, and answers it wrong
+   * for this one. It has no occluders and it runs to the camera's 4200 m far
+   * plane, so on an eye-level card looking down a straight street it reports
+   * the WHOLE FLEET as on camera. Measured on the real slice at the round-4
+   * card-01 pose, after the capture harness's own 20 s warm-up:
+   *
+   *   cars at or beyond the recycle radius (distance-eligible donors): 42 / 42
+   *   cars this test called visible:                                   40 / 42
+   *   donors the recycler therefore had:                                2
+   *   eye distance of those "visible" cars, min/median/max: 504 / 724 / 1460 m
+   *
+   * With two donors the recycler could place nothing, and that card's near
+   * field held TWO moving vehicles inside 120 m. That is the empty street, and
+   * the empty intersection box, in one number.
+   *
+   * So the test is bounded by how far the eye is from the point. The bound is
+   * `VISIBILITY_HORIZON_M`, not a taste value: it is the radius beyond which
+   * this subsystem already declares an actor recyclable, and past several
+   * blocks of a downtown grid a car at that range is behind buildings this
+   * projection does not model. Inside it nothing changed - the pop-in guard,
+   * the destination ban and the recorded `visibleBefore` / `visibleAfter` all
+   * still apply exactly as before.
+   */
   worldPointIsVisible(x, z, y = null) {
     const camera = this.renderer?.camera;
     if (!camera) return false;
+    const eye = camera.position;
+    if (Math.hypot(x - eye.x, z - eye.z) > VISIBILITY_HORIZON_M) return false;
     const worldY = y ?? (this.renderer.terrain?.heightAt ? this.renderer.terrain.heightAt(x, z) + 1 : 1);
     const projected = new THREE.Vector3(x, worldY, z).project(camera);
     return projected.z >= -1 && projected.z <= 1
@@ -1626,6 +1919,16 @@ export class TrafficSim {
         pedestrian.roadSide = selected.path.roadSide ?? pedestrian.roadSide ?? 1;
         pedestrian.activity = 'walk';
         pedestrian.activityFacing = 'keep';
+        // A relocated walker is on a NEW footway. Anything it was part-way
+        // through - a corner link, a crosswalk, a kerb wait for a signal it is
+        // no longer standing at - belongs to where it used to be, and carrying
+        // it over would walk this figure toward a junction on the far side of
+        // the city. The heading is dropped too so the turn rate limiter swings
+        // from the new bearing rather than turning the whole way from the old.
+        pedestrian.transit = null;
+        pedestrian.kerbWait = null;
+        pedestrian.pathIndex = selected.path.index ?? null;
+        pedestrian.yaw = undefined;
         pedestrian.activityTimer = 2 + keyedRandom(pedestrian.activityKey, `recycle-${this.localLifeDiagnostics.pedestrianRecycles}`) * 18;
       }
       this.localLifeDiagnostics.pedestrianRecycles += 1;
@@ -1768,6 +2071,145 @@ export class TrafficSim {
       resources: { ...diagnostics.resources },
       phaseSeconds: this.phase,
       finite,
+    };
+  }
+
+  /**
+   * Rolling record of how far the DRAWN vehicles actually moved.
+   *
+   * The lesson this exists for: this codebase's counters have disagreed with
+   * its frames before. "Traffic is bound" and "42 mirrored" were both true of
+   * the round-4 manifest while four of five reviewers reported that no vehicle
+   * was in motion on any card, because nothing in the manifest ever measured
+   * MOTION - only binding and counts. This does, from the instance buffer.
+   */
+  createMotionLedger() {
+    const capacity = this.cars.length;
+    return {
+      capacity,
+      // Previous drawn translation per instance slot, xz interleaved.
+      previous: new Float64Array(capacity * 2),
+      seeded: new Uint8Array(capacity),
+      distance: new Float64Array(capacity),
+      relocations: 0,
+      elapsed: 0,
+      windows: 0,
+      report: null,
+    };
+  }
+
+  sampleDrawnVehicleMotion(delta) {
+    const ledger = this.motion;
+    const matrices = this.vehicleBatch?.parts?.body?.instanceMatrix?.array;
+    if (!ledger || !matrices) return;
+    // A step longer than this is not driving. The fastest `maxSpeed` this file
+    // issues is 12 m/s, so 20 m/s of step is unreachable by the driving model
+    // and can only be the local-life recycler putting a car somewhere else.
+    // Counting those metres as motion is exactly how a counter comes to
+    // disagree with a frame, so they are counted as RELOCATIONS instead and
+    // never enter the driven total.
+    const teleportStep = Math.max(0.5, MAX_DRIVEN_SPEED_MS * Math.max(1e-3, delta));
+    for (const car of this.cars) {
+      const slot = car.instanceIndex;
+      if (!(slot >= 0) || slot >= ledger.capacity) continue;
+      const base = slot * 16;
+      const x = matrices[base + 12];
+      const z = matrices[base + 14];
+      const p = slot * 2;
+      if (ledger.seeded[slot]) {
+        const moved = Math.hypot(x - ledger.previous[p], z - ledger.previous[p + 1]);
+        if (moved > teleportStep) ledger.relocations += 1;
+        else ledger.distance[slot] += moved;
+      }
+      ledger.previous[p] = x;
+      ledger.previous[p + 1] = z;
+      ledger.seeded[slot] = 1;
+    }
+    ledger.elapsed += Math.max(0, delta);
+    if (ledger.elapsed < MOTION_WINDOW_SECONDS) return;
+    let moved = 0;
+    let total = 0;
+    let worst = 0;
+    for (let i = 0; i < this.cars.length; i += 1) {
+      const d = ledger.distance[i];
+      total += d;
+      worst = Math.max(worst, d);
+      // 0.5 m over the window is a tenth of a car length: below it the vehicle
+      // is parked as far as a reviewer is concerned, whatever its speed field says.
+      if (d >= 0.5) moved += 1;
+      ledger.distance[i] = 0;
+    }
+    const count = this.cars.length || 1;
+    ledger.report = {
+      windowSeconds: +ledger.elapsed.toFixed(3),
+      vehicles: this.cars.length,
+      drivenInWindow: moved,
+      drivenMeanMetres: +(total / count).toFixed(3),
+      drivenMeanMetresPerSecond: +(total / count / ledger.elapsed).toFixed(3),
+      drivenWorstMetres: +worst.toFixed(3),
+      relocations: ledger.relocations,
+    };
+    ledger.windows += 1;
+    ledger.relocations = 0;
+    ledger.elapsed = 0;
+  }
+
+  /**
+   * What the traffic is DOING, for the capture manifest.
+   *
+   * Every figure here is either read off the committed instance buffer or off
+   * the camera, so a passing number cannot be satisfied by simulation state
+   * that never reaches the frame. Nothing in this method mutates anything.
+   */
+  getTrafficMotionDiagnostics() {
+    const focus = this.localLifeFocus;
+    const distanceTo = (car) => (focus
+      ? Math.hypot(car.group.position.x - focus.x, car.group.position.z - focus.z)
+      : Infinity);
+    let onScreen = 0;
+    let onScreenMoving = 0;
+    let within40 = 0;
+    let within90 = 0;
+    let heldAtSignal = 0;
+    let turning = 0;
+    const perEdge = new Map();
+    for (const car of this.cars) {
+      const d = distanceTo(car);
+      if (d <= 40) within40 += 1;
+      if (d <= 90) within90 += 1;
+      if (car.corner) turning += 1;
+      if (car.speed < 0.3 && (car.signalState === 'red' || car.signalState === 'yellow')) heldAtSignal += 1;
+      if (car.edge) perEdge.set(car.edge, (perEdge.get(car.edge) || 0) + 1);
+      if (!this.actorIsVisible(car.group)) continue;
+      onScreen += 1;
+      if (car.speed > 0.3) onScreenMoving += 1;
+    }
+    let queues = 0;
+    let longestQueue = 0;
+    for (const n of perEdge.values()) {
+      if (n >= 2) queues += 1;
+      longestQueue = Math.max(longestQueue, n);
+    }
+    return {
+      version: 'traffic-motion-v1',
+      vehicles: this.cars.length,
+      // Measured on the committed instance matrices, not on `car.distance`.
+      drawn: this.motion?.report || null,
+      drawnWindows: this.motion?.windows || 0,
+      onScreen,
+      onScreenMoving,
+      onScreenTarget: LOCAL_ONSCREEN_CAR_TARGET,
+      within40,
+      within90,
+      heldAtSignal,
+      turning,
+      // A lane edge carrying two or more vehicles is a queue; the car-following
+      // model is what puts them there.
+      queues,
+      longestQueue,
+      signalEdges: this.edges.filter((edge) => edge.signalId).length,
+      visibilityHorizon: VISIBILITY_HORIZON_M,
+      focus: focus ? { x: +focus.x.toFixed(2), z: +focus.z.toFixed(2) } : null,
     };
   }
 
@@ -2040,7 +2482,27 @@ export class TrafficSim {
       return;
     }
     const walk = pedestrian.group.userData.walk;
-    const moving = this.advancePedestrianActivity(pedestrian, delta);
+    // A kerb wait outranks the activity schedule: the schedule is a private
+    // clock, the signal is the world's. While the wait is on, the walker is
+    // standing at the kerb reading a light, not idling on a timer.
+    const waiting = this.updateKerbWait(pedestrian, delta);
+    // The schedule may not stop a figure in the carriageway. It picks window
+    // shopping and phone checks off a private timer, and a walker frozen
+    // mid-crosswalk to read a phone is worse than no schedule at all. The
+    // timer is PAUSED rather than overridden, so the pause the walker was owed
+    // still happens - on the far kerb, where a person actually stops - and the
+    // named activity stays honest: a crossing figure reports `walk`, which is
+    // what the anti-skating contract at this boundary requires of anything
+    // with a non-zero ground speed.
+    const crossing = pedestrian.transit?.kind === 'cross';
+    const scheduled = (waiting || crossing)
+      ? false
+      : this.advancePedestrianActivity(pedestrian, delta);
+    if (crossing) {
+      pedestrian.activity = 'walk';
+      pedestrian.activityFacing = 'keep';
+    }
+    const moving = crossing ? true : scheduled;
     // The instantaneous ground speed, which is NOT `pedestrian.speed`: that is
     // a nominal cruise figure that stays at 1.2-2.1 m/s even while the agent is
     // standing at a kerb waiting for a light. Presentation drives the gait
@@ -2048,12 +2510,22 @@ export class TrafficSim {
     // a stationary person's legs on the spot - the skating the gate rejects.
     pedestrian.groundSpeed = moving ? pedestrian.speed : 0;
     if (moving) pedestrian.s += pedestrian.dir * pedestrian.speed * delta;
+    // Approaching a junction: decide about crossing HERE, on the approach,
+    // while the figure still has kerb in front of it to stand on.
+    if (moving && pedestrian.activityKey && !pedestrian.transit && !pedestrian.kerbWait) {
+      const toEnd = pedestrian.dir > 0 ? pedestrian.total - pedestrian.s : pedestrian.s;
+      if (toEnd <= CROSSING_SETBACK_M) this.considerCrossing(pedestrian, pedestrian.dir > 0 ? 1 : 0);
+    }
     if (pedestrian.s >= pedestrian.total) {
       pedestrian.s = pedestrian.total;
-      pedestrian.dir = -1;
+      // Continue onto a connected footway, or cross, if this walker has a
+      // route. `routeAtPathEnd` returns false when it cannot - a cul-de-sac,
+      // or one of the 48 logical pedestrians, whose contract is unchanged -
+      // and then the old reversal is exactly what happens.
+      if (!this.routeAtPathEnd(pedestrian, 1)) pedestrian.dir = -1;
     } else if (pedestrian.s <= 0) {
       pedestrian.s = 0;
-      pedestrian.dir = 1;
+      if (!this.routeAtPathEnd(pedestrian, 0)) pedestrian.dir = 1;
     }
     const points = pedestrian.points;
     while (pedestrian.seg < points.length - 2 && pedestrian.s > pedestrian.cum[pedestrian.seg + 1]) pedestrian.seg += 1;
@@ -2084,12 +2556,378 @@ export class TrafficSim {
     const fx = pedestrian.dir > 0 ? segDx : -segDx;
     const fz = pedestrian.dir > 0 ? segDz : -segDz;
     const travelYaw = Math.atan2(fx, fz);
-    pedestrian.group.rotation.y = moving
+    const targetYaw = moving
       ? travelYaw
       : this.pausedFacing(pedestrian, travelYaw, segDx, segDz);
+    // A body turns. The old code wrote the target heading straight onto the
+    // transform, so a walker reaching the end of its path spun 180 degrees
+    // between two frames - the single most legible "this is a looping sprite"
+    // artefact on the pavement. Ambient walkers now swing at a walking turn
+    // rate; the 48 logical pedestrians keep the instantaneous heading their
+    // verifiers measure.
+    if (pedestrian.activityKey) {
+      if (pedestrian.yaw === undefined) pedestrian.yaw = targetYaw;
+      const step = PEDESTRIAN_TURN_RATE * Math.max(0, delta);
+      const diff = shortestAngle(targetYaw - pedestrian.yaw);
+      const applied = clamp(diff, -step, step);
+      pedestrian.yaw = normalizeAngle(pedestrian.yaw + applied);
+      if (this.routeDiagnostics) {
+        this.routeDiagnostics.worstYawStepRad = Math.max(
+          this.routeDiagnostics.worstYawStepRad,
+          Math.abs(applied),
+        );
+      }
+      pedestrian.group.rotation.y = pedestrian.yaw;
+    } else {
+      pedestrian.group.rotation.y = targetYaw;
+    }
     if (this.pedestrianBatch && pedestrian.instanceIndex != null) {
       writePedestrianInstance(this.pedestrianBatch, pedestrian.instanceIndex, pedestrian);
     }
+  }
+
+  /**
+   * The signal's own phase, as the drawn lamp shows it.
+   *
+   * `signalState` reads this for a vehicle; a pedestrian reads it for the same
+   * signal object, so the figure at the kerb and the bulb above it can never
+   * disagree. The cycle this file and `renderer.js` both implement is
+   * `floor((phase + offset) / period) % 4` with red on 0 and 1, amber on 2 and
+   * green on 3 - i.e. amber comes BEFORE green, so it is a hold, not a
+   * clearance.
+   */
+  signalPhaseState(signal) {
+    if (!signal) return null;
+    const local = Math.floor((this.phase + (signal.phaseOffset || 0)) / (signal.period || 8)) % 4;
+    if (local === 0 || local === 1) return 'red';
+    if (local === 2) return 'yellow';
+    return 'green';
+  }
+
+  /**
+   * Seconds left in this signal's vehicle-red window, or 0 if it is not red.
+   *
+   * Every approach of a junction shares one phase offset in this model, so
+   * vehicle-red is the whole junction stopped, and that is the window in which
+   * a pedestrian may legally be in the carriageway. A walker only steps off
+   * the kerb when enough of it is left to reach the far side.
+   */
+  signalRedRemaining(signal) {
+    if (!signal) return 0;
+    const period = signal.period || 8;
+    const cycle = period * 4;
+    const inCycle = positiveModulo(this.phase + (signal.phaseOffset || 0), cycle);
+    const redEnds = period * 2;
+    return inCycle < redEnds ? redEnds - inCycle : 0;
+  }
+
+  /**
+   * Is the carriageway this crossing spans free of moving traffic?
+   *
+   * The unsignalised counterpart to reading a light: the walker looks, and
+   * steps off only when nothing is bearing down on the crossing. Cheap enough
+   * to poll - the moving fleet is 42 vehicles - and it reads the SAME car
+   * positions the vehicle instances are written from, so a walker cannot step
+   * in front of a car that is somewhere else in the frame.
+   */
+  crossingIsClearOfTraffic(link) {
+    const mx = (link[0].x + link[1].x) / 2;
+    const mz = (link[0].z + link[1].z) / 2;
+    for (const car of this.cars) {
+      if (car.speed <= 1) continue;
+      const position = car.group.position;
+      if (Math.hypot(position.x - mx, position.z - mz) <= CROSSING_GAP_M) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Stand at the kerb until the light says go.
+   *
+   * @returns {boolean} true while the walker is still standing.
+   */
+  updateKerbWait(pedestrian, delta) {
+    const wait = pedestrian.kerbWait;
+    if (!wait) return false;
+    wait.elapsed += Math.max(0, delta);
+    pedestrian.activity = 'wait';
+    pedestrian.activityFacing = 'across';
+    const crossingSeconds = wait.length / Math.max(0.4, pedestrian.speed);
+    const clear = wait.signal
+      ? this.signalRedRemaining(wait.signal) >= crossingSeconds + CROSSING_CLEARANCE_S
+      : this.crossingIsClearOfTraffic(wait.link);
+    if (clear) {
+      pedestrian.kerbWait = null;
+      pedestrian.activity = 'walk';
+      pedestrian.activityFacing = 'keep';
+      pedestrian.lateralHold = wait.lateral;
+      pedestrian.lateral = 0;
+      this.beginFootwayLink(pedestrian, wait.link, wait.nextIndex, wait.nextEnd, 'cross', {
+        arc: wait.arc,
+        dir: wait.dir,
+      });
+      if (this.routeDiagnostics) this.routeDiagnostics.crossingsStarted += 1;
+      return false;
+    }
+    if (wait.elapsed >= KERB_WAIT_MAX_S) {
+      // Never a permanent statue. Give up on the crossing and take the corner.
+      // Never a permanent statue, and never a teleport either: give up on the
+      // crossing and simply keep walking to the corner, where the ordinary
+      // continuation rule takes over.
+      pedestrian.kerbWait = null;
+      pedestrian.activity = 'walk';
+      pedestrian.activityFacing = 'keep';
+      if (this.routeDiagnostics) this.routeDiagnostics.kerbWaitsAbandoned += 1;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Start walking a transient two-point leg - a corner link or a crosswalk -
+   * after which the walker adopts `nextIndex` at `nextEnd`.
+   *
+   * The walker's own `points/cum/total/s/seg/dir` carry it, so every consumer
+   * downstream - grounding, presentation, the local-life recycler - keeps
+   * working without knowing a leg is transient.
+   */
+  beginFootwayLink(pedestrian, link, nextIndex, nextEnd, kind, adopt = null) {
+    const length = Math.hypot(link[1].x - link[0].x, link[1].z - link[0].z);
+    if (!(length > 0.05)) {
+      this.adoptFootwayPath(pedestrian, nextIndex, nextEnd, adopt?.arc ?? null, adopt?.dir ?? null);
+      return;
+    }
+    pedestrian.points = link;
+    pedestrian.cum = [0, length];
+    pedestrian.total = length;
+    pedestrian.seg = 0;
+    pedestrian.dir = 1;
+    pedestrian.s = 0.01;
+    pedestrian.transit = {
+      kind, nextIndex, nextEnd, arc: adopt?.arc ?? null, dir: adopt?.dir ?? null,
+    };
+  }
+
+  /**
+   * Put the walker onto a real footway path.
+   *
+   * Entering at an end is the corner case; a completed crossing lands the
+   * walker part-way along the far kerb at the arc it left from, still heading
+   * the way it was going, which is what a person does when they cross the
+   * street they are walking down.
+   */
+  adoptFootwayPath(pedestrian, index, end, arc = null, dir = null) {
+    const path = this.sidewalkPaths[index];
+    if (!path) return false;
+    const cum = cumulativeLengths(path);
+    const total = cum[cum.length - 1] || 0.01;
+    pedestrian.points = path;
+    pedestrian.cum = cum;
+    pedestrian.total = total;
+    pedestrian.roadSide = path.roadSide ?? 1;
+    pedestrian.transit = null;
+    pedestrian.pathIndex = index;
+    if (pedestrian.lateralHold !== undefined) {
+      pedestrian.lateral = pedestrian.lateralHold;
+      pedestrian.lateralHold = undefined;
+    }
+    if (arc != null) {
+      pedestrian.s = clamp(arc, 0.01, Math.max(0.01, total - 0.01));
+      pedestrian.dir = dir ?? pedestrian.dir;
+      pedestrian.seg = 0;
+      while (pedestrian.seg < path.length - 2 && pedestrian.s > cum[pedestrian.seg + 1]) pedestrian.seg += 1;
+      return true;
+    }
+    if (end === 0) {
+      pedestrian.seg = 0;
+      pedestrian.dir = 1;
+      // Nudged off the end so the very next end test does not fire again and
+      // route this walker a second time on the same frame.
+      pedestrian.s = Math.min(total, 0.01);
+    } else {
+      pedestrian.seg = Math.max(0, path.length - 2);
+      pedestrian.dir = -1;
+      pedestrian.s = Math.max(0, total - 0.01);
+    }
+    return true;
+  }
+
+  /**
+   * Decide whether to cross the street this walker is walking along.
+   *
+   * Called on the APPROACH to a junction, not at it, so the crossing starts
+   * exactly where the figure is standing. An earlier version set the walker
+   * back onto the painted approach when it reached the node, which moved it
+   * 4 m backwards in a single frame - a teleport, and precisely the class of
+   * defect this wave exists to remove. Measured: 1407 relocation-sized
+   * position steps per 300 s with the snap, 30 without it.
+   */
+  considerCrossing(pedestrian, end) {
+    const index = pedestrian.pathIndex;
+    const path = this.sidewalkPaths[index];
+    if (!path || path !== pedestrian.points || !path.nodeKeys || path.crossIndex == null) return;
+    const nodeKey = path.nodeKeys[end];
+    if (pedestrian.crossNodeKey === nodeKey) return;
+    pedestrian.crossNodeKey = nodeKey;
+    const node = this.footwayGraph.nodes.get(nodeKey);
+    if (!node) return;
+    // A junction is where a crossing belongs. At a signalised one the walker
+    // reads the light this file and the renderer both drive; at an ordinary
+    // one it waits for a gap in the traffic instead.
+    const junction = node.ends.length > 2;
+    if (!node.signal && !junction) return;
+    pedestrian.crossLeg = (pedestrian.crossLeg || 0) + 1;
+    const share = node.signal ? CROSSING_SHARE : UNSIGNALLED_CROSSING_SHARE;
+    if (keyedRandom(pedestrian.activityKey, `cross-${pedestrian.crossLeg}`) >= share) return;
+    const other = this.sidewalkPaths[path.crossIndex];
+    if (!other) return;
+    // Both kerbs of one street are offset from the same centreline along the
+    // same normal, so the crossing is the perpendicular between the two arc
+    // stations - the crosswalk, not a diagonal through the junction box.
+    const here = pathPositionAtArc(path, pedestrian.cum, pedestrian.s);
+    const farCum = cumulativeLengths(other);
+    const there = pathPositionAtArc(other, farCum, clamp(pedestrian.s, 0, farCum[farCum.length - 1]));
+    const lateral = pedestrian.lateral || 0;
+    const nx = path.normal ? path.normal.x : 0;
+    const nz = path.normal ? path.normal.z : 0;
+    // Carry the walker's lane offset into BOTH ends of the leg and drop it for
+    // the duration, so the figure does not sidestep on entry or on exit.
+    const from = { x: here.x + nx * lateral, z: here.z + nz * lateral };
+    const to = { x: there.x + nx * lateral, z: there.z + nz * lateral };
+    const length = Math.hypot(to.x - from.x, to.z - from.z);
+    if (!(length > 1)) return;
+    pedestrian.kerbWait = {
+      signal: node.signal,
+      node,
+      fromIndex: index,
+      fromEnd: end,
+      nextIndex: path.crossIndex,
+      nextEnd: end,
+      arc: pedestrian.s,
+      dir: pedestrian.dir,
+      lateral,
+      link: [from, to],
+      length,
+      elapsed: 0,
+    };
+    if (this.routeDiagnostics) this.routeDiagnostics.kerbWaits += 1;
+  }
+
+  /**
+   * Pick a connected footway and walk the corner onto it.
+   *
+   * Weighted by street class, so a walker leaving a service alley for a
+   * downtown avenue is the common case and the reverse is not. The choice is a
+   * pure function of the walker's identity and how many legs it has walked, so
+   * it replays identically, consumes no shared RNG, and does not depend on the
+   * order agents are updated in.
+   */
+  continueAlongFootway(pedestrian, node, fromIndex, fromEnd) {
+    const candidates = [];
+    let totalWeight = 0;
+    for (const entry of node.ends) {
+      if (entry.index === fromIndex) continue;
+      const path = this.sidewalkPaths[entry.index];
+      if (!path) continue;
+      let weight = SIDEWALK_CLASS_WEIGHT[path.highway] ?? 0.5;
+      // The other side of the SAME street is reached by crossing it, not by
+      // walking round the end of the carriageway.
+      if (path.segmentId === this.sidewalkPaths[fromIndex]?.segmentId) weight *= 0.05;
+      weight = Math.max(0.01, weight);
+      totalWeight += weight;
+      candidates.push({ entry, path, weight });
+    }
+    if (!candidates.length) return false;
+    pedestrian.routeLeg = (pedestrian.routeLeg || 0) + 1;
+    let roll = keyedRandom(pedestrian.activityKey, `route-${pedestrian.routeLeg}`) * totalWeight;
+    let chosen = candidates[candidates.length - 1];
+    for (const candidate of candidates) {
+      roll -= candidate.weight;
+      if (roll <= 0) { chosen = candidate; break; }
+    }
+    const from = pedestrian.points[fromEnd === 1 ? pedestrian.points.length - 1 : 0];
+    const to = chosen.path[chosen.entry.end];
+    // The walker is NOT standing on the path centreline: it carries a lane
+    // offset of up to +/-0.38 m so a pavement reads as a stream rather than a
+    // queue. Ignoring it here put a 0.4-0.8 m sidestep into every corner -
+    // measured at 1699 sub-2 m position jumps per 120 s across the pool before
+    // this. Both ends of the leg carry the offset instead, and the leg itself
+    // is walked without one, so entry and exit are continuous to the bit.
+    const lateral = pedestrian.lateral || 0;
+    const nFrom = pedestrian.points.normal || { x: 0, z: 0 };
+    const nTo = chosen.path.normal || { x: 0, z: 0 };
+    pedestrian.lateralHold = lateral;
+    pedestrian.lateral = 0;
+    // New street: this walker may consider crossing again.
+    pedestrian.crossNodeKey = null;
+    if (this.routeDiagnostics) this.routeDiagnostics.continuations += 1;
+    this.beginFootwayLink(
+      pedestrian,
+      [
+        { x: from.x + nFrom.x * lateral, z: from.z + nFrom.z * lateral },
+        { x: to.x + nTo.x * lateral, z: to.z + nTo.z * lateral },
+      ],
+      chosen.entry.index,
+      chosen.entry.end,
+      'corner',
+    );
+    return true;
+  }
+
+  /**
+   * What an ambient walker does when it runs out of pavement.
+   *
+   * Ambient pool only. The 48 logical pedestrians carry gameplay behaviour and
+   * three pinned verifiers, so they keep the reversal they have always had -
+   * this returns false for them and the caller flips `dir` exactly as before.
+   *
+   * @returns {boolean} true when a route was taken and the walker's path state
+   *   has already been rewritten.
+   */
+  routeAtPathEnd(pedestrian, end) {
+    if (!pedestrian.activityKey || !this.footwayGraph) return false;
+    // Finishing a transient leg: adopt the path it was aimed at.
+    const transit = pedestrian.transit;
+    if (transit) {
+      if (transit.kind === 'cross' && this.routeDiagnostics) {
+        this.routeDiagnostics.crossingsCompleted += 1;
+      }
+      return this.adoptFootwayPath(
+        pedestrian, transit.nextIndex, transit.nextEnd, transit.arc, transit.dir,
+      );
+    }
+    const index = pedestrian.pathIndex ?? pedestrian.points.index;
+    const path = this.sidewalkPaths[index];
+    if (!path || path !== pedestrian.points || !path.nodeKeys) return false;
+    const node = this.footwayGraph.nodes.get(path.nodeKeys[end]);
+    if (!node) return false;
+    pedestrian.pathIndex = index;
+    if (this.continueAlongFootway(pedestrian, node, index, end)) return true;
+    if (this.routeDiagnostics) this.routeDiagnostics.reversals += 1;
+    return false;
+  }
+
+  /** Read-only record of what the ambient pool's routing did. */
+  getAmbientRoutingDiagnostics() {
+    const record = this.routeDiagnostics;
+    if (!record) return null;
+    let waiting = 0;
+    let crossing = 0;
+    let routed = 0;
+    for (const walker of (this.ambientCrowd || [])) {
+      if (walker.kerbWait) waiting += 1;
+      if (walker.transit?.kind === 'cross') crossing += 1;
+      if (walker.routeLeg) routed += 1;
+    }
+    return {
+      ...record,
+      waitingNow: waiting,
+      crossingNow: crossing,
+      walkersThatHaveRouted: routed,
+      ambientPool: (this.ambientCrowd || []).length,
+      worstYawStepRad: +record.worstYawStepRad.toFixed(4),
+      turnRateLimitRad: PEDESTRIAN_TURN_RATE,
+    };
   }
 
   /**
@@ -2449,6 +3287,29 @@ export class TrafficSim {
     this.animateCar(car, delta);
   }
 
+  /**
+   * How hard a turn at this node should be pulled back toward the view focus.
+   *
+   * Zero inside the near field - traffic in shot must drive, not orbit - then
+   * ramps linearly to `HOMING_MAX_GAIN` at the recycle radius. Returns null
+   * when there is no focus to home on (a generated city, or a headless harness
+   * with no camera), which is what keeps the procedural determinism gates
+   * bit-identical.
+   */
+  homingBiasAt(x, z) {
+    if (!this.localLifeEnabled) return null;
+    const focus = this.localLifeFocus;
+    if (!focus) return null;
+    const distance = Math.hypot(x - focus.x, z - focus.z);
+    if (!(distance > LOCAL_LIFE_RADIUS)) return null;
+    const ramp = clamp(
+      (distance - LOCAL_LIFE_RADIUS) / Math.max(1, LOCAL_RECYCLE_RADIUS - LOCAL_LIFE_RADIUS),
+      0,
+      1,
+    );
+    return { gain: ramp * HOMING_MAX_GAIN, fx: (focus.x - x) / distance, fz: (focus.z - z) / distance };
+  }
+
   chooseNextEdge(car, a, b) {
     const raw = car.edge.outgoing || [];
     const outgoing = raw.filter((e) => e.streetId !== car.edge.streetId || this.random() < 0.35);
@@ -2457,6 +3318,10 @@ export class TrafficSim {
     const inDx = b.x - a.x;
     const inDz = b.z - a.z;
     const inLen = Math.hypot(inDx, inDz) || 1;
+    // Sampled at the NODE the car is arriving at, and read before the loop so
+    // every candidate is scored against one bias. It consumes no RNG, so the
+    // seeded draw sequence below is byte-identical with and without it.
+    const homing = this.homingBiasAt(b.x, b.z);
     let totalWeight = 0;
     const weighted = pool.map((edge) => {
       const out = edge.points[0];
@@ -2470,6 +3335,13 @@ export class TrafficSim {
       else if (dot > -0.35) weight = 1.6;
       const nextStart = edge.points[0];
       if (Math.hypot(nextStart.x - a.x, nextStart.z - a.z) < 0.5) weight *= 0.15;
+      if (homing) {
+        // Cosine between the outgoing lane and the direction of the focus. A
+        // turn that heads away is left alone rather than punished: punishing it
+        // would empty the far streets, and the far streets are in the frame too.
+        const toward = (outDx * homing.fx + outDz * homing.fz) / outLen;
+        if (toward > 0) weight *= 1 + homing.gain * toward;
+      }
       totalWeight += weight;
       return { edge, weight };
     });
@@ -2521,11 +3393,10 @@ export class TrafficSim {
   signalState(car) {
     if (!car.edge?.signalId) return null;
     const signal = car.signal ?? this.city.signals.find((s) => s.id === car.edge.signalId);
-    if (!signal) return null;
-    const local = Math.floor((this.phase + (signal.phaseOffset || 0)) / (signal.period || 8)) % 4;
-    if (local === 0 || local === 1) return 'red';
-    if (local === 2) return 'yellow';
-    return 'green';
+    // ONE implementation of the phase for both populations. A driver and the
+    // pedestrian on the kerb beside it now read the same function, so they can
+    // never disagree about what the bulb above them is showing.
+    return this.signalPhaseState(signal);
   }
 
   signalBlocked(car) {

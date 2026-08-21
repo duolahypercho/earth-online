@@ -12,6 +12,21 @@
 //      SF_QA_TRAVERSAL_SPAN_M, SF_QA_TRAVERSAL_SPEED, SF_QA_WINDOW,
 //      SF_QA_WATERFRONT_WINDOW ("x,z,r" or "off"), SF_QA_MAX_RECOVERIES
 //
+// What the report says about itself, and why those fields exist:
+//   resolution        - the raw SF_QA_W/SF_QA_H/SF_QA_PROTOCOL strings, the
+//                       viewport the browser opened, and the pixel size of the
+//                       PNGs. roundStatus.meetsProtocolResolution is decided
+//                       from the WRITTEN PIXELS.
+//   eyeHeights        - height above the DRAWN surface under each camera,
+//                       measured with a down-ray. `pose.eye.y` is a world Y.
+//   dressingInFrame   - what the harness raycast filter excluded (nothing is
+//                       excluded from the FRAME), and what is genuinely absent
+//                       because an ancestor is hidden.
+//   frameCostAttribution (per card) - where the frame time went: image
+//                       pipeline, shadow passes, active night practicals.
+//   urlOverrides      - query parameters that change what the runtime builds.
+//   readingNotes      - fields that have been misread before, and their meaning.
+//
 // Frame budget: this harness draws frames only when it asks for them. The
 // animation loop keeps ticking (the world simulates, the compositor stays
 // live) but `renderFrame` is gated behind `window.__QA_RENDER__`, so a round
@@ -21,15 +36,25 @@ import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pngStats } from './png-stats-v1.mjs';
+import { resolveCaptureResolution, compareResolution } from './qa-resolution-v1.mjs';
 
 const URL_BASE = process.env.SF_QA_URL || 'http://127.0.0.1:5178/';
 const OUT = process.env.SF_QA_OUT || '.qa-quality-cards';
 // The gate's blind-review protocol wants 1440p or higher. That is ~4x the
 // fragments of 720p on a software backend, so iteration rounds run smaller and
 // say so; a round offered for review must set SF_QA_PROTOCOL=1.
-const PROTOCOL = process.env.SF_QA_PROTOCOL === '1';
-const W = Number(process.env.SF_QA_W || (PROTOCOL ? 2560 : 1280));
-const H = Number(process.env.SF_QA_H || (PROTOCOL ? 1440 : 720));
+//
+// Resolved in `qa-resolution-v1.mjs`, which also records the RAW environment it
+// resolved from. Five rounds in a row reported a sub-protocol resolution and
+// the last one was believed to have been launched at 1280x720 while it wrote
+// 1600x900 frames; nothing in the report could settle that, because the report
+// only ever held the resolved numbers. It now holds the request, the viewport
+// the browser opened, and the pixel size of the PNGs that were written, and it
+// says so out loud when they disagree.
+const RESOLUTION = resolveCaptureResolution(process.env);
+const PROTOCOL = RESOLUTION.protocolFlag;
+const W = RESOLUTION.w;
+const H = RESOLUTION.h;
 // Wall-clock settles are gone from the card path: a fixed millisecond wait is
 // not evidence that anything was drawn (see `renderFrames`). This remains only
 // for the asynchronous weather rig rebuild, which is not a frame.
@@ -107,6 +132,9 @@ const browser = await chromium.launch({
   args: ['--disable-dev-shm-usage', '--enable-unsafe-swiftshader', '--use-angle=swiftshader'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
+// Read BACK, not assumed. This is the browser's own answer to "what did you
+// open", and it is a different fact from what the harness asked for.
+const openedViewport = page.viewportSize();
 // Read once, before any module runs: `prewarmLightingPipelines` checks this
 // probe at the end of every buildCity.
 if (SKIP_PREWARM) {
@@ -121,6 +149,78 @@ page.on('console', (m) => {
 });
 
 const report = { url: URL_BASE, viewport: { w: W, h: H }, cards: [], errors: [] };
+report.resolution = {
+  requested: { w: W, h: H },
+  requestedFromEnv: RESOLUTION.raw,
+  source: RESOLUTION.source,
+  invalidEnv: RESOLUTION.invalid,
+  protocolFlagSet: PROTOCOL,
+  browserViewport: openedViewport ? { w: openedViewport.width, h: openedViewport.height } : null,
+  // Filled in from the first card actually written to disk.
+  writtenPng: null,
+  note: 'requestedFromEnv holds the RAW SF_QA_W/SF_QA_H/SF_QA_PROTOCOL strings this process '
+    + 'received. If a round comes out at an unexpected size, compare these three: what the '
+    + 'launcher asked for, what the browser opened, and what was written.',
+};
+// A round shot on a URL that switches passes off is not evidence about the
+// production build. The runtime reads `?cascades=`, `?ao=`, `?post=`, `?aa=`,
+// `?samples=`, `?nightLights=`, `?qaPasses=`, `?detailRes=` and friends at
+// construction, and one debug run has already been captured at `?cascades=0`
+// without the report saying so anywhere except a nested diagnostics string.
+const RUNTIME_OVERRIDE_KEYS = new Set(['qaPasses', 'post', 'ao', 'aoScale', 'aoRadius', 'aoNormals',
+  'aa', 'samples', 'cascades', 'shadowMap', 'shadowFar', 'nightLights', 'nightShadows',
+  'nightShadowMap', 'decalFade', 'practicalSolve', 'detailRes', 'groundDetail', 'facadeDetail',
+  'detailBump', 'qaPrewarm', 'street', 'sidewalk', 'preset']);
+report.urlOverrides = (() => {
+  try {
+    const parsed = new URL(URL_BASE);
+    const found = [...parsed.searchParams.entries()].filter(([key]) => RUNTIME_OVERRIDE_KEYS.has(key));
+    return {
+      url: URL_BASE,
+      query: parsed.search || '',
+      overrides: Object.fromEntries(found),
+      count: found.length,
+      note: found.length
+        ? 'This round was captured on a URL that changes what the runtime builds or draws. It is '
+          + 'NOT evidence about production behaviour and must not be scored as if it were.'
+        : 'no runtime-behaviour overrides on the capture URL',
+    };
+  } catch (error) {
+    return { url: URL_BASE, error: String(error).slice(0, 120) };
+  }
+})();
+if (report.urlOverrides?.count) {
+  const message = `capture URL carries runtime overrides ${JSON.stringify(report.urlOverrides.overrides)}; `
+    + 'this round is NOT production behaviour';
+  consoleErrors.push(message);
+  console.error(message);
+}
+for (const message of RESOLUTION.invalid) {
+  consoleErrors.push(`resolution: ${message}`);
+  console.error(`resolution: ${message}`);
+}
+console.log(`capture resolution ${W}x${H} (width from ${RESOLUTION.source.width}, `
+  + `height from ${RESOLUTION.source.height}; env SF_QA_W=${JSON.stringify(RESOLUTION.raw.SF_QA_W)} `
+  + `SF_QA_H=${JSON.stringify(RESOLUTION.raw.SF_QA_H)} SF_QA_PROTOCOL=${JSON.stringify(RESOLUTION.raw.SF_QA_PROTOCOL)}); `
+  + `browser opened ${JSON.stringify(openedViewport)}`);
+// SF_QA_W/SF_QA_H beat SF_QA_PROTOCOL, and used to do it silently: a launch of
+// `SF_QA_PROTOCOL=1 SF_QA_W=1600 SF_QA_H=900` produced a sub-protocol round
+// whose report said `protocolFlagSet: true`. Say it, at the top of the log,
+// before the round spends an hour.
+if (PROTOCOL && !RESOLUTION.meetsProtocol) {
+  const message = `SF_QA_PROTOCOL=1 was set, but SF_QA_W/SF_QA_H pinned the round to ${W}x${H}, `
+    + 'which does NOT meet the review protocol (16:9 at >= 1440p). Unset SF_QA_W/SF_QA_H to '
+    + 'capture at 2560x1440.';
+  report.resolution.protocolOverriddenByEnv = true;
+  consoleErrors.push(`resolution: ${message}`);
+  console.error(`resolution: ${message}`);
+}
+if (openedViewport && (openedViewport.width !== W || openedViewport.height !== H)) {
+  const message = `browser viewport ${openedViewport.width}x${openedViewport.height} does not match `
+    + `the requested ${W}x${H}`;
+  consoleErrors.push(`resolution: ${message}`);
+  console.error(`resolution: ${message}`);
+}
 
 // A software-GL city build is heavy enough that the renderer process can be
 // killed under memory pressure, or the page can reload underneath us. Either
@@ -608,6 +708,141 @@ if (report.simWarm) {
 async function installPin() {
   return page.evaluate(() => {
     const r = window.__CITYGEN__.getRenderer();
+    // ONE definition of "what a harness raycast is allowed to hit", installed
+    // on the page so the ground probe, the coverage grid and the waterfront
+    // water check cannot drift apart. It also does the accounting properly.
+    //
+    // `coverage.droppedDressing` was read across the project as "387 of 1036
+    // pieces of street dressing are missing from every frame". It never meant
+    // that. `targets` (1036) is what the list KEPT and `droppedDressing` (387)
+    // is what it EXCLUDED - two independent counts of a 1423-mesh scene, and
+    // the exclusion applies to the RAYCAST TARGET LIST only. Every excluded
+    // mesh is visible, has visible ancestors, and is drawn. The field is now
+    // named for what it is, the totals are published next to each other so they
+    // cannot be read as a ratio, and `drawnMeshes` states the denominator.
+    // Names, matched at the START of the name and not as loose substrings.
+    //
+    // The substring filter this replaces excluded the entire drawn street,
+    // because the word "street" contains "tree":
+    //
+    //   street-surface-v2:carriageway  matched "car" and "tree"
+    //   street-surface-v2:concrete     matched "tree"
+    //   street-surface-v2:markings     matched "tree"
+    //   ground-coverage-v1:carpet      matched "car"
+    //
+    // So every mesh whose name begins with "street-" was dropped, and four
+    // consecutive rounds of "0.0% ground holes" were measured against a target
+    // list with no road, no kerb, no footway and no markings in it. The
+    // ground-hole tripwire had never once tested the street. Verified by
+    // running the old expression over the real mesh names in
+    // src/world/streets/street-surface-v2.js and src/world/ground-coverage.js.
+    window.__QA_DRESSING_PREFIXES__ = [
+      'street-lamps', 'street-life', 'street-furniture', 'sidewalk-props',
+      'shopfront-awnings', 'pedestrian', 'crowd', 'vehicle-', 'vehicle-presentation',
+      'parked-car', 'contact-shadow', 'bay-ripple-cards', 'rain', 'elevation-contours',
+      'local-light-pool', 'local-night-light', 'sf-transit-', 'sf-bike-rack',
+      'sf-newspaper-box', 'sf-pay-station', 'sf-trash-can', 'marker', 'ghost', 'minimap',
+    ];
+    // The atmospherics. A ray that reaches any of these has left the world, and
+    // the hole detector must say so - it used to recognise only 'sky-dome',
+    // while the sky-atmosphere pass draws its own dome ON TOP of that one
+    // ("later than the legacy dome's -10 so this one wins"), so a ray to the
+    // sky could be counted as SOLID GROUND.
+    //
+    // The sky itself, and only the sky. `sky-atmosphere:ground-haze` and
+    // `:dither` are deliberately NOT here: they are ground-level and
+    // screen-level effects, and calling a ray that stops on them "a hole in the
+    // world" would manufacture holes. They are dressing - the ray passes
+    // through them to the surface underneath, which is the answer the hole
+    // detector and the eye-height probe both want.
+    window.__QA_SKY_NAMES__ = ['sky-dome', 'sky-atmosphere:dome', 'sky-atmosphere:sky',
+      'sky-atmosphere:stars', 'sky-atmosphere:moon', 'sky-atmosphere:clouds',
+      'sky-atmosphere:sun-disc', 'sky-atmosphere:sun-glow'];
+    window.__QA_CLASSIFY__ = (name) => {
+      const key = String(name || '').toLowerCase();
+      if (window.__QA_SKY_NAMES__.some((sky) => key === sky || key.startsWith(`${sky}:`))) return 'sky';
+      // Everything else the sky-atmosphere pass draws is a ground decal or a
+      // glow lying on the world (light pools, road pools, wet sheen, grounding,
+      // shop spill). It must not stop a ground ray a few millimetres above the
+      // surface the card is standing on.
+      if (key.startsWith('sky-atmosphere:')) return 'dressing';
+      if (window.__QA_DRESSING_PREFIXES__.some((prefix) => key.startsWith(prefix))) return 'dressing';
+      // Default KEEP. An unknown name is more likely to be world geometry than
+      // dressing, and keeping it can only make a raycast stop on something that
+      // is drawn - it can never invent a hole.
+      return 'surface';
+    };
+    window.__QA_BUILD_TARGETS__ = () => {
+      const renderer = window.__CITYGEN__.getRenderer();
+      const rootId = renderer.root?.uuid || null;
+      const cached = window.__QA_TARGETS__;
+      if (cached && cached.rootId === rootId && cached.list) return cached;
+      // `Object3D.traverse` visits the children of an invisible node too, so
+      // "object.visible" alone counts meshes that are never drawn. Walk the
+      // ancestors: a mesh under a hidden group is not in the frame, and must
+      // not be a raycast target either - otherwise the hole detector stops on
+      // geometry the reviewer cannot see.
+      const ancestorsVisible = (object) => {
+        let node = object.parent;
+        while (node) {
+          if (node.visible === false) return false;
+          node = node.parent;
+        }
+        return true;
+      };
+      const list = [];
+      const excludedByName = {};
+      const keptByName = {};
+      const hiddenByAncestorNames = {};
+      let excluded = 0;
+      let hiddenByAncestor = 0;
+      let excludedInstances = 0;
+      let drawnMeshes = 0;
+      let skyMeshes = 0;
+      let streetSurfaceMeshes = 0;
+      renderer.scene.traverse((object) => {
+        if (!object.isMesh && !object.isInstancedMesh) return;
+        if (!object.geometry) return;
+        if (object.visible === false) return;
+        if (!ancestorsVisible(object)) {
+          hiddenByAncestor += 1;
+          const key = object.name || object.parent?.name || '(unnamed)';
+          hiddenByAncestorNames[key] = (hiddenByAncestorNames[key] || 0) + 1;
+          return;
+        }
+        drawnMeshes += 1;
+        const name = object.name || object.parent?.name || '';
+        const kind = window.__QA_CLASSIFY__(name);
+        if (kind === 'dressing') {
+          excluded += 1;
+          excludedInstances += object.isInstancedMesh ? (object.count || 0) : 1;
+          const key = name || '(unnamed)';
+          excludedByName[key] = (excludedByName[key] || 0) + 1;
+          return;
+        }
+        if (kind === 'sky') skyMeshes += 1;
+        if (/^street-surface-v2|^ground-coverage|^sf-ground-|^terrain/i.test(name)) streetSurfaceMeshes += 1;
+        keptByName[name || '(unnamed)'] = (keptByName[name || '(unnamed)'] || 0) + 1;
+        list.push(object);
+      });
+      window.__QA_TARGETS__ = {
+        rootId,
+        list,
+        kept: list.length,
+        excludedDressing: excluded,
+        excludedDressingInstances: excludedInstances,
+        excludedByName,
+        keptByName,
+        hiddenByAncestor,
+        hiddenByAncestorNames,
+        drawnMeshes,
+        skyMeshes,
+        // The assertion that matters: a hole detector with no road, kerb or
+        // footway in its target list is not testing the street.
+        streetSurfaceMeshes,
+      };
+      return window.__QA_TARGETS__;
+    };
     if (window.__QA_RENDER__ === undefined) window.__QA_RENDER__ = false;
     if (window.__QA_FRAMES__ === undefined) window.__QA_FRAMES__ = 0;
     if (!window.__QA_FRAME_MS__) window.__QA_FRAME_MS__ = [];
@@ -714,9 +949,49 @@ async function captureFrame(file, { frames = SETTLE_FRAMES } = {}) {
   if (await ensureWorld(`before ${path.basename(file)}`)) out.recoveredBeforeFrame = true;
   out.render = await renderFrames(frames);
   await stopRendering();
-  let started = Date.now();
-  await page.screenshot({ path: file, timeout: SHOT_MS });
-  out.shotMs = Date.now() - started;
+  // NOTHING DRAWN IS NOT A FRAME. `renderFrames` returns after SF_QA_FRAME_MS
+  // whether or not the counter moved, and the compositor then still holds the
+  // last frame it was given - which is the PREVIOUS card's pose. Screenshotting
+  // that files a duplicate frame under this card's name, which is the exact
+  // class of false evidence this harness refuses elsewhere. Retry once, then
+  // refuse: a missing card is honest, a mislabelled one is not.
+  if (!(out.render?.drawn > 0)) {
+    const message = `${path.basename(file)}: the render drew ${out.render?.drawn ?? 'an unreadable number of'} `
+      + `frames in ${out.render?.wallMs} ms; the compositor still holds the previous pose`;
+    consoleErrors.push(message);
+    console.error(`  ${message} - retrying once`);
+    out.retryRender = await renderFrames(1);
+    await stopRendering();
+    if (!(out.retryRender?.drawn > 0)) {
+      throw new Error(`${path.basename(file)}: no frame was drawn for this pose `
+        + `(first attempt ${out.render?.drawn ?? 'unreadable'}, retry ${out.retryRender?.drawn ?? 'unreadable'}); `
+        + 'refusing to screenshot the previous card\'s frame under this name');
+    }
+  }
+  // The screenshot is where the last two lost traversal frames died: this dev
+  // server hot-reloads while a round runs, and a reload mid-screenshot times
+  // out after ten minutes and takes the card with it. One recovery and one
+  // retry is cheaper than losing a frame that has already been paid for.
+  const shoot = async () => {
+    const startedShot = Date.now();
+    await page.screenshot({ path: file, timeout: SHOT_MS });
+    return Date.now() - startedShot;
+  };
+  try {
+    out.shotMs = await shoot();
+  } catch (error) {
+    out.screenshotFailure = String(error?.message || error).slice(0, 200);
+    consoleErrors.push(`${path.basename(file)} screenshot failed: ${out.screenshotFailure}`);
+    console.error(`  ${path.basename(file)} screenshot FAILED: ${out.screenshotFailure} - recovering and retrying once`);
+    out.recoveredAfterScreenshotFailure = await ensureWorld(`screenshot of ${path.basename(file)}`);
+    out.retryAfterScreenshotFailure = await renderFrames(1);
+    await stopRendering();
+    if (!(out.retryAfterScreenshotFailure?.drawn > 0)) {
+      throw new Error(`${path.basename(file)}: screenshot failed and the retry drew no frame`);
+    }
+    out.shotMs = await shoot();
+    out.reshotAfterFailure = true;
+  }
   out.bytes = (await stat(file)).size;
   // Measure the frame. "Is the PNG bigger than 20 KB" is not a test that it is
   // a picture: a fully blown-out waterfront card compressed to 24.7 KB and
@@ -735,14 +1010,40 @@ async function captureFrame(file, { frames = SETTLE_FRAMES } = {}) {
   } catch (error) {
     out.statsError = String(error).slice(0, 160);
   }
+  // The PIXELS that were written. Not the viewport, not the request - the IHDR
+  // of the file a reviewer will open. `meetsProtocolResolution` is decided from
+  // this, so the field describes the delivered evidence rather than the intent.
+  if (out.stats?.width && out.stats?.height) {
+    out.pngPixels = { w: out.stats.width, h: out.stats.height };
+    if (!report.resolution.writtenPng) {
+      report.resolution.writtenPng = { ...out.pngPixels, from: path.basename(file) };
+      const agreement = compareResolution({
+        resolved: { w: W, h: H },
+        viewport: report.resolution.browserViewport,
+        png: out.pngPixels,
+      });
+      report.resolution.agreement = agreement;
+      for (const mismatch of agreement.mismatches) {
+        consoleErrors.push(`resolution: ${mismatch}`);
+        console.error(`resolution: ${mismatch}`);
+      }
+    } else if (out.pngPixels.w !== report.resolution.writtenPng.w
+      || out.pngPixels.h !== report.resolution.writtenPng.h) {
+      const message = `${path.basename(file)} is ${out.pngPixels.w}x${out.pngPixels.h}, but `
+        + `${report.resolution.writtenPng.from} was ${report.resolution.writtenPng.w}x${report.resolution.writtenPng.h}; `
+        + 'the round is not one resolution';
+      consoleErrors.push(`resolution: ${message}`);
+      console.error(`resolution: ${message}`);
+      report.resolution.mixedSizes = true;
+    }
+  }
   if (out.bytes < 20000) {
     out.emptyFrameSuspected = out.bytes;
     consoleErrors.push(`${path.basename(file)} was ${out.bytes} B; re-shooting with the loop drawing`);
     const second = await renderFrames(1);
-    started = Date.now();
-    await page.screenshot({ path: file, timeout: SHOT_MS });
+    const shotMs = await shoot();
     await stopRendering();
-    out.reshot = { render: second, shotMs: Date.now() - started, bytes: (await stat(file)).size };
+    out.reshot = { render: second, shotMs, bytes: (await stat(file)).size };
     out.bytes = out.reshot.bytes;
   }
   return out;
@@ -793,6 +1094,55 @@ async function placeCamera(pose, { measureWater = true } = {}) {
     // its eye height is not this task's to change.
     const surfaceLift = pose === 'intersection' ? lift.datum : lift.footway;
     const groundAt = (x, z) => (r.terrain?.heightAt ? r.terrain.heightAt(x, z) + surfaceLift : surfaceLift);
+
+    // The MODEL above is the placement code's own arithmetic: bare terrain plus
+    // a constant cross-section lift. This is the DRAWN answer - a ray dropped
+    // through the scene onto whatever surface is really there. A reviewer
+    // measured "eye heights of 2.17-2.57 m" off `pose.eye.y`, which is an
+    // absolute world Y and not an eye height at all; the report never carried
+    // the height above ground, so there was nothing to correct them with. Now
+    // the eye is SET from the drawn surface and the report carries both numbers
+    // and their disagreement.
+    const dropRay = api.THREE?.Raycaster ? new api.THREE.Raycaster() : null;
+    const downVector = api.THREE?.Vector3 ? new api.THREE.Vector3(0, -1, 0) : null;
+    const rayOrigin = api.THREE?.Vector3 ? new api.THREE.Vector3() : null;
+    /**
+     * The drawn surface under (x, z), or null if nothing is there.
+     *
+     * `modelY` bounds what counts as "the ground under the camera": a hit far
+     * above it is a roof or a canopy, and accepting it would aim the card at
+     * the sky. A rejected hit is reported, never silently swapped.
+     */
+    const drawnGroundAt = (x, z, modelY) => {
+      if (!dropRay || !downVector || typeof window.__QA_BUILD_TARGETS__ !== 'function') return null;
+      const bundle = window.__QA_BUILD_TARGETS__();
+      if (!bundle?.list?.length) return null;
+      rayOrigin.set(x, modelY + 6, z);
+      dropRay.set(rayOrigin, downVector);
+      dropRay.near = 0;
+      dropRay.far = 120;
+      const hits = dropRay.intersectObjects(bundle.list, false);
+      let best = null;
+      let rejectedAbove = null;
+      for (const hit of hits) {
+        const name = hit.object.name || hit.object.parent?.name || '';
+        if (window.__QA_CLASSIFY__(name) === 'sky') continue;
+        const y = hit.point.y;
+        // The band the ground under a standing camera can plausibly be in.
+        if (y > modelY + 1 || y < modelY - 4) {
+          if (!rejectedAbove) rejectedAbove = { y: +y.toFixed(3), surface: name || '(unnamed)' };
+          continue;
+        }
+        if (!best || y > best.y) best = { y, surface: name || '(unnamed)', distance: hit.distance };
+      }
+      return {
+        y: best ? +best.y.toFixed(3) : null,
+        surface: best ? best.surface : null,
+        modelY: +modelY.toFixed(3),
+        hits: hits.length,
+        rejectedOutsideBand: rejectedAbove,
+      };
+    };
 
     // A simulated pedestrian's position is NOT on the record: it is derived from
     // its path (`points`, `cum`, `s`) and mirrored onto its group each frame.
@@ -1192,14 +1542,33 @@ async function placeCamera(pose, { measureWater = true } = {}) {
           const ex = p.x + px * walk;
           const ez = p.z + pz * walk;
           const look = at(Math.min(total, d + 34));
+          // Every pose in the strip stands on the DRAWN surface under it, like
+          // the single-frame cards, and records what it measured. A traversal
+          // that walks off the footway model shows up here as a per-frame
+          // disagreement instead of as a subtly floating camera in four frames.
+          const modelEyeGround = groundAt(ex, ez);
+          const eyeGround = drawnGroundAt(ex, ez, modelEyeGround);
+          const eyeSurfaceY = eyeGround?.y != null ? eyeGround.y : modelEyeGround;
+          const modelLookGround = groundAt(look.x, look.z);
+          const lookGround = drawnGroundAt(look.x, look.z, modelLookGround);
+          const lookSurfaceY = lookGround?.y != null ? lookGround.y : modelLookGround;
           frames.push({
             index: k,
             distanceAlong: +d.toFixed(2),
-            eye: { x: +ex.toFixed(2), y: +(groundAt(ex, ez) + EYE).toFixed(2), z: +ez.toFixed(2) },
+            eye: { x: +ex.toFixed(2), y: +(eyeSurfaceY + EYE).toFixed(2), z: +ez.toFixed(2) },
             look: {
               x: +look.x.toFixed(2),
-              y: +(groundAt(look.x, look.z) + EYE * 0.92).toFixed(2),
+              y: +(lookSurfaceY + EYE * 0.92).toFixed(2),
               z: +look.z.toFixed(2),
+            },
+            eyeHeight: {
+              target: EYE,
+              modelGroundY: +modelEyeGround.toFixed(3),
+              drawnGroundY: eyeGround?.y ?? null,
+              drawnGroundSurface: eyeGround?.surface ?? null,
+              modelMinusDrawnM: eyeGround?.y != null ? +(modelEyeGround - eyeGround.y).toFixed(3) : null,
+              heightAboveDrawnGroundM: eyeGround?.y != null ? EYE : null,
+              measured: !!eyeGround?.y,
             },
             cell: cellOf(ex, ez),
             insideBuilding: insideAny({ x: ex, z: ez }),
@@ -1270,10 +1639,9 @@ async function placeCamera(pose, { measureWater = true } = {}) {
       }
     }
 
-    const eyeY = groundAt(eye.x, eye.z) + eyeLift;
-    const tgtY = targetYOverride != null
-      ? targetYOverride
-      : groundAt(target.x, target.z) + (pose === 'canyon' ? 22 : (pose === 'character' ? 1.1 : EYE * 0.92));
+    let eyeY = groundAt(eye.x, eye.z) + eyeLift;
+    const targetLift = pose === 'canyon' ? 22 : (pose === 'character' ? 1.1 : EYE * 0.92);
+    let tgtY = targetYOverride != null ? targetYOverride : groundAt(target.x, target.z) + targetLift;
     cam.position.set(eye.x, eyeY, eye.z);
     cam.lookAt(target.x, tgtY, target.z);
     // Keep the crowd out of the lens. Two reviewers reported a card whose near
@@ -1371,7 +1739,59 @@ async function placeCamera(pose, { measureWater = true } = {}) {
     }
     if (clearanceNote) note = note ? `${note}; ${clearanceNote}` : clearanceNote;
     if (sunNote) note = note ? `${note}; ${sunNote}` : sunNote;
+    // Stand the eye on the surface that is actually drawn under it, AFTER the
+    // clearance guard has finished moving it. Everything above this line is the
+    // placement model; this is the measurement, and the measurement wins.
+    const eyeGround = drawnGroundAt(eye.x, eye.z, groundAt(eye.x, eye.z));
+    const modelEyeGround = groundAt(eye.x, eye.z);
+    const eyeHeight = {
+      target: +eyeLift.toFixed(3),
+      surfaceDatum: pose === 'intersection' ? 'carriageway' : 'footway',
+      modelGroundY: +modelEyeGround.toFixed(3),
+      modelEyeY: +eyeY.toFixed(3),
+      drawnGroundY: eyeGround?.y ?? null,
+      drawnGroundSurface: eyeGround?.surface ?? null,
+      // Whether the camera is standing on the paved cross-section it was placed
+      // against, or on the backdrop ground behind it. A street card whose eye
+      // stands on the backdrop is off the pavement, and that is a framing fact
+      // a reviewer should be told rather than left to infer from a name.
+      standingOn: (() => {
+        const name = String(eyeGround?.surface || '');
+        if (/^street-surface-v2/i.test(name)) return 'drawn street cross-section';
+        if (/^ground-coverage|^sf-ground-|^terrain/i.test(name)) return 'ground backdrop, NOT the paved cross-section';
+        if (!name) return 'nothing measured';
+        return name;
+      })(),
+      modelMinusDrawnM: eyeGround?.y != null ? +(modelEyeGround - eyeGround.y).toFixed(3) : null,
+      rejectedHitOutsideBand: eyeGround?.rejectedOutsideBand ?? null,
+      measured: !!eyeGround?.y,
+    };
+    if (eyeGround?.y != null) {
+      eyeY = +(eyeGround.y + eyeLift).toFixed(3);
+      eyeHeight.snapped = true;
+    } else {
+      eyeHeight.snapped = false;
+      eyeHeight.note = 'no drawn surface under the camera; the eye stands on the placement model '
+        + 'and its height above the frame is NOT measured';
+    }
+    eyeHeight.eyeY = +eyeY.toFixed(3);
+    eyeHeight.heightAboveDrawnGroundM = eyeGround?.y != null ? +(eyeY - eyeGround.y).toFixed(3) : null;
+    eyeHeight.ok = eyeHeight.heightAboveDrawnGroundM != null
+      && Math.abs(eyeHeight.heightAboveDrawnGroundM - eyeLift) <= 0.02;
+    // Same treatment for the look-at point, but with a tighter guard: a target
+    // 90 m down the street can sit inside a building footprint, and a down-ray
+    // that stops on a roof would aim a street card at the sky. Out-of-band hits
+    // are already refused inside `drawnGroundAt`; a refusal here keeps the
+    // model and says so.
+    let targetGround = null;
+    if (targetYOverride == null) {
+      const modelTargetGround = groundAt(target.x, target.z);
+      targetGround = drawnGroundAt(target.x, target.z, modelTargetGround);
+      if (targetGround?.y != null) tgtY = +(targetGround.y + targetLift).toFixed(3);
+    }
     if (cam.fov != null) { cam.fov = pose === 'canyon' ? 58 : 47; cam.updateProjectionMatrix(); }
+    cam.position.set(eye.x, eyeY, eye.z);
+    cam.lookAt(target.x, tgtY, target.z);
     if (controls?.target?.set) controls.target.set(target.x, tgtY, target.z);
     if (controls) controls.enabled = false;
     window.__QA_CAM__ = { pos: [eye.x, eyeY, eye.z], look: [target.x, tgtY, target.z] };
@@ -1429,23 +1849,11 @@ async function placeCamera(pose, { measureWater = true } = {}) {
         // grid uses (the whole 650k-triangle scene with no acceleration
         // structure costs tens of seconds); the water body survives that filter
         // because it is an unnamed child of `city-root`.
-        const cached = window.__QA_TARGETS__;
-        const rootId = r.root?.uuid || null;
-        if (!cached || cached.rootId !== rootId) {
-          const DRESSING = /lamp|light|prop|awning|ripple|contour|contact-shadow|shadow|rail|tie|overhead|support|parked-car|street-life|crowd|pedestrian|vehicle|car|signal|tree|foliage|canopy|marker|ghost|minimap/i;
-          const list = [];
-          let dropped = 0;
-          r.scene.traverse((object) => {
-            if (!object.visible) return;
-            if (!object.isMesh && !object.isInstancedMesh) return;
-            if (!object.geometry) return;
-            const name = object.name || object.parent?.name || '';
-            if (name !== 'sky-dome' && DRESSING.test(name)) { dropped += 1; return; }
-            list.push(object);
-          });
-          window.__QA_TARGETS__ = { rootId, list, dropped };
+        if (typeof window.__QA_BUILD_TARGETS__ !== 'function') {
+          return { ok: false, reason: 'the QA raycast target builder is not installed on this '
+            + 'document (the page reloaded under the round); recover and re-pose' };
         }
-        const targets = window.__QA_TARGETS__.list;
+        const targets = window.__QA_BUILD_TARGETS__().list;
         const COLS = 9;
         const ROWS = 6;
         let sampled = 0; let waterHits = 0; let skyHits = 0;
@@ -1462,7 +1870,7 @@ async function placeCamera(pose, { measureWater = true } = {}) {
             if (!hit) continue;
             const name = hit.object.name || hit.object.parent?.name || '(unnamed)';
             if (hit.object === waterMesh || /water|bay/i.test(name)) { waterHits += 1; continue; }
-            if (name === 'sky-dome') { skyHits += 1; continue; }
+            if (window.__QA_CLASSIFY__(name) === 'sky') { skyHits += 1; continue; }
             blockers[name] = (blockers[name] || 0) + 1;
           }
         }
@@ -1514,6 +1922,15 @@ async function placeCamera(pose, { measureWater = true } = {}) {
       ok: true,
       traversal: traversalPlan,
       waterCheck,
+      // The number a reviewer wants when they ask "what height was this shot
+      // from". `eye.y` below is an ABSOLUTE world Y and is not it.
+      eyeHeight,
+      eyeHeightAboveDrawnGroundM: eyeHeight.heightAboveDrawnGroundM,
+      targetGround: targetGround ? {
+        drawnGroundY: targetGround.y, surface: targetGround.surface,
+        modelGroundY: targetGround.modelY, lift: +targetLift.toFixed(2),
+        rejectedHitOutsideBand: targetGround.rejectedOutsideBand,
+      } : null,
       eyeInsideBuilding: insideAny(eye),
       street: chosen.streetName || null,
       segmentId: chosen.id,
@@ -1553,6 +1970,10 @@ for (const card of orderedCards) {
       }
     }
     entry.worldWindow = currentWindowRecord;
+    // One round trip, and it makes every later step on this card safe against a
+    // hot reload that slipped past the navigation watcher: the pin, the render
+    // gate and the shared raycast target builder all live on the document.
+    await installPin().catch(() => {});
     activeHour = card.hour;
     activeWeather = card.weather || null;
     await evaluateInWorld((h) => { window.__QA_HOUR__ = h; window.__CITYGEN__.setClock?.(h); }, card.hour);
@@ -1649,6 +2070,52 @@ for (const card of orderedCards) {
       report.cards.push(entry);
       console.error(`${card.id}: SKIPPED (${entry.error}) - no frame written`);
       continue;
+    }
+    // Eye height, stated per card in the terms the gate calibrates against.
+    // `pose.eye.y` is an absolute world Y; a reviewer read those as eye heights
+    // and reported "2.17-2.57 m against the 1.65 m human scale". The height
+    // above the DRAWN surface under the camera is the number that answers that,
+    // and it is asserted here rather than assumed.
+    const eyeHeightRecord = card.pose === 'traversal'
+      ? {
+        target: EYE,
+        perFrame: (entry.pose?.traversal?.frames || []).map((f) => ({
+          index: f.index,
+          eyeY: f.eye.y,
+          drawnGroundY: f.eyeHeight?.drawnGroundY ?? null,
+          heightAboveDrawnGroundM: f.eyeHeight?.heightAboveDrawnGroundM ?? null,
+          modelMinusDrawnM: f.eyeHeight?.modelMinusDrawnM ?? null,
+          measured: !!f.eyeHeight?.measured,
+        })),
+      }
+      : entry.pose?.eyeHeight || null;
+    entry.eyeHeight = eyeHeightRecord;
+    const heights = card.pose === 'traversal'
+      ? (eyeHeightRecord?.perFrame || []).map((f) => f.heightAboveDrawnGroundM).filter((v) => v != null)
+      : (entry.pose?.eyeHeight?.heightAboveDrawnGroundM != null
+        ? [entry.pose.eyeHeight.heightAboveDrawnGroundM] : []);
+    const wantedEyeHeight = card.pose === 'character' ? EYE + 0.15 : EYE;
+    if (!heights.length) {
+      const message = `${card.id}: eye height NOT MEASURED - no drawn surface under the camera. `
+        + 'The frame is still evidence; its scale is not asserted.';
+      consoleErrors.push(message);
+      console.error(`  ${message}`);
+    } else {
+      const worst = heights.reduce(
+        (acc, v) => (Math.abs(v - wantedEyeHeight) > Math.abs(acc - wantedEyeHeight) ? v : acc),
+        heights[0],
+      );
+      entry.eyeHeightAboveDrawnGroundM = worst;
+      if (Math.abs(worst - wantedEyeHeight) > 0.02) {
+        const message = `${card.id}: eye sits ${worst.toFixed(3)} m above the drawn surface, `
+          + `not the ${wantedEyeHeight.toFixed(2)} m this pose asks for`;
+        consoleErrors.push(message);
+        console.error(`  ${message}`);
+      } else {
+        console.log(`  ${card.id}: eye ${worst.toFixed(3)} m above the drawn `
+          + `${entry.pose?.eyeHeight?.drawnGroundSurface || 'surface'} `
+          + `(placement model was ${entry.pose?.eyeHeight?.modelMinusDrawnM ?? 'n/a'} m off it)`);
+      }
     }
     if (card.pose === 'traversal') {
       // The gate asks for a 30 s 60 FPS traversal clip. One frame costs minutes
@@ -1753,23 +2220,11 @@ for (const card of orderedCards) {
       // answer for "is the ground there". It COULD miss a hole whose only
       // surface is dressing (an elevated deck, say); that limit is the price of
       // the 30x saving and is stated in the round report.
-      const cached = window.__QA_TARGETS__;
-      const rootId = r.root?.uuid || null;
-      if (!cached || cached.rootId !== rootId) {
-        const DRESSING = /lamp|light|prop|awning|ripple|contour|contact-shadow|shadow|rail|tie|overhead|support|parked-car|street-life|crowd|pedestrian|vehicle|car|signal|tree|foliage|canopy|marker|ghost|minimap/i;
-        const list = [];
-        let dropped = 0;
-        r.scene.traverse((object) => {
-          if (!object.visible) return;
-          if (!object.isMesh && !object.isInstancedMesh) return;
-          if (!object.geometry) return;
-          const name = object.name || object.parent?.name || '';
-          if (name !== 'sky-dome' && DRESSING.test(name)) { dropped += 1; return; }
-          list.push(object);
-        });
-        window.__QA_TARGETS__ = { rootId, list, dropped };
+      if (typeof window.__QA_BUILD_TARGETS__ !== 'function') {
+        return { error: 'the QA raycast target builder is not installed on this document '
+          + '(the page reloaded under the round)' };
       }
-      const targets = window.__QA_TARGETS__;
+      const targets = window.__QA_BUILD_TARGETS__();
 
       const ray = new THREE.Raycaster();
       const pointer = new THREE.Vector2();
@@ -1793,7 +2248,11 @@ for (const card of orderedCards) {
           // all hit `ground-coverage-v1` at 540-686 m - ground, correctly drawn.
           // The distance signal is kept, separately and by name, so nothing is
           // hidden and the historical `holeRatioLegacy` series stays comparable.
-          const isVoid = !hit || hit.object.name === 'sky-dome';
+          // A ray that reaches ANY sky mesh has left the world. This used to
+          // test only the name 'sky-dome', while the sky-atmosphere pass draws
+          // its own dome in front of that one - so a ray to the sky was counted
+          // as solid ground, and the hole ratio could not have found a hole.
+          const isVoid = !hit || window.__QA_CLASSIFY__(hit.object.name || hit.object.parent?.name || '') === 'sky';
           const isFarGround = !isVoid && hit.distance > 400;
           if (isFarGround) {
             farGround += 1;
@@ -1816,8 +2275,27 @@ for (const card of orderedCards) {
       return {
         samples: total,
         grid: [cols, rows],
-        targets: targets.list.length,
-        droppedDressing: targets.dropped,
+        // These three are counts of the SCENE, not of each other. `droppedDressing`
+        // used to sit next to `targets` and was read across the project as "387
+        // of 1036 dressing objects are missing from every frame". Nothing is
+        // missing: `drawnMeshes` is every mesh in the frame, `raycastTargets` is
+        // the subset this hole detector is allowed to stop on, and
+        // `raycastExcludedDressing` is the rest - all of it drawn.
+        drawnMeshes: targets.drawnMeshes,
+        raycastTargets: targets.kept,
+        raycastExcludedDressing: targets.excludedDressing,
+        raycastExcludedDressingInstances: targets.excludedDressingInstances,
+        meshesHiddenByAncestor: targets.hiddenByAncestor,
+        streetSurfaceMeshesInTargets: targets.streetSurfaceMeshes,
+        skyMeshesInTargets: targets.skyMeshes,
+        testsTheDrawnStreet: targets.streetSurfaceMeshes > 0,
+        raycastFilter: 'excluded from the RAYCAST TARGET LIST ONLY, to keep the hole detector off '
+          + 'street dressing and 30x cheaper. Every excluded mesh is visible, has visible '
+          + 'ancestors, and is drawn in the frame. drawnMeshes = raycastTargets + '
+          + 'raycastExcludedDressing.',
+        // Kept so the historical series stays readable, named so it cannot be
+        // read as "dropped from the frame" again.
+        targets: targets.kept,
         holes,
         solid,
         farGround,
@@ -1832,6 +2310,14 @@ for (const card of orderedCards) {
       };
     }, { cols: COVER_COLS, rows: COVER_ROWS });
     if (entry.coverage) entry.coverage.ms = Date.now() - coverageStartedAt;
+    // The hole detector is only a hole detector if the drawn street is in its
+    // target list. It was not, for every round this project has run.
+    if (entry.coverage && entry.coverage.testsTheDrawnStreet === false) {
+      const message = `${card.id}: the ground-hole raycast target list contains NO street-surface, `
+        + 'ground or terrain mesh, so its hole ratio is not a statement about the street';
+      consoleErrors.push(message);
+      console.error(`  ${message}`);
+    }
 
     // Optional: ask the world what actually drew at a screen pixel. A visual
     // artifact is otherwise a guessing game, and a re-boot to investigate costs
@@ -1953,9 +2439,74 @@ for (const card of orderedCards) {
           programs: Array.isArray(info.programs) ? info.programs.length : (info.programs ?? null),
         } : null,
         performance: typeof api.getPerformanceTelemetry === 'function' ? api.getPerformanceTelemetry() : null,
+        // The app's own frame timer runs over EVERY animation-loop tick, and
+        // this harness gates `renderFrame` off for all of them except the ones
+        // it pays for. Its percentiles therefore describe suppressed no-op
+        // ticks, not rendered frames: a card that cost 173 s of wall clock to
+        // draw sits next to `appFrameMs.p50 = 7`. Say so, in the field.
+        performanceCaveat: 'appFrameMs/frameIntervalMs percentiles are measured over animation-loop '
+          + 'ticks in which this harness SUPPRESSED drawing. They are not frame times for the '
+          + 'captured frames and must not be read as an FPS figure. The rendered-frame cost is '
+          + 'frameCostAttribution.frameWallMs (wall clock to draw one frame) and cpuFrameMs '
+          + '(main-thread ms inside renderFrame).',
+        // Per-card cost attribution for the things this build just added. A
+        // round that fails to finish must be able to say WHICH stage did it.
+        pipeline: typeof r.getImagePipeline === 'function' ? r.getImagePipeline() : null,
+        cascade: r.shadowDiagnostics?.cascade ? {
+          installed: r.shadowDiagnostics.cascade.installed,
+          count: Array.isArray(r.shadowDiagnostics.cascade.cascades)
+            ? r.shadowDiagnostics.cascade.cascades.length : null,
+          shadowPassesPerFrame: r.shadowDiagnostics.cascade.shadowPassesPerFrame ?? null,
+          texelBytes: r.shadowDiagnostics.cascade.texelBytes ?? null,
+          reason: r.shadowDiagnostics.cascade.reason ?? null,
+        } : null,
+        localLights: r.localLightDiagnostics ? {
+          pass: r.localLightDiagnostics.pass ?? null,
+          candidates: r.localLightDiagnostics.candidates ?? null,
+          active: r.localLightDiagnostics.active ?? null,
+          budget: r.localLightDiagnostics.budget ?? null,
+          shadowRefreshes: r.localLightDiagnostics.shadowRefreshes ?? null,
+        } : null,
+        // Counted from the scene, not from a pass's own record of itself.
+        lightsInScene: (() => {
+          const counts = { total: 0, visible: 0, casting: 0, byType: {} };
+          r.scene.traverse((object) => {
+            if (!object.isLight) return;
+            counts.total += 1;
+            if (object.visible !== false) counts.visible += 1;
+            if (object.castShadow) counts.casting += 1;
+            const key = object.type || 'Light';
+            counts.byType[key] = (counts.byType[key] || 0) + 1;
+          });
+          return counts;
+        })(),
         drawnFrames: window.__QA_FRAMES__ | 0,
       };
     });
+    // One row per card, so a reviewer can attribute the frame cost across the
+    // ambient-occlusion pass, the shadow cascades and the night practicals
+    // without reading five nested objects.
+    entry.frameCostAttribution = {
+      frameWallMs: entry.frameWallMs ?? null,
+      screenshotMs: entry.shotMs ?? null,
+      cpuFrameMs: entry.frame?.cpuFrameMs ?? null,
+      postChainMs: entry.telemetry?.pipeline?.lastRenderMs ?? null,
+      postChainEnabled: entry.telemetry?.pipeline?.enabled ?? null,
+      ao: entry.telemetry?.pipeline?.ao ?? null,
+      antialias: entry.telemetry?.pipeline?.antialias ?? null,
+      sceneSamples: entry.telemetry?.pipeline?.sceneSamples ?? null,
+      shadowPassesPerFrame: entry.telemetry?.cascade?.shadowPassesPerFrame ?? null,
+      shadowCascades: entry.telemetry?.cascade?.count ?? null,
+      shadowDepthBytes: entry.telemetry?.cascade?.texelBytes ?? null,
+      localLightsActive: entry.telemetry?.localLights?.active ?? null,
+      localLightShadowRefreshes: entry.telemetry?.localLights?.shadowRefreshes ?? null,
+      lightsInScene: entry.telemetry?.lightsInScene ?? null,
+      drawCalls: entry.telemetry?.renderInfoAtFrame?.render?.drawCalls ?? null,
+      triangles: entry.telemetry?.renderInfoAtFrame?.render?.triangles ?? null,
+      note: 'frameWallMs is wall clock from arming the render flag to the frame counter moving, on '
+        + 'a software rasterizer with no GPU. postChainMs is the image pipeline\'s own last-frame '
+        + 'cost, which is where ambient occlusion and the AA resolve are paid.',
+    };
   } catch (e) {
     // ISOLATION. One card failing must never end a round that has already paid
     // for its boot and its earlier cards: the failure is recorded on the card,
@@ -2078,9 +2629,63 @@ report.runtime = await evaluateInWorld(() => {
     },
     boot: safe(() => (typeof api.getBootPhases === 'function' ? api.getBootPhases() : null)),
     performance: safe(() => (typeof api.getPerformanceTelemetry === 'function' ? api.getPerformanceTelemetry() : null)),
+    performanceCaveat: 'appFrameMs/frameIntervalMs are measured over animation-loop ticks in which '
+      + 'this harness SUPPRESSED drawing (see installPin). They are NOT frame times for the '
+      + 'captured frames and are not an FPS figure. Per-card rendered-frame cost is in '
+      + 'frameCost and in each card\'s frameCostAttribution.',
+    imagePipeline: safe(() => (typeof r.getImagePipeline === 'function' ? r.getImagePipeline() : null)),
+    localLights: safe(() => r.localLightDiagnostics ?? null),
     drawnFrames: window.__QA_FRAMES__ | 0,
   };
 }).catch((error) => ({ error: String(error).slice(0, 200) }));
+
+// What the raycast filter excluded, and proof that it is still in the frame.
+//
+// The round-4 report said `droppedDressing: 387` next to `targets: 1036` and
+// that pair was read as "37% of street dressing is missing from every frame".
+// It never meant that. This block states the scene totals, names the excluded
+// meshes, and checks the only way dressing could actually be absent from a
+// frame - a hidden ancestor, which `Object3D.traverse` does not report.
+report.dressingInFrame = await evaluateInWorld(() => {
+  if (typeof window.__QA_BUILD_TARGETS__ !== 'function') {
+    return { error: 'the QA raycast target builder is not installed on this document' };
+  }
+  const bundle = window.__QA_BUILD_TARGETS__();
+  const named = Object.entries(bundle.excludedByName || {})
+    .sort((left, right) => right[1] - left[1]);
+  return {
+    drawnMeshes: bundle.drawnMeshes,
+    raycastTargets: bundle.kept,
+    raycastExcludedDressing: bundle.excludedDressing,
+    raycastExcludedDressingInstances: bundle.excludedDressingInstances,
+    meshesHiddenByAncestor: bundle.hiddenByAncestor,
+    excludedByName: named.slice(0, 24),
+    distinctExcludedNames: named.length,
+    keptByName: Object.entries(bundle.keptByName || {}).sort((l, m) => m[1] - l[1]).slice(0, 24),
+    streetSurfaceMeshesInTargets: bundle.streetSurfaceMeshes,
+    skyMeshesInTargets: bundle.skyMeshes,
+    classifier: 'names are matched at the START of the name. The previous substring filter dropped '
+      + 'every mesh whose name begins with "street-", because the word "street" contains "tree" - '
+      + 'so street-surface-v2:carriageway, :concrete and :markings, plus ground-coverage-v1:carpet '
+      + '("car"), were all excluded, and the ground-hole tripwire had no road, kerb, footway or '
+      + 'markings in its target list at all.',
+    meaning: 'raycastExcludedDressing counts meshes excluded from the HARNESS RAYCAST TARGET LIST. '
+      + 'They are visible, their ancestors are visible, and they are drawn. Nothing here is missing '
+      + 'from a frame. drawnMeshes = raycastTargets + raycastExcludedDressing.',
+    absentFromFrame: bundle.hiddenByAncestor,
+    absentFromFrameNames: Object.entries(bundle.hiddenByAncestorNames || {}).sort((l, m) => m[1] - l[1]).slice(0, 16),
+    absentFromFrameMeaning: 'meshes whose own .visible is true but which sit under a hidden '
+      + 'ancestor, so they are NOT drawn. This is the only count on this block that means '
+      + '"missing from the frame".',
+  };
+}).catch((error) => ({ error: String(error).slice(0, 200) }));
+if (report.dressingInFrame && !report.dressingInFrame.error) {
+  const d = report.dressingInFrame;
+  console.log(`\nscene meshes drawn: ${d.drawnMeshes} `
+    + `(${d.raycastTargets} are harness raycast targets, ${d.raycastExcludedDressing} are street `
+    + `dressing excluded from the raycast list ONLY - all ${d.drawnMeshes} are in the frame); `
+    + `${d.meshesHiddenByAncestor} mesh(es) hidden by an ancestor and therefore NOT drawn`);
+}
 
 if (report.runtime?.backend) {
   console.log(`\nbackend: ${report.runtime.backend.rendererBackend} `
@@ -2146,23 +2751,27 @@ if (framed.length) {
 // >= 1440p; iteration rounds run smaller and say so.
 //
 // The obvious model - "software rasterization is fragment-bound, so scale by
-// pixels" - is WRONG on this box, and measurement says so. Two steady-state
-// samples, first-frame warm-up excluded (that first frame costs 1.4-2.3x the
-// rest and is paid once per round, not once per card):
+// pixels" - is WRONG on this box, and measurement says so: a 2.8x change in
+// fragment count moved the measured cost by about 1.6x. There is a per-card
+// floor no resolution reduction can touch (scene walk, draw submission, surface
+// readback, PNG encode setup) plus a per-megapixel slope. The estimate keeps
+// the measured SLOPE and re-anchors the INTERCEPT on this round's own measured
+// cost, so it improves as rounds accumulate; a resolution-independent floor and
+// a pure linear-in-pixels ceiling are reported either side of it.
+// Refitted by `scripts/qa/estimate-protocol-round-v1.mjs`, which reads every
+// capture report on disk, drops each run's first frame (it costs 1.4-1.8x the
+// rest and is paid once per round, not once per card) and least-squares fits
+// steady-state frame cost against megapixels:
 //
-//   0.5184 Mpx (960x540):  mean 93.8 s per card, n=2
-//   1.4400 Mpx (1600x900): mean 148.7 s per card, n=5
+//   0.5184 Mpx (960x540)   steady mean  94 s   (.qa-card-debug, 2 frames)
+//   1.4400 Mpx (1600x900)  steady mean 149 s   (.qa-round4, 5 frames)
+//   1.4400 Mpx (1600x900)  steady mean 173 s   (.qa-round5, 3 frames)
+//   fit: 72.6 s per megapixel + 56.2 s fixed, r2 0.912
 //
-// A 2.8x change in fragment count moved the cost by 1.59x, not 2.8x. Fitting
-// `cost = fixed + slope * Mpx` through those two means gives a ~63 s per-card
-// floor that no resolution reduction can touch (scene walk, draw submission,
-// surface readback, PNG encode setup) plus ~59.6 s per megapixel. Both samples
-// come from this box but from DIFFERENT runs and slightly different builds, so
-// this is a two-point fit, not a performance model. The estimate keeps the
-// measured SLOPE and re-anchors the INTERCEPT on this round's own measured
-// cost, so it improves as rounds accumulate; a resolution-independent floor
-// and a pure linear-in-pixels ceiling are reported either side of it.
-const COST_SLOPE_MS_PER_MEGAPIXEL = 59581;
+// The two 1600x900 means are 24 s apart on the SAME resolution and DIFFERENT
+// builds, which is the size of the build drift this slope carries along with
+// the fragment cost. Treat the band, not the point.
+const COST_SLOPE_MS_PER_MEGAPIXEL = 72600;
 if (framed.length) {
   const pixels = W * H;
   const protocolPixels = 2560 * 1440;
@@ -2208,6 +2817,14 @@ if (framed.length) {
     caveat: '2560x1440 with MSAA also raises peak GPU/CPU memory, and this box has ~2 GB free. '
       + 'A protocol round can fail for memory reasons neither bound predicts. Nothing here is a '
       + 'measurement AT 1440p - no card has been captured at that size.',
+    fullRoundMinutes: {
+      floor: +(roundMs(perSingle) / 60000).toFixed(0),
+      model: +(roundMs(perSingle + COST_SLOPE_MS_PER_MEGAPIXEL * (protocolMegapixels - megapixels)) / 60000).toFixed(0),
+      ceiling: +(roundMs(perSingle * scale) / 60000).toFixed(0),
+    },
+    keyOffDoubles: process.env.SF_QA_KEYOFF === '1',
+    refitWith: 'node scripts/qa/estimate-protocol-round-v1.mjs (reads every capture report on disk '
+      + 'and refits the slope; this in-round estimate uses only this round plus the recorded slope)',
   } : null;
   if (report.protocolEstimate) {
     const e = report.protocolEstimate;
@@ -2218,6 +2835,41 @@ if (framed.length) {
         ? ` (band ${(e.fullRoundMsFloor / 60000).toFixed(0)}-${(e.fullRoundMsCeiling / 60000).toFixed(0)} min). `
         : `; the linear ceiling is a ${e.protocol.pixelScale}x extrapolation from this resolution and is not worth reading. `)
       + 'Estimate, not a measurement: no card has been captured at 1440p.');
+  }
+}
+
+// Eye height, run level, in one place a reviewer can find it. The gate
+// calibrates human scale at 1.65 m; `pose.eye.y` is an absolute world Y and
+// reading it as an eye height is what produced the "2.17-2.57 m" finding.
+const withEye = report.cards.filter((c) => c.eyeHeightAboveDrawnGroundM != null);
+report.eyeHeights = {
+  targetM: EYE,
+  characterCardTargetM: +(EYE + 0.15).toFixed(2),
+  measuredAgainst: 'a ray dropped onto the drawn surface under the final camera position, after '
+    + 'the clearance guard has finished moving it - not the placement model',
+  perCard: report.cards.map((c) => ({
+    id: c.id,
+    eyeWorldY: c.pose?.eye?.y ?? null,
+    drawnGroundY: c.eyeHeight?.drawnGroundY ?? null,
+    heightAboveDrawnGroundM: c.eyeHeightAboveDrawnGroundM ?? null,
+    surface: c.eyeHeight?.drawnGroundSurface ?? null,
+    standingOn: c.eyeHeight?.standingOn ?? null,
+    placementModelErrorM: c.eyeHeight?.modelMinusDrawnM ?? null,
+  })),
+  allWithinToleranceOfTarget: withEye.length > 0 && withEye.every((c) => {
+    const want = c.id === '07-character-curb' ? EYE + 0.15 : EYE;
+    return Math.abs(c.eyeHeightAboveDrawnGroundM - want) <= 0.02;
+  }),
+  unmeasured: report.cards.filter((c) => c.file && c.eyeHeightAboveDrawnGroundM == null).map((c) => c.id),
+  note: 'pose.eye.y is an ABSOLUTE WORLD Y (terrain + street cross-section + eye). It is not the '
+    + 'eye height. heightAboveDrawnGroundM is.',
+};
+if (withEye.length) {
+  console.log('\neye height above the drawn surface (gate calibrates human scale at 1.65 m):');
+  for (const c of report.eyeHeights.perCard) {
+    if (c.heightAboveDrawnGroundM == null) continue;
+    console.log(`  ${c.id}: ${c.heightAboveDrawnGroundM.toFixed(3)} m above ${c.surface} `
+      + `(world Y ${c.eyeWorldY}, placement model off by ${c.placementModelErrorM} m)`);
   }
 }
 
@@ -2252,6 +2904,28 @@ report.worldWindowSummary = {
     windowSource: c.worldWindow?.source || 'boot',
   })),
 };
+// Fields in this report that have been MISREAD, and what they mean. Each entry
+// is here because a reader acted on the wrong meaning and a round was scored,
+// or a change was planned, on the strength of it.
+report.readingNotes = [
+  'pose.eye.y is an ABSOLUTE WORLD Y (terrain + street cross-section + eye height), not an eye '
+    + 'height. The eye height is eyeHeights.perCard[].heightAboveDrawnGroundM, measured by dropping '
+    + 'a ray onto the surface the camera actually stands over. Reading eye.y as an eye height '
+    + 'produced the finding "cards were shot at 2.17-2.57 m".',
+  'coverage.raycastTargets and coverage.raycastExcludedDressing are two counts of the same scene, '
+    + 'not a ratio. The exclusion applies to the HARNESS RAYCAST TARGET LIST only; every excluded '
+    + 'mesh is drawn. dressingInFrame.absentFromFrame is the only count that means "not in the '
+    + 'frame". The old field name droppedDressing produced the finding "37% of street dressing is '
+    + 'missing from every frame".',
+  'runtime.performance.appFrameMs and frameIntervalMs are measured over animation-loop ticks in '
+    + 'which this harness SUPPRESSED drawing. They are not frame times and not an FPS figure. Use '
+    + 'frameCost and each card\'s frameCostAttribution.',
+  'resolution.requestedFromEnv holds the raw SF_QA_W/SF_QA_H/SF_QA_PROTOCOL strings this process '
+    + 'received. resolution.agreement compares the request, the browser viewport and the pixel size '
+    + 'of the PNGs. roundStatus.meetsProtocolResolution is decided from the WRITTEN PIXELS.',
+  'traversal evidence is a stepped strip of fully rendered frames, not a 30 s 60 FPS clip. See '
+    + 'traversalEvidence.form for what it does and does not demonstrate.',
+];
 report.protocolResolution = PROTOCOL;
 report.settings = {
   skipPrewarm: SKIP_PREWARM,
@@ -2270,6 +2944,14 @@ report.settings = {
   waterfrontWindow: WATERFRONT_WINDOW,
   maxRecoveries: MAX_RECOVERIES,
   keyOff: process.env.SF_QA_KEYOFF === '1',
+  eyeHeightM: EYE,
+  raycastFilterVersion: 'anchored-prefix-v2 (2026-08-21)',
+  raycastFilterNote: 'The previous substring filter excluded every drawn street-surface mesh from '
+    + 'the raycast target list (the pattern "tree" matches the word "street"), and the hole test '
+    + 'recognised only the mesh named "sky-dome" while the sky-atmosphere pass draws its own dome '
+    + 'in front of it. holeRatio figures from rounds before this version were measured against a '
+    + 'target list with no road in it and a sky that counted as solid ground; they are NOT '
+    + 'comparable with this round.',
 };
 const traversalCard = report.cards.find((c) => c.id === '08-traversal');
 if (traversalCard?.clipForm) {
@@ -2306,19 +2988,66 @@ if (waterfrontCard) {
   console.log(`\nwaterfront evidence: ${report.waterfrontEvidence.delivered ? 'delivered' : `NOT delivered (${report.waterfrontEvidence.reason})`}`
     + `; water in frame ${JSON.stringify(report.waterfrontEvidence.waterCheck?.waterFraction ?? null)}`);
 }
+// Three facts, compared once, at the end: what was asked for, what the browser
+// opened, and what was written to disk.
+const finalResolution = compareResolution({
+  resolved: { w: W, h: H },
+  viewport: report.resolution.browserViewport,
+  png: report.resolution.writtenPng,
+});
+report.resolution.agreement = finalResolution;
 const skipped = report.cards.filter((c) => c.skipped).map((c) => c.id);
 const failed = report.cards.filter((c) => c.error && !c.skipped).map((c) => c.id);
+// Per card, in one row: did it deliver, which window of the extract it came
+// from, and how many frames it is. A two-window round is only honest evidence
+// if each frame says which window it was shot on, and a traversal strip that
+// lost a frame must not look like a complete one.
+const traversalRequested = orderedCards.some((c) => c.pose === 'traversal');
+const perCardStatus = report.cards.map((c) => {
+  const frames = c.sequence ? c.sequence.filter((item) => item.file).length : (c.file ? 1 : 0);
+  const planned = c.pose?.traversal?.frames?.length ?? (c.requested?.pose === 'traversal' ? TRAVERSAL_FRAMES : 1);
+  return {
+    id: c.id,
+    delivered: !!c.file,
+    frames,
+    framesPlanned: planned,
+    partial: !!c.file && frames < planned,
+    window: c.worldWindow?.center
+      ? windowKey({ center: c.worldWindow.center, radius: c.worldWindow.radius })
+      : 'boot',
+    windowSource: c.worldWindow?.source || 'boot',
+    eyeHeightAboveDrawnGroundM: c.eyeHeightAboveDrawnGroundM ?? null,
+    error: c.error ? String(c.error).slice(0, 160) : null,
+  };
+});
+const partial = perCardStatus.filter((c) => c.partial).map((c) => c.id);
 report.roundStatus = {
   requested: orderedCards.map((c) => c.id),
   captured: report.cards.filter((c) => c.file).map((c) => c.id),
+  missing: orderedCards.map((c) => c.id).filter((id) => !report.cards.some((c) => c.id === id && c.file)),
   skipped,
   failed,
+  partial,
+  perCard: perCardStatus,
+  windowsUsed: [...new Set(perCardStatus.map((c) => c.window))],
+  waterfrontDelivered: perCardStatus.some((c) => c.id === '04-waterfront' && c.delivered),
+  traversalDelivered: perCardStatus.some((c) => c.id === '08-traversal' && c.delivered && !c.partial),
+  traversalRequested,
   complete: skipped.length === 0 && failed.length === 0 && report.cards.length === cards.length,
   // The gate's condition is the PIXELS ("16:9, 1440p or higher"), not which
   // environment variable set them. Reporting false for a round that really is
   // 2560x1440 because SF_QA_PROTOCOL was not the thing that set it would make
   // the field lie in the strict direction, which is still lying.
-  meetsProtocolResolution: H >= 1440 && Math.abs(W / H - 16 / 9) < 0.02,
+  //
+  // Decided from the pixels that were WRITTEN when a frame exists to measure,
+  // and from the request only when none does. A round whose PNGs disagree with
+  // its own viewport cannot claim the protocol on the strength of the request.
+  meetsProtocolResolution: finalResolution.meetsProtocolResolution && finalResolution.agrees,
+  protocolResolutionDecidedBy: finalResolution.decidedBy,
+  resolutionAgrees: finalResolution.agrees,
+  resolutionMismatches: finalResolution.mismatches,
+  requestedResolution: [W, H],
+  writtenResolution: finalResolution.writtenPng,
   protocolFlagSet: PROTOCOL,
   aspect: +(W / H).toFixed(4),
 };
@@ -2327,13 +3056,29 @@ finalized = true;
 await writeFile(path.join(OUT, 'capture-report.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report.state, null, 2));
 console.log(`errors: ${report.errors.length}`);
+console.log('\nper card: delivered / frames / window');
+for (const c of report.roundStatus.perCard) {
+  console.log(`  ${c.id}: ${c.delivered ? 'delivered' : 'NOT DELIVERED'} `
+    + `${c.frames}/${c.framesPlanned} frame(s) on window ${c.window} (${c.windowSource})`
+    + (c.error ? ` :: ${c.error}` : ''));
+}
 if (!report.roundStatus.complete) {
-  console.error(`\nROUND INCOMPLETE - skipped: [${skipped.join(', ') || 'none'}] failed: [${failed.join(', ') || 'none'}]`);
+  console.error(`\nROUND INCOMPLETE - skipped: [${skipped.join(', ') || 'none'}] `
+    + `failed: [${failed.join(', ') || 'none'}] partial: [${partial.join(', ') || 'none'}]`);
+  console.error(`  ${report.roundStatus.captured.length} of ${report.roundStatus.requested.length} `
+    + 'cards ARE on disk and are usable evidence; a missing card does not invalidate the ones that '
+    + 'delivered.');
 }
 if (!report.roundStatus.meetsProtocolResolution) {
-  console.error(`round captured at ${W}x${H} (aspect ${report.roundStatus.aspect}); `
+  const written = report.resolution.writtenPng
+    ? `${report.resolution.writtenPng.w}x${report.resolution.writtenPng.h}`
+    : 'no frame written';
+  console.error(`round requested ${W}x${H} (from SF_QA_W=${JSON.stringify(RESOLUTION.raw.SF_QA_W)}, `
+    + `SF_QA_H=${JSON.stringify(RESOLUTION.raw.SF_QA_H)}, SF_QA_PROTOCOL=${JSON.stringify(RESOLUTION.raw.SF_QA_PROTOCOL)}) `
+    + `and wrote ${written} (aspect ${report.roundStatus.aspect}); `
     + 'the review protocol needs 16:9 at >= 1440p (SF_QA_PROTOCOL=1). '
     + 'This is an ITERATION round and must be labelled as one.');
+  for (const mismatch of finalResolution.mismatches) console.error(`  ${mismatch}`);
 }
 await browser.close();
 if (!report.roundStatus.complete) process.exit(4);

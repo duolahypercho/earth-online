@@ -71,6 +71,20 @@ import {
   contactShadowFor,
   CONTACT_SHADOW,
   contactShadowSunTerm,
+  // The validity gate. Same rules, same constants and the same counted ledger
+  // as the walking crowd, because a standing figure standing inside a wall and
+  // a walking one standing inside a wall are one defect with one owner.
+  PRESENTATION_VALIDITY,
+  CARRIED_PROP_FLAGS,
+  buildFootprintIndex,
+  publishBuildingFootprints,
+  createValidityLedger,
+  clampTorsoTilt,
+  measureRigPose,
+  poseRejection,
+  carriedHandIsFree,
+  carriedPropAttachments,
+  restBoneWorld,
 } from '../../simulation/pedestrians/pedestrian-presentation.js';
 
 export const STREET_LIFE_ID = 'street-life';
@@ -98,7 +112,7 @@ export const STREET_LIFE_VERSION = 'street-life-v1';
 //                   deltoid continuous with the torso, limbs whose section
 //                   changes along their length, a head with a jaw and a brow,
 //                   hands with a thumb, and a collar, a cuff and a shirt hem.
-//                   Measured: body 2432 tri and wardrobe 164 tri per figure, in
+//                   Measured: body 2432 tri and wardrobe 186 tri per figure, in
 //                   21 body + 9 wardrobe draws. The chunk keys are per
 //                   bone/group, so neither the segment count nor the loft ring
 //                   count can ever add a draw call.
@@ -152,12 +166,26 @@ export const STREET_LIFE_RINGS = Object.freeze([
 // are hard:
 //
 //   near body      26 x 2432 = 63 232     (measured, `buildInstancedPartGeometries`)
-//   near wardrobe  26 x  164 =  4 264     (measured, every flag set)
+//   near wardrobe  26 x  186 =  4 836     (measured, every flag set)
 //   mid body      200 x  180 = 36 000
 //   mid wardrobe  200 x   48 =  9 600
 //   kerb cars      72 x  128 =  9 216     (hull 116 + cabin 12)
 //                             --------
-//                              122 312
+//                              122 884
+//
+// RESTATED THIS WAVE, and the ceiling did NOT move. The near wardrobe went from
+// 164 to 186 triangles per figure, in two authored changes:
+//
+//   coat        +20   a 6-sided lofted skirt at the near tier instead of the
+//                     4-cornered frustum the cheaper tiers keep
+//   bag strap    +2   a 3-sided lofted diagonal from shoulder to hip instead
+//                     of an upright box that reached neither end
+//
+// That is +572 against the saturated 26-figure ring: worst case 122 312 ->
+// 122 884, against an unchanged ceiling of 123 000. Draw calls are unchanged at
+// 42: both lofts REPLACE a primitive inside the chunk it already had
+// (`coat|Hips|top`, `bag|Chest|accent`), so no chunk was added. See
+// `WARDROBE_PARTS` for both.
 //
 // Contact shadows are 2 tri x 298 instances and are not in this total because
 // `writeFrame` has never counted them; that accounting predates this landing
@@ -294,11 +322,29 @@ const ACTIVITY_CATALOGUE = Object.freeze([
 
 /**
  * Clearance the walking simulation's through-route keeps from a stationary
- * figure. `buildSidewalkPaths` walks its agents 1.0 m in from the property
- * line with up to 0.38 m of lateral scatter, so on the narrowest footway this
- * pass populates the two never come closer than this.
+ * figure, measured from the CENTRE of that route.
+ *
+ * `buildSidewalkPaths` walks its agents 1.0 m in from the property line with up
+ * to 0.38 m of lateral scatter. At the previous 0.45 m a walker scattered fully
+ * toward the kerb passed within 0.45 - 0.38 = 0.07 m of a standing figure's
+ * centre - i.e. THROUGH it. Two populations that never touch by construction is
+ * the whole premise of this pass sharing a pavement with the simulation, and
+ * 0.07 m is not that.
+ *
+ * The number is now derived from the two facts it has to satisfy:
+ *
+ *   scatter                            0.38 m
+ *   + `PRESENTATION_VALIDITY.minSeparationM`  0.40 m
+ *                                      ------
+ *                                      0.78 m -> 0.80 m
+ *
+ * so the closest a walker can come to a standing figure is exactly the
+ * separation the validity gate would otherwise have to cull one of them for.
+ * The placement window on the narrowest footway this pass populates (2.5 m,
+ * band 4.26-6.60 m) is 4.16-4.80 m, and the authored standing offset is
+ * 4.60-4.76 m, so nothing is lost to the wider clearance.
  */
-export const WALKER_LANE_CLEARANCE_M = 0.45;
+export const WALKER_LANE_CLEARANCE_M = 0.80;
 
 /** How close to a junction a figure has to be to count as "at the corner". */
 const CORNER_ZONE_METRES = 7;
@@ -356,6 +402,24 @@ const PARKING_END_CLEARANCE = 8.5;
 const PARKING_DEDUPE_RADIUS = 3.2;
 
 const TAU = Math.PI * 2;
+
+/**
+ * Where the two ankles sit in CHARACTER space (soles at y = 0) with the legs at
+ * rest, from the shared rest pose rather than from a number copied out of it.
+ *
+ * This is the target the drawn foot is measured against: every stationary
+ * activity except `sit` leaves the leg bones at identity, so a standing
+ * figure's drawn ankle must land exactly here once the root transform is
+ * applied, and any difference is a foot that is not where the placement put it.
+ */
+const REST_ANKLE = Object.freeze([
+  Object.freeze(restBoneWorld('LeftFoot')),
+  Object.freeze(restBoneWorld('RightFoot')),
+]);
+
+/** The carried-prop attachment, resolved once. See `carriedPropAttachments`. */
+const CARRIED_PROP_ATTACHMENT = carriedPropAttachments()
+  .find((entry) => entry.flag === CARRIED_PROP_FLAGS[0]) || null;
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -669,9 +733,11 @@ export function planStreetLifeAnchors(plan, {
   occupancy = null,
   heightAt = () => 0,
   maxAnchors = STREET_LIFE_BUDGET.maxAnchors,
+  footprints = null,
 } = {}) {
   const anchors = [];
-  const rejected = { noBand: 0, tooShort: 0, blocked: 0, crowded: 0, capped: 0 };
+  const rejected = { noBand: 0, tooShort: 0, blocked: 0, crowded: 0, capped: 0, insideBuilding: 0 };
+  let relocated = 0;
   const options = plan.options;
   const hourFactor = streetLifeHourFactor(hour);
   const districtAt = density ? (x, z) => density.at(x, z) : () => 0.7;
@@ -784,17 +850,63 @@ export function planStreetLifeAnchors(plan, {
           || pickActivity(seed, salt, Boolean(atCorner));
         // Lateral offset inside the band, measured from the centreline.
         const jitter = identityRandom(seed, `lat-${salt}`) * 0.16;
-        const offset = entry.zone === 'kerbEdge'
+        const desiredOffset = entry.zone === 'kerbEdge'
           // Perched on the kerb top, which is a seat every city provides.
           ? band.inner - 0.06
           : band.inner + 0.34 + jitter;
-        if (offset < band.inner - 0.1) return false;
+        if (desiredOffset < band.inner - 0.1) return false;
         // Never inside the lane the walking simulation uses.
+        //
+        // CLAMPED, NOT REJECTED. The clearance widened this wave (see
+        // `WALKER_LANE_CLEARANCE_M`), and on a footway narrower than about
+        // 2.15 m the authored standing offset no longer fits inside it. A
+        // return here would have emptied every narrow street in the city -
+        // which is the "nobody on the pavement" complaint this pass exists to
+        // answer, reintroduced by a spacing rule. Pressed against the kerb IS
+        // where people stand on a narrow pavement, so the figure is moved there
+        // and only dropped when even the kerb line is inside the walking lane's
+        // clearance.
         const walkerLane = band.outer - 1.0;
-        if (offset > walkerLane - WALKER_LANE_CLEARANCE_M) return false;
+        const outermost = walkerLane - WALKER_LANE_CLEARANCE_M;
+        if (outermost < band.inner - 0.1) return false;
+        const baseOffset = Math.min(desiredOffset, outermost);
+        // ---------------------------------------------------------------
+        // NOBODY STANDS INSIDE A BUILDING.
+        // ---------------------------------------------------------------
+        // The footway band comes from the STREET contract - centreline, width,
+        // sidewalk width - and knows nothing about what is built beside it.
+        // Where a source building polygon overlaps that band, which is most
+        // narrow downtown streets, the furnishing strip is inside the ground
+        // floor and every figure placed on it stands behind the glazing. That
+        // is the round-4 canyon card, and no amount of pose work fixes it.
+        //
+        // RELOCATE FIRST, REJECT SECOND. The strip runs from the kerb outward,
+        // so a footprint that reaches it always reaches the OUTER end first.
+        // The candidates are therefore kerbward: where the figure wanted to
+        // stand, a 0.28 m step back from the property line, and finally the
+        // kerb edge itself - which is where somebody stands when the building
+        // comes out to the pavement, and is a real place to stand rather than a
+        // fallback. Only a footprint that covers the kerb as well - a source
+        // polygon over the carriageway - loses the figure, and that rejection
+        // is counted rather than absorbed.
+        let offset = baseOffset;
+        let x = 0;
+        let z = 0;
+        let inside = true;
+        let attempt = 0;
+        const candidates = [baseOffset, baseOffset - 0.28, band.inner + 0.02];
+        for (; attempt < candidates.length; attempt += 1) {
+          offset = candidates[attempt];
+          if (offset < band.inner - 0.1 || offset > baseOffset + 1e-9) continue;
+          const lateral = offset * side;
+          x = frame.x + frame.nx * lateral * frame.miter;
+          z = frame.z + frame.nz * lateral * frame.miter;
+          inside = footprints ? footprints.contains(x, z) : false;
+          if (!inside) break;
+        }
+        if (inside) { rejected.insideBuilding += 1; return false; }
+        if (attempt > 0) relocated += 1;
         const u = offset * side;
-        const x = frame.x + frame.nx * u * frame.miter;
-        const z = frame.z + frame.nz * u * frame.miter;
         if (occupancy && occupancy.blocked(x, z, FIGURE_RADIUS)) { rejected.blocked += 1; return false; }
         if (!claim(x, z, groupId)) { rejected.crowded += 1; return false; }
         const datum = heightAt(x, z) + options.roadLift;
@@ -866,7 +978,7 @@ export function planStreetLifeAnchors(plan, {
       }
     }
   }
-  return { anchors, rejected, sampledSegments };
+  return { anchors, rejected, sampledSegments, relocated };
 }
 
 /**
@@ -1144,6 +1256,9 @@ function createStreetLife() {
       mesh.material.dispose();
       mesh.dispose();
     }
+    // Withdraw the footprint index this pass published for the walking crowd:
+    // it describes the world that is going away.
+    publishBuildingFootprints(null);
     state = null;
   }
 
@@ -1180,7 +1295,13 @@ function createStreetLife() {
     const vehicles = collectStreetOccupancy(ctx?.root, { match: /car|vehicle/i });
     const density = buildDistrictDensity(city);
     const hour = Number.isFinite(ctx?.hour) ? ctx.hour : 12;
-    const planned = planStreetLifeAnchors(plan, { hour, density, occupancy, heightAt });
+    // The building footprints, from the same source array the district density
+    // is built from. Published for the walking crowd as well: its agents come
+    // from the traffic simulation and are placed on sidewalk paths that have
+    // the same blind spot this pass had - see `publishBuildingFootprints`.
+    const footprints = buildFootprintIndex(city?.buildings);
+    if (footprints.count > 0) publishBuildingFootprints(footprints);
+    const planned = planStreetLifeAnchors(plan, { hour, density, occupancy, heightAt, footprints });
     const parking = planKerbParking(plan, { occupancy: vehicles, heightAt });
 
     const nearRing = STREET_LIFE_RINGS[0];
@@ -1305,6 +1426,8 @@ function createStreetLife() {
       figures,
       parking: parking.spots,
       poser: buildPoser(),
+      validity: createValidityLedger(),
+      footprintCount: footprints.count,
       overlay: {},
       time: 0,
       replanIn: 0,
@@ -1321,6 +1444,14 @@ function createStreetLife() {
         colour: new THREE.Color(),
         euler: new THREE.Euler(0, 0, 0, 'XYZ'),
         quaternion: new THREE.Quaternion(),
+        // Reused ankle-target record, shaped like a `sampleFootGrounding`
+        // result so the shared pose gate can read it. Allocation-free.
+        grounding: {
+          feet: [
+            { ankleX: 0, ankleY: 0, ankleZ: 0, groundY: 0, contact: true },
+            { ankleX: 0, ankleY: 0, ankleZ: 0, groundY: 0, contact: true },
+          ],
+        },
       },
       diagnostics: {
         version: STREET_LIFE_VERSION,
@@ -1338,7 +1469,34 @@ function createStreetLife() {
           lensCulled: 0,
           lensWithheld: 0,
           rejected: planned.rejected,
+          /** Figures moved back toward the kerb to get out of a building. */
+          relocated: planned.relocated,
           sampledSegments: planned.sampledSegments,
+        },
+        /**
+         * THE VALIDITY GATE, COUNTED.
+         *
+         * `placement` is what the planner did with the building footprints -
+         * how many figures it moved and how many it refused to place at all.
+         * `pose` is the per-frame ledger from the near ring: it re-measures the
+         * DRAWN bone matrices of every articulated figure and refuses to write
+         * an instance for one that is in an impossible state. `peak` publishes
+         * what it measured, not only what it rejected, so a frame that passed
+         * by a millimetre is legible as such.
+         *
+         * `footprints` is the number of building polygons the placement test
+         * had; 0 means the test could not run and no rejection under
+         * `insideBuilding` means anything.
+         */
+        validity: {
+          version: PRESENTATION_VALIDITY.version,
+          footprints: footprints.count,
+          placement: {
+            relocated: planned.relocated,
+            insideBuilding: planned.rejected.insideBuilding,
+          },
+          carriedProps: carriedPropAttachments(),
+          pose: null,
         },
         appearance: {
           uniqueSignatures: new Set(figures.map((f) => f.signature)).size,
@@ -1367,6 +1525,7 @@ function createStreetLife() {
     };
     state.diagnostics.lens = state.lens;
     state.diagnostics.nearAnchors = state.nearAnchors;
+    state.diagnostics.validity.pose = state.validity;
 
     // The stable handle the QA clearance guard reads.
     //
@@ -1594,6 +1753,42 @@ function createStreetLife() {
     const { object3d, colour, euler, quaternion } = state.scratch;
     const poser = state.poser;
     state.time += delta;
+    // One writeFrame per frame, so the ledger is per frame.
+    state.validity.reset();
+    state.validity.buildings = state.footprintCount > 0 ? 'own' : 'none';
+
+    /**
+     * Where this figure's two ankles are SUPPOSED to be, in world metres.
+     *
+     * Derived from the FOOTWAY height the anchor was grounded on plus the rest
+     * pose - never from the rig's own root - so the comparison against the
+     * drawn bone matrices is a comparison against the pavement, and a figure
+     * whose root has drifted off it fails rather than dragging the target
+     * along with it.
+     */
+    const ankleTargets = (anchor, variation) => {
+      const grounding = state.scratch.grounding;
+      const scaleY = variation.heightScale;
+      const scaleXZ = scaleY * variation.buildScale;
+      const cos = Math.cos(anchor.yaw);
+      const sin = Math.sin(anchor.yaw);
+      for (let i = 0; i < 2; i += 1) {
+        const rest = REST_ANKLE[i];
+        const lx = rest[0] * scaleXZ;
+        const ly = rest[1] * scaleY;
+        const lz = rest[2] * scaleXZ;
+        const foot = grounding.feet[i];
+        foot.ankleX = anchor.x + lx * cos + lz * sin;
+        // From the FOOTWAY, not from the rig's own root: a figure whose root
+        // has drifted is exactly what this is here to catch, and a target
+        // derived from that root would drift with it and see nothing.
+        foot.ankleY = anchor.y + ly;
+        foot.ankleZ = anchor.z - lx * sin + lz * cos;
+        foot.groundY = anchor.y;
+        foot.contact = true;
+      }
+      return grounding;
+    };
 
     const nearCursor = new Map();
     let shadowIndex = 0;
@@ -1645,6 +1840,33 @@ function createStreetLife() {
       poser.root.scale.set(scaleXZ, figure.variation.heightScale, scaleXZ);
       poser.root.updateMatrixWorld(true);
 
+      // ---- THE VALIDITY GATE, ON THE DRAWN FIGURE ------------------------
+      // Everything below reads `matrixWorld` off the posed bone tree - the same
+      // matrices that are about to be written into the instance buffers - and
+      // not the anchor record that produced them. A figure that fails is not
+      // written at all this frame, and the reason is counted.
+      state.validity.checked += 1;
+      if (clampTorsoTilt(poser).clamped) state.validity.clampedTorso += 1;
+      const metrics = state.validity.observe(measureRigPose(poser, {
+        // A seated figure's legs come from the overlay, so it has no standing
+        // ankle target to be measured against; everything else does.
+        grounding: anchor.seated ? null : ankleTargets(anchor, figure.variation),
+        seated: anchor.seated,
+        // ...so a seated figure is held to its ROOT instead: the pelvis is on
+        // the kerb the anchor was grounded on, or the figure is not drawn.
+        // Without this a seated figure was the one shape the gate could not
+        // catch levitating.
+        rootTargetY: anchor.y - (anchor.seated
+          ? ACTIVITY_ROOT_DROP.sit * figure.variation.heightScale
+          : 0),
+      }));
+      const rejection = poseRejection(metrics);
+      if (rejection) {
+        state.validity.reject(rejection);
+        continue;
+      }
+      state.validity.drawn += 1;
+
       for (const item of state.near.meshes) {
         const cursor = nearCursor.get(item.key) || 0;
         if (cursor >= state.near.capacity) continue;
@@ -1654,8 +1876,18 @@ function createStreetLife() {
         item.mesh.setColorAt(cursor, colour);
         nearCursor.set(item.key, cursor + 1);
       }
+      const handFree = Boolean(CARRIED_PROP_ATTACHMENT?.attached)
+        && carriedHandIsFree(anchor.activity, (anchor.seed & 1) !== 0);
       for (const item of state.nearWardrobe.meshes) {
         if (!figure.wardrobe.flags[item.flag]) continue;
+        // A prop hangs from a hand bone and follows it wherever the activity
+        // sends it. `phone` puts the hand at the ear and `wait` folds it across
+        // the ribs, so a case drawn through those poses is a box in somebody's
+        // ear or through their back. Drawn only while the hand is free.
+        if (CARRIED_PROP_FLAGS.includes(item.flag) && !handFree) {
+          state.validity.suppressedProps += 1;
+          continue;
+        }
         const cursor = nearCursor.get(item.key) || 0;
         if (cursor >= state.nearWardrobe.capacity) continue;
         const node = poser.byName.get(item.bone);

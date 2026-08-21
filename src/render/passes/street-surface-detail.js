@@ -74,6 +74,9 @@ import * as THREE from 'three';
 import { applyDetailMaps, uvScalePerMetre } from '../detail-maps.js';
 import {
   buildStreetscapePlan,
+  planCrossingStripes,
+  crossingBandDepth,
+  nodeEarnsJunctionPaint,
   sidewalkBand,
   sidewalkSurfaceY,
   carriagewaySurfaceY,
@@ -235,8 +238,8 @@ export const STREET_WEAR_MULTIPLIERS = Object.freeze({
   wheelPolish: 0.86,    // aggregate polished by tyres: slightly darker, glossier
   gutterGrime: 0.66,    // silt and oil against the kerb line
   // footway
-  jointLip: 0.86,       // the tooled shoulder either side of a score joint
-  jointDeep: 0.44,      // the bottom of the groove, which never sees the sky
+  jointLip: 0.82,       // the tooled shoulder either side of a score joint
+  jointDeep: 0.34,      // the scored core, which in a real joint never sees the sky
   stain: 0.76,          // downpipe and kerb-runoff washes
   apron: 0.94,          // a driveway apron is a separate, later pour
   // paint
@@ -603,12 +606,17 @@ function emitItem(state, x, z, feature, fn) {
  */
 export function junctionEarnsCrossings(node) {
   if (!node || node.signalised) return false;
-  if (node.degree < 3) return false;
-  if (node.maxClassRank < 4) return false;
-  // A crossing is marked where a footway has to continue ACROSS a leg, which
-  // needs at least three legs that carry a footway at all. Two streets plus a
-  // service alley is a driveway, not a junction, and gets no ladder.
-  return node.approaches.filter((a) => a.classRank >= 3).length >= 3;
+  // ONE READING OF "THIS JUNCTION IS MARKED" (round 6). The rule now lives in
+  // street-surface-v2 next to the surface it has to reserve room on: that
+  // module stops the longitudinal lane lines where the crossing starts, and if
+  // this pass answered the question differently the lane lines would run back
+  // under the zebra - which is the round-4 defect four reviewers reported.
+  return nodeEarnsJunctionPaint(
+    false,
+    node.degree,
+    node.maxClassRank,
+    (node.approaches || []).filter((a) => a.classRank >= 3).length,
+  );
 }
 
 /**
@@ -628,11 +636,17 @@ export function approachStops(node, approach) {
   return node.minClassRank === node.maxClassRank && node.maxClassRank <= 6 && node.degree >= 3;
 }
 
-/** Marked crossing width for a node, inside the legal band. */
-export function crossingWidthFor(node) {
+/**
+ * Marked crossing band depth for a node, inside the legal band.
+ *
+ * The depth ladder is `crossingBandDepth` in street-surface-v2, which is also
+ * what that module reserves on the approach and what it paints at a signalised
+ * node, so every crossing in the city is one band family at one depth per
+ * class - not one depth here and another one there.
+ */
+export function crossingWidthFor(node, options = null) {
   const { crosswalkMinWidth, crosswalkMaxWidth } = STREET_DETAIL_MARKINGS;
-  const width = node.maxClassRank >= 6 ? 3.6 : node.maxClassRank >= 5 ? 3.0 : 2.4;
-  return clamp(width, crosswalkMinWidth, crosswalkMaxWidth);
+  return clamp(crossingBandDepth(node?.maxClassRank ?? 0, options), crosswalkMinWidth, crosswalkMaxWidth);
 }
 
 /**
@@ -779,7 +793,7 @@ function emitJunctionPaint(state, node) {
     fresh, clamp(1 - 0.52 * age - 0.42 * track, paintFloor, 1),
   );
   const crossings = junctionEarnsCrossings(node);
-  const width = crossingWidthFor(node);
+  const width = crossingWidthFor(node, o);
   const ladder = node.maxClassRank >= 5;
 
   for (const approach of node.approaches) {
@@ -821,13 +835,14 @@ function emitJunctionPaint(state, node) {
       const emitted = emitItem(state, anchor.x, anchor.z, 'crossing', () => {
         const usable = Math.max(0, half * 2 - o.crosswalkEdgeInset * 2);
         if (ladder) {
-          const pitch = STREET_DETAIL_MARKINGS.ladderStripePitch;
-          const stripeWidth = STREET_DETAIL_MARKINGS.ladderStripeWidth;
-          const stripes = Math.max(2, Math.floor(usable / pitch));
-          for (let i = 0; i < stripes; i += 1) {
-            const v = -half + o.crosswalkEdgeInset + (usable * (i + 0.5)) / stripes;
-            const v0 = v - stripeWidth / 2;
-            const v1 = v + stripeWidth / 2;
+          // ONE BAR WIDTH AND ONE BAR PITCH FOR THE WHOLE CITY. See
+          // `planCrossingStripes` in street-surface-v2: round 4 rescaled the
+          // pitch to the road width here and again, differently, in the
+          // surface builder, so one junction carried 14 bars at 0.871 m on its
+          // arterial legs and 6 bars at 0.967 m on its residential legs.
+          const family = planCrossingStripes(half, o);
+          for (const stripe of family.stripes) {
+            const { v, v0, v1 } = stripe;
             // The bars of a continental crossing run PARALLEL to the traffic
             // that crosses them, so a wheel path lies along one bar and leaves
             // its neighbour alone. That comb - not noise - is what makes the
@@ -883,7 +898,7 @@ function emitJunctionPaint(state, node) {
     // it instead of on top of it.
     const stops = !node.signalised && approachStops(node, approach);
     const paintedBandEnd = node.signalised
-      ? approach.trim + o.crosswalkClearance + o.crosswalkBandDepth
+      ? approach.trim + o.crosswalkClearance + crossingBandDepth(node.maxClassRank, o)
       : drawCrossing ? bandEnd : approach.trim + o.crosswalkClearance;
     const barStart = paintedBandEnd + o.stopBarClearance;
     const barDepth = clamp(STREET_DETAIL_MARKINGS.stopBarDepth,
@@ -1345,73 +1360,73 @@ export function panelLengthFor(segment, seedTag = 'city') {
 }
 
 /**
- * A REAL SCORE JOINT, NOT A GREY LINE (round 5). READ THIS BEFORE EDITING.
+ * A JOINT MUST NEVER BE BRIGHTER THAN THE SLAB. READ THIS BEFORE EDITING.
  *
- * Round 4 drew every footway joint as one flat 22 mm quad, 14% darker than the
- * slab, lying at a constant lift above it. At any distance past about 4 m that
- * is a pencil line on paper: it has no shading term of its own, so it cannot
- * change with the sun, it produces no contact darkening, and it disappears
- * entirely in overcast light. A jointing tool leaves a groove with a radiused
- * shoulder either side, and what makes that groove legible in real light is
- * that the two facets face in DIFFERENT DIRECTIONS and the bottom of the
- * groove is occluded from most of the sky.
+ * Round 4 drew a flat 22 mm quad 14% darker than the slab, and a reviewer
+ * called it a pencil line. Round 5 replaced it with a V-groove whose rim
+ * stands 9 mm PROUD of the footway - the header then admitted as much:
+ * "geometrically it is a tooled lip standing 9 mm proud". Three of the five
+ * round-4 reviewers read the result as bright white dashed lines that break
+ * into dots, i.e. as paint on the surface rather than a recess in it.
  *
- * So the joint is now two quads meeting at a depressed centre line, with real
- * per-facet normals and a darker tone at the bottom than at the shoulders.
+ * That is not a tone bug, it is a geometry bug, and it is provable. A facet
+ * whose normal is tilted by `r = depth / halfWidth` away from vertical returns,
+ * relative to the flat slab beside it, at most
  *
- * WHY THE GROOVE IS BUILT UPWARD FROM THE SURFACE, NOT CUT INTO IT. The
- * footway slab is a solid mesh with no groove in it, so a facet sunk below the
- * slab is behind it and gets depth-rejected in exactly the places the groove
- * would be visible. The shoulders therefore sit at `lift + depth` and the
- * centre line at `lift`, i.e. the whole groove is above the surface it scores
- * and only the RELIEF between shoulder and centre is real. That relief is what
- * the ambient-occlusion resolve in src/render/post-chain.js integrates, and it
- * is what the sun shades: geometrically it is a tooled lip standing 9 mm
- * proud, which is also what a jointing tool actually leaves behind.
+ *     k * (1 + r * cot(theta)) / sqrt(1 + r * r)
  *
- * `walkPoint(s, v, lift)` supplies the CAMBERED footway height at (s, v), so
- * the groove follows the cross-fall of the walk instead of floating over it.
+ * where `theta` is the sun elevation and `k` is the facet's albedo as a
+ * fraction of the slab's. With round 5's numbers - k = 0.86, halfWidth 13 mm,
+ * depth 9 mm, so r = 0.69 - that ratio passes 1.0 at a sun elevation of 55
+ * degrees and reaches 2.4 at 20 degrees. A RAISED lip is BRIGHTER THAN THE
+ * SLAB for every sun this world ever renders, whatever albedo is written on
+ * it. No amount of darkening fixes it, and the groove cannot be sunk instead,
+ * because the footway slab is solid and a facet below it is depth-rejected.
+ *
+ * So the joint is flat and its normal is exactly the slab's. With r = 0 the
+ * ratio collapses to `k`, which is below 1 by construction at every sun angle,
+ * in every sky, at night, and under any exposure. It is emitted as three
+ * strips - two tooled shoulders either side of a darker core - so the profile
+ * has a soft edge instead of one hard sub-pixel stroke, which is what was
+ * breaking into dots at distance.
+ *
+ * `scripts/verify/verify-street-detail.mjs` can assert the invariant directly
+ * from `STREET_JOINT_GROOVE`: every tone multiplier < 1 and `depth` == 0.
  */
 export const STREET_JOINT_GROOVE = Object.freeze({
-  panelHalfWidth: 0.013,     // 26 mm overall, the width of a tooled score joint
-  expansionHalfWidth: 0.026, // 52 mm, a sealed expansion joint
-  depth: 0.009,              // shoulder to groove bottom
+  panelHalfWidth: 0.019,     // 38 mm overall: shoulders plus the scored core
+  expansionHalfWidth: 0.032, // 64 mm, a sealed expansion joint
+  coreFraction: 0.42,        // how much of the width is the dark core
+  depth: 0,                  // FLAT. See the note above; this may not go above 0.
 });
 
 /**
- * Emit one V-groove between two points on the footway, as two quads sharing a
- * depressed centre line. `at(s, v, lift)` must return a point on the surface
- * being scored. `axis` is 'along' (the groove runs along v, i.e. across the
- * walk) or 'across' (the groove runs along s, i.e. down the walk).
+ * Emit one score joint between two points on the footway as three coplanar
+ * strips: shoulder, core, shoulder. `at(s, v, lift)` must return a point on the
+ * surface being scored. `axis` is 'along' (the joint runs along v, i.e. across
+ * the walk) or 'across' (it runs along s, i.e. down the walk).
  */
 function pushGroove(buffer, at, s, v0, v1, halfWidth, tones, axis) {
-  const { depth } = STREET_JOINT_GROOVE;
-  const lip = STREET_DETAIL_LIFTS.joint + depth;
-  const floor = STREET_DETAIL_LIFTS.joint;
+  const lift = STREET_DETAIL_LIFTS.joint;
+  const core = halfWidth * STREET_JOINT_GROOVE.coreFraction;
   const shoulder = tones.jointLip;
   const bottom = tones.jointDeep;
-  // Facet normal: rises `depth` over `halfWidth`, tilted away from the centre.
-  const run = Math.hypot(halfWidth, depth) || 1;
-  const nUp = halfWidth / run;
-  const nOut = depth / run;
+  // Bands as (offset-from-centre lo, hi, tone), centre band last so it wins
+  // the depth test against its own neighbours at grazing angles.
+  const bands = [
+    [-halfWidth, -core, shoulder],
+    [core, halfWidth, shoulder],
+    [-core, core, bottom],
+  ];
   let faces = 0;
-  for (const sign of [-1, 1]) {
-    const outer = axis === 'along'
-      ? [at(s + sign * halfWidth, v0, lip), at(s + sign * halfWidth, v1, lip)]
-      : [at(v0, s + sign * halfWidth, lip), at(v1, s + sign * halfWidth, lip)];
-    const inner = axis === 'along'
-      ? [at(s, v0, floor), at(s, v1, floor)]
-      : [at(v0, s, floor), at(v1, s, floor)];
-    // The facet climbs from the groove floor out to the shoulder, so its
-    // normal leans back INTO the groove. Taken from the emitted points rather
-    // than from the axis argument, so it cannot be inverted by a sign
-    // convention: an inverted pair reads as a raised ridge, not a groove.
-    const ox = outer[0].x - inner[0].x;
-    const oz = outer[0].z - inner[0].z;
-    const ol = Math.hypot(ox, oz) || 1;
-    const normal = { x: -(ox / ol) * nOut, y: nUp, z: -(oz / ol) * nOut };
-    faces += pushFace(buffer, [outer[0], outer[1], inner[1], inner[0]],
-      [shoulder, shoulder, bottom, bottom], normal);
+  for (const [lo, hi, tone] of bands) {
+    const pts = axis === 'along'
+      ? [at(s + lo, v0, lift), at(s + lo, v1, lift), at(s + hi, v1, lift), at(s + hi, v0, lift)]
+      : [at(v0, s + lo, lift), at(v1, s + lo, lift), at(v1, s + hi, lift), at(v0, s + hi, lift)];
+    // UP, exactly the slab's own normal. This is the whole point: with the
+    // same normal and a lower albedo the joint cannot out-reflect the slab
+    // under any light.
+    faces += pushFace(buffer, pts, tone, UP);
   }
   return faces;
 }
@@ -1545,13 +1560,20 @@ function pushDome(buffer, cx, cy, cz, halfSize, height, color, ax, az) {
 function emitRampPads(state, node) {
   const o = state.o;
   const rampReach = o.curbTopWidth + o.rampRun;
-  const padDepth = 0.62;
+  // A DETECTABLE-WARNING PAD IS 0.6-0.9 m DEEP (round 6). Round 4 laid a
+  // 0.62 m pad on a 1.36 m ramp run and a reviewer measured it at "roughly a
+  // third of legal depth"; the pad is now the full depth a cast panel is
+  // supplied in and covers most of the ramp's own run.
+  const padDepth = clamp(rampReach * 0.62, 0.6, 0.9);
   const padColor = hexToSrgb(streetHash32(`${state.seedTag}:pad:${node.id}`) % 2 === 0
     ? PALETTE.domePadYellow : PALETTE.domePadRed);
   const domeColor = hexToSrgb(PALETTE.domeCap);
   for (const path of node.paths || []) {
-    const window = path.ramp;
-    if (!window) { reject(state, 'rampPad', 'no-ramp'); continue; }
+    // Every ramp on the corner, not just the first: a corner return now cuts a
+    // perpendicular PAIR of ramps, one square to each leg's crossing, and both
+    // of them carry a pad.
+    const windows = (path.ramps && path.ramps.length) ? path.ramps : (path.ramp ? [path.ramp] : []);
+    if (!windows.length) { reject(state, 'rampPad', 'no-ramp'); continue; }
     const stations = path.stations || [];
     for (let i = 0; i < stations.length - 1; i += 1) {
       const a = stations[i];
@@ -1559,18 +1581,21 @@ function emitRampPads(state, node) {
       if (a.ang === undefined || b.ang === undefined) continue;
       if (!(a.walk > rampReach + 0.05) || !(b.walk > rampReach + 0.05)) continue;
       const midAng = (a.ang + b.ang) / 2;
-      if (!(midAng > window.lo - 1e-9 && midAng < window.hi + 1e-9)) continue;
+      if (!windows.some((w) => midAng > w.lo - 1e-9 && midAng < w.hi + 1e-9)) continue;
       if (Math.hypot(a.x - b.x, a.z - b.z) < 1e-6) continue;
       const surfaceAt = (st, dist) => {
         const scaleFactor = Number.isFinite(st.scale) && st.scale > 0 ? st.scale : 1;
         const x = st.x + st.out.x * dist * scaleFactor;
         const z = st.z + st.out.z * dist * scaleFactor;
         const datum = state.datum(st.x, st.z);
-        const invert = datum - o.gutterDepth + o.rampLift;
+        // The ramp now starts on the depressed kerb lip the surface builder
+        // leaves across it, not at the gutter invert, so the pad sits on the
+        // ramp instead of in the channel.
+        const lip = datum - o.gutterDepth + (o.rampLipHeight ?? 0) + o.rampLift;
         const back = curbTopSurfaceY(datum, o) + o.curbTopFall
           + o.sidewalkCrossSlope * Math.max(0, rampReach - o.curbTopWidth);
         const t = clamp(dist / rampReach, 0, 1);
-        return { x, y: invert + (back - invert) * t, z };
+        return { x, y: lip + (back - lip) * t, z };
       };
       const anchor = surfaceAt(a, padDepth / 2);
       // The pad goes in the DOME buffer, not the concrete one (round 5). A

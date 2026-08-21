@@ -127,6 +127,7 @@ const state = {
   buildings: [],
   baseYFor: null,
   preserveIds: new Set(),
+  preserveSurvey: null,
   hiddenLegacy: [],
   refreshes: 0,
   lastRefreshMs: 0,
@@ -318,6 +319,31 @@ function disposeZone(zone) {
   }
 }
 
+/**
+ * This zone's share of the scene triangle budget.
+ *
+ * The two zones are built by separate calls, and each call enforces the budget
+ * it is handed. Handing both of them the whole scene budget -- which is what
+ * happened until wave C -- bounds neither the sum nor anything else: measured
+ * on the real slice at the round 4 capture centre the pair came to 350,536
+ * triangles against a 330,000 "ceiling", with zero coverage cuts and zero
+ * demotions recorded, because neither call had any reason to cut.
+ *
+ * The detail zone (near + mid) takes first claim, and takes it from a STATIC
+ * number so its rung assignment does not move when the background happens to
+ * be busy -- a facade that changes rung because a block three hundred metres
+ * away came into range is a pop. The bulk zone takes what is left, floored at
+ * the background's guaranteed share. Detail is always built or refreshed with
+ * the other zone's batch already in `state`, so the arithmetic is exact.
+ */
+function zoneTriangleBudget(zone) {
+  const scene = FACADE_ARTICULATION_BUDGET.sceneTriangleBudget;
+  const floor = FACADE_ARTICULATION_BUDGET.bulkTriangleFloor;
+  if (zone === 'detail') return Math.max(0, scene - floor);
+  const detail = state.zoneBatches.get('detail');
+  return Math.max(floor, scene - (detail ? detail.triangles : 0));
+}
+
 /** Build (or rebuild) one zone's merged meshes around `centre`. */
 function buildZone(zone, centre) {
   const startedAt = Date.now();
@@ -326,6 +352,7 @@ function buildZone(zone, centre) {
     zone,
     baseYFor: state.baseYFor,
     preserveIds: state.preserveIds,
+    sceneTriangleBudget: zoneTriangleBudget(zone),
   });
   disposeZone(zone);
   let group = state.zoneGroups.get(zone);
@@ -368,20 +395,77 @@ function buildZone(zone, centre) {
 }
 
 /**
- * Buildings whose elevation is authored somewhere else. The renderer merges a
- * hand-made facade atlas onto a handful of hero frontages and publishes their
- * ids on the merged mesh; cladding procedural windows over a hand-authored
- * photographic facade would be a straight downgrade, so those keep their
- * surface and take the silhouette rung's roofline only.
+ * Buildings whose elevation is authored somewhere else.
+ *
+ * Preserving a frontage means it is forced to the silhouette rung: no
+ * cladding, no openings, no reveals, only a cornice and a plinth over the
+ * shell's tiled wallpaper. That is the right answer for a hand-authored
+ * elevation and a catastrophe for anything else, so the test for "authored"
+ * has to be exact.
+ *
+ * Round 4 it was not. This read every id off every `buildings-hero-textured`
+ * mesh, but the renderer puts a building on that mesh whenever its facade and
+ * material land on one of six SHARED atlas cells -- a procedural fill, not an
+ * authored elevation. Measured on the 700 building slice that is 139
+ * candidates, and at the round 4 capture eye they held 64.2% of the frame's
+ * screen coverage, including the 115 m building 6.4 m from the camera that
+ * fills the whole hero card. All five reviewers described exactly that: "the
+ * nearest and largest surface ... an articulation-free smear with no windows,
+ * mullions or reveals at all". The near tier was not failing to build depth;
+ * it was being told not to build any.
+ *
+ * Two tests, in order:
+ *
+ *  1. `userData.authoredBuildingIds` -- the explicit contract. If the renderer
+ *     names its authored frontages, that answer is used and nothing else is.
+ *     THIS IS THE FIX THE RENDERER OWNER SHOULD LAND; everything below is a
+ *     bridge until it does.
+ *  2. `userData.patternKeys` -- the atlas cells the merged group draws from.
+ *     An authored frontage owns its cell. A group carrying more buildings than
+ *     cells is sharing them, which is a procedural fill by definition, and
+ *     none of its ids are preserved.
+ *
+ * A group that declares neither keeps the old behaviour, which is the
+ * conservative direction: it preserves an authored surface it cannot identify
+ * rather than cladding over one.
  */
 function authoredElevations(root) {
   const ids = new Set();
-  if (!root?.traverse) return ids;
+  const survey = { groups: 0, candidates: 0, declared: 0, inferredAuthored: 0, sharedAtlasSkipped: 0, source: 'none' };
+  if (!root?.traverse) return { ids, survey };
   root.traverse((object) => {
     if (object.userData?.kind !== 'buildings-hero-textured') return;
-    for (const id of object.userData.buildingIds || []) ids.add(id);
+    const buildingIds = Array.isArray(object.userData.buildingIds) ? object.userData.buildingIds : [];
+    survey.groups += 1;
+    survey.candidates += buildingIds.length;
+
+    // 1. The declared contract. If the renderer names its authored frontages,
+    //    that answer is authoritative and nothing else is consulted.
+    const declared = Array.isArray(object.userData.authoredBuildingIds)
+      ? object.userData.authoredBuildingIds
+      : null;
+    if (declared) {
+      for (const id of declared) ids.add(id);
+      survey.declared += declared.length;
+      survey.source = survey.source === 'inferred' ? 'mixed' : 'declared';
+      return;
+    }
+
+    // 2. The atlas-cell test. `patternKeys` is the set of atlas cells this
+    //    merged group draws from. A hand-authored frontage owns its cell; a
+    //    procedurally atlassed one shares a handful of cells across many
+    //    buildings, and a group carrying more buildings than cells is
+    //    therefore a procedural fill whatever its mesh is called.
+    const patternKeys = Array.isArray(object.userData.patternKeys) ? object.userData.patternKeys : null;
+    if (patternKeys && buildingIds.length > patternKeys.length) {
+      survey.sharedAtlasSkipped += buildingIds.length;
+      return;
+    }
+    for (const id of buildingIds) ids.add(id);
+    survey.inferredAuthored += buildingIds.length;
+    if (buildingIds.length) survey.source = survey.source === 'declared' ? 'mixed' : 'inferred';
   });
-  return ids;
+  return { ids, survey };
 }
 
 /**
@@ -468,6 +552,10 @@ function collectDiagnostics(centre, centreSource) {
     }
   }
   const budget = FACADE_ARTICULATION_BUDGET;
+  const zoneTriangles = {
+    detail: detail ? detail.triangles : 0,
+    bulk: bulk ? bulk.triangles : 0,
+  };
   return {
     version: FACADE_ARTICULATION_VERSION,
     implemented: true,
@@ -498,6 +586,10 @@ function collectDiagnostics(centre, centreSource) {
     partyEdges,
     preservedAuthored,
     authoredElevations: state.preserveIds.size,
+    // How that number was reached. `candidates` is every id published on a
+    // `buildings-hero-textured` mesh; `sharedAtlasSkipped` is the ones that
+    // turned out to be a procedural atlas fill and are now clad normally.
+    preserve: state.preserveSurvey || { groups: 0, candidates: 0, declared: 0, inferredAuthored: 0, sharedAtlasSkipped: 0, source: 'none' },
     signatures: {
       total: articulated,
       unique: signatures.size,
@@ -507,6 +599,13 @@ function collectDiagnostics(centre, centreSource) {
     },
     budget: {
       sceneTriangleBudget: budget.sceneTriangleBudget,
+      bulkTriangleFloor: budget.bulkTriangleFloor,
+      // What each zone was actually allowed, and what it spent. The sum is
+      // bounded by `sceneTriangleBudget` by construction; these are here so a
+      // reader can see WHICH zone is close to its share rather than only that
+      // the total fits.
+      zoneBudgets: { detail: Math.max(0, budget.sceneTriangleBudget - budget.bulkTriangleFloor), bulk: zoneTriangles.bulk ? Math.max(budget.bulkTriangleFloor, budget.sceneTriangleBudget - zoneTriangles.detail) : 0 },
+      zoneTriangles,
       maxDrawCalls: budget.maxDrawCalls,
       withinBudget: triangles <= budget.sceneTriangleBudget && drawCalls <= budget.maxDrawCalls,
       demotions,
@@ -536,6 +635,7 @@ function teardown() {
   state.buildings = [];
   state.baseYFor = null;
   state.preserveIds = new Set();
+  state.preserveSurvey = null;
   state.refreshes = 0;
   state.lastRefreshMs = 0;
   state.group = null;
@@ -578,7 +678,9 @@ export default {
       return value;
     };
 
-    state.preserveIds = authoredElevations(ctx?.root);
+    const authored = authoredElevations(ctx?.root);
+    state.preserveIds = authored.ids;
+    state.preserveSurvey = authored.survey;
     state.nightLevel = -1;
 
     // Create every material now, before the renderer walks the scene to cache

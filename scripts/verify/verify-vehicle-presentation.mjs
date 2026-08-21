@@ -72,7 +72,7 @@ import {
   wetnessFor,
   VEHICLE_ENV_CLASS,
 } from '../../src/vehicles/vehicle-fleet.js';
-import { carriagewaySurfaceY } from '../../src/world/streets/street-surface-v2.js';
+import { buildStreetSurfaceData } from '../../src/world/streets/street-surface-v2.js';
 import { MATERIAL_CLASSES, envMapIntensityFor } from '../../src/render/environment-ibl.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -513,44 +513,137 @@ section('5. construction survives a three-metre close-up');
 // ---------------------------------------------------------------------------
 section('6. wheels touch the carriageway on flat ground and on a grade');
 // ---------------------------------------------------------------------------
-function contactAudit(built) {
-  let worst = 0;
-  let sum = 0;
-  let n = 0;
-  const options = built.plan.options;
-  const datumAt = options.heightAt
-    ? (x, z) => options.roadLift + options.heightAt(x, z)
-    : () => options.roadLift;
-  for (const vehicle of built.vehicles) {
-    const segment = built.plan.segmentById.get(vehicle.segmentId);
-    if (!segment) continue;
-    for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
-      const lateral = lateralOf(segment, contact.x, contact.z);
-      const expected = carriagewaySurfaceY(datumAt(contact.x, contact.z), lateral, segment.half, options);
-      const error = Math.abs(contact.y - expected);
-      if (!Number.isFinite(error)) return { worst: Infinity, mean: Infinity, samples: n };
-      sum += error;
-      n += 1;
-      if (error > worst) worst = error;
+/**
+ * The DRAWN carriageway, as triangles, indexed for point lookup.
+ *
+ * ROUND 5 ADJUDICATION - READ THIS BEFORE SIMPLIFYING IT BACK TO A FORMULA.
+ *
+ * This audit used to compare each wheel against
+ * `carriagewaySurfaceY(roadLift + heightAt(wheelX, wheelZ), ...)`, i.e. the
+ * terrain sampled UNDER THE WHEEL plus the cross-section. That is not the
+ * surface the renderer draws. `street-surface-v2.emitSegment` takes ONE datum
+ * per centreline station - `datums = stations.map((st) => ctx.datum(st.x, st.z))`
+ * - and sweeps the whole cross-section from it; it never samples the terrain at
+ * a lateral offset. Wherever the terrain cross-falls, terrain-under-the-wheel
+ * and the drawn asphalt are different surfaces, and they differ by the terrain
+ * cross-grade times the wheel's lateral offset - 0.84 m on the 12% fixture
+ * below.
+ *
+ * Worse, the old expression was the same expression the placement code used, so
+ * it could only ever prove that the placement agreed with its own model. It
+ * reported 0.0019 m worst error on the round-4 build.
+ *
+ * The expectation is therefore taken from the GEOMETRY: the street module is
+ * asked for the same surface data the renderer builds, and the height of the
+ * asphalt under a wheel is read out of the triangle that covers it. Nothing
+ * here re-derives a cross-section, so the audit cannot agree with the placement
+ * by construction.
+ */
+function drawnCarriageway(city, options, cell = 8) {
+  const surface = buildStreetSurfaceData(city, { ...options });
+  const layer = surface.layers.carriageway;
+  const grid = new Map();
+  const tris = [];
+  const pos = layer.positions;
+  const idx = layer.indices;
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i] * 3; const b = idx[i + 1] * 3; const c = idx[i + 2] * 3;
+    const t = [
+      pos[a], pos[a + 1], pos[a + 2],
+      pos[b], pos[b + 1], pos[b + 2],
+      pos[c], pos[c + 1], pos[c + 2],
+    ];
+    const ti = tris.push(t) - 1;
+    const minX = Math.min(t[0], t[3], t[6]); const maxX = Math.max(t[0], t[3], t[6]);
+    const minZ = Math.min(t[2], t[5], t[8]); const maxZ = Math.max(t[2], t[5], t[8]);
+    for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+      for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+        const key = `${gx}:${gz}`;
+        let list = grid.get(key);
+        if (!list) { list = []; grid.set(key, list); }
+        list.push(ti);
+      }
     }
   }
-  return { worst, mean: n ? sum / n : 0, samples: n };
+  /** Every drawn asphalt height at a world point - two where ribbons lap. */
+  return function heightsAt(x, z) {
+    const list = grid.get(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`);
+    if (!list) return [];
+    const out = [];
+    for (const ti of list) {
+      const t = tris[ti];
+      const x0 = t[0]; const y0 = t[1]; const z0 = t[2];
+      const x1 = t[3]; const y1 = t[4]; const z1 = t[5];
+      const x2 = t[6]; const y2 = t[7]; const z2 = t[8];
+      const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+      if (Math.abs(d) < 1e-12) continue;
+      const l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d;
+      const l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d;
+      const l2 = 1 - l0 - l1;
+      if (l0 < -1e-6 || l1 < -1e-6 || l2 < -1e-6) continue;
+      out.push(l0 * y0 + l1 * y1 + l2 * y2);
+    }
+    return out;
+  };
+}
+
+function contactAudit(built, city) {
+  const heightsAt = drawnCarriageway(city, built.plan.options);
+  let worst = 0;
+  let worstFloat = 0;
+  let worstAt = null;
+  let sum = 0;
+  let n = 0;
+  let offMesh = 0;
+  for (const vehicle of built.vehicles) {
+    for (const contact of wheelContactPoints(vehicle.spec, vehicle)) {
+      const heights = heightsAt(contact.x, contact.z);
+      if (!heights.length) { offMesh += 1; continue; }
+      // Where two ribbons lap there are two asphalt surfaces under one point. A
+      // wheel is grounded when it rests on ONE of them, so the error is the
+      // distance to the NEAREST; `float` is how far it stands above the
+      // HIGHEST, which is the gap a camera sees.
+      let error = Infinity;
+      let top = -Infinity;
+      for (const h of heights) {
+        const d = Math.abs(contact.y - h);
+        if (d < error) error = d;
+        if (h > top) top = h;
+      }
+      if (!Number.isFinite(error)) return { worst: Infinity, mean: Infinity, samples: n, offMesh, worstFloat: Infinity, worstAt };
+      sum += error;
+      n += 1;
+      if (error > worst) {
+        worst = error;
+        worstAt = `${vehicle.typeId} on ${vehicle.segmentId} at (${contact.x.toFixed(2)}, ${contact.z.toFixed(2)}):`
+          + ` wheel ${contact.y.toFixed(3)} m, asphalt ${top.toFixed(3)} m`;
+      }
+      if (contact.y - top > worstFloat) worstFloat = contact.y - top;
+    }
+  }
+  return { worst, mean: n ? sum / n : 0, samples: n, offMesh, worstFloat, worstAt };
 }
 
 {
   const flat = buildVehiclePresentation(makeCtx(gridCity(), { heightAt: () => 0 }));
-  const flatAudit = contactAudit(flat);
-  assert(flatAudit.samples > 200, `flat ground: ${flatAudit.samples} wheel contacts measured`);
+  const flatAudit = contactAudit(flat, gridCity());
+  assert(flatAudit.samples > 200,
+    `flat ground: ${flatAudit.samples} wheel contacts measured against the drawn asphalt (${flatAudit.offMesh} off the mesh)`);
+  assert(flatAudit.offMesh === 0, `flat ground: every wheel is over drawn asphalt (${flatAudit.offMesh} are not)`);
   assert(flatAudit.worst <= CONTACT_TOLERANCE,
-    `flat ground: worst wheel contact error ${(flatAudit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`);
+    `flat ground: worst wheel-to-drawn-asphalt error ${(flatAudit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`
+    + ` (worst float ${(flatAudit.worstFloat * 1000).toFixed(2)} mm)${flatAudit.worstAt ? ` - ${flatAudit.worstAt}` : ''}`);
 
   // A 12% grade with cross-fall and curvature - steeper than any real street.
   const slopeCtx = makeCtx(gridCity(), { heightAt: (x, z) => x * 0.12 + z * 0.05 + Math.sin(x * 0.02) * 2 });
   const sloped = buildVehiclePresentation(slopeCtx);
-  const slopeAudit = contactAudit(sloped);
-  assert(slopeAudit.samples > 200, `12% grade: ${slopeAudit.samples} wheel contacts measured`);
+  const slopeAudit = contactAudit(sloped, gridCity());
+  assert(slopeAudit.samples > 200,
+    `12% grade: ${slopeAudit.samples} wheel contacts measured against the drawn asphalt (${slopeAudit.offMesh} off the mesh)`);
+  assert(slopeAudit.offMesh === 0, `12% grade: every wheel is over drawn asphalt (${slopeAudit.offMesh} are not)`);
   assert(slopeAudit.worst <= CONTACT_TOLERANCE,
-    `12% grade: worst wheel contact error ${(slopeAudit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`);
+    `12% grade: worst wheel-to-drawn-asphalt error ${(slopeAudit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`
+    + ` (worst float ${(slopeAudit.worstFloat * 1000).toFixed(2)} mm)${slopeAudit.worstAt ? ` - ${slopeAudit.worstAt}` : ''}`);
   const pitched = sloped.vehicles.filter((v) => Math.abs(v.pitch) > 0.02).length;
   assert(pitched > sloped.vehicles.length * 0.4,
     `12% grade: ${pitched}/${sloped.vehicles.length} vehicles are pitched onto the road plane, not left level`);
@@ -963,9 +1056,20 @@ section('11. budgets at a stated real city size');
   assert(d.totals.drawCalls <= VEHICLE_BUDGET.maxDrawCalls,
     `draw-call budget holds (${d.totals.drawCalls} <= ${VEHICLE_BUDGET.maxDrawCalls})`);
   assert(elapsed < 8000, `build stays inside a usable capture budget (${elapsed} ms)`);
-  const audit = contactAudit(built);
+  // The real city is the case the modelled fallback cannot serve: where
+  // `street-surface-v2` laps a junction pad or a wider ribbon over a narrower
+  // one, the modelled "topmost cross-section" is not the asphalt that was
+  // drawn. This ctx carries no street mesh, so the pass is on that fallback
+  // here. A failure below is a float in the FALLBACK, not a stale expectation:
+  // re-measured against the drawn triangles the worst wheel of round 5 stands
+  // 109.6 mm above the asphalt under it, at the same wheel the old expression
+  // reported 109.23 mm on.
+  const audit = contactAudit(built, city);
+  console.log(`  drawn-asphalt audit: ${audit.samples} contacts, ${audit.offMesh} off the mesh,`
+    + ` mean ${(audit.mean * 1000).toFixed(2)} mm, worst float ${(audit.worstFloat * 1000).toFixed(2)} mm`);
   assert(audit.worst <= CONTACT_TOLERANCE,
-    `real city: worst wheel contact error ${(audit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`);
+    `real city: worst wheel-to-drawn-asphalt error ${(audit.worst * 1000).toFixed(2)} mm <= ${CONTACT_TOLERANCE * 1000} mm`
+    + `${audit.worstAt ? ` - ${audit.worstAt}` : ''}`);
 
   // Instancing, not one mesh per vehicle.
   let instanced = 0;

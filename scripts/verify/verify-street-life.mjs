@@ -50,6 +50,7 @@ import streetLife, {
 import { MATERIAL_CLASSES } from '../../src/render/environment-ibl.js';
 import {
   buildStreetscapePlan,
+  buildStreetSurfaceData,
   sidewalkSurfaceY,
   carriagewaySurfaceY,
   streetStationAt,
@@ -94,6 +95,18 @@ import {
 const GROUNDING_TOLERANCE_M = 1e-6;
 /** Simulated walkers are placed analytically, so their tolerance is tighter. */
 const WALKER_GROUNDING_TOLERANCE_M = 1e-9;
+/**
+ * How far a simulated figure or vehicle may stand from the surface the renderer
+ * actually DRAWS under it.
+ *
+ * This is not a closed-form comparison and cannot be exact: the ribbon is swept
+ * on cross-sections at most `maxStep` (6 m) apart and chords between them, and
+ * a junction pad is a fillet no cross-section expresses, so a correctly grounded
+ * body still sits a sagitta off the triangle under it. 25 mm covers that. It
+ * does not cover a gap a reviewer can see: 25 mm at 12 m is a fifth of a pixel
+ * on a 1600 x 900 frame, while the offsets measured below are 10 to 20 pixels.
+ */
+const DRAWN_SURFACE_TOLERANCE_M = 0.025;
 /**
  * Stride / (2 x leg length) must stay inside this band over walking speeds.
  * For a 0.92 m leg that is a 0.63 m stride at a 0.4 m/s shuffle and a 2.21 m
@@ -569,16 +582,94 @@ for (const [label, heightAt] of [['flat ground', flatHeight], ['6% slope', slope
   assert(carsOnFootway === 0, `${label}: no kerb car is parked on the pavement (${carsOnFootway})`);
 }
 
-// The simulation's own walkers must stand on the surface that is DRAWN.
+/**
+ * The street surface the renderer DRAWS, as triangles, indexed for point
+ * lookup. `layers` are the drawn layers a body may legitimately rest on.
+ *
+ * Returns `heightsAt(x, z)` - every drawn height at that point, because two
+ * paved surfaces lap wherever a junction pad crosses a ribbon or a wide street
+ * crosses a narrow one, and a body is grounded when it rests on ONE of them.
+ */
+function drawnStreetSurface(city, options, layers, cell = 8) {
+  const surface = buildStreetSurfaceData(city, { ...options });
+  const grid = new Map();
+  const tris = [];
+  for (const name of layers) {
+    const layer = surface.layers[name];
+    if (!layer?.indices?.length) continue;
+    const pos = layer.positions;
+    const idx = layer.indices;
+    for (let i = 0; i < idx.length; i += 3) {
+      const a = idx[i] * 3; const b = idx[i + 1] * 3; const c = idx[i + 2] * 3;
+      const t = [
+        pos[a], pos[a + 1], pos[a + 2],
+        pos[b], pos[b + 1], pos[b + 2],
+        pos[c], pos[c + 1], pos[c + 2],
+      ];
+      const ti = tris.push(t) - 1;
+      const minX = Math.min(t[0], t[3], t[6]); const maxX = Math.max(t[0], t[3], t[6]);
+      const minZ = Math.min(t[2], t[5], t[8]); const maxZ = Math.max(t[2], t[5], t[8]);
+      for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+        for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+          const key = `${gx}:${gz}`;
+          let list = grid.get(key);
+          if (!list) { list = []; grid.set(key, list); }
+          list.push(ti);
+        }
+      }
+    }
+  }
+  return function heightsAt(x, z) {
+    const list = grid.get(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`);
+    if (!list) return [];
+    const out = [];
+    for (const ti of list) {
+      const t = tris[ti];
+      const x0 = t[0]; const y0 = t[1]; const z0 = t[2];
+      const x1 = t[3]; const y1 = t[4]; const z1 = t[5];
+      const x2 = t[6]; const y2 = t[7]; const z2 = t[8];
+      const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+      if (Math.abs(d) < 1e-12) continue;
+      const l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d;
+      const l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d;
+      const l2 = 1 - l0 - l1;
+      if (l0 < -1e-6 || l1 < -1e-6 || l2 < -1e-6) continue;
+      out.push(l0 * y0 + l1 * y1 + l2 * y2);
+    }
+    return out;
+  };
+}
+
+// The simulation's own walkers and vehicles must stand on the surface that is
+// DRAWN.
 //
-// This assertion used to compare against `terrain + footwayLift`, a flat plane.
-// The footway is not a plane: street-surface-v2 cuts a gutter pan, a cross-fall
-// and a crown into it, and the simulation now samples that cross-section at
-// each walker's own lateral offset. Against the plane model the difference
-// reads as a 12.8 cm float, which is the assertion being stale rather than the
-// walkers being wrong. It is re-pointed at the drawn surface, and the tolerance
-// is unchanged - a walker that misses the real footway by more than the same
-// margin still fails.
+// ROUND 5 ADJUDICATION - READ THIS BEFORE POINTING EITHER HALF BACK AT A PLANE
+// OR AT THE SIMULATION'S OWN SAMPLER.
+//
+// Both halves of this block used to compare against `terrain + lift`, a flat
+// plane. That is not the surface the renderer draws: `street-surface-v2` crowns
+// the carriageway by `crossSlope * half`, falls it into a gutter pan, and
+// stands the footway on a curb face, so on this fixture the plane is 116 mm off
+// the road and 128 mm off the footway before anything is wrong at all. The
+// plane model was stale, and the vehicle half failed on it for that reason.
+//
+// The walker half was re-pointed in an earlier wave AT `traffic.pedestrianGroundY`
+// - the very function the simulation grounds with. That is a self-check: it
+// reported a worst offset of 4.44e-16 m, and it would report the same if the
+// whole crowd stood a metre in the air. Neither half may be pointed at the
+// placement code again.
+//
+// The expectation therefore comes from the GEOMETRY: the same street-surface
+// data the renderer builds, indexed as triangles, read under each body. That
+// disagrees with the simulation, and the disagreement is the defect, not the
+// measurement: `TrafficSim.vehicleGroundY` and `createStreetSurfaceSampler`
+// both take their datum from `terrainY(x, z)` UNDER THE BODY, while the drawn
+// ribbon sweeps its whole cross-section from one datum per CENTRELINE station
+// (`emitSegment`: `datums = stations.map((st) => ctx.datum(st.x, st.z))`). On a
+// cross-grade those are different surfaces, and they differ by the terrain
+// cross-grade times the body's lateral offset. `src/render/passes/vehicle-presentation.js`
+// removed that term from the parked fleet in round 5; the simulation still has
+// it.
 {
   const camera = new THREE.PerspectiveCamera(47, 16 / 9, 0.5, 4200);
   camera.position.set(0, 1.8, -20);
@@ -587,30 +678,63 @@ for (const [label, heightAt] of [['flat ground', flatHeight], ['6% slope', slope
   const renderer = makeTrafficRenderer(city, camera, slopedHeight);
   const traffic = new TrafficSim(renderer, city);
   for (let i = 0; i < 60; i += 1) traffic.update(1 / 30);
+  const drawnOptions = { ...surfaceOptions, heightAt: slopedHeight, inferNodes: true };
+  // A shoe may rest on any paved thing the street draws; a tyre may rest only
+  // on asphalt.
+  const walkableAt = drawnStreetSurface(city, drawnOptions,
+    ['sidewalk', 'curbTop', 'ramp', 'path', 'crosswalk', 'verge', 'carriageway']);
+  const asphaltAt = drawnStreetSurface(city, drawnOptions, ['carriageway']);
+  /** Distance to the nearest drawn surface, and the gap above the highest. */
+  const offsetFrom = (heightsAt, x, z, y) => {
+    const heights = heightsAt(x, z);
+    if (!heights.length) return null;
+    let nearest = Infinity;
+    let top = -Infinity;
+    for (const h of heights) {
+      const d = Math.abs(y - h);
+      if (d < nearest) nearest = d;
+      if (h > top) top = h;
+    }
+    return { nearest, float: y - top };
+  };
+
   let maxWalker = 0;
+  let walkerFloat = 0;
+  let walkersOffMesh = 0;
+  let walkersOver = 0;
   const agents = traffic.presentationAgents();
   for (const agent of agents) {
     if (agent.heroCurbBehavior) continue;
-    // The same source the simulation grounds on: the drawn footway at this
-    // walker's own position, not a plane through the datum.
-    const expected = typeof traffic.pedestrianGroundY === 'function'
-      ? traffic.pedestrianGroundY(agent.group.position.x, agent.group.position.z)
-      : slopedHeight(agent.group.position.x, agent.group.position.z) + traffic.footwayLift;
     const bob = agent.group.userData.walk.bobOffset || 0;
-    maxWalker = Math.max(maxWalker, Math.abs(agent.group.position.y - bob - expected));
+    const sole = agent.group.position.y - bob;
+    const off = offsetFrom(walkableAt, agent.group.position.x, agent.group.position.z, sole);
+    if (!off) { walkersOffMesh += 1; continue; }
+    if (off.nearest > maxWalker) maxWalker = off.nearest;
+    if (off.float > walkerFloat) walkerFloat = off.float;
+    if (off.nearest > DRAWN_SURFACE_TOLERANCE_M) walkersOver += 1;
   }
   assert(
-    maxWalker <= WALKER_GROUNDING_TOLERANCE_M,
-    `simulated walkers stand on the drawn footway: worst offset ${maxWalker.toExponential(2)} m over ${agents.length} agents`,
+    maxWalker <= DRAWN_SURFACE_TOLERANCE_M,
+    `simulated walkers stand on the drawn footway: worst offset ${(maxWalker * 1000).toFixed(1)} mm`
+    + ` <= ${DRAWN_SURFACE_TOLERANCE_M * 1000} mm (worst float ${(walkerFloat * 1000).toFixed(1)} mm,`
+    + ` ${walkersOver} of ${agents.length - walkersOffMesh} agents over, ${walkersOffMesh} off the mesh)`,
   );
   let maxCar = 0;
+  let carFloat = 0;
+  let carsOffMesh = 0;
+  let carsOver = 0;
   for (const car of traffic.cars) {
-    const expected = slopedHeight(car.group.position.x, car.group.position.z) + traffic.roadLift;
-    maxCar = Math.max(maxCar, Math.abs(car.group.position.y - expected));
+    const off = offsetFrom(asphaltAt, car.group.position.x, car.group.position.z, car.group.position.y);
+    if (!off) { carsOffMesh += 1; continue; }
+    if (off.nearest > maxCar) maxCar = off.nearest;
+    if (off.float > carFloat) carFloat = off.float;
+    if (off.nearest > DRAWN_SURFACE_TOLERANCE_M) carsOver += 1;
   }
   assert(
-    maxCar <= WALKER_GROUNDING_TOLERANCE_M,
-    `moving vehicles sit on the carriageway datum: worst offset ${maxCar.toExponential(2)} m over ${traffic.cars.length} cars`,
+    maxCar <= DRAWN_SURFACE_TOLERANCE_M,
+    `moving vehicles sit on the drawn carriageway: worst offset ${(maxCar * 1000).toFixed(1)} mm`
+    + ` <= ${DRAWN_SURFACE_TOLERANCE_M * 1000} mm (worst float ${(carFloat * 1000).toFixed(1)} mm,`
+    + ` ${carsOver} of ${traffic.cars.length - carsOffMesh} cars over, ${carsOffMesh} off the mesh)`,
   );
   assert(
     near(traffic.footwayLift - traffic.roadLift, 0.102, 1e-12),

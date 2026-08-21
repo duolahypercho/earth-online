@@ -1943,6 +1943,33 @@ const ART_DRIP_DEPTH = 0.035;
 /** Below this the edge is a corner return, not an elevation. */
 const MIN_ART_EDGE = 1.2;
 
+/**
+ * The thinnest caster the near-field sun cascade resolves, in metres.
+ *
+ * Wave B's three-cascade shadow map drops the near-field caster thickness
+ * floor to 0.058 m. A sill, lintel, plinth or dentil that projects less than
+ * that is geometry with no shadow line under it: it costs triangles and reads
+ * as a painted stripe, which is exactly what round 4 rejected the elevations
+ * for ("windows flush to the wall with no reveal, sill or lintel depth").
+ *
+ * 0.06 m is that floor with a 2 mm margin. `castingProjection` is where it is
+ * applied: every projecting trim member on the near rungs is lifted to it
+ * before it is emitted, and is still bounded by the edge's own outward
+ * allowance, so the floor can never push a member past `maxProjection`.
+ */
+export const FACADE_CASTER_MIN_PROJECTION = 0.06;
+
+/**
+ * The depth a projecting member is actually built at: what it wants, lifted to
+ * the caster floor, and clamped to the room it has.
+ */
+function castingProjection(want, room) {
+  const available = Math.max(0, room);
+  if (available <= 0) return 0;
+  const wanted = Number.isFinite(want) ? Math.max(0, want) : 0;
+  return Math.min(available, Math.max(wanted, FACADE_CASTER_MIN_PROJECTION));
+}
+
 export const FACADE_ARTICULATION_VERSION = 'facade-articulation-1';
 
 /**
@@ -2154,13 +2181,50 @@ export const FACADE_ARTICULATION_RING_ORDER = Object.freeze(['near', 'mid', 'far
 export const COVERAGE_CUT_STEPS = Object.freeze([0.5, 0.2, 0]);
 
 /**
- * Scene budget. The arithmetic worst case of the ring caps is
- * 30*3400 + 90*1300 + 260*320 + 1200*48 = 358,600; the batch enforces the
- * ceiling below by demoting whole rings outside-in, never by dropping one
- * building and keeping its neighbour.
+ * Scene budget.
+ *
+ * RESTATED IN WAVE C, because this wave moved it. The 330,000 ceiling was
+ * measured on a city in which 139 of 700 buildings were never clad at all --
+ * the pass was preserving every id on the renderer's shared hero atlas as if
+ * it were a hand-authored elevation, so a fifth of the city, and 64% of the
+ * hero frame's screen coverage, cost 24-192 triangles each. See
+ * `authoredElevations` in src/render/passes/facade-articulation.js. The round
+ * 4 capture manifest records the consequence: 208,524 triangles spent out of
+ * a 330,000 ceiling while the building filling the whole hero card carried 84
+ * triangles.
+ *
+ * With the whole city actually clad, UNDEGRADED demand measured over 182
+ * street eyes on the real 700 building slice (both zones, no budget applied):
+ *
+ *   worst detail zone (near+mid)   260,510   at 1519, 905
+ *   worst bulk zone (far+silh.)    163,396   at 1261, 379
+ *   worst combined                 373,312   at 1519, 905
+ *   median combined                216,116        p95 340,194
+ *   worst draw calls                    21   (ceiling 48, unchanged)
+ *
+ * The two zones do not peak together, so a static split cannot hold both; the
+ * pass therefore gives the detail zone first claim of
+ * `sceneTriangleBudget - bulkTriangleFloor` and hands the bulk zone whatever
+ * the detail zone left, floored at `bulkTriangleFloor`. The numbers below are
+ * set from that measurement: the detail claim of 265,000 covers the worst
+ * detail zone (260,510) so the frame itself is never coverage-cut, the floor
+ * covers the bulk zone at every pose where the detail zone is hot, and the
+ * ceiling is the worst combined demand plus 1.8%.
+ *
+ * This is a GEOMETRY budget backed by a demand measurement, not a frame-time
+ * measurement -- there is no GPU on the build box. What it buys is that the
+ * degrade ladder does not fire on a normal street walk: a ring demotion is a
+ * whole-background LOD pop, and the quality gate rejects those outright.
+ *
+ * The two zones were previously each handed the WHOLE scene budget and their
+ * sum was never bounded by anything, which is why this is a restatement with
+ * enforcement rather than a raise.
  */
 export const FACADE_ARTICULATION_BUDGET = Object.freeze({
-  sceneTriangleBudget: 330000,
+  sceneTriangleBudget: 380000,
+  // The background's guaranteed share; the detail zone's claim is the
+  // remainder. The pass is what applies these; see `zoneTriangleBudget`.
+  bulkTriangleFloor: 115000,
   // Arithmetic worst case: every ring full of buildings tall enough to take
   // the whole height scale. It is far above the scene budget on purpose --
   // the budget is what the batch enforces, by demoting whole rings.
@@ -2422,13 +2486,18 @@ export function drawArticulationVariant(building, style, className, salt = 0) {
     frameWidth: 0.055 + random() * 0.045,
     glassSet: ART_GLASS_SET_MIN + random() * (ART_GLASS_SET_MAX - ART_GLASS_SET_MIN),
     sillLift: 0.72 + random() * 0.42,
-    sillProjection: 0.07 + random() * 0.07,
-    lintelDepth: 0.05 + random() * 0.05,
+    // Trim depths. Round 4's floor was 0.05 m, which is under the near-field
+    // shadow cascade's 0.058 m caster threshold: half the sills and every
+    // lintel and plinth in the city projected too little to cast their own
+    // line. These ranges sit clear of it; `castingProjection` holds the floor
+    // for the ones a style profile still drives lower.
+    sillProjection: 0.085 + random() * 0.075,
+    lintelDepth: 0.07 + random() * 0.06,
     corniceHeight: profile.corniceHeight * (0.85 + random() * 0.3),
-    corniceProjection: clamp(profile.corniceProjection * (0.8 + random() * 0.45), 0.06, 0.26),
+    corniceProjection: clamp(profile.corniceProjection * (0.8 + random() * 0.45), 0.11, 0.3),
     parapetHeight: 0.55 + random() * 0.75,
     plinthHeight: profile.plinthHeight * (0.85 + random() * 0.35),
-    plinthProjection: 0.05 + random() * 0.05,
+    plinthProjection: 0.075 + random() * 0.075,
     // 0 = single light, 1 = one vertical mullion, 2 = mullion + transom.
     mullionPattern: modern ? (random() < 0.35 ? 1 : 2) : (random() < 0.55 ? 1 : 0),
     capProfile: modern ? (random() < 0.6 ? 'coping' : 'reveal') : (random() < 0.5 ? 'entablature' : 'bracketed'),
@@ -3505,7 +3574,7 @@ function emitCap(sink, edge, height, opt) {
     // Architrave, then the corona, then the parapet and its coping.
     capBottom = corniceBottom - architrave;
     sink.mark('architrave');
-    emitProfile(sink, edge, s0, s1, corniceBottom - architrave, corniceBottom, clad, clad + projection * 0.4, trimTint, 0.9);
+    emitProfile(sink, edge, s0, s1, corniceBottom - architrave, corniceBottom, clad, clad + castingProjection(projection * 0.4, opt.projection - clad), trimTint, 0.9);
     if (variant.capProfile === 'bracketed') {
       // Dentils: a row of small blocks under the corona. Real high-frequency
       // detail on the one line of a masonry building the sun always rakes.
@@ -3519,7 +3588,7 @@ function emitCap(sink, edge, height, opt) {
       }
       emitRow(sink, edge, corniceBottom, corniceBottom + dentilHeight, spans, tint, (span) => {
         sink.mark('dentil');
-        emitPanel(sink, edge, span.s0, span.s1, corniceBottom, corniceBottom + dentilHeight, clad, clad + projection * 0.55, trimTint, 0.95);
+        emitPanel(sink, edge, span.s0, span.s1, corniceBottom, corniceBottom + dentilHeight, clad, clad + castingProjection(projection * 0.55, opt.projection - clad), trimTint, 0.95);
       }, 0.6);
       sink.mark('cornice');
       emitProfile(sink, edge, s0, s1, corniceBottom + dentilHeight, corniceTop, clad, clad + projection, trimTint, 0.95);
@@ -3611,18 +3680,45 @@ function articulationGlazing(storeys, index, variant, capBottom, register = 'typ
 }
 
 /**
+ * Rainwater goods: one downpipe, standing proud of the clad wall.
+ *
+ * Three quads. It is here because all five round-4 reviewers listed "no
+ * downspout" among the missing construction, and because it is the cheapest
+ * element on a facade that breaks a repeating window grid: a continuous
+ * vertical member from the cornice to the plinth, projecting clear of the
+ * caster floor, so at eye level it carries its own hard shadow line down the
+ * full height of the elevation and the ambient occlusion pass darkens the
+ * gap behind it.
+ *
+ * It stands at the centre of a BLANK PIER BAY, which is where a real one goes
+ * and is also the only place on the elevation that carries no sill, no lintel
+ * and no opening -- so the pipe cannot intersect any of them at any rung.
+ */
+function emitDownpipe(sink, edge, centre, halfWidth, y0, y1, inner, outer, tint) {
+  if (!(y1 - y0 > EPSILON) || !(halfWidth > 0) || !(outer - inner > EPSILON)) return false;
+  const a = centre - halfWidth;
+  const b = centre + halfWidth;
+  if (a < 0.05 || b > edge.length - 0.05) return false;
+  sink.mark('downpipe').paint(tint, 0.75);
+  sink.quad('frame', edge, [[a, y0, outer], [a, y1, outer], [b, y1, outer], [b, y0, outer]], 'out');
+  sink.quad('frame', edge, [[a, y0, inner], [a, y1, inner], [a, y1, outer], [a, y0, outer]], 'against');
+  sink.quad('frame', edge, [[b, y0, inner], [b, y1, inner], [b, y1, outer], [b, y0, outer]], 'along');
+  return true;
+}
+
+/**
  * The detail ladder. A building starts at the rung its ring names and steps
  * down until it fits its triangle cap. Every rung is a complete elevation, so
  * a step down changes the vocabulary of the whole facade rather than removing
  * pieces of it -- there is no rung at which part of a wall is missing.
  */
 export const ART_DETAIL_LADDER = Object.freeze([
-  Object.freeze({ name: 'full', bandFins: true, clad: true, edges: 6, openStoreys: 6, frames: true, mullions: true, sills: true, lintels: true, drip: true, storefront: 'full', full: true }),
-  Object.freeze({ name: 'framed', bandFins: true, clad: true, edges: 5, openStoreys: 5, frames: true, mullions: true, sills: true, lintels: false, drip: false, storefront: 'full', full: true }),
-  Object.freeze({ name: 'reveal', bandFins: true, clad: true, edges: 4, openStoreys: 4, frames: false, mullions: false, sills: true, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'sparse', bandFins: true, clad: true, edges: 4, openStoreys: 2, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'banded', bandFins: true, clad: true, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: 'simple', full: false }),
-  Object.freeze({ name: 'silhouette', bandFins: false, clad: false, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, storefront: null, full: false }),
+  Object.freeze({ name: 'full', bandFins: true, clad: true, edges: 6, openStoreys: 6, frames: true, mullions: true, sills: true, lintels: true, drip: true, goods: true, storefront: 'full', full: true }),
+  Object.freeze({ name: 'framed', bandFins: true, clad: true, edges: 5, openStoreys: 5, frames: true, mullions: true, sills: true, lintels: false, drip: false, goods: true, storefront: 'full', full: true }),
+  Object.freeze({ name: 'reveal', bandFins: true, clad: true, edges: 4, openStoreys: 4, frames: false, mullions: false, sills: true, lintels: false, drip: false, goods: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'sparse', bandFins: true, clad: true, edges: 4, openStoreys: 2, frames: false, mullions: false, sills: false, lintels: false, drip: false, goods: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'banded', bandFins: true, clad: true, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, goods: false, storefront: 'simple', full: false }),
+  Object.freeze({ name: 'silhouette', bandFins: false, clad: false, edges: 4, openStoreys: 0, frames: false, mullions: false, sills: false, lintels: false, drip: false, goods: false, storefront: null, full: false }),
 ]);
 
 const ART_RING_LADDER_START = Object.freeze({ near: 0, mid: 2, far: 4, silhouette: 5 });
@@ -3665,7 +3761,7 @@ function layoutEdge(sink, edge, state) {
     emitProfile(sink, edge, 0, edge.length, Math.max(0, height - capBand), height, 0, projection, opt.trimTint, 0.9);
     const plinth = clamp(variant.plinthHeight, 0.3, Math.max(0.3, height * 0.12));
     sink.mark('plinth');
-    emitProfile(sink, edge, 0, edge.length, GROUND_CLEARANCE, plinth, 0, Math.min(variant.plinthProjection, opt.projection), opt.trimTint, 0.95);
+    emitProfile(sink, edge, 0, edge.length, GROUND_CLEARANCE, plinth, 0, castingProjection(variant.plinthProjection, opt.projection), opt.trimTint, 0.95);
     return { openings: 0, bands: 0, glazedRows: 0, bandedRows: 0 };
   }
 
@@ -3703,12 +3799,16 @@ function layoutEdge(sink, edge, state) {
     sink.mark('plinth');
     emitPanel(
       sink, edge, -overlap, edge.length + overlap, GROUND_CLEARANCE, plinth,
-      opt.clad, opt.clad + Math.min(variant.plinthProjection, opt.projection - opt.clad), opt.trimTint, 0.95,
+      opt.clad, opt.clad + castingProjection(variant.plinthProjection, opt.projection - opt.clad), opt.trimTint, 0.95,
     );
     cursor = plinth;
     sink.counts.plinth = (sink.counts.plinth || 0) + 1;
   }
 
+  // Where the shaft starts: the top of the storefront or of the plinth. The
+  // downpipe below runs from here, so it stops at the shoe rather than running
+  // through the base course.
+  const goodsBottom = cursor;
   const startStorey = storefront ? 1 : 0;
   const typicalBays = bayspans(edge, variant, variant.windowRatio);
   // The crown runs on its own rhythm: narrower, more closely spaced openings,
@@ -3820,7 +3920,7 @@ function layoutEdge(sink, edge, state) {
       sink.mark('string-course');
       emitProfile(
         sink, edge, -overlap, edge.length + overlap, dripBottom - 0.22, dripBottom - 0.04,
-        opt.clad, opt.clad + Math.min(0.12, opt.projection - opt.clad), opt.trimTint, 0.9,
+        opt.clad, opt.clad + castingProjection(0.12, opt.projection - opt.clad), opt.trimTint, 0.9,
       );
       sink.counts.stringCourse = (sink.counts.stringCourse || 0) + 1;
     }
@@ -3840,7 +3940,7 @@ function layoutEdge(sink, edge, state) {
         sink.mark('sill');
         emitPanel(
           sink, edge, span.s0, span.s1, sillBottom, sillTop,
-          opt.clad, opt.clad + Math.min(variant.sillProjection, opt.projection - opt.clad), opt.trimTint, shed,
+          opt.clad, opt.clad + castingProjection(variant.sillProjection, opt.projection - opt.clad), opt.trimTint, shed,
         );
       }, 0.2 * shed);
       sink.counts.sill = (sink.counts.sill || 0) + 1;
@@ -3887,7 +3987,7 @@ function layoutEdge(sink, edge, state) {
             sink.mark('lintel');
             emitPanel(
               sink, edge, span.s0, span.s1, band.head, top,
-              opt.clad, opt.clad + Math.min(variant.lintelDepth, opt.projection - opt.clad), opt.trimTint, 0.9,
+              opt.clad, opt.clad + castingProjection(variant.lintelDepth, opt.projection - opt.clad), opt.trimTint, 0.9,
             );
           }, 0.15);
           cursor = top;
@@ -3974,6 +4074,40 @@ function layoutEdge(sink, edge, state) {
       sink.counts.bayPier = (sink.counts.bayPier || 0) + 1;
     }
   }
+  // Rainwater goods. One pipe per pier bay on a face the camera can see, at
+  // most two per elevation: two is what a real frontage carries, and more
+  // would read as a comb. Gated on the ladder's `goods` rung, so this is near
+  // ring only and a building that steps down loses it before it loses a
+  // window.
+  if (detail.goods && detailEdge) {
+    // The pipe stops below the first crown or plant storey. Those two
+    // registers are the only ones that do NOT read off `typicalBays` -- the
+    // crown runs a tighter sequence and a plant floor is one inset louvre
+    // panel -- so a pier bay down the shaft is not guaranteed to still be a
+    // pier bay up there, and a pipe run to the cornice could cross a light.
+    let goodsTop = capBottom;
+    for (let i = 0; i < registers.length; i += 1) {
+      if (registers[i] === 'crown' || registers[i] === 'mechanical') {
+        goodsTop = Math.min(goodsTop, storeys.floors[i]);
+      }
+    }
+    const room = opt.projection - opt.clad;
+    const depth = castingProjection(0.105, room);
+    if (depth > 0.02 && goodsTop - goodsBottom > 3) {
+      const piers = (typicalBays.bays || []).filter((bay) => bay.spec.lights === 0 && bay.s1 - bay.s0 > 0.6);
+      let placed = 0;
+      for (let i = 0; i < piers.length && placed < 2; i += 1) {
+        const bay = piers[i];
+        const centre = (bay.s0 + bay.s1) / 2;
+        const half = clamp((bay.s1 - bay.s0) * 0.14, 0.055, 0.085);
+        if (emitDownpipe(sink, edge, centre, half, goodsBottom, goodsTop, opt.clad, opt.clad + depth, opt.frameTint)) {
+          placed += 1;
+        }
+      }
+      if (placed) sink.counts.downpipe = (sink.counts.downpipe || 0) + placed;
+    }
+  }
+
   // End returns: the side of the cladding tab where it runs past the corner.
   // On a right angle they land inside the neighbouring elevation and are never
   // seen; on an acute or obtuse corner they are what closes it.

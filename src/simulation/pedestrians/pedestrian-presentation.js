@@ -742,9 +742,34 @@ export function sampleFootGrounding({
   }
   supportY -= Math.min(drop, GAIT.maxPelvisDrop * scale);
 
-  const rootY = previousRootY == null
+  const damped = previousRootY == null
     ? supportY
     : damp(previousRootY, supportY, responseRate, dt);
+
+  // SECOND REACHABILITY PASS, against the height the body is actually DRAWN at.
+  //
+  // The drop above is solved against `supportY` - where the pelvis belongs -
+  // but the pelvis is drawn at the DAMPED height, which lags by up to the whole
+  // step size for a few frames after a curb. While it lags ABOVE the support,
+  // the leg has to reach further than the first pass allowed for, the two-bone
+  // IK clamps instead of stretching, and the ankle ends up short of its target:
+  // measured, up to 65 mm of ankle drift for the ten frames after a 150 mm
+  // curb, which on the character card is a shoe hanging in the kerb face while
+  // the other one is planted.
+  //
+  // So the drawn height is lowered to whatever the more extended leg can
+  // actually reach, and never below `supportY`, which the first pass has
+  // already solved. The response stays damped - this only ever removes lag,
+  // it never adds motion of its own.
+  let reachDrop = 0;
+  for (const foot of feet) {
+    const horizontal = Math.abs(foot.ankleLongitudinal);
+    if (horizontal >= scaledReach * 0.995) continue;
+    const allowedVertical = Math.sqrt(scaledReach * scaledReach - horizontal * horizontal);
+    const vertical = damped + scaledHip - foot.ankleY;
+    if (vertical > allowedVertical) reachDrop = Math.max(reachDrop, vertical - allowedVertical);
+  }
+  const rootY = reachDrop > 0 ? Math.max(supportY, damped - reachDrop) : damped;
 
   let slopePitch = 0;
   let slopeRoll = 0;
@@ -986,14 +1011,57 @@ export function identityVariation(idOrSeed) {
 export const WARDROBE_PARTS = Object.freeze([
   // A coat is a hem, and a hem is the single most legible clothing silhouette at
   // street distance: it flares below the hips and breaks the leg line.
-  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'taper', size: [0.30, 0.235, 0.375, 0.285, 0.44], offset: [0, -0.15, 0], detail: 'far', group: 'top', ao: 0.30 },
+  // The coat, twice over - the same argument the cranium makes above.
+  //
+  // A 4-sided frustum is the right shape for a 40-pixel figure and the wrong
+  // one for a figure two metres from the lens: it has FOUR vertical corners, so
+  // at hero distance it reads as a box worn over the body, which is exactly
+  // what a round-4 reviewer wrote down about the near-field figure ("a red
+  // jacket box interpenetrating the green torso"). It is capped at `mid`.
+  //
+  // The near tier draws a lofted coat in its place: a hexagonal section, waist
+  // in and hem flared, hanging 50 mm further down the thigh than the frustum
+  // and carried 10 mm forward at the hem so it hangs like cloth rather than
+  // standing like a bin. 32 triangles against the frustum's 12; the +20 is
+  // inside the near-tier budget restated in street-life.js.
+  //
+  // The hem is also 55 mm DEEPER than the frustum's (170 vs 142 mm half-depth).
+  // A coat is parented to the hips and a swinging thigh is not, so the front of
+  // the skirt is where a knee comes through it: at a 25 degree swing the
+  // frustum was pierced by 48 mm and this is pierced by 14 mm. Deeper still
+  // would read as a barrel; the remaining 14 mm is stated rather than hidden.
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'taper', size: [0.30, 0.235, 0.375, 0.285, 0.44], offset: [0, -0.15, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.30 },
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'loft', sides: 6, detail: 'near', group: 'top', ao: 0.32, offset: [0, 0, 0], size: [
+    [-0.420, 0.203, 0.170, 0, 0.010],
+    [-0.160, 0.186, 0.150, 0, 0.006],
+    [ 0.062, 0.166, 0.130, 0, 0],
+  ] },
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'taper', size: [0.245, 0.130, 0.275, 0.155, 0.360], offset: [0, 0.045, -0.160], detail: 'far', group: 'accent', ao: 0.30 },
   // Straps: a backpack with no straps floats behind the shoulders.
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [-0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
   { key: 'bag', bone: 'Hips', slot: 'accent', kind: 'taper', size: [0.175, 0.085, 0.205, 0.105, 0.245], offset: [0.185, 0.030, 0.015], detail: 'mid', group: 'accent', ao: 0.28 },
-  // The strap is what makes a bag read as carried rather than stuck on.
-  { key: 'bag', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.036, 0.300, 0.026], offset: [-0.055, 0.060, 0.088], detail: 'near', group: 'accent', ao: 0.40 },
+  // THE STRAP, AND WHY IT WAS A STRAY PRISM.
+  //
+  // A strap is what makes a bag read as carried rather than stuck on - but a
+  // BOX cannot be a strap, because a part carries an offset and no rotation, so
+  // the box could only ever hang vertically. It did: 36 x 300 x 26 mm, upright,
+  // on the front of the chest, starting below the shoulder and ending well
+  // above the bag. It touched neither end. Three round-4 reviewers logged it
+  // independently, one of them as "a stray teal prism on the shoulder" in the
+  // hero frame, and they were describing exactly this part.
+  //
+  // A loft CAN be a strap: its section centre is free to travel, so three rings
+  // carry it from the right shoulder, across the sternum, to the left hip where
+  // the bag actually hangs (the bag is at Hips +0.185 x, and +x is the LEFT of
+  // this rig - see `restBoneWorld('LeftArm')`). 3 sides and 3 rings is 14
+  // triangles against the box's 12; the strap is a near-tier part only, so
+  // nothing below `near` changes at all.
+  { key: 'bag', bone: 'Chest', slot: 'accent', kind: 'loft', sides: 3, detail: 'near', group: 'accent', ao: 0.40, offset: [0, 0, 0], size: [
+    [-0.150, 0.024, 0.012,  0.132, 0.070],
+    [ 0.010, 0.022, 0.011, -0.020, 0.104],
+    [ 0.150, 0.020, 0.010, -0.130, 0.050],
+  ] },
   { key: 'hat', bone: 'Head', slot: 'accent', kind: 'taper', size: [0.130, 0.140, 0.160, 0.168, 0.105], offset: [0, 0.268, 0.002], detail: 'far', group: 'accent', ao: 0.25 },
   { key: 'brim', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.190, 0.190, 0.016], offset: [0, 0.213, 0.012], detail: 'mid', group: 'accent', ao: 0.55 },
   { key: 'longHair', bone: 'Head', slot: 'hair', kind: 'taper', size: [0.180, 0.115, 0.155, 0.095, 0.270], offset: [0, 0.075, -0.078], detail: 'far', group: 'hair', ao: 0.34 },
@@ -1349,6 +1417,498 @@ export function mirrorActivityPose(pose) {
   return pose;
 }
 
+// ------------------------------------------------------------------ validity
+//
+// THE CROWD IS ALLOWED TO BE CHEAP. IT IS NOT ALLOWED TO BE IMPOSSIBLE.
+//
+// Round-4 scored character grounding 1.0 against a 4.0 floor, unanimously, on
+// five findings that are all the same kind of thing - a figure in a state no
+// body can be in:
+//
+//   * two figures standing INSIDE a building, behind the ground-floor glazing,
+//     tilted 25-45 degrees off vertical, feet clear of the pavement;
+//   * a figure bent double, arms vertical, HEAD BELOW HIPS, inside a facade;
+//   * a figure whose carried box is detached from its hands and intersects its
+//     own head;
+//   * a figure whose two feet sit at different heights on flat asphalt, one
+//     shoe through the kerb face;
+//   * a hero-frame figure with its head yawed off its shoulders, which is what
+//     put a nose prism on the SIDE of a head.
+//
+// Every one of those was PRODUCED BY THIS MODULE and DRAWN without complaint,
+// while the module's own counters reported a healthy crowd. That is the failure
+// this section exists to make impossible: not "the bug is fixed" - the bugs
+// above have their own fixes upstream - but "a pose that cannot be true is not
+// submitted for draw, and the rejection is counted where the next reviewer can
+// read it".
+//
+// THREE RULES THIS SECTION FOLLOWS.
+//
+//   1. MEASURE THE DRAWN TRANSFORM, NOT THE MODEL THAT PRODUCED IT. Every pose
+//      check below reads `bone.matrixWorld` AFTER `applyPose` has finished -
+//      the same matrices that go into the skin and into the instance buffer.
+//      Re-checking the placement code's own intent is how this build shipped a
+//      0.0019 m contact error under a visibly levitating vehicle.
+//   2. FAIL VISIBLY, NEVER SILENTLY. Every rejection increments a named counter
+//      that is published in `stats.validity` (crowd) and
+//      `diagnostics.validity` (street life). A gate that quietly drops figures
+//      is indistinguishable from a bug that quietly drops figures.
+//   3. FAIL OPEN WHERE THERE IS NO DATA. With no building footprints wired in,
+//      the building test does not guess - it reports `buildings: 'none'` and
+//      counts every agent as unchecked, so "the gate found nothing" can never
+//      be confused with "the gate was not asked".
+
+/**
+ * Everything the gate compares against, in one place, with its derivation.
+ *
+ * These are LIMITS OF THE BODY, not tuning knobs. Each is stated against the
+ * rig's own rest measurements so that changing the rig moves the limit with it
+ * rather than leaving a stale constant behind.
+ */
+export const PRESENTATION_VALIDITY = Object.freeze({
+  version: 'pedestrian-validity-v1',
+  /**
+   * Head above hips, metres, at the reference scale.
+   *
+   * Rest separation is `restBoneWorld('Head').y - restBoneWorld('Hips').y` =
+   * 0.590 m. The smallest identity scale is 0.90 (`identityVariation`), and a
+   * deep crouch or a lean shortens the vertical projection further, so the
+   * floor is set at 60% of the rest separation: 0.35 m. Anything under that is
+   * not a person bending over, it is a person folded at the waist - the
+   * round-4 wet-street figure measured NEGATIVE.
+   */
+  minHeadAboveHipsM: 0.35,
+  /**
+   * Torso tilt off the agent's own up axis, radians.
+   *
+   * Measured against the ROOT's up axis, not world up, so a figure standing on
+   * a 20% slope is not penalised for standing normally on it. 0.61 rad is
+   * 35 degrees: a deep bow, past anything the authored activity poses ask for
+   * (the deepest is `lean` at 0.10 rad) and past the 12-degree ceiling the walk
+   * cycle is verified to hold. The round-4 canyon figures measured 25-45.
+   *
+   * This one CLAMPS before it rejects: a torso a few degrees over the limit is
+   * pulled back to the limit and drawn, because deleting a figure is a worse
+   * artifact than a slightly stiff one. It only rejects when the clamp cannot
+   * bring it back (a non-finite or wildly broken bone chain).
+   */
+  maxTorsoTiltRad: 0.61,
+  /**
+   * Head yaw off the chest, radians. 1.08 rad is 62 degrees - past the human
+   * cervical limit of about 80 degrees only in the sense that the AUTHORED
+   * poses never ask for more than 0.26 rad, so anything past this is a
+   * transform defect and not a look-over-the-shoulder. A head yawed 90 degrees
+   * off the torso is what puts a nose on a cheek.
+   */
+  maxHeadYawRad: 1.08,
+  /**
+   * How far a drawn ankle may sit from the ankle the foot solver asked for,
+   * metres.
+   *
+   * This is the check that measures the DRAWN skeleton against its own target,
+   * and it is the one that would have caught the round-4 shoe hanging in the
+   * kerb face while the other foot was planted.
+   *
+   * The limit is derived, not chosen. `solveTwoBoneIK` clamps rather than
+   * stretches, so an ankle can only fall short when the pelvis is higher than
+   * the leg can reach down from - and the pelvis is only ever that high because
+   * `GAIT.maxPelvisDrop` (0.16 m) caps how far it may crouch. Swept over every
+   * speed to 3 m/s, every identity scale and 240 phases, the WORST reach
+   * deficit that cap can produce at steady state is 58 mm (3 m/s, 1.10 scale,
+   * mid-swing). 75 mm is that measured bound plus 30%, so the gate fires only
+   * on drift the authored crouch cap does not explain, and well under the
+   * 150 mm that reads as a floating shoe.
+   *
+   * The transient case - the damped root lagging above the support after a
+   * curb, which measured 65 mm - is not covered by this margin: it is FIXED, by
+   * the second reachability pass in `sampleFootGrounding`. Measured after that
+   * fix, 240 frames x 300 agents across a 150 mm curb produce a worst drift of
+   * 17 mm and zero rejections.
+   */
+  maxAnkleDriftM: 0.075,
+  /**
+   * Ground height difference between two feet that are BOTH in contact,
+   * metres.
+   *
+   * A kerb is 150 mm and stepping onto one is legitimate, so the limit is the
+   * kerb plus the sampling tolerance of the surface under it: 0.22 m. Past
+   * that, the two feet are standing on two different surfaces - a footway and
+   * the floor of a building, or a footway and a road one storey down.
+   */
+  maxContactStepM: 0.22,
+  /**
+   * Body half-breadth, body half-depth, and the separation two centres may not
+   * cross, all metres.
+   *
+   * Taken from the drawn near-tier solid at the largest identity scale, which
+   * is `heightScale` 1.10 x `buildScale` 1.12 = 1.232 on the horizontal axes:
+   *
+   *   half-breadth  bideltoid 0.488 / 2 x 1.232 = 0.301 m
+   *   half-depth    chest section 0.205 / 2 x 1.232 = 0.126 m
+   *
+   * Two bodies whose centres are 0.40 m apart can only avoid sharing solid if
+   * BOTH are turned within about 40 degrees of profile to each other - which is
+   * exactly what two people passing on a narrow pavement do, and is why the
+   * limit is not the 0.60 m that "shoulders never touch" would require. Below
+   * 0.40 m one figure is standing where another one already is, at any pair of
+   * yaws worth arguing about.
+   *
+   * `releaseFactor` is hysteresis. Without it a pair oscillating around the
+   * threshold blinks one of its members on and off every frame, which is a LOD
+   * pop by another name; a suppressed figure is only restored once the pair is
+   * 25% clear of the threshold.
+   */
+  /**
+   * THE GOVERNOR on the building test.
+   *
+   * The footprints and the walking paths come from two different owners - a
+   * source building polygon set and a sidewalk path generator - and this module
+   * owns neither. If they disagree wholesale, every walker in the city is
+   * "inside a building" and a gate that obeys literally would delete the crowd
+   * and report a clean frame. That is a worse failure than the one it is
+   * guarding against, and it is not one a reviewer could diagnose from a frame.
+   *
+   * So: above this share of checked agents, the building rejection SUSPENDS
+   * itself for the next frame and publishes `insideBuildingShare` and
+   * `insideBuildingSuspended` instead. The crowd stays drawn, the disagreement
+   * is stated as a number, and the owner of the paths can act on it. Below the
+   * share, the rejection is enforced literally.
+   *
+   * 0.20 is the line: a fifth of a city's pedestrians standing inside its
+   * buildings is a systematic data fault, not a crowd with some bad placements.
+   */
+  maxInsideBuildingShare: 0.20,
+  halfBreadthM: 0.301,
+  halfDepthM: 0.126,
+  minSeparationM: 0.40,
+  releaseFactor: 1.25,
+});
+
+/** Every reason the gate can refuse to draw an agent. Order is report order. */
+export const VALIDITY_REASONS = Object.freeze([
+  'insideBuilding',
+  'headBelowHips',
+  'headYaw',
+  'torsoTilt',
+  'ankleDrift',
+  'rootDrift',
+  'footSplit',
+  'overlap',
+  'nonFinite',
+]);
+
+/**
+ * A counted ledger of gate decisions, published verbatim in diagnostics.
+ *
+ * `checked` counts agents the gate looked at, `drawn` the ones it passed and
+ * `rejected` the ones it refused; `reasons` breaks the refusals down, and
+ * `clampedTorso` / `suppressedProps` count the two REPAIRS the gate makes
+ * instead of rejecting. `buildings` records where the footprints came from, so
+ * a zero in `reasons.insideBuilding` can be read correctly: 'none' means the
+ * test never ran.
+ */
+export function createValidityLedger() {
+  const reasons = {};
+  for (const reason of VALIDITY_REASONS) reasons[reason] = 0;
+  // What the gate MEASURED, not only what it rejected. A frame with zero
+  // rejections and a worst torso tilt of 0.59 rad is one authored pose away
+  // from failing, and a reviewer can only know that if the measurement is
+  // published. Peaks are over every pose judged this frame, rejected or not.
+  //
+  // The two MINIMA start at Infinity, so in a JSON diagnostics payload they
+  // read as `null` when nothing was measured this frame - which is the correct
+  // reading: not "zero separation", but "no figure was judged".
+  const peak = {
+    torsoTilt: 0,
+    headYaw: 0,
+    ankleDrift: 0,
+    rootDrift: 0,
+    contactStep: 0,
+    minHeadAboveHips: Infinity,
+    minSeparation: Infinity,
+  };
+  const ledger = {
+    version: PRESENTATION_VALIDITY.version,
+    checked: 0,
+    drawn: 0,
+    rejected: 0,
+    clampedTorso: 0,
+    suppressedProps: 0,
+    unchecked: 0,
+    buildings: 'none',
+    /** Agents measured inside a building footprint, acted on or not. */
+    insideBuilding: 0,
+    insideBuildingShare: 0,
+    /** True while the governor is holding the building rejection off. */
+    insideBuildingSuspended: false,
+    reasons,
+    peak,
+    reset() {
+      ledger.checked = 0;
+      ledger.drawn = 0;
+      ledger.rejected = 0;
+      ledger.clampedTorso = 0;
+      ledger.suppressedProps = 0;
+      ledger.unchecked = 0;
+      ledger.insideBuilding = 0;
+      ledger.insideBuildingShare = 0;
+      for (const reason of VALIDITY_REASONS) reasons[reason] = 0;
+      peak.torsoTilt = 0;
+      peak.headYaw = 0;
+      peak.ankleDrift = 0;
+      peak.rootDrift = 0;
+      peak.contactStep = 0;
+      peak.minHeadAboveHips = Infinity;
+      peak.minSeparation = Infinity;
+      return ledger;
+    },
+    /** Fold one measured pose into the peaks. */
+    observe(metrics) {
+      if (metrics.torsoTilt > peak.torsoTilt) peak.torsoTilt = metrics.torsoTilt;
+      if (metrics.headYaw > peak.headYaw) peak.headYaw = metrics.headYaw;
+      if (metrics.ankleDrift > peak.ankleDrift) peak.ankleDrift = metrics.ankleDrift;
+      if (metrics.rootDrift > peak.rootDrift) peak.rootDrift = metrics.rootDrift;
+      if (metrics.contactStep > peak.contactStep) peak.contactStep = metrics.contactStep;
+      if (metrics.headAboveHips < peak.minHeadAboveHips) peak.minHeadAboveHips = metrics.headAboveHips;
+      return metrics;
+    },
+    /** Fold one measured neighbour distance into the peaks. */
+    observeSeparation(distance) {
+      if (distance < peak.minSeparation) peak.minSeparation = distance;
+      return distance;
+    },
+    reject(reason) {
+      ledger.rejected += 1;
+      if (reason in reasons) reasons[reason] += 1;
+      return false;
+    },
+  };
+  return ledger;
+}
+
+/**
+ * A point-in-footprint index over building polygons.
+ *
+ * Uniform hash grid of polygon bounding boxes; `contains` runs the standard
+ * crossing test against the candidates in one cell. Built once per world, read
+ * once per agent per re-plan, so it is bounded by the number of buildings and
+ * never by the number of people.
+ *
+ * @param {Array<{polygon:Array<{x:number,z:number}>}>|Array<Array<{x:number,z:number}>>} buildings
+ * @param {object} [options]
+ * @param {number} [options.cell=28] grid pitch, metres
+ * @param {number} [options.maxBuildings=40000] memory guard
+ */
+export function buildFootprintIndex(buildings, { cell = 28, maxBuildings = 40000 } = {}) {
+  const list = Array.isArray(buildings) ? buildings : [];
+  const rings = [];
+  const cells = new Map();
+  const add = (key, index) => {
+    let bucket = cells.get(key);
+    if (!bucket) {
+      bucket = [];
+      cells.set(key, bucket);
+    }
+    bucket.push(index);
+  };
+  for (const entry of list) {
+    if (rings.length >= maxBuildings) break;
+    const polygon = Array.isArray(entry) ? entry : entry?.polygon;
+    if (!Array.isArray(polygon) || polygon.length < 3) continue;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    const flat = new Float64Array(polygon.length * 2);
+    let ok = true;
+    for (let i = 0; i < polygon.length; i += 1) {
+      const px = Number(polygon[i]?.x);
+      const pz = Number(polygon[i]?.z);
+      if (!Number.isFinite(px) || !Number.isFinite(pz)) { ok = false; break; }
+      flat[i * 2] = px;
+      flat[i * 2 + 1] = pz;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (pz < minZ) minZ = pz;
+      if (pz > maxZ) maxZ = pz;
+    }
+    if (!ok) continue;
+    const index = rings.length;
+    rings.push({ flat, minX, maxX, minZ, maxZ });
+    const gx0 = Math.floor(minX / cell);
+    const gx1 = Math.floor(maxX / cell);
+    const gz0 = Math.floor(minZ / cell);
+    const gz1 = Math.floor(maxZ / cell);
+    // A single absurd polygon (a whole-city block outline) would otherwise
+    // paint the entire grid; cap the span it may claim and fall back to the
+    // bounding-box test for it.
+    if ((gx1 - gx0 + 1) * (gz1 - gz0 + 1) > 4096) continue;
+    for (let gz = gz0; gz <= gz1; gz += 1) {
+      for (let gx = gx0; gx <= gx1; gx += 1) add(`${gx}:${gz}`, index);
+    }
+  }
+  const inside = (ring, x, z) => {
+    if (x < ring.minX || x > ring.maxX || z < ring.minZ || z > ring.maxZ) return false;
+    const flat = ring.flat;
+    const n = flat.length / 2;
+    let hit = false;
+    for (let i = 0, j = n - 1; i < n; j = i, i += 1) {
+      const xi = flat[i * 2];
+      const zi = flat[i * 2 + 1];
+      const xj = flat[j * 2];
+      const zj = flat[j * 2 + 1];
+      if ((zi > z) !== (zj > z)
+        && x < ((xj - xi) * (z - zi)) / (zj - zi || 1e-12) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  return {
+    count: rings.length,
+    cell,
+    /** True when `(x, z)` is inside any building footprint. */
+    contains(x, z) {
+      if (!rings.length || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+      const bucket = cells.get(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`);
+      if (!bucket) return false;
+      for (let i = 0; i < bucket.length; i += 1) {
+        if (inside(rings[bucket[i]], x, z)) return true;
+      }
+      return false;
+    },
+  };
+}
+
+/**
+ * A frame-scoped index of where the drawn bodies already are.
+ *
+ * Rebuilt every frame from the agents the gate has ACCEPTED, so it describes
+ * the drawn crowd and not the planned one. Cell pitch is the separation limit,
+ * so a query touches nine cells at most.
+ */
+export function createCapsuleIndex(cell = PRESENTATION_VALIDITY.minSeparationM * 2) {
+  const cells = new Map();
+  return {
+    cell,
+    clear() { cells.clear(); },
+    /** Distance to the nearest occupied centre, or Infinity. */
+    nearest(x, z) {
+      const gx = Math.floor(x / cell);
+      const gz = Math.floor(z / cell);
+      let best = Infinity;
+      for (let dz = -1; dz <= 1; dz += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const bucket = cells.get(`${gx + dx}:${gz + dz}`);
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i += 2) {
+            const ex = bucket[i];
+            const ez = bucket[i + 1];
+            const d2 = (ex - x) * (ex - x) + (ez - z) * (ez - z);
+            if (d2 < best) best = d2;
+          }
+        }
+      }
+      return Math.sqrt(best);
+    },
+    add(x, z) {
+      const key = `${Math.floor(x / cell)}:${Math.floor(z / cell)}`;
+      let bucket = cells.get(key);
+      if (!bucket) {
+        bucket = [];
+        cells.set(key, bucket);
+      }
+      bucket.push(x, z);
+    },
+  };
+}
+
+// ------------------------------------------------------------ carried props
+//
+// WHY A CARRIED BOX ENDS UP IN SOMEBODY'S EAR
+//
+// `case` is the one wardrobe item parented to a HAND bone, and it is the only
+// one whose transform therefore follows an arm that the activity overlay moves.
+// The overlays were authored for the BODY and never asked what the hand was
+// holding, so, measured on the shipped poses with the rig at rest scale:
+//
+//   activity   right-hand case centre        what that is
+//   phone      (-0.19, 1.57, -0.41) m        a briefcase held against the ear
+//   talk       (-0.30, 1.52, -0.52) m        a briefcase waved at head height
+//   wait       (-0.35, 1.09, -0.54) m        a briefcase behind the back,
+//                                            through the trunk of the body
+//   carry      (-0.22, 0.62, -0.07) m        a briefcase, carried
+//
+// A reviewer measured exactly this on the round-4 night card and wrote it up as
+// "carried boxes detached from its hands and intersecting its own head". The
+// prop is NOT detached - it is welded to the hand, and the hand went to the
+// ear.
+//
+// The rule below is the one a person follows: you cannot do a thing with a hand
+// that is already holding something. A carried prop is drawn only while the
+// hand that carries it is hanging free, and is otherwise suppressed and
+// COUNTED. Suppression, not relocation: moving the case to the other hand needs
+// a second geometry chunk and therefore a second draw call, and the figure is
+// equally correct having set it down.
+
+/** Which arm each authored activity occupies. 'free' means both hands hang. */
+export const ACTIVITY_ARM_USE = Object.freeze({
+  stand: 'free',
+  carry: 'free',
+  lean: 'free',
+  phone: 'right',
+  talk: 'right',
+  browse: 'right',
+  wait: 'both',
+  listen: 'both',
+  sit: 'both',
+});
+
+/** The hand every carried prop hangs from, and the flags that are carried. */
+export const CARRIED_PROP_BONE = 'RightHand';
+export const CARRIED_PROP_FLAGS = Object.freeze(['case']);
+
+/**
+ * Is the carrying hand free while this activity runs?
+ *
+ * `mirrored` is the pose mirror the crowd and the street-life pass apply to half
+ * the population (`mirrorActivityPose`): it swaps left for right, so a
+ * right-handed gesture on a mirrored figure occupies the LEFT hand and leaves
+ * the carrying hand free.
+ */
+export function carriedHandIsFree(activity, mirrored = false) {
+  if (!activity) return true;
+  const use = ACTIVITY_ARM_USE[activity];
+  if (!use || use === 'free') return true;
+  if (use === 'both') return false;
+  const engaged = mirrored ? (use === 'right' ? 'left' : 'right') : use;
+  return engaged !== 'right';
+}
+
+/**
+ * The attachment of every carried prop, for the assertion that it IS one.
+ *
+ * A prop whose attachment transform is the identity is a prop at the wrist
+ * joint - i.e. inside the hand - which is the failure mode this reports rather
+ * than hides. Consumers draw a prop only when `attached` is true.
+ */
+export function carriedPropAttachments() {
+  const out = [];
+  for (const part of WARDROBE_PARTS) {
+    if (!CARRIED_PROP_FLAGS.includes(part.key)) continue;
+    const [ox, oy, oz] = part.offset;
+    const reach = Math.hypot(ox, oy, oz);
+    out.push(Object.freeze({
+      flag: part.key,
+      bone: part.bone,
+      offset: Object.freeze([ox, oy, oz]),
+      /** Metres from the hand joint to the prop's own origin. */
+      reach,
+      /** A hand bone drives it, and the attachment is not the identity. */
+      attached: part.bone.endsWith('Hand') && reach > 1e-3,
+    }));
+  }
+  return out;
+}
+
 // ------------------------------------------------- distance bands and budget
 
 export const PRESENTATION_BANDS = Object.freeze(['skinned', 'instanced', 'far', 'culled']);
@@ -1407,6 +1967,28 @@ export const PRESENTATION_BAND_DISTANCES = Object.freeze({
  * The skinned figure's own triangle count is set by the near-tier parts table
  * and is measured by `verify:pedestrian-presentation` against its 1 600
  * ceiling; nothing here changes it.
+ */
+/**
+ * Band caps. Hard: `planCrowdPresentation` can never return more.
+ *
+ * RESTATED for the lofted near coat. The caps did not move and no draw call was
+ * added; what moved is the triangles behind ONE SKINNED FIGURE THAT WEARS A
+ * COAT, because the near tier now draws the coat as a 6-sided lofted skirt
+ * instead of the 4-cornered frustum the cheaper tiers keep (`WARDROBE_PARTS`):
+ *
+ *   skinned body           2432 tri   (measured, unchanged)
+ *   + coat, was            +  12 tri
+ *   + coat, now            +  32 tri   -> +20 per coated figure
+ *   + bag strap, was       +  12 tri
+ *   + bag strap, now       +  14 tri   -> + 2 per figure with a bag
+ *   24 skinned, all laden   +528 tri   worst case for the whole band
+ *
+ * The instanced and far bands are untouched: the coat frustum is capped at
+ * `mid` and the strap was always a near-tier part, so they draw exactly what
+ * they drew before, at the same 456 / 180 triangles and the same 16 / 5 draws.
+ * The 34% coat and 26% bag rates make the expected cost about +175 triangles on
+ * a full skinned band; the number above is the bound, and a coat and a bag are
+ * mutually compatible so it is reachable.
  */
 export const CROWD_BUDGET = Object.freeze({
   skinned: 24,
@@ -3004,6 +3586,164 @@ function applyPose(rig, pose, clipDurations, footIK) {
   root.updateMatrixWorld(true);
 }
 
+// ------------------------------------------------------- the pose gate
+
+const _gv1 = new THREE.Vector3();
+const _gv2 = new THREE.Vector3();
+const _gv3 = new THREE.Vector3();
+const _gq1 = new THREE.Quaternion();
+const _identityQ = new THREE.Quaternion();
+
+/** World position of a posed bone, into `out`. Null when the bone is absent. */
+function boneWorld(rig, name, out) {
+  const node = rig.byName.get(name);
+  if (!node) return null;
+  return out.setFromMatrixPosition(node.matrixWorld);
+}
+
+/**
+ * Pull an over-tilted torso back to the limit, on the DRAWN chain.
+ *
+ * The tilt measured is the angle between the hips->head axis and the agent
+ * root's own up axis, so a figure standing normally on a slope measures zero.
+ * When it is over the limit, `Spine` and `Chest` are slerped toward their rest
+ * orientation by the fraction that removes the excess and the world matrices
+ * are rebuilt, so what the caller reads afterwards is the corrected pose and
+ * not an intention to correct it.
+ *
+ * Returns the tilt in radians BEFORE the clamp, and whether it clamped.
+ */
+export function clampTorsoTilt(rig, maxTiltRad = PRESENTATION_VALIDITY.maxTorsoTiltRad) {
+  const hips = boneWorld(rig, 'Hips', _gv1);
+  const head = boneWorld(rig, 'Head', _gv2);
+  if (!hips || !head) return { tilt: 0, clamped: false };
+  _gv3.copy(head).sub(hips);
+  const length = _gv3.length();
+  if (!(length > 1e-6)) return { tilt: 0, clamped: false };
+  _gv3.multiplyScalar(1 / length);
+  // The root's up axis: column 1 of its world matrix, normalised out of scale.
+  const up = _gq1.setFromRotationMatrix(rig.root.matrixWorld);
+  const rootUp = _gv1.set(0, 1, 0).applyQuaternion(up);
+  const tilt = Math.acos(clamp(_gv3.dot(rootUp), -1, 1));
+  if (!(tilt > maxTiltRad)) return { tilt, clamped: false };
+  // Two bones carry the bend; removing the same fraction from both keeps the
+  // curve of the spine rather than snapping one joint straight.
+  const keep = clamp(maxTiltRad / tilt, 0, 1);
+  for (const name of ['Spine', 'Chest']) {
+    const node = rig.byName.get(name);
+    if (!node) continue;
+    node.quaternion.slerp(_identityQ, 1 - keep);
+  }
+  rig.root.updateMatrixWorld(true);
+  return { tilt, clamped: true };
+}
+
+/**
+ * Everything the gate can measure on a posed rig, from the matrices that will
+ * be drawn.
+ *
+ * @param {object} rig                posed rig; `root.updateMatrixWorld` done
+ * @param {object} [options]
+ * @param {object} [options.grounding] the `sampleFootGrounding` record the pose
+ *   was built from, for the drawn-versus-asked ankle comparison
+ * @param {boolean} [options.seated]   seated figures have no stance to check
+ * @param {number} [options.rootTargetY] world height the rig root is supposed
+ *   to be drawn at, for the figures - seated ones - that have no stance foot to
+ *   measure. Omit to skip the check.
+ * @returns {{headAboveHips:number, headYaw:number, torsoTilt:number,
+ *            ankleDrift:number, rootDrift:number, contactStep:number,
+ *            finite:boolean}}
+ */
+export function measureRigPose(rig, { grounding = null, seated = false, rootTargetY = null } = {}) {
+  const out = {
+    headAboveHips: 0,
+    headYaw: 0,
+    torsoTilt: 0,
+    ankleDrift: 0,
+    rootDrift: 0,
+    contactStep: 0,
+    finite: true,
+  };
+  if (Number.isFinite(rootTargetY)) {
+    const drawnY = rig.root.matrixWorld.elements[13];
+    out.rootDrift = Math.abs(drawnY - rootTargetY);
+    if (!Number.isFinite(drawnY)) out.finite = false;
+  }
+  const hips = rig.byName.get('Hips');
+  const head = rig.byName.get('Head');
+  const chest = rig.byName.get('Chest');
+  if (!hips || !head) return out;
+  const hipsY = hips.matrixWorld.elements[13];
+  const headY = head.matrixWorld.elements[13];
+  out.headAboveHips = headY - hipsY;
+  out.finite = Number.isFinite(hipsY) && Number.isFinite(headY);
+
+  // Torso tilt off the agent's own up axis.
+  _gv1.setFromMatrixPosition(hips.matrixWorld);
+  _gv2.setFromMatrixPosition(head.matrixWorld);
+  _gv3.copy(_gv2).sub(_gv1);
+  const spineLength = _gv3.length();
+  if (spineLength > 1e-6) {
+    _gv3.multiplyScalar(1 / spineLength);
+    _gq1.setFromRotationMatrix(rig.root.matrixWorld);
+    _gv1.set(0, 1, 0).applyQuaternion(_gq1);
+    out.torsoTilt = Math.acos(clamp(_gv3.dot(_gv1), -1, 1));
+  }
+
+  // Head yaw off the chest, in the horizontal plane. Both forward vectors come
+  // from the drawn matrices, so a bone that has been rotated by anything -
+  // clip, style, overlay or a defect - is measured the same way.
+  if (chest) {
+    _gq1.setFromRotationMatrix(chest.matrixWorld);
+    _gv1.set(0, 0, 1).applyQuaternion(_gq1);
+    _gq1.setFromRotationMatrix(head.matrixWorld);
+    _gv2.set(0, 0, 1).applyQuaternion(_gq1);
+    _gv1.y = 0;
+    _gv2.y = 0;
+    if (_gv1.lengthSq() > 1e-8 && _gv2.lengthSq() > 1e-8) {
+      _gv1.normalize();
+      _gv2.normalize();
+      out.headYaw = Math.acos(clamp(_gv1.dot(_gv2), -1, 1));
+    }
+  }
+
+  if (grounding && !seated) {
+    // The DRAWN ankle against the ankle the foot solver asked for. This is the
+    // one measurement in the module that can catch a figure whose feet are not
+    // where its own grounding record says they are.
+    for (let i = 0; i < 2; i += 1) {
+      const foot = grounding.feet[i];
+      const node = rig.byName.get(i === 0 ? 'LeftFoot' : 'RightFoot');
+      if (!node || !foot) continue;
+      _gv1.setFromMatrixPosition(node.matrixWorld);
+      const drift = Math.hypot(_gv1.x - foot.ankleX, _gv1.y - foot.ankleY, _gv1.z - foot.ankleZ);
+      if (!Number.isFinite(drift)) out.finite = false;
+      else if (drift > out.ankleDrift) out.ankleDrift = drift;
+    }
+    // Both feet planted on two different surfaces.
+    if (grounding.feet[0].contact && grounding.feet[1].contact) {
+      out.contactStep = Math.abs(grounding.feet[0].groundY - grounding.feet[1].groundY);
+    }
+  }
+  return out;
+}
+
+/**
+ * Judge a measured pose. Pure; the caller owns the ledger and the drawing.
+ *
+ * @returns {string|null} the rejection reason, or null when the pose may draw.
+ */
+export function poseRejection(metrics, limits = PRESENTATION_VALIDITY) {
+  if (!metrics.finite) return 'nonFinite';
+  if (!(metrics.headAboveHips >= limits.minHeadAboveHipsM)) return 'headBelowHips';
+  if (metrics.headYaw > limits.maxHeadYawRad) return 'headYaw';
+  if (metrics.torsoTilt > limits.maxTorsoTiltRad) return 'torsoTilt';
+  if (metrics.ankleDrift > limits.maxAnkleDriftM) return 'ankleDrift';
+  if (metrics.rootDrift > limits.maxAnkleDriftM) return 'rootDrift';
+  if (metrics.contactStep > limits.maxContactStepM) return 'footSplit';
+  return null;
+}
+
 // ----------------------------------------------------------- instanced band
 
 /**
@@ -3059,6 +3799,43 @@ function createInstancedBand(name, geometries, capacity, { castShadow }) {
   return { group, meshes, materials, capacity };
 }
 
+// ---------------------------------------------------------- footprint seam
+//
+// WHERE THE BUILDING FOOTPRINTS COME FROM
+//
+// The building test is the one validity check that needs data this module does
+// not own. There are three ways to supply it, and the diagnostics say which one
+// was used, so "no rejections" is never ambiguous:
+//
+//   'option'    `createCrowdPresentation({ buildings })` or `{ insideBuilding }`
+//               - the explicit wiring, and the one to prefer. One line in the
+//               composition root: `buildings: this.city?.buildings`.
+//   'runtime'   `crowd.setBuildingFootprints(polygons)` after the world loads.
+//   'published' `publishBuildingFootprints(index)`, below. The street-life pass
+//               already builds this index from `ctx.city.buildings` for its own
+//               placement, and publishes it here so the walking crowd is gated
+//               even in a runtime that has not been rewired yet. It is READ
+//               ONLY presentation data - a set of polygons - and it is the
+//               LAST resort: an explicit option always wins.
+//   'none'      nothing was supplied. Every agent is counted in
+//               `validity.unchecked` and none is rejected for it.
+
+let publishedFootprints = null;
+
+/**
+ * Publish a footprint index for any crowd presentation that has not been given
+ * one explicitly. Pass `null` to withdraw it when the world is disposed.
+ */
+export function publishBuildingFootprints(index) {
+  publishedFootprints = index && typeof index.contains === 'function' ? index : null;
+  return publishedFootprints;
+}
+
+/** The currently published index, or null. */
+export function publishedBuildingFootprints() {
+  return publishedFootprints;
+}
+
 // ------------------------------------------------------------ the crowd
 
 /**
@@ -3091,6 +3868,8 @@ export function createCrowdPresentation(options = {}) {
     castShadow = true,
     material = null,
     groundResponseRate = 14,
+    buildings = null,
+    insideBuilding = null,
   } = options;
 
   const caps = {
@@ -3107,6 +3886,76 @@ export function createCrowdPresentation(options = {}) {
   let clipDurations = clipDurationsFor(clipSet);
   let groundSampler = typeof sampleGround === 'function' ? sampleGround : null;
   let sunElevation = sunElevationDeg;
+
+  // The validity gate's own state: an explicit footprint source, the counted
+  // ledger, and the frame-scoped index of where the accepted bodies already
+  // are. See the `validity` section above for what each rule is and why.
+  let ownFootprints = null;
+  if (typeof insideBuilding === 'function') ownFootprints = { contains: insideBuilding, count: -1 };
+  else if (buildings) ownFootprints = buildFootprintIndex(buildings);
+  let footprintSource = ownFootprints ? 'option' : 'none';
+  const validity = createValidityLedger();
+  const capsules = createCapsuleIndex();
+  // The governor's one-frame memory: this frame's decision is made from the
+  // share measured on the previous frame, so it costs no second pass.
+  let insideBuildingCount = 0;
+  let insideBuildingSuspended = false;
+
+  /** The footprint oracle in force this frame, and where it came from. */
+  function resolveFootprints() {
+    if (ownFootprints) {
+      footprintSource = footprintSource === 'runtime' ? 'runtime' : 'option';
+      return ownFootprints;
+    }
+    if (publishedFootprints) {
+      footprintSource = 'published';
+      return publishedFootprints;
+    }
+    footprintSource = 'none';
+    return null;
+  }
+
+  /**
+   * Clamp what can be clamped, measure the DRAWN bones, and judge.
+   * Counted either way; returns false when the figure must not be drawn.
+   */
+  function judgePose(rig, grounding, seated) {
+    const clamped = clampTorsoTilt(rig);
+    if (clamped.clamped) validity.clampedTorso += 1;
+    const metrics = validity.observe(measureRigPose(rig, { grounding, seated }));
+    const reason = poseRejection(metrics);
+    if (reason) {
+      validity.reject(reason);
+      return false;
+    }
+    return true;
+  }
+
+  // A carried prop's attachment is resolved once: a prop that is NOT parented
+  // to a hand bone with a real offset is never drawn at all, rather than being
+  // drawn inside a wrist.
+  const carriedProps = new Map();
+  for (const attachment of carriedPropAttachments()) {
+    carriedProps.set(attachment.flag, attachment);
+  }
+
+  /** Wardrobe with every carried prop cleared, memoised per silhouette. */
+  const unloadedWardrobe = new Map();
+  function withoutCarriedProps(wardrobe) {
+    let derived = unloadedWardrobe.get(wardrobe.silhouetteBits);
+    if (derived) return derived;
+    const flags = { ...wardrobe.flags };
+    let bits = wardrobe.silhouetteBits;
+    for (const flag of CARRIED_PROP_FLAGS) {
+      if (!flags[flag]) continue;
+      flags[flag] = false;
+      const bit = WARDROBE_FLAGS.indexOf(flag);
+      if (bit >= 0) bits &= ~(1 << bit);
+    }
+    derived = Object.freeze({ ...wardrobe, flags: Object.freeze(flags), silhouetteBits: bits });
+    unloadedWardrobe.set(wardrobe.silhouetteBits, derived);
+    return derived;
+  }
 
   // The skinned band is the <= 28 m band: it is the one a reviewer walks up to,
   // so it pays for hands, jaw, brow, nose, eyes and shoulder caps.
@@ -3215,6 +4064,13 @@ export function createCrowdPresentation(options = {}) {
     activityOverlays: 0,
     /** Distinct appearance signatures drawn this frame. */
     uniqueAppearances: 0,
+    /**
+     * The validity gate's counted ledger - the same live object every frame.
+     * `checked` agents were examined, `drawn` passed, `rejected` did not, and
+     * `reasons` says why. `buildings` names the footprint source; 'none' means
+     * the building test did not run, which is why `unchecked` exists.
+     */
+    validity,
   };
   const signatureSet = new Set();
 
@@ -3268,6 +4124,7 @@ export function createCrowdPresentation(options = {}) {
         material: rig.material,
         skeleton: rig.skeleton,
         id: null,
+        bits: 0,
       });
     }
     return skinnedActors[index];
@@ -3364,6 +4221,12 @@ export function createCrowdPresentation(options = {}) {
     stats.maxFootGroundSpeed = 0;
     stats.wardrobeInstances = 0;
     stats.activityOverlays = 0;
+    validity.reset();
+    capsules.clear();
+    insideBuildingCount = 0;
+    const footprints = resolveFootprints();
+    validity.buildings = footprintSource;
+    validity.insideBuildingSuspended = insideBuildingSuspended;
     signatureSet.clear();
     for (const key in stats.activities) stats.activities[key] = 0;
 
@@ -3383,7 +4246,6 @@ export function createCrowdPresentation(options = {}) {
       const record = memoryFor(entry.id, agent.seed);
       record.seen = stats.frame;
       const variation = record.variation;
-      signatureSet.add(record.signature);
 
       const legLength = variation.legLength;
       const speed = agent.speed;
@@ -3428,6 +4290,44 @@ export function createCrowdPresentation(options = {}) {
         if (contactSpeed > stats.maxFootGroundSpeed) stats.maxFootGroundSpeed = contactSpeed;
       }
 
+      // ---- validity gate, part 1: WHERE THE BODY IS ----------------------
+      // Run AFTER the ground sample, so a rejected agent is still counted as
+      // grounded - it did find ground, it is simply not fit to draw - and the
+      // grounding statistics keep describing the whole mirrored population.
+      validity.checked += 1;
+      let rejected = false;
+      if (footprints) {
+        if (footprints.contains(agent.x, agent.z)) {
+          insideBuildingCount += 1;
+          // THE GOVERNOR. See `maxInsideBuildingShare`: when the footprints and
+          // the walking paths disagree wholesale, the honest answer is to say
+          // so in the diagnostics, not to delete the crowd.
+          if (!insideBuildingSuspended) {
+            validity.reject('insideBuilding');
+            rejected = true;
+          }
+        }
+      } else {
+        validity.unchecked += 1;
+      }
+      if (!rejected) {
+        const separation = validity.observeSeparation(capsules.nearest(agent.x, agent.z));
+        const overlapLimit = record.overlapHold
+          ? PRESENTATION_VALIDITY.minSeparationM * PRESENTATION_VALIDITY.releaseFactor
+          : PRESENTATION_VALIDITY.minSeparationM;
+        if (separation < overlapLimit) {
+          // The nearer agent is already drawn - the plan walks nearest-first -
+          // so the one that loses is always the one further from the eye.
+          record.overlapHold = true;
+          validity.reject('overlap');
+          rejected = true;
+        } else {
+          record.overlapHold = false;
+        }
+      }
+      if (rejected) continue;
+      signatureSet.add(record.signature);
+
       // What this person is doing, resolved from simulation-owned fields only.
       // `pose === 'sit'` is an explicit seated actor; otherwise the simulation
       // may name an activity, and a stationary agent with no named activity
@@ -3470,24 +4370,51 @@ export function createCrowdPresentation(options = {}) {
       pose.lift = Math.max(1e-4, lift);
       footEuler.set(grounding.slopePitch, pose.yaw, 0, 'YXZ');
 
-      const wardrobe = record.wardrobe;
+      // ---- validity gate, part 2: WHAT THE BODY IS HOLDING ----------------
+      // A carried prop hangs from a hand bone, so it goes wherever the activity
+      // sends that hand: the shipped `phone` pose put a briefcase against the
+      // ear and `wait` put one through the back of the ribs. A prop is drawn
+      // only while its hand is free, and the suppression is counted.
+      const carrying = record.wardrobe.silhouetteBits !== 0
+        && CARRIED_PROP_FLAGS.some((flag) => record.wardrobe.flags[flag]);
+      let handFree = true;
+      if (carrying) {
+        const attachment = carriedProps.get(CARRIED_PROP_FLAGS[0]);
+        handFree = Boolean(attachment && attachment.attached)
+          && carriedHandIsFree(activity, (variation.seed & 1) !== 0);
+        if (!handFree) validity.suppressedProps += 1;
+      }
+      const wardrobe = handFree ? record.wardrobe : withoutCarriedProps(record.wardrobe);
+      let drew = false;
 
       if (entry.band === 'skinned') {
         const actor = ensureSkinnedActor(stats.skinned);
         if (actor.id !== entry.id) {
           actor.id = entry.id;
           writePalette(actor, variation);
-          // Swap in the geometry that carries this person's silhouette. Bone
-          // order and skin attributes are identical, so the existing binding
-          // keeps working.
+        }
+        // Swap in the geometry that carries this person's silhouette. Bone
+        // order and skin attributes are identical, so the existing binding
+        // keeps working. Re-checked every frame rather than only on a slot
+        // change, because the silhouette itself changes when a carried prop is
+        // suppressed.
+        if (actor.bits !== wardrobe.silhouetteBits) {
+          actor.bits = wardrobe.silhouetteBits;
           const geometry = bodyGeometryFor(wardrobe);
           if (actor.mesh.geometry !== geometry) actor.mesh.geometry = geometry;
         }
-        actor.group.visible = true;
         applyPose(actor.rig, pose, clipDurations, footIK);
+        if (!judgePose(actor.rig, grounding, seated)) {
+          actor.group.visible = false;
+          continue;
+        }
+        actor.group.visible = true;
         stats.skinned += 1;
+        drew = true;
       } else if (entry.band === 'instanced') {
         applyPose(poser, pose, clipDurations, footIK);
+        if (!judgePose(poser, grounding, seated)) continue;
+        drew = true;
         for (const item of midBand.meshes) {
           const cursor = midCursor.get(item.key) || 0;
           if (cursor >= midBand.capacity) continue;
@@ -3540,7 +4467,15 @@ export function createCrowdPresentation(options = {}) {
           }
           farCursor += 1;
           stats.far += 1;
+          drew = true;
         }
+      }
+
+      if (drew) {
+        validity.drawn += 1;
+        // Only the ACCEPTED bodies occupy space, so the overlap rule is about
+        // what is drawn and not about what was planned.
+        capsules.add(agent.x, agent.z);
       }
 
       // Contact shadow for every visible agent in every band.
@@ -3572,6 +4507,15 @@ export function createCrowdPresentation(options = {}) {
       skinnedActors[i].group.visible = false;
       skinnedActors[i].id = null;
     }
+    // Publish what the building test SAW, whether or not it acted on it, and
+    // set the governor for the next frame from it.
+    validity.insideBuilding = insideBuildingCount;
+    validity.insideBuildingShare = validity.checked > 0
+      ? insideBuildingCount / validity.checked
+      : 0;
+    insideBuildingSuspended = validity.insideBuildingShare
+      > PRESENTATION_VALIDITY.maxInsideBuildingShare;
+    stats.validity = validity;
     let draws = stats.skinned;
     for (const item of midBand.meshes) {
       item.mesh.count = midCursor.get(item.key) || 0;
@@ -3687,6 +4631,23 @@ export function createCrowdPresentation(options = {}) {
     setClips,
     getClips: () => ({ ...clipSet }),
     setGroundSampler: (fn) => { groundSampler = typeof fn === 'function' ? fn : null; },
+    /**
+     * Supply the building footprints the validity gate tests against.
+     *
+     * Accepts an index from `buildFootprintIndex`, an array of building records
+     * (`{polygon:[{x,z}...]}`), or a bare `(x,z)=>boolean`. Pass null to drop
+     * back to whatever `publishBuildingFootprints` has published.
+     */
+    setBuildingFootprints: (source) => {
+      if (!source) ownFootprints = null;
+      else if (typeof source === 'function') ownFootprints = { contains: source, count: -1 };
+      else if (typeof source.contains === 'function') ownFootprints = source;
+      else ownFootprints = buildFootprintIndex(source);
+      footprintSource = ownFootprints ? 'runtime' : 'none';
+      return ownFootprints;
+    },
+    /** The gate's live counted ledger. Same object as `stats().validity`. */
+    validity: () => validity,
     setSunElevation: (deg) => {
       if (!Number.isFinite(deg)) return;
       sunElevation = deg;

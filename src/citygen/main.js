@@ -1702,6 +1702,27 @@ async function boot() {
       // What the light model says it is delivering right now, so a key-off pair
       // can check the prediction directly instead of it being re-derived by hand.
       lightRig: state.renderer?.environmentDiagnostics?.lightRig || null,
+      // The whole environment record, not just the light-rig scales.
+      //
+      // Forwarding only `lightRig` dropped the two things a round needs to
+      // check the probe itself: `probe` (solar-disc intensity, cache
+      // fingerprint, rebuild count - a cached probe with no sun in it and a
+      // freshly baked one with a sun are identical from `textureReady` alone)
+      // and `wet` (the per-class roughness/albedo actually written onto the
+      // graded materials, which is the only live record of the drizzle
+      // response; the `passes[].detail.wet` block is a BUILD-time snapshot
+      // taken at the default clear bucket and never rewritten).
+      environment: state.renderer?.environmentDiagnostics || null,
+      // The sun and the key, separately and unambiguously. See the note inside
+      // `setKeyDirectionFromSun`: `shadows.sunPosition` is a world position
+      // dominated by the shadow fit's centre, and round 4 was read as "the sun
+      // does not follow the clock" because of it.
+      solar: state.renderer?.solarDiagnostics || null,
+      // The display-referred solve behind the resident practical pool.
+      practicals: state.renderer?.localLightDiagnostics || null,
+      // Rain: built, visible, and what it costs. The round-4 reviews recorded
+      // "no particles, no streaks, no droplets" on the drizzle card.
+      rain: state.renderer?.rainDiagnostics || null,
       // Shadow evidence: the fit the camera actually got, and how many meshes
       // the caster policy admitted. A frame with no shadows is otherwise
       // indistinguishable from a frame whose shadows are merely subtle.

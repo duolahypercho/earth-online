@@ -412,6 +412,8 @@ const smoothstep = (edge0, edge1, x) => {
 };
 
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+/** `value` when it is a finite number, else `fallback`. */
+const finiteOr = (value, fallback) => (isFiniteNumber(value) ? value : fallback);
 
 /** Relative luminance of a linear-sRGB triple. */
 const luminance = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
@@ -1605,6 +1607,40 @@ export function baselineFillCurve(daylight) {
 }
 
 /**
+ * Altitude band, in degrees, over which the directional key fades in.
+ *
+ * `[0, 4]` and not a twilight band: the key IS the direct beam, so it must be
+ * exactly zero when the disc is under the horizon and must not come back.
+ * @type {readonly [number, number]}
+ */
+export const KEY_ENVELOPE_ALTITUDE_BAND_DEG = Object.freeze([0, 4]);
+
+/**
+ * The multiplier the integrator applies to the directional key AFTER every
+ * other scale, as a function of solar altitude alone.
+ *
+ * There is exactly one of these in the project and every consumer must read
+ * it from here. It used to exist three times - once in `recommendedLightRig`,
+ * once inside `sceneIlluminance`, once inside `keyFillBalance().delivered` -
+ * and the last two were left behind as `(2 * daylight - 1) ** 2` when the
+ * first was fixed. That form is zero at the horizon and returns to ONE below
+ * it, which is what lit round 4's night card from a sun 28 degrees
+ * underground. It is also wrong in the other direction inside civil twilight:
+ * at +3 deg it books 0.25 where the renderer applies 0.84, so the exposure
+ * curve and the key/fill solver were both reasoning about a key 3.4x weaker
+ * than the one the frame gets. Both cards that live in that band - the
+ * golden-hour card and the dusk end of the night ramp - were mis-exposed by
+ * it.
+ *
+ * @param {number} altitudeDeg Solar altitude in degrees.
+ * @returns {number} 0 at and below the horizon, 1 from +4 deg, monotone between.
+ */
+export function keyEnvelope(altitudeDeg) {
+  if (!isFiniteNumber(altitudeDeg)) return 0;
+  return smoothstep(KEY_ENVELOPE_ALTITUDE_BAND_DEG[0], KEY_ENVELOPE_ALTITUDE_BAND_DEG[1], altitudeDeg);
+}
+
+/**
  * Reference clear-sky irradiance luminance at the canonical noon, used to
  * normalise the fill curve. Recomputed lazily and memoised, never hard-coded,
  * so it cannot drift away from the sky model.
@@ -1793,7 +1829,7 @@ export function recommendedLightRig(modelOrState, baseline = BASELINE_LIGHT_RIG)
        * dome. If that leaves it dark, the answer is the practicals, not a
        * directional key at 1/27 of daylight standing where no sun is.
        */
-      envelope: round4(smoothstep(0, 4, model.sun.altitudeDeg)),
+      envelope: round4(keyEnvelope(model.sun.altitudeDeg)),
       /** Never cast from a key the sun is not behind. */
       castShadow: model.sun.altitudeDeg > 0,
     }),
@@ -2469,10 +2505,11 @@ const _illuminanceReference = { value: 0 };
 export function sceneIlluminance(model, baseline = BASELINE_LIGHT_RIG) {
   const beam = directBeamTransmittance(model.sun.altitudeDeg);
   const rigSunScale = model.lightRig ? model.lightRig.scales.sun : 1;
-  // The renderer squares `(2*daylight - 1)` onto the key so it crosses zero at
-  // the horizon; the illuminance has to see the same envelope or the exposure
-  // curve would ramp against a key that is not there.
-  const envelope = (2 * model.daylight - 1) ** 2;
+  // The illuminance has to see the same envelope the renderer applies, or the
+  // exposure curve ramps against a key that is not there (or misses one that
+  // is). Read from `keyEnvelope`, never re-derived: see the note on that
+  // function for what the two stale copies of this line cost.
+  const envelope = keyEnvelope(model.sun.altitudeDeg);
   const key = Math.max(0, model.sun.y) * baseline.sun * rigSunScale * beam.transmittance * envelope;
   const sky = model.skyIrradianceLuminance;
   return { sky, key, total: sky + key };
@@ -2786,7 +2823,7 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
   // measured ratio, which is the size of the light-colour and prefilter losses
   // it does not model.
   const deliveredKey = Math.max(0, model.sun.y) * baseline.sun * rig.scales.sun
-    * ((2 * model.daylight - 1) ** 2) * keyGain;
+    * keyEnvelope(model.sun.altitudeDeg) * keyGain;
   const deliveredEnvironment = model.skyIrradianceLuminance
     * envMapIntensityFor(DELIVERED_REFERENCE_CLASS, model);
   const deliveredPunctual = curve.hemi * applyHemiScale + curve.ambient * applyAmbientScale;
@@ -3465,6 +3502,19 @@ export function nightPracticalProfile(modelOrState) {
        */
       peakDisplay: Math.round(82 * Math.min(1.35, wetGain)),
       /**
+       * The same peak with the wet gain removed.
+       *
+       * A painted pool is a decal standing in for BOTH the light landing on
+       * the road and the specular streak the wet road returns, so its peak
+       * rises in the rain. A real luminaire's output does not change when it
+       * rains. A point light solved against the wet peak therefore
+       * double-counts the wetness the material grade is already applying
+       * through its roughness and albedo - and asks for an intensity 2.2x the
+       * clear one, which on the canonical 21:30 drizzle rig runs past the
+       * solver's own clamp. Anything solving for a real fixture reads this.
+       */
+      dryPeakDisplay: 82,
+      /**
        * The throw over the carriageway. A street lamp is not a point source
        * over its own base: the head is on an outreach arm and the distribution
        * is deliberately biased across the road, which is the whole reason the
@@ -3484,6 +3534,8 @@ export function nightPracticalProfile(modelOrState) {
       depth: round4(3.6 * (1 + 0.3 * model.wetness)),
       opacity: round4(clamp(dusk * wetGain, 0, 1)),
       peakDisplay: Math.round(88 * Math.min(1.25, wetGain)),
+      /** The fixture's own output, with the wet gain removed. @see pool.dryPeakDisplay */
+      dryPeakDisplay: 88,
       color: Object.freeze([1.0, 0.83, 0.60]),
       occupancy: round4(clamp(occupancy * 1.25, 0, 0.95)),
     }),
@@ -3512,6 +3564,106 @@ export function nightPracticalProfile(modelOrState) {
     }),
     /** Ambient sky glow the practicals themselves put back into the dome. */
     skyGlow: round4(night * (weatherProfile(model.weather).urbanGlow ?? 0.6)),
+  });
+}
+
+/**
+ * Default reflectance the practical solver quotes its peak against.
+ *
+ * The footway is the surface a night street card is mostly made of and the
+ * surface the pool decals were authored over, so the peak is quoted for it.
+ * @type {number}
+ */
+export const PRACTICAL_REFERENCE_ALBEDO = 0.42;
+
+/**
+ * Intensity a `PointLight` needs so its pool reads at a stated DISPLAY level.
+ *
+ * Why this is not a hand-typed intensity
+ * --------------------------------------
+ * `nightPracticalProfile` already specifies every painted practical in display
+ * steps (`pool.peakDisplay`, `shopSpill.peakDisplay`), for the reason given
+ * there: three tone-maps per material, so a scene-referred number for a
+ * practical is not exposure-independent and does not survive a change to the
+ * exposure curve. Wave B replaced the painted pools near the camera with real
+ * point lights and gave those lights hand-authored intensities instead, which
+ * puts the two halves of the same fixture on two different scales. Measured on
+ * the canonical 21:30 rig, the hand-authored street lamp (intensity 0.72,
+ * decay 2.1, at 4.8 m over its own pool centre) delivers irradiance 0.0267
+ * where the decal it replaces claims 82 display steps: the real light is about
+ * a fiftieth of the painted one it fades out.
+ *
+ * This inverts the display chain instead. Given the background the surface is
+ * already sitting at, it solves for the extra irradiance that lands the pool
+ * centre `peakDisplay` steps higher after ACES and the sRGB transfer, then
+ * divides by three's own distance attenuation at the fixture's geometry to get
+ * the intensity. The result is exposure-independent by construction and moves
+ * correctly with weather, because `peakDisplay` does.
+ *
+ * Deterministic and pure: no clock, no seed, no renderer state.
+ *
+ * @param {object} options
+ * @param {number} options.peakDisplay Steps out of 255 the pool centre adds.
+ * @param {number} options.exposure `renderer.toneMappingExposure`.
+ * @param {number} options.backgroundIrradiance Irradiance already on the surface.
+ * @param {number} [options.albedo=PRACTICAL_REFERENCE_ALBEDO] Surface reflectance.
+ * @param {number} options.distance Metres from the fixture to the pool centre.
+ * @param {number} [options.decay=2] `light.decay`.
+ * @param {number} [options.cutoffDistance=0] `light.distance`; 0 for no window.
+ * @param {number} [options.maxIntensity=64] Clamp, so a pathological background
+ *   cannot ask for an unbounded light.
+ * @returns {Readonly<object>}
+ */
+export function practicalPointLightIntensity(options = {}) {
+  const peakDisplay = Math.max(0, finiteOr(options.peakDisplay, 0));
+  const exposure = Math.max(1e-6, finiteOr(options.exposure, 1));
+  const background = Math.max(0, finiteOr(options.backgroundIrradiance, 0));
+  const albedo = clamp(finiteOr(options.albedo, PRACTICAL_REFERENCE_ALBEDO), 0.01, 1);
+  const distance = Math.max(0.05, finiteOr(options.distance, 1));
+  const decay = clamp(finiteOr(options.decay, 2), 0, 4);
+  const cutoff = Math.max(0, finiteOr(options.cutoffDistance, 0));
+  const maxIntensity = Math.max(0, finiteOr(options.maxIntensity, 64));
+
+  const backgroundDisplay = displayValue((albedo * background) / Math.PI, exposure);
+  // ACES saturates; leave a step of headroom so a bright background cannot ask
+  // for an infinite light to clear a display level it can never reach.
+  const targetDisplay = Math.min(backgroundDisplay + peakDisplay / 255, 254 / 255);
+  const targetScene = sceneForDisplay(targetDisplay, exposure);
+  const targetIrradiance = (targetScene * Math.PI) / albedo;
+  const deltaIrradiance = Math.max(0, targetIrradiance - background);
+
+  // three's punctual distance attenuation, `getDistanceAttenuation` in
+  // three/src/nodes/lighting/LightUtils.js: an inverse power law windowed to
+  // zero at `light.distance`. Reproduced, not approximated - an intensity
+  // solved against a different falloff is not a solved intensity.
+  let attenuation = 1 / Math.max(Math.pow(distance, decay), 0.01);
+  if (cutoff > 0) {
+    const window = clamp(1 - Math.pow(distance / cutoff, 4), 0, 1);
+    attenuation *= window * window;
+  }
+
+  const raw = attenuation > 1e-9 ? deltaIrradiance / attenuation : maxIntensity;
+  const intensity = clamp(raw, 0, maxIntensity);
+  const achievedIrradiance = background + intensity * attenuation;
+  const achievedDisplay = displayValue((albedo * achievedIrradiance) / Math.PI, exposure);
+  const round4 = (value) => Math.round(value * 10000) / 10000;
+  return Object.freeze({
+    version: ATMOSPHERE_MODEL_VERSION,
+    intensity: round4(intensity),
+    raw: round4(raw),
+    clamped: raw > maxIntensity,
+    albedo,
+    distance: round4(distance),
+    decay,
+    cutoffDistance: cutoff,
+    attenuation: round4(attenuation),
+    backgroundIrradiance: round4(background),
+    backgroundDisplay: Math.round(backgroundDisplay * 2550) / 10,
+    targetIrradiance: round4(targetIrradiance),
+    deltaIrradiance: round4(deltaIrradiance),
+    /** Steps out of 255 the pool centre actually reaches over the background. */
+    achievedPeakDisplay: Math.round((achievedDisplay - backgroundDisplay) * 2550) / 10,
+    achievedDisplay: Math.round(achievedDisplay * 2550) / 10,
   });
 }
 
